@@ -85,7 +85,9 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
   // The "new ad" chooser (Jon, 2026-11-02: "when you select new ad it should let you decide how you
   // want to create it — prompt it, new visual, revamp, music vibe and goal").
   const [starting, setStarting] = useState(false)
-  const [st, setSt] = useState<{ mode: 'describe' | 'template' | 'revamp' | 'blank'; prompt: string; goal: string; music: string; vibe: string; look: string; format: AdFormat | ''; from: string }>({ mode: 'describe', prompt: '', goal: 'bookings', music: '', vibe: '', look: 'stay', format: '', from: '' })
+  const [ws, setWs] = useState(0)
+  const [draft, setDraft] = useState<{ name: string; scenes: AdScene[]; settings: Plan['settings']; note: string } | null>(null)
+  const [st, setSt] = useState<{ mode: 'describe' | 'script' | 'template' | 'revamp' | 'blank'; prompt: string; goal: string; music: string; vibe: string; look: string; format: AdFormat | ''; from: string; audience: AdAudience; who: string; why: string; script: string }>({ mode: 'describe', prompt: '', goal: 'bookings', music: '', vibe: '', look: 'stay', format: '', from: '', audience: 'guests', who: '', why: '', script: '' })
   const seed = useRef<{ fresh: boolean; look: string; goal: string; music: string; vibe: string } | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [planNote, setPlanNote] = useState('')
@@ -166,10 +168,10 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     loadList()
     return r.project
   }
-  const openStart = () => { stop(); setPlan(null); setStarting(true); setSt(x => ({ ...x, prompt: '', vibe: '', from: '' })) }
+  const openStart = () => { stop(); setPlan(null); setErr(''); setWs(0); setStarting(true); setSt(x => ({ ...x, prompt: '', vibe: '', from: '', who: '', why: '', script: '' })); setDraft(null) }
   const goalOf = (k: string) => GOALS.find(g => g.key === k)
   /** Brief extras the chooser adds: goal, music vibe and look, in words the planner and writer use. */
-  const seedLines = () => [goalOf(st.goal)?.brief || '', st.vibe.trim() ? 'Music vibe: ' + st.vibe.trim() + '.' : st.music ? 'Music vibe: ' + (MUSIC.find(m => m.key === st.music)?.mood || '') + '.' : '', 'Visual style: ' + (LOOKS.find(l => l.key === st.look)?.blurb || '') + '.'].filter(Boolean).join(' ')
+  const seedLines = () => [goalOf(st.goal)?.brief || '', st.why.trim() ? 'What we are trying to accomplish: ' + st.why.trim() + '.' : '', 'Audience: ' + AUD[st.audience].brief + (st.who.trim() ? ', specifically ' + st.who.trim() : '') + '.', st.vibe.trim() ? 'Music vibe: ' + st.vibe.trim() + '.' : st.music ? 'Music vibe: ' + (MUSIC.find(m => m.key === st.music)?.mood || '') + '.' : '', 'Visual style: ' + (LOOKS.find(l => l.key === st.look)?.blurb || '') + '.'].filter(Boolean).join(' ')
   /** After an ad is built from the chooser: generate the described music vibe with ElevenLabs. */
   const vibeTrack = async (vibe: string) => {
     if (!vibe.trim()) return
@@ -186,7 +188,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
       if (!st.prompt.trim()) { setErr('Describe the ad first — even one line, e.g. a cool video for Amrit.'); return }
       seed.current = { fresh: true, look, goal: st.goal, music, vibe }
       setBrief(st.prompt.trim()); setStarting(false)
-      await planAd(st.prompt.trim() + '\n\n' + seedLines(), { audience: g?.audience, format: st.format || undefined })
+      await planAd(st.prompt.trim() + '\n\n' + seedLines(), { audience: st.audience, format: st.format || undefined })
       return
     }
     if (st.mode === 'revamp') {
@@ -197,7 +199,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
       const n = await newAd(); if (!n) return
       setStarting(false); setBusy('adask')
       let scenes = S.scenes.map(x => ({ ...x, items: x.items.slice(), photos: x.photos.slice() }))
-      const base: AdProject = { ...n, name: S.name + ' · revamp', format: (st.format || S.format) as AdFormat, audience: g?.audience || S.audience, music: music || S.music, look, goal: st.goal, contact: S.contact, captions: S.captions, voiceId: S.voiceId, voiceName: S.voiceName, voiceSettings: S.voiceSettings, scenes }
+      const base: AdProject = { ...n, name: S.name + ' · revamp', format: (st.format || S.format) as AdFormat, audience: st.audience, music: music || S.music, look, goal: st.goal, contact: S.contact, captions: S.captions, voiceId: S.voiceId, voiceName: S.voiceName, voiceSettings: S.voiceSettings, scenes }
       const ask = 'REVAMP THIS AD: keep what works, make it fresher and stronger. ' + (st.prompt.trim() ? 'What to change: ' + st.prompt.trim() + '. ' : '') + seedLines()
       const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: ask, seconds, audience: AUD[base.audience].brief, format: base.format, current: base }) }).then(x => x.json()).catch(() => null)
       setBusy('')
@@ -209,7 +211,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
       return
     }
     const n = await newAd(); if (!n) return
-    change(d => ({ ...d, look, goal: st.goal, audience: g?.audience || d.audience, music: music || d.music, format: (st.format || d.format) as AdFormat }))
+    change(d => ({ ...d, look, goal: st.goal, audience: st.audience, music: music || d.music, format: (st.format || d.format) as AdFormat }))
     setStarting(false)
     if (st.mode === 'template') { setSide('templates'); vibeTrack(vibe); return }
     vibeTrack(vibe)
@@ -287,34 +289,79 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
     setAnswers(Object.fromEntries(r.plan.questions.map((q: any) => [q.id, q.options[0]])))
   }
   /** Build the ad from the confirmed plan: settings applied, then the writer works from the sharpened brief. */
-  const buildFromPlan = async () => {
-    if (!plan) return
-    const st = plan.settings
-    const full = [
-      plan.brief,
-      plan.property ? `PROPERTY: ${plan.property}. Every photoQuery must name it (e.g. "${plan.property.split(/\s+/)[0].toLowerCase()} pool") so the photos are of this property only.` : '',
-      plan.angle ? 'ANGLE: ' + plan.angle : '', plan.hook ? 'OPEN WITH: ' + plan.hook : '',
-      plan.questions.length ? 'DECISIONS:\n' + plan.questions.map(q => `- ${q.q} → ${answers[q.id] || q.options[0]}`).join('\n') : '',
-      planNote.trim() ? 'ALSO: ' + planNote.trim() : '',
-      plan.outline.length ? 'FOLLOW THIS SCENE OUTLINE:\n' + plan.outline.join('\n') : '',
-    ].filter(Boolean).join('\n\n')
-    setBusy('write'); setErr('')
-    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: full, seconds: st.seconds, audience: AUD[st.audience].brief, format: st.format, current: null }) }).then(x => x.json()).catch(() => null)
-    if (!r?.ok) { setBusy(''); setErr(r?.error || 'The writer did not answer. Try again.'); return }
+  /** The writer's prompt for a confirmed plan. */
+  const planPromptText = (pl: Plan) => [
+    pl.brief,
+    pl.property ? `PROPERTY: ${pl.property}. Every photoQuery must name it (e.g. "${pl.property.split(/\s+/)[0].toLowerCase()} pool") so the photos are of this property only.` : '',
+    pl.angle ? 'ANGLE: ' + pl.angle : '', pl.hook ? 'OPEN WITH: ' + pl.hook : '',
+    pl.questions.length ? 'DECISIONS:\n' + pl.questions.map(q => `- ${q.q} → ${answers[q.id] || q.options[0]}`).join('\n') : '',
+    planNote.trim() ? 'ALSO: ' + planNote.trim() : '',
+    pl.outline.length ? 'FOLLOW THIS SCENE OUTLINE:\n' + pl.outline.join('\n') : '',
+  ].filter(Boolean).join('\n\n')
+  /** Ask the writer for scenes. */
+  const writeScenes = async (prompt: string, set: Plan['settings'], current?: AdProject | null): Promise<{ name: string; scenes: AdScene[] } | null> => {
+    setErr('')
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null }) }).then(x => x.json()).catch(() => null)
+    if (!r?.ok || !r.scenes?.length) { setErr(r?.error || 'The writer did not answer. Try again.'); return null }
+    return { name: r.name || '', scenes: r.scenes }
+  }
+  /** Put finished scenes into an ad (a new one when the guide started it), with the chosen settings. */
+  const applyScenes = async (name: string, scenes: AdScene[], set: Plan['settings']) => {
     const sd = seed.current
     let base = sd?.fresh ? null : pRef.current
     if (!base) {
       const n = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
-      if (!n?.ok) { setBusy(''); setErr(n?.error || 'Could not start a new ad.'); return }
+      if (!n?.ok) { setErr(n?.error || 'Could not start a new ad.'); return }
       base = n.project as AdProject
-      setP(base); setAudioUrl(null); loadList()
+      setP(base); pRef.current = base; setAudioUrl(null); loadList()
     }
-    setBusy('')
-    setSeconds(st.seconds)
-    change(d => ({ ...d, prompt: brief, name: plan.name || r.name || d.name, audience: st.audience, format: st.format, music: st.music || d.music, look: sd?.look || d.look, goal: sd?.goal || d.goal, scenes: r.scenes }))
-    setPlan(null); setSel(0); setT(1.6); setUndo(null)
+    setSeconds(set.seconds)
+    change(d => ({ ...d, prompt: brief, name: name || d.name, audience: set.audience, format: set.format, music: set.music || d.music, look: sd?.look || d.look, goal: sd?.goal || d.goal, scenes }))
+    setPlan(null); setDraft(null); setSel(0); setT(1.6); setUndo(null)
     seed.current = null
     if (sd?.vibe) vibeTrack(sd.vibe)
+  }
+  const buildFromPlan = async () => {
+    if (!plan) return
+    setBusy('write')
+    const w = await writeScenes(planPromptText(plan), plan.settings)
+    setBusy('')
+    if (w) await applyScenes(plan.name || w.name, w.scenes, plan.settings)
+  }
+  /** Jon, 2026-11-02: "should also be able to generate a script and use that to build out the video".
+   *  The writer's scenes come back as a script to read and edit first; Build turns it into the video. */
+  const scriptFromPlan = async () => {
+    if (!plan) return
+    setBusy('script')
+    const w = await writeScenes(planPromptText(plan), plan.settings)
+    setBusy('')
+    if (w) setDraft({ name: plan.name || w.name, scenes: w.scenes, settings: plan.settings, note: '' })
+  }
+  const rewriteDraft = async () => {
+    if (!draft) return
+    setBusy('script')
+    const cur = { ...(pRef.current || ({} as any)), scenes: draft.scenes, audience: draft.settings.audience, format: draft.settings.format } as AdProject
+    const w = await writeScenes('Rewrite this script. ' + (draft.note.trim() ? 'What to change: ' + draft.note.trim() : 'Make it tighter and stronger.') + (plan ? '\n\n' + planPromptText(plan) : ''), draft.settings, cur)
+    setBusy('')
+    if (w) setDraft({ ...draft, scenes: w.scenes, note: '' })
+  }
+  const copyScript = () => {
+    if (!draft) return
+    const txt = draft.name + '\n\n' + draft.scenes.map((x, k) => `SCENE ${k + 1} · ${KINDS.find(q => q.kind === x.kind)?.label || x.kind}\nVO: ${x.vo || '(music only)'}\nON SCREEN: ${x.head.replace(/\*\*/g, '').replace(/\n/g, ' / ')}${x.items.length ? '\nROWS: ' + x.items.join(' · ') : ''}`).join('\n\n')
+    try { navigator.clipboard.writeText(txt) } catch { /* fine */ }
+  }
+  /** A pasted script → scenes, keeping the spoken words. */
+  const layOutScript = async () => {
+    if (!st.script.trim()) { setErr('Paste the script first.'); return false }
+    const set = { audience: st.audience, format: (st.format || '16:9') as AdFormat, seconds: Math.max(15, Math.min(90, Math.round(st.script.trim().split(/\s+/).length / 2.5 / 15) * 15 || 30)), music: st.music }
+    seed.current = { fresh: true, look: st.look, goal: st.goal, music: st.music, vibe: st.vibe }
+    setBrief(st.prompt || 'From a script')
+    setBusy('script')
+    const w = await writeScenes('LAY OUT THIS SCRIPT AS SCENES. Keep the spoken words exactly as written (only split them across scenes; fix nothing but obvious typos). Choose the scene kinds, on-screen headlines and photoQuery words that fit each line.\n\n' + seedLines() + '\n\nTHE SCRIPT:\n' + st.script.trim(), set)
+    setBusy('')
+    if (!w) return false
+    setDraft({ name: w.name || 'Scripted ad', scenes: w.scenes, settings: set, note: '' })
+    return true
   }
 
   /** Rewrite just the selected scene the way it is asked ("punchier", "show the rooftop", "make it numbers"). */
@@ -765,6 +812,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
         {full
           ? <a href="/ads" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Back to Lighthouse">← Lighthouse</a>
           : <a href="/ads?full=1" target="_blank" rel="noopener" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Open the editor on its own, full screen, in a new tab">⤢ Full screen</a>}
+        {canEdit ? <Btn tone="gold" small onClick={openStart} title="Guided: describe it, answer a few questions, then build">✦ Create new ad</Btn> : null}
         {p ? (
           <input value={p.name} disabled={!canEdit} onChange={e => change(d => ({ ...d, name: e.target.value }))} style={{ ...field, width: 260, padding: '6px 10px', fontWeight: 600 }} />
         ) : null}
@@ -904,7 +952,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
             </div>
           ) : (<>
           <Label>Ads</Label>
-          {canEdit ? <Btn small disabled={!!busy} onClick={openStart}>+ New ad</Btn> : null}
+          {canEdit ? <Btn small disabled={!!busy} onClick={openStart}>✦ Create new ad</Btn> : null}
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
             {list.map(a => (
               <button key={a.id} onClick={() => open(a.id)} style={{ textAlign: 'left', background: p?.id === a.id ? '#232C38' : 'transparent', border: 0, borderRadius: 7, padding: '7px 8px', cursor: 'pointer', color: UI.ink }}>
@@ -920,80 +968,223 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
 
         {/* ── centre: viewer ── */}
         <div style={{ padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0, background: '#0A0D11' }}>
-          {starting && !plan ? (
-            <div style={{ width: '100%', maxWidth: 760, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '16px 18px' }}>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                <span style={{ fontFamily: display, fontSize: 20, fontWeight: 800 }}>New ad</span>
-                <span style={{ fontSize: 12, color: UI.mut }}>How do you want to make it?</span>
-                <span style={{ marginLeft: 'auto' }}><Btn small onClick={() => setStarting(false)}>Close</Btn></span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8, marginTop: 12 }}>
-                {([['describe', '✦ Describe it', 'Prompt it in your words — I plan it with you first'], ['revamp', '↻ Revamp an ad', 'Take one we made and make it fresher'], ['template', '▦ From a template', 'A ready layout, filled with our photos'], ['blank', '□ Blank', 'Start empty and build scene by scene']] as const).map(([k, l, d]) => (
-                  <button key={k} onClick={() => setSt(x => ({ ...x, mode: k }))} style={{ textAlign: 'left', background: st.mode === k ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.mode === k ? UI.blue : UI.line), borderRadius: 10, padding: '10px 11px', cursor: 'pointer', color: UI.ink }}>
-                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700 }}>{l}</span>
-                    <span style={{ display: 'block', fontSize: 11, color: UI.mut, marginTop: 3, lineHeight: 1.4 }}>{d}</span>
-                  </button>
-                ))}
-              </div>
+          {starting && !draft ? (() => {
+            // A guided "Create new ad" (Jon, 2026-11-02: "create new ad, then guide you through prompt,
+            // questions, etc."): one question per step, Back/Next, the AI's questions folded in.
+            const pre: string[] = st.mode === 'describe' ? ['how', 'prompt', 'goal', 'audience', 'music', 'look', 'shape']
+              : st.mode === 'script' ? ['how', 'script', 'goal', 'audience', 'music', 'look', 'shape']
+              : st.mode === 'revamp' ? ['how', 'pick', 'change', 'goal', 'audience', 'music', 'look', 'shape']
+              : st.mode === 'template' ? ['how', 'goal', 'audience', 'music', 'look', 'shape'] : ['how', 'goal', 'audience', 'look', 'shape']
+            const steps = st.mode === 'describe' ? (plan ? pre.concat(['think'], plan.questions.map((_, i) => 'q' + i), ['review']) : pre.concat(['think'])) : pre
+            const i = Math.min(ws, steps.length - 1), key = steps[i]
+            const last = i === steps.length - 1
+            const next = async () => {
+              if (key === 'script' && !st.script.trim()) { setErr('Paste the script first.'); return }
+              if (key === 'prompt' && !st.prompt.trim()) { setErr('Say what the ad is about first — even one line.'); return }
+              if (key === 'pick' && !st.from) { setErr('Pick the ad to revamp.'); return }
+              setErr('')
+              if (key === 'think' && plan) { setWs(i + 1); return }
+              if (key === 'think') {
+                seed.current = { fresh: true, look: st.look, goal: st.goal, music: st.music, vibe: st.vibe }
+                setBrief(st.prompt.trim())
+                await planAd(st.prompt.trim() + '\n\n' + seedLines(), { audience: st.audience, format: st.format || undefined })
+                setWs(i + 1)
+                return
+              }
+              if (last) {
+                if (st.mode === 'describe') { setStarting(false); return } // → the plan to review and build
+                if (st.mode === 'script') { if (await layOutScript()) setStarting(false); return } // → the script to review
+                await startGo(); return
+              }
+              setWs(i + 1)
+            }
+            const pickNext = (fn: () => void) => { fn(); setTimeout(() => setWs(w => Math.max(w, i + 1)), 160) }
+            const title: Record<string, string> = {
+              how: 'How do you want to start?', prompt: 'What’s the ad about?', goal: 'What are you trying to accomplish?', audience: 'Who is it for?', review: 'Here’s the plan', music: 'What’s the vibe?',
+              look: 'Pick a look', shape: 'Where will it run?', pick: 'Which ad are we revamping?', change: 'What should change?',
+              think: 'Ready — let me work it through', script: 'Paste your script',
+            }
+            const q = key.startsWith('q') && plan ? plan.questions[Number(key.slice(1))] : null
+            return (
+              <div style={{ width: '100%', maxWidth: 720, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.gold }}>Create new ad</span>
+                  <span style={{ fontSize: 11, color: UI.mut }}>Step {i + 1} of {steps.length}{st.mode === 'describe' && !plan ? '+' : ''}</span>
+                  <span style={{ marginLeft: 'auto' }}><Btn small onClick={() => { setStarting(false); setPlan(null) }}>Cancel</Btn></span>
+                </div>
+                <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                  {steps.map((x, k) => <span key={x} onClick={() => k < i && setWs(k)} style={{ flex: 1, height: 4, borderRadius: 2, background: k <= i ? UI.gold : UI.line, cursor: k < i ? 'pointer' : 'default' }} />)}
+                </div>
+                <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '18px 0 4px', letterSpacing: '-0.01em' }}>{q ? q.q : title[key]}</p>
+                {q ? <p style={{ fontSize: 12, color: UI.mut, margin: '0 0 12px' }}>A question from the plan · ★ is my recommendation</p> : null}
 
-              {st.mode === 'describe' ? (
-                <>
-                  <Label>Describe the ad</Label>
-                  <textarea autoFocus value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} rows={3} placeholder="e.g. a cool video for Amrit · a 15-second Reel for Art Basel weekend at 17WEST · why owners switch to Stay" style={field} />
-                </>
-              ) : st.mode === 'revamp' ? (
-                <>
-                  <Label>Which ad?</Label>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {list.map(a => <Btn key={a.id} small on={st.from === a.id} onClick={() => setSt(x => ({ ...x, from: a.id }))}>{a.name} · {a.format}</Btn>)}
-                    {!list.length ? <span style={{ fontSize: 12, color: UI.mut }}>No ads to revamp yet.</span> : null}
-                  </div>
-                  <Label>What should change? (optional)</Label>
-                  <textarea value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} rows={2} placeholder="e.g. make it for guests, faster cuts, open on the rooftop" style={field} />
-                  <p style={{ fontSize: 11, color: UI.mut, marginTop: 4 }}>The original stays as it is — the revamp is a new ad.</p>
-                </>
-              ) : st.mode === 'template' ? (
-                <p style={{ fontSize: 12, color: UI.mut, marginTop: 12 }}>Set the goal, vibe and look below, then pick a template on the left — it fills itself with our photos.</p>
-              ) : <p style={{ fontSize: 12, color: UI.mut, marginTop: 12 }}>An empty ad with the goal, vibe and look below. Add scenes from the timeline.</p>}
+                <div style={{ marginTop: 12 }}>
+                  {key === 'how' ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
+                      {([['describe', '✦ Describe it', 'Tell me in your words. I ask a few questions, write the script, then build.'], ['script', '📝 From a script', 'Paste a script you have. I lay it out into scenes and build the video.'], ['revamp', '↻ Revamp an ad', 'Take one we made and make it fresher.'], ['template', '▦ From a template', 'A ready layout, filled with our photos.'], ['blank', '□ Blank', 'Empty — build it scene by scene.']] as const).map(([k, l, d]) => (
+                        <button key={k} onClick={() => pickNext(() => { setSt(x => ({ ...x, mode: k })); setPlan(null) })} style={{ textAlign: 'left', background: st.mode === k ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.mode === k ? UI.blue : UI.line), borderRadius: 11, padding: '14px 14px', cursor: 'pointer', color: UI.ink }}>
+                          <span style={{ display: 'block', fontSize: 15, fontWeight: 700 }}>{l}</span>
+                          <span style={{ display: 'block', fontSize: 12, color: UI.mut, marginTop: 4, lineHeight: 1.45 }}>{d}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : key === 'prompt' ? (
+                    <>
+                      <textarea autoFocus value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) next() }} rows={4}
+                        placeholder="e.g. a cool video for Amrit · a 15-second Reel for Art Basel weekend at 17WEST · why owners switch to Stay" style={{ ...field, fontSize: 15 }} />
+                      <p style={{ fontSize: 11.5, color: UI.mut, marginTop: 6 }}>One line is enough. Name a property and I’ll use its photos.</p>
+                    </>
+                  ) : key === 'script' ? (
+                    <>
+                      <textarea autoFocus value={st.script} onChange={e => setSt(x => ({ ...x, script: e.target.value }))} rows={9} placeholder={'Paste the voiceover script. Line breaks help me cut scenes.\n\ne.g.\nWake up to the ocean.\nRooftop pool. Sunset views.\nAmrit, Singer Island.\nBook your stay at stay-hospitality.com.'} style={{ ...field, fontSize: 14 }} />
+                      <p style={{ fontSize: 11.5, color: UI.mut, marginTop: 6 }}>{st.script.trim() ? `${st.script.trim().split(/\s+/).length} words · about ${Math.round(st.script.trim().split(/\s+/).length / 2.5)}s spoken · ` : ''}Your words are kept as written. You review the laid-out script before the video is built.</p>
+                    </>
+                  ) : key === 'pick' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 300, overflowY: 'auto' }}>
+                      {list.map(a => (
+                        <button key={a.id} onClick={() => pickNext(() => setSt(x => ({ ...x, from: a.id })))} style={{ textAlign: 'left', background: st.from === a.id ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.from === a.id ? UI.blue : UI.line), borderRadius: 9, padding: '9px 11px', cursor: 'pointer', color: UI.ink }}>
+                          <span style={{ fontSize: 13.5, fontWeight: 700 }}>{a.name}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {a.format} · {a.scenes} scenes</span>
+                        </button>
+                      ))}
+                      {!list.length ? <p style={{ fontSize: 12, color: UI.mut }}>No ads to revamp yet — go back and pick Describe it.</p> : null}
+                    </div>
+                  ) : key === 'change' ? (
+                    <>
+                      <textarea autoFocus value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} rows={3} placeholder="e.g. make it for guests, faster cuts, open on the rooftop (or leave empty: just make it fresher)" style={{ ...field, fontSize: 14 }} />
+                      <p style={{ fontSize: 11.5, color: UI.mut, marginTop: 6 }}>The original stays as it is — the revamp is a new ad.</p>
+                    </>
+                  ) : key === 'goal' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {GOALS.map(g => (
+                        <button key={g.key} onClick={() => setSt(x => ({ ...x, goal: g.key, audience: g.audience }))} style={{ textAlign: 'left', background: st.goal === g.key ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.goal === g.key ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink }}>
+                          <span style={{ fontSize: 14, fontWeight: 700 }}>{g.label}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {g.brief.replace(/^Goal: /, '')}</span>
+                        </button>
+                      ))}
+                      <Label>In your words (optional)</Label>
+                      <input value={st.why} onChange={e => setSt(x => ({ ...x, why: e.target.value }))} placeholder="e.g. fill the empty weekdays in December · get 5 owner calls this month" style={field} />
+                    </div>
+                  ) : key === 'audience' ? (
+                    <>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {(Object.keys(AUD) as AdAudience[]).map(k => (
+                          <button key={k} onClick={() => setSt(x => ({ ...x, audience: k }))} style={{ textAlign: 'left', background: st.audience === k ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.audience === k ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink }}>
+                            <span style={{ fontSize: 14, fontWeight: 700 }}>{AUD[k].label}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {AUD[k].hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <Label>Who exactly? (optional)</Label>
+                      <input value={st.who} onChange={e => setSt(x => ({ ...x, who: e.target.value }))} placeholder={st.audience === 'guests' ? 'e.g. couples, families, groups for Art Basel, remote workers' : st.audience === 'owners' ? 'e.g. owners unhappy with their manager, new buyers in Miami' : 'e.g. realtors selling condos in Brickell'} style={field} />
+                    </>
+                  ) : key === 'review' && plan ? (
+                    <div style={{ fontSize: 13, lineHeight: 1.65 }}>
+                      <p style={{ margin: 0 }}><b>{plan.name}</b>{plan.property ? <span style={{ color: UI.gold }}> · {plan.property}</span> : null}</p>
+                      <p style={{ margin: '4px 0 0', color: UI.mut }}>{plan.brief}</p>
+                      {plan.hook ? <p style={{ margin: '6px 0 0' }}><b>Opens on:</b> “{plan.hook}”</p> : null}
+                      <ol style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12.5 }}>{plan.outline.map((o, k) => <li key={k}>{o.replace(/^\d+[.)]\s*/, '')}</li>)}</ol>
+                      <p style={{ fontSize: 12, color: UI.mut, marginTop: 8 }}>Next you can tweak any of it, then build.</p>
+                    </div>
+                  ) : key === 'music' ? (
+                    <>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <button onClick={() => setSt(x => ({ ...x, music: '', vibe: '' }))} style={{ textAlign: 'left', background: !st.music && !st.vibe ? '#1d2a3d' : 'transparent', border: '1.5px solid ' + (!st.music && !st.vibe ? UI.blue : UI.line), borderRadius: 9, padding: '8px 11px', cursor: 'pointer', color: UI.ink, fontSize: 13, fontWeight: 600 }}>Pick for me <span style={{ color: UI.mut, fontWeight: 500 }}>· the plan chooses a track that fits</span></button>
+                        {MUSIC.filter(m => m.file).map(m => (
+                          <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: st.music === m.key ? '#1d2a3d' : 'transparent', border: '1.5px solid ' + (st.music === m.key ? UI.blue : UI.line), borderRadius: 9, padding: '5px 8px' }}>
+                            <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
+                            <button onClick={() => setSt(x => ({ ...x, music: m.key, vibe: '' }))} style={{ flex: 1, textAlign: 'left', background: 'none', border: 0, color: UI.ink, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>{m.label} <span style={{ color: UI.mut, fontWeight: 500 }}>· {m.mood.toLowerCase()}</span></button>
+                          </div>
+                        ))}
+                        {sounds.filter(x => x.kind === 'music').slice(0, 6).map(x => (
+                          <div key={x.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: st.music === x.key ? '#1d2a3d' : 'transparent', border: '1.5px solid ' + (st.music === x.key ? UI.blue : UI.line), borderRadius: 9, padding: '5px 8px' }}>
+                            <Btn small on={hear === x.url} onClick={() => preview(x.url)}>{hear === x.url ? '■' : '▶'}</Btn>
+                            <button onClick={() => setSt(s2 => ({ ...s2, music: x.key, vibe: '' }))} style={{ flex: 1, textAlign: 'left', background: 'none', border: 0, color: UI.ink, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>♪ {x.name} <span style={{ color: UI.mut, fontWeight: 500 }}>· made with ElevenLabs</span></button>
+                          </div>
+                        ))}
+                      </div>
+                      <Label>Or describe a new vibe</Label>
+                      <input value={st.vibe} onChange={e => setSt(x => ({ ...x, vibe: e.target.value, music: e.target.value ? '' : x.music }))} placeholder="e.g. sunset lounge house, warm, upscale — ElevenLabs composes it" style={field} />
+                    </>
+                  ) : key === 'look' ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
+                      {LOOKS.map(l => (
+                        <button key={l.key} onClick={() => pickNext(() => setSt(x => ({ ...x, look: l.key })))} style={{ padding: 0, border: '2px solid ' + (st.look === l.key ? UI.blue : UI.line), borderRadius: 10, overflow: 'hidden', cursor: 'pointer', background: 'none', color: UI.ink, textAlign: 'left' }}>
+                          <span style={{ display: 'block', height: 64, background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '12px 12px', fontFamily: display, fontWeight: 800, fontSize: 18, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>
+                          <span style={{ display: 'block', background: UI.panel2, padding: '7px 10px' }}><span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{l.label}</span><span style={{ fontSize: 10.5, color: UI.mut }}>{l.blurb}</span></span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : key === 'shape' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {([['', 'Pick for me', 'the plan chooses from where it fits best']] as [AdFormat | '', string, string][]).concat((Object.keys(FORMATS) as AdFormat[]).map(f => [f, f, FORMAT_LABEL[f]])).map(([f, l, d]) => (
+                        <button key={l} onClick={() => pickNext(() => setSt(x => ({ ...x, format: f })))} style={{ textAlign: 'left', background: st.format === f ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.format === f ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink }}>
+                          <span style={{ fontSize: 14, fontWeight: 700 }}>{l}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {d}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : key === 'think' ? (
+                    <div style={{ fontSize: 13, lineHeight: 1.7, color: UI.ink }}>
+                      <p style={{ margin: 0 }}><b>Ad:</b> {st.prompt}</p>
+                      <p style={{ margin: 0 }}><b>Goal:</b> {goalOf(st.goal)?.label}{st.why ? ' — ' + st.why : ''} · <b>For:</b> {AUD[st.audience].label}{st.who ? ' (' + st.who + ')' : ''} · <b>Vibe:</b> {st.vibe || MUSIC.find(m => m.key === st.music)?.label || 'pick for me'} · <b>Look:</b> {LOOKS.find(l => l.key === st.look)?.label} · <b>Shape:</b> {st.format || 'pick for me'}</p>
+                      <p style={{ fontSize: 12, color: UI.mut, marginTop: 8 }}>Next, I sharpen this into a plan, check our photos of the property, and ask you only what would change the ad.</p>
+                    </div>
+                  ) : q ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {q.options.map((o, k) => (
+                        <button key={o} onClick={() => pickNext(() => setAnswers(a => ({ ...a, [q.id]: o })))} style={{ textAlign: 'left', background: (answers[q.id] || q.options[0]) === o ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + ((answers[q.id] || q.options[0]) === o ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink, fontSize: 13.5, fontWeight: 600 }}>
+                          {o}{k === 0 ? <span style={{ color: UI.gold }}> ★</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
 
-              <Label>Goal</Label>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                {GOALS.map(g => <Btn key={g.key} small on={st.goal === g.key} title={g.brief} onClick={() => setSt(x => ({ ...x, goal: g.key }))}>{g.label}</Btn>)}
+                <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
+                  {i > 0 ? <Btn disabled={!!busy} onClick={() => setWs(i - 1)}>← Back</Btn> : null}
+                  <span style={{ marginLeft: 'auto', fontSize: 11.5, color: UI.mut }}>{busy === 'plan' ? 'Working it through… about 10 seconds' : ''}</span>
+                  <Btn tone="gold" disabled={!!busy} onClick={next}>{busy === 'plan' ? 'Thinking…' : busy ? 'Working…' : key === 'think' ? (plan ? 'Next →' : 'Work it through →') : last ? (st.mode === 'describe' ? 'Review the plan →' : st.mode === 'script' ? (busy === 'script' ? 'Laying it out…' : 'Lay out my script →') : st.mode === 'revamp' ? 'Revamp it →' : st.mode === 'template' ? 'Next: pick a template →' : 'Create it →') : 'Next →'}</Btn>
+                </div>
               </div>
-
-              <Label>Music vibe</Label>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                <Btn small on={!st.music && !st.vibe} onClick={() => setSt(x => ({ ...x, music: '', vibe: '' }))} title="Let the plan pick">Pick for me</Btn>
-                {MUSIC.filter(m => m.file).map(m => (
-                  <span key={m.key} style={{ display: 'inline-flex', gap: 2 }}>
-                    <Btn small on={st.music === m.key} title={m.mood} onClick={() => setSt(x => ({ ...x, music: m.key, vibe: '' }))}>{m.label} · {m.mood.toLowerCase()}</Btn>
-                    <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
-                  </span>
-                ))}
-                {sounds.filter(x => x.kind === 'music').slice(0, 6).map(x => <Btn key={x.key} small on={st.music === x.key} title={x.prompt} onClick={() => setSt(s2 => ({ ...s2, music: x.key, vibe: '' }))}>♪ {x.name}</Btn>)}
+            )
+          })() : draft ? (
+            <div style={{ width: '100%', maxWidth: 760, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: display, fontSize: 22, fontWeight: 800 }}>The script</span>
+                <span style={{ fontSize: 12, color: UI.mut }}>{draft.scenes.length} scenes · about {Math.round(draft.scenes.reduce((a, x) => a + (x.vo.trim() ? x.vo.trim().split(/\s+/).length / 2.55 + 1 : 3), 0) + 4)}s · {AUD[draft.settings.audience].label} · {draft.settings.format}</span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                  <Btn small onClick={copyScript} title="Copies the whole script as text">Copy</Btn>
+                  <Btn small onClick={() => setDraft(null)}>{plan ? '← Plan' : 'Cancel'}</Btn>
+                </span>
               </div>
-              <input value={st.vibe} onChange={e => setSt(x => ({ ...x, vibe: e.target.value, music: e.target.value ? '' : x.music }))} placeholder="…or describe a new vibe and ElevenLabs makes it: e.g. sunset lounge house, warm, upscale" style={{ ...field, marginTop: 6, fontSize: 12.5 }} />
-
-              <Label>Look</Label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 6 }}>
-                {LOOKS.map(l => (
-                  <button key={l.key} onClick={() => setSt(x => ({ ...x, look: l.key }))} style={{ padding: 0, border: '2px solid ' + (st.look === l.key ? UI.blue : 'transparent'), borderRadius: 9, overflow: 'hidden', cursor: 'pointer', background: 'none', color: UI.ink, textAlign: 'left' }}>
-                    <span style={{ display: 'block', height: 46, background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '8px 9px', fontFamily: display, fontWeight: 800, fontSize: 14, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>
-                    <span style={{ display: 'block', background: UI.panel2, padding: '5px 8px' }}><span style={{ display: 'block', fontSize: 11.5, fontWeight: 700 }}>{l.label}</span><span style={{ fontSize: 10, color: UI.mut }}>{l.blurb}</span></span>
-                  </button>
-                ))}
+              <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} style={{ ...field, fontWeight: 700, marginTop: 10 }} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10, maxHeight: 520, overflowY: 'auto', paddingRight: 4 }}>
+                {draft.scenes.map((x, k) => {
+                  const put = (patch: Partial<AdScene>) => setDraft({ ...draft, scenes: draft.scenes.map((y, j) => (j === k ? { ...y, ...patch } : y)) })
+                  return (
+                    <div key={x.id + k} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderLeft: '4px solid ' + KIND_COLOR[x.kind], borderRadius: 9, padding: '9px 11px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: UI.mut }}>Scene {k + 1} · {KINDS.find(q => q.kind === x.kind)?.label}</span>
+                        <span style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>
+                          <Btn small disabled={k === 0} onClick={() => { const a = draft.scenes.slice(); [a[k - 1], a[k]] = [a[k], a[k - 1]]; setDraft({ ...draft, scenes: a }) }}>↑</Btn>
+                          <Btn small disabled={k === draft.scenes.length - 1} onClick={() => { const a = draft.scenes.slice(); [a[k + 1], a[k]] = [a[k], a[k + 1]]; setDraft({ ...draft, scenes: a }) }}>↓</Btn>
+                          <Btn small tone="red" disabled={draft.scenes.length < 2} onClick={() => setDraft({ ...draft, scenes: draft.scenes.filter((_, j) => j !== k) })}>✕</Btn>
+                        </span>
+                      </div>
+                      <p style={{ fontSize: 10.5, color: UI.mut, margin: '6px 0 3px' }}>VOICEOVER</p>
+                      <textarea value={x.vo} onChange={e => put({ vo: e.target.value })} rows={2} placeholder="(music only)" style={{ ...field, fontSize: 14 }} />
+                      <p style={{ fontSize: 10.5, color: UI.mut, margin: '6px 0 3px' }}>ON SCREEN</p>
+                      <input value={x.head} onChange={e => put({ head: e.target.value })} style={{ ...field, fontSize: 12.5 }} />
+                      {riskyWords(x.vo).length ? <p style={{ fontSize: 11, color: UI.red, margin: '4px 0 0' }}>The voice says {riskyWords(x.vo).join(' and ')} wrong — keep it on screen only</p> : null}
+                    </div>
+                  )
+                })}
               </div>
-
-              <Label>Shape</Label>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                <Btn small on={!st.format} onClick={() => setSt(x => ({ ...x, format: '' }))}>Pick for me</Btn>
-                {(Object.keys(FORMATS) as AdFormat[]).map(f => <Btn key={f} small on={st.format === f} onClick={() => setSt(x => ({ ...x, format: f }))}>{f} · {FORMAT_LABEL[f]}</Btn>)}
+              <div style={{ display: 'flex', gap: 6, marginTop: 12, alignItems: 'center' }}>
+                <input value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} placeholder="Want changes? e.g. warmer, shorter, open with the sunset" style={{ ...field, flex: 1 }} />
+                <Btn disabled={!!busy} onClick={rewriteDraft}>{busy === 'script' ? 'Rewriting…' : 'Rewrite'}</Btn>
               </div>
-
-              <div style={{ display: 'flex', gap: 6, marginTop: 14, alignItems: 'center' }}>
-                <Btn tone="gold" disabled={!!busy} onClick={startGo}>{busy ? 'Working…' : st.mode === 'describe' ? 'Plan it with me →' : st.mode === 'revamp' ? 'Revamp it →' : st.mode === 'template' ? 'Next: pick a template →' : 'Start blank →'}</Btn>
-                <span style={{ fontSize: 11, color: UI.mut }}>{st.mode === 'describe' ? 'You confirm the plan before anything is built.' : ''}</span>
+              <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+                <Btn tone="gold" disabled={!!busy} onClick={async () => { setBusy('write'); await applyScenes(draft.name, draft.scenes, draft.settings); setBusy('') }}>{busy === 'write' ? 'Building…' : 'Build the video from this script →'}</Btn>
               </div>
+              <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>Photos, timing and looks are laid out from this script. Then Make voice records it in one take.</p>
             </div>
           ) : plan ? (
             <div style={{ width: '100%', maxWidth: 720, background: UI.panel, border: '1px solid #2b4470', borderRadius: 12, padding: '16px 18px' }}>
@@ -1037,7 +1228,8 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
               <Label>Anything else?</Label>
               <input value={planNote} onChange={e => setPlanNote(e.target.value)} placeholder="Optional, e.g. lead with the rooftop, end on the sunset shot" style={field} />
               <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
-                <Btn tone="gold" disabled={!!busy} onClick={buildFromPlan}>{busy === 'write' ? 'Building the ad…' : p && p.scenes.length > 1 && !seed.current?.fresh ? 'Looks right — build it (replaces this ad’s scenes)' : 'Looks right — build it'}</Btn>
+                <Btn tone="gold" disabled={!!busy} onClick={scriptFromPlan} title="Writes the full script for you to read and edit, then you build the video from it">{busy === 'script' ? 'Writing the script…' : 'Write the script →'}</Btn>
+                <Btn disabled={!!busy} onClick={buildFromPlan}>{busy === 'write' ? 'Building the ad…' : p && p.scenes.length > 1 && !seed.current?.fresh ? 'Skip to the video (replaces this ad’s scenes)' : 'Skip to the video'}</Btn>
                 <Btn disabled={!!busy} onClick={replan} title="Plans again with your answers and note">{busy === 'plan' ? 'Thinking…' : 'Rethink with my answers'}</Btn>
                 <Btn disabled={!!busy} onClick={() => setPlan(null)}>Cancel</Btn>
               </div>
@@ -1060,7 +1252,7 @@ export default function AdStudio({ display, body, canEdit, canDelete, full }: { 
             <div style={{ margin: 'auto', textAlign: 'center', color: UI.mut, maxWidth: 380 }}>
               <p style={{ fontFamily: display, fontSize: 22, color: UI.ink, fontWeight: 800 }}>Make an ad</p>
               <p style={{ fontSize: 13, lineHeight: 1.6 }}>Start a new ad, write a one-line brief, and let the writer lay out the scenes with photos from our library. Then edit, make the voice, and export for any platform.</p>
-              {canEdit ? <div style={{ marginTop: 12 }}><Btn tone="gold" onClick={openStart}>+ New ad</Btn></div> : null}
+              {canEdit ? <div style={{ marginTop: 12 }}><Btn tone="gold" onClick={openStart}>✦ Create new ad</Btn></div> : null}
             </div>
           )}
         </div>
