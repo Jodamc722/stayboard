@@ -582,6 +582,7 @@ export function BillingReview() {
   // standard list by owner, grouped by type; Final review walks the ops-approved jobs owner by owner.
   const view: 'owner' | 'property' | 'kind' = stage === 'gm' ? 'property' : 'owner'
   const [evBusy, setEvBusy] = useState(0)
+  const [sureAll, setSureAll] = useState(false)
   const [moreF, setMoreF] = useState(false)   // the extra filters stay folded away (Jon, 2026-11-02: "cleaner and easier")
   const [q, setQ] = useState('')
   // FILTERS (Jon, 2026-09-30: "filter by billable amount greater than zero, by date window, by
@@ -1088,9 +1089,17 @@ export function BillingReview() {
               <CheckSquare size={13} /> {visible.every(t => picks.has(t.id)) ? 'Unselect all' : 'Select all shown'}
             </button>
           ) : null}
-          {canApproveAll && visible.some(inStage) ? (
-            <button onClick={() => setState(visible.filter(inStage).map(t => t.id), approveAllTo)} className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1.5"><Check size={13} /> {approveAllLabel} ({visible.filter(inStage).length})</button>
-          ) : null}
+          {/* ARE YOU SURE (2026-11-02: 844 October jobs were moved to Final review by one click on this
+              button). A whole-queue approval now asks once, in place. */}
+          {canApproveAll && visible.some(inStage) ? (sureAll ? (
+            <span className="h-8 inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2 text-[12px]">
+              <span className="font-semibold text-amber-900">{approveAllLabel.replace(' shown', '')} {visible.filter(inStage).length} jobs?</span>
+              <button onClick={() => { setSureAll(false); setState(visible.filter(inStage).map(t => t.id), approveAllTo) }} className="h-6 px-2 rounded-md bg-ink text-white font-semibold">Yes</button>
+              <button onClick={() => setSureAll(false)} className="h-6 px-2 rounded-md border border-line bg-white">No</button>
+            </span>
+          ) : (
+            <button onClick={() => setSureAll(true)} className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1.5"><Check size={13} /> {approveAllLabel} ({visible.filter(inStage).length})</button>
+          )) : null}
         </>} />
 
       {/* ── filters: billable only, minimum, department, building, person ───────────────────────
