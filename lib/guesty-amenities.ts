@@ -16,7 +16,7 @@ export const GUESTY_AMENITIES_SNAPSHOT: string[] = ['Accessible-height bed', 'Ac
 /** Our words → Guesty's. Keys are normalised (see norm). */
 const SYNONYMS: Record<string, string> = {
   'cooking basics': 'Cookware',
-  'balcony patio': 'Patio or balcony', 'barbecue utensils': 'Barbeque utensils', 'bbq utensils': 'Barbeque utensils',
+  'balcony patio': 'Patio or balcony', 'bbq utensils': 'Barbeque utensils',
   'suitable for infants': 'Family/kid friendly', 'suitable for infants under 2 years': 'Family/kid friendly', 'suitable for children 2 12 years': 'Family/kid friendly', 'suitable for children': 'Family/kid friendly', 'kid friendly': 'Family/kid friendly', 'family friendly': 'Family/kid friendly',
   'toilet paper': 'Essentials', 'pots and pans': 'Cookware', 'cookware': 'Cookware',
   'smart tv': 'TV', 'hdtv': 'TV', 'television': 'TV', 'netflix': 'TV',
