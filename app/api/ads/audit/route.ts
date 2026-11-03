@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { askJson } from '@/lib/ad-json'
-import { normalize, auditPrompt } from '@/lib/ad-studio'
+import { normalize, auditPrompt, propertiesLine } from '@/lib/ad-studio'
 import { auditAd, auditScore, timeline, HOUSE_FACTS, GUEST_FACTS, KINDS, tidyHead } from '@/lib/ad-engine'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key || b?.quick) return NextResponse.json({ ok: true, score: base, verdict: '', strengths: [], issues: [], checks })
   try {
-    const a = await askJson(key, auditPrompt(p, checks, tl.total), { maxTokens: 2500, temperature: 0.4 })
+    const a = await askJson(key, auditPrompt(p, checks, tl.total, await propertiesLine()), { maxTokens: 2500, temperature: 0.4 })
     if (!a.ok) return NextResponse.json({ ok: true, score: base, verdict: '', strengths: [], issues: [], checks, note: a.error })
     const j = a.json
     const kinds = KINDS.map(k => k.kind as string)

@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { askJson } from '@/lib/ad-json'
-import { normalize, scenePrompt } from '@/lib/ad-studio'
+import { normalize, scenePrompt, propertiesLine } from '@/lib/ad-studio'
 import { tidyHead } from '@/lib/ad-engine'
 import { searchPhotos } from '@/lib/photo-library'
 import { withoutCollages } from '@/lib/collage'
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   if (b?.options) {
     if (!(i >= 0 && i < p.scenes.length)) return NextResponse.json({ ok: false, error: 'Pick a scene.' }, { status: 400 })
     const sc = p.scenes[i]
-    const prompt = scenePrompt(p, i, 'Write THREE different options for this scene\'s headline and spoken line: one punchier, one warmer, one more specific/sensory. Keep the same meaning and the same photos. Each headline 2 to 7 words in sentence case with the key word marked **like this**.') +
+    const prompt = scenePrompt(p, i, 'Write THREE different options for this scene\'s headline and spoken line: one punchier, one warmer, one more specific/sensory. Keep the same meaning and the same photos. Each headline 2 to 7 words in sentence case with the key word marked **like this**.', await propertiesLine()) +
       '\nInstead of the single-scene JSON, reply with ONLY: {"options": [{"head": "...", "vo": "..."}, {"head": "...", "vo": "..."}, {"head": "...", "vo": "..."}]}'
     const a = await askJson(key, prompt, { maxTokens: 900, temperature: 0.8 })
     if (!a.ok) return NextResponse.json({ ok: false, error: a.error }, { status: 502 })
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   }
   if (!ask || !(i >= 0 && i < p.scenes.length)) return NextResponse.json({ ok: false, error: 'Say what to change.' }, { status: 400 })
   try {
-    const a = await askJson(key, scenePrompt(p, i, ask), { maxTokens: 1200, temperature: 0.5 })
+    const a = await askJson(key, scenePrompt(p, i, ask, await propertiesLine()), { maxTokens: 1200, temperature: 0.5 })
     if (!a.ok) return NextResponse.json({ ok: false, error: a.error }, { status: 502 })
     const j = a.json
     const old = p.scenes[i]

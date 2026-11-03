@@ -259,7 +259,7 @@ export function auditAd(p: AdProject, tl: Timeline, facts: string): AuditIssue[]
     if (i > 0 && x.kind === sc[i - 1].kind && ['photo', 'wall'].indexOf(x.kind) < 0) out.push({ sev: 'low', scene: i, code: 'same-kind', msg: `Two ${x.kind} scenes in a row — vary the design.` })
   })
   if (!sc.some(x => /\*\*/.test(x.head))) out.push({ sev: 'low', code: 'no-gold', msg: 'No highlighted word anywhere — mark the key word in a headline with **…** for the brand accent.' })
-  const named = sc.some(x => /stay hospitality|17west|amrit|elser|botanica|arya|salato|capri|eden|nomad|lucerne|hendricks|boynton|park towers/i.test(x.vo + ' ' + x.head + ' ' + x.sub))
+  const named = sc.some(x => /stay hospitality|17 ?west|amrit|elser|botanica|garden hotel|arya|aria|salato|capri|eden|nomad|lucerne|hendricks|boynton|park towers/i.test(x.vo + ' ' + x.head + ' ' + x.sub))
   if (!named) out.push({ sev: 'med', code: 'no-name', msg: guests ? 'The property is never named — people cannot search for it.' : 'Stay Hospitality is never named.' })
   return out.sort((a, b) => ({ high: 0, med: 1, low: 2 }[a.sev] - { high: 0, med: 1, low: 2 }[b.sev]))
 }

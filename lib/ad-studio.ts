@@ -208,11 +208,27 @@ export async function makeVoice(p: AdProject): Promise<{ ok: true; project: AdPr
   return { ok: true, project: { ...p, voice: { path, sig, voiceId: p.voiceId, starts, ends, dur } } }
 }
 
+// ───────────────────────── the properties we manage ─────────────────────────
+// Every prompt gets the real list from the photo library, so the writer names real places and the
+// reviewer never calls a real property "invented" (it did, for 17WEST, 2026-11-03).
+let propsCache: { at: number; text: string } | null = null
+export async function propertiesLine(): Promise<string> {
+  if (propsCache && Date.now() - propsCache.at < 10 * 60 * 1000) return propsCache.text
+  try {
+    const { libraryIndex } = await import('@/lib/photo-library')
+    const idx = await libraryIndex()
+    const text = idx.buildings.filter(b => b.photos > 0).map(b => `${b.name} (${b.market}${b.units.length > 1 ? ', ' + b.units.length + ' units' : ''})`).join('; ')
+    propsCache = { at: Date.now(), text }
+    return text
+  } catch { return propsCache?.text || '' }
+}
+const withProps = (facts: string, props?: string) => props ? facts + `\nPROPERTIES WE MANAGE (real names — use them as given): ${props}` : facts
+
 // ───────────────────────── the script writer ─────────────────────────
-export function scriptPrompt(input: { prompt: string; seconds: number; format: string; audience: string; current?: AdProject | null }): string {
+export function scriptPrompt(input: { prompt: string; seconds: number; format: string; audience: string; current?: AdProject | null; props?: string }): string {
   const kinds = KINDS.map(k => `- ${k.kind}: ${k.hint}`).join('\n')
   const guests = /guest/i.test(input.audience)
-  const facts = guests ? GUEST_FACTS : HOUSE_FACTS
+  const facts = withProps(guests ? GUEST_FACTS : HOUSE_FACTS, input.props)
   const rules = guests ? `HOUSE STYLE FOR GUEST ADS:
 - Warm, visual, inviting — sell the stay and the place, not the company. Short lines.
 - Never promise a price, discount, "best rate", free night or availability. No phone number, never "call us" or "text us".
@@ -393,14 +409,14 @@ export async function searchVoices(q: string, gender: string): Promise<{ id: str
 }
 
 /** Rewrite ONE scene the way the person asks ("make it punchier", "show the rooftop", "turn this into numbers"). */
-export function scenePrompt(p: AdProject, index: number, ask: string): string {
+export function scenePrompt(p: AdProject, index: number, ask: string, props?: string): string {
   const guests = p.audience === 'guests'
   const sc = p.scenes[index]
   const kinds = KINDS.map(k => `- ${k.kind}: ${k.hint}`).join('\n')
   return `You edit one scene of a short video ad for Stay Hospitality. Change ONLY what the request asks; keep everything else as it is.
 
 FACTS YOU MAY USE (never invent numbers, prices, fees or promises):
-${guests ? GUEST_FACTS : HOUSE_FACTS}
+${withProps(guests ? GUEST_FACTS : HOUSE_FACTS, props)}
 
 RULES: one short spoken line ("vo", about 2.5 words a second), a short on-screen headline ("head", **gold** one or two words, \\n for a new line). Never put "Salato" or "Pompano Beach" in "vo". ${guests ? 'Guest ad: no prices, no "call us"; a closing scene is kind "cta" with row 1 "Book at stay-hospitality.com".' : 'Owner ad: "listings" not "homes", "40+ channels", no fee or revenue numbers; Lighthouse does not do the owner report.'}
 
@@ -473,12 +489,13 @@ export async function restoreVersion(id: string, ts: string, by: string): Promis
 }
 
 /** The expert review on top of auditAd: a score, what works, and concrete rewrites per scene. */
-export function auditPrompt(p: AdProject, issues: { sev: string; scene?: number; msg: string }[], seconds: number): string {
+export function auditPrompt(p: AdProject, issues: { sev: string; scene?: number; msg: string }[], seconds: number, props?: string): string {
   const guests = p.audience === 'guests'
   return `You are a senior creative director reviewing a short ${guests ? 'guest' : 'owner'} video ad for Stay Hospitality before it ships. Be specific and useful — the team will click "apply" on your fixes.
 
 FACTS (never invent numbers, prices, fees or promises):
-${guests ? GUEST_FACTS : HOUSE_FACTS}
+${withProps(guests ? GUEST_FACTS : HOUSE_FACTS, props)}
+A property name from that list is a real place, never "invented". Amenities shown in a property's photos are real for that property; the "many / not every stay" caution applies only to portfolio-wide claims.
 
 HOUSE RULES: ${guests ? 'no prices, no "call us"; ends on Book at stay-hospitality.com.' : '"listings" not "homes", "40+ channels", no fee or revenue numbers, ends on a call with Nick.'} Never "Salato" or "Pompano Beach" in a spoken line. Headlines in sentence case, 2 to 8 words, the key word marked **like this**. The hook (scene 1) must work in 1.5 seconds with the sound off.
 

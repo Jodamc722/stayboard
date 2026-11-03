@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { askJson } from '@/lib/ad-json'
 import { HOUSE_FACTS, GUEST_FACTS, numbersIn, tidyHead } from '@/lib/ad-engine'
-import { scriptPrompt, normalize } from '@/lib/ad-studio'
+import { scriptPrompt, normalize, propertiesLine } from '@/lib/ad-studio'
 import { searchPhotos } from '@/lib/photo-library'
 import { isCollagePhoto } from '@/lib/collage'
 
@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
     prompt: String(b?.prompt || '').slice(0, 8000), seconds, format: String(b?.format || '16:9'),
     audience: String(b?.audience || 'property owners').slice(0, 80),
     current: b?.current ? normalize(b.current) : null,
+    props: await propertiesLine(),
   })
   try {
     const ans = await askJson(key, prompt, { maxTokens: 5000, temperature: 0.6 })
