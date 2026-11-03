@@ -288,6 +288,11 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   }
   const dupScene = () => { if (!p) return; const s = p.scenes[sel]; change(d => { const a = d.scenes.slice(); a.splice(sel + 1, 0, { ...s, id: newSceneId(d), items: s.items.slice(), photos: s.photos.slice() }); return { ...d, scenes: a } }); setSel(sel + 1) }
   const delScene = () => { if (!p || p.scenes.length < 2) return; change(d => ({ ...d, scenes: d.scenes.filter((_, k) => k !== sel) })); setSel(Math.max(0, sel - 1)) }
+  const delSceneAt = (i: number) => { const cur = pRef.current; if (!cur || cur.scenes.length < 2) return; change(d => ({ ...d, scenes: d.scenes.filter((_, k) => k !== i) })); setSel(Math.max(0, Math.min(i, cur.scenes.length - 2))) }
+  // Shorter / longer: nudges the scene's hold by half a second from what it is now (auto or set).
+  const nudge = (i: number, by: number) => { if (!p || !tl) return; const cur = p.scenes[i].dur && p.scenes[i].dur! > 0 ? p.scenes[i].dur! : tl.durs[i]; const next = Math.round(Math.max(1, Math.min(30, cur + by)) * 2) / 2; change(d => { const a = d.scenes.slice(); a[i] = { ...a[i], dur: next }; return { ...d, scenes: a } }) }
+  // Cut the whole ad to a target length: every scene's hold scaled down together (never under 1.2 s), end card keeps ≥ 2.5 s.
+  const cutTo = (seconds: number) => { if (!p || !tl || tl.total <= seconds) return; const k = seconds / tl.total; change(d => ({ ...d, scenes: d.scenes.map((s, i) => { const cur = s.dur && s.dur > 0 ? s.dur : tl.durs[i]; const min = i === d.scenes.length - 1 ? 2.5 : 1.2; return { ...s, dur: Math.round(Math.max(min, cur * k) * 2) / 2 } }) })) }
 
   // ── AI: write / rewrite ───────────────────────────────────────────────
   const write = async (rewrite: boolean, change_?: string) => {
@@ -711,6 +716,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       if (e.key === ' ') { e.preventDefault(); if (play0.current) stop(); else { const T = timeline(pRef.current); start(tRef.current >= T.total - 0.05 ? 0 : tRef.current) } }
       else if (e.key === 'ArrowRight') { e.preventDefault(); const T = timeline(pRef.current); const i = Math.min(T.starts.length - 1, sel + 1); setSel(i); if (!play0.current) setT(T.starts[i] + Math.min(1.6, T.durs[i] * 0.6)) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); const T = timeline(pRef.current); const i = Math.max(0, sel - 1); setSel(i); if (!play0.current) setT(T.starts[i] + Math.min(1.6, T.durs[i] * 0.6)) }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && canEdit && pRef.current.scenes.length > 1) { e.preventDefault(); delSceneAt(sel) }
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
@@ -1493,6 +1499,23 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : 'Estimated timing · make the voice to lock it'}
                 </span>
               </div>
+              {sc && canEdit && tl ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: '100%', maxWidth: FW >= FH ? pw : 520, padding: '6px 8px', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 9 }} title="Scene tools">
+                  <span style={{ fontSize: 11.5, fontWeight: 700, color: UI.ink }}>Scene {sel + 1}</span>
+                  <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: UI.mut }}>{tl.durs[sel].toFixed(1)} s</span>
+                  {!hasVoice ? (<>
+                    <Btn small onClick={() => nudge(sel, -0.5)} title="Half a second shorter">− Shorter</Btn>
+                    <Btn small onClick={() => nudge(sel, 0.5)} title="Half a second longer">+ Longer</Btn>
+                    {sc.dur ? <Btn small onClick={() => setScene(sel, { dur: null })} title="Back to automatic timing from the spoken line">Auto</Btn> : null}
+                  </>) : <span style={{ fontSize: 11, color: UI.mut }}>timed to the voice · shorten the spoken line, then re-make the voice</span>}
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                    <Btn small disabled={sel === 0} onClick={() => move(sel, sel - 1)} title="Move earlier">◀</Btn>
+                    <Btn small disabled={sel === p.scenes.length - 1} onClick={() => move(sel, sel + 1)} title="Move later">▶</Btn>
+                    <Btn small onClick={dupScene} title="Duplicate this scene">⧉ Duplicate</Btn>
+                    <Btn small tone="red" disabled={p.scenes.length < 2} onClick={() => delSceneAt(sel)} title="Delete this scene (Delete key)">✕ Delete scene</Btn>
+                  </span>
+                </div>
+              ) : null}
               {sc && canEdit ? (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 520 }} title="Quick edit of the scene on screen">
                   <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen" style={{ ...field, padding: '6px 9px', fontSize: 12.5, fontWeight: 700 }} />
@@ -1775,6 +1798,12 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut }}>Timeline</span>
             <span style={{ fontSize: 11, color: UI.mut }}>Drag scenes to reorder · click to edit · click the ruler to jump</span>
+            {canEdit && !hasVoice ? (
+              <span style={{ display: 'flex', gap: 4, alignItems: 'center', marginLeft: 8 }} title="Cuts every scene's hold down together so the whole ad fits the length">
+                <span style={{ fontSize: 11, color: UI.mut }}>Cut the ad to</span>
+                {[6, 10, 15, 30].map(n => <Btn key={n} small disabled={tl.total <= n} onClick={() => cutTo(n)}>{n} s</Btn>)}
+              </span>
+            ) : null}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {canEdit ? KINDS.map(k => <Btn key={k.kind} small onClick={() => addScene(k.kind)} title={'Add a ' + k.label + ' scene after this one'}>+ {k.label}</Btn>) : null}
             </span>
@@ -1796,6 +1825,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                     background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), borderLeft: '4px solid ' + KIND_COLOR[s.kind], border: '2px solid ' + (i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
                   <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}</span>
                   <span style={{ display: 'block', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(s.head || s.vo).replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
+                  {canEdit && p.scenes.length > 1 ? (
+                    <button type="button" onClick={e => { e.stopPropagation(); delSceneAt(i) }} title="Delete this scene"
+                      style={{ position: 'absolute', top: 3, right: 4, width: 18, height: 18, borderRadius: 9, border: 0, background: 'rgba(0,0,0,.55)', color: '#fff', fontSize: 11, lineHeight: '18px', cursor: 'pointer', opacity: i === sel ? 1 : 0.6, padding: 0 }}>✕</button>
+                  ) : null}
                 </div>
               ))}
             </div>
