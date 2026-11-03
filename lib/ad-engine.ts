@@ -16,6 +16,27 @@
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
 export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact' | 'cta'
+/** Jon, 2026-11-02: "need more style … a wide range of edits, range of styles and looks". */
+export type AdStyle = {
+  font: 'auto' | 'sans' | 'serif' | 'condensed' | 'elegant'
+  caps: 'auto' | 'on' | 'off'
+  grade: 'auto' | 'natural' | 'warm' | 'cool' | 'mono' | 'vivid' | 'faded'
+  pace: 'calm' | 'normal' | 'fast'
+  finish: 'auto' | 'film' | 'soft' | 'glow' | 'clean'
+  frame: 'none' | 'border' | 'letterbox'
+  logo: 'auto' | 'gold' | 'black' | 'white' | 'off'
+}
+export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto', pace: 'normal', finish: 'auto', frame: 'none', logo: 'auto' }
+export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: string }[] } = {
+  font: [{ key: 'auto', label: 'Look’s own' }, { key: 'sans', label: 'Bold sans' }, { key: 'serif', label: 'Serif' }, { key: 'condensed', label: 'Condensed' }, { key: 'elegant', label: 'Elegant' }],
+  caps: [{ key: 'auto', label: 'Look’s own' }, { key: 'on', label: 'ALL CAPS' }, { key: 'off', label: 'Normal case' }],
+  grade: [{ key: 'auto', label: 'Look’s own' }, { key: 'natural', label: 'Natural' }, { key: 'warm', label: 'Warm' }, { key: 'cool', label: 'Cool' }, { key: 'vivid', label: 'Vivid' }, { key: 'faded', label: 'Faded film' }, { key: 'mono', label: 'Black & white' }],
+  pace: [{ key: 'calm', label: 'Calm' }, { key: 'normal', label: 'Normal' }, { key: 'fast', label: 'Fast' }],
+  finish: [{ key: 'auto', label: 'Look’s own' }, { key: 'film', label: 'Film grain' }, { key: 'soft', label: 'Soft' }, { key: 'glow', label: 'Light leak' }, { key: 'clean', label: 'Clean' }],
+  frame: [{ key: 'none', label: 'Full bleed' }, { key: 'border', label: 'Border' }, { key: 'letterbox', label: 'Letterbox' }],
+  logo: [{ key: 'auto', label: 'Look’s own' }, { key: 'gold', label: 'Gold' }, { key: 'black', label: 'Black' }, { key: 'white', label: 'White' }, { key: 'off', label: 'Off' }],
+}
+
 /** How a scene arrives from the one before it. 'auto' varies them across the ad. */
 export type AdTransition = 'auto' | 'fade' | 'zoom' | 'push' | 'wipe' | 'flash' | 'cut'
 export const TRANSITIONS: AdTransition[] = ['auto', 'fade', 'zoom', 'push', 'wipe', 'flash', 'cut']
@@ -70,6 +91,8 @@ export type AdProject = {
   look?: string
   /** What the ad is for (GOALS), set when it was started. */
   goal?: string
+  /** Fine-grained style on top of the look (each 'auto' falls back to the look's own choice). */
+  style?: AdStyle
   scenes: AdScene[]
   contact: AdContact
   voice: AdVoice | null
@@ -214,6 +237,11 @@ export type AdAssets = {
   img: (url: string) => HTMLImageElement | null
   /** An elegant serif for the editorial looks (falls back to display). */
   serif?: string
+  /** A condensed display face (single weight) and an elegant high-contrast serif. */
+  condensed?: string
+  elegant?: string
+  /** The Stay mark in each colour (transparent PNGs). */
+  logos?: { gold: HTMLImageElement | null; black: HTMLImageElement | null; white: HTMLImageElement | null }
   /** A scene's media — a photo, or a library video ('video:…') synced to the scene's own clock. */
   media?: (url: string, local: number) => HTMLImageElement | HTMLVideoElement | null
   logo: HTMLImageElement | null
@@ -222,18 +250,57 @@ export type AdAssets = {
   mono: string
   credit: string
 }
-type Palette = { serif?: boolean; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
+type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boolean; grade?: AdStyle['grade']; finish?: AdStyle['finish']; logo?: 'gold' | 'black' | 'white' }
+type Palette = { serif?: boolean; light?: boolean; def?: LookDef; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
 /** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
  *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
   { key: 'stay', label: 'Stay navy & gold', blurb: 'The house look', c: { gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
-  { key: 'sunset', label: 'Sunset', blurb: 'Warm coral, golden hour', c: { gold: '#FFB37A', ink: '#FFF4EA', mut: '#E7C3B0', navy: '#2A1220', navy2: '#4A1E2C', deep: '#1A0A14', tint: '38,12,22', glass: 'rgba(48,16,30,0.6)', line: 'rgba(255,220,200,0.22)', green: '#7FD1A6' } },
-  { key: 'ocean', label: 'Ocean', blurb: 'Aqua and deep blue, beachy', c: { gold: '#5FE0D2', ink: '#EFFBFF', mut: '#A8CFDA', navy: '#062A3A', navy2: '#0A4258', deep: '#031B27', tint: '2,26,38', glass: 'rgba(4,36,52,0.6)', line: 'rgba(200,245,255,0.2)', green: '#5FE0A0' } },
-  { key: 'editorial', label: 'Editorial', blurb: 'Serif type, cream on deep green, magazine feel', c: { serif: true, gold: '#E9D8B4', ink: '#F7F1E6', mut: '#C8C0AE', navy: '#0F1F1A', navy2: '#1D3A31', deep: '#08120F', tint: '8,20,16', glass: 'rgba(14,30,25,0.6)', line: 'rgba(240,230,210,0.25)', green: '#9FD3B0' } },
-  { key: 'mono', label: 'Minimal luxe', blurb: 'Black and white, serif, editorial', c: { serif: true, gold: '#FFFFFF', ink: '#F5F5F2', mut: '#B9B9B4', navy: '#0B0B0B', navy2: '#1E1E1E', deep: '#000000', tint: '0,0,0', glass: 'rgba(12,12,12,0.6)', line: 'rgba(255,255,255,0.25)', green: '#CFCFCF' } },
-  { key: 'bold', label: 'Bold pop', blurb: 'Bright yellow, high energy', c: { gold: '#FFD84A', ink: '#FFFFFF', mut: '#C9C9D6', navy: '#14112A', navy2: '#2A2160', deep: '#0B0920', tint: '14,10,36', glass: 'rgba(20,16,50,0.62)', line: 'rgba(255,255,255,0.22)', green: '#4CE08A' } },
+  { key: 'sunset', label: 'Sunset', blurb: 'Warm coral, golden hour', c: { def: { grade: 'warm', finish: 'glow' }, gold: '#FFB37A', ink: '#FFF4EA', mut: '#E7C3B0', navy: '#2A1220', navy2: '#4A1E2C', deep: '#1A0A14', tint: '38,12,22', glass: 'rgba(48,16,30,0.6)', line: 'rgba(255,220,200,0.22)', green: '#7FD1A6' } },
+  { key: 'ocean', label: 'Ocean', blurb: 'Aqua and deep blue, beachy', c: { def: { grade: 'cool' }, gold: '#5FE0D2', ink: '#EFFBFF', mut: '#A8CFDA', navy: '#062A3A', navy2: '#0A4258', deep: '#031B27', tint: '2,26,38', glass: 'rgba(4,36,52,0.6)', line: 'rgba(200,245,255,0.2)', green: '#5FE0A0' } },
+  { key: 'editorial', label: 'Editorial', blurb: 'Serif type, cream on deep green, magazine feel', c: { serif: true, def: { font: 'serif', finish: 'film' }, gold: '#E9D8B4', ink: '#F7F1E6', mut: '#C8C0AE', navy: '#0F1F1A', navy2: '#1D3A31', deep: '#08120F', tint: '8,20,16', glass: 'rgba(14,30,25,0.6)', line: 'rgba(240,230,210,0.25)', green: '#9FD3B0' } },
+  { key: 'mono', label: 'Minimal luxe', blurb: 'Black and white, serif, editorial', c: { serif: true, def: { font: 'serif', grade: 'mono', logo: 'white' }, gold: '#FFFFFF', ink: '#F5F5F2', mut: '#B9B9B4', navy: '#0B0B0B', navy2: '#1E1E1E', deep: '#000000', tint: '0,0,0', glass: 'rgba(12,12,12,0.6)', line: 'rgba(255,255,255,0.25)', green: '#CFCFCF' } },
+  { key: 'bold', label: 'Bold pop', blurb: 'Bright yellow, high energy', c: { def: { font: 'condensed', caps: true, grade: 'vivid' }, gold: '#FFD84A', ink: '#FFFFFF', mut: '#C9C9D6', navy: '#14112A', navy2: '#2A2160', deep: '#0B0920', tint: '14,10,36', glass: 'rgba(20,16,50,0.62)', line: 'rgba(255,255,255,0.22)', green: '#4CE08A' } },
+  // Light looks: cream / white grounds, dark type, the BLACK logo.
+  { key: 'linen', label: 'Linen', blurb: 'Light cream, serif, black logo', c: { light: true, def: { font: 'serif', grade: 'warm', finish: 'soft', logo: 'black' }, gold: '#9A6A38', ink: '#1C1813', mut: '#5E554B', navy: '#F4EEE4', navy2: '#FFFDF8', deep: '#E7DDCD', tint: '248,243,235', glass: 'rgba(255,252,246,0.86)', line: 'rgba(0,0,0,0.12)', green: '#4E8A5B' } },
+  { key: 'paper', label: 'Swiss white', blurb: 'White, condensed caps, red accent, black logo', c: { light: true, def: { font: 'condensed', caps: true, grade: 'natural', finish: 'clean', logo: 'black' }, gold: '#E2412B', ink: '#0E0E0E', mut: '#4F4F4F', navy: '#FFFFFF', navy2: '#FFFFFF', deep: '#EDEDED', tint: '255,255,255', glass: 'rgba(255,255,255,0.9)', line: 'rgba(0,0,0,0.14)', green: '#1F9D55' } },
+  { key: 'sand', label: 'Sand', blurb: 'Beige and terracotta, elegant type', c: { light: true, def: { font: 'elegant', grade: 'warm', finish: 'soft', logo: 'black' }, gold: '#B5562E', ink: '#2A1F16', mut: '#6A5847', navy: '#EEE3D3', navy2: '#F8F1E6', deep: '#E0D2BD', tint: '240,230,214', glass: 'rgba(250,244,234,0.86)', line: 'rgba(60,40,20,0.15)', green: '#5E8A4E' } },
+  { key: 'fresh', label: 'Fresh white', blurb: 'Clean white, navy type, Stay gold', c: { light: true, def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'black' }, gold: '#A8803F', ink: '#0D2131', mut: '#4A5B6B', navy: '#F7F8FA', navy2: '#FFFFFF', deep: '#E9EDF2', tint: '250,251,253', glass: 'rgba(255,255,255,0.88)', line: 'rgba(13,33,49,0.12)', green: '#2E9B6A' } },
+  // More dark looks.
+  { key: 'noir', label: 'Noir', blurb: 'Black & white photos, gold, condensed caps', c: { def: { font: 'condensed', caps: true, grade: 'mono', finish: 'film', logo: 'gold' }, gold: '#D2B077', ink: '#FFFFFF', mut: '#BDBDBD', navy: '#080808', navy2: '#1A1A1A', deep: '#000000', tint: '0,0,0', glass: 'rgba(10,10,10,0.65)', line: 'rgba(255,255,255,0.22)', green: '#D2B077' } },
+  { key: 'miami', label: 'Miami nights', blurb: 'Neon pink on violet, vivid, light leak', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white' }, gold: '#FF5FA2', ink: '#FFFFFF', mut: '#D9C6F0', navy: '#1A0B2E', navy2: '#341457', deep: '#0D0518', tint: '26,8,46', glass: 'rgba(30,10,52,0.62)', line: 'rgba(255,180,230,0.25)', green: '#4FF0D0' } },
+  { key: 'tropic', label: 'Tropic', blurb: 'Jungle green and coral, vivid', c: { def: { font: 'sans', grade: 'vivid', finish: 'soft', logo: 'white' }, gold: '#FF8A5B', ink: '#FFF8F0', mut: '#BFD9C8', navy: '#0B2A1F', navy2: '#124234', deep: '#061710', tint: '6,30,20', glass: 'rgba(8,36,26,0.62)', line: 'rgba(220,255,235,0.2)', green: '#7FE3A8' } },
+  { key: 'golden', label: 'Golden hour', blurb: 'Warm amber, elegant serif, light leak', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'gold' }, gold: '#F2B544', ink: '#FFF6E8', mut: '#E3CDB0', navy: '#24170C', navy2: '#3D2814', deep: '#140C05', tint: '36,22,10', glass: 'rgba(40,24,10,0.6)', line: 'rgba(255,220,170,0.22)', green: '#B9D98A' } },
 ]
 let C: Palette = LOOKS[0].c
+// Per-frame style state, set by drawFrame from the look + the ad's style.
+let GRADE = ''          // canvas filter for photos
+let PD = 1              // pace: >1 slower, <1 faster
+let CAPS = false
+let FONTW = 0           // a single-weight display face (condensed) draws at its own weight
+let DISPLAY = ''
+let FS = 1             // the elegant serif runs small; scale it up
+const GRADES: Record<string, string> = { natural: '', warm: 'sepia(0.16) saturate(1.12) brightness(1.03)', cool: 'saturate(0.92) contrast(1.05) hue-rotate(-7deg) brightness(1.02)', vivid: 'saturate(1.35) contrast(1.08)', faded: 'contrast(0.86) saturate(0.82) brightness(1.07)', mono: 'grayscale(1) contrast(1.12)' }
+/** Resolve the look + the ad's style into what the renderer uses. */
+export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
+  const L = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
+  const st = { ...STYLE_DEFAULT, ...(p.style || {}) }
+  const d = L.def || {}
+  return {
+    font: st.font === 'auto' ? (d.font || (L.serif ? 'serif' : 'sans')) : st.font,
+    caps: st.caps === 'auto' ? !!d.caps : st.caps === 'on',
+    grade: st.grade === 'auto' ? (d.grade || 'natural') : st.grade,
+    pace: st.pace,
+    finish: st.finish === 'auto' ? (d.finish || 'film') : st.finish,
+    frame: st.frame,
+    logo: st.logo === 'auto' ? (d.logo || (L.light ? 'black' : 'gold')) : st.logo,
+  }
+}
+/** Overlay strength: light looks wash photos harder so dark type reads. */
+const TA = (a: number) => (C.light ? Math.min(0.92, a * 1.25 + 0.12) : a)
+const fnt = (w: number | string, size: number, fam: string) => `${fam === DISPLAY && FONTW ? FONTW : w} ${fam === DISPLAY ? size * FS : size}px ${fam}`
+/** Readable text on the accent colour (button labels, ticks). */
+const onAccent = () => { const h = C.gold.replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(x => x + x).join('') : h, 16); const l = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)); return l > 150 ? '#14110B' : '#FFFFFF' }
 /** What the ad is meant to do — set when an ad is started; it steers the writer. */
 export const GOALS: { key: string; label: string; audience: AdAudience; brief: string }[] = [
   { key: 'bookings', label: 'Get bookings', audience: 'guests', brief: 'Goal: drive direct bookings at stay-hospitality.com.' },
@@ -244,7 +311,7 @@ export const GOALS: { key: string; label: string; audience: AdAudience; brief: s
 ]
 const clamp = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x))
 const ease = (x: number) => 1 - Math.pow(1 - clamp(x), 3)
-const appear = (local: number, delay: number, d = 0.6) => ease((local - delay) / d)
+const appear = (local: number, delay: number, d = 0.6) => ease((local - delay * PD) / (d * PD))
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   const k = Math.min(r, w / 2, h / 2)
@@ -259,7 +326,9 @@ function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement | HTMLVideoE
   if (!iw || !ih) return
   const s = Math.max(w / iw, h / ih) * zoom
   const dw = iw * s, dh = ih * s
+  if (GRADE) { ctx.save(); const f = ctx.filter && ctx.filter !== 'none' ? ctx.filter + ' ' : ''; try { ctx.filter = f + GRADE } catch { /* no filter support */ } }
   ctx.drawImage(img, x + (w - dw) / 2 - pan * (dw - w) / 2, y + (h - dh) / 2, dw, dh)
+  if (GRADE) ctx.restore()
 }
 type Seg = { t: string; gold: boolean }
 function segs(text: string): Seg[] {
@@ -296,9 +365,10 @@ function layout(ctx: CanvasRenderingContext2D, text: string, maxW: number): { wo
 }
 /** Draw rich text; each line can arrive on its own (stagger in seconds). Returns the height used. */
 function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, size: number, opts: { align?: 'left' | 'center'; font: string; weight?: number; local: number; delay?: number; stagger?: number; color?: string; lh?: number; shadow?: boolean }): number {
-  ctx.font = `${opts.weight || 800} ${size}px ${opts.font}`
+  ctx.font = fnt(opts.weight || 800, size, opts.font)
   const lines = layout(ctx, text, maxW)
-  const lh = size * (opts.lh || 1.08)
+  const S = opts.font === DISPLAY ? size * FS : size
+  const lh = S * (opts.lh || 1.08)
   const sp = ctx.measureText(' ').width
   ctx.textBaseline = 'alphabetic'
   for (let i = 0; i < lines.length; i++) {
@@ -306,10 +376,10 @@ function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
     if (a <= 0) continue
     const L = lines[i]
     let cx = opts.align === 'center' ? x + (maxW - L.w) / 2 : x
-    const cy = y + size + i * lh + (1 - a) * size * 0.35
+    const cy = y + S + i * lh + (1 - a) * S * 0.35
     ctx.save()
     ctx.globalAlpha *= a
-    if (opts.shadow !== false) { ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = size * 0.35 }
+    if (opts.shadow !== false) { ctx.shadowColor = C.light ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'; ctx.shadowBlur = size * 0.35 }
     for (let k = 0; k < L.words.length; k++) {
       ctx.fillStyle = L.words[k].gold ? C.gold : (opts.color || C.ink)
       ctx.fillText(L.words[k].t.trim(), cx, cy)
@@ -321,7 +391,7 @@ function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
 }
 function plain(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, size: number, font: string, color: string, weight = 500, align: 'left' | 'center' = 'left', alpha = 1): number {
   if (!text) return 0
-  ctx.font = `${weight} ${size}px ${font}`
+  ctx.font = fnt(weight, size, font)
   const lines = layout(ctx, text.replace(/\*\*/g, ''), maxW)
   ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.textBaseline = 'alphabetic'
   for (let i = 0; i < lines.length; i++) {
@@ -336,11 +406,11 @@ function split(row: string): [string, string] { const i = row.indexOf('|'); retu
 
 function background(ctx: CanvasRenderingContext2D, W: number, H: number, img: HTMLImageElement | HTMLVideoElement | null, local: number, dur: number, dark: number) {
   if (img) {
-    cover(ctx, img, 0, 0, W, H, 1.04 + 0.09 * clamp(local / Math.max(dur, 1)), 0.25 * clamp(local / Math.max(dur, 1)))
+    cover(ctx, img, 0, 0, W, H, 1.04 + (0.09 / PD) * clamp(local / Math.max(dur, 1)), (0.25 / PD) * clamp(local / Math.max(dur, 1)))
     const g = ctx.createLinearGradient(0, 0, 0, H)
-    g.addColorStop(0, `rgba(${C.tint},${0.35 * dark + 0.1})`)
-    g.addColorStop(0.55, `rgba(${C.tint},${0.55 * dark + 0.12})`)
-    g.addColorStop(1, `rgba(${C.tint},${0.75 * dark + 0.15})`)
+    g.addColorStop(0, `rgba(${C.tint},${TA(0.35 * dark + 0.1)})`)
+    g.addColorStop(0.55, `rgba(${C.tint},${TA(0.55 * dark + 0.12)})`)
+    g.addColorStop(1, `rgba(${C.tint},${TA(0.75 * dark + 0.15)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
   } else {
     const g = ctx.createRadialGradient(W * 0.8, 0, 0, W * 0.8, 0, Math.max(W, H) * 1.1)
@@ -368,7 +438,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   const bottomSafe = (p.captions ? 190 : 110) * u
   const get = (u: string) => (!u ? null : A.media ? A.media(u, local) : A.img(u))
   const im = (k: number) => get(sc.photos[k] || '')
-  const head = sc.head || ''
+  const head = CAPS ? (sc.head || '').toUpperCase() : sc.head || ''
 
   if (sc.kind === 'cta') {
     background(ctx, W, H, im(0), local, dur, 0.95)
@@ -383,7 +453,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     y += rich(ctx, head || 'Your South Florida **stay.**', pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25, stagger: 0.3, align: 'center' }) + 26 * u
     if (sc.sub) y += plain(ctx, sc.sub, pad, y, W - pad * 2, 38 * u, A.body, C.ink, 500, 'center', appear(local, 0.7)) + 40 * u
     const label = (sc.items[0] || 'Book at stay-hospitality.com').replace(/\|.*/, '')
-    ctx.font = `700 ${40 * u}px ${A.body}`
+    ctx.font = fnt(700, 40 * u, A.body)
     const bw = ctx.measureText(label).width + 110 * u, bh = 104 * u
     const a = appear(local, 1.0)
     // a soft pulse so a still post still reads as "tap me"
@@ -391,7 +461,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.save(); ctx.globalAlpha *= a
     ctx.translate(W / 2, y + bh / 2); ctx.scale(pulse, pulse); ctx.translate(-W / 2, -(y + bh / 2))
     rr(ctx, (W - bw) / 2, y + (1 - a) * 30 * u, bw, bh, bh / 2); ctx.fillStyle = C.gold; ctx.fill()
-    ctx.fillStyle = '#1B1408'; ctx.textBaseline = 'middle'; ctx.fillText(label, (W - bw) / 2 + 55 * u, y + bh / 2 + (1 - a) * 30 * u)
+    ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(label, (W - bw) / 2 + 55 * u, y + bh / 2 + (1 - a) * 30 * u)
     ctx.restore()
     if (sc.items[1]) plain(ctx, sc.items[1], pad, y + bh + 36 * u, W - pad * 2, 30 * u, A.body, C.mut, 500, 'center', appear(local, 1.4))
     if (A.credit && p.music !== 'none') plain(ctx, A.credit, W - 900 * u, H - 44 * u, 880 * u, 18 * u, A.mono, 'rgba(255,255,255,0.45)', 400)
@@ -443,7 +513,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.restore()
     }
     if (k > 0 && lt < 0.22) { draw(k - 1, seg + lt, 1); draw(k, lt, ease(lt / 0.22)) } else draw(k, lt, 1)
-    const g = ctx.createLinearGradient(0, H * 0.35, 0, H); g.addColorStop(0, `rgba(${C.tint},0)`); g.addColorStop(1, `rgba(${C.tint},0.82)`)
+    const g = ctx.createLinearGradient(0, H * 0.35, 0, H); g.addColorStop(0, `rgba(${C.tint},${TA(0)})`); g.addColorStop(1, `rgba(${C.tint},${TA(0.82)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
     // a thin progress tick per photo, like a story
     for (let j = 0; j < n && n > 1; j++) {
@@ -453,8 +523,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     }
     if (head) {
       const size = (portrait ? 108 : 112) * u
-      ctx.font = `800 ${size}px ${A.display}`
-      const hh = layout(ctx, head, W - pad * 2).length * size * 1.08
+      ctx.font = fnt(800, size, A.display)
+      const hh = layout(ctx, head, W - pad * 2).length * size * FS * 1.08
       const y = H - bottomSafe - hh - (sc.sub ? 70 * u : 10 * u)
       ctx.fillStyle = C.gold; ctx.fillRect(pad, y - 26 * u, 90 * u * appear(local, 0.2), 6 * u)
       rich(ctx, head, pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25 })
@@ -471,10 +541,10 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const img = get(sc.photos[k] || sc.photos[0] || '')
     if (img) cover(ctx, img, 0, 0, W, H, 1.12 - 0.08 * clamp(lt / seg), (k % 2 ? 0.25 : -0.25) * clamp(lt / seg)); else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
     const g = ctx.createLinearGradient(portrait ? 0 : W, 0, portrait ? 0 : 0, portrait ? H : 0)
-    g.addColorStop(0, `rgba(${C.tint},0.1)`); g.addColorStop(1, `rgba(${C.tint},0.85)`)
+    g.addColorStop(0, `rgba(${C.tint},${TA(0.1)})`); g.addColorStop(1, `rgba(${C.tint},${TA(0.85)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
     if (lt < 0.25 && k > 0) { ctx.fillStyle = `rgba(255,255,255,${0.5 * (1 - lt / 0.25)})`; ctx.fillRect(0, 0, W, H) }
-    const [t1, t2] = split(it[k])
+    const [t1r, t2] = split(it[k]); const t1 = CAPS ? t1r.toUpperCase() : t1r
     const tw = portrait ? W - pad * 2 : W * 0.55
     const y = portrait ? H * 0.5 : H * 0.3
     plain(ctx, '0' + (k + 1) + ' / 0' + n, pad, y - 70 * u, tw, 30 * u, A.mono, C.gold, 600, 'left', appear(lt, 0))
@@ -490,14 +560,21 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const img = im(0)
     const pr = clamp(local / Math.max(dur, 1))
     if (img) cover(ctx, img, 0, 0, W, H, 1.02 + 0.14 * pr, -0.35 + 0.7 * pr); else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
-    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, `rgba(${C.tint},0.15)`); g.addColorStop(0.6, `rgba(${C.tint},0.25)`); g.addColorStop(1, `rgba(${C.tint},0.7)`)
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, `rgba(${C.tint},${TA(0.2)})`); g.addColorStop(0.5, `rgba(${C.tint},${TA(0.42)})`); g.addColorStop(1, `rgba(${C.tint},${TA(0.72)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
     const bar = (portrait ? H * 0.09 : H * 0.115) * ease(local / 0.8)
-    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar)
+    ctx.fillStyle = C.light ? C.navy2 : '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar)
     const size = (portrait ? 104 : 96) * u
-    ctx.font = `700 ${size}px ${A.display}`
-    const hh = layout(ctx, head, W - pad * 2.4).length * size * 1.08
+    ctx.font = fnt(700, size, A.display)
+    const hh = layout(ctx, head, W - pad * 2.4).length * size * FS * 1.08
     const y = (H - hh) / 2 + (portrait ? 40 : 30) * u
+    if (C.light) {
+      // a soft frosted band so dark type reads over the photo
+      const a0 = appear(local, 0.3)
+      const bg = ctx.createLinearGradient(0, y - 60 * u, 0, y + hh + 160 * u)
+      bg.addColorStop(0, `rgba(${C.tint},0)`); bg.addColorStop(0.25, `rgba(${C.tint},${0.82 * a0})`); bg.addColorStop(0.8, `rgba(${C.tint},${0.82 * a0})`); bg.addColorStop(1, `rgba(${C.tint},0)`)
+      ctx.fillStyle = bg; ctx.fillRect(0, y - 60 * u, W, hh + 220 * u)
+    }
     rich(ctx, head, pad * 1.2, y, W - pad * 2.4, size, { font: A.display, weight: 700, local, delay: 0.5, stagger: 0.35, align: 'center', lh: 1.04 })
     const rw = 160 * u * appear(local, 1.0, 0.8)
     ctx.fillStyle = C.gold; ctx.fillRect((W - rw) / 2, y + hh + 34 * u, rw, 3 * u)
@@ -517,9 +594,9 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       cover(ctx, img, -40 * u, -40 * u, W + 80 * u, H + 80 * u, 1.1 + 0.05 * clamp(local / dur))
       ctx.restore()
     } else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
-    ctx.fillStyle = `rgba(${C.tint},0.55)`; ctx.fillRect(0, 0, W, H)
+    ctx.fillStyle = `rgba(${C.tint},${TA(0.55)})`; ctx.fillRect(0, 0, W, H)
     const size = (portrait ? 150 : 160) * u
-    ctx.font = `800 ${size}px ${A.display}`
+    ctx.font = fnt(800, size, A.display)
     const lines = layout(ctx, head || 'Stay **here.**', W - pad * 2)
     const lh = size * 1.02, sp = ctx.measureText(' ').width
     const total = lines.length * lh
@@ -537,7 +614,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
           const ww = w.w
           ctx.save(); ctx.globalAlpha *= a
           ctx.translate(x + ww / 2, yb - size * 0.35); ctx.scale(sc2, sc2); ctx.translate(-(x + ww / 2), -(yb - size * 0.35))
-          ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = size * 0.25
+          ctx.shadowColor = C.light ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.35)'; ctx.shadowBlur = size * 0.25
           ctx.fillStyle = w.gold ? C.gold : C.ink; ctx.fillText(w.t.trim(), x, yb)
           ctx.restore()
         }
@@ -557,13 +634,13 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const cx = W / 2, cy = portrait ? H * 0.42 : H / 2
     ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.clip()
     if (img) cover(ctx, img, 0, 0, W, H, 1.25 - 0.17 * a - 0.04 * clamp(local / dur)); else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
-    const g = ctx.createLinearGradient(0, H * 0.45, 0, H); g.addColorStop(0, `rgba(${C.tint},0)`); g.addColorStop(1, `rgba(${C.tint},0.8)`)
+    const g = ctx.createLinearGradient(0, H * 0.45, 0, H); g.addColorStop(0, `rgba(${C.tint},${TA(0)})`); g.addColorStop(1, `rgba(${C.tint},${TA(0.8)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
     ctx.restore()
     if (a < 1) { ctx.save(); ctx.globalAlpha = 1 - a * 0.9; ctx.lineWidth = 6 * u; ctx.strokeStyle = C.gold; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke(); ctx.restore() }
     const size = (portrait ? 112 : 108) * u
-    ctx.font = `800 ${size}px ${A.display}`
-    const hh = layout(ctx, head, W * (portrait ? 0.86 : 0.7)).length * size * 1.08
+    ctx.font = fnt(800, size, A.display)
+    const hh = layout(ctx, head, W * (portrait ? 0.86 : 0.7)).length * size * FS * 1.08
     const y = H - bottomSafe - hh - (sc.sub ? 70 * u : 10 * u)
     rich(ctx, head, pad, y, W * (portrait ? 0.86 : 0.7), size, { font: A.display, local, delay: 0.9 })
     if (sc.sub) plain(ctx, sc.sub, pad, y + hh + 14 * u, W * 0.6, 34 * u, A.body, C.ink, 500, 'left', appear(local, 1.2))
@@ -575,8 +652,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   if (sc.kind === 'title' || sc.kind === 'photo') {
     const size = (sc.kind === 'title' ? 130 : 104) * u
     const hw = sc.kind === 'title' ? W - pad * 2 : W * (portrait ? 0.86 : 0.7)
-    ctx.font = `800 ${size}px ${A.display}`
-    const hh = layout(ctx, head, hw).length * size * 1.08
+    ctx.font = fnt(800, size, A.display)
+    const hh = layout(ctx, head, hw).length * size * FS * 1.08
     if (sc.kind === 'title') {
       const y = (H - bottomSafe * 0.5 - hh) / 2 - 20 * u
       rich(ctx, head, pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.15, stagger: 0.55, align: 'center' })
@@ -592,9 +669,9 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   // FEED, LANDSCAPE: the headline holds the left third, the cards slide in on the right.
   if (sc.kind === 'feed' && !portrait) {
     const lw = W * 0.3
-    ctx.font = `800 ${92 * u}px ${A.display}`
+    ctx.font = fnt(800, 92 * u, A.display)
     const hh = layout(ctx, head, lw).length * 92 * u * 1.08
-    ctx.font = `500 ${32 * u}px ${A.body}`
+    ctx.font = fnt(500, 32 * u, A.body)
     const sh = sc.sub ? layout(ctx, sc.sub, lw).length * 32 * u * 1.3 : 0
     const y = (H - bottomSafe * 0.6 - hh - sh - 20 * u) / 2
     if (head) rich(ctx, head, pad, y, lw, 92 * u, { font: A.display, local, delay: 0.1 })
@@ -641,7 +718,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       const pn = parseNum(val)
       const prog = ease((local - 0.2 - k * 0.15) / 1.4)
       const shown = pn ? pn.pre + (pn.n * prog).toLocaleString('en-US', { minimumFractionDigits: pn.dec, maximumFractionDigits: pn.dec }) + pn.suf : val
-      ctx.font = `800 ${120 * u}px ${A.display}`; ctx.fillStyle = C.ink; ctx.fillText(shown, x, y + 150 * u)
+      ctx.font = fnt(800, 120 * u, A.display); ctx.fillStyle = C.ink; ctx.fillText(shown, x, y + 150 * u)
       plain(ctx, label, x, y + 170 * u, cw - 50 * u, 32 * u, A.body, C.mut, 500)
       ctx.restore()
     }
@@ -681,7 +758,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
         ctx.save(); ctx.globalAlpha *= 0.4 + 0.6 * a
         const bx = lx, by = y + (rowH - 44 * u) / 2
         rr(ctx, bx, by, 44 * u, 44 * u, 10 * u); ctx.lineWidth = 3 * u; ctx.strokeStyle = C.gold; ctx.stroke()
-        if (on) { ctx.fillStyle = C.gold; ctx.fill(); ctx.strokeStyle = '#1B1408'; ctx.lineWidth = 5 * u; ctx.beginPath(); ctx.moveTo(bx + 11 * u, by + 23 * u); ctx.lineTo(bx + 19 * u, by + 31 * u); ctx.lineTo(bx + 34 * u, by + 13 * u); ctx.stroke() }
+        if (on) { ctx.fillStyle = C.gold; ctx.fill(); ctx.strokeStyle = onAccent(); ctx.lineWidth = 5 * u; ctx.beginPath(); ctx.moveTo(bx + 11 * u, by + 23 * u); ctx.lineTo(bx + 19 * u, by + 31 * u); ctx.lineTo(bx + 34 * u, by + 13 * u); ctx.stroke() }
         plain(ctx, t1 + (t2 ? ' · ' + t2 : ''), bx + 70 * u, y + (rowH - 40 * u) / 2 - 6 * u, lw - 80 * u, 40 * u, A.body, C.ink, 600)
         ctx.restore()
       }
@@ -697,7 +774,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     for (let k = 0; k < Math.min(4, sc.items.length); k++) {
       const a = appear(local, 1 + k * 0.3)
       if (a <= 0) continue
-      ctx.font = `600 ${30 * u}px ${A.body}`
+      ctx.font = fnt(600, 30 * u, A.body)
       const tw = ctx.measureText(sc.items[k]).width + 50 * u
       if (!portrait && chx + tw > area.x + area.w * 0.44) { chx = area.x; chy += 76 * u }
       ctx.save(); ctx.globalAlpha *= a
@@ -716,7 +793,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.stroke(); ctx.setLineDash([])
     const sx = P(0.5)[0]
     ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth = 2 * u; ctx.setLineDash([6 * u, 8 * u]); ctx.beginPath(); ctx.moveTo(sx, cy); ctx.lineTo(sx, cy + ch * 0.92); ctx.stroke(); ctx.setLineDash([])
-    ctx.font = `500 ${26 * u}px ${A.body}`; ctx.fillStyle = C.ink; ctx.textAlign = 'right'; ctx.fillText('Switch to Stay', sx - 14 * u, cy + 26 * u); ctx.textAlign = 'left'
+    ctx.font = fnt(500, 26 * u, A.body); ctx.fillStyle = C.ink; ctx.textAlign = 'right'; ctx.fillText('Switch to Stay', sx - 14 * u, cy + 26 * u); ctx.textAlign = 'left'
     const prog = ease((local - 0.5) / 2.2)
     ctx.strokeStyle = C.gold; ctx.lineWidth = 9 * u; ctx.lineCap = 'round'; ctx.beginPath()
     let last = P(0.5)
@@ -746,10 +823,19 @@ export function transitionOf(p: AdProject, i: number): AdTransition {
 }
 /** Film finish: a soft vignette and a fine moving grain, so it reads as footage, not slides. */
 let grain: HTMLCanvasElement | null = null
-function finish(ctx: CanvasRenderingContext2D, W: number, H: number, u: number, t: number) {
+function finish(ctx: CanvasRenderingContext2D, W: number, H: number, u: number, t: number, kind: string = 'film') {
+  if (kind === 'clean') return
   const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) * 0.62)
-  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.38)')
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, C.light ? 'rgba(60,40,20,0.14)' : 'rgba(0,0,0,0.38)')
   ctx.fillStyle = v; ctx.fillRect(0, 0, W, H)
+  if (kind === 'glow') {
+    // a warm light leak drifting across the frame
+    const lx = W * (0.15 + 0.7 * (0.5 + 0.5 * Math.sin(t * 0.35))), ly = H * (0.1 + 0.15 * Math.cos(t * 0.5))
+    const lg = ctx.createRadialGradient(lx, ly, 0, lx, ly, Math.max(W, H) * 0.6)
+    lg.addColorStop(0, 'rgba(255,170,90,0.32)'); lg.addColorStop(0.5, 'rgba(255,110,80,0.10)'); lg.addColorStop(1, 'rgba(255,110,80,0)')
+    ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H); ctx.restore()
+  }
+  if (kind !== 'film') return
   if (typeof document === 'undefined') return
   if (!grain) {
     grain = document.createElement('canvas'); grain.width = grain.height = 192
@@ -767,14 +853,18 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   const W = ctx.canvas.width, H = ctx.canvas.height
   const u = Math.min(W, H) / 1080
   C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
-  if (C.serif && A.serif) A = { ...A, display: A.serif }
+  const R = resolveStyle(p)
+  const fam = R.font === 'serif' ? A.serif : R.font === 'condensed' ? A.condensed : R.font === 'elegant' ? A.elegant : A.display
+  A = { ...A, display: fam || A.display, logo: R.logo === 'off' ? null : (A.logos && A.logos[R.logo as 'gold' | 'black' | 'white']) || (R.logo === 'gold' ? A.logo : null) }
+  DISPLAY = A.display; FONTW = R.font === 'condensed' && fam ? 400 : 0; FS = R.font === 'elegant' && fam ? 1.2 : 1
+  GRADE = GRADES[R.grade] || ''; PD = R.pace === 'calm' ? 1.35 : R.pace === 'fast' ? 0.72 : 1; CAPS = R.caps
   ctx.save()
   ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H)
   if (!p.scenes.length) { ctx.restore(); return }
   const i = sceneAt(tl, t)
   const local = t - tl.starts[i]
   const tr = transitionOf(p, i)
-  const XF = tr === 'push' || tr === 'wipe' ? 0.6 : tr === 'cut' ? 0 : XFADE
+  const XF = (tr === 'push' || tr === 'wipe' ? 0.6 : tr === 'cut' ? 0 : XFADE) * PD
   if (i > 0 && local < XF) {
     const a = ease(local / XF)
     drawScene(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
@@ -790,7 +880,10 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
     if (tr === 'flash') { ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(2 * (local / XF) - 1)})`; ctx.fillRect(0, 0, W, H) }
   } else drawScene(ctx, p, i, local, tl.durs[i], A)
   ctx.globalAlpha = 1
-  finish(ctx, W, H, u, t)
+  // FRAME: a thin inset border in the accent, or letterbox bars on every scene.
+  if (R.frame === 'border') { ctx.save(); ctx.strokeStyle = C.light ? C.ink : C.gold; ctx.globalAlpha = 0.85; ctx.lineWidth = 3 * u; ctx.strokeRect(28 * u, 28 * u, W - 56 * u, H - 56 * u); ctx.restore() }
+  if (R.frame === 'letterbox' && p.scenes[i].kind !== 'cinema') { const bar = (H > W ? H * 0.07 : H * 0.09); ctx.fillStyle = C.light ? C.navy2 : '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar) }
+  finish(ctx, W, H, u, t, R.finish)
   const sc = p.scenes[i]
   if (A.logo && sc.kind !== 'contact' && sc.kind !== 'cta') {
     const lw = 150 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
@@ -803,16 +896,16 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
     const a = clamp(local / 0.3) * clamp((tl.durs[i] - local) / 0.3)
     if (a > 0) {
       const g = ctx.createLinearGradient(0, H - 230 * u, 0, H)
-      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.6)')
+      g.addColorStop(0, C.light ? 'rgba(255,255,255,0)' : 'rgba(0,0,0,0)'); g.addColorStop(1, C.light ? 'rgba(255,255,255,0.78)' : 'rgba(0,0,0,0.6)')
       ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = g; ctx.fillRect(0, H - 230 * u, W, 230 * u)
       const size = (H > W * 1.1 ? 40 : 34) * u
-      ctx.font = `500 ${size}px ${A.body}`
+      ctx.font = fnt(500, size, A.body)
       const lines = layout(ctx, sc.vo.replace(/\*\*/g, ''), W * 0.76)
       const shown = lines.slice(0, 3)
       for (let k = 0; k < shown.length; k++) {
         const s = shown[k].words.map(w => w.t.trim()).join(' ')
         const w = ctx.measureText(s).width
-        ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 8 * u
+        ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.shadowColor = C.light ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 8 * u
         ctx.fillText(s, (W - w) / 2, H - 60 * u - (shown.length - 1 - k) * size * 1.3)
       }
       ctx.restore()

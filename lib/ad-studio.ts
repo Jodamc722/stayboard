@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -105,6 +105,12 @@ export function normalize(p: any): AdProject {
     format: (['16:9', '9:16', '1:1', '4:5'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
     audience: (['owners', 'partners', 'guests'].indexOf(p?.audience) >= 0 ? p.audience : 'owners'),
     look: /^[a-z]{2,12}$/.test(String(p?.look || '')) ? String(p.look) : 'stay',
+    style: (() => {
+      const st: any = { ...STYLE_DEFAULT }
+      const src = p?.style || {}
+      ;(Object.keys(STYLE_OPTIONS) as (keyof typeof STYLE_OPTIONS)[]).forEach(k => { if ((STYLE_OPTIONS[k] as any[]).some(o => o.key === src[k])) st[k] = src[k] })
+      return st
+    })(),
     goal: String(p?.goal || '').slice(0, 20),
     voiceId: String(p?.voiceId || 'qSeXEcewz7tA0Q0qk9fH').slice(0, 40),
     voiceName: String(p?.voiceName || '').slice(0, 80),

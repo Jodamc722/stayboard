@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, TRANSITIONS, type AdTransition, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -63,7 +63,37 @@ function Btn({ on, children, onClick, title, tone, disabled, small }: { on?: boo
 const Label = ({ children }: { children: React.ReactNode }) => <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut, margin: '14px 0 6px' }}>{children}</p>
 const field: React.CSSProperties = { boxSizing: 'border-box', width: '100%', background: UI.panel2, color: UI.ink, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 10px', fontSize: 13, lineHeight: 1.45, fontFamily: 'inherit', resize: 'vertical' }
 
-export default function AdStudio({ display, body, serif, canEdit, canDelete, full }: { display: string; body: string; serif?: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
+/** A live thumbnail of THIS ad in a given look/style — the real renderer, one frame. */
+function LookPreview({ proj, look, style, assets, w = 168 }: { proj: AdProject; look: string; style?: Partial<AdStyle>; assets: () => AdAssets; w?: number }) {
+  const ref = useRef<HTMLCanvasElement>(null)
+  const [FW, FH] = FORMATS[proj.format]
+  const h = Math.round(w * Math.min(1.25, FH / FW))
+  const key = JSON.stringify(style || {}) + look + proj.id + proj.format + proj.scenes.length
+  useEffect(() => {
+    let n = 0
+    const draw = () => {
+      const cv = ref.current; if (!cv) return
+      const q: AdProject = { ...proj, look, style: { ...STYLE_DEFAULT, ...(proj.style || {}), ...(style || {}) }, captions: false }
+      const T = timeline(q)
+      // the first scene with a photo, a beat in, so the type has landed
+      let k = q.scenes.findIndex(x => x.photos.length && x.kind !== 'contact')
+      if (k < 0) k = 0
+      const c2 = document.createElement('canvas'); c2.width = Math.round(540 * FW / Math.max(FW, FH)) * 2; c2.height = Math.round(540 * FH / Math.max(FW, FH)) * 2
+      const g = c2.getContext('2d'); if (!g) return
+      drawFrame(g, q, T, Math.min(T.total - 0.01, T.starts[k] + Math.min(2.2, T.durs[k] * 0.75)), assets())
+      const x = cv.getContext('2d'); if (!x) return
+      x.clearRect(0, 0, cv.width, cv.height)
+      const s2 = Math.max(cv.width / c2.width, cv.height / c2.height)
+      x.drawImage(c2, (cv.width - c2.width * s2) / 2, (cv.height - c2.height * s2) / 2, c2.width * s2, c2.height * s2)
+    }
+    draw()
+    const id = setInterval(() => { draw(); if (++n > 6) clearInterval(id) }, 700)
+    return () => clearInterval(id)
+  }, [key]) // eslint-disable-line react-hooks/exhaustive-deps
+  return <canvas ref={ref} width={w * 2} height={h * 2} style={{ width: '100%', aspectRatio: `${w}/${h}`, display: 'block', background: '#000' }} />
+}
+
+export default function AdStudio({ display, body, serif, condensed, elegant, canEdit, canDelete, full }: { display: string; body: string; serif?: string; condensed?: string; elegant?: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
   const [list, setList] = useState<ListRow[]>([])
   const [p, setP] = useState<AdProject | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
@@ -112,6 +142,7 @@ export default function AdStudio({ display, body, serif, canEdit, canDelete, ful
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const imgs = useRef<Record<string, HTMLImageElement>>({})
   const logo = useRef<HTMLImageElement | null>(null)
+  const logos = useRef<{ gold: HTMLImageElement | null; black: HTMLImageElement | null; white: HTMLImageElement | null }>({ gold: null, black: null, white: null })
   const actx = useRef<AudioContext | null>(null)
   const voiceBuf = useRef<{ url: string; buf: AudioBuffer } | null>(null)
   const musicBuf = useRef<Record<string, AudioBuffer>>({})
@@ -157,7 +188,8 @@ export default function AdStudio({ display, body, serif, canEdit, canDelete, ful
       try { last = localStorage.getItem('adstudio.last') || '' } catch { /* fine */ }
       if (last) open(last, true)
     })
-    const l = new Image(); l.src = '/ads/stay-logo-gold.svg'; l.onload = () => { logo.current = l }
+    const l = new Image(); l.src = '/ads/stay-logo-gold.png'; l.onload = () => { logo.current = l; logos.current.gold = l }
+    ;(['black', 'white'] as const).forEach(c => { const im = new Image(); im.src = '/ads/stay-logo-' + c + '.png'; im.onload = () => { logos.current[c] = im } })
     loadLib(); loadSounds()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -366,6 +398,23 @@ export default function AdStudio({ display, body, serif, canEdit, canDelete, ful
     return true
   }
 
+  /** Jon: "a wide range of styles and looks" — one tap for a fresh combination. */
+  const surprise = () => {
+    const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
+    const look = pick(LOOKS.filter(l => l.key !== (pRef.current?.look || 'stay'))).key
+    const style: AdStyle = {
+      font: pick(['auto', 'auto', 'sans', 'serif', 'condensed', 'elegant'] as AdStyle['font'][]),
+      caps: pick(['auto', 'auto', 'on'] as AdStyle['caps'][]),
+      grade: pick(['auto', 'auto', 'warm', 'cool', 'vivid', 'faded', 'mono'] as AdStyle['grade'][]),
+      pace: pick(['normal', 'normal', 'calm', 'fast'] as AdStyle['pace'][]),
+      finish: pick(['auto', 'auto', 'film', 'glow', 'soft'] as AdStyle['finish'][]),
+      frame: pick(['none', 'none', 'border', 'letterbox'] as AdStyle['frame'][]),
+      logo: 'auto',
+    }
+    change(d => ({ ...d, look, style, scenes: d.scenes.map(x => ({ ...x, tr: 'auto' as AdTransition })) }))
+    if (tl) setT(tl.starts[Math.min(1, tl.starts.length - 1)] + 1.6)
+  }
+
   /** Rewrite just the selected scene the way it is asked ("punchier", "show the rooftop", "make it numbers"). */
   const askScene = async (what: string) => {
     if (!p || !what.trim()) return
@@ -446,7 +495,7 @@ export default function AdStudio({ display, body, serif, canEdit, canDelete, ful
     return g ? { label: g.name, file: g.url, credit: '' } : { label: key.startsWith('snd:') ? 'Generated track' : 'No music', file: '', credit: '' }
   }
   const assets = (): AdAssets => ({
-    img, media, logo: logo.current, display, body, serif, mono: 'ui-monospace, Menlo, monospace',
+    img, media, logo: logo.current, logos: logos.current, display, body, serif, condensed, elegant, mono: 'ui-monospace, Menlo, monospace',
     credit: track(pRef.current?.music || '').credit,
   })
 
@@ -1106,10 +1155,10 @@ export default function AdStudio({ display, body, serif, canEdit, canDelete, ful
                       <input value={st.vibe} onChange={e => setSt(x => ({ ...x, vibe: e.target.value, music: e.target.value ? '' : x.music }))} placeholder="e.g. sunset lounge house, warm, upscale — ElevenLabs composes it" style={field} />
                     </>
                   ) : key === 'look' ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 8 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8, maxHeight: 460, overflowY: 'auto' }}>
                       {LOOKS.map(l => (
                         <button key={l.key} onClick={() => pickNext(() => setSt(x => ({ ...x, look: l.key })))} style={{ padding: 0, border: '2px solid ' + (st.look === l.key ? UI.blue : UI.line), borderRadius: 10, overflow: 'hidden', cursor: 'pointer', background: 'none', color: UI.ink, textAlign: 'left' }}>
-                          <span style={{ display: 'block', height: 64, background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '12px 12px', fontFamily: display, fontWeight: 800, fontSize: 18, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>
+                          {p && p.scenes.some(x => x.photos.length) ? <LookPreview proj={p} look={l.key} style={{}} assets={assets} w={200} /> : <span style={{ display: 'block', height: 64, background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '12px 12px', fontFamily: display, fontWeight: 800, fontSize: 18, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>}
                           <span style={{ display: 'block', background: UI.panel2, padding: '7px 10px' }}><span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{l.label}</span><span style={{ fontSize: 10.5, color: UI.mut }}>{l.blurb}</span></span>
                         </button>
                       ))}
@@ -1382,10 +1431,28 @@ export default function AdStudio({ display, body, serif, canEdit, canDelete, ful
               </div>
 
               <Label>Whole ad</Label>
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Look</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
-                {LOOKS.map(l => <Btn key={l.key} small on={(p.look || 'stay') === l.key} disabled={!canEdit} title={l.blurb} onClick={() => change(d => ({ ...d, look: l.key }))}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 5, background: l.c.gold, boxShadow: '0 0 0 2px ' + l.c.navy2, marginRight: 5, verticalAlign: 'middle' }} />{l.label}</Btn>)}
+              <div style={{ display: 'flex', alignItems: 'center', margin: '0 0 6px' }}>
+                <p style={{ fontSize: 11.5, color: UI.mut, margin: 0 }}>Look · {LOOKS.find(l => l.key === (p.look || 'stay'))?.label}</p>
+                {canEdit ? <span style={{ marginLeft: 'auto' }}><Btn small onClick={surprise} title="A random look and style — keep pressing to explore">🎲 Surprise me</Btn></span> : null}
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6, marginBottom: 10 }}>
+                {LOOKS.map(l => (
+                  <button key={l.key} disabled={!canEdit} title={l.blurb} onClick={() => change(d => ({ ...d, look: l.key, style: { ...STYLE_DEFAULT, pace: d.style?.pace || 'normal', frame: d.style?.frame || 'none' } }))}
+                    style={{ padding: 0, border: '2px solid ' + ((p.look || 'stay') === l.key ? UI.gold : UI.line), borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: UI.panel2, color: UI.ink, textAlign: 'left' }}>
+                    <LookPreview proj={p} look={l.key} style={{}} assets={assets} w={100} />
+                    <span style={{ display: 'block', fontSize: 10.5, fontWeight: 700, padding: '3px 5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.label}</span>
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '4px 0 6px' }}>Style · fine-tune the look</p>
+              {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo']] as [keyof AdStyle, string][]).map(([k, lab]) => (
+                <div key={k} style={{ marginBottom: 6 }}>
+                  <span style={{ fontSize: 10.5, color: UI.mut, display: 'block', marginBottom: 3 }}>{lab}</span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                    {(STYLE_OPTIONS[k] as { key: string; label: string }[]).map(o => <Btn key={o.key} small disabled={!canEdit} on={((p.style || STYLE_DEFAULT)[k] || STYLE_DEFAULT[k]) === o.key} onClick={() => change(d => ({ ...d, style: { ...STYLE_DEFAULT, ...(d.style || {}), [k]: o.key } }))}>{o.label}</Btn>)}
+                  </div>
+                </div>
+              ))}
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Voice{p.voiceName && !VOICES.some(v => v.id === p.voiceId) ? <span style={{ color: UI.gold }}> · using {p.voiceName}</span> : null}</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {VOICES.map(v => <Btn key={v.id} small on={p.voiceId === v.id} title={v.blurb} onClick={() => change(d => ({ ...d, voiceId: v.id, voiceName: v.name }))}>{v.name}</Btn>)}
