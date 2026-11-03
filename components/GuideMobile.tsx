@@ -43,8 +43,18 @@ export function sentence(t: string): string {
   const s = String(t || '').trim()
   if (!s) return ''
   const words = s.split(/\s+/)
-  return words.map((w, i) => (/^[A-Z0-9]{2,}$/.test(w) || /\d/.test(w) ? w : i === 0 ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w.toLowerCase())).join(' ')
+  // Place names stay capitalised ("Delray Beach & Atlantic Avenue"): a word in PLACES, and any capitalised word right after one.
+  let prevPlace = false
+  return words.map((w, i) => {
+    const bare = w.replace(/[^A-Za-z]/g, '')
+    const place = PLACES.has(bare.toLowerCase()) || (prevPlace && /^[A-Z]/.test(w))
+    prevPlace = place
+    if (/^[A-Z0-9]{2,}$/.test(w) || /\d/.test(w)) return w
+    if (place) return w.charAt(0).toUpperCase() + w.slice(1)
+    return i === 0 ? w.charAt(0).toUpperCase() + w.slice(1).toLowerCase() : w.toLowerCase()
+  }).join(' ')
 }
+const PLACES = new Set(['delray', 'boynton', 'atlantic', 'miami', 'fort', 'lauderdale', 'pompano', 'palm', 'florida', 'brickell', 'wynwood', 'las', 'olas', 'hollywood', 'elser', 'salato', 'botanica', 'arya', 'aria', 'hendricks', 'eden', 'gulf', 'briny', 'seaview', 'central', 'east', 'ocean', 'intracoastal', 'pineapple', 'morikami', 'wakodahatchee'])
 /** The guest-facing name of the stay: the listing title without the "— Guest Guidebook" suffix or the "| Pool & Beach" marketing tail. */
 export function stayName(gb: any): string {
   const t = String(gb?.title || gb?.listing_name || 'Your stay').replace(/\s*[—–-]\s*Guest Guidebook\s*$/i, '').trim()
@@ -272,7 +282,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
                         </button>
                         {isOpen ? (
                           <div className="px-1 pb-4">
-                            {photo ? <img src={photo} alt="" loading="lazy" className="mb-3 max-h-[220px] w-full rounded-xl object-cover" onError={(e: any) => { e.currentTarget.style.display = 'none' }} /> : null}
+                            {photo ? <img src={photo} alt="" loading="lazy" className="mb-3 max-h-[300px] w-full rounded-xl object-contain" style={{ background: '#f3efe6' }} onError={(e: any) => { e.currentTarget.style.display = 'none' }} /> : null}
                             <p className="text-[14.5px] leading-[1.65] whitespace-pre-line">{str(it.body)}</p>
                           </div>
                         ) : null}
