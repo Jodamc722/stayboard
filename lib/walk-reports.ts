@@ -21,7 +21,7 @@ import { getSetting, setSetting } from './app-settings'
 import { bzApi, breezewayConfigured, createBreezewayTask, listBreezewayComments, retrieveBreezewayTask } from './breezeway'
 import { loadPrograms, programForTask, reportOf, buildingKey, onDays, ymdET, type Program, type Place } from './site-programs'
 import { isTaskDone, isTaskGone } from './task-categories'
-import { sendGmail } from './gmail-send'
+import { sendGmail, draftGmail, draftStatus } from './gmail-send'
 import { sendResendEmail } from './resend-send'
 import { recordRun } from './automation-runs'
 
@@ -46,11 +46,14 @@ export type WalkReport = {
   fixTasks: FixTask[]
   carried: (FixTask & { code: string; date: string })[]
   emailedAt: string | null; emailedTo: string[]; emailError: string | null
+  /** Approval flow: the Gmail draft to the owners waiting in the Lighthouse mailbox (null once sent or if none). */
+  draftId?: string | null; draftTo?: string[]; draftedAt?: string | null; draftSentAt?: string | null
   createdAt: string
 }
-export type IndexRow = { code: string; programId: string; taskId: string; date: string; finishedAt: string | null; finishedBy: string; passed: number; issues: number; open: number; place: string }
+export type IndexRow = { code: string; programId: string; taskId: string; date: string; finishedAt: string | null; finishedBy: string; passed: number; issues: number; open: number; place: string; mail: 'sent' | 'draft' | 'none' }
 
-const toIndex = (r: WalkReport): IndexRow => ({ code: r.code, programId: r.programId, taskId: r.taskId, date: r.scheduledDate, finishedAt: r.finishedAt, finishedBy: r.finishedBy, passed: r.passed, issues: r.issues, open: r.open, place: r.place })
+const mailState = (r: Pick<WalkReport, 'emailedAt' | 'draftId' | 'draftSentAt'>): IndexRow['mail'] => (r.emailedAt || r.draftSentAt ? 'sent' : r.draftId ? 'draft' : 'none')
+const toIndex = (r: WalkReport): IndexRow => ({ code: r.code, programId: r.programId, taskId: r.taskId, date: r.scheduledDate, finishedAt: r.finishedAt, finishedBy: r.finishedBy, passed: r.passed, issues: r.issues, open: r.open, place: r.place, mail: mailState(r) })
 
 // ── storage ──────────────────────────────────────────────────────────────────────────────────────
 
@@ -90,11 +93,11 @@ export async function getReport(code: string): Promise<WalkReport | null> {
 export async function listReports(opts: { programId?: string; since?: string; limit?: number } = {}): Promise<IndexRow[]> {
   const limit = Math.max(1, Math.min(opts.limit || 30, 400))
   try {
-    let q = supabaseAdmin().from('walk_reports').select('code, program_id, task_id, scheduled_date, finished_at, finished_by, passed, issues, open_items, place')
+    let q = supabaseAdmin().from('walk_reports').select('code, program_id, task_id, scheduled_date, finished_at, finished_by, passed, issues, open_items, place, emailed_at, report->draftId, report->draftSentAt')
     if (opts.programId) q = q.eq('program_id', opts.programId)
     if (opts.since) q = q.gte('scheduled_date', opts.since)
     const { data, error } = await q.order('scheduled_date', { ascending: false }).order('finished_at', { ascending: false }).limit(limit)
-    if (!error) return ((data || []) as any[]).map(x => ({ code: str(x.code), programId: str(x.program_id), taskId: str(x.task_id), date: str(x.scheduled_date), finishedAt: x.finished_at || null, finishedBy: str(x.finished_by), passed: Number(x.passed) || 0, issues: Number(x.issues) || 0, open: Number(x.open_items) || 0, place: str(x.place) }))
+    if (!error) return ((data || []) as any[]).map(x => ({ code: str(x.code), programId: str(x.program_id), taskId: str(x.task_id), date: str(x.scheduled_date), finishedAt: x.finished_at || null, finishedBy: str(x.finished_by), passed: Number(x.passed) || 0, issues: Number(x.issues) || 0, open: Number(x.open_items) || 0, place: str(x.place), mail: mailState({ emailedAt: x.emailed_at || null, draftId: x.draftId || null, draftSentAt: x.draftSentAt || null }) }))
     if (!noTable(error)) return []
   } catch { /* fall through */ }
   const idx = await getSetting<{ rows: IndexRow[] }>(INDEX_KEY, { rows: [] })
@@ -104,8 +107,8 @@ export async function listReports(opts: { programId?: string; since?: string; li
 export async function reportForTask(taskId: string): Promise<IndexRow | null> {
   const id = str(taskId)
   try {
-    const { data, error } = await supabaseAdmin().from('walk_reports').select('code, program_id, task_id, scheduled_date, finished_at, finished_by, passed, issues, open_items, place').eq('task_id', id).limit(1)
-    if (!error) { const x: any = (data || [])[0]; return x ? { code: str(x.code), programId: str(x.program_id), taskId: id, date: str(x.scheduled_date), finishedAt: x.finished_at || null, finishedBy: str(x.finished_by), passed: Number(x.passed) || 0, issues: Number(x.issues) || 0, open: Number(x.open_items) || 0, place: str(x.place) } : null }
+    const { data, error } = await supabaseAdmin().from('walk_reports').select('code, program_id, task_id, scheduled_date, finished_at, finished_by, passed, issues, open_items, place, emailed_at').eq('task_id', id).limit(1)
+    if (!error) { const x: any = (data || [])[0]; return x ? { code: str(x.code), programId: str(x.program_id), taskId: id, date: str(x.scheduled_date), finishedAt: x.finished_at || null, finishedBy: str(x.finished_by), passed: Number(x.passed) || 0, issues: Number(x.issues) || 0, open: Number(x.open_items) || 0, place: str(x.place), mail: x.emailed_at ? 'sent' : 'none' } : null }
     if (!noTable(error)) return null
   } catch { /* fall through */ }
   const idx = await getSetting<{ rows: IndexRow[] }>(INDEX_KEY, { rows: [] })
@@ -208,12 +211,19 @@ export async function walkReportForTask(task: any, opts: { force?: boolean; prog
     await saveReport(report)
     const wantMail = rep.mode === 'always' || (rep.mode === 'issues' && issues > 0)
     if (wantMail) {
-      const to = (rep.owners ? await ownerEmailsFor(place).catch(() => [] as string[]) : []).concat(rep.to)
-      const sent = await emailReport(report, Array.from(new Set(to)))
-      report.emailedAt = sent.ok ? new Date().toISOString() : null; report.emailedTo = sent.ok ? sent.to : []; report.emailError = sent.ok ? null : sent.error || 'not sent'
+      const owners = rep.owners ? await ownerEmailsFor(place).catch(() => [] as string[]) : []
+      if (rep.review) {
+        // Approval first: a Gmail draft to the owners, and a note to the reviewer that it is waiting.
+        const d = await draftForReview(report, Array.from(new Set(owners)), rep.to)
+        report.draftId = d.ok ? d.draftId || null : null; report.draftTo = d.ok ? d.to : []; report.draftedAt = d.ok ? new Date().toISOString() : null
+        report.emailError = d.ok ? null : d.error || 'draft not created'
+      } else {
+        const sent = await emailReport(report, Array.from(new Set(owners.concat(rep.to))))
+        report.emailedAt = sent.ok ? new Date().toISOString() : null; report.emailedTo = sent.ok ? sent.to : []; report.emailError = sent.ok ? null : sent.error || 'not sent'
+      }
       await saveReport(report)
     }
-    recordRun({ name: 'walk-reports', ok: true, itemCount: issues, detail: { code: report.code, program: program.name, passed, issues, open, emailed: report.emailedTo.length, fixTasks: report.fixTasks.length } })
+    recordRun({ name: 'walk-reports', ok: true, itemCount: issues, detail: { code: report.code, program: program.name, passed, issues, open, emailed: report.emailedTo.length, drafted: !!report.draftId, fixTasks: report.fixTasks.length } })
     return { ok: true, code: report.code }
   } catch (e: any) {
     const error = str(e?.message || e).slice(0, 300)
@@ -317,6 +327,52 @@ export function reportEmailHtml(r: WalkReport): { subject: string; html: string 
 async function emailReport(r: WalkReport, to: string[]) {
   const { subject, html } = reportEmailHtml(r)
   return send(to, subject, html)
+}
+
+/**
+ * APPROVAL FIRST (Jon, 2026-11-02: "let's not send anything without my approval — draft it, send it
+ * to me, I will review and then push it"). The owner email is written as a Gmail DRAFT in the
+ * Lighthouse mailbox, addressed to the owners (nobody is emailed by it), and the reviewer gets a
+ * short note: what is waiting, who it is addressed to, the report link, and that sending the draft
+ * is the approval. In Gmail, sending a draft deletes the draft object, which is how the sweep later
+ * tells "sent" from "still waiting" (lib/gmail-send draftStatus). No owner address found = the draft
+ * goes to the reviewer alone, so nothing is lost and the gap is visible.
+ */
+async function draftForReview(r: WalkReport, owners: string[], extra: string[]): Promise<{ ok: boolean; draftId?: string; to: string[]; error?: string }> {
+  const cfg = await mailSettings()
+  const reviewers = Array.from(new Set(extra.map(x => str(x).trim().toLowerCase()).filter(x => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))))
+  if (!reviewers.length) reviewers.push(cfg.fromEmail.toLowerCase())
+  const to = owners.length ? owners : reviewers
+  const { subject, html } = reportEmailHtml(r)
+  const d = await draftGmail({ fromEmail: cfg.fromEmail, to, subject, html })
+  if (!d.ok) return { ok: false, to: [], error: d.error }
+  const link = APP() + '/walks/' + r.code
+  const note = `<div style="${FONT};max-width:620px;margin:0 auto;font-size:14px;line-height:1.5">
+    <h1 style="font-size:18px;margin:0 0 8px">Walk report ready for your review</h1>
+    <p style="margin:0 0 10px"><b>${esc(subject)}</b></p>
+    <p style="margin:0 0 10px">The owner email is drafted in your Gmail Drafts${owners.length ? ', addressed to ' + esc(owners.join(', ')) : ' — <b>no owner email is on file for this place</b>, so it is addressed to you'}. Open the draft, read it over, and press Send when it is right; edit it first if it is not. Nothing goes to the owners until you do.</p>
+    <p style="margin:0 0 10px">${r.issues ? r.issues + ' issue' + (r.issues === 1 ? '' : 's') + ' on this walk' + (r.fixTasks.length ? ', ' + r.fixTasks.length + ' fix task' + (r.fixTasks.length === 1 ? '' : 's') + ' raised' : '') : 'Nothing failed on this walk'}${r.carried.length ? ' · ' + r.carried.length + ' still open from earlier walks' : ''}.</p>
+    <p style="margin:0"><a href="${esc(link)}" style="color:#185fa5">The report itself</a> &nbsp;·&nbsp; <a href="https://mail.google.com/mail/u/0/#drafts" style="color:#185fa5">Your drafts</a></p>
+  </div>`
+  const n = await sendGmail({ fromEmail: cfg.fromEmail, to: reviewers, subject: 'Review: ' + subject, html: note })
+  if (!n.ok) { const rr = await sendResendEmail({ to: reviewers, subject: 'Review: ' + subject, html: note }); if (!rr.ok) console.error('[walk-reports] review note not sent', n.error || rr.error) }
+  return { ok: true, draftId: d.draftId, to }
+}
+
+/** Reports whose owner draft is still waiting, checked against Gmail: a draft that is gone was sent. */
+export async function settleDrafts(limit = 40): Promise<{ checked: number; sent: string[] }> {
+  const out = { checked: 0, sent: [] as string[] }
+  const cfg = await mailSettings()
+  const rows = await listReports({ limit: 200 })
+  for (const row of rows) {
+    if (out.checked >= limit) break
+    const r = await getReport(row.code)
+    if (!r || !r.draftId || r.draftSentAt) continue
+    out.checked++
+    const s = await draftStatus(cfg.fromEmail, r.draftId).catch(() => 'error' as const)
+    if (s === 'gone') { r.draftSentAt = new Date().toISOString(); r.emailedAt = r.draftSentAt; r.emailedTo = r.draftTo || []; await saveReport(r).catch(() => null); out.sent.push(r.code) }
+  }
+  return out
 }
 
 /**
@@ -448,8 +504,20 @@ export async function sendWeeklyDigests(opts: { force?: boolean; onlyProgram?: s
       const openIssues = await carriedIssues(p, probe).catch(() => [])
       const { subject, html } = weeklyDigestHtml(p, from7, to7, reports, scheduled, openIssues)
       const place = p.places[0] || null
-      const to = (rep.owners ? await ownerEmailsFor(place).catch(() => [] as string[]) : []).concat(rep.to)
-      if (opts.dryRun) { out.sent.push({ program: p.name, to, subject }); continue }
+      const owners = rep.owners ? await ownerEmailsFor(place).catch(() => [] as string[]) : []
+      const to = owners.concat(rep.to)
+      if (opts.dryRun) { out.sent.push({ program: p.name, to, subject: (rep.review ? '[draft for review] ' : '') + subject }); continue }
+      if (rep.review) {
+        // Same approval rule as the per-walk report: a draft to the owners, a note to the reviewer.
+        const cfg = await mailSettings()
+        const reviewers = rep.to.length ? rep.to : [cfg.fromEmail]
+        const d = await draftGmail({ fromEmail: cfg.fromEmail, to: owners.length ? owners : reviewers, subject, html })
+        if (!d.ok) { out.errors.push(p.name + ': ' + (d.error || 'draft not created')); continue }
+        await sendGmail({ fromEmail: cfg.fromEmail, to: reviewers, subject: 'Review: ' + subject, html: `<div style="${FONT};max-width:620px;margin:0 auto;font-size:14px;line-height:1.5"><p><b>${esc(subject)}</b> is drafted in your Gmail Drafts${owners.length ? ', addressed to ' + esc(owners.join(', ')) : ' — no owner email is on file, so it is addressed to you'}. Read it over and press Send when it is right. <a href="https://mail.google.com/mail/u/0/#drafts" style="color:#185fa5">Your drafts</a></p></div>` }).catch(() => null)
+        weeklySent[p.id] = today
+        out.sent.push({ program: p.name, to: owners.length ? owners : reviewers, subject: '[draft for review] ' + subject })
+        continue
+      }
       const s = await send(to, subject, html)
       if (!s.ok) { out.errors.push(p.name + ': ' + (s.error || 'not sent')); continue }
       weeklySent[p.id] = today

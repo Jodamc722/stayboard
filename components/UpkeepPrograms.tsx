@@ -21,7 +21,7 @@ const bz = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent
 const nice = (ymd: string) => { const d = new Date(ymd + 'T12:00:00Z'); return isNaN(d.getTime()) ? ymd : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) }
 const rid = () => Math.random().toString(36).slice(2, 9)
 const DEPTS = [['maintenance', 'Maintenance'], ['housekeeping', 'Housekeeping'], ['inspection', 'Inspection']] as const
-const NO_REPORT: ProgramReport = { mode: 'off', weekly: false, owners: true, to: [] }
+const NO_REPORT: ProgramReport = { mode: 'off', weekly: false, owners: true, to: [], review: true }
 const ordinal = (n: number) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th')
 
 type Data = {
@@ -30,7 +30,7 @@ type Data = {
   error?: string
 }
 type Tpl = { id: number; name: string; department: string }
-type ReportRow = { code: string; programId: string; taskId: string; date: string; finishedAt: string | null; finishedBy: string; passed: number; issues: number; open: number; place: string }
+type ReportRow = { code: string; programId: string; taskId: string; date: string; finishedAt: string | null; finishedBy: string; passed: number; issues: number; open: number; place: string; mail?: 'sent' | 'draft' | 'none' }
 
 function scheduleText(p: Place) {
   const parts: string[] = []
@@ -48,7 +48,7 @@ function reportText(r: ProgramReport | undefined) {
   if (x.mode === 'off' && !x.weekly) return ''
   const who = [x.owners ? 'the owners' : '', x.to.length ? x.to.length + ' address' + (x.to.length === 1 ? '' : 'es') : ''].filter(Boolean).join(' + ') || 'nobody yet'
   const when = x.mode === 'always' ? 'every walk' : x.mode === 'issues' ? 'walks with issues' : ''
-  return 'Report to ' + who + ': ' + [when, x.weekly ? 'Monday roll-up' : ''].filter(Boolean).join(' + ')
+  return 'Report to ' + who + ': ' + [when, x.weekly ? 'Monday roll-up' : ''].filter(Boolean).join(' + ') + (x.review ? ' · drafted for approval first' : ' · sent automatically')
 }
 
 // THE LAST REPORTS OF A PROGRAM (lib/walk-reports) — one line each, the owners' link beside it.
@@ -69,6 +69,7 @@ function Reports({ program }: { program: Program }) {
                 <Tag tone="emerald">{r.passed} pass</Tag>
                 <Tag tone={r.issues ? 'rose' : 'slate'}>{r.issues} issue{r.issues === 1 ? '' : 's'}</Tag>
                 {r.open ? <Tag tone="amber">{r.open} not done</Tag> : null}
+                {r.mail === 'draft' ? <Tag tone="violet" title="The owner email is in the Lighthouse mailbox's Gmail Drafts, waiting for approval">Awaiting approval</Tag> : r.mail === 'sent' ? <Tag tone="emerald">Sent to owners</Tag> : null}
                 <a href={'/walks/' + r.code} target="_blank" rel="noreferrer" className="text-muted hover:text-ink" title="Open the report (the owners' link)"><ExternalLink size={13} /></a>
               </li>
             ))}
@@ -363,12 +364,14 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
             <>
               <p className="text-[11.5px] text-muted">Every finished task becomes a report with its own link: each checklist line pass or issue, each issue with its photo and note, and what is still open from earlier walks. A failed line also raises a maintenance task for the program&rsquo;s people.</p>
               <div className="flex gap-1.5 flex-wrap items-center">
+                <button onClick={() => setReport({ review: !report.review })} className={chip(report.review)} title="On: the owner email is written as a draft in the Lighthouse mailbox and you get a note; you read it and press Send. Off: it goes to the owners on its own.">{report.review ? '✓ ' : ''}I approve each one before it goes out</button>
+                <span className="mx-1 h-5 w-px bg-line" />
                 <button onClick={() => setReport({ owners: !report.owners })} className={chip(report.owners)}>{report.owners ? '✓ ' : ''}The owners of each place</button>
                 {report.to.map(e => <span key={e} className="h-7 pl-2.5 pr-1 rounded-full bg-ink text-white text-[11.5px] font-semibold inline-flex items-center gap-1">{e}<button onClick={() => setReport({ to: report.to.filter(x => x !== e) })} className="h-5 w-5 inline-flex items-center justify-center rounded-full hover:bg-white/20"><X size={11} /></button></span>)}
                 <label className="flex items-center gap-1.5 h-7 rounded-full border border-line px-2.5"><Plus size={12} className="text-muted" />
                   <input value={emailQ} onChange={e => setEmailQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ',' || e.key === ' ') { e.preventDefault(); addEmail() } }} onBlur={addEmail} placeholder="Also email…" className="w-[160px] bg-transparent text-[12px] outline-none" /></label>
               </div>
-              <p className="text-[11px] text-muted">Owners come from the Guesty owner records on the place&rsquo;s units. Emails go out from the Lighthouse mailbox (jon@stay-hospitality.com).</p>
+              <p className="text-[11px] text-muted">Owners come from the Guesty owner records on the place&rsquo;s units. Emails go out from the Lighthouse mailbox (jon@stay-hospitality.com).{report.review ? ' With approval on, each report is drafted there addressed to the owners, and the addresses above (else the mailbox) get a note that it is waiting — sending the draft is the approval.' : ''}</p>
             </>
           ) : null}
         </div>

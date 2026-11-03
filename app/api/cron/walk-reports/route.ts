@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
-import { sweepFinishedWalks, sendWeeklyDigests } from '@/lib/walk-reports'
+import { sweepFinishedWalks, sendWeeklyDigests, settleDrafts } from '@/lib/walk-reports'
 import { ymdET } from '@/lib/site-programs'
 
 export const dynamic = 'force-dynamic'
@@ -22,8 +22,10 @@ async function run(req: NextRequest) {
   const monday = new Date(today + 'T12:00:00Z').getUTCDay() === 1
   const sweep = sp.get('sweep') === '0' || dry ? null : await sweepFinishedWalks(3)
   const weekly = monday || sp.get('weekly') === '1' || dry ? await sendWeeklyDigests({ dryRun: dry, force: sp.get('weekly') === '1' || dry, today }) : null
+  // Drafts the reviewer has since sent are marked sent (a Gmail draft disappears when it is sent).
+  const drafts = dry ? null : await settleDrafts().catch(() => null)
   const count = (sweep ? sweep.filed.length : 0) + (weekly ? weekly.sent.length : 0)
-  return NextResponse.json({ ok: (!sweep || !sweep.errors.length) && (!weekly || weekly.ok), today, sweep, weekly, count })
+  return NextResponse.json({ ok: (!sweep || !sweep.errors.length) && (!weekly || weekly.ok), today, sweep, weekly, drafts, count })
 }
 const receipted = withRouteReceipt<NextRequest>('walk-reports', run, { skipWhen: (req) => req.nextUrl.searchParams.get('dry') === '1' })
 export async function GET(req: NextRequest) { return receipted(req) }

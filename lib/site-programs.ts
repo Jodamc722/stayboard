@@ -62,8 +62,12 @@ export type Place = {
  *   weekly   a Monday roll-up of the week's walks, issues and what is still open
  *   owners   send to the owners of the place's units (guesty_owners), plus `to`
  *   to       extra addresses (the property manager, the on-site contact)
+ *   review   NOTHING GOES TO THE OWNERS ON ITS OWN (Jon, 2026-11-02: "let's not send anything
+ *            without my approval — draft it, send it to me, I will review and push it"): the
+ *            report is written as a Gmail draft addressed to the owners in the Lighthouse mailbox,
+ *            and the reviewer (the `to` addresses, else the mailbox) gets a note that it is ready.
  */
-export type ProgramReport = { mode: 'off' | 'issues' | 'always'; weekly: boolean; owners: boolean; to: string[] }
+export type ProgramReport = { mode: 'off' | 'issues' | 'always'; weekly: boolean; owners: boolean; to: string[]; review: boolean }
 export type Program = {
   id: string
   name: string
@@ -79,7 +83,7 @@ export type Program = {
   updatedAt?: string
   updatedBy?: string
 }
-export const NO_REPORT: ProgramReport = { mode: 'off', weekly: false, owners: true, to: [] }
+export const NO_REPORT: ProgramReport = { mode: 'off', weekly: false, owners: true, to: [], review: true }
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 export const ymdET = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -150,7 +154,8 @@ export function reportOf(p: Pick<Program, 'report'> | null | undefined): Program
   if (!r || typeof r !== 'object') return { ...NO_REPORT, to: [] }
   const mode = ['off', 'issues', 'always'].indexOf(r.mode) >= 0 ? r.mode : 'off'
   const to = (Array.isArray(r.to) ? r.to : []).map((x: any) => str(x).trim().toLowerCase()).filter((x: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x)).slice(0, 20)
-  return { mode, weekly: !!r.weekly, owners: r.owners !== false, to: Array.from(new Set(to)) as string[] }
+  // review defaults ON: a report never reaches an owner unless someone switched approval off on purpose.
+  return { mode, weekly: !!r.weekly, owners: r.owners !== false, to: Array.from(new Set(to)) as string[], review: r.review !== false }
 }
 
 /**
@@ -241,7 +246,7 @@ const EDEN_DESC = [
   '',
   'RECORRIDO SEMANAL — se completa una vez por semana, cada lunes. Recorrido exterior de Eden en orden de ruta. Cada línea es PASS o ISSUE; un ISSUE necesita foto y nota. Un peligro se aísla en el momento (cerrar la piscina, acordonar la baranda o escalera, bloquear el cableado expuesto). Al terminar, completa la tarea.',
 ].join('\n')
-const EDEN_REPORT: ProgramReport = { mode: 'always', weekly: false, owners: true, to: [] }
+const EDEN_REPORT: ProgramReport = { mode: 'always', weekly: false, owners: true, to: ['jon@stay-hospitality.com'], review: true }
 async function legacyPrograms(): Promise<Program[]> {
   const people: Person[] = breezewayConfigured() ? await breezewayPeopleLite().catch(() => [] as any[]) as any : []
   const who = (res: RegExp[]) => res.map(re => people.find(p => re.test(str(p.name).trim()))).filter(Boolean).map(p => ({ id: Number((p as any).id), name: str((p as any).name) }))
