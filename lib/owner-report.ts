@@ -385,7 +385,7 @@ export type NewBookings = {
   byChannel: { channel: string; count: number; revenue: number }[]
   top: { unit: string; checkIn: string; checkOut: string; nights: number; revenue: number; channel: string; booked: string }[]
 }
-const CHANNEL_NAME = (s: string) => /airbnb/.test(s) ? 'Airbnb' : /booking/.test(s) ? 'Booking.com' : /vrbo|homeaway/.test(s) ? 'Vrbo' : /expedia|hotels\.com/.test(s) ? 'Expedia' : /direct|website|manual|owner/.test(s) ? 'Direct' : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Other'
+const CHANNEL_NAME = (s: string) => /be-?api|booking ?engine|website|direct|manual|owner/.test(s) ? 'Direct' : /airbnb/.test(s) ? 'Airbnb' : /booking/.test(s) ? 'Booking.com' : /vrbo|homeaway/.test(s) ? 'Vrbo' : /expedia|hotels\.com/.test(s) ? 'Expedia' : /direct|website|manual|owner/.test(s) ? 'Direct' : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Other'
 export async function bookingsSince(listingIds: string[], since: string, asOf: string, names: Record<string, string>): Promise<NewBookings | null> {
   if (!listingIds.length) return null
   const db = supabaseAdmin()
