@@ -225,7 +225,7 @@ CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a 
 - Give each scene "anim" (how the headline arrives): rise, pop, words, type, wipe, blur or drop; and "cam" (the camera on the photo): in, out, left, right, up, drift or still. Vary them.
 - Optionally a short "badge" sticker (2 or 3 words that are true, e.g. "Oceanfront", "Book direct") on one or two scenes — never a price or a claim we cannot prove.
 - Use the newer designs when they fit: "mask" (giant word filled with the photo), "panel" (photo + colour panel), "ticker" (marquee band), "callouts" (labels on one photo), "polaroid" (instant photo), "event" (date block for an event/season — only with a real date from the brief).
-- Headlines are copywriting, not labels: sensory, specific, short. Use the "sub" for a place line (e.g. "Singer Island · Florida") on cinematic scenes.
+- Headlines are copywriting, not labels: sensory, specific, short. Write them in sentence case (not Title Case). Gold (**…**) the one word that carries the idea — never a filler word like "The", "Your" or "Book". Use the "sub" for a place line (e.g. "Singer Island · Florida") on cinematic scenes.
 - Prefer photos with a single strong subject: the view, the pool at golden hour, a styled bedroom. Ask for them with specific photoQuery words.
 
 SCENE KINDS YOU CAN USE:

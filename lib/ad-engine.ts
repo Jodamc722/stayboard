@@ -381,25 +381,28 @@ function segs(text: string): Seg[] {
   return out
 }
 /** Lay out rich text (**gold** words, \n breaks) into lines that fit maxW. */
-function layout(ctx: CanvasRenderingContext2D, text: string, maxW: number): { words: { t: string; gold: boolean; w: number }[]; w: number }[] {
-  const lines: { words: { t: string; gold: boolean; w: number }[]; w: number }[] = []
+function layout(ctx: CanvasRenderingContext2D, text: string, maxW: number): { words: { t: string; gold: boolean; w: number; g?: boolean }[]; w: number }[] {
+  const lines: { words: { t: string; gold: boolean; w: number; g?: boolean }[]; w: number }[] = []
   const hard = String(text || '').split('\n')
   for (let h = 0; h < hard.length; h++) {
-    let cur: { t: string; gold: boolean; w: number }[] = []
+    let cur: { t: string; gold: boolean; w: number; g?: boolean }[] = []
     let cw = 0
     const sp = ctx.measureText(' ').width
     const ss = segs(hard[h])
     for (let s = 0; s < ss.length; s++) {
       const ws = ss[s].t.split(/(\s+)/)
+      let atStart = true
       for (let k = 0; k < ws.length; k++) {
         const w = ws[k]
         if (!w) continue
-        if (/^\s+$/.test(w)) { if (cur.length) cur[cur.length - 1].t += ' '; continue }
+        if (/^\s+$/.test(w)) { if (cur.length) cur[cur.length - 1].t += ' '; atStart = false; continue }
         const mw = ctx.measureText(w).width
-        const add = cur.length ? mw + (/\s$/.test(cur[cur.length - 1].t) ? 0 : 0) : mw
-        if (cur.length && cw + add > maxW) { lines.push({ words: cur, w: cw }); cur = []; cw = 0 }
-        cur.push({ t: w, gold: ss[s].gold, w: mw })
-        cw += (cur.length > 1 ? sp : 0) + mw
+        // "**views**." — punctuation (or any text) that follows a gold run with no space is glued to it
+        const glue = atStart && s > 0 && cur.length > 0 && !/\s$/.test(cur[cur.length - 1].t)
+        atStart = false
+        if (!glue && cur.length && cw + sp + mw > maxW) { lines.push({ words: cur, w: cw }); cur = []; cw = 0 }
+        cur.push({ t: w, gold: ss[s].gold, w: mw, g: glue })
+        cw += (cur.length > 1 && !glue ? sp : 0) + mw
       }
     }
     lines.push({ words: cur, w: cw })
@@ -458,13 +461,13 @@ function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
     if (opts.shadow !== false) { ctx.shadowColor = C.light ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'; ctx.shadowBlur = size * 0.35 }
     for (let k = 0; k < L.words.length; k++) {
       let wa = 1
-      if (mode === 'words') { wa = appear(opts.local, d0 + (wordIx + k) * 0.12, 0.35); if (wa <= 0) { cx += L.words[k].w + sp; continue } }
+      if (mode === 'words') { wa = appear(opts.local, d0 + (wordIx + k) * 0.12, 0.35); if (wa <= 0) { cx += L.words[k].w + (L.words[k + 1]?.g ? 0 : sp); continue } }
       ctx.save()
       if (mode === 'words') { ctx.globalAlpha *= wa; ctx.translate(0, (1 - wa) * S * 0.25) }
       ctx.fillStyle = L.words[k].gold ? C.gold : (opts.color || C.ink)
       ctx.fillText(L.words[k].t.trim(), cx, base)
       ctx.restore()
-      cx += L.words[k].w + sp
+      cx += L.words[k].w + (L.words[k + 1]?.g ? 0 : sp)
     }
     ctx.restore()
     if ((mode === 'wipe' || mode === 'type') && a > 0 && a < 1) {
@@ -860,7 +863,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
           ctx.fillStyle = w.gold ? C.gold : C.ink; ctx.fillText(w.t.trim(), x, yb)
           ctx.restore()
         }
-        x += w.w + sp; wi++
+        x += w.w + (L.words[L.words.indexOf(w) + 1]?.g ? 0 : sp); wi++
       }
     }
     if (sc.sub) plain(ctx, sc.sub, pad, (H + total) / 2 + 40 * u, W - pad * 2, 36 * u, A.body, C.mut, 500, 'center', appear(local, 0.3 + wi * step))
