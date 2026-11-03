@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
         if (!cache[q]) { try { cache[q] = pickPhotos((await searchPhotos(q, 60)).hits as any, 12) } catch { cache[q] = [] } }
         photos = cache[q].slice(0, want)
       }
-      return { id: 's' + (i + 1), kind: s?.kind, tr: s?.tr, vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q }
+      return { id: 's' + (i + 1), kind: s?.kind, tr: s?.tr, anim: s?.anim, cam: s?.cam, badge: s?.badge, vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q }
     }))
     const norm = normalize({ id: 'x', scenes })
     // a contact card in a guest ad is the wrong end card — the writer is told, this is the backstop

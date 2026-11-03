@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS, TEXT_ANIMS, CAMS, type AdTextAnim, type AdCam } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -89,6 +89,9 @@ export function normalize(p: any): AdProject {
     id: String(s?.id || 's' + (i + 1)).slice(0, 20),
     kind: (KIND_KEYS.indexOf(s?.kind) >= 0 ? s.kind : 'title') as AdKind,
     tr: (TRANSITIONS.indexOf(s?.tr) >= 0 ? s.tr : 'auto') as AdTransition,
+    anim: (TEXT_ANIMS.some(x => x.key === s?.anim) ? s.anim : 'auto') as AdTextAnim,
+    cam: (CAMS.some(x => x.key === s?.cam) ? s.cam : 'auto') as AdCam,
+    badge: String(s?.badge || '').slice(0, 22),
     vo: String(s?.vo || '').slice(0, 600),
     head: String(s?.head || '').slice(0, 300),
     sub: String(s?.sub || '').slice(0, 300),
@@ -109,6 +112,7 @@ export function normalize(p: any): AdProject {
       const st: any = { ...STYLE_DEFAULT }
       const src = p?.style || {}
       ;(Object.keys(STYLE_OPTIONS) as (keyof typeof STYLE_OPTIONS)[]).forEach(k => { if ((STYLE_OPTIONS[k] as any[]).some(o => o.key === src[k])) st[k] = src[k] })
+      ;(['accent', 'base', 'text'] as const).forEach(k => { st[k] = /^#[0-9a-f]{6}$/i.test(String(src[k] || '')) ? String(src[k]) : '' })
       return st
     })(),
     goal: String(p?.goal || '').slice(0, 20),
@@ -217,7 +221,10 @@ CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a 
 - Make it feel like a premium travel/brand film, not slides. Vary the scene kinds; never use the same kind twice in a row.
 - Open with motion: a "cinema" or "kinetic" scene. Use "kinetic" for punchy 2 to 6 word hooks, "cinema" for mood and place, "reveal" for a hero shot, "wall" (montage, quick full-screen cuts) for energy, "cards" (three beats) for three selling points.
 - One image on screen at a time. NEVER a grid, collage or side-by-side photos.
-- Give each scene "tr" (how it arrives): "zoom", "push", "wipe", "flash", "fade" or "cut". Mix them; "flash" or "cut" suit a fast beat, "fade" a calm one.
+- Give each scene "tr" (how it arrives): zoom, push, slide, whip, wipe, iris, diamond, doors, blinds, spin, blur, glitch, dip, flash, fade or cut. Mix them; never the same twice in a row. whip/glitch/flash/cut for fast beats, blur/fade/dip for calm ones, iris/diamond/doors for a reveal.
+- Give each scene "anim" (how the headline arrives): rise, pop, words, type, wipe, blur or drop; and "cam" (the camera on the photo): in, out, left, right, up, drift or still. Vary them.
+- Optionally a short "badge" sticker (2 or 3 words that are true, e.g. "Oceanfront", "Book direct") on one or two scenes — never a price or a claim we cannot prove.
+- Use the newer designs when they fit: "mask" (giant word filled with the photo), "panel" (photo + colour panel), "ticker" (marquee band), "callouts" (labels on one photo), "polaroid" (instant photo), "event" (date block for an event/season — only with a real date from the brief).
 - Headlines are copywriting, not labels: sensory, specific, short. Use the "sub" for a place line (e.g. "Singer Island · Florida") on cinematic scenes.
 - Prefer photos with a single strong subject: the view, the pool at golden hour, a styled bedroom. Ask for them with specific photoQuery words.
 
@@ -232,7 +239,7 @@ AUDIENCE: ${input.audience || 'property owners'}
 FORMAT: ${input.format}${input.current && input.current.scenes.length ? `\n\nTHE CURRENT DRAFT (improve it; keep what works):\n${JSON.stringify(input.current.scenes.map(s => ({ kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items })))}` : ''}
 
 Reply with ONLY a JSON object, no prose:
-{"name": "a short name for this ad", "scenes": [{"kind": "...", "tr": "...", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
+{"name": "a short name for this ad", "scenes": [{"kind": "...", "tr": "...", "anim": "...", "cam": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
 }
 
 
@@ -387,7 +394,7 @@ THE REQUEST: ${ask}
 
 If the request asks for different photos, give "photoQuery" (two or three words to search our photo library, e.g. "17west pool", "ocean view", "rooftop"); otherwise leave "photoQuery" empty and the photos stay.
 One image on screen at a time — never a grid or collage. Scene kinds can be changed if the request wants a different feel.
-Reply with ONLY JSON: {"kind": "...", "tr": "auto|zoom|push|wipe|flash|fade|cut", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
+Reply with ONLY JSON: {"kind": "...", "tr": "auto|zoom|push|slide|whip|wipe|iris|diamond|doors|blinds|spin|blur|glitch|dip|flash|fade|cut", "anim": "auto|rise|pop|words|type|wipe|blur|drop", "cam": "auto|in|out|left|right|up|drift|still", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
 }
 
 

@@ -15,7 +15,7 @@
 //  - The STAY mark is gold in video, transparent, no chip. The end card is Nick's card.
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
-export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact' | 'cta'
+export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact' | 'cta'
 /** Jon, 2026-11-02: "need more style … a wide range of edits, range of styles and looks". */
 export type AdStyle = {
   font: 'auto' | 'sans' | 'serif' | 'condensed' | 'elegant'
@@ -25,6 +25,10 @@ export type AdStyle = {
   finish: 'auto' | 'film' | 'soft' | 'glow' | 'clean'
   frame: 'none' | 'border' | 'letterbox'
   logo: 'auto' | 'gold' | 'black' | 'white' | 'off'
+  /** Custom colours on top of the look ('' = the look's own). */
+  accent?: string
+  base?: string
+  text?: string
 }
 export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto', pace: 'normal', finish: 'auto', frame: 'none', logo: 'auto' }
 export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: string }[] } = {
@@ -38,8 +42,16 @@ export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: st
 }
 
 /** How a scene arrives from the one before it. 'auto' varies them across the ad. */
-export type AdTransition = 'auto' | 'fade' | 'zoom' | 'push' | 'wipe' | 'flash' | 'cut'
-export const TRANSITIONS: AdTransition[] = ['auto', 'fade', 'zoom', 'push', 'wipe', 'flash', 'cut']
+export type AdTransition = 'auto' | 'fade' | 'zoom' | 'push' | 'wipe' | 'flash' | 'cut' | 'slide' | 'iris' | 'blinds' | 'spin' | 'blur' | 'doors' | 'glitch' | 'whip' | 'dip' | 'diamond'
+export const TRANSITIONS: AdTransition[] = ['auto', 'fade', 'zoom', 'push', 'slide', 'whip', 'wipe', 'iris', 'diamond', 'doors', 'blinds', 'spin', 'blur', 'glitch', 'dip', 'flash', 'cut']
+/** How a scene's headline arrives (Jon, 2026-11-03: "more everything"). */
+export type AdTextAnim = 'auto' | 'rise' | 'pop' | 'type' | 'wipe' | 'blur' | 'words' | 'drop'
+export const TEXT_ANIMS: { key: AdTextAnim; label: string }[] = [{ key: 'auto', label: 'Auto' }, { key: 'rise', label: 'Rise' }, { key: 'pop', label: 'Pop' }, { key: 'words', label: 'Word by word' }, { key: 'type', label: 'Typewriter' }, { key: 'wipe', label: 'Wipe' }, { key: 'blur', label: 'Focus' }, { key: 'drop', label: 'Drop' }]
+/** The camera move on a scene's photo. */
+export type AdCam = 'auto' | 'in' | 'out' | 'left' | 'right' | 'up' | 'still' | 'drift'
+export const CAMS: { key: AdCam; label: string }[] = [{ key: 'auto', label: 'Auto' }, { key: 'in', label: 'Push in' }, { key: 'out', label: 'Pull out' }, { key: 'left', label: 'Pan left' }, { key: 'right', label: 'Pan right' }, { key: 'up', label: 'Tilt up' }, { key: 'drift', label: 'Drift' }, { key: 'still', label: 'Still' }]
+/** Colour presets for the custom-colour controls (beyond the looks). */
+export const SWATCHES = ['#D2B077', '#0D2131', '#FFFFFF', '#111111', '#F4EEE4', '#E2412B', '#FF5FA2', '#FF8A5B', '#F2B544', '#5FE0D2', '#2F7DF6', '#4CC488', '#7B5CF0', '#1D3A31', '#B5562E', '#E9D8B4']
 export type AdAudience = 'owners' | 'partners' | 'guests'
 export type AdFormat = '16:9' | '9:16' | '1:1' | '4:5'
 export type AdScene = {
@@ -47,6 +59,10 @@ export type AdScene = {
   kind: AdKind
   /** How this scene comes in (default auto). */
   tr?: AdTransition
+  /** Headline animation, camera move and an optional badge/sticker. */
+  anim?: AdTextAnim
+  cam?: AdCam
+  badge?: string
   /** What the voice says over this scene. Empty = a music-only beat. */
   vo: string
   /** On-screen headline. Wrap a word in **double stars** to make it gold. A newline forces a break. */
@@ -125,6 +141,12 @@ export const MUSIC: { key: string; label: string; file: string; credit: string; 
 ]
 export const VOICE_DEFAULTS = { stability: 0.5, style: 0.2, speed: 1 }
 export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
+  { kind: 'mask', label: 'Text mask', hint: 'Giant headline (1 to 3 short words) with the photo showing through the letters. Bold statement.' },
+  { kind: 'panel', label: 'Split panel', hint: 'One photo on one side, a solid colour panel with the headline on the other. Clean and editorial.' },
+  { kind: 'ticker', label: 'Ticker', hint: 'Full-screen photo with the headline scrolling across a colour band like a marquee. Energy.' },
+  { kind: 'callouts', label: 'Callouts', hint: 'One photo with labels pointing at what is in it. Rows: up to 4 short labels (e.g. Rooftop pool).' },
+  { kind: 'polaroid', label: 'Polaroid', hint: 'One photo in a white instant-photo frame that drops in, caption written on it. Personal, warm.' },
+  { kind: 'event', label: 'Event / date', hint: 'A big date block for an event or season. Row 1: the date (e.g. DEC 5–7). Headline: the event.' },
   { kind: 'cinema', label: 'Cinematic', hint: 'Letterboxed full-screen photo, slow dolly, elegant headline and a small place line. Best opener.' },
   { kind: 'kinetic', label: 'Kinetic type', hint: 'The headline punches in word by word, huge, over a blurred photo. 2 to 6 words. Great hook.' },
   { kind: 'reveal', label: 'Reveal', hint: 'The photo opens out of a circle with a ring of light; headline lands in the lower third.' },
@@ -280,6 +302,26 @@ let CAPS = false
 let FONTW = 0           // a single-weight display face (condensed) draws at its own weight
 let DISPLAY = ''
 let FS = 1             // the elegant serif runs small; scale it up
+let ANIM: AdTextAnim = 'rise'
+let CAM: AdCam = 'auto'
+const hexRgb = (h: string): [number, number, number] => { const x = h.replace('#', ''); const n = parseInt(x.length === 3 ? x.split('').map(c => c + c).join('') : x, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255] }
+const lumOf = (h: string) => { const [r, g, b] = hexRgb(h); return 0.299 * r + 0.587 * g + 0.114 * b }
+const shade = (h: string, d: number) => { const [r, g, b] = hexRgb(h).map(v => Math.max(0, Math.min(255, Math.round(v + d)))); return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('') }
+const isHex = (h?: string) => !!h && /^#[0-9a-f]{6}$/i.test(h)
+/** Camera: zoom and pan at a point in the scene. Auto = the house push-in with a slight pan. */
+function camAt(local: number, dur: number): { z: number; x: number; y: number } {
+  const k = clamp(local / Math.max(dur, 1)), m = 1 / PD
+  switch (CAM) {
+    case 'in': return { z: 1.0 + 0.2 * m * k, x: 0, y: 0 }
+    case 'out': return { z: 1.22 - 0.2 * m * k, x: 0, y: 0 }
+    case 'left': return { z: 1.14, x: (0.6 - 1.2 * k) * m, y: 0 }
+    case 'right': return { z: 1.14, x: (-0.6 + 1.2 * k) * m, y: 0 }
+    case 'up': return { z: 1.16, x: 0, y: (0.6 - 1.2 * k) * m }
+    case 'still': return { z: 1.02, x: 0, y: 0 }
+    case 'drift': return { z: 1.08 + 0.03 * Math.sin(local * 0.8), x: 0.25 * Math.sin(local * 0.5), y: 0.2 * Math.cos(local * 0.4) }
+    default: return { z: 1.04 + 0.09 * m * k, x: 0.25 * m * k, y: 0 }
+  }
+}
 const GRADES: Record<string, string> = { natural: '', warm: 'sepia(0.16) saturate(1.12) brightness(1.03)', cool: 'saturate(0.92) contrast(1.05) hue-rotate(-7deg) brightness(1.02)', vivid: 'saturate(1.35) contrast(1.08)', faded: 'contrast(0.86) saturate(0.82) brightness(1.07)', mono: 'grayscale(1) contrast(1.12)' }
 /** Resolve the look + the ad's style into what the renderer uses. */
 export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
@@ -294,6 +336,7 @@ export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
     finish: st.finish === 'auto' ? (d.finish || 'film') : st.finish,
     frame: st.frame,
     logo: st.logo === 'auto' ? (d.logo || (L.light ? 'black' : 'gold')) : st.logo,
+    accent: st.accent || '', base: st.base || '', text: st.text || '',
   }
 }
 /** Overlay strength: light looks wash photos harder so dark type reads. */
@@ -321,13 +364,13 @@ function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
   ctx.lineTo(x + k, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - k)
   ctx.lineTo(x, y + k); ctx.quadraticCurveTo(x, y, x + k, y); ctx.closePath()
 }
-function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement | HTMLVideoElement, x: number, y: number, w: number, h: number, zoom = 1, pan = 0) {
+function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement | HTMLVideoElement, x: number, y: number, w: number, h: number, zoom = 1, pan = 0, panY = 0) {
   const iw = (img as any).naturalWidth || (img as any).videoWidth || img.width, ih = (img as any).naturalHeight || (img as any).videoHeight || img.height
   if (!iw || !ih) return
   const s = Math.max(w / iw, h / ih) * zoom
   const dw = iw * s, dh = ih * s
   if (GRADE) { ctx.save(); const f = ctx.filter && ctx.filter !== 'none' ? ctx.filter + ' ' : ''; try { ctx.filter = f + GRADE } catch { /* no filter support */ } }
-  ctx.drawImage(img, x + (w - dw) / 2 - pan * (dw - w) / 2, y + (h - dh) / 2, dw, dh)
+  ctx.drawImage(img, x + (w - dw) / 2 - pan * (dw - w) / 2, y + (h - dh) / 2 - panY * (dh - h) / 2, dw, dh)
   if (GRADE) ctx.restore()
 }
 type Seg = { t: string; gold: boolean }
@@ -371,21 +414,44 @@ function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
   const lh = S * (opts.lh || 1.08)
   const sp = ctx.measureText(' ').width
   ctx.textBaseline = 'alphabetic'
+  const mode = ANIM
+  const d0 = opts.delay || 0, stg = opts.stagger == null ? 0.22 : opts.stagger
+  let wordIx = 0
   for (let i = 0; i < lines.length; i++) {
-    const a = appear(opts.local, (opts.delay || 0) + i * (opts.stagger == null ? 0.22 : opts.stagger))
-    if (a <= 0) continue
     const L = lines[i]
-    let cx = opts.align === 'center' ? x + (maxW - L.w) / 2 : x
-    const cy = y + S + i * lh + (1 - a) * S * 0.35
+    const t0 = d0 + i * stg
+    const a = mode === 'type' ? clamp((opts.local - t0 * PD) / (Math.max(0.5, L.words.length * 0.16) * PD)) : appear(opts.local, t0, mode === 'drop' ? 0.45 : 0.6)
+    if (a <= 0 && mode !== 'words') { wordIx += L.words.length; continue }
+    const x0 = opts.align === 'center' ? x + (maxW - L.w) / 2 : x
+    let cx = x0
+    const base = y + S + i * lh
     ctx.save()
-    ctx.globalAlpha *= a
+    if (mode === 'rise' || mode === 'auto') { ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * S * 0.35) }
+    else if (mode === 'drop') { ctx.globalAlpha *= a; ctx.translate(0, -(1 - a) * S * 0.9 + Math.sin(a * Math.PI) * S * 0.06) }
+    else if (mode === 'pop') { ctx.globalAlpha *= a; const z = 1 + 0.35 * (1 - a) - 0.05 * Math.sin(a * Math.PI); ctx.translate(x0 + L.w / 2, base - S * 0.35); ctx.scale(z, z); ctx.translate(-(x0 + L.w / 2), -(base - S * 0.35)) }
+    else if (mode === 'blur') { ctx.globalAlpha *= Math.min(1, a * 1.6); try { ctx.filter = `blur(${Math.round((1 - a) * S * 0.22)}px)` } catch { /* no filter */ } }
+    else if (mode === 'type' || mode === 'wipe') {
+      ctx.beginPath(); ctx.rect(x0 - 4, base - S * 1.1, (L.w + 8) * a, S * 1.45); ctx.clip()
+    }
     if (opts.shadow !== false) { ctx.shadowColor = C.light ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'; ctx.shadowBlur = size * 0.35 }
     for (let k = 0; k < L.words.length; k++) {
+      let wa = 1
+      if (mode === 'words') { wa = appear(opts.local, d0 + (wordIx + k) * 0.12, 0.35); if (wa <= 0) { cx += L.words[k].w + sp; continue } }
+      ctx.save()
+      if (mode === 'words') { ctx.globalAlpha *= wa; ctx.translate(0, (1 - wa) * S * 0.25) }
       ctx.fillStyle = L.words[k].gold ? C.gold : (opts.color || C.ink)
-      ctx.fillText(L.words[k].t.trim(), cx, cy)
+      ctx.fillText(L.words[k].t.trim(), cx, base)
+      ctx.restore()
       cx += L.words[k].w + sp
     }
     ctx.restore()
+    if ((mode === 'wipe' || mode === 'type') && a > 0 && a < 1) {
+      // the wipe's accent bar / the typewriter's caret at the reveal edge
+      ctx.save(); ctx.fillStyle = C.gold; const ex = x0 + (L.w + 8) * a
+      if (mode === 'wipe') ctx.fillRect(ex - 3, base - S * 1.05, Math.max(4, S * 0.06), S * 1.35); else if (Math.floor(opts.local * 6) % 2 === 0) ctx.fillRect(ex, base - S * 0.8, Math.max(3, S * 0.05), S * 0.9)
+      ctx.restore()
+    }
+    wordIx += L.words.length
   }
   return lines.length * lh
 }
@@ -406,7 +472,8 @@ function split(row: string): [string, string] { const i = row.indexOf('|'); retu
 
 function background(ctx: CanvasRenderingContext2D, W: number, H: number, img: HTMLImageElement | HTMLVideoElement | null, local: number, dur: number, dark: number) {
   if (img) {
-    cover(ctx, img, 0, 0, W, H, 1.04 + (0.09 / PD) * clamp(local / Math.max(dur, 1)), (0.25 / PD) * clamp(local / Math.max(dur, 1)))
+    const cm = camAt(local, dur)
+    cover(ctx, img, 0, 0, W, H, cm.z, cm.x, cm.y)
     const g = ctx.createLinearGradient(0, 0, 0, H)
     g.addColorStop(0, `rgba(${C.tint},${TA(0.35 * dark + 0.1)})`)
     g.addColorStop(0.55, `rgba(${C.tint},${TA(0.55 * dark + 0.12)})`)
@@ -439,6 +506,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   const get = (u: string) => (!u ? null : A.media ? A.media(u, local) : A.img(u))
   const im = (k: number) => get(sc.photos[k] || '')
   const head = CAPS ? (sc.head || '').toUpperCase() : sc.head || ''
+  ANIM = sc.anim && sc.anim !== 'auto' ? sc.anim : (sc.kind === 'cinema' || sc.kind === 'panel' ? 'blur' : sc.kind === 'title' ? 'words' : 'rise')
+  CAM = sc.cam || 'auto'
 
   if (sc.kind === 'cta') {
     background(ctx, W, H, im(0), local, dur, 0.95)
@@ -555,11 +624,166 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     return
   }
 
+  // TEXT MASK: giant letters with the photo showing through them.
+  if (sc.kind === 'mask') {
+    ctx.fillStyle = C.light ? C.navy2 : C.deep; ctx.fillRect(0, 0, W, H)
+    const img = im(0)
+    if (img) { ctx.save(); ctx.globalAlpha = C.light ? 0.12 : 0.1; try { ctx.filter = `blur(${Math.round(10 * u)}px)` } catch { /* */ } const cm = camAt(local, dur); cover(ctx, img, 0, 0, W, H, cm.z * 1.1, cm.x, cm.y); ctx.restore() }
+    if (typeof document !== 'undefined') {
+      const off = document.createElement('canvas'); off.width = W; off.height = H
+      const o = off.getContext('2d')
+      if (o) {
+        const txt = (head || 'Stay').replace(/\*\*/g, '')
+        let size = (portrait ? 330 : 300) * u
+        o.font = fnt(FONTW ? 400 : 900, size, A.display)
+        let lines = layout(o, txt, W - pad * 1.2)
+        while (lines.some(L => L.w > W - pad * 1.2) && size > 80 * u) { size *= 0.9; o.font = fnt(FONTW ? 400 : 900, size, A.display); lines = layout(o, txt, W - pad * 1.2) }
+        const S = size * FS, lh2 = S * 0.92, total = lines.length * lh2
+        const a = appear(local, 0.05, 0.9), z = 1.12 - 0.12 * a
+        o.save(); o.translate(W / 2, H / 2); o.scale(z, z); o.translate(-W / 2, -H / 2)
+        o.fillStyle = '#fff'; o.textBaseline = 'alphabetic'
+        lines.forEach((L, k) => { const s2 = L.words.map(w => w.t.trim()).join(' '); const w2 = o.measureText(s2).width; o.fillText(s2, (W - w2) / 2, (H - total) / 2 + S * 0.82 + k * lh2) })
+        o.restore()
+        o.globalCompositeOperation = 'source-in'
+        if (img) { const cm = camAt(local, dur); try { o.filter = 'saturate(1.3) contrast(1.15) brightness(1.08)' } catch { /* */ } cover(o, img, 0, 0, W, H, cm.z, cm.x, cm.y) } else { o.fillStyle = C.gold; o.fillRect(0, 0, W, H) }
+        ctx.save(); ctx.globalAlpha *= a; ctx.drawImage(off, 0, 0); ctx.restore()
+        ctx.save(); ctx.globalAlpha *= a * 0.9; ctx.strokeStyle = C.gold; ctx.lineWidth = 4 * u; ctx.font = fnt(FONTW ? 400 : 900, size, A.display)
+        ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2)
+        lines.forEach((L, k) => { const s2 = L.words.map(w => w.t.trim()).join(' '); const w2 = ctx.measureText(s2).width; ctx.strokeText(s2, (W - w2) / 2, (H - total) / 2 + S * 0.82 + k * lh2) })
+        ctx.restore()
+        if (sc.sub) plain(ctx, sc.sub, pad, (H + total) / 2 + 40 * u, W - pad * 2, 38 * u, A.body, C.ink, 600, 'center', appear(local, 0.8))
+      }
+    }
+    return
+  }
+
+  // SPLIT PANEL: one photo, one solid panel with the headline (photo top on vertical).
+  if (sc.kind === 'panel') {
+    const img = im(0)
+    const a = appear(local, 0, 0.8)
+    ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H)
+    const side = (i % 2 === 0)
+    const ph = portrait ? H * 0.56 : H, pw = portrait ? W : W * 0.55
+    const px = portrait ? 0 : (side ? 0 : W - pw), py = 0
+    ctx.save(); ctx.beginPath(); ctx.rect(px, py, pw, ph); ctx.clip()
+    if (img) { const cm = camAt(local, dur); ctx.translate(portrait ? 0 : (side ? -1 : 1) * (1 - a) * 80 * u, portrait ? -(1 - a) * 60 * u : 0); cover(ctx, img, px, py, pw, ph, cm.z, cm.x, cm.y) } else { ctx.fillStyle = C.navy2; ctx.fillRect(px, py, pw, ph) }
+    ctx.restore()
+    // the panel
+    const qx = portrait ? 0 : (side ? pw : 0), qy = portrait ? ph : 0, qw = portrait ? W : W - pw, qh = portrait ? H - ph : H
+    ctx.fillStyle = C.light ? C.navy2 : C.navy2; ctx.fillRect(qx, qy, qw, qh)
+    ctx.fillStyle = C.gold; if (portrait) ctx.fillRect(0, ph - 6 * u, W * a, 12 * u); else ctx.fillRect(side ? pw - 6 * u : W - pw - 6 * u, 0, 12 * u, H * a)
+    const tp = (portrait ? 70 : 90) * u
+    const tw = qw - tp * 2
+    const size = (portrait ? 100 : 92) * u
+    ctx.font = fnt(800, size, A.display)
+    const hh = layout(ctx, head, tw).length * size * FS * 1.08
+    const ty = portrait ? qy + tp * 0.8 : (H - hh) / 2 - (sc.sub ? 40 * u : 0)
+    if (sc.items[0]) plain(ctx, sc.items[0].replace(/\|.*/, '').toUpperCase(), qx + tp, ty - 54 * u, tw, 26 * u, A.body, C.gold, 700, 'left', appear(local, 0.2))
+    rich(ctx, head, qx + tp, ty, tw, size, { font: A.display, local, delay: 0.3, shadow: false })
+    if (sc.sub) plain(ctx, sc.sub, qx + tp, ty + hh + 20 * u, tw, 34 * u, A.body, C.mut, 500, 'left', appear(local, 0.7))
+    return
+  }
+
+  // TICKER: the headline runs across a colour band like a marquee, over a full-screen photo.
+  if (sc.kind === 'ticker') {
+    background(ctx, W, H, im(0), local, dur, 0.55)
+    const bandH = (portrait ? 190 : 170) * u, by = portrait ? H * 0.42 : H * 0.42
+    const a = appear(local, 0, 0.5)
+    ctx.save(); ctx.translate(W / 2, by + bandH / 2); ctx.rotate(-0.045); ctx.translate(-W / 2, -(by + bandH / 2))
+    ctx.fillStyle = C.gold; ctx.fillRect(-W * 0.1, by + (1 - a) * bandH / 2, W * 1.2, bandH * a)
+    const txt = ((head || 'Stay here').replace(/\*\*/g, '').replace(/\n/g, ' ') + '   ✦   ').toUpperCase()
+    const size = bandH * 0.62
+    ctx.font = fnt(FONTW ? 400 : 900, size, A.display)
+    const tw = ctx.measureText(txt).width
+    const off = -((local * 260 * u / PD) % tw)
+    ctx.beginPath(); ctx.rect(-W * 0.1, by, W * 1.2, bandH); ctx.clip()
+    ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.globalAlpha *= a
+    for (let x = off - tw; x < W * 1.2; x += tw) ctx.fillText(txt, x, by + bandH / 2 + size * 0.04)
+    ctx.restore()
+    if (sc.sub) plain(ctx, sc.sub, pad, by + bandH + 70 * u, W - pad * 2, 40 * u, A.body, C.ink, 600, 'center', appear(local, 0.5))
+    return
+  }
+
+  // CALLOUTS: one photo, labels pointing at what is in it.
+  if (sc.kind === 'callouts') {
+    background(ctx, W, H, im(0), local, dur, 0.35)
+    const it = sc.items.slice(0, 4)
+    const spots = portrait ? [[0.3, 0.3], [0.68, 0.45], [0.35, 0.62], [0.7, 0.75]] : [[0.25, 0.35], [0.7, 0.3], [0.4, 0.65], [0.78, 0.68]]
+    it.forEach((row, k) => {
+      const [t1] = split(row)
+      const a = appear(local, 0.4 + k * 0.45, 0.5)
+      if (a <= 0) return
+      const sx = W * spots[k][0], sy = H * spots[k][1]
+      const lx = sx + (spots[k][0] > 0.5 ? -1 : 1) * 120 * u, ly = sy - 110 * u
+      ctx.save(); ctx.globalAlpha *= a
+      const pr = 1 + 0.35 * Math.abs(Math.sin(local * 2.4 + k))
+      ctx.beginPath(); ctx.arc(sx, sy, 22 * u * pr, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
+      ctx.beginPath(); ctx.arc(sx, sy, 11 * u, 0, Math.PI * 2); ctx.fillStyle = C.gold; ctx.fill()
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + (lx - sx) * a, sy + (ly - sy) * a); ctx.stroke()
+      ctx.font = fnt(700, 40 * u, A.body); const tw = ctx.measureText(t1).width
+      const bx = spots[k][0] > 0.5 ? lx - tw - 44 * u : lx, bh = 70 * u
+      rr(ctx, bx, ly - bh / 2, tw + 44 * u, bh, bh / 2); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.92)' : 'rgba(10,14,20,0.78)'; ctx.fill()
+      ctx.lineWidth = 2 * u; ctx.strokeStyle = C.gold; ctx.stroke()
+      ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(t1, bx + 22 * u, ly + 2 * u)
+      ctx.restore()
+    })
+    if (head) { const size = (portrait ? 88 : 80) * u; rich(ctx, head, pad, H - bottomSafe - size * FS * 1.2 * layout(ctx, head, W - pad * 2).length, W - pad * 2, size, { font: A.display, local, delay: 0.1 }) }
+    return
+  }
+
+  // POLAROID: one photo in a white instant-photo frame that drops in, caption written on it.
+  if (sc.kind === 'polaroid') {
+    const img = im(0)
+    if (img) { ctx.save(); try { ctx.filter = `blur(${Math.round(22 * u)}px)` } catch { /* */ } cover(ctx, img, -40 * u, -40 * u, W + 80 * u, H + 80 * u, 1.15); ctx.restore() } else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
+    ctx.fillStyle = `rgba(${C.tint},${TA(0.45)})`; ctx.fillRect(0, 0, W, H)
+    const a = appear(local, 0.05, 0.9)
+    const fw = portrait ? W * 0.78 : H * 0.62, fh = fw * 1.18
+    const cx = W / 2 + (portrait ? 0 : -W * 0.14), cy = portrait ? H * 0.44 : H / 2
+    ctx.save(); ctx.globalAlpha *= Math.min(1, a * 1.5)
+    ctx.translate(cx, cy - (1 - a) * H * 0.5); ctx.rotate((-6 + 10 * (1 - a)) * Math.PI / 180 + 0.01 * Math.sin(local))
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 40 * u; ctx.shadowOffsetY = 18 * u
+    ctx.fillStyle = '#FBFAF6'; ctx.fillRect(-fw / 2, -fh / 2, fw, fh)
+    ctx.shadowColor = 'transparent'
+    const m = fw * 0.06, iw = fw - m * 2, ih = iw
+    if (img) { ctx.save(); ctx.beginPath(); ctx.rect(-fw / 2 + m, -fh / 2 + m, iw, ih); ctx.clip(); cover(ctx, img, -fw / 2 + m, -fh / 2 + m, iw, ih, 1.05 + 0.05 * clamp(local / dur)); ctx.restore() }
+    const cap = (sc.sub || head).replace(/\*\*/g, '').replace(/\n/g, ' ')
+    ctx.fillStyle = '#2A2A2A'; ctx.font = fnt(600, fw * 0.075, A.elegant || A.serif || A.display); ctx.textBaseline = 'middle'
+    const cw = ctx.measureText(cap).width
+    ctx.save(); ctx.beginPath(); ctx.rect(-fw / 2, fh / 2 - (fh - ih - m), fw * appear(local, 0.8, 1.0), fh); ctx.clip()
+    ctx.fillText(cap, -cw / 2, -fh / 2 + m + ih + (fh - ih - m) / 2)
+    ctx.restore()
+    ctx.restore()
+    if (!portrait && head) rich(ctx, head, W * 0.62, H * 0.36, W * 0.32, 84 * u, { font: A.display, local, delay: 0.6 })
+    else if (portrait && sc.sub && head) rich(ctx, head, pad, H * 0.8, W - pad * 2, 76 * u, { font: A.display, local, delay: 0.6, align: 'center' })
+    return
+  }
+
+  // EVENT: a big date block for an event or a season.
+  if (sc.kind === 'event') {
+    background(ctx, W, H, im(0), local, dur, 1.0)
+    const date = (sc.items[0] || '').replace(/\|.*/, '').toUpperCase()
+    const a = appear(local, 0.1, 0.6)
+    const bw = (portrait ? W * 0.7 : W * 0.34), bh = bw * 0.62
+    const bx = portrait ? (W - bw) / 2 : pad, by = portrait ? H * 0.22 : (H - bh) / 2 - 40 * u
+    ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 40 * u)
+    rr(ctx, bx, by, bw, bh, 26 * u); ctx.fillStyle = C.gold; ctx.fill()
+    let ds = bh * 0.42; ctx.font = fnt(FONTW ? 400 : 900, ds, A.display)
+    while (ctx.measureText(date).width > bw * 0.86 && ds > 20) { ds *= 0.92; ctx.font = fnt(FONTW ? 400 : 900, ds, A.display) }
+    ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'
+    const dw = ctx.measureText(date).width; ctx.fillText(date, bx + (bw - dw) / 2, by + bh / 2 + ds * 0.04)
+    ctx.restore()
+    const tx = portrait ? pad : bx + bw + 70 * u, tw = portrait ? W - pad * 2 : W - tx - pad
+    const ty = portrait ? by + bh + 70 * u : H * 0.34
+    const hh = rich(ctx, head, tx, ty, tw, (portrait ? 104 : 96) * u, { font: A.display, local, delay: 0.5, align: portrait ? 'center' : 'left' })
+    if (sc.sub) plain(ctx, sc.sub, tx, ty + hh + 20 * u, tw, 36 * u, A.body, C.ink, 500, portrait ? 'center' : 'left', appear(local, 0.9))
+    return
+  }
+
   // CINEMATIC: letterbox, slow dolly, an elegant headline, a tracked place line.
   if (sc.kind === 'cinema') {
     const img = im(0)
     const pr = clamp(local / Math.max(dur, 1))
-    if (img) cover(ctx, img, 0, 0, W, H, 1.02 + 0.14 * pr, -0.35 + 0.7 * pr); else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
+    if (img) { if (CAM === 'auto') cover(ctx, img, 0, 0, W, H, 1.02 + 0.14 * pr, -0.35 + 0.7 * pr); else { const cm = camAt(local, dur); cover(ctx, img, 0, 0, W, H, cm.z, cm.x, cm.y) } } else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
     const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, `rgba(${C.tint},${TA(0.2)})`); g.addColorStop(0.5, `rgba(${C.tint},${TA(0.42)})`); g.addColorStop(1, `rgba(${C.tint},${TA(0.72)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
     const bar = (portrait ? H * 0.09 : H * 0.115) * ease(local / 0.8)
@@ -819,7 +1043,7 @@ export function transitionOf(p: AdProject, i: number): AdTransition {
   const k = p.scenes[i].kind
   if (k === 'kinetic') return 'flash'
   if (k === 'cta' || k === 'contact') return 'zoom'
-  return (['zoom', 'push', 'wipe', 'fade'] as AdTransition[])[i % 4]
+  return (['zoom', 'push', 'iris', 'wipe', 'slide', 'diamond', 'whip', 'fade'] as AdTransition[])[i % 8]
 }
 /** Film finish: a soft vignette and a fine moving grain, so it reads as footage, not slides. */
 let grain: HTMLCanvasElement | null = null
@@ -856,6 +1080,14 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   const R = resolveStyle(p)
   const fam = R.font === 'serif' ? A.serif : R.font === 'condensed' ? A.condensed : R.font === 'elegant' ? A.elegant : A.display
   A = { ...A, display: fam || A.display, logo: R.logo === 'off' ? null : (A.logos && A.logos[R.logo as 'gold' | 'black' | 'white']) || (R.logo === 'gold' ? A.logo : null) }
+  // CUSTOM COLOURS on top of the look (Jon, 2026-11-03: "colour options, not just theme changes").
+  if (isHex(R.accent)) C = { ...C, gold: R.accent! }
+  if (isHex(R.base)) {
+    const b = R.base!, lt = lumOf(b) > 150, [r, g, bb] = hexRgb(b)
+    C = { ...C, light: lt, navy: b, navy2: shade(b, lt ? 8 : 18), deep: shade(b, lt ? -14 : -12), tint: `${r},${g},${bb}`, glass: `rgba(${r},${g},${bb},${lt ? 0.86 : 0.62})`, line: lt ? 'rgba(0,0,0,0.13)' : 'rgba(255,255,255,0.2)', ink: lt ? '#151515' : '#F5F2EC', mut: lt ? '#555049' : '#B8BEC6' }
+    if ((p.style?.logo || 'auto') === 'auto') A = { ...A, logo: A.logos ? (lt ? A.logos.black : (A.logos.gold || A.logo)) : A.logo }
+  }
+  if (isHex(R.text)) C = { ...C, ink: R.text!, mut: R.text! }
   DISPLAY = A.display; FONTW = R.font === 'condensed' && fam ? 400 : 0; FS = R.font === 'elegant' && fam ? 1.2 : 1
   GRADE = GRADES[R.grade] || ''; PD = R.pace === 'calm' ? 1.35 : R.pace === 'fast' ? 0.72 : 1; CAPS = R.caps
   ctx.save()
@@ -864,7 +1096,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   const i = sceneAt(tl, t)
   const local = t - tl.starts[i]
   const tr = transitionOf(p, i)
-  const XF = (tr === 'push' || tr === 'wipe' ? 0.6 : tr === 'cut' ? 0 : XFADE) * PD
+  const XF = (tr === 'push' || tr === 'wipe' || tr === 'iris' || tr === 'doors' || tr === 'diamond' || tr === 'blinds' ? 0.65 : tr === 'dip' ? 0.8 : tr === 'whip' || tr === 'glitch' ? 0.4 : tr === 'cut' ? 0 : XFADE) * PD
   if (i > 0 && local < XF) {
     const a = ease(local / XF)
     drawScene(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
@@ -873,9 +1105,38 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
     else if (tr === 'zoom') { ctx.globalAlpha = Math.min(1, a * 1.4); const z = 1.22 - 0.22 * a; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
     else if (tr === 'push') ctx.translate(W * (1 - a), 0)
     else if (tr === 'wipe') { const e = a * (W + H * 0.6); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip() }
-    else if (tr === 'flash') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
+    else if (tr === 'flash' || tr === 'glitch') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
+    else if (tr === 'slide') ctx.translate(0, H * (1 - a))
+    else if (tr === 'whip') { ctx.translate(W * (1 - a), 0); try { ctx.filter = `blur(${Math.round((1 - a) * 40 * u)}px)` } catch { /* */ } }
+    else if (tr === 'iris') { ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.hypot(W, H) * 0.52 * a + 1, 0, Math.PI * 2); ctx.clip() }
+    else if (tr === 'diamond') { const r = (W + H) * 0.55 * a; ctx.beginPath(); ctx.moveTo(W / 2, H / 2 - r); ctx.lineTo(W / 2 + r, H / 2); ctx.lineTo(W / 2, H / 2 + r); ctx.lineTo(W / 2 - r, H / 2); ctx.closePath(); ctx.clip() }
+    else if (tr === 'doors') { ctx.beginPath(); ctx.rect(W / 2 - W / 2 * a, 0, W * a, H); ctx.clip() }
+    else if (tr === 'blinds') { const n = 9, bh = H / n; ctx.beginPath(); for (let k = 0; k < n; k++) ctx.rect(0, k * bh, W, bh * clamp(a * 1.4 - k * 0.04)); ctx.clip() }
+    else if (tr === 'spin') { ctx.globalAlpha = a; ctx.translate(W / 2, H / 2); ctx.rotate((1 - a) * -0.35); const z = 0.55 + 0.45 * a; ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
+    else if (tr === 'blur') { ctx.globalAlpha = a; try { ctx.filter = `blur(${Math.round((1 - a) * 30 * u)}px)` } catch { /* */ } }
+    else if (tr === 'dip') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
     drawScene(ctx, p, i, local, tl.durs[i], A)
     ctx.restore()
+    if ((tr === 'iris' || tr === 'diamond' || tr === 'doors') && a < 1) {
+      ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 6 * u; ctx.beginPath()
+      if (tr === 'iris') ctx.arc(W / 2, H / 2, Math.hypot(W, H) * 0.52 * a + 1, 0, Math.PI * 2)
+      else if (tr === 'diamond') { const r = (W + H) * 0.55 * a; ctx.moveTo(W / 2, H / 2 - r); ctx.lineTo(W / 2 + r, H / 2); ctx.lineTo(W / 2, H / 2 + r); ctx.lineTo(W / 2 - r, H / 2); ctx.closePath() }
+      else { ctx.moveTo(W / 2 - W / 2 * a, 0); ctx.lineTo(W / 2 - W / 2 * a, H); ctx.moveTo(W / 2 + W / 2 * a, 0); ctx.lineTo(W / 2 + W / 2 * a, H) }
+      ctx.stroke(); ctx.restore()
+    }
+    if (tr === 'dip') { const q = 1 - Math.abs(2 * (local / XF) - 1); ctx.save(); ctx.globalAlpha = q; ctx.fillStyle = C.gold; ctx.fillRect(0, 0, W, H); ctx.restore() }
+    if (tr === 'glitch') {
+      const q = local / XF
+      if (q > 0.1 && q < 0.9) {
+        const seed = Math.floor(t * 30)
+        for (let k = 0; k < 9; k++) {
+          const rnd = (n: number) => { const v = Math.sin((seed + 1) * 12.9898 + (k + 1) * 78.233 + n * 37.719) * 43758.5453; return v - Math.floor(v) }
+          const sy = rnd(1) * H, sh = (0.02 + rnd(2) * 0.06) * H, dx = (rnd(3) - 0.5) * W * 0.12
+          ctx.drawImage(ctx.canvas, 0, sy, W, sh, dx, sy, W, sh)
+        }
+        ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.18; ctx.fillStyle = C.gold; ctx.fillRect(0, H * ((seed % 7) / 7), W, H * 0.06); ctx.restore()
+      }
+    }
     if (tr === 'wipe' && a < 1) { const e = a * (W + H * 0.6); ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 8 * u; ctx.beginPath(); ctx.moveTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.stroke(); ctx.restore() }
     if (tr === 'flash') { ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(2 * (local / XF) - 1)})`; ctx.fillRect(0, 0, W, H) }
   } else drawScene(ctx, p, i, local, tl.durs[i], A)
@@ -885,6 +1146,21 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   if (R.frame === 'letterbox' && p.scenes[i].kind !== 'cinema') { const bar = (H > W ? H * 0.07 : H * 0.09); ctx.fillStyle = C.light ? C.navy2 : '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar) }
   finish(ctx, W, H, u, t, R.finish)
   const sc = p.scenes[i]
+  // BADGE: an optional sticker on the scene (e.g. "Oceanfront", "Book direct").
+  if (sc.badge && sc.badge.trim() && sc.kind !== 'contact') {
+    const ba = appear(local, 0.5, 0.45)
+    if (ba > 0) {
+      const txt = sc.badge.trim().toUpperCase().slice(0, 22)
+      ctx.save(); ctx.font = fnt(800, 30 * u, A.body)
+      const tw = ctx.measureText(txt).width, bw = tw + 56 * u, bh = 64 * u
+      const bx = 56 * u, by = (H > W * 1.1 ? 130 : 56) * u
+      ctx.translate(bx + bw / 2, by + bh / 2); ctx.rotate(-0.07); const z = 0.6 + 0.4 * ba + 0.08 * Math.sin(ba * Math.PI); ctx.scale(z, z); ctx.globalAlpha *= ba
+      rr(ctx, -bw / 2, -bh / 2, bw, bh, bh / 2); ctx.fillStyle = C.gold; ctx.fill()
+      ctx.setLineDash([6 * u, 6 * u]); ctx.lineWidth = 2 * u; ctx.strokeStyle = onAccent(); rr(ctx, -bw / 2 + 7 * u, -bh / 2 + 7 * u, bw - 14 * u, bh - 14 * u, (bh - 14 * u) / 2); ctx.stroke(); ctx.setLineDash([])
+      ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(txt, -tw / 2, 2 * u)
+      ctx.restore()
+    }
+  }
   if (A.logo && sc.kind !== 'contact' && sc.kind !== 'cta') {
     const lw = 150 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
     ctx.drawImage(A.logo, W - lw - 56 * u, 46 * u, lw, lh)

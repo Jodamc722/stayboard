@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -38,7 +38,7 @@ const UI = {
   bg: '#0E1116', panel: '#151A21', panel2: '#1B222B', line: '#262E39', ink: '#E8EBEF', mut: '#8C96A3', gold: '#D2B077', blue: '#4C8DF6', red: '#E5675C', green: '#4CC488',
 }
 const KIND_COLOR: Record<AdKind, string> = {
-  cta: '#E0A64C', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', contact: '#B58B3E',
+  cta: '#E0A64C', mask: '#E0C04C', panel: '#7FA6C9', ticker: '#E06C4C', callouts: '#4CC4A8', polaroid: '#C9B79A', event: '#A06CE0', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', contact: '#B58B3E',
 }
 const AUD: Record<AdAudience, { label: string; brief: string; hint: string }> = {
   owners: { label: 'Owners', brief: 'property owners', hint: 'Sell management: revenue, team, Lighthouse; ends on Nick' },
@@ -68,7 +68,7 @@ function LookPreview({ proj, look, style, assets, w = 168 }: { proj: AdProject; 
   const ref = useRef<HTMLCanvasElement>(null)
   const [FW, FH] = FORMATS[proj.format]
   const h = Math.round(w * Math.min(1.25, FH / FW))
-  const key = JSON.stringify(style || {}) + look + proj.id + proj.format + proj.scenes.length
+  const key = JSON.stringify(style || {}) + JSON.stringify(proj.style || {}) + look + proj.id + proj.format + proj.scenes.length
   useEffect(() => {
     let n = 0
     const draw = () => {
@@ -1346,6 +1346,16 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </div>
                 </>
               ) : null}
+              <Label>Headline animation</Label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {TEXT_ANIMS.map(x => <Btn key={x.key} small on={(sc.anim || 'auto') === x.key} disabled={!canEdit} onClick={() => { setScene(sel, { anim: x.key as AdTextAnim }); if (tl) setT(tl.starts[sel] + 0.05) }}>{x.label}</Btn>)}
+              </div>
+              <Label>Camera</Label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {CAMS.map(x => <Btn key={x.key} small on={(sc.cam || 'auto') === x.key} disabled={!canEdit} onClick={() => setScene(sel, { cam: x.key as AdCam })}>{x.label}</Btn>)}
+              </div>
+              <Label>Badge (sticker)</Label>
+              <input value={sc.badge || ''} disabled={!canEdit} maxLength={22} onChange={e => setScene(sel, { badge: e.target.value })} placeholder="Optional, e.g. Oceanfront · Book direct · Rooftop pool" style={{ ...field, padding: '6px 9px' }} />
 
               <Label>Voice line</Label>
               <textarea rows={3} value={sc.vo} disabled={!canEdit} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Leave empty for a music-only beat" style={field} />
@@ -1445,6 +1455,25 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 ))}
               </div>
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '4px 0 6px' }}>Style · fine-tune the look</p>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '6px 0 4px' }}>Colours · any colour, on top of the look</p>
+              {([['accent', 'Accent (highlights, buttons)'], ['base', 'Background'], ['text', 'Text']] as ['accent' | 'base' | 'text', string][]).map(([k, lab]) => {
+                const cur = (p.style || STYLE_DEFAULT)[k] || ''
+                const setC = (v: string) => change(d => ({ ...d, style: { ...STYLE_DEFAULT, ...(d.style || {}), [k]: v } }))
+                return (
+                  <div key={k} style={{ marginBottom: 7 }}>
+                    <span style={{ fontSize: 10.5, color: UI.mut, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>{lab}
+                      {cur ? <button disabled={!canEdit} onClick={() => setC('')} style={{ marginLeft: 'auto', background: 'none', border: 0, color: UI.blue, fontSize: 10.5, cursor: 'pointer' }}>Look’s own</button> : <span style={{ marginLeft: 'auto' }}>Look’s own</span>}
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+                      {SWATCHES.map(c => <button key={c} disabled={!canEdit} title={c} onClick={() => setC(c)} style={{ width: 20, height: 20, borderRadius: 10, background: c, border: '2px solid ' + (cur.toLowerCase() === c.toLowerCase() ? UI.gold : 'rgba(255,255,255,0.25)'), cursor: 'pointer', padding: 0 }} />)}
+                      <label title="Any colour" style={{ position: 'relative', width: 22, height: 22, borderRadius: 11, background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)', cursor: 'pointer', border: '2px solid ' + (cur && !SWATCHES.some(x => x.toLowerCase() === cur.toLowerCase()) ? UI.gold : 'transparent') }}>
+                        <input type="color" disabled={!canEdit} value={cur || '#D2B077'} onChange={e => setC(e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+                      </label>
+                      {cur ? <span style={{ fontSize: 10.5, color: UI.mut, fontFamily: 'ui-monospace, Menlo, monospace' }}>{cur}</span> : null}
+                    </div>
+                  </div>
+                )
+              })}
               {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo']] as [keyof AdStyle, string][]).map(([k, lab]) => (
                 <div key={k} style={{ marginBottom: 6 }}>
                   <span style={{ fontSize: 10.5, color: UI.mut, display: 'block', marginBottom: 3 }}>{lab}</span>

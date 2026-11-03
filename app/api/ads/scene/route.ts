@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
         if (got.length) photos = got
       } catch { /* keep the old photos */ }
     }
-    const next = normalize({ id: p.id, scenes: [{ ...old, kind: j?.kind || old.kind, tr: j?.tr || old.tr, vo: j?.vo ?? old.vo, head: j?.head ?? old.head, sub: j?.sub ?? old.sub, items: Array.isArray(j?.items) ? j.items : old.items, photos }] }).scenes[0]
+    const next = normalize({ id: p.id, scenes: [{ ...old, kind: j?.kind || old.kind, tr: j?.tr || old.tr, anim: j?.anim || old.anim, cam: j?.cam || old.cam, badge: j?.badge ?? old.badge, vo: j?.vo ?? old.vo, head: j?.head ?? old.head, sub: j?.sub ?? old.sub, items: Array.isArray(j?.items) ? j.items : old.items, photos }] }).scenes[0]
     return NextResponse.json({ ok: true, scene: { ...next, id: old.id, sfx: old.sfx || '' }, photoQuery: q })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }
 }
