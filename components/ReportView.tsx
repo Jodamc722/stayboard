@@ -1079,7 +1079,14 @@ function ChartTip({ title, rows, dark, children, style, className, empty }: {
   const [dx, setDx] = useState(0)
   useLayoutEffect(() => {
     if (!on) { setDx(0); return }
-    const el = card.current, slide = wrap.current?.closest('.sb-slide')
+    const el = card.current
+    // The box that actually clips: the nearest ancestor that hides its overflow (the slide's
+    // content area, not always the slide itself), else the slide.
+    let slide: Element | null = null
+    for (let p = wrap.current?.parentElement || null; p; p = p.parentElement) {
+      const cs = getComputedStyle(p)
+      if (cs.overflow !== 'visible' || cs.overflowX !== 'visible' || cs.overflowY !== 'visible' || p.classList.contains('sb-slide')) { slide = p; break }
+    }
     if (!el || !slide) return
     const r = el.getBoundingClientRect(), sr = slide.getBoundingClientRect(), pad = 10
     let shift = 0
