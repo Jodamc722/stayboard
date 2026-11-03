@@ -16,7 +16,7 @@ import { aiFetch } from '@/lib/ai-usage'
 import { buildEmergency, mergeEmergency } from '@/lib/emergency'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
