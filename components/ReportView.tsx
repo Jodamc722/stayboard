@@ -1103,11 +1103,14 @@ function ChartTip({ title, rows, dark, children, style, className, empty }: {
           boxShadow: '0 10px 30px -12px rgba(0,0,0,0.55)',
         }}>
           <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.16em', textTransform: 'uppercase', opacity: 0.55, margin: 0 }}>{title}</p>
-          {live.map(([k, v]) => (
-            <p key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: 12.5, margin: '6px 0 0', fontVariantNumeric: 'tabular-nums' }}>
-              <span style={{ opacity: 0.65 }}>{k}</span><span style={{ fontWeight: 600 }}>{v}</span>
-            </p>
-          ))}
+          {/* A long card (the months-ahead mix, 2026-11-03) goes into two columns so it fits the slide. */}
+          <div style={live.length > 7 ? { display: 'grid', gridTemplateColumns: 'auto auto', columnGap: 26 } : undefined}>
+            {live.map(([k, v]) => (
+              <p key={k} style={{ display: 'flex', justifyContent: 'space-between', gap: 18, fontSize: 12.5, margin: '6px 0 0', fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{ opacity: 0.65 }}>{k}</span><span style={{ fontWeight: 600 }}>{v}</span>
+              </p>
+            ))}
+          </div>
           {live.length < 2 && empty ? (
             <p style={{ fontSize: 12.5, margin: '6px 0 0', opacity: 0.75, maxWidth: 220, whiteSpace: 'normal' }}>{empty}</p>
           ) : null}
