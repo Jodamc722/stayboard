@@ -156,15 +156,25 @@ export function mapBreezewayTask(t: any) {
 const PER_STAY = /\b(departure|turnover|check-?out|mid-?stay)\s+clean/i
 const twinKey = (n: any) => String(n ?? '').replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').toLowerCase().replace(/\s+/g, ' ').trim()
 const ymdShift = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
+/** Tasks this server created in the last few minutes, by home + name — catches a parallel batch. */
+const RECENT = new Map<string, { id: string; date: string; at: number }>()
 
 async function openTwin(body: Record<string, any>): Promise<any | null> {
   const home = Number(body?.home_id)
   const key = twinKey(body?.name)
   if (!Number.isFinite(home) || !key || PER_STAY.test(key)) return null
+  // Made by this server a moment ago (a batch creating in parallel): that is the twin.
+  const recent = RECENT.get(home + '|' + key)
+  if (recent && Date.now() - recent.at < 10 * 60_000) return { id: recent.id, name: body?.name, scheduled_date: recent.date, assignees: [] }
   try {
-    const { data } = await supabaseAdmin().from('breezeway_tasks_sync')
-      .select('id,name,status,finished_at,scheduled_date,assignees')
-      .eq('home_id', home).gte('scheduled_date', ymdShift(-180)).lte('scheduled_date', ymdShift(120)).limit(3000)
+    const db = supabaseAdmin()
+    // MATCH BY THE UNIT TOO (2026-11-03: ten "A/C filter change — 906/6" copies got past this): some
+    // writers mirror a new task with its listing id and no home id, so a home-only lookup missed it.
+    let ref: string | null = null
+    try { const { data: p } = await db.from('breezeway_properties').select('reference_property_id').eq('home_id', home).limit(1); ref = (p || [])[0]?.reference_property_id ? String((p as any[])[0].reference_property_id) : null } catch { ref = null }
+    const q = db.from('breezeway_tasks_sync').select('id,name,status,finished_at,scheduled_date,assignees')
+      .gte('scheduled_date', ymdShift(-180)).lte('scheduled_date', ymdShift(120)).limit(3000)
+    const { data } = await (ref ? q.or('home_id.eq.' + home + ',reference_property_id.eq.' + ref) : q.eq('home_id', home))
     const open = ((data || []) as any[]).filter(t => twinKey(t.name) === key && !isTaskDone(t.status, t.finished_at) && !isTaskGone(t.status))
     if (!open.length) return null
     // The newest open copy is the job; any older copies are already duplicates (the sweeps cancel those).
@@ -227,6 +237,17 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
     r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bare) })
   }
   if (landed(r)) bustBoards()
+  // Remember it, and mirror it WITH its home id at once, so the next create of the same job — here
+  // or on another server — finds it instead of making a second one.
+  try {
+    const id = r.ok && r.data?.id != null ? String(r.data.id) : ''
+    const home = Number(body?.home_id)
+    if (id && Number.isFinite(home)) {
+      RECENT.set(home + '|' + twinKey(body?.name), { id, date: String(body?.scheduled_date || ''), at: Date.now() })
+      if (RECENT.size > 500) { const old = Array.from(RECENT.entries()).sort((a, b) => a[1].at - b[1].at).slice(0, 200); for (const [k] of old) RECENT.delete(k) }
+      await supabaseAdmin().from('breezeway_tasks_sync').upsert({ id, home_id: home, name: String(body?.name || ''), status: 'created', scheduled_date: body?.scheduled_date || null }, { onConflict: 'id', ignoreDuplicates: false })
+    }
+  } catch { /* the sync catches up */ }
   return r
 }
 

@@ -94,6 +94,8 @@ export async function GET(req: NextRequest) {
         }
       }
     } catch { /* carrying must never fail the run */ }
+    // EVERY DUPLICATE, NOT ONLY PREVENTATIVE ONES (Jon, 2026-11-03): one open copy per job per unit.
+    try { const { cancelDuplicates } = await import('@/lib/task-dedupe'); const d = await cancelDuplicates({ max: 150 }); dupesCancelled += d.cancelled } catch { /* next morning */ }
     ;(safe as any).carried = carried; (safe as any).duplicatesCancelled = dupesCancelled
 
     if (!cfg.enabled) return NextResponse.json({ ...safe, created: 0, note: 'Suggestions are switched off in settings.' })
@@ -173,7 +175,7 @@ export async function GET(req: NextRequest) {
     await recordRun({
       name: 'suggestions', ok: failed.length === 0, itemCount: created.length,
       detail: {
-        suggested: run.suggestions.length, autoCreated: created.length, failed: failed.length,
+        suggested: run.suggestions.length, autoCreated: created.length, failed: failed.length, carried: (safe as any).carried || 0, duplicatesCancelled: (safe as any).duplicatesCancelled || 0,
         consolidated, consolidatedUnits: consolidatedUnits.slice(0, 20), verdict: run.day.verdict,
         staleCleansClosed: stale?.closed?.length || 0, staleCleansSkipped: stale?.skipped || null,
         strayInspectionsClosed: strays?.closed?.length || 0, strayInspectionsSkipped: strays?.skipped || null,
