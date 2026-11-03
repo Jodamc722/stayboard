@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { askJson } from '@/lib/ad-json'
-import { HOUSE_FACTS, GUEST_FACTS, numbersIn } from '@/lib/ad-engine'
+import { HOUSE_FACTS, GUEST_FACTS, numbersIn, tidyHead } from '@/lib/ad-engine'
 import { scriptPrompt, normalize } from '@/lib/ad-studio'
 import { searchPhotos } from '@/lib/photo-library'
 import { isCollagePhoto } from '@/lib/collage'
@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
     const allowed = new Set(numbersIn([HOUSE_FACTS, GUEST_FACTS, String(b?.prompt || ''), '1M 1000000 651 200 8283 01 02 03'].join(' ')))
     const bad = (t: string) => numbersIn(t).filter(n => !allowed.has(n))
     const warnings: string[] = []
+    norm.scenes = norm.scenes.map(x => ({ ...x, head: tidyHead(x.head) }))
     norm.scenes = norm.scenes.map((x, k) => {
       const items = x.items.filter(r => !bad(r).length)
       if (items.length !== x.items.length) warnings.push(`Scene ${k + 1}: removed a row with a number that is not in our facts`)

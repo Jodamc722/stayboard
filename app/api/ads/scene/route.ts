@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { askJson } from '@/lib/ad-json'
 import { normalize, scenePrompt } from '@/lib/ad-studio'
+import { tidyHead } from '@/lib/ad-engine'
 import { searchPhotos } from '@/lib/photo-library'
 import { withoutCollages } from '@/lib/collage'
 
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
       } catch { /* keep the old photos */ }
     }
     const next = normalize({ id: p.id, scenes: [{ ...old, kind: j?.kind || old.kind, badge: j?.badge ?? old.badge, vo: j?.vo ?? old.vo, head: j?.head ?? old.head, sub: j?.sub ?? old.sub, items: Array.isArray(j?.items) ? j.items : old.items, photos }] }).scenes[0]
+    next.head = tidyHead(next.head)
     return NextResponse.json({ ok: true, scene: { ...next, id: old.id, sfx: old.sfx || '' }, photoQuery: q })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }
 }

@@ -193,6 +193,24 @@ export function captionText(vo: string): string {
   }).trim()
   return s
 }
+/** Headline tidy (the writer is not reliable about it): each line starts with a capital, and the gold
+ *  emphasis sits on a word that carries meaning — never "the", "your", "book" and the like. */
+const FILLER = new Set(['the', 'your', 'our', 'a', 'an', 'book', 'stay', 'here', 'this', 'it', 'my', 'we', 'you', 'and', 'to', 'in', 'of', 'for', 'with', 'at', 'on', 'is', 'are', 'be', 'all', 'more', 'right', 'now', 'designed', 'made', 'just', 'every', 'one', 'that', 'its', "it's"])
+export function tidyHead(h: string): string {
+  let s = String(h || '')
+  // move gold off a filler word onto the strongest word in the headline
+  const golds = Array.from(s.matchAll(/\*\*([^*]+)\*\*/g)).map(m => m[1])
+  if (golds.length && golds.every(g => g.trim().split(/\s+/).every(w => FILLER.has(w.toLowerCase().replace(/[^a-z']/g, ''))))) {
+    s = s.replace(/\*\*/g, '')
+    const words = s.split(/(\s+)/)
+    let best = -1, bl = 0
+    words.forEach((w, i) => { const c = w.toLowerCase().replace(/[^a-z']/g, ''); if (c.length > 3 && !FILLER.has(c) && c.length >= bl) { best = i; bl = c.length } })
+    if (best >= 0) { const m = words[best].match(/^([^A-Za-z]*)(.*?)([^A-Za-z]*)$/); if (m) words[best] = m[1] + '**' + m[2] + '**' + m[3] }
+    s = words.join('')
+  }
+  // capital at the start of every line (also inside a leading **)
+  return s.split('\n').map(line => line.replace(/^(\s*(?:\*\*)?\s*)([a-z])/, (_m, a: string, b: string) => a + b.toUpperCase())).join('\n')
+}
 /** Every number an ad may state comes from the facts or the brief (Jon: never invent numbers). */
 export function numbersIn(text: string): string[] {
   return (String(text || '').match(/\d[\d,]*(?:\.\d+)?\s*(?:[kKmM]\b)?/g) || []).map(n => {
