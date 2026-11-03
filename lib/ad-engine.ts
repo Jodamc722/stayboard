@@ -169,6 +169,7 @@ const SPOKEN: [RegExp, string][] = [
   [/\bAI\b/g, 'A.I.'],
   [/\bPompano\b/g, 'Pompuhno'],
   [/\bSalato\b/g, 'Sah-lah-toe'],
+  [/\bstay-hospitality\.com\b/gi, 'stay dash hospitality dot com'],
 ]
 const DIGIT = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
 /** A US phone number is read digit by digit ("six five one, two zero zero, …"), the way people say them. */
@@ -180,6 +181,26 @@ export function spokenText(vo: string): string {
   let s = String(vo || '')
   for (let i = 0; i < SPOKEN.length; i++) s = s.replace(SPOKEN[i][0], SPOKEN[i][1])
   return speakPhones(s)
+}
+/** Captions show the line as people read it: a spelled-out web address or phone number goes back to its written form. */
+export function captionText(vo: string): string {
+  let s = String(vo || '').replace(/\*\*/g, '')
+  s = s.replace(/stay\s+dash\s+hospitality\s+dot\s+com/gi, 'stay-hospitality.com')
+  const D: Record<string, string> = { zero: '0', oh: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9' }
+  s = s.replace(/\b(?:(?:zero|oh|one|two|three|four|five|six|seven|eight|nine)[\s,.-]*){10}/gi, m => {
+    const d = (m.match(/zero|oh|one|two|three|four|five|six|seven|eight|nine/gi) || []).map(w => D[w.toLowerCase()]).join('')
+    return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` + (/[.,]\s*$/.test(m) ? m.trim().slice(-1) + ' ' : ' ') : m
+  }).trim()
+  return s
+}
+/** Every number an ad may state comes from the facts or the brief (Jon: never invent numbers). */
+export function numbersIn(text: string): string[] {
+  return (String(text || '').match(/\d[\d,]*(?:\.\d+)?\s*(?:[kKmM]\b)?/g) || []).map(n => {
+    const t = n.replace(/,/g, '').trim(); const m = t.match(/^([\d.]+)\s*([kKmM])?$/)
+    if (!m) return t
+    const v = parseFloat(m[1]) * (m[2] ? (/k/i.test(m[2]) ? 1e3 : 1e6) : 1)
+    return String(v)
+  })
 }
 /** Words in the script the voice is known to stumble on — shown as a warning beside the line. */
 export function riskyWords(vo: string): string[] {
@@ -732,19 +753,31 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     background(ctx, W, H, im(0), local, dur, 0.35)
     const it = sc.items.slice(0, 4)
     const spots = portrait ? [[0.3, 0.3], [0.68, 0.45], [0.35, 0.62], [0.7, 0.75]] : [[0.25, 0.35], [0.7, 0.3], [0.4, 0.65], [0.78, 0.68]]
-    it.forEach((row, k) => {
+    // Place every label first (same every frame), nudging any that would overlap one already placed.
+    const placed: { x: number; y: number; w: number; h: number }[] = []
+    const plan = it.map((row, k) => {
       const [t1] = split(row)
+      ctx.font = fnt(700, 40 * u, A.body)
+      const tw = ctx.measureText(t1).width, bh = 70 * u, bw = tw + 44 * u
+      const sx = W * spots[k][0], sy = H * spots[k][1]
+      const lx = sx + (spots[k][0] > 0.5 ? -1 : 1) * 120 * u
+      let ly = sy - 110 * u
+      const bxOf = () => (spots[k][0] > 0.5 ? lx - bw : lx)
+      for (let tries = 0; tries < 8 && placed.some(r => bxOf() < r.x + r.w + 8 * u && bxOf() + bw + 8 * u > r.x && ly - bh / 2 < r.y + r.h + 8 * u && ly + bh / 2 + 8 * u > r.y); tries++) ly += bh + 14 * u
+      ly = Math.max(pad + bh, Math.min(H - bottomSafe - 160 * u, ly))
+      placed.push({ x: bxOf(), y: ly - bh / 2, w: bw, h: bh })
+      return { t1, tw, bh, sx, sy, lx, ly, bx: bxOf() }
+    })
+    it.forEach((row, k) => {
+      const { t1, tw, bh, sx, sy, lx, ly, bx } = plan[k]
       const a = appear(local, 0.4 + k * 0.45, 0.5)
       if (a <= 0) return
-      const sx = W * spots[k][0], sy = H * spots[k][1]
-      const lx = sx + (spots[k][0] > 0.5 ? -1 : 1) * 120 * u, ly = sy - 110 * u
       ctx.save(); ctx.globalAlpha *= a
       const pr = 1 + 0.35 * Math.abs(Math.sin(local * 2.4 + k))
       ctx.beginPath(); ctx.arc(sx, sy, 22 * u * pr, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
       ctx.beginPath(); ctx.arc(sx, sy, 11 * u, 0, Math.PI * 2); ctx.fillStyle = C.gold; ctx.fill()
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + (lx - sx) * a, sy + (ly - sy) * a); ctx.stroke()
-      ctx.font = fnt(700, 40 * u, A.body); const tw = ctx.measureText(t1).width
-      const bx = spots[k][0] > 0.5 ? lx - tw - 44 * u : lx, bh = 70 * u
+      ctx.font = fnt(700, 40 * u, A.body)
       rr(ctx, bx, ly - bh / 2, tw + 44 * u, bh, bh / 2); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.92)' : 'rgba(10,14,20,0.78)'; ctx.fill()
       ctx.lineWidth = 2 * u; ctx.strokeStyle = C.gold; ctx.stroke()
       ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(t1, bx + 22 * u, ly + 2 * u)
@@ -1195,7 +1228,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
       ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = g; ctx.fillRect(0, H - 230 * u, W, 230 * u)
       const size = (H > W * 1.1 ? 40 : 34) * u
       ctx.font = fnt(500, size, A.body)
-      const lines = layout(ctx, sc.vo.replace(/\*\*/g, ''), W * 0.76)
+      const lines = layout(ctx, captionText(sc.vo), W * 0.76)
       const shown = lines.slice(0, 3)
       for (let k = 0; k < shown.length; k++) {
         const s = shown[k].words.map(w => w.t.trim()).join(' ')

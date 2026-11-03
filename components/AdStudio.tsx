@@ -290,6 +290,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds, audience: AUD[p.audience].brief, format: p.format, current: rewrite ? p : null }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok) { setErr(r?.error || 'The writer did not answer. Try again.'); return }
+    if (r.warnings?.length) setErr('Fact check: ' + r.warnings.join(' · '))
     change(d => ({ ...d, prompt: brief, name: d.name === 'Untitled ad' && r.name ? r.name : d.name, scenes: r.scenes }))
     setSel(0); setT(1.6); setUndo(null)
     if (change_) setAdAsk('')
@@ -337,6 +338,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     setErr('')
     const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null }) }).then(x => x.json()).catch(() => null)
     if (!r?.ok || !r.scenes?.length) { setErr(r?.error || 'The writer did not answer. Try again.'); return null }
+    if (r.warnings?.length) setErr('Fact check: ' + r.warnings.join(' · '))
     return { name: r.name || '', scenes: r.scenes }
   }
   /** Put finished scenes into an ad (a new one when the guide started it), with the chosen settings. */
