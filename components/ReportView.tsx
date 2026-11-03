@@ -1072,6 +1072,22 @@ function ChartTip({ title, rows, dark, children, style, className, empty }: {
   // frame would be cut in half. Measure against the slide on the way in and flip it downward.
   const [below, setBelow] = useState(false)
   const wrap = useRef<HTMLDivElement>(null)
+  // KEEP THE CARD INSIDE THE SLIDE (2026-11-03: a wide card on the first column was cut off at the
+  // slide's left edge, a tall one at its top). Once it is drawn, measure it against the slide and
+  // nudge it sideways; if it still pokes out of the top, open it below the mark instead.
+  const card = useRef<HTMLDivElement>(null)
+  const [dx, setDx] = useState(0)
+  useLayoutEffect(() => {
+    if (!on) { setDx(0); return }
+    const el = card.current, slide = wrap.current?.closest('.sb-slide')
+    if (!el || !slide) return
+    const r = el.getBoundingClientRect(), sr = slide.getBoundingClientRect(), pad = 10
+    let shift = 0
+    if (r.left < sr.left + pad) shift = sr.left + pad - r.left
+    else if (r.right > sr.right - pad) shift = sr.right - pad - r.right
+    if (shift) setDx(d => d + shift)
+    if (!below && r.top < sr.top + pad) setBelow(true)
+  }, [on, below])
   // A row with nothing in it is dropped rather than printed as an em dash.
   //
   // IT USED TO REFUSE TO OPEN ON ONE ROW, which looked like a broken hover rather than a quiet
@@ -1095,8 +1111,8 @@ function ChartTip({ title, rows, dark, children, style, className, empty }: {
       onMouseLeave={() => setOn(false)}>
       {children}
       {on && (live.length || empty) ? (
-        <div className="sb-noprint" style={{
-          position: 'absolute', left: '50%', transform: 'translateX(-50%)',
+        <div ref={card} className="sb-noprint" style={{
+          position: 'absolute', left: '50%', transform: 'translateX(calc(-50% + ' + dx + 'px))',
           ...(below ? { top: 'calc(100% + 9px)' } : { bottom: 'calc(100% + 9px)' }),
           zIndex: 8, whiteSpace: 'nowrap', pointerEvents: 'none', borderRadius: 9, padding: '10px 13px',
           background: dark ? '#ffffff' : '#0E2436', color: dark ? '#0E2436' : '#ffffff',
@@ -9489,9 +9505,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <div key={kk}><Fig size={26} ok={kk}>{v}</Fig><div style={{ marginTop: 6 }}><Lbl ok={kk + '_l'}>{l}</Lbl></div></div>
                       ))}
                     </div>
-                    {(nb.byChannel || []).length ? (
-                      <p style={{ fontSize: 12.5, color: tint(0.5), margin: '18px 0 0', lineHeight: 1.6 }}>{O('nb_channels', (nb.byChannel as Any[]).map((x: Any) => x.channel + ' ' + x.count).join('  ·  '))}</p>
-                    ) : null}
                   </div>
                   <div>
                     <Lbl ok="nb_where">Where they stay</Lbl>
@@ -9512,7 +9525,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         {((nb.top || []) as Any[]).slice(0, 4).map((b: Any, i: number) => (
                           <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5, padding: '6px 0', borderBottom: '1px solid ' + t.rule }}>
                             <span style={{ color: t.ink }}>{b.unit} · {new Date(b.checkIn + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · {b.nights}n</span>
-                            <span style={{ color: tint(0.6), fontVariantNumeric: 'tabular-nums' }}>{k0(b.revenue)} · {b.channel}</span>
+                            <span style={{ color: tint(0.6), fontVariantNumeric: 'tabular-nums' }}>{k0(b.revenue)}</span>
                           </div>
                         ))}
                       </div>
