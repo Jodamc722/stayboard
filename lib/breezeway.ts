@@ -497,7 +497,18 @@ export async function cancelBreezewayTask(taskId: string | number): Promise<{ ok
       body: JSON.stringify({ type_task_status: { code } }),
     })
     // Landed (even with its reply lost): stop — trying the next code would PATCH a cancelled task again.
-    if (landed(r)) { bustBoards(); return r }
+    if (landed(r)) {
+      bustBoards()
+      // CHECK IT TOOK (2026-11-03): Breezeway answers 200 to this PATCH and leaves the task at
+      // "Created" — five duplicate 906/6 filter changes were "cancelled" and stayed open. A cancel is
+      // only reported once a fresh read says the task is no longer open.
+      const after = await retrieveBreezewayTask(taskId).catch(() => null)
+      const st = String(after?.data?.type_task_status?.code || after?.data?.task?.type_task_status?.code || '').toLowerCase()
+      if (after?.ok && st && !/cancel|delete|void|close|complete|finish/.test(st)) {
+        return { ok: false, status: 409, data: after?.data || null, text: 'Breezeway accepted the cancel but the task is still "' + st + '" — it was not cancelled' }
+      }
+      return r
+    }
   }
   return { ok: false, status: 422, data: null, text: 'Breezeway rejected every cancel status code' }
 }
