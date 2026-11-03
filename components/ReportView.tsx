@@ -9627,7 +9627,6 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       <ChartTip key={i} title={x.full || x.month}
                         empty="On the books, but too far out to have a rate set yet."
                         rows={[
-                        ['Occupancy on the books', Math.round(pct) + '%'],
                         ['Gross revenue', String(x.revenue || '')],
                         ['Gross ADR', String(x.adr || '')],
                         ['Gross RevPAR', String(x.revpar || '')],
@@ -9637,7 +9636,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ...(x.mix ? ([
                           ['Weekends (Fri–Sat nights)', x.mix.weekend.avail ? x.mix.weekend.pct + '% · ' + x.mix.weekend.nights + ' nights' : ''],
                           ['Weeknights (Sun–Thu)', x.mix.weekday.avail ? x.mix.weekday.pct + '% · ' + x.mix.weekday.nights + ' nights' : ''],
-                          ...((x.mix.types || []) as Any[]).filter((ty: Any) => ty.units > 0).map((ty: Any) => [ty.label + (ty.units > 1 ? ' (' + ty.units + ' units)' : ' (1 unit)'), ty.pct + '% booked'] as [string, string]),
+                          ['Unit types booked', ((x.mix.types || []) as Any[]).filter((ty: Any) => ty.units > 0).map((ty: Any) => ty.label + ' ' + ty.pct + '%').join(' · ')],
                           ...((x.mix.dates || []) as Any[]).map((d: Any) => [d.label + ' · ' + new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), d.booked + ' of ' + d.units + ' booked'] as [string, string]),
                         ] as [string, string][]) : []),
                       ]} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
