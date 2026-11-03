@@ -1,27 +1,12 @@
 import './globals.css'
 import type { Metadata, Viewport } from 'next'
-import { Inter, Fraunces } from 'next/font/google'
-
-const inter = Inter({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700', '800'],
-  variable: '--font-inter',
-  display: 'swap'
-})
-
-// THE DECK SERIF (2026-09-22). Owner-facing documents set their titles and their figures in a
-// display serif — it is the single cheapest thing that separates a report an owner keeps from a
-// dashboard screenshot. Loaded as a variable so only the deck reaches for it; the app itself
-// stays on Inter. NOT PRELOADED (2026-09-28 audit): next/font preloads by default, so every page
-// of the app downloaded three serif weights only the decks and reports use. It still loads — on
-// the pages that set a Fraunces face.
-const fraunces = Fraunces({
-  subsets: ['latin'],
-  weight: ['300', '400', '500'],
-  variable: '--font-serif',
-  display: 'swap',
-  preload: false,
-})
+// FONTS BY <link>, NOT next/font (2026-11-03). next/font downloads Google's CSS at BUILD time, and
+// when that response changes shape the whole deploy fails ("next/font … Cannot read properties of
+// null") — two production builds died on it today with nothing wrong in the code. The browser
+// fetches the same faces at run time instead; the CSS variables keep their names, so nothing that
+// reads var(--font-inter) / var(--font-serif) changes. Fraunces is still only downloaded by the
+// pages that render it.
+const FONT_VARS = ":root{--font-inter:'Inter';--font-serif:'Fraunces'}"
 
 export const metadata: Metadata = {
   title: 'LIGHTHOUSE — Stay Hospitality',
@@ -66,13 +51,15 @@ const THEME_BOOT = "try{var t=localStorage.getItem('lh:theme');if(t==='legacy')d
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={inter.variable + ' ' + fraunces.variable} suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         {/* Lighthouse theme faces. Geist is not in this Next version's font list, so both come from
             Google Fonts; Legacy never uses them and the browser only fetches a face it renders. */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Instrument+Serif&display=swap" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:wght@300;400;500&display=swap" />
+        <style dangerouslySetInnerHTML={{ __html: FONT_VARS }} />
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
       <body className="bg-app text-ink antialiased font-sans">
