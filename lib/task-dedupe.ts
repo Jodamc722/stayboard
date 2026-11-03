@@ -2,10 +2,14 @@
 // moving the incomplete tasks … you should be able to cancel these").
 //
 // The create guard (lib/breezeway createBreezewayTask) stops new copies. This is the sweep for the
-// ones that already exist: every open Breezeway task with the same name at the same unit is one job.
-// The copy with the latest date is kept (it is where the job was moved to); the others are CANCELLED
-// — cancel, not complete, because nobody did them. Departure / turnover / mid-stay cleans and
-// inspections are left alone: those are one per stay, and two open ones can both be right.
+// ones that already exist — LIGHTHOUSE'S OWN JOBS ONLY: the preventative programs ("A/C filter change
+// — 906/6") and the property programs ("Parking Check: Eden"). Breezeway's own recurring tasks (Daily
+// Pool testing on every day of the month) are not ours and are never touched.
+//
+// For one job at one unit: of the open copies dated today or earlier, the latest is kept (that is
+// where the job was moved to) and the older ones are CANCELLED — cancel, not complete, because nobody
+// did them. A copy dated ahead is the next cycle and stays; only a second copy on the SAME future day
+// is a duplicate.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { cancelBreezewayTask } from './breezeway'
@@ -17,8 +21,18 @@ const ymd = (d: number) => new Date(Date.now() + d * 86400000).toISOString().sli
 
 export type DupGroup = { unit: string; name: string; keep: { id: string; date: string }; cancel: { id: string; date: string }[] }
 
+/** Is this one of the jobs Lighthouse files on a schedule? */
+async function ourJobs(): Promise<(name: string) => boolean> {
+  const labels: string[] = [], prefixes: string[] = []
+  try { const { getCadenceCfg } = await import('./suggestions'); for (const c of (await getCadenceCfg()).cadences) if (c.label) labels.push(c.label.toLowerCase().trim() + ' — ') } catch { /* none */ }
+  try { const { loadPrograms } = await import('./site-programs'); for (const p of await loadPrograms()) if (p.name) prefixes.push(p.name.toLowerCase().trim() + ':') } catch { /* none */ }
+  return (name: string) => { const n = keyOf(name); return labels.some(l => n.startsWith(l)) || prefixes.some(p => n.startsWith(p)) }
+}
+
 export async function findDuplicates(opts: { only?: RegExp } = {}): Promise<DupGroup[]> {
   const db = supabaseAdmin()
+  const ours = await ourJobs()
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const rows: any[] = []
   for (let i = 0; i < 20; i++) {
     const { data } = await db.from('breezeway_tasks_sync').select('id,name,status,finished_at,scheduled_date,home_id,reference_property_id')
@@ -39,7 +53,7 @@ export async function findDuplicates(opts: { only?: RegExp } = {}): Promise<DupG
   for (const t of rows) {
     if (isTaskDone(t.status, t.finished_at) || isTaskGone(t.status)) continue
     const k = keyOf(t.name)
-    if (!k || SKIP.test(k) || (opts.only && !opts.only.test(String(t.name)))) continue
+    if (!k || SKIP.test(k) || !ours(String(t.name)) || (opts.only && !opts.only.test(String(t.name)))) continue
     const place = t.reference_property_id ? 'L' + t.reference_property_id : t.home_id != null ? 'H' + t.home_id : ''
     if (!place) continue
     ;(groups[place + '|' + k] = groups[place + '|' + k] || []).push(t)
@@ -48,7 +62,13 @@ export async function findDuplicates(opts: { only?: RegExp } = {}): Promise<DupG
   for (const list of Object.values(groups)) {
     if (list.length < 2) continue
     list.sort((a, b) => String(b.scheduled_date).localeCompare(String(a.scheduled_date)) || Number(b.id) - Number(a.id))
-    const [keep, ...rest] = list
+    const day = (t: any) => String(t.scheduled_date || '').slice(0, 10)
+    const due = list.filter(t => day(t) <= today)
+    const rest: any[] = due.slice(1)                    // late copies under the latest one
+    const seenDay = new Set<string>()
+    for (const t of list.filter(t => day(t) > today)) { if (seenDay.has(day(t))) rest.push(t); else seenDay.add(day(t)) }
+    if (!rest.length) continue
+    const keep = due[0] || list[0]
     out.push({
       unit: names[String(keep.reference_property_id || '')] || String(keep.reference_property_id || keep.home_id || ''),
       name: String(keep.name), keep: { id: String(keep.id), date: String(keep.scheduled_date || '').slice(0, 10) },
