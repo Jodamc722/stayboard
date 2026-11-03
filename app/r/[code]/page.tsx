@@ -9,6 +9,7 @@ import { reportGallery } from '@/lib/report-gallery'
 import { reportByListing } from '@/lib/report-listings'
 import { reportRecommendations } from '@/lib/report-recommendations'
 import { reportDelta } from '@/lib/report-delta'
+import { picsAsUrls } from '@/lib/pic-url'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +30,10 @@ export default async function PublicReportPage({ params }: { params: { code: str
   const { data } = await supabaseAdmin().from('owner_reports').select('*').eq('code', code).limit(1)
   const rep = (data || [])[0]
   if (!rep) notFound()
+  // A deck built while guesty_listings.pictures held JSON text instead of URLs (lib/pic-url) has
+  // those strings in its content; they render as URLs here, so the deck shows its photos whether
+  // or not the row has been rewritten yet.
+  if (rep.content && typeof rep.content === 'object') rep.content = picsAsUrls(rep.content)
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const unlocked = hasEditCookie()

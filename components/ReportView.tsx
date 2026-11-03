@@ -3050,7 +3050,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       {designOpen ? Object.keys(FONT_PAIRS).filter(k => FONT_PAIRS[k].href && k !== fontKey).map(k => <link key={k} rel="stylesheet" href={FONT_PAIRS[k].href} />) : null}
 
       {/* elevated look: smoother rhythm + hairline dividers between sections */}
-      <style>{`
+      {/* AS INNER HTML, NOT A TEXT CHILD (2026-11-03). React escapes a text child even inside
+          <style> ('>' becomes &gt;, quotes become &quot;/&#x27;) and the browser reads a <style>
+          as raw text, so the server HTML carried 100+ entities here: the '>' selectors were
+          invalid until the client took over, and the text no longer matched what React rendered
+          on the client, which is the hydration failure (React #425 then #422) every deck opened
+          with — the whole page thrown away and re-rendered client-side. Inner HTML is written
+          verbatim on the server and compared as such. */}
+      <style dangerouslySetInnerHTML={{ __html: `
         html { scroll-behavior: smooth; }
         /* The onboarding document breathes more than a report: it is read one section at a time,
            out loud, on a call. */
@@ -3353,7 +3360,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         .sb-present:not(.sb-present-deck) header img:not(.sb-mark) { height: auto !important; max-height: 42vh !important; width: 100%; object-fit: cover; border-radius: 18px; }
         .sb-present .sb-mark { width: auto !important; max-height: none !important; object-fit: contain !important; border-radius: 0 !important; }
         .sb-present img { object-fit: cover; }
-      `}</style>
+      ` }} />
 
       {/* Presenting an onboarding: the mark sits on every slide, top-left, quietly. */}
       {present && (

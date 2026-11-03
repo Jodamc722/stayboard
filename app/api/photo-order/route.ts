@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase-server'
 import { requireAnyLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyFetch } from '@/lib/guesty-retry'
+import { picUrls } from '@/lib/pic-url'
 
 export const maxDuration = 60   // one PUT plus a verify GET, each with backoff
 
@@ -102,7 +103,9 @@ export async function POST(req: NextRequest) {
   try {
     const newRaw = { ...raw, pictures: reordered, _lastOptimized: new Date().toISOString() }
     const update: any = { raw: newRaw, last_optimized: new Date().toISOString() }
-    if (Array.isArray((row as any).pictures)) update.pictures = reordered
+    // The pictures column is text[] of bare URLs (what the sync writes); the objects stay in raw.
+    // Writing the objects here stored their JSON text and broke every deck built from the row.
+    if (Array.isArray((row as any).pictures)) update.pictures = picUrls(reordered)
     await sb.from('guesty_listings').update(update).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
 

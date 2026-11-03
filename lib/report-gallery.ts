@@ -16,6 +16,7 @@
 // 26-unit building shows six different apartments and a single-unit review shows six rooms.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { picUrls } from '@/lib/pic-url'
 
 /** A photo is skipped when it is obviously not a room — floor plans and collages read as clip art. */
 const BAD = /(floor\s*-?plan|floorplan|collage|logo|watermark|map)/i
@@ -46,9 +47,8 @@ export async function reportGallery(report: any, limit = 8): Promise<string[]> {
 
   const byId = new Map<string, string[]>()
   for (const r of rows) {
-    const pics: string[] = (Array.isArray(r.pictures) ? r.pictures : [])
-      .map((p: any) => String(typeof p === 'string' ? p : (p?.original || p?.regular || p?.thumbnail || '')))
-      .filter((u: string) => !!u && /^https?:\/\//i.test(u) && !BAD.test(u))
+    const pics: string[] = picUrls(r.pictures)
+      .filter((u: string) => /^https?:\/\//i.test(u) && !BAD.test(u))
     if (pics.length) byId.set(String(r.id), pics)
   }
 

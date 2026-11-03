@@ -719,7 +719,9 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
           "Interactive demo" header with Step n of 6 and a progress bar, the steps, and Next right
           under them, where the eye already is. */}
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, background: '#f3f6fe', padding: '14px 14px 12px' }}>
-        <style>{`
+        {/* Inner HTML, not a text child: React escapes the quotes in content: '' inside a <style>
+            text child, and the escaped text fails hydration (see ReportView). */}
+        <style dangerouslySetInnerHTML={{ __html: `
           @keyframes opd-pulse { 0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.6); } 70% { box-shadow: 0 0 0 12px rgba(37,99,235,0); } 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); } }
           @keyframes opd-bob { 0%,100% { transform: translate(-50%,0); } 50% { transform: translate(-50%,3px); } }
           @keyframes opd-bob2 { 0%,100% { transform: translateY(0); } 50% { transform: translateY(3px); } }
@@ -734,7 +736,7 @@ export default function OwnerPortalDemo({ unitName, portalUrl, ownerName, photos
           .opd-hot.opd-right::before { left: 16px; }
           @keyframes opd-dot { 0% { box-shadow: 0 0 0 0 rgba(37,99,235,0.55); } 70% { box-shadow: 0 0 0 7px rgba(37,99,235,0); } 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); } }
           @media print { .opd-hot, .opd-hot::after, .opd-dot { animation: none !important; } .opd-hot { outline: none; } .opd-hot::after, .opd-hot::before { display: none; } }
-        `}</style>
+        ` }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
           <span className="opd-dot" style={{ width: 8, height: 8, borderRadius: 8, background: P.blue, animation: 'opd-dot 1.6s ease-out infinite', flex: '0 0 auto' }} />
           <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: P.blue }}>Interactive demo</p>

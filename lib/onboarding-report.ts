@@ -45,6 +45,7 @@ import { otaLinksFrom, type OtaLink } from './ota-links'
 import { MARKET_DEFAULTS } from './projections'
 import { marketLabel } from './segments'
 import type { LinenDeckSection } from './linens'
+import { picUrls } from './pic-url'
 
 /** A question we ask on the call. `a` is the answer, typed live into the report. */
 export type Ask = { id: string; q: string; hint?: string; a?: string }
@@ -640,7 +641,8 @@ export function listingCardFrom(
 ): ListingCard {
   const raw = l && l.raw ? l.raw : {}
   const pub = raw.publicDescription || raw.publicDescriptions || {}
-  const pics: string[] = Array.isArray(l.pictures) ? l.pictures.filter(Boolean) : []
+  // Any shape the column has held (URL, JSON text of the picture object, the object) as URLs.
+  const pics: string[] = picUrls(l.pictures)
   const bits = [
     // "0 BR" is not a thing an owner calls their unit.
     l.bedrooms != null ? (Number(l.bedrooms) === 0 ? 'Studio' : `${l.bedrooms} BR`) : null,

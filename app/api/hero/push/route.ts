@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAnyLevel } from '@/lib/access'
+import { picUrls } from '@/lib/pic-url'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -69,7 +70,9 @@ export async function POST(req: NextRequest) {
   try {
     const newRaw = { ...raw, pictures, _lastOptimized: new Date().toISOString() }
     const update: any = { raw: newRaw, last_optimized: new Date().toISOString() }
-    if (Array.isArray((row as any).pictures)) update.pictures = pictures
+    // The pictures column is text[] of bare URLs (what the sync writes); the objects stay in raw.
+    // Writing the objects here stored their JSON text and broke every deck built from the row.
+    if (Array.isArray((row as any).pictures)) update.pictures = picUrls(pictures)
     await sb.from('guesty_listings').update(update).eq('id', listingId)
   } catch { /* mirror is best-effort */ }
 

@@ -33,7 +33,7 @@ export default function PrintSheet() {
   const rec = data.today
   return (
     <main className="sheet">
-      <style>{`
+      <style dangerouslySetInnerHTML={{ __html: `
         .sheet{font-family:Geist,system-ui,sans-serif;color:#111;max-width:8.5in;margin:0 auto;padding:28px 32px;font-size:11.5px;line-height:1.35;background:#fff}
         .sheet h1{font-family:'Instrument Serif',Georgia,serif;font-weight:400;font-size:26px;margin:0}
         .sheet h2{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;margin:18px 0 6px;color:#111;border-bottom:1.5px solid #111;padding-bottom:3px}
@@ -57,7 +57,7 @@ export default function PrintSheet() {
         .sheet .note{border:1px solid #bbb;border-radius:6px;padding:8px 10px;margin:6px 0 2px;white-space:pre-line}
         .sheet .lines{height:54px;border-bottom:1px solid #ccc;background:repeating-linear-gradient(to bottom,transparent,transparent 17px,#ddd 17px,#ddd 18px)}
         @media print{.sheet{padding:0;max-width:none}.sheet .bar{display:none}@page{margin:.6in .6in}}
-      `}</style>
+      ` }} />
       <div className="bar">
         <button onClick={() => window.print()}>Print</button>
         <label><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} /> include done rows</label>

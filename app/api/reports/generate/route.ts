@@ -35,6 +35,7 @@ import { SALES_CONTACT_KEY, type SalesContactSetting } from '@/lib/sales-copy'
 import { linenDeckFor } from '@/lib/linen-deck'
 import { buildingPhotos, buildingPhotoPools, fillPropertyPics, portfolioProperties } from '@/lib/building-photos'
 import { withoutCollages } from '@/lib/photo-filter'
+import { picUrls } from '@/lib/pic-url'
 import { computeScore, ratingToStars, isBeachListing } from '@/lib/optimize-score'
 import { getStaff } from '@/lib/staffing'
 import { marketOf } from '@/lib/segments'
@@ -220,7 +221,7 @@ export async function POST(req: NextRequest) {
         .in('id', sIds)
       const rowsS: any[] = (fullS || []) as any[]
       const cleanedS = await Promise.all(rowsS.map(async l => {
-        const pictures = Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : []
+        const pictures = picUrls(l.pictures)
         return { ...l, pictures, clean: await withoutCollages(pictures, 30) }
       }))
       cards = cleanedS.map(l => listingCardFrom(l, [], [], l.clean))
@@ -425,7 +426,7 @@ export async function POST(req: NextRequest) {
     // listing and wrong now that the picker offers the whole set (Jon, 2026-09-17). Thirty
     // covers a typical Guesty listing end to end.
     const cleaned = await Promise.all(rows.map(async l => {
-      const pictures = Array.isArray(l.pictures) ? l.pictures.map(String).filter(Boolean) : []
+      const pictures = picUrls(l.pictures)
       return { ...l, pictures, clean: await withoutCollages(pictures, 30) }
     }))
 
