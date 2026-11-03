@@ -24,16 +24,16 @@ const SUBJECTS: { word: string; any: RegExp }[] = [
   { word: 'pool', any: /pool|swim/i },
   { word: 'ocean', any: /ocean|beach|sea\b|sand|waterfront|oceanfront|shore/i },
   { word: 'marina', any: /marina|boat|yacht|dock/i },
-  { word: 'view', any: /view|skyline|bay\b|vista|panoram/i },
+  { word: 'view', any: /view|skyline|bay\b|vista|panoram|city|downtown|urban|nightlife|lights/i },
   { word: 'balcony', any: /balcon|terrace|patio/i },
-  { word: 'bedroom', any: /bed(room)?\b|suite|king|queen|sleep/i },
+  { word: 'bedroom', any: /bed(room)?\b|suite|king|queen|sleep|comfort|cozy|cosy|rest\b|pillow|linen/i },
   { word: 'kitchen', any: /kitchen|cook|chef/i },
-  { word: 'living', any: /living|lounge|sofa|couch/i },
+  { word: 'living', any: /living|lounge|sofa|couch|relax|unwind|space to/i },
   { word: 'bathroom', any: /bath|shower|spa\b/i },
   { word: 'lobby', any: /lobby|reception|entrance|front desk/i },
   { word: 'gym', any: /gym|fitness|workout/i },
   { word: 'garden', any: /garden|tropical|palm|landscap/i },
-  { word: 'dining', any: /dining|restaurant|bar\b|cafe|breakfast/i },
+  { word: 'dining', any: /dining|restaurant|bar\b|cafe|breakfast|coffee|morning/i },
   { word: 'sunset', any: /sunset|dusk|twilight|night|evening/i },
   { word: 'exterior', any: /building|exterior|facade|tower|aerial/i },
 ]
@@ -84,28 +84,34 @@ export async function POST(req: NextRequest) {
     const search = async (q: string) => { if (!searches[q]) { try { searches[q] = ((await searchPhotos(q, 80)).hits as any[]).filter(h => h.active !== false && !isCollage(h)) } catch { searches[q] = [] } } return searches[q] }
     const used = new Set<string>()
     const scenes: { id: string; kind: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string }[] = []
+    // Pass 1: every slot's candidate list (subject-matched first). Pass 2: slots with the fewest good
+    // candidates choose first, so a scene that needs "the pool" is not left with the pool already taken.
+    type Slot = { scene: number; k: number; subj: ReturnType<typeof subjectOf>; cands: any[] }
+    const slots: Slot[] = []
     for (let i = 0; i < raw.length; i++) {
       const s = raw[i]
       const q = String(s?.photoQuery || '').trim().slice(0, 60)
       const want = s?.kind === 'wall' ? 4 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
       const place = q.split(/\s+/)[0] || ''
       const items: string[] = Array.isArray(s?.items) ? s.items.map((x: any) => String(x || '')) : []
-      // what each photo slot should show: per beat for three-beats, the scene's own words otherwise
       const texts = s?.kind === 'cards' ? items.slice(0, 3).map(x => x + ' ' + q) : Array.from({ length: want }, () => [s?.head, s?.sub, s?.vo, q, items.join(' ')].join(' '))
-      const photos: string[] = []
+      scenes.push({ id: 's' + (i + 1), kind: s?.kind, badge: i === raw.findIndex((x: any) => x?.badge) ? s?.badge : '', vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos: [], photoQuery: q })
       for (let k = 0; k < want; k++) {
         const subj = subjectOf(texts[k] || '')
-        const pools = [
-          subj && place ? await search(place + ' ' + subj.word) : [],
-          q ? await search(q) : [],
-          place ? await search(place) : [],
-        ]
-        const pick = await bestPhoto(pools.flat(), subj, used, s?.kind === 'wall' ? k : 0)
-        if (pick) { photos.push(pick); used.add(pick) }
+        const pools = [subj && place ? await search(place + ' ' + subj.word) : [], q ? await search(q) : [], place ? await search(place) : []]
+        slots.push({ scene: i, k, subj, cands: pools.flat() })
       }
-      scenes.push({ id: 's' + (i + 1), kind: s?.kind, badge: i === raw.findIndex((x: any) => x?.badge) ? s?.badge : '', vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q })
     }
-    // Every photo-led design needs a photo: borrow one the ad already has, so no scene renders empty.
+    const good = (sl: Slot) => sl.subj ? sl.cands.filter(h => sl.subj!.any.test(String(h.caption || ''))).length : sl.cands.length
+    const order = slots.map((sl, idx) => ({ idx, n: good(sl) })).sort((a, b) => a.n - b.n || a.idx - b.idx)
+    const picks: Record<string, string> = {}
+    for (const { idx } of order) {
+      const sl = slots[idx]
+      const u = await bestPhoto(sl.cands, sl.subj, used, 0)
+      if (u) { used.add(u); picks[sl.scene + ':' + sl.k] = u }
+    }
+    slots.forEach(sl => { const u = picks[sl.scene + ':' + sl.k]; if (u) scenes[sl.scene].photos[sl.k] = u })
+    scenes.forEach(x => { x.photos = x.photos.filter(Boolean) })
     const everything = Object.values(searches).flat()
     for (const x of scenes) {
       if (x.photos.length || x.kind === 'contact') continue

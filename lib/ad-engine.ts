@@ -107,6 +107,11 @@ export type AdProject = {
   look?: string
   /** What the ad is for (GOALS), set when it was started. */
   goal?: string
+  /** Where it will run (PLATFORMS key) — sets the shape, the safe zones and the length rules. */
+  platform?: string
+  /** Team workflow: draft → review → approved, with notes for whoever picks it up next. */
+  status?: 'draft' | 'review' | 'approved'
+  notes?: string
   /** Fine-grained style on top of the look (each 'auto' falls back to the look's own choice). */
   style?: AdStyle
   scenes: AdScene[]
@@ -212,6 +217,54 @@ export function tidyHead(h: string): string {
   s = s.replace(/\b(lighthouse|miami|florida|botanica|elser|amrit|nick|stay hospitality|fort lauderdale|palm beach|singer island|art basel)\b/gi, w => w.split(' ').map(x => x[0].toUpperCase() + x.slice(1).toLowerCase()).join(' '))
   // capital at the start of every line (also inside a leading **)
   return s.split('\n').map(line => line.replace(/^(\s*(?:\*\*)?\s*)([a-z])/, (_m, a: string, b: string) => a + b.toUpperCase())).join('\n')
+}
+/** THE AD AUDIT — the checks an ad expert runs before anything ships (Jon, 2026-11-03: "as an ad expert,
+ *  audit this"). Deterministic; the AI review on top of it lives in /api/ads/audit. Each issue can carry a
+ *  one-click fix: a scene patch or a project patch. */
+export type AuditIssue = { sev: 'high' | 'med' | 'low'; scene?: number; code: string; msg: string; fix?: { scene?: Partial<AdScene>; project?: Partial<AdProject>; label: string } }
+export function auditAd(p: AdProject, tl: Timeline, facts: string): AuditIssue[] {
+  const out: AuditIssue[] = []
+  const sc = p.scenes, n = sc.length, guests = p.audience === 'guests'
+  if (!n) return [{ sev: 'high', code: 'empty', msg: 'No scenes yet.' }]
+  const PF = platformOf(p)
+  const first = sc[0]
+  const hw = (first.head || '').replace(/\*\*/g, '').trim().split(/\s+/).filter(Boolean).length
+  if (hw > 6) out.push({ sev: 'high', scene: 0, code: 'hook-long', msg: `The hook is ${hw} words — people decide in 1.5 s. Cut it to 2–5.` })
+  if (!first.head.trim()) out.push({ sev: 'high', scene: 0, code: 'hook-missing', msg: 'The first scene has no headline — most people watch muted, so the hook must be on screen.' })
+  if (/^(welcome|introducing|stay hospitality)/i.test(first.head.replace(/\*\*/g, '').trim())) out.push({ sev: 'med', scene: 0, code: 'hook-weak', msg: 'Opening on "Welcome" or the company name wastes the hook. Lead with a feeling, a benefit or the place.' })
+  if (!first.photos.length && ['stats', 'contact'].indexOf(first.kind) < 0) out.push({ sev: 'high', scene: 0, code: 'hook-photo', msg: 'The first scene has no photo — the strongest image belongs here.' })
+  const last = sc[n - 1]
+  if (guests && last.kind !== 'cta') out.push({ sev: 'high', scene: n - 1, code: 'cta', msg: 'A guest ad must end on the Book now card.', fix: { label: 'Make it the Book now card', scene: { kind: 'cta', items: ['Book at stay-hospitality.com'] } } })
+  if (!guests && last.kind !== 'contact') out.push({ sev: 'high', scene: n - 1, code: 'contact', msg: 'An owner or partner ad must end on Nick’s contact card.', fix: { label: 'Make it the contact card', scene: { kind: 'contact' } } })
+  if (tl.durs[n - 1] < 3.2) out.push({ sev: 'med', scene: n - 1, code: 'end-short', msg: `The end card holds ${tl.durs[n - 1].toFixed(1)} s — too short to read the call to action.`, fix: tl.voiced ? undefined : { label: 'Hold it 4.5 s', scene: { dur: 4.5 } } })
+  if (!p.captions) out.push({ sev: 'med', code: 'captions', msg: 'Captions are off — most feed viewers watch muted.', fix: { label: 'Turn captions on', project: { captions: true } } })
+  if (p.music === 'none') out.push({ sev: 'low', code: 'music', msg: 'No music. Even a quiet bed lifts watch time.', fix: { label: 'Use Werq', project: { music: 'werq' } } })
+  if (tl.total > PF.max) out.push({ sev: 'med', code: 'length', msg: `${tl.total.toFixed(0)} s is over the ${PF.max} s limit for a ${PF.label}. Cut scenes or lines.` })
+  else if (tl.total > 35 && (PF.key === 'reel' || PF.key === 'tiktok')) out.push({ sev: 'low', code: 'length-soft', msg: `${tl.total.toFixed(0)} s on a ${PF.label}: 15–30 s keeps more viewers to the end.` })
+  if (n > Math.max(4, tl.total / 2.4)) out.push({ sev: 'med', code: 'too-many', msg: `${n} scenes in ${tl.total.toFixed(0)} s is a flicker — aim for one scene every 3–4 s.` })
+  // photos
+  const seen = new Map<string, number>()
+  sc.forEach((x, i) => x.photos.forEach(u => { if (seen.has(u)) out.push({ sev: 'med', scene: i, code: 'dup-photo', msg: `Same photo as scene ${seen.get(u)! + 1}. Give each scene its own.` }); else seen.set(u, i) }))
+  sc.forEach((x, i) => { if (!x.photos.length && ['stats', 'contact', 'checks', 'feed', 'rise'].indexOf(x.kind) < 0) out.push({ sev: 'high', scene: i, code: 'no-photo', msg: 'No photo on a photo-led scene.' }) })
+  // words per second, voice risks, numbers
+  const allowed = new Set(numbersIn(facts + ' ' + (p.prompt || '') + ' 1M 1000000 651 200 8283'))
+  sc.forEach((x, i) => {
+    const w = x.vo.trim().split(/\s+/).filter(Boolean).length
+    if (w && !tl.voiced && w / Math.max(1, tl.durs[i]) > 3.1) out.push({ sev: 'med', scene: i, code: 'fast', msg: `${w} words in ${tl.durs[i].toFixed(1)} s — too fast to land. Cut the line or let it hold longer.` })
+    const risky = riskyWords(x.vo); if (risky.length) out.push({ sev: 'med', scene: i, code: 'voice-risk', msg: `The voice says ${risky.join(' and ')} wrong — keep it on screen only.` })
+    const bad = numbersIn([x.vo, x.head, x.sub, x.items.join(' ')].join(' ')).filter(v => !allowed.has(v))
+    if (bad.length) out.push({ sev: 'high', scene: i, code: 'number', msg: `Check ${Array.from(new Set(bad)).join(', ')} — not in our facts.` })
+    if (guests && /\$|\bcall us\b|\btext us\b|\d{3}[-.]\d{3}[-.]\d{4}/i.test(x.vo + ' ' + x.head + ' ' + x.items.join(' '))) out.push({ sev: 'high', scene: i, code: 'guest-rule', msg: 'Guest ads never show a price or "call us" — the only ask is to book at stay-hospitality.com.' })
+    if (!x.head.trim() && !x.vo.trim() && ['wall', 'photo'].indexOf(x.kind) < 0) out.push({ sev: 'low', scene: i, code: 'blank', msg: 'Nothing said and nothing on screen.' })
+    if (i > 0 && x.kind === sc[i - 1].kind && ['photo', 'wall'].indexOf(x.kind) < 0) out.push({ sev: 'low', scene: i, code: 'same-kind', msg: `Two ${x.kind} scenes in a row — vary the design.` })
+  })
+  if (!sc.some(x => /\*\*/.test(x.head))) out.push({ sev: 'low', code: 'no-gold', msg: 'No highlighted word anywhere — mark the key word in a headline with **…** for the brand accent.' })
+  const named = sc.some(x => /stay hospitality|17west|amrit|elser|botanica|arya|salato|capri|eden|nomad|lucerne|hendricks|boynton|park towers/i.test(x.vo + ' ' + x.head + ' ' + x.sub))
+  if (!named) out.push({ sev: 'med', code: 'no-name', msg: guests ? 'The property is never named — people cannot search for it.' : 'Stay Hospitality is never named.' })
+  return out.sort((a, b) => ({ high: 0, med: 1, low: 2 }[a.sev] - { high: 0, med: 1, low: 2 }[b.sev]))
+}
+export function auditScore(issues: AuditIssue[]): number {
+  return Math.max(0, Math.min(100, 100 - issues.reduce((a, i) => a + (i.sev === 'high' ? 15 : i.sev === 'med' ? 7 : 3), 0)))
 }
 /** Every number an ad may state comes from the facts or the brief (Jon: never invent numbers). */
 export function numbersIn(text: string): string[] {
@@ -393,6 +446,35 @@ export const GOALS: { key: string; label: string; audience: AdAudience; brief: s
   { key: 'partners', label: 'Partner referrals', audience: 'partners', brief: 'Goal: get realtors, lenders and advisors to refer owners.' },
   { key: 'brand', label: 'Brand awareness', audience: 'guests', brief: 'Goal: make people remember Stay Hospitality and its places.' },
 ]
+/** Where the ad will run. Shape, safe zones (what the app's own UI covers) and the length that performs. */
+export const PLATFORMS: { key: string; label: string; format: AdFormat; max: number; best: string; safe: { top: number; bottom: number; right: number } }[] = [
+  { key: 'reel', label: 'Instagram Reel', format: '9:16', max: 60, best: '15–30 s', safe: { top: 0.11, bottom: 0.2, right: 0.12 } },
+  { key: 'story', label: 'Story', format: '9:16', max: 15, best: '≤ 15 s', safe: { top: 0.14, bottom: 0.2, right: 0.06 } },
+  { key: 'tiktok', label: 'TikTok', format: '9:16', max: 60, best: '15–30 s', safe: { top: 0.12, bottom: 0.22, right: 0.14 } },
+  { key: 'feed', label: 'Feed post', format: '4:5', max: 60, best: '15–25 s', safe: { top: 0, bottom: 0, right: 0 } },
+  { key: 'square', label: 'Square', format: '1:1', max: 60, best: '15–25 s', safe: { top: 0, bottom: 0, right: 0 } },
+  { key: 'web', label: 'YouTube / web', format: '16:9', max: 120, best: '30–60 s', safe: { top: 0, bottom: 0.1, right: 0 } },
+]
+export const platformOf = (p: Pick<AdProject, 'platform' | 'format'>) => PLATFORMS.find(x => x.key === p.platform) || PLATFORMS.find(x => x.format === p.format && x.key !== 'story' && x.key !== 'tiktok') || PLATFORMS[0]
+
+/** Proven ad concepts the team can start from (Jon, 2026-11-03: "give the team the best ideas"). */
+export const IDEAS: { key: string; goal: string; title: string; why: string; prompt: string }[] = [
+  { key: 'wake', goal: 'bookings', title: 'Wake up here', why: 'The first-morning feeling sells more than amenities. Opens on the view, ends on the bed.', prompt: 'A guest Reel about waking up at <property>: open on the view from the balcony at sunrise, then coffee, the pool, the bed. One idea: the first morning. End on Book at stay-hospitality.com.' },
+  { key: 'golden', goal: 'bookings', title: 'Golden hour', why: 'Sunset light makes every property look premium; pairs with calm music and slow pacing.', prompt: 'A calm guest ad about golden hour at <property>: rooftop or pool at sunset, the balcony, dinner out, back to the room. Slow, elegant. End on Book at stay-hospitality.com.' },
+  { key: 'weekend', goal: 'bookings', title: 'The 48-hour weekend', why: 'A plan is easier to book than a place. Friday arrive → Saturday pool → Sunday slow.', prompt: 'A guest Reel that plans a weekend at <property>: Friday night arrival, Saturday at the pool and the beach, Sunday slow morning. Three beats. End on Book at stay-hospitality.com.' },
+  { key: 'local', goal: 'bookings', title: 'Steps from it all', why: 'Location is the most-asked question; show what is walkable.', prompt: 'A guest ad about the location of <property>: what is steps away (beach, restaurants, nightlife, the marina), then the room to come back to. Callouts scene for the walkable list. End on Book at stay-hospitality.com.' },
+  { key: 'space', goal: 'bookings', title: 'More room than a hotel', why: 'Families and groups book on space: kitchen, living room, separate bedrooms.', prompt: 'A guest ad for families and groups at <property>: a full kitchen, a real living room, separate bedrooms, the pool. Warm. End on Book at stay-hospitality.com.' },
+  { key: 'work', goal: 'bookings', title: 'Work from paradise', why: 'Longer stays: a desk, fast wifi, a view, the pool at 5 pm.', prompt: 'A guest ad for remote workers at <property>: a quiet place to work with a view, fast wifi, then the pool at five. Monthly stays welcome. End on Book at stay-hospitality.com.' },
+  { key: 'event', goal: 'event', title: 'Be there for the event', why: 'Date-led ads convert: the event, the dates, how close you stay.', prompt: 'An event ad for <event> on <dates>: the city energy, how close <property> is to it, the room to come back to. Use the Event / date scene with the real dates. End on Book at stay-hospitality.com.' },
+  { key: 'winter', goal: 'event', title: 'Winter sun', why: 'December to March is the demand season for the north; sell warmth.', prompt: 'A winter-sun ad for <property> aimed at travellers escaping the cold, December to March: the pool, the beach, the balcony in the sun. End on Book at stay-hospitality.com.' },
+  { key: 'switch', goal: 'owners', title: 'Why owners switch', why: 'The core owner story: revenue managed daily, 40+ channels, one team, Lighthouse, lower fee.', prompt: 'An owner ad: why owners switch to Stay Hospitality — revenue managed daily, listed on 40+ channels, Lighthouse spots issues and automates work, one complete team, a lower fee and full transparency. End on the contact card with Nick.' },
+  { key: 'highdates', goal: 'owners', title: 'Priced for the big dates', why: 'Owners worry about leaving money on the table on Art Basel, New Year, F1.', prompt: 'An owner ad about pricing the high-demand dates months ahead — Art Basel, New Year’s Eve, the boat shows, Formula 1 Miami — with dedicated revenue managers pricing every day. End on the contact card with Nick.' },
+  { key: 'lighthouse', goal: 'owners', title: 'Meet Lighthouse', why: 'Our own AI is a differentiator no competitor has: show it working.', prompt: 'An owner ad introducing Lighthouse, our in-house AI: spots recurring issues before guests do, turns problems into tasks, builds guest guidebooks, optimises listings, monitors reviews. Use the Live feed scene. End on the contact card with Nick.' },
+  { key: 'team', goal: 'owners', title: 'One complete team', why: 'Owners leave managers over service; show housekeeping, maintenance, inspections, guest care.', prompt: 'An owner ad about the complete in-house team: housekeeping, maintenance, inspections, the Customer Care Team — and what that means for reviews and revenue. End on the contact card with Nick.' },
+  { key: 'partner', goal: 'partners', title: 'Your client just asked', why: 'Realtors get asked “who should manage it?” — give them the answer to forward.', prompt: 'A partner ad for realtors and advisors: when a client asks who should manage their property, here is the answer — Stay Hospitality, 450+ listings, 10 years, daily pricing, one team. Send an address, get a projection. End on the contact card with Nick.' },
+  { key: 'brand', goal: 'brand', title: 'South Florida, stayed well', why: 'Brand film: the portfolio across Miami, Fort Lauderdale, Pompano and Palm Beach.', prompt: 'A brand film for Stay Hospitality guests: South Florida stays from downtown Miami high-rises to the beach — montage of our best places, one line per city. End on Book at stay-hospitality.com.' },
+]
+
 const clamp = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x))
 const ease = (x: number) => 1 - Math.pow(1 - clamp(x), 3)
 const appear = (local: number, delay: number, d = 0.6) => ease((local - delay * PD) / (d * PD))
@@ -568,7 +650,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   const u = Math.min(W, H) / 1080
   const portrait = H > W * 1.1
   const pad = (portrait ? 80 : 120) * u
-  const bottomSafe = (p.captions ? 190 : 110) * u
+  const PF = platformOf(p)
+  const bottomSafe = Math.max((p.captions ? 190 : 110) * u, H * PF.safe.bottom + (p.captions ? 150 : 40) * u)
   const get = (u: string) => (!u ? null : A.media ? A.media(u, local) : A.img(u))
   const im = (k: number) => get(sc.photos[k] || '')
   const head = CAPS ? (sc.head || '').toUpperCase() : sc.head || ''
@@ -1223,7 +1306,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
       const txt = sc.badge.trim().toUpperCase().slice(0, 22)
       ctx.save(); ctx.font = fnt(800, 30 * u, A.body)
       const tw = ctx.measureText(txt).width, bw = tw + 56 * u, bh = 64 * u
-      const bx = 56 * u, by = (H > W * 1.1 ? 130 : 56) * u
+      const bx = 56 * u, by = Math.max((H > W * 1.1 ? 130 : 56) * u, H * platformOf(p).safe.top + 24 * u)
       ctx.translate(bx + bw / 2, by + bh / 2); ctx.rotate(-0.07); const z = 0.6 + 0.4 * ba + 0.08 * Math.sin(ba * Math.PI); ctx.scale(z, z); ctx.globalAlpha *= ba
       rr(ctx, -bw / 2, -bh / 2, bw, bh, bh / 2); ctx.fillStyle = C.gold; ctx.fill()
       ctx.setLineDash([6 * u, 6 * u]); ctx.lineWidth = 2 * u; ctx.strokeStyle = onAccent(); rr(ctx, -bw / 2 + 7 * u, -bh / 2 + 7 * u, bw - 14 * u, bh - 14 * u, (bh - 14 * u) / 2); ctx.stroke(); ctx.setLineDash([])
@@ -1233,7 +1316,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   }
   if (A.logo && sc.kind !== 'contact' && sc.kind !== 'cta') {
     const lw = 150 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
-    ctx.drawImage(A.logo, W - lw - 56 * u, 46 * u, lw, lh)
+    const PF2 = platformOf(p)
+    ctx.drawImage(A.logo, W - lw - Math.max(56 * u, W * PF2.safe.right + 20 * u), Math.max(46 * u, H * PF2.safe.top + 20 * u), lw, lh)
   }
   // CAPTIONS: the line being spoken (most viewers watch muted). Shown while the line plays.
   // Captions — unless the screen already says the same words (a kinetic hook, a title that IS the line).
@@ -1241,7 +1325,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   if (p.captions && sc.vo.trim() && bare(sc.vo) !== bare(sc.head)) {
     const a = clamp(local / 0.3) * clamp((tl.durs[i] - local) / 0.3)
     if (a > 0) {
-      const g = ctx.createLinearGradient(0, H - 230 * u, 0, H)
+      const capBase = H - 60 * u - H * platformOf(p).safe.bottom
+      const g = ctx.createLinearGradient(0, capBase - 170 * u, 0, H)
       g.addColorStop(0, C.light ? 'rgba(255,255,255,0)' : 'rgba(0,0,0,0)'); g.addColorStop(1, C.light ? 'rgba(255,255,255,0.78)' : 'rgba(0,0,0,0.6)')
       ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = g; ctx.fillRect(0, H - 230 * u, W, 230 * u)
       const size = (H > W * 1.1 ? 40 : 34) * u
@@ -1252,7 +1337,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
         const s = shown[k].words.map(w => w.t.trim()).join(' ')
         const w = ctx.measureText(s).width
         ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.shadowColor = C.light ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 8 * u
-        ctx.fillText(s, (W - w) / 2, H - 60 * u - (shown.length - 1 - k) * size * 1.3)
+        ctx.fillText(s, (W - w) / 2, capBase - (shown.length - 1 - k) * size * 1.3)
       }
       ctx.restore()
     }

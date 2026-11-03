@@ -17,11 +17,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
-type ListRow = { id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string }
+type ListRow = { id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string; status?: string }
+type Audit = { score: number; verdict: string; strengths: string[]; issues: { scene: number; problem: string; fix: string; patch: Partial<AdScene> | null; remove: boolean; done?: boolean }[]; checks: AuditIssue[]; note?: string }
 type Sound = { key: string; name: string; kind: 'music' | 'sfx'; url: string; dur: number; prompt: string; createdAt: string; by: string; path: string }
 type LibVoice = { id: string; name: string; blurb: string; preview: string }
 type Plan = {
@@ -105,7 +106,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [saved, setSaved] = useState<'saved' | 'saving' | 'dirty' | ''>('')
   const [brief, setBrief] = useState('')
   const [seconds, setSeconds] = useState(30)
-  const [side, setSide] = useState<'ads' | 'templates' | 'videos' | 'sounds'>('ads')
+  const [side, setSide] = useState<'ads' | 'templates' | 'videos' | 'sounds' | 'ideas'>('ads')
+  const [audit, setAudit] = useState<Audit | null>(null)
+  const [showAudit, setShowAudit] = useState(false)
+  const [safe, setSafe] = useState(true)
+  const [versions, setVersions] = useState<{ ts: string; name: string; scenes: number; by: string; look: string }[] | null>(null)
+  const [options, setOptions] = useState<{ id: string; list: { head: string; vo: string }[] } | null>(null)
+  const safeRef = useRef<HTMLCanvasElement>(null)
   const [sounds, setSounds] = useState<Sound[]>([])
   const [sndKind, setSndKind] = useState<'music' | 'sfx'>('music')
   const [sndPrompt, setSndPrompt] = useState('')
@@ -417,6 +424,84 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (tl) setT(tl.starts[Math.min(1, tl.starts.length - 1)] + 1.6)
   }
 
+  // ── the expert audit (Jon, 2026-11-03: "as an ad expert, audit this") ─────
+  const liveChecks = useMemo(() => (p && tl ? auditAd(p, tl, p.audience === 'guests' ? GUEST_FACTS : HOUSE_FACTS) : []), [p, tl])
+  const runAudit = async () => {
+    if (!p) return
+    setBusy('audit'); setErr(''); setShowAudit(true)
+    const r = await fetch('/api/ads/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: p }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok) { setErr(r?.error || 'The audit did not come back. Try again.'); return }
+    setAudit(r)
+  }
+  const applyIssue = (k: number) => {
+    if (!audit) return
+    const is = audit.issues[k]; if (!is || is.done) return
+    if (is.remove) change(d => ({ ...d, scenes: d.scenes.length > 1 ? d.scenes.filter((_, i) => i !== is.scene) : d.scenes }))
+    else if (is.patch) change(d => ({ ...d, scenes: d.scenes.map((x, i) => (i === is.scene ? { ...x, ...is.patch } : x)) }))
+    setAudit({ ...audit, issues: audit.issues.map((x, i) => (i === k ? { ...x, done: true } : x)) })
+  }
+  const applyCheck = (c: AuditIssue) => {
+    if (!c.fix) return
+    change(d => ({ ...d, ...(c.fix!.project || {}), scenes: c.scene != null && c.fix!.scene ? d.scenes.map((x, i) => (i === c.scene ? { ...x, ...c.fix!.scene } : x)) : d.scenes }))
+  }
+  // ── versions ──
+  const loadVersions = async () => {
+    if (!p) return
+    const r = await fetch('/api/ads/versions?id=' + encodeURIComponent(p.id)).then(x => x.json()).catch(() => null)
+    setVersions(r?.ok ? r.versions : [])
+  }
+  const restore = async (ts: string) => {
+    if (!p || !window.confirm('Go back to this version? The current state is kept as a version too.')) return
+    const r = await fetch('/api/ads/versions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, ts }) }).then(x => x.json()).catch(() => null)
+    if (!r?.ok) { setErr(r?.error || 'Could not restore.'); return }
+    stop(); setP(r.project); pRef.current = r.project; setAudioUrl(r.audioUrl || null); setSaved('saved'); setVersions(null); setSel(0); setT(1.6); setAudit(null)
+  }
+  // ── three headline options for the selected scene ──
+  const headOptions = async () => {
+    if (!p || !sc) return
+    setBusy('options'); setErr('')
+    const r = await fetch('/api/ads/scene', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: p, index: sel, options: true }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok) { setErr(r?.error || 'No options came back.'); return }
+    setOptions({ id: sc.id, list: r.options || [] })
+  }
+  // ── duplicate the whole ad (an A/B variant) ──
+  const duplicateAd = async () => {
+    if (!p) return
+    const n = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
+    if (!n?.ok) { setErr(n?.error || 'Could not duplicate.'); return }
+    const copy: AdProject = { ...p, id: n.project.id, name: p.name + ' · B', voice: null, status: 'draft', createdAt: n.project.createdAt, updatedAt: n.project.updatedAt }
+    const sv = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: copy }) }).then(x => x.json()).catch(() => null)
+    if (!sv?.ok) { setErr(sv?.error || 'Could not save the copy.'); return }
+    stop(); setP(sv.project); pRef.current = sv.project; setAudioUrl(null); setSaved('saved'); setSel(0); setT(1.6); setAudit(null); loadList()
+  }
+  // ── start from an idea ──
+  const useIdea = (idea: typeof IDEAS[number]) => {
+    openStart()
+    const g = GOALS.find(x => x.key === idea.goal)
+    setSt(x => ({ ...x, mode: 'describe', prompt: idea.prompt, goal: idea.goal, audience: g?.audience || 'guests' }))
+    setWs(1)
+  }
+  // ── safe-zone overlay on the preview (never in the export) ──
+  useEffect(() => {
+    const cv = safeRef.current; if (!cv || !p) return
+    const g = cv.getContext('2d'); if (!g) return
+    g.clearRect(0, 0, cv.width, cv.height)
+    if (!safe) return
+    const PF = platformOf(p), W = cv.width, H = cv.height
+    g.fillStyle = 'rgba(255,80,80,0.18)'
+    if (PF.safe.top) g.fillRect(0, 0, W, H * PF.safe.top)
+    if (PF.safe.bottom) g.fillRect(0, H - H * PF.safe.bottom, W, H * PF.safe.bottom)
+    if (PF.safe.right) g.fillRect(W - W * PF.safe.right, H * PF.safe.top, W * PF.safe.right, H - H * PF.safe.top - H * PF.safe.bottom)
+    g.strokeStyle = 'rgba(255,80,80,0.6)'; g.setLineDash([6, 6]); g.lineWidth = 1.5
+    if (PF.safe.top) { g.beginPath(); g.moveTo(0, H * PF.safe.top); g.lineTo(W, H * PF.safe.top); g.stroke() }
+    if (PF.safe.bottom) { g.beginPath(); g.moveTo(0, H - H * PF.safe.bottom); g.lineTo(W, H - H * PF.safe.bottom); g.stroke() }
+    if (PF.safe.right) { g.beginPath(); g.moveTo(W - W * PF.safe.right, 0); g.lineTo(W - W * PF.safe.right, H); g.stroke() }
+    g.setLineDash([]); g.fillStyle = 'rgba(255,255,255,0.75)'; g.font = `600 ${Math.round(W * 0.022)}px ${body}`
+    if (PF.safe.bottom) g.fillText(PF.label + ' UI covers this', 12, H - H * PF.safe.bottom + W * 0.03)
+  }, [safe, p?.platform, p?.format, p?.id, body]) // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Rewrite just the selected scene the way it is asked ("punchier", "show the rooftop", "make it numbers"). */
   const askScene = async (what: string) => {
     if (!p || !what.trim()) return
@@ -612,6 +697,19 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   useEffect(() => { if (playing && tl) { const i = sceneAt(tl, t); if (i !== sel) setSel(i) } }, [t]) // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (i: number) => { setSel(i); if (tl && !playing) setT(tl.starts[i] + Math.min(1.6, tl.durs[i] * 0.6)) }
   const seek = (x: number) => { const was = !!play0.current; stop(); const to = Math.max(0, x); setT(to); tRef.current = to; if (was) start(to) }
+  // ── keyboard: space = play/pause, ← → = scenes (not while typing) ──
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+      if (!pRef.current) return
+      if (e.key === ' ') { e.preventDefault(); if (play0.current) stop(); else { const T = timeline(pRef.current); start(tRef.current >= T.total - 0.05 ? 0 : tRef.current) } }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); const T = timeline(pRef.current); const i = Math.min(T.starts.length - 1, sel + 1); setSel(i); if (!play0.current) setT(T.starts[i] + Math.min(1.6, T.durs[i] * 0.6)) }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); const T = timeline(pRef.current); const i = Math.max(0, sel - 1); setSel(i); if (!play0.current) setT(T.starts[i] + Math.min(1.6, T.durs[i] * 0.6)) }
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [sel]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── export: the same renderer, recorded ───────────────────────────────
   const exportVideo = async () => {
@@ -881,9 +979,16 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
         ) : null}
         {p ? (
           <div style={{ display: 'flex', gap: 4 }}>
-            {(Object.keys(FORMATS) as AdFormat[]).map(f => <Btn key={f} small on={p.format === f} title={FORMAT_LABEL[f]} onClick={() => change(d => ({ ...d, format: f }))}>{f}</Btn>)}
+            {PLATFORMS.map(x => <Btn key={x.key} small on={platformOf(p).key === x.key} title={`${x.label} · ${FORMAT_LABEL[x.format]} · best ${x.best}`} onClick={() => change(d => ({ ...d, platform: x.key, format: x.format }))}>{x.label}</Btn>)}
           </div>
         ) : null}
+        {p ? (
+          <div style={{ display: 'flex', gap: 3 }} title="Where this ad is in the team's workflow">
+            {([['draft', 'Draft'], ['review', 'In review'], ['approved', 'Approved']] as const).map(([k, l]) => <Btn key={k} small on={(p.status || 'draft') === k} disabled={!canEdit} onClick={() => change(d => ({ ...d, status: k }))}>{k === 'approved' && (p.status || 'draft') === k ? '✓ ' : ''}{l}</Btn>)}
+          </div>
+        ) : null}
+        {p ? <Btn small onClick={runAudit} disabled={!!busy} title="The expert review: hook, idea, rhythm, copy, call to action — with one-click fixes" tone={liveChecks.some(c => c.sev === 'high') ? 'red' : undefined}>{busy === 'audit' ? 'Auditing…' : `Audit${liveChecks.length ? ' · ' + liveChecks.length : ''}`}</Btn> : null}
+        {p ? <Btn small onClick={loadVersions} title="Earlier saved states of this ad">Versions</Btn> : null}
         <span style={{ marginLeft: 'auto', fontSize: 11.5, color: saved === 'dirty' || saved === 'saving' ? UI.gold : UI.mut }}>
           {saved === 'saving' ? 'Saving…' : saved === 'dirty' ? 'Unsaved changes' : saved === 'saved' ? 'Saved' : ''}
         </span>
@@ -923,7 +1028,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           ) : null}
 
           <div style={{ display: 'flex', gap: 4, marginTop: 16, borderTop: '1px solid ' + UI.line, paddingTop: 12 }}>
-            {([['ads', 'Ads'], ['templates', 'Templates'], ['videos', 'Videos'], ['sounds', 'Sounds']] as const).map(([k, l]) => <Btn key={k} small on={side === k} onClick={() => setSide(k)}>{l}</Btn>)}
+            {([['ads', 'Ads'], ['ideas', 'Ideas'], ['templates', 'Templates'], ['videos', 'Videos'], ['sounds', 'Sounds']] as const).map(([k, l]) => <Btn key={k} small on={side === k} onClick={() => setSide(k)}>{l}</Btn>)}
           </div>
           {side === 'templates' ? (
             <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -935,6 +1040,17 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               ))}
               {busy === 'template' ? <p style={{ fontSize: 11.5, color: UI.gold }}>Filling it with photos from the library…</p> : null}
               {!p ? <p style={{ fontSize: 11.5, color: UI.mut }}>Start an ad first (+ New ad), then pick a template.</p> : null}
+            </div>
+          ) : side === 'ideas' ? (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 560, overflowY: 'auto' }}>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 4px', lineHeight: 1.5 }}>Proven ad concepts. Pick one, name the property, and the guide takes it from there.</p>
+              {IDEAS.map(idea => (
+                <div key={idea.key} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px' }}>
+                  <p style={{ fontSize: 12.5, fontWeight: 700, margin: 0 }}>{idea.title} <span style={{ fontWeight: 500, color: UI.mut }}>· {GOALS.find(g => g.key === idea.goal)?.label}</span></p>
+                  <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 6px', lineHeight: 1.45 }}>{idea.why}</p>
+                  {canEdit ? <Btn small tone="blue" onClick={() => useIdea(idea)}>Use this idea</Btn> : null}
+                </div>
+              ))}
             </div>
           ) : side === 'sounds' ? (
             <div style={{ marginTop: 10 }}>
@@ -1020,12 +1136,19 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             {list.map(a => (
               <button key={a.id} onClick={() => open(a.id)} style={{ textAlign: 'left', background: p?.id === a.id ? '#232C38' : 'transparent', border: 0, borderRadius: 7, padding: '7px 8px', cursor: 'pointer', color: UI.ink }}>
                 <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-                <span style={{ fontSize: 10.5, color: UI.mut }}>{a.format} · {a.scenes} scenes · {new Date(a.updatedAt).toLocaleDateString()}</span>
+                <span style={{ fontSize: 10.5, color: UI.mut }}>{a.status === 'approved' ? <span style={{ color: UI.green }}>✓ Approved · </span> : a.status === 'review' ? <span style={{ color: UI.gold }}>In review · </span> : null}{a.format} · {a.scenes} scenes · {new Date(a.updatedAt).toLocaleDateString()}</span>
               </button>
             ))}
             {!list.length ? <p style={{ fontSize: 12, color: UI.mut }}>No ads yet. Start one with + New ad.</p> : null}
           </div>
-          {p && canDelete ? <div style={{ marginTop: 14 }}><Btn small tone="red" onClick={del}>Delete this ad</Btn></div> : null}
+          {p && canEdit ? (
+            <>
+              <Label>Team notes</Label>
+              <textarea rows={3} value={p.notes || ''} onChange={e => change(d => ({ ...d, notes: e.target.value }))} placeholder="For whoever picks this up: what to check, what the client said, where it runs." style={{ ...field, fontSize: 12 }} />
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}><Btn small onClick={duplicateAd} title="A copy to try a different hook, look or ending — an A/B variant">⧉ Duplicate as variant</Btn></div>
+            </>
+          ) : null}
+          {p && canDelete ? <div style={{ marginTop: 10 }}><Btn small tone="red" onClick={del}>Delete this ad</Btn></div> : null}
           </>)}
         </div>
 
@@ -1207,7 +1330,58 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </div>
               </div>
             )
-          })() : draft ? (
+          })() : showAudit && p ? (
+            <div style={{ width: '100%', maxWidth: 780, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                {(() => { const sc0 = audit ? audit.score : auditScore(liveChecks); const col = sc0 >= 80 ? UI.green : sc0 >= 60 ? UI.gold : UI.red; return (
+                  <div style={{ width: 72, height: 72, borderRadius: 36, border: '4px solid ' + col, display: 'grid', placeItems: 'center', fontFamily: display, fontWeight: 800, fontSize: 24, color: col }}>{sc0}</div>
+                ) })()}
+                <div style={{ flex: 1 }}>
+                  <p style={{ fontFamily: display, fontSize: 20, fontWeight: 800, margin: 0 }}>Ad audit · {p.name}</p>
+                  <p style={{ fontSize: 12.5, color: UI.mut, margin: '3px 0 0' }}>{busy === 'audit' ? 'The creative director is reading it… about 20 seconds.' : audit?.verdict || (audit ? 'Checks only — the review did not come back.' : 'Automatic checks. Press Run the review for the expert pass.')}</p>
+                </div>
+                <span style={{ display: 'flex', gap: 4 }}>
+                  <Btn small disabled={!!busy} onClick={runAudit}>{audit ? 'Run again' : 'Run the review'}</Btn>
+                  <Btn small onClick={() => setShowAudit(false)}>Close</Btn>
+                </span>
+              </div>
+              {audit?.strengths?.length ? (
+                <>
+                  <Label>What works</Label>
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6 }}>{audit.strengths.map((x, i) => <li key={i}>{x}</li>)}</ul>
+                </>
+              ) : null}
+              {audit?.issues?.length ? (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'baseline' }}><Label>Expert fixes</Label>{canEdit ? <span style={{ marginLeft: 'auto' }}><Btn small tone="blue" onClick={() => audit.issues.forEach((_, i) => applyIssue(i))}>Apply all</Btn></span> : null}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {audit.issues.map((is, k) => (
+                      <div key={k} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 9, padding: '8px 11px', opacity: is.done ? 0.5 : 1 }}>
+                        <p style={{ fontSize: 12.5, margin: 0 }}><button onClick={() => pick(is.scene)} style={{ background: 'none', border: 0, color: UI.gold, fontWeight: 700, cursor: 'pointer', padding: 0 }}>Scene {is.scene + 1}</button> · {is.problem}</p>
+                        <p style={{ fontSize: 12, color: UI.mut, margin: '3px 0 0' }}>{is.fix}</p>
+                        {is.patch ? <p style={{ fontSize: 12, margin: '4px 0 0', color: UI.ink }}>{is.patch.head ? <>Headline → <b>{String(is.patch.head).replace(/\*\*/g, '')}</b> </> : null}{is.patch.vo ? <>· Line → <i>{is.patch.vo}</i></> : null}{is.patch.kind ? <> · Design → {is.patch.kind}</> : null}</p> : null}
+                        {canEdit && (is.patch || is.remove) ? <div style={{ marginTop: 6 }}><Btn small on={is.done} disabled={is.done} onClick={() => applyIssue(k)}>{is.done ? 'Applied' : is.remove ? 'Delete the scene' : 'Apply'}</Btn></div> : null}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              <Label>Checks</Label>
+              {liveChecks.length ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {liveChecks.map((c, k) => (
+                    <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 4, background: c.sev === 'high' ? UI.red : c.sev === 'med' ? UI.gold : UI.mut, flex: 'none' }} />
+                      {c.scene != null ? <button onClick={() => pick(c.scene!)} style={{ background: 'none', border: 0, color: UI.gold, fontWeight: 700, cursor: 'pointer', padding: 0, fontSize: 12.5 }}>Scene {c.scene + 1}</button> : null}
+                      <span style={{ flex: 1 }}>{c.msg}</span>
+                      {canEdit && c.fix ? <Btn small onClick={() => applyCheck(c)}>{c.fix.label}</Btn> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : <p style={{ fontSize: 12.5, color: UI.green }}>All checks pass: hook, end card, captions, photos, numbers, length.</p>}
+              {audit?.note ? <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>{audit.note}</p> : null}
+            </div>
+          ) : draft ? (
             <div style={{ width: '100%', maxWidth: 760, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
                 <span style={{ fontFamily: display, fontSize: 22, fontWeight: 800 }}>The script</span>
@@ -1300,11 +1474,15 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             </div>
           ) : p ? (
             <>
-              <canvas ref={canvasRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960}
-                style={{ ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? 'calc(100vh - 330px)' : 560, maxHeight: 640, width: 'auto' }), aspectRatio: `${FW}/${FH}`, borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
+              <div style={{ position: 'relative', ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? 'calc(100vh - 330px)' : 560, maxHeight: 640 }), aspectRatio: `${FW}/${FH}` }}>
+                <canvas ref={canvasRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960}
+                  style={{ width: '100%', height: '100%', display: 'block', borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
+                <canvas ref={safeRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 8 }} />
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: FW >= FH ? pw : 520 }}>
                 <Btn tone="gold" onClick={play}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
                 <Btn small onClick={() => seek(0)}>⏮ Start</Btn>
+                {platformOf(p).safe.bottom || platformOf(p).safe.top ? <Btn small on={safe} onClick={() => setSafe(!safe)} title="Shows what the app's own buttons cover on this platform — keep words out of the red">Safe zones</Btn> : null}
                 <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, color: UI.mut }}>{fmtT(t)} / {tl ? fmtT(tl.total) : '0:00'}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 11.5, color: hasVoice ? UI.green : UI.gold }}>
                   {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : 'Estimated timing · make the voice to lock it'}
@@ -1378,8 +1556,19 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
 
               {sc.kind !== 'contact' ? (
                 <>
-                  <Label>Headline on screen</Label>
+                  <div style={{ display: 'flex', alignItems: 'baseline' }}><Label>Headline on screen</Label>{canEdit ? <span style={{ marginLeft: 'auto' }}><Btn small disabled={!!busy} onClick={headOptions} title="Three alternative headline + line pairs to pick from">{busy === 'options' ? '…' : '3 options'}</Btn></span> : null}</div>
                   <textarea rows={2} value={sc.head} disabled={!canEdit} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Short. **Gold** a word. Enter = new line." style={field} />
+                  {options && options.id === sc.id && options.list.length ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                      {options.list.map((o, k) => (
+                        <button key={k} onClick={() => { setScene(sel, { head: o.head, vo: o.vo }); setOptions(null) }} style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 7, padding: '6px 9px', cursor: 'pointer', color: UI.ink }}>
+                          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{o.head.replace(/\*\*/g, '').replace(/\n/g, ' / ')}</span>
+                          <span style={{ display: 'block', fontSize: 11, color: UI.mut }}>{o.vo}</span>
+                        </button>
+                      ))}
+                      <button onClick={() => setOptions(null)} style={{ background: 'none', border: 0, color: UI.mut, fontSize: 11, cursor: 'pointer', textAlign: 'left' }}>Keep mine</button>
+                    </div>
+                  ) : null}
                   <Label>Line under it</Label>
                   <input value={sc.sub} disabled={!canEdit} onChange={e => setScene(sel, { sub: e.target.value })} style={field} />
                   {['stats', 'cards', 'feed', 'checks', 'rise', 'wall'].indexOf(sc.kind) >= 0 ? (
@@ -1606,6 +1795,23 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             </div>
             {/* playhead */}
             <div style={{ position: 'absolute', top: 0, bottom: 0, left: `calc(64px + (100% - 64px) * ${tl.total ? t / tl.total : 0})`, width: 2, background: UI.red, pointerEvents: 'none' }} />
+          </div>
+        </div>
+      ) : null}
+      {versions ? (
+        <div onClick={() => setVersions(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 80, display: 'grid', placeItems: 'center', padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 'min(520px, 100%)', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}><span style={{ fontFamily: display, fontWeight: 800, fontSize: 16 }}>Versions</span><span style={{ marginLeft: 'auto' }}><Btn small onClick={() => setVersions(null)}>Close</Btn></span></div>
+            <p style={{ fontSize: 11.5, color: UI.mut, margin: '4px 0 10px' }}>Every real change keeps the state before it (last 12). Restoring keeps today's state as a version too.</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 400, overflowY: 'auto' }}>
+              {versions.map(v => (
+                <div key={v.ts} style={{ display: 'flex', alignItems: 'center', gap: 8, background: UI.panel2, borderRadius: 8, padding: '7px 10px' }}>
+                  <span style={{ flex: 1, minWidth: 0 }}><span style={{ display: 'block', fontSize: 12.5, fontWeight: 600 }}>{new Date(v.ts).toLocaleString()}</span><span style={{ fontSize: 11, color: UI.mut }}>{v.scenes} scenes · {LOOKS.find(l => l.key === v.look)?.label || v.look} · {v.by}</span></span>
+                  {canEdit ? <Btn small onClick={() => restore(v.ts)}>Restore</Btn> : null}
+                </div>
+              ))}
+              {!versions.length ? <p style={{ fontSize: 12, color: UI.mut }}>No earlier versions yet.</p> : null}
+            </div>
           </div>
         </div>
       ) : null}

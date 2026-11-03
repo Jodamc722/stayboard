@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS, TEXT_ANIMS, CAMS, type AdTextAnim, type AdCam } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS, TEXT_ANIMS, CAMS, type AdTextAnim, type AdCam, PLATFORMS } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -34,14 +34,14 @@ export async function defaultContact(): Promise<AdContact> {
   }
 }
 
-export async function listProjects(): Promise<{ id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string }[]> {
+export async function listProjects(): Promise<{ id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string; status: string }[]> {
   await ensureBucket()
   const sb = supabaseAdmin()
   const { data } = await sb.storage.from(BUCKET).list('projects', { limit: 200, sortBy: { column: 'updated_at', order: 'desc' } })
   const files = (data || []).filter(f => /\.json$/.test(f.name))
   const out = await Promise.all(files.slice(0, 60).map(async f => {
     const p = await getProject(f.name.replace(/\.json$/, ''))
-    return p ? { id: p.id, name: p.name, updatedAt: p.updatedAt, updatedBy: p.updatedBy, scenes: p.scenes.length, format: p.format } : null
+    return p ? { id: p.id, name: p.name, updatedAt: p.updatedAt, updatedBy: p.updatedBy, scenes: p.scenes.length, format: p.format, status: p.status || 'draft' } : null
   }))
   return out.filter(Boolean).sort((a: any, b: any) => String(b.updatedAt).localeCompare(String(a.updatedAt))) as any
 }
@@ -56,6 +56,20 @@ export async function getProject(id: string): Promise<AdProject | null> {
 export async function saveProject(p: AdProject, by: string): Promise<AdProject> {
   await ensureBucket()
   const clean = normalize({ ...p, updatedAt: new Date().toISOString(), updatedBy: by })
+  // VERSIONS (2026-11-03): when the scenes or the look change, the previous state is kept (last 12) so the
+  // team can go back. Autosave fires often, so only a real change makes a version.
+  try {
+    const prev = await getProject(clean.id)
+    const sig = (x: AdProject) => JSON.stringify([x.scenes.map(s => [s.kind, s.vo, s.head, s.sub, s.items, s.photos]), x.look, x.style, x.format, x.music])
+    if (prev && prev.scenes.length && sig(prev) !== sig(clean)) {
+      const sb = supabaseAdmin().storage.from(BUCKET)
+      const ts = (prev.updatedAt || new Date().toISOString()).replace(/[:.]/g, '-')
+      await sb.upload(`versions/${clean.id}/${ts}.json`, new Blob([JSON.stringify(prev)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+      const { data } = await sb.list(`versions/${clean.id}`, { limit: 100 })
+      const old = (data || []).map(f => f.name).sort().slice(0, -12)
+      if (old.length) await sb.remove(old.map(n => `versions/${clean.id}/${n}`))
+    }
+  } catch { /* versions are best effort */ }
   const body = new Blob([JSON.stringify(clean)], { type: 'application/json' })
   const { error } = await supabaseAdmin().storage.from(BUCKET).upload(`projects/${clean.id}.json`, body, { upsert: true, contentType: 'application/json' })
   if (error) throw new Error('save: ' + error.message)
@@ -116,6 +130,9 @@ export function normalize(p: any): AdProject {
       return st
     })(),
     goal: String(p?.goal || '').slice(0, 20),
+    platform: PLATFORMS.some(x => x.key === p?.platform) ? String(p.platform) : '',
+    status: (['draft', 'review', 'approved'].indexOf(p?.status) >= 0 ? p.status : 'draft') as AdProject['status'],
+    notes: String(p?.notes || '').slice(0, 2000),
     voiceId: String(p?.voiceId || 'qSeXEcewz7tA0Q0qk9fH').slice(0, 40),
     voiceName: String(p?.voiceName || '').slice(0, 80),
     voiceSettings: {
@@ -221,6 +238,9 @@ CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a 
 - Make it feel like a premium travel/brand film, not slides. Vary the scene kinds; never use the same kind twice in a row.
 - Open with motion: a "cinema" or "kinetic" scene. Use "kinetic" for punchy 2 to 6 word hooks, "cinema" for mood and place, "reveal" for a hero shot, "wall" (montage, quick full-screen cuts) for energy, "cards" (three beats) for three selling points.
 - One image on screen at a time. NEVER a grid, collage or side-by-side photos.
+- THE HOOK: scene 1 must stop the thumb in 1.5 seconds — a headline of 2 to 5 words that is a benefit, a feeling or the place ("Wake up on the water", "Miami, from the pool"), on the strongest photo. Never "Welcome to…" or the company name as the opener.
+- ONE idea per ad. Say the property's name (guest ads) or "Stay Hospitality" (owner ads) by scene 2 and again on the last scene. Every scene earns its place; cut anything that is just a label.
+- The last scene holds the call to action long enough to read: give it the most words of "vo" or leave it as the end card.
 - Transitions, headline animation and camera moves are chosen by the editor to suit the look — do not set them.
 - Optionally ONE short "badge" sticker in the whole ad (2 or 3 words that are true, e.g. "Oceanfront", "Book direct") — never a price or a claim we cannot prove.
 - Every scene's words and its photo must agree: if the line is about the pool, the photoQuery asks for the pool ("<property> pool"); about a bedroom, the bedroom. Each scene should show a different thing — don't repeat a subject.
@@ -427,4 +447,49 @@ Work it through like a pro:
 
 Reply with ONLY JSON:
 {"name": "short ad name", "property": "exact property name or empty", "brief": "the sharpened brief, 2 to 4 sentences, written as instructions to the writer", "settings": {"audience": "owners|partners|guests", "format": "16:9|9:16|1:1|4:5", "seconds": 15|30|45|60|90, "music": "werq|backbay|moonlight|inspired|wallpaper|funkorama"}, "angle": "one sentence", "hook": "the first line on screen", "questions": [{"id": "q1", "q": "question", "options": ["recommended", "other", "other"]}], "outline": ["1. Title — ...", "2. ..."], "warnings": ["anything missing or risky, e.g. few photos of that property"]}`
+}
+
+
+export async function listVersions(id: string): Promise<{ ts: string; name: string; scenes: number; by: string; look: string }[]> {
+  const sb = supabaseAdmin().storage.from(BUCKET)
+  const { data } = await sb.list(`versions/${safeId(id)}`, { limit: 100 })
+  const names = (data || []).map(f => f.name).filter(n => /\.json$/.test(n)).sort().reverse()
+  const out = await Promise.all(names.map(async n => {
+    const { data: b } = await sb.download(`versions/${safeId(id)}/${n}`)
+    if (!b) return null
+    try { const p = JSON.parse(await b.text()); return { ts: String(p.updatedAt || n), name: String(p.name || ''), scenes: (p.scenes || []).length, by: String(p.updatedBy || ''), look: String(p.look || 'stay') } } catch { return null }
+  }))
+  return out.filter(Boolean) as any
+}
+export async function restoreVersion(id: string, ts: string, by: string): Promise<AdProject | null> {
+  const sb = supabaseAdmin().storage.from(BUCKET)
+  const { data } = await sb.list(`versions/${safeId(id)}`, { limit: 100 })
+  const n = (data || []).map(f => f.name).find(f => f.startsWith(ts.replace(/[:.]/g, '-')))
+  if (!n) return null
+  const { data: b } = await sb.download(`versions/${safeId(id)}/${n}`)
+  if (!b) return null
+  const old = normalize(JSON.parse(await b.text()))
+  return saveProject({ ...old, id: safeId(id), voice: null }, by)
+}
+
+/** The expert review on top of auditAd: a score, what works, and concrete rewrites per scene. */
+export function auditPrompt(p: AdProject, issues: { sev: string; scene?: number; msg: string }[], seconds: number): string {
+  const guests = p.audience === 'guests'
+  return `You are a senior creative director reviewing a short ${guests ? 'guest' : 'owner'} video ad for Stay Hospitality before it ships. Be specific and useful — the team will click "apply" on your fixes.
+
+FACTS (never invent numbers, prices, fees or promises):
+${guests ? GUEST_FACTS : HOUSE_FACTS}
+
+HOUSE RULES: ${guests ? 'no prices, no "call us"; ends on Book at stay-hospitality.com.' : '"listings" not "homes", "40+ channels", no fee or revenue numbers, ends on a call with Nick.'} Never "Salato" or "Pompano Beach" in a spoken line. Headlines in sentence case, 2 to 8 words, the key word marked **like this**. The hook (scene 1) must work in 1.5 seconds with the sound off.
+
+THE AD (${p.format}, about ${seconds.toFixed(0)} s, look "${p.look || 'stay'}"):
+${p.scenes.map((s, i) => `${i + 1}. [${s.kind}] head: ${JSON.stringify(s.head)} | sub: ${JSON.stringify(s.sub)} | vo: ${JSON.stringify(s.vo)}${s.items.length ? ' | rows: ' + JSON.stringify(s.items) : ''}${s.badge ? ' | badge: ' + s.badge : ''}`).join('\n')}
+
+AUTOMATED CHECKS ALREADY FLAGGED (do not repeat them; go deeper):
+${issues.length ? issues.map(i => `- ${i.sev}${i.scene != null ? ' scene ' + (i.scene + 1) : ''}: ${i.msg}`).join('\n') : '- none'}
+
+Judge it like a paid-social expert: hook strength, one clear idea, rhythm, copy craft (specific and sensory, not generic), the call to action, whether the photos the words ask for exist in a rental (we only have photos of the property), and whether every scene earns its place. Then give up to 6 improvements, each with a concrete patch (new head / vo / sub / items / kind / badge for ONE scene, or "delete": true for a scene that adds nothing). Keep what already works.
+
+Reply with ONLY JSON:
+{"score": 0-100, "verdict": "one sentence", "strengths": ["...", "..."], "issues": [{"scene": 1, "problem": "...", "fix": "what to change and why", "patch": {"head": "...", "vo": "...", "sub": "...", "items": ["..."], "kind": "...", "badge": "...", "delete": false}}]}`
 }
