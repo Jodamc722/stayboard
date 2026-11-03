@@ -12,7 +12,7 @@ import { scriptPrompt, normalize } from '@/lib/ad-studio'
 import { searchPhotos } from '@/lib/photo-library'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 90
+export const maxDuration = 180
 
 /** A photo that is itself a collage / grid / split image never goes in an ad (Jon, 2026-11-02). */
 const isCollage = (h: { caption?: string; url?: string }) => /collage|grid|mosaic|montage|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i.test(String(h.caption || '') + ' ' + String(h.url || ''))
@@ -52,6 +52,12 @@ export async function POST(req: NextRequest) {
       }
       return { id: 's' + (i + 1), kind: s?.kind, tr: s?.tr, anim: s?.anim, cam: s?.cam, badge: s?.badge, vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos, photoQuery: q }
     }))
+    // Every photo-led design needs a photo: borrow one the ad already has, so no scene renders empty.
+    const pool: string[] = []
+    scenes.forEach(x => x.photos.forEach(u => { if (pool.indexOf(u) < 0) pool.push(u) }))
+    if (!pool.length && cache && Object.keys(cache).length) Object.values(cache).forEach(a => a.forEach(u => { if (pool.indexOf(u) < 0) pool.push(u) }))
+    let rot = 0
+    scenes.forEach(x => { if (!x.photos.length && x.kind !== 'contact' && pool.length) { x.photos = [pool[(rot++ + 1) % pool.length]] } })
     const norm = normalize({ id: 'x', scenes })
     // a contact card in a guest ad is the wrong end card — the writer is told, this is the backstop
     if (/guest/i.test(String(b?.audience || ''))) norm.scenes = norm.scenes.map(s => (s.kind === 'contact' ? { ...s, kind: 'cta' as const, items: s.items.length ? s.items : ['Book at stay-hospitality.com'] } : s))

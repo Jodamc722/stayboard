@@ -9,7 +9,7 @@ import { planPrompt } from '@/lib/ad-studio'
 import { libraryIndex, buildingPhotos } from '@/lib/photo-library'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]+/g, '')
 
