@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -39,7 +39,7 @@ const UI = {
   bg: '#0E1116', panel: '#151A21', panel2: '#1B222B', line: '#262E39', ink: '#E8EBEF', mut: '#8C96A3', gold: '#D2B077', blue: '#4C8DF6', red: '#E5675C', green: '#4CC488',
 }
 const KIND_COLOR: Record<AdKind, string> = {
-  cta: '#E0A64C', mask: '#E0C04C', panel: '#7FA6C9', ticker: '#E06C4C', callouts: '#4CC4A8', polaroid: '#C9B79A', event: '#A06CE0', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', contact: '#B58B3E',
+  cta: '#E0A64C', mask: '#E0C04C', panel: '#7FA6C9', ticker: '#E06C4C', callouts: '#4CC4A8', polaroid: '#C9B79A', event: '#A06CE0', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', timeline: '#D9A441', team: '#7CB5A0', quote: '#B89BD9', contact: '#B58B3E',
 }
 const AUD: Record<AdAudience, { label: string; brief: string; hint: string }> = {
   owners: { label: 'Owners', brief: 'property owners', hint: 'Sell management: revenue, team, Lighthouse; ends on Nick' },
@@ -106,7 +106,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [saved, setSaved] = useState<'saved' | 'saving' | 'dirty' | ''>('')
   const [brief, setBrief] = useState('')
   const [seconds, setSeconds] = useState(30)
-  const [side, setSide] = useState<'ads' | 'templates' | 'videos' | 'sounds' | 'ideas'>('ads')
+  const [side, setSide] = useState<'ads' | 'stories' | 'templates' | 'videos' | 'sounds' | 'ideas'>('ads')
   const [audit, setAudit] = useState<Audit | null>(null)
   const [showAudit, setShowAudit] = useState(false)
   const [safe, setSafe] = useState(true)
@@ -914,10 +914,18 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   }
 
   // ── templates: a ready-made ad that fills itself from the photo library ──
-  const applyTemplate = async (tp: AdTemplate) => {
+  // A story is a template that starts its own ad (Jon, 2026-11-03: our story, welcome, first 90 days, the team).
+  const buildStory = async (st: AdStory) => {
+    if (!canEdit || busy) return
+    let cur = pRef.current
+    if (!cur || cur.scenes.length > 2) { cur = await newAd(); if (!cur) return }
+    await applyTemplate(st, true)
+    change(d => ({ ...d, name: st.name, audience: st.audience, format: st.format, goal: st.audience === 'partners' ? 'partners' : 'owners', look: d.look || 'stay' }))
+  }
+  const applyTemplate = async (tp: AdTemplate, quiet = false) => {
     const p = pRef.current
     if (!p || !canEdit) return
-    if (p.scenes.length > 2 && !window.confirm('Replace the scenes in "' + p.name + '" with the ' + tp.label + ' template?')) return
+    if (!quiet && p.scenes.length > 2 && !window.confirm('Replace the scenes in "' + p.name + '" with the ' + tp.label + ' template?')) return
     stop(); setBusy('template')
     const cache: Record<string, string[]> = {}
     const scenes: AdScene[] = []
@@ -1039,9 +1047,21 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           ) : null}
 
           <div style={{ display: 'flex', gap: 4, marginTop: 16, borderTop: '1px solid ' + UI.line, paddingTop: 12 }}>
-            {([['ads', 'Ads'], ['ideas', 'Ideas'], ['templates', 'Templates'], ['videos', 'Videos'], ['sounds', 'Sounds']] as const).map(([k, l]) => <Btn key={k} small on={side === k} onClick={() => setSide(k)}>{l}</Btn>)}
+            {([['ads', 'Ads'], ['stories', 'Stories'], ['ideas', 'Ideas'], ['templates', 'Templates'], ['videos', 'Videos'], ['sounds', 'Sounds']] as const).map(([k, l]) => <Btn key={k} small on={side === k} onClick={() => setSide(k)}>{l}</Btn>)}
           </div>
-          {side === 'templates' ? (
+          {side === 'stories' ? (
+            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 560, overflowY: 'auto' }}>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 4px', lineHeight: 1.5 }}>Longer pieces for owners and partners, written from the house facts and filled with photos from the library. Build one, then edit any word, swap photos, make the voice.</p>
+              {STORIES.map(st => (
+                <div key={st.key} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px' }}>
+                  <p style={{ fontSize: 12.5, fontWeight: 700, margin: 0 }}>{st.label} <span style={{ fontWeight: 500, color: UI.mut }}>· {st.length}</span></p>
+                  <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 2px', lineHeight: 1.45 }}>{st.blurb}</p>
+                  <p style={{ fontSize: 10.5, color: UI.mut, margin: '0 0 6px' }}>For: {st.who} · {st.scenes.length} scenes</p>
+                  {canEdit ? <Btn small tone="gold" disabled={!!busy} onClick={() => buildStory(st)}>{busy === 'template' ? 'Building…' : 'Build this story'}</Btn> : null}
+                </div>
+              ))}
+            </div>
+          ) : side === 'templates' ? (
             <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {TEMPLATES.map(tp => (
                 <button key={tp.key} disabled={!p || !canEdit || !!busy} onClick={() => applyTemplate(tp)} style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px', cursor: 'pointer', color: UI.ink, opacity: !p ? 0.5 : 1 }}>

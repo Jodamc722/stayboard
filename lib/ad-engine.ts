@@ -15,7 +15,7 @@
 //  - The STAY mark is gold in video, transparent, no chip. The end card is Nick's card.
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
-export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'contact' | 'cta'
+export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'timeline' | 'team' | 'quote' | 'contact' | 'cta'
 /** Jon, 2026-11-02: "need more style … a wide range of edits, range of styles and looks". */
 export type AdStyle = {
   font: 'auto' | 'sans' | 'serif' | 'condensed' | 'elegant'
@@ -165,6 +165,9 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'feed', label: 'Live feed', hint: 'Cards that slide in, like Lighthouse at work. Rows: Title|detail' },
   { kind: 'checks', label: 'Checklist', hint: 'Items that tick off, beside a photo. Rows: item' },
   { kind: 'rise', label: 'Results', hint: 'Headline with a rising line. Rows become chips.' },
+  { kind: 'timeline', label: 'Timeline', hint: 'Milestones along a gold line, landing one by one. Rows: Week 1|Agreement and walk-through. Up to 6.' },
+  { kind: 'team', label: 'Team', hint: 'People cards: a round photo (or initials), name and role. Rows: Name|Role; one photo per row, in order. Up to 6.' },
+  { kind: 'quote', label: 'Quote', hint: 'One line we stand behind, big, with a big quotation mark; the sub line is who said it. Photo behind.' },
   { kind: 'contact', label: 'Contact card', hint: 'The end card: photo, Book a call, number, email.' },
   { kind: 'cta', label: 'Book now', hint: 'Guest end card / social post: photo, headline, a button. Row 1 is the button text.' },
 ]
@@ -1069,7 +1072,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     return
   }
 
-  background(ctx, W, H, im(0), local, dur, sc.kind === 'photo' ? 0.6 : 1.15)
+  // Team cards: the photos are the people, so the backdrop is the look's mesh, never a face blown up behind the cards.
+  background(ctx, W, H, sc.kind === 'team' ? null : im(0), local, dur, sc.kind === 'photo' ? 0.6 : 1.15)
 
   if (sc.kind === 'title' || sc.kind === 'photo') {
     const hw = sc.kind === 'title' ? W - pad * 2 : W * (portrait ? 0.86 : 0.7)
@@ -1117,11 +1121,108 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     return
   }
 
+  // QUOTE — one line we stand behind, big, with a quotation mark; the sub line is who said it.
+  if (sc.kind === 'quote') {
+    background(ctx, W, H, im(0), local, dur, 1.2)
+    const qw = W - pad * 2
+    ctx.save(); ctx.globalAlpha *= appear(local, 0.05) * 0.9
+    ctx.font = fnt(800, (portrait ? 260 : 300) * u, A.display); ctx.fillStyle = C.gold; ctx.fillText('“', pad - 10 * u, (portrait ? H * 0.3 : H * 0.36) + 40 * u)
+    ctx.restore()
+    const size = fitSize(ctx, head, qw, (portrait ? 80 : 88) * u, H * 0.5, 700, A.display, 1.15)
+    const hh = linesH(ctx, head, qw, size, A.display, 1.15)
+    const y = portrait ? H * 0.3 : H * 0.34
+    rich(ctx, head, pad, y, qw, size, { font: A.display, local, delay: 0.2, stagger: 0.2, weight: 700, lh: 1.15, maxH: H * 0.55 })
+    if (sc.sub) {
+      const a = appear(local, 0.9)
+      ctx.save(); ctx.globalAlpha *= a
+      ctx.fillStyle = C.gold; ctx.fillRect(pad, y + hh + 34 * u, 90 * u, 5 * u)
+      plain(ctx, sc.sub, pad + 120 * u, y + hh + 18 * u, qw - 120 * u, 32 * u, A.body, C.ink, 600, 'left', a)
+      ctx.restore()
+    }
+    return
+  }
+
   // The rest share a headline at the top-left (or top on vertical) and a content area beneath.
   let top = pad + 20 * u
   if (head) top += rich(ctx, head, pad, top, W - pad * 2, (portrait ? 84 : 80) * u, { font: A.display, local, delay: 0.1, maxH: H * 0.26 }) + 16 * u
   if (sc.sub) top += plain(ctx, sc.sub, pad, top, W - pad * 2, 32 * u, A.body, C.mut, 500, 'left', appear(local, 0.4)) + 10 * u
   const area = { x: pad, y: top + 30 * u, w: W - pad * 2, h: H - bottomSafe - top - 40 * u }
+
+  // TIMELINE — milestones along a gold line. Landscape: left → right (the date above each dot, the milestone
+  // below); portrait: top → bottom.
+  if (sc.kind === 'timeline') {
+    const it = sc.items.slice(0, 6)
+    const n = Math.max(1, it.length)
+    if (!portrait) {
+      const colW = area.w / n - 12 * u
+      const ly = area.y + 70 * u, x0 = area.x + colW / 2 + 6 * u, x1 = area.x + area.w - colW / 2 - 6 * u
+      const prog = appear(local, 0.2, 0.5 + n * 0.45)
+      ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 4 * u; ctx.beginPath(); ctx.moveTo(x0, ly); ctx.lineTo(x1, ly); ctx.stroke()
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 6 * u; ctx.beginPath(); ctx.moveTo(x0, ly); ctx.lineTo(x0 + (x1 - x0) * prog, ly); ctx.stroke(); ctx.restore()
+      const step = n > 1 ? (x1 - x0) / (n - 1) : 0
+      for (let k = 0; k < n; k++) {
+        const a = appear(local, 0.35 + k * 0.45, 0.5)
+        if (a <= 0) continue
+        const [when, what] = split(it[k])
+        const x = x0 + step * k
+        const tx = x - colW / 2
+        ctx.save(); ctx.globalAlpha *= a
+        ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(x, ly, 18 * u * (0.6 + 0.4 * a), 0, Math.PI * 2); ctx.fill()
+        ctx.strokeStyle = onAccent(); ctx.lineWidth = 4 * u; ctx.stroke()
+        ctx.font = fnt(800, 32 * u, A.display); ctx.fillStyle = C.gold; ctx.textAlign = 'center'; ctx.fillText(when.toUpperCase(), x, ly - 36 * u); ctx.textAlign = 'left'
+        plain(ctx, what, tx, ly + 44 * u, colW, 29 * u, A.body, C.ink, 500, 'center')
+        ctx.restore()
+      }
+      return
+    }
+    const lx = area.x + 30 * u, y0 = area.y + 20 * u, y1 = area.y + area.h - 20 * u
+    const prog = appear(local, 0.2, 0.5 + n * 0.45)
+    ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = 4 * u; ctx.beginPath(); ctx.moveTo(lx, y0); ctx.lineTo(lx, y1); ctx.stroke()
+    ctx.strokeStyle = C.gold; ctx.lineWidth = 6 * u; ctx.beginPath(); ctx.moveTo(lx, y0); ctx.lineTo(lx, y0 + (y1 - y0) * prog); ctx.stroke(); ctx.restore()
+    const step = n > 1 ? (y1 - y0) / (n - 1) : 0
+    for (let k = 0; k < n; k++) {
+      const a = appear(local, 0.35 + k * 0.45, 0.5)
+      if (a <= 0) continue
+      const [when, what] = split(it[k])
+      const y = y0 + step * k
+      ctx.save(); ctx.globalAlpha *= a
+      ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(lx, y, 16 * u, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = onAccent(); ctx.lineWidth = 4 * u; ctx.stroke()
+      ctx.font = fnt(800, 32 * u, A.display); ctx.fillStyle = C.gold; ctx.fillText(when.toUpperCase(), lx + 50 * u, y - 10 * u)
+      plain(ctx, what, lx + 50 * u, y + 6 * u, area.w - 90 * u, 28 * u, A.body, C.ink, 500)
+      ctx.restore()
+    }
+    return
+  }
+
+  // TEAM — people cards: round photo (or gold initials), name, role.
+  if (sc.kind === 'team') {
+    const it = sc.items.slice(0, 6)
+    const n = Math.max(1, it.length)
+    const cols = portrait ? (n > 4 ? 3 : 2) : Math.min(n, n > 4 ? 3 : n)
+    const rows = Math.ceil(n / cols)
+    const cw = area.w / cols
+    const r = Math.max(50 * u, Math.min(cw * 0.3, 130 * u, (area.h / rows - 150 * u) / 2))
+    const ch = r * 2 + 150 * u
+    const y0 = area.y + Math.max(0, (area.h - ch * rows) / 2)
+    for (let k = 0; k < n; k++) {
+      const a = appear(local, 0.2 + k * 0.22, 0.5)
+      if (a <= 0) continue
+      const [name, role] = split(it[k])
+      const cx = area.x + (k % cols) * cw + cw / 2, cy = y0 + Math.floor(k / cols) * ch + r + 20 * u
+      const img = get(sc.photos[k] || '')
+      ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 30 * u)
+      ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.closePath(); ctx.clip()
+      if (img) cover(ctx, img, cx - r, cy - r, r * 2, r * 2, 1.02)
+      else { ctx.fillStyle = C.gold; ctx.fillRect(cx - r, cy - r, r * 2, r * 2); ctx.fillStyle = onAccent(); ctx.font = fnt(800, r * 0.9, A.display); ctx.textAlign = 'center'; ctx.fillText(name.split(/\s+/).map(w => w.charAt(0)).join('').slice(0, 2).toUpperCase(), cx, cy + r * 0.32); ctx.textAlign = 'left' }
+      ctx.restore()
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.lineWidth = 5 * u; ctx.strokeStyle = C.gold; ctx.stroke()
+      const nsz = fitSize(ctx, name, cw - 30 * u, 40 * u, 0, 800, A.display)
+      ctx.font = fnt(800, nsz, A.display); ctx.fillStyle = C.ink; ctx.textAlign = 'center'; ctx.fillText(name, cx, cy + r + 62 * u)
+      ctx.font = fnt(500, 27 * u, A.body); ctx.fillStyle = C.mut; ctx.fillText(role, cx, cy + r + 102 * u); ctx.textAlign = 'left'
+      ctx.restore()
+    }
+    return
+  }
 
   if (sc.kind === 'stats') {
     const it = sc.items.slice(0, 6)
@@ -1556,6 +1657,57 @@ Rules: never promise a price, a discount, a "best rate" or availability. The cal
 
 export type AdTemplate = { key: string; label: string; blurb: string; audience: AdAudience; format: AdFormat; name: string; scenes: (Omit<AdScene, 'id' | 'photos'> & { q?: string; n?: number })[] }
 /** Ready-made ads: pick one and it fills itself with photos from the library — no AI needed. */
+export type AdStory = AdTemplate & { length: string; who: string }
+/** Longer owner-facing stories (Jon, 2026-11-03: "full Stay Hospitality story, what we can share with owners as we onboard,
+ *  welcome video, what the first 90 days looks like, team intro, our story"). Every fact is from HOUSE_FACTS / the house
+ *  onboarding copy; photos come from the library; every word is editable after it is built. */
+export const STORIES: AdStory[] = [
+  { key: 'our-story', label: 'Our story · Stay Hospitality', length: '≈ 60 s', who: 'Owners, partners, the website', blurb: 'Who we are in a minute: ten years, 450+ listings, how we run revenue, tools and team — ends on Nick.', audience: 'owners', format: '16:9', name: 'Our story', scenes: [
+    { kind: 'cinema', vo: 'Ten years. Four hundred and fifty listings. One standard.', head: 'Ten **years.**\n450+ **listings.**\nOne **standard.**', sub: 'Stay Hospitality · South Florida', items: [], q: 'exterior', n: 1 },
+    { kind: 'stats', vo: 'Stay Hospitality manages short-term rentals across Miami, Fort Lauderdale, Pompano and Palm Beach.', head: 'South Florida, **by the numbers**', sub: '', items: ['10|years in business', '450+|listings', '140+|properties', '1M+|guests hosted', '4.6|guest rating', '40+|booking channels'], q: 'pool', n: 1 },
+    { kind: 'wall', vo: 'From downtown high-rises to beachfront buildings, we run whole buildings and the units inside them.', head: 'Buildings, **not just units.**', sub: '', items: [], q: 'exterior', n: 4 },
+    { kind: 'cards', vo: 'Three things decide what a property earns: how the rate is managed, the tools it runs on, and the team that shows up.', head: '', sub: '', items: ['Revenue|Priced every day against the competitive set', 'Tools|Guesty, PriceLabs, Breezeway and Lighthouse', 'Team|Housekeeping, maintenance, inspections and guest care — in-house'], q: 'living room', n: 3 },
+    { kind: 'feed', vo: 'Lighthouse is our own AI platform. It optimizes listings, builds guidebooks, catches recurring issues and turns problems into tasks before a guest notices.', head: '**Lighthouse**, built in-house', sub: 'Our own AI platform', items: ['Listings optimized|Best photos first, copy that sells, refreshed every three months', 'Issues caught early|Recurring problems become tasks automatically', 'Guests looked after|Guidebooks, ID checks, reviews and messages monitored'], q: 'kitchen', n: 1 },
+    { kind: 'quote', vo: 'We price to convert. Higher conversion ranks a listing higher, which books more and earns more.', head: 'We price to **convert.** Higher conversion ranks higher, books more, earns more.', sub: 'How we manage revenue', items: [], q: 'balcony view', n: 1 },
+    { kind: 'contact', vo: 'Talk to Nick about your property. 651-200-8283.', head: 'Talk to **Nick.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+  { key: 'welcome', label: 'Welcome aboard', length: '≈ 45 s', who: 'A new owner, the day they sign', blurb: 'Thank you, what happens now, who you will hear from, what you see every month.', audience: 'owners', format: '16:9', name: 'Welcome to Stay', scenes: [
+    { kind: 'title', vo: 'Welcome to Stay Hospitality. Thank you for trusting us with your property.', head: 'Welcome to **Stay.**', sub: 'Thank you for trusting us with your property', items: [], q: 'exterior', n: 1 },
+    { kind: 'checks', vo: 'Here is what happens now. We walk the property, photograph it, build the listing, publish it across forty-plus channels, and set the pricing.', head: 'What happens **now**', sub: 'Most of it is on us', items: ['The walk-through', 'Professional photography', 'Listing built from scratch', 'Live on 40+ channels', 'Pricing set and reviewed daily'], q: 'living room', n: 1 },
+    { kind: 'team', vo: 'These are the people behind your property: management, maintenance, housekeeping and the Customer Care Team.', head: 'Who you will **hear from**', sub: '', items: ['Nick Carline|Business Development', 'Jon McGill|General Manager', 'Roberto Chirboga|Manager', 'Ronnie Regis|Maintenance Supervisor', 'Karla Valle|Customer Care'] },
+    { kind: 'feed', vo: 'Every month you get a statement, your owner portal, and a report that shows the work behind the numbers.', head: 'What you **see** every month', sub: '', items: ['Your statement|Every booking, every fee, every payout', 'Your owner portal|Calendar, bookings and documents, any time', 'The owner report|The month, explained'], q: 'kitchen', n: 1 },
+    { kind: 'quote', vo: 'Your part is the agreement, access and approving what gets bought. Everything else is work we do and show you.', head: 'Your part is the agreement, access and approvals. **Everything else is work we do and show you.**', sub: 'Stay Hospitality', items: [], q: 'balcony view', n: 1 },
+    { kind: 'contact', vo: 'Questions any time. Nick is at 651-200-8283.', head: 'Questions? **Any time.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+  { key: 'first-90', label: 'Your first 90 days', length: '≈ 60 s', who: 'A new owner', blurb: 'Signature to first booking in about four weeks, then what the next two months look like.', audience: 'owners', format: '16:9', name: 'Your first 90 days', scenes: [
+    { kind: 'kinetic', vo: 'From signature to first booking, usually inside four weeks. Here is your first ninety days.', head: 'Your first **90 days**', sub: '', items: [], q: 'exterior', n: 1 },
+    { kind: 'timeline', vo: 'Week one: the agreement, your owner profile, and the walk-through. Weeks one and two: anything the property needs is specified and ordered. Week two: photography and the listing. Week three: live everywhere, pricing set, operations live. Week four: the kickoff call.', head: 'The first **four weeks**', sub: '', items: ['Week 1|Agreement, owner profile, the walk-through', 'Weeks 1–2|Furnishing and supplies ordered', 'Week 2|Photography and the listing', 'Week 3|Live on 40+ channels, pricing set, operations live', 'Week 4|The kickoff call'], q: 'living room', n: 1 },
+    { kind: 'cards', vo: 'Then the calendar fills. Days thirty to ninety are about conversion: the rate reviewed every day, reviews earned, and the listing refined from what the data says.', head: '', sub: '', items: ['Days 30–60|Priced every day; the first reviews come in', 'Days 60–90|Ranking climbs with conversion; the listing is refined', 'Every month|Your statement, your portal, your report'], q: 'pool', n: 3 },
+    { kind: 'quote', vo: 'A new listing converts worse at the same price until it has reviews and rank. We price to the demand that is there, take every night that clears it, and earn the reviews from nights that would otherwise have gone empty.', head: 'We price to the demand that is there and **earn the reviews from nights that would otherwise have gone empty.**', sub: 'How a new listing ramps', items: [], q: 'balcony view', n: 1 },
+    { kind: 'checks', vo: 'What we need from you: the agreement, the keys, and about two hours of decisions.', head: 'What we need **from you**', sub: 'Everything else is on us', items: ['The management agreement', 'Keys and access', 'About two hours of decisions', 'Approvals on what gets bought'], q: 'kitchen', n: 1 },
+    { kind: 'contact', vo: 'Questions on the way? Nick is at 651-200-8283.', head: 'Here the **whole way.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+  { key: 'team', label: 'Meet the team', length: '≈ 40 s', who: 'Owners and partners', blurb: 'The people, then the four crews that make up one in-house team.', audience: 'owners', format: '16:9', name: 'Meet the team', scenes: [
+    { kind: 'title', vo: 'One complete team. Here is who runs your property.', head: 'One complete **team.**', sub: 'Stay Hospitality', items: [], q: 'lobby', n: 1 },
+    { kind: 'team', vo: 'Nick in business development. Jon, our general manager. Roberto managing operations. Ronnie on maintenance. Karla leading customer care.', head: 'The **people**', sub: '', items: ['Nick Carline|Business Development', 'Jon McGill|General Manager', 'Roberto Chirboga|Manager', 'Ronnie Regis|Maintenance Supervisor', 'Karla Valle|Customer Care'] },
+    { kind: 'checks', vo: 'Behind them, four crews, all in-house: housekeeping, maintenance, inspections, and the Customer Care Team for every guest.', head: 'Four crews, **in-house**', sub: '', items: ['Housekeeping', 'Maintenance', 'Inspections', 'Customer Care Team'], q: 'living room', n: 1 },
+    { kind: 'stats', vo: 'Across Miami, Fort Lauderdale, Pompano and Palm Beach.', head: '', sub: '', items: ['450+|listings', '140+|properties', '4.6|guest rating', '1M+|guests hosted'], q: 'pool', n: 1 },
+    { kind: 'contact', vo: 'Meet us in person. Nick is at 651-200-8283.', head: 'Meet us **in person.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+  { key: 'stay-run', label: 'How a stay is run', length: '≈ 40 s', who: 'Owners', blurb: 'The guest journey from booking to review, and the record behind it.', audience: 'owners', format: '16:9', name: 'How a stay is run', scenes: [
+    { kind: 'cinema', vo: 'Every stay follows the same path, and every step is on the record.', head: 'Every stay, **on the record.**', sub: 'How a stay is run', items: [], q: 'bedroom', n: 1 },
+    { kind: 'feed', vo: 'A booking lands on one of forty-plus channels. The guest is checked, welcomed, and given a guidebook. The turnover is cleaned and inspected with photos. The Customer Care Team is there throughout.', head: 'Booking to **review**', sub: '', items: ['The booking|One calendar across 40+ channels', 'The guest|ID checked, welcomed, a digital guidebook', 'The turnover|Cleaned and inspected, photo-checked in Breezeway', 'The stay|Customer Care Team on every guest', 'The review|Monitored and answered'], q: 'living room', n: 1 },
+    { kind: 'stats', vo: 'Guests rate their stays four point six out of five.', head: '', sub: '', items: ['4.6|guest rating', '1M+|guests hosted'], q: 'pool', n: 1 },
+    { kind: 'contact', vo: 'See how it would run for your property. Nick, 651-200-8283.', head: 'See it for **your property.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+  { key: 'partner', label: 'Partner intro', length: '≈ 30 s', who: 'Realtors, lenders, CPAs', blurb: 'Who we are, what we run, and what their client gets — for referral partners.', audience: 'partners', format: '16:9', name: 'For our partners', scenes: [
+    { kind: 'kinetic', vo: 'When your client buys a rental, here is who runs it.', head: 'Who runs **your client\'s** rental', sub: '', items: [], q: 'exterior', n: 1 },
+    { kind: 'stats', vo: 'Ten years, four hundred and fifty listings, over a million guests.', head: '', sub: '', items: ['10|years', '450+|listings', '1M+|guests', '4.6|rating'], q: 'pool', n: 1 },
+    { kind: 'cards', vo: 'Revenue managed every day, one in-house team, and a statement every month your client can read.', head: '', sub: '', items: ['Revenue|Priced every day, big dates months ahead', 'Operations|One in-house team, every task photo-checked', 'Transparency|A statement every month, an owner portal any time'], q: 'living room', n: 3 },
+    { kind: 'contact', vo: 'Introduce us. Nick, 651-200-8283.', head: 'Introduce **us.**', sub: '', items: [], q: 'ocean view', n: 1 },
+  ] },
+]
+
 export const TEMPLATES: AdTemplate[] = [
   { key: 'owner-earn', label: 'Owners · Why Stay', blurb: '30s owner ad: hook, buildings, how, Lighthouse, results, Nick', audience: 'owners', format: '16:9', name: 'Why owners choose Stay', scenes: [
     { kind: 'title', vo: 'More revenue. A lower fee. One complete team. This is Stay Hospitality.', head: 'More **revenue.**\nLower **fee.**\nOne complete **team.**', sub: '', items: [], q: 'exterior', n: 1 },
