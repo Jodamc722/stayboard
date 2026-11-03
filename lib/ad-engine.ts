@@ -1000,7 +1000,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.save(); ctx.globalAlpha *= a
       ctx.fillStyle = C.gold; ctx.fillRect(x, y, cw - 40 * u, 4 * u)
       const pn = parseNum(val)
-      const prog = ease((local - 0.2 - k * 0.15) / 1.4)
+      const prog = ease((local - 0.1 - k * 0.08) / 0.75)
       const shown = pn ? pn.pre + (pn.n * prog).toLocaleString('en-US', { minimumFractionDigits: pn.dec, maximumFractionDigits: pn.dec }) + pn.suf : val
       const nsz = fitSize(ctx, val, cw - 50 * u, 120 * u); ctx.font = fnt(800, nsz, A.display); ctx.fillStyle = C.ink; ctx.fillText(shown, x, y + 150 * u)
       plain(ctx, label, x, y + 170 * u, cw - 50 * u, 32 * u, A.body, C.mut, 500)
