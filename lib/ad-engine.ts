@@ -232,6 +232,7 @@ export function auditAd(p: AdProject, tl: Timeline, facts: string): AuditIssue[]
   if (hw > 6) out.push({ sev: 'high', scene: 0, code: 'hook-long', msg: `The hook is ${hw} words — people decide in 1.5 s. Cut it to 2–5.` })
   if (!first.head.trim()) out.push({ sev: 'high', scene: 0, code: 'hook-missing', msg: 'The first scene has no headline — most people watch muted, so the hook must be on screen.' })
   if (/^(welcome|introducing|stay hospitality)/i.test(first.head.replace(/\*\*/g, '').trim())) out.push({ sev: 'med', scene: 0, code: 'hook-weak', msg: 'Opening on "Welcome" or the company name wastes the hook. Lead with a feeling, a benefit or the place.' })
+  if (/^(welcome to|introducing|this is stay)/i.test(first.vo.trim())) out.push({ sev: 'low', scene: 0, code: 'hook-vo', msg: 'The first line opens with "Welcome to" - lead with the place or the feeling instead.' })
   if (!first.photos.length && ['stats', 'contact'].indexOf(first.kind) < 0) out.push({ sev: 'high', scene: 0, code: 'hook-photo', msg: 'The first scene has no photo — the strongest image belongs here.' })
   const last = sc[n - 1]
   if (guests && last.kind !== 'cta') out.push({ sev: 'high', scene: n - 1, code: 'cta', msg: 'A guest ad must end on the Book now card.', fix: { label: 'Make it the Book now card', scene: { kind: 'cta', items: ['Book at stay-hospitality.com'] } } })
