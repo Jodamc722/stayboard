@@ -242,5 +242,9 @@ export const config = {
   // This holds because public/ is flat — icon-180/192/512.png, stay-logo.png, manifest.json, and
   // nothing else. A static asset added in a SUBDIRECTORY of public/ would be gated by this and must
   // be named here explicitly rather than by widening the pattern back out.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|api/|[^/]+\\.(?:png|jpe?g|gif|svg|webp|ico|avif|woff2?)$).*)']
+  //
+  // public/guides/ (2026-11-03): the maps shown inside the public guest guidebook (/g/) — the Boynton
+  // walk-to-the-beach and parking maps. Guests are signed out, so these files are exempted by folder,
+  // one level deep, images only; nothing else under public/ is.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.json|api/|guides/[^/]+\\.(?:png|jpe?g|webp)$|[^/]+\\.(?:png|jpe?g|gif|svg|webp|ico|avif|woff2?)$).*)']
 }
