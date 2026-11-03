@@ -94,6 +94,19 @@ const FLAG_LEVEL: Record<Flag, 3 | 2 | 1> = {
 }
 const severity = (t: Task) => t.flags.reduce((m, f) => Math.max(m, FLAG_LEVEL[f] || 0), 0)
 const isFinished = (t: Task) => isTaskDone(t.status, t.finishedAt)
+// WHAT THE QUEUE SHOWS BY DEFAULT (Jon, 2026-11-03: "if unlikely not a billable have a filter, if
+// billable show. This feels long and hard to look at … easy to look at, approve and move on").
+// November had 367 open rows and 73 of them were finished; 220 were inspections and common-area
+// jobs the billable model calls not billable, at $0. Nobody needs to read those one by one. So the
+// queue opens on what there is to decide — a job that is finished and either carries money, is
+// flagged, or looks billable — and the rest sit under two folded lines beneath the list: the
+// routine $0 jobs (approved in one click) and the jobs the crew has not finished yet (they come up
+// when they are finished). "Everything" brings them all back.
+/** Finished, bills nothing, nobody touched it, the model says routine, no must-look flag. */
+const quietRoutine = (t: Task) => isFinished(t) && t.billedAmount === 0 && t.overrideAmount == null && !t.excluded && t.billable?.verdict === 'no' && severity(t) < 3 && !t.flags.includes('should_bill')
+/** Not finished yet and nothing on it to decide — no money, no price, no must-look flag. */
+const notReady = (t: Task) => !isFinished(t) && t.billedAmount === 0 && t.overrideAmount == null && severity(t) < 3
+const toDecide = (t: Task) => !quietRoutine(t) && !notReady(t)
 /** The report flags, recomputed when a check lands on the client. */
 function withEvidence(t: Task, ev: Evidence): Task {
   const flags: Flag[] = t.flags.filter(f => f !== 'no_report' && f !== 'thin_report')
@@ -226,7 +239,10 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
   const btn = 'inline-flex items-center gap-1 rounded-lg px-2.5 h-8 text-[12px] font-semibold disabled:opacity-40 transition'
   return (
     <li className={'border-b border-line last:border-b-0 ' + (over ? 'border-l-[3px] border-l-amber-400 ' : 'border-l-[3px] border-l-transparent ') + (done ? 'bg-emerald-50/40' : t.excluded ? 'bg-app/40' : '')}>
-      <div className={'grid gap-3 px-3 py-2.5 items-center ' + (checked ? 'bg-brand-50/60' : '')} style={{ gridTemplateColumns: 'auto minmax(0,1fr) auto auto' }}>
+      {/* ONE LINE PER JOB (Jon, 2026-11-03: "easy to look at, approve and move on"): unit, job, the
+          flags that matter, who and when — the price — the one button. The breakdown lives in the
+          hover and the details; the information-only flags live in the details. */}
+      <div className={'grid gap-2 px-3 py-1.5 items-center ' + (checked ? 'bg-brand-50/60' : '')} style={{ gridTemplateColumns: 'auto minmax(0,1fr) auto auto' }}>
         {/* BULK (Jon, 2026-10-02: "bulk change billables and approve"): tick rows, then act on them all from the bar below. Shift-click ticks a run. */}
         <input type="checkbox" checked={checked} aria-label="Select this row" title="Select — then change or approve the selection together (shift-click for a run)"
           onClick={e => onCheck(t.id, !checked, (e as any).shiftKey)} onChange={() => { /* onClick carries shift */ }} className="h-4 w-4 accent-brand-600 cursor-pointer" />
@@ -242,7 +258,7 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               {t.actualMinutes ? ' · ' + (t.actualMinutes / 60).toFixed(1) + 'h' : ''}
             </span>
             {t.evidence && t.evidence.verdict === 'solid' && t.billedAmount > 0 ? <Tag tone="emerald" title={'Report checked: ' + t.evidence.why + (t.evidence.said.length ? ' — “' + t.evidence.said[0] + '”' : '')}>Report ✓</Tag> : null}
-            {t.flags.slice().sort((a, b) => (FLAG_LEVEL[b] || 0) - (FLAG_LEVEL[a] || 0)).map(f => (
+            {t.flags.filter(f => (FLAG_LEVEL[f] || 0) >= 2 || f === 'no_price').sort((a, b) => (FLAG_LEVEL[b] || 0) - (FLAG_LEVEL[a] || 0)).map(f => (
               <Tag key={f} tone={FLAG_TONE(f)}
                 title={t.flagWhy?.[f] ? FLAG_LABEL[f] + ' — ' + t.flagWhy[f] : f === 'ai_bill' && t.aiReason ? t.aiReason + (t.aiAmount != null ? ' — suggests ' + money(t.aiAmount) : '') : (f === 'should_bill' || f === 'no_price' || f === 'billed_routine') && t.billable ? FLAG_LABEL[f] + ' — ' + (CAT_LABEL[t.billable.category] || t.billable.category) + ': ' + t.billable.reasons.join(' · ') : FLAG_LABEL[f]}>{FLAG_SHORT[f]}{f === 'should_bill' && t.billable ? ' · ' + (CAT_LABEL[t.billable.category] || '') : ''}</Tag>
             ))}
@@ -257,19 +273,19 @@ const Row = memo(function Row({ t, stage, isGm, busy, open, checked, onCheck, on
               onBlur={() => { setEditing(false); const v = amt.trim() === '' ? null : Number(amt.replace(/[$,]/g, '')); if (v !== (t.overrideAmount ?? null) && (v === null || Number.isFinite(v))) onEdit(t.id, { override_amount: v }) }}
               className="h-8 w-28 rounded-lg border border-brand-400 ring-2 ring-brand-100 bg-white px-2 text-right text-[15px] font-bold tabular-nums text-ink outline-none" />
           ) : (
-            <button onClick={() => { if (!done || isGm) setEditing(true) }} disabled={done && !isGm} title={done ? (isGm ? 'Final-approved — click to change the amount; it stays approved' : 'Final-approved — only the final approver can change it') : 'Click to set the price (Enter saves, Esc cancels)'}
-              className={'block ml-auto text-[16px] font-bold tabular-nums leading-tight rounded px-1 -mx-1 ' + (done && !isGm ? '' : 'hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 ') + (t.excluded ? 'text-muted line-through' : over ? 'text-amber-800' : 'text-ink')}>
+            <button onClick={() => { if (!done || isGm) setEditing(true) }} disabled={done && !isGm}
+              title={(t.overrideAmount != null ? 'Set by hand' : breakdown(t).join(' · ') || 'No charge') + '\n' + (done ? (isGm ? 'Final-approved — click to change the amount; it stays approved' : 'Final-approved — only the final approver can change it') : 'Click to set the price (Enter saves, Esc cancels)')}
+              className={'block ml-auto text-[15px] font-bold tabular-nums leading-tight rounded px-1 -mx-1 ' + (done && !isGm ? '' : 'hover:bg-brand-50 hover:ring-1 hover:ring-brand-200 ') + (t.excluded ? 'text-muted line-through' : over ? 'text-amber-800' : t.billedAmount === 0 ? 'text-muted' : 'text-ink')}>
               {money(t.billedAmount)}
             </button>
           )}
-          {/* THE BREAKDOWN UNDER THE NUMBER (Jon, 2026-10-05: "full amount on the title, the breakdown or
-              type when you expand"): what Breezeway's cost lines add up to, by type — "labor $10 ·
-              parts $60" — so a price is never a bare figure. */}
-          <span className="block text-[10.5px] text-muted truncate max-w-[14rem] ml-auto" title={breakdown(t).join(' · ')}>
-            {t.overrideAmount != null ? 'set by hand' : breakdown(t).join(' · ') || 'no charge'}
-          </span>
-          {t.suggested || t.usual ? (
-            <span className={'block text-[10.5px] ml-auto ' + (t.usual && t.billedAmount > t.usual.high * 1.5 ? 'text-rose-700 font-semibold' : t.usual && t.billedAmount > 0 && t.billedAmount < t.usual.low * 0.7 ? 'text-amber-800' : 'text-brand-700')}
+          {/* One small line under the number at most: the recommendation when there is one to act on,
+              or "set by hand". The breakdown (labor $10 · parts $60) is on the hover and in the details
+              (Jon, 2026-10-05: "full amount on the title, the breakdown or type when you expand"). */}
+          {t.overrideAmount != null ? (
+            <span className="block text-[10.5px] text-muted ml-auto">set by hand</span>
+          ) : t.suggested || t.usual ? (
+            <span className={'block text-[10.5px] ml-auto whitespace-nowrap ' + (t.usual && t.billedAmount > t.usual.high * 1.5 ? 'text-rose-700 font-semibold' : t.usual && t.billedAmount > 0 && t.billedAmount < t.usual.low * 0.7 ? 'text-amber-800' : 'text-brand-700')}
               title={(t.suggested ? 'Recommended ' + money(t.suggested.amount) + ' — ' + t.suggested.why : '') + (t.usual ? '\nSimilar approved jobs (' + t.usual.n + (t.usual.scope === 'type' ? ', same type' : '') + '): middle half $' + Math.round(t.usual.low) + '–$' + Math.round(t.usual.high) + (t.usual.recent?.length ? '\nRecent: ' + t.usual.recent.map(r => r.unit + ' $' + Math.round(r.amount) + ' (' + r.day.slice(5) + ')').join(' · ') : '') : '')}>
               rec. {money(t.suggested ? t.suggested.amount : t.usual!.recommended ?? t.usual!.median)}{t.usual ? ' · $' + Math.round(t.usual.low) + '–' + Math.round(t.usual.high) : ''}
             </span>
@@ -593,6 +609,9 @@ export function BillingReview() {
   const [studyOpen, setStudyOpen] = useState(false)
   const [moreF, setMoreF] = useState(false)   // the extra filters stay folded away (Jon, 2026-11-02: "cleaner and easier")
   const [q, setQ] = useState('')
+  // 'bill' = only what there is to decide (see toDecide); 'all' = every row in the queue.
+  const [scope, setScope] = useState<'bill' | 'all'>('bill')
+  const [sureQuiet, setSureQuiet] = useState(false)
   // FILTERS (Jon, 2026-09-30: "filter by billable amount greater than zero, by date window, by
   // department etc."). The window is a month (arrows) or any from–to range; the rest narrow the
   // rows shown. None of them changes the whole-window numbers in the header strip. All of them ride
@@ -628,6 +647,7 @@ export function BillingReview() {
     if (sp.get('owner')) setOwnerF(sp.get('owner')!)
     if (sp.get('task')) setTaskF(sp.get('task')!)
     const bf = sp.get('bill'); if (bf === 'should' || bf === 'bill' || bf === 'maybe' || bf === 'no') setBFilter(bf)
+    if (sp.get('scope') === 'all') setScope('all')
   }, [])
   const [openId, setOpenId] = useState<string>('')
   const [busy, setBusy] = useState<Set<string>>(new Set())
@@ -680,9 +700,9 @@ export function BillingReview() {
     set('month', range ? null : month); set('from', range?.from || null); set('to', range?.to || null)
     set('billable', billOnly ? '1' : null); set('dept', depts.length ? depts.join(',') : null)
     set('building', building || null); set('person', person || null); set('min', minAmt || null); set('bill', bFilter || null)
-    set('max', maxAmt || null); set('owner', ownerF || null); set('task', taskF || null)
+    set('max', maxAmt || null); set('owner', ownerF || null); set('task', taskF || null); set('scope', scope === 'all' ? 'all' : null)
     window.history.replaceState(null, '', url.toString())
-  }, [month, range, billOnly, depts, building, person, minAmt, bFilter, maxAmt, ownerF, taskF])
+  }, [month, range, billOnly, depts, building, person, minAmt, bFilter, maxAmt, ownerF, taskF, scope])
 
   const tasks = data?.tasks || []
   const byId = useMemo(() => { const m = new Map<string, Task>(); for (const t of tasks) m.set(t.id, t); return m }, [tasks])
@@ -713,10 +733,15 @@ export function BillingReview() {
       && (!person || (t.doer || '—') === person)
       && (!needle || (t.unit + ' ' + t.name + ' ' + (t.description || '') + ' ' + (t.doer || '') + ' ' + t.ownerName).toLowerCase().includes(needle))
   }, [q, flagF, billOnly, minAmt, maxAmt, ownerF, taskF, depts, building, person, bFilter])
-  const visible = useMemo(() => {
+  // Everything the stage and the filters let through — then the scope takes the quiet rows out of
+  // the list and counts them for the folded lines under it. (The Approved tab's by-owner read never
+  // sees the scope: a statement total is the whole thing.)
+  const scoped = useMemo(() => {
     if (!viewIds) return [] as Task[]
     return tasks.filter(t => viewIds.has(t.id)).filter(passes)
   }, [tasks, viewIds, passes])
+  const hidden = useMemo(() => ({ routine: scoped.filter(quietRoutine), later: scoped.filter(notReady) }), [scoped])
+  const visible = useMemo(() => scope === 'all' ? scoped : scoped.filter(toDecide), [scoped, scope])
   // The choices each filter offers — what this window actually holds, with counts.
   const facets = useMemo(() => {
     // Counts for what is in the current queue, so a number in a dropdown matches what it shows.
@@ -1084,6 +1109,14 @@ export function BillingReview() {
               ))}
             </div>
           ) : null}
+          {/* THE SCOPE (Jon, 2026-11-03): what there is to decide, or everything in the queue. */}
+          {st !== 'done' ? (
+            <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] h-8" title="To bill: finished jobs that carry money, look billable or are flagged. Everything: every job in this queue, routine $0 jobs and unfinished ones included.">
+              {([['bill', 'To bill', scoped.filter(toDecide).length], ['all', 'Everything', scoped.length]] as const).map(([k, l, n]) => (
+                <button key={k} onClick={() => setScope(k)} className={'px-2.5 font-semibold border-l border-line first:border-l-0 inline-flex items-center gap-1 ' + (scope === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l} <span className="opacity-60 tabular-nums">{n}</span></button>
+              ))}
+            </div>
+          ) : null}
           <select value={flagF} onChange={e => setFlagF(e.target.value as any)} title="Show rows by flag" className={'h-8 rounded-lg border px-2 text-[12px] font-semibold max-w-[13rem] ' + (flagF ? 'bg-amber-500 text-white border-amber-500' : 'bg-white border-line text-ink')}>
             <option value="">All jobs</option>
             <option value="stop">Must look ({facets.stopN})</option>
@@ -1209,7 +1242,9 @@ export function BillingReview() {
         <ApprovedByOwner owners={approved} open={apOpen} setOpen={setApOpen} winQS={winQS} isGm={isGm} onEdit={onEdit} picks={picks} checkMany={checkMany} filtered={filtersOn} />
       ) : !visible.length ? (
         <LeanEmpty>
-          {st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet in this window.' : 'No tasks in this window.'}
+          {scope === 'bill' && scoped.length
+            ? 'Nothing to decide' + (st === 'ops' ? ' for ops' : st === 'gm' ? ' on final review' : '') + ' — the ' + scoped.length + ' job' + (scoped.length === 1 ? '' : 's') + ' here ' + (scoped.length === 1 ? 'is' : 'are') + ' routine at $0 or not finished yet (below).'
+            : st === 'ops' ? 'Nothing open for ops to review.' : st === 'gm' ? 'Nothing waiting on final review.' : st === 'done' ? 'Nothing final-approved yet in this window.' : 'No tasks in this window.'}
           {filtersOn ? ' (with the current filters)' : ''}
         </LeanEmpty>
       ) : view === 'property' && walk ? (() => {
@@ -1272,24 +1307,20 @@ export function BillingReview() {
         const actionable = rows.filter(inStage)
         return (
           <section key={k} className="rounded-2xl bg-white ring-1 ring-line overflow-hidden">
-            <header className="px-4 py-2.5 flex items-center gap-3 flex-wrap bg-app/40 border-b border-line">
+            <header className="px-4 py-2 flex items-center gap-3 flex-wrap bg-app/40 border-b border-line">
               <input type="checkbox" aria-label={'Select all of ' + o.ownerName + '’s rows shown'} title={'Select all ' + rows.length + ' of ' + o.ownerName + '’s rows shown'}
                 checked={rows.length > 0 && rows.every(t => picks.has(t.id))} onChange={e => checkMany(rows.map(t => t.id), e.target.checked)} className="h-4 w-4 accent-brand-600 cursor-pointer" />
               <button onClick={() => setCollapsed(c => ({ ...c, [k]: !c[k] }))} className="flex items-center gap-2 text-left min-w-0">
                 <ChevronDown size={14} className={'text-muted transition ' + (isOpen ? '' : '-rotate-90')} />
                 <span className="text-[14px] font-bold text-ink truncate">{o.ownerName}</span>
               </button>
-              <span className="text-[12px] text-muted tabular-nums" title={o.tasks + ' task' + (o.tasks === 1 ? '' : 's') + ' · ' + o.units + ' unit' + (o.units === 1 ? '' : 's') + ' this month'}>
-                {money(o.billed)} · {o.tasks}t · {o.units}u
+              {/* The owner's month in one muted line: the money, and how far the review has got.
+                  (Three pills per owner were most of what made the page long to read.) */}
+              <span className="text-[12px] text-muted tabular-nums truncate" title={o.tasks + ' task' + (o.tasks === 1 ? '' : 's') + ' · ' + o.units + ' unit' + (o.units === 1 ? '' : 's') + ' this month — ' + o.open + ' open, ' + o.opsApproved + ' ops-approved, ' + o.gmApproved + ' final-approved'}>
+                {money(o.billed)} · {rows.length === o.tasks ? o.tasks + ' job' + (o.tasks === 1 ? '' : 's') : rows.length + ' of ' + o.tasks + ' job' + (o.tasks === 1 ? '' : 's')} · {o.open ? o.open + ' open' : ''}{o.open && o.opsApproved ? ', ' : ''}{o.opsApproved ? o.opsApproved + ' at final' : ''}{(o.open || o.opsApproved) && o.gmApproved ? ', ' : ''}{o.gmApproved ? o.gmApproved + ' done' : ''}
               </span>
-              {filtersOn ? <Tag tone="brand" title="What the filters show for this owner">{rows.length} shown · {money(rows.reduce((a, t) => a + t.billedAmount, 0))}</Tag> : null}
-              {/* Progress over the WHOLE month for this owner, whatever the filter shows. */}
-              <span className="inline-flex items-center gap-1 flex-wrap">
-                <Tag title="Open — ops to review">{o.open} open</Tag>
-                <Tag tone="brand" title="Ops approved — waiting on final review">{o.opsApproved} ops</Tag>
-                <Tag tone="emerald" title="Final approved — statement-ready">{o.gmApproved} final</Tag>
-                {o.flagged ? <Tag tone="amber" title="Flagged rows">{o.flagged} flagged</Tag> : null}
-              </span>
+              {filtersOn ? <Tag tone="brand" title="What the filters show for this owner">{money(rows.reduce((a, t) => a + t.billedAmount, 0))} shown</Tag> : null}
+              {o.flagged ? <Tag tone="amber" title="Flagged rows this month, not yet final-approved">{o.flagged} flagged</Tag> : null}
               <div className="flex-1" />
               {canApproveAll && actionable.length ? (
                 <button onClick={() => setState(actionable.map(t => t.id), approveAllTo)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Check size={12} /> {st === 'gm' ? 'Final approve' : 'Approve'} {actionable.length}</button>
@@ -1320,6 +1351,43 @@ export function BillingReview() {
           </section>
         )
       })}
+
+      {/* ── WHAT THE SCOPE FOLDED AWAY (Jon, 2026-11-03) ─────────────────────────────────────────
+            Two quiet lines, not rows: the routine $0 jobs, approved together in one click, and the
+            jobs not finished yet, which join the list on their own once the crew finishes them. */}
+      {scope === 'bill' && st !== 'done' && (hidden.routine.length || hidden.later.length) ? (
+        <div className="rounded-2xl bg-white ring-1 ring-line divide-y divide-line text-[12.5px]">
+          {hidden.routine.length ? (() => {
+            const ids = hidden.routine.filter(inStage).map(t => t.id)
+            const n = hidden.routine.length
+            return (
+              <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+                <span className="text-ink font-semibold">{n} routine job{n === 1 ? '' : 's'} at $0</span>
+                <span className="text-muted">— inspections, common-area work and the like; the billable model says they bill the owner nothing.</span>
+                <div className="flex-1" />
+                <button onClick={() => setScope('all')} className="h-7 px-2 rounded-md border border-line bg-white text-[12px] font-semibold text-muted hover:text-ink">Show them</button>
+                {canApproveAll && ids.length ? (sureQuiet ? (
+                  <span className="h-7 inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 text-[12px]">
+                    <span className="font-semibold text-amber-900">{st === 'gm' ? 'Final approve' : 'Approve'} all {ids.length} at $0?</span>
+                    <button onClick={() => { setSureQuiet(false); setState(ids, approveAllTo) }} className="h-5 px-2 rounded bg-ink text-white font-semibold">Yes</button>
+                    <button onClick={() => setSureQuiet(false)} className="h-5 px-2 rounded border border-line bg-white">No</button>
+                  </span>
+                ) : (
+                  <button onClick={() => setSureQuiet(true)} disabled={busy.size > 0} title="They bill nothing — sign them off together and move on" className="h-7 px-2.5 rounded-md bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-40"><Check size={12} /> {st === 'gm' ? 'Final approve' : 'Approve'} all {ids.length}</button>
+                )) : null}
+              </div>
+            )
+          })() : null}
+          {hidden.later.length ? (
+            <div className="px-4 py-2.5 flex items-center gap-2 flex-wrap">
+              <span className="text-ink font-semibold">{hidden.later.length} not finished yet</span>
+              <span className="text-muted">— nothing to bill until the crew finishes them; they join the list on their own.</span>
+              <div className="flex-1" />
+              <button onClick={() => setScope('all')} className="h-7 px-2 rounded-md border border-line bg-white text-[12px] font-semibold text-muted hover:text-ink">Show them</button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* ── THE BULK BAR: what the ticked rows get, together ──────────────────────────────────── */}
       {picks.size ? (() => {
