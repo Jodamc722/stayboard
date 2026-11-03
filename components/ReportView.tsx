@@ -1057,6 +1057,22 @@ function LiveText({ v, set, live, single, t, cls, ro }: { v: string; set: (s: st
 // A slide has room for one number per mark and no more, so the rest of the story — rate, RevPAR,
 // revenue, what the plan said — lives here and costs the composition nothing. It is hover only:
 // nothing in this card is load-bearing, because a printed deck and a PDF never get to see it.
+/** Edit-mode date range for the New bookings slide: pick from / to, Apply recounts and saves. */
+function NbRange({ from, to, busy, onApply }: { from: string; to: string; busy: boolean; onApply: (f: string, t: string) => void }) {
+  const [f, setF] = useState(from), [t2, setT2] = useState(to)
+  useEffect(() => { setF(from); setT2(to) }, [from, to])
+  const inp: Any = { height: 30, borderRadius: 8, border: '1px solid rgba(0,0,0,0.15)', padding: '0 8px', fontSize: 12.5, background: '#fff' }
+  return (
+    <div className="sb-noprint" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 12.5 }}>
+      <span style={{ opacity: 0.6 }}>Bookings made</span>
+      <input type="date" value={f} max={t2 || undefined} onChange={e => setF(e.target.value)} style={inp} />
+      <span style={{ opacity: 0.6 }}>to</span>
+      <input type="date" value={t2} min={f || undefined} onChange={e => setT2(e.target.value)} style={inp} />
+      <button onClick={() => onApply(f, t2)} disabled={busy || !f || !t2 || f > t2 || (f === from && t2 === to)} style={{ height: 30, padding: '0 12px', borderRadius: 8, background: '#0E2436', color: '#fff', fontWeight: 600, opacity: busy || !f || !t2 || f > t2 || (f === from && t2 === to) ? 0.4 : 1 }}>{busy ? 'Counting…' : 'Apply'}</button>
+    </div>
+  )
+}
+
 function ChartTip({ title, rows, dark, children, style, className, empty }: {
   title: string
   rows: [string, string][]
@@ -2538,10 +2554,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // refresh, a hand-typed figure does not, and that is the sentence it has to say out loud.
   const REFRESHABLE: Record<string, string> = {
     snapshot: 'the snapshot', listings: 'the per-listing table', plan: 'the budget slide',
-    ahead: 'the looking-ahead slide', statement: 'the owner statement',
+    ahead: 'the looking-ahead slide', statement: 'the owner statement', newBookings: 'the new-bookings slide',
   }
   const [rfKey, setRfKey] = useState('')
   const [rfMsg, setRfMsg] = useState<{ key: string; text: string; bad: boolean } | null>(null)
+  // THE NEW-BOOKINGS WINDOW, PICKED IN EDIT (Jon, 2026-11-03: "ability to select a date range in edit").
+  async function rangeBookings(from: string, to: string) {
+    if (!from || !to || from > to || rfKey) return
+    setRfKey('newBookings'); setRfMsg(null)
+    try {
+      const r = await fetch('/api/reports/refresh-section', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: initial.id, section: 'newBookings', from, to }) })
+      const d = await r.json()
+      if (d?.ok && d?.content) { setC(d.content); setRfMsg({ key: 'newBookings', text: String(d.summary || 'Recounted.') + ' Saved.', bad: false }) }
+      else setRfMsg({ key: 'newBookings', text: String((d && d.error) || 'Could not recount.'), bad: true })
+    } catch (_e) { setRfMsg({ key: 'newBookings', text: 'Could not recount.', bad: true }) }
+    setRfKey('')
+  }
   async function refreshSlide(key: string) {
     if (rfKey || !REFRESHABLE[key]) return
     const ok = window.confirm(
@@ -9504,7 +9532,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 {nb.headline || edit ? <RTitle k="newBookings" /> : null}
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.05fr) minmax(0,1fr)', gap: 46, marginTop: nb.headline || edit ? 26 : 0, alignItems: 'start' }}>
                   <div>
-                    <Lbl ok="nb_lbl">{'Booked since ' + sinceTxt}</Lbl>
+                    {edit ? (
+                      <NbRange from={String(nb.since || '')} to={String(nb.asOf || '')} busy={rfKey === 'newBookings'} onApply={rangeBookings} />
+                    ) : null}
+                    <Lbl ok="nb_lbl">{'Booked ' + (nb.asOf && nb.asOf !== String(meta.asOf || '') ? sinceTxt + ' – ' + new Date(String(nb.asOf) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric' }) : 'since ' + sinceTxt)}</Lbl>
                     <div style={{ marginTop: 8 }}><Fig size={92} ok="nb_count">{String(nb.count || 0)}</Fig></div>
                     <p style={{ fontSize: 15, color: tint(0.55), margin: '2px 0 0' }}>{O('nb_count_s', (nb.count === 1 ? 'new booking' : 'new bookings'))}</p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 18, marginTop: 26, borderTop: '1px solid ' + tint(0.12), paddingTop: 16 }}>

@@ -267,11 +267,16 @@ export async function POST(req: NextRequest) {
 
   // ── BOOKINGS SINCE THE LAST REPORT ──
   if (section === 'newBookings') {
-    const since = str((content as any).newBookings?.since) || (await lastReportDate(ids, scopeLabel, asOf)) || new Date(Date.parse(asOf + 'T12:00:00Z') - 30 * 86400000).toISOString().slice(0, 10)
+    // A date range picked on the slide in edit mode (Jon, 2026-11-03) wins over the stored one.
+    const isYmd = (v: any) => /^\d{4}-\d{2}-\d{2}$/.test(str(v))
+    const since = isYmd(body?.from) ? str(body.from) : str((content as any).newBookings?.since) || (await lastReportDate(ids, scopeLabel, asOf)) || new Date(Date.parse(asOf + 'T12:00:00Z') - 30 * 86400000).toISOString().slice(0, 10)
+    const until = isYmd(body?.to) && str(body.to) >= since ? str(body.to) : isYmd((content as any).newBookings?.asOf) && str((content as any).newBookings.asOf) >= since ? str((content as any).newBookings.asOf) : asOf
     const nm: Record<string, string> = {}
     for (const l of listings) nm[l.id] = l.unit || l.name
-    ;(content as any).newBookings = await bookingsSince(ids, since, asOf, nm)
-    summary = 'Bookings since ' + since + ' recounted.'
+    const prevHead = (content as any).newBookings?.headline
+    ;(content as any).newBookings = await bookingsSince(ids, since, until, nm)
+    if ((content as any).newBookings && prevHead) (content as any).newBookings.headline = prevHead
+    summary = 'Bookings ' + since + ' to ' + until + ' recounted.'
   }
 
   // ── OWNER STATEMENT ────────────────────────────────────────────────────────
