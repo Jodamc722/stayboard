@@ -9457,6 +9457,63 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             ) })
           }
 
+          // ── 6b · BOOKINGS SINCE THE LAST REPORT (Jon, 2026-11-03) ─────────────
+          // One big number — what has been booked since the owners last heard from us — then where
+          // those stays land, which channels sold them, and the biggest of them.
+          if ((c as Any).newBookings && !hid('newBookings')) {
+            const nb: Any = (c as Any).newBookings
+            const n = next()
+            const k0 = (v: Any) => { const x = Number(v) || 0; return x >= 1000 ? '$' + (Math.round(x / 100) / 10).toLocaleString('en-US') + 'K' : '$' + Math.round(x).toLocaleString('en-US') }
+            const maxM = Math.max(1, ...((nb.byMonth || []) as Any[]).map((m: Any) => Number(m.revenue) || 0))
+            const sinceTxt = new Date(String(nb.since) + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric' })
+            slides.push({ key: 'newBookings', ai: false, node: (
+              <Frame note="newBookings" nav="New bookings" sec="Bookings" subj={'Since ' + sinceTxt} tone="light" n={n}>
+                {nb.headline || edit ? <RTitle k="newBookings" /> : null}
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.05fr) minmax(0,1fr)', gap: 46, marginTop: nb.headline || edit ? 26 : 0, alignItems: 'start' }}>
+                  <div>
+                    <Lbl ok="nb_lbl">{'Booked since ' + sinceTxt}</Lbl>
+                    <div style={{ marginTop: 8 }}><Fig size={92} ok="nb_count">{String(nb.count || 0)}</Fig></div>
+                    <p style={{ fontSize: 15, color: tint(0.55), margin: '2px 0 0' }}>{O('nb_count_s', (nb.count === 1 ? 'new booking' : 'new bookings'))}</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 18, marginTop: 26, borderTop: '1px solid ' + tint(0.12), paddingTop: 16 }}>
+                      {([['nb_rev', k0(nb.revenue), 'Accommodation'], ['nb_nights', String(nb.nights || 0), 'Nights'], ['nb_adr', '$' + (nb.adr || 0), 'ADR'], ['nb_lead', (nb.avgLead || 0) + ' d', 'Booked ahead']] as [string, string, string][]).map(([kk, v, l]) => (
+                        <div key={kk}><Fig size={26} ok={kk}>{v}</Fig><div style={{ marginTop: 6 }}><Lbl ok={kk + '_l'}>{l}</Lbl></div></div>
+                      ))}
+                    </div>
+                    {(nb.byChannel || []).length ? (
+                      <p style={{ fontSize: 12.5, color: tint(0.5), margin: '18px 0 0', lineHeight: 1.6 }}>{O('nb_channels', (nb.byChannel as Any[]).map((x: Any) => x.channel + ' ' + x.count).join('  ·  '))}</p>
+                    ) : null}
+                  </div>
+                  <div>
+                    <Lbl ok="nb_where">Where they stay</Lbl>
+                    <div style={{ marginTop: 10 }}>
+                      {((nb.byMonth || []) as Any[]).slice(0, 7).map((m: Any) => (
+                        <ChartTip key={m.iso} title={String(m.label)} rows={[['Bookings', String(m.count)], ['Nights', String(m.nights)], ['Accommodation', k0(m.revenue)]]}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '64px minmax(0,1fr) 64px', alignItems: 'center', gap: 10, padding: '5px 0' }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: tint(0.5) }}>{String(m.label).replace(/\s+\d{4}$/, '').slice(0, 3)}</span>
+                            <span style={{ height: 10, borderRadius: 5, background: t.accent, opacity: 0.85, width: Math.max(4, (Number(m.revenue) || 0) / maxM * 100) + '%' }} />
+                            <span style={{ fontSize: 12.5, color: t.ink, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{m.count}</span>
+                          </div>
+                        </ChartTip>
+                      ))}
+                    </div>
+                    {(nb.top || []).length ? (
+                      <div style={{ marginTop: 18, borderTop: '1px solid ' + tint(0.12), paddingTop: 12 }}>
+                        <Lbl ok="nb_top">Biggest bookings</Lbl>
+                        {((nb.top || []) as Any[]).slice(0, 4).map((b: Any, i: number) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12.5, padding: '6px 0', borderBottom: '1px solid ' + t.rule }}>
+                            <span style={{ color: t.ink }}>{b.unit} · {new Date(b.checkIn + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · {b.nights}n</span>
+                            <span style={{ color: tint(0.6), fontVariantNumeric: 'tabular-nums' }}>{k0(b.revenue)} · {b.channel}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <SlideNote k="newBookings" />
+              </Frame>
+            ) })
+          }
+
           // ── 7 · ON THE BOOKS ──────────────────────────────────────────────
           // The column carries one number, because a slide has room for one. Rate, RevPAR, revenue
           // and what the month held last year all live in the hover card (Jon, 2026-09-22: "if i
@@ -9500,6 +9557,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 revenue: g ? g.rev : '',
                 nights: x.occNights != null ? String(x.occNights) : (m.occNights != null ? String(m.occNights) : ''),
                 res: x.reservations != null ? String(x.reservations) : (m.reservations != null ? String(m.reservations) : ''),
+                mix: x.mix || null,
               }
             })
             // The report's own month is the one to mark, not whichever column happens to be first —
@@ -9545,6 +9603,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         ['Gross RevPAR', String(x.revpar || '')],
                         ['Nights on the books', String(x.nights || '')],
                         ['Reservations', String(x.res || '')],
+                        // THE MIX (Jon, 2026-11-03: "unit types booked, weekdays vs weekends, important dates")
+                        ...(x.mix ? ([
+                          ['Weekends (Fri–Sat nights)', x.mix.weekend.avail ? x.mix.weekend.pct + '% · ' + x.mix.weekend.nights + ' nights' : ''],
+                          ['Weeknights (Sun–Thu)', x.mix.weekday.avail ? x.mix.weekday.pct + '% · ' + x.mix.weekday.nights + ' nights' : ''],
+                          ...((x.mix.types || []) as Any[]).filter((ty: Any) => ty.units > 0).map((ty: Any) => [ty.label + (ty.units > 1 ? ' (' + ty.units + ' units)' : ' (1 unit)'), ty.pct + '% booked'] as [string, string]),
+                          ...((x.mix.dates || []) as Any[]).map((d: Any) => [d.label + ' · ' + new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), d.booked + ' of ' + d.units + ' booked'] as [string, string]),
+                        ] as [string, string][]) : []),
                       ]} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
                         <Fig size={26} ok={'ahead_' + (x.month || i) + '_v'}>{Math.round(pct) + '%'}</Fig>
                         <span style={{ marginTop: 9, borderRadius: '4px 4px 0 0', background: i === curIx ? t.accent : tint(0.22), height: Math.max(4, ((ovOf('ahead_' + (x.month || i) + '_v') ? (parseFloat(ovOf('ahead_' + (x.month || i) + '_v')) || 0) : pct) / 100) * 142) }} />

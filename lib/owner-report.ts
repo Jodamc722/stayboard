@@ -5,6 +5,7 @@
 // the generate route; everything here is deterministic math so numbers are auditable.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
+import { getSetting } from './app-settings'
 import { rollupBuilding } from './optimize-score'
 import type { Basis } from './basis'
 
@@ -105,8 +106,10 @@ export type ReportContent = {
       accomNum?: number; accomGrossNum?: number; cleaningNum?: number; feeNum?: number
       occNights?: number; availNights?: number
     }[]
-    strip: { month: string; occPct: number }[]
+    strip: { month: string; occPct: number; mix?: MonthMix | null }[]
   }
+  /** Bookings made since the last owner report on these units (any stay month). */
+  newBookings?: NewBookings | null
   voices: {
     headline: string; subtitle: string
     quotes: { text: string; guest: string; unit: string; br: string }[]
@@ -315,19 +318,142 @@ export async function ytdStats(listingIds: string[], asOf: string, units: number
   return { reservations: resv.length, avgStay, avgWindow, occupancyPct: m.occupancyPct }
 }
 
+// ---------- the month's booking mix (Jon, 2026-11-03: "unit types booked, weekdays vs weekends,
+// important dates … in the hover") ----------
+export type MonthMix = {
+  types: { label: string; units: number; nights: number; avail: number; pct: number }[]
+  weekday: { nights: number; avail: number; pct: number }
+  weekend: { nights: number; avail: number; pct: number }
+  dates: { label: string; date: string; booked: number; units: number }[]
+}
+const nth = (y: number, m: number, dow: number, n: number) => { const d = new Date(Date.UTC(y, m, 1)); const shift = (dow - d.getUTCDay() + 7) % 7; return new Date(Date.UTC(y, m, 1 + shift + (n - 1) * 7)).toISOString().slice(0, 10) }
+const lastDow = (y: number, m: number, dow: number) => { const d = new Date(Date.UTC(y, m + 1, 0)); const back = (d.getUTCDay() - dow + 7) % 7; return new Date(Date.UTC(y, m + 1, -back)).toISOString().slice(0, 10) }
+/** The nights that matter in a year: holidays (computed, so always right) and their long weekends. */
+export function keyDates(year: number): { date: string; label: string }[] {
+  const ymd = (m: number, d: number) => year + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0')
+  const tg = nth(year, 10, 4, 4)
+  return [
+    { date: ymd(1, 1), label: "New Year's Day" }, { date: nth(year, 0, 1, 3), label: 'MLK Day' },
+    { date: ymd(2, 14), label: "Valentine's Day" }, { date: nth(year, 1, 1, 3), label: "Presidents' Day" },
+    { date: lastDow(year, 4, 1), label: 'Memorial Day' }, { date: ymd(7, 4), label: 'July 4th' },
+    { date: nth(year, 8, 1, 1), label: 'Labor Day' }, { date: nth(year, 9, 1, 2), label: 'Columbus Day' },
+    { date: ymd(10, 31), label: 'Halloween' }, { date: ymd(11, 11), label: 'Veterans Day' },
+    { date: addDays(tg, -1), label: 'Thanksgiving Eve' }, { date: tg, label: 'Thanksgiving' }, { date: addDays(tg, 2), label: 'Thanksgiving Saturday' },
+    { date: ymd(12, 24), label: 'Christmas Eve' }, { date: ymd(12, 25), label: 'Christmas' }, { date: ymd(12, 31), label: "New Year's Eve" },
+  ]
+}
+function mixFor(resv: Resv[], beds: Record<string, number | null>, listingIds: string[], from: string, toExcl: string, extraDates: { date: string; label: string }[]): MonthMix {
+  const typeOf = (b: number | null | undefined) => b == null ? 'Other' : b <= 0 ? 'Studio' : b >= 4 ? '4BR+' : b + 'BR'
+  const unitsByType: Record<string, number> = {}
+  for (const id of listingIds) { const k = typeOf(beds[id]); unitsByType[k] = (unitsByType[k] || 0) + 1 }
+  const nightsByType: Record<string, number> = {}
+  let wkN = 0, weN = 0
+  const bookedOn: Record<string, Set<string>> = {}
+  for (const r of resv) {
+    let d = r.check_in < from ? from : r.check_in
+    const end = r.check_out > toExcl ? toExcl : r.check_out
+    const k = typeOf(beds[r.listing_id])
+    while (d < end) {
+      nightsByType[k] = (nightsByType[k] || 0) + 1
+      const dow = new Date(d + 'T12:00:00Z').getUTCDay()
+      if (dow === 5 || dow === 6) weN++; else wkN++      // Friday and Saturday nights are the weekend
+      ;(bookedOn[d] = bookedOn[d] || new Set()).add(r.listing_id)
+      d = addDays(d, 1)
+    }
+  }
+  let wkDays = 0, weDays = 0
+  for (let d = from; d < toExcl; d = addDays(d, 1)) { const dow = new Date(d + 'T12:00:00Z').getUTCDay(); if (dow === 5 || dow === 6) weDays++; else wkDays++ }
+  const n = listingIds.length || 1
+  const pct = (a: number, b: number) => b > 0 ? Math.round(a / b * 100) : 0
+  const order = ['Studio', '1BR', '2BR', '3BR', '4BR+', 'Other']
+  const days = daysBetween(from, toExcl)
+  const types = Object.keys(unitsByType).sort((a, b) => order.indexOf(a) - order.indexOf(b)).map(label => {
+    const avail = unitsByType[label] * days, nights = nightsByType[label] || 0
+    return { label, units: unitsByType[label], nights, avail, pct: pct(nights, avail) }
+  })
+  const year = Number(from.slice(0, 4))
+  const dates = keyDates(year).concat(extraDates).filter(x => x.date >= from && x.date < toExcl).sort((a, b) => a.date.localeCompare(b.date))
+    .map(x => ({ label: x.label, date: x.date, booked: bookedOn[x.date] ? bookedOn[x.date].size : 0, units: listingIds.length }))
+  return { types, weekday: { nights: wkN, avail: wkDays * n, pct: pct(wkN, wkDays * n) }, weekend: { nights: weN, avail: weDays * n, pct: pct(weN, weDays * n) }, dates }
+}
+
+// ---------- bookings since the last owner report (Jon, 2026-11-03) ----------
+export type NewBookings = {
+  since: string; sinceLabel: string; asOf: string
+  count: number; nights: number; revenue: number; adr: number; avgLead: number; avgStay: number
+  byMonth: { iso: string; label: string; count: number; nights: number; revenue: number }[]
+  byChannel: { channel: string; count: number; revenue: number }[]
+  top: { unit: string; checkIn: string; checkOut: string; nights: number; revenue: number; channel: string; booked: string }[]
+}
+const CHANNEL_NAME = (s: string) => /airbnb/.test(s) ? 'Airbnb' : /booking/.test(s) ? 'Booking.com' : /vrbo|homeaway/.test(s) ? 'Vrbo' : /expedia|hotels\.com/.test(s) ? 'Expedia' : /direct|website|manual|owner/.test(s) ? 'Direct' : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Other'
+export async function bookingsSince(listingIds: string[], since: string, asOf: string, names: Record<string, string>): Promise<NewBookings | null> {
+  if (!listingIds.length) return null
+  const db = supabaseAdmin()
+  let all: any[] = []
+  for (let i = 0; i < 10; i++) {
+    const { data } = await db.from('guesty_reservations')
+      .select('id, listing_id, check_in, check_out, nights, status, source, created_at, grossFare:raw->money->>fareAccommodationAdjusted, fare:raw->money->>fareAccommodation')
+      .in('status', CONFIRMED).in('listing_id', listingIds)
+      .gte('created_at', since + 'T00:00:00').lte('created_at', asOf + 'T23:59:59')
+      .order('id').range(i * 1000, i * 1000 + 999)
+    if (!data || !data.length) break
+    all = all.concat(data)
+    if (data.length < 1000) break
+  }
+  const rows = all.filter(r => r.check_in && r.check_out).map(r => {
+    const nights = Math.max(1, num(r.nights) || daysBetween(String(r.check_in).slice(0, 10), String(r.check_out).slice(0, 10)))
+    return { unit: names[String(r.listing_id)] || 'Unit', checkIn: String(r.check_in).slice(0, 10), checkOut: String(r.check_out).slice(0, 10), nights,
+      revenue: Math.round((num(r.grossFare) || num(r.fare)) * 100) / 100, channel: CHANNEL_NAME(String(r.source || '').toLowerCase()), booked: String(r.created_at).slice(0, 10) }
+  })
+  const count = rows.length, nights = rows.reduce((a, r) => a + r.nights, 0), revenue = Math.round(rows.reduce((a, r) => a + r.revenue, 0))
+  const leads = rows.map(r => daysBetween(r.booked, r.checkIn)).filter(d => d >= 0)
+  const bm: Record<string, { iso: string; label: string; count: number; nights: number; revenue: number }> = {}
+  for (const r of rows) { const iso = monthStart(r.checkIn); const x = bm[iso] = bm[iso] || { iso, label: monthLabel(iso), count: 0, nights: 0, revenue: 0 }; x.count++; x.nights += r.nights; x.revenue += r.revenue }
+  const bc: Record<string, { channel: string; count: number; revenue: number }> = {}
+  for (const r of rows) { const x = bc[r.channel] = bc[r.channel] || { channel: r.channel, count: 0, revenue: 0 }; x.count++; x.revenue += r.revenue }
+  return {
+    since, sinceLabel: monthLabel(since).replace(/\s+\d{4}$/, '') + ' ' + Number(since.slice(8, 10)), asOf,
+    count, nights, revenue, adr: nights ? Math.round(revenue / nights) : 0,
+    avgLead: leads.length ? Math.round(leads.reduce((a, b) => a + b, 0) / leads.length) : 0,
+    avgStay: count ? Math.round(nights / count * 10) / 10 : 0,
+    byMonth: Object.values(bm).sort((a, b) => a.iso.localeCompare(b.iso)).map(x => ({ ...x, revenue: Math.round(x.revenue) })),
+    byChannel: Object.values(bc).sort((a, b) => b.revenue - a.revenue).map(x => ({ ...x, revenue: Math.round(x.revenue) })),
+    top: rows.sort((a, b) => b.revenue - a.revenue).slice(0, 5),
+  }
+}
+/** When the last owner report for these units was dated — the "since" line. */
+export async function lastReportDate(listingIds: string[], scopeLabel: string, asOf: string): Promise<string | null> {
+  try {
+    const db = supabaseAdmin()
+    const { data } = await db.from('owner_reports').select('as_of, scope_label, listing_ids').lt('as_of', asOf).order('as_of', { ascending: false }).limit(200)
+    const want = new Set(listingIds)
+    const hit = ((data || []) as any[]).find(r => String(r.scope_label || '') === scopeLabel || (Array.isArray(r.listing_ids) && r.listing_ids.some((x: any) => want.has(String(x)))))
+    return hit ? String(hit.as_of).slice(0, 10) : null
+  } catch { return null }
+}
+
 // ---------- months-ahead (OTB by stay month) ----------
 export async function monthsAhead(listingIds: string[], asOf: string, units: number, count: number) {
   const first = monthStart(asOf)
-  const months: { iso: string; label: string; short: string; m: MetricSet }[] = []
+  const months: { iso: string; label: string; short: string; m: MetricSet; mix?: MonthMix }[] = []
   // one pull covering the whole horizon
   let horizonEnd = first
   for (let i = 0; i < count; i++) horizonEnd = monthEndExcl(horizonEnd)
   const prevStart = monthStart(addDays(first, -1)) // include the just-closed month for the strip
   const resv = await pullReservations(listingIds, prevStart, horizonEnd)
+  const beds: Record<string, number | null> = {}
+  try {
+    const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, bedrooms').in('id', listingIds)
+    for (const l of (ls || []) as any[]) beds[String(l.id)] = l.bedrooms == null ? null : Number(l.bedrooms)
+  } catch { /* types read as Other */ }
+  let extra: { date: string; label: string }[] = []
+  try { const v = await getSetting<any>('owner_report_dates', null); if (Array.isArray(v?.dates)) extra = v.dates.filter((x: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(x?.date)) && x?.label).map((x: any) => ({ date: String(x.date), label: String(x.label).slice(0, 40) })) } catch { /* holidays only */ }
   let cur = prevStart
   for (let i = 0; i < count + 1; i++) {
     const end = monthEndExcl(cur)
-    months.push({ iso: cur, label: monthLabel(cur), short: monthShort(cur), m: metricsFor(resv, units, cur, end) })
+    let mix: MonthMix | undefined
+    try { mix = mixFor(resv, beds, listingIds, cur, end, extra) } catch { mix = undefined }
+    months.push({ iso: cur, label: monthLabel(cur), short: monthShort(cur), m: metricsFor(resv, units, cur, end), mix })
     cur = end
   }
   return months // [prev month, current, +1, ...]

@@ -14,7 +14,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   resolveScope, pullReservations, metricsFor, fmtK, ytdStats, monthsAhead,
-  pullReviews, pullTasks, weekBuckets, makeCode, etToday, planSectionFor,
+  pullReviews, pullTasks, weekBuckets, makeCode, etToday, planSectionFor, bookingsSince, lastReportDate,
 } from '@/lib/owner-report'
 import type { ReportContent, ReportListing, MetricSet } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
@@ -880,6 +880,16 @@ export async function POST(req: NextRequest) {
   // (kind 'projection') still builds it — that report says PROJECTION on its face.
   const projection: ReportContent['projection'] = null
 
+  // BOOKINGS SINCE THE LAST OWNER REPORT (Jon, 2026-11-03: "a slide before that … a big Bookings
+  // since last owner report"). Since the last report on these units; 30 days back when there is none.
+  let newBookings: ReportContent['newBookings'] = null
+  try {
+    const since = (await lastReportDate(ids, scopeLabel, asOf)) || new Date(Date.parse(asOf + 'T12:00:00Z') - 30 * 86400000).toISOString().slice(0, 10)
+    const nm: Record<string, string> = {}
+    for (const l of listings) nm[l.id] = l.unit || l.name
+    newBookings = await bookingsSince(ids, since, asOf, nm)
+  } catch { newBookings = null }
+
   const content: ReportContent = {
     meta: {
       scopeLabel, periodStart, periodEnd, asOf,
@@ -937,8 +947,10 @@ export async function POST(req: NextRequest) {
         grossAdr: '$' + m.m.grossAdr, grossRevpar: '$' + m.m.grossRevpar,
         reservations: m.m.reservations,
         ...aheadRaw(m.m),
+        mix: m.mix || null,
       })),
     },
+    newBookings,
     voices: {
       headline: "What guests said — and what we're addressing.",
       subtitle: 'Highlights from recent reviews  ·  Plus the themes we’re acting on',

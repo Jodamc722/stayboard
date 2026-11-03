@@ -24,7 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
-  resolveScope, pullReservations, metricsFor, fmtK, monthsAhead, planSectionFor, etToday,
+  resolveScope, pullReservations, metricsFor, fmtK, monthsAhead, planSectionFor, etToday, bookingsSince, lastReportDate,
 } from '@/lib/owner-report'
 import { buildStatementSection } from '@/lib/statement-section'
 import { basisTriple, isBasis, BASIS_NOTE, type Basis } from '@/lib/basis'
@@ -56,6 +56,7 @@ const LABEL: Record<string, string> = {
   plan: 'Budget',
   ahead: 'Looking ahead',
   statement: 'Owner statement',
+  newBookings: 'New bookings',
 }
 /** Named refusals, so the UI can say why instead of showing a button that does nothing. */
 const NO_SOURCE: Record<string, string> = {
@@ -258,10 +259,19 @@ export async function POST(req: NextRequest) {
         month: m.short, label: m.label, iso: m.iso, occPct: m.m.occupancyPct,
         adr: '$' + m.m.adr, revpar: '$' + m.m.revpar,
         grossAdr: '$' + m.m.grossAdr, grossRevpar: '$' + m.m.grossRevpar,
-        reservations: m.m.reservations, ...aheadRaw(m.m),
+        reservations: m.m.reservations, ...aheadRaw(m.m), mix: m.mix || null,
       })),
     }
     summary = 'On-the-books rebuilt through ' + mAhead[mAhead.length - 1].label + '.'
+  }
+
+  // ── BOOKINGS SINCE THE LAST REPORT ──
+  if (section === 'newBookings') {
+    const since = str((content as any).newBookings?.since) || (await lastReportDate(ids, scopeLabel, asOf)) || new Date(Date.parse(asOf + 'T12:00:00Z') - 30 * 86400000).toISOString().slice(0, 10)
+    const nm: Record<string, string> = {}
+    for (const l of listings) nm[l.id] = l.unit || l.name
+    ;(content as any).newBookings = await bookingsSince(ids, since, asOf, nm)
+    summary = 'Bookings since ' + since + ' recounted.'
   }
 
   // ── OWNER STATEMENT ────────────────────────────────────────────────────────
