@@ -1485,7 +1485,26 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             </div>
           ) : p ? (
             <>
-              <div style={{ position: 'relative', ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? 'calc(100vh - 330px)' : 560, maxHeight: 640 }), aspectRatio: `${FW}/${FH}` }}>
+              {sc && canEdit && tl ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: '100%', maxWidth: FW >= FH ? pw : 520, padding: '6px 8px', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 9 }} title="Scene tools">
+                  <span style={{ fontSize: 11.5, fontWeight: 700, color: UI.ink }}>Scene {sel + 1}</span>
+                  <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: UI.mut }}>{tl.durs[sel].toFixed(1)} s</span>
+                  {!hasVoice ? (<>
+                    <Btn small onClick={() => nudge(sel, -0.5)} title="Half a second shorter">− Shorter</Btn>
+                    <Btn small onClick={() => nudge(sel, 0.5)} title="Half a second longer">+ Longer</Btn>
+                    {sc.dur ? <Btn small onClick={() => setScene(sel, { dur: null })} title="Back to automatic timing from the spoken line">Auto</Btn> : null}
+                    <span style={{ fontSize: 11, color: UI.mut, marginLeft: 6 }}>Cut the ad to</span>
+                    {[6, 10, 15, 30].map(n => <Btn key={n} small disabled={tl.total <= n} onClick={() => cutTo(n)} title="Cuts every scene's hold down together so the whole ad fits">{n} s</Btn>)}
+                  </>) : <span style={{ fontSize: 11, color: UI.mut }}>timed to the voice · shorten the spoken line, then re-make the voice</span>}
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                    <Btn small disabled={sel === 0} onClick={() => move(sel, sel - 1)} title="Move earlier">◀</Btn>
+                    <Btn small disabled={sel === p.scenes.length - 1} onClick={() => move(sel, sel + 1)} title="Move later">▶</Btn>
+                    <Btn small onClick={dupScene} title="Duplicate this scene">⧉ Duplicate</Btn>
+                    <Btn small tone="red" disabled={p.scenes.length < 2} onClick={() => delSceneAt(sel)} title="Delete this scene (Delete key)">✕ Delete scene</Btn>
+                  </span>
+                </div>
+              ) : null}
+              <div style={{ position: 'relative', ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? 'calc(100vh - 380px)' : 520, maxHeight: 640 }), aspectRatio: `${FW}/${FH}` }}>
                 <canvas ref={canvasRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960}
                   style={{ width: '100%', height: '100%', display: 'block', borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
                 <canvas ref={safeRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 8 }} />
@@ -1499,23 +1518,6 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : 'Estimated timing · make the voice to lock it'}
                 </span>
               </div>
-              {sc && canEdit && tl ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: '100%', maxWidth: FW >= FH ? pw : 520, padding: '6px 8px', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 9 }} title="Scene tools">
-                  <span style={{ fontSize: 11.5, fontWeight: 700, color: UI.ink }}>Scene {sel + 1}</span>
-                  <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: UI.mut }}>{tl.durs[sel].toFixed(1)} s</span>
-                  {!hasVoice ? (<>
-                    <Btn small onClick={() => nudge(sel, -0.5)} title="Half a second shorter">− Shorter</Btn>
-                    <Btn small onClick={() => nudge(sel, 0.5)} title="Half a second longer">+ Longer</Btn>
-                    {sc.dur ? <Btn small onClick={() => setScene(sel, { dur: null })} title="Back to automatic timing from the spoken line">Auto</Btn> : null}
-                  </>) : <span style={{ fontSize: 11, color: UI.mut }}>timed to the voice · shorten the spoken line, then re-make the voice</span>}
-                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                    <Btn small disabled={sel === 0} onClick={() => move(sel, sel - 1)} title="Move earlier">◀</Btn>
-                    <Btn small disabled={sel === p.scenes.length - 1} onClick={() => move(sel, sel + 1)} title="Move later">▶</Btn>
-                    <Btn small onClick={dupScene} title="Duplicate this scene">⧉ Duplicate</Btn>
-                    <Btn small tone="red" disabled={p.scenes.length < 2} onClick={() => delSceneAt(sel)} title="Delete this scene (Delete key)">✕ Delete scene</Btn>
-                  </span>
-                </div>
-              ) : null}
               {sc && canEdit ? (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 520 }} title="Quick edit of the scene on screen">
                   <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen" style={{ ...field, padding: '6px 9px', fontSize: 12.5, fontWeight: 700 }} />
@@ -1798,12 +1800,6 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut }}>Timeline</span>
             <span style={{ fontSize: 11, color: UI.mut }}>Drag scenes to reorder · click to edit · click the ruler to jump</span>
-            {canEdit && !hasVoice ? (
-              <span style={{ display: 'flex', gap: 4, alignItems: 'center', marginLeft: 8 }} title="Cuts every scene's hold down together so the whole ad fits the length">
-                <span style={{ fontSize: 11, color: UI.mut }}>Cut the ad to</span>
-                {[6, 10, 15, 30].map(n => <Btn key={n} small disabled={tl.total <= n} onClick={() => cutTo(n)}>{n} s</Btn>)}
-              </span>
-            ) : null}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {canEdit ? KINDS.map(k => <Btn key={k.kind} small onClick={() => addScene(k.kind)} title={'Add a ' + k.label + ' scene after this one'}>+ {k.label}</Btn>) : null}
             </span>
