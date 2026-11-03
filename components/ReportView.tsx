@@ -1201,6 +1201,33 @@ function FitBox({ w, h, fill, children }: { w: number; h: number; fill?: boolean
   )
 }
 
+// SHRINK TO FIT (2026-11-03, the NoMad #718 proposal: a five-fact property column ran under the
+// footer and off the slide). A column of type on a fixed canvas is measured after layout, and
+// while it is taller than the room it has, its type steps down — 92%, 85%, 78% — and stops there.
+// The children get the factor, so every px size inside is authored once and multiplied. New
+// content starts again from full size (deps), and the measure is repeated once fonts land.
+const SHRINK_STEPS = [1, 0.92, 0.85, 0.78]
+function ShrinkToFit({ className, style, deps, children }: { className?: string; style?: React.CSSProperties; deps: string; children: (k: number) => React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [lvl, setLvl] = useState(0)
+  const [tick, setTick] = useState(0)
+  useEffect(() => { setLvl(0) }, [deps])
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (el.scrollHeight > el.clientHeight + 1 && lvl < SHRINK_STEPS.length - 1) setLvl(lvl + 1)
+  })
+  useEffect(() => {
+    let done = false
+    const again = () => { if (!done) setTick(n => n + 1) }
+    const id = setTimeout(again, 400)
+    try { (document as Any).fonts?.ready?.then?.(again) } catch { /* no font API */ }
+    return () => { done = true; clearTimeout(id) }
+  }, [])
+  void tick
+  return <div ref={ref} className={className} style={{ ...(style || {}), overflow: 'hidden' }}>{children(SHRINK_STEPS[lvl])}</div>
+}
+
 function Slide({ nav, children, pad, bleed, warn, ground, h, noteKey }: {
   nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean; warn?: boolean
   /** Which content.slideNotes entry this slide shows, so presenter notes can land on it. */
@@ -4715,32 +4742,46 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const ppFacts: Any[] = (pp.facts || []) as Any[]
             const ppShown = edit ? ppFacts : ppFacts.filter((f: Any) => String(f.v || '').trim())
             const ppPhotos: string[] = ((pp.photos || []) as string[]).filter(Boolean)
+            // AS MANY FRAMES AS THERE ARE PHOTOS (2026-11-03, the NoMad #718 proposal: one photo
+            // and two cream boxes beside it, and the facts running off the slide). One photo fills
+            // the right of the slide and the words get a wider column; two sit side by side; three
+            // keep the large-and-two grid. The editor always sees three, so there is somewhere to
+            // drop the next one.
+            const ppN = edit ? 3 : Math.min(3, ppPhotos.length)
+            const ppTextW = ppN <= 1 ? 440 : 330
+            const ppSet = (n: number) => (u: string) => mutate((d: Any) => { d.property = d.property || {}; const ph = (d.property.photos = Array.isArray(d.property.photos) ? d.property.photos : []); while (ph.length <= n) ph.push(''); ph[n] = u })
+            const ppFrame = { borderRadius: 12, border: '1px solid ' + t.cardBorder }
             if (ppShown.length || ppPhotos.length) slides.push({ key: 'property', ai: true, node: (
             <Slide nav="Your property" warn={edit}>
               <div className="flex flex-col" style={{ height: '100%' }}>
                 <div className="flex-1 min-h-0 flex" style={{ gap: 40, paddingBottom: 18 }}>
-                  <div className="flex flex-col min-h-0" style={{ width: 330, flexShrink: 0 }}>
+                  {/* The column of words never leaves the slide: when the body and the facts are
+                      taller than the room, the type steps down until they fit (ShrinkToFit). */}
+                  <ShrinkToFit className="flex flex-col min-h-0" style={{ width: ppTextW, flexShrink: 0 }}
+                    deps={String(pp.body || '') + '|' + ppShown.map((f: Any) => String(f.k || '') + '=' + String(f.v || '')).join('|') + '|' + ppTextW + (edit ? '|e' : '')}>
+                    {k => (<>
                     <Title k="property" narrow />
                     {(pp.body || edit) ? (
-                      <p style={{ fontSize: 14, lineHeight: 1.6, color: t.body, marginTop: 18, paddingTop: 16, borderTop: '1px solid ' + t.cardBorder }}>
+                      <p style={{ fontSize: 14 * k, lineHeight: k < 1 ? 1.5 : 1.6, color: t.body, marginTop: 18 * k, paddingTop: 16 * k, borderTop: '1px solid ' + t.cardBorder }}>
                         <Ed v={pp.body || ''} set={v => patch('property.body', v)} edit={edit} multiline placeholder="A line about this property (optional)" />
                       </p>
                     ) : null}
-                    <div style={{ display: 'grid', gap: 13, marginTop: 20 }}>
+                    <div style={{ display: 'grid', gap: 13 * k, marginTop: 20 * k }}>
                       {ppShown.map((f: Any) => { const i = ppFacts.indexOf(f); return (
                         <div key={i}>
                           <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.accent, margin: 0 }}>
                             <Ed v={f.k || ''} set={v => patch('property.facts.' + i + '.k', v)} edit={edit} />
                           </p>
-                          <p style={{ fontSize: 14, lineHeight: 1.5, color: t.ink, margin: '4px 0 0' }}>
+                          <p style={{ fontSize: 14 * k, lineHeight: k < 1 ? 1.4 : 1.5, color: t.ink, margin: (k < 1 ? 3 : 4) + 'px 0 0' }}>
                             <Ed v={f.v || ''} set={v => patch('property.facts.' + i + '.v', v)} edit={edit} multiline
                               placeholder={PROPERTY_FACT_HINTS[String(f.k || '')] || ''} />
                           </p>
                         </div>
                       ) })}
                     </div>
-                  </div>
-                  {/* FOUR FRAMES, THE FIRST ONE LARGE — the order a guest meets them in, which is
+                    </>)}
+                  </ShrinkToFit>
+                  {/* THE FRAMES — the first one large — in the order a guest meets them, which is
                       the order that decides whether this property books. */}
                   {!edit && !ppPhotos.length ? (
                     // NO PHOTOS YET, NO EMPTY FRAMES (2026-10-27 sales audit). Three cream boxes
@@ -4760,12 +4801,17 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         </div>
                       )
                     })()
+                  ) : ppN === 1 ? (
+                  <Pick title="Photo 1" cur={String(ppPhotos[0] || '')} set={ppSet(0)} style={{ flex: 1, minWidth: 0, height: '100%', ...ppFrame }} />
+                  ) : ppN === 2 ? (
+                  <div className="flex-1 min-w-0" style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 12 }}>
+                    {[0, 1].map(n => <Pick key={n} title={'Photo ' + (n + 1)} cur={String(ppPhotos[n] || '')} set={ppSet(n)} style={{ width: '100%', height: '100%', ...ppFrame }} />)}
+                  </div>
                   ) : (
                   <div className="flex-1 min-w-0" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gridTemplateRows: '1fr 1fr', gap: 12 }}>
                     {[0, 1, 2].map(n => (
-                      <Pick key={n} title={'Photo ' + (n + 1)} cur={String(ppPhotos[n] || '')}
-                        set={u => mutate((d: Any) => { d.property = d.property || {}; const ph = (d.property.photos = Array.isArray(d.property.photos) ? d.property.photos : []); while (ph.length <= n) ph.push(''); ph[n] = u })}
-                        style={{ width: '100%', height: '100%', borderRadius: 12, border: '1px solid ' + t.cardBorder, ...(n === 0 ? { gridRow: 'span 2' } : {}) }} />
+                      <Pick key={n} title={'Photo ' + (n + 1)} cur={String(ppPhotos[n] || '')} set={ppSet(n)}
+                        style={{ width: '100%', height: '100%', ...ppFrame, ...(n === 0 ? { gridRow: 'span 2' } : {}) }} />
                     ))}
                   </div>
                   )}
