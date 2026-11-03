@@ -407,14 +407,36 @@ function layout(ctx: CanvasRenderingContext2D, text: string, maxW: number): { wo
   return lines
 }
 /** Draw rich text; each line can arrive on its own (stagger in seconds). Returns the height used. */
-function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, size: number, opts: { align?: 'left' | 'center'; font: string; weight?: number; local: number; delay?: number; stagger?: number; color?: string; lh?: number; shadow?: boolean }): number {
-  ctx.font = fnt(opts.weight || 800, size, opts.font)
+/** Jon, 2026-11-03: "make sure the fonts fit in the different style layouts". The largest size (≤ the
+ *  design's size) at which the text fits: no word wider than the box, and — when a height is given —
+ *  all lines inside it. Leaves ctx.font set to the fitted size. Every font (condensed, serif, the
+ *  scaled-up elegant face) and every shape goes through this, so nothing spills off the frame. */
+function fitSize(ctx: CanvasRenderingContext2D, text: string, maxW: number, size: number, maxH = 0, weight: number | string = 800, font = DISPLAY, lh = 1.08): number {
+  let s = size
+  for (let k = 0; k < 18; k++) {
+    ctx.font = fnt(weight, s, font)
+    const lines = layout(ctx, text, maxW)
+    const S = font === DISPLAY ? s * FS : s
+    const wide = lines.some(L => L.w > maxW * 1.002)
+    const tall = maxH > 0 && lines.length * S * lh > maxH
+    if (!wide && !tall) return s
+    s *= 0.92
+    if (s < size * 0.35) break
+  }
+  ctx.font = fnt(weight, s, font)
+  return s
+}
+const linesH = (ctx: CanvasRenderingContext2D, text: string, maxW: number, size: number, font = DISPLAY, lh = 1.08) => layout(ctx, text, maxW).length * (font === DISPLAY ? size * FS : size) * lh
+
+function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, maxW: number, size: number, opts: { align?: 'left' | 'center'; font: string; weight?: number; local: number; delay?: number; stagger?: number; color?: string; lh?: number; shadow?: boolean; maxH?: number }): number {
+  size = fitSize(ctx, text, maxW, size, opts.maxH || 0, opts.weight || 800, opts.font, opts.lh || 1.08)
   const lines = layout(ctx, text, maxW)
   const S = opts.font === DISPLAY ? size * FS : size
   const lh = S * (opts.lh || 1.08)
   const sp = ctx.measureText(' ').width
   ctx.textBaseline = 'alphabetic'
   const mode = ANIM
+  if (typeof globalThis !== 'undefined' && (globalThis as any).__adFit) { const W0 = ctx.canvas.width, H0 = ctx.canvas.height; const Lc = layout(ctx, text, maxW); const S0 = opts.font === DISPLAY ? size * FS : size; Lc.forEach((L, k) => { const x0 = opts.align === 'center' ? x + (maxW - L.w) / 2 : x; const yb = y + S0 + k * S0 * (opts.lh || 1.08); if (L.w > maxW * 1.01 || x0 < -2 || x0 + L.w > W0 + 2 || yb > H0 + 2 || yb - S0 < -2) (globalThis as any).__adFit.push({ text: text.slice(0, 40), w: Math.round(L.w), maxW: Math.round(maxW), x: Math.round(x0), y: Math.round(yb), W: W0, H: H0 }) }) }
   const d0 = opts.delay || 0, stg = opts.stagger == null ? 0.22 : opts.stagger
   let wordIx = 0
   for (let i = 0; i < lines.length; i++) {
@@ -519,7 +541,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       y += lh + 60 * u
     }
     const size = (portrait ? 112 : 118) * u
-    y += rich(ctx, head || 'Your South Florida **stay.**', pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25, stagger: 0.3, align: 'center' }) + 26 * u
+    y += rich(ctx, head || 'Your South Florida **stay.**', pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25, stagger: 0.3, align: 'center', maxH: H * 0.3 }) + 26 * u
     if (sc.sub) y += plain(ctx, sc.sub, pad, y, W - pad * 2, 38 * u, A.body, C.ink, 500, 'center', appear(local, 0.7)) + 40 * u
     const label = (sc.items[0] || 'Book at stay-hospitality.com').replace(/\|.*/, '')
     ctx.font = fnt(700, 40 * u, A.body)
@@ -559,7 +581,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.save(); ctx.globalAlpha *= appear(local, 0.2); ctx.drawImage(A.logo, portrait ? (W - lw) / 2 : tx, ty, lw, lh); ctx.restore()
       ty += lh + 50 * u
     }
-    ty += rich(ctx, head || 'Book a **call.**', tx, ty, tw, 104 * u, { font: A.display, local, delay: 0.4, align: al }) + 30 * u
+    ty += rich(ctx, head || 'Book a **call.**', tx, ty, tw, 104 * u, { font: A.display, local, delay: 0.4, align: al, maxH: H * 0.22 }) + 30 * u
     const fade = (d: number) => appear(local, d)
     if (c.name) { ty += plain(ctx, c.name, tx, ty, tw, 54 * u, A.display, C.ink, 700, al, fade(0.7)) }
     if (c.role) { ty += plain(ctx, c.role, tx, ty, tw, 30 * u, A.body, C.mut, 500, al, fade(0.8)) + 26 * u }
@@ -591,9 +613,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.fillStyle = C.gold; ctx.fillRect(x, 40 * u, tw * (j < k ? 1 : j === k ? clamp(lt / seg) : 0), 4 * u)
     }
     if (head) {
-      const size = (portrait ? 108 : 112) * u
-      ctx.font = fnt(800, size, A.display)
-      const hh = layout(ctx, head, W - pad * 2).length * size * FS * 1.08
+      const size = fitSize(ctx, head, W - pad * 2, (portrait ? 108 : 112) * u, H * 0.4)
+      const hh = linesH(ctx, head, W - pad * 2, size)
       const y = H - bottomSafe - hh - (sc.sub ? 70 * u : 10 * u)
       ctx.fillStyle = C.gold; ctx.fillRect(pad, y - 26 * u, 90 * u * appear(local, 0.2), 6 * u)
       rich(ctx, head, pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25 })
@@ -618,7 +639,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const y = portrait ? H * 0.5 : H * 0.3
     plain(ctx, '0' + (k + 1) + ' / 0' + n, pad, y - 70 * u, tw, 30 * u, A.mono, C.gold, 600, 'left', appear(lt, 0))
     const size = (portrait ? 128 : 132) * u
-    const hh = rich(ctx, t1.replace(/^(?!.*\*\*)(.*)$/, '**$1**'), pad, y, tw, size, { font: A.display, local: lt, delay: 0.05, stagger: 0.18 })
+    const hh = rich(ctx, t1.replace(/^(?!.*\*\*)(.*)$/, '**$1**'), pad, y, tw, size, { font: A.display, local: lt, delay: 0.05, stagger: 0.18, maxH: portrait ? H * 0.3 : H * 0.42 })
     if (t2) plain(ctx, t2, pad, y + hh + 16 * u, tw, 38 * u, A.body, C.ink, 500, 'left', appear(lt, 0.35))
     if (head && k === 0 && n > 1) plain(ctx, head.replace(/\*\*/g, ''), pad, pad + 40 * u, tw, 30 * u, A.body, C.mut, 600, 'left', appear(lt, 0))
     return
@@ -674,9 +695,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.fillStyle = C.gold; if (portrait) ctx.fillRect(0, ph - 6 * u, W * a, 12 * u); else ctx.fillRect(side ? pw - 6 * u : W - pw - 6 * u, 0, 12 * u, H * a)
     const tp = (portrait ? 70 : 90) * u
     const tw = qw - tp * 2
-    const size = (portrait ? 100 : 92) * u
-    ctx.font = fnt(800, size, A.display)
-    const hh = layout(ctx, head, tw).length * size * FS * 1.08
+    const size = fitSize(ctx, head, tw, (portrait ? 100 : 92) * u, (portrait ? qh - tp * 1.6 - (sc.sub ? 110 * u : 0) : H * 0.62))
+    const hh = linesH(ctx, head, tw, size)
     const ty = portrait ? qy + tp * 0.8 : (H - hh) / 2 - (sc.sub ? 40 * u : 0)
     if (sc.items[0]) plain(ctx, sc.items[0].replace(/\|.*/, '').toUpperCase(), qx + tp, ty - 54 * u, tw, 26 * u, A.body, C.gold, 700, 'left', appear(local, 0.2))
     rich(ctx, head, qx + tp, ty, tw, size, { font: A.display, local, delay: 0.3, shadow: false })
@@ -727,7 +747,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(t1, bx + 22 * u, ly + 2 * u)
       ctx.restore()
     })
-    if (head) { const size = (portrait ? 88 : 80) * u; rich(ctx, head, pad, H - bottomSafe - size * FS * 1.2 * layout(ctx, head, W - pad * 2).length, W - pad * 2, size, { font: A.display, local, delay: 0.1 }) }
+    if (head) { const size = fitSize(ctx, head, W - pad * 2, (portrait ? 88 : 80) * u, H * 0.25); rich(ctx, head, pad, H - bottomSafe - linesH(ctx, head, W - pad * 2, size) - 10 * u, W - pad * 2, size, { font: A.display, local, delay: 0.1 }) }
     return
   }
 
@@ -753,8 +773,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.fillText(cap, -cw / 2, -fh / 2 + m + ih + (fh - ih - m) / 2)
     ctx.restore()
     ctx.restore()
-    if (!portrait && head) rich(ctx, head, W * 0.62, H * 0.36, W * 0.32, 84 * u, { font: A.display, local, delay: 0.6 })
-    else if (portrait && sc.sub && head) rich(ctx, head, pad, H * 0.8, W - pad * 2, 76 * u, { font: A.display, local, delay: 0.6, align: 'center' })
+    if (!portrait && head) rich(ctx, head, W * 0.62, H * 0.3, W * 0.32, 84 * u, { font: A.display, local, delay: 0.6, maxH: H * 0.5 })
+    else if (portrait && sc.sub && head) { const hy = Math.max(H * 0.78, cy + fh / 2 + 40 * u); rich(ctx, head, pad, hy, W - pad * 2, 76 * u, { font: A.display, local, delay: 0.6, align: 'center', maxH: H - hy - 24 * u }) }
     return
   }
 
@@ -774,7 +794,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.restore()
     const tx = portrait ? pad : bx + bw + 70 * u, tw = portrait ? W - pad * 2 : W - tx - pad
     const ty = portrait ? by + bh + 70 * u : H * 0.34
-    const hh = rich(ctx, head, tx, ty, tw, (portrait ? 104 : 96) * u, { font: A.display, local, delay: 0.5, align: portrait ? 'center' : 'left' })
+    const hh = rich(ctx, head, tx, ty, tw, (portrait ? 104 : 96) * u, { font: A.display, local, delay: 0.5, align: portrait ? 'center' : 'left', maxH: portrait ? H - ty - bottomSafe - (sc.sub ? 90 * u : 20 * u) : H * 0.4 })
     if (sc.sub) plain(ctx, sc.sub, tx, ty + hh + 20 * u, tw, 36 * u, A.body, C.ink, 500, portrait ? 'center' : 'left', appear(local, 0.9))
     return
   }
@@ -788,9 +808,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
     const bar = (portrait ? H * 0.09 : H * 0.115) * ease(local / 0.8)
     ctx.fillStyle = C.light ? C.navy2 : '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar)
-    const size = (portrait ? 104 : 96) * u
-    ctx.font = fnt(700, size, A.display)
-    const hh = layout(ctx, head, W - pad * 2.4).length * size * FS * 1.08
+    const size = fitSize(ctx, head, W - pad * 2.4, (portrait ? 104 : 96) * u, H * (portrait ? 0.4 : 0.42), 700)
+    const hh = linesH(ctx, head, W - pad * 2.4, size)
     const y = (H - hh) / 2 + (portrait ? 40 : 30) * u
     if (C.light) {
       // a soft frosted band so dark type reads over the photo
@@ -819,10 +838,9 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.restore()
     } else { ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H) }
     ctx.fillStyle = `rgba(${C.tint},${TA(0.55)})`; ctx.fillRect(0, 0, W, H)
-    const size = (portrait ? 150 : 160) * u
-    ctx.font = fnt(800, size, A.display)
+    const size = fitSize(ctx, head || 'Stay **here.**', W - pad * 2, (portrait ? 150 : 160) * u, H * 0.62, 800, A.display, 1.02)
     const lines = layout(ctx, head || 'Stay **here.**', W - pad * 2)
-    const lh = size * 1.02, sp = ctx.measureText(' ').width
+    const lh = size * FS * 1.02, sp = ctx.measureText(' ').width
     const total = lines.length * lh
     let wi = 0
     const step = Math.min(0.32, Math.max(0.16, (dur * 0.55) / Math.max(1, lines.reduce((a, L) => a + L.words.length, 0))))
@@ -862,9 +880,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
     ctx.restore()
     if (a < 1) { ctx.save(); ctx.globalAlpha = 1 - a * 0.9; ctx.lineWidth = 6 * u; ctx.strokeStyle = C.gold; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke(); ctx.restore() }
-    const size = (portrait ? 112 : 108) * u
-    ctx.font = fnt(800, size, A.display)
-    const hh = layout(ctx, head, W * (portrait ? 0.86 : 0.7)).length * size * FS * 1.08
+    const size = fitSize(ctx, head, W * (portrait ? 0.86 : 0.7), (portrait ? 112 : 108) * u, H * 0.4)
+    const hh = linesH(ctx, head, W * (portrait ? 0.86 : 0.7), size)
     const y = H - bottomSafe - hh - (sc.sub ? 70 * u : 10 * u)
     rich(ctx, head, pad, y, W * (portrait ? 0.86 : 0.7), size, { font: A.display, local, delay: 0.9 })
     if (sc.sub) plain(ctx, sc.sub, pad, y + hh + 14 * u, W * 0.6, 34 * u, A.body, C.ink, 500, 'left', appear(local, 1.2))
@@ -874,10 +891,9 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   background(ctx, W, H, im(0), local, dur, sc.kind === 'photo' ? 0.6 : 1.15)
 
   if (sc.kind === 'title' || sc.kind === 'photo') {
-    const size = (sc.kind === 'title' ? 130 : 104) * u
     const hw = sc.kind === 'title' ? W - pad * 2 : W * (portrait ? 0.86 : 0.7)
-    ctx.font = fnt(800, size, A.display)
-    const hh = layout(ctx, head, hw).length * size * FS * 1.08
+    const size = fitSize(ctx, head, hw, (sc.kind === 'title' ? 130 : 104) * u, sc.kind === 'title' ? H * 0.58 : H * 0.42)
+    const hh = linesH(ctx, head, hw, size)
     if (sc.kind === 'title') {
       const y = (H - bottomSafe * 0.5 - hh) / 2 - 20 * u
       rich(ctx, head, pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.15, stagger: 0.55, align: 'center' })
@@ -893,12 +909,12 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   // FEED, LANDSCAPE: the headline holds the left third, the cards slide in on the right.
   if (sc.kind === 'feed' && !portrait) {
     const lw = W * 0.3
-    ctx.font = fnt(800, 92 * u, A.display)
-    const hh = layout(ctx, head, lw).length * 92 * u * 1.08
+    const fsz = fitSize(ctx, head, lw, 92 * u, H * 0.5)
+    const hh = linesH(ctx, head, lw, fsz)
     ctx.font = fnt(500, 32 * u, A.body)
     const sh = sc.sub ? layout(ctx, sc.sub, lw).length * 32 * u * 1.3 : 0
     const y = (H - bottomSafe * 0.6 - hh - sh - 20 * u) / 2
-    if (head) rich(ctx, head, pad, y, lw, 92 * u, { font: A.display, local, delay: 0.1 })
+    if (head) rich(ctx, head, pad, y, lw, fsz, { font: A.display, local, delay: 0.1 })
     if (sc.sub) plain(ctx, sc.sub, pad, y + hh + 20 * u, lw, 32 * u, A.body, C.mut, 500, 'left', appear(local, 0.4))
     const it = sc.items.slice(0, 6)
     const lx = pad + lw + 80 * u, lwid = W - lx - pad
@@ -922,7 +938,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
 
   // The rest share a headline at the top-left (or top on vertical) and a content area beneath.
   let top = pad + 20 * u
-  if (head) top += rich(ctx, head, pad, top, W - pad * 2, (portrait ? 84 : 80) * u, { font: A.display, local, delay: 0.1 }) + 16 * u
+  if (head) top += rich(ctx, head, pad, top, W - pad * 2, (portrait ? 84 : 80) * u, { font: A.display, local, delay: 0.1, maxH: H * 0.26 }) + 16 * u
   if (sc.sub) top += plain(ctx, sc.sub, pad, top, W - pad * 2, 32 * u, A.body, C.mut, 500, 'left', appear(local, 0.4)) + 10 * u
   const area = { x: pad, y: top + 30 * u, w: W - pad * 2, h: H - bottomSafe - top - 40 * u }
 
@@ -942,7 +958,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       const pn = parseNum(val)
       const prog = ease((local - 0.2 - k * 0.15) / 1.4)
       const shown = pn ? pn.pre + (pn.n * prog).toLocaleString('en-US', { minimumFractionDigits: pn.dec, maximumFractionDigits: pn.dec }) + pn.suf : val
-      ctx.font = fnt(800, 120 * u, A.display); ctx.fillStyle = C.ink; ctx.fillText(shown, x, y + 150 * u)
+      const nsz = fitSize(ctx, val, cw - 50 * u, 120 * u); ctx.font = fnt(800, nsz, A.display); ctx.fillStyle = C.ink; ctx.fillText(shown, x, y + 150 * u)
       plain(ctx, label, x, y + 170 * u, cw - 50 * u, 32 * u, A.body, C.mut, 500)
       ctx.restore()
     }
