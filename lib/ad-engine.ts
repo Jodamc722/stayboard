@@ -208,6 +208,8 @@ export function tidyHead(h: string): string {
     if (best >= 0) { const m = words[best].match(/^([^A-Za-z]*)(.*?)([^A-Za-z]*)$/); if (m) words[best] = m[1] + '**' + m[2] + '**' + m[3] }
     s = words.join('')
   }
+  // names keep their capitals
+  s = s.replace(/\b(lighthouse|miami|florida|botanica|elser|amrit|nick|stay hospitality|fort lauderdale|palm beach|singer island|art basel)\b/gi, w => w.split(' ').map(x => x[0].toUpperCase() + x.slice(1).toLowerCase()).join(' '))
   // capital at the start of every line (also inside a leading **)
   return s.split('\n').map(line => line.replace(/^(\s*(?:\*\*)?\s*)([a-z])/, (_m, a: string, b: string) => a + b.toUpperCase())).join('\n')
 }
