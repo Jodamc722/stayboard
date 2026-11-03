@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -407,6 +407,11 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     return true
   }
 
+  /** A vibe: look + style + graphics on every scene + music, in one tap. */
+  const applyVibe = (v: typeof VIBES[number]) => {
+    change(d => ({ ...d, look: v.look, music: v.music, style: { ...STYLE_DEFAULT, ...v.style }, scenes: d.scenes.map(x => ({ ...x, fx: v.fx.slice(), tr: 'auto' as AdTransition })) }))
+    if (tl) setT(tl.starts[Math.min(1, tl.starts.length - 1)] + 1.6)
+  }
   /** Jon: "a wide range of styles and looks" — one tap for a fresh combination. */
   const surprise = () => {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
@@ -1488,6 +1493,12 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : 'Estimated timing · make the voice to lock it'}
                 </span>
               </div>
+              {sc && canEdit ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 520 }} title="Quick edit of the scene on screen">
+                  <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen" style={{ ...field, padding: '6px 9px', fontSize: 12.5, fontWeight: 700 }} />
+                  <input value={sc.vo} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Spoken line" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />
+                </div>
+              ) : null}
             </>
           ) : (
             <div style={{ margin: 'auto', textAlign: 'center', color: UI.mut, maxWidth: 380 }}>
@@ -1634,6 +1645,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </>
               ) : null}
 
+              <Label>Graphics on this scene</Label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {FX.map(f => { const on = (sc.fx || []).indexOf(f.key) >= 0; return <Btn key={f.key} small on={on} disabled={!canEdit} title={f.hint} onClick={() => setScene(sel, { fx: on ? (sc.fx || []).filter(x => x !== f.key) : (sc.fx || []).concat([f.key]).slice(-4) })}>{f.label}</Btn> })}
+                {(sc.fx || []).length ? <Btn small tone="red" disabled={!canEdit} onClick={() => setScene(sel, { fx: [] })}>Clear</Btn> : null}
+                {canEdit && p.scenes.length > 1 ? <Btn small disabled={!(sc.fx || []).length} title="Put these graphics on every scene" onClick={() => change(d => ({ ...d, scenes: d.scenes.map(x => ({ ...x, fx: (sc.fx || []).slice() })) }))}>→ All scenes</Btn> : null}
+              </div>
+              <p style={{ fontSize: 10.5, color: UI.mut, marginTop: 4 }}>{(sc.fx || []).length ? 'Up to four per scene. They render in the export too.' : 'None picked — the look’s own graphics show (if it has any).'}</p>
               <Label>Sound effect</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 <Btn small on={!sc.sfx} disabled={!canEdit} onClick={() => setScene(sel, { sfx: '' })}>None</Btn>
@@ -1642,6 +1660,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               </div>
 
               <Label>Whole ad</Label>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Vibe · one tap sets look, style, graphics and music</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+                {VIBES.map(v => <Btn key={v.key} small disabled={!canEdit} title={v.blurb} onClick={() => applyVibe(v)}>{v.label}</Btn>)}
+              </div>
               <div style={{ display: 'flex', alignItems: 'center', margin: '0 0 6px' }}>
                 <p style={{ fontSize: 11.5, color: UI.mut, margin: 0 }}>Look · {LOOKS.find(l => l.key === (p.look || 'stay'))?.label}</p>
                 {canEdit ? <span style={{ marginLeft: 'auto' }}><Btn small onClick={surprise} title="A random look and style — keep pressing to explore">🎲 Surprise me</Btn></span> : null}
@@ -1771,7 +1793,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 <div key={s.id} draggable={canEdit} onDragStart={() => setDragFrom(i)} onDragOver={e => e.preventDefault()} onDrop={() => { if (dragFrom != null) move(dragFrom, i); setDragFrom(null) }}
                   onClick={() => pick(i)} title={(s.head || s.vo || KINDS.find(k => k.kind === s.kind)?.label || '').replace(/\*\*/g, '')}
                   style={{ position: 'absolute', left: pct(tl.starts[i]) + '%', width: `calc(${pct(tl.durs[i])}% - 3px)`, top: 0, bottom: 0, borderRadius: 7, cursor: 'pointer', overflow: 'hidden',
-                    background: KIND_COLOR[s.kind] + (i === sel ? '' : '55'), border: '2px solid ' + (i === sel ? '#fff' : 'transparent'), padding: '4px 6px', color: i === sel ? '#111' : UI.ink }}>
+                    background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), borderLeft: '4px solid ' + KIND_COLOR[s.kind], border: '2px solid ' + (i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
                   <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}</span>
                   <span style={{ display: 'block', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(s.head || s.vo).replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
                 </div>

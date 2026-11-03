@@ -20,7 +20,7 @@ export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel
 export type AdStyle = {
   font: 'auto' | 'sans' | 'serif' | 'condensed' | 'elegant'
   caps: 'auto' | 'on' | 'off'
-  grade: 'auto' | 'natural' | 'warm' | 'cool' | 'mono' | 'vivid' | 'faded'
+  grade: 'auto' | 'natural' | 'warm' | 'cool' | 'mono' | 'vivid' | 'faded' | 'duotone' | 'golden' | 'noir'
   pace: 'calm' | 'normal' | 'fast'
   finish: 'auto' | 'film' | 'soft' | 'glow' | 'clean'
   frame: 'none' | 'border' | 'letterbox'
@@ -34,7 +34,7 @@ export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto
 export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: string }[] } = {
   font: [{ key: 'auto', label: 'Look’s own' }, { key: 'sans', label: 'Bold sans' }, { key: 'serif', label: 'Serif' }, { key: 'condensed', label: 'Condensed' }, { key: 'elegant', label: 'Elegant' }],
   caps: [{ key: 'auto', label: 'Look’s own' }, { key: 'on', label: 'ALL CAPS' }, { key: 'off', label: 'Normal case' }],
-  grade: [{ key: 'auto', label: 'Look’s own' }, { key: 'natural', label: 'Natural' }, { key: 'warm', label: 'Warm' }, { key: 'cool', label: 'Cool' }, { key: 'vivid', label: 'Vivid' }, { key: 'faded', label: 'Faded film' }, { key: 'mono', label: 'Black & white' }],
+  grade: [{ key: 'auto', label: 'Look’s own' }, { key: 'natural', label: 'Natural' }, { key: 'warm', label: 'Warm' }, { key: 'cool', label: 'Cool' }, { key: 'vivid', label: 'Vivid' }, { key: 'faded', label: 'Faded film' }, { key: 'mono', label: 'Black & white' }, { key: 'duotone', label: 'Duotone' }, { key: 'golden', label: 'Gold tone' }, { key: 'noir', label: 'Noir' }],
   pace: [{ key: 'calm', label: 'Calm' }, { key: 'normal', label: 'Normal' }, { key: 'fast', label: 'Fast' }],
   finish: [{ key: 'auto', label: 'Look’s own' }, { key: 'film', label: 'Film grain' }, { key: 'soft', label: 'Soft' }, { key: 'glow', label: 'Light leak' }, { key: 'clean', label: 'Clean' }],
   frame: [{ key: 'none', label: 'Full bleed' }, { key: 'border', label: 'Border' }, { key: 'letterbox', label: 'Letterbox' }],
@@ -76,6 +76,8 @@ export type AdScene = {
   dur?: number | null
   /** A sound effect that plays as the scene lands ('snd:<path>' from the Sounds library). */
   sfx?: string
+  /** Motion graphics layered on the scene (FX keys). */
+  fx?: string[]
 }
 export type AdContact = { name: string; role: string; phone: string; email: string; photo: string }
 export type AdVoice = {
@@ -367,7 +369,7 @@ export type AdAssets = {
   mono: string
   credit: string
 }
-type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boolean; grade?: AdStyle['grade']; finish?: AdStyle['finish']; logo?: 'gold' | 'black' | 'white' }
+type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boolean; grade?: AdStyle['grade']; finish?: AdStyle['finish']; logo?: 'gold' | 'black' | 'white'; fx?: string[]; mesh?: [string, string, string] }
 type Palette = { serif?: boolean; light?: boolean; def?: LookDef; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
 /** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
  *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
@@ -387,11 +389,16 @@ export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] 
   { key: 'noir', label: 'Noir', blurb: 'Black & white photos, gold, condensed caps', c: { def: { font: 'condensed', caps: true, grade: 'mono', finish: 'film', logo: 'gold' }, gold: '#D2B077', ink: '#FFFFFF', mut: '#BDBDBD', navy: '#080808', navy2: '#1A1A1A', deep: '#000000', tint: '0,0,0', glass: 'rgba(10,10,10,0.65)', line: 'rgba(255,255,255,0.22)', green: '#D2B077' } },
   { key: 'miami', label: 'Miami nights', blurb: 'Neon pink on violet, vivid, light leak', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white' }, gold: '#FF5FA2', ink: '#FFFFFF', mut: '#D9C6F0', navy: '#1A0B2E', navy2: '#341457', deep: '#0D0518', tint: '26,8,46', glass: 'rgba(30,10,52,0.62)', line: 'rgba(255,180,230,0.25)', green: '#4FF0D0' } },
   { key: 'tropic', label: 'Tropic', blurb: 'Jungle green and coral, vivid', c: { def: { font: 'sans', grade: 'vivid', finish: 'soft', logo: 'white' }, gold: '#FF8A5B', ink: '#FFF8F0', mut: '#BFD9C8', navy: '#0B2A1F', navy2: '#124234', deep: '#061710', tint: '6,30,20', glass: 'rgba(8,36,26,0.62)', line: 'rgba(220,255,235,0.2)', green: '#7FE3A8' } },
+  { key: 'aurora', label: 'Aurora', blurb: 'Teal-to-violet gradient, bokeh, modern', c: { def: { font: 'sans', grade: 'cool', finish: 'soft', logo: 'white', fx: ['bokeh'], mesh: ['#0E7C86', '#3B2A8C', '#0A1030'] }, gold: '#7CF2E0', ink: '#F4FBFF', mut: '#B9D4E6', navy: '#121A3F', navy2: '#1E2A5E', deep: '#080C22', tint: '14,18,56', glass: 'rgba(20,28,80,0.55)', line: 'rgba(200,240,255,0.22)', green: '#7CF2B0' } },
+  { key: 'champagne', label: 'Champagne', blurb: 'Gold gradient, elegant serif, sparkle', c: { def: { font: 'elegant', grade: 'golden', finish: 'glow', logo: 'white', fx: ['sparkle'], mesh: ['#8A6A2E', '#3A2A12', '#1A1208'] }, gold: '#F3D9A0', ink: '#FFF8EC', mut: '#D9C7A6', navy: '#2A1E0E', navy2: '#4A3617', deep: '#160F06', tint: '34,24,10', glass: 'rgba(50,36,16,0.6)', line: 'rgba(255,230,180,0.25)', green: '#CDE3A0' } },
+  { key: 'midnight', label: 'Midnight', blurb: 'Deep blue, light rays, cinematic', c: { def: { font: 'sans', grade: 'cool', finish: 'film', logo: 'gold', fx: ['rays'], mesh: ['#0A2A5A', '#071530', '#03091A'] }, gold: '#D2B077', ink: '#EAF0FF', mut: '#A8B6D0', navy: '#071530', navy2: '#0E2250', deep: '#030A1C', tint: '5,16,40', glass: 'rgba(8,22,60,0.6)', line: 'rgba(200,220,255,0.2)', green: '#5FE0A0' } },
   { key: 'golden', label: 'Golden hour', blurb: 'Warm amber, elegant serif, light leak', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'gold' }, gold: '#F2B544', ink: '#FFF6E8', mut: '#E3CDB0', navy: '#24170C', navy2: '#3D2814', deep: '#140C05', tint: '36,22,10', glass: 'rgba(40,24,10,0.6)', line: 'rgba(255,220,170,0.22)', green: '#B9D98A' } },
 ]
 let C: Palette = LOOKS[0].c
 // Per-frame style state, set by drawFrame from the look + the ad's style.
 let GRADE = ''          // canvas filter for photos
+let DUO: [string, string] | null = null  // duotone shadows/highlights
+let FXS: string[] = []  // the look's default graphics
 let PD = 1              // pace: >1 slower, <1 faster
 let CAPS = false
 let FONTW = 0           // a single-weight display face (condensed) draws at its own weight
@@ -458,6 +465,22 @@ export const PLATFORMS: { key: string; label: string; format: AdFormat; max: num
 ]
 export const platformOf = (p: Pick<AdProject, 'platform' | 'format'>) => PLATFORMS.find(x => x.key === p.platform) || PLATFORMS.find(x => x.format === p.format && x.key !== 'story' && x.key !== 'tiktok') || PLATFORMS[0]
 
+/** VIBES (Jon, 2026-11-03: "catchier vibes and looks"): one tap sets look + style + graphics + music + pace. */
+export const VIBES: { key: string; label: string; blurb: string; look: string; style: Partial<AdStyle>; fx: string[]; music: string }[] = [
+  { key: 'luxe', label: 'Luxury calm', blurb: 'Editorial serif, bokeh, lounge music', look: 'editorial', style: { pace: 'calm', finish: 'soft' }, fx: ['bokeh'], music: 'backbay' },
+  { key: 'energy', label: 'Miami energy', blurb: 'Neon pink, fast cuts, sparkle', look: 'miami', style: { pace: 'fast' }, fx: ['sparkle'], music: 'funkorama' },
+  { key: 'golden', label: 'Golden hour', blurb: 'Amber light rays, elegant serif', look: 'golden', style: {}, fx: ['rays'], music: 'moonlight' },
+  { key: 'clean', label: 'Clean & modern', blurb: 'White, corner brackets, bright', look: 'fresh', style: { finish: 'clean' }, fx: ['corners'], music: 'wallpaper' },
+  { key: 'noir', label: 'Noir cinema', blurb: 'Black & white, letterbox, film grain', look: 'noir', style: { frame: 'letterbox', finish: 'film' }, fx: [], music: 'inspired' },
+  { key: 'tropic', label: 'Tropical', blurb: 'Jungle green and coral, waves', look: 'tropic', style: { grade: 'vivid' }, fx: ['waves'], music: 'werq' },
+  { key: 'aurora', label: 'Aurora', blurb: 'Teal-violet gradient, bokeh, glow line', look: 'aurora', style: {}, fx: ['bokeh', 'glowline'], music: 'wallpaper' },
+  { key: 'champagne', label: 'Champagne', blurb: 'Gold tone photos, sparkle, elegant', look: 'champagne', style: {}, fx: ['sparkle'], music: 'backbay' },
+  { key: 'tech', label: 'Lighthouse tech', blurb: 'Midnight blue, tech grid, scanlines — owner ads', look: 'midnight', style: {}, fx: ['grid'], music: 'inspired' },
+  { key: 'party', label: 'Celebration', blurb: 'Bold pop, confetti, stripes — events', look: 'bold', style: { pace: 'fast' }, fx: ['confetti', 'stripes'], music: 'funkorama' },
+  { key: 'duotone', label: 'Duotone', blurb: 'Two-colour photos in the look’s accent', look: 'stay', style: { grade: 'duotone' }, fx: ['orb'], music: 'werq' },
+  { key: 'linen', label: 'Linen soft', blurb: 'Cream, serif, black logo, bokeh', look: 'linen', style: { pace: 'calm' }, fx: ['bokeh'], music: 'moonlight' },
+]
+
 /** Proven ad concepts the team can start from (Jon, 2026-11-03: "give the team the best ideas"). */
 export const IDEAS: { key: string; goal: string; title: string; why: string; prompt: string }[] = [
   { key: 'wake', goal: 'bookings', title: 'Wake up here', why: 'The first-morning feeling sells more than amenities. Opens on the view, ends on the bed.', prompt: 'A guest Reel about waking up at <property>: open on the view from the balcony at sunrise, then coffee, the pool, the bed. One idea: the first morning. End on Book at stay-hospitality.com.' },
@@ -493,8 +516,20 @@ function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement | HTMLVideoE
   if (!iw || !ih) return
   const s = Math.max(w / iw, h / ih) * zoom
   const dw = iw * s, dh = ih * s
+  const dx = x + (w - dw) / 2 - pan * (dw - w) / 2, dy = y + (h - dh) / 2 - panY * (dh - h) / 2
+  if (DUO) {
+    // DUOTONE: grayscale photo, shadows pushed to one colour (lighten), highlights to another (multiply)
+    ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip()
+    try { ctx.filter = (ctx.filter && ctx.filter !== 'none' ? ctx.filter + ' ' : '') + 'grayscale(1) contrast(1.1)' } catch { /* */ }
+    ctx.drawImage(img, dx, dy, dw, dh)
+    try { ctx.filter = 'none' } catch { /* */ }
+    ctx.globalCompositeOperation = 'lighten'; ctx.fillStyle = DUO[0]; ctx.fillRect(x, y, w, h)
+    ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = DUO[1]; ctx.fillRect(x, y, w, h)
+    ctx.restore()
+    return
+  }
   if (GRADE) { ctx.save(); const f = ctx.filter && ctx.filter !== 'none' ? ctx.filter + ' ' : ''; try { ctx.filter = f + GRADE } catch { /* no filter support */ } }
-  ctx.drawImage(img, x + (w - dw) / 2 - pan * (dw - w) / 2, y + (h - dh) / 2 - panY * (dh - h) / 2, dw, dh)
+  ctx.drawImage(img, dx, dy, dw, dh)
   if (GRADE) ctx.restore()
 }
 type Seg = { t: string; gold: boolean }
@@ -629,10 +664,28 @@ function background(ctx: CanvasRenderingContext2D, W: number, H: number, img: HT
     g.addColorStop(1, `rgba(${C.tint},${TA(0.75 * dark + 0.15)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
   } else {
-    const g = ctx.createRadialGradient(W * 0.8, 0, 0, W * 0.8, 0, Math.max(W, H) * 1.1)
-    g.addColorStop(0, C.navy2); g.addColorStop(0.6, C.navy); g.addColorStop(1, C.deep)
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    meshBg(ctx, W, H, local)
   }
+}
+/** A slowly moving gradient mesh — the look's colours — for scenes and panels without a photo. */
+function meshBg(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
+  const m = C.def?.mesh
+  const g = ctx.createRadialGradient(W * 0.8, 0, 0, W * 0.8, 0, Math.max(W, H) * 1.1)
+  g.addColorStop(0, C.navy2); g.addColorStop(0.6, C.navy); g.addColorStop(1, C.deep)
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+  if (!m) return
+  const blobs: [number, number, number, string][] = [
+    [0.2 + 0.1 * Math.sin(t * 0.5), 0.3 + 0.1 * Math.cos(t * 0.4), 0.75, m[0]],
+    [0.8 + 0.08 * Math.cos(t * 0.35), 0.7 + 0.1 * Math.sin(t * 0.45), 0.8, m[1]],
+    [0.55 + 0.1 * Math.sin(t * 0.3), 0.1 + 0.08 * Math.cos(t * 0.6), 0.6, m[2]],
+  ]
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.75
+  for (const [bx, by, r, col] of blobs) {
+    const rg = ctx.createRadialGradient(W * bx, H * by, 0, W * bx, H * by, Math.max(W, H) * r)
+    rg.addColorStop(0, col); rg.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H)
+  }
+  ctx.restore()
 }
 function glass(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, gold = false) {
   rr(ctx, x, y, w, h, r); ctx.fillStyle = C.glass; ctx.fill()
@@ -1226,6 +1279,138 @@ function finish(ctx: CanvasRenderingContext2D, W: number, H: number, u: number, 
   ctx.save(); ctx.translate(-((t * 977) % 192), -((t * 613) % 192)); ctx.fillStyle = pat; ctx.fillRect(0, 0, W + 192, H + 192); ctx.restore()
 }
 
+// ───────────────────────── MOTION GRAPHICS (Jon, 2026-11-03: "we need cool graphics") ─────────────────────────
+export const FX: { key: string; label: string; hint: string }[] = [
+  { key: 'bokeh', label: 'Bokeh', hint: 'Soft drifting light circles' },
+  { key: 'rays', label: 'Light rays', hint: 'Sun rays sweeping from the corner' },
+  { key: 'sparkle', label: 'Sparkle', hint: 'Twinkles that catch the light' },
+  { key: 'confetti', label: 'Confetti', hint: 'Falling gold confetti — events, celebrations' },
+  { key: 'waves', label: 'Waves', hint: 'Animated wave lines along the bottom' },
+  { key: 'grid', label: 'Tech grid', hint: 'A faint moving grid — Lighthouse, data, owners' },
+  { key: 'stripes', label: 'Stripes', hint: 'Diagonal accent stripes that slide in' },
+  { key: 'orb', label: 'Accent orb', hint: 'A big soft circle in the accent colour behind the words' },
+  { key: 'corners', label: 'Corners', hint: 'Animated corner brackets, like a viewfinder' },
+  { key: 'stars', label: '4.6 stars', hint: 'The guest rating as stars filling up' },
+  { key: 'pin', label: 'Map pin', hint: 'A pin drops with the place line' },
+  { key: 'swipe', label: 'Book arrow', hint: 'A bouncing arrow toward the button (end cards)' },
+  { key: 'scan', label: 'Scanlines', hint: 'Fine horizontal lines — retro, techy' },
+  { key: 'glowline', label: 'Glow line', hint: 'A travelling accent line across the frame' },
+]
+function hashN(n: number, k: number) { const v = Math.sin(n * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v) }
+function drawFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets) {
+  const sc = p.scenes[i]
+  const keys = Array.from(new Set([...(sc.fx || []), ...(sc.fx && sc.fx.length ? [] : FXS)]))
+  if (!keys.length) return
+  const W = ctx.canvas.width, H = ctx.canvas.height, u = Math.min(W, H) / 1080, t = local
+  const portrait = H > W * 1.1
+  const gold = hexRgb(C.gold)
+  const ga = (a: number) => `rgba(${gold[0]},${gold[1]},${gold[2]},${a})`
+  for (const k of keys) {
+    ctx.save()
+    if (k === 'bokeh') {
+      ctx.globalCompositeOperation = C.light ? 'multiply' : 'screen'
+      for (let n = 0; n < 18; n++) {
+        const r = (30 + 90 * hashN(n, 1)) * u, x = (hashN(n, 2) + 0.03 * Math.sin(t * 0.4 + n)) * W, y = ((hashN(n, 3) - t * 0.012 * (0.5 + hashN(n, 4))) % 1 + 1) % 1 * H
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, C.light ? 'rgba(200,170,120,0.35)' : 'rgba(255,255,255,0.22)'); g.addColorStop(0.7, C.light ? 'rgba(200,170,120,0.12)' : ga(0.08)); g.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2)
+      }
+    } else if (k === 'rays') {
+      ctx.globalCompositeOperation = 'screen'; ctx.translate(W * 0.95, -H * 0.05)
+      for (let n = 0; n < 7; n++) {
+        const ang = Math.PI * 0.55 + n * 0.11 + 0.03 * Math.sin(t * 0.6 + n)
+        const g = ctx.createLinearGradient(0, 0, Math.cos(ang) * W * 1.4, Math.sin(ang) * W * 1.4)
+        g.addColorStop(0, ga(0.18 + 0.06 * Math.sin(t + n))); g.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ang - 0.03) * W * 1.6, Math.sin(ang - 0.03) * W * 1.6); ctx.lineTo(Math.cos(ang + 0.03) * W * 1.6, Math.sin(ang + 0.03) * W * 1.6); ctx.closePath(); ctx.fill()
+      }
+    } else if (k === 'sparkle') {
+      ctx.globalCompositeOperation = 'screen'
+      for (let n = 0; n < 26; n++) {
+        const ph = (t * (0.6 + hashN(n, 5)) + hashN(n, 6) * 6) % 3, a = ph < 1 ? Math.sin(ph * Math.PI) : 0
+        if (a <= 0) continue
+        const x = hashN(n, 7) * W, y = hashN(n, 8) * H, r = (6 + 10 * hashN(n, 9)) * u * a
+        ctx.fillStyle = C.light ? ga(0.9 * a) : `rgba(255,255,255,${0.9 * a})`
+        ctx.beginPath(); ctx.moveTo(x, y - r * 2); ctx.quadraticCurveTo(x, y, x + r * 2, y); ctx.quadraticCurveTo(x, y, x, y + r * 2); ctx.quadraticCurveTo(x, y, x - r * 2, y); ctx.quadraticCurveTo(x, y, x, y - r * 2); ctx.fill()
+      }
+    } else if (k === 'confetti') {
+      for (let n = 0; n < 40; n++) {
+        const sp = 0.08 + 0.1 * hashN(n, 10), y = ((hashN(n, 11) + t * sp) % 1.1) * H - H * 0.05, x = hashN(n, 12) * W + Math.sin(t * 2 + n) * 20 * u
+        const w = (8 + 10 * hashN(n, 13)) * u, h = (14 + 10 * hashN(n, 14)) * u
+        ctx.save(); ctx.translate(x, y); ctx.rotate(t * (1 + hashN(n, 15)) + n); ctx.fillStyle = n % 3 === 0 ? '#fff' : ga(0.95); ctx.globalAlpha = 0.85; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.restore()
+      }
+    } else if (k === 'waves') {
+      ctx.lineWidth = 3 * u
+      for (let n = 0; n < 3; n++) {
+        ctx.strokeStyle = ga(0.55 - n * 0.15); ctx.beginPath()
+        const base = H - (90 + n * 34) * u - H * platformOf(p).safe.bottom
+        for (let x = 0; x <= W; x += 12 * u) ctx.lineTo(x, base + Math.sin(x / (140 * u) + t * (1.2 + n * 0.3) + n) * 14 * u)
+        ctx.stroke()
+      }
+    } else if (k === 'grid') {
+      ctx.strokeStyle = C.light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1 * u
+      const step = 96 * u, off = (t * 18 * u) % step
+      ctx.beginPath()
+      for (let x = -step + off; x < W + step; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H) }
+      for (let y = -step + off * 0.6; y < H + step; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y) }
+      ctx.stroke()
+      ctx.fillStyle = ga(0.5)
+      for (let n = 0; n < 5; n++) { const x = ((hashN(n, 16) + t * 0.02) % 1) * W, y = hashN(n, 17) * H; ctx.beginPath(); ctx.arc(Math.round(x / step) * step + off, Math.round(y / step) * step + off * 0.6, 4 * u, 0, Math.PI * 2); ctx.fill() }
+    } else if (k === 'stripes') {
+      const a = ease(Math.min(1, t / 0.8))
+      ctx.translate(W, 0); ctx.rotate(0.6)
+      for (let n = 0; n < 3; n++) { ctx.fillStyle = n === 1 ? (C.light ? C.ink : '#fff') : C.gold; ctx.globalAlpha = 0.85 - n * 0.2; ctx.fillRect(-(60 + n * 70) * u, -H * 0.5 + (1 - a) * H * 1.5, 26 * u, H * 2) }
+    } else if (k === 'orb') {
+      const a = ease(Math.min(1, t / 0.9)), r = (portrait ? W * 0.42 : H * 0.38) * (0.8 + 0.2 * a)
+      const x = portrait ? W * 0.5 : W * 0.3, y = portrait ? H * 0.38 : H * 0.5
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, ga(0.55 * a)); g.addColorStop(1, ga(0))
+      ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2)
+    } else if (k === 'corners') {
+      const a = ease(Math.min(1, t / 0.7)), m = 60 * u + (1 - a) * 40 * u, L = 70 * u * a
+      ctx.strokeStyle = C.light ? C.ink : C.gold; ctx.lineWidth = 4 * u; ctx.globalAlpha = 0.9
+      const PF = platformOf(p), top = H * PF.safe.top + m, bot = H - H * PF.safe.bottom - m, right = W - W * PF.safe.right - m
+      for (const [x, y, sx, sy] of [[m, top, 1, 1], [right, top, -1, 1], [m, bot, 1, -1], [right, bot, -1, -1]] as number[][]) { ctx.beginPath(); ctx.moveTo(x, y + sy * L); ctx.lineTo(x, y); ctx.lineTo(x + sx * L, y); ctx.stroke() }
+    } else if (k === 'stars') {
+      const a = ease(Math.min(1, (t - 0.3) / 1.2)), n = 4.6 * a, size = 44 * u
+      const PF = platformOf(p), x0 = 56 * u, y0 = H - H * PF.safe.bottom - (p.captions ? 250 : 140) * u
+      for (let s = 0; s < 5; s++) {
+        const fill = Math.max(0, Math.min(1, n - s))
+        const cx = x0 + s * (size + 10 * u) + size / 2, cy = y0
+        const star = () => { ctx.beginPath(); for (let q = 0; q < 10; q++) { const r = q % 2 ? size * 0.22 : size * 0.5, an = -Math.PI / 2 + q * Math.PI / 5; ctx.lineTo(cx + Math.cos(an) * r, cy + Math.sin(an) * r) } ctx.closePath() }
+        star(); ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
+        if (fill > 0) { ctx.save(); ctx.beginPath(); ctx.rect(cx - size / 2, cy - size / 2, size * fill, size); ctx.clip(); star(); ctx.fillStyle = C.gold; ctx.fill(); ctx.restore() }
+      }
+      if (a > 0.9) { ctx.font = fnt(700, 30 * u, A.body); ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText('4.6 / 5 from our guests', x0 + 5 * (size + 10 * u) + 10 * u, y0 + 2 * u) }
+    } else if (k === 'pin') {
+      const a = ease(Math.min(1, (t - 0.2) / 0.7)), PF = platformOf(p)
+      const x = W - W * PF.safe.right - 170 * u, y = H * PF.safe.top + 150 * u - (1 - a) * 200 * u
+      ctx.globalAlpha = a
+      ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(x, y, 22 * u, Math.PI, 0); ctx.lineTo(x, y + 38 * u); ctx.closePath(); ctx.fill()
+      ctx.fillStyle = C.navy; ctx.beginPath(); ctx.arc(x, y, 9 * u, 0, Math.PI * 2); ctx.fill()
+      const ring = ((t * 1.2) % 1); ctx.strokeStyle = ga(0.6 * (1 - ring)); ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.ellipse(x, y + 42 * u, 30 * u * (0.4 + ring), 12 * u * (0.4 + ring), 0, 0, Math.PI * 2); ctx.stroke()
+      const label = (sc.sub || '').replace(/\*\*/g, '').split('·')[0].trim()
+      if (label) { ctx.font = fnt(700, 26 * u, A.body); const tw = ctx.measureText(label).width; rr(ctx, x - tw / 2 - 16 * u, y + 56 * u, tw + 32 * u, 44 * u, 22 * u); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.6)'; ctx.fill(); ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(label, x - tw / 2, y + 78 * u) }
+    } else if (k === 'swipe') {
+      const b = Math.abs(Math.sin(t * 3)) * 16 * u, PF = platformOf(p)
+      const x = W / 2, y = H - H * PF.safe.bottom - (p.captions ? 300 : 190) * u + b
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 8 * u; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+      ctx.beginPath(); ctx.moveTo(x, y - 70 * u); ctx.lineTo(x, y); ctx.moveTo(x - 28 * u, y - 30 * u); ctx.lineTo(x, y); ctx.lineTo(x + 28 * u, y - 30 * u); ctx.stroke()
+    } else if (k === 'scan') {
+      ctx.fillStyle = C.light ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.18)'
+      const off = (t * 40 * u) % (6 * u)
+      for (let y = -6 * u + off; y < H; y += 6 * u) ctx.fillRect(0, y, W, 2 * u)
+    } else if (k === 'glowline') {
+      const ph = (t * 0.35) % 1, x = ph * (W + 400 * u) - 200 * u
+      ctx.globalCompositeOperation = 'screen'
+      const g = ctx.createLinearGradient(x - 200 * u, 0, x + 200 * u, 0); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, ga(0.35)); g.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = g; ctx.save(); ctx.transform(1, 0, -0.3, 1, 0, 0); ctx.fillRect(x - 200 * u, 0, 400 * u, H); ctx.restore()
+    }
+    ctx.restore()
+  }
+}
+function drawSceneFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets) {
+  drawScene(ctx, p, i, local, dur, A)
+  drawFx(ctx, p, i, local, dur, A)
+}
+
 /** The whole frame at time t: scene (with a crossfade from the previous one), the mark, captions. */
 export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timeline, t: number, A: AdAssets) {
   const W = ctx.canvas.width, H = ctx.canvas.height
@@ -1243,7 +1428,10 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   }
   if (isHex(R.text)) C = { ...C, ink: R.text!, mut: R.text! }
   DISPLAY = A.display; FONTW = R.font === 'condensed' && fam ? 400 : 0; FS = R.font === 'elegant' && fam ? 1.2 : 1
-  GRADE = GRADES[R.grade] || ''; PD = R.pace === 'calm' ? 1.35 : R.pace === 'fast' ? 0.72 : 1; CAPS = R.caps
+  GRADE = GRADES[R.grade] || ''
+  DUO = R.grade === 'duotone' ? [shade(C.navy, -10), C.gold] : R.grade === 'golden' ? ['#2A1A08', '#F2C879'] : R.grade === 'noir' ? ['#050505', '#E8E2D6'] : null
+  FXS = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c.def?.fx || []
+  PD = R.pace === 'calm' ? 1.35 : R.pace === 'fast' ? 0.72 : 1; CAPS = R.caps
   ctx.save()
   ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H)
   if (!p.scenes.length) { ctx.restore(); return }
@@ -1253,7 +1441,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   const XF = (tr === 'push' || tr === 'wipe' || tr === 'iris' || tr === 'doors' || tr === 'diamond' || tr === 'blinds' ? 0.65 : tr === 'dip' ? 0.8 : tr === 'whip' || tr === 'glitch' ? 0.4 : tr === 'cut' ? 0 : XFADE) * PD
   if (i > 0 && local < XF) {
     const a = ease(local / XF)
-    drawScene(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
+    drawSceneFx(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
     ctx.save()
     if (tr === 'fade') ctx.globalAlpha = a
     else if (tr === 'zoom') { ctx.globalAlpha = Math.min(1, a * 1.4); const z = 1.08 - 0.08 * a; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
@@ -1269,7 +1457,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
     else if (tr === 'spin') { ctx.globalAlpha = a; ctx.translate(W / 2, H / 2); ctx.rotate((1 - a) * -0.35); const z = 0.55 + 0.45 * a; ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
     else if (tr === 'blur') { ctx.globalAlpha = a; try { ctx.filter = `blur(${Math.round((1 - a) * 30 * u)}px)` } catch { /* */ } }
     else if (tr === 'dip') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
-    drawScene(ctx, p, i, local, tl.durs[i], A)
+    drawSceneFx(ctx, p, i, local, tl.durs[i], A)
     ctx.restore()
     if ((tr === 'iris' || tr === 'diamond' || tr === 'doors') && a < 1) {
       ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 6 * u; ctx.beginPath()
@@ -1293,7 +1481,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
     }
     if (tr === 'wipe' && a < 1) { const e = a * (W + H * 0.6); ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 8 * u; ctx.beginPath(); ctx.moveTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.stroke(); ctx.restore() }
     if (tr === 'flash') { ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(2 * (local / XF) - 1)})`; ctx.fillRect(0, 0, W, H) }
-  } else drawScene(ctx, p, i, local, tl.durs[i], A)
+  } else drawSceneFx(ctx, p, i, local, tl.durs[i], A)
   ctx.globalAlpha = 1
   // FRAME: a thin inset border in the accent, or letterbox bars on every scene.
   if (R.frame === 'border') { ctx.save(); ctx.strokeStyle = C.light ? C.ink : C.gold; ctx.globalAlpha = 0.85; ctx.lineWidth = 3 * u; ctx.strokeRect(28 * u, 28 * u, W - 56 * u, H - 56 * u); ctx.restore() }

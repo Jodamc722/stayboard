@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS, TEXT_ANIMS, CAMS, type AdTextAnim, type AdCam, PLATFORMS } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS, TEXT_ANIMS, CAMS, type AdTextAnim, type AdCam, PLATFORMS, FX } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -113,6 +113,7 @@ export function normalize(p: any): AdProject {
     photos: Array.isArray(s?.photos) ? s.photos.slice(0, 12).map((x: any) => String(x || '')).filter((x: string) => /^(https:\/\/|\/|video:)/.test(x)) : [],
     dur: s?.dur && Number(s.dur) > 0 ? Math.min(30, Number(s.dur)) : null,
     sfx: typeof s?.sfx === 'string' && /^snd:sounds\/[a-z0-9]+\.mp3$/i.test(s.sfx) ? s.sfx : '',
+    fx: Array.isArray(s?.fx) ? s.fx.filter((x: any) => FX.some(f => f.key === x)).slice(0, 4) : [],
   })) : []
   const c = p?.contact || {}
   return {
