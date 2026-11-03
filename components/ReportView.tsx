@@ -9630,8 +9630,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // ── 8 · GUEST VOICES — the score, then the words ───────────────────
           if (((voices.quotes || []).length || (voices.themes || []).length) && !hid('voices')) {
             const n = next()
-            const avg = recs && recs.avgRating != null ? Number(recs.avgRating) : null
-            const count = recs ? Number(recs.reviews || 0) : 0
+            // LIFETIME, NOT THE LAST 90 DAYS (Jon, 2026-11-03): every review these units have had.
+            const life = recs && recs.lifetime && recs.lifetime.reviews ? recs.lifetime : null
+            const avg = life && life.avgRating != null ? Number(life.avgRating) : recs && recs.avgRating != null ? Number(recs.avgRating) : null
+            const count = life ? Number(life.reviews || 0) : recs ? Number(recs.reviews || 0) : 0
             const quotes = (voices.quotes as Any[] || [])
             const hero1 = quotes[0]
             const rest = quotes.slice(1, 3)
@@ -9650,7 +9652,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         </svg>
                         <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: SERIF, fontSize: 44, letterSpacing: '-0.03em', color: t.ink, fontVariantNumeric: 'tabular-nums' }}>{O('voices_avg', avg.toFixed(1))}</span>
                       </div>
-                      <div style={{ marginTop: 16 }}><Lbl ok="voices_avg_l">{'Average of ' + count + ' review' + (count === 1 ? '' : 's')}</Lbl></div>
+                      <div style={{ marginTop: 16 }}><Lbl ok="voices_avg_l">{(life ? 'Lifetime average · ' : 'Average of ') + count + ' review' + (count === 1 ? '' : 's')}</Lbl></div>
                     </div>
                   ) : null}
                   <div style={{ flex: 1, minWidth: 0 }}>
