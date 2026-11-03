@@ -221,9 +221,10 @@ CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a 
 - Make it feel like a premium travel/brand film, not slides. Vary the scene kinds; never use the same kind twice in a row.
 - Open with motion: a "cinema" or "kinetic" scene. Use "kinetic" for punchy 2 to 6 word hooks, "cinema" for mood and place, "reveal" for a hero shot, "wall" (montage, quick full-screen cuts) for energy, "cards" (three beats) for three selling points.
 - One image on screen at a time. NEVER a grid, collage or side-by-side photos.
-- Give each scene "tr" (how it arrives): zoom, push, slide, whip, wipe, iris, diamond, doors, blinds, spin, blur, glitch, dip, flash, fade or cut. Mix them; never the same twice in a row. whip/glitch/flash/cut for fast beats, blur/fade/dip for calm ones, iris/diamond/doors for a reveal.
-- Give each scene "anim" (how the headline arrives): rise, pop, words, type, wipe, blur or drop; and "cam" (the camera on the photo): in, out, left, right, up, drift or still. Vary them.
-- Optionally a short "badge" sticker (2 or 3 words that are true, e.g. "Oceanfront", "Book direct") on one or two scenes — never a price or a claim we cannot prove.
+- Transitions, headline animation and camera moves are chosen by the editor to suit the look — do not set them.
+- Optionally ONE short "badge" sticker in the whole ad (2 or 3 words that are true, e.g. "Oceanfront", "Book direct") — never a price or a claim we cannot prove.
+- Every scene's words and its photo must agree: if the line is about the pool, the photoQuery asks for the pool ("<property> pool"); about a bedroom, the bedroom. Each scene should show a different thing — don't repeat a subject.
+- "callouts" rows are amenities the PLACE has that the photo can stand for; keep them short (1 to 3 words).
 - Use the newer designs when they fit: "mask" (giant word filled with the photo), "panel" (photo + colour panel), "ticker" (marquee band), "callouts" (labels on one photo), "polaroid" (instant photo), "event" (date block for an event/season — only with a real date from the brief).
 - Write "vo" as normal text: numbers as digits (651-200-8283), the website as stay-hospitality.com — the voice handles pronunciation. Use only the numbers in the facts (or in the brief); never round, change or invent one.
 - Headlines are copywriting, not labels: sensory, specific, short. Write them in sentence case (not Title Case). Gold (**…**) the one word that carries the idea — never a filler word like "The", "Your" or "Book". Use the "sub" for a place line (e.g. "Singer Island · Florida") on cinematic scenes.
@@ -240,7 +241,7 @@ AUDIENCE: ${input.audience || 'property owners'}
 FORMAT: ${input.format}${input.current && input.current.scenes.length ? `\n\nTHE CURRENT DRAFT (improve it; keep what works):\n${JSON.stringify(input.current.scenes.map(s => ({ kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items })))}` : ''}
 
 Reply with ONLY a JSON object, no prose:
-{"name": "a short name for this ad", "scenes": [{"kind": "...", "tr": "...", "anim": "...", "cam": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
+{"name": "a short name for this ad", "scenes": [{"kind": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
 }
 
 
@@ -395,7 +396,7 @@ THE REQUEST: ${ask}
 
 If the request asks for different photos, give "photoQuery" (two or three words to search our photo library, e.g. "17west pool", "ocean view", "rooftop"); otherwise leave "photoQuery" empty and the photos stay.
 One image on screen at a time — never a grid or collage. Scene kinds can be changed if the request wants a different feel.
-Reply with ONLY JSON: {"kind": "...", "tr": "auto|zoom|push|slide|whip|wipe|iris|diamond|doors|blinds|spin|blur|glitch|dip|flash|fade|cut", "anim": "auto|rise|pop|words|type|wipe|blur|drop", "cam": "auto|in|out|left|right|up|drift|still", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
+Reply with ONLY JSON: {"kind": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": ""}`
 }
 
 

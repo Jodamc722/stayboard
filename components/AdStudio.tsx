@@ -822,6 +822,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           cache[s.q] = hs.filter((h: any) => h.active !== false && !COLLAGE.test(String(h.caption || ''))).map(h => h.view || h.url)
         }
         // different photos for different scenes that share a search
+        if (cache[s.q].length) {
+          const c = await fetch('/api/ads/photo-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: cache[s.q].slice(0, 30) }) }).then(x => x.json()).catch(() => null)
+          if (c?.ok && c.collage?.length) cache[s.q] = cache[s.q].filter(u => c.collage.indexOf(u) < 0)
+        }
         const used = scenes.reduce((a: string[], x) => a.concat(x.photos), [])
         const fresh = cache[s.q].filter(u => used.indexOf(u) < 0)
         photos = (fresh.length >= s.n ? fresh : cache[s.q]).slice(0, s.n)
@@ -839,7 +843,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     setSearching(true)
     const r = await fetch('/api/photos/library?search=' + encodeURIComponent(q.trim())).then(x => x.json()).catch(() => null)
     setSearching(false)
-    setHits(r?.ok ? (r.hits || []).filter((h: Hit) => !COLLAGE.test(String(h.caption || ''))).slice(0, 60) : [])
+    const list: Hit[] = r?.ok ? (r.hits || []).filter((h: Hit) => !COLLAGE.test(String(h.caption || ''))).slice(0, 60) : []
+    setHits(list)
+    // then drop any that are collages by the picture itself
+    if (list.length) {
+      const c = await fetch('/api/ads/photo-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: list.map(h => h.view || h.url) }) }).then(x => x.json()).catch(() => null)
+      if (c?.ok && c.collage?.length) setHits(list.filter(h => c.collage.indexOf(h.view || h.url) < 0))
+    }
     if (!r?.ok) setErr(r?.error || 'Photo search failed.')
   }
 

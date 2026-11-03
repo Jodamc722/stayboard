@@ -144,7 +144,7 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'mask', label: 'Text mask', hint: 'Giant headline (1 to 3 short words) with the photo showing through the letters. Bold statement.' },
   { kind: 'panel', label: 'Split panel', hint: 'One photo on one side, a solid colour panel with the headline on the other. Clean and editorial.' },
   { kind: 'ticker', label: 'Ticker', hint: 'Full-screen photo with the headline scrolling across a colour band like a marquee. Energy.' },
-  { kind: 'callouts', label: 'Callouts', hint: 'One photo with labels pointing at what is in it. Rows: up to 4 short labels (e.g. Rooftop pool).' },
+  { kind: 'callouts', label: 'Callouts', hint: 'One photo with up to 4 short feature labels stacked beside it (e.g. Rooftop pool). Rows: the labels.' },
   { kind: 'polaroid', label: 'Polaroid', hint: 'One photo in a white instant-photo frame that drops in, caption written on it. Personal, warm.' },
   { kind: 'event', label: 'Event / date', hint: 'A big date block for an event or season. Row 1: the date (e.g. DEC 5–7). Headline: the event.' },
   { kind: 'cinema', label: 'Cinematic', hint: 'Letterboxed full-screen photo, slow dolly, elegant headline and a small place line. Best opener.' },
@@ -552,7 +552,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   const get = (u: string) => (!u ? null : A.media ? A.media(u, local) : A.img(u))
   const im = (k: number) => get(sc.photos[k] || '')
   const head = CAPS ? (sc.head || '').toUpperCase() : sc.head || ''
-  ANIM = sc.anim && sc.anim !== 'auto' ? sc.anim : (sc.kind === 'cinema' || sc.kind === 'panel' ? 'blur' : sc.kind === 'title' ? 'words' : 'rise')
+  const fam = motionFamily(p)
+  ANIM = sc.anim && sc.anim !== 'auto' ? sc.anim : (sc.kind === 'cinema' || sc.kind === 'panel' ? (fam === 'lively' ? 'rise' : 'blur') : fam === 'lively' ? (sc.kind === 'title' || sc.kind === 'photo' ? 'words' : 'rise') : 'rise')
   CAM = sc.cam || 'auto'
 
   if (sc.kind === 'cta') {
@@ -753,34 +754,21 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     background(ctx, W, H, im(0), local, dur, 0.35)
     const it = sc.items.slice(0, 4)
     const spots = portrait ? [[0.3, 0.3], [0.68, 0.45], [0.35, 0.62], [0.7, 0.75]] : [[0.25, 0.35], [0.7, 0.3], [0.4, 0.65], [0.78, 0.68]]
-    // Place every label first (same every frame), nudging any that would overlap one already placed.
-    const placed: { x: number; y: number; w: number; h: number }[] = []
-    const plan = it.map((row, k) => {
-      const [t1] = split(row)
-      ctx.font = fnt(700, 40 * u, A.body)
-      const tw = ctx.measureText(t1).width, bh = 70 * u, bw = tw + 44 * u
-      const sx = W * spots[k][0], sy = H * spots[k][1]
-      const lx = sx + (spots[k][0] > 0.5 ? -1 : 1) * 120 * u
-      let ly = sy - 110 * u
-      const bxOf = () => (spots[k][0] > 0.5 ? lx - bw : lx)
-      for (let tries = 0; tries < 8 && placed.some(r => bxOf() < r.x + r.w + 8 * u && bxOf() + bw + 8 * u > r.x && ly - bh / 2 < r.y + r.h + 8 * u && ly + bh / 2 + 8 * u > r.y); tries++) ly += bh + 14 * u
-      ly = Math.max(pad + bh, Math.min(H - bottomSafe - 160 * u, ly))
-      placed.push({ x: bxOf(), y: ly - bh / 2, w: bw, h: bh })
-      return { t1, tw, bh, sx, sy, lx, ly, bx: bxOf() }
-    })
-    it.forEach((row, k) => {
-      const { t1, tw, bh, sx, sy, lx, ly, bx } = plan[k]
-      const a = appear(local, 0.4 + k * 0.45, 0.5)
+    // Labels stack as clean pills beside the headline — they name what the place has, never point at a
+    // spot in the photo (a pin on the wrong thing reads as a mistake).
+    const lab = it.map(r => split(r)[0])
+    ctx.font = fnt(700, (portrait ? 40 : 36) * u, A.body)
+    const bh = (portrait ? 78 : 70) * u, gap = 16 * u
+    const stackH = lab.length * (bh + gap)
+    const sx0 = pad, sy0 = portrait ? H * 0.2 : (H - stackH) / 2 - 40 * u
+    lab.forEach((t1, k) => {
+      const a = appear(local, 0.3 + k * 0.35, 0.5)
       if (a <= 0) return
-      ctx.save(); ctx.globalAlpha *= a
-      const pr = 1 + 0.35 * Math.abs(Math.sin(local * 2.4 + k))
-      ctx.beginPath(); ctx.arc(sx, sy, 22 * u * pr, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
-      ctx.beginPath(); ctx.arc(sx, sy, 11 * u, 0, Math.PI * 2); ctx.fillStyle = C.gold; ctx.fill()
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + (lx - sx) * a, sy + (ly - sy) * a); ctx.stroke()
-      ctx.font = fnt(700, 40 * u, A.body)
-      rr(ctx, bx, ly - bh / 2, tw + 44 * u, bh, bh / 2); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.92)' : 'rgba(10,14,20,0.78)'; ctx.fill()
-      ctx.lineWidth = 2 * u; ctx.strokeStyle = C.gold; ctx.stroke()
-      ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(t1, bx + 22 * u, ly + 2 * u)
+      const tw = ctx.measureText(t1).width, bw = tw + 90 * u, y = sy0 + k * (bh + gap)
+      ctx.save(); ctx.globalAlpha *= a; ctx.translate(-(1 - a) * 60 * u, 0)
+      rr(ctx, sx0, y, bw, bh, bh / 2); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.92)' : 'rgba(10,14,20,0.72)'; ctx.fill()
+      ctx.beginPath(); ctx.arc(sx0 + 36 * u, y + bh / 2, 9 * u, 0, Math.PI * 2); ctx.fillStyle = C.gold; ctx.fill()
+      ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.font = fnt(700, (portrait ? 40 : 36) * u, A.body); ctx.fillText(t1, sx0 + 62 * u, y + bh / 2 + 2 * u)
       ctx.restore()
     })
     if (head) { const size = fitSize(ctx, head, W - pad * 2, (portrait ? 88 : 80) * u, H * 0.25); rich(ctx, head, pad, H - bottomSafe - linesH(ctx, head, W - pad * 2, size) - 10 * u, W - pad * 2, size, { font: A.display, local, delay: 0.1 }) }
@@ -1089,13 +1077,23 @@ export function sceneAt(tl: Timeline, t: number): number {
 }
 
 /** How scene i arrives. 'auto' varies it so an ad never uses the same move twice in a row. */
+/** Jon, 2026-11-03: "we need transitions but make sure they are not crazy … make sure it makes sense".
+ *  Auto picks from ONE family per ad, chosen by the look and pace: calm ads dissolve, normal ads mix a
+ *  soft zoom and a push, lively ads cut faster. Special moves (iris, glitch, spin …) only when chosen. */
+export function motionFamily(p: Pick<AdProject, 'look' | 'style'>): 'calm' | 'normal' | 'lively' {
+  const pace = p.style?.pace || 'normal'
+  if (pace === 'calm' || ['linen', 'sand', 'editorial', 'mono', 'golden', 'fresh'].indexOf(p.look || '') >= 0) return pace === 'fast' ? 'normal' : 'calm'
+  if (pace === 'fast' || ['miami', 'bold', 'tropic', 'noir'].indexOf(p.look || '') >= 0) return 'lively'
+  return 'normal'
+}
 export function transitionOf(p: AdProject, i: number): AdTransition {
   const t = p.scenes[i]?.tr || 'auto'
   if (t !== 'auto') return t
-  const k = p.scenes[i].kind
-  if (k === 'kinetic') return 'flash'
-  if (k === 'cta' || k === 'contact') return 'zoom'
-  return (['zoom', 'push', 'iris', 'wipe', 'slide', 'diamond', 'whip', 'fade'] as AdTransition[])[i % 8]
+  const k = p.scenes[i].kind, fam = motionFamily(p)
+  if (k === 'cta' || k === 'contact' || k === 'reveal' || k === 'mask') return 'fade' // they make their own entrance
+  if (fam === 'calm') return (['fade', 'blur', 'fade', 'zoom'] as AdTransition[])[i % 4]
+  if (fam === 'lively') return (['push', 'zoom', 'slide', 'whip'] as AdTransition[])[i % 4]
+  return (['zoom', 'fade', 'push', 'fade'] as AdTransition[])[i % 4]
 }
 /** Film finish: a soft vignette and a fine moving grain, so it reads as footage, not slides. */
 let grain: HTMLCanvasElement | null = null
@@ -1154,7 +1152,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
     drawScene(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
     ctx.save()
     if (tr === 'fade') ctx.globalAlpha = a
-    else if (tr === 'zoom') { ctx.globalAlpha = Math.min(1, a * 1.4); const z = 1.22 - 0.22 * a; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
+    else if (tr === 'zoom') { ctx.globalAlpha = Math.min(1, a * 1.4); const z = 1.08 - 0.08 * a; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
     else if (tr === 'push') ctx.translate(W * (1 - a), 0)
     else if (tr === 'wipe') { const e = a * (W + H * 0.6); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip() }
     else if (tr === 'flash' || tr === 'glitch') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
