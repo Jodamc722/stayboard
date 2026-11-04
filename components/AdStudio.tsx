@@ -98,6 +98,10 @@ function LookPreview({ proj, look, style, assets, w = 168 }: { proj: AdProject; 
   return <canvas ref={ref} width={w * 2} height={h * 2} style={{ width: '100%', aspectRatio: `${w}/${h}`, display: 'block', background: '#000' }} />
 }
 
+/** One labelled option row in a graphic's settings card. */
+function FxRow({ name, children }: { name: string; children: React.ReactNode }) {
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><span style={{ fontSize: 10, color: UI.mut, width: 58, flex: '0 0 58px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{name}</span>{children}</div>
+}
 export default function AdStudio({ display, body, serif, condensed, elegant, canEdit, canDelete, full }: { display: string; body: string; serif?: string; condensed?: string; elegant?: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
   const [list, setList] = useState<ListRow[]>([])
   // The front door (Jon, 2026-11-04): start from fresh every time; the last ad is one click away in Your work.
@@ -1865,7 +1869,6 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 const m = fxMeta(k); if (!m) return null
                 const o = fxOpts(sc, k)
                 const set = (patch: Partial<FxOpts>) => setScene(sel, { fxo: { ...(sc.fxo || {}), [k]: { ...((sc.fxo || {})[k] || {}), ...patch } } })
-                const Row = ({ name, children }: { name: string; children: React.ReactNode }) => <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><span style={{ fontSize: 10, color: UI.mut, width: 58, flex: '0 0 58px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{name}</span>{children}</div>
                 return (
                   <div key={k} style={{ marginTop: 8, padding: '8px 10px', background: UI.panel2, borderRadius: 8, border: '1px solid ' + UI.line }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1875,13 +1878,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                         <Btn small tone="red" disabled={!canEdit} onClick={() => { const n = { ...(sc.fxo || {}) }; delete n[k]; setScene(sel, { fx: (sc.fx || []).filter(x => x !== k), fxo: n }) }}>✕</Btn>
                       </span>
                     </div>
-                    {m.variants ? <Row name="Style">{m.variants.map(v => <Btn key={v.key} small on={o.variant === v.key} disabled={!canEdit} onClick={() => set({ variant: v.key })}>{v.label}</Btn>)}</Row> : null}
-                    {m.pos ? <Row name="Place">{m.pos.map(x => <Btn key={x} small on={o.pos === x} disabled={!canEdit} onClick={() => set({ pos: x })}>{FX_POS_LABEL[x] || x}</Btn>)}</Row> : null}
-                    {m.has.indexOf('size') >= 0 ? <Row name="Size">{(['S', 'M', 'L'] as const).map(x => <Btn key={x} small on={o.size === x} disabled={!canEdit} onClick={() => set({ size: x })}>{x === 'S' ? 'Small' : x === 'M' ? 'Medium' : 'Large'}</Btn>)}</Row> : null}
-                    {m.has.indexOf('amt') >= 0 ? <Row name="Amount">{(['low', 'med', 'high'] as const).map(x => <Btn key={x} small on={o.amt === x} disabled={!canEdit} onClick={() => set({ amt: x })}>{x === 'low' ? 'Few' : x === 'med' ? 'Some' : 'Lots'}</Btn>)}</Row> : null}
-                    {m.has.indexOf('speed') >= 0 ? <Row name="Speed">{(['slow', 'normal', 'fast'] as const).map(x => <Btn key={x} small on={o.speed === x} disabled={!canEdit} onClick={() => set({ speed: x })}>{x === 'slow' ? 'Slow' : x === 'normal' ? 'Normal' : 'Fast'}</Btn>)}</Row> : null}
-                    {m.colors ? <Row name="Colour">{m.colors.map(x => <Btn key={x} small on={o.color === x} disabled={!canEdit} onClick={() => set({ color: x })}>{FX_COLOR_LABEL[x] || x}</Btn>)}</Row> : null}
-                    {m.has.indexOf('blink') >= 0 ? <Row name="Blink">{(['on', 'off'] as const).map(x => <Btn key={x} small on={o.blink === x} disabled={!canEdit} onClick={() => set({ blink: x })}>{x === 'on' ? 'Blinking' : 'Steady'}</Btn>)}</Row> : null}
+                    {m.variants ? <FxRow name="Style">{m.variants.map(v => <Btn key={v.key} small on={o.variant === v.key} disabled={!canEdit} onClick={() => set({ variant: v.key })}>{v.label}</Btn>)}</FxRow> : null}
+                    {m.pos ? <FxRow name="Place">{m.pos.map(x => <Btn key={x} small on={o.pos === x} disabled={!canEdit} onClick={() => set({ pos: x })}>{FX_POS_LABEL[x] || x}</Btn>)}</FxRow> : null}
+                    {m.has.indexOf('size') >= 0 ? <FxRow name="Size">{(['S', 'M', 'L'] as const).map(x => <Btn key={x} small on={o.size === x} disabled={!canEdit} onClick={() => set({ size: x })}>{x === 'S' ? 'Small' : x === 'M' ? 'Medium' : 'Large'}</Btn>)}</FxRow> : null}
+                    {m.has.indexOf('amt') >= 0 ? <FxRow name="Amount">{(['low', 'med', 'high'] as const).map(x => <Btn key={x} small on={o.amt === x} disabled={!canEdit} onClick={() => set({ amt: x })}>{x === 'low' ? 'Few' : x === 'med' ? 'Some' : 'Lots'}</Btn>)}</FxRow> : null}
+                    {m.has.indexOf('speed') >= 0 ? <FxRow name="Speed">{(['slow', 'normal', 'fast'] as const).map(x => <Btn key={x} small on={o.speed === x} disabled={!canEdit} onClick={() => set({ speed: x })}>{x === 'slow' ? 'Slow' : x === 'normal' ? 'Normal' : 'Fast'}</Btn>)}</FxRow> : null}
+                    {m.colors ? <FxRow name="Colour">{m.colors.map(x => <Btn key={x} small on={o.color === x} disabled={!canEdit} onClick={() => set({ color: x })}>{FX_COLOR_LABEL[x] || x}</Btn>)}</FxRow> : null}
+                    {m.has.indexOf('blink') >= 0 ? <FxRow name="Blink">{(['on', 'off'] as const).map(x => <Btn key={x} small on={o.blink === x} disabled={!canEdit} onClick={() => set({ blink: x })}>{x === 'on' ? 'Blinking' : 'Steady'}</Btn>)}</FxRow> : null}
                   </div>
                 )
               })}
