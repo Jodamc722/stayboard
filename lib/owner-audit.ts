@@ -62,6 +62,15 @@ export type Allocation = {
   service: { title: string; amount: number }[]   // the service items it was re-added as
   ownerShare: number | null      // the matching statement line(s), as owner money
   pmcShare: number | null        // service total − owner share
+  expectedOwner: number | null   // what the owner's share should be at this booking's split
+  splitOk: boolean | null        // owner share matches the expected split (within a dollar)
+}
+// THE SPLIT (Jon, 2026-11-04): a re-added service splits to the owner by the management fee of
+// the booking — except Eden, where services split 50/50.
+const EDEN_RE = /\beden\b/i
+export function serviceOwnerPct(unit: string, mgmtPct: number | null): number | null {
+  if (EDEN_RE.test(unit)) return 0.5
+  return mgmtPct != null && mgmtPct > 0 && mgmtPct < 1 ? 1 - mgmtPct : null
 }
 export type AuditComment = { author: string; body: string; at: string }
 // THE REVIEW LADDER. Only three of these are ever stored — 'clear' is computed, never written.
@@ -275,7 +284,7 @@ export function folioItemsOf(inv: any[]): FolioItem[] {
 }
 
 /** Read how the Resolution Center money on a booking was handled — null when there is none. */
-export function resolutionAllocation(inv: any[], lines: AuditLine[]): Allocation | null {
+export function resolutionAllocation(inv: any[], lines: AuditLine[], ownerPct: number | null = null): Allocation | null {
   const items: any[] = Array.isArray(inv) ? inv : []
   const isRes = (x: any) => RESOLUTION_RE.test(String(x?.title || x?.name || '') + ' ' + String(x?.normalType || x?.type || ''))
   const arcs = items.filter(isRes)
@@ -284,22 +293,24 @@ export function resolutionAllocation(inv: any[], lines: AuditLine[]): Allocation
   const touched = arcs.map(x => String(x?.logs?.updatedBy || '')).find(b => b && !/^system$/i.test(b)) || ''
   const what = arcs.map(x => String(x?.description || '').replace(/\s+/g, ' ').trim()).filter(Boolean).join('; ').slice(0, 140)
   const original = money(arcs.reduce((a, x) => a + (Number(x?.baseAmount ?? x?.originalAmount ?? x?.amount) || 0), 0))
-  if (arc > 0.005) return { state: 'unallocated', arc, original, what, by: touched, service: [], ownerShare: null, pmcShare: null }
-  if (arc < -0.005) return { state: 'refund', arc, original, what, by: touched, service: [], ownerShare: null, pmcShare: null }
+  if (arc > 0.005) return { state: 'unallocated', arc, original, what, by: touched, service: [], ownerShare: null, pmcShare: null, expectedOwner: null, splitOk: null }
+  if (arc < -0.005) return { state: 'refund', arc, original, what, by: touched, service: [], ownerShare: null, pmcShare: null, expectedOwner: null, splitOk: null }
   // $0 and nobody touched it: Guesty's placeholder. Only a person adjusting it to $0 is an allocation.
   if (!touched) return null
   const service = items
     .filter(x => !isRes(x) && (Number(x?.amount) || 0) > 0.005 && !CORE_ITEM_RE.test(String(x?.normalType || x?.type || '')) && !TAXISH_RE.test(String(x?.title || '')) && !REVFEE_RE.test(String(x?.title || '')))
     .map(x => ({ title: String(x?.title || x?.name || 'Service').trim(), amount: money(Number(x?.amount) || 0) }))
-  if (!service.length) return { state: 'unposted', arc: 0, original, what, by: touched, service: [], ownerShare: null, pmcShare: null }
+  if (!service.length) return { state: 'unposted', arc: 0, original, what, by: touched, service: [], ownerShare: null, pmcShare: null, expectedOwner: null, splitOk: null }
   // The owner's side: statement lines whose label shares a word with a service item ("Parking" ~
   // "Nightly Parking"), as owner money. Only this month's lines are in view.
   const words = new Set(service.flatMap(x => x.title.toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4)))
   const owner = lines.filter(l => !RESOLUTION_RE.test(l.label) && !REVFEE_RE.test(l.label) && l.label.toLowerCase().split(/[^a-z]+/).some(w => words.has(w)))
   const total = money(service.reduce((a, x) => a + x.amount, 0))
-  if (!owner.length) return { state: 'unposted', arc: 0, original, what, by: touched, service, ownerShare: null, pmcShare: null }
+  if (!owner.length) return { state: 'unposted', arc: 0, original, what, by: touched, service, ownerShare: null, pmcShare: null, expectedOwner: null, splitOk: null }
   const ownerShare = money(owner.reduce((a, l) => a + l.amount, 0))
-  return { state: 'allocated', arc: 0, original, what, by: touched, service, ownerShare, pmcShare: money(total - ownerShare) }
+  const expectedOwner = ownerPct != null ? money(total * ownerPct) : null
+  const splitOk = expectedOwner != null ? Math.abs(expectedOwner - ownerShare) <= 1 : null
+  return { state: 'allocated', arc: 0, original, what, by: touched, service, ownerShare, pmcShare: money(total - ownerShare), expectedOwner, splitOk }
 }
 export type ResolutionClaim = {
   id: string
@@ -1209,7 +1220,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const flags: AuditFlag[] = []
     const on = rules.enabled
     const folioItems: FolioItem[] = res ? folioItemsOf(folioByRes[String(res.id || '')] || []) : []
-    const allocation: Allocation | null = res ? resolutionAllocation(folioByRes[String(res.id || '')] || [], g.lines) : null
+    const allocation: Allocation | null = res ? resolutionAllocation(folioByRes[String(res.id || '')] || [], g.lines, serviceOwnerPct(unitOf[bestListing] || '', g.rental > 0.5 ? g.commission / g.rental : null)) : null
     if (g.resCode) {
       const refundAmt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
       const isPassthru = g.rental > 1 && g.commission / g.rental >= rules.passthruLo && g.commission / g.rental <= rules.passthruHi
@@ -1243,10 +1254,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
               type: 'resolution', severity: 'review', amount: allocation.service.reduce((a, x) => a + x.amount, 0),
               detail: 'Resolution allocated on the folio' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ', but no matching line is on this month’s statement yet — it may sit on another month, or the mirror is behind (Refresh from Guesty).',
             })
+          } else if (allocation.splitOk === false) {
+            flags.push({
+              type: 'resolution', severity: 'review', amount: allocation.service.reduce((a, x) => a + x.amount, 0),
+              detail: 'Resolution allocated' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ', but the owner got $' + (allocation.ownerShare || 0).toFixed(2) + ' where the split' + (EDEN_RE.test(unitOf[bestListing] || '') ? ' (50/50 at Eden)' : ' by the management fee') + ' says $' + (allocation.expectedOwner || 0).toFixed(2) + '.',
+            })
           } else {
             flags.push({
               type: 'resolution', severity: 'info', amount: allocation.service.reduce((a, x) => a + x.amount, 0),
-              detail: 'Resolution allocated' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ' — owner $' + (allocation.ownerShare || 0).toFixed(2) + ', Stay $' + (allocation.pmcShare || 0).toFixed(2) + '.',
+              detail: 'Resolution allocated' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ' — owner $' + (allocation.ownerShare || 0).toFixed(2) + ', Stay $' + (allocation.pmcShare || 0).toFixed(2) + (allocation.splitOk ? ' — split checks out.' : '.'),
             })
           }
         }

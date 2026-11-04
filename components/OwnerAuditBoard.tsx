@@ -45,6 +45,7 @@ type Allocation = {
   arc: number; original: number; what: string; by: string
   service: { title: string; amount: number }[]
   ownerShare: number | null; pmcShare: number | null
+  expectedOwner?: number | null; splitOk?: boolean | null
 }
 type Comment = { author: string; body: string; at: string }
 type SignOff = { by: string; at: string }
@@ -1110,19 +1111,19 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 resolution on it was handled. */}
             {it.allocation && (() => {
               const a = it.allocation!
-              const cls = a.state === 'allocated' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : a.state === 'refund' ? 'bg-rose-50 text-rose-800 ring-rose-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
+              const cls = a.state === 'allocated' && a.splitOk !== false ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : a.state === 'refund' ? 'bg-rose-50 text-rose-800 ring-rose-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
               const svc = a.service.map(x => x.title + ' ' + fmt(x.amount)).join(', ')
               return (
                 <div className={'max-w-2xl mb-2 rounded-xl ring-1 ring-inset px-3 py-2 text-[12px] ' + cls}>
                   <div className="font-semibold">
-                    {a.state === 'allocated' ? 'Airbnb resolution allocated' : a.state === 'unposted' ? 'Airbnb resolution allocated on the folio — not on this statement yet' : a.state === 'refund' ? 'Airbnb resolution — refund to the guest' : 'Airbnb resolution not allocated'}
+                    {a.state === 'allocated' ? (a.splitOk === false ? 'Airbnb resolution allocated — split is off' : 'Airbnb resolution allocated') : a.state === 'unposted' ? 'Airbnb resolution allocated on the folio — not on this statement yet' : a.state === 'refund' ? 'Airbnb resolution — refund to the guest' : 'Airbnb resolution not allocated'}
                     {a.what ? <span className="font-normal opacity-80"> · {a.what}</span> : null}
                   </div>
                   <div className="mt-0.5">
                     {a.state === 'unallocated' && <>Resolution Center item still carries <b className="tabular-nums">{fmt(a.arc)}</b>. Adjust it to $0 and add the money as the service it paid for, so it splits to the owner by the management fee.</>}
                     {a.state === 'refund' && <>Resolution Center item carries <b className="tabular-nums">{fmt(a.arc)}</b> going back to the guest — confirm it was authorized and the owner side was adjusted.</>}
                     {a.state === 'unposted' && <>Adjusted to $0{a.by ? ' by ' + a.by : ''}{svc ? ' and re-added as ' + svc : ' but no service item was added'}. No matching line on this month’s statement — it may sit on another month, or the mirror is behind: Refresh from Guesty below.</>}
-                    {a.state === 'allocated' && <>Adjusted to $0{a.by ? ' by ' + a.by : ''} and re-added as {svc} → owner <b className="tabular-nums">{fmt(a.ownerShare || 0)}</b>, Stay <b className="tabular-nums">{fmt(a.pmcShare || 0)}</b>.</>}
+                    {a.state === 'allocated' && <>Adjusted to $0{a.by ? ' by ' + a.by : ''} and re-added as {svc} → owner <b className="tabular-nums">{fmt(a.ownerShare || 0)}</b>, Stay <b className="tabular-nums">{fmt(a.pmcShare || 0)}</b>{a.splitOk === false && a.expectedOwner != null ? <> — the split says the owner should get <b className="tabular-nums">{fmt(a.expectedOwner)}</b></> : a.splitOk ? ' — split checks out' : ''}.</>}
                   </div>
                 </div>
               )
