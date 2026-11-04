@@ -1,4 +1,5 @@
 'use client'
+import { GardenAudit } from '@/components/GardenAudit'
 // THE GARDEN HOTEL DESK — the five tabs behind the Garden Hotel row, drawn with the lean kit.
 //
 // Jon, 2026-09-28: "a separate tab or business… connect to Cloudbeds… track and manage operations
@@ -71,6 +72,7 @@ export function GardenDesk({ view, canEdit, owner }: { view: View; canEdit: bool
       {view === 'calls' ? <Calls d={data} canEdit={canEdit} reload={load} /> : null}
       {view === 'reports' ? <Reports d={data} range={range} setRange={setRange} /> : null}
       {view === 'setup' ? <Setup d={data} owner={owner} canEdit={canEdit} onSync={syncNow} busy={busy} /> : null}
+      {view === 'setup' ? <GardenAudit canEdit={canEdit} /> : null}
     </>
   )
 }

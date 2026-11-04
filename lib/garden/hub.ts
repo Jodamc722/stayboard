@@ -82,9 +82,14 @@ export async function ingestMessage(m: { threadId: string; reservationId?: strin
 
 /** Out-of-service and blocked rooms (getRoomBlocks) — maintenance as Cloudbeds sees it. */
 export async function pullRoomBlocks(): Promise<number> {
-  const start = ymd(new Date(Date.now() - 7 * 86400000)), end = ymd(new Date(Date.now() + 90 * 86400000))
-  const { data } = await cbGet<any>('getRoomBlocks', { startDate: start, endDate: end })
-  const arr: any[] = (Array.isArray(data) ? data : [data]).flatMap((x: any) => Array.isArray(x?.roomBlocks) ? x.roomBlocks : [x]).filter((x: any) => x && (x.roomBlockID || x.id))
+  // Cloudbeds allows 35 days per call: three windows cover a week back to ~3 months ahead.
+  const seen = new Map<string, any>()
+  for (let w = 0; w < 3; w++) {
+    const start = ymd(new Date(Date.now() + (w * 34 - 7) * 86400000)), end = ymd(new Date(Date.now() + ((w + 1) * 34 - 7) * 86400000))
+    const { data } = await cbGet<any>('getRoomBlocks', { startDate: start, endDate: end })
+    for (const b of (Array.isArray(data) ? data : [data]).flatMap((x: any) => Array.isArray(x?.roomBlocks) ? x.roomBlocks : [x])) if (b && (b.roomBlockID || b.id)) seen.set(String(b.roomBlockID || b.id), b)
+  }
+  const arr: any[] = Array.from(seen.values())
   const rows = arr.map((b: any) => {
     const rooms: any[] = Array.isArray(b.rooms) ? b.rooms : []
     return { id: String(b.roomBlockID || b.id), room_ids: rooms.map(r => String(r.roomID)).filter(Boolean), room_names: rooms.map(r => String(r.roomName || r.roomID)).filter(Boolean),
