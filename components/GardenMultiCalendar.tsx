@@ -316,6 +316,9 @@ const GroupRows = memo(function GroupRows({ g, dates, colW, lines, open, onToggl
 }) {
   const t = g.type
   const units = t.units || t.total || 0
+  // A type that is one room (the hotel names many types after their room) is drawn as that room's
+  // row alone — a header repeating the same name above every room doubled the page.
+  if (g.rows.length === 1 && units <= 1 && g.rows[0].room) return <TrackRow r={g.rows[0]} colW={colW} n={dates.length} lines={lines} pinned={pinned} />
   return (
     <>
       <div className="relative flex border-b border-line bg-slate-50/70" style={{ height: HEAD_H }}>

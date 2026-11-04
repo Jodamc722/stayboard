@@ -63,10 +63,11 @@ export async function gardenFrontDesk() {
   const db = supabaseAdmin()
   const t0 = todayET(0), t2 = addDays(t0, 2)
 
-  // Rooms: try the 170 columns, fall back without them.
+  // Rooms: try the 170 columns, fall back without them. Virtual rooms (Cloudbeds' linked/combined
+  // listings — 155 of the 310) are not physical rooms, so they are left out of counts and lists.
   let detail = true
-  let roomsQ = await db.from('garden_rooms').select(`${ROOM_BASE},${ROOM_EXT}`).order('name')
-  if (roomsQ.error && missing(roomsQ.error)) { detail = false; roomsQ = await db.from('garden_rooms').select(ROOM_BASE).order('name') as any }
+  let roomsQ = await db.from('garden_rooms').select(`${ROOM_BASE},${ROOM_EXT}`).or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false').order('name')
+  if (roomsQ.error && missing(roomsQ.error)) { detail = false; roomsQ = await db.from('garden_rooms').select(ROOM_BASE).or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false').order('name') as any }
   if (roomsQ.error) throw new Error(roomsQ.error.message)
 
   const [resQ, tasksQ, blocksQ, shiftsQ, cardsQ, syncQ] = await Promise.all([

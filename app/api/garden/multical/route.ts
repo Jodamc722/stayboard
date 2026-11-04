@@ -44,9 +44,9 @@ export async function GET(req: NextRequest) {
     // ROOMS — try the 170 columns, fall back to the 115 ones.
     let rooms: any[] = []
     {
-      const full = await db.from('garden_rooms').select('id,name,room_type_id,room_type,hk_status,occupied,status,housekeeper,blocked,floor').limit(2000)
+      const full = await db.from('garden_rooms').select('id,name,room_type_id,room_type,hk_status,occupied,status,housekeeper,blocked,floor').or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false').limit(2000)
       if (full.error) {
-        const base = await db.from('garden_rooms').select('id,name,room_type_id,room_type,hk_status,occupied,status').limit(2000)
+        const base = await db.from('garden_rooms').select('id,name,room_type_id,room_type,hk_status,occupied,status').or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false').limit(2000)
         if (base.error) throw base.error
         rooms = (base.data || []) as any[]
       } else rooms = (full.data || []) as any[]

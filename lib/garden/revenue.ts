@@ -95,7 +95,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const byDate: Record<string, { units: number; left: number; rateW: number; rateUnits: number; closed: number; types: number }> = {}
   const byType: Record<string, { id: string; name: string; units: number; rates: number[]; closed: number; minStay: number[] }> = {}
   for (const c of C) {
-    const units = num(c.total) || unitsOf[String(c.room_type_id)] || 0, left = num(c.available)
+    const left = num(c.available), units = Math.max(num(c.total) || unitsOf[String(c.room_type_id)] || 0, left)
     const d = byDate[c.date] = byDate[c.date] || { units: 0, left: 0, rateW: 0, rateUnits: 0, closed: 0, types: 0 }
     d.units += units; d.left += Math.min(left, units || left); d.types++
     if (c.closed) d.closed++
