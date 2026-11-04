@@ -197,7 +197,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     setErr(''); setPlan(null)
     setP(r.project); setAudioUrl(r.audioUrl || null); setSel(0); setT(1.6); setSaved('saved'); setBrief(r.project.prompt || '')
     try { localStorage.setItem('adstudio.last', id) } catch { /* fine */ }
-    setHome(false)
+    setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadList().then(() => {
@@ -1035,7 +1035,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos, dur: 6 }]
     setBusy('')
     change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, scenes }))
-    setSel(0); setT(5.5); setHome(false)
+    setSel(0); setT(5.5); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
   /** An animated post: a 4–8 s loop — the moment scene, then the book-now card. */
   const startPost = async (m?: Moment) => {
@@ -1052,7 +1052,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     ]
     setBusy('')
     change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, scenes }))
-    setSel(0); setT(1.6); setHome(false)
+    setSel(0); setT(1.6); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
   /** A video ad for a moment: the guided start, with the brief and the look already filled in. */
   const startVideoFor = async (m?: Moment) => {
@@ -1141,8 +1141,9 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       <div style={{ display: home ? 'none' : 'grid', gridTemplateColumns: full ? '280px minmax(0,1fr) 360px' : '260px minmax(0,1fr) 330px', minHeight: full ? 'calc(100vh - 230px)' : 560 }}>
         {/* ── left: brief + ads ── */}
         <div style={{ borderRight: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0 }}>
-          <Label>Brief</Label>
+          {!isFlyer ? <><Label>Brief</Label>
           <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={5} disabled={!canEdit} placeholder="What is this ad for? Even one line works, e.g. a cool video for Amrit. I'll work through the details with you first." style={field} />
+          </> : null}
           {!isFlyer ? <><Label>Length</Label>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{[15, 30, 45, 60, 90].map(s => <Btn key={s} small on={seconds === s} onClick={() => setSeconds(s)}>{s}s</Btn>)}</div>
           </> : null}
@@ -1150,11 +1151,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={p?.audience === k} disabled={!p || !canEdit} title={AUD[k].hint} onClick={() => change(d => ({ ...d, audience: k }))}>{AUD[k].label}</Btn>)}
           </div>
+          {!isFlyer ? (<>
           <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
             <Btn tone="blue" disabled={!canEdit || !!busy || !brief.trim()} onClick={() => planAd()} title="Works through the details with you first, then builds">{busy === 'plan' ? 'Thinking…' : busy === 'write' ? 'Writing…' : 'Plan the ad'}</Btn>
             <Btn disabled={!p || !canEdit || !!busy || !p?.scenes.length} onClick={() => write(true)} title="Keeps what works and tightens the rest">{busy === 'rewrite' ? 'Rewriting…' : 'Improve draft'}</Btn>
           </div>
           <p style={{ fontSize: 11, color: UI.mut, marginTop: 8, lineHeight: 1.5 }}>I sharpen the brief, ask what matters, and show the scene plan before anything is built. House facts only — no made-up numbers.{p && canEdit ? <> <button onClick={() => write(false)} disabled={!!busy} style={{ background: 'none', border: 0, padding: 0, color: UI.blue, cursor: 'pointer', fontSize: 11 }}>Skip — write it now</button></> : null}</p>
+          </>) : null}
           {p && canEdit && p.scenes.length ? (
             <>
               <Label>Change the whole ad</Label>
