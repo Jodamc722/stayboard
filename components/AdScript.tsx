@@ -20,11 +20,12 @@ function Grow({ value, onChange, disabled, placeholder, style }: { value: string
     onFocus={e => (e.currentTarget.style.borderColor = 'rgba(210,176,119,0.5)')} onBlur={e => (e.currentTarget.style.borderColor = 'transparent')} />
 }
 
-export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stale, display, onPick, onPlayFrom, setScene, move, del, addAfter, setScenes }: {
+export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stale, display, tall, onPick, onPlayFrom, setScene, move, del, addAfter, setScenes }: {
   p: AdProject; tl: Timeline; t: number; playing: boolean; sel: number; canEdit: boolean
   /** a voice take exists and matches the script */ voiced: boolean
   /** a voice take exists but the script changed since */ stale: boolean
   display: string
+  /** beside the player: fill the height of the screen */ tall?: boolean
   onPick: (i: number) => void
   onPlayFrom: (i: number) => void
   setScene: (i: number, patch: Partial<AdScene>) => void
@@ -88,7 +89,7 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
           </div>
         </div>
       ) : (
-        <div ref={box} style={{ overflowY: 'auto', maxHeight: 520, padding: '6px 0' }}>
+        <div ref={box} style={{ overflowY: 'auto', maxHeight: tall ? 'calc(100vh - 210px)' : 520, padding: '6px 0' }}>
           {p.scenes.map((x, i) => {
             const on = i === lit
             const w = words(x.vo), d = tl.durs[i] || 0, rate = d ? w / d : 0

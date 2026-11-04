@@ -130,6 +130,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** The first-pass review shown when an ad is freshly built: score before → after the touch-up, and what changed. */
   const [firstPass, setFirstPass] = useState<{ before: number; after: number; changes: string[] } | null>(null)
   const [safe, setSafe] = useState(true)
+  /** Script beside the player (Jon, 2026-11-04: "the script the most important part of walking through the video ads"). */
+  const [beside, setBeside] = useState(true)
+  useEffect(() => { try { const v = localStorage.getItem('ads.scriptBeside'); if (v != null) setBeside(v === '1') } catch { /* fine */ } }, [])
+  const toggleBeside = () => { const v = !beside; setBeside(v); try { localStorage.setItem('ads.scriptBeside', v ? '1' : '0') } catch { /* fine */ } }
   const [versions, setVersions] = useState<{ ts: string; name: string; scenes: number; by: string; look: string }[] | null>(null)
   const [options, setOptions] = useState<{ id: string; list: { head: string; vo: string }[] } | null>(null)
   const safeRef = useRef<HTMLCanvasElement>(null)
@@ -1138,6 +1142,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [FW, FH] = p ? FORMATS[p.format] : [1920, 1080]
   const isFlyer = p?.kind === 'flyer'
   const pw = FW >= FH ? (full ? 1280 : 960) : 540 * (FW / FH) * 1.6
+  const scriptSide = beside && !!p && (p.kind || 'video') !== 'flyer' && p.kind !== 'post'
   const totalW = 100 // timeline is % based
   const pct = (x: number) => (tl ? (x / tl.total) * totalW : 0)
 
@@ -1696,7 +1701,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>★ = my recommendation. Nothing is built or saved until you press build.</p>
             </div>
           ) : p ? (
-            <>
+            <div style={scriptSide ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(360px, 1fr)', gap: 14, width: '100%', alignItems: 'start' } : { display: 'contents' }}>
+            <div style={scriptSide ? { position: 'sticky', top: 8, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 } : { display: 'contents' }}>
               {sc && canEdit && tl && p.kind !== 'flyer' ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: '100%', maxWidth: FW >= FH ? pw : 520, padding: '6px 8px', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 9 }} title="Scene tools">
                   <span style={{ fontSize: 11.5, fontWeight: 700, color: UI.ink }}>Scene {sel + 1}</span>
@@ -1730,15 +1736,17 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 <Btn tone="gold" onClick={play}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
                 <Btn small onClick={() => seek(0)}>⏮ Start</Btn>
                 {platformOf(p).safe.bottom || platformOf(p).safe.top ? <Btn small on={safe} onClick={() => setSafe(!safe)} title="Shows what the app's own buttons cover on this platform — keep words out of the red">Safe zones</Btn> : null}
+                {p.kind !== 'post' ? <Btn small on={beside} onClick={toggleBeside} title="Script beside the player, or below a big player">{beside ? 'Script beside ⇆' : 'Script below ⇅'}</Btn> : null}
                 <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, color: UI.mut }}>{fmtT(t)} / {tl ? fmtT(tl.total) : '0:00'}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 11.5, color: hasVoice ? UI.green : UI.gold }}>
                   {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : p.kind === 'post' ? 'Loop · ' + (tl ? tl.total.toFixed(1) : '0') + ' s' : 'Estimated timing · make the voice to lock it'}
                 </span>
               </div>
               )}
+            </div>
               {tl && (p.kind || 'video') !== 'flyer' && p.kind !== 'post' ? (
-                <div style={{ width: '100%', maxWidth: Math.max(FW >= FH ? pw : 520, 760) }}>
-                  <AdScript p={p} tl={tl} t={t} playing={playing} sel={sel} canEdit={canEdit} voiced={hasVoice} stale={!!p.voice && !hasVoice} display={display}
+                <div style={{ width: '100%', maxWidth: scriptSide ? 'none' : Math.max(FW >= FH ? pw : 520, 760) }}>
+                  <AdScript p={p} tl={tl} t={t} playing={playing} sel={sel} canEdit={canEdit} voiced={hasVoice} stale={!!p.voice && !hasVoice} display={display} tall={scriptSide}
                     onPick={i => pick(i)}
                     onPlayFrom={i => { stop(); setSel(i); start(tl.starts[i]) }}
                     setScene={setScene}
@@ -1755,7 +1763,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                     : <input value={sc.vo} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Spoken line" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />}
                 </div>
               ) : null}
-            </>
+            </div>
           ) : (
             <div style={{ margin: 'auto', textAlign: 'center', color: UI.mut, maxWidth: 380 }}>
               <p style={{ fontFamily: display, fontSize: 22, color: UI.ink, fontWeight: 800 }}>Make an ad</p>
