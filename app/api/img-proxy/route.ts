@@ -4,7 +4,9 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
-const ALLOWED = [/(^|\.)guesty\.com$/i, /(^|\.)cloudinary\.com$/i, /(^|\.)muscache\.com$/i]
+// Stock photo hosts (Ad Studio, 2026-11-04): Pexels, Unsplash, and the public-domain sources Openverse serves.
+const ALLOWED = [/(^|\.)guesty\.com$/i, /(^|\.)cloudinary\.com$/i, /(^|\.)muscache\.com$/i,
+  /(^|\.)pexels\.com$/i, /(^|\.)unsplash\.com$/i, /(^|\.)staticflickr\.com$/i, /(^|\.)rawpixel\.com$/i, /(^|\.)wikimedia\.org$/i, /(^|\.)openverse\.org$/i, /(^|\.)stocksnap\.io$/i, /(^|\.)nappy\.co$/i]
 
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get('url') || ''

@@ -34,7 +34,7 @@ type Plan = {
   questions: { id: string; q: string; options: string[] }[]
   outline: string[]; warnings: string[]
 }
-type Hit = { url: string; view?: string; thumb: string; caption: string; unit: string; building: string; width: number | null }
+type Hit = { url: string; view?: string; thumb: string; caption: string; unit: string; building: string; width: number | null; source?: string; license?: string; credit?: string }
 type LibVideo = { key: string; name: string; url: string; thumb: string; dur: number; format: string; builtin: boolean; createdAt: string; by: string; path?: string }
 
 const UI = {
@@ -52,7 +52,7 @@ const AUD: Record<AdAudience, { label: string; brief: string; hint: string }> = 
 const COLLAGE = /collage|grid|mosaic|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i
 /** The date block a flyer shows for a calendar moment: 'DEC 4–6' / 'DEC 25'. */
 const whenShort = (m: Moment) => { const f = (iso: string) => new Date(iso + 'T12:00:00'); const a = f(m.start), b = f(m.end); const mo = (d: Date) => d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(); return a.getTime() === b.getTime() ? mo(a) + ' ' + a.getDate() : a.getMonth() === b.getMonth() ? mo(a) + ' ' + a.getDate() + '–' + b.getDate() : mo(a) + ' ' + a.getDate() + ' – ' + mo(b) + ' ' + b.getDate() }
-const proxied = (u: string) => (!u ? '' : u.startsWith('/') ? u : /guesty|cloudinary|muscache/i.test(u) ? '/api/img-proxy?url=' + encodeURIComponent(u) : u)
+const proxied = (u: string) => (!u ? '' : u.startsWith('/') ? u : /guesty|cloudinary|muscache|pexels|unsplash|staticflickr|rawpixel|wikimedia|openverse|stocksnap|nappy/i.test(u) ? '/api/img-proxy?url=' + encodeURIComponent(u) : u)
 const fmtT = (s: number) => { const m = Math.floor(s / 60); const r = s - m * 60; return m + ':' + (r < 10 ? '0' : '') + r.toFixed(1) }
 
 function Btn({ on, children, onClick, title, tone, disabled, small }: { on?: boolean; children: React.ReactNode; onClick?: () => void; title?: string; tone?: 'gold' | 'blue' | 'red'; disabled?: boolean; small?: boolean }) {
@@ -151,6 +151,9 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [keepCopy, setKeepCopy] = useState(true)
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
+  // Where photos come from: our library, or licensed stock (Jon, 2026-11-04).
+  const [photoSrc, setPhotoSrc] = useState<'library' | 'stock'>('library')
+  const [stockNote, setStockNote] = useState('')
   const [searching, setSearching] = useState(false)
   const [exportPct, setExportPct] = useState<number | null>(null)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
@@ -983,6 +986,16 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const search = async () => {
     if (!q.trim()) return
     setSearching(true)
+    if (photoSrc === 'stock') {
+      const shape = p ? (p.format === '9:16' || p.format === '4:5' || p.format === 'letter' ? 'portrait' : p.format === '1:1' ? 'square' : 'landscape') : ''
+      const r = await fetch('/api/ads/stock?q=' + encodeURIComponent(q.trim()) + '&shape=' + shape).then(x => x.json()).catch(() => null)
+      setSearching(false)
+      const list: Hit[] = r?.ok ? (r.hits || []).map((h: any) => ({ url: h.url, view: h.view, thumb: h.thumb, caption: h.caption, unit: h.source, building: '', width: h.width, source: h.source, license: h.license, credit: h.credit })) : []
+      setHits(list)
+      setStockNote(!r?.ok ? (r?.error || 'Stock search failed.') : r.keys && !r.keys.pexels && !r.keys.unsplash ? 'Public-domain results only (Openverse). Add PEXELS_API_KEY or UNSPLASH_ACCESS_KEY in Vercel for the full stock libraries.' : list.length ? '' : 'Nothing found — try fewer words.')
+      return
+    }
+    setStockNote('')
     const r = await fetch('/api/photos/library?search=' + encodeURIComponent(q.trim())).then(x => x.json()).catch(() => null)
     setSearching(false)
     const list: Hit[] = r?.ok ? (r.hits || []).filter((h: Hit) => !COLLAGE.test(String(h.caption || ''))).slice(0, 60) : []
@@ -1031,10 +1044,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const photos = await libPhotos(m?.photo || 'exterior', 1)
     const guests = !m || m.audience !== 'owners'
     const scenes: AdScene[] = m
-      ? [{ id: 's1', kind: 'poster', vo: '', head: m.headline, sub: m.sub, items: [m.audience === 'owners' ? '' : whenShort(m), m.audience === 'owners' ? 'Talk to Nick · 651-200-8283' : 'Book at stay-hospitality.com'], photos, dur: 6 }]
+      ? [{ id: 's1', kind: 'poster', vo: '', head: m.headline, sub: m.sub, items: [m.audience === 'owners' ? '' : whenShort(m), m.audience === 'owners' ? 'Talk to Nick · 651-200-8283' : 'Book at stay-hospitality.com', m.poster || ''], photos, dur: 6, fx: m.fx || [] }]
       : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos, dur: 6 }]
     setBusy('')
-    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, scenes }))
+    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     setSel(0); setT(5.5); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
   /** An animated post: a 4–8 s loop — the moment scene, then the book-now card. */
@@ -1045,20 +1058,21 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const b = await libPhotos('ocean view', 1, a)
     const guests = !m || m.audience !== 'owners'
     const scenes: AdScene[] = [
-      { id: 's1', kind: 'poster', vo: '', head: m?.headline || 'Your South Florida **stay.**', sub: m?.sub || '', items: [m && guests ? whenShort(m) : '', ''], photos: a, dur: 4 },
+      { id: 's1', kind: 'poster', vo: '', head: m?.headline || 'Your South Florida **stay.**', sub: m?.sub || '', items: [m && guests ? whenShort(m) : '', '', m?.poster || ''], photos: a, dur: 4, fx: m?.fx || [] },
       guests
         ? { id: 's2', kind: 'cta', vo: '', head: 'Book **direct.**', sub: '', items: ['Book at stay-hospitality.com'], photos: b, dur: 3 }
         : { id: 's2', kind: 'contact', vo: '', head: 'Talk to **Nick.**', sub: '', items: [], photos: b, dur: 3 },
     ]
+    if (m?.fx) scenes[1].fx = m.fx
     setBusy('')
-    change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, scenes }))
+    change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     setSel(0); setT(1.6); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
   /** A video ad for a moment: the guided start, with the brief and the look already filled in. */
   const startVideoFor = async (m?: Moment) => {
     const cur = await newAd(); if (!cur) return
     setHome(false)
-    if (m) change(d => ({ ...d, kind: 'video', name: m.name, look: m.look, moment: m.key, audience: m.audience === 'owners' ? 'owners' : 'guests', goal: m.audience === 'owners' ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings', format: '9:16', platform: 'reel' }))
+    if (m) change(d => ({ ...d, kind: 'video', name: m.name, look: m.look, moment: m.key, music: m.music || d.music, audience: m.audience === 'owners' ? 'owners' : 'guests', goal: m.audience === 'owners' ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings', format: '9:16', platform: 'reel' }))
     else change(d => ({ ...d, kind: 'video' }))
     openStart()
     if (m) setSt(x => ({ ...x, mode: 'describe', prompt: m.brief, vibe: '' }))
@@ -1731,6 +1745,18 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 {CAMS.map(x => <Btn key={x.key} small on={(sc.cam || 'auto') === x.key} disabled={!canEdit} onClick={() => setScene(sel, { cam: x.key as AdCam })}>{x.label}</Btn>)}
               </div>
               </>) : null}
+              {sc.kind === 'poster' ? (<>
+                <Label>Poster style</Label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {([['', 'Auto'], ['dark', 'Dark photo'], ['gallery', 'Gallery mat'], ['neon', 'Neon'], ['band', 'Colour band']] as [string, string][]).map(([v, l]) => (
+                    <Btn key={v} small on={(sc.items[2] || '') === v} disabled={!canEdit} onClick={() => setScene(sel, { items: [sc.items[0] || '', sc.items[1] || '', v] })}>{l}</Btn>
+                  ))}
+                </div>
+                <Label>Date pill</Label>
+                <input value={sc.items[0] || ''} disabled={!canEdit} onChange={e => setScene(sel, { items: [e.target.value, sc.items[1] || '', sc.items[2] || ''] })} placeholder="e.g. DEC 20–26 (leave empty for none)" style={field} />
+                <Label>Button / call to action</Label>
+                <input value={sc.items[1] || ''} disabled={!canEdit} onChange={e => setScene(sel, { items: [sc.items[0] || '', e.target.value, sc.items[2] || ''] })} placeholder="e.g. Book at stay-hospitality.com" style={field} />
+              </>) : null}
               <Label>{sc.kind === 'poster' ? 'Kicker (top line)' : 'Badge (sticker)'}</Label>
               <input value={sc.badge || ''} disabled={!canEdit} maxLength={22} onChange={e => setScene(sel, { badge: e.target.value })} placeholder="Optional, e.g. Oceanfront · Book direct · Rooftop pool" style={{ ...field, padding: '6px 9px' }} />
 
@@ -1760,7 +1786,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   ) : null}
                   <Label>Line under it</Label>
                   <input value={sc.sub} disabled={!canEdit} onChange={e => setScene(sel, { sub: e.target.value })} style={field} />
-                  {['stats', 'cards', 'feed', 'checks', 'rise', 'wall'].indexOf(sc.kind) >= 0 ? (
+                  {['stats', 'cards', 'feed', 'checks', 'rise', 'wall', 'timeline', 'team', 'callouts'].indexOf(sc.kind) >= 0 ? (
                     <>
                       <Label>Rows · one per line</Label>
                       <textarea rows={4} value={sc.items.join('\n')} disabled={!canEdit} onChange={e => setScene(sel, { items: e.target.value.split('\n') })} style={{ ...field, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }} />
@@ -1802,16 +1828,21 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               </div>
               {canEdit ? (
                 <>
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                    <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} placeholder="Search the library: 17west pool" style={{ ...field, padding: '6px 9px' }} />
+                  <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                    <Btn small on={photoSrc === 'library'} onClick={() => { setPhotoSrc('library'); setHits([]); setStockNote('') }} title="Our own photos — every property, every unit">Our library</Btn>
+                    <Btn small on={photoSrc === 'stock'} onClick={() => { setPhotoSrc('stock'); setHits([]) }} title="Licensed stock photos we may use in marketing (Pexels, Unsplash, public domain)">Stock photos</Btn>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} placeholder={photoSrc === 'stock' ? 'e.g. christmas lights palm trees · miami skyline night · art gallery' : 'Search the library: 17west pool'} style={{ ...field, padding: '6px 9px' }} />
                     <Btn small onClick={search}>{searching ? '…' : 'Find'}</Btn>
                   </div>
+                  {stockNote ? <p style={{ fontSize: 11, color: UI.gold, margin: '6px 0 0', lineHeight: 1.45 }}>{stockNote}</p> : null}
                   {hits.length ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginTop: 8, maxHeight: 260, overflowY: 'auto' }}>
                       {hits.map(h => {
                         const on = sc.photos.indexOf(h.view || h.url) >= 0 || sc.photos.indexOf(h.url) >= 0
                         return (
-                          <button key={h.url} title={h.unit + (h.caption ? ' · ' + h.caption : '')} onClick={() => { const u = h.view || h.url; setScene(sel, { photos: on ? sc.photos.filter(x => x !== u && x !== h.url) : sc.photos.concat([u]).slice(0, 12) }) }}
+                          <button key={h.url} title={(h.source ? h.source + ' · ' + (h.license || '') + (h.credit ? ' · ' + h.credit : '') : h.unit) + (h.caption ? ' · ' + h.caption : '')} onClick={() => { const u = h.view || h.url; setScene(sel, { photos: on ? sc.photos.filter(x => x !== u && x !== h.url) : sc.photos.concat([u]).slice(0, 12) }) }}
                             style={{ padding: 0, border: '2px solid ' + (on ? UI.gold : 'transparent'), borderRadius: 6, overflow: 'hidden', aspectRatio: '4/3', cursor: 'pointer', background: UI.panel2 }}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={h.thumb || h.url} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />

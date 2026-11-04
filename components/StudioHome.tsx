@@ -9,7 +9,7 @@ import { LOOKS, type AdKindOf } from '@/lib/ad-engine'
 export type HomeRow = { id: string; name: string; updatedAt: string; scenes: number; format: string; status?: string; kind?: string; look?: string; thumb?: string; moment?: string }
 
 const UI = { bg: '#0B0F16', panel: '#121824', panel2: '#182131', line: 'rgba(255,255,255,0.09)', ink: '#F1F3F7', mut: '#8E9AAE', gold: '#D2B077', red: '#E06C6C', green: '#4CC488' }
-const proxied = (u: string) => (!u ? '' : u.startsWith('/') ? u : /guesty|cloudinary|muscache/i.test(u) ? '/api/img-proxy?url=' + encodeURIComponent(u) : u)
+const proxied = (u: string) => (!u ? '' : u.startsWith('/') ? u : /guesty|cloudinary|muscache|pexels|unsplash|staticflickr|rawpixel|wikimedia|openverse|stocksnap|nappy/i.test(u) ? '/api/img-proxy?url=' + encodeURIComponent(u) : u)
 
 export const KIND_META: Record<AdKindOf, { label: string; plural: string; blurb: string; icon: string; out: string }> = {
   flyer: { label: 'Flyer', plural: 'Flyers', blurb: 'One designed page — an Instagram post, a Story, or a Letter PDF for print.', icon: '▣', out: 'PNG · PDF' },

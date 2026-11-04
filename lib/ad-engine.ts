@@ -158,6 +158,32 @@ export const MUSIC: { key: string; label: string; file: string; credit: string; 
   { key: 'inspired', label: 'Inspired', mood: 'Uplifting piano', file: '/ads/music/inspired.mp3', credit: KM('Inspired') },
   { key: 'wallpaper', label: 'Wallpaper', mood: 'Light, bright', file: '/ads/music/wallpaper.mp3', credit: KM('Wallpaper') },
   { key: 'funkorama', label: 'Funkorama', mood: 'Funky, fun', file: '/ads/music/funkorama.mp3', credit: KM('Funkorama') },
+  // 2026-11-04 (Jon: "need more sounds, more music that we can use"). All Kevin MacLeod, CC BY 4.0 — the credit is
+  // drawn into the end card like the first six. Trimmed to 100 s with a fade.
+  { key: 'jingle', label: 'Jingle Bells (calm)', mood: 'Christmas, gentle', file: '/ads/music/jingle-bells-calm.mp3', credit: KM('Jingle Bells Calm') },
+  { key: 'deckhalls', label: 'Deck the Halls', mood: 'Christmas, bright', file: '/ads/music/deck-the-halls-b.mp3', credit: KM('Deck the Halls B') },
+  { key: 'sugarplum', label: 'Sugar Plum Fairy', mood: 'Holiday, elegant', file: '/ads/music/dance-of-the-sugar-plum-fairy.mp3', credit: KM('Dance of the Sugar Plum Fairy') },
+  { key: 'electrodoodle', label: 'Electrodoodle', mood: 'Electronic, festival', file: '/ads/music/electrodoodle.mp3', credit: KM('Electrodoodle') },
+  { key: 'pamgaea', label: 'Pamgaea', mood: 'Electronic, driving', file: '/ads/music/pamgaea.mp3', credit: KM('Pamgaea') },
+  { key: 'glitter', label: 'Glitter Blast', mood: 'Party, big', file: '/ads/music/glitter-blast.mp3', credit: KM('Glitter Blast') },
+  { key: 'crypto', label: 'Crypto', mood: 'Tech, owners', file: '/ads/music/crypto.mp3', credit: KM('Crypto') },
+  { key: 'dispersion', label: 'Dispersion Relation', mood: 'Ambient, calm', file: '/ads/music/dispersion-relation.mp3', credit: KM('Dispersion Relation') },
+  { key: 'floating', label: 'Floating Cities', mood: 'Cinematic, soft', file: '/ads/music/floating-cities.mp3', credit: KM('Floating Cities') },
+  { key: 'heart', label: 'Heart of Nowhere', mood: 'Cinematic, warm', file: '/ads/music/heart-of-nowhere.mp3', credit: KM('Heart of Nowhere') },
+  { key: 'deliberate', label: 'Deliberate Thought', mood: 'Thoughtful piano', file: '/ads/music/deliberate-thought.mp3', credit: KM('Deliberate Thought') },
+  { key: 'dreamer', label: 'Dreamer', mood: 'Dreamy, light', file: '/ads/music/dreamer.mp3', credit: KM('Dreamer') },
+  { key: 'carefree', label: 'Carefree', mood: 'Ukulele, happy', file: '/ads/music/carefree.mp3', credit: KM('Carefree') },
+  { key: 'beachfront', label: 'Beachfront Celebration', mood: 'Tropical, upbeat', file: '/ads/music/beachfront-celebration.mp3', credit: KM('Beachfront Celebration') },
+  { key: 'bossa', label: 'Bossa Antigua', mood: 'Bossa nova, chic', file: '/ads/music/bossa-antigua.mp3', credit: KM('Bossa Antigua') },
+  { key: 'smooth', label: 'Smooth Lovin', mood: 'Smooth jazz, romantic', file: '/ads/music/smooth-lovin.mp3', credit: KM('Smooth Lovin') },
+  { key: 'docks', label: 'Night on the Docks', mood: 'Sax, late night', file: '/ads/music/night-on-the-docks-sax.mp3', credit: KM('Night on the Docks - Sax') },
+  { key: 'ultralounge', label: 'Ultralounge', mood: 'Lounge, cool', file: '/ads/music/ultralounge.mp3', credit: KM('Ultralounge') },
+  { key: 'airport', label: 'Airport Lounge', mood: 'Lounge, travel', file: '/ads/music/airport-lounge.mp3', credit: KM('Airport Lounge') },
+  { key: 'lobby', label: 'Lobby Time', mood: 'Jazz, lobby', file: '/ads/music/lobby-time.mp3', credit: KM('Lobby Time') },
+  { key: 'hidden', label: 'Hidden Agenda', mood: 'Sleek, modern', file: '/ads/music/hidden-agenda.mp3', credit: KM('Hidden Agenda') },
+  { key: 'cheery', label: 'Cheery Monday', mood: 'Bright, quick', file: '/ads/music/cheery-monday.mp3', credit: KM('Cheery Monday') },
+  { key: 'impact', label: 'Impact Moderato', mood: 'Epic, trailer', file: '/ads/music/impact-moderato.mp3', credit: KM('Impact Moderato') },
+  { key: 'macabre', label: 'Danse Macabre', mood: 'Halloween, classical', file: '/ads/music/danse-macabre.mp3', credit: KM('Danse Macabre') },
   { key: 'none', label: 'No music', mood: '', file: '', credit: '' },
 ]
 export const VOICE_DEFAULTS = { stability: 0.5, style: 0.2, speed: 1 }
@@ -182,7 +208,7 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'timeline', label: 'Timeline', hint: 'Milestones along a gold line, landing one by one. Rows: Week 1|Agreement and walk-through. Up to 6.' },
   { kind: 'team', label: 'Team', hint: 'People cards: a round photo (or initials), name and role. Rows: Name|Role; one photo per row, in order. Up to 6.' },
   { kind: 'quote', label: 'Quote', hint: 'One line we stand behind, big, with a big quotation mark; the sub line is who said it. Photo behind.' },
-  { kind: 'poster', label: 'Poster', hint: 'A designed page: kicker, date pill, big headline bottom-left, a line, and a call-to-action bar. Row 1: the date; row 2: the button text. Flyers and posts.' },
+  { kind: 'poster', label: 'Poster', hint: 'A designed page. Row 1: the date; row 2: the button text; row 3 (optional): dark · gallery · neon · band to force a style (otherwise light looks get the gallery mat, Festival and Miami get neon). Flyers and posts.' },
   { kind: 'contact', label: 'Contact card', hint: 'The end card: photo, Book a call, number, email.' },
   { kind: 'cta', label: 'Book now', hint: 'Guest end card / social post: photo, headline, a button. Row 1 is the button text.' },
 ]
@@ -415,6 +441,8 @@ export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] 
   { key: 'holiday', label: 'Holiday', blurb: 'Deep green, warm gold, soft bokeh lights — Christmas and New Year', c: { def: { font: 'serif', grade: 'warm', finish: 'glow', logo: 'gold', fx: ['bokeh'] }, gold: '#E8C27A', ink: '#FBF4E6', mut: '#C9C3A8', navy: '#0C2A22', navy2: '#143C31', deep: '#06170F', tint: '6,30,22', glass: 'rgba(10,40,30,0.62)', line: 'rgba(232,194,122,0.28)', green: '#7FD9A4' } },
   { key: 'festival', label: 'Festival', blurb: 'Electric violet and acid lime, condensed caps, neon grid — Ultra, F1, race week', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white', fx: ['grid'], mesh: ['#3A0CA3', '#7209B7', '#0B0220'] }, gold: '#C8FF3D', ink: '#FFFFFF', mut: '#D8CCFF', navy: '#12063A', navy2: '#2B0E7A', deep: '#07021A', tint: '18,6,58', glass: 'rgba(30,10,90,0.6)', line: 'rgba(200,255,61,0.28)', green: '#C8FF3D' } },
   { key: 'nautical', label: 'Nautical', blurb: 'Navy, white and a red stripe, clean sans — boat shows and the Fourth', c: { light: true, def: { font: 'sans', caps: true, grade: 'cool', finish: 'clean', logo: 'black', fx: [] }, gold: '#C62828', ink: '#0B1F3A', mut: '#4B5E78', navy: '#F4F6F9', navy2: '#FFFFFF', deep: '#E6EBF2', tint: '244,246,249', glass: 'rgba(255,255,255,0.78)', line: 'rgba(11,31,58,0.16)', green: '#1B7F5A' } },
+  { key: 'harvest', label: 'Harvest', blurb: 'Burnt orange, deep brown, cream — Thanksgiving and fall', c: { def: { font: 'serif', grade: 'warm', finish: 'soft', logo: 'gold', fx: ['leaves'] }, gold: '#E08A3C', ink: '#FBF1E3', mut: '#D9B99A', navy: '#3A1E12', navy2: '#5A2E1A', deep: '#24110A', tint: '48,24,14', glass: 'rgba(70,36,20,0.62)', line: 'rgba(224,138,60,0.3)', green: '#9DB36A' } },
+  { key: 'rose', label: 'Rose', blurb: 'Deep rose and blush, elegant serif — Valentine’s, romance', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'white', fx: ['hearts'] }, gold: '#FFB3C1', ink: '#FFF3F5', mut: '#E6BFC8', navy: '#4A1020', navy2: '#6E1A33', deep: '#2E0A14', tint: '60,12,28', glass: 'rgba(80,16,38,0.62)', line: 'rgba(255,179,193,0.3)', green: '#7FD9A4' } },
   { key: 'midnight', label: 'Midnight', blurb: 'Deep blue, light rays, cinematic', c: { def: { font: 'sans', grade: 'cool', finish: 'film', logo: 'gold', fx: ['rays'], mesh: ['#0A2A5A', '#071530', '#03091A'] }, gold: '#D2B077', ink: '#EAF0FF', mut: '#A8B6D0', navy: '#071530', navy2: '#0E2250', deep: '#030A1C', tint: '5,16,40', glass: 'rgba(8,22,60,0.6)', line: 'rgba(200,220,255,0.2)', green: '#5FE0A0' } },
   { key: 'golden', label: 'Golden hour', blurb: 'Warm amber, elegant serif, light leak', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'gold' }, gold: '#F2B544', ink: '#FFF6E8', mut: '#E3CDB0', navy: '#24170C', navy2: '#3D2814', deep: '#140C05', tint: '36,22,10', glass: 'rgba(40,24,10,0.6)', line: 'rgba(255,220,170,0.22)', green: '#B9D98A' } },
 ]
@@ -1147,8 +1175,84 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   // bottom-left, a line under it, and a solid call-to-action bar along the bottom edge.
   if (sc.kind === 'poster') {
     const img = im(0)
+    const variant = (sc.items[2] || '').trim() || (C.light ? 'gallery' : (p.look === 'festival' || p.look === 'miami') ? 'neon' : 'dark')
+    if (variant === 'gallery') {
+      // GALLERY — a white mat, the photo sitting inside it, type below: Art Basel, editorial, print.
+      // The mat is always light and the type dark — a gallery wall whatever the look; the accent colour stays.
+      const mat = C.light ? C.navy2 : '#F4EFE6', inkG = C.light ? C.ink : '#15130F', mutG = C.light ? C.mut : '#5B564E'
+      // a pale accent (cream gold, white) vanishes on the mat — the marked words take a deep gold instead
+      const goldWas = C.gold
+      if (lumOf(C.gold) > 150) C.gold = '#8A6A2E'
+      ctx.fillStyle = mat; ctx.fillRect(0, 0, W, H)
+      const m = (portrait ? 70 : 90) * u, top = m + 60 * u
+      const ph = portrait ? H * 0.56 : H * 0.62
+      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.22)'; ctx.shadowBlur = 40 * u; ctx.shadowOffsetY = 14 * u; ctx.fillStyle = '#fff'; ctx.fillRect(m, top, W - m * 2, ph); ctx.restore()
+      ctx.save(); ctx.beginPath(); ctx.rect(m, top, W - m * 2, ph); ctx.clip()
+      if (img) cover(ctx, img, m, top, W - m * 2, ph, 1.02 + 0.03 * clamp(local / Math.max(dur, 1))); else { ctx.fillStyle = C.deep; ctx.fillRect(m, top, W - m * 2, ph) }
+      ctx.restore()
+      const kicker = (sc.badge || 'Stay Hospitality · South Florida').toUpperCase()
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.05); ctx.font = fnt(700, 24 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(kicker.split('').join(String.fromCharCode(8202)), m, m + 30 * u); ctx.restore()
+      const date = (sc.items[0] || '').replace(/\|.*/, '').toUpperCase().trim()
+      if (date) {
+        // the date as a pill inside the photo, bottom-right
+        const a = appear(local, 0.2); ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(800, 30 * u, A.display)
+        const dw = ctx.measureText(date).width + 50 * u, dh = 60 * u
+        rr(ctx, W - m - dw - 24 * u, top + ph - dh - 24 * u, dw, dh, dh / 2); ctx.fillStyle = C.gold; ctx.fill()
+        ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(date, W - m - dw, top + ph - dh / 2 - 22 * u); ctx.restore()
+      }
+      const ty = top + ph + 54 * u, tw = W - m * 2
+      const cta = (sc.items[1] || '').replace(/\|.*/, '').trim()
+      ctx.font = fnt(500, 30 * u, A.body)
+      const subH = sc.sub ? (layout(ctx, sc.sub, tw).length || 1) * 30 * u * 1.35 + 14 * u : 0
+      const ctaH = cta ? 60 * u : 0
+      const size = fitSize(ctx, head, tw, (portrait ? 96 : 88) * u, H - ty - subH - ctaH - m - 20 * u, 800)
+      const hh = linesH(ctx, head, tw, size)
+      rich(ctx, head, m, ty, tw, size, { font: A.display, local, delay: 0.3, stagger: 0.18, maxH: H - ty - subH - ctaH - m, color: inkG })
+      if (sc.sub) plain(ctx, sc.sub, m, ty + hh + 14 * u, tw, 30 * u, A.body, mutG, 500, 'left', appear(local, 0.7))
+      if (cta) { const a = appear(local, 0.9); ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(800, 26 * u, A.body); ctx.fillStyle = inkG; ctx.fillText(cta.toUpperCase().split('').join(String.fromCharCode(8202)), m, H - m - 10 * u); ctx.fillStyle = C.gold; ctx.fillRect(m, H - m + 6 * u, 90 * u, 5 * u); ctx.restore() }
+      C.gold = goldWas
+      return
+    }
     if (img) cover(ctx, img, 0, 0, W, H, 1.02 + 0.03 * clamp(local / Math.max(dur, 1)))
     else meshBg(ctx, W, H, local)
+    if (variant === 'band') {
+      // BAND — photo on top, a solid band in the look's base colour below, the words in the band. Clean, print-ready.
+      const bandH = portrait ? H * 0.4 : H * 0.42
+      ctx.fillStyle = C.navy; ctx.fillRect(0, H - bandH, W, bandH)
+      ctx.fillStyle = C.gold; ctx.fillRect(0, H - bandH, W, 8 * u)
+      const kicker = (sc.badge || 'Stay Hospitality · South Florida').toUpperCase()
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.05); ctx.font = fnt(700, 24 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(kicker.split('').join(String.fromCharCode(8202)), pad, H - bandH + 60 * u); ctx.restore()
+      const date = (sc.items[0] || '').replace(/\|.*/, '').toUpperCase().trim(), cta = (sc.items[1] || '').replace(/\|.*/, '').trim()
+      if (date) { const a = appear(local, 0.15); ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(800, 32 * u, A.display); const dw = ctx.measureText(date).width + 50 * u; rr(ctx, pad, H - bandH - 44 * u - 34 * u, dw, 66 * u, 33 * u); ctx.fillStyle = C.gold; ctx.fill(); ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(date, pad + 25 * u, H - bandH - 44 * u); ctx.restore() }
+      const tw = W - pad * 2, ty = H - bandH + 90 * u
+      ctx.font = fnt(500, 30 * u, A.body)
+      const subH = sc.sub ? (layout(ctx, sc.sub, tw).length || 1) * 30 * u * 1.35 + 14 * u : 0
+      const ctaH = cta ? 56 * u : 0
+      const size = fitSize(ctx, head, tw, (portrait ? 100 : 92) * u, bandH - 90 * u - subH - ctaH - 50 * u, 800)
+      const hh = linesH(ctx, head, tw, size)
+      rich(ctx, head, pad, ty, tw, size, { font: A.display, local, delay: 0.3, stagger: 0.18, maxH: bandH - 100 * u - subH - ctaH })
+      if (sc.sub) plain(ctx, sc.sub, pad, ty + hh + 14 * u, tw, 30 * u, A.body, C.mut, 500, 'left', appear(local, 0.7))
+      if (cta) { const a = appear(local, 0.9); ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(800, 26 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(cta.toUpperCase().split('').join(String.fromCharCode(8202)), pad, H - 44 * u); ctx.restore() }
+      return
+    }
+    if (variant === 'neon') {
+      // NEON — the photo cooled right down, a huge outlined headline in the middle, a glowing accent fill on the key word.
+      ctx.fillStyle = `rgba(${C.tint},${TA(0.72)})`; ctx.fillRect(0, 0, W, H)
+      const kicker = (sc.badge || 'Stay Hospitality · South Florida').toUpperCase()
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.05); ctx.font = fnt(700, 26 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(kicker.split('').join(String.fromCharCode(8202)), pad, pad + 26 * u); ctx.restore()
+      const date = (sc.items[0] || '').replace(/\|.*/, '').toUpperCase().trim(), cta = (sc.items[1] || '').replace(/\|.*/, '').trim()
+      const tw = W - pad * 2
+      const size = fitSize(ctx, head, tw, (portrait ? 150 : 140) * u, H * 0.5, 800, A.display, 0.98)
+      const hh = linesH(ctx, head, tw, size, A.display, 0.98)
+      const y = (H - hh) / 2 - 20 * u
+      ctx.save(); ctx.shadowColor = C.gold; ctx.shadowBlur = 40 * u
+      rich(ctx, head, pad, y, tw, size, { font: A.display, local, delay: 0.3, stagger: 0.12, align: 'center', lh: 0.98, maxH: H * 0.55 })
+      ctx.restore()
+      if (date) { const a = appear(local, 0.15); ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(800, 40 * u, A.display); const dw = ctx.measureText(date).width + 60 * u; rr(ctx, (W - dw) / 2, y - 100 * u, dw, 70 * u, 35 * u); ctx.strokeStyle = C.gold; ctx.lineWidth = 4 * u; ctx.stroke(); ctx.fillStyle = C.gold; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(date, W / 2, y - 64 * u); ctx.textAlign = 'left'; ctx.restore() }
+      if (sc.sub) plain(ctx, sc.sub, pad, y + hh + 24 * u, tw, 34 * u, A.body, C.ink, 500, 'center', appear(local, 0.8))
+      if (cta) { const a = appear(local, 0.95); ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(800, 34 * u, A.body); const cw = ctx.measureText(cta.toUpperCase()).width + 90 * u, ch = 92 * u, cy = H - bottomSafe - ch; rr(ctx, (W - cw) / 2, cy, cw, ch, ch / 2); ctx.fillStyle = C.gold; ctx.shadowColor = C.gold; ctx.shadowBlur = 30 * u; ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = onAccent(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(cta.toUpperCase(), W / 2, cy + ch / 2 + 2 * u); ctx.textAlign = 'left'; ctx.restore() }
+      return
+    }
     const g = ctx.createLinearGradient(0, 0, 0, H)
     g.addColorStop(0, `rgba(${C.tint},${TA(0.25)})`); g.addColorStop(0.45, `rgba(${C.tint},${TA(0.18)})`); g.addColorStop(0.72, `rgba(${C.tint},${TA(0.72)})`); g.addColorStop(1, `rgba(${C.tint},${TA(0.96)})`)
     ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
@@ -1176,8 +1280,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.strokeStyle = onAccent(); ctx.lineWidth = 5 * u; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(ax - 40 * u, ay); ctx.lineTo(ax, ay); ctx.moveTo(ax - 16 * u, ay - 16 * u); ctx.lineTo(ax, ay); ctx.lineTo(ax - 16 * u, ay + 16 * u); ctx.stroke()
       ctx.restore()
     }
-    // headline block, anchored to the bottom (above the bar)
-    const tw = W - pad * 2
+    // headline block, anchored to the bottom (above the bar); a corner tree gets its own column
+    const tw = (W - pad * 2) * ((sc.fx || []).indexOf('tree') >= 0 ? (portrait ? 0.66 : 0.72) : 1)
     ctx.font = fnt(500, 34 * u, A.body)
     const subH = sc.sub ? (layout(ctx, sc.sub, tw).length || 1) * 34 * u * 1.35 + 20 * u : 0
     const size = fitSize(ctx, head, tw, (portrait ? 118 : 108) * u, H * 0.34, 800)
@@ -1482,7 +1586,18 @@ export const FX: { key: string; label: string; hint: string }[] = [
   { key: 'swipe', label: 'Book arrow', hint: 'A bouncing arrow toward the button (end cards)' },
   { key: 'scan', label: 'Scanlines', hint: 'Fine horizontal lines — retro, techy' },
   { key: 'glowline', label: 'Glow line', hint: 'A travelling accent line across the frame' },
+  // Themed visuals (Jon, 2026-11-04: "visuals that fit the theme").
+  { key: 'snow', label: 'Snow', hint: 'Soft snowfall — Christmas, winter sun' },
+  { key: 'lights', label: 'String lights', hint: 'A swag of warm bulbs across the top — holidays' },
+  { key: 'fireworks', label: 'Fireworks', hint: 'Bursts in the accent colour — New Year, the Fourth' },
+  { key: 'hearts', label: 'Hearts', hint: 'Drifting hearts — Valentine’s' },
+  { key: 'leaves', label: 'Falling leaves', hint: 'Autumn leaves — Thanksgiving' },
+  { key: 'eq', label: 'Equalizer', hint: 'Sound bars along the bottom — Ultra, music week' },
+  { key: 'rope', label: 'Nautical rope', hint: 'A rope line and anchor mark — boat shows' },
+  { key: 'frame', label: 'Gallery frame', hint: 'A thin inner frame, like a gallery wall — Art Basel, editorial' },
+  { key: 'tree', label: 'Christmas tree', hint: 'A tree silhouette in the corner with lights that blink' },
 ]
+const pad = (W: number, H: number, u: number) => (H > W * 1.1 ? 80 : 120) * u
 function hashN(n: number, k: number) { const v = Math.sin(n * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v) }
 function drawFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets) {
   const sc = p.scenes[i]
@@ -1589,6 +1704,100 @@ function drawFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: n
       ctx.globalCompositeOperation = 'screen'
       const g = ctx.createLinearGradient(x - 200 * u, 0, x + 200 * u, 0); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, ga(0.35)); g.addColorStop(1, 'rgba(0,0,0,0)')
       ctx.fillStyle = g; ctx.save(); ctx.transform(1, 0, -0.3, 1, 0, 0); ctx.fillRect(x - 200 * u, 0, 400 * u, H); ctx.restore()
+    } else if (k === 'snow') {
+      ctx.globalCompositeOperation = C.light ? 'source-over' : 'screen'
+      for (let n = 0; n < 90; n++) {
+        const sp = 0.03 + 0.05 * hashN(n, 11), r = (2 + 5 * hashN(n, 12)) * u
+        const x = ((hashN(n, 13) + 0.02 * Math.sin(t * 0.8 + n)) % 1) * W, y = (((hashN(n, 14) + t * sp) % 1) + 1) % 1 * H
+        ctx.fillStyle = C.light ? 'rgba(120,130,150,0.35)' : `rgba(255,255,255,${0.5 + 0.4 * hashN(n, 15)})`
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+      }
+    } else if (k === 'lights') {
+      // a swag of bulbs across the top, each glowing on its own rhythm
+      const n = portrait ? 9 : 14, y0 = Math.max(70 * u, H * 0.06)
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 3 * u; ctx.beginPath()
+      for (let i2 = 0; i2 <= n; i2++) { const x = (i2 / n) * W, y = y0 + Math.sin((i2 / n) * Math.PI * 2 - Math.PI / 2) * 0 + 40 * u * Math.sin((i2 / n) * Math.PI); if (i2 === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y) }
+      ctx.stroke()
+      const cols = [C.gold, '#F26D6D', '#6FCF97', '#F2C94C', '#56CCF2']
+      for (let i2 = 0; i2 <= n; i2++) {
+        const x = (i2 / n) * W, y = y0 + 40 * u * Math.sin((i2 / n) * Math.PI) + 22 * u
+        const on = 0.55 + 0.45 * Math.sin(t * 2 + i2 * 1.3)
+        const col = cols[i2 % cols.length]
+        ctx.save(); ctx.globalCompositeOperation = 'screen'
+        const g = ctx.createRadialGradient(x, y, 0, x, y, 46 * u); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.5 * on; ctx.fillStyle = g; ctx.fillRect(x - 46 * u, y - 46 * u, 92 * u, 92 * u)
+        ctx.restore()
+        ctx.fillStyle = col; ctx.globalAlpha = 0.7 + 0.3 * on; ctx.beginPath(); ctx.ellipse(x, y, 7 * u, 11 * u, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
+        ctx.fillStyle = 'rgba(40,40,40,0.9)'; ctx.fillRect(x - 4 * u, y - 18 * u, 8 * u, 8 * u)
+      }
+    } else if (k === 'fireworks') {
+      ctx.globalCompositeOperation = 'screen'
+      for (let n = 0; n < 5; n++) {
+        const period = 2.2 + hashN(n, 21), ph = ((t + hashN(n, 22) * period) % period) / period
+        if (ph > 0.85) continue
+        const cx = (0.15 + 0.7 * hashN(n, 23)) * W, cy = (0.12 + 0.35 * hashN(n, 24)) * H
+        const R = (120 + 160 * hashN(n, 25)) * u * ease(ph / 0.8), fade = 1 - ph / 0.85
+        const col = n % 2 ? C.gold : '#FFFFFF'
+        for (let k2 = 0; k2 < 26; k2++) {
+          const ang = (k2 / 26) * Math.PI * 2, x = cx + Math.cos(ang) * R, y = cy + Math.sin(ang) * R + ph * 60 * u
+          ctx.strokeStyle = col; ctx.globalAlpha = 0.9 * fade; ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.moveTo(cx + Math.cos(ang) * R * 0.7, cy + Math.sin(ang) * R * 0.7 + ph * 40 * u); ctx.lineTo(x, y); ctx.stroke()
+          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 4 * u, 0, Math.PI * 2); ctx.fill()
+        }
+        ctx.globalAlpha = 1
+      }
+    } else if (k === 'hearts') {
+      ctx.globalCompositeOperation = C.light ? 'multiply' : 'screen'
+      for (let n = 0; n < 16; n++) {
+        const sz = (14 + 26 * hashN(n, 31)) * u, x = (hashN(n, 32) + 0.03 * Math.sin(t + n)) * W, y = (((hashN(n, 33) - t * (0.02 + 0.03 * hashN(n, 34))) % 1) + 1) % 1 * H
+        ctx.fillStyle = ga(0.35 + 0.3 * hashN(n, 35))
+        ctx.beginPath(); ctx.moveTo(x, y + sz * 0.9); ctx.bezierCurveTo(x - sz * 1.2, y, x - sz * 0.5, y - sz * 0.8, x, y - sz * 0.2); ctx.bezierCurveTo(x + sz * 0.5, y - sz * 0.8, x + sz * 1.2, y, x, y + sz * 0.9); ctx.fill()
+      }
+    } else if (k === 'leaves') {
+      for (let n = 0; n < 22; n++) {
+        const sz = (12 + 18 * hashN(n, 41)) * u, x = ((hashN(n, 42) + t * 0.015 + 0.03 * Math.sin(t * 0.9 + n)) % 1) * W, y = (((hashN(n, 43) + t * (0.03 + 0.03 * hashN(n, 44))) % 1) + 1) % 1 * H
+        const cols = ['#C9792E', '#B5562E', '#D9A441', '#8A4B2A']
+        ctx.fillStyle = cols[n % 4]; ctx.globalAlpha = 0.85
+        ctx.save(); ctx.translate(x, y); ctx.rotate(t * (0.8 + hashN(n, 45)) + n); ctx.beginPath(); ctx.ellipse(0, 0, sz, sz * 0.45, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore(); ctx.globalAlpha = 1
+      }
+    } else if (k === 'eq') {
+      const n = portrait ? 28 : 48, bw = W / n, base = H - Math.max(20 * u, H * 0.02)
+      ctx.globalCompositeOperation = 'screen'
+      for (let i2 = 0; i2 < n; i2++) {
+        const h = (0.15 + 0.85 * Math.abs(Math.sin(t * 3.1 + i2 * 0.7) * Math.sin(t * 1.3 + i2 * 0.21))) * H * (portrait ? 0.14 : 0.2)
+        ctx.fillStyle = ga(0.55); ctx.fillRect(i2 * bw + bw * 0.2, base - h, bw * 0.6, h)
+      }
+    } else if (k === 'rope') {
+      // a rope line under the top edge with an anchor mark at the corner
+      const y = pad(W, H, u) + 38 * u
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 4 * u; ctx.setLineDash([18 * u, 10 * u]); ctx.lineDashOffset = -t * 40 * u
+      ctx.beginPath(); ctx.moveTo(pad(W, H, u), y); ctx.lineTo(W - pad(W, H, u) - 230 * u, y); ctx.stroke(); ctx.setLineDash([])
+      const ax = W - pad(W, H, u) - 40 * u, ay = y + 150 * u, r = 22 * u
+      ctx.lineWidth = 6 * u; ctx.beginPath(); ctx.arc(ax, ay - r * 0.9, r * 0.35, 0, Math.PI * 2); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(ax, ay - r * 0.55); ctx.lineTo(ax, ay + r); ctx.moveTo(ax - r * 0.7, ay - r * 0.1); ctx.lineTo(ax + r * 0.7, ay - r * 0.1); ctx.stroke()
+      ctx.beginPath(); ctx.arc(ax, ay + r * 0.1, r * 0.95, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke()
+    } else if (k === 'tree') {
+      const th = (portrait ? H * 0.26 : H * 0.42), bx = W - pad(W, H, u) - th * 0.4, by = H - Math.max(40 * u, H * 0.04) - (sc.kind === 'poster' ? (portrait ? 118 : 104) * u : 0)
+      ctx.save(); ctx.translate(bx, by)
+      ctx.fillStyle = C.light ? 'rgba(20,60,40,0.9)' : 'rgba(6,28,18,0.95)'
+      for (let tier = 0; tier < 3; tier++) { const w = th * (0.62 - tier * 0.15), y = -th * (0.18 + tier * 0.3); ctx.beginPath(); ctx.moveTo(-w / 2, y); ctx.lineTo(w / 2, y); ctx.lineTo(0, y - th * 0.34); ctx.closePath(); ctx.fill() }
+      ctx.fillStyle = '#5A3A1E'; ctx.fillRect(-th * 0.05, -th * 0.18, th * 0.1, th * 0.18)
+      const cols = ['#F26D6D', '#F2C94C', '#6FCF97', '#56CCF2', C.gold]
+      for (let n = 0; n < 22; n++) {
+        const tier = n % 3, w = th * (0.6 - tier * 0.15), fy = -th * (0.2 + tier * 0.3) - hashN(n, 51) * th * 0.28
+        const fx = (hashN(n, 52) - 0.5) * w * (1 - (fy + th * (0.2 + tier * 0.3)) / (-th * 0.3) * 0.9)
+        const on = Math.sin(t * 3 + n * 2.1) > 0.1 ? 1 : 0.25
+        const col = cols[n % cols.length]
+        ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.6 * on
+        const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, 22 * u); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(fx - 22 * u, fy - 22 * u, 44 * u, 44 * u); ctx.restore()
+        ctx.fillStyle = col; ctx.globalAlpha = 0.6 + 0.4 * on; ctx.beginPath(); ctx.arc(fx, fy, 5 * u, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
+      }
+      // the star
+      ctx.fillStyle = C.gold; ctx.save(); ctx.translate(0, -th * 1.14); ctx.beginPath(); for (let i2 = 0; i2 < 10; i2++) { const r = i2 % 2 ? 9 * u : 20 * u, a = -Math.PI / 2 + i2 * Math.PI / 5; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r) } ctx.closePath(); ctx.fill(); ctx.restore()
+      ctx.restore()
+    } else if (k === 'frame') {
+      const m = Math.max(40 * u, Math.min(W, H) * 0.045)
+      ctx.strokeStyle = C.light ? 'rgba(20,20,20,0.7)' : 'rgba(255,255,255,0.75)'; ctx.lineWidth = 3 * u
+      ctx.strokeRect(m, m, W - m * 2, H - m * 2)
+      ctx.strokeStyle = ga(0.9); ctx.lineWidth = 1.5 * u; ctx.strokeRect(m + 10 * u, m + 10 * u, W - m * 2 - 20 * u, H - m * 2 - 20 * u)
     }
     ctx.restore()
   }
@@ -1605,7 +1814,11 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
   const R = resolveStyle(p)
   const fam = R.font === 'serif' ? A.serif : R.font === 'condensed' ? A.condensed : R.font === 'elegant' ? A.elegant : A.display
-  A = { ...A, display: fam || A.display, logo: R.logo === 'off' ? null : (A.logos && A.logos[R.logo as 'gold' | 'black' | 'white']) || (R.logo === 'gold' ? A.logo : null) }
+  // A gallery-mat poster is a light page whatever the look: the mark goes black on it (unless the logo is off).
+  const sc0 = p.scenes[sceneAt(tl, t)]
+  const galleryPage = !!sc0 && sc0.kind === 'poster' && !C.light && ((sc0.items[2] || '').trim() === 'gallery')
+  const logoKey = R.logo === 'off' ? 'off' : galleryPage ? 'black' : R.logo
+  A = { ...A, display: fam || A.display, logo: logoKey === 'off' ? null : (A.logos && A.logos[logoKey as 'gold' | 'black' | 'white']) || (logoKey === 'gold' ? A.logo : null) }
   // CUSTOM COLOURS on top of the look (Jon, 2026-11-03: "colour options, not just theme changes").
   if (isHex(R.accent)) C = { ...C, gold: R.accent! }
   if (isHex(R.base)) {
