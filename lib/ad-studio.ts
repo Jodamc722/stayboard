@@ -23,6 +23,9 @@ async function ensureBucket(): Promise<void> {
 const safeId = (id: string) => String(id || '').replace(/[^a-z0-9-]/gi, '').slice(0, 40)
 
 /** Nick's card by default — the presenter saved once for the sales deck, else the house values. */
+/** The ElevenLabs key — under the standard name, or as it was saved in Vercel ("ElevenLabs", 2026-11-04). */
+function elevenKey(): string { return process.env.ELEVENLABS_API_KEY || process.env.ElevenLabs || process.env.ELEVENLABS || process.env.ELEVEN_API_KEY || '' }
+
 export async function defaultContact(): Promise<AdContact> {
   const c = await getSetting<Partial<ContactCard>>(SALES_CONTACT_KEY, {})
   return {
@@ -176,7 +179,7 @@ export function normalize(p: any): AdProject {
 
 // ───────────────────────── voice: one continuous take, cut to the words ─────────────────────────
 export async function makeVoice(p: AdProject): Promise<{ ok: true; project: AdProject } | { ok: false; error: string; status?: number }> {
-  const key = process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_API_KEY
+  const key = elevenKey()
   if (!key) return { ok: false, status: 503, error: 'The voice needs an ElevenLabs key. Add ELEVENLABS_API_KEY in Vercel → Settings → Environment Variables, then redeploy.' }
   if (!p.scenes.some(s => s.vo.trim())) return { ok: false, status: 400, error: 'No scene has a voice line yet.' }
   // Build the take: each scene's spoken text, with a pause between lines and a longer one for a
@@ -358,7 +361,7 @@ export async function deleteLibraryItem(path: string): Promise<void> {
 // effects are kept in the bucket under sounds/<id>.mp3 with a .json beside it, and appear in the
 // Sounds tab for every ad. The bundled royalty-free tracks are MUSIC in lib/ad-engine.
 export type Sound = { key: string; name: string; kind: 'music' | 'sfx'; url: string; dur: number; prompt: string; createdAt: string; by: string; path: string }
-const elevenKey = () => process.env.ELEVENLABS_API_KEY || process.env.ELEVEN_API_KEY || ''
+
 
 export async function listSounds(): Promise<Sound[]> {
   await ensureBucket()
