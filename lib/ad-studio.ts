@@ -24,7 +24,7 @@ const safeId = (id: string) => String(id || '').replace(/[^a-z0-9-]/gi, '').slic
 
 /** Nick's card by default — the presenter saved once for the sales deck, else the house values. */
 /** The ElevenLabs key — under the standard name, or as it was saved in Vercel ("ElevenLabs", 2026-11-04). */
-function elevenKey(): string { return process.env.ELEVENLABS_API_KEY || process.env.ElevenLabs || process.env.ELEVENLABS || process.env.ELEVEN_API_KEY || '' }
+function elevenKey(): string { return String(process.env.ELEVENLABS_API_KEY || process.env.ElevenLabs || process.env.ELEVENLABS || process.env.ELEVEN_API_KEY || '').trim().replace(/^["'\s]+|["'\s]+$/g, '') }
 
 export async function defaultContact(): Promise<AdContact> {
   const c = await getSetting<Partial<ContactCard>>(SALES_CONTACT_KEY, {})
