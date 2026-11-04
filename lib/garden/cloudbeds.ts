@@ -86,6 +86,30 @@ export async function cbGet<T = any>(endpoint: string, params: Record<string, st
   return { data: j.data as T, count: j.count, total: j.total }
 }
 
+/** The same GET against another API version (webhooks live on v1.3). */
+export async function cbGetV<T = any>(version: string, endpoint: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<{ data: T; count?: number; total?: number; raw: any }> {
+  const cfg = cloudbedsConfig()
+  const qs = new URLSearchParams()
+  if (cfg.propertyId && params.propertyID == null) qs.set('propertyID', cfg.propertyId)
+  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') qs.set(k, String(v))
+  const base = API_BASE.replace(/v1\.\d+$/, version)
+  const r = await fetch(`${base}/${endpoint}${qs.toString() ? '?' + qs.toString() : ''}`, { headers: { accept: 'application/json', ...(await authHeaders()) }, cache: 'no-store' })
+  const j: any = await r.json().catch(() => ({}))
+  if (!r.ok || j.success === false) throw new Error(`Cloudbeds ${endpoint}: ${j.message || j.error || `HTTP ${r.status}`}`)
+  return { data: j.data as T, count: j.count, total: j.total, raw: j }
+}
+export async function cbPostV<T = any>(version: string, endpoint: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
+  const cfg = cloudbedsConfig()
+  const body = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) if (v != null && v !== '') body.set(k, String(v))
+  const base = API_BASE.replace(/v1\.\d+$/, version)
+  const q = cfg.propertyId ? `?propertyID=${encodeURIComponent(cfg.propertyId)}` : ''
+  const r = await fetch(`${base}/${endpoint}${q}`, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded', ...(await authHeaders()) }, body, cache: 'no-store' })
+  const j: any = await r.json().catch(() => ({}))
+  if (!r.ok || j.success === false) throw new Error(`Cloudbeds ${endpoint}: ${j.message || j.error || `HTTP ${r.status}`}`)
+  return j as T
+}
+
 /** One POST (form-encoded, as Cloudbeds expects). Used for housekeeping status write-back. */
 export async function cbPost<T = any>(endpoint: string, params: Record<string, string | number | boolean | undefined> = {}): Promise<T> {
   const cfg = cloudbedsConfig()
