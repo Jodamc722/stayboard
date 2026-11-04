@@ -28,14 +28,18 @@ export type CbConfig = { mode: 'api_key' | 'oauth' | 'none'; propertyId: string 
 function apiKey(): string {
   const k = (process.env.CLOUDBEDS_API_KEY || '').trim()
   if (k) return k
-  const alt = (process.env.CLOUDBEDSSECRETKEY || '').trim()
-  return alt
+  // Any other variable that names Cloudbeds and an API key, however it is spelled
+  // (APIKEYCloudbeds, CLOUDBEDS_APIKEY, …), then the first saved name.
+  for (const [name, v] of Object.entries(process.env)) {
+    if (/cloudbed/i.test(name) && /api.?key/i.test(name) && String(v || '').trim()) return String(v).trim()
+  }
+  return (process.env.CLOUDBEDSSECRETKEY || '').trim()
 }
 /** Why the connection is off when something Cloudbeds-shaped IS in Vercel — for the setup row. */
 export function cloudbedsHint(): string | null {
   if (cloudbedsConfig().mode !== 'none') return null
-  if ((process.env.CLOUDBEDSSECRETKEY || '').trim() || (process.env.CLIENTIDCLOUDEDS || '').trim())
-    return 'Vercel has CLIENTIDCLOUDEDS but no API key — save the Cloudbeds API key as CLOUDBEDS_API_KEY.'
+  if (Object.keys(process.env).some(n => /cloudbed/i.test(n) && n !== 'CLOUDBEDS_API_BASE'))
+    return 'Vercel has a Cloudbeds client ID but no API key — save the Cloudbeds API key as CLOUDBEDS_API_KEY.'
   return null
 }
 export function cloudbedsConfig(): CbConfig {
