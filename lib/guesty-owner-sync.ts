@@ -166,6 +166,75 @@ async function ledgerParamFor(a: string, b: string): Promise<string> {
   return (probe.ok && rows.length && rows.every((r: any) => r.ledger === 'Owners')) ? '&ledger[]=O' : ''
 }
 
+
+/** One journal entry → one guesty_owner_ledger row. Rows without their own id are keyed on their
+ *  content so a re-sweep still upserts onto the same row instead of duplicating. */
+function ledgerRowOf(r: any, fallbackMonth: string) {
+  const date = String(r.date || '').slice(0, 10)
+  const rid = String(r.id || r._id || '')
+    || [date, r.chargeCode, r.owner?.id || r.owner?._id, r.amount?.value ?? r.amount].join('|')
+  const L = r.listing
+  const href = typeof L === 'object' && L ? String(L.href || '') : ''
+  const lid = typeof L === 'string' ? L
+    : String(L?._id || L?.id || (href.split('/').filter(Boolean).pop() || ''))
+  return {
+    id: rid,
+    owner_id: String(r.owner?.id || r.owner?._id || '') || null,
+    listing_id: lid || null,
+    entry_date: date || null,
+    entry_month: date.slice(0, 7) || fallbackMonth,
+    charge_code: String(r.chargeCode || ''),
+    amount: Number(r.amount?.value ?? r.amount ?? 0) || 0,
+    recognized: r.recognized !== false,
+    ledger: r.ledger || null,
+    currency: r.amount?.currency || r.currency || null,
+    synced_at: new Date().toISOString(),
+    raw: r,
+  }
+}
+
+/**
+ * A NARROW RE-SWEEP (Jon, 2026-11-04: "this has been corrected in folio but not showing corrected
+ * in app"). The month sweep runs twice a day and a busy month takes minutes; a reviewer who just
+ * fixed one booking in Guesty should not wait for either. This sweeps only the Owners-ledger
+ * lines whose transaction date falls in [a, b] — a stay's own dates, a few thousand rows at most —
+ * upserts them, and retires the lines in that window Guesty no longer returns (a re-issued line
+ * comes back under a new id; the old one just stops coming). Nothing is retired unless the window
+ * was read to the end.
+ */
+export async function syncLedgerRange(a: string, b: string, deadline = Date.now() + 40_000): Promise<{ rows: number; retired: number; complete: boolean }> {
+  const sb = supabaseAdmin()
+  const epoch = new Date().toISOString()
+  const ledgerParam = await ledgerParamFor(a, b)
+  const cf = filterFor(a, b)
+  const seen = new Set<string>()
+  let batch: any[] = []
+  let total = 0
+  let complete = false
+  for (let skip = 0; skip < 20000; skip += 100) {
+    if (Date.now() > deadline) break
+    const page = await gget('/accounting-api/journal-entries/all?limit=100&sortByDate=ASC&skip=' + skip + '&' + cf + ledgerParam)
+    if (!page.ok) throw new Error('journal page ' + page.status + ' at skip=' + skip + ': ' + (page.error || ''))
+    const results = listOf(page.json)
+    for (const r of results) {
+      const row = ledgerRowOf(r, a.slice(0, 7))
+      if (seen.has(row.id)) continue
+      seen.add(row.id)
+      batch.push(row)
+    }
+    if (batch.length >= 500) { await chunkUpsert('guesty_owner_ledger', batch, 'id'); total += batch.length; batch = [] }
+    if (results.length < 100) { complete = true; break }
+  }
+  if (batch.length) { await chunkUpsert('guesty_owner_ledger', batch, 'id'); total += batch.length }
+  let retired = 0
+  if (complete) {
+    const { data: gone } = await sb.from('guesty_owner_ledger').delete()
+      .gte('entry_date', a).lte('entry_date', b).lt('synced_at', epoch).select('id')
+    retired = Array.isArray(gone) ? gone.length : 0
+  }
+  return { rows: total, retired, complete }
+}
+
 export type MonthSync = { month: string; rows: number; pages: number; ms: number }
 
 /**
@@ -219,31 +288,10 @@ export async function syncLedgerMonth(month: string, deadline = Date.now() + 240
       if (!results.length) break
 
       for (const r of results) {
-        // Rows without their own id are keyed on their content so a re-sweep still upserts
-        // onto the same row instead of duplicating.
-        const date = String(r.date || '').slice(0, 10)
-        const rid = String(r.id || r._id || '')
-          || [date, r.chargeCode, r.owner?.id || r.owner?._id, r.amount?.value ?? r.amount].join('|')
-        if (seen.has(rid)) continue
-        seen.add(rid)
-        const L = r.listing
-        const href = typeof L === 'object' && L ? String(L.href || '') : ''
-        const lid = typeof L === 'string' ? L
-          : String(L?._id || L?.id || (href.split('/').filter(Boolean).pop() || ''))
-        batch.push({
-          id: rid,
-          owner_id: String(r.owner?.id || r.owner?._id || '') || null,
-          listing_id: lid || null,
-          entry_date: date || null,
-          entry_month: date.slice(0, 7) || month,
-          charge_code: String(r.chargeCode || ''),
-          amount: Number(r.amount?.value ?? r.amount ?? 0) || 0,
-          recognized: r.recognized !== false,
-          ledger: r.ledger || null,
-          currency: r.amount?.currency || r.currency || null,
-          synced_at: new Date().toISOString(),
-          raw: r,
-        })
+        const row = ledgerRowOf(r, month)
+        if (seen.has(row.id)) continue
+        seen.add(row.id)
+        batch.push(row)
       }
       if (batch.length >= 500) {
         await chunkUpsert('guesty_owner_ledger', batch, 'id')

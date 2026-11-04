@@ -39,6 +39,13 @@ type Severity = 'high' | 'review' | 'info'
 type Status = 'review' | 'action' | 'done' | 'clear'
 type Flag = { type: FlagType; severity: Severity; detail: string; amount?: number }
 type Line = { date: string; label: string; code: string; amount: number }
+type FolioItem = { title: string; type: string; amount: number; note: string; by: string }
+type Allocation = {
+  state: 'unallocated' | 'allocated' | 'unposted' | 'refund'
+  arc: number; original: number; what: string; by: string
+  service: { title: string; amount: number }[]
+  ownerShare: number | null; pmcShare: number | null
+}
 type Comment = { author: string; body: string; at: string }
 type SignOff = { by: string; at: string }
 type Rules = {
@@ -88,6 +95,7 @@ type Item = {
   rental: number; commission: number; other: number; net: number
   rate: number | null; avgRate: number | null
   lines: Line[]; lineCount: number; lastPosted: string; posted: number; reversed: number; resValue: number | null
+  folio?: FolioItem[]; allocation?: Allocation | null
   flags: Flag[]; needsReview: boolean
   status: Status; touched: boolean; note: string; comments: Comment[]
   updatedBy: string | null; updatedAt: string | null
@@ -151,6 +159,9 @@ const FLAG_CLS: Record<Severity, string> = {
 const STAY_LABEL: Record<'owner' | 'owner_guest' | 'ff', string> = {
   owner: 'Owner stay', owner_guest: 'Owner’s guest', ff: 'Friends & family',
 }
+type TagKey = 'canceled' | 'cancel_fee' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'owner_guest' | 'ff'
+type Lens = '' | 'review' | 'action' | 'done' | 'flagged' | 'fresh' | `flag:${FlagType}` | `tag:${TagKey}`
+const TAG_CHIPS: [TagKey, string][] = [['canceled', 'Canceled'], ['cancel_fee', 'Cancellation fee'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']]
 const STATUS_LABEL: Record<Status, string> = {
   review: 'Needs review', action: 'Action needed', done: 'Approved', clear: 'No issues found',
 }
@@ -319,15 +330,18 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [stmtOwner, setStmtOwner] = useState('')          // '' = overview grid
 
   const [q, setQ] = useState('')
-  const [fStatus, setFStatus] = useState<'' | Status>('')
-  const [fFlag, setFFlag] = useState<'' | 'flagged' | FlagType>('')
+  // ONE LENS AT A TIME (Jon, 2026-11-04: "if a filter has a tag it needs review and should auto
+  // populate without having to select action needed or approved… We should not have to click
+  // multiple filters. One at a time, or all flagged"). Every chip is a complete view on its own:
+  //   Needs review   rows waiting on a person (review + action)
+  //   Approved       pre-approved by Lighthouse (nothing found) + approved by a team member
+  //   Flagged        every row carrying a real flag, whatever its status
+  //   Posted this week  rows whose line items moved in the last 7 days — the Monday-morning lens
+  //   a flag type / a booking kind   every row with that flag or tag, open or approved
+  // Clicking a chip replaces the previous one. Channel, owner and search narrow whichever lens is on.
+  const [lens, setLens] = useState<Lens>('')
   const [fOwner, setFOwner] = useState('')
   const [fSource, setFSource] = useState('')                                 // channel filter (label)
-  const [fTag, setFTag] = useState<'' | 'canceled' | 'cancel_fee' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'owner_guest' | 'ff'>('')
-  // The weekly lens: only rows whose line items moved in the last 7 days. This is what makes the
-  // board a Monday-morning tool instead of a statement-day scramble — the team reviews what
-  // CHANGED since last week, and by generation day there is nothing left to discover.
-  const [fFresh, setFFresh] = useState(false)
   const [openItems, setOpenItems] = useState<Record<string, boolean>>({})
   // Worklist opens CLEAN: every statement collapsed to its totals row. expandedOwners is the
   // explicit open/close override; sections auto-open while filters or a search are active.
@@ -345,7 +359,6 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [routineOpen, setRoutineOpen] = useState(false)
   // LEAN PASS (2026-09-22): rarely used worklist filters and the per-row note boxes on the prep and
   // resolution lists open on demand instead of standing on every row.
-  const [moreFilters, setMoreFilters] = useState(false)
   const [noteOpen, setNoteOpen] = useState<Record<string, boolean>>({})
   // Changes the server never confirmed, keyed by row — shown on the row with a Retry button so a
   // dropped connection can never look like saved work.
@@ -434,7 +447,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   // filter: an owner collapsed by hand stayed collapsed when a chip was clicked, and the Approved /
   // No-issues sections are shut by default, so the Approved chip opened every owner onto a shut
   // section with the count on it and no rows. Any change to the filters clears those overrides.
-  const filterKey = [q.trim(), fStatus, fFlag, fOwner, fSource, fTag, fFresh ? '1' : ''].join('|')
+  const filterKey = [q.trim(), lens, fOwner, fSource].join('|')
   useEffect(() => { setExpandedOwners({}); setOpenSections({}); setShowAllRows({}) }, [filterKey])
 
   const unlock = async () => {
@@ -669,11 +682,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     try {
       const r = await fetch('/api/owner-audit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'prep-recheck', reservationIds: [it.reservationId] }),
+        // The folio AND the statement lines for the stay's own dates — a correction made in Guesty
+        // (a resolution adjusted and re-added) shows up here without waiting for the twice-daily sweep.
+        body: JSON.stringify({ action: 'refresh', reservationId: it.reservationId, from: (it.checkIn || '').slice(0, 10), to: (it.checkOut || it.checkIn || '').slice(0, 10) }),
       })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || !j.ok) { setError(j.error || 'Could not reach Guesty for that booking.'); setRowSync(''); return }
-      setFlash('Pulled this booking fresh from Guesty.')
+      setFlash('Pulled this booking and its statement lines fresh from Guesty.')
       setTimeout(() => setFlash(''), 2500)
       await load(month)
     } catch (e: any) { setError(String(e?.message || e)) }
@@ -764,22 +779,22 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   // rows only, so "Approved + Resolution" showed a chip for a number you could never reach.
   const weekAgo = useMemo(() => new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10), [])
   const needle = q.trim().toLowerCase()
-  const passes = useCallback((it: Item, skip: '' | 'status' | 'flag' | 'owner' | 'source' | 'tag' | 'fresh' | 'q' = '') => {
-    if (skip !== 'fresh' && fFresh && !(it.lastPosted && it.lastPosted >= weekAgo)) return false
+  const tagPass = (it: Item, t: TagKey) => t === 'owner' || t === 'owner_guest' || t === 'ff' ? it.stayTag === t : t === 'cancel_fee' ? isCancelFee(it) : it.statusTag === t
+  const lensPass = useCallback((it: Item, L: Lens): boolean => {
+    if (!L) return true
+    if (L === 'review') return it.status === 'review' || it.status === 'action'
+    if (L === 'action') return it.status === 'action'
+    if (L === 'done') return it.status === 'done' || it.status === 'clear'
+    if (L === 'flagged') return it.flags.some(f => f.severity !== 'info')
+    if (L === 'fresh') return !!it.lastPosted && it.lastPosted >= weekAgo
+    if (L.startsWith('flag:')) { const t = L.slice(5); return it.flags.some(f => f.type === t) }
+    if (L.startsWith('tag:')) return tagPass(it, L.slice(4) as TagKey)
+    return true
+  }, [weekAgo])
+  const passes = useCallback((it: Item, skip: '' | 'lens' | 'owner' | 'source' | 'q' = '') => {
+    if (skip !== 'lens' && !lensPass(it, lens)) return false
     if (skip !== 'owner' && fOwner && it.ownerId !== fOwner) return false
-    if (skip !== 'status' && fStatus && it.status !== fStatus) return false
-    if (skip !== 'flag') {
-      // Flagged = a real (review / high) flag. Open rows unless the Approved chip is on — approved
-      // rows keep their flags for the paper trail and are reachable through Approved + Flagged.
-      if (fFlag === 'flagged' && ((it.status === 'done' && fStatus !== 'done') || !it.flags.some(f => f.severity !== 'info'))) return false
-      if (fFlag && fFlag !== 'flagged' && !it.flags.some(f => f.type === fFlag)) return false
-    }
     if (skip !== 'source' && fSource && sourceLabel(it.source) !== fSource) return false
-    if (skip !== 'tag') {
-      if (fTag === 'owner' || fTag === 'owner_guest' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
-      else if (fTag === 'cancel_fee') { if (!isCancelFee(it)) return false }
-      else if (fTag) { if (it.statusTag !== fTag) return false }
-    }
     if (skip !== 'q' && needle) {
       // Everything a reviewer might type: guest, code, unit, owner, channel, flag names, dates,
       // the note and the comments, and the money (so "350" finds a $350 row).
@@ -789,31 +804,20 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (hay.indexOf(needle) < 0) return false
     }
     return true
-  }, [fFresh, fOwner, fStatus, fFlag, fSource, fTag, needle, weekAgo, ownerName])
+  }, [lens, lensPass, fOwner, fSource, needle, ownerName])
   const filtered = useMemo(() => (data ? data.items.filter(it => passes(it)) : [] as Item[]), [data, passes])
-  // What each chip would return, given the other filters — the number printed on it.
+  // What each chip would return, given the channel / owner / search — the number printed on it.
   const facet = useMemo(() => {
     const items = data?.items || []
-    const status: Record<string, number> = {}, flag: Record<string, number> = {}, tag: Record<string, number> = {}, src: Record<string, number> = {}, owner: Record<string, number> = {}
-    let flagged = 0, fresh = 0
+    const lensN: Record<string, number> = {}, src: Record<string, number> = {}, owner: Record<string, number> = {}
+    const lenses: Lens[] = ['review', 'action', 'done', 'flagged', 'fresh', ...(Object.keys(FLAG_LABEL) as FlagType[]).map(f => ('flag:' + f) as Lens), ...TAG_CHIPS.map(([k]) => ('tag:' + k) as Lens)]
     for (const it of items) {
-      if (passes(it, 'status')) status[it.status] = (status[it.status] || 0) + 1
-      if (passes(it, 'flag')) {
-        const seen: Record<string, boolean> = {}
-        for (const f of it.flags) if (!seen[f.type]) { flag[f.type] = (flag[f.type] || 0) + 1; seen[f.type] = true }
-        if ((it.status !== 'done' || fStatus === 'done') && it.flags.some(f => f.severity !== 'info')) flagged++
-      }
-      if (passes(it, 'tag')) {
-        if (it.statusTag) tag[it.statusTag] = (tag[it.statusTag] || 0) + 1
-        if (it.stayTag) tag[it.stayTag] = (tag[it.stayTag] || 0) + 1
-        if (isCancelFee(it)) tag.cancel_fee = (tag.cancel_fee || 0) + 1
-      }
+      if (passes(it, 'lens')) for (const L of lenses) if (lensPass(it, L)) lensN[L] = (lensN[L] || 0) + 1
       if (passes(it, 'source')) { const l = sourceLabel(it.source); if (l) src[l] = (src[l] || 0) + 1 }
       if (passes(it, 'owner')) owner[it.ownerId] = (owner[it.ownerId] || 0) + 1
-      if (passes(it, 'fresh') && it.lastPosted && it.lastPosted >= weekAgo) fresh++
     }
-    return { status, flag, tag, src, owner, flagged, fresh }
-  }, [data, passes, fStatus, weekAgo])
+    return { lens: lensN, src, owner }
+  }, [data, passes, lensPass])
 
   // Tag + channel counts for the filter chips.
   const tagCounts = useMemo(() => {
@@ -1101,16 +1105,63 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 </div>
               </div>
             )}
+            {/* THE WHOLE GUEST FOLIO (Jon, 2026-11-04: "we should see the whole folio as is in the
+                statement review") — every invoice item as Guesty shows it, and how the Airbnb
+                resolution on it was handled. */}
+            {it.allocation && (() => {
+              const a = it.allocation!
+              const cls = a.state === 'allocated' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : a.state === 'refund' ? 'bg-rose-50 text-rose-800 ring-rose-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
+              const svc = a.service.map(x => x.title + ' ' + fmt(x.amount)).join(', ')
+              return (
+                <div className={'max-w-2xl mb-2 rounded-xl ring-1 ring-inset px-3 py-2 text-[12px] ' + cls}>
+                  <div className="font-semibold">
+                    {a.state === 'allocated' ? 'Airbnb resolution allocated' : a.state === 'unposted' ? 'Airbnb resolution allocated on the folio — not on this statement yet' : a.state === 'refund' ? 'Airbnb resolution — refund to the guest' : 'Airbnb resolution not allocated'}
+                    {a.what ? <span className="font-normal opacity-80"> · {a.what}</span> : null}
+                  </div>
+                  <div className="mt-0.5">
+                    {a.state === 'unallocated' && <>Resolution Center item still carries <b className="tabular-nums">{fmt(a.arc)}</b>. Adjust it to $0 and add the money as the service it paid for, so it splits to the owner by the management fee.</>}
+                    {a.state === 'refund' && <>Resolution Center item carries <b className="tabular-nums">{fmt(a.arc)}</b> going back to the guest — confirm it was authorized and the owner side was adjusted.</>}
+                    {a.state === 'unposted' && <>Adjusted to $0{a.by ? ' by ' + a.by : ''}{svc ? ' and re-added as ' + svc : ' but no service item was added'}. No matching line on this month’s statement — it may sit on another month, or the mirror is behind: Refresh from Guesty below.</>}
+                    {a.state === 'allocated' && <>Adjusted to $0{a.by ? ' by ' + a.by : ''} and re-added as {svc} → owner <b className="tabular-nums">{fmt(a.ownerShare || 0)}</b>, Stay <b className="tabular-nums">{fmt(a.pmcShare || 0)}</b>.</>}
+                  </div>
+                </div>
+              )
+            })()}
+            {it.folio && it.folio.length > 0 && (
+              <div className="rounded-xl border border-line overflow-hidden mb-2 max-w-2xl">
+                <div className="px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted bg-app/60 border-b border-line">Guest folio in Guesty · {it.folio.length} item{it.folio.length === 1 ? '' : 's'}</div>
+                <div className="lh-hscroll">
+                <table className="w-full min-w-[400px] sm:min-w-0 text-xs">
+                  <tbody>
+                    {it.folio.map((f, i) => {
+                      const isRes = /resolution|aircover/i.test(f.title + ' ' + f.type)
+                      return (
+                        <tr key={i} className={(i % 2 ? 'bg-app/50' : 'bg-white') + (isRes ? ' font-medium' : '')}>
+                          <td className="px-2.5 py-1 text-ink">{f.title}{f.note ? <span className="text-muted font-normal"> · {f.note}</span> : null}{f.by ? <span className="text-muted font-normal italic"> · adjusted by {f.by}</span> : null}</td>
+                          <td className="px-2.5 py-1 text-muted whitespace-nowrap">{f.type}</td>
+                          <td className={'px-2.5 py-1 text-right font-medium whitespace-nowrap ' + (f.amount < 0 ? 'text-rose-700' : f.amount === 0 ? 'text-muted' : 'text-ink')}>{fmt(f.amount)}</td>
+                        </tr>
+                      )
+                    })}
+                    <tr className="border-t border-line bg-white">
+                      <td className="px-2.5 py-1 font-semibold text-ink" colSpan={2}>Guest total</td>
+                      <td className="px-2.5 py-1 text-right font-semibold whitespace-nowrap text-ink">{fmt(it.folio.reduce((a, f) => a + f.amount, 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                </div>
+              </div>
+            )}
             {/* Pull THIS booking again from Guesty. Folio edits (fee breakouts, corrections) are
                 made on the reservation; without this you would be reading yesterday's copy of a
                 booking you just fixed. Statement line items come from the monthly sync above. */}
             {it.reservationId && internal && !share && (
               <div className="mb-2 flex items-center gap-2 flex-wrap">
                 <button onClick={() => refreshRow(it)} disabled={rowSync === k}
-                  title="Pull this reservation and its folio from Guesty again — use this after editing the booking in Guesty"
+                  title="Pull this booking's folio and the statement lines for its dates from Guesty again — use this right after fixing the booking in Guesty"
                   className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-lg ring-1 ring-inset bg-white text-brand-700 ring-line hover:bg-app disabled:opacity-50">
                   <RefreshCw size={11} className={rowSync === k ? 'animate-spin' : ''} />
-                  {rowSync === k ? 'Refreshing from Guesty…' : 'Refresh folio from Guesty'}
+                  {rowSync === k ? 'Refreshing from Guesty…' : 'Refresh from Guesty'}
                 </button>
               </div>
             )}
@@ -1882,53 +1933,48 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* ═══ WORKLIST ═══ */}
           {view === 'work' && (
             <>
-              {/* filters — row 1: work state (statuses + flags). A dozen chips stacked four rows
-                  deep on a phone; one swipeable line instead. */}
+              {/* filters — one lens at a time; every chip is a complete view (see `lens`). */}
               <div className="lh-actions flex flex-wrap items-center gap-2">
-                {(['action', 'review', 'done', 'clear'] as Status[]).map(s => (
-                  <button key={s} onClick={() => setFStatus(fStatus === s ? '' : s)}
-                    className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + STATUS_CLS[s] + (fStatus === s ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                    {STATUS_LABEL[s]} {facet.status[s] || 0}
-                  </button>
-                ))}
-                <span className="w-px h-5 bg-line mx-1" />
-                {/* The weekly lens: what moved since last week's review. */}
-                <button onClick={() => setFFresh(v => !v)}
-                  title="Only rows with line items posted in the last 7 days — review what changed since last week"
-                  className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-teal-50 text-teal-700 ring-teal-200 transition' + (fFresh ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                  <RefreshCw size={11} className="inline -mt-0.5 mr-1" />Posted this week {facet.fresh}
-                </button>
-                <button onClick={() => setFFlag(fFlag === 'flagged' ? '' : 'flagged')}
-                  className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200 transition' + (fFlag === 'flagged' ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                  <ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged {facet.flagged}
-                </button>
-                <button onClick={() => setMoreFilters(v => !v)} title="Filter by flag type or booking kind (canceled, owner stay…)"
-                  className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + (moreFilters ? 'bg-ink text-white ring-ink' : 'bg-white text-muted ring-line hover:text-ink')}>
-                  Filters{(fTag || (fFlag && fFlag !== 'flagged')) ? ' •' : ''}
-                </button>
+                {(() => {
+                  const chip = (L: Lens, label: React.ReactNode, cls: string, title?: string) => (
+                    <button key={L} onClick={() => setLens(lens === L ? '' : L)} title={title}
+                      className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + cls + (lens === L ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
+                      {label} {facet.lens[L] || 0}
+                    </button>
+                  )
+                  return (
+                    <>
+                      {chip('review', 'Needs review', STATUS_CLS.review, 'Everything waiting on a person — flagged rows nobody has approved yet')}
+                      {(facet.lens.action || lens === 'action') ? chip('action', 'Action needed', STATUS_CLS.action, 'Rows a reviewer marked as needing a fix in Guesty') : null}
+                      {chip('done', 'Approved', STATUS_CLS.done, 'Pre-approved by Lighthouse (nothing found) and approved by a team member')}
+                      <span className="w-px h-5 bg-line mx-1" />
+                      {chip('flagged', <><ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged</>, 'bg-rose-50 text-rose-700 ring-rose-200', 'Every row carrying a real flag, open or approved')}
+                      {chip('fresh', <><RefreshCw size={11} className="inline -mt-0.5 mr-1" />Posted this week</>, 'bg-teal-50 text-teal-700 ring-teal-200', 'Rows with line items posted in the last 7 days — what changed since last week')}
+                    </>
+                  )
+                })()}
               </div>
-              {(moreFilters || !!fTag || (!!fFlag && fFlag !== 'flagged')) && (
+              {/* flag types and booking kinds — one click shows every row with that tag, whatever its
+                  status, bucketed by status underneath. Chips with nothing behind them stay hidden. */}
               <div className="lh-actions flex flex-wrap items-center gap-2">
-                {(Object.keys(FLAG_LABEL) as FlagType[]).filter(f => facet.flag[f] || fFlag === f).map(f => (
-                  <button key={f} onClick={() => setFFlag(fFlag === f ? '' : f)}
-                    className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-muted ring-line hover:text-ink transition' + (fFlag === f ? ' outline outline-2 outline-offset-1 outline-brand-300' : '') + (!facet.flag[f] ? ' opacity-40' : '')}>
-                    {FLAG_LABEL[f]} {facet.flag[f] || 0}
+                {(Object.keys(FLAG_LABEL) as FlagType[]).filter(f => facet.lens['flag:' + f] || lens === 'flag:' + f).map(f => (
+                  <button key={f} onClick={() => setLens(lens === 'flag:' + f ? '' : ('flag:' + f) as Lens)}
+                    className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-muted ring-line hover:text-ink transition' + (lens === 'flag:' + f ? ' outline outline-2 outline-offset-1 outline-brand-300' : '') + (!facet.lens['flag:' + f] ? ' opacity-40' : '')}>
+                    {FLAG_LABEL[f]} {facet.lens['flag:' + f] || 0}
                   </button>
                 ))}
-                <span className="w-px h-5 bg-line mx-1" />
-                {([['canceled', 'Canceled'], ['cancel_fee', 'Cancellation fee'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']] as [typeof fTag, string][])
-                  .filter(([k]) => facet.tag[k as string] || fTag === k)
+                {TAG_CHIPS.some(([k]) => facet.lens['tag:' + k] || lens === 'tag:' + k) && <span className="w-px h-5 bg-line mx-1" />}
+                {TAG_CHIPS.filter(([k]) => facet.lens['tag:' + k] || lens === 'tag:' + k)
                   .map(([k, label]) => (
-                    <button key={k} onClick={() => setFTag(fTag === k ? '' : k)}
+                    <button key={k} onClick={() => setLens(lens === 'tag:' + k ? '' : ('tag:' + k) as Lens)}
                       title={k === 'cancel_fee' ? 'Canceled bookings that still left money on the statement this month — the cancellation fee — plus any line item named as one' : k === 'canceled' ? 'Every canceled booking with line items this month, fee or not' : undefined}
                       className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset transition '
                         + (k === 'owner' || k === 'owner_guest' || k === 'ff' ? 'bg-violet-50 text-violet-700 ring-violet-200' : k === 'inquiry' ? 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200' : k === 'cancel_fee' ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-300')
-                        + (fTag === k ? ' outline outline-2 outline-offset-1 outline-brand-300' : '') + (!facet.tag[k as string] ? ' opacity-40' : '')}>
-                      {label} {facet.tag[k as string] || 0}
+                        + (lens === 'tag:' + k ? ' outline outline-2 outline-offset-1 outline-brand-300' : '') + (!facet.lens['tag:' + k] ? ' opacity-40' : '')}>
+                      {label} {facet.lens['tag:' + k] || 0}
                     </button>
                   ))}
               </div>
-              )}
 
               {/* channel + owner + search, one line */}
               <div className="flex flex-wrap items-center gap-2">
@@ -1949,11 +1995,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, code…"
                     className="text-[12px] border border-line rounded-lg pl-7 pr-2.5 py-1 w-full sm:w-48 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 </div>
-                {(fStatus || fFlag || fTag || fSource || fOwner || q || fFresh) && (
-                  <button onClick={() => { setFStatus(''); setFFlag(''); setFTag(''); setFSource(''); setFOwner(''); setQ(''); setFFresh(false) }}
+                {(lens || fSource || fOwner || q) && (
+                  <button onClick={() => { setLens(''); setFSource(''); setFOwner(''); setQ('') }}
                     className="text-[11px] font-medium text-muted hover:text-ink underline">Clear all</button>
                 )}
-                {(fStatus || fFlag || fTag || fSource || fOwner || q || fFresh) && (
+                {(lens || fSource || fOwner || q) && (
                   <span className="text-[11.5px] text-muted tabular-nums" title="What the filters return — every row is shown, in every owner, with the sections open">
                     {filtered.length} row{filtered.length === 1 ? '' : 's'} · {Object.keys(byOwner).length} owner{Object.keys(byOwner).length === 1 ? '' : 's'} · net {fmt(filtered.reduce((a, it) => a + it.net, 0))}
                   </span>
@@ -1964,7 +2010,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   and open rows first, with the full statement one click further */}
               {data.owners.filter(o => byOwner[o.ownerId] && byOwner[o.ownerId].length).map(o => {
                 const items = byOwner[o.ownerId]
-                const filterActive = !!(q.trim() || fStatus || fFlag || fOwner || fSource || fTag || fFresh)
+                const filterActive = !!(q.trim() || lens || fOwner || fSource)
                 const isOpen = expandedOwners[o.ownerId] !== undefined ? expandedOwners[o.ownerId] : filterActive
                 const s = stats[o.ownerId] || { notes: 0, comments: 0 }
                 const attention = items.filter(it => it.status !== 'done' || it.flags.some(f => f.severity !== 'info') || it.note || it.comments.length > 0)

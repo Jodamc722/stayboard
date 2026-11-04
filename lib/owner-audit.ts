@@ -41,6 +41,28 @@ export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
 export type AuditLine = { date: string; label: string; code: string; amount: number }
+export type FolioItem = { title: string; type: string; amount: number; note: string; by: string }
+// AIRBNB RESOLUTIONS, THE WAY THE TEAM BOOKS THEM (Jon, 2026-11-04). A Resolution Center payment
+// lands on the guest folio as an "Airbnb Resolution Center" item with the money on it. Prep
+// re-allocates it: the resolution item is adjusted to $0 and the money is added as the service it
+// paid for (Parking, Extra services, Damage…), which then flows to the Owners ledger split by the
+// management fee — the owner's line on the statement, the rest to us.
+//   unallocated   the resolution item still carries the money → needs doing
+//   allocated     adjusted to $0 by a person, the service item is on the folio AND its line is on
+//                 this month's statement → nothing to review; the split is shown
+//   unposted      adjusted and re-added on the folio, but no matching statement line this month —
+//                 either it sits on another month's statement or the mirror is behind (Refresh)
+//   refund        money going back to the guest through the Resolution Center
+export type Allocation = {
+  state: 'unallocated' | 'allocated' | 'unposted' | 'refund'
+  arc: number                    // what the resolution item(s) carry now (0 once allocated)
+  original: number               // what they carried before adjustment, when Guesty kept it
+  what: string                   // the resolution's own description ("Extra services [CLA-…]")
+  by: string                     // who adjusted it, when a person did
+  service: { title: string; amount: number }[]   // the service items it was re-added as
+  ownerShare: number | null      // the matching statement line(s), as owner money
+  pmcShare: number | null        // service total − owner share
+}
 export type AuditComment = { author: string; body: string; at: string }
 // THE REVIEW LADDER. Only three of these are ever stored — 'clear' is computed, never written.
 //
@@ -105,6 +127,11 @@ export type AuditItem = {
   posted: number                 // everything credited to the owner this month on this booking
   reversed: number               // everything taken back this month (corrections, cancellations)
   resValue: number | null        // the reservation's own total in Guesty (folio), null if unmatched
+  // THE WHOLE GUEST FOLIO, as Guesty shows it (Jon, 2026-11-04: "we should see the whole folio as
+  // is in the statement review") — every invoice item, with who last touched it when a person did.
+  folio: FolioItem[]
+  // How the Airbnb Resolution Center money on this booking was handled — see resolutionAllocation().
+  allocation: Allocation | null
   flags: AuditFlag[]
   needsReview: boolean           // carries at least one flag above informational
   status: AuditStatus
@@ -227,6 +254,53 @@ export const PREP_PREFIX = 'prep:'
 // board; the cross-check is whether a resolution-looking ledger line exists on the same
 // reservation code this month.
 export const RESOLUTION_RE = /resolution|aircover|damage protection|guest damage/i
+// Folio item types that are the booking itself (fare, cleaning, channel fee, discount, markup, the
+// resolution item, taxes) — anything else with money on it is a SERVICE the guest was charged for.
+const CORE_ITEM_RE = /^(AF|CF|PCM|LOSD|MAR|ARC|LT|CT|TAX|VAT|GST|CTX|LTX|STX)$/i
+const TAXISH_RE = /\btax\b|\bvat\b|\bgst\b/i
+const REVFEE_RE = /revenue (fee|management)|management fee|commission/i
+
+/** The guest folio as a slim list — every item, in Guesty's order. */
+export function folioItemsOf(inv: any[]): FolioItem[] {
+  return (Array.isArray(inv) ? inv : []).slice(0, 40).map((x: any) => {
+    const by = String(x?.logs?.updatedBy || '')
+    return {
+      title: String(x?.title || x?.name || '').trim() || String(x?.normalType || x?.type || 'Item'),
+      type: String(x?.normalType || x?.type || ''),
+      amount: Number(x?.amount) || 0,
+      note: String(x?.description || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+      by: /^system$/i.test(by) ? '' : by,
+    }
+  })
+}
+
+/** Read how the Resolution Center money on a booking was handled — null when there is none. */
+export function resolutionAllocation(inv: any[], lines: AuditLine[]): Allocation | null {
+  const items: any[] = Array.isArray(inv) ? inv : []
+  const isRes = (x: any) => RESOLUTION_RE.test(String(x?.title || x?.name || '') + ' ' + String(x?.normalType || x?.type || ''))
+  const arcs = items.filter(isRes)
+  if (!arcs.length) return null
+  const arc = money(arcs.reduce((a, x) => a + (Number(x?.amount) || 0), 0))
+  const touched = arcs.map(x => String(x?.logs?.updatedBy || '')).find(b => b && !/^system$/i.test(b)) || ''
+  const what = arcs.map(x => String(x?.description || '').replace(/\s+/g, ' ').trim()).filter(Boolean).join('; ').slice(0, 140)
+  const original = money(arcs.reduce((a, x) => a + (Number(x?.baseAmount ?? x?.originalAmount ?? x?.amount) || 0), 0))
+  if (arc > 0.005) return { state: 'unallocated', arc, original, what, by: touched, service: [], ownerShare: null, pmcShare: null }
+  if (arc < -0.005) return { state: 'refund', arc, original, what, by: touched, service: [], ownerShare: null, pmcShare: null }
+  // $0 and nobody touched it: Guesty's placeholder. Only a person adjusting it to $0 is an allocation.
+  if (!touched) return null
+  const service = items
+    .filter(x => !isRes(x) && (Number(x?.amount) || 0) > 0.005 && !CORE_ITEM_RE.test(String(x?.normalType || x?.type || '')) && !TAXISH_RE.test(String(x?.title || '')) && !REVFEE_RE.test(String(x?.title || '')))
+    .map(x => ({ title: String(x?.title || x?.name || 'Service').trim(), amount: money(Number(x?.amount) || 0) }))
+  if (!service.length) return { state: 'unposted', arc: 0, original, what, by: touched, service: [], ownerShare: null, pmcShare: null }
+  // The owner's side: statement lines whose label shares a word with a service item ("Parking" ~
+  // "Nightly Parking"), as owner money. Only this month's lines are in view.
+  const words = new Set(service.flatMap(x => x.title.toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4)))
+  const owner = lines.filter(l => !RESOLUTION_RE.test(l.label) && !REVFEE_RE.test(l.label) && l.label.toLowerCase().split(/[^a-z]+/).some(w => words.has(w)))
+  const total = money(service.reduce((a, x) => a + x.amount, 0))
+  if (!owner.length) return { state: 'unposted', arc: 0, original, what, by: touched, service, ownerShare: null, pmcShare: null }
+  const ownerShare = money(owner.reduce((a, l) => a + l.amount, 0))
+  return { state: 'allocated', arc: 0, original, what, by: touched, service, ownerShare, pmcShare: money(total - ownerShare) }
+}
 export type ResolutionClaim = {
   id: string
   guest: string
@@ -1134,6 +1208,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
 
     const flags: AuditFlag[] = []
     const on = rules.enabled
+    const folioItems: FolioItem[] = res ? folioItemsOf(folioByRes[String(res.id || '')] || []) : []
+    const allocation: Allocation | null = res ? resolutionAllocation(folioByRes[String(res.id || '')] || [], g.lines) : null
     if (g.resCode) {
       const refundAmt = money(g.lines.filter(l => REFUND_RE.test(l.label)).reduce((a, l) => a + l.amount, 0))
       const isPassthru = g.rental > 1 && g.commission / g.rental >= rules.passthruLo && g.commission / g.rental <= rules.passthruHi
@@ -1144,26 +1220,44 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
         flags.push({ type: 'refund', severity: 'review', amount: refundAmt, detail: 'Refund on this reservation — verify it was authorized.' })
       }
-      // AIRBNB RESOLUTIONS (Jon, 2026-10-07: "check for Airbnb resolutions — if there's a line item
-      // in the folio that shows resolution, please flag it"). The guest folio (Guesty invoice items)
-      // is where a Resolution Center payment or AirCover reimbursement lands; the statement's own
-      // lines are the second look. Either one raises the flag, and the detail says which, with the
-      // amounts, so the reviewer can see at a glance whether the money reached the owner.
+      // AIRBNB RESOLUTIONS — allocated or not (Jon, 2026-11-04: "verify that it's been allocated to
+      // the folio to proper payout… if this is done, this should not show"). See Allocation above.
+      // A $0 resolution item nobody touched is Guesty's placeholder (Sept 2026: 142 of 159 Airbnb
+      // bookings carry one) — not a resolution, not a flag.
       if (on.resolution) {
         const folio = res ? (folioByRes[String(res.id || '')] || []) : []
-        const itemText = (x: any) => String(x?.title || x?.name || '') + ' ' + String(x?.normalType || x?.type || '')
-        // Guesty puts an "Airbnb Resolution Center" item at $0.00 on most Airbnb bookings — a
-        // placeholder, not a resolution (Sept 2026: 142 of 159). Only money counts.
-        const fRes = folio.filter((x: any) => RESOLUTION_RE.test(itemText(x)) && Math.abs(Number(x?.amount) || 0) > 0.005)
+        if (allocation) {
+          const svcTxt = allocation.service.map(x => '“' + x.title + '” $' + x.amount.toFixed(2)).join(', ')
+          if (allocation.state === 'unallocated') {
+            flags.push({
+              type: 'resolution', severity: 'review', amount: allocation.arc,
+              detail: 'Airbnb resolution of $' + allocation.arc.toFixed(2) + (allocation.what ? ' (' + allocation.what + ')' : '') + ' is still on the Resolution Center item — not allocated. Adjust it to $0 and add it to the folio as the service it paid for, so it splits to the owner by the management fee.',
+            })
+          } else if (allocation.state === 'refund') {
+            flags.push({
+              type: 'resolution', severity: 'review', amount: allocation.arc,
+              detail: 'Resolution Center refund of $' + Math.abs(allocation.arc).toFixed(2) + ' to the guest' + (allocation.what ? ' (' + allocation.what + ')' : '') + ' — confirm it was authorized and that the owner side was adjusted.',
+            })
+          } else if (allocation.state === 'unposted') {
+            flags.push({
+              type: 'resolution', severity: 'review', amount: allocation.service.reduce((a, x) => a + x.amount, 0),
+              detail: 'Resolution allocated on the folio' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ', but no matching line is on this month’s statement yet — it may sit on another month, or the mirror is behind (Refresh from Guesty).',
+            })
+          } else {
+            flags.push({
+              type: 'resolution', severity: 'info', amount: allocation.service.reduce((a, x) => a + x.amount, 0),
+              detail: 'Resolution allocated' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ' — owner $' + (allocation.ownerShare || 0).toFixed(2) + ', Stay $' + (allocation.pmcShare || 0).toFixed(2) + '.',
+            })
+          }
+        }
+        // A statement line named "resolution" that was never re-allocated — money handed to the
+        // owner raw, with no service item on the folio behind it.
         const sRes = g.lines.filter(l => RESOLUTION_RE.test(l.label) && Math.abs(l.amount) > 0.005)
-        if (fRes.length || sRes.length) {
-          const fTot = money(fRes.reduce((a: number, x: any) => a + (Number(x?.amount) || 0), 0))
+        if (sRes.length && !(allocation && allocation.state === 'allocated')) {
           const sTot = money(sRes.reduce((a, l) => a + l.amount, 0))
-          const fTxt = fRes.length ? 'Folio: ' + fRes.slice(0, 3).map((x: any) => '“' + String(x?.title || x?.name || 'Resolution').trim() + '” $' + (Number(x?.amount) || 0).toFixed(2)).join(', ') + (fRes.length > 3 ? ' +' + (fRes.length - 3) + ' more' : '') + '.' : ''
-          const sTxt = sRes.length ? ' Statement: ' + sRes.length + ' line' + (sRes.length === 1 ? '' : 's') + ', $' + sTot.toFixed(2) + ' to the owner.' : (fRes.length ? ' No line named “resolution” on this month’s statement — check where the money landed.' : '')
           flags.push({
-            type: 'resolution', severity: 'review', amount: fRes.length ? fTot : sTot,
-            detail: 'Airbnb resolution on this reservation. ' + (fTxt + sTxt).trim() + ' Check it belongs to this stay and that the owner gets the right share.',
+            type: 'resolution', severity: 'review', amount: sTot,
+            detail: 'A line named “resolution” ($' + sTot.toFixed(2) + ' to the owner) is on the statement' + (folio.length ? ' without a matching service item on the folio' : '') + ' — it should be re-added as the service it paid for and split by the management fee.',
           })
         }
       }
@@ -1449,6 +1543,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
       posted: g.posted,
       reversed: g.reversed,
       resValue: res ? (Number((res as any).money_total) || Number((res as any).fare) || null) : null,
+      folio: folioItems,
+      allocation,
       flags,
       needsReview,
       // Stored statuses win, but only the ones a human can actually set. Rows saved as 'done'
@@ -1484,6 +1580,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       const nights = Number(r.nights) || 0
       items.push({
         key, kind: 'reservation', ownerId: oid, resCode: code,
+        folio: folioItemsOf(folioByRes[String(r.id || '')] || []), allocation: null,
         guest: String(r.guest_name || ''),
         checkIn: String(r.check_in || '').slice(0, 10), checkOut: String(r.check_out || '').slice(0, 10),
         totalNights: nights, monthNights: 0, splitMonth: false,
@@ -1537,7 +1634,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       const saved = reviews[oid + '|' + key]
       const savedStatus = saved ? String(saved.status) : ''
       items.push({
-        key, kind: 'line', ownerId: oid, resCode: '',
+        key, kind: 'line', ownerId: oid, resCode: '', folio: [], allocation: null,
         guest: 'Statement generated with nothing on it',
         checkIn: '', checkOut: '', totalNights: 0, monthNights: 0, splitMonth: false,
         listingId: '', unit: '', source: '', reservationId: '', resNote: '',
@@ -1574,7 +1671,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const byOwner: Record<string, AuditItem[]> = {}
     for (const it of items) {
       const f = it.flags.find(x => x.type === 'resolution')
-      if (f && (f.amount || 0) > 0 && /No line named/.test(f.detail)) (byOwner[it.ownerId] = byOwner[it.ownerId] || []).push(it)
+      if (f && (f.amount || 0) > 0 && /not allocated/.test(f.detail)) (byOwner[it.ownerId] = byOwner[it.ownerId] || []).push(it)
     }
     for (const [oid, list] of Object.entries(byOwner)) {
       if (list.length < 10) continue

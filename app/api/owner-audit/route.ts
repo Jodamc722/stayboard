@@ -21,7 +21,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { linkGate } from '@/lib/passcode-gate'
 import { appendReservationNote } from '@/lib/claim-note'
 import { pullReservationsByIds } from '@/lib/guesty'
-import { syncOwners, syncOwnerStatements, syncLedgerMonth } from '@/lib/guesty-owner-sync'
+import { syncOwners, syncOwnerStatements, syncLedgerMonth, syncLedgerRange } from '@/lib/guesty-owner-sync'
 import { MONTH_LABEL } from '@/lib/owner-statements'
 import { auditMonths, buildAudit, defaultAuditMonth, prevMonthUnsigned, saveAuditRules, AuditStatus, WRITABLE_STATUSES, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
 import { tagAndNotify } from '@/lib/mentions'
@@ -154,6 +154,29 @@ export async function POST(req: NextRequest) {
     try {
       const pulled = await pullReservationsByIds(ids)
       return NextResponse.json({ ok: true, pulled })
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 502 })
+    }
+  }
+
+  // ── REFRESH ONE ROW (Jon, 2026-11-04: "this has been corrected in folio but not showing corrected
+  // in app"). Pull the booking fresh (its folio: the resolution adjusted, the service re-added) and
+  // re-sweep the Owners ledger for the stay's own dates (the statement lines that split it), then
+  // the page rebuilds. Signed-in staff only — it spends Guesty budget.
+  if (action === 'refresh') {
+    if (!who.internal) return NextResponse.json({ ok: false, error: 'Refreshing from Guesty is for signed-in staff.' }, { status: 403 })
+    const id = String(body.reservationId || '')
+    const from = String(body.from || '').slice(0, 10), to = String(body.to || '').slice(0, 10)
+    const out: any = { ok: true }
+    try {
+      if (id) out.pulled = await pullReservationsByIds([id])
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from) && /^\d{4}-\d{2}-\d{2}$/.test(to) && to >= from) {
+        // Cap the window at 21 days: a long stay is re-swept around its edges and the month sweep does the rest.
+        const lo = new Date(from + 'T00:00:00Z'), hi = new Date(to + 'T00:00:00Z')
+        const capped = (hi.getTime() - lo.getTime()) / 86400000 > 21 ? new Date(lo.getTime() + 21 * 86400000).toISOString().slice(0, 10) : to
+        out.ledger = await syncLedgerRange(from, capped, Date.now() + 45_000)
+      }
+      return NextResponse.json(out)
     } catch (e: any) {
       return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 502 })
     }
