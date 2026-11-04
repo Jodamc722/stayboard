@@ -43,17 +43,38 @@ function subjectOf(text: string): { word: string; any: RegExp } | null {
   for (const s of SUBJECTS) { const m = t.search(s.any); if (m >= 0 && m < at) { at = m; best = s } }
   return best
 }
-/** The best unused, non-collage photo: one whose caption shows the subject, then by resolution. */
-async function bestPhoto(hits: any[], subj: { word: string; any: RegExp } | null, used: Set<string>, skip: number): Promise<string> {
+/** Which photos make a strong opener: wide establishing shots, never the bathroom or a close-up. */
+const OPENER = /exterior|building|aerial|facade|tower|roof ?top|pool|ocean|beach|skyline|view|balcon|terrace|marina|sunset|dusk|night/i
+const WEAK = /bath|toilet|shower|closet|hallway|corridor|laundry|washer|dryer|stair|garage|parking|sign|floor ?plan|map|detail|close[- ]?up|towel|amenit/i
+/** The caption with numbers and filler stripped — two photos with the same core are the same room from another angle. */
+const core = (c: string) => String(c || '').toLowerCase().replace(/\b(the|a|an|with|and|of|in|at|view|photo|image)\b/g, '').replace(/[^a-z ]/g, '').trim().split(/\s+/).slice(0, 3).join(' ')
+/** The best unused, non-collage photo for a slot (Jon, 2026-11-04: "use the library and think about photo use").
+ *  Scored by: shows the subject (caption) · fits the frame (portrait photos for 9:16, landscape for 16:9) · size ·
+ *  an opener wants an establishing shot · weak rooms (bathroom, hallway, closet) only when asked for · not the
+ *  same room as a photo already in the ad. Small files (< 900 px) are out. */
+async function bestPhoto(hits: any[], subj: { word: string; any: RegExp } | null, used: Set<string>, skip: number, opts: { format?: string; opener?: boolean; usedCores?: Set<string> } = {}): Promise<string> {
   const seen = new Set<string>()
-  const cands = hits.filter(h => { const u = h.view || h.url; if (!u || used.has(u) || seen.has(u)) return false; seen.add(u); return true })
-  const score = (h: any) => (subj && subj.any.test(String(h.caption || '')) ? 1000 : 0) + Math.min(400, (h.width || 1200) / 10)
+  const portrait = /^9:16$|^4:5$/.test(String(opts.format || ''))
+  const landscape = String(opts.format || '') === '16:9'
+  const cands = hits.filter(h => { const u = h.view || h.url; if (!u || used.has(u) || seen.has(u)) return false; if ((h.width || 1200) < 900) return false; seen.add(u); return true })
+  const score = (h: any) => {
+    const cap = String(h.caption || '')
+    let sc = subj && subj.any.test(cap) ? 1000 : 0
+    sc += Math.min(400, (h.width || 1200) / 10)
+    const w = h.width || 0, ht = h.height || 0
+    if (w && ht) { const r = ht / w; if (portrait) sc += r >= 1 ? 260 : r >= 0.75 ? 120 : 0; else if (landscape) sc += r <= 0.8 ? 200 : r <= 1 ? 80 : -120 }
+    if (opts.opener) sc += OPENER.test(cap) ? 350 : -150
+    if (WEAK.test(cap) && !(subj && subj.any.test(cap))) sc -= 700
+    if (opts.usedCores && cap && opts.usedCores.has(core(cap))) sc -= 500
+    return sc
+  }
   cands.sort((a, b) => score(b) - score(a))
   let skipped = 0
-  for (const h of cands.slice(0, 14)) {
+  for (const h of cands.slice(0, 16)) {
     const u = h.view || h.url
     if (await isCollagePhoto(u)) continue
     if (skipped++ < skip) continue
+    if (opts.usedCores && h.caption) opts.usedCores.add(core(String(h.caption)))
     return u
   }
   return ''
@@ -84,6 +105,8 @@ export async function POST(req: NextRequest) {
     const searches: Record<string, any[]> = {}
     const search = async (q: string) => { if (!searches[q]) { try { searches[q] = ((await searchPhotos(q, 80)).hits as any[]).filter(h => h.active !== false && !isCollage(h)) } catch { searches[q] = [] } } return searches[q] }
     const used = new Set<string>()
+    const usedCores = new Set<string>()
+    const fmt = String(b?.format || '16:9')
     const scenes: { id: string; kind: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string }[] = []
     // Pass 1: every slot's candidate list (subject-matched first). Pass 2: slots with the fewest good
     // candidates choose first, so a scene that needs "the pool" is not left with the pool already taken.
@@ -108,7 +131,7 @@ export async function POST(req: NextRequest) {
     const picks: Record<string, string> = {}
     for (const { idx } of order) {
       const sl = slots[idx]
-      const u = await bestPhoto(sl.cands, sl.subj, used, 0)
+      const u = await bestPhoto(sl.cands, sl.subj, used, 0, { format: fmt, opener: sl.scene === 0 && sl.k === 0, usedCores })
       if (u) { used.add(u); picks[sl.scene + ':' + sl.k] = u }
     }
     slots.forEach(sl => { const u = picks[sl.scene + ':' + sl.k]; if (u) scenes[sl.scene].photos[sl.k] = u })
@@ -116,7 +139,7 @@ export async function POST(req: NextRequest) {
     const everything = Object.values(searches).flat()
     for (const x of scenes) {
       if (x.photos.length || x.kind === 'contact') continue
-      const u = await bestPhoto(everything, subjectOf([x.head, x.sub, x.vo].join(' ')), used, 0)
+      const u = await bestPhoto(everything, subjectOf([x.head, x.sub, x.vo].join(' ')), used, 0, { format: fmt, usedCores })
       if (u) { x.photos = [u]; used.add(u) }
     }
     const norm = normalize({ id: 'x', scenes })

@@ -1096,6 +1096,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           : <a href="/ads?full=1" target="_blank" rel="noopener" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Open the editor on its own, full screen, in a new tab">⤢ Full screen</a>}
         <Btn small on={home} onClick={() => { stop(); setHome(true); loadList() }} title="Studio home: make something new, the calendar, your work">⌂ Studio</Btn>
         {canEdit && !home ? <Btn tone="gold" small onClick={() => { stop(); setHome(true); loadList() }} title="Start something new">✦ New</Btn> : null}
+        {p && canDelete && !home ? <Btn tone="red" small onClick={async () => { const id = p.id; if (!window.confirm('Delete "' + p.name + '"? This cannot be undone.')) return; await fetch('/api/ads?id=' + encodeURIComponent(id), { method: 'DELETE' }); setP(null); pRef.current = null; setHome(true); loadList() }} title="Delete this piece">✕ Delete</Btn> : null}
         {p ? (
           <input value={p.name} disabled={!canEdit} onChange={e => change(d => ({ ...d, name: e.target.value }))} style={{ ...field, width: 260, padding: '6px 10px', fontWeight: 600 }} />
         ) : null}

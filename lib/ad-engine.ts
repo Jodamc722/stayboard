@@ -1221,8 +1221,11 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   }
 
   // The rest share a headline at the top-left (or top on vertical) and a content area beneath.
-  let top = pad + 20 * u
-  if (head) top += rich(ctx, head, pad, top, W - pad * 2, (portrait ? 84 : 80) * u, { font: A.display, local, delay: 0.1, maxH: H * 0.26 }) + 16 * u
+  // The logo sits top-right (about 200u wide, ~95u tall): on vertical shapes the headline starts under it; on
+  // landscape it stops short of it. Headlines no longer run into the mark (2026-11-04 design pass).
+  let top = portrait ? Math.max(pad + 20 * u, Math.max(46 * u, H * PF.safe.top + 20 * u) + 95 * u + 30 * u) : pad + 20 * u
+  const headW = portrait ? W - pad * 2 : W - pad * 2 - 250 * u
+  if (head) top += rich(ctx, head, pad, top, headW, (portrait ? 84 : 80) * u, { font: A.display, local, delay: 0.1, maxH: H * 0.26 }) + 16 * u
   if (sc.sub) top += plain(ctx, sc.sub, pad, top, W - pad * 2, 32 * u, A.body, C.mut, 500, 'left', appear(local, 0.4)) + 10 * u
   const area = { x: pad, y: top + 30 * u, w: W - pad * 2, h: H - bottomSafe - top - 40 * u }
 
@@ -1304,7 +1307,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
 
   if (sc.kind === 'stats') {
     const it = sc.items.slice(0, 6)
-    const cols = portrait ? 2 : Math.min(3, Math.max(1, it.length))
+    const cols = portrait ? 2 : it.length === 4 ? 4 : Math.min(3, Math.max(1, it.length))
     const rows = Math.ceil(it.length / cols) || 1
     const cw = area.w / cols, ch = Math.min(area.h / rows, 300 * u)
     const y0 = area.y + (area.h - ch * rows) / 2
@@ -1338,7 +1341,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     } else if (side) { lx = area.x + area.w * 0.36; lw = area.w * 0.64; ly = area.y - (head ? 120 * u : 0) }
     const rowH = (sc.kind === 'feed' ? 118 : 96) * u, gap = 18 * u
     const avail = (portrait ? area.y + area.h - ly : area.h + (side && sc.kind === 'feed' ? 120 * u : 0))
-    const y0 = portrait ? ly : ly + Math.max(0, (avail - it.length * (rowH + gap)) / 2)
+    // Vertical shapes: the list sits in the middle of the free space rather than hugging the headline.
+    const y0 = ly + Math.max(0, (avail - it.length * (rowH + gap)) / (portrait ? 2.6 : 2))
     for (let k = 0; k < it.length; k++) {
       const [t1, t2] = split(it[k])
       const delay = 0.4 + k * (sc.kind === 'feed' ? 0.65 : 0.5)
@@ -1418,18 +1422,22 @@ export function sceneAt(tl: Timeline, t: number): number {
  *  soft zoom and a push, lively ads cut faster. Special moves (iris, glitch, spin …) only when chosen. */
 export function motionFamily(p: Pick<AdProject, 'look' | 'style'>): 'calm' | 'normal' | 'lively' {
   const pace = p.style?.pace || 'normal'
-  if (pace === 'calm' || ['linen', 'sand', 'editorial', 'mono', 'golden', 'fresh'].indexOf(p.look || '') >= 0) return pace === 'fast' ? 'normal' : 'calm'
-  if (pace === 'fast' || ['miami', 'bold', 'tropic', 'noir'].indexOf(p.look || '') >= 0) return 'lively'
+  if (pace === 'calm' || ['linen', 'sand', 'editorial', 'mono', 'golden', 'fresh', 'holiday', 'champagne'].indexOf(p.look || '') >= 0) return pace === 'fast' ? 'normal' : 'calm'
+  if (pace === 'fast' || ['miami', 'bold', 'tropic', 'noir', 'festival'].indexOf(p.look || '') >= 0) return 'lively'
   return 'normal'
 }
+// CLEAN TRANSITIONS (Jon, 2026-11-03: "we need transitions but make sure they are not crazy"; 2026-11-04: "quality vs
+// quantity"). Auto uses two moves per family and keeps them in rhythm: calm = dissolve and a soft blur; normal = a
+// slow zoom-dissolve and a plain dissolve; lively = push and zoom. Whips, spins, glitches and blinds are only ever
+// chosen by hand on a scene. End cards and the designs that make their own entrance always dissolve in.
 export function transitionOf(p: AdProject, i: number): AdTransition {
   const t = p.scenes[i]?.tr || 'auto'
   if (t !== 'auto') return t
   const k = p.scenes[i].kind, fam = motionFamily(p)
-  if (k === 'cta' || k === 'contact' || k === 'reveal' || k === 'mask') return 'fade' // they make their own entrance
-  if (fam === 'calm') return (['fade', 'blur', 'fade', 'zoom'] as AdTransition[])[i % 4]
-  if (fam === 'lively') return (['push', 'zoom', 'slide', 'whip'] as AdTransition[])[i % 4]
-  return (['zoom', 'fade', 'push', 'fade'] as AdTransition[])[i % 4]
+  if (k === 'cta' || k === 'contact' || k === 'reveal' || k === 'mask' || k === 'poster') return 'fade'
+  if (fam === 'calm') return (['fade', 'blur'] as AdTransition[])[i % 2]
+  if (fam === 'lively') return (['push', 'zoom'] as AdTransition[])[i % 2]
+  return (['zoom', 'fade'] as AdTransition[])[i % 2]
 }
 /** Film finish: a soft vignette and a fine moving grain, so it reads as footage, not slides. */
 let grain: HTMLCanvasElement | null = null

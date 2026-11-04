@@ -3,7 +3,7 @@
 //   GET ?id=            → one project (+ a signed URL for its voice take)
 //   POST { new: true }  → a fresh project with the house defaults
 //   POST { project }    → save
-//   DELETE ?id=         → delete it and its voice takes (full)
+//   DELETE ?id=         → delete it and its voice takes (edit — Jon, 2026-11-04: "need to be able to delete ads")
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { listProjects, getProject, saveProject, deleteProject, newProject, signedAudio, normalize } from '@/lib/ad-studio'
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const g = await requireLevel('ads', 'full'); if (!g.ok) return g.res
+  const g = await requireLevel('ads', 'edit'); if (!g.ok) return g.res
   const id = req.nextUrl.searchParams.get('id') || ''
   if (!id) return NextResponse.json({ ok: false, error: 'id is required' }, { status: 400 })
   try { await deleteProject(id); return NextResponse.json({ ok: true }) }

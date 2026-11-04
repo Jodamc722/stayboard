@@ -41,7 +41,7 @@ export default async function AdsPage({ searchParams }: { searchParams?: { full?
     return (
       <div style={{ minHeight: '100vh', background: '#0E1116' }}>
         {fonts}
-        <AdStudio full display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'full')} />
+        <AdStudio full display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'edit')} />
       </div>
     )
   }
@@ -50,7 +50,7 @@ export default async function AdsPage({ searchParams }: { searchParams?: { full?
       {/* Top padding keeps the editor's top bar (voice + export buttons) clear of the floating Brief and bell buttons. */}
       <div style={{ padding: '56px 0 24px' }}>
         {fonts}
-        <AdStudio display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'full')} />
+        <AdStudio display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'edit')} />
       </div>
     </Shell>
   )
