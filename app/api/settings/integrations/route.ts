@@ -11,7 +11,7 @@ import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { pageAllowed } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getConnections, publicView, slackAppConfigured } from '@/lib/integrations'
-import { cloudbedsConfig } from '@/lib/garden/cloudbeds'
+import { cloudbedsConfig, cloudbedsHint } from '@/lib/garden/cloudbeds'
 
 export const dynamic = 'force-dynamic'
 
@@ -105,7 +105,7 @@ export async function GET() {
         connected: cloudbedsConfig().mode !== 'none',
         summary: cloudbedsConfig().mode !== 'none'
           ? `Connected by ${cloudbedsConfig().mode === 'api_key' ? 'property API key' : 'OAuth app'}${cloudbedsConfig().propertyId ? ` · property ${cloudbedsConfig().propertyId}` : ''}. Feeds and a test button are on Garden Hotel → Setup.`
-          : 'Not connected — the Garden Hotel tabs are empty until a Cloudbeds key is set.',
+          : (cloudbedsHint() || 'Not connected — the Garden Hotel tabs are empty until a Cloudbeds key is set.'),
         uses: [
           'Garden Hotel → Today: arrivals, departures, in-house and room condition',
           'Rooms & cleans: departure cleans and stayovers created from reservations; a finished clean marks the room clean in Cloudbeds',

@@ -22,9 +22,25 @@ const API_BASE = process.env.CLOUDBEDS_API_BASE || 'https://api.cloudbeds.com/ap
 const TOKEN_URL = 'https://hotels.cloudbeds.com/api/v1.2/access_token'
 
 export type CbConfig = { mode: 'api_key' | 'oauth' | 'none'; propertyId: string | null }
+// The key under the documented name, or under the name it was first saved with in Vercel
+// (2026-11-04: CLOUDBEDSSECRETKEY — Jon: "secret key is api"; CLIENTIDCLOUDEDS is the client id
+// and is not needed for an API key).
+function apiKey(): string {
+  const k = (process.env.CLOUDBEDS_API_KEY || '').trim()
+  if (k) return k
+  const alt = (process.env.CLOUDBEDSSECRETKEY || '').trim()
+  return alt
+}
+/** Why the connection is off when something Cloudbeds-shaped IS in Vercel — for the setup row. */
+export function cloudbedsHint(): string | null {
+  if (cloudbedsConfig().mode !== 'none') return null
+  if ((process.env.CLOUDBEDSSECRETKEY || '').trim() || (process.env.CLIENTIDCLOUDEDS || '').trim())
+    return 'Vercel has CLIENTIDCLOUDEDS but no API key — save the Cloudbeds API key as CLOUDBEDS_API_KEY.'
+  return null
+}
 export function cloudbedsConfig(): CbConfig {
   const propertyId = (process.env.CLOUDBEDS_PROPERTY_ID || '').trim() || null
-  if ((process.env.CLOUDBEDS_API_KEY || '').trim()) return { mode: 'api_key', propertyId }
+  if (apiKey()) return { mode: 'api_key', propertyId }
   if (process.env.CLOUDBEDS_CLIENT_ID && process.env.CLOUDBEDS_CLIENT_SECRET && process.env.CLOUDBEDS_REFRESH_TOKEN) return { mode: 'oauth', propertyId }
   return { mode: 'none', propertyId }
 }
@@ -48,7 +64,7 @@ async function accessToken(): Promise<string> {
 
 async function authHeaders(): Promise<Record<string, string>> {
   const cfg = cloudbedsConfig()
-  if (cfg.mode === 'api_key') return { 'x-api-key': String(process.env.CLOUDBEDS_API_KEY).trim() }
+  if (cfg.mode === 'api_key') return { 'x-api-key': apiKey() }
   if (cfg.mode === 'oauth') return { authorization: `Bearer ${await accessToken()}` }
   throw new Error('Cloudbeds is not connected (set CLOUDBEDS_API_KEY or the OAuth trio in Vercel)')
 }
