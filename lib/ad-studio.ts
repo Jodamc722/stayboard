@@ -34,14 +34,15 @@ export async function defaultContact(): Promise<AdContact> {
   }
 }
 
-export async function listProjects(): Promise<{ id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string; status: string }[]> {
+export async function listProjects(): Promise<{ id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string; status: string; kind: string; look: string; thumb: string; moment: string }[]> {
   await ensureBucket()
   const sb = supabaseAdmin()
   const { data } = await sb.storage.from(BUCKET).list('projects', { limit: 200, sortBy: { column: 'updated_at', order: 'desc' } })
   const files = (data || []).filter(f => /\.json$/.test(f.name))
   const out = await Promise.all(files.slice(0, 60).map(async f => {
     const p = await getProject(f.name.replace(/\.json$/, ''))
-    return p ? { id: p.id, name: p.name, updatedAt: p.updatedAt, updatedBy: p.updatedBy, scenes: p.scenes.length, format: p.format, status: p.status || 'draft' } : null
+    const thumb = p ? (p.scenes.map(x => x.photos.find(u => !u.startsWith('video:')) || '').find(Boolean) || '') : ''
+    return p ? { id: p.id, name: p.name, updatedAt: p.updatedAt, updatedBy: p.updatedBy, scenes: p.scenes.length, format: p.format, status: p.status || 'draft', kind: p.kind || 'video', look: p.look || 'stay', thumb, moment: p.moment || '' } : null
   }))
   return out.filter(Boolean).sort((a: any, b: any) => String(b.updatedAt).localeCompare(String(a.updatedAt))) as any
 }
@@ -120,7 +121,9 @@ export function normalize(p: any): AdProject {
     id: safeId(p?.id) || Date.now().toString(36),
     name: String(p?.name || 'Untitled ad').slice(0, 120),
     prompt: String(p?.prompt || '').slice(0, 2000),
-    format: (['16:9', '9:16', '1:1', '4:5'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
+    format: (['16:9', '9:16', '1:1', '4:5', 'letter'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
+    kind: (['video', 'flyer', 'post', 'story'].indexOf(p?.kind) >= 0 ? p.kind : 'video'),
+    moment: typeof p?.moment === 'string' ? p.moment.slice(0, 40) : undefined,
     audience: (['owners', 'partners', 'guests'].indexOf(p?.audience) >= 0 ? p.audience : 'owners'),
     look: /^[a-z]{2,12}$/.test(String(p?.look || '')) ? String(p.look) : 'stay',
     style: (() => {

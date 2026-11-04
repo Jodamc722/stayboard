@@ -15,7 +15,7 @@
 //  - The STAY mark is gold in video, transparent, no chip. The end card is Nick's card.
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
-export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'timeline' | 'team' | 'quote' | 'contact' | 'cta'
+export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'timeline' | 'team' | 'quote' | 'poster' | 'contact' | 'cta'
 /** Jon, 2026-11-02: "need more style … a wide range of edits, range of styles and looks". */
 export type AdStyle = {
   font: 'auto' | 'sans' | 'serif' | 'condensed' | 'elegant'
@@ -53,7 +53,9 @@ export const CAMS: { key: AdCam; label: string }[] = [{ key: 'auto', label: 'Aut
 /** Colour presets for the custom-colour controls (beyond the looks). */
 export const SWATCHES = ['#D2B077', '#0D2131', '#FFFFFF', '#111111', '#F4EEE4', '#E2412B', '#FF5FA2', '#FF8A5B', '#F2B544', '#5FE0D2', '#2F7DF6', '#4CC488', '#7B5CF0', '#1D3A31', '#B5562E', '#E9D8B4']
 export type AdAudience = 'owners' | 'partners' | 'guests'
-export type AdFormat = '16:9' | '9:16' | '1:1' | '4:5'
+export type AdFormat = '16:9' | '9:16' | '1:1' | '4:5' | 'letter'
+/** What a project is (Jon, 2026-11-04): a video ad, a static flyer/poster, a short animated post, or an owner story. */
+export type AdKindOf = 'video' | 'flyer' | 'post' | 'story'
 export type AdScene = {
   id: string
   kind: AdKind
@@ -111,6 +113,10 @@ export type AdProject = {
   goal?: string
   /** Where it will run (PLATFORMS key) — sets the shape, the safe zones and the length rules. */
   platform?: string
+  /** What this project is: video (default), flyer (one static design), post (a short loop), story. */
+  kind?: AdKindOf
+  /** The calendar moment it was made for (marketing-calendar key), if any. */
+  moment?: string
   /** Team workflow: draft → review → approved, with notes for whoever picks it up next. */
   status?: 'draft' | 'review' | 'approved'
   notes?: string
@@ -124,8 +130,16 @@ export type AdProject = {
   updatedBy: string
 }
 
-export const FORMATS: Record<AdFormat, [number, number]> = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080], '4:5': [1080, 1350] }
-export const FORMAT_LABEL: Record<AdFormat, string> = { '16:9': 'Landscape 16:9 · YouTube, web', '9:16': 'Vertical 9:16 · Reels, TikTok, Stories', '1:1': 'Square 1:1 · Feed posts', '4:5': 'Portrait 4:5 · Instagram and Facebook feed' }
+export const FORMATS: Record<AdFormat, [number, number]> = { '16:9': [1920, 1080], '9:16': [1080, 1920], '1:1': [1080, 1080], '4:5': [1080, 1350], letter: [2550, 3300] }
+export const FORMAT_LABEL: Record<AdFormat, string> = { '16:9': 'Landscape 16:9 · YouTube, web', '9:16': 'Vertical 9:16 · Reels, TikTok, Stories', '1:1': 'Square 1:1 · Feed posts', '4:5': 'Portrait 4:5 · Instagram and Facebook feed', letter: 'Letter 8.5×11 in · print' }
+/** Flyer sizes. */
+export const FLYER_SIZES: { key: AdFormat; label: string; hint: string }[] = [
+  { key: '4:5', label: 'Instagram post', hint: '1080×1350' },
+  { key: '9:16', label: 'Story', hint: '1080×1920' },
+  { key: '1:1', label: 'Square', hint: '1080×1080' },
+  { key: 'letter', label: 'Print · Letter', hint: '8.5×11 in at 300 dpi' },
+  { key: '16:9', label: 'Screen / slide', hint: '1920×1080' },
+]
 
 /** Voices from the ElevenLabs library (paid plan). Victoria is the house sales voice (Jon, 2026-10-29). */
 export const VOICES: { id: string; name: string; blurb: string }[] = [
@@ -168,6 +182,7 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'timeline', label: 'Timeline', hint: 'Milestones along a gold line, landing one by one. Rows: Week 1|Agreement and walk-through. Up to 6.' },
   { kind: 'team', label: 'Team', hint: 'People cards: a round photo (or initials), name and role. Rows: Name|Role; one photo per row, in order. Up to 6.' },
   { kind: 'quote', label: 'Quote', hint: 'One line we stand behind, big, with a big quotation mark; the sub line is who said it. Photo behind.' },
+  { kind: 'poster', label: 'Poster', hint: 'A designed page: kicker, date pill, big headline bottom-left, a line, and a call-to-action bar. Row 1: the date; row 2: the button text. Flyers and posts.' },
   { kind: 'contact', label: 'Contact card', hint: 'The end card: photo, Book a call, number, email.' },
   { kind: 'cta', label: 'Book now', hint: 'Guest end card / social post: photo, headline, a button. Row 1 is the button text.' },
 ]
@@ -376,6 +391,8 @@ type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boole
 type Palette = { serif?: boolean; light?: boolean; def?: LookDef; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
 /** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
  *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
+/** The curated set shown first (Jon, 2026-11-04: "quality vs quantity"): six designed looks; the rest sit under "More looks". */
+export const LOOKS_FEATURED = ['stay', 'editorial', 'miami', 'sand', 'festival', 'holiday']
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
   { key: 'stay', label: 'Stay navy & gold', blurb: 'The house look', c: { gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
   { key: 'sunset', label: 'Sunset', blurb: 'Warm coral, golden hour', c: { def: { grade: 'warm', finish: 'glow' }, gold: '#FFB37A', ink: '#FFF4EA', mut: '#E7C3B0', navy: '#2A1220', navy2: '#4A1E2C', deep: '#1A0A14', tint: '38,12,22', glass: 'rgba(48,16,30,0.6)', line: 'rgba(255,220,200,0.22)', green: '#7FD1A6' } },
@@ -394,6 +411,10 @@ export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] 
   { key: 'tropic', label: 'Tropic', blurb: 'Jungle green and coral, vivid', c: { def: { font: 'sans', grade: 'vivid', finish: 'soft', logo: 'white' }, gold: '#FF8A5B', ink: '#FFF8F0', mut: '#BFD9C8', navy: '#0B2A1F', navy2: '#124234', deep: '#061710', tint: '6,30,20', glass: 'rgba(8,36,26,0.62)', line: 'rgba(220,255,235,0.2)', green: '#7FE3A8' } },
   { key: 'aurora', label: 'Aurora', blurb: 'Teal-to-violet gradient, bokeh, modern', c: { def: { font: 'sans', grade: 'cool', finish: 'soft', logo: 'white', fx: ['bokeh'], mesh: ['#0E7C86', '#3B2A8C', '#0A1030'] }, gold: '#7CF2E0', ink: '#F4FBFF', mut: '#B9D4E6', navy: '#121A3F', navy2: '#1E2A5E', deep: '#080C22', tint: '14,18,56', glass: 'rgba(20,28,80,0.55)', line: 'rgba(200,240,255,0.22)', green: '#7CF2B0' } },
   { key: 'champagne', label: 'Champagne', blurb: 'Gold gradient, elegant serif, sparkle', c: { def: { font: 'elegant', grade: 'golden', finish: 'glow', logo: 'white', fx: ['sparkle'], mesh: ['#8A6A2E', '#3A2A12', '#1A1208'] }, gold: '#F3D9A0', ink: '#FFF8EC', mut: '#D9C7A6', navy: '#2A1E0E', navy2: '#4A3617', deep: '#160F06', tint: '34,24,10', glass: 'rgba(50,36,16,0.6)', line: 'rgba(255,230,180,0.25)', green: '#CDE3A0' } },
+  // Seasonal looks (Jon, 2026-11-04: Christmas post, Ultra, boat show — "real design").
+  { key: 'holiday', label: 'Holiday', blurb: 'Deep green, warm gold, soft bokeh lights — Christmas and New Year', c: { def: { font: 'serif', grade: 'warm', finish: 'glow', logo: 'gold', fx: ['bokeh'] }, gold: '#E8C27A', ink: '#FBF4E6', mut: '#C9C3A8', navy: '#0C2A22', navy2: '#143C31', deep: '#06170F', tint: '6,30,22', glass: 'rgba(10,40,30,0.62)', line: 'rgba(232,194,122,0.28)', green: '#7FD9A4' } },
+  { key: 'festival', label: 'Festival', blurb: 'Electric violet and acid lime, condensed caps, neon grid — Ultra, F1, race week', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white', fx: ['grid'], mesh: ['#3A0CA3', '#7209B7', '#0B0220'] }, gold: '#C8FF3D', ink: '#FFFFFF', mut: '#D8CCFF', navy: '#12063A', navy2: '#2B0E7A', deep: '#07021A', tint: '18,6,58', glass: 'rgba(30,10,90,0.6)', line: 'rgba(200,255,61,0.28)', green: '#C8FF3D' } },
+  { key: 'nautical', label: 'Nautical', blurb: 'Navy, white and a red stripe, clean sans — boat shows and the Fourth', c: { light: true, def: { font: 'sans', caps: true, grade: 'cool', finish: 'clean', logo: 'black', fx: [] }, gold: '#C62828', ink: '#0B1F3A', mut: '#4B5E78', navy: '#F4F6F9', navy2: '#FFFFFF', deep: '#E6EBF2', tint: '244,246,249', glass: 'rgba(255,255,255,0.78)', line: 'rgba(11,31,58,0.16)', green: '#1B7F5A' } },
   { key: 'midnight', label: 'Midnight', blurb: 'Deep blue, light rays, cinematic', c: { def: { font: 'sans', grade: 'cool', finish: 'film', logo: 'gold', fx: ['rays'], mesh: ['#0A2A5A', '#071530', '#03091A'] }, gold: '#D2B077', ink: '#EAF0FF', mut: '#A8B6D0', navy: '#071530', navy2: '#0E2250', deep: '#030A1C', tint: '5,16,40', glass: 'rgba(8,22,60,0.6)', line: 'rgba(200,220,255,0.2)', green: '#5FE0A0' } },
   { key: 'golden', label: 'Golden hour', blurb: 'Warm amber, elegant serif, light leak', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'gold' }, gold: '#F2B544', ink: '#FFF6E8', mut: '#E3CDB0', navy: '#24170C', navy2: '#3D2814', deep: '#140C05', tint: '36,22,10', glass: 'rgba(40,24,10,0.6)', line: 'rgba(255,220,170,0.22)', green: '#B9D98A' } },
 ]
@@ -1116,6 +1137,63 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.fillStyle = dots[k % dots.length]; ctx.beginPath(); ctx.arc(lx + 40 * u, yy + rowH / 2, 9 * u, 0, Math.PI * 2); ctx.fill()
       plain(ctx, t1, lx + 72 * u, yy + 18 * u, lwid - 110 * u, 34 * u, A.body, C.ink, 700)
       plain(ctx, t2, lx + 72 * u, yy + 62 * u, lwid - 110 * u, 26 * u, A.body, C.mut, 500)
+      ctx.restore()
+    }
+    return
+  }
+
+  // POSTER — the flyer design (Jon, 2026-11-04: flyers, Christmas post, boat show, "real design"). Full-bleed
+  // photo with a deep gradient from the bottom, a small kicker up top, a date pill, the headline anchored
+  // bottom-left, a line under it, and a solid call-to-action bar along the bottom edge.
+  if (sc.kind === 'poster') {
+    const img = im(0)
+    if (img) cover(ctx, img, 0, 0, W, H, 1.02 + 0.03 * clamp(local / Math.max(dur, 1)))
+    else meshBg(ctx, W, H, local)
+    const g = ctx.createLinearGradient(0, 0, 0, H)
+    g.addColorStop(0, `rgba(${C.tint},${TA(0.25)})`); g.addColorStop(0.45, `rgba(${C.tint},${TA(0.18)})`); g.addColorStop(0.72, `rgba(${C.tint},${TA(0.72)})`); g.addColorStop(1, `rgba(${C.tint},${TA(0.96)})`)
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+    const date = (sc.items[0] || '').replace(/\|.*/, '').toUpperCase().trim()
+    const cta = (sc.items[1] || '').replace(/\|.*/, '').trim()
+    const kicker = (sc.badge || 'Stay Hospitality · South Florida').toUpperCase()
+    // kicker, top-left, tracked
+    ctx.save(); ctx.globalAlpha *= appear(local, 0.05)
+    ctx.font = fnt(700, 26 * u, A.body); ctx.fillStyle = C.gold
+    const kk = kicker.split('').join(String.fromCharCode(8202))
+    ctx.fillText(kk, pad, pad + 26 * u)
+    ctx.fillRect(pad, pad + 44 * u, 70 * u, 4 * u)
+    ctx.restore()
+    // bottom bar
+    const barH = cta ? (portrait ? 118 : 104) * u : 0
+    if (cta) {
+      const a = appear(local, 0.9)
+      ctx.save(); ctx.globalAlpha *= a
+      ctx.fillStyle = C.gold; ctx.fillRect(0, H - barH, W, barH)
+      const fs = fitSize(ctx, cta, W - pad * 2 - 80 * u, 40 * u, barH * 0.6, 800, A.body)
+      ctx.font = fnt(800, fs, A.body); ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'
+      ctx.fillText(cta.toUpperCase().split('').join(String.fromCharCode(8202)), pad, H - barH / 2 + 2 * u)
+      // arrow
+      const ax = W - pad - 40 * u, ay = H - barH / 2
+      ctx.strokeStyle = onAccent(); ctx.lineWidth = 5 * u; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(ax - 40 * u, ay); ctx.lineTo(ax, ay); ctx.moveTo(ax - 16 * u, ay - 16 * u); ctx.lineTo(ax, ay); ctx.lineTo(ax - 16 * u, ay + 16 * u); ctx.stroke()
+      ctx.restore()
+    }
+    // headline block, anchored to the bottom (above the bar)
+    const tw = W - pad * 2
+    ctx.font = fnt(500, 34 * u, A.body)
+    const subH = sc.sub ? (layout(ctx, sc.sub, tw).length || 1) * 34 * u * 1.35 + 20 * u : 0
+    const size = fitSize(ctx, head, tw, (portrait ? 118 : 108) * u, H * 0.34, 800)
+    const hh = linesH(ctx, head, tw, size)
+    const by = H - barH - (portrait ? 70 : 56) * u - subH - hh
+    rich(ctx, head, pad, by, tw, size, { font: A.display, local, delay: 0.35, stagger: 0.18, maxH: H * 0.36 })
+    if (sc.sub) plain(ctx, sc.sub, pad, by + hh + 16 * u, tw, 34 * u, A.body, C.ink, 500, 'left', appear(local, 0.8))
+    // date pill above the headline
+    if (date) {
+      const a = appear(local, 0.2)
+      ctx.save(); ctx.globalAlpha *= a
+      ctx.font = fnt(800, 34 * u, A.display)
+      const dw = ctx.measureText(date).width + 56 * u, dh = 66 * u
+      const dy = by - dh - 30 * u
+      rr(ctx, pad, dy, dw, dh, dh / 2); ctx.fillStyle = C.gold; ctx.fill()
+      ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(date, pad + 28 * u, dy + dh / 2 + 2 * u)
       ctx.restore()
     }
     return

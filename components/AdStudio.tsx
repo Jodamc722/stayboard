@@ -14,14 +14,16 @@
 // box that rewrites just that scene (with Undo); the whole ad takes a change request too; a Sounds tab
 // generates music and sound effects with ElevenLabs and keeps them as a playlist; any scene can carry
 // a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
+import StudioHome, { KIND_META } from './StudioHome'
+import { type Moment } from '@/lib/marketing-calendar'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
-type ListRow = { id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string; status?: string }
+type ListRow = { id: string; name: string; updatedAt: string; updatedBy: string; scenes: number; format: string; status?: string; kind?: string; look?: string; thumb?: string; moment?: string }
 type Audit = { score: number; verdict: string; strengths: string[]; issues: { scene: number; problem: string; fix: string; patch: Partial<AdScene> | null; remove: boolean; done?: boolean }[]; checks: AuditIssue[]; note?: string }
 type Sound = { key: string; name: string; kind: 'music' | 'sfx'; url: string; dur: number; prompt: string; createdAt: string; by: string; path: string }
 type LibVoice = { id: string; name: string; blurb: string; preview: string }
@@ -39,7 +41,7 @@ const UI = {
   bg: '#0E1116', panel: '#151A21', panel2: '#1B222B', line: '#262E39', ink: '#E8EBEF', mut: '#8C96A3', gold: '#D2B077', blue: '#4C8DF6', red: '#E5675C', green: '#4CC488',
 }
 const KIND_COLOR: Record<AdKind, string> = {
-  cta: '#E0A64C', mask: '#E0C04C', panel: '#7FA6C9', ticker: '#E06C4C', callouts: '#4CC4A8', polaroid: '#C9B79A', event: '#A06CE0', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', timeline: '#D9A441', team: '#7CB5A0', quote: '#B89BD9', contact: '#B58B3E',
+  cta: '#E0A64C', mask: '#E0C04C', panel: '#7FA6C9', ticker: '#E06C4C', callouts: '#4CC4A8', polaroid: '#C9B79A', event: '#A06CE0', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', timeline: '#D9A441', team: '#7CB5A0', quote: '#B89BD9', poster: '#E0A64C', contact: '#B58B3E',
 }
 const AUD: Record<AdAudience, { label: string; brief: string; hint: string }> = {
   owners: { label: 'Owners', brief: 'property owners', hint: 'Sell management: revenue, team, Lighthouse; ends on Nick' },
@@ -48,6 +50,8 @@ const AUD: Record<AdAudience, { label: string; brief: string; hint: string }> = 
 }
 /** Jon, 2026-11-02: "never use a collage photo ever" — photos captioned as grids/collages are left out. */
 const COLLAGE = /collage|grid|mosaic|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i
+/** The date block a flyer shows for a calendar moment: 'DEC 4–6' / 'DEC 25'. */
+const whenShort = (m: Moment) => { const f = (iso: string) => new Date(iso + 'T12:00:00'); const a = f(m.start), b = f(m.end); const mo = (d: Date) => d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase(); return a.getTime() === b.getTime() ? mo(a) + ' ' + a.getDate() : a.getMonth() === b.getMonth() ? mo(a) + ' ' + a.getDate() + '–' + b.getDate() : mo(a) + ' ' + a.getDate() + ' – ' + mo(b) + ' ' + b.getDate() }
 const proxied = (u: string) => (!u ? '' : u.startsWith('/') ? u : /guesty|cloudinary|muscache/i.test(u) ? '/api/img-proxy?url=' + encodeURIComponent(u) : u)
 const fmtT = (s: number) => { const m = Math.floor(s / 60); const r = s - m * 60; return m + ':' + (r < 10 ? '0' : '') + r.toFixed(1) }
 
@@ -96,6 +100,11 @@ function LookPreview({ proj, look, style, assets, w = 168 }: { proj: AdProject; 
 
 export default function AdStudio({ display, body, serif, condensed, elegant, canEdit, canDelete, full }: { display: string; body: string; serif?: string; condensed?: string; elegant?: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
   const [list, setList] = useState<ListRow[]>([])
+  // The front door (Jon, 2026-11-04): start from fresh every time; the last ad is one click away in Your work.
+  const [home, setHome] = useState(true)
+  // Looks: the six designed ones first; the rest behind More looks (Jon, 2026-11-04: quality over quantity).
+  const [moreLooks, setMoreLooks] = useState(false)
+  const looksShown = (cur?: string) => moreLooks ? LOOKS : LOOKS.filter(l => LOOKS_FEATURED.indexOf(l.key) >= 0 || l.key === cur)
   const [p, setP] = useState<AdProject | null>(null)
   const [audioUrl, setAudioUrl] = useState<string | null>(null)
   const [sel, setSel] = useState(0)
@@ -188,12 +197,12 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     setErr(''); setPlan(null)
     setP(r.project); setAudioUrl(r.audioUrl || null); setSel(0); setT(1.6); setSaved('saved'); setBrief(r.project.prompt || '')
     try { localStorage.setItem('adstudio.last', id) } catch { /* fine */ }
+    setHome(false)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadList().then(() => {
       let last = ''
       try { last = localStorage.getItem('adstudio.last') || '' } catch { /* fine */ }
-      if (last) open(last, true)
     })
     const l = new Image(); l.src = '/ads/stay-logo-gold.png'; l.onload = () => { logo.current = l; logos.current.gold = l }
     ;(['black', 'white'] as const).forEach(c => { const im = new Image(); im.src = '/ads/stay-logo-' + c + '.png'; im.onload = () => { logos.current[c] = im } })
@@ -687,7 +696,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       const cv = canvasRef.current, cur = pRef.current
       if (cv && cur) {
         const T = timeline(cur)
-        let now = tRef.current
+        let now = cur.kind === 'flyer' ? Math.max(0, T.total - 0.4) : tRef.current
         const pl = play0.current
         if (pl && actx.current) {
           now = pl.from + Math.max(0, actx.current.currentTime - pl.at)
@@ -786,9 +795,25 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!p || !tl) return
     const [W, H] = FORMATS[p.format]
     const cv = document.createElement('canvas'); cv.width = W; cv.height = H
-    drawFrame(cv.getContext('2d')!, p, tl, Math.min(t, tl.total - 0.01), assets())
+    drawFrame(cv.getContext('2d')!, p, tl, p.kind === 'flyer' ? Math.max(0, tl.total - 0.4) : Math.min(t, tl.total - 0.01), assets())
     const b = await new Promise<Blob | null>(res => cv.toBlob(x => res(x), 'image/png'))
     if (b) download(b, 'png')
+  }
+  /** The flyer as a PDF at its real size (Letter prints at 300 dpi; social sizes as a one-page PDF). */
+  const exportPdf = async () => {
+    if (!p || !tl) return
+    setBusy('export')
+    try {
+      const [W, H] = FORMATS[p.format]
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+      drawFrame(cv.getContext('2d')!, p, tl, Math.max(0, tl.total - 0.4), assets())
+      const { jsPDF } = await import('jspdf')
+      const inW = p.format === 'letter' ? 8.5 : W / 150, inH = p.format === 'letter' ? 11 : H / 150
+      const doc = new jsPDF({ orientation: inW >= inH ? 'landscape' : 'portrait', unit: 'in', format: [inW, inH] })
+      doc.addImage(cv.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, inW, inH)
+      doc.save(`${fileBase()}.pdf`)
+    } catch (e: any) { setErr('PDF failed: ' + (e?.message || e)) }
+    setBusy('')
   }
   /** An animated GIF of the whole ad (no sound) — "a static image that moves", for posts and email. */
   const exportGif = async () => {
@@ -970,6 +995,82 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!r?.ok) setErr(r?.error || 'Photo search failed.')
   }
 
+  /** Quick delete from the front door (Jon, 2026-11-04: "need a quick delete"). */
+  const quickDelete = async (id: string) => {
+    if (!canDelete) return
+    const row = list.find(r => r.id === id)
+    if (!window.confirm('Delete "' + (row?.name || 'this piece') + '"? This cannot be undone.')) return
+    await fetch('/api/ads?id=' + encodeURIComponent(id), { method: 'DELETE' })
+    if (p?.id === id) { setP(null); pRef.current = null }
+    loadList()
+  }
+  const quickDuplicate = async (id: string) => {
+    const r = await fetch('/api/ads?id=' + encodeURIComponent(id)).then(x => x.json()).catch(() => null)
+    if (!r?.ok) return
+    const n = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
+    if (!n?.ok) return
+    const copy: AdProject = { ...r.project, id: n.project.id, name: r.project.name + ' · copy', voice: null, status: 'draft', createdAt: n.project.createdAt, updatedAt: n.project.updatedAt }
+    await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: copy }) })
+    loadList()
+  }
+  /** Photos for a flyer/post scene: the library, collages out, nothing repeated. */
+  const libPhotos = async (q: string, n: number, avoid: string[] = []): Promise<string[]> => {
+    const r = await fetch('/api/photos/library?search=' + encodeURIComponent(q)).then(x => x.json()).catch(() => null)
+    const hs: Hit[] = r?.ok ? r.hits || [] : []
+    let urls = hs.filter((h: any) => h.active !== false && !COLLAGE.test(String(h.caption || ''))).map(h => h.view || h.url).filter(u => avoid.indexOf(u) < 0)
+    if (urls.length) {
+      const c = await fetch('/api/ads/photo-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: urls.slice(0, 30) }) }).then(x => x.json()).catch(() => null)
+      if (c?.ok && c.collage?.length) urls = urls.filter(u => c.collage.indexOf(u) < 0)
+    }
+    return urls.slice(0, n)
+  }
+  /** A flyer: one designed page. From a calendar moment, or blank in the house look. */
+  const startFlyer = async (m?: Moment) => {
+    const cur = await newAd(); if (!cur) return
+    setBusy('template')
+    const photos = await libPhotos(m?.photo || 'exterior', 1)
+    const guests = !m || m.audience !== 'owners'
+    const scenes: AdScene[] = m
+      ? [{ id: 's1', kind: 'poster', vo: '', head: m.headline, sub: m.sub, items: [m.audience === 'owners' ? '' : whenShort(m), m.audience === 'owners' ? 'Talk to Nick · 651-200-8283' : 'Book at stay-hospitality.com'], photos, dur: 6 }]
+      : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos, dur: 6 }]
+    setBusy('')
+    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, scenes }))
+    setSel(0); setT(5.5); setHome(false)
+  }
+  /** An animated post: a 4–8 s loop — the moment scene, then the book-now card. */
+  const startPost = async (m?: Moment) => {
+    const cur = await newAd(); if (!cur) return
+    setBusy('template')
+    const a = await libPhotos(m?.photo || 'pool', 1)
+    const b = await libPhotos('ocean view', 1, a)
+    const guests = !m || m.audience !== 'owners'
+    const scenes: AdScene[] = [
+      { id: 's1', kind: 'poster', vo: '', head: m?.headline || 'Your South Florida **stay.**', sub: m?.sub || '', items: [m && guests ? whenShort(m) : '', ''], photos: a, dur: 4 },
+      guests
+        ? { id: 's2', kind: 'cta', vo: '', head: 'Book **direct.**', sub: '', items: ['Book at stay-hospitality.com'], photos: b, dur: 3 }
+        : { id: 's2', kind: 'contact', vo: '', head: 'Talk to **Nick.**', sub: '', items: [], photos: b, dur: 3 },
+    ]
+    setBusy('')
+    change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, scenes }))
+    setSel(0); setT(1.6); setHome(false)
+  }
+  /** A video ad for a moment: the guided start, with the brief and the look already filled in. */
+  const startVideoFor = async (m?: Moment) => {
+    const cur = await newAd(); if (!cur) return
+    setHome(false)
+    if (m) change(d => ({ ...d, kind: 'video', name: m.name, look: m.look, moment: m.key, audience: m.audience === 'owners' ? 'owners' : 'guests', goal: m.audience === 'owners' ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings', format: '9:16', platform: 'reel' }))
+    else change(d => ({ ...d, kind: 'video' }))
+    openStart()
+    if (m) setSt(x => ({ ...x, mode: 'describe', prompt: m.brief, vibe: '' }))
+  }
+  const startStory = async () => {
+    const cur = await newAd(); if (!cur) return
+    change(d => ({ ...d, kind: 'story' }))
+    setHome(false); setSide('stories')
+  }
+  const makeKind = (k: AdKindOf) => { if (k === 'flyer') startFlyer(); else if (k === 'post') startPost(); else if (k === 'story') startStory(); else startVideoFor() }
+  const makeMoment = (m: Moment, k: AdKindOf) => { if (k === 'flyer') startFlyer(m); else if (k === 'post') startPost(m); else startVideoFor(m) }
+
   const del = async () => {
     if (!p || !canDelete) return
     if (!window.confirm('Delete "' + p.name + '" and its voice takes? This cannot be undone.')) return
@@ -980,6 +1081,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   // ─────────────────────────────── render ───────────────────────────────
   const sc = p ? p.scenes[sel] : null
   const [FW, FH] = p ? FORMATS[p.format] : [1920, 1080]
+  const isFlyer = p?.kind === 'flyer'
   const pw = FW >= FH ? (full ? 1280 : 960) : 540 * (FW / FH) * 1.6
   const totalW = 100 // timeline is % based
   const pct = (x: number) => (tl ? (x / tl.total) * totalW : 0)
@@ -992,11 +1094,16 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
         {full
           ? <a href="/ads" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Back to Lighthouse">← Lighthouse</a>
           : <a href="/ads?full=1" target="_blank" rel="noopener" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Open the editor on its own, full screen, in a new tab">⤢ Full screen</a>}
-        {canEdit ? <Btn tone="gold" small onClick={openStart} title="Guided: describe it, answer a few questions, then build">✦ Create new ad</Btn> : null}
+        <Btn small on={home} onClick={() => { stop(); setHome(true); loadList() }} title="Studio home: make something new, the calendar, your work">⌂ Studio</Btn>
+        {canEdit && !home ? <Btn tone="gold" small onClick={() => { stop(); setHome(true); loadList() }} title="Start something new">✦ New</Btn> : null}
         {p ? (
           <input value={p.name} disabled={!canEdit} onChange={e => change(d => ({ ...d, name: e.target.value }))} style={{ ...field, width: 260, padding: '6px 10px', fontWeight: 600 }} />
         ) : null}
-        {p ? (
+        {p && p.kind === 'flyer' ? (
+          <div style={{ display: 'flex', gap: 4 }} title="Flyer size">
+            {FLYER_SIZES.map(x => <Btn key={x.key} small on={p.format === x.key} title={x.hint} onClick={() => change(d => ({ ...d, format: x.key, platform: x.key === '9:16' ? 'story' : x.key === '4:5' ? 'feed' : x.key === '1:1' ? 'square' : 'web' }))}>{x.label}</Btn>)}
+          </div>
+        ) : p ? (
           <div style={{ display: 'flex', gap: 4 }}>
             {PLATFORMS.map(x => <Btn key={x.key} small on={platformOf(p).key === x.key} title={`${x.label} · ${FORMAT_LABEL[x.format]} · best ${x.best}`} onClick={() => change(d => ({ ...d, platform: x.key, format: x.format }))}>{x.label}</Btn>)}
           </div>
@@ -1011,24 +1118,34 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
         <span style={{ marginLeft: 'auto', fontSize: 11.5, color: saved === 'dirty' || saved === 'saving' ? UI.gold : UI.mut }}>
           {saved === 'saving' ? 'Saving…' : saved === 'dirty' ? 'Unsaved changes' : saved === 'saved' ? 'Saved' : ''}
         </span>
-        {p && canEdit ? <Btn tone={stale || !p.voice ? 'blue' : undefined} disabled={!!busy} onClick={makeVoice} title="Records the whole script as one take and cuts the scenes to it">{busy === 'voice' ? 'Recording voice…' : p.voice ? (stale ? 'Re-record voice (script changed)' : 'Re-record voice') : 'Make voice'}</Btn> : null}
+        {p && canEdit && p.kind !== 'flyer' && p.kind !== 'post' ? <Btn tone={stale || !p.voice ? 'blue' : undefined} disabled={!!busy} onClick={makeVoice} title="Records the whole script as one take and cuts the scenes to it">{busy === 'voice' ? 'Recording voice…' : p.voice ? (stale ? 'Re-record voice (script changed)' : 'Re-record voice') : 'Make voice'}</Btn> : null}
         {p ? (exportPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600 }}>Exporting {exportPct}% · keep this tab open</span> : libPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600 }}>Saving to the library {libPct}%</span> : (
           <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <Btn tone="gold" disabled={!!busy} onClick={exportVideo} title="MP4 with sound, at full size">Export MP4</Btn>
-            <Btn small disabled={!!busy} onClick={exportGif} title="An animated GIF, no sound — moves like a post">GIF</Btn>
-            <Btn small disabled={!!busy} onClick={exportPng} title="A still of the frame on screen">PNG</Btn>
+            {p.kind === 'flyer' ? (<>
+              <Btn tone="gold" disabled={!!busy} onClick={exportPng} title="The flyer as an image at full size">Export PNG</Btn>
+              <Btn small disabled={!!busy} onClick={exportPdf} title="The flyer as a PDF (Letter prints at 300 dpi)">PDF</Btn>
+            </>) : (<>
+              <Btn tone="gold" disabled={!!busy} onClick={exportVideo} title="MP4 with sound, at full size">Export MP4</Btn>
+              <Btn small disabled={!!busy} onClick={exportGif} title="An animated GIF, no sound — moves like a post">GIF</Btn>
+              <Btn small disabled={!!busy} onClick={exportPng} title="A still of the frame on screen">PNG</Btn>
+            </>)}
           </span>
         )) : null}
       </div>
       {err ? <div style={{ background: '#3a1d1b', color: '#F3C2BC', padding: '8px 14px', fontSize: 12.5, display: 'flex', gap: 10 }}><span style={{ flex: 1 }}>{err}</span><button onClick={() => setErr('')} style={{ background: 'none', border: 0, color: '#F3C2BC', cursor: 'pointer' }}>Dismiss</button></div> : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: full ? '280px minmax(0,1fr) 360px' : '260px minmax(0,1fr) 330px', minHeight: full ? 'calc(100vh - 230px)' : 560 }}>
+      {home ? (
+        <StudioHome rows={list} canEdit={canEdit} canDelete={canDelete} busy={busy} display={display}
+          onMake={makeKind} onMoment={makeMoment} onOpen={id => open(id)} onDelete={quickDelete} onDuplicate={quickDuplicate} />
+      ) : null}
+      <div style={{ display: home ? 'none' : 'grid', gridTemplateColumns: full ? '280px minmax(0,1fr) 360px' : '260px minmax(0,1fr) 330px', minHeight: full ? 'calc(100vh - 230px)' : 560 }}>
         {/* ── left: brief + ads ── */}
         <div style={{ borderRight: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0 }}>
           <Label>Brief</Label>
           <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={5} disabled={!canEdit} placeholder="What is this ad for? Even one line works, e.g. a cool video for Amrit. I'll work through the details with you first." style={field} />
-          <Label>Length</Label>
+          {!isFlyer ? <><Label>Length</Label>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{[15, 30, 45, 60, 90].map(s => <Btn key={s} small on={seconds === s} onClick={() => setSeconds(s)}>{s}s</Btn>)}</div>
+          </> : null}
           <Label>Audience</Label>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={p?.audience === k} disabled={!p || !canEdit} title={AUD[k].hint} onClick={() => change(d => ({ ...d, audience: k }))}>{AUD[k].label}</Btn>)}
@@ -1064,13 +1181,12 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           ) : side === 'templates' ? (
             <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
               {TEMPLATES.map(tp => (
-                <button key={tp.key} disabled={!p || !canEdit || !!busy} onClick={() => applyTemplate(tp)} style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px', cursor: 'pointer', color: UI.ink, opacity: !p ? 0.5 : 1 }}>
+                <button key={tp.key} disabled={!canEdit || !!busy} onClick={async () => { if (!pRef.current) { const n = await newAd(); if (!n) return } applyTemplate(tp) }} style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px', cursor: 'pointer', color: UI.ink, opacity: !p ? 0.5 : 1 }}>
                   <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{tp.label} <span style={{ color: UI.mut, fontWeight: 500 }}>· {tp.format}</span></span>
                   <span style={{ display: 'block', fontSize: 11, color: UI.mut, marginTop: 2 }}>{tp.blurb}</span>
                 </button>
               ))}
               {busy === 'template' ? <p style={{ fontSize: 11.5, color: UI.gold }}>Filling it with photos from the library…</p> : null}
-              {!p ? <p style={{ fontSize: 11.5, color: UI.mut }}>Start an ad first (+ New ad), then pick a template.</p> : null}
             </div>
           ) : side === 'ideas' ? (
             <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 560, overflowY: 'auto' }}>
@@ -1322,12 +1438,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                     </>
                   ) : key === 'look' ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8, maxHeight: 460, overflowY: 'auto' }}>
-                      {LOOKS.map(l => (
+                      {looksShown(st.look).map(l => (
                         <button key={l.key} onClick={() => pickNext(() => setSt(x => ({ ...x, look: l.key })))} style={{ padding: 0, border: '2px solid ' + (st.look === l.key ? UI.blue : UI.line), borderRadius: 10, overflow: 'hidden', cursor: 'pointer', background: 'none', color: UI.ink, textAlign: 'left' }}>
                           {p && p.scenes.some(x => x.photos.length) ? <LookPreview proj={p} look={l.key} style={{}} assets={assets} w={200} /> : <span style={{ display: 'block', height: 64, background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '12px 12px', fontFamily: display, fontWeight: 800, fontSize: 18, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>}
                           <span style={{ display: 'block', background: UI.panel2, padding: '7px 10px' }}><span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{l.label}</span><span style={{ fontSize: 10.5, color: UI.mut }}>{l.blurb}</span></span>
                         </button>
                       ))}
+                      <button onClick={() => setMoreLooks(!moreLooks)} style={{ border: '1px dashed ' + UI.line, borderRadius: 10, background: 'transparent', color: UI.mut, fontSize: 12, cursor: 'pointer', minHeight: 90 }}>{moreLooks ? 'Fewer looks' : '+ More looks'}</button>
                     </div>
                   ) : key === 'shape' ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1505,7 +1622,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             </div>
           ) : p ? (
             <>
-              {sc && canEdit && tl ? (
+              {sc && canEdit && tl && p.kind !== 'flyer' ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: '100%', maxWidth: FW >= FH ? pw : 520, padding: '6px 8px', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 9 }} title="Scene tools">
                   <span style={{ fontSize: 11.5, fontWeight: 700, color: UI.ink }}>Scene {sel + 1}</span>
                   <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: UI.mut }}>{tl.durs[sel].toFixed(1)} s</span>
@@ -1529,19 +1646,27 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   style={{ width: '100%', height: '100%', display: 'block', borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
                 <canvas ref={safeRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 8 }} />
               </div>
+              {p.kind === 'flyer' ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: FW >= FH ? pw : 520, fontSize: 11.5, color: UI.mut }}>
+                  Static flyer · {FLYER_SIZES.find(x => x.key === p.format)?.label} · {FORMATS[p.format][0]}×{FORMATS[p.format][1]} · pick a design on the right, edit the words below, export PNG or PDF
+                </div>
+              ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: FW >= FH ? pw : 520 }}>
                 <Btn tone="gold" onClick={play}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
                 <Btn small onClick={() => seek(0)}>⏮ Start</Btn>
                 {platformOf(p).safe.bottom || platformOf(p).safe.top ? <Btn small on={safe} onClick={() => setSafe(!safe)} title="Shows what the app's own buttons cover on this platform — keep words out of the red">Safe zones</Btn> : null}
                 <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, color: UI.mut }}>{fmtT(t)} / {tl ? fmtT(tl.total) : '0:00'}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 11.5, color: hasVoice ? UI.green : UI.gold }}>
-                  {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : 'Estimated timing · make the voice to lock it'}
+                  {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : p.kind === 'post' ? 'Loop · ' + (tl ? tl.total.toFixed(1) : '0') + ' s' : 'Estimated timing · make the voice to lock it'}
                 </span>
               </div>
+              )}
               {sc && canEdit ? (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 520 }} title="Quick edit of the scene on screen">
                   <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen" style={{ ...field, padding: '6px 9px', fontSize: 12.5, fontWeight: 700 }} />
-                  <input value={sc.vo} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Spoken line" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />
+                  {isFlyer || p.kind === 'post'
+                    ? <input value={sc.sub} onChange={e => setScene(sel, { sub: e.target.value })} placeholder="Line under the headline" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />
+                    : <input value={sc.vo} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Spoken line" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />}
                 </div>
               ) : null}
             </>
@@ -1592,6 +1717,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </div>
                 </>
               ) : null}
+              {!isFlyer ? (<>
               <Label>Headline animation</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {TEXT_ANIMS.map(x => <Btn key={x.key} small on={(sc.anim || 'auto') === x.key} disabled={!canEdit} onClick={() => { setScene(sel, { anim: x.key as AdTextAnim }); if (tl) setT(tl.starts[sel] + 0.05) }}>{x.label}</Btn>)}
@@ -1600,15 +1726,18 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {CAMS.map(x => <Btn key={x.key} small on={(sc.cam || 'auto') === x.key} disabled={!canEdit} onClick={() => setScene(sel, { cam: x.key as AdCam })}>{x.label}</Btn>)}
               </div>
-              <Label>Badge (sticker)</Label>
+              </>) : null}
+              <Label>{sc.kind === 'poster' ? 'Kicker (top line)' : 'Badge (sticker)'}</Label>
               <input value={sc.badge || ''} disabled={!canEdit} maxLength={22} onChange={e => setScene(sel, { badge: e.target.value })} placeholder="Optional, e.g. Oceanfront · Book direct · Rooftop pool" style={{ ...field, padding: '6px 9px' }} />
 
+              {!isFlyer ? (<>
               <Label>Voice line</Label>
               <textarea rows={3} value={sc.vo} disabled={!canEdit} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Leave empty for a music-only beat" style={field} />
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 4 }}>
                 {sc.vo.trim() ? `${sc.vo.trim().split(/\s+/).length} words · about ${(sc.vo.trim().split(/\s+/).length / 2.55).toFixed(1)}s spoken` : 'Music only'}
                 {riskyWords(sc.vo).length ? <span style={{ color: UI.red }}> · The voice says {riskyWords(sc.vo).join(' and ')} wrong — keep it on screen only</span> : null}
               </p>
+              </>) : null}
 
               {sc.kind !== 'contact' ? (
                 <>
@@ -1713,8 +1842,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 <p style={{ fontSize: 11.5, color: UI.mut, margin: 0 }}>Look · {LOOKS.find(l => l.key === (p.look || 'stay'))?.label}</p>
                 {canEdit ? <span style={{ marginLeft: 'auto' }}><Btn small onClick={surprise} title="A random look and style — keep pressing to explore">🎲 Surprise me</Btn></span> : null}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6, marginBottom: 10 }}>
-                {LOOKS.map(l => (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6, marginBottom: 6 }}>
+                {looksShown(p.look).map(l => (
                   <button key={l.key} disabled={!canEdit} title={l.blurb} onClick={() => change(d => ({ ...d, look: l.key, style: { ...STYLE_DEFAULT, pace: d.style?.pace || 'normal', frame: d.style?.frame || 'none' } }))}
                     style={{ padding: 0, border: '2px solid ' + ((p.look || 'stay') === l.key ? UI.gold : UI.line), borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: UI.panel2, color: UI.ink, textAlign: 'left' }}>
                     <LookPreview proj={p} look={l.key} style={{}} assets={assets} w={100} />
@@ -1722,6 +1851,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </button>
                 ))}
               </div>
+              <div style={{ marginBottom: 10 }}><Btn small onClick={() => setMoreLooks(!moreLooks)}>{moreLooks ? 'Fewer looks' : 'More looks (' + (LOOKS.length - LOOKS_FEATURED.length) + ')'}</Btn></div>
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '4px 0 6px' }}>Style · fine-tune the look</p>
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '6px 0 4px' }}>Colours · any colour, on top of the look</p>
               {([['accent', 'Accent (highlights, buttons)'], ['base', 'Background'], ['text', 'Text']] as ['accent' | 'base' | 'text', string][]).map(([k, lab]) => {
@@ -1815,7 +1945,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       </div>
 
       {/* ── timeline ── */}
-      {p && tl ? (
+      {p && tl && !home && p.kind !== 'flyer' ? (
         <div style={{ borderTop: '1px solid ' + UI.line, padding: '10px 14px 14px', background: UI.panel }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut }}>Timeline</span>
