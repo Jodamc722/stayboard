@@ -757,31 +757,63 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     return m
   }, [data])
 
-  const filtered = useMemo(() => {
-    if (!data) return [] as Item[]
-    const needle = q.trim().toLowerCase()
-    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
-    return data.items.filter(it => {
-      if (fFresh && !(it.lastPosted && it.lastPosted >= weekAgo)) return false
-      if (fOwner && it.ownerId !== fOwner) return false
-      if (fStatus && it.status !== fStatus) return false
-      // "Flagged" is the open flagged work — the number on the chip. Approved rows keep their flags
-      // for the paper trail and are found under the Approved chip, not here.
-      // Flagged = open rows with a real flag. With the Approved chip on, approved rows keep their
-      // flags for the paper trail, so Flagged + Approved shows them instead of nothing.
+  // ONE TEST, USED TWICE (Jon, 2026-11-04: "the filters don't work perfectly, don't show everything
+  // properly"). `passes(it, skip)` is the whole filter with one axis left out, so every chip can show
+  // the count it would actually return next to the OTHER filters that are on — a count that then
+  // matches what appears. Before, chip counts were whole-month totals and the flag chips counted open
+  // rows only, so "Approved + Resolution" showed a chip for a number you could never reach.
+  const weekAgo = useMemo(() => new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10), [])
+  const needle = q.trim().toLowerCase()
+  const passes = useCallback((it: Item, skip: '' | 'status' | 'flag' | 'owner' | 'source' | 'tag' | 'fresh' | 'q' = '') => {
+    if (skip !== 'fresh' && fFresh && !(it.lastPosted && it.lastPosted >= weekAgo)) return false
+    if (skip !== 'owner' && fOwner && it.ownerId !== fOwner) return false
+    if (skip !== 'status' && fStatus && it.status !== fStatus) return false
+    if (skip !== 'flag') {
+      // Flagged = a real (review / high) flag. Open rows unless the Approved chip is on — approved
+      // rows keep their flags for the paper trail and are reachable through Approved + Flagged.
       if (fFlag === 'flagged' && ((it.status === 'done' && fStatus !== 'done') || !it.flags.some(f => f.severity !== 'info'))) return false
       if (fFlag && fFlag !== 'flagged' && !it.flags.some(f => f.type === fFlag)) return false
-      if (fSource && sourceLabel(it.source) !== fSource) return false
+    }
+    if (skip !== 'source' && fSource && sourceLabel(it.source) !== fSource) return false
+    if (skip !== 'tag') {
       if (fTag === 'owner' || fTag === 'owner_guest' || fTag === 'ff') { if (it.stayTag !== fTag) return false }
       else if (fTag === 'cancel_fee') { if (!isCancelFee(it)) return false }
       else if (fTag) { if (it.statusTag !== fTag) return false }
-      if (needle) {
-        const hay = (it.guest + ' ' + it.resCode + ' ' + it.unit + ' ' + (ownerName[it.ownerId] || '') + ' ' + it.note).toLowerCase()
-        if (hay.indexOf(needle) < 0) return false
+    }
+    if (skip !== 'q' && needle) {
+      // Everything a reviewer might type: guest, code, unit, owner, channel, flag names, dates,
+      // the note and the comments, and the money (so "350" finds a $350 row).
+      const hay = [it.guest, it.resCode, it.unit, ownerName[it.ownerId] || '', sourceLabel(it.source), it.source,
+        it.flags.map(f => FLAG_LABEL[f.type] + ' ' + f.detail).join(' '), it.checkIn, it.checkOut, it.note,
+        it.comments.map(c => c.body).join(' '), String(it.rental), String(it.net), String(it.rate ?? ''), it.statusTag || '', it.stayTag || ''].join(' ').toLowerCase()
+      if (hay.indexOf(needle) < 0) return false
+    }
+    return true
+  }, [fFresh, fOwner, fStatus, fFlag, fSource, fTag, needle, weekAgo, ownerName])
+  const filtered = useMemo(() => (data ? data.items.filter(it => passes(it)) : [] as Item[]), [data, passes])
+  // What each chip would return, given the other filters — the number printed on it.
+  const facet = useMemo(() => {
+    const items = data?.items || []
+    const status: Record<string, number> = {}, flag: Record<string, number> = {}, tag: Record<string, number> = {}, src: Record<string, number> = {}, owner: Record<string, number> = {}
+    let flagged = 0, fresh = 0
+    for (const it of items) {
+      if (passes(it, 'status')) status[it.status] = (status[it.status] || 0) + 1
+      if (passes(it, 'flag')) {
+        const seen: Record<string, boolean> = {}
+        for (const f of it.flags) if (!seen[f.type]) { flag[f.type] = (flag[f.type] || 0) + 1; seen[f.type] = true }
+        if ((it.status !== 'done' || fStatus === 'done') && it.flags.some(f => f.severity !== 'info')) flagged++
       }
-      return true
-    })
-  }, [data, q, fStatus, fFlag, fOwner, fSource, fTag, fFresh, ownerName])
+      if (passes(it, 'tag')) {
+        if (it.statusTag) tag[it.statusTag] = (tag[it.statusTag] || 0) + 1
+        if (it.stayTag) tag[it.stayTag] = (tag[it.stayTag] || 0) + 1
+        if (isCancelFee(it)) tag.cancel_fee = (tag.cancel_fee || 0) + 1
+      }
+      if (passes(it, 'source')) { const l = sourceLabel(it.source); if (l) src[l] = (src[l] || 0) + 1 }
+      if (passes(it, 'owner')) owner[it.ownerId] = (owner[it.ownerId] || 0) + 1
+      if (passes(it, 'fresh') && it.lastPosted && it.lastPosted >= weekAgo) fresh++
+    }
+    return { status, flag, tag, src, owner, flagged, fresh }
+  }, [data, passes, fStatus, weekAgo])
 
   // Tag + channel counts for the filter chips.
   const tagCounts = useMemo(() => {
@@ -803,21 +835,6 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     return m
   }, [filtered])
 
-  // Flag chips count OPEN work only — an approved row is closed out and should stop counting
-  // (bookkeeper: "I approved the F&F items after adding cleaning charges, but the count is
-  // still at 4"). The row itself keeps its chips inside Approved & closed for the paper trail.
-  const flagCounts = useMemo(() => {
-    const m: Record<string, number> = {}
-    for (const it of (data?.items || [])) {
-      if (it.status === 'done') continue
-      const seen: Record<string, boolean> = {}
-      for (const f of it.flags) { if (!seen[f.type]) { m[f.type] = (m[f.type] || 0) + 1; seen[f.type] = true } }
-    }
-    return m
-  }, [data])
-  const openFlagged = useMemo(() =>
-    (data?.items || []).filter(it => it.status !== 'done' && it.flags.some(f => f.severity !== 'info')).length,
-  [data])
 
   const exportCsv = () => {
     if (!data) return
@@ -1871,7 +1888,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 {(['action', 'review', 'done', 'clear'] as Status[]).map(s => (
                   <button key={s} onClick={() => setFStatus(fStatus === s ? '' : s)}
                     className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + STATUS_CLS[s] + (fStatus === s ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                    {STATUS_LABEL[s]} {s === 'review' ? t!.review : s === 'action' ? t!.action : s === 'done' ? t!.done : t!.clear}
+                    {STATUS_LABEL[s]} {facet.status[s] || 0}
                   </button>
                 ))}
                 <span className="w-px h-5 bg-line mx-1" />
@@ -1879,35 +1896,35 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 <button onClick={() => setFFresh(v => !v)}
                   title="Only rows with line items posted in the last 7 days — review what changed since last week"
                   className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-teal-50 text-teal-700 ring-teal-200 transition' + (fFresh ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                  <RefreshCw size={11} className="inline -mt-0.5 mr-1" />Posted this week {t!.postedThisWeek}
+                  <RefreshCw size={11} className="inline -mt-0.5 mr-1" />Posted this week {facet.fresh}
                 </button>
                 <button onClick={() => setFFlag(fFlag === 'flagged' ? '' : 'flagged')}
                   className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200 transition' + (fFlag === 'flagged' ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                  <ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged {openFlagged}
+                  <ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged {facet.flagged}
                 </button>
                 <button onClick={() => setMoreFilters(v => !v)} title="Filter by flag type or booking kind (canceled, owner stay…)"
                   className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + (moreFilters ? 'bg-ink text-white ring-ink' : 'bg-white text-muted ring-line hover:text-ink')}>
                   Filters{(fTag || (fFlag && fFlag !== 'flagged')) ? ' •' : ''}
                 </button>
               </div>
-              {moreFilters && (
+              {(moreFilters || !!fTag || (!!fFlag && fFlag !== 'flagged')) && (
               <div className="lh-actions flex flex-wrap items-center gap-2">
-                {(Object.keys(FLAG_LABEL) as FlagType[]).filter(f => flagCounts[f]).map(f => (
+                {(Object.keys(FLAG_LABEL) as FlagType[]).filter(f => facet.flag[f] || fFlag === f).map(f => (
                   <button key={f} onClick={() => setFFlag(fFlag === f ? '' : f)}
-                    className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-muted ring-line hover:text-ink transition' + (fFlag === f ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                    {FLAG_LABEL[f]} {flagCounts[f]}
+                    className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-muted ring-line hover:text-ink transition' + (fFlag === f ? ' outline outline-2 outline-offset-1 outline-brand-300' : '') + (!facet.flag[f] ? ' opacity-40' : '')}>
+                    {FLAG_LABEL[f]} {facet.flag[f] || 0}
                   </button>
                 ))}
                 <span className="w-px h-5 bg-line mx-1" />
                 {([['canceled', 'Canceled'], ['cancel_fee', 'Cancellation fee'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']] as [typeof fTag, string][])
-                  .filter(([k]) => tagCounts.t[k as string])
+                  .filter(([k]) => facet.tag[k as string] || fTag === k)
                   .map(([k, label]) => (
                     <button key={k} onClick={() => setFTag(fTag === k ? '' : k)}
                       title={k === 'cancel_fee' ? 'Canceled bookings that still left money on the statement this month — the cancellation fee — plus any line item named as one' : k === 'canceled' ? 'Every canceled booking with line items this month, fee or not' : undefined}
                       className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset transition '
                         + (k === 'owner' || k === 'owner_guest' || k === 'ff' ? 'bg-violet-50 text-violet-700 ring-violet-200' : k === 'inquiry' ? 'bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200' : k === 'cancel_fee' ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-300')
-                        + (fTag === k ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                      {label} {tagCounts.t[k as string]}
+                        + (fTag === k ? ' outline outline-2 outline-offset-1 outline-brand-300' : '') + (!facet.tag[k as string] ? ' opacity-40' : '')}>
+                      {label} {facet.tag[k as string] || 0}
                     </button>
                   ))}
               </div>
@@ -1919,12 +1936,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 <select value={fSource} onChange={e => setFSource(e.target.value)} aria-label="Channel"
                   className="text-[12px] border border-line rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 max-w-[170px]">
                   <option value="">All channels</option>
-                  {Object.keys(tagCounts.src).sort().map(s => <option key={s} value={s}>{s} ({tagCounts.src[s]})</option>)}
+                  {Object.keys(tagCounts.src).sort().map(s => <option key={s} value={s} disabled={!facet.src[s] && fSource !== s}>{s} ({facet.src[s] || 0})</option>)}
                 </select>
                 <select value={fOwner} onChange={e => setFOwner(e.target.value)} aria-label="Owner"
                   className="text-[12px] border border-line rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 max-w-[220px]">
                   <option value="">All owners</option>
-                  {data.owners.map(o => <option key={o.ownerId} value={o.ownerId}>{o.ownerName}</option>)}
+                  {data.owners.slice().sort((a, b) => Number(!!facet.owner[b.ownerId]) - Number(!!facet.owner[a.ownerId]) || a.ownerName.localeCompare(b.ownerName)).map(o => <option key={o.ownerId} value={o.ownerId} disabled={!facet.owner[o.ownerId] && fOwner !== o.ownerId}>{o.ownerName} ({facet.owner[o.ownerId] || 0})</option>)}
                 </select>
                 </div>
                 <div className="relative w-full sm:w-auto">
@@ -1935,6 +1952,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 {(fStatus || fFlag || fTag || fSource || fOwner || q || fFresh) && (
                   <button onClick={() => { setFStatus(''); setFFlag(''); setFTag(''); setFSource(''); setFOwner(''); setQ(''); setFFresh(false) }}
                     className="text-[11px] font-medium text-muted hover:text-ink underline">Clear all</button>
+                )}
+                {(fStatus || fFlag || fTag || fSource || fOwner || q || fFresh) && (
+                  <span className="text-[11.5px] text-muted tabular-nums" title="What the filters return — every row is shown, in every owner, with the sections open">
+                    {filtered.length} row{filtered.length === 1 ? '' : 's'} · {Object.keys(byOwner).length} owner{Object.keys(byOwner).length === 1 ? '' : 's'} · net {fmt(filtered.reduce((a, it) => a + it.net, 0))}
+                  </span>
                 )}
               </div>
 
