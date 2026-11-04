@@ -1934,7 +1934,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </div>
                 )
               })}
-              {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo']] as [keyof AdStyle, string][]).map(([k, lab]) => (
+              {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['wash', 'Photo wash'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo']] as [keyof AdStyle, string][]).map(([k, lab]) => (
                 <div key={k} style={{ marginBottom: 6 }}>
                   <span style={{ fontSize: 10.5, color: UI.mut, display: 'block', marginBottom: 3 }}>{lab}</span>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>

@@ -25,12 +25,14 @@ export type AdStyle = {
   finish: 'auto' | 'film' | 'soft' | 'glow' | 'clean'
   frame: 'none' | 'border' | 'letterbox'
   logo: 'auto' | 'gold' | 'black' | 'white' | 'off'
+  /** What sits over the photo: the look's colour wash, a neutral scrim for legibility, or nothing at all (Jon, 2026-11-04: "some with no filter"). */
+  wash?: 'auto' | 'look' | 'neutral' | 'none'
   /** Custom colours on top of the look ('' = the look's own). */
   accent?: string
   base?: string
   text?: string
 }
-export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto', pace: 'normal', finish: 'auto', frame: 'none', logo: 'auto' }
+export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto', pace: 'normal', finish: 'auto', frame: 'none', logo: 'auto', wash: 'auto' }
 export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: string }[] } = {
   font: [{ key: 'auto', label: 'Look’s own' }, { key: 'sans', label: 'Bold sans' }, { key: 'serif', label: 'Serif' }, { key: 'condensed', label: 'Condensed' }, { key: 'elegant', label: 'Elegant' }],
   caps: [{ key: 'auto', label: 'Look’s own' }, { key: 'on', label: 'ALL CAPS' }, { key: 'off', label: 'Normal case' }],
@@ -39,6 +41,7 @@ export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: st
   finish: [{ key: 'auto', label: 'Look’s own' }, { key: 'film', label: 'Film grain' }, { key: 'soft', label: 'Soft' }, { key: 'glow', label: 'Light leak' }, { key: 'clean', label: 'Clean' }],
   frame: [{ key: 'none', label: 'Full bleed' }, { key: 'border', label: 'Border' }, { key: 'letterbox', label: 'Letterbox' }],
   logo: [{ key: 'auto', label: 'Look’s own' }, { key: 'gold', label: 'Gold' }, { key: 'black', label: 'Black' }, { key: 'white', label: 'White' }, { key: 'off', label: 'Off' }],
+  wash: [{ key: 'auto', label: 'Look’s own' }, { key: 'look', label: 'Colour wash' }, { key: 'neutral', label: 'Just a scrim' }, { key: 'none', label: 'No filter' }],
 }
 
 /** How a scene arrives from the one before it. 'auto' varies them across the ad. */
@@ -416,12 +419,12 @@ export type AdAssets = {
   mono: string
   credit: string
 }
-type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boolean; grade?: AdStyle['grade']; finish?: AdStyle['finish']; logo?: 'gold' | 'black' | 'white'; fx?: string[]; mesh?: [string, string, string] }
+type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boolean; grade?: AdStyle['grade']; finish?: AdStyle['finish']; logo?: 'gold' | 'black' | 'white'; fx?: string[]; mesh?: [string, string, string]; wash?: 'look' | 'neutral' | 'none' }
 type Palette = { serif?: boolean; light?: boolean; def?: LookDef; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
 /** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
  *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
 /** The curated set shown first (Jon, 2026-11-04: "quality vs quantity"): six designed looks; the rest sit under "More looks". */
-export const LOOKS_FEATURED = ['stay', 'editorial', 'miami', 'sand', 'festival', 'holiday']
+export const LOOKS_FEATURED = ['stay', 'pure', 'editorial', 'blackgold', 'ivory', 'miami', 'sand', 'festival', 'holiday']
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
   { key: 'stay', label: 'Stay navy & gold', blurb: 'The house look', c: { gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
   { key: 'sunset', label: 'Sunset', blurb: 'Warm coral, golden hour', c: { def: { grade: 'warm', finish: 'glow' }, gold: '#FFB37A', ink: '#FFF4EA', mut: '#E7C3B0', navy: '#2A1220', navy2: '#4A1E2C', deep: '#1A0A14', tint: '38,12,22', glass: 'rgba(48,16,30,0.6)', line: 'rgba(255,220,200,0.22)', green: '#7FD1A6' } },
@@ -448,6 +451,16 @@ export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] 
   { key: 'rose', label: 'Rose', blurb: 'Deep rose and blush, elegant serif — Valentine’s, romance', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'white', fx: ['hearts'] }, gold: '#FFB3C1', ink: '#FFF3F5', mut: '#E6BFC8', navy: '#4A1020', navy2: '#6E1A33', deep: '#2E0A14', tint: '60,12,28', glass: 'rgba(80,16,38,0.62)', line: 'rgba(255,179,193,0.3)', green: '#7FD9A4' } },
   { key: 'midnight', label: 'Midnight', blurb: 'Deep blue, light rays, cinematic', c: { def: { font: 'sans', grade: 'cool', finish: 'film', logo: 'gold', fx: ['rays'], mesh: ['#0A2A5A', '#071530', '#03091A'] }, gold: '#D2B077', ink: '#EAF0FF', mut: '#A8B6D0', navy: '#071530', navy2: '#0E2250', deep: '#030A1C', tint: '5,16,40', glass: 'rgba(8,22,60,0.6)', line: 'rgba(200,220,255,0.2)', green: '#5FE0A0' } },
   { key: 'golden', label: 'Golden hour', blurb: 'Warm amber, elegant serif, light leak', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'gold' }, gold: '#F2B544', ink: '#FFF6E8', mut: '#E3CDB0', navy: '#24170C', navy2: '#3D2814', deep: '#140C05', tint: '36,22,10', glass: 'rgba(40,24,10,0.6)', line: 'rgba(255,220,170,0.22)', green: '#B9D98A' } },
+  // True-colour looks (Jon, 2026-11-04: "better colour schemes, some with no filter") — photos untouched, type reads on a soft shadow.
+  { key: 'pure', label: 'True colour', blurb: 'Photos exactly as shot, no wash, white type with a soft shadow, Stay gold', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'none' }, gold: '#D2B077', ink: '#FFFFFF', mut: '#E6E6E6', navy: '#101418', navy2: '#1C232B', deep: '#07090C', tint: '0,0,0', glass: 'rgba(0,0,0,0.45)', line: 'rgba(255,255,255,0.3)', green: '#4CC488' } },
+  { key: 'blackgold', label: 'Black & gold', blurb: 'Pure black, gold accent, photos untouched — luxury without a tint', c: { def: { font: 'serif', grade: 'natural', finish: 'clean', logo: 'gold', wash: 'neutral' }, gold: '#C9A96E', ink: '#FFFFFF', mut: '#C8C2B8', navy: '#000000', navy2: '#161616', deep: '#000000', tint: '0,0,0', glass: 'rgba(0,0,0,0.55)', line: 'rgba(201,169,110,0.3)', green: '#C9A96E' } },
+  { key: 'emerald', label: 'Emerald & brass', blurb: 'Deep emerald, brass accent, natural photos', c: { def: { font: 'serif', grade: 'natural', finish: 'clean', logo: 'gold', wash: 'neutral' }, gold: '#C9A96E', ink: '#F6F3EC', mut: '#B9C8BE', navy: '#0E3B2E', navy2: '#165040', deep: '#07241B', tint: '0,0,0', glass: 'rgba(14,59,46,0.72)', line: 'rgba(201,169,110,0.28)', green: '#7FD9A4' } },
+  { key: 'slate', label: 'Slate & coral', blurb: 'Slate blue-grey, coral accent, natural photos — modern', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#FF7A59', ink: '#F4F6F8', mut: '#B9C2CC', navy: '#2F3E4E', navy2: '#3D4F62', deep: '#1F2A36', tint: '0,0,0', glass: 'rgba(47,62,78,0.7)', line: 'rgba(255,255,255,0.22)', green: '#5FE0A0' } },
+  { key: 'lagoon', label: 'Lagoon', blurb: 'Deep teal, sand accent, natural photos — beach without the blue tint', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#E8D5B5', ink: '#F3FAFA', mut: '#A9CBCB', navy: '#0E5C63', navy2: '#147780', deep: '#083B40', tint: '0,0,0', glass: 'rgba(14,92,99,0.7)', line: 'rgba(232,213,181,0.3)', green: '#7FE3C8' } },
+  { key: 'ivory', label: 'Ivory & charcoal', blurb: 'Warm ivory, charcoal type, brass accent, photos untouched', c: { light: true, def: { font: 'serif', grade: 'natural', finish: 'clean', logo: 'black', wash: 'none' }, gold: '#B08D57', ink: '#232323', mut: '#6B665E', navy: '#F6F2EA', navy2: '#FFFDF9', deep: '#EBE4D6', tint: '255,255,255', glass: 'rgba(255,253,249,0.86)', line: 'rgba(0,0,0,0.12)', green: '#4E8A5B' } },
+  { key: 'terracotta', label: 'Terracotta & olive', blurb: 'Cream, terracotta accent, olive details, photos untouched', c: { light: true, def: { font: 'elegant', grade: 'natural', finish: 'clean', logo: 'black', wash: 'none' }, gold: '#C4603A', ink: '#2B2118', mut: '#6E6256', navy: '#F3EBDD', navy2: '#FBF6EC', deep: '#E6DBC7', tint: '255,255,255', glass: 'rgba(251,246,236,0.86)', line: 'rgba(43,33,24,0.14)', green: '#6E7F3E' } },
+  { key: 'sky', label: 'Sky', blurb: 'Powder blue, deep navy type, bright blue accent — airy, photos untouched', c: { light: true, def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'black', wash: 'none' }, gold: '#1E6FD9', ink: '#0B1F3A', mut: '#4B5E78', navy: '#E8F1F8', navy2: '#F6FAFD', deep: '#D6E4F0', tint: '255,255,255', glass: 'rgba(246,250,253,0.86)', line: 'rgba(11,31,58,0.14)', green: '#1B7F5A' } },
+  { key: 'charcoal', label: 'Charcoal & white', blurb: 'Charcoal, white type, white accent, no tint — clean and modern', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#FFFFFF', ink: '#FFFFFF', mut: '#BDBDBD', navy: '#1F1F1F', navy2: '#2C2C2C', deep: '#121212', tint: '0,0,0', glass: 'rgba(20,20,20,0.6)', line: 'rgba(255,255,255,0.25)', green: '#9BE3B5' } },
 ]
 let C: Palette = LOOKS[0].c
 // Per-frame style state, set by drawFrame from the look + the ad's style.
@@ -489,6 +502,7 @@ export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
     font: st.font === 'auto' ? (d.font || (L.serif ? 'serif' : 'sans')) : st.font,
     caps: st.caps === 'auto' ? !!d.caps : st.caps === 'on',
     grade: st.grade === 'auto' ? (d.grade || 'natural') : st.grade,
+    wash: (st.wash || 'auto') === 'auto' ? (d.wash || 'look') : st.wash as 'look' | 'neutral' | 'none',
     pace: st.pace,
     finish: st.finish === 'auto' ? (d.finish || 'film') : st.finish,
     frame: st.frame,
@@ -497,7 +511,9 @@ export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
   }
 }
 /** Overlay strength: light looks wash photos harder so dark type reads. */
-const TA = (a: number) => (C.light ? Math.min(0.92, a * 1.25 + 0.12) : a)
+let WASH: 'look' | 'neutral' | 'none' = 'look'
+/** Overlay alpha over photos: the look's wash as designed, a lighter neutral scrim, or nothing. */
+const TA = (a: number) => WASH === 'none' ? 0 : WASH === 'neutral' ? (C.light ? Math.min(0.6, a * 0.7) : a * 0.55) : (C.light ? Math.min(0.92, a * 1.25 + 0.12) : a)
 const fnt = (w: number | string, size: number, fam: string) => `${fam === DISPLAY && FONTW ? FONTW : w} ${fam === DISPLAY ? size * FS : size}px ${fam}`
 /** Readable text on the accent colour (button labels, ticks). */
 const onAccent = () => { const h = C.gold.replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(x => x + x).join('') : h, 16); const l = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)); return l > 150 ? '#14110B' : '#FFFFFF' }
@@ -672,7 +688,7 @@ function rich(ctx: CanvasRenderingContext2D, text: string, x: number, y: number,
     else if (mode === 'type' || mode === 'wipe') {
       ctx.beginPath(); ctx.rect(x0 - 4, base - S * 1.1, (L.w + 8) * a, S * 1.45); ctx.clip()
     }
-    if (opts.shadow !== false) { ctx.shadowColor = C.light ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'; ctx.shadowBlur = size * 0.35 }
+    if (opts.shadow !== false) { const k2 = WASH === 'none' ? 1.6 : WASH === 'neutral' ? 1.25 : 1; ctx.shadowColor = C.light ? `rgba(255,255,255,${Math.min(0.9, 0.55 * k2)})` : `rgba(0,0,0,${Math.min(0.8, 0.45 * k2)})`; ctx.shadowBlur = size * 0.35 * k2; if (WASH === 'none') ctx.shadowOffsetY = size * 0.03 }
     for (let k = 0; k < L.words.length; k++) {
       let wa = 1
       if (mode === 'words') { wa = appear(opts.local, d0 + (wordIx + k) * 0.12, 0.35); if (wa <= 0) { cx += L.words[k].w + (L.words[k + 1]?.g ? 0 : sp); continue } }
@@ -699,6 +715,7 @@ function plain(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
   ctx.font = fnt(weight, size, font)
   const lines = layout(ctx, text.replace(/\*\*/g, ''), maxW)
   ctx.save(); ctx.globalAlpha *= alpha; ctx.fillStyle = color; ctx.textBaseline = 'alphabetic'
+  if (WASH !== 'look') { ctx.shadowColor = C.light ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.6)'; ctx.shadowBlur = size * (WASH === 'none' ? 0.5 : 0.3) }
   for (let i = 0; i < lines.length; i++) {
     const s = lines[i].words.map(w => w.t.trim()).join(' ')
     const w = ctx.measureText(s).width
@@ -1047,6 +1064,9 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const size = fitSize(ctx, head, W - pad * 2.4, (portrait ? 104 : 96) * u, H * (portrait ? 0.4 : 0.42), 700)
     const hh = linesH(ctx, head, W - pad * 2.4, size)
     const y = (H - hh) / 2 + (portrait ? 40 : 30) * u
+    // A light look with no wash keeps the photo untouched and switches to white type on a shadow (no frosted band).
+    const Csave = C
+    if (C.light && WASH === 'none') C = { ...C, light: false, ink: '#FFFFFF', mut: '#F0F0F0' }
     if (C.light) {
       // a soft frosted band so dark type reads over the photo
       const a0 = appear(local, 0.3)
@@ -1062,6 +1082,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       plain(ctx, sc.sub.toUpperCase(), pad, y + hh + 64 * u, W - pad * 2, 28 * u, A.body, C.ink, 600, 'center', appear(local, 1.2))
       ctx.restore()
     }
+    C = Csave
     return
   }
 
@@ -1589,12 +1610,12 @@ export type FxMeta = {
   has: ('size' | 'amt' | 'speed' | 'blink')[]
 }
 export const FX_POS_LABEL: Record<string, string> = { full: 'Everywhere', top: 'Top', bottom: 'Bottom', both: 'Top & bottom', left: 'Left', right: 'Right', center: 'Centre', tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right', frame: 'Around the edge', behind: 'Behind the words' }
-export const FX_COLOR_LABEL: Record<string, string> = { accent: 'Accent', white: 'White', multi: 'Multi', warm: 'Warm', cool: 'Cool', red: 'Red', green: 'Green', fall: 'Fall', ink: 'Ink' }
+export const FX_COLOR_LABEL: Record<string, string> = { accent: 'Accent', white: 'White', multi: 'Multi', warm: 'Warm', cool: 'Cool', red: 'Red', green: 'Green', fall: 'Fall', ink: 'Ink', gold: 'Golds', xmas: 'Red & green', pastel: 'Pastel', ice: 'Ice', sunset: 'Sunset', neon: 'Neon' }
 export const FX: FxMeta[] = [
-  { key: 'bokeh', label: 'Bokeh', hint: 'Soft drifting light circles', pos: ['full', 'top', 'bottom', 'left', 'right'], colors: ['accent', 'white', 'warm', 'cool'], has: ['size', 'amt', 'speed'] },
+  { key: 'bokeh', label: 'Bokeh', hint: 'Soft drifting light circles', pos: ['full', 'top', 'bottom', 'left', 'right'], colors: ['accent', 'white', 'warm', 'cool', 'gold', 'xmas', 'pastel'], has: ['size', 'amt', 'speed'] },
   { key: 'rays', label: 'Light rays', hint: 'Sun rays sweeping from a corner', pos: ['tr', 'tl', 'br', 'bl'], colors: ['accent', 'white', 'warm'], has: ['amt', 'speed'] },
-  { key: 'sparkle', label: 'Sparkle', hint: 'Twinkles that catch the light', pos: ['full', 'top', 'bottom', 'left', 'right'], colors: ['white', 'accent', 'warm', 'cool'], has: ['size', 'amt', 'speed'] },
-  { key: 'confetti', label: 'Confetti', hint: 'Falling confetti — events, celebrations', pos: ['full', 'left', 'right', 'top'], colors: ['accent', 'multi', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
+  { key: 'sparkle', label: 'Sparkle', hint: 'Twinkles that catch the light', pos: ['full', 'top', 'bottom', 'left', 'right'], colors: ['white', 'accent', 'gold', 'ice', 'warm', 'cool'], has: ['size', 'amt', 'speed'] },
+  { key: 'confetti', label: 'Confetti', hint: 'Falling confetti — events, celebrations', pos: ['full', 'left', 'right', 'top'], colors: ['accent', 'multi', 'gold', 'pastel', 'neon', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
   { key: 'waves', label: 'Waves', hint: 'Animated wave lines', pos: ['bottom', 'top', 'both'], colors: ['accent', 'white', 'cool'], has: ['size', 'amt', 'speed'] },
   { key: 'grid', label: 'Tech grid', hint: 'A faint moving grid — Lighthouse, data, owners', colors: ['accent', 'white', 'cool'], has: ['size', 'amt', 'speed'] },
   { key: 'stripes', label: 'Stripes', hint: 'Diagonal accent stripes that slide in', pos: ['tr', 'tl', 'br', 'bl'], colors: ['accent', 'white', 'multi'], has: ['size', 'amt'] },
@@ -1607,16 +1628,16 @@ export const FX: FxMeta[] = [
   { key: 'glowline', label: 'Glow line', hint: 'A travelling accent line across the frame', variants: [{ key: 'slant', label: 'Slanted' }, { key: 'vert', label: 'Vertical' }, { key: 'horiz', label: 'Horizontal' }], colors: ['accent', 'white', 'cool'], has: ['size', 'speed'] },
   // Themed visuals (Jon, 2026-11-04: "visuals that fit the theme", "multiple options, features and placement").
   { key: 'snow', label: 'Snow', hint: 'Soft snowfall — Christmas, winter sun', pos: ['full', 'top', 'left', 'right'], colors: ['white', 'accent', 'cool'], has: ['size', 'amt', 'speed'] },
-  { key: 'lights', label: 'String lights', hint: 'A string of warm bulbs — holidays', pos: ['top', 'bottom', 'both', 'frame'], variants: [{ key: 'swag', label: 'Swag' }, { key: 'straight', label: 'Straight' }, { key: 'zigzag', label: 'Zigzag' }, { key: 'double', label: 'Double swag' }], colors: ['multi', 'warm', 'accent', 'white', 'cool'], has: ['size', 'amt', 'speed', 'blink'] },
-  { key: 'fireworks', label: 'Fireworks', hint: 'Bursts in the sky — New Year, the Fourth', pos: ['top', 'full', 'left', 'right', 'tl', 'tr'], colors: ['accent', 'multi', 'white', 'warm', 'red'], has: ['size', 'amt', 'speed'] },
+  { key: 'lights', label: 'String lights', hint: 'A string of warm bulbs — holidays', pos: ['top', 'bottom', 'both', 'frame'], variants: [{ key: 'swag', label: 'Swag' }, { key: 'straight', label: 'Straight' }, { key: 'zigzag', label: 'Zigzag' }, { key: 'double', label: 'Double swag' }], colors: ['multi', 'warm', 'xmas', 'gold', 'ice', 'pastel', 'accent', 'white', 'cool'], has: ['size', 'amt', 'speed', 'blink'] },
+  { key: 'fireworks', label: 'Fireworks', hint: 'Bursts in the sky — New Year, the Fourth', pos: ['top', 'full', 'left', 'right', 'tl', 'tr'], colors: ['accent', 'multi', 'gold', 'neon', 'sunset', 'white', 'warm', 'red'], has: ['size', 'amt', 'speed'] },
   { key: 'hearts', label: 'Hearts', hint: 'Drifting hearts — Valentine’s', pos: ['full', 'left', 'right', 'bottom'], colors: ['accent', 'red', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
   { key: 'leaves', label: 'Falling leaves', hint: 'Autumn leaves — Thanksgiving', pos: ['full', 'left', 'right', 'top'], colors: ['fall', 'accent', 'green', 'warm'], has: ['size', 'amt', 'speed'] },
-  { key: 'eq', label: 'Equalizer', hint: 'Sound bars — Ultra, music week', pos: ['bottom', 'top', 'both', 'left', 'right'], colors: ['accent', 'white', 'multi', 'cool'], variants: [{ key: 'bars', label: 'Bars' }, { key: 'wave', label: 'Wave' }, { key: 'dots', label: 'Dots' }], has: ['size', 'amt', 'speed'] },
+  { key: 'eq', label: 'Equalizer', hint: 'Sound bars — Ultra, music week', pos: ['bottom', 'top', 'both', 'left', 'right'], colors: ['accent', 'neon', 'white', 'multi', 'cool', 'sunset'], variants: [{ key: 'bars', label: 'Bars' }, { key: 'wave', label: 'Wave' }, { key: 'dots', label: 'Dots' }], has: ['size', 'amt', 'speed'] },
   { key: 'rope', label: 'Nautical rope', hint: 'A rope line and an anchor — boat shows', pos: ['top', 'bottom', 'both', 'frame'], variants: [{ key: 'dash', label: 'Rope' }, { key: 'solid', label: 'Solid line' }, { key: 'anchor', label: 'Anchor only' }], colors: ['accent', 'white', 'red', 'ink'], has: ['size'] },
   { key: 'frame', label: 'Gallery frame', hint: 'A thin inner frame, like a gallery wall — Art Basel, editorial', variants: [{ key: 'double', label: 'Double line' }, { key: 'single', label: 'Single line' }, { key: 'thick', label: 'Thick mat' }, { key: 'corners', label: 'Corner marks' }], colors: ['white', 'accent', 'ink'], has: ['size'] },
-  { key: 'tree', label: 'Christmas tree', hint: 'A tree silhouette with lights that blink', pos: ['br', 'bl', 'right', 'left', 'center'], variants: [{ key: 'classic', label: 'Classic' }, { key: 'slim', label: 'Slim' }, { key: 'outline', label: 'Outline' }, { key: 'pair', label: 'A pair' }], colors: ['multi', 'warm', 'accent', 'white'], has: ['size', 'speed', 'blink'] },
+  { key: 'tree', label: 'Christmas tree', hint: 'A tree silhouette with lights that blink', pos: ['br', 'bl', 'right', 'left', 'center'], variants: [{ key: 'classic', label: 'Classic' }, { key: 'slim', label: 'Slim' }, { key: 'outline', label: 'Outline' }, { key: 'pair', label: 'A pair' }], colors: ['multi', 'warm', 'xmas', 'gold', 'ice', 'accent', 'white'], has: ['size', 'speed', 'blink'] },
   { key: 'garland', label: 'Garland', hint: 'A pine garland with berries along an edge — Christmas', pos: ['top', 'bottom', 'both', 'frame'], colors: ['green', 'accent', 'red'], has: ['size'] },
-  { key: 'balloons', label: 'Balloons', hint: 'Balloons drifting up — birthdays, openings, celebrations', pos: ['full', 'left', 'right', 'bottom'], colors: ['multi', 'accent', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
+  { key: 'balloons', label: 'Balloons', hint: 'Balloons drifting up — birthdays, openings, celebrations', pos: ['full', 'left', 'right', 'bottom'], colors: ['multi', 'pastel', 'gold', 'sunset', 'accent', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
   { key: 'palms', label: 'Palm fronds', hint: 'Palm leaf silhouettes in the corners — Miami, tropical', pos: ['tr', 'tl', 'br', 'bl', 'both'], colors: ['green', 'ink', 'accent'], has: ['size'] },
   { key: 'badge', label: 'Date badge', hint: 'A round stamp with the date line (uses the scene’s date or sub line)', pos: ['tr', 'tl', 'br', 'bl', 'center'], colors: ['accent', 'white', 'red', 'ink'], variants: [{ key: 'circle', label: 'Circle' }, { key: 'ribbon', label: 'Ribbon' }, { key: 'burst', label: 'Starburst' }], has: ['size'] },
 ]
@@ -1645,6 +1666,12 @@ function fxPalette(scheme: string): string[] {
     case 'red': return ['#D64545', '#F26D6D', '#B3202C']
     case 'green': return ['#2E6B45', '#3F8F5C', '#1E4D31']
     case 'fall': return ['#C9792E', '#B5562E', '#D9A441', '#8A4B2A']
+    case 'gold': return ['#D2B077', '#F3D9A0', '#B08D57', '#FFF1C9']
+    case 'xmas': return ['#D64545', '#2E8B57', '#F2C94C', '#FFFFFF']
+    case 'pastel': return ['#FFC8DD', '#BDE0FE', '#CDB4DB', '#FFE5B4', '#C7F9CC']
+    case 'ice': return ['#FFFFFF', '#CFEFFF', '#9FD8FF', '#E6F7FF']
+    case 'sunset': return ['#FF7A59', '#FFB37A', '#FF5FA2', '#F2C94C']
+    case 'neon': return ['#C8FF3D', '#FF5FA2', '#4FF0D0', '#7B61FF']
     case 'ink': return [C.light ? C.ink : '#FFFFFF']
     default: return [C.gold]
   }
@@ -2111,6 +2138,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   if (isHex(R.text)) C = { ...C, ink: R.text!, mut: R.text! }
   DISPLAY = A.display; FONTW = R.font === 'condensed' && fam ? 400 : 0; FS = R.font === 'elegant' && fam ? 1.2 : 1
   GRADE = GRADES[R.grade] || ''
+  WASH = R.wash
+  if (WASH !== 'look') C = { ...C, tint: C.light ? '255,255,255' : '0,0,0' }
   DUO = R.grade === 'duotone' ? [shade(C.navy, -10), C.gold] : R.grade === 'golden' ? ['#2A1A08', '#F2C879'] : R.grade === 'noir' ? ['#050505', '#E8E2D6'] : null
   FXS = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c.def?.fx || []
   PD = R.pace === 'calm' ? 1.35 : R.pace === 'fast' ? 0.72 : 1; CAPS = R.caps
