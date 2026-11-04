@@ -96,3 +96,20 @@ export async function runAudit(): Promise<Audit> {
   return out
 }
 export const lastAudit = () => getSetting<Audit | null>('garden_cloudbeds_audit', null).catch(() => null)
+
+/** One raw read, summarised: total, keys, and a masked sample — for exploring an endpoint's shape. */
+export async function explore(endpoint: string, params: Record<string, any> = {}, version = 'v1.2') {
+  const mask = (k: string, v: any): any => {
+    if (v == null) return v
+    if (/email|phone|cell|address|document|card|birth/i.test(k)) return '•••'
+    if (typeof v === 'string') return v.length > 60 ? v.slice(0, 60) + '…' : v
+    if (Array.isArray(v)) return v.length > 3 ? [...v.slice(0, 3).map(x => shrink(x)), `…+${v.length - 3}`] : v.map(x => shrink(x))
+    if (typeof v === 'object') return shrink(v)
+    return v
+  }
+  const shrink = (o: any): any => (o && typeof o === 'object' && !Array.isArray(o)) ? Object.fromEntries(Object.entries(o).slice(0, 30).map(([k, v]) => [k, mask(k, v)])) : mask('', o)
+  const r = await cbGetV<any>(version, endpoint, params)
+  const top = Object.fromEntries(Object.entries(r.raw || {}).filter(([k]) => k !== 'data').map(([k, v]) => [k, typeof v === 'object' ? '[obj]' : v]))
+  const data = r.data
+  return { top, isArray: Array.isArray(data), length: Array.isArray(data) ? data.length : null, sample: Array.isArray(data) ? data.slice(0, 2).map(shrink) : shrink(data) }
+}
