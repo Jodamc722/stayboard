@@ -15,6 +15,7 @@
 // generates music and sound effects with ElevenLabs and keeps them as a playlist; any scene can carry
 // a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
 import StudioHome, { KIND_META } from './StudioHome'
+import AdScript from './AdScript'
 import { buildingsIn, inBuildings, byPlace, type AreaKey } from '@/lib/ad-places'
 import { type Moment, MOMENTS } from '@/lib/marketing-calendar'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -1735,7 +1736,18 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </span>
               </div>
               )}
-              {sc && canEdit ? (
+              {tl && (p.kind || 'video') !== 'flyer' && p.kind !== 'post' ? (
+                <div style={{ width: '100%', maxWidth: Math.max(FW >= FH ? pw : 520, 760) }}>
+                  <AdScript p={p} tl={tl} t={t} playing={playing} sel={sel} canEdit={canEdit} voiced={hasVoice} stale={!!p.voice && !hasVoice} display={display}
+                    onPick={i => pick(i)}
+                    onPlayFrom={i => { stop(); setSel(i); start(tl.starts[i]) }}
+                    setScene={setScene}
+                    move={move}
+                    del={delSceneAt}
+                    addAfter={i => { change(d => { const a = d.scenes.slice(); a.splice(i + 1, 0, { id: newSceneId(d), kind: 'cinema', vo: '', head: '', sub: '', items: [], photos: (d.scenes[i]?.photos || []).slice(0, 1) }); return { ...d, scenes: a } }); setSel(i + 1) }}
+                    setScenes={scenes => change(d => ({ ...d, scenes }))} />
+                </div>
+              ) : sc && canEdit ? (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 520 }} title="Quick edit of the scene on screen">
                   <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen" style={{ ...field, padding: '6px 9px', fontSize: 12.5, fontWeight: 700 }} />
                   {isFlyer || p.kind === 'post'
