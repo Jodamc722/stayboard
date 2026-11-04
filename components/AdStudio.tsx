@@ -1739,7 +1739,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 {p.kind !== 'post' ? <Btn small on={beside} onClick={toggleBeside} title="Script beside the player, or below a big player">{beside ? 'Script beside ⇆' : 'Script below ⇅'}</Btn> : null}
                 <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, color: UI.mut }}>{fmtT(t)} / {tl ? fmtT(tl.total) : '0:00'}</span>
                 <span style={{ marginLeft: 'auto', fontSize: 11.5, color: hasVoice ? UI.green : UI.gold }}>
-                  {hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : p.kind === 'post' ? 'Loop · ' + (tl ? tl.total.toFixed(1) : '0') + ' s' : 'Estimated timing · make the voice to lock it'}
+                  {scriptSide ? (hasVoice ? 'Timed to the voice' : p.voice ? 'Re-record the voice' : 'Estimated timing') : hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : p.kind === 'post' ? 'Loop · ' + (tl ? tl.total.toFixed(1) : '0') + ' s' : 'Estimated timing · make the voice to lock it'}
                 </span>
               </div>
               )}

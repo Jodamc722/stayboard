@@ -107,11 +107,13 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
                   <Grow value={x.vo} disabled={!canEdit} onChange={v => setScene(i, { vo: v })} placeholder={x.vo ? '' : '(no voice — music and pictures)'}
                     style={{ fontSize: 16, lineHeight: 1.55, fontFamily: 'Georgia, "Times New Roman", serif', padding: '4px 8px', color: x.vo ? UI.ink : UI.mut }} />
                   {showScreen ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px', marginTop: 2 }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: UI.mut, textTransform: 'uppercase', flex: 'none' }}>On screen</span>
-                      <span style={{ fontSize: 10.5, color: UI.gold, border: '1px solid rgba(210,176,119,0.35)', borderRadius: 5, padding: '0 5px', flex: 'none' }}>{kind}</span>
-                      <input value={x.head} disabled={!canEdit} onChange={e => setScene(i, { head: e.target.value })} placeholder="headline on screen (**gold** a word)"
-                        style={{ flex: 1, minWidth: 0, background: 'transparent', border: 0, borderBottom: '1px dashed ' + UI.line, color: UI.ink, fontSize: 12.5, fontWeight: 700, padding: '3px 2px', outline: 'none' }} />
+                    <div style={{ padding: '0 8px', marginTop: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: UI.mut, textTransform: 'uppercase' }}>On screen</span>
+                        <span style={{ fontSize: 10.5, color: UI.gold, border: '1px solid rgba(210,176,119,0.35)', borderRadius: 5, padding: '0 5px' }}>{kind}</span>
+                      </div>
+                      <Grow value={x.head} disabled={!canEdit} onChange={v => setScene(i, { head: v })} placeholder="headline on screen — **gold** a word"
+                        style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.4, padding: '3px 6px', marginTop: 2, borderBottom: '1px dashed ' + UI.line }} />
                     </div>
                   ) : null}
                   {fast ? <p style={{ fontSize: 11, color: UI.red, margin: '3px 8px 0' }}>{w} words in {d.toFixed(1)} s — too fast to land. Trim the line or hold the scene longer.</p> : null}
