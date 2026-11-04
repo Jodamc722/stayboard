@@ -130,7 +130,7 @@ export type CbReservation = {
   roomIds: string[]; roomNames: string[]; source: string | null; total: number | null; balance: number | null
   bookedAt: string | null; modifiedAt: string | null; raw: any
 }
-export type CbHousekeeping = { roomId: string; roomName: string; condition: string | null; occupied: boolean | null; frontdeskStatus: string | null; raw: any }
+export type CbHousekeeping = { roomId: string; roomName: string; condition: string | null; occupied: boolean | null; frontdeskStatus: string | null; housekeeper: string | null; housekeeperId: string | null; comments: string | null; dnd: boolean; refused: boolean; blocked: boolean; raw: any }
 
 const s = (v: any): string => (v == null ? '' : String(v))
 const n = (v: any): number | null => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v))
@@ -145,8 +145,15 @@ export async function getHotel(): Promise<{ id: string; name: string; city: stri
 
 /** Every room, flattened out of Cloudbeds' room-type → rooms tree. */
 export async function getRooms(): Promise<CbRoom[]> {
-  const { data } = await cbGet<any>('getRooms')
-  const props = Array.isArray(data) ? data : [data]
+  // Paged: 100 a page (the default is 20 — the audit found 20 of the hotel's 310 rooms mirrored).
+  const props: any[] = []
+  for (let page = 1; page <= 20; page++) {
+    const { data, total } = await cbGet<any>('getRooms', { pageNumber: page, pageSize: 100 })
+    const chunk = Array.isArray(data) ? data : [data]
+    props.push(...chunk)
+    const got = chunk.reduce((a, p) => a + (Array.isArray(p?.rooms) ? p.rooms.length : 0), 0)
+    if (!got || got < 100 || (total != null && page * 100 >= total)) break
+  }
   const out: CbRoom[] = []
   for (const p of props) {
     for (const t of (p?.rooms || p?.roomTypes || [])) {
@@ -205,12 +212,19 @@ export async function getReservations(opts: { from: string; to: string; modified
 
 /** Room condition as the front desk sees it (clean / dirty / inspected + occupied). */
 export async function getHousekeeping(): Promise<CbHousekeeping[]> {
-  const { data } = await cbGet<any>('getHousekeepingStatus')
-  const props = Array.isArray(data) ? data : [data]
+  // Cloudbeds returns one flat row per room, 100 a page (older payloads nested them under the
+  // property — both are read). The audit found the nested-only reader returning 0 of 310.
   const out: CbHousekeeping[] = []
-  for (const p of props) for (const r of (p?.rooms || [])) {
-    if (!r?.roomID) continue
-    out.push({ roomId: s(r.roomID), roomName: s(r.roomName), condition: s(r.roomCondition).toLowerCase() || null, occupied: r.roomOccupied == null ? null : !!r.roomOccupied, frontdeskStatus: s(r.frontdeskStatus) || null, raw: r })
+  for (let page = 1; page <= 20; page++) {
+    const { data, total } = await cbGet<any>('getHousekeepingStatus', { pageNumber: page, pageSize: 100 })
+    const arr = Array.isArray(data) ? data : [data]
+    const rows = arr.flatMap((x: any) => Array.isArray(x?.rooms) ? x.rooms : [x])
+    for (const r of rows) {
+      if (!r?.roomID) continue
+      out.push({ roomId: s(r.roomID), roomName: s(r.roomName), condition: s(r.roomCondition).toLowerCase() || null, occupied: r.roomOccupied == null ? null : !!r.roomOccupied, frontdeskStatus: s(r.frontdeskStatus) || null,
+        housekeeper: s(r.housekeeper) || null, housekeeperId: s(r.housekeeperID) || null, comments: s(r.roomComments) || null, dnd: !!r.doNotDisturb, refused: !!r.refusedService, blocked: !!r.roomBlocked, raw: r })
+    }
+    if (rows.length < 100 || (total != null && page * 100 >= total)) break
   }
   return out
 }

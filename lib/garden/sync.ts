@@ -101,8 +101,15 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
     const hk = await getHousekeeping()
     const { data: cur } = await db.from('garden_rooms').select('id,hk_status,name')
     const curBy: Record<string, any> = {}; for (const c of ((cur || []) as any[])) curBy[c.id] = c
+    let detail = true   // migration 170's columns; until it is run, only the base fields are written
     for (const h of hk) {
-      await db.from('garden_rooms').update({ hk_status: h.condition, occupied: h.occupied, hk_updated_at: new Date().toISOString() }).eq('id', h.roomId)
+      const base = { hk_status: h.condition, occupied: h.occupied, hk_updated_at: new Date().toISOString() }
+      if (detail) {
+        const { error } = await db.from('garden_rooms').update({ ...base, housekeeper: h.housekeeper, housekeeper_id: h.housekeeperId, hk_comments: h.comments, dnd: h.dnd, refused_service: h.refused, frontdesk_status: h.frontdeskStatus, blocked: h.blocked }).eq('id', h.roomId)
+        if (error && /column|schema cache/i.test(error.message)) detail = false
+        else if (!error) { if (h.condition === 'dirty' && curBy[h.roomId] && curBy[h.roomId].hk_status !== 'dirty') await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name }); continue }
+      }
+      await db.from('garden_rooms').update(base).eq('id', h.roomId)
       if (h.condition === 'dirty' && curBy[h.roomId] && curBy[h.roomId].hk_status !== 'dirty') await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name })
     }
     out.housekeeping = hk.length
