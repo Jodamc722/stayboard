@@ -24,7 +24,18 @@ const safeId = (id: string) => String(id || '').replace(/[^a-z0-9-]/gi, '').slic
 
 /** Nick's card by default — the presenter saved once for the sales deck, else the house values. */
 /** The ElevenLabs key — under the standard name, or as it was saved in Vercel ("ElevenLabs", 2026-11-04). */
-function elevenKey(): string { return String(process.env.ELEVENLABS_API_KEY || process.env.ElevenLabs || process.env.ELEVENLABS || process.env.ELEVEN_API_KEY || '').trim().replace(/^["'\s]+|["'\s]+$/g, '') }
+function elevenKey(): string {
+  const raw = String(process.env.ELEVENLABS_API_KEY || process.env.ElevenLabs || process.env.ELEVENLABS || process.env.ELEVEN_API_KEY || '')
+  // a value pasted with a label around it ("ELEVENLABS_API_KEY=sk_…", "xi-api-key: sk_…", quotes) — keep just the key
+  const m = raw.match(/sk_[A-Za-z0-9]{20,}/)
+  return m ? m[0] : raw.trim().replace(/^["'\s]+|["'\s]+$/g, '')
+}
+/** The SHAPE of the saved key, never its value — so a bad paste can be diagnosed without exposing it. */
+export function elevenKeyShape(): { set: boolean; name: string; length: number; startsSk: boolean; hadExtra: boolean; spaces: boolean } {
+  const name = process.env.ELEVENLABS_API_KEY ? 'ELEVENLABS_API_KEY' : process.env.ElevenLabs ? 'ElevenLabs' : process.env.ELEVENLABS ? 'ELEVENLABS' : process.env.ELEVEN_API_KEY ? 'ELEVEN_API_KEY' : ''
+  const raw = String((name && process.env[name]) || ''), k = elevenKey()
+  return { set: !!raw, name, length: k.length, startsSk: k.startsWith('sk_'), hadExtra: raw.length !== k.length, spaces: /\s/.test(k) }
+}
 
 export async function defaultContact(): Promise<AdContact> {
   const c = await getSetting<Partial<ContactCard>>(SALES_CONTACT_KEY, {})
