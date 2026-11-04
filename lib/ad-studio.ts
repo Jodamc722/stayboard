@@ -92,6 +92,8 @@ export async function newProject(by: string): Promise<AdProject> {
 
 export async function signedAudio(path: string): Promise<string | null> {
   if (!path) return null
+  // A bundled take (the sales videos' voice, shipped in public/ads/) is served as-is.
+  if (path.startsWith('public:')) { const u = path.slice(7); return /^\/ads\/[a-z0-9\-/]+\.mp3$/i.test(u) ? u : null }
   const { data } = await supabaseAdmin().storage.from(BUCKET).createSignedUrl(path, SIGN_TTL)
   return data?.signedUrl || null
 }
@@ -107,6 +109,8 @@ export function normalize(p: any): AdProject {
     anim: (TEXT_ANIMS.some(x => x.key === s?.anim) ? s.anim : 'auto') as AdTextAnim,
     cam: (CAMS.some(x => x.key === s?.cam) ? s.cam : 'auto') as AdCam,
     badge: String(s?.badge || '').slice(0, 22),
+    ...(s?.eyebrow ? { eyebrow: String(s.eyebrow).slice(0, 80) } : {}),
+    ...([0, 1, 2].indexOf(Number(s?.dim)) >= 0 && s?.dim !== null && s?.dim !== undefined && s?.dim !== '' ? { dim: Number(s.dim) } : {}),
     vo: String(s?.vo || '').slice(0, 600),
     head: String(s?.head || '').slice(0, 300),
     sub: String(s?.sub || '').slice(0, 300),

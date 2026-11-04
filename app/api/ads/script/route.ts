@@ -11,6 +11,7 @@ import { askJson } from '@/lib/ad-json'
 import { HOUSE_FACTS, GUEST_FACTS, numbersIn, tidyHead } from '@/lib/ad-engine'
 import { scriptPrompt, normalize, propertiesLine } from '@/lib/ad-studio'
 import { searchPhotos } from '@/lib/photo-library'
+import { areasIn, buildingsIn, inBuildings, AREA_LABEL, AREAS, type AreaKey } from '@/lib/ad-places'
 import { isCollagePhoto } from '@/lib/collage'
 
 export const dynamic = 'force-dynamic'
@@ -52,7 +53,7 @@ const core = (c: string) => String(c || '').toLowerCase().replace(/\b(the|a|an|w
  *  Scored by: shows the subject (caption) · fits the frame (portrait photos for 9:16, landscape for 16:9) · size ·
  *  an opener wants an establishing shot · weak rooms (bathroom, hallway, closet) only when asked for · not the
  *  same room as a photo already in the ad. Small files (< 900 px) are out. */
-async function bestPhoto(hits: any[], subj: { word: string; any: RegExp } | null, used: Set<string>, skip: number, opts: { format?: string; opener?: boolean; usedCores?: Set<string> } = {}): Promise<string> {
+async function bestPhoto(hits: any[], subj: { word: string; any: RegExp } | null, used: Set<string>, skip: number, opts: { format?: string; opener?: boolean; usedCores?: Set<string>; place?: string[] } = {}): Promise<string> {
   const seen = new Set<string>()
   const portrait = /^9:16$|^4:5$/.test(String(opts.format || ''))
   const landscape = String(opts.format || '') === '16:9'
@@ -66,6 +67,8 @@ async function bestPhoto(hits: any[], subj: { word: string; any: RegExp } | null
     if (opts.opener) sc += OPENER.test(cap) ? 350 : -150
     if (WEAK.test(cap) && !(subj && subj.any.test(cap))) sc -= 700
     if (opts.usedCores && cap && opts.usedCores.has(core(cap))) sc -= 500
+    // LOCATION (Jon, 2026-11-04): a Fort Lauderdale event shows our Fort Lauderdale listings, Miami shows Miami.
+    if (opts.place && opts.place.length) sc += inBuildings(String(h.building || ''), opts.place) ? 900 : -600
     return sc
   }
   cands.sort((a, b) => score(b) - score(a))
@@ -87,8 +90,13 @@ export async function POST(req: NextRequest) {
   if (!key) return NextResponse.json({ ok: false, error: 'No Anthropic key configured.' }, { status: 503 })
   const b = await req.json().catch(() => ({} as any))
   const seconds = Math.max(10, Math.min(120, Number(b?.seconds) || 30))
+  // Where the ad is set: given by the studio (a calendar moment), else read from the brief.
+  const areas: AreaKey[] = (Array.isArray(b?.where) ? b.where : []).filter((x: any) => AREAS.some(a => a.key === x))
+  const where = areas.length ? areas : areasIn(String(b?.prompt || ''))
+  const placeSet = buildingsIn(where)
+  const placeLine = where.length ? `\nWHERE THIS AD IS SET: ${where.map(k => AREA_LABEL[k]).join(' and ')}. Feature ONLY our properties there: ${placeSet.join(', ')}. Every photoQuery starts with one of those property names; never show a property from another area.` : ''
   const prompt = scriptPrompt({
-    prompt: String(b?.prompt || '').slice(0, 8000), seconds, format: String(b?.format || '16:9'),
+    prompt: String(b?.prompt || '').slice(0, 8000) + placeLine, seconds, format: String(b?.format || '16:9'),
     audience: String(b?.audience || 'property owners').slice(0, 80),
     current: b?.current ? normalize(b.current) : null,
     props: await propertiesLine(),
@@ -123,6 +131,8 @@ export async function POST(req: NextRequest) {
       for (let k = 0; k < want; k++) {
         const subj = subjectOf(texts[k] || '')
         const pools = [subj && place ? await search(place + ' ' + subj.word) : [], q ? await search(q) : [], place ? await search(place) : []]
+        // the area's own buildings, by subject, so there is always a right-place candidate
+        for (const bname of placeSet.slice(0, 6)) pools.push(subj ? await search(bname + ' ' + subj.word) : await search(bname))
         slots.push({ scene: i, k, subj, cands: pools.flat() })
       }
     }
@@ -131,7 +141,7 @@ export async function POST(req: NextRequest) {
     const picks: Record<string, string> = {}
     for (const { idx } of order) {
       const sl = slots[idx]
-      const u = await bestPhoto(sl.cands, sl.subj, used, 0, { format: fmt, opener: sl.scene === 0 && sl.k === 0, usedCores })
+      const u = await bestPhoto(sl.cands, sl.subj, used, 0, { format: fmt, opener: sl.scene === 0 && sl.k === 0, usedCores, place: placeSet })
       if (u) { used.add(u); picks[sl.scene + ':' + sl.k] = u }
     }
     slots.forEach(sl => { const u = picks[sl.scene + ':' + sl.k]; if (u) scenes[sl.scene].photos[sl.k] = u })
@@ -139,7 +149,7 @@ export async function POST(req: NextRequest) {
     const everything = Object.values(searches).flat()
     for (const x of scenes) {
       if (x.photos.length || x.kind === 'contact') continue
-      const u = await bestPhoto(everything, subjectOf([x.head, x.sub, x.vo].join(' ')), used, 0, { format: fmt, usedCores })
+      const u = await bestPhoto(everything, subjectOf([x.head, x.sub, x.vo].join(' ')), used, 0, { format: fmt, usedCores, place: placeSet })
       if (u) { x.photos = [u]; used.add(u) }
     }
     const norm = normalize({ id: 'x', scenes })
@@ -158,7 +168,7 @@ export async function POST(req: NextRequest) {
     })
     // a contact card in a guest ad is the wrong end card — the writer is told, this is the backstop
     if (/guest/i.test(String(b?.audience || ''))) norm.scenes = norm.scenes.map(s => (s.kind === 'contact' ? { ...s, kind: 'cta' as const, items: s.items.length ? s.items : ['Book at stay-hospitality.com'] } : s))
-    return NextResponse.json({ ok: true, name: String(j?.name || '').slice(0, 120), scenes: norm.scenes, queries: scenes.map(s => s.photoQuery), warnings })
+    return NextResponse.json({ ok: true, name: String(j?.name || '').slice(0, 120), scenes: norm.scenes, queries: scenes.map(s => s.photoQuery), warnings, where })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

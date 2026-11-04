@@ -15,11 +15,12 @@
 // generates music and sound effects with ElevenLabs and keeps them as a playlist; any scene can carry
 // a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
 import StudioHome, { KIND_META } from './StudioHome'
-import { type Moment } from '@/lib/marketing-calendar'
+import { buildingsIn, inBuildings, byPlace, type AreaKey } from '@/lib/ad-places'
+import { type Moment, MOMENTS } from '@/lib/marketing-calendar'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, PRO_KINDS, PRO_DIM_OF, polishAd, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -42,12 +43,15 @@ const UI = {
 }
 const KIND_COLOR: Record<AdKind, string> = {
   cta: '#E0A64C', mask: '#E0C04C', panel: '#7FA6C9', ticker: '#E06C4C', callouts: '#4CC4A8', polaroid: '#C9B79A', event: '#A06CE0', cinema: '#C98B5E', kinetic: '#E06C9F', reveal: '#5FB8C9', title: '#C9A15E', photo: '#5C8FD6', stats: '#6CB28C', wall: '#9A7FD1', cards: '#D07F5C', feed: '#4FA7B8', checks: '#8FB04A', rise: '#D4677C', timeline: '#D9A441', team: '#7CB5A0', quote: '#B89BD9', poster: '#E0A64C', contact: '#B58B3E',
+  beats: '#D2B077', tiles: '#D2B077', grid: '#D2B077', calendar: '#D2B077', dates: '#D2B077', hub: '#D2B077', beforeafter: '#D2B077', tilegrid: '#D2B077', livefeed: '#D2B077', roles: '#D2B077', curve: '#D2B077', triad: '#D2B077',
 }
 const AUD: Record<AdAudience, { label: string; brief: string; hint: string }> = {
   owners: { label: 'Owners', brief: 'property owners', hint: 'Sell management: revenue, team, Lighthouse; ends on Nick' },
   partners: { label: 'Partners', brief: 'realtors, lenders and tax advisors who refer owners', hint: 'For referral partners; ends on Nick' },
   guests: { label: 'Guests', brief: 'travellers choosing where to stay in South Florida', hint: 'Sell the stay; ends on Book at stay-hospitality.com' },
 }
+/** The areas an ad is set in — from its calendar moment (empty = the writer reads the brief). */
+const whereOf = (x: AdProject | null | undefined): AreaKey[] => (x && x.moment ? (MOMENTS.find(m => m.key === x.moment)?.where || []) : [])
 /** Jon, 2026-11-02: "never use a collage photo ever" — photos captioned as grids/collages are left out. */
 const COLLAGE = /collage|grid|mosaic|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i
 /** The date block a flyer shows for a calendar moment: 'DEC 4–6' / 'DEC 25'. */
@@ -122,6 +126,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [side, setSide] = useState<'ads' | 'stories' | 'templates' | 'videos' | 'sounds' | 'ideas'>('ads')
   const [audit, setAudit] = useState<Audit | null>(null)
   const [showAudit, setShowAudit] = useState(false)
+  /** The first-pass review shown when an ad is freshly built: score before → after the touch-up, and what changed. */
+  const [firstPass, setFirstPass] = useState<{ before: number; after: number; changes: string[] } | null>(null)
   const [safe, setSafe] = useState(true)
   const [versions, setVersions] = useState<{ ts: string; name: string; scenes: number; by: string; look: string }[] | null>(null)
   const [options, setOptions] = useState<{ id: string; list: { head: string; vo: string }[] } | null>(null)
@@ -225,6 +231,14 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     loadList()
     return r.project
   }
+  /** Videos library → Edit this video: an editable copy of a built-in sales video, opened in the editor. */
+  const editLibraryVideo = async (key: string) => {
+    setBusy('import'); setErr('')
+    const r = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fromLibrary: key }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok) { setErr(r?.error || 'Could not open that video for editing.'); return }
+    await loadList(); await open(r.project.id)
+  }
   const openStart = () => { stop(); setPlan(null); setErr(''); setWs(0); setStarting(true); setSt(x => ({ ...x, prompt: '', vibe: '', from: '', who: '', why: '', script: '' })); setDraft(null) }
   const goalOf = (k: string) => GOALS.find(g => g.key === k)
   /** Brief extras the chooser adds: goal, music vibe and look, in words the planner and writer use. */
@@ -258,7 +272,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       let scenes = S.scenes.map(x => ({ ...x, items: x.items.slice(), photos: x.photos.slice() }))
       const base: AdProject = { ...n, name: S.name + ' · revamp', format: (st.format || S.format) as AdFormat, audience: st.audience, music: music || S.music, look, goal: st.goal, contact: S.contact, captions: S.captions, voiceId: S.voiceId, voiceName: S.voiceName, voiceSettings: S.voiceSettings, scenes }
       const ask = 'REVAMP THIS AD: keep what works, make it fresher and stronger. ' + (st.prompt.trim() ? 'What to change: ' + st.prompt.trim() + '. ' : '') + seedLines()
-      const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: ask, seconds, audience: AUD[base.audience].brief, format: base.format, current: base }) }).then(x => x.json()).catch(() => null)
+      const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: ask, seconds, audience: AUD[base.audience].brief, format: base.format, current: base, where: whereOf(base) }) }).then(x => x.json()).catch(() => null)
       setBusy('')
       if (r?.ok && r.scenes?.length) scenes = r.scenes
       else setErr('Copied the ad, but the rewrite did not come back — it is the original scenes for now. Try "Change the whole ad".')
@@ -315,11 +329,11 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!p) return
     setBusy(change_ ? 'adask' : rewrite ? 'rewrite' : 'write'); setErr('')
     const prompt = change_ ? (brief ? brief + '\n\n' : '') + 'CHANGE REQUESTED FOR THE WHOLE AD (keep everything else): ' + change_ : brief
-    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds, audience: AUD[p.audience].brief, format: p.format, current: rewrite ? p : null }) }).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds, audience: AUD[p.audience].brief, format: p.format, current: rewrite ? p : null, where: whereOf(p) }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok) { setErr(r?.error || 'The writer did not answer. Try again.'); return }
     if (r.warnings?.length) setErr('Fact check: ' + r.warnings.join(' · '))
-    change(d => ({ ...d, prompt: brief, name: d.name === 'Untitled ad' && r.name ? r.name : d.name, scenes: r.scenes }))
+    { const d0 = pRef.current || p; finishBuild({ ...d0, prompt: brief, name: d0.name === 'Untitled ad' && r.name ? r.name : d0.name, scenes: r.scenes }) }
     setSel(0); setT(1.6); setUndo(null)
     if (change_) setAdAsk('')
   }
@@ -364,7 +378,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** Ask the writer for scenes. */
   const writeScenes = async (prompt: string, set: Plan['settings'], current?: AdProject | null): Promise<{ name: string; scenes: AdScene[] } | null> => {
     setErr('')
-    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null }) }).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null, where: whereOf(pRef.current) }) }).then(x => x.json()).catch(() => null)
     if (!r?.ok || !r.scenes?.length) { setErr(r?.error || 'The writer did not answer. Try again.'); return null }
     if (r.warnings?.length) setErr('Fact check: ' + r.warnings.join(' · '))
     return { name: r.name || '', scenes: r.scenes }
@@ -380,7 +394,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       setP(base); pRef.current = base; setAudioUrl(null); loadList()
     }
     setSeconds(set.seconds)
-    change(d => ({ ...d, prompt: brief, name: name || d.name, audience: set.audience, format: set.format, music: set.music || d.music, look: sd?.look || d.look, goal: sd?.goal || d.goal, scenes }))
+    const d0 = pRef.current || base
+    finishBuild({ ...d0, prompt: brief, name: name || d0.name, audience: set.audience, format: set.format, music: set.music || d0.music, look: sd?.look || d0.look, goal: sd?.goal || d0.goal, scenes })
     setPlan(null); setDraft(null); setSel(0); setT(1.6); setUndo(null)
     seed.current = null
     if (sd?.vibe) vibeTrack(sd.vibe)
@@ -450,12 +465,25 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (tl) setT(tl.starts[Math.min(1, tl.starts.length - 1)] + 1.6)
   }
 
+  /** FIRST PASS (Jon, 2026-11-04: "we need a view, an audit and overall touch-up when videos are first generated").
+   *  Every freshly built ad is touched up (end card, captions, calm transitions, no repeated photos, varied designs,
+   *  gold accents, pacing), then the review opens: the score before → after, what changed, the expert pass running. */
+  const finishBuild = (built: AdProject) => {
+    const facts = built.audience === 'guests' ? GUEST_FACTS : HOUSE_FACTS
+    const before = auditScore(auditAd(built, timeline(built), facts))
+    const fp = polishAd(built)
+    const after = auditScore(auditAd(fp.project, timeline(fp.project), facts))
+    change(() => fp.project)
+    setFirstPass({ before, after, changes: fp.changes }); setAudit(null); setShowAudit(true)
+    if ((fp.project.kind || 'video') !== 'flyer') runAudit(fp.project)
+  }
   // ── the expert audit (Jon, 2026-11-03: "as an ad expert, audit this") ─────
   const liveChecks = useMemo(() => (p && tl ? auditAd(p, tl, p.audience === 'guests' ? GUEST_FACTS : HOUSE_FACTS) : []), [p, tl])
-  const runAudit = async () => {
-    if (!p) return
+  const runAudit = async (proj?: AdProject) => {
+    const target = proj || p
+    if (!target) return
     setBusy('audit'); setErr(''); setShowAudit(true)
-    const r = await fetch('/api/ads/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: p }) }).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/ads/audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: target }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok) { setErr(r?.error || 'The audit did not come back. Try again.'); return }
     setAudit(r)
@@ -982,7 +1010,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       scenes.push({ id: 's' + (i + 1), kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items.slice(), photos, dur: s.dur || null })
     }
     setBusy('')
-    change(d => ({ ...d, name: d.name === 'Untitled ad' ? tp.name : d.name, format: d.goal ? d.format : tp.format, audience: tp.audience, scenes }))
+    { const d0 = pRef.current || p; finishBuild({ ...d0, name: d0.name === 'Untitled ad' ? tp.name : d0.name, format: d0.goal ? d0.format : tp.format, audience: tp.audience, scenes }) }
     setSel(0); setT(1.6); setSide('ads')
   }
 
@@ -1031,9 +1059,17 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     loadList()
   }
   /** Photos for a flyer/post scene: the library, collages out, nothing repeated. */
-  const libPhotos = async (q: string, n: number, avoid: string[] = []): Promise<string[]> => {
-    const r = await fetch('/api/photos/library?search=' + encodeURIComponent(q)).then(x => x.json()).catch(() => null)
-    const hs: Hit[] = r?.ok ? r.hits || [] : []
+  const libPhotos = async (q: string, n: number, avoid: string[] = [], where: AreaKey[] = []): Promise<string[]> => {
+    // LOCATION (Jon, 2026-11-04): a Fort Lauderdale moment shows our Fort Lauderdale listings first, Miami → Miami.
+    const set = buildingsIn(where)
+    const ask = async (qq: string): Promise<Hit[]> => { const r = await fetch('/api/photos/library?search=' + encodeURIComponent(qq)).then(x => x.json()).catch(() => null); return r?.ok ? r.hits || [] : [] }
+    let hs: Hit[] = await ask(q)
+    if (set.length) {
+      const inSet = (h: any) => inBuildings(String(h.building || ''), set)
+      if (hs.filter(inSet).length < n) for (const b of set.slice(0, 5)) { hs = hs.concat((await ask(b + ' ' + q)).filter(inSet)); if (hs.filter(inSet).length >= n + 2) break }
+      if (hs.filter(inSet).length < n) for (const b of set.slice(0, 5)) hs = hs.concat((await ask(b)).filter(inSet))
+      hs = byPlace(hs, set)
+    }
     let urls = hs.filter((h: any) => h.active !== false && !COLLAGE.test(String(h.caption || ''))).map(h => h.view || h.url).filter(u => avoid.indexOf(u) < 0)
     if (urls.length) {
       const c = await fetch('/api/ads/photo-check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: urls.slice(0, 30) }) }).then(x => x.json()).catch(() => null)
@@ -1045,7 +1081,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const startFlyer = async (m?: Moment) => {
     const cur = await newAd(); if (!cur) return
     setBusy('template')
-    const photos = await libPhotos(m?.photo || 'exterior', 1)
+    const photos = await libPhotos(m?.photo || 'exterior', 1, [], m?.where || [])
     const guests = !m || m.audience !== 'owners'
     const scenes: AdScene[] = m
       ? [{ id: 's1', kind: 'poster', vo: '', head: m.headline, sub: m.sub, items: [m.audience === 'owners' ? '' : whenShort(m), m.audience === 'owners' ? 'Talk to Nick · 651-200-8283' : 'Book at stay-hospitality.com', m.poster || ''], photos, dur: 6, fx: m.fx || [] }]
@@ -1058,8 +1094,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const startPost = async (m?: Moment) => {
     const cur = await newAd(); if (!cur) return
     setBusy('template')
-    const a = await libPhotos(m?.photo || 'pool', 1)
-    const b = await libPhotos('ocean view', 1, a)
+    const a = await libPhotos(m?.photo || 'pool', 1, [], m?.where || [])
+    const b = await libPhotos('ocean view', 1, a, m?.where || [])
     const guests = !m || m.audience !== 'owners'
     const scenes: AdScene[] = [
       { id: 's1', kind: 'poster', vo: '', head: m?.headline || 'Your South Florida **stay.**', sub: m?.sub || '', items: [m && guests ? whenShort(m) : '', '', m?.poster || ''], photos: a, dur: 4, fx: m?.fx || [] },
@@ -1155,7 +1191,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
 
       {home ? (
         <StudioHome rows={list} canEdit={canEdit} canDelete={canDelete} busy={busy} display={display}
-          onMake={makeKind} onMoment={makeMoment} onOpen={id => open(id)} onDelete={quickDelete} onDuplicate={quickDuplicate} />
+          onMake={makeKind} onMoment={makeMoment} onOpen={id => open(id)} onDelete={quickDelete} onDuplicate={quickDuplicate} library={lib.filter(v => v.builtin).map(v => ({ key: v.key, name: v.name, thumb: v.thumb, dur: v.dur }))} onEditVideo={editLibraryVideo} />
       ) : null}
       <div style={{ display: home ? 'none' : 'grid', gridTemplateColumns: full ? '280px minmax(0,1fr) 360px' : '260px minmax(0,1fr) 330px', minHeight: full ? 'calc(100vh - 230px)' : 560 }}>
         {/* ── left: brief + ads ── */}
@@ -1288,6 +1324,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                       <p style={{ fontSize: 12, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</p>
                       <p style={{ fontSize: 10.5, color: UI.mut, margin: '2px 0 6px' }}>{v.builtin ? 'Sales video' : (v.format || 'video') + ' · ' + (v.createdAt ? new Date(v.createdAt).toLocaleDateString() : '')}</p>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {canEdit && v.builtin ? <Btn small tone="gold" disabled={!!busy} onClick={() => editLibraryVideo(v.key)} title="Opens this video scene by scene — every word, number, photo and timing editable. Makes a copy; the original stays here.">✎ Edit this video</Btn> : null}
                         {canEdit && p ? <Btn small onClick={() => useVideo(v)} title="Puts this clip behind the selected scene">Use in scene</Btn> : null}
                         <a href={v.url} download style={{ fontSize: 11.5, color: UI.mut, padding: '4px 6px' }}>Download</a>
                         {!v.builtin && canDelete ? <Btn small tone="red" onClick={() => delVideo(v)}>Delete</Btn> : null}
@@ -1511,10 +1548,25 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   <p style={{ fontSize: 12.5, color: UI.mut, margin: '3px 0 0' }}>{busy === 'audit' ? 'The creative director is reading it… about 20 seconds.' : audit?.verdict || (audit ? 'Checks only — the review did not come back.' : 'Automatic checks. Press Run the review for the expert pass.')}</p>
                 </div>
                 <span style={{ display: 'flex', gap: 4 }}>
-                  <Btn small disabled={!!busy} onClick={runAudit}>{audit ? 'Run again' : 'Run the review'}</Btn>
-                  <Btn small onClick={() => setShowAudit(false)}>Close</Btn>
+                  <Btn small disabled={!!busy} onClick={() => runAudit()}>{audit ? 'Run again' : 'Run the review'}</Btn>
+                  <Btn small onClick={() => { setShowAudit(false); setFirstPass(null) }}>Close</Btn>
                 </span>
               </div>
+              {firstPass ? (
+                <div style={{ marginTop: 14, background: 'rgba(76,196,136,0.08)', border: '1px solid rgba(76,196,136,0.35)', borderRadius: 10, padding: '10px 13px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <b style={{ fontSize: 13 }}>First pass — touched up before you saw it</b>
+                    <span style={{ fontSize: 12, color: UI.mut }}>Checks {firstPass.before} → <b style={{ color: firstPass.after >= firstPass.before ? UI.green : UI.gold }}>{firstPass.after}</b></span>
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                      <Btn small tone="gold" onClick={() => { setShowAudit(false); setFirstPass(null); start(0) }}>▶ Watch it</Btn>
+                    </span>
+                  </div>
+                  {firstPass.changes.length
+                    ? <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12.5, lineHeight: 1.6 }}>{firstPass.changes.map((x, i) => <li key={i}>{x}</li>)}</ul>
+                    : <p style={{ fontSize: 12.5, margin: '6px 0 0', color: UI.mut }}>Nothing needed touching — end card, captions, transitions, photos and pacing were already right.</p>}
+                  <p style={{ fontSize: 11, color: UI.mut, margin: '6px 0 0' }}>Below: what the expert review suggests (apply one at a time or all), then the checks still open. Nothing here changes what is said without you pressing Apply.</p>
+                </div>
+              ) : null}
               {audit?.strengths?.length ? (
                 <>
                   <Label>What works</Label>
@@ -1728,7 +1780,9 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               ) : null}
               <Label>Look</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {KINDS.map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setScene(sel, { kind: k.kind })}>{k.label}</Btn>)}
+                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) < 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setScene(sel, { kind: k.kind })}>{k.label}</Btn>)}
+                <span style={{ width: '100%', fontSize: 10, color: UI.gold, letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 6 }}>Pro designs · from the sales videos</span>
+                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) >= 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setScene(sel, { kind: k.kind })}>{k.label}</Btn>)}
               </div>
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 6 }}>{KINDS.find(k => k.kind === sc.kind)?.hint}</p>
               {sel > 0 ? (
@@ -1790,6 +1844,19 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   ) : null}
                   <Label>Line under it</Label>
                   <input value={sc.sub} disabled={!canEdit} onChange={e => setScene(sel, { sub: e.target.value })} style={field} />
+                  {PRO_KINDS.indexOf(sc.kind) >= 0 ? (
+                    <>
+                      <p style={{ fontSize: 11, color: UI.gold, margin: '8px 0 0', lineHeight: 1.45 }}>{(KINDS.find(k => k.kind === sc.kind)?.hint || '').replace(/^Pro · /, '')}</p>
+                      <Label>Eyebrow (small top line)</Label>
+                      <input value={sc.eyebrow || ''} disabled={!canEdit} maxLength={80} onChange={e => setScene(sel, { eyebrow: e.target.value })} placeholder="e.g. NIGHTLY RATE · NEXT 5 WEEKS" style={field} />
+                      <Label>Rows · one per line</Label>
+                      <textarea rows={Math.min(9, Math.max(3, sc.items.length + 1))} value={sc.items.join('\n')} disabled={!canEdit} onChange={e => setScene(sel, { items: e.target.value.split('\n') })} style={{ ...field, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }} />
+                      <Label>Photo behind</Label>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        {([[1, 'Light'], [0, 'Normal'], [2, 'Dark']] as [number, string][]).map(([v, l]) => <Btn key={v} small disabled={!canEdit} on={(sc.dim ?? PRO_DIM_OF(sc.kind)) === v} onClick={() => setScene(sel, { dim: v })}>{l}</Btn>)}
+                      </div>
+                    </>
+                  ) : null}
                   {['stats', 'cards', 'feed', 'checks', 'rise', 'wall', 'timeline', 'team', 'callouts'].indexOf(sc.kind) >= 0 ? (
                     <>
                       <Label>Rows · one per line</Label>

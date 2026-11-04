@@ -2,11 +2,13 @@
 //   GET                 → the list
 //   GET ?id=            → one project (+ a signed URL for its voice take)
 //   POST { new: true }  → a fresh project with the house defaults
+//   POST { fromLibrary: 'full'|'short' } → an editable copy of a built-in sales video
 //   POST { project }    → save
 //   DELETE ?id=         → delete it and its voice takes (edit — Jon, 2026-11-04: "need to be able to delete ads")
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { listProjects, getProject, saveProject, deleteProject, newProject, signedAudio, normalize } from '@/lib/ad-studio'
+import { salesProject, SALES_CUTS, type SalesCut } from '@/lib/ad-sales-cuts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -32,6 +34,14 @@ export async function POST(req: NextRequest) {
   try {
     const b = await req.json().catch(() => ({} as any))
     if (b?.new) return NextResponse.json({ ok: true, project: await newProject(by) })
+    // An editable copy of one of the built-in sales videos (Videos library → Edit this video).
+    if (b?.fromLibrary) {
+      const cut = String(b.fromLibrary).replace(/^builtin:/, '') as SalesCut
+      if (!(cut in SALES_CUTS)) return NextResponse.json({ ok: false, error: 'No such video.' }, { status: 400 })
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+      const saved = await saveProject(normalize(salesProject(cut, id, by)), by)
+      return NextResponse.json({ ok: true, project: saved, audioUrl: saved.voice ? await signedAudio(saved.voice.path) : null })
+    }
     if (!b?.project) return NextResponse.json({ ok: false, error: 'Nothing to save.' }, { status: 400 })
     const saved = await saveProject(normalize(b.project), by)
     return NextResponse.json({ ok: true, project: saved })

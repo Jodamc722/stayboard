@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react'
 import { comingUp, whenLabel, type Moment } from '@/lib/marketing-calendar'
 import { LOOKS, type AdKindOf } from '@/lib/ad-engine'
+import { AREA_LABEL, buildingsIn } from '@/lib/ad-places'
 
 export type HomeRow = { id: string; name: string; updatedAt: string; scenes: number; format: string; status?: string; kind?: string; look?: string; thumb?: string; moment?: string }
 
@@ -18,8 +19,11 @@ export const KIND_META: Record<AdKindOf, { label: string; plural: string; blurb:
   story: { label: 'Owner story', plural: 'Owner stories', blurb: 'Our story, welcome aboard, the first 90 days, the team — for owners and partners.', icon: '✦', out: 'MP4 with voice' },
 }
 
-export default function StudioHome({ rows, canEdit, canDelete, busy, display, onMake, onMoment, onOpen, onDelete, onDuplicate }: {
+export default function StudioHome({ rows, canEdit, canDelete, busy, display, onMake, onMoment, onOpen, onDelete, onDuplicate, library = [], onEditVideo }: {
   rows: HomeRow[]; canEdit: boolean; canDelete: boolean; busy: string; display: string
+  /** The finished sales videos (Videos library, built-in) — opened scene by scene to edit. */
+  library?: { key: string; name: string; thumb: string; dur: number }[]
+  onEditVideo?: (key: string) => void
   onMake: (kind: AdKindOf) => void
   onMoment: (m: Moment, kind: AdKindOf) => void
   onOpen: (id: string) => void
@@ -56,6 +60,27 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, on
         })}
       </div>
 
+      {/* ── finished videos, editable (Jon, 2026-11-04: "two videos that I want to be able to edit … I love the way those look") ── */}
+      {library.length ? (<>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '30px 0 10px' }}>
+          <p style={{ fontFamily: display, fontWeight: 800, fontSize: 20, margin: 0 }}>Our sales videos</p>
+          <span style={{ fontSize: 12.5, color: UI.mut }}>Open either one scene by scene — every word, number, photo and timing editable. The original stays in the library.</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(290px, 1fr))', gap: 10 }}>
+          {library.map(v => (
+            <div key={v.key} style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, overflow: 'hidden' }}>
+              <div style={{ aspectRatio: '16/9', background: '#000 center/cover no-repeat', backgroundImage: v.thumb ? `url(${v.thumb})` : 'none', position: 'relative' }}>
+                <span style={{ position: 'absolute', left: 8, bottom: 8, fontSize: 11, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff', padding: '2px 7px', borderRadius: 5 }}>▶ {Math.floor(v.dur / 60)}:{String(Math.round(v.dur % 60)).padStart(2, '0')}</span>
+              </div>
+              <div style={{ padding: '10px 12px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontFamily: display, fontWeight: 800, fontSize: 14.5, flex: 1, minWidth: 0 }}>{v.name}</span>
+                {canEdit && onEditVideo ? <button type="button" disabled={!!busy} onClick={() => onEditVideo(v.key)} style={{ fontSize: 11.5, fontWeight: 800, padding: '6px 11px', borderRadius: 8, border: 0, background: UI.gold, color: '#0B0F16', cursor: 'pointer', whiteSpace: 'nowrap' }}>{busy === 'import' ? 'Opening…' : '✎ Edit this video'}</button> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      </>) : null}
+
       {/* ── coming up ── */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '30px 0 10px' }}>
         <p style={{ fontFamily: display, fontWeight: 800, fontSize: 20, margin: 0 }}>Coming up</p>
@@ -78,6 +103,7 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, on
               </p>
               <p style={{ fontSize: 12.5, margin: '8px 0 0', lineHeight: 1.45 }}>{m.headline.replace(/\*\*/g, '')}</p>
               <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 10px' }}>{m.audience === 'owners' ? 'For owners' : m.audience === 'both' ? 'Guests and owners' : 'For guests'} · {lk.label} look</p>
+              {m.where && m.where.length ? <p title={'Photos from: ' + buildingsIn(m.where).join(', ')} style={{ fontSize: 11, color: UI.gold, margin: '-6px 0 10px' }}>📍 {m.where.map(k => AREA_LABEL[k]).join(' · ')} — {buildingsIn(m.where).slice(0, 4).join(', ')}{buildingsIn(m.where).length > 4 ? '…' : ''}</p> : null}
               {canEdit ? (
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                   {(['flyer', 'post', 'video'] as AdKindOf[]).map(k => (

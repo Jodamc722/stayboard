@@ -16,6 +16,7 @@
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
 export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'timeline' | 'team' | 'quote' | 'poster' | 'contact' | 'cta'
+  | 'beats' | 'tiles' | 'grid' | 'calendar' | 'dates' | 'hub' | 'beforeafter' | 'tilegrid' | 'livefeed' | 'roles' | 'curve' | 'triad'
 /** Jon, 2026-11-02: "need more style … a wide range of edits, range of styles and looks". */
 export type AdStyle = {
   font: 'auto' | 'sans' | 'serif' | 'condensed' | 'elegant'
@@ -85,6 +86,10 @@ export type AdScene = {
   fx?: string[]
   /** Per-graphic options (placement, size, amount, speed, colour, variant, blink), keyed by FX key. Missing = that graphic's default. */
   fxo?: Record<string, FxOpts>
+  /** Pro designs: a small mono line above the content (e.g. NIGHTLY RATE · NEXT 5 WEEKS). */
+  eyebrow?: string
+  /** How dark the photo behind the scene is: 1 light · 0 normal · 2 dark. Missing = the design's default. */
+  dim?: number
 }
 export type FxOpts = { pos?: string; size?: 'S' | 'M' | 'L'; amt?: 'low' | 'med' | 'high'; speed?: 'slow' | 'normal' | 'fast'; color?: string; variant?: string; blink?: 'on' | 'off' }
 export type AdContact = { name: string; role: string; phone: string; email: string; photo: string }
@@ -217,6 +222,19 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'poster', label: 'Poster', hint: 'A designed page. Row 1: the date; row 2: the button text; row 3 (optional): dark · gallery · neon · band to force a style (otherwise light looks get the gallery mat, Festival and Miami get neon). Flyers and posts.' },
   { kind: 'contact', label: 'Contact card', hint: 'The end card: photo, Book a call, number, email.' },
   { kind: 'cta', label: 'Book now', hint: 'Guest end card / social post: photo, headline, a button. Row 1 is the button text.' },
+  // Pro designs — the twelve from the two sales videos (2026-11-04), editable here.
+  { kind: 'beats', label: 'Beat lines', hint: 'Pro · the hook: 2 to 4 short lines (one per line of the headline) landing one per beat over the photo. **Gold** the key word.' },
+  { kind: 'tiles', label: 'Count-up tiles', hint: 'Pro · figures that count up under a gold rule. Rows: 450+|listings (up to 9). Sub: chips split by · (e.g. Miami · Fort Lauderdale).' },
+  { kind: 'grid', label: 'Photo wall', hint: 'Pro · up to 9 photos as a labelled wall that pops in (rows label the photos). With a headline it becomes a full-bleed dimmed wall with the line over it.' },
+  { kind: 'calendar', label: 'Pricing calendar', hint: 'Pro · nightly rates for 5 weeks, a few cells repricing live. Eyebrow: the label. Sub: the green tag. Row 1: footnote. Row 2: Mon–Sun base rates (189,179,…).' },
+  { kind: 'dates', label: 'Event rates', hint: 'Pro · event cards that flip from a standard rate to a premium one. Rows: Dec|Art Basel Miami Beach|$309|$899. Sub: footnote.' },
+  { kind: 'hub', label: 'Channel hub', hint: 'Pro · the listing at the centre with a spoke to each channel. Rows: the channels (stay-hospitality.com last turns gold). Eyebrow: centre label. Headline or sub: the line under it.' },
+  { kind: 'beforeafter', label: 'Before → after', hint: 'Pro · a listing rebuilds. Photo 1: background; photos 2–4: before; 5–7: after. Sub: old title; headline: new title. Rows: the checklist.' },
+  { kind: 'tilegrid', label: 'Feature tiles', hint: 'Pro · a name (Light**house**), a mono tag (eyebrow or sub) and tiles that light up in turn. Rows: the tiles (up to 12).' },
+  { kind: 'livefeed', label: 'Live feed (split)', hint: 'Pro · title on the left, events sliding in on the right. Rows: Title|detail|#colour. Eyebrow + sub sit with the title.' },
+  { kind: 'roles', label: 'Role tiles', hint: 'Pro · a centred headline, then tiles that light up in turn, then a line under them (sub). Rows: the roles.' },
+  { kind: 'curve', label: 'Switch curve', hint: 'Pro · results: headline and chips on the left, the dashed line and the rising gold line on the right. Rows: chips. Sub: the marker label.' },
+  { kind: 'triad', label: 'Three cards', hint: 'Pro · three photo cards that land with the words. Photo 1: background; photos 2–4: the cards. Rows: Title|line.' },
 ]
 
 // ── Words the voice says wrong (October 2026 sessions). Applied to what the voice reads only. ──
@@ -280,7 +298,8 @@ export function auditAd(p: AdProject, tl: Timeline, facts: string): AuditIssue[]
   if (!n) return [{ sev: 'high', code: 'empty', msg: 'No scenes yet.' }]
   const PF = platformOf(p)
   const first = sc[0]
-  const hw = (first.head || '').replace(/\*\*/g, '').trim().split(/\s+/).filter(Boolean).length
+  // a beat-lines hook lands one line at a time — the first line is what has to stop the scroll
+  const hw = (first.kind === 'beats' ? (first.head || '').split('\n')[0] : first.head || '').replace(/\*\*/g, '').trim().split(/\s+/).filter(Boolean).length
   if (hw > 6) out.push({ sev: 'high', scene: 0, code: 'hook-long', msg: `The hook is ${hw} words — people decide in 1.5 s. Cut it to 2–5.` })
   if (!first.head.trim()) out.push({ sev: 'high', scene: 0, code: 'hook-missing', msg: 'The first scene has no headline — most people watch muted, so the hook must be on screen.' })
   if (/^(welcome|introducing|stay hospitality)/i.test(first.head.replace(/\*\*/g, '').trim())) out.push({ sev: 'med', scene: 0, code: 'hook-weak', msg: 'Opening on "Welcome" or the company name wastes the hook. Lead with a feeling, a benefit or the place.' })
@@ -297,7 +316,9 @@ export function auditAd(p: AdProject, tl: Timeline, facts: string): AuditIssue[]
   if (n > Math.max(4, tl.total / 2.4)) out.push({ sev: 'med', code: 'too-many', msg: `${n} scenes in ${tl.total.toFixed(0)} s is a flicker — aim for one scene every 3–4 s.` })
   // photos
   const seen = new Map<string, number>()
-  sc.forEach((x, i) => x.photos.forEach(u => { if (seen.has(u)) out.push({ sev: 'med', scene: i, code: 'dup-photo', msg: `Same photo as scene ${seen.get(u)! + 1}. Give each scene its own.` }); else seen.set(u, i) }))
+  // a pro design's photo 1 is its background; a photo wall's tiles and a card's contents are allowed to echo the ad
+  const shown = (x: AdScene) => x.kind === 'grid' ? [] : PRO_KINDS.indexOf(x.kind) >= 0 ? x.photos.slice(0, 1) : x.photos
+  sc.forEach((x, i) => shown(x).forEach(u => { if (seen.has(u)) out.push({ sev: 'med', scene: i, code: 'dup-photo', msg: `Same photo as scene ${seen.get(u)! + 1}. Give each scene its own.` }); else seen.set(u, i) }))
   sc.forEach((x, i) => { if (!x.photos.length && ['stats', 'contact', 'checks', 'feed', 'rise'].indexOf(x.kind) < 0) out.push({ sev: 'high', scene: i, code: 'no-photo', msg: 'No photo on a photo-led scene.' }) })
   // words per second, voice risks, numbers
   const allowed = new Set(numbersIn(facts + ' ' + (p.prompt || '') + ' 1M 1000000 651 200 8283'))
@@ -305,16 +326,90 @@ export function auditAd(p: AdProject, tl: Timeline, facts: string): AuditIssue[]
     const w = x.vo.trim().split(/\s+/).filter(Boolean).length
     if (w && !tl.voiced && w / Math.max(1, tl.durs[i]) > 3.1) out.push({ sev: 'med', scene: i, code: 'fast', msg: `${w} words in ${tl.durs[i].toFixed(1)} s — too fast to land. Cut the line or let it hold longer.` })
     const risky = riskyWords(x.vo); if (risky.length) out.push({ sev: 'med', scene: i, code: 'voice-risk', msg: `The voice says ${risky.join(' and ')} wrong — keep it on screen only.` })
-    const bad = numbersIn([x.vo, x.head, x.sub, x.items.join(' ')].join(' ')).filter(v => !allowed.has(v))
-    if (bad.length) out.push({ sev: 'high', scene: i, code: 'number', msg: `Check ${Array.from(new Set(bad)).join(', ')} — not in our facts.` })
+    // pricing calendars and event-rate cards carry illustrative rates, labelled as such on the slide
+    const illus = (x.kind === 'calendar' || x.kind === 'dates') && /illustrat/i.test(x.sub + ' ' + x.items.join(' '))
+    // colours (#E07B5F) and property names (17WEST, 3316, District 225) are not claims
+    const clean = (t: string) => t.replace(/#[0-9a-f]{3,8}\b/gi, ' ').replace(/\b(17 ?west|district 225|3316|906|1587|2023|7071)\b/gi, ' ')
+    const bad = numbersIn(clean([x.vo, x.head, x.sub, illus ? '' : x.items.join(' ')].join(' '))).filter(v => !allowed.has(v) && !(illus && /^\d+$/.test(v)))
+    if (bad.length) out.push({ sev: x.kind === 'livefeed' ? 'low' : 'high', scene: i, code: 'number', msg: x.kind === 'livefeed' ? `The feed shows example events (${Array.from(new Set(bad)).join(', ')}) — make sure they read as examples, not results.` : `Check ${Array.from(new Set(bad)).join(', ')} — not in our facts.` })
     if (guests && /\$|\bcall us\b|\btext us\b|\d{3}[-.]\d{3}[-.]\d{4}/i.test(x.vo + ' ' + x.head + ' ' + x.items.join(' '))) out.push({ sev: 'high', scene: i, code: 'guest-rule', msg: 'Guest ads never show a price or "call us" — the only ask is to book at stay-hospitality.com.' })
-    if (!x.head.trim() && !x.vo.trim() && ['wall', 'photo'].indexOf(x.kind) < 0) out.push({ sev: 'low', scene: i, code: 'blank', msg: 'Nothing said and nothing on screen.' })
+    if (!x.head.trim() && !x.vo.trim() && ['wall', 'photo', 'grid'].indexOf(x.kind) < 0) out.push({ sev: 'low', scene: i, code: 'blank', msg: 'Nothing said and nothing on screen.' })
     if (i > 0 && x.kind === sc[i - 1].kind && ['photo', 'wall'].indexOf(x.kind) < 0) out.push({ sev: 'low', scene: i, code: 'same-kind', msg: `Two ${x.kind} scenes in a row — vary the design.` })
   })
   if (!sc.some(x => /\*\*/.test(x.head))) out.push({ sev: 'low', code: 'no-gold', msg: 'No highlighted word anywhere — mark the key word in a headline with **…** for the brand accent.' })
   const named = sc.some(x => /stay hospitality|17 ?west|amrit|elser|botanica|garden hotel|arya|aria|salato|capri|eden|nomad|lucerne|hendricks|boynton|park towers/i.test(x.vo + ' ' + x.head + ' ' + x.sub))
   if (!named) out.push({ sev: 'med', code: 'no-name', msg: guests ? 'The property is never named — people cannot search for it.' : 'Stay Hospitality is never named.' })
   return out.sort((a, b) => ({ high: 0, med: 1, low: 2 }[a.sev] - { high: 0, med: 1, low: 2 }[b.sev]))
+}
+/** FIRST-PASS TOUCH-UP (Jon, 2026-11-04: "we need a review, an audit and an overall touch-up when videos are first
+ *  generated"). Runs on every freshly built ad before anyone sees it. Only safe, reversible fixes — it never rewrites
+ *  what is said and never invents a fact; everything it cannot fix stays in the review as a check to make. */
+const ALT_KIND: Partial<Record<AdKind, AdKind>> = { title: 'photo', photo: 'cinema', cinema: 'panel', panel: 'cinema', kinetic: 'title', mask: 'title', reveal: 'cinema', ticker: 'photo', polaroid: 'photo', callouts: 'checks', quote: 'cinema' }
+const WILD_TR: AdTransition[] = ['spin', 'glitch', 'blinds', 'diamond', 'iris', 'doors', 'flash', 'whip']
+export function polishAd(p0: AdProject): { project: AdProject; changes: string[] } {
+  const p: AdProject = JSON.parse(JSON.stringify(p0))
+  const ch: string[] = []
+  const sc = p.scenes
+  if (!sc.length) return { project: p, changes: ch }
+  const video = (p.kind || 'video') === 'video' || p.kind === 'story'
+  const guests = p.audience === 'guests'
+  // the right end card, added (never replacing a scene that carries content)
+  if (video) {
+    const last = sc[sc.length - 1]
+    if (guests && last.kind !== 'cta') {
+      if (last.kind === 'contact') { last.kind = 'cta'; last.items = ['Book at stay-hospitality.com']; ch.push('Guest ad: the end card is now Book at stay-hospitality.com') }
+      else { sc.push({ id: 'end' + sc.length, kind: 'cta', vo: '', head: 'Your South Florida **stay.**', sub: '', items: ['Book at stay-hospitality.com'], photos: (sc[0].photos || []).slice(0, 1), tr: 'fade' }); ch.push('Added the Book now end card') }
+    }
+    if (!guests && last.kind !== 'contact') { sc.push({ id: 'end' + sc.length, kind: 'contact', vo: '', head: 'Book a **call.**', sub: '', items: [], photos: [], tr: 'fade' }); ch.push('Added Nick’s contact card as the end card') }
+    if (!p.captions) { p.captions = true; ch.push('Captions on — most people watch muted') }
+    if (p.music === 'none') { p.music = 'werq'; ch.push('Added a music bed (Werq)') }
+  }
+  // transitions: calm and consistent — the writer's flashy picks go back to the ad's own family
+  let wild = 0
+  sc.forEach((x, i) => { if (x.tr && WILD_TR.indexOf(x.tr) >= 0) { x.tr = 'auto'; wild++ } if (i === sc.length - 1 && (x.kind === 'cta' || x.kind === 'contact') && x.tr !== 'fade') x.tr = 'fade' })
+  if (wild) ch.push(`Calmed ${wild} transition${wild > 1 ? 's' : ''} — one clean family across the ad`)
+  // photos never repeat: a repeated photo is dropped where the scene has others, or swapped for a spare one
+  const used = new Set<string>(), spare: string[] = []
+  sc.forEach(x => { if (PRO_KINDS.indexOf(x.kind) < 0) x.photos.slice(1).forEach(u => spare.push(u)) })
+  let dups = 0
+  sc.forEach(x => {
+    if (x.kind === 'grid') return
+    if (PRO_KINDS.indexOf(x.kind) >= 0) { if (x.photos[0]) used.add(x.photos[0]); return }
+    const out: string[] = []
+    x.photos.forEach((u, k) => {
+      if (!used.has(u)) { out.push(u); used.add(u); return }
+      dups++
+      if (k === 0 && x.photos.length === 1) { const alt = spare.find(s => !used.has(s)); if (alt) { out.push(alt); used.add(alt) } else out.push(u) }
+    })
+    x.photos = out.length ? out : x.photos
+  })
+  if (dups) ch.push(`Removed ${dups} repeated photo${dups > 1 ? 's' : ''} — every scene shows its own`)
+  // the same design twice in a row reads as a stutter
+  let swaps = 0
+  for (let i = 1; i < sc.length; i++) if (sc[i].kind === sc[i - 1].kind && ALT_KIND[sc[i].kind] && sc[i].photos.length) { sc[i].kind = ALT_KIND[sc[i].kind]!; swaps++ }
+  if (swaps) ch.push(`Varied ${swaps} back-to-back design${swaps > 1 ? 's' : ''}`)
+  // the brand accent: a headline with no gold word gets its last word in gold
+  let golds = 0
+  sc.forEach(x => {
+    const h = (x.head || '').trim()
+    if (!h || /\*\*/.test(h) || x.kind === 'contact' || x.kind === 'beforeafter' || x.kind === 'poster' || h.split(/\s+/).length < 2) return
+    const lines = h.split('\n'), L = lines.length - 1, m = lines[L].match(/^(.*\s)?(\S+)$/)
+    if (!m) return
+    lines[L] = (m[1] || '') + '**' + m[2] + '**'; x.head = lines.join('\n'); golds++
+  })
+  if (golds) ch.push(`Gold accent on ${golds} headline${golds > 1 ? 's' : ''}`)
+  // timing without a voice take: lines get time to land, the end card holds long enough to read
+  if (!p.voice) {
+    let paced = 0
+    sc.forEach((x, i) => {
+      const w = x.vo.trim().split(/\s+/).filter(Boolean).length
+      const need = w ? +(w / 2.55 + 1).toFixed(1) : 0
+      if (x.dur && need && x.dur < need) { x.dur = need; paced++ }
+      if (i === sc.length - 1 && video && (x.kind === 'cta' || x.kind === 'contact') && x.dur && x.dur < 4.5) { x.dur = 4.5; paced++ }
+    })
+    if (paced) ch.push(`Gave ${paced} scene${paced > 1 ? 's' : ''} time to land`)
+  }
+  return { project: p, changes: ch }
 }
 export function auditScore(issues: AuditIssue[]): number {
   return Math.max(0, Math.min(100, 100 - issues.reduce((a, i) => a + (i.sev === 'high' ? 15 : i.sev === 'med' ? 7 : 3), 0)))
@@ -777,13 +872,16 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   const portrait = H > W * 1.1
   const pad = (portrait ? 80 : 120) * u
   const PF = platformOf(p)
-  const bottomSafe = Math.max((p.captions ? 190 : 110) * u, H * PF.safe.bottom + (p.captions ? 150 : 40) * u)
+  // vertical captions run to three lines: content stops above them
+  const bottomSafe = Math.max((p.captions ? 190 : 110) * u, H * PF.safe.bottom + (p.captions ? (portrait ? 250 : 150) : 40) * u)
   const get = (u: string) => (!u ? null : A.media ? A.media(u, local) : A.img(u))
   const im = (k: number) => get(sc.photos[k] || '')
   const head = CAPS ? (sc.head || '').toUpperCase() : sc.head || ''
   const fam = motionFamily(p)
   ANIM = sc.anim && sc.anim !== 'auto' ? sc.anim : (sc.kind === 'cinema' || sc.kind === 'panel' ? (fam === 'lively' ? 'rise' : 'blur') : fam === 'lively' ? (sc.kind === 'title' || sc.kind === 'photo' ? 'words' : 'rise') : 'rise')
   CAM = sc.cam || 'auto'
+
+  if (PRO_KINDS.indexOf(sc.kind) >= 0) { drawPro(ctx, p, i, local, dur, A, get, bottomSafe); return }
 
   if (sc.kind === 'cta') {
     background(ctx, W, H, im(0), local, dur, 0.95)
@@ -817,8 +915,9 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     background(ctx, W, H, im(0), local, dur, 1.3)
     const c = p.contact || ({} as AdContact)
     const face = c.photo ? A.img(c.photo) : null
-    const R = (portrait ? 300 : 260) * u
-    const cx = portrait ? W / 2 : W * 0.29, cy = portrait ? H * 0.3 : H * 0.47
+    const sq = !portrait && W < H * 1.25
+    const R = (portrait ? 300 : sq ? 190 : 260) * u
+    const cx = portrait ? W / 2 : sq ? W * 0.27 : W * 0.29, cy = portrait ? H * 0.3 : sq ? H * 0.34 : H * 0.47
     const a = appear(local, 0)
     ctx.save(); ctx.globalAlpha *= a
     ctx.beginPath(); ctx.arc(cx, cy, R + 22 * u, 0, Math.PI * 2); ctx.fillStyle = 'rgba(210,176,119,0.16)'; ctx.fill()
@@ -827,20 +926,20 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.restore()
     ctx.lineWidth = 6 * u; ctx.strokeStyle = C.gold; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke()
     ctx.restore()
-    const tx = portrait ? pad : W * 0.5, tw = portrait ? W - pad * 2 : W * 0.44
-    let ty = portrait ? H * 0.52 : H * 0.2
+    const tx = portrait ? pad : sq ? W * 0.48 : W * 0.5, tw = portrait ? W - pad * 2 : sq ? W * 0.46 : W * 0.44
+    let ty = portrait ? H * 0.52 : sq ? H * 0.16 : H * 0.2
     const al: 'left' | 'center' = portrait ? 'center' : 'left'
     if (A.logo) {
       const lw = 230 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
       ctx.save(); ctx.globalAlpha *= appear(local, 0.2); ctx.drawImage(A.logo, portrait ? (W - lw) / 2 : tx, ty, lw, lh); ctx.restore()
       ty += lh + 50 * u
     }
-    ty += rich(ctx, head || 'Book a **call.**', tx, ty, tw, 104 * u, { font: A.display, local, delay: 0.4, align: al, maxH: H * 0.22 }) + 30 * u
+    ty += rich(ctx, head || 'Book a **call.**', tx, ty, tw, fitHard(ctx, head || 'Book a **call.**', tw, 104 * u), { font: A.display, local, delay: 0.4, align: al, maxH: H * 0.22 }) + 30 * u
     const fade = (d: number) => appear(local, d)
     if (c.name) { ty += plain(ctx, c.name, tx, ty, tw, 54 * u, A.display, C.ink, 700, al, fade(0.7)) }
     if (c.role) { ty += plain(ctx, c.role, tx, ty, tw, 30 * u, A.body, C.mut, 500, al, fade(0.8)) + 26 * u }
-    if (c.phone) { ty += plain(ctx, c.phone, tx, ty, tw, 92 * u, A.display, C.gold, 800, al, fade(1.1)) + 6 * u }
-    if (c.email) { plain(ctx, c.email, tx, ty, tw, 30 * u, A.mono, C.ink, 500, al, fade(1.3)) }
+    if (c.phone) { ty += plain(ctx, c.phone, tx, ty, tw, fitLine(ctx, c.phone, tw, 92 * u, 800, A.display), A.display, C.gold, 800, al, fade(1.1)) + 6 * u }
+    if (c.email) { plain(ctx, c.email, tx, ty, tw, fitLine(ctx, c.email, tw, 30 * u, 500, A.mono), A.mono, C.ink, 500, al, fade(1.3)) }
     if (A.credit) plain(ctx, A.credit, W - 900 * u, H - 44 * u, 880 * u, 18 * u, A.mono, 'rgba(255,255,255,0.45)', 400)
     return
   }
@@ -1540,6 +1639,549 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   }
 }
 
+
+// ── PRO DESIGNS (Jon, 2026-11-04: "two videos … I love the way those look … need to be able to edit").
+// The two sales videos were hand-built in a separate HTML pipeline. These are those twelve designs, redrawn
+// on the canvas so every word, number, photo and timing in them can be edited here. Proportions are taken
+// from the originals at 1920×1080 (the HTML stage scaled 1.8×); vertical shapes get their own stacking.
+export const PRO_KINDS: AdKind[] = ['beats', 'tiles', 'grid', 'calendar', 'dates', 'hub', 'beforeafter', 'tilegrid', 'livefeed', 'roles', 'curve', 'triad']
+const PRO_DIM: Partial<Record<AdKind, number>> = { beats: 1, tiles: 0, calendar: 2, dates: 2, hub: 0, beforeafter: 2, tilegrid: 2, livefeed: 0, roles: 0, curve: 2, triad: 2 }
+export const PRO_DIM_OF = (k: AdKind) => PRO_DIM[k] ?? 0
+/** The sales videos' photo layer: a slow 9-second push-in and the navy gradient (light · normal · dark). */
+function proBg(ctx: CanvasRenderingContext2D, W: number, H: number, img: HTMLImageElement | HTMLVideoElement | null, local: number, level: number) {
+  if (!img) { meshBg(ctx, W, H, local); return }
+  const k = ease(local / (9 * PD))
+  const c = CAM && CAM !== 'auto' ? camAt(local, 9) : { z: 1.02 + 0.1 * k, x: 0.25 * k, y: 0.16 * k }
+  cover(ctx, img, 0, 0, W, H, c.z, c.x, c.y)
+  if (level >= 2) { ctx.fillStyle = `rgba(${C.tint},${TA(0.86)})`; ctx.fillRect(0, 0, W, H); return }
+  const [a, b, d] = level === 1 ? [0.15, 0.35, 0.8] : [0.45, 0.62, 0.9]
+  const g = ctx.createLinearGradient(0, 0, 0, H)
+  g.addColorStop(0, `rgba(${C.tint},${TA(a)})`); g.addColorStop(0.55, `rgba(${C.tint},${TA(b)})`); g.addColorStop(1, `rgba(${C.tint},${TA(d)})`)
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H)
+}
+const rgbaOf = (hex: string, a: number) => { const [r, g, b] = hexRgb(hex); return `rgba(${r},${g},${b},${a})` }
+/** Mono eyebrow in the accent, letter-spaced. */
+function eyebrow(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, A: AdAssets, a = 1, color = C.gold, align: 'left' | 'center' | 'right' = 'left', upper = true) {
+  if (!text || a <= 0) return
+  ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(500, size, A.mono); ctx.fillStyle = color; ctx.textBaseline = 'alphabetic'
+  try { (ctx as any).letterSpacing = size * 0.14 + 'px' } catch { /* older canvas */ }
+  const t = upper ? text.toUpperCase() : text, w = ctx.measureText(t).width
+  ctx.fillText(t, align === 'center' ? x - w / 2 : align === 'right' ? x - w : x, y)
+  ctx.restore()
+}
+/** A pill chip with a soft accent outline (mono). Returns its width. */
+function chip(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, A: AdAssets, a: number, fill = false): number {
+  ctx.save(); ctx.font = fnt(500, size, A.mono)
+  const w = ctx.measureText(text).width + size * 1.6, h = size * 2
+  if (a > 0) {
+    ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 14 * (size / 20))
+    rr(ctx, x, y, w, h, h / 2); ctx.fillStyle = fill ? C.gold : (C.light ? 'rgba(255,255,255,0.7)' : 'rgba(10,26,40,0.6)'); ctx.fill()
+    ctx.lineWidth = Math.max(1, size * 0.08); ctx.strokeStyle = rgbaOf(C.gold, 0.55); ctx.stroke()
+    ctx.fillStyle = fill ? onAccent() : C.ink; ctx.textBaseline = 'middle'; ctx.fillText(text, x + size * 0.8, y + h / 2 + 1)
+  }
+  ctx.restore()
+  return w
+}
+/** A row of chips, wrapped and centred (or left-aligned) inside maxW. */
+function chipRow(ctx: CanvasRenderingContext2D, list: string[], x: number, y: number, maxW: number, size: number, A: AdAssets, local: number, delay: number, align: 'left' | 'center') {
+  ctx.font = fnt(500, size, A.mono)
+  const ws = list.map(t => ctx.measureText(t).width + size * 1.6), gap = size * 0.6, h = size * 2
+  const rows: number[][] = [[]]; let cw = 0
+  ws.forEach((w, k) => { if (cw && cw + gap + w > maxW) { rows.push([]); cw = 0 } rows[rows.length - 1].push(k); cw += (cw ? gap : 0) + w })
+  rows.forEach((row, ri) => {
+    const rw = row.reduce((s, k) => s + ws[k], 0) + gap * (row.length - 1)
+    let cx = align === 'center' ? x + (maxW - rw) / 2 : x
+    row.forEach(k => { chip(ctx, list[k], cx, y + ri * (h + gap), size, A, appear(local, delay + k * 0.2, 0.7)); cx += ws[k] + gap })
+  })
+  return rows.length * (h + gap)
+}
+/** A glass card the way the sales videos draw them: frosted navy, hairline border, optional accent ring. */
+function proGlass(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, on = 0, glow = true) {
+  rr(ctx, x, y, w, h, r); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.78)' : 'rgba(10,26,40,0.58)'; ctx.fill()
+  ctx.lineWidth = 1.5; ctx.strokeStyle = C.light ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.16)'; ctx.stroke()
+  if (on > 0 && !glow) { ctx.save(); ctx.globalAlpha *= on * 0.75; rr(ctx, x, y, w, h, r); ctx.lineWidth = 1.5; ctx.strokeStyle = C.gold; ctx.stroke(); ctx.restore(); return }
+  if (on > 0) {
+    ctx.save(); ctx.globalAlpha *= on; ctx.shadowColor = rgbaOf(C.gold, 0.5); ctx.shadowBlur = 30
+    rr(ctx, x, y, w, h, r); ctx.lineWidth = 3; ctx.strokeStyle = C.gold; ctx.stroke(); ctx.restore()
+  }
+}
+/** The size at which every hard line (\n) fits on ONE line — designed headlines keep their breaks. */
+function fitHard(ctx: CanvasRenderingContext2D, text: string, maxW: number, size: number, weight = 800, font = DISPLAY): number {
+  let sz = size
+  for (let k = 0; k < 20; k++) {
+    ctx.font = fnt(weight, sz, font)
+    if (String(text).split('\n').every(l => ctx.measureText(l.replace(/\*\*/g, '')).width <= maxW)) break
+    sz *= 0.94
+  }
+  return sz
+}
+/** The size at which a line fits on ONE line (down to 55 % of the design size). */
+function fitLine(ctx: CanvasRenderingContext2D, text: string, maxW: number, size: number, weight: number | string, font: string): number {
+  let sz = size
+  for (let k = 0; k < 14; k++) { ctx.font = fnt(weight, sz, font); if (ctx.measureText(String(text).replace(/\*\*/g, '')).width <= maxW || sz < size * 0.56) break; sz *= 0.95 }
+  return sz
+}
+const rnd01 = (a: number, b: number) => { const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453; return v - Math.floor(v) }
+const cubicAt = (p0: number[], p1: number[], p2: number[], p3: number[], t: number) => { const m = 1 - t; return [m * m * m * p0[0] + 3 * m * m * t * p1[0] + 3 * m * t * t * p2[0] + t * t * t * p3[0], m * m * m * p0[1] + 3 * m * m * t * p1[1] + 3 * m * t * t * p2[1] + t * t * t * p3[1]] }
+
+function drawPro(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets, get: (u: string) => HTMLImageElement | HTMLVideoElement | null, bottomSafe: number) {
+  const W = ctx.canvas.width, H = ctx.canvas.height
+  const sc = p.scenes[i]
+  const u = Math.min(W, H) / 1080
+  const portrait = H > W * 1.1
+  const square = !portrait && W < H * 1.25
+  const PF = platformOf(p)
+  const lvl = sc.dim == null ? (PRO_DIM[sc.kind] ?? 0) : sc.dim
+  const head = CAPS ? (sc.head || '').toUpperCase() : sc.head || ''
+  const eb = sc.eyebrow || ''
+  // the stage: 7% each side, a little more at the bottom (as the HTML stage), clear of the logo and captions
+  const padX = Math.max((portrait ? 70 : 0.07 * W / u) * u, 30 * u)
+  const topY = portrait ? Math.max(H * PF.safe.top + 150 * u, 210 * u) : Math.max(0.1 * H, H * PF.safe.top + 40 * u)
+  const box = { x: padX, y: topY, w: W - padX * 2, h: H - bottomSafe - topY - (portrait ? 30 : 10) * u }
+  const ph = (k: number) => get(sc.photos[k] || '')
+  ANIM = sc.anim && sc.anim !== 'auto' ? sc.anim : 'rise'
+
+  // BEATS — the hook: two to four short lines, one per beat, centred over the photo.
+  if (sc.kind === 'beats') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const text = head || 'More **revenue.**\nLower **fee.**\nOne complete **team.**'
+    const size = fitSize(ctx, text, box.w, fitHard(ctx, text, box.w, (portrait ? 120 : square ? 108 : 116) * u), box.h * 0.8, 800, A.display, 1.08)
+    const hh = linesH(ctx, text, box.w, size, A.display, 1.08)
+    const y = box.y + (box.h - hh) / 2 - (sc.sub ? 30 * u : 0)
+    rich(ctx, text, box.x, y, box.w, size, { font: A.display, local, delay: 0.1, stagger: 0.8, align: 'center', lh: 1.08 })
+    if (sc.sub) plain(ctx, sc.sub, box.x, y + hh + 24 * u, box.w, 30 * u, A.body, C.mut, 500, 'center', appear(local, 0.4 + 0.8 * layout(ctx, text, box.w).length))
+    return
+  }
+
+  // TILES — figures that count up (gold rule above each), then the markets as chips.
+  if (sc.kind === 'tiles') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const it = sc.items.slice(0, 9)
+    const cols = portrait ? 2 : it.length === 4 ? 2 : Math.min(3, Math.max(1, it.length))
+    const rows = Math.ceil(it.length / cols) || 1
+    const chips = (sc.sub || '').split('·').map(s => s.trim()).filter(Boolean)
+    let y = box.y
+    if (eb) { eyebrow(ctx, eb, box.x, y + 24 * u, 22 * u, A, appear(local, 0)); y += 56 * u }
+    if (head) { y += rich(ctx, head, box.x, y, box.w, (portrait ? 84 : 72) * u, { font: A.display, local, delay: 0.05, maxH: box.h * 0.22 }) + 30 * u }
+    const gapX = box.w * 0.045, cw = (box.w - gapX * (cols - 1)) / cols
+    const nsz = (portrait ? 110 : 88) * u, rowH = nsz + 92 * u
+    const gridH = rows * rowH + (rows - 1) * 40 * u
+    const chipH = chips.length ? 100 * u : 0
+    y = Math.max(y, box.y + (box.h - gridH - chipH) / 2)
+    for (let k = 0; k < it.length; k++) {
+      const [val, label] = split(it[k])
+      const x = box.x + (k % cols) * (cw + gapX), ty = y + Math.floor(k / cols) * (rowH + 40 * u)
+      const a = appear(local, k * 0.18, 0.7)
+      if (a <= 0) continue
+      ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 25 * u)
+      ctx.fillStyle = C.gold; ctx.fillRect(x, ty, cw, 3.5 * u)
+      const pn = parseNum(val), prog = ease((local - k * 0.18 * PD) / (1.4 * PD))
+      const shown = pn ? pn.pre + (pn.n * prog).toLocaleString('en-US', { minimumFractionDigits: pn.dec, maximumFractionDigits: pn.dec }) + pn.suf : val
+      const s2 = fitSize(ctx, val, cw - 10 * u, nsz, 0, 800, A.display, 1)
+      ctx.font = fnt(800, s2, A.display); ctx.fillStyle = C.ink; ctx.textBaseline = 'alphabetic'
+      ctx.fillText(shown, x, ty + 30 * u + s2 * 0.9)
+      plain(ctx, label, x, ty + 42 * u + s2 * 0.9, cw, 24 * u, A.body, C.mut, 500)
+      ctx.restore()
+    }
+    if (chips.length) chipRow(ctx, chips, box.x, y + gridH + 54 * u, box.w, 22 * u, A, local, 1.6, 'center')
+    return
+  }
+
+  // GRID — the buildings wall (labelled tiles that pop in), or, with a headline, a full-bleed dimmed wall
+  // with the question over it. Up to nine photos; row k labels photo k.
+  if (sc.kind === 'grid') {
+    const list = sc.photos.slice(0, 9).filter(Boolean)
+    const n = Math.max(1, list.length)
+    const cols = portrait ? (n > 6 ? 3 : 2) : n <= 4 ? 2 : 3, rows = Math.ceil(n / cols)
+    if (head) {
+      ctx.fillStyle = C.deep; ctx.fillRect(0, 0, W, H)
+      const g = 3 * u, cw = (W - g * (cols - 1)) / cols, ch = (H - g * (rows - 1)) / rows
+      for (let k = 0; k < list.length; k++) {
+        const a = appear(local, k * 0.07, 0.55); if (a <= 0) continue
+        const x = (k % cols) * (cw + g), y = Math.floor(k / cols) * (ch + g), img = get(list[k])
+        ctx.save(); ctx.globalAlpha *= a; const z = 0.92 + 0.08 * a
+        ctx.translate(x + cw / 2, y + ch / 2); ctx.scale(z, z); ctx.translate(-(x + cw / 2), -(y + ch / 2))
+        ctx.beginPath(); ctx.rect(x, y, cw, ch); ctx.clip()
+        if (img) cover(ctx, img, x, y, cw, ch, 1.02 + 0.1 * ease(local / (6 * PD))); ctx.restore()
+      }
+      const rg = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.7)
+      rg.addColorStop(0, `rgba(${C.tint},${TA(lvl >= 2 ? 0.7 : lvl === 1 ? 0.4 : 0.55)})`); rg.addColorStop(1, `rgba(${C.tint},${TA(lvl >= 2 ? 0.92 : lvl === 1 ? 0.65 : 0.8)})`)
+      ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H)
+      const size = fitSize(ctx, head, box.w, fitHard(ctx, head, box.w, (portrait ? 128 : 124) * u), box.h * 0.7, 800, A.display, 1.05)
+      const hh = linesH(ctx, head, box.w, size, A.display, 1.05)
+      const y = box.y + (box.h - hh) / 2
+      rich(ctx, head, box.x, y, box.w, size, { font: A.display, local, delay: 0.6, stagger: 0.25, align: 'center', lh: 1.05 })
+      if (sc.sub) plain(ctx, sc.sub, box.x, y + hh + 26 * u, box.w, 32 * u, A.body, C.mut, 500, 'center', appear(local, 1.1))
+      return
+    }
+    proBg(ctx, W, H, null, local, 0)
+    const g = box.w * 0.014, cw = (box.w - g * (cols - 1)) / cols
+    const ch = Math.min((box.h - g * (rows - 1)) / rows, cw * (portrait ? 1.1 : 0.62))
+    const y0 = box.y + (box.h - (ch * rows + g * (rows - 1))) / 2
+    for (let k = 0; k < list.length; k++) {
+      const a = appear(local, k * 0.1, 0.55); if (a <= 0) continue
+      const x = box.x + (k % cols) * (cw + g), y = y0 + Math.floor(k / cols) * (ch + g), img = get(list[k])
+      ctx.save(); ctx.globalAlpha *= a; const z = 0.92 + 0.08 * a
+      ctx.translate(x + cw / 2, y + ch / 2); ctx.scale(z, z); ctx.translate(-(x + cw / 2), -(y + ch / 2))
+      rr(ctx, x, y, cw, ch, 10 * u); ctx.save(); ctx.clip()
+      if (img) cover(ctx, img, x, y, cw, ch, 1.02 + 0.1 * ease(local / (6 * PD)))
+      const lg = ctx.createLinearGradient(0, y + ch * 0.45, 0, y + ch); lg.addColorStop(0, 'rgba(6,18,30,0)'); lg.addColorStop(1, 'rgba(6,18,30,0.78)')
+      ctx.fillStyle = lg; ctx.fillRect(x, y, cw, ch); ctx.restore()
+      const label = (sc.items[k] || '').split('|')[0].trim()
+      if (label) { ctx.font = fnt(700, Math.min(32 * u, ch * 0.14), A.display); ctx.fillStyle = '#FFFFFF'; ctx.textBaseline = 'alphabetic'; ctx.fillText(label, x + cw * 0.06, y + ch * 0.9) }
+      ctx.restore()
+    }
+    return
+  }
+
+  // CALENDAR — nightly rates for the next five weeks; a couple of cells reprice every 0.38 s.
+  if (sc.kind === 'calendar') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    const base = ((sc.items[1] || '').match(/\d+/g) || []).map(Number).slice(0, 7)
+    const B = base.length === 7 ? base : [189, 179, 185, 199, 259, 289, 229]
+    const v: number[] = Array.from({ length: 35 }, (_, k) => B[k % 7] + (k > 27 ? 60 : 0))
+    const ticks = Math.min(30, Math.max(0, Math.floor((local / PD - 0.6) / 0.38)))
+    const flash: number[] = [], touched: number[] = []
+    for (let n = 0; n < ticks; n++) for (let q = 0; q < 2; q++) {
+      const c = Math.floor(rnd01(n + 1, q + 1) * 35)
+      v[c] = Math.max(150, Math.min(420, v[c] + Math.round((rnd01(n + 7, q + 3) - 0.4) * 40)))
+      if (touched.indexOf(c) < 0) touched.push(c)
+      if (n === ticks - 1) flash.push(c)
+    }
+    const flashA = 1 - clamp(((local / PD - 0.6) - ticks * 0.38) / 0.38)
+    let y = box.y
+    eyebrow(ctx, eb || 'Nightly rate · next 5 weeks', box.x, y + 22 * u, 21 * u, A, appear(local, 0))
+    if (sc.sub && !portrait) eyebrow(ctx, '● ' + sc.sub, box.x + box.w, y + 22 * u, 21 * u, A, appear(local, 0.6), '#9EE2B8', 'right', false)
+    y += 44 * u
+    if (sc.sub && portrait) { eyebrow(ctx, '● ' + sc.sub, box.x, y + 22 * u, 21 * u, A, appear(local, 0.6), '#9EE2B8', 'left', false); y += 44 * u }
+    if (head) y += rich(ctx, head, box.x, y, box.w, (portrait ? 74 : 60) * u, { font: A.display, local, delay: 0.1, maxH: box.h * 0.2 }) + 20 * u
+    const g = 7 * u, cw = (box.w - g * 6) / 7
+    const foot = sc.items[0] || ''
+    const avail = box.y + box.h - y - 34 * u - (foot ? 50 * u : 0)
+    const ch = Math.min(cw * (portrait ? 1.25 : 0.62), (avail - 5 * g) / 5)
+    ctx.font = fnt(500, 19 * u, A.mono); ctx.fillStyle = C.mut; ctx.textBaseline = 'alphabetic'
+    days.forEach((d, k) => { const w = ctx.measureText(d).width; ctx.fillText(d, box.x + k * (cw + g) + (cw - w) / 2, y + 22 * u) })
+    y += 36 * u
+    for (let k = 0; k < 35; k++) {
+      const a = appear(local, 0.05 + (k % 7) * 0.03 + Math.floor(k / 7) * 0.05, 0.5); if (a <= 0) continue
+      const x = box.x + (k % 7) * (cw + g), cy = y + Math.floor(k / 7) * (ch + g)
+      ctx.save(); ctx.globalAlpha *= a
+      rr(ctx, x, cy, cw, ch, 9 * u); ctx.fillStyle = rgbaOf(C.gold, Math.min(0.85, Math.max(0.08, (v[k] - 160) / 220))); ctx.fill()
+      ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.stroke()
+      if (touched.indexOf(k) >= 0) { rr(ctx, x + 1.5 * u, cy + 1.5 * u, cw - 3 * u, ch - 3 * u, 8 * u); ctx.lineWidth = 2.2 * u; ctx.strokeStyle = rgbaOf(C.gold, 0.85); ctx.stroke() }
+      if (flash.indexOf(k) >= 0 && flashA > 0) { ctx.save(); ctx.globalAlpha *= flashA; rr(ctx, x + 2 * u, cy + 2 * u, cw - 4 * u, ch - 4 * u, 8 * u); ctx.lineWidth = 3.5 * u; ctx.strokeStyle = C.gold; ctx.stroke(); ctx.restore() }
+      const dark = v[k] > 300
+      ctx.font = fnt(500, 15 * u, A.mono); ctx.fillStyle = dark ? 'rgba(27,20,8,0.7)' : rgbaOf(C.light ? '#000000' : '#FFFFFF', 0.7); ctx.fillText(String((k % 31) + 1), x + cw * 0.08, cy + 22 * u)
+      const ps = Math.min(30 * u, cw * 0.24, ch * 0.42)
+      ctx.font = fnt(700, ps, A.display); ctx.fillStyle = dark ? '#1B1408' : C.ink; ctx.fillText('$' + v[k], x + cw * 0.08, cy + Math.min(ch - 12 * u, 22 * u + ps + 10 * u))
+      ctx.restore()
+    }
+    if (foot) plain(ctx, foot, box.x, y + 5 * (ch + g) + 18 * u, box.w, 18 * u, A.mono, C.mut, 400, 'left', appear(local, 1))
+    return
+  }
+
+  // DATES — event cards that flip from a standard rate to a premium one. Rows: Month|Event|$standard|$premium
+  if (sc.kind === 'dates') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const it = sc.items.slice(0, 6).map(r => r.split('|').map(s => s.trim()))
+    const n = Math.max(1, it.length)
+    let y = box.y
+    eyebrow(ctx, eb || 'High-demand dates · priced months ahead', box.x, y + 22 * u, 21 * u, A, appear(local, 0)); y += 50 * u
+    if (head) y += rich(ctx, head, box.x, y, box.w, (portrait ? 74 : 60) * u, { font: A.display, local, delay: 0.1, maxH: box.h * 0.2 }) + 20 * u
+    const cols = portrait ? 2 : Math.min(n, 5), rows = Math.ceil(n / cols)
+    const g = box.w * 0.02, cw = (box.w - g * (cols - 1)) / cols
+    const ch = Math.min(portrait ? 330 * u : 300 * u, (box.y + box.h - y - (sc.sub ? 70 * u : 20 * u) - g * (rows - 1)) / rows)
+    const y0 = y + Math.max(0, (box.y + box.h - y - (sc.sub ? 70 * u : 0) - (ch * rows + g * (rows - 1))) / (portrait ? 2.4 : 3))
+    for (let k = 0; k < it.length; k++) {
+      const [mon, ev, r1, r2] = it[k]
+      const a = appear(local, k * 0.15, 0.6); if (a <= 0) continue
+      const x = box.x + (k % cols) * (cw + g), cy = y0 + Math.floor(k / cols) * (ch + g)
+      const on = appear(local, 0.9 + k * 0.45, 0.4)
+      const from = parseNum(r1 || ''), to = parseNum(r2 || '')
+      ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 25 * u)
+      proGlass(ctx, x, cy, cw, ch, 18 * u, on)
+      const ip = cw * 0.09
+      ctx.font = fnt(500, 20 * u, A.mono); ctx.fillStyle = C.gold; ctx.textBaseline = 'alphabetic'; ctx.fillText(mon || '', x + ip, cy + ip + 16 * u)
+      const ts = fitSize(ctx, ev || '', cw - ip * 2, 30 * u, 80 * u, 700, A.display, 1.15)
+      rich(ctx, ev || '', x + ip, cy + ip + 32 * u, cw - ip * 2, ts, { font: A.display, weight: 700, local: 99, lh: 1.15, shadow: false })
+      const prog = ease((local / PD - 0.9 - k * 0.45) / 0.9)
+      const val = from && to ? Math.round(from.n + (to.n - from.n) * prog) : 0
+      const big = from && to ? (to.pre || '$') + val.toLocaleString('en-US') : (r2 || r1 || '')
+      const rs = fitSize(ctx, big, cw - ip * 2, 62 * u, 0, 800, A.display, 1)
+      if (on > 0 && r1) { ctx.save(); ctx.globalAlpha *= on; ctx.font = fnt(500, 20 * u, A.mono); ctx.fillStyle = C.mut; const sw = ctx.measureText(r1).width; ctx.fillText(r1, x + ip, cy + ch - ip - rs - 6 * u); ctx.fillRect(x + ip, cy + ch - ip - rs - 13 * u, sw, 2 * u); ctx.restore() }
+      ctx.font = fnt(800, rs, A.display); ctx.fillStyle = on > 0.5 ? C.gold : C.ink; ctx.fillText(big, x + ip, cy + ch - ip)
+      ctx.restore()
+    }
+    if (sc.sub) plain(ctx, sc.sub, box.x, y0 + rows * (ch + g) + 14 * u, box.w, 18 * u, A.mono, C.mut, 400, 'left', appear(local, 1.2))
+    return
+  }
+
+  // HUB — the listing at the centre, a spoke out to every channel. Rows: the channels (the last one is gold).
+  if (sc.kind === 'hub') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const ch = sc.items.length ? sc.items.slice(0, 10) : ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia', 'Marriott', 'Blueground', 'stay-hospitality.com']
+    const cx = W / 2, cy = box.y + box.h * (portrait ? 0.45 : 0.45)
+    const rx = portrait ? box.w * 0.42 : box.w * 0.38, ry = portrait ? box.h * 0.32 : box.h * 0.4
+    const R = (portrait ? 120 : 92) * u
+    const pts = ch.map((_, k) => { const an = -Math.PI / 2 + k * 2 * Math.PI / ch.length; return [cx + rx * Math.cos(an), cy + ry * Math.sin(an)] })
+    ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 2.5 * u
+    pts.forEach((q, k) => { const a = ease((local / PD - 0.3 - k * 0.18) / 0.6); if (a <= 0) return; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + (q[0] - cx) * a, cy + (q[1] - cy) * a); ctx.stroke() })
+    ctx.restore()
+    const ha = appear(local, 0, 0.7)
+    ctx.save(); ctx.globalAlpha *= ha; ctx.translate(0, (1 - ha) * 18 * u)
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.85)' : 'rgba(10,26,40,0.72)'; ctx.fill(); ctx.lineWidth = 3 * u; ctx.strokeStyle = C.gold; ctx.stroke()
+    ctx.restore()
+    eyebrow(ctx, eb || 'Your home', cx, cy + 8 * u, 20 * u, A, ha, C.gold, 'center')
+    pts.forEach((q, k) => {
+      const a = appear(local, 0.5 + k * 0.18, 0.55); if (a <= 0) return
+      const last = k === ch.length - 1 && /stay/i.test(ch[k])
+      ctx.font = fnt(500, (portrait ? 24 : 21) * u, A.mono)
+      const w = ctx.measureText(ch[k]).width + 36 * u, h = (portrait ? 50 : 44) * u
+      ctx.save(); ctx.globalAlpha *= a
+      const x = Math.max(box.x - padX * 0.5, Math.min(W - w - padX * 0.5, q[0] - w / 2)), y = q[1] - h / 2 + (1 - a) * 18 * u
+      rr(ctx, x, y, w, h, h / 2); ctx.fillStyle = last ? C.gold : (C.light ? 'rgba(255,255,255,0.88)' : 'rgba(10,26,40,0.8)'); ctx.fill(); ctx.lineWidth = 1.5 * u; ctx.strokeStyle = rgbaOf(C.gold, 0.6); ctx.stroke()
+      ctx.fillStyle = last ? onAccent() : C.ink; ctx.textBaseline = 'middle'; ctx.fillText(ch[k], x + 18 * u, y + h / 2 + 1)
+      ctx.restore()
+    })
+    const line = head || sc.sub
+    if (line) {
+      const yy = Math.min(box.y + box.h - 50 * u, cy + ry + (portrait ? 90 : 50) * u)
+      rich(ctx, line, box.x, yy, box.w, (portrait ? 46 : 36) * u, { font: A.display, weight: 700, local, delay: 1.6, align: 'center' })
+    }
+    return
+  }
+
+  // BEFORE → AFTER — a real listing rebuilds: the hero photo and title swap, the checklist ticks off.
+  // Photo 1 = background; photos 2–4 = before; photos 5–7 = after. Sub = the old title, headline = the new.
+  if (sc.kind === 'beforeafter') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const before = [1, 2, 3].map(k => sc.photos[k] || ''), after = [4, 5, 6].map((k, j) => sc.photos[k] || before[j])
+    const it = sc.items.slice(0, 5)
+    const cardW = portrait ? box.w : box.w * 0.54, cardX = box.x
+    const pad2 = 22 * u, mosW = cardW - pad2 * 2
+    const titleH = 92 * u
+    const listW = portrait ? box.w : box.w - cardW - box.w * 0.06
+    const rowH = (portrait ? 70 : 64) * u
+    // vertical: the card gives way so the checklist stays clear of the captions
+    const mosH = portrait ? Math.min(mosW * 10 / 16, box.h - titleH - pad2 - 70 * u - it.length * rowH) : mosW * 10 / 16
+    const cardH = pad2 + mosH + titleH
+    const total = portrait ? cardH + 60 * u + it.length * rowH : Math.max(cardH, it.length * rowH)
+    const cy = box.y + Math.max(20 * u, (box.h - total) / 2)
+    const a = appear(local, 0, 0.7)
+    ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 25 * u)
+    proGlass(ctx, cardX, cy, cardW, cardH, 18 * u)
+    const sw = (k: number) => { const t0 = (1.5 + k * 0.3) * PD; return local < t0 ? 0 : local < t0 + 0.28 ? -1 : 1 }
+    const cell = (k: number): [number, number, number, number] => k === 0 ? [cardX + pad2, cy + pad2, mosW * 2 / 3 - 3 * u, mosH] : [cardX + pad2 + mosW * 2 / 3 + 3 * u, cy + pad2 + (k - 1) * (mosH / 2 + 3 * u), mosW / 3 - 3 * u, mosH / 2 - 3 * u]
+    for (let k = 0; k < 3; k++) {
+      const st = sw(k), [x, y, w, h] = cell(k)
+      const src = st === 1 ? after[k] : before[k]
+      const img = get(src)
+      const fade = st === -1 ? 1 - (local - (1.5 + k * 0.3) * PD) / 0.28 : st === 1 ? clamp((local - (1.5 + k * 0.3) * PD - 0.28) / 0.28) : 1
+      ctx.save(); rr(ctx, x, y, w, h, 7 * u); ctx.clip(); ctx.fillStyle = C.deep; ctx.fillRect(x, y, w, h)
+      ctx.globalAlpha *= clamp(fade); if (img) cover(ctx, img, x, y, w, h, 1.02); ctx.restore()
+    }
+    const isAfter = local >= 1.5 * PD
+    const t2 = local >= 2.3 * PD
+    const tt = t2 ? (head || 'Rebuilt title') : (sc.sub || 'Condo w/ Pool')
+    ctx.save(); ctx.globalAlpha *= t2 ? clamp((local - 2.3 * PD) / 0.3) : 1
+    const ts = fitSize(ctx, tt.replace(/\*\*/g, ''), mosW, 28 * u, titleH - 24 * u, 700, A.display, 1.2)
+    rich(ctx, tt, cardX + pad2, cy + pad2 + mosH + 16 * u, mosW, ts, { font: A.display, weight: 700, local: 99, lh: 1.2, shadow: false })
+    ctx.restore()
+    // the BEFORE / AFTER pill, top-left above the card
+    ctx.font = fnt(600, 20 * u, A.mono)
+    const lab = isAfter ? 'AFTER' : 'BEFORE', lw = ctx.measureText(lab).width + 36 * u, lh = 40 * u
+    rr(ctx, cardX + cardW * 0.04, cy - lh * 0.45, lw, lh, lh / 2); ctx.fillStyle = isAfter ? C.gold : '#2E4459'; ctx.fill()
+    ctx.fillStyle = isAfter ? onAccent() : C.ink; ctx.textBaseline = 'middle'; ctx.fillText(lab, cardX + cardW * 0.04 + 18 * u, cy - lh * 0.45 + lh / 2 + 1)
+    ctx.restore()
+    const lx = portrait ? box.x : cardX + cardW + box.w * 0.06
+    const ly = portrait ? cy + cardH + 60 * u : cy + (cardH - it.length * rowH) / 2
+    for (let k = 0; k < it.length; k++) {
+      const ok = local >= (1.7 + k * 0.45) * PD
+      const y = ly + k * rowH
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.2, 0.5) * (ok ? 1 : 0.35)
+      const bs = 34 * u
+      rr(ctx, lx, y + (rowH - bs) / 2, bs, bs, 7 * u); ctx.lineWidth = 3 * u; ctx.strokeStyle = C.gold; ctx.stroke()
+      if (ok) { ctx.fillStyle = C.gold; ctx.fill(); ctx.strokeStyle = onAccent(); ctx.lineWidth = 4 * u; ctx.beginPath(); ctx.moveTo(lx + 8 * u, y + rowH / 2); ctx.lineTo(lx + 14 * u, y + rowH / 2 + 7 * u); ctx.lineTo(lx + 26 * u, y + rowH / 2 - 7 * u); ctx.stroke() }
+      const rs = fitLine(ctx, it[k], listW - bs - 22 * u, 31 * u, 500, A.body)
+      plain(ctx, it[k], lx + bs + 22 * u, y + (rowH - rs * 1.06) / 2 - rs * 0.26, listW - bs - 22 * u, rs, A.body, C.ink, 500)
+      ctx.restore()
+    }
+    return
+  }
+
+  // TILE GRID — Lighthouse: the name, a mono tag, and capability tiles that light up one by one.
+  if (sc.kind === 'tilegrid') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const it = sc.items.slice(0, 12)
+    const cols = portrait ? 2 : it.length <= 6 ? 3 : 4, rows = Math.ceil(it.length / cols) || 1
+    const hs = (portrait ? 110 : 94) * u
+    const thD = (portrait ? 210 : 175) * u, gD = box.w * 0.018
+    const blockH = hs * 1.15 + 40 * u + rows * thD + (rows - 1) * gD
+    let y = box.y + Math.max(0, (box.h - blockH) / 2)
+    const hw = head ? (() => { ctx.font = fnt(800, hs, A.display); return layout(ctx, head, box.w)[0]?.w || 0 })() : 0
+    if (head) rich(ctx, head, box.x, y, box.w, hs, { font: A.display, local, delay: 0, maxH: hs * 1.2 })
+    const tag = eb || sc.sub
+    if (tag) {
+      if (portrait || hw > box.w * 0.6) eyebrow(ctx, tag, box.x, y + hs * 1.25 + 30 * u, 20 * u, A, appear(local, 0.4))
+      else eyebrow(ctx, tag, box.x + hw + 36 * u, y + hs * 0.86, 20 * u, A, appear(local, 0.4))
+    }
+    y += hs * 1.15 + (portrait && tag ? 70 * u : 40 * u)
+    const g = box.w * 0.018, cw = (box.w - g * (cols - 1)) / cols
+    const th = Math.min(thD, (box.y + box.h - y - g * (rows - 1)) / rows)
+    for (let k = 0; k < it.length; k++) {
+      const x = box.x + (k % cols) * (cw + g), ty = y + Math.floor(k / cols) * (th + g)
+      const on = appear(local, 0.5 + k * 0.26, 0.4)
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.1, 0.4) * (0.35 + 0.65 * on)
+      proGlass(ctx, x, ty, cw, th, 18 * u, on, false)
+      ctx.fillStyle = on > 0.5 ? C.gold : C.mut; ctx.fillRect(x + cw * 0.08, ty + th * 0.22, 36 * u, 4 * u)
+      plain(ctx, it[k], x + cw * 0.08, ty + th * 0.22 + 26 * u, cw * 0.84, (portrait ? 30 : 27) * u, A.body, C.ink, 600)
+      ctx.restore()
+    }
+    return
+  }
+
+  // LIVE FEED — Lighthouse at work: the title on the left, events sliding in on the right.
+  // Rows: Title|detail|#colour (colour optional).
+  if (sc.kind === 'livefeed') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const it = sc.items.slice(0, 6).map(r => r.split('|').map(s => s.trim()))
+    const dots = ['#E07B5F', C.gold, '#4CC488', '#E0B44C', '#6E9BE0', '#B48CF0']
+    const leftW = portrait ? box.w : box.w * 0.38
+    let rowH = (portrait ? 116 : 96) * u
+    const gap = (portrait ? 18 : 14) * u
+    if (portrait) rowH = Math.min(rowH, (box.h * 0.6 - gap * (it.length - 1)) / Math.max(1, it.length))
+    const listH = it.length * (rowH + gap) - gap
+    let ly = box.y + (portrait ? 0 : (box.h - 280 * u) / 2)
+    if (eb) { eyebrow(ctx, eb, box.x, ly + 22 * u, 21 * u, A, appear(local, 0)); ly += 46 * u }
+    const hsz = (portrait ? 96 : 80) * u
+    if (head) ly += rich(ctx, head, box.x, ly, leftW, fitHard(ctx, head, leftW, hsz), { font: A.display, local, delay: 0.05, stagger: 0.25, maxH: portrait ? box.h * 0.26 : box.h * 0.5 }) + 18 * u
+    if (sc.sub) ly += plain(ctx, sc.sub, box.x, ly, leftW, 27 * u, A.body, C.mut, 500, 'left', appear(local, 0.4)) + 10 * u
+    const fx = portrait ? box.x : box.x + leftW + box.w * 0.05, fw = portrait ? box.w : box.w - leftW - box.w * 0.05
+    const fy = portrait ? ly + 40 * u : box.y + (box.h - listH) / 2
+    for (let k = 0; k < it.length; k++) {
+      const [t1, t2, col] = it[k]
+      const a = appear(local, 0.4 + k * 0.75, 0.55); if (a <= 0) continue
+      const y = fy + k * (rowH + gap)
+      ctx.save(); ctx.globalAlpha *= a; ctx.translate((1 - a) * 54 * u, 0)
+      proGlass(ctx, fx, y, fw, rowH, 18 * u)
+      ctx.fillStyle = /^#[0-9a-f]{6}$/i.test(col || '') ? col : dots[k % dots.length]; ctx.beginPath(); ctx.arc(fx + 36 * u, y + rowH / 2, 8 * u, 0, Math.PI * 2); ctx.fill()
+      plain(ctx, t1 || '', fx + 66 * u, y + rowH * 0.18, fw - 160 * u, fitLine(ctx, t1 || '', fw - 160 * u, (portrait ? 30 : 27) * u, 600, A.body), A.body, C.ink, 600)
+      plain(ctx, t2 || '', fx + 66 * u, y + rowH * 0.52, fw - 160 * u, fitLine(ctx, t2 || '', fw - 160 * u, (portrait ? 24 : 21) * u, 400, A.body), A.body, C.mut, 400)
+      ctx.font = fnt(500, 17 * u, A.mono); ctx.fillStyle = C.mut; ctx.textBaseline = 'middle'; ctx.fillText('now', fx + fw - 62 * u, y + rowH / 2)
+      ctx.restore()
+    }
+    return
+  }
+
+  // ROLES — "One complete team": the headline, then role tiles that light up, then a line under them.
+  if (sc.kind === 'roles') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const it = sc.items.slice(0, 6)
+    const cols = portrait ? 2 : Math.min(4, Math.max(1, it.length)), rows = Math.ceil(it.length / cols) || 1
+    const hsz = (portrait ? 110 : 92) * u
+    const hh = head ? linesH(ctx, head, box.w, fitSize(ctx, head, box.w, hsz, box.h * 0.3), A.display) : 0
+    const g = box.w * 0.03, cw = (box.w - g * (cols - 1)) / cols, th = (portrait ? 150 : 120) * u
+    const total = hh + 60 * u + rows * th + (rows - 1) * g + (sc.sub ? 90 * u : 0)
+    let y = box.y + (box.h - total) / 2
+    if (head) { rich(ctx, head, box.x, y, box.w, hsz, { font: A.display, local, delay: 0, align: 'center', maxH: box.h * 0.3 }); y += hh + 60 * u }
+    for (let k = 0; k < it.length; k++) {
+      const x = box.x + (k % cols) * (cw + g), ty = y + Math.floor(k / cols) * (th + g)
+      const on = appear(local, 0.5 + k * 0.45, 0.5)
+      ctx.save(); ctx.globalAlpha *= 0.35 + 0.65 * on
+      proGlass(ctx, x, ty, cw, th, 18 * u, on, false)
+      const s = fitSize(ctx, it[k], cw * 0.82, (portrait ? 40 : 38) * u, th * 0.7, 700, A.display, 1.15)
+      const lh2 = linesH(ctx, it[k], cw * 0.82, s, A.display, 1.15)
+      rich(ctx, it[k], x + cw * 0.09, ty + (th - lh2) / 2, cw * 0.82, s, { font: A.display, weight: 700, local: 99, lh: 1.15, shadow: false })
+      ctx.restore()
+    }
+    y += rows * th + (rows - 1) * g + 40 * u
+    if (sc.sub) plain(ctx, sc.sub, box.x, y, box.w, 27 * u, A.body, C.mut, 500, 'center', appear(local, 0.5 + it.length * 0.45 + 0.4))
+    return
+  }
+
+  // CURVE — the results scene: headline + chips on the left, the dashed "before" line and the rising gold
+  // line after the switch on the right. Sub = the marker label (default "Switch to Stay").
+  if (sc.kind === 'curve') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const leftW = portrait ? box.w : box.w * 0.47
+    const hsz = (portrait ? 104 : 86) * u
+    const text = head || 'Owners who switch\n**earn more.**'
+    const hs = fitSize(ctx, text, leftW, fitHard(ctx, text, leftW, hsz), portrait ? box.h * 0.28 : box.h * 0.5)
+    const hh = linesH(ctx, text, leftW, hs)
+    const chipsH = sc.items.length ? 110 * u : 0
+    const ly = portrait ? box.y : box.y + (box.h - hh - chipsH) / 2
+    rich(ctx, text, box.x, ly, leftW, hs, { font: A.display, local, delay: 0, stagger: 0.3 })
+    if (sc.items.length) chipRow(ctx, sc.items.slice(0, 5), box.x, ly + hh + 40 * u, leftW, 20 * u, A, local, 1.2, 'left')
+    const gx = portrait ? box.x : box.x + leftW + box.w * 0.03, gw = portrait ? box.w : box.w - leftW - box.w * 0.03
+    const gh = Math.min(gw * 0.6, portrait ? box.h * 0.5 : box.h * 0.85)
+    const gy = portrait ? box.y + box.h - gh : box.y + (box.h - gh) / 2
+    const M = (x: number, y: number) => [gx + x / 300 * gw, gy + y / 180 * gh]
+    ctx.save()
+    ctx.strokeStyle = rgbaOf(C.mut, 0.5); ctx.lineWidth = 1.5 * u; ctx.beginPath(); ctx.moveTo(...(M(10, 170) as [number, number])); ctx.lineTo(...(M(290, 170) as [number, number])); ctx.stroke()
+    // before: a flat dashed line
+    ctx.setLineDash([9 * u, 11 * u]); ctx.strokeStyle = C.mut; ctx.lineWidth = 5 * u; ctx.beginPath()
+    const seg1: number[][][] = [[[10, 140], [60, 138], [90, 132], [120, 128]], [[120, 128], [150, 124], [150, 122], [160, 118]]]
+    seg1.forEach((s, j) => { for (let q = 0; q <= 20; q++) { const pt = cubicAt(s[0], s[1], s[2], s[3], q / 20); const m = M(pt[0], pt[1]); if (j === 0 && q === 0) ctx.moveTo(m[0], m[1]); else ctx.lineTo(m[0], m[1]) } })
+    ctx.stroke(); ctx.setLineDash([])
+    // the marker
+    ctx.setLineDash([5 * u, 7 * u]); ctx.strokeStyle = rgbaOf(C.ink, 0.5); ctx.lineWidth = 1.5 * u; ctx.beginPath(); ctx.moveTo(...(M(160, 20) as [number, number])); ctx.lineTo(...(M(160, 170) as [number, number])); ctx.stroke(); ctx.setLineDash([])
+    const mk = M(152, 14); ctx.font = fnt(500, 22 * u, A.body); ctx.fillStyle = C.ink; ctx.textAlign = 'right'; ctx.textBaseline = 'alphabetic'; ctx.fillText(sc.sub || 'Switch to Stay', mk[0], mk[1]); ctx.textAlign = 'left'
+    // after: the gold line draws itself (0.5 s in, 3.2 s ease-out)
+    const pr = ease((local / PD - 0.5) / 3.2)
+    if (pr > 0) {
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 8 * u; ctx.lineCap = 'round'; ctx.beginPath()
+      const N = Math.max(1, Math.round(60 * pr))
+      for (let q = 0; q <= N; q++) { const pt = cubicAt([160, 118], [200, 100], [230, 70], [290, 24], (q / 60)); const m = M(pt[0], pt[1]); if (q === 0) ctx.moveTo(m[0], m[1]); else ctx.lineTo(m[0], m[1]) }
+      ctx.stroke()
+    }
+    const da = appear(local, 2.4, 0.5)
+    if (da > 0) { const e = M(290, 24); ctx.globalAlpha *= da; ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(e[0], e[1], 11 * u, 0, Math.PI * 2); ctx.fill() }
+    ctx.restore()
+    return
+  }
+
+  // TRIAD — three photo cards that land with the words (4 %, 36 % and 66 % of the scene).
+  // Photo 1 = background; photos 2–4 = the cards. Rows: Title|line.
+  if (sc.kind === 'triad') {
+    proBg(ctx, W, H, ph(0), local, lvl)
+    const it = (sc.items.length ? sc.items : ['Priced daily|Dedicated revenue managers', '40+ channels|Everywhere guests book', 'One complete team|Housekeeping to guest care']).slice(0, 3).map(r => r.split('|').map(s => s.trim()))
+    const n = it.length, at = [0.04, 0.36, 0.66]
+    if (portrait) {
+      const g = 34 * u, cw = box.w, rowH = (box.h - g * (n - 1)) / n
+      for (let k = 0; k < n; k++) {
+        const t0 = dur * at[k], a = ease((local - t0) / (0.6 * PD)); if (a <= 0) continue
+        const y = box.y + k * (rowH + g), pw = cw * 0.48, phh = Math.min(rowH, pw * 0.75)
+        ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 24 * u)
+        rr(ctx, box.x, y, pw, phh, 22 * u); ctx.save(); ctx.clip(); const img = ph(k + 1); if (img) cover(ctx, img, box.x, y, pw, phh, 1.08 - 0.08 * ease((local - t0) / (6 * PD))); ctx.restore()
+        ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,0.18)'; rr(ctx, box.x, y, pw, phh, 22 * u); ctx.stroke()
+        const tx = box.x + pw + 34 * u, tw = cw - pw - 34 * u
+        const ts = fitSize(ctx, it[k][0] || '', tw, 60 * u, phh * 0.55)
+        const th2 = rich(ctx, (k === 0 ? '**' + (it[k][0] || '') + '**' : it[k][0] || ''), tx, y + phh * 0.2, tw, ts, { font: A.display, local: 99 })
+        if (it[k][1]) plain(ctx, it[k][1], tx, y + phh * 0.2 + th2 + 10 * u, tw, 28 * u, A.body, C.mut, 500)
+        ctx.restore()
+      }
+      return
+    }
+    const g = box.w * 0.035, cw = (box.w - g * (n - 1)) / n, phh = cw * 0.75
+    const y = box.y + (box.h - phh - 150 * u) / 2
+    for (let k = 0; k < n; k++) {
+      const t0 = dur * at[k], a = ease((local - t0) / (0.6 * PD)); if (a <= 0) continue
+      const x = box.x + k * (cw + g), z = 0.97 + 0.03 * a
+      ctx.save(); ctx.globalAlpha *= a; ctx.translate(0, (1 - a) * 24 * u)
+      ctx.translate(x + cw / 2, y + phh / 2); ctx.scale(z, z); ctx.translate(-(x + cw / 2), -(y + phh / 2))
+      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 40 * u; ctx.shadowOffsetY = 18 * u; rr(ctx, x, y, cw, phh, 22 * u); ctx.fillStyle = C.deep; ctx.fill(); ctx.restore()
+      rr(ctx, x, y, cw, phh, 22 * u); ctx.save(); ctx.clip(); const img = ph(k + 1); if (img) cover(ctx, img, x, y, cw, phh, 1.08 - 0.08 * ease((local - t0) / (6 * PD))); ctx.restore()
+      ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,0.18)'; rr(ctx, x, y, cw, phh, 22 * u); ctx.stroke()
+      const ts = fitLine(ctx, it[k][0] || '', cw, 58 * u, 800, A.display)
+      rich(ctx, (k === 0 ? '**' + (it[k][0] || '') + '**' : it[k][0] || ''), x, y + phh + 28 * u, cw * 1.5, ts, { font: A.display, local: 99 })
+      if (it[k][1]) plain(ctx, it[k][1], x, y + phh + 40 * u + ts * 1.05, cw, fitLine(ctx, it[k][1], cw, 27 * u, 500, A.body), A.body, C.mut, 500)
+      ctx.restore()
+    }
+    return
+  }
+}
+
 /** Find the scene playing at time t. */
 export function sceneAt(tl: Timeline, t: number): number {
   let i = 0
@@ -2222,7 +2864,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   // CAPTIONS: the line being spoken (most viewers watch muted). Shown while the line plays.
   // Captions — unless the screen already says the same words (a kinetic hook, a title that IS the line).
   const bare = (x: string) => x.replace(/\*\*/g, '').replace(/[^a-z0-9]+/gi, ' ').trim().toLowerCase()
-  if (p.captions && sc.vo.trim() && bare(sc.vo) !== bare(sc.head)) {
+  const endCardV = H > W * 1.1 && (sc.kind === 'contact' || sc.kind === 'cta')
+  if (p.captions && !endCardV && sc.vo.trim() && bare(sc.vo) !== bare(sc.head)) {
     const a = clamp(local / 0.3) * clamp((tl.durs[i] - local) / 0.3)
     if (a > 0) {
       const capBase = H - 60 * u - H * platformOf(p).safe.bottom
@@ -2246,7 +2889,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
 }
 
 /** Ask the AI to write: what we send it about the house, so every script starts from the same facts. */
-export const HOUSE_FACTS = `Stay Hospitality: short-term rental management across South Florida (Miami, Fort Lauderdale, Pompano, Palm Beach).
+export const HOUSE_FACTS = `Stay Hospitality: short-term rental management across South Florida — 4 markets (Miami, Fort Lauderdale, Pompano, Palm Beach). Listings are rebuilt and refreshed every 3 months.
 450+ listings across 140+ properties (hotels are part of the listings — say "listings", never "homes" for the count). 10 years in business. 1,000,000+ guests hosted. 4.6/5 guest rating.
 Revenue: dedicated revenue managers price every listing every day against the competitive set; high-demand dates (Art Basel, New Year's Eve, the boat shows, Formula 1 Miami) are priced months ahead. We price to convert: higher conversion ranks listings higher, which books more and earns more.
 Distribution: 40+ channels (Airbnb, Vrbo, Booking.com, Expedia, Marriott, Blueground, our direct site stay-hospitality.com).
