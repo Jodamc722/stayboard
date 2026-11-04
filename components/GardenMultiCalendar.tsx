@@ -230,8 +230,8 @@ export function GardenMultiCalendar({ switcher }: { switcher?: ReactNode }) {
           {q ? <button onClick={() => setQ('')} aria-label="Clear search" className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={13} /></button> : null}
         </label>
         <select value={typeF} onChange={e => setTypeF(e.target.value)} className={selCls} title="Room type">
-          <option value="">All room types{d?.types ? ` (${d.types.length})` : ''}</option>
-          {(d?.types || []).map(t => <option key={t.id} value={t.id}>{t.name} · {t.units}</option>)}
+          <option value="">All room types{d?.types ? ` (${d.types.filter(t => t.units > 0).length})` : ''}</option>
+          {(d?.types || []).filter(t => t.units > 0).map(t => <option key={t.id} value={t.id}>{t.name} · {t.units}</option>)}
         </select>
         <select value={chanF} onChange={e => setChanF(e.target.value)} className={selCls} title="Booking channel">
           <option value="">All channels</option>
@@ -318,6 +318,9 @@ const GroupRows = memo(function GroupRows({ g, dates, colW, lines, open, onToggl
   const units = t.units || t.total || 0
   // A type that is one room (the hotel names many types after their room) is drawn as that room's
   // row alone — a header repeating the same name above every room doubled the page.
+  // A virtual type (Cloudbeds' linked listings, named after a room) has no physical rooms and, with
+  // no booking on it, nothing to show.
+  if (!g.rows.length) return null
   if (g.rows.length === 1 && units <= 1 && g.rows[0].room) return <TrackRow r={g.rows[0]} colW={colW} n={dates.length} lines={lines} pinned={pinned} />
   return (
     <>
