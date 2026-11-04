@@ -74,6 +74,9 @@ export const FEATURES: Feature[] = [
   { key: 'maintenance',   label: 'Maintenance',       path: '/maintenance', group: 'Operations' },
   { key: 'schedule',      label: 'Scheduler',         path: '/schedule', group: 'Operations' },
   { key: 'glitches',      label: 'Glitches',          path: '/glitches', group: 'Guest Experience' },
+  // Lost & Found (Jon, 2026-11-04): what housekeeping found in a unit, pulled from the Slack channel
+  // or logged by hand; attach the stay, contact the guest, return / ship / donate.
+  { key: 'lost-found',    label: 'Lost & Found',      path: '/lost-found', group: 'Guest Experience' },
   // The refund playbook (2026-09-22, Jon): the ladder, the matrix, the clocks and the training
   // scenarios. Read-only for anyone who handles a guest issue; the money columns still obey the
   // money permission inside the page, so a role without it sees the doctrine and not the dollars.
@@ -446,9 +449,9 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/command',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'upkeep', 'schedule', 'glitches', 'audits', 'orders', 'requests', 'projects', 'ffe', 'catalogs', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
+    pages: ['home', 'plan', 'upkeep', 'schedule', 'glitches', 'lost-found', 'audits', 'orders', 'requests', 'projects', 'ffe', 'catalogs', 'onboarding', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
-    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
+    pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'lost-found', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',
     pages: ['home', 'revenue', 'revenue-app', 'marketing', 'reports', 'health', 'blocked', 'buildings', 'listings', 'claims', 'contacts', 'channels', 'api-keys'] },
 ]
