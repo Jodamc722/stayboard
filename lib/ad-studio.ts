@@ -114,7 +114,16 @@ export function normalize(p: any): AdProject {
     photos: Array.isArray(s?.photos) ? s.photos.slice(0, 12).map((x: any) => String(x || '')).filter((x: string) => /^(https:\/\/|\/|video:)/.test(x)) : [],
     dur: s?.dur && Number(s.dur) > 0 ? Math.min(30, Number(s.dur)) : null,
     sfx: typeof s?.sfx === 'string' && /^snd:sounds\/[a-z0-9]+\.mp3$/i.test(s.sfx) ? s.sfx : '',
-    fx: Array.isArray(s?.fx) ? s.fx.filter((x: any) => FX.some(f => f.key === x)).slice(0, 4) : [],
+    fx: Array.isArray(s?.fx) ? s.fx.filter((x: any) => FX.some(f => f.key === x)).slice(0, 6) : [],
+    fxo: s?.fxo && typeof s.fxo === 'object' ? Object.fromEntries(Object.entries(s.fxo).filter(([k]) => FX.some(f => f.key === k)).map(([k, v]: [string, any]) => [k, {
+      ...(typeof v?.pos === 'string' ? { pos: v.pos.slice(0, 12) } : {}),
+      ...(['S', 'M', 'L'].indexOf(v?.size) >= 0 ? { size: v.size } : {}),
+      ...(['low', 'med', 'high'].indexOf(v?.amt) >= 0 ? { amt: v.amt } : {}),
+      ...(['slow', 'normal', 'fast'].indexOf(v?.speed) >= 0 ? { speed: v.speed } : {}),
+      ...(typeof v?.color === 'string' ? { color: v.color.slice(0, 12) } : {}),
+      ...(typeof v?.variant === 'string' ? { variant: v.variant.slice(0, 12) } : {}),
+      ...(['on', 'off'].indexOf(v?.blink) >= 0 ? { blink: v.blink } : {}),
+    }])) : undefined,
   })) : []
   const c = p?.contact || {}
   return {

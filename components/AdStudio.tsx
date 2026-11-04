@@ -19,7 +19,7 @@ import { type Moment } from '@/lib/marketing-calendar'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -426,7 +426,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
 
   /** A vibe: look + style + graphics on every scene + music, in one tap. */
   const applyVibe = (v: typeof VIBES[number]) => {
-    change(d => ({ ...d, look: v.look, music: v.music, style: { ...STYLE_DEFAULT, ...v.style }, scenes: d.scenes.map(x => ({ ...x, fx: v.fx.slice(), tr: 'auto' as AdTransition })) }))
+    change(d => ({ ...d, look: v.look, music: v.music, style: { ...STYLE_DEFAULT, ...v.style }, scenes: d.scenes.map(x => ({ ...x, fx: v.fx.slice(), fxo: {}, tr: 'auto' as AdTransition })) }))
     if (tl) setT(tl.starts[Math.min(1, tl.starts.length - 1)] + 1.6)
   }
   /** Jon: "a wide range of styles and looks" — one tap for a fresh combination. */
@@ -1856,11 +1856,35 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
 
               <Label>Graphics on this scene</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {FX.map(f => { const on = (sc.fx || []).indexOf(f.key) >= 0; return <Btn key={f.key} small on={on} disabled={!canEdit} title={f.hint} onClick={() => setScene(sel, { fx: on ? (sc.fx || []).filter(x => x !== f.key) : (sc.fx || []).concat([f.key]).slice(-4) })}>{f.label}</Btn> })}
-                {(sc.fx || []).length ? <Btn small tone="red" disabled={!canEdit} onClick={() => setScene(sel, { fx: [] })}>Clear</Btn> : null}
-                {canEdit && p.scenes.length > 1 ? <Btn small disabled={!(sc.fx || []).length} title="Put these graphics on every scene" onClick={() => change(d => ({ ...d, scenes: d.scenes.map(x => ({ ...x, fx: (sc.fx || []).slice() })) }))}>→ All scenes</Btn> : null}
+                {FX.map(f => { const on = (sc.fx || []).indexOf(f.key) >= 0; return <Btn key={f.key} small on={on} disabled={!canEdit} title={f.hint} onClick={() => setScene(sel, { fx: on ? (sc.fx || []).filter(x => x !== f.key) : (sc.fx || []).concat([f.key]).slice(-6) })}>{f.label}</Btn> })}
+                {(sc.fx || []).length ? <Btn small tone="red" disabled={!canEdit} onClick={() => setScene(sel, { fx: [], fxo: {} })}>Clear</Btn> : null}
+                {canEdit && p.scenes.length > 1 ? <Btn small disabled={!(sc.fx || []).length} title="Put these graphics, with their settings, on every scene" onClick={() => change(d => ({ ...d, scenes: d.scenes.map(x => ({ ...x, fx: (sc.fx || []).slice(), fxo: { ...(sc.fxo || {}) } })) }))}>→ All scenes</Btn> : null}
               </div>
-              <p style={{ fontSize: 10.5, color: UI.mut, marginTop: 4 }}>{(sc.fx || []).length ? 'Up to four per scene. They render in the export too.' : 'None picked — the look’s own graphics show (if it has any).'}</p>
+              <p style={{ fontSize: 10.5, color: UI.mut, marginTop: 4 }}>{(sc.fx || []).length ? 'Up to six per scene. Each one has its own placement, size and colour below. They render in the export too.' : 'None picked — the look’s own graphics show (if it has any).'}</p>
+              {(sc.fx || []).map(k => {
+                const m = fxMeta(k); if (!m) return null
+                const o = fxOpts(sc, k)
+                const set = (patch: Partial<FxOpts>) => setScene(sel, { fxo: { ...(sc.fxo || {}), [k]: { ...((sc.fxo || {})[k] || {}), ...patch } } })
+                const Row = ({ name, children }: { name: string; children: React.ReactNode }) => <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><span style={{ fontSize: 10, color: UI.mut, width: 58, flex: '0 0 58px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{name}</span>{children}</div>
+                return (
+                  <div key={k} style={{ marginTop: 8, padding: '8px 10px', background: UI.panel2, borderRadius: 8, border: '1px solid ' + UI.line }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <b style={{ fontSize: 11.5 }}>{m.label}</b>
+                      <span style={{ display: 'flex', gap: 4 }}>
+                        <Btn small disabled={!canEdit || !(sc.fxo && sc.fxo[k])} title="Back to this graphic’s defaults" onClick={() => { const n = { ...(sc.fxo || {}) }; delete n[k]; setScene(sel, { fxo: n }) }}>Reset</Btn>
+                        <Btn small tone="red" disabled={!canEdit} onClick={() => { const n = { ...(sc.fxo || {}) }; delete n[k]; setScene(sel, { fx: (sc.fx || []).filter(x => x !== k), fxo: n }) }}>✕</Btn>
+                      </span>
+                    </div>
+                    {m.variants ? <Row name="Style">{m.variants.map(v => <Btn key={v.key} small on={o.variant === v.key} disabled={!canEdit} onClick={() => set({ variant: v.key })}>{v.label}</Btn>)}</Row> : null}
+                    {m.pos ? <Row name="Place">{m.pos.map(x => <Btn key={x} small on={o.pos === x} disabled={!canEdit} onClick={() => set({ pos: x })}>{FX_POS_LABEL[x] || x}</Btn>)}</Row> : null}
+                    {m.has.indexOf('size') >= 0 ? <Row name="Size">{(['S', 'M', 'L'] as const).map(x => <Btn key={x} small on={o.size === x} disabled={!canEdit} onClick={() => set({ size: x })}>{x === 'S' ? 'Small' : x === 'M' ? 'Medium' : 'Large'}</Btn>)}</Row> : null}
+                    {m.has.indexOf('amt') >= 0 ? <Row name="Amount">{(['low', 'med', 'high'] as const).map(x => <Btn key={x} small on={o.amt === x} disabled={!canEdit} onClick={() => set({ amt: x })}>{x === 'low' ? 'Few' : x === 'med' ? 'Some' : 'Lots'}</Btn>)}</Row> : null}
+                    {m.has.indexOf('speed') >= 0 ? <Row name="Speed">{(['slow', 'normal', 'fast'] as const).map(x => <Btn key={x} small on={o.speed === x} disabled={!canEdit} onClick={() => set({ speed: x })}>{x === 'slow' ? 'Slow' : x === 'normal' ? 'Normal' : 'Fast'}</Btn>)}</Row> : null}
+                    {m.colors ? <Row name="Colour">{m.colors.map(x => <Btn key={x} small on={o.color === x} disabled={!canEdit} onClick={() => set({ color: x })}>{FX_COLOR_LABEL[x] || x}</Btn>)}</Row> : null}
+                    {m.has.indexOf('blink') >= 0 ? <Row name="Blink">{(['on', 'off'] as const).map(x => <Btn key={x} small on={o.blink === x} disabled={!canEdit} onClick={() => set({ blink: x })}>{x === 'on' ? 'Blinking' : 'Steady'}</Btn>)}</Row> : null}
+                  </div>
+                )
+              })}
               <Label>Sound effect</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 <Btn small on={!sc.sfx} disabled={!canEdit} onClick={() => setScene(sel, { sfx: '' })}>None</Btn>

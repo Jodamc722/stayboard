@@ -80,7 +80,10 @@ export type AdScene = {
   sfx?: string
   /** Motion graphics layered on the scene (FX keys). */
   fx?: string[]
+  /** Per-graphic options (placement, size, amount, speed, colour, variant, blink), keyed by FX key. Missing = that graphic's default. */
+  fxo?: Record<string, FxOpts>
 }
+export type FxOpts = { pos?: string; size?: 'S' | 'M' | 'L'; amt?: 'low' | 'med' | 'high'; speed?: 'slow' | 'normal' | 'fast'; color?: string; variant?: string; blink?: 'on' | 'off' }
 export type AdContact = { name: string; role: string; phone: string; email: string; photo: string }
 export type AdVoice = {
   path: string
@@ -1281,14 +1284,17 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.restore()
     }
     // headline block, anchored to the bottom (above the bar); a corner tree gets its own column
-    const tw = (W - pad * 2) * ((sc.fx || []).indexOf('tree') >= 0 ? (portrait ? 0.66 : 0.72) : 1)
+    const treeOn = (sc.fx || []).indexOf('tree') >= 0, treeO = treeOn ? fxOpts(sc, 'tree') : null
+    const treeSide = !treeO ? '' : treeO.variant === 'pair' ? 'both' : treeO.pos === 'bl' || treeO.pos === 'left' ? 'left' : treeO.pos === 'center' ? '' : 'right'
+    const tw = (W - pad * 2) * (treeSide === 'both' ? (portrait ? 0.5 : 0.56) : treeSide ? (portrait ? 0.66 : 0.72) : 1)
+    const tx = treeSide === 'left' ? W - pad - tw : treeSide === 'both' ? (W - tw) / 2 : pad
     ctx.font = fnt(500, 34 * u, A.body)
     const subH = sc.sub ? (layout(ctx, sc.sub, tw).length || 1) * 34 * u * 1.35 + 20 * u : 0
     const size = fitSize(ctx, head, tw, (portrait ? 118 : 108) * u, H * 0.34, 800)
     const hh = linesH(ctx, head, tw, size)
     const by = H - barH - (portrait ? 70 : 56) * u - subH - hh
-    rich(ctx, head, pad, by, tw, size, { font: A.display, local, delay: 0.35, stagger: 0.18, maxH: H * 0.36 })
-    if (sc.sub) plain(ctx, sc.sub, pad, by + hh + 16 * u, tw, 34 * u, A.body, C.ink, 500, 'left', appear(local, 0.8))
+    rich(ctx, head, tx, by, tw, size, { font: A.display, local, delay: 0.35, stagger: 0.18, maxH: H * 0.36 })
+    if (sc.sub) plain(ctx, sc.sub, tx, by + hh + 16 * u, tw, 34 * u, A.body, C.ink, 500, 'left', appear(local, 0.8))
     // date pill above the headline
     if (date) {
       const a = appear(local, 0.2)
@@ -1296,8 +1302,8 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       ctx.font = fnt(800, 34 * u, A.display)
       const dw = ctx.measureText(date).width + 56 * u, dh = 66 * u
       const dy = by - dh - 30 * u
-      rr(ctx, pad, dy, dw, dh, dh / 2); ctx.fillStyle = C.gold; ctx.fill()
-      ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(date, pad + 28 * u, dy + dh / 2 + 2 * u)
+      rr(ctx, tx, dy, dw, dh, dh / 2); ctx.fillStyle = C.gold; ctx.fill()
+      ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(date, tx + 28 * u, dy + dh / 2 + 2 * u)
       ctx.restore()
     }
     return
@@ -1571,236 +1577,512 @@ function finish(ctx: CanvasRenderingContext2D, W: number, H: number, u: number, 
 }
 
 // ───────────────────────── MOTION GRAPHICS (Jon, 2026-11-03: "we need cool graphics") ─────────────────────────
-export const FX: { key: string; label: string; hint: string }[] = [
-  { key: 'bokeh', label: 'Bokeh', hint: 'Soft drifting light circles' },
-  { key: 'rays', label: 'Light rays', hint: 'Sun rays sweeping from the corner' },
-  { key: 'sparkle', label: 'Sparkle', hint: 'Twinkles that catch the light' },
-  { key: 'confetti', label: 'Confetti', hint: 'Falling gold confetti — events, celebrations' },
-  { key: 'waves', label: 'Waves', hint: 'Animated wave lines along the bottom' },
-  { key: 'grid', label: 'Tech grid', hint: 'A faint moving grid — Lighthouse, data, owners' },
-  { key: 'stripes', label: 'Stripes', hint: 'Diagonal accent stripes that slide in' },
-  { key: 'orb', label: 'Accent orb', hint: 'A big soft circle in the accent colour behind the words' },
-  { key: 'corners', label: 'Corners', hint: 'Animated corner brackets, like a viewfinder' },
-  { key: 'stars', label: '4.6 stars', hint: 'The guest rating as stars filling up' },
-  { key: 'pin', label: 'Map pin', hint: 'A pin drops with the place line' },
-  { key: 'swipe', label: 'Book arrow', hint: 'A bouncing arrow toward the button (end cards)' },
-  { key: 'scan', label: 'Scanlines', hint: 'Fine horizontal lines — retro, techy' },
-  { key: 'glowline', label: 'Glow line', hint: 'A travelling accent line across the frame' },
-  // Themed visuals (Jon, 2026-11-04: "visuals that fit the theme").
-  { key: 'snow', label: 'Snow', hint: 'Soft snowfall — Christmas, winter sun' },
-  { key: 'lights', label: 'String lights', hint: 'A swag of warm bulbs across the top — holidays' },
-  { key: 'fireworks', label: 'Fireworks', hint: 'Bursts in the accent colour — New Year, the Fourth' },
-  { key: 'hearts', label: 'Hearts', hint: 'Drifting hearts — Valentine’s' },
-  { key: 'leaves', label: 'Falling leaves', hint: 'Autumn leaves — Thanksgiving' },
-  { key: 'eq', label: 'Equalizer', hint: 'Sound bars along the bottom — Ultra, music week' },
-  { key: 'rope', label: 'Nautical rope', hint: 'A rope line and anchor mark — boat shows' },
-  { key: 'frame', label: 'Gallery frame', hint: 'A thin inner frame, like a gallery wall — Art Basel, editorial' },
-  { key: 'tree', label: 'Christmas tree', hint: 'A tree silhouette in the corner with lights that blink' },
+export type FxMeta = {
+  key: string; label: string; hint: string
+  /** Placements this graphic can take (first = default). */
+  pos?: string[]
+  /** Colour schemes it can take (first = default). */
+  colors?: string[]
+  /** Design variants (first = default). */
+  variants?: { key: string; label: string }[]
+  /** Which sliders it has. */
+  has: ('size' | 'amt' | 'speed' | 'blink')[]
+}
+export const FX_POS_LABEL: Record<string, string> = { full: 'Everywhere', top: 'Top', bottom: 'Bottom', both: 'Top & bottom', left: 'Left', right: 'Right', center: 'Centre', tl: 'Top left', tr: 'Top right', bl: 'Bottom left', br: 'Bottom right', frame: 'Around the edge', behind: 'Behind the words' }
+export const FX_COLOR_LABEL: Record<string, string> = { accent: 'Accent', white: 'White', multi: 'Multi', warm: 'Warm', cool: 'Cool', red: 'Red', green: 'Green', fall: 'Fall', ink: 'Ink' }
+export const FX: FxMeta[] = [
+  { key: 'bokeh', label: 'Bokeh', hint: 'Soft drifting light circles', pos: ['full', 'top', 'bottom', 'left', 'right'], colors: ['accent', 'white', 'warm', 'cool'], has: ['size', 'amt', 'speed'] },
+  { key: 'rays', label: 'Light rays', hint: 'Sun rays sweeping from a corner', pos: ['tr', 'tl', 'br', 'bl'], colors: ['accent', 'white', 'warm'], has: ['amt', 'speed'] },
+  { key: 'sparkle', label: 'Sparkle', hint: 'Twinkles that catch the light', pos: ['full', 'top', 'bottom', 'left', 'right'], colors: ['white', 'accent', 'warm', 'cool'], has: ['size', 'amt', 'speed'] },
+  { key: 'confetti', label: 'Confetti', hint: 'Falling confetti — events, celebrations', pos: ['full', 'left', 'right', 'top'], colors: ['accent', 'multi', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
+  { key: 'waves', label: 'Waves', hint: 'Animated wave lines', pos: ['bottom', 'top', 'both'], colors: ['accent', 'white', 'cool'], has: ['size', 'amt', 'speed'] },
+  { key: 'grid', label: 'Tech grid', hint: 'A faint moving grid — Lighthouse, data, owners', colors: ['accent', 'white', 'cool'], has: ['size', 'amt', 'speed'] },
+  { key: 'stripes', label: 'Stripes', hint: 'Diagonal accent stripes that slide in', pos: ['tr', 'tl', 'br', 'bl'], colors: ['accent', 'white', 'multi'], has: ['size', 'amt'] },
+  { key: 'orb', label: 'Accent orb', hint: 'A big soft circle in the accent colour', pos: ['behind', 'center', 'left', 'right', 'tl', 'tr', 'bl', 'br'], colors: ['accent', 'white', 'warm', 'cool', 'red'], has: ['size'] },
+  { key: 'corners', label: 'Corners', hint: 'Corner brackets, like a viewfinder', colors: ['accent', 'white', 'ink'], variants: [{ key: 'thin', label: 'Thin' }, { key: 'bold', label: 'Bold' }, { key: 'dots', label: 'Dots' }], has: ['size'] },
+  { key: 'stars', label: '4.6 stars', hint: 'The guest rating as stars filling up', pos: ['bl', 'br', 'tl', 'tr', 'center'], has: ['size'] },
+  { key: 'pin', label: 'Map pin', hint: 'A pin drops with the place line', pos: ['tr', 'tl', 'center', 'br', 'bl'], colors: ['accent', 'white', 'red'], has: ['size'] },
+  { key: 'swipe', label: 'Book arrow', hint: 'A bouncing arrow toward the button (end cards)', pos: ['bottom', 'center', 'right'], colors: ['accent', 'white'], has: ['size', 'speed'] },
+  { key: 'scan', label: 'Scanlines', hint: 'Fine horizontal lines — retro, techy', has: ['amt', 'speed'] },
+  { key: 'glowline', label: 'Glow line', hint: 'A travelling accent line across the frame', variants: [{ key: 'slant', label: 'Slanted' }, { key: 'vert', label: 'Vertical' }, { key: 'horiz', label: 'Horizontal' }], colors: ['accent', 'white', 'cool'], has: ['size', 'speed'] },
+  // Themed visuals (Jon, 2026-11-04: "visuals that fit the theme", "multiple options, features and placement").
+  { key: 'snow', label: 'Snow', hint: 'Soft snowfall — Christmas, winter sun', pos: ['full', 'top', 'left', 'right'], colors: ['white', 'accent', 'cool'], has: ['size', 'amt', 'speed'] },
+  { key: 'lights', label: 'String lights', hint: 'A string of warm bulbs — holidays', pos: ['top', 'bottom', 'both', 'frame'], variants: [{ key: 'swag', label: 'Swag' }, { key: 'straight', label: 'Straight' }, { key: 'zigzag', label: 'Zigzag' }, { key: 'double', label: 'Double swag' }], colors: ['multi', 'warm', 'accent', 'white', 'cool'], has: ['size', 'amt', 'speed', 'blink'] },
+  { key: 'fireworks', label: 'Fireworks', hint: 'Bursts in the sky — New Year, the Fourth', pos: ['top', 'full', 'left', 'right', 'tl', 'tr'], colors: ['accent', 'multi', 'white', 'warm', 'red'], has: ['size', 'amt', 'speed'] },
+  { key: 'hearts', label: 'Hearts', hint: 'Drifting hearts — Valentine’s', pos: ['full', 'left', 'right', 'bottom'], colors: ['accent', 'red', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
+  { key: 'leaves', label: 'Falling leaves', hint: 'Autumn leaves — Thanksgiving', pos: ['full', 'left', 'right', 'top'], colors: ['fall', 'accent', 'green', 'warm'], has: ['size', 'amt', 'speed'] },
+  { key: 'eq', label: 'Equalizer', hint: 'Sound bars — Ultra, music week', pos: ['bottom', 'top', 'both', 'left', 'right'], colors: ['accent', 'white', 'multi', 'cool'], variants: [{ key: 'bars', label: 'Bars' }, { key: 'wave', label: 'Wave' }, { key: 'dots', label: 'Dots' }], has: ['size', 'amt', 'speed'] },
+  { key: 'rope', label: 'Nautical rope', hint: 'A rope line and an anchor — boat shows', pos: ['top', 'bottom', 'both', 'frame'], variants: [{ key: 'dash', label: 'Rope' }, { key: 'solid', label: 'Solid line' }, { key: 'anchor', label: 'Anchor only' }], colors: ['accent', 'white', 'red', 'ink'], has: ['size'] },
+  { key: 'frame', label: 'Gallery frame', hint: 'A thin inner frame, like a gallery wall — Art Basel, editorial', variants: [{ key: 'double', label: 'Double line' }, { key: 'single', label: 'Single line' }, { key: 'thick', label: 'Thick mat' }, { key: 'corners', label: 'Corner marks' }], colors: ['white', 'accent', 'ink'], has: ['size'] },
+  { key: 'tree', label: 'Christmas tree', hint: 'A tree silhouette with lights that blink', pos: ['br', 'bl', 'right', 'left', 'center'], variants: [{ key: 'classic', label: 'Classic' }, { key: 'slim', label: 'Slim' }, { key: 'outline', label: 'Outline' }, { key: 'pair', label: 'A pair' }], colors: ['multi', 'warm', 'accent', 'white'], has: ['size', 'speed', 'blink'] },
+  { key: 'garland', label: 'Garland', hint: 'A pine garland with berries along an edge — Christmas', pos: ['top', 'bottom', 'both', 'frame'], colors: ['green', 'accent', 'red'], has: ['size'] },
+  { key: 'balloons', label: 'Balloons', hint: 'Balloons drifting up — birthdays, openings, celebrations', pos: ['full', 'left', 'right', 'bottom'], colors: ['multi', 'accent', 'white', 'warm'], has: ['size', 'amt', 'speed'] },
+  { key: 'palms', label: 'Palm fronds', hint: 'Palm leaf silhouettes in the corners — Miami, tropical', pos: ['tr', 'tl', 'br', 'bl', 'both'], colors: ['green', 'ink', 'accent'], has: ['size'] },
+  { key: 'badge', label: 'Date badge', hint: 'A round stamp with the date line (uses the scene’s date or sub line)', pos: ['tr', 'tl', 'br', 'bl', 'center'], colors: ['accent', 'white', 'red', 'ink'], variants: [{ key: 'circle', label: 'Circle' }, { key: 'ribbon', label: 'Ribbon' }, { key: 'burst', label: 'Starburst' }], has: ['size'] },
 ]
+export function fxMeta(k: string) { return FX.find(f => f.key === k) }
+/** Resolve a graphic's options with the graphic's defaults filled in. */
+export function fxOpts(sc: AdScene | undefined, k: string): Required<FxOpts> {
+  const m = fxMeta(k), o = (sc && sc.fxo && sc.fxo[k]) || {}
+  return {
+    pos: o.pos && (!m?.pos || m.pos.indexOf(o.pos) >= 0) ? o.pos : (m?.pos?.[0] || 'full'),
+    size: o.size || 'M', amt: o.amt || 'med', speed: o.speed || 'normal',
+    color: o.color && (!m?.colors || m.colors.indexOf(o.color) >= 0) ? o.color : (m?.colors?.[0] || 'accent'),
+    variant: o.variant && (!m?.variants || m.variants.some(v => v.key === o.variant)) ? o.variant : (m?.variants?.[0]?.key || ''),
+    blink: o.blink || 'on',
+  }
+}
 const pad = (W: number, H: number, u: number) => (H > W * 1.1 ? 80 : 120) * u
 function hashN(n: number, k: number) { const v = Math.sin(n * 12.9898 + k * 78.233) * 43758.5453; return v - Math.floor(v) }
-function drawFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets) {
+const SIZE_MUL = { S: 0.65, M: 1, L: 1.5 }, AMT_MUL = { low: 0.5, med: 1, high: 1.8 }, SPD_MUL = { slow: 0.5, normal: 1, fast: 1.8 }
+/** Colour palette for an FX colour scheme. */
+function fxPalette(scheme: string): string[] {
+  switch (scheme) {
+    case 'white': return ['#FFFFFF']
+    case 'multi': return [C.gold, '#F26D6D', '#6FCF97', '#F2C94C', '#56CCF2']
+    case 'warm': return ['#F2C94C', '#F26D6D', '#E08A3C', '#FFD9A0']
+    case 'cool': return ['#56CCF2', '#7CF2E0', '#B9D4E6', '#8FA8FF']
+    case 'red': return ['#D64545', '#F26D6D', '#B3202C']
+    case 'green': return ['#2E6B45', '#3F8F5C', '#1E4D31']
+    case 'fall': return ['#C9792E', '#B5562E', '#D9A441', '#8A4B2A']
+    case 'ink': return [C.light ? C.ink : '#FFFFFF']
+    default: return [C.gold]
+  }
+}
+/** The screen region a placement means, as a rect. */
+function fxRegion(pos: string, W: number, H: number): { x: number; y: number; w: number; h: number } {
+  switch (pos) {
+    case 'top': return { x: 0, y: 0, w: W, h: H * 0.42 }
+    case 'bottom': return { x: 0, y: H * 0.58, w: W, h: H * 0.42 }
+    case 'left': return { x: 0, y: 0, w: W * 0.42, h: H }
+    case 'right': return { x: W * 0.58, y: 0, w: W * 0.42, h: H }
+    case 'center': return { x: W * 0.25, y: H * 0.25, w: W * 0.5, h: H * 0.5 }
+    case 'tl': return { x: 0, y: 0, w: W * 0.5, h: H * 0.5 }
+    case 'tr': return { x: W * 0.5, y: 0, w: W * 0.5, h: H * 0.5 }
+    case 'bl': return { x: 0, y: H * 0.5, w: W * 0.5, h: H * 0.5 }
+    case 'br': return { x: W * 0.5, y: H * 0.5, w: W * 0.5, h: H * 0.5 }
+    default: return { x: 0, y: 0, w: W, h: H }
+  }
+}
+/** Anchor point for a corner/edge placement, inset by m. */
+function fxAnchor(pos: string, W: number, H: number, m: number): { x: number; y: number; sx: number; sy: number } {
+  const sx = pos === 'tl' || pos === 'bl' || pos === 'left' ? 1 : pos === 'center' ? 0 : -1
+  const sy = pos === 'tl' || pos === 'tr' || pos === 'top' ? 1 : pos === 'center' ? 0 : -1
+  const x = sx > 0 ? m : sx < 0 ? W - m : W / 2, y = sy > 0 ? m : sy < 0 ? H - m : H / 2
+  return { x, y, sx, sy }
+}
+let fxOff: HTMLCanvasElement | null = null
+/** Graphics ease in over the first half-second of a scene and out over the last, so they never pop (Jon, 2026-11-04: "good transitions, better flows"). */
+function fxEnvelope(local: number, dur: number) {
+  const inA = Math.min(1, Math.max(0, local / 0.45)), outA = dur > 1.2 ? Math.min(1, Math.max(0, (dur - local) / 0.45)) : 1
+  return ease(Math.min(inA, outA))
+}
+function drawFx(ctx0: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets) {
   const sc = p.scenes[i]
   const keys = Array.from(new Set([...(sc.fx || []), ...(sc.fx && sc.fx.length ? [] : FXS)]))
   if (!keys.length) return
-  const W = ctx.canvas.width, H = ctx.canvas.height, u = Math.min(W, H) / 1080, t = local
+  const W = ctx0.canvas.width, H = ctx0.canvas.height, u0 = Math.min(W, H) / 1080
+  const env = fxEnvelope(local, dur)
+  // Posters carry a CTA bar along the bottom — bottom-edge graphics sit above it.
+  const barInset = sc.kind === 'poster' ? (H > W * 1.1 ? 118 : 104) * u0 + 24 * u0 : 0
+  let ctx = ctx0
+  if (env < 0.995 && typeof document !== 'undefined') {
+    if (!fxOff || fxOff.width !== W || fxOff.height !== H) { fxOff = document.createElement('canvas'); fxOff.width = W; fxOff.height = H }
+    const oc = fxOff.getContext('2d'); if (oc) { oc.setTransform(1, 0, 0, 1, 0, 0); oc.globalAlpha = 1; oc.globalCompositeOperation = 'source-over'; oc.clearRect(0, 0, W, H); ctx = oc }
+  }
   const portrait = H > W * 1.1
-  const gold = hexRgb(C.gold)
-  const ga = (a: number) => `rgba(${gold[0]},${gold[1]},${gold[2]},${a})`
+  const PF = platformOf(p)
+  const safeB = H * PF.safe.bottom, safeT = H * PF.safe.top
   for (const k of keys) {
+    const o = fxOpts(sc, k)
+    const u = u0 * SIZE_MUL[o.size], amt = AMT_MUL[o.amt], t = local * SPD_MUL[o.speed]
+    const pal = fxPalette(o.color), col = pal[0], crgb = hexRgb(col)
+    const ca = (a: number, idx = 0) => { const r = hexRgb(pal[idx % pal.length]); return `rgba(${r[0]},${r[1]},${r[2]},${a})` }
+    const R = fxRegion(o.pos, W, H)
+    const inR = (hx: number, hy: number) => ({ x: R.x + hx * R.w, y: R.y + hy * R.h })
     ctx.save()
     if (k === 'bokeh') {
       ctx.globalCompositeOperation = C.light ? 'multiply' : 'screen'
-      for (let n = 0; n < 18; n++) {
-        const r = (30 + 90 * hashN(n, 1)) * u, x = (hashN(n, 2) + 0.03 * Math.sin(t * 0.4 + n)) * W, y = ((hashN(n, 3) - t * 0.012 * (0.5 + hashN(n, 4))) % 1 + 1) % 1 * H
-        const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, C.light ? 'rgba(200,170,120,0.35)' : 'rgba(255,255,255,0.22)'); g.addColorStop(0.7, C.light ? 'rgba(200,170,120,0.12)' : ga(0.08)); g.addColorStop(1, 'rgba(0,0,0,0)')
-        ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2)
+      const N = Math.round(18 * amt)
+      for (let n = 0; n < N; n++) {
+        const r = (30 + 90 * hashN(n, 1)) * u, q = inR(hashN(n, 2) + 0.03 * Math.sin(t * 0.4 + n), ((hashN(n, 3) - t * 0.012 * (0.5 + hashN(n, 4))) % 1 + 1) % 1)
+        const g = ctx.createRadialGradient(q.x, q.y, 0, q.x, q.y, r); g.addColorStop(0, C.light ? 'rgba(200,170,120,0.35)' : ca(0.26, n)); g.addColorStop(0.7, C.light ? 'rgba(200,170,120,0.12)' : ca(0.08, n)); g.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = g; ctx.fillRect(q.x - r, q.y - r, r * 2, r * 2)
       }
     } else if (k === 'rays') {
-      ctx.globalCompositeOperation = 'screen'; ctx.translate(W * 0.95, -H * 0.05)
-      for (let n = 0; n < 7; n++) {
-        const ang = Math.PI * 0.55 + n * 0.11 + 0.03 * Math.sin(t * 0.6 + n)
+      ctx.globalCompositeOperation = 'screen'
+      const an = fxAnchor(o.pos, W, H, 0); ctx.translate(an.x + (an.sx > 0 ? -W * 0.05 : W * 0.05) * -1 * an.sx, an.y - an.sy * H * 0.05)
+      const base = an.sx > 0 ? (an.sy > 0 ? 0 : -Math.PI / 2) : (an.sy > 0 ? Math.PI / 2 : Math.PI)
+      const N = Math.round(7 * amt)
+      for (let n = 0; n < N; n++) {
+        const ang = base + Math.PI * 0.05 + (n / Math.max(1, N - 1)) * Math.PI * 0.4 + 0.03 * Math.sin(t * 0.6 + n)
         const g = ctx.createLinearGradient(0, 0, Math.cos(ang) * W * 1.4, Math.sin(ang) * W * 1.4)
-        g.addColorStop(0, ga(0.18 + 0.06 * Math.sin(t + n))); g.addColorStop(1, 'rgba(0,0,0,0)')
+        g.addColorStop(0, ca(0.18 + 0.06 * Math.sin(t + n))); g.addColorStop(1, 'rgba(0,0,0,0)')
         ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(ang - 0.03) * W * 1.6, Math.sin(ang - 0.03) * W * 1.6); ctx.lineTo(Math.cos(ang + 0.03) * W * 1.6, Math.sin(ang + 0.03) * W * 1.6); ctx.closePath(); ctx.fill()
       }
     } else if (k === 'sparkle') {
       ctx.globalCompositeOperation = 'screen'
-      for (let n = 0; n < 26; n++) {
+      const N = Math.round(26 * amt)
+      for (let n = 0; n < N; n++) {
         const ph = (t * (0.6 + hashN(n, 5)) + hashN(n, 6) * 6) % 3, a = ph < 1 ? Math.sin(ph * Math.PI) : 0
         if (a <= 0) continue
-        const x = hashN(n, 7) * W, y = hashN(n, 8) * H, r = (6 + 10 * hashN(n, 9)) * u * a
-        ctx.fillStyle = C.light ? ga(0.9 * a) : `rgba(255,255,255,${0.9 * a})`
-        ctx.beginPath(); ctx.moveTo(x, y - r * 2); ctx.quadraticCurveTo(x, y, x + r * 2, y); ctx.quadraticCurveTo(x, y, x, y + r * 2); ctx.quadraticCurveTo(x, y, x - r * 2, y); ctx.quadraticCurveTo(x, y, x, y - r * 2); ctx.fill()
+        const q = inR(hashN(n, 7), hashN(n, 8)), r = (6 + 10 * hashN(n, 9)) * u * a
+        ctx.fillStyle = C.light && o.color === 'white' ? `rgba(${hexRgb(C.gold).join(',')},${0.9 * a})` : ca(0.9 * a, n)
+        ctx.beginPath(); ctx.moveTo(q.x, q.y - r * 2); ctx.quadraticCurveTo(q.x, q.y, q.x + r * 2, q.y); ctx.quadraticCurveTo(q.x, q.y, q.x, q.y + r * 2); ctx.quadraticCurveTo(q.x, q.y, q.x - r * 2, q.y); ctx.quadraticCurveTo(q.x, q.y, q.x, q.y - r * 2); ctx.fill()
       }
     } else if (k === 'confetti') {
-      for (let n = 0; n < 40; n++) {
-        const sp = 0.08 + 0.1 * hashN(n, 10), y = ((hashN(n, 11) + t * sp) % 1.1) * H - H * 0.05, x = hashN(n, 12) * W + Math.sin(t * 2 + n) * 20 * u
+      const N = Math.round(40 * amt)
+      for (let n = 0; n < N; n++) {
+        const sp = 0.08 + 0.1 * hashN(n, 10), y = R.y + ((hashN(n, 11) + t * sp) % 1.1) * R.h - R.h * 0.05, x = R.x + hashN(n, 12) * R.w + Math.sin(t * 2 + n) * 20 * u
         const w = (8 + 10 * hashN(n, 13)) * u, h = (14 + 10 * hashN(n, 14)) * u
-        ctx.save(); ctx.translate(x, y); ctx.rotate(t * (1 + hashN(n, 15)) + n); ctx.fillStyle = n % 3 === 0 ? '#fff' : ga(0.95); ctx.globalAlpha = 0.85; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.restore()
+        ctx.save(); ctx.translate(x, y); ctx.rotate(t * (1 + hashN(n, 15)) + n); ctx.fillStyle = pal.length === 1 && n % 3 === 0 ? (C.light ? C.ink : '#fff') : pal[n % pal.length]; ctx.globalAlpha = 0.85; ctx.fillRect(-w / 2, -h / 2, w, h); ctx.restore()
       }
     } else if (k === 'waves') {
       ctx.lineWidth = 3 * u
-      for (let n = 0; n < 3; n++) {
-        ctx.strokeStyle = ga(0.55 - n * 0.15); ctx.beginPath()
-        const base = H - (90 + n * 34) * u - H * platformOf(p).safe.bottom
-        for (let x = 0; x <= W; x += 12 * u) ctx.lineTo(x, base + Math.sin(x / (140 * u) + t * (1.2 + n * 0.3) + n) * 14 * u)
+      const N = Math.max(1, Math.round(3 * amt))
+      const edges = o.pos === 'both' ? ['bottom', 'top'] : [o.pos]
+      for (const e of edges) for (let n = 0; n < N; n++) {
+        ctx.strokeStyle = ca(Math.max(0.15, 0.55 - n * 0.12), n); ctx.beginPath()
+        const base = e === 'top' ? safeT + (90 + n * 34) * u : H - (90 + n * 34) * u - safeB
+        for (let x = 0; x <= W; x += 12 * u0) ctx.lineTo(x, base + Math.sin(x / (140 * u) + t * (1.2 + n * 0.3) + n) * 14 * u)
         ctx.stroke()
       }
     } else if (k === 'grid') {
-      ctx.strokeStyle = C.light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1 * u
-      const step = 96 * u, off = (t * 18 * u) % step
+      ctx.strokeStyle = C.light ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1 * u0
+      const step = 96 * u, off = (t * 18 * u0) % step
       ctx.beginPath()
       for (let x = -step + off; x < W + step; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H) }
       for (let y = -step + off * 0.6; y < H + step; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y) }
       ctx.stroke()
-      ctx.fillStyle = ga(0.5)
-      for (let n = 0; n < 5; n++) { const x = ((hashN(n, 16) + t * 0.02) % 1) * W, y = hashN(n, 17) * H; ctx.beginPath(); ctx.arc(Math.round(x / step) * step + off, Math.round(y / step) * step + off * 0.6, 4 * u, 0, Math.PI * 2); ctx.fill() }
+      ctx.fillStyle = ca(0.5)
+      const N = Math.round(5 * amt)
+      for (let n = 0; n < N; n++) { const x = ((hashN(n, 16) + t * 0.02) % 1) * W, y = hashN(n, 17) * H; ctx.beginPath(); ctx.arc(Math.round(x / step) * step + off, Math.round(y / step) * step + off * 0.6, 4 * u0, 0, Math.PI * 2); ctx.fill() }
     } else if (k === 'stripes') {
-      const a = ease(Math.min(1, t / 0.8))
-      ctx.translate(W, 0); ctx.rotate(0.6)
-      for (let n = 0; n < 3; n++) { ctx.fillStyle = n === 1 ? (C.light ? C.ink : '#fff') : C.gold; ctx.globalAlpha = 0.85 - n * 0.2; ctx.fillRect(-(60 + n * 70) * u, -H * 0.5 + (1 - a) * H * 1.5, 26 * u, H * 2) }
+      const a = ease(Math.min(1, t / 0.8)), an = fxAnchor(o.pos, W, H, 0)
+      ctx.translate(an.x, an.y); ctx.rotate(an.sx * an.sy > 0 ? -0.6 : 0.6)
+      const N = Math.max(1, Math.round(3 * amt))
+      for (let n = 0; n < N; n++) { ctx.fillStyle = pal.length === 1 && n === 1 ? (C.light ? C.ink : '#fff') : pal[n % pal.length]; ctx.globalAlpha = Math.max(0.3, 0.85 - n * 0.2); ctx.fillRect(-(60 + n * 70) * u * (an.sx < 0 ? 1 : -1) - (an.sx < 0 ? 0 : 26 * u), -H * 0.5 + (1 - a) * H * 1.5 * (an.sy > 0 ? -1 : 1), 26 * u, H * 2) }
     } else if (k === 'orb') {
-      const a = ease(Math.min(1, t / 0.9)), r = (portrait ? W * 0.42 : H * 0.38) * (0.8 + 0.2 * a)
-      const x = portrait ? W * 0.5 : W * 0.3, y = portrait ? H * 0.38 : H * 0.5
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, ga(0.55 * a)); g.addColorStop(1, ga(0))
+      const a = ease(Math.min(1, t / 0.9)), r = (portrait ? W * 0.42 : H * 0.38) * (0.8 + 0.2 * a) * SIZE_MUL[o.size]
+      let x = portrait ? W * 0.5 : W * 0.3, y = portrait ? H * 0.38 : H * 0.5
+      if (o.pos !== 'behind') { const q = inR(0.5, 0.5); x = q.x; y = q.y }
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, ca(0.55 * a)); g.addColorStop(1, ca(0))
       ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2)
     } else if (k === 'corners') {
-      const a = ease(Math.min(1, t / 0.7)), m = 60 * u + (1 - a) * 40 * u, L = 70 * u * a
-      ctx.strokeStyle = C.light ? C.ink : C.gold; ctx.lineWidth = 4 * u; ctx.globalAlpha = 0.9
-      const PF = platformOf(p), top = H * PF.safe.top + m, bot = H - H * PF.safe.bottom - m, right = W - W * PF.safe.right - m
-      for (const [x, y, sx, sy] of [[m, top, 1, 1], [right, top, -1, 1], [m, bot, 1, -1], [right, bot, -1, -1]] as number[][]) { ctx.beginPath(); ctx.moveTo(x, y + sy * L); ctx.lineTo(x, y); ctx.lineTo(x + sx * L, y); ctx.stroke() }
+      const a = ease(Math.min(1, t / 0.7)), m = 60 * u0 + (1 - a) * 40 * u0, L = 70 * u * a
+      ctx.strokeStyle = o.color === 'accent' && C.light ? C.ink : col; ctx.fillStyle = ctx.strokeStyle; ctx.lineWidth = (o.variant === 'bold' ? 10 : 4) * u; ctx.globalAlpha = 0.9
+      const top = safeT + m, bot = H - safeB - m, right = W - W * PF.safe.right - m
+      for (const [x, y, sx, sy] of [[m, top, 1, 1], [right, top, -1, 1], [m, bot, 1, -1], [right, bot, -1, -1]] as number[][]) {
+        if (o.variant === 'dots') { ctx.beginPath(); ctx.arc(x + sx * 10 * u, y + sy * 10 * u, 9 * u * a, 0, Math.PI * 2); ctx.fill() }
+        else { ctx.beginPath(); ctx.moveTo(x, y + sy * L); ctx.lineTo(x, y); ctx.lineTo(x + sx * L, y); ctx.stroke() }
+      }
     } else if (k === 'stars') {
       const a = ease(Math.min(1, (t - 0.3) / 1.2)), n = 4.6 * a, size = 44 * u
-      const PF = platformOf(p), x0 = 56 * u, y0 = H - H * PF.safe.bottom - (p.captions ? 250 : 140) * u
+      const rowW = 5 * (size + 10 * u) + 10 * u + 300 * u
+      const an = fxAnchor(o.pos, W, H, 56 * u0)
+      const x0 = an.sx < 0 ? W - 56 * u0 - rowW : an.sx === 0 ? W / 2 - rowW / 2 : 56 * u0
+      const y0 = an.sy > 0 ? safeT + 120 * u0 : an.sy === 0 ? H / 2 : H - safeB - (p.captions ? 250 : 140) * u0
       for (let s = 0; s < 5; s++) {
         const fill = Math.max(0, Math.min(1, n - s))
         const cx = x0 + s * (size + 10 * u) + size / 2, cy = y0
-        const star = () => { ctx.beginPath(); for (let q = 0; q < 10; q++) { const r = q % 2 ? size * 0.22 : size * 0.5, an = -Math.PI / 2 + q * Math.PI / 5; ctx.lineTo(cx + Math.cos(an) * r, cy + Math.sin(an) * r) } ctx.closePath() }
+        const star = () => { ctx.beginPath(); for (let q = 0; q < 10; q++) { const r = q % 2 ? size * 0.22 : size * 0.5, an2 = -Math.PI / 2 + q * Math.PI / 5; ctx.lineTo(cx + Math.cos(an2) * r, cy + Math.sin(an2) * r) } ctx.closePath() }
         star(); ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fill()
         if (fill > 0) { ctx.save(); ctx.beginPath(); ctx.rect(cx - size / 2, cy - size / 2, size * fill, size); ctx.clip(); star(); ctx.fillStyle = C.gold; ctx.fill(); ctx.restore() }
       }
       if (a > 0.9) { ctx.font = fnt(700, 30 * u, A.body); ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText('4.6 / 5 from our guests', x0 + 5 * (size + 10 * u) + 10 * u, y0 + 2 * u) }
     } else if (k === 'pin') {
-      const a = ease(Math.min(1, (t - 0.2) / 0.7)), PF = platformOf(p)
-      const x = W - W * PF.safe.right - 170 * u, y = H * PF.safe.top + 150 * u - (1 - a) * 200 * u
+      const a = ease(Math.min(1, (t - 0.2) / 0.7))
+      const an = fxAnchor(o.pos, W, H, 170 * u0)
+      const x = an.sx === 0 ? W / 2 : an.sx > 0 ? 170 * u0 : W - W * PF.safe.right - 170 * u0
+      const y = (an.sy === 0 ? H * 0.42 : an.sy > 0 ? safeT + 150 * u0 : H - safeB - 260 * u0) - (1 - a) * 200 * u0
       ctx.globalAlpha = a
-      ctx.fillStyle = C.gold; ctx.beginPath(); ctx.arc(x, y, 22 * u, Math.PI, 0); ctx.lineTo(x, y + 38 * u); ctx.closePath(); ctx.fill()
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 22 * u, Math.PI, 0); ctx.lineTo(x, y + 38 * u); ctx.closePath(); ctx.fill()
       ctx.fillStyle = C.navy; ctx.beginPath(); ctx.arc(x, y, 9 * u, 0, Math.PI * 2); ctx.fill()
-      const ring = ((t * 1.2) % 1); ctx.strokeStyle = ga(0.6 * (1 - ring)); ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.ellipse(x, y + 42 * u, 30 * u * (0.4 + ring), 12 * u * (0.4 + ring), 0, 0, Math.PI * 2); ctx.stroke()
+      const ring = ((t * 1.2) % 1); ctx.strokeStyle = ca(0.6 * (1 - ring)); ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.ellipse(x, y + 42 * u, 30 * u * (0.4 + ring), 12 * u * (0.4 + ring), 0, 0, Math.PI * 2); ctx.stroke()
       const label = (sc.sub || '').replace(/\*\*/g, '').split('·')[0].trim()
       if (label) { ctx.font = fnt(700, 26 * u, A.body); const tw = ctx.measureText(label).width; rr(ctx, x - tw / 2 - 16 * u, y + 56 * u, tw + 32 * u, 44 * u, 22 * u); ctx.fillStyle = C.light ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.6)'; ctx.fill(); ctx.fillStyle = C.light ? C.ink : '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(label, x - tw / 2, y + 78 * u) }
     } else if (k === 'swipe') {
-      const b = Math.abs(Math.sin(t * 3)) * 16 * u, PF = platformOf(p)
-      const x = W / 2, y = H - H * PF.safe.bottom - (p.captions ? 300 : 190) * u + b
-      ctx.strokeStyle = C.gold; ctx.lineWidth = 8 * u; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+      const b = Math.abs(Math.sin(t * 3)) * 16 * u
+      const x = o.pos === 'right' ? W - W * PF.safe.right - 120 * u0 : W / 2, y = (o.pos === 'center' ? H * 0.55 : H - safeB - (p.captions ? 300 : 190) * u0) + b
+      ctx.strokeStyle = col; ctx.lineWidth = 8 * u; ctx.lineCap = 'round'; ctx.lineJoin = 'round'
       ctx.beginPath(); ctx.moveTo(x, y - 70 * u); ctx.lineTo(x, y); ctx.moveTo(x - 28 * u, y - 30 * u); ctx.lineTo(x, y); ctx.lineTo(x + 28 * u, y - 30 * u); ctx.stroke()
     } else if (k === 'scan') {
-      ctx.fillStyle = C.light ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.18)'
-      const off = (t * 40 * u) % (6 * u)
-      for (let y = -6 * u + off; y < H; y += 6 * u) ctx.fillRect(0, y, W, 2 * u)
+      ctx.fillStyle = C.light ? 'rgba(0,0,0,0.06)' : `rgba(0,0,0,${0.1 + 0.1 * amt})`
+      const step = (6 / Math.sqrt(amt)) * u0, off = (t * 40 * u0) % step
+      for (let y = -step + off; y < H; y += step) ctx.fillRect(0, y, W, 2 * u0)
     } else if (k === 'glowline') {
-      const ph = (t * 0.35) % 1, x = ph * (W + 400 * u) - 200 * u
+      const ph = (t * 0.35) % 1
       ctx.globalCompositeOperation = 'screen'
-      const g = ctx.createLinearGradient(x - 200 * u, 0, x + 200 * u, 0); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, ga(0.35)); g.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = g; ctx.save(); ctx.transform(1, 0, -0.3, 1, 0, 0); ctx.fillRect(x - 200 * u, 0, 400 * u, H); ctx.restore()
+      const wdt = 400 * u
+      if (o.variant === 'horiz') {
+        const y = ph * (H + wdt) - wdt / 2
+        const g = ctx.createLinearGradient(0, y - wdt / 2, 0, y + wdt / 2); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, ca(0.35)); g.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = g; ctx.fillRect(0, y - wdt / 2, W, wdt)
+      } else {
+        const x = ph * (W + wdt) - wdt / 2
+        const g = ctx.createLinearGradient(x - wdt / 2, 0, x + wdt / 2, 0); g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, ca(0.35)); g.addColorStop(1, 'rgba(0,0,0,0)')
+        ctx.fillStyle = g; ctx.save(); if (o.variant !== 'vert') ctx.transform(1, 0, -0.3, 1, 0, 0); ctx.fillRect(x - wdt / 2, 0, wdt, H); ctx.restore()
+      }
     } else if (k === 'snow') {
       ctx.globalCompositeOperation = C.light ? 'source-over' : 'screen'
-      for (let n = 0; n < 90; n++) {
+      const N = Math.round(90 * amt)
+      for (let n = 0; n < N; n++) {
         const sp = 0.03 + 0.05 * hashN(n, 11), r = (2 + 5 * hashN(n, 12)) * u
-        const x = ((hashN(n, 13) + 0.02 * Math.sin(t * 0.8 + n)) % 1) * W, y = (((hashN(n, 14) + t * sp) % 1) + 1) % 1 * H
-        ctx.fillStyle = C.light ? 'rgba(120,130,150,0.35)' : `rgba(255,255,255,${0.5 + 0.4 * hashN(n, 15)})`
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+        const q = inR((hashN(n, 13) + 0.02 * Math.sin(t * 0.8 + n)) % 1, (((hashN(n, 14) + t * sp) % 1) + 1) % 1)
+        ctx.fillStyle = C.light ? 'rgba(120,130,150,0.35)' : ca(0.5 + 0.4 * hashN(n, 15), n)
+        ctx.beginPath(); ctx.arc(q.x, q.y, r, 0, Math.PI * 2); ctx.fill()
       }
     } else if (k === 'lights') {
-      // a swag of bulbs across the top, each glowing on its own rhythm
-      const n = portrait ? 9 : 14, y0 = Math.max(70 * u, H * 0.06)
-      ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 3 * u; ctx.beginPath()
-      for (let i2 = 0; i2 <= n; i2++) { const x = (i2 / n) * W, y = y0 + Math.sin((i2 / n) * Math.PI * 2 - Math.PI / 2) * 0 + 40 * u * Math.sin((i2 / n) * Math.PI); if (i2 === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y) }
-      ctx.stroke()
-      const cols = [C.gold, '#F26D6D', '#6FCF97', '#F2C94C', '#56CCF2']
-      for (let i2 = 0; i2 <= n; i2++) {
-        const x = (i2 / n) * W, y = y0 + 40 * u * Math.sin((i2 / n) * Math.PI) + 22 * u
-        const on = 0.55 + 0.45 * Math.sin(t * 2 + i2 * 1.3)
-        const col = cols[i2 % cols.length]
-        ctx.save(); ctx.globalCompositeOperation = 'screen'
-        const g = ctx.createRadialGradient(x, y, 0, x, y, 46 * u); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.5 * on; ctx.fillStyle = g; ctx.fillRect(x - 46 * u, y - 46 * u, 92 * u, 92 * u)
-        ctx.restore()
-        ctx.fillStyle = col; ctx.globalAlpha = 0.7 + 0.3 * on; ctx.beginPath(); ctx.ellipse(x, y, 7 * u, 11 * u, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
-        ctx.fillStyle = 'rgba(40,40,40,0.9)'; ctx.fillRect(x - 4 * u, y - 18 * u, 8 * u, 8 * u)
+      const blink = o.blink !== 'off'
+      const drawString = (y0: number, flip: boolean) => {
+        const n = Math.max(4, Math.round((portrait ? 9 : 14) * amt))
+        const sag = o.variant === 'straight' ? 0 : 40 * u
+        const yAt = (f: number) => {
+          if (o.variant === 'zigzag') return y0 + (f * n % 2 < 1 ? 0 : sag * 0.8) * (flip ? -1 : 1)
+          if (o.variant === 'double') return y0 + sag * Math.abs(Math.sin(f * Math.PI * 2)) * (flip ? -1 : 1)
+          return y0 + sag * Math.sin(f * Math.PI) * (flip ? -1 : 1)
+        }
+        ctx.strokeStyle = C.light ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.45)'; ctx.lineWidth = 3 * u0; ctx.beginPath()
+        for (let i2 = 0; i2 <= n * 4; i2++) { const f = i2 / (n * 4), x = f * W; if (i2 === 0) ctx.moveTo(x, yAt(f)); else ctx.lineTo(x, yAt(f)) }
+        ctx.stroke()
+        for (let i2 = 0; i2 <= n; i2++) {
+          const f = i2 / n, x = f * W, y = yAt(f) + (flip ? -22 : 22) * u
+          const on = blink ? 0.55 + 0.45 * Math.sin(t * 2 + i2 * 1.3) : 1
+          const c2 = pal[i2 % pal.length]
+          ctx.save(); ctx.globalCompositeOperation = 'screen'
+          const g = ctx.createRadialGradient(x, y, 0, x, y, 46 * u); g.addColorStop(0, c2); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.5 * on; ctx.fillStyle = g; ctx.fillRect(x - 46 * u, y - 46 * u, 92 * u, 92 * u)
+          ctx.restore()
+          ctx.fillStyle = c2; ctx.globalAlpha = 0.7 + 0.3 * on; ctx.beginPath(); ctx.ellipse(x, y, 7 * u, 11 * u, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
+          ctx.fillStyle = 'rgba(40,40,40,0.9)'; ctx.fillRect(x - 4 * u, y + (flip ? 10 : -18) * u, 8 * u, 8 * u)
+        }
+      }
+      const topY = Math.max(70 * u0, H * 0.06), botY = H - Math.max(70 * u0, H * 0.06) - safeB - barInset
+      if (o.pos === 'top' || o.pos === 'both' || o.pos === 'frame') drawString(topY, false)
+      if (o.pos === 'bottom' || o.pos === 'both' || o.pos === 'frame') drawString(botY, true)
+      if (o.pos === 'frame') {
+        // bulbs down the sides too
+        const n = Math.max(3, Math.round((portrait ? 10 : 6) * amt))
+        for (const side of [0, 1]) for (let i2 = 1; i2 < n; i2++) {
+          const y = topY + (i2 / n) * (botY - topY), x = side ? W - Math.max(60 * u0, W * 0.05) : Math.max(60 * u0, W * 0.05)
+          const on = blink ? 0.55 + 0.45 * Math.sin(t * 2 + i2 * 1.7 + side) : 1, c2 = pal[(i2 + side) % pal.length]
+          ctx.save(); ctx.globalCompositeOperation = 'screen'; const g = ctx.createRadialGradient(x, y, 0, x, y, 46 * u); g.addColorStop(0, c2); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.5 * on; ctx.fillStyle = g; ctx.fillRect(x - 46 * u, y - 46 * u, 92 * u, 92 * u); ctx.restore()
+          ctx.fillStyle = c2; ctx.globalAlpha = 0.7 + 0.3 * on; ctx.beginPath(); ctx.ellipse(x, y, 7 * u, 11 * u, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
+        }
       }
     } else if (k === 'fireworks') {
       ctx.globalCompositeOperation = 'screen'
-      for (let n = 0; n < 5; n++) {
+      const N = Math.round(5 * amt)
+      for (let n = 0; n < N; n++) {
         const period = 2.2 + hashN(n, 21), ph = ((t + hashN(n, 22) * period) % period) / period
         if (ph > 0.85) continue
-        const cx = (0.15 + 0.7 * hashN(n, 23)) * W, cy = (0.12 + 0.35 * hashN(n, 24)) * H
-        const R = (120 + 160 * hashN(n, 25)) * u * ease(ph / 0.8), fade = 1 - ph / 0.85
-        const col = n % 2 ? C.gold : '#FFFFFF'
+        const q = inR(0.12 + 0.76 * hashN(n, 23), o.pos === 'full' ? 0.1 + 0.6 * hashN(n, 24) : 0.15 + 0.7 * hashN(n, 24))
+        const Rr = (120 + 160 * hashN(n, 25)) * u * ease(ph / 0.8), fade = 1 - ph / 0.85
+        const c2 = pal.length === 1 ? (n % 2 ? col : '#FFFFFF') : pal[n % pal.length]
         for (let k2 = 0; k2 < 26; k2++) {
-          const ang = (k2 / 26) * Math.PI * 2, x = cx + Math.cos(ang) * R, y = cy + Math.sin(ang) * R + ph * 60 * u
-          ctx.strokeStyle = col; ctx.globalAlpha = 0.9 * fade; ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.moveTo(cx + Math.cos(ang) * R * 0.7, cy + Math.sin(ang) * R * 0.7 + ph * 40 * u); ctx.lineTo(x, y); ctx.stroke()
-          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, 4 * u, 0, Math.PI * 2); ctx.fill()
+          const ang = (k2 / 26) * Math.PI * 2, x = q.x + Math.cos(ang) * Rr, y = q.y + Math.sin(ang) * Rr + ph * 60 * u
+          ctx.strokeStyle = c2; ctx.globalAlpha = 0.9 * fade; ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.moveTo(q.x + Math.cos(ang) * Rr * 0.7, q.y + Math.sin(ang) * Rr * 0.7 + ph * 40 * u); ctx.lineTo(x, y); ctx.stroke()
+          ctx.fillStyle = c2; ctx.beginPath(); ctx.arc(x, y, 4 * u, 0, Math.PI * 2); ctx.fill()
         }
         ctx.globalAlpha = 1
       }
     } else if (k === 'hearts') {
       ctx.globalCompositeOperation = C.light ? 'multiply' : 'screen'
-      for (let n = 0; n < 16; n++) {
-        const sz = (14 + 26 * hashN(n, 31)) * u, x = (hashN(n, 32) + 0.03 * Math.sin(t + n)) * W, y = (((hashN(n, 33) - t * (0.02 + 0.03 * hashN(n, 34))) % 1) + 1) % 1 * H
-        ctx.fillStyle = ga(0.35 + 0.3 * hashN(n, 35))
-        ctx.beginPath(); ctx.moveTo(x, y + sz * 0.9); ctx.bezierCurveTo(x - sz * 1.2, y, x - sz * 0.5, y - sz * 0.8, x, y - sz * 0.2); ctx.bezierCurveTo(x + sz * 0.5, y - sz * 0.8, x + sz * 1.2, y, x, y + sz * 0.9); ctx.fill()
+      const N = Math.round(16 * amt)
+      for (let n = 0; n < N; n++) {
+        const sz = (14 + 26 * hashN(n, 31)) * u, q = inR(hashN(n, 32) + 0.03 * Math.sin(t + n), (((hashN(n, 33) - t * (0.02 + 0.03 * hashN(n, 34))) % 1) + 1) % 1)
+        ctx.fillStyle = ca(0.35 + 0.3 * hashN(n, 35), n)
+        ctx.beginPath(); ctx.moveTo(q.x, q.y + sz * 0.9); ctx.bezierCurveTo(q.x - sz * 1.2, q.y, q.x - sz * 0.5, q.y - sz * 0.8, q.x, q.y - sz * 0.2); ctx.bezierCurveTo(q.x + sz * 0.5, q.y - sz * 0.8, q.x + sz * 1.2, q.y, q.x, q.y + sz * 0.9); ctx.fill()
       }
     } else if (k === 'leaves') {
-      for (let n = 0; n < 22; n++) {
-        const sz = (12 + 18 * hashN(n, 41)) * u, x = ((hashN(n, 42) + t * 0.015 + 0.03 * Math.sin(t * 0.9 + n)) % 1) * W, y = (((hashN(n, 43) + t * (0.03 + 0.03 * hashN(n, 44))) % 1) + 1) % 1 * H
-        const cols = ['#C9792E', '#B5562E', '#D9A441', '#8A4B2A']
-        ctx.fillStyle = cols[n % 4]; ctx.globalAlpha = 0.85
-        ctx.save(); ctx.translate(x, y); ctx.rotate(t * (0.8 + hashN(n, 45)) + n); ctx.beginPath(); ctx.ellipse(0, 0, sz, sz * 0.45, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore(); ctx.globalAlpha = 1
+      const N = Math.round(22 * amt)
+      for (let n = 0; n < N; n++) {
+        const sz = (12 + 18 * hashN(n, 41)) * u, q = inR((hashN(n, 42) + t * 0.015 + 0.03 * Math.sin(t * 0.9 + n)) % 1, (((hashN(n, 43) + t * (0.03 + 0.03 * hashN(n, 44))) % 1) + 1) % 1)
+        ctx.fillStyle = pal[n % pal.length]; ctx.globalAlpha = 0.85
+        ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(t * (0.8 + hashN(n, 45)) + n); ctx.beginPath(); ctx.ellipse(0, 0, sz, sz * 0.45, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore(); ctx.globalAlpha = 1
       }
     } else if (k === 'eq') {
-      const n = portrait ? 28 : 48, bw = W / n, base = H - Math.max(20 * u, H * 0.02)
       ctx.globalCompositeOperation = 'screen'
-      for (let i2 = 0; i2 < n; i2++) {
-        const h = (0.15 + 0.85 * Math.abs(Math.sin(t * 3.1 + i2 * 0.7) * Math.sin(t * 1.3 + i2 * 0.21))) * H * (portrait ? 0.14 : 0.2)
-        ctx.fillStyle = ga(0.55); ctx.fillRect(i2 * bw + bw * 0.2, base - h, bw * 0.6, h)
+      const vertical = o.pos === 'left' || o.pos === 'right'
+      const n = Math.max(8, Math.round((vertical ? (portrait ? 40 : 24) : (portrait ? 28 : 48)) * amt))
+      const edges = o.pos === 'both' ? ['bottom', 'top'] : [o.pos]
+      for (const e of edges) {
+        const L = vertical ? H : W, bw = L / n
+        for (let i2 = 0; i2 < n; i2++) {
+          const lv = 0.15 + 0.85 * Math.abs(Math.sin(t * 3.1 + i2 * 0.7) * Math.sin(t * 1.3 + i2 * 0.21))
+          const h = lv * (vertical ? W : H) * (portrait ? 0.14 : 0.2) * SIZE_MUL[o.size]
+          ctx.fillStyle = ca(0.55, i2)
+          if (o.variant === 'dots') {
+            const steps = Math.max(1, Math.round(h / (14 * u0)))
+            for (let s = 0; s < steps; s++) {
+              const d = s * 14 * u0 + 7 * u0
+              if (vertical) ctx.fillRect(e === 'right' ? W - d - 5 * u0 : d, i2 * bw + bw * 0.25, 5 * u0, bw * 0.5)
+              else ctx.fillRect(i2 * bw + bw * 0.25, e === 'top' ? safeT + d : H - safeB * 0 - Math.max(20 * u0, H * 0.02) - d - 5 * u0, bw * 0.5, 5 * u0)
+            }
+          } else if (o.variant === 'wave') {
+            if (i2 === 0) { ctx.strokeStyle = ca(0.7); ctx.lineWidth = 4 * u0; ctx.beginPath() }
+            const a = i2 * bw + bw / 2
+            if (vertical) { const x = e === 'right' ? W - h - 10 * u0 : h + 10 * u0; if (i2 === 0) ctx.moveTo(x, a); else ctx.lineTo(x, a) }
+            else { const y = e === 'top' ? safeT + h + 10 * u0 : H - Math.max(20 * u0, H * 0.02) - h; if (i2 === 0) ctx.moveTo(a, y); else ctx.lineTo(a, y) }
+            if (i2 === n - 1) ctx.stroke()
+          } else {
+            if (vertical) ctx.fillRect(e === 'right' ? W - h : 0, i2 * bw + bw * 0.2, h, bw * 0.6)
+            else ctx.fillRect(i2 * bw + bw * 0.2, e === 'top' ? safeT : H - Math.max(20 * u0, H * 0.02) - h, bw * 0.6, h)
+          }
+        }
       }
     } else if (k === 'rope') {
-      // a rope line under the top edge with an anchor mark at the corner
-      const y = pad(W, H, u) + 38 * u
-      ctx.strokeStyle = C.gold; ctx.lineWidth = 4 * u; ctx.setLineDash([18 * u, 10 * u]); ctx.lineDashOffset = -t * 40 * u
-      ctx.beginPath(); ctx.moveTo(pad(W, H, u), y); ctx.lineTo(W - pad(W, H, u) - 230 * u, y); ctx.stroke(); ctx.setLineDash([])
-      const ax = W - pad(W, H, u) - 40 * u, ay = y + 150 * u, r = 22 * u
-      ctx.lineWidth = 6 * u; ctx.beginPath(); ctx.arc(ax, ay - r * 0.9, r * 0.35, 0, Math.PI * 2); ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(ax, ay - r * 0.55); ctx.lineTo(ax, ay + r); ctx.moveTo(ax - r * 0.7, ay - r * 0.1); ctx.lineTo(ax + r * 0.7, ay - r * 0.1); ctx.stroke()
-      ctx.beginPath(); ctx.arc(ax, ay + r * 0.1, r * 0.95, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke()
-    } else if (k === 'tree') {
-      const th = (portrait ? H * 0.26 : H * 0.42), bx = W - pad(W, H, u) - th * 0.4, by = H - Math.max(40 * u, H * 0.04) - (sc.kind === 'poster' ? (portrait ? 118 : 104) * u : 0)
-      ctx.save(); ctx.translate(bx, by)
-      ctx.fillStyle = C.light ? 'rgba(20,60,40,0.9)' : 'rgba(6,28,18,0.95)'
-      for (let tier = 0; tier < 3; tier++) { const w = th * (0.62 - tier * 0.15), y = -th * (0.18 + tier * 0.3); ctx.beginPath(); ctx.moveTo(-w / 2, y); ctx.lineTo(w / 2, y); ctx.lineTo(0, y - th * 0.34); ctx.closePath(); ctx.fill() }
-      ctx.fillStyle = '#5A3A1E'; ctx.fillRect(-th * 0.05, -th * 0.18, th * 0.1, th * 0.18)
-      const cols = ['#F26D6D', '#F2C94C', '#6FCF97', '#56CCF2', C.gold]
-      for (let n = 0; n < 22; n++) {
-        const tier = n % 3, w = th * (0.6 - tier * 0.15), fy = -th * (0.2 + tier * 0.3) - hashN(n, 51) * th * 0.28
-        const fx = (hashN(n, 52) - 0.5) * w * (1 - (fy + th * (0.2 + tier * 0.3)) / (-th * 0.3) * 0.9)
-        const on = Math.sin(t * 3 + n * 2.1) > 0.1 ? 1 : 0.25
-        const col = cols[n % cols.length]
-        ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.6 * on
-        const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, 22 * u); g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(fx - 22 * u, fy - 22 * u, 44 * u, 44 * u); ctx.restore()
-        ctx.fillStyle = col; ctx.globalAlpha = 0.6 + 0.4 * on; ctx.beginPath(); ctx.arc(fx, fy, 5 * u, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
+      const P = pad(W, H, u0), lw = 4 * u
+      ctx.strokeStyle = col; ctx.lineWidth = lw
+      const line = (y: number, x0: number, x1: number) => { if (o.variant === 'dash') { ctx.setLineDash([18 * u, 10 * u]); ctx.lineDashOffset = -t * 40 * u } ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke(); ctx.setLineDash([]) }
+      const anchor = (ax: number, ay: number) => {
+        const r = 22 * u
+        ctx.lineWidth = 6 * u; ctx.beginPath(); ctx.arc(ax, ay - r * 0.9, r * 0.35, 0, Math.PI * 2); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(ax, ay - r * 0.55); ctx.lineTo(ax, ay + r); ctx.moveTo(ax - r * 0.7, ay - r * 0.1); ctx.lineTo(ax + r * 0.7, ay - r * 0.1); ctx.stroke()
+        ctx.beginPath(); ctx.arc(ax, ay + r * 0.1, r * 0.95, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke()
       }
-      // the star
-      ctx.fillStyle = C.gold; ctx.save(); ctx.translate(0, -th * 1.14); ctx.beginPath(); for (let i2 = 0; i2 < 10; i2++) { const r = i2 % 2 ? 9 * u : 20 * u, a = -Math.PI / 2 + i2 * Math.PI / 5; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r) } ctx.closePath(); ctx.fill(); ctx.restore()
-      ctx.restore()
+      const yT = P + 38 * u0, yB = H - P - 38 * u0 - safeB - barInset
+      if (o.variant !== 'anchor') {
+        if (o.pos === 'top' || o.pos === 'both' || o.pos === 'frame') line(yT, P, W - P - (o.pos === 'top' ? 230 * u0 : 0))
+        if (o.pos === 'bottom' || o.pos === 'both' || o.pos === 'frame') line(yB, P, W - P)
+        if (o.pos === 'frame') { ctx.save(); ctx.translate(P, 0); ctx.rotate(Math.PI / 2); line(0, yT, yB); ctx.restore(); ctx.save(); ctx.translate(W - P, 0); ctx.rotate(Math.PI / 2); line(0, yT, yB); ctx.restore() }
+      }
+      if (o.pos === 'top' || o.variant === 'anchor') anchor(W - P - 40 * u0, yT + 150 * u)
+      else if (o.pos === 'bottom') anchor(P + 40 * u0, yB - 150 * u)
+    } else if (k === 'tree') {
+      const blink = o.blink !== 'off'
+      const drawTree = (bx: number, by: number, th: number) => {
+        const slim = o.variant === 'slim' ? 0.72 : 1
+        ctx.save(); ctx.translate(bx, by)
+        const fill = C.light ? 'rgba(20,60,40,0.9)' : 'rgba(6,28,18,0.95)'
+        for (let tier = 0; tier < 3; tier++) {
+          const w = th * (0.62 - tier * 0.15) * slim, y = -th * (0.18 + tier * 0.3)
+          ctx.beginPath(); ctx.moveTo(-w / 2, y); ctx.lineTo(w / 2, y); ctx.lineTo(0, y - th * 0.34); ctx.closePath()
+          if (o.variant === 'outline') { ctx.strokeStyle = pal.length === 1 ? col : C.gold; ctx.lineWidth = 3 * u0; ctx.stroke() } else { ctx.fillStyle = fill; ctx.fill() }
+        }
+        ctx.fillStyle = '#5A3A1E'; ctx.fillRect(-th * 0.05, -th * 0.18, th * 0.1, th * 0.18)
+        for (let n = 0; n < 22; n++) {
+          const tier = n % 3, w = th * (0.6 - tier * 0.15) * slim, fy = -th * (0.2 + tier * 0.3) - hashN(n, 51) * th * 0.28
+          const fx2 = (hashN(n, 52) - 0.5) * w * (1 - (fy + th * (0.2 + tier * 0.3)) / (-th * 0.3) * 0.9)
+          const on = blink ? (Math.sin(t * 3 + n * 2.1) > 0.1 ? 1 : 0.25) : 1
+          const c2 = pal[n % pal.length]
+          ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.6 * on
+          const g = ctx.createRadialGradient(fx2, fy, 0, fx2, fy, 22 * u0); g.addColorStop(0, c2); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(fx2 - 22 * u0, fy - 22 * u0, 44 * u0, 44 * u0); ctx.restore()
+          ctx.fillStyle = c2; ctx.globalAlpha = 0.6 + 0.4 * on; ctx.beginPath(); ctx.arc(fx2, fy, 5 * u0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
+        }
+        ctx.fillStyle = C.gold; ctx.save(); ctx.translate(0, -th * 1.14); ctx.beginPath(); for (let i2 = 0; i2 < 10; i2++) { const r = i2 % 2 ? 9 * u0 : 20 * u0, a = -Math.PI / 2 + i2 * Math.PI / 5; ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r) } ctx.closePath(); ctx.fill(); ctx.restore()
+        ctx.restore()
+      }
+      const th = (portrait ? H * 0.26 : H * 0.42) * SIZE_MUL[o.size]
+      const by = H - Math.max(40 * u0, H * 0.04) - (sc.kind === 'poster' ? (portrait ? 118 : 104) * u0 : 0) - safeB
+      const P = pad(W, H, u0)
+      const xr = W - P - th * 0.4, xl = P + th * 0.4
+      if (o.variant === 'pair') { drawTree(xl, by, th * 0.9); drawTree(xr, by, th) }
+      else if (o.pos === 'bl' || o.pos === 'left') drawTree(xl, by, th)
+      else if (o.pos === 'center') drawTree(W / 2, by, th)
+      else drawTree(xr, by, th)
     } else if (k === 'frame') {
-      const m = Math.max(40 * u, Math.min(W, H) * 0.045)
-      ctx.strokeStyle = C.light ? 'rgba(20,20,20,0.7)' : 'rgba(255,255,255,0.75)'; ctx.lineWidth = 3 * u
-      ctx.strokeRect(m, m, W - m * 2, H - m * 2)
-      ctx.strokeStyle = ga(0.9); ctx.lineWidth = 1.5 * u; ctx.strokeRect(m + 10 * u, m + 10 * u, W - m * 2 - 20 * u, H - m * 2 - 20 * u)
+      const m = Math.max(40 * u0, Math.min(W, H) * 0.045) * SIZE_MUL[o.size]
+      const main = o.color === 'white' ? (C.light ? 'rgba(20,20,20,0.7)' : 'rgba(255,255,255,0.75)') : col
+      if (o.variant === 'thick') {
+        ctx.fillStyle = o.color === 'white' ? (C.light ? '#FFFFFF' : 'rgba(255,255,255,0.92)') : col
+        ctx.fillRect(0, 0, W, m); ctx.fillRect(0, H - m, W, m); ctx.fillRect(0, 0, m, H); ctx.fillRect(W - m, 0, m, H)
+        ctx.strokeStyle = ca(0.9); ctx.lineWidth = 1.5 * u0; ctx.strokeRect(m + 8 * u0, m + 8 * u0, W - m * 2 - 16 * u0, H - m * 2 - 16 * u0)
+      } else if (o.variant === 'corners') {
+        ctx.strokeStyle = main; ctx.lineWidth = 3 * u0; const L = Math.min(W, H) * 0.08
+        for (const [x, y, sx, sy] of [[m, m, 1, 1], [W - m, m, -1, 1], [m, H - m, 1, -1], [W - m, H - m, -1, -1]] as number[][]) { ctx.beginPath(); ctx.moveTo(x, y + sy * L); ctx.lineTo(x, y); ctx.lineTo(x + sx * L, y); ctx.stroke() }
+      } else {
+        ctx.strokeStyle = main; ctx.lineWidth = 3 * u0
+        ctx.strokeRect(m, m, W - m * 2, H - m * 2)
+        if (o.variant !== 'single') { ctx.strokeStyle = o.color === 'white' ? `rgba(${hexRgb(C.gold).join(',')},0.9)` : ca(0.9); ctx.lineWidth = 1.5 * u0; ctx.strokeRect(m + 10 * u0, m + 10 * u0, W - m * 2 - 20 * u0, H - m * 2 - 20 * u0) }
+      }
+    } else if (k === 'garland') {
+      const green = o.color === 'green' ? ['#1E4D31', '#2E6B45', '#3F8F5C'] : pal
+      const berry = o.color === 'red' ? C.gold : '#D64545'
+      const strand = (y0: number, flip: boolean) => {
+        const n = Math.round(W / (26 * u))
+        for (let i2 = 0; i2 <= n; i2++) {
+          const f = i2 / n, x = f * W, y = y0 + 26 * u * Math.sin(f * Math.PI) * (flip ? -1 : 1)
+          for (let s = 0; s < 5; s++) {
+            const a = (s / 5) * Math.PI * 2 + hashN(i2, 61) * 2, L = (14 + 10 * hashN(i2 + s, 62)) * u
+            ctx.strokeStyle = green[(i2 + s) % green.length]; ctx.lineWidth = 3 * u; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * L, y + Math.sin(a) * L); ctx.stroke()
+          }
+          if (i2 % 4 === 0) { ctx.fillStyle = berry; ctx.beginPath(); ctx.arc(x + 4 * u, y + 2 * u, 5 * u, 0, Math.PI * 2); ctx.fill() }
+        }
+      }
+      const topY = Math.max(50 * u0, H * 0.045), botY = H - Math.max(50 * u0, H * 0.045) - safeB - barInset
+      if (o.pos === 'top' || o.pos === 'both' || o.pos === 'frame') strand(topY, false)
+      if (o.pos === 'bottom' || o.pos === 'both' || o.pos === 'frame') strand(botY, true)
+      if (o.pos === 'frame') { ctx.save(); ctx.translate(Math.max(50 * u0, W * 0.045), 0); ctx.rotate(Math.PI / 2); strand(0, true); ctx.restore(); ctx.save(); ctx.translate(W - Math.max(50 * u0, W * 0.045), 0); ctx.rotate(Math.PI / 2); strand(0, false); ctx.restore() }
+    } else if (k === 'balloons') {
+      const N = Math.round(10 * amt)
+      for (let n = 0; n < N; n++) {
+        const sz = (26 + 22 * hashN(n, 71)) * u, q = inR(hashN(n, 72) + 0.02 * Math.sin(t * 0.7 + n), (((hashN(n, 73) - t * (0.03 + 0.03 * hashN(n, 74))) % 1) + 1) % 1)
+        const c2 = pal[n % pal.length]
+        ctx.strokeStyle = C.light ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5 * u0; ctx.beginPath(); ctx.moveTo(q.x, q.y + sz * 1.15); ctx.quadraticCurveTo(q.x + 8 * u, q.y + sz * 1.9, q.x - 4 * u, q.y + sz * 2.6); ctx.stroke()
+        ctx.fillStyle = c2; ctx.globalAlpha = 0.9; ctx.beginPath(); ctx.ellipse(q.x, q.y, sz * 0.85, sz, 0, 0, Math.PI * 2); ctx.fill()
+        ctx.beginPath(); ctx.moveTo(q.x - 5 * u, q.y + sz * 1.15); ctx.lineTo(q.x + 5 * u, q.y + sz * 1.15); ctx.lineTo(q.x, q.y + sz * 0.98); ctx.closePath(); ctx.fill()
+        ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.ellipse(q.x - sz * 0.3, q.y - sz * 0.35, sz * 0.18, sz * 0.3, -0.4, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1
+      }
+    } else if (k === 'palms') {
+      // A palm crown: five fronds fanning from the corner, each a rib with tapered leaflets, swaying gently.
+      const frond = (ax: number, ay: number, dir: number, up: number) => {
+        const L = Math.min(W, H) * 0.48 * SIZE_MUL[o.size]
+        ctx.strokeStyle = o.color === 'green' ? (C.light ? 'rgba(30,77,49,0.85)' : 'rgba(16,52,34,0.92)') : o.color === 'ink' ? (C.light ? 'rgba(11,31,58,0.85)' : 'rgba(0,0,0,0.75)') : ca(0.85)
+        ctx.lineCap = 'round'
+        for (let f = 0; f < 5; f++) {
+          const base = 0.1 + f * 0.33 + 0.025 * Math.sin(t * 0.8 + f * 1.3)
+          // dir>0 = left corner, up>0 = top corner; fronds fan into the frame
+          const ang = dir > 0 ? (up > 0 ? base : -base) : (up > 0 ? Math.PI - base : Math.PI + base)
+          ctx.save(); ctx.translate(ax, ay); ctx.rotate(ang)
+          ctx.fillStyle = ctx.strokeStyle
+          // rib
+          ctx.lineWidth = 4 * u; ctx.beginPath(); ctx.moveTo(0, 0); ctx.quadraticCurveTo(L * 0.55, -L * 0.05, L, L * 0.1); ctx.stroke()
+          // leaflets: filled blades sweeping back toward the tip, on both sides of the rib
+          const n = 13
+          for (let s2 = 1; s2 <= n; s2++) {
+            const g = s2 / n, px = g * L, py = -L * 0.05 * 4 * g * (1 - g) + L * 0.1 * g * g
+            const len = L * 0.26 * Math.sin(Math.min(1, g * 1.1) * Math.PI) + L * 0.04, wdt = len * 0.16
+            for (const side of [-1, 1]) {
+              const tipX = px + len * 0.55, tipY = py + side * len * 0.85
+              ctx.beginPath(); ctx.moveTo(px, py); ctx.quadraticCurveTo(px + len * 0.1 - wdt * 0.6, py + side * len * 0.45, tipX, tipY); ctx.quadraticCurveTo(px + len * 0.35 + wdt * 0.6, py + side * len * 0.35, px + wdt * 0.5, py); ctx.closePath(); ctx.fill()
+            }
+          }
+          ctx.restore()
+        }
+      }
+      const corners = o.pos === 'both' ? ['tl', 'tr'] : [o.pos]
+      for (const c of corners) {
+        const an = fxAnchor(c, W, H, -Math.min(W, H) * 0.04)
+        // fronds point in toward the frame from the corner
+        frond(an.x, an.y, an.sx > 0 ? 1 : -1, an.sy > 0 ? 1 : -1)
+      }
+    } else if (k === 'badge') {
+      const text = ((sc.kind === 'poster' ? sc.items[0] : '') || (sc.sub || '')).replace(/\*\*/g, '').split('·')[0].trim().slice(0, 28)
+      if (text) {
+        const r = Math.min(W, H) * 0.11 * SIZE_MUL[o.size]
+        const an = fxAnchor(o.pos, W, H, r + Math.max(40 * u0, Math.min(W, H) * 0.05))
+        const y = an.sy > 0 ? an.y + safeT : an.sy < 0 ? an.y - safeB : an.y
+        const a = ease(Math.min(1, (local - 0.1) / 0.5)), x = an.x
+        const bg = o.color === 'white' ? '#FFFFFF' : o.color === 'ink' ? (C.light ? C.ink : '#111') : col
+        const fg = o.color === 'white' || (o.color === 'accent' && lumOf(col) > 150) ? C.navy : '#FFFFFF'
+        ctx.save(); ctx.translate(x, y); ctx.rotate(-0.12); ctx.scale(a, a)
+        ctx.fillStyle = bg
+        if (o.variant === 'burst') { ctx.beginPath(); for (let i2 = 0; i2 < 32; i2++) { const rr2 = i2 % 2 ? r * 0.86 : r, ang = i2 * Math.PI / 16; ctx.lineTo(Math.cos(ang) * rr2, Math.sin(ang) * rr2) } ctx.closePath(); ctx.fill() }
+        else if (o.variant === 'ribbon') { rr(ctx, -r * 1.4, -r * 0.42, r * 2.8, r * 0.84, r * 0.12); ctx.fill(); ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(-r * 1.4, r * 0.3, r * 2.8, r * 0.12) }
+        else { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = fg; ctx.globalAlpha = 0.5; ctx.lineWidth = 2 * u0; ctx.beginPath(); ctx.arc(0, 0, r * 0.86, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1 }
+        ctx.fillStyle = fg; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+        const words = text.split(/\s+/), lines: string[] = []
+        for (const w2 of words) { const last = lines[lines.length - 1]; if (last && (last + ' ' + w2).length <= 11) lines[lines.length - 1] = last + ' ' + w2; else lines.push(w2) }
+        const maxW = o.variant === 'ribbon' ? r * 2.5 : r * 1.5
+        let fs = Math.min(r * 0.42, (maxW / Math.max(...lines.map(l => l.length))) * 1.9); if (o.variant === 'ribbon') fs = Math.min(r * 0.5, fs * 1.4)
+        if (o.variant === 'ribbon') { ctx.font = fnt(800, fs, A.display); ctx.fillText(lines.join(' '), 0, 0, maxW) }
+        else { ctx.font = fnt(800, fs, A.display); lines.slice(0, 3).forEach((l, li, arr) => ctx.fillText(l, 0, (li - (arr.length - 1) / 2) * fs * 1.1, maxW)) }
+        ctx.restore()
+      }
     }
     ctx.restore()
   }
+  if (ctx !== ctx0) { ctx0.save(); ctx0.globalAlpha = env; ctx0.drawImage(fxOff as HTMLCanvasElement, 0, 0); ctx0.restore() }
 }
 function drawSceneFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets) {
   drawScene(ctx, p, i, local, dur, A)
