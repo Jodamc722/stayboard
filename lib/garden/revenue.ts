@@ -45,9 +45,14 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
     db.from('garden_calendar').select('room_type_id,room_type,date,available,total,rate,min_stay,closed').gte('date', t0).lte('date', fEnd).limit(30000),
     db.from('garden_channels').select('id,name,kind,status').order('name'),
     db.from('garden_payments').select('kind,amount,paid_at').gte('paid_at', new Date(Date.now() - 30 * 86400000).toISOString()),
-    db.from('garden_rooms').select('id', { count: 'exact', head: true }),
+    db.from('garden_rooms').select('id,room_type_id,virtual:raw->isVirtual'),
   ])
-  const rooms = roomsQ.count || 0
+  // Sellable rooms per type: the physical (non-virtual) rooms Cloudbeds lists under it. The
+  // calendar carries what is left per night, not the type's size, so the size comes from here.
+  const RM = ((roomsQ.data || []) as any[]).filter(r => r.virtual !== true && r.virtual !== 'true')
+  const rooms = RM.length
+  const unitsOf: Record<string, number> = {}
+  for (const r of RM) unitsOf[String(r.room_type_id)] = (unitsOf[String(r.room_type_id)] || 0) + 1
 
   // ── On the books ────────────────────────────────────────────────────────────────────────────
   const R = ((res || []) as any[])
@@ -90,7 +95,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const byDate: Record<string, { units: number; left: number; rateW: number; rateUnits: number; closed: number; types: number }> = {}
   const byType: Record<string, { id: string; name: string; units: number; rates: number[]; closed: number; minStay: number[] }> = {}
   for (const c of C) {
-    const units = num(c.total), left = num(c.available)
+    const units = num(c.total) || unitsOf[String(c.room_type_id)] || 0, left = num(c.available)
     const d = byDate[c.date] = byDate[c.date] || { units: 0, left: 0, rateW: 0, rateUnits: 0, closed: 0, types: 0 }
     d.units += units; d.left += Math.min(left, units || left); d.types++
     if (c.closed) d.closed++
