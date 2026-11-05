@@ -83,6 +83,9 @@ export type LinenStandard = {
 export const LINEN_STANDARD_KEY = 'linen_standard'   // app_settings: the standard
 export const LINEN_UNIT_BEDS_KEY = 'linen_unit_beds' // app_settings: { [listingId]: { King: 1, Queen: 2 } }
 export const LINEN_QUOTES_KEY = 'linen_quotes'       // app_settings: { [onboardCode]: { tier, updatedAt, updatedBy } }
+export const LINEN_INVENTORY_KEY = 'linen_inventory' // app_settings: { [unitId]: { counts: { 'fitted-sheet|King': 3 }, countedAt, countedBy } }
+/** A unit id as the desk uses it: a Guesty listing id, or onboard:<code> for a unit not live yet. */
+export const LINEN_UNIT_ID = /^(onboard:)?[A-Za-z0-9_-]{1,64}$/
 
 export const LINEN_GROUPS: LinenGroup[] = ['Bed', 'Bath', 'Kitchen', 'Other']
 export const LINEN_TIERS: LinenTier[] = ['low', 'mid', 'lux']
@@ -106,7 +109,7 @@ export const LIMITS = {
 /** A quote or a document is for at most this many units, and a unit at most these counts. */
 export const MANUAL_LIMITS = { units: 200, bedrooms: 20, bathrooms: 20, guests: 50, bedsPerSize: 20, name: 80 }
 
-const PILLOWS: Record<string, number> = { King: 4, Queen: 4, Full: 2, Twin: 2, 'Sofa bed': 2 }
+const PILLOWS: Record<string, number> = { King: 4, Queen: 4, Full: 4, Twin: 2, 'Sofa bed': 2 }
 
 // STARTING TIERS — pieces per case and a product line per tier. These are STARTING VALUES only, for
 // Jon to overwrite: the pack sizes are how linen is commonly sold (by the dozen for sheets, cases and
@@ -121,7 +124,14 @@ const tiersOf = (pack: number, [low, mid, lux]: Hints): Partial<Record<LinenTier
 const SHEETING: Hints = ['T-180 poly-cotton', 'T-300 cotton percale', 'T-400+ cotton sateen']
 const towel = (low: number, mid: number, lux: number): Hints => [`Cotton blend, ~${low} GSM`, `100% cotton, ~${mid} GSM`, `Ring-spun cotton, ${lux}+ GSM`]
 
-/** STARTING VALUES — what the page opens with before Jon saves his own list. */
+/**
+ * STARTING VALUES — what the page opens with before Jon saves his own list. Set to Jon's own
+ * "1 PAR" sheet (2026-11-05): bed linen by bed size (fitted 1, flat 2, pillows / protectors / cases
+ * 4 on a King, Queen or Full, mattress protector, duvet insert and cover 1 each); hand towels 4,
+ * bath mat 1 and makeup towels 2 PER BATHROOM; washcloths 2, bath towels 2 and pool towels 1 PER
+ * GUEST; kitchen towels 2 per unit. Rotation: sheets, cases and towels at the par (3); the duvet
+ * cover 2; the mattress protector "1 extra per bed, never 3 par" = 2; pillows and inserts 1.
+ */
 export const DEFAULT_LINEN_STANDARD: LinenStandard = {
   par: DEFAULT_PAR,
   bedSizes: [...DEFAULT_BED_SIZES],
@@ -131,23 +141,23 @@ export const DEFAULT_LINEN_STANDARD: LinenStandard = {
   taxPct: 0,
   items: [
     // Bed — per bed, sized by the bed it goes on.
-    { id: 'mattress-protector', name: 'Mattress protector', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, tiers: tiersOf(6, ['Basic waterproof, fitted', 'Waterproof cotton terry, fitted', 'Waterproof, quiet, cooling top']) },
+    { id: 'mattress-protector', name: 'Mattress protector', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, notes: 'One on the bed plus one extra per bed — never the full par', tiers: tiersOf(6, ['Basic waterproof, fitted', 'Waterproof cotton terry, fitted', 'Waterproof, quiet, cooling top']) },
     { id: 'pillow-protectors', name: 'Pillow protectors', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: true, tiers: tiersOf(12, ['Poly, zippered', 'Cotton, zippered, waterproof', 'Cotton sateen, zippered, waterproof']) },
     { id: 'pillows', name: 'Pillows', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: false, tiers: tiersOf(1, ['Poly fiberfill', 'Gel-fiber down-alternative', 'Hotel down-alternative, cluster fill']) },
     { id: 'pillowcases', name: 'Pillowcases', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'fitted-sheet', name: 'Fitted sheet', group: 'Bed', per: 'bed', qty: 1, rotates: true, tiers: tiersOf(12, SHEETING) },
-    { id: 'flat-sheet', name: 'Flat sheet', group: 'Bed', per: 'bed', qty: 1, rotates: true, tiers: tiersOf(12, SHEETING) },
+    { id: 'flat-sheet', name: 'Flat sheet', group: 'Bed', per: 'bed', qty: 2, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'duvet-insert', name: 'Duvet insert', group: 'Bed', per: 'bed', qty: 1, rotates: false, tiers: tiersOf(1, ['Poly fill, lightweight', 'Down-alternative, all-season', 'Hotel down-alternative, baffle-box']) },
-    { id: 'duvet-cover', name: 'Duvet cover', group: 'Bed', per: 'bed', qty: 1, rotates: true, tiers: tiersOf(6, ['Poly-cotton, white', 'T-300 cotton percale, white', 'T-400+ cotton sateen, white']) },
+    { id: 'duvet-cover', name: 'Duvet cover', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, tiers: tiersOf(6, ['Poly-cotton, white', 'T-300 cotton percale, white', 'T-400+ cotton sateen, white']) },
     // Bath
-    { id: 'bath-towels', name: 'Bath towels', group: 'Bath', per: 'guest', qty: 1, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
-    { id: 'hand-towels', name: 'Hand towels', group: 'Bath', per: 'bathroom', qty: 2, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
-    { id: 'washcloths', name: 'Washcloths', group: 'Bath', per: 'guest', qty: 1, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
-    { id: 'makeup-cloths', name: 'Makeup cloths', group: 'Bath', per: 'guest', qty: 1, rotates: true, tiers: tiersOf(12, ['Dark cotton blend', 'Dark 100% cotton', 'Dark ring-spun cotton']) },
+    { id: 'bath-towels', name: 'Bath towels', group: 'Bath', per: 'guest', qty: 2, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
+    { id: 'hand-towels', name: 'Hand towels', group: 'Bath', per: 'bathroom', qty: 4, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
+    { id: 'washcloths', name: 'Washcloths', group: 'Bath', per: 'guest', qty: 2, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
+    { id: 'makeup-cloths', name: 'Makeup towels', group: 'Bath', per: 'bathroom', qty: 2, rotates: true, tiers: tiersOf(12, ['Dark cotton blend', 'Dark 100% cotton', 'Dark ring-spun cotton']) },
     { id: 'bath-mat', name: 'Bath mat', group: 'Bath', per: 'bathroom', qty: 1, rotates: true, tiers: tiersOf(12, towel(650, 800, 900)) },
-    { id: 'pool-towels', name: 'Pool/beach towels', group: 'Bath', per: 'guest', qty: 1, rotates: false, active: false, tiers: tiersOf(1, ['Cotton blend, striped', '100% cotton, ~450 GSM', 'Cotton velour, 500+ GSM']) },
+    { id: 'pool-towels', name: 'Pool towels', group: 'Bath', per: 'guest', qty: 1, rotates: false, tiers: tiersOf(1, ['Cotton blend, striped', '100% cotton, ~450 GSM', 'Cotton velour, 500+ GSM']) },
     // Kitchen — per unit
-    { id: 'kitchen-towels', name: 'Kitchen towels', group: 'Kitchen', per: 'unit', qty: 4, rotates: true, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
+    { id: 'kitchen-towels', name: 'Kitchen towels', group: 'Kitchen', per: 'unit', qty: 2, rotates: true, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
     { id: 'dish-cloths', name: 'Dish cloths', group: 'Kitchen', per: 'unit', qty: 2, rotates: true, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
     { id: 'oven-mitts', name: 'Oven mitts', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
     { id: 'pot-holders', name: 'Pot holders', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
@@ -337,6 +347,76 @@ export function normLinenQuotes(raw: any): Record<string, LinenQuoteChoice> {
     out[code] = c
     if (++n >= 2000) break
   }
+  return out
+}
+
+
+// ── what is on the shelf ──────────────────────────────────────────────────────────────────────────
+// THE COUNT (Jon, 2026-11-05: "we can input what we have, and then add beds, etc and it will calculate
+// how much we need"). A unit's count is what the team found on the shelf plus on the beds, per item
+// and bed size, keyed the same way the needs rows are (`itemId|size`, size blank for per-bath /
+// per-guest / per-unit items). The calculator nets it: buy = need − have, never below zero. A unit
+// with NO count is treated as empty — a new unit being set up needs everything — and the page says
+// which it is. Pillows and inserts count like everything else: four pillows short is four to buy.
+export type LinenCount = { counts: Record<string, number>; countedAt?: string; countedBy?: string }
+export const LINEN_COUNT_LIMITS = { rows: 400, each: 9_999 }
+
+/** The key a needs row and a count share. */
+export const linenRowKey = (itemId: string, size?: string | null) => itemId + '|' + (size || '')
+
+/** One unit's count, normalised: known-shape keys, whole counts 0..9,999, zeros dropped. Null when empty. */
+export function normLinenCount(raw: any): LinenCount | null {
+  if (!isObj(raw)) return null
+  const src = isObj(raw.counts) ? raw.counts : raw
+  const counts: Record<string, number> = {}
+  let n = 0
+  for (const [k, v] of Object.entries(src)) {
+    const key = text(k, LIMITS.id + 1 + LIMITS.size)
+    if (!key || key.indexOf('|') < 0) continue
+    const c = whole(v, LINEN_COUNT_LIMITS.each)
+    if (c === null || c <= 0 || key in counts) continue
+    counts[key] = c
+    if (++n >= LINEN_COUNT_LIMITS.rows) break
+  }
+  if (!n) return null
+  const out: LinenCount = { counts }
+  const at = typeof raw.countedAt === 'string' && Number.isFinite(Date.parse(raw.countedAt)) ? raw.countedAt : ''
+  if (at) out.countedAt = at
+  const by = text(raw.countedBy, LIMITS.who)
+  if (by) out.countedBy = by
+  return out
+}
+
+/** The whole `linen_inventory` setting: one entry per known unit id. */
+export function normLinenInventory(raw: any): Record<string, LinenCount> {
+  const out: Record<string, LinenCount> = {}
+  if (!isObj(raw)) return out
+  for (const [k, v] of Object.entries(raw)) {
+    if (!LINEN_UNIT_ID.test(k)) continue
+    const c = normLinenCount(v)
+    if (c) out[k] = c
+  }
+  return out
+}
+
+export type LinenGapRow = LinenRow & { key: string; have: number; buy: number; extra: number }
+export type LinenGap = { rows: LinenGapRow[]; need: number; have: number; buy: number; counted: boolean; countedAt?: string; countedBy?: string }
+
+/**
+ * One unit's need against its count: buy = max(0, need − have); extra = what is over the standard.
+ * No count → every row is a buy and `counted` is false (the page shows it as not counted yet).
+ */
+export function linenGap(standard: LinenStandard, unit: LinenUnit, count: LinenCount | null | undefined): LinenGap {
+  const c = count && count.counts ? count.counts : {}
+  const rows: LinenGapRow[] = linenNeeds(standard, unit).map(r => {
+    const key = linenRowKey(r.itemId, r.size)
+    const have = Math.max(0, Math.round(c[key] || 0))
+    return { ...r, key, have, buy: Math.max(0, r.total - have), extra: Math.max(0, have - r.total) }
+  })
+  const sum = (f: (r: LinenGapRow) => number) => rows.reduce((a, r) => a + f(r), 0)
+  const out: LinenGap = { rows, need: sum(r => r.total), have: sum(r => Math.min(r.have, r.total)), buy: sum(r => r.buy), counted: !!(count && Object.keys(c).length) }
+  if (count && count.countedAt) out.countedAt = count.countedAt
+  if (count && count.countedBy) out.countedBy = count.countedBy
   return out
 }
 
@@ -544,14 +624,16 @@ export type LinenTotalRow = {
   name: string
   group: LinenGroup
   size?: string
-  qty: number
+  qty: number             // pieces to buy (need − what is on the shelf when counts were given)
+  need: number            // pieces the standard calls for
+  have: number            // pieces counted on the shelf that go against the need
   price: number | null
   cost: number | null
   vendor?: string
   sku?: string
   product?: string
 }
-export type LinenTotals = { rows: LinenTotalRow[]; grandTotal: number; priced: number; unpriced: number; units: number; tier: LinenTier }
+export type LinenTotals = { rows: LinenTotalRow[]; grandTotal: number; priced: number; unpriced: number; units: number; tier: LinenTier; counted: number }
 
 /** An item's option at a tier ({} when nothing is set). */
 export function tierOf(it: Pick<LinenItem, 'tiers'>, tier: LinenTier): TierOption {
@@ -573,22 +655,29 @@ export function priceFor(opt: Pick<TierOption, 'price' | 'priceBySize'>, size?: 
  * the standard's order (group, item, bed size), each priced when that tier carries a price, and a
  * grand total of the priced rows. Items left out of the tier are left out of the list.
  */
-export function linenTotals(standard: LinenStandard, units: LinenUnit[], tier: LinenTier = 'mid'): LinenTotals {
+export function linenTotals(standard: LinenStandard, units: LinenUnit[], tier: LinenTier = 'mid', inventory?: Record<string, LinenCount> | null): LinenTotals {
   const byKey = new Map<string, LinenTotalRow>()
   const itemById = new Map(standard.items.map(i => [i.id, i] as const))
-  for (const u of units) for (const r of linenNeeds(standard, u)) {
-    const it = itemById.get(r.itemId)
-    if (it && !inTier(it, tier)) continue
-    const key = r.itemId + '|' + (r.size || '')
-    const cur = byKey.get(key)
-    if (cur) { cur.qty += r.total; continue }
-    const opt = it ? tierOf(it, tier) : {}
-    const row: LinenTotalRow = { key, itemId: r.itemId, name: r.name, group: r.group, qty: r.total, price: priceFor(opt, r.size), cost: null }
+  let counted = 0
+  for (const u of units) {
+    const count = inventory ? inventory[u.id] : null
+    const gap = linenGap(standard, u, count)
+    if (gap.counted) counted++
+    for (const r of gap.rows) {
+      const it = itemById.get(r.itemId)
+      if (it && !inTier(it, tier)) continue
+      const key = r.key
+      const have = Math.min(r.have, r.total)
+      const cur = byKey.get(key)
+      if (cur) { cur.qty += r.buy; cur.need += r.total; cur.have += have; continue }
+      const opt = it ? tierOf(it, tier) : {}
+      const row: LinenTotalRow = { key, itemId: r.itemId, name: r.name, group: r.group, qty: r.buy, need: r.total, have, price: priceFor(opt, r.size), cost: null }
     if (r.size) row.size = r.size
     if (opt.vendor) row.vendor = opt.vendor
     if (opt.sku) row.sku = opt.sku
-    if (opt.product) row.product = opt.product
-    byKey.set(key, row)
+      if (opt.product) row.product = opt.product
+      byKey.set(key, row)
+    }
   }
   const itemAt = (id: string) => standard.items.findIndex(i => i.id === id)
   const sizeAt = (s?: string) => { if (!s) return -1; const i = standard.bedSizes.findIndex(o => o.toLowerCase() === s.toLowerCase()); return i < 0 ? 999 : i }
@@ -596,12 +685,15 @@ export function linenTotals(standard: LinenStandard, units: LinenUnit[], tier: L
     LINEN_GROUPS.indexOf(a.group) - LINEN_GROUPS.indexOf(b.group) || itemAt(a.itemId) - itemAt(b.itemId) || sizeAt(a.size) - sizeAt(b.size) || String(a.size || '').localeCompare(String(b.size || '')))
   let grand = 0, priced = 0, unpriced = 0
   for (const r of rows) {
+    // A row fully covered by the shelf is kept (the page shows it as stocked) but costs nothing and
+    // is not an "unpriced" line — there is nothing to price.
+    if (r.qty === 0) { r.cost = 0; continue }
     if (r.price === null) { unpriced++; continue }
     r.cost = r2(r.price * r.qty)
     grand += r.cost
     priced++
   }
-  return { rows, grandTotal: r2(grand), priced, unpriced, units: units.length, tier }
+  return { rows, grandTotal: r2(grand), priced, unpriced, units: units.length, tier, counted }
 }
 
 // ── the owner's quote ─────────────────────────────────────────────────────────────────────────────
@@ -627,8 +719,8 @@ export type LinenQuote = {
  * standard's markup on top, tax on top of that. NOT whole cases — the case overage is our stock
  * (see vendorOrder). Unpriced rows are counted and left out of the money, never priced at $0.
  */
-export function linenQuote(standard: LinenStandard, units: LinenUnit[], tier: LinenTier): LinenQuote {
-  const t = linenTotals(standard, units, tier)
+export function linenQuote(standard: LinenStandard, units: LinenUnit[], tier: LinenTier, inventory?: Record<string, LinenCount> | null): LinenQuote {
+  const t = linenTotals(standard, units, tier, inventory)
   const subtotal = t.grandTotal
   const markupPct = standard.markupPct || 0
   const taxPct = standard.taxPct || 0
@@ -649,8 +741,8 @@ export function linenQuote(standard: LinenStandard, units: LinenUnit[], tier: Li
 }
 
 /** The three tiers side by side, for the same units. */
-export function linenQuoteAllTiers(standard: LinenStandard, units: LinenUnit[]): Record<LinenTier, LinenQuote> {
-  return { low: linenQuote(standard, units, 'low'), mid: linenQuote(standard, units, 'mid'), lux: linenQuote(standard, units, 'lux') }
+export function linenQuoteAllTiers(standard: LinenStandard, units: LinenUnit[], inventory?: Record<string, LinenCount> | null): Record<LinenTier, LinenQuote> {
+  return { low: linenQuote(standard, units, 'low', inventory), mid: linenQuote(standard, units, 'mid', inventory), lux: linenQuote(standard, units, 'lux', inventory) }
 }
 
 /** The one-liner on the onboarding desk: each tier's total, and the tier Jon picked. */
@@ -765,12 +857,13 @@ export type VendorOrder = {
  * (ordered − needed) goes to stock. A vendor whose priced lines total less than its $ minimum is
  * flagged, with its lead time alongside. Lines with no vendor set are grouped last.
  */
-export function vendorOrder(standard: LinenStandard, units: LinenUnit[], tier: LinenTier): VendorOrder {
-  const t = linenTotals(standard, units, tier)
+export function vendorOrder(standard: LinenStandard, units: LinenUnit[], tier: LinenTier, inventory?: Record<string, LinenCount> | null): VendorOrder {
+  const t = linenTotals(standard, units, tier, inventory)
   const itemById = new Map(standard.items.map(i => [i.id, i] as const))
   const vendorCard = (name: string) => standard.vendors.find(v => v.name.toLowerCase() === name.toLowerCase()) || null
   const groups = new Map<string, { vendor: string | null; info: LinenVendor | null; lines: Map<string, VendorLine> }>()
   for (const r of t.rows) {
+    if (r.qty <= 0) continue   // on the shelf already — nothing to order
     const it = itemById.get(r.itemId)
     const opt = it ? tierOf(it, tier) : {}
     const vName = (opt.vendor || '').trim()
@@ -931,9 +1024,11 @@ function csvCell(v: any): string {
 
 /** The buy list as CSV (formula-leading cells are defused so a spreadsheet never runs one). */
 export function linenCsv(t: LinenTotals): string {
-  const lines = [['Group', 'Item', 'Size', 'Qty', 'Unit price', 'Cost', 'Vendor', 'SKU', 'Product'].join(',')]
-  for (const r of t.rows) lines.push([r.group, r.name, r.size || '', r.qty, r.price ?? '', r.cost ?? '', r.vendor || '', r.sku || '', r.product || ''].map(csvCell).join(','))
-  if (t.priced) lines.push(['', 'Total', '', '', '', t.grandTotal, '', '', ''].map(csvCell).join(','))
+  // With counts in play the sheet carries Need and Have beside what to buy; without, Buy is the need.
+  const c = t.counted > 0
+  const lines = [['Group', 'Item', 'Size', ...(c ? ['Need', 'Have', 'Buy'] : ['Qty']), 'Unit price', 'Cost', 'Vendor', 'SKU', 'Product'].join(',')]
+  for (const r of t.rows) lines.push([r.group, r.name, r.size || '', ...(c ? [r.need, r.have] : []), r.qty, r.price ?? '', r.qty > 0 ? (r.cost ?? '') : '', r.vendor || '', r.sku || '', r.product || ''].map(csvCell).join(','))
+  if (t.priced) lines.push(['', 'Total', '', ...(c ? ['', ''] : []), '', '', t.grandTotal, '', '', ''].map(csvCell).join(','))
   return lines.join('\n') + '\n'
 }
 
@@ -941,12 +1036,15 @@ export function linenCsv(t: LinenTotals): string {
 export function linenText(t: LinenTotals, title?: string): string {
   const out: string[] = []
   if (title) out.push(title)
+  let any = false
   for (const g of LINEN_GROUPS) {
-    const rows = t.rows.filter(r => r.group === g)
+    const rows = t.rows.filter(r => r.group === g && r.qty > 0)
     if (!rows.length) continue
+    any = true
     out.push('', g)
-    for (const r of rows) out.push(`${r.qty} × ${r.name}${r.size ? ' (' + r.size + ')' : ''}`)
+    for (const r of rows) out.push(`${r.qty} × ${r.name}${r.size ? ' (' + r.size + ')' : ''}${t.counted && r.have ? ` (need ${r.need}, have ${r.have})` : ''}`)
   }
+  if (!any && t.rows.length) out.push('', 'Nothing to buy — every line is stocked to the standard.')
   return out.join('\n').replace(/^\n/, '') + '\n'
 }
 
@@ -960,7 +1058,7 @@ export function quoteText(q: LinenQuote, title?: string): string {
   out.push((title ? title + ' — ' : '') + q.label + ' linen package')
   let sub = 0
   for (const g of LINEN_GROUPS) {
-    const rows = q.rows.filter(r => r.group === g)
+    const rows = q.rows.filter(r => r.group === g && r.qty > 0)
     if (!rows.length) continue
     out.push('', g)
     for (const r of rows) {

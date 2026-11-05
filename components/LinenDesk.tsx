@@ -13,11 +13,12 @@
 //               bathrooms, etc."). Opened as ?unit=onboard:<code> from the onboarding desk.
 // All arithmetic is lib/linens.ts (tested in lib/__tests__/linens.test.mjs); this file only draws it.
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Check, Copy, Download, FileText, Loader2, Minus, Pencil, Plus, RotateCcw, Search, Trash2, Truck, X } from 'lucide-react'
+import { ArrowLeft, Check, ClipboardList, Copy, Download, FileText, Loader2, Minus, Pencil, Plus, RotateCcw, Search, Trash2, Truck, X } from 'lucide-react'
 import { Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
 import {
   LINEN_GROUPS, LINEN_PER, LINEN_TIERS, LIMITS, MANUAL_LIMITS, DEFAULT_LINEN_STANDARD, normLinenStandard, linenNeeds, linenTotals, linenCsv, linenText, sortSizes,
-  linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf,
+  linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf, linenGap, LINEN_COUNT_LIMITS,
+  type LinenCount, type LinenGap,
   type LinenStandard, type LinenItem, type LinenGroup, type LinenPer, type LinenDeskUnit, type BedsSource, type LinenTotals, type LinenTier, type TierOption,
   type LinenVendor, type LinenQuote, type VendorOrder, type LinenQuoteChoice, type ManualUnitInput,
 } from '@/lib/linens'
@@ -89,6 +90,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
   const [units, setUnits] = useState<LinenDeskUnit[]>([])
   const [focus, setFocus] = useState<LinenDeskUnit | null>(null)
   const [quotes, setQuotes] = useState<Record<string, LinenQuoteChoice>>({})
+  const [inventory, setInventory] = useState<Record<string, LinenCount>>({})   // what each unit has on the shelf, by unit id
   const [partial, setPartial] = useState(false)
   const [view, setView] = useState<View>(initialUnit ? 'quote' : 'standard')
   const [picked, setPicked] = useState<string[]>([])
@@ -109,6 +111,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
         setUnits(us); setPartial(!!j.partial)
         setFocus(j.focus && typeof j.focus === 'object' ? j.focus : null)
         setQuotes(j.quotes && typeof j.quotes === 'object' ? j.quotes : {})
+        setInventory(j.inventory && typeof j.inventory === 'object' ? j.inventory : {})
         try { const p = JSON.parse(store.get(PICK_KEY) || '[]'); if (Array.isArray(p)) setPicked(p.filter((id: any) => us.some(u => u.id === id))) } catch { /* nothing remembered */ }
         setErr(''); setReady(true)
       } catch (e: any) { setErr(String(e?.message || e)) }
@@ -141,7 +144,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
 
   const TABS: [View, string, string][] = [
     ['standard', 'Standard', 'The linen list — what every unit gets, per bed, bath, guest or unit, and what is bought at each tier'],
-    ['calculator', 'Calculator', 'Pick units and get the order: quantities, whole cases per vendor, and cost at your prices'],
+    ['calculator', 'Calculator', 'Pick units, count what is on the shelf, and get the order: what to buy, whole cases per vendor, and cost at your prices'],
     ['quote', 'Quote', 'No listing yet? Type in bedrooms, baths, guests and beds — the three tiers, the invoice and the vendor order'],
   ]
 
@@ -173,7 +176,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
         : <>
           {view === 'standard' && <StandardView draft={draft} setDraft={setDraft} saved={saved} edited={edited} canEdit={canStd}
               onSaved={(s) => { setSaved(s); setDraft(s); setEdited(true) }} />}
-          {view === 'calculator' && <CalculatorView standard={draft} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} />}
+          {view === 'calculator' && <CalculatorView standard={draft} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
           {/* The Quote view stays mounted once opened, so what was typed (and Bill to) survives a tab switch. */}
           <div hidden={view !== 'quote'}>
             {(view === 'quote' || quoteOpened) && <QuoteView standard={draft} dirty={dirty} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
@@ -247,7 +250,7 @@ function QuoteCard({ q }: { q: LinenQuote }) {
                 <th className="hidden sm:table-cell text-right font-semibold px-2 py-2" title="Price per piece">Each</th><th className="text-right font-semibold px-3 sm:px-4 py-2">Amount</th></tr>
             </thead>
             {LINEN_GROUPS.map(g => {
-              const rows = q.rows.filter(r => r.group === g)
+              const rows = q.rows.filter(r => r.group === g && r.qty > 0)
               if (!rows.length) return null
               return (
                 <tbody key={g} className="border-t border-line">
@@ -742,14 +745,16 @@ function VendorsCard({ vendors, canEdit, onChange }: { vendors: LinenVendor[]; c
 // ── CALCULATOR ────────────────────────────────────────────────────────────────────────────────────
 const shapeOf = (u: LinenDeskUnit): ManualUnitInput => ({ name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, beds: u.beds })
 
-function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pick, canBeds, tier, setTier }: {
+function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pick, canBeds, tier, setTier, inventory, setInventory }: {
   standard: LinenStandard; dirty: boolean; units: LinenDeskUnit[]; setUnits: (f: (u: LinenDeskUnit[]) => LinenDeskUnit[]) => void; partial: boolean
   picked: string[]; pick: (ids: string[]) => void; canBeds: boolean; tier: LinenTier; setTier: (t: LinenTier) => void
+  inventory: Record<string, LinenCount>; setInventory: (f: (m: Record<string, LinenCount>) => Record<string, LinenCount>) => void
 }) {
   const [q, setQ] = useState('')
   const [bld, setBld] = useState<string>('all')
   const [openId, setOpenId] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
+  const [countId, setCountId] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   const buildings = useMemo(() => {
@@ -763,9 +768,10 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
   }, [units, q, bld])
   const pickedSet = useMemo(() => new Set(picked), [picked])
   const chosen = useMemo(() => units.filter(u => pickedSet.has(u.id)), [units, pickedSet])
-  const totals = useMemo(() => linenTotals(standard, chosen, tier), [standard, chosen, tier])
-  const allTiers = useMemo(() => linenQuoteAllTiers(standard, chosen), [standard, chosen])
-  const order = useMemo(() => vendorOrder(standard, chosen, tier), [standard, chosen, tier])
+  const totals = useMemo(() => linenTotals(standard, chosen, tier, inventory), [standard, chosen, tier, inventory])
+  const allTiers = useMemo(() => linenQuoteAllTiers(standard, chosen, inventory), [standard, chosen, inventory])
+  const order = useMemo(() => vendorOrder(standard, chosen, tier, inventory), [standard, chosen, tier, inventory])
+  const countedChosen = chosen.filter(u => !!inventory[u.id]).length
 
   const toggle = (id: string) => pick(pickedSet.has(id) ? picked.filter(x => x !== id) : [...picked, id])
   const allShownIn = shown.length > 0 && shown.every(u => pickedSet.has(u.id))
@@ -823,20 +829,25 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
 
       {!chosen.length ? <LeanEmpty>Pick units above to size the order.</LeanEmpty> : (
         <>
-          <div className="mb-1.5 px-1 flex items-center gap-2">
+          <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
             <h2 className={EYEBROW}>Selected <span className="tabular-nums">{chosen.length}</span></h2>
             {dirty && <Tag tone="amber" title="The standard has edits that are not saved — these numbers already use them">unsaved standard</Tag>}
+            {countedChosen > 0
+              ? <Tag tone="emerald" title="These units have a shelf count — the order below is only what is missing (need − have)">{countedChosen} of {chosen.length} counted · order is net of stock</Tag>
+              : <Tag title="No unit here has a shelf count yet — the order is the full standard, as for a new unit. Use the clipboard on a unit to count what it has">no counts · full setup</Tag>}
           </div>
           <div className="mb-3">
             <LeanList>
               {chosen.map(u => (
-                <UnitRow key={u.id} u={u} std={standard} canBeds={canBeds}
-                  open={openId === u.id || editId === u.id} editing={editId === u.id}
-                  onToggle={() => { if (openId === u.id || editId === u.id) { setOpenId(null); setEditId(null) } else setOpenId(u.id) }}
-                  onEdit={() => { setEditId(editId === u.id ? null : u.id); setOpenId(u.id) }}
-                  onDoneEdit={() => setEditId(null)}
+                <UnitRow key={u.id} u={u} std={standard} canBeds={canBeds} count={inventory[u.id] || null}
+                  open={openId === u.id || editId === u.id || countId === u.id} editing={editId === u.id} counting={countId === u.id}
+                  onToggle={() => { if (openId === u.id || editId === u.id || countId === u.id) { setOpenId(null); setEditId(null); setCountId(null) } else setOpenId(u.id) }}
+                  onEdit={() => { setEditId(editId === u.id ? null : u.id); setCountId(null); setOpenId(u.id) }}
+                  onCount={() => { setCountId(countId === u.id ? null : u.id); setEditId(null); setOpenId(u.id) }}
+                  onDoneEdit={() => { setEditId(null); setCountId(null) }}
                   onRemove={() => toggle(u.id)}
-                  onBeds={(beds, source) => setUnits(list => list.map(x => x.id === u.id ? { ...x, beds, bedsSource: source } : x))} />
+                  onBeds={(beds, source) => setUnits(list => list.map(x => x.id === u.id ? { ...x, beds, bedsSource: source } : x))}
+                  onCounted={c => setInventory(m => { const x = { ...m }; if (c) x[u.id] = c; else delete x[u.id]; return x })} />
               ))}
             </LeanList>
           </div>
@@ -854,14 +865,17 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
 const unitLine = (u: LinenDeskUnit) => [u.bedrooms ? u.bedrooms + ' BR' : 'Studio', (u.bathrooms || 0) + ' BA', u.guests ? u.guests + ' guests' : 'guests ?'].join(' · ')
 const bedsText = (beds: Record<string, number>, order: string[]) => sortSizes(Object.keys(beds).filter(k => beds[k] > 0), order).map(k => `${k} ×${beds[k]}`).join(', ') || 'no beds'
 
-function UnitRow({ u, std, canBeds, open, editing, onToggle, onEdit, onDoneEdit, onRemove, onBeds }: {
-  u: LinenDeskUnit; std: LinenStandard; canBeds: boolean; open: boolean; editing: boolean
-  onToggle: () => void; onEdit: () => void; onDoneEdit: () => void; onRemove: () => void
+function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, onEdit, onCount, onDoneEdit, onRemove, onBeds, onCounted }: {
+  u: LinenDeskUnit; std: LinenStandard; canBeds: boolean; count: LinenCount | null; open: boolean; editing: boolean; counting: boolean
+  onToggle: () => void; onEdit: () => void; onCount: () => void; onDoneEdit: () => void; onRemove: () => void
   onBeds: (beds: Record<string, number>, source: BedsSource) => void
+  onCounted: (c: LinenCount | null) => void
 }) {
   const src = SOURCE[u.bedsSource] || SOURCE.assumed
-  const rows = useMemo(() => linenNeeds(std, u), [std, u])
+  const gap = useMemo(() => linenGap(std, u, count), [std, u, count])
   const sizes = sortSizes(Object.keys(u.beds).filter(k => u.beds[k] > 0), std.bedSizes)
+  const when = gap.countedAt ? new Date(gap.countedAt) : null
+  const whenText = when && !Number.isNaN(when.getTime()) ? when.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
   return (
     <LeanRow open={open} onToggle={onToggle}
       name={u.name}
@@ -871,39 +885,133 @@ function UnitRow({ u, std, canBeds, open, editing, onToggle, onEdit, onDoneEdit,
         <Tag tone={src.tone} title={src.title}>{src.label}</Tag>
         {!u.live && <Tag tone="violet" title="An onboarding unit that is not live in Guesty yet">not live</Tag>}
         {!u.guests && <Tag tone="rose" title="No max-guest count — per-guest items (towels, washcloths) are not counted for this unit">no guest count</Tag>}
+        {gap.counted
+          ? <Tag tone={gap.buy ? 'amber' : 'emerald'} title={`Shelf count${whenText ? ' from ' + whenText : ''}${gap.countedBy ? ' by ' + gap.countedBy : ''} — ${gap.have} of ${gap.need} pieces on hand, ${gap.buy} to buy`}>{gap.buy ? `${gap.buy} to buy` : 'stocked'}{whenText ? ' · ' + whenText : ''}</Tag>
+          : <Tag title="Nothing counted yet — sized as an empty unit (the full standard). Click the clipboard to count what it has">not counted</Tag>}
       </>}
       actions={<>
         <IconBtn title="Quote this unit alone" href={'/onboarding/linens?unit=' + encodeURIComponent(u.id)}><FileText size={13} /></IconBtn>
+        {canBeds && <IconBtn title={counting ? 'Close the count' : 'Count what this unit has on the shelf'} onClick={onCount} tone={counting ? 'brand' : undefined}><ClipboardList size={13} /></IconBtn>}
         {canBeds && <IconBtn title={editing ? 'Close the bed editor' : "Set this unit's bed sizes"} onClick={onEdit}><Pencil size={13} /></IconBtn>}
         <IconBtn title="Take off the order" onClick={onRemove}><X size={14} /></IconBtn>
       </>}
     >
       {editing
         ? <BedEditor u={u} std={std} onDone={onDoneEdit} onBeds={onBeds} />
-        : <NeedsTable rows={rows} />}
+        : counting
+          ? <CountEditor u={u} gap={gap} onDone={onDoneEdit} onCounted={onCounted} />
+          : <NeedsTable gap={gap} />}
     </LeanRow>
   )
 }
 
-function NeedsTable({ rows }: { rows: ReturnType<typeof linenNeeds> }) {
+/** One unit's need, and against it what was counted. Without a count the Have / Buy columns stay out of the way. */
+function NeedsTable({ gap }: { gap: LinenGap }) {
+  const rows = gap.rows
   if (!rows.length) return <p className="text-[12.5px] text-muted">Nothing on the standard applies to this unit.</p>
+  const c = gap.counted
   return (
     <div className="overflow-x-auto rounded-xl border border-line">
       <table className="w-full min-w-[420px] text-[12.5px]">
         <thead className="bg-app text-[10.5px] uppercase tracking-wider text-muted">
           <tr><th className="text-left font-semibold px-3 py-1.5">Item</th><th className="text-left font-semibold px-2 py-1.5">Size</th>
-            <th className="text-right font-semibold px-2 py-1.5" title="One set on the unit">On the unit</th><th className="text-right font-semibold px-2 py-1.5" title="Sets in rotation (1 when the item does not rotate)">Par</th><th className="text-right font-semibold px-3 py-1.5">Total</th></tr>
+            <th className="text-right font-semibold px-2 py-1.5" title="One set on the unit">On the unit</th><th className="text-right font-semibold px-2 py-1.5" title="Sets in rotation (1 when the item does not rotate)">Par</th>
+            <th className="text-right font-semibold px-2 py-1.5" title="What the standard calls for">Need</th>
+            {c && <th className="text-right font-semibold px-2 py-1.5" title="Counted on the shelf">Have</th>}
+            {c && <th className="text-right font-semibold px-3 py-1.5" title="Need − have, never below zero">Buy</th>}</tr>
         </thead>
         <tbody className="divide-y divide-line/70">
           {rows.map(r => (
-            <tr key={r.itemId + '|' + (r.size || '')}>
+            <tr key={r.key}>
               <td className="px-3 py-1.5 text-ink">{r.name}</td><td className="px-2 py-1.5 text-muted">{r.size || ''}</td>
               <td className="px-2 py-1.5 text-right tabular-nums">{r.perUnitQty}</td><td className="px-2 py-1.5 text-right tabular-nums text-muted">×{r.par}</td>
-              <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{r.total}</td>
+              <td className={'px-2 py-1.5 text-right tabular-nums ' + (c ? '' : 'font-semibold')}>{r.total}</td>
+              {c && <td className="px-2 py-1.5 text-right tabular-nums text-muted">{r.have}{r.extra > 0 && <span title={`${r.extra} over the standard`} className="text-emerald-700"> (+{r.extra})</span>}</td>}
+              {c && <td className="px-3 py-1.5 text-right tabular-nums">{r.buy > 0 ? <Pill tone="amber">{r.buy}</Pill> : <Pill tone="emerald" title="Stocked to the standard">✓</Pill>}</td>}
             </tr>
           ))}
         </tbody>
+        {c && (
+          <tfoot className="border-t border-line bg-app/60">
+            <tr><td colSpan={4} className="px-3 py-1.5 font-semibold text-ink">Total</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{gap.need}</td><td className="px-2 py-1.5 text-right tabular-nums text-muted">{gap.have}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{gap.buy}</td></tr>
+          </tfoot>
+        )}
       </table>
+    </div>
+  )
+}
+
+/**
+ * THE COUNT. One box per needs row: type what is on the shelf (and on the beds). Buy updates as you
+ * type; Save writes the count against the unit for everyone. Clear forgets it (sized as empty again).
+ */
+function CountEditor({ u, gap, onDone, onCounted }: { u: LinenDeskUnit; gap: LinenGap; onDone: () => void; onCounted: (c: LinenCount | null) => void }) {
+  const [counts, setCounts] = useState<Record<string, number>>(() => { const o: Record<string, number> = {}; for (const r of gap.rows) if (r.have) o[r.key] = r.have; return o })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const live = gap.rows.map(r => { const have = counts[r.key] || 0; return { ...r, have, buy: Math.max(0, r.total - have) } })
+  const toBuy = live.reduce((a, r) => a + r.buy, 0)
+  const typed = Object.keys(counts).length > 0
+  const send = async (next: Record<string, number> | null) => {
+    setBusy(true); setErr('')
+    try {
+      const r = await fetch('/api/onboard/linens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inventory: { unitId: u.id, counts: next } }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || !j.ok) throw new Error(j.message || j.error || 'Could not save the count')
+      onCounted(j.count || null)
+      onDone()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  const set = (key: string, v: string) => {
+    const n = Math.max(0, Math.min(LINEN_COUNT_LIMITS.each, Math.round(toNum(v) ?? 0)))
+    setCounts(c => { const x = { ...c }; if (n) x[key] = n; else delete x[key]; return x })
+  }
+  const fill = () => setCounts(() => { const o: Record<string, number> = {}; for (const r of gap.rows) o[r.key] = r.total; return o })
+  if (!gap.rows.length) return <p className="text-[12.5px] text-muted">Nothing on the standard applies to this unit — set its beds first.</p>
+  return (
+    <div className="rounded-xl border border-line bg-app/50 p-3">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <span className={EYEBROW}>Count the shelf</span>
+        <span className="text-[12.5px] text-muted">Type what the unit has — on the beds, in the closet, in the laundry. Pillows and inserts count too.</span>
+        <button onClick={fill} disabled={busy} title="Set every line to the standard — then lower the ones that are short" className="ml-auto text-[12px] font-semibold text-muted hover:text-ink">Fill to standard</button>
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-line bg-white">
+        <table className="w-full min-w-[420px] text-[12.5px]">
+          <thead className="bg-app text-[10.5px] uppercase tracking-wider text-muted">
+            <tr><th className="text-left font-semibold px-3 py-1.5">Item</th><th className="text-left font-semibold px-2 py-1.5">Size</th>
+              <th className="text-right font-semibold px-2 py-1.5" title="What the standard calls for">Need</th><th className="text-right font-semibold px-2 py-1.5">Have</th><th className="text-right font-semibold px-3 py-1.5">Buy</th></tr>
+          </thead>
+          <tbody className="divide-y divide-line/70">
+            {live.map(r => (
+              <tr key={r.key}>
+                <td className="px-3 py-1 text-ink">{r.name}</td><td className="px-2 py-1 text-muted">{r.size || ''}</td>
+                <td className="px-2 py-1 text-right tabular-nums text-muted">{r.total}</td>
+                <td className="px-2 py-1 text-right">
+                  <input type="number" inputMode="numeric" min={0} max={LINEN_COUNT_LIMITS.each} value={counts[r.key] ?? ''} placeholder="0"
+                    onChange={e => set(r.key, e.target.value)} title={`How many ${r.name.toLowerCase()}${r.size ? ' (' + r.size + ')' : ''} the unit has`} className={NUM + ' w-[72px] py-1'} />
+                </td>
+                <td className="px-3 py-1 text-right tabular-nums">{r.buy > 0 ? <Pill tone="amber">{r.buy}</Pill> : <Pill tone="emerald" title="Stocked to the standard">✓</Pill>}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="border-t border-line bg-app/60">
+            <tr><td colSpan={2} className="px-3 py-1.5 font-semibold text-ink">Total</td>
+              <td className="px-2 py-1.5 text-right tabular-nums text-muted">{gap.need}</td><td className="px-2 py-1.5 text-right tabular-nums">{live.reduce((a, r) => a + Math.min(r.have, r.total), 0)}</td>
+              <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{toBuy}</td></tr>
+          </tfoot>
+        </table>
+      </div>
+      <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+        <button onClick={() => send(counts)} disabled={busy || !typed} title={typed ? 'Save this count for the unit — the order will only include what is missing' : 'Type at least one count'} className={PRIMARY}>
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save count
+        </button>
+        <button onClick={onDone} disabled={busy} title="Close without saving" className={GHOST}>Cancel</button>
+        {gap.counted && <button onClick={() => send(null)} disabled={busy} title="Forget the saved count — the unit is sized as empty again (full standard)" className="text-[12px] font-semibold text-muted hover:text-ink">Clear count</button>}
+        {err && <span className="text-[12.5px] text-rose-600 font-semibold">{err}</span>}
+      </div>
     </div>
   )
 }
@@ -960,7 +1068,8 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
     <section className={CARD + ' mb-3 overflow-hidden'}>
       <div className="px-3 sm:px-4 py-2.5 flex items-center gap-2 flex-wrap border-b border-line">
         <h2 className={EYEBROW}>Order · {label}</h2>
-        <span className="text-[12.5px] text-muted tabular-nums">{totals.units} unit{totals.units === 1 ? '' : 's'} · {pieces.toLocaleString('en-US')} pieces</span>
+        <span className="text-[12.5px] text-muted tabular-nums">{totals.units} unit{totals.units === 1 ? '' : 's'} · {pieces.toLocaleString('en-US')} pieces{totals.counted > 0 ? ' to buy' : ''}</span>
+        {totals.counted > 0 && <Tag tone="emerald" title={`${totals.counted} of ${totals.units} units have a shelf count — Buy is need minus what they have; units without a count need everything`}>net of {totals.counted} count{totals.counted === 1 ? '' : 's'}</Tag>}
         {totals.priced > 0 && <Pill tone="emerald" title={(totals.unpriced ? `${totals.unpriced} line${totals.unpriced === 1 ? ' has' : 's have'} no price and are not in this total. ` : 'Every line is priced. ') + 'Pieces at the piece price — before markup and tax, and before rounding to whole cases.'}>{money(totals.grandTotal)}</Pill>}
         <span className="ml-auto flex items-center gap-1.5">
           <button onClick={onCsv} disabled={!totals.rows.length} title="Download the pieces list as a spreadsheet (CSV)" className={GHOST}><Download size={13} /> Download CSV</button>
@@ -971,7 +1080,10 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
         <div className="overflow-x-auto">
           <table className="w-full min-w-[480px] text-[13px]">
             <thead className="text-[10.5px] uppercase tracking-wider text-muted">
-              <tr><th className="text-left font-semibold px-3 sm:px-4 py-2">Item</th><th className="text-left font-semibold px-2 py-2">Size</th><th className="text-right font-semibold px-2 py-2">Qty</th>
+              <tr><th className="text-left font-semibold px-3 sm:px-4 py-2">Item</th><th className="text-left font-semibold px-2 py-2">Size</th>
+                {totals.counted > 0 && <th className="text-right font-semibold px-2 py-2" title="What the standard calls for across these units">Need</th>}
+                {totals.counted > 0 && <th className="text-right font-semibold px-2 py-2" title="Counted on the shelves">Have</th>}
+                <th className="text-right font-semibold px-2 py-2" title={totals.counted > 0 ? 'Need − have' : 'Pieces'}>{totals.counted > 0 ? 'Buy' : 'Qty'}</th>
                 <th className="text-right font-semibold px-2 py-2" title="Price per piece">Unit price</th><th className="text-right font-semibold px-3 sm:px-4 py-2">Cost</th></tr>
             </thead>
             {LINEN_GROUPS.map(g => {
@@ -980,15 +1092,17 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
               const sub = rows.reduce((a, r) => a + (r.cost || 0), 0)
               return (
                 <tbody key={g} className="border-t border-line">
-                  <tr className="bg-app/60"><td colSpan={4} className={EYEBROW + ' px-3 sm:px-4 py-1.5'}>{g}</td>
+                  <tr className="bg-app/60"><td colSpan={totals.counted > 0 ? 6 : 4} className={EYEBROW + ' px-3 sm:px-4 py-1.5'}>{g}</td>
                     <td className="px-3 sm:px-4 py-1.5 text-right text-[12px] text-muted tabular-nums">{sub > 0 ? money(sub) : ''}</td></tr>
                   {rows.map(r => (
                     <tr key={r.key} className="border-t border-line/60">
                       <td className="px-3 sm:px-4 py-1.5 text-ink">{r.name}{r.vendor ? <span className="text-muted text-[11.5px]"> · {r.vendor}</span> : null}{r.product ? <span className="block text-muted text-[11.5px]">{r.product}</span> : null}</td>
                       <td className="px-2 py-1.5 text-muted">{r.size || ''}</td>
-                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{r.qty.toLocaleString('en-US')}</td>
+                      {totals.counted > 0 && <td className="px-2 py-1.5 text-right tabular-nums text-muted">{r.need.toLocaleString('en-US')}</td>}
+                      {totals.counted > 0 && <td className="px-2 py-1.5 text-right tabular-nums text-muted">{r.have.toLocaleString('en-US')}</td>}
+                      <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{r.qty > 0 ? r.qty.toLocaleString('en-US') : <Tag tone="emerald" title="Stocked to the standard — nothing to buy">stocked</Tag>}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-muted">{r.price != null ? money(r.price) : ''}</td>
-                      <td className="px-3 sm:px-4 py-1.5 text-right tabular-nums">{r.cost != null ? money(r.cost) : <Tag tone="amber" title="No price for this line at this tier — add it on the Standard">unpriced</Tag>}</td>
+                      <td className="px-3 sm:px-4 py-1.5 text-right tabular-nums">{r.qty === 0 ? '' : r.cost != null ? money(r.cost) : <Tag tone="amber" title="No price for this line at this tier — add it on the Standard">unpriced</Tag>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -997,7 +1111,7 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
             {totals.priced > 0 && (
               <tfoot>
                 <tr className="border-t-2 border-line">
-                  <td colSpan={4} className="px-3 sm:px-4 py-2 font-bold text-ink">Total{totals.unpriced ? <span className="font-normal text-[12px] text-muted"> · {totals.unpriced} line{totals.unpriced === 1 ? '' : 's'} with no price left out</span> : null}</td>
+                  <td colSpan={totals.counted > 0 ? 6 : 4} className="px-3 sm:px-4 py-2 font-bold text-ink">Total{totals.unpriced ? <span className="font-normal text-[12px] text-muted"> · {totals.unpriced} line{totals.unpriced === 1 ? '' : 's'} with no price left out</span> : null}</td>
                   <td className="px-3 sm:px-4 py-2 text-right font-bold tabular-nums text-ink">{money(totals.grandTotal)}</td>
                 </tr>
               </tfoot>

@@ -5,9 +5,12 @@
 //   PUT { standard }                            full  → saves the standard (normalised, stamped with who/when)
 //   PUT { unitBeds: { listingId, beds } }       edit  → saves one unit's bed sizes; beds null / {} clears them
 //   PUT { linenQuote: { code, tier } }          edit  → the tier Jon picked for an onboarding unit; tier null clears it
+//   PUT { inventory: { unitId, counts } }       edit  → what the team counted on a unit's shelf, keyed itemId|size; counts null clears it
 //
 // Storage is app_settings (no migration): `linen_standard`, `linen_unit_beds`
-// ({ [listingId]: { King: 1, Queen: 2 } }) and `linen_quotes` ({ [onboardCode]: { tier, updatedAt, updatedBy } }).
+// ({ [listingId]: { King: 1, Queen: 2 } }), `linen_quotes` ({ [onboardCode]: { tier, updatedAt, updatedBy } }) and
+// `linen_inventory` ({ [unitId]: { counts: { 'fitted-sheet|King': 3 }, countedAt, countedBy } } — the calculator nets
+// these out: buy = need − have; a unit with no count is sized as empty, as a new unit is).
 // The invoice and the vendor order are built at /api/onboard/linens/doc from the saved standard.
 //
 // WHERE A UNIT'S BEDS COME FROM, first hit wins:
@@ -29,7 +32,8 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
 import { rollupBuilding } from '@/lib/optimize-score'
 import {
-  LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, ONBOARD_CODE, normLinenStandard, normBeds, normLinenQuotes, isLinenTier,
+  LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, LINEN_INVENTORY_KEY, LINEN_UNIT_ID, ONBOARD_CODE,
+  normLinenStandard, normBeds, normLinenQuotes, normLinenInventory, normLinenCount, isLinenTier,
   bedsFromGuestyRooms, assumedBeds, resolveLinenUnit,
   type LinenDeskUnit, type BedsSource,
 } from '@/lib/linens'
@@ -38,7 +42,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const DEAD = /^(inactive|disabled|archived|deleted)$/i
-const UNIT_ID = /^(onboard:)?[A-Za-z0-9_-]{1,64}$/
+const UNIT_ID = LINEN_UNIT_ID
 const MAX_SAVED_UNITS = 2000
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v)).trim()
 const num = (v: any) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
@@ -90,10 +94,11 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin()
     const want = str(req.nextUrl.searchParams.get('unit')).toLowerCase()
     const wantCode = want.startsWith('onboard:') && ONBOARD_CODE.test(want.slice(8)) ? want.slice(8) : ''
-    const [savedStd, savedBedsRaw, quotesRaw, listingRead, onboardRead] = await Promise.all([
+    const [savedStd, savedBedsRaw, quotesRaw, inventoryRaw, listingRead, onboardRead] = await Promise.all([
       getSetting<any>(LINEN_STANDARD_KEY, null),
       getSetting<any>(LINEN_UNIT_BEDS_KEY, null),
       getSetting<any>(LINEN_QUOTES_KEY, null),
+      getSetting<any>(LINEN_INVENTORY_KEY, null),
       // Only the columns the calculator reads, and only the rooms sub-field of raw (never raw whole).
       pageRows<any>((a, b) => db.from('guesty_listings')
         .select('id,nickname,title,building,bedrooms,bathrooms,beds,max_occupancy,status,rooms:raw->listingRooms')
@@ -145,6 +150,7 @@ export async function GET(req: NextRequest) {
       units,
       partial: listingRead.truncated,
       quotes: normLinenQuotes(quotesRaw),
+      inventory: normLinenInventory(inventoryRaw),
       focus,
     })
   } catch (e: any) {
@@ -154,7 +160,7 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => null)
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('Send { standard }, { unitBeds } or { linenQuote }.', 400)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('Send { standard }, { unitBeds }, { linenQuote } or { inventory }.', 400)
 
   if ('standard' in body) {
     const g = await gate('full')
@@ -254,5 +260,33 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  return fail('Send { standard }, { unitBeds } or { linenQuote }.', 400)
+  if ('inventory' in body) {
+    const g = await gate('edit')
+    if (!g.ok) return g.res
+    try {
+      const inv = body.inventory && typeof body.inventory === 'object' ? body.inventory : {}
+      const unitId = str(inv.unitId || inv.listingId)
+      if (!UNIT_ID.test(unitId)) return fail('That is not a unit id.', 400)
+      const who = g.access.email || ''
+      const count = inv.counts == null ? null : normLinenCount({ counts: inv.counts, countedAt: new Date().toISOString(), countedBy: who })
+      // Read-modify-write from the table, not the settings cache (two people counting two units at once).
+      const { data, error } = await supabaseAdmin().from('app_settings').select('value').eq('key', LINEN_INVENTORY_KEY).limit(1)
+      if (error) return fail('Could not read the saved counts — try again.', 502)
+      let cur: any = null
+      const raw = Array.isArray(data) && data[0] ? (data[0] as any).value : null
+      if (raw && typeof raw === 'object') cur = raw
+      else if (typeof raw === 'string' && raw) { try { cur = JSON.parse(raw) } catch { cur = null } }
+      const map = normLinenInventory(cur)
+      if (count) map[unitId] = count
+      else delete map[unitId]
+      if (Object.keys(map).length > MAX_SAVED_UNITS) return fail('Too many units with a saved count.', 400)
+      const r = await setSetting(LINEN_INVENTORY_KEY, map, who || null)
+      if (!r.ok) return fail(r.error || 'Could not save the count.', 500)
+      return NextResponse.json({ ok: true, unitId, count: map[unitId] || null })
+    } catch (e: any) {
+      return fail(String(e?.message || e).slice(0, 200), 500)
+    }
+  }
+
+  return fail('Send { standard }, { unitBeds }, { linenQuote } or { inventory }.', 400)
 }
