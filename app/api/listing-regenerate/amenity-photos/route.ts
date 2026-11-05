@@ -20,14 +20,16 @@ const AMENITIES: { key: string; label: string; re: RegExp; max: number }[] = [
   { key: 'rooftop', label: 'Rooftop', re: /roof ?top|sky ?deck/i, max: 1 },
   { key: 'grill', label: 'Grill area', re: /\bgrill|bbq|barbecue/i, max: 1 },
   { key: 'courtyard', label: 'Courtyard / garden', re: /courtyard|garden|patio area|common (patio|area)/i, max: 1 },
-  { key: 'beach', label: 'Beach', re: /\bbeach\b/i, max: 1 },
-  { key: 'parking', label: 'Parking', re: /parking|garage/i, max: 1 },
+  { key: 'beach', label: 'Beach', re: /beach ?front|beach access|on the beach|private beach|beach chairs|steps to the beach/i, max: 1 },
   { key: 'exterior', label: 'Building exterior', re: /exterior|facade|fa[cç]ade|building (front|entrance)|entrance/i, max: 1 },
+  { key: 'parking', label: 'Parking', re: /parking (garage|lot|area|deck)|\bgarage\b/i, max: 1 },
   { key: 'play', label: 'Game / play area', re: /playground|game room|pickleball|tennis|basketball/i, max: 1 },
-  { key: 'laundry', label: 'Shared laundry', re: /laundry room|shared laundry|laundry facility/i, max: 1 },
+  { key: 'laundry', label: 'Shared laundry', re: /shared laundry|common laundry|laundry facilit/i, max: 1 },
   { key: 'cowork', label: 'Business center', re: /co-?working|business cent/i, max: 1 },
 ]
-const IN_UNIT = /bed ?room|\bbed\b|kitchen|bath|shower|toilet|living room|sofa|couch|dining table|balcony view|closet/i
+const IN_UNIT = /bed ?room|\bbed\b|kitchen|bath|shower|toilet|living room|sofa|couch|dining table|balcon|closet|washer|dryer|view from|restaurant|steakhouse|near(by)?\b|minutes? (walk|drive|away)|map\b|guide/i
+/** A photo counts for the FIRST amenity it names, so "exterior with rooftop pool" is a pool shot. */
+const amenityOf = (cap: string) => AMENITIES.find(a => a.re.test(cap)) || null
 
 export async function GET(req: NextRequest) {
   const g = await requireLevel('optimize', 'view')
@@ -48,7 +50,7 @@ export async function GET(req: NextRequest) {
       if (have.has(a.key)) continue
       const cands: any[] = []
       for (const u of sibs) for (const p of u.photos) {
-        if (!p.caption || !a.re.test(p.caption) || IN_UNIT.test(p.caption)) continue
+        if (!p.caption || IN_UNIT.test(p.caption) || amenityOf(p.caption)?.key !== a.key) continue
         if (myUrls.has(p.url.split('?')[0])) continue
         cands.push({ p, u })
       }
