@@ -6,7 +6,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { breezewayConfigured, getBreezewayToken, retrieveBreezewayTask, mapBreezewayTask } from '@/lib/breezeway'
+import { breezewayConfigured, getBreezewayToken, retrieveBreezewayTask, mapBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
+import { withTroubleshoot, TROUBLESHOOT_MARKER } from '@/lib/troubleshoot'
 import { requireVrAdmin } from '@/lib/vr-gate'
 import { bustBoards } from '@/lib/bust'
 import { isTaskDone } from '@/lib/task-categories'
@@ -64,6 +65,22 @@ export async function POST(req: NextRequest) {
     // task, and a task that is not a reporting program's is answered in one settings read.
     if (isTaskDone(row.status, row.finished_at)) {
       waitUntil(walkReportForTask(task).then(r => { if (r.code && !r.skipped) console.info('[walk-reports] filed', r.code, 'for task', String(task.id)); else if (r.error) console.error('[walk-reports]', String(task.id), r.error) }).catch(e => console.error('[walk-reports] unhandled', String(e?.message || e).slice(0, 300))))
+    }
+    // TROUBLESHOOT FIRST for maintenance tasks made straight in Breezeway (lib/troubleshoot). Once:
+    // only open tasks created in the last 48 h whose description lacks the marker — the PATCH below
+    // fires another webhook, which then sees the marker and stops.
+    else if (/maint/.test(String(row.type_department || '')) && !String(task.description || '').includes(TROUBLESHOOT_MARKER)) {
+      const made = Date.parse(String(task.created_at ?? task.created ?? ''))
+      const notStarted = !task.started_at && !/start|progress/.test(String(row.status || ''))
+      if (Number.isFinite(made) && Date.now() - made < 48 * 3600_000 && notStarted) {
+        waitUntil((async () => {
+          const d = await withTroubleshoot({ type_department: row.type_department, name: task.name, description: task.description, template_id: task.template_id ?? task.template?.id, home_id: task.home_id })
+          if (!d) return
+          const u = await updateBreezewayTask(String(task.id), { description: d })
+          if (u.ok) console.info('[troubleshoot] added to task', String(task.id))
+          else console.warn('[troubleshoot] patch failed', String(task.id), u.status, String(u.text || '').slice(0, 160))
+        })().catch(e => console.error('[troubleshoot]', String(e?.message || e).slice(0, 300))))
+      }
     }
   } catch { /* never fail the webhook delivery */ }
   return NextResponse.json({ ok: true })

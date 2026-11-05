@@ -97,6 +97,7 @@ export async function bzApi(path: string, init?: RequestInit): Promise<{ ok: boo
 }
 
 /** Did a write land? Its status said 2xx — even when the reply body was then lost (bzApi ok:false). */
+const isMaintenanceDept = (d: any) => /maint/i.test(String((d && typeof d === 'object' ? d.name || d.code : d) || ''))
 const landed = (r: { status: number }) => r.status >= 200 && r.status < 300
 
 // Normalize a Breezeway task into the columns we store. Defensive — falls back across
@@ -227,6 +228,16 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
     const inferred = templateForTask(body?.name, body?.type_department)
     if (inferred) body = { ...body, template_id: inferred }
   } else if (!(Number(body.template_id) > 0)) { body = { ...body }; delete body.template_id }
+  // TROUBLESHOOT FIRST (lib/troubleshoot; Jon, 2026-11-05) — reactive MAINTENANCE tasks only: the
+  // description gets issue-specific steps and the "not fixed → post in Slack, leave it open" rule.
+  // Never blocks the create: capped at ~6 s and any failure leaves the description as it was.
+  if (isMaintenanceDept(body?.type_department)) {
+    try {
+      const { withTroubleshoot } = await import('@/lib/troubleshoot')
+      const d = await withTroubleshoot(body)
+      if (d) body = { ...body, description: d }
+    } catch { /* the task matters more than the checklist */ }
+  }
   let r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   // A template Breezeway will not take on create (deleted there, or an API version that rejects the
   // field) must not cost us the task: retry bare, and say so in the log. The glitch route did this

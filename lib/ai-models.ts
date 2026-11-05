@@ -255,7 +255,9 @@ export const AI_TASKS: AiTask[] = [
     matters: 'Nothing is created by the model — a person reviews the form and clicks Create. A wrong guess costs one correction.' },
   { key: 'billing-judge', title: 'Billable review — unit checks & strips', group: 'Operations', def: 'fable',
     what: 'Reads a unit check or strip whose description is not the template and says whether real chargeable work happened, with a suggested amount and a reason.',
-    matters: 'Decides whether a routine visit reaches an owner statement. Called once per task, a couple of dozen a month; a human still approves every dollar.' },
+    matters: 'Decides whether a routine visit reaches an owner statement. Called once per task, a couple of dozen a month; a human still approves every dollar.' },  { key: 'maintenance-troubleshoot', title: 'Maintenance — troubleshoot checklist', group: 'Operations', def: 'haiku',
+    what: 'Writes 4–6 safe first-check steps for a reported maintenance issue, added to the Breezeway task description (lib/troubleshoot). A few hundred tokens per task.',
+    matters: 'Read by the tech on site before calling a vendor. Capped at 6 s; a keyword library takes over when the model is slow, so a bad or missing answer only costs specificity.' },
 ]
 
 const TASK_KEYS = new Set(AI_TASKS.map(t => t.key))
