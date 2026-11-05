@@ -40,7 +40,7 @@ async function readHouseRules(tok: string, id: string): Promise<{ ok: boolean; r
     return { ok: true, rules: wrapped ? d.houseRules : (d || {}), wrapped }
   } catch (e: any) { return { ok: false, rules: null, wrapped: false, error: String(e?.message || e) } }
 }
-async function writeAdditionalRules(tok: string, id: string, text: string): Promise<{ ok: boolean; error?: string }> {
+async function writeAdditionalRules(tok: string, id: string, text: string): Promise<{ ok: boolean; error?: string; trace?: string }> {
   const cur = await readHouseRules(tok, id)
   if (!cur.ok) return { ok: false, error: 'Could not read the current house rules from Guesty — nothing changed. ' + (cur.error || '') }
   const body: any = {}
@@ -51,6 +51,14 @@ async function writeAdditionalRules(tok: string, id: string, text: string): Prom
   let t = await r.text().catch(() => '')
   // The docs don't say whether the body is wrapped — try the other shape once on a 400.
   if (r.status === 400) { r = await put(cur.wrapped ? body : { houseRules: body }); t = await r.text().catch(() => '') }
+  // Guesty can answer 200 and keep the old text — read it back so the row tells the truth.
+  if (r.ok) {
+    const back = await readHouseRules(tok, id)
+    const got = back.ok ? String(back.rules?.additionalRules ?? '') : null
+    const trace = `put ${r.status} wrapped=${cur.wrapped} keys=${Object.keys(cur.rules || {}).join('|').slice(0, 160)} resp=${t.slice(0, 200)}`
+    if (got !== null && got.trim() !== text.trim()) return { ok: false, error: 'Guesty accepted the house-rules write but still shows the old text.', trace }
+    return { ok: true, trace }
+  }
   return r.ok ? { ok: true } : { ok: false, error: r.status === 429 ? 'Guesty asked us to slow down — run again in a minute.' : `House rules: Guesty ${r.status}: ${t.slice(0, 140)}` }
 }
 
@@ -265,7 +273,7 @@ export async function POST(req: NextRequest) {
     // Additional house rules first (its own resource). If the listing PUT then fails, the row says so.
     if (change.additionalRules !== undefined) {
       const hr = await writeAdditionalRules(tok, id, change.additionalRules)
-      if (!hr.ok) { results.push({ id, name, ok: false, error: hr.error }); failCount++; continue }
+      if (!hr.ok) { results.push({ id, name, ok: false, error: hr.error, note: hr.trace }); failCount++; continue }
       try { await sb.from('guesty_listings').update({ raw: { ...raw, _additionalRules: change.additionalRules } }).eq('id', id); raw._additionalRules = change.additionalRules } catch { /* best effort */ }
       if (!Object.keys(payload).length) { results.push({ id, name, ok: true }); okCount++; continue }
     }
