@@ -54,6 +54,8 @@ const str = (v: any) => (v == null ? '' : String(v)).trim()
 const addDays = (d: string, n: number) => new Date(Date.parse(d + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10)
 const etDay = (iso: string | null) => iso ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(iso)) : null
 const DONE = /finish|complet|closed|approved/i
+/** "Opal Works Opal Works" → "Opal Works": Breezeway sends a company as first + last name. */
+const who = (n: string | null) => { const s = str(n); if (!s) return null; const h = s.split(' '); const k = h.length / 2; return h.length % 2 === 0 && h.slice(0, k).join(' ') === h.slice(k).join(' ') ? h.slice(0, k).join(' ') : s }
 
 // ── Reading the invoice ─────────────────────────────────────────────────────────────────────────
 type Read = { vendor: string; number: string | null; invoiceDate: string | null; periodFrom: string | null; periodTo: string | null; total: number | null; lines: { date: string | null; unit: string; service: string; qty: number; amount: number | null }[] }
@@ -141,7 +143,7 @@ export async function checkInvoice(read: Read, opts: { id: string; excludeId?: s
   const used = new Set<string>()
   const seen = new Map<string, number>()
   const out: InvLine[] = []
-  const shape = (t: Task): InvLine['clean'] => ({ taskId: String(t.id), date: t.scheduled_date, status: t.status, name: t.name, cleaner: t.finished_by_name || t.assignee_name, finishedAt: t.finished_at, report: t.report_url })
+  const shape = (t: Task): InvLine['clean'] => ({ taskId: String(t.id), date: t.scheduled_date, status: t.status, name: t.name, cleaner: who(t.finished_by_name || t.assignee_name), finishedAt: t.finished_at, report: t.report_url })
   const dayOf = (t: Task) => etDay(t.finished_at) || t.scheduled_date
   read.lines.forEach((l, i) => {
     const lst = matched[i]
@@ -159,7 +161,7 @@ export async function checkInvoice(read: Read, opts: { id: string; excludeId?: s
       let t: Task | undefined, verdict: Verdict, why: string
       if (l.date) {
         t = pick(done, l.date, 0)
-        if (t) { verdict = 'match'; why = `Finished ${dayOf(t)}${t.finished_by_name || t.assignee_name ? ' by ' + (t.finished_by_name || t.assignee_name) : ''}.` }
+        if (t) { const by = who(t.finished_by_name || t.assignee_name); verdict = 'match'; why = (dayOf(t) === l.date ? `Finished ${dayOf(t)}` : `Scheduled ${t.scheduled_date}, finished ${dayOf(t)}`) + (by ? ' by ' + by : '') + '.' }
         else if ((t = pick(done, l.date, 1))) { verdict = 'date_off'; why = `Billed ${l.date}; the clean on record was ${dayOf(t)}.` }
         else if ((t = pick(cands, l.date, 1))) { verdict = 'not_done'; why = `A clean was scheduled ${t.scheduled_date} but is “${t.status || 'open'}”, not finished.` }
         else { verdict = 'no_clean'; why = `No housekeeping task at ${lst.name} on or around ${l.date}.` }
@@ -179,7 +181,7 @@ export async function checkInvoice(read: Read, opts: { id: string; excludeId?: s
   // Finished cleans at these units in the period that the invoice does not bill.
   const pf = read.periodFrom || dates.sort()[0] || from, pt = read.periodTo || dates.sort().reverse()[0] || to
   const unbilled = tasks.filter(t => DONE.test(String(t.status)) && !used.has(String(t.id)) && !billedBefore.has(String(t.id)) && (dayOf(t) || '') >= pf && (dayOf(t) || '') <= pt)
-    .map(t => ({ taskId: String(t.id), date: dayOf(t), unit: listings.find(l => l.id === String(t.reference_property_id))?.name || String(t.reference_property_id), name: t.name, cleaner: t.finished_by_name || t.assignee_name }))
+    .map(t => ({ taskId: String(t.id), date: dayOf(t), unit: listings.find(l => l.id === String(t.reference_property_id))?.name || String(t.reference_property_id), name: t.name, cleaner: who(t.finished_by_name || t.assignee_name) }))
   return { lines: out, unbilled }
 }
 
