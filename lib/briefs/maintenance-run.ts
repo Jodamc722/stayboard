@@ -1,8 +1,9 @@
 // MAINTENANCE RUN — one technician's morning (Jon, 2026-10-01). Per tech, in his language:
 //   Do first (guest-reported, pest, a unit that is empty only today) → Your list, ordered by the
 //   window (empty today → arriving today → occupied, call first → building & common areas) →
-//   Free trips (you are already going there, take this with you) → the charge reminder → the
-//   shape of the day. Roberto gets the combined version (every tech, same order).
+//   Trips with nothing on them (you are already going there, take this with you) → the charge
+//   reminder → how the day runs. The combined version (every tech, same order) goes to the
+//   `maint` list.
 import 'server-only'
 import { gather, niceDay } from '@/lib/ops-brief'
 import { getShifts, nameMatches } from '@/lib/homebase'
@@ -76,7 +77,7 @@ export async function buildMaintenanceRun(tech: string | 'all', lang: BriefLang 
     const j: Job = { unit: o.unit === 'Unknown unit' ? pick('Building / common area', 'Edificio / área común') : o.unit, lid: o.lid, task: title, who, state: o.state, kind, age: ageOf[o.lid + '|' + str(o.task).slice(0, 40)] ?? null, withOthers: ppl.filter((p: string) => p !== who && !/^[—-]/.test(p)) }
     if (!who) { unowned.push(j); continue }
     // ONLY THE TECHNICIANS (2026-10-01). A maintenance-department task held by a supervisor, the
-    // office or the CCS line is not a technician's run — it stays on the Ops Desk and the boards.
+    // office or the CCS line is not a technician's run — it stays on the Ops morning and the boards.
     if (!isTechName(who)) { heldByOthers++; continue }
     ;(jobs[personName(who)] = jobs[personName(who)] || []).push(j)
   }
@@ -109,10 +110,10 @@ export async function buildMaintenanceRun(tech: string | 'all', lang: BriefLang 
     const rows = list.map(jobRow)
     techBlocks.push(`<p style="margin:10px 0 2px;font-size:13px"><b>${esc(n)}</b> <span style="${T.muted};font-size:12px">· ${meta}</span></p>` +
       (rows.length ? `<table cellspacing="0" cellpadding="0" style="margin-left:4px">${rows.slice(0, tech === 'all' ? 8 : 14).map((h, i) => `<tr><td style="width:18px;padding:2px 0;font-size:12.5px;color:#9ca3af;vertical-align:top">${i + 1}</td><td style="padding:2px 0;font-size:13px;line-height:1.45">${h}</td></tr>`).join('')}${rows.length > (tech === 'all' ? 8 : 14) ? `<tr><td></td><td style="padding:2px 0;font-size:11.5px;color:#9ca3af">+${rows.length - (tech === 'all' ? 8 : 14)} ${t('more on the board')}</td></tr>` : ''}</table>` : `<p style="margin:2px 0 0 4px;font-size:12.5px;color:#6b7280">${pick('Nothing on the board — take a carryover from the Review tab.', 'Nada en el tablero — tome un pendiente de la pestaña Review.')}</p>`) +
-      (free.length ? `<p style="margin:6px 0 0 4px;font-size:12px;color:#065f46">${pick('Free trips', 'Viajes gratis')}: ${free.map((i: any) => `<b>${esc(unitShort(i.unit))}</b> ${esc(niceDate(i.target.date))} — ${esc(cleanTitle(i.task, lang))}`).join(' · ')}</p>` : ''))
+      (free.length ? `<p style="margin:6px 0 0 4px;font-size:12px;color:#065f46">${pick('Trips with nothing on them', 'Viajes sin nada asignado')}: ${free.map((i: any) => `<b>${esc(unitShort(i.unit))}</b> ${esc(niceDate(i.target.date))} — ${esc(cleanTitle(i.task, lang))}`).join(' · ')}</p>` : ''))
   }
   const unownedLines: Line[] = sortJobs(unowned).slice(0, 4).map(j => ({ tone: 'red', html: jobRow(j), sub: pick('Nobody is on it.', 'Nadie lo tiene.') }))
-  if (heldByOthers && tech === 'all') unownedLines.push({ tone: 'none', html: `<span style="${T.muted}">${heldByOthers} ${pick('maintenance jobs are held by supervisors or the office — on the Ops Desk, not here.', 'trabajos de mantenimiento los tienen supervisores u oficina — en el Ops Desk, no aquí.')}</span>` })
+  if (heldByOthers && tech === 'all') unownedLines.push({ tone: 'none', html: `<span style="${T.muted}">${heldByOthers} ${pick('maintenance jobs are held by supervisors or the office — on the Ops morning, not here.', 'trabajos de mantenimiento los tienen supervisores u oficina — en el Ops morning, no aquí.')}</span>` })
 
   // ---- the charge reminder — the one number a tech moves ---------------------------------------
   const noCharge7 = Number(mMi?.d7?.noCharge || 0) + Number(mBr?.d7?.noCharge || 0)
@@ -124,7 +125,7 @@ export async function buildMaintenanceRun(tech: string | 'all', lang: BriefLang 
   const steps = [
     { at: pick('start', 'inicio'), do: `${pick('Message every guest whose unit you need to enter', 'Escriba a cada huésped cuya unidad deba entrar')} (${k('guest') + k('occupied')}). ${pick('Pest and guest-reported first.', 'Plagas y reportes de huéspedes primero.')}` },
     { at: '10–4', do: `${pick('Empty units while they are empty', 'Unidades vacías mientras lo estén')} (${k('empty')})${k('arrival') ? ` · ${pick('arrival units finished before 4pm', 'las de llegada listas antes de las 4pm')} (${k('arrival')})` : ''}.` },
-    { at: pick('between', 'entre'), do: `${pick('Occupied units by appointment only', 'Unidades ocupadas solo con cita')} (${k('occupied')}). ${pick('Free trips ride along.', 'Los viajes gratis van de paso.')}` },
+    { at: pick('between', 'entre'), do: `${pick('Occupied units by appointment only', 'Unidades ocupadas solo con cita')} (${k('occupied')}). ${pick('Take the trips with nothing on them along.', 'Lleve de paso los viajes sin nada asignado.')}` },
     { at: pick('after 4', 'después 4'), do: `${pick('Building and common areas', 'Edificio y áreas comunes')} (${k('building')}). ${pick('Close every job in Breezeway with its cost before you leave.', 'Cierre cada trabajo en Breezeway con su costo antes de irse.')}` },
   ]
 
@@ -137,11 +138,12 @@ export async function buildMaintenanceRun(tech: string | 'all', lang: BriefLang 
     { html: doFirstAll.length ? section(pick('Do first', 'Primero'), doFirstAll, { cap: 5, accent: A }) : '' },
     { html: block(pick('Your list — in order', 'Su lista — en orden'), techBlocks.join('') || `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">${t('Nothing on the board today.')}</p>`, A, allJobs.length) },
     { html: unownedLines.length && tech === 'all' ? section(pick('Nobody on it', 'Sin asignar'), unownedLines, { cap: 4, accent: A }) : '', optional: true },
-    { html: dayShape(A, steps, pick('Shape of the day', 'Forma del día')) },
+    { html: dayShape(A, steps, pick('How the day runs', 'Cómo va el día')) },
     { html: reminder ? block(pick('Charges', 'Cargos'), reminder, A) : '', optional: true },
     { html: footer(pick('Maintenance Run · every morning at 7 · the board has the live picture.', 'Ruta de mantenimiento · cada mañana a las 7 · el tablero tiene la foto en vivo.')) },
   ]
   const { html } = fit(parts, 60_000)
-  const subject = `${pick('Maintenance Run', 'Ruta de mantenimiento')}${tech === 'all' ? '' : ' · ' + who} · ${allJobs.length} ${pick('jobs', 'trabajos')}${k('pest') + k('guest') ? ` · ${k('pest') + k('guest')} ${pick('urgent', 'urgentes')}` : ''} · ${niceDay(today)}`
+  // PLAIN SUBJECTS (Jon, 2026-11-05): the brief, the tech, the day, one number.
+  const subject = `${pick('Maintenance Run', 'Ruta de mantenimiento')} · ${who} · ${niceDay(today)} · ${allJobs.length} ${pick('jobs', 'trabajos')}`
   return { subject, html, words: words(html), counts: { jobs: allJobs.length, urgent: k('pest') + k('guest'), empty: k('empty'), unowned: unowned.length, techs: techs.length } }
 }

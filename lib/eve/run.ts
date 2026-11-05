@@ -21,7 +21,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from './ctx'
 import { wireTools, runTool, DOMAIN_KEYS } from './registry'
 import { guessDomains } from './domain-guess'
-import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory, memoryHitsFor, recordMemoryHits } from './memory'
+import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory, memoryHitsFor, recordMemoryHits, STAFF_MAX_WEIGHT } from './memory'
+import { teacherFor, identityOfAccess, teacherSource, type Teacher } from './teachers'
 import { appAtlas } from './atlas'
 import { buildSystemBlocks, getVoiceProfile, nowET } from './prompt'
 import { detectLanguage, languageNote, getLingo, lingoNote } from './voice'
@@ -154,7 +155,24 @@ export type RunEveInput = {
    *  how the asker was matched to a Lighthouse account (lib/slack-identity-rules.ts), null if not at all. */
   slack?: { channel: string; user: string; name?: string | null; how?: string | null; thread?: string | null }
   maxTurns?: number
+  /**
+   * TEACH MODE (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can teach Eve").
+   * The message is an instruction to keep, not a question: she restates it, picks kind and scope and
+   * calls `remember` — no regex gate decides whether it counts.
+   */
+  teach?: boolean
+  /** The server-side conversation this turn belongs to (eve_conversations, migration 171). */
+  conversationId?: string | null
 }
+
+/** One memory written during a turn, as the chat shows it ("Saved as rule · Botanica · Undo · Edit"). */
+export type LearnedItem = {
+  id: string; kind: string; text: string; scope: string; scopeLabel: string; weight: number; source: string
+  teacher: string | null; via: 'remember' | 'auto' | 'correction' | 'teach'
+  /** 'saved' is in force; 'suggested' waits for a teacher's Confirm (a non-teacher's auto-capture). */
+  status: 'saved' | 'suggested'
+}
+export type UsedItem = { id: string; kind: string; text: string; source: string }
 
 export type RunEveOk = {
   ok: true
@@ -167,8 +185,16 @@ export type RunEveOk = {
    */
   logReply: string
   chatId: string | null
+  conversationId: string | null
   meta: {
     turns: number; ms: number; tools: string[]; domains: string[]; memories: number; moneyRedacted: boolean; webSearch: string
+    /** Every memory written this turn (remember, auto-capture, correction) — 2026-11-05. */
+    learned: LearnedItem[]
+    /** The memories the answer drew on, as text (memoryHits.used, capped at 10) — 2026-11-05. */
+    used: UsedItem[]
+    /** Was the asker a teacher, and how heavy their word (lib/eve/teachers.ts). */
+    teacher: { tier: string | null; maxWeight: number } | null
+    conversationId: string | null
     usage: { input: number; output: number; cacheRead: number; cacheWrite: number }
     /** Which injected memories the answer actually drew on (lib/eve/memory.ts memoryHitsFor). */
     memoryHits: { injected: number; used: string[]; lanes?: Record<string, number>; used_by_lane?: Record<string, number>; reranked?: boolean; rerank?: string }
@@ -235,6 +261,29 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   if (guestSafe) ctx.guestSafe = true
   const db = supabaseAdmin()
   const today = todayET()
+
+  /* WHO IS TEACHING (Jon, 2026-11-05: "She can learn from any CCS agent, she can also learn from
+     Roberto, Karla & Bernadette"). One answer from lib/eve/teachers.ts for every surface. A vendor
+     tier never teaches, whoever they claim to be. The effective memory ceiling: Jon 10, a named
+     teacher 8, CCS 6, anyone else STAFF_MAX_WEIGHT — and a room's cap still narrows a non-teacher. */
+  const NOT_TEACHER: Teacher = { teacher: false, tier: null, maxWeight: 0, label: '' }
+  const teacher: Teacher = input.tier === 'vendor' || isProbe ? NOT_TEACHER
+    : await teacherFor(identityOfAccess(access as any, { slackId: input.slack?.user || null, name: input.slack?.name || null })).catch(() => NOT_TEACHER)
+  const roomCap = Number.isFinite(input.memoryWeightCap) ? Number(input.memoryWeightCap) : null
+  const isJon = isSuperadmin(ctx.email)
+  const effCap = isJon ? (roomCap ?? 10)
+    : roomCap === 0 ? 0
+    : teacher.teacher ? Math.max(roomCap ?? 0, teacher.maxWeight)
+    : Math.min(roomCap ?? STAFF_MAX_WEIGHT, STAFF_MAX_WEIGHT)
+  const conversationId = input.conversationId && /^[0-9a-f-]{36}$/i.test(String(input.conversationId)) ? String(input.conversationId) : null
+  // Ids written this turn, by how they were written (built into meta.learned at the end).
+  const learnedIds: { id: string; via: LearnedItem['via']; status: LearnedItem['status'] }[] = []
+  const noteLearned = (id: any, via: LearnedItem['via'], status: LearnedItem['status'] = 'saved') => {
+    const k = String(id || ''); if (!k) return
+    const at = learnedIds.findIndex(x => x.id === k)
+    if (at >= 0) learnedIds[at] = { id: k, via, status }
+    else learnedIds.push({ id: k, via, status })
+  }
 
   // --- Light headline snapshot: cheap counts, for instant situational awareness only. ---
   const cutoff60 = daysAgoISO(60)
@@ -337,7 +386,14 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   if (source === 'slack') {
     try { const { voiceLessonsText } = await import('./match-lessons'); const t = await voiceLessonsText(8); if (t) voiceLessons = 'FOLLOW-UPS THE TEAM HAD TO ASK YOU RECENTLY — put these answers in the message up front:\n' + t } catch { /* optional */ }
   }
-  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', voiceLessons, input.surfaceNote || '', emptyScope].filter(Boolean).join('\n')
+  /* TEACH MODE (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can teach Eve"). */
+  const teachNote = input.teach && !noTools ? `TEACH MODE IS ON. ${userName || 'The person'} is TEACHING you, not asking. Treat the message as an instruction to keep:
+1. Restate it as ONE standalone sentence someone new could follow (keep their numbers, names and exceptions; translate to English if needed, and keep the original wording in "why").
+2. Pick the kind: rule (an instruction), preference (how they want it done), decision, person (who someone is / a name mapping), issue (a recurring problem) or correction (you had it wrong).
+3. Pick the narrowest scope it is about: portfolio, building:<Name>, unit:<listingId>, channel:<Airbnb|Vrbo|Booking.com|Expedia|Direct> or person:<email>.
+4. Call remember with text, kind, scope, why and weight ${Math.max(1, Math.min(effCap || STAFF_MAX_WEIGHT, 8))}${isJon ? ' (up to 10 if they say it is critical)' : ''}; add expires_on if it is time-bound. If it replaces something you already believe, pass supersedes with that memory's id (search_memory first).
+5. Reply in one or two lines: what you saved, as what, for where ("Saved as a rule for Botanica: …"). If it is genuinely ambiguous (which building? always or only this week?), ask ONE short question instead of saving.` : ''
+  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', voiceLessons, input.surfaceNote || '', emptyScope, teachNote].filter(Boolean).join('\n')
   // ORDER IS PRECEDENCE. The prompt tells the model these notes override what came before, so the
   // last word belongs to the narrowest instruction: house vocabulary first, then where she is
   // standing, then Jon's own hand-written voice notes, and the language rule last of all, because
@@ -497,11 +553,26 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
           // A CODE RELEASED IN THIS TURN STAYS IN THE REPLY (N6): a propose_action payload, a memory or
           // any other tool call after the release gets the code replaced with the audit-trail pointer.
           if (released.length && block.name !== 'door_code_check') args = scrubReleasedInValue(args, released)
-          if (block.name === 'remember' && Number.isFinite(input.memoryWeightCap)) {
-            const cap = Number(input.memoryWeightCap)
-            args = { ...args, weight: Math.min(cap, Number(args.weight) || cap), _maxWeight: cap, _source: source === 'slack' ? 'slack' : undefined, why: `${String(args.why || '').slice(0, 200)} [said by ${ctx.email || 'someone'} in Slack]`.trim() }
+          if (block.name === 'remember') {
+            // Nothing the model sends may set the underscore fields — they are stamped here only.
+            const clean: any = {}
+            for (const k of Object.keys(args || {})) if (!k.startsWith('_')) clean[k] = (args as any)[k]
+            args = clean
+            /* EVERY SURFACE IS CAPPED NOW, NOT ONLY SLACK (2026-11-05). On the web a colleague's
+               `remember` carried whatever weight the model chose; it now carries the asker's ceiling
+               (teachers.ts: Jon 10, named teachers 8, CCS 6, anyone else 6). */
+            if (!isJon || roomCap != null) {
+              const cap = effCap
+              args = { ...args, weight: Math.min(cap, Number(args.weight) || cap), _maxWeight: cap }
+            }
+            if (source === 'slack') {
+              // A teacher's word in Slack is theirs ('staff' with their name), not an overheard 'slack' line.
+              args = { ...args, _source: teacher.teacher ? undefined : 'slack', why: `${String(args.why || '').slice(0, 200)} [said by ${teacher.label || ctx.email || 'someone'} in Slack]`.trim() }
+            }
+            args = { ...args, _teacher: teacher.teacher ? teacher.label : undefined, _evidence: { capturedFrom: source, conversationId, ...(input.teach ? { teachMode: true } : {}) } }
           }
           const { output, opened } = await runTool(block.name, args, ctx, open)
+          if (block.name === 'remember' && output && (output as any).saved && (output as any).id) noteLearned((output as any).id, input.teach ? 'teach' : 'remember')
           if (opened && open.indexOf(opened) < 0) open.push(opened)
           if (block.name === 'door_code_check' && output && typeof output === 'object') {
             for (const k of ['code', 'previous_code']) if (output[k] != null && String(output[k]).trim()) released.push(String(output[k]).trim())
@@ -551,7 +622,11 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // `memory_hits` arrived with migration 103, `usage` with 075 and `source` with 055. Before
       // any of them runs, log the exchange with what the table has rather than losing it from the
       // learning loop — each attempt drops the newest column.
-      const attempts: any[] = [{ ...row, source, usage, memory_hits: memoryHits }, { ...row, source, usage }, { ...row, source }, row]
+      // conversation_id arrived with migration 171 (2026-11-05); before it runs the next shape logs as before.
+      const attempts: any[] = [
+        ...(conversationId ? [{ ...row, source, usage, memory_hits: memoryHits, conversation_id: conversationId }] : []),
+        { ...row, source, usage, memory_hits: memoryHits }, { ...row, source, usage }, { ...row, source }, row,
+      ]
       for (const attempt of attempts) {
         try {
           const { data, error } = await db.from('eve_chats').insert(attempt).select('id').maybeSingle()
@@ -580,7 +655,10 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // taught twice. A Slack reply now teaches her when the room's tier may hold a rule (memory weight
       // cap ≥ 6: staff and admin rooms, never a vendor room) and the thread carried her previous answer
       // (app/api/slack/events passes it). personSource still caps a colleague's weight at 6.
-      const slackMayTeach = source === 'slack' && Number.isFinite(input.memoryWeightCap) && Number(input.memoryWeightCap) >= 6
+      // A TEACHER TEACHES FROM SLACK WHATEVER THE ROOM (Jon, 2026-11-05: "She can learn from any CCS
+      // agent, she can also learn from Roberto, Karla & Bernadette") — never in a vendor tier (teacherFor
+      // is not asked there).
+      const slackMayTeach = source === 'slack' && ((Number.isFinite(input.memoryWeightCap) && Number(input.memoryWeightCap) >= 6) || teacher.teacher)
       if (!isProbe && (source !== 'slack' || slackMayTeach) && prev) {
         const { looksLikeCorrection, captureCorrection } = await import('./brain')
         if (looksLikeCorrection(lastUser, !!prev)) {
@@ -589,10 +667,12 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
             const only = (prefix: string) => { const l = named.filter(x => x.startsWith(prefix)); return l.length === 1 ? l[0] : null }
             return only('unit:') || only('building:') || only('channel:') || 'portfolio'
           }
-          await Promise.race([
-            captureCorrection({ email: ctx.email, question: prevQ, answer: prev, correction: lastUser, chatId, memories, scopeFor }),
-            new Promise(res => setTimeout(res, 9000)),
+          const who = teacher.teacher ? (() => { const t = teacherSource(teacher, 8); return { ...t, label: teacher.label } })() : undefined
+          const got: any = await Promise.race([
+            captureCorrection({ email: ctx.email, question: prevQ, answer: prev, correction: lastUser, chatId, memories, scopeFor, who, evidence: { conversationId } }),
+            new Promise(res => setTimeout(() => res(null), 9000)),
           ])
+          if (got && got.saved && got.id) noteLearned(got.id, 'correction')
         }
       }
     } catch { /* a missed lesson never breaks an answer */ }
@@ -607,26 +687,50 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // weight; nothing is captured behind their back and nothing they say is filed as Jon's.
     try {
       const cap = Number.isFinite(input.memoryWeightCap) ? Number(input.memoryWeightCap) : 10
-      const directive = /\b(always|never|from now on|going forward|do not ever|don'?t ever|stop (?:doing|sending|creating|drafting)|make sure (?:to|you|we|it))\b/i
+      /* BROADER EARS (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can teach Eve").
+         Besides always / never / from now on: "remember", "our rule is", "going forward", "note that",
+         and the Spanish the CCS team writes in — siempre, nunca, a partir de ahora, de ahora en
+         adelante, recuerda, nuestra regla. */
+      const directive = /\b(always|never|from now on|going forward|moving forward|do not ever|don'?t ever|stop (?:doing|sending|creating|drafting)|make sure (?:to|you|we|it)|remember (?:that|to)|please remember|our (?:rule|policy) is|the rule is|we (?:always|never)|note that|keep in mind)\b|\b(siempre|nunca|a partir de ahora|de ahora en adelante|recuerda|recuerde|nuestra (?:regla|pol[ií]tica) es|la regla es|ten en cuenta|toma nota)\b/i
       const memGate = await agentAllowed('memory_rule')
       //
       // A QUESTION IS NOT AN INSTRUCTION, AND A CAPTURE IS NOT SETTLED (Jon, 2026-09-23 review).
       // "Should we always charge a pet fee?" was being filed as a standing rule. Anything with a
       // question mark, or opening with who/what/why/how/when/where/can/should/do/does/is/are, is
       // not captured. What is captured is scoped to the building, unit or channel it names (the
-      // same scopesForText() the prompt uses) instead of always portfolio, stored at weight 5 — a
-      // lead, not a rule — and raised to Jon as a confirmation question. His answer supersedes the
-      // capture (evidence.memory_ids, see answerQuestion in questions.ts).
+      // same scopesForText() the prompt uses) instead of always portfolio.
+      //
+      // A TEACHER'S DIRECTIVE IS A RULE, NOT A SUGGESTION (Jon, 2026-11-05: "She can learn from any CCS
+      // agent, she can also learn from Roberto, Karla & Bernadette"). From a teacher it is saved as a
+      // rule at their weight, in their name, with no verify question — in Slack too. From anyone else
+      // it stays what it was: an insight at weight 5 plus a confirmation question, never from Slack,
+      // and the chat shows it as "Suggested — Confirm / Dismiss".
+      // TEACH MODE skips this: the model was told to call remember, and a fallback below covers a miss.
       const said = lastUser.trim()
-      const asking = said.includes('?') || /^(who|what|why|how|when|where|can|should|do|does|is|are)\b/i.test(said)
-      if (!isProbe && memGate.mode !== 'observe' && source !== 'slack' && cap >= 6 && !asking && directive.test(said) && said.length >= 25 && said.length <= 600) {
-        const kind = /\b(always|never)\b/i.test(said) ? 'rule' : 'preference'
-        // The most specific single place the sentence names: one unit, else one building, else one
-        // channel. Two buildings (or none) is a portfolio-wide statement.
+      const asking = said.includes('?') || said.includes('¿') || /^(who|what|why|how|when|where|can|should|do|does|is|are|qu[eé]|c[oó]mo|cu[aá]ndo|d[oó]nde|por qu[eé]|puedes|debemos)\b/i.test(said)
+      const scopeOfSaid = () => {
         const named = scopesForText(said, ctx.listingMeta).filter(x => x !== 'portfolio')
         const only = (prefix: string) => { const l = named.filter(x => x.startsWith(prefix)); return l.length === 1 ? l[0] : null }
-        const capScope = only('unit:') || only('building:') || only('channel:') || 'portfolio'
-        saveMemory({
+        return only('unit:') || only('building:') || only('channel:') || 'portfolio'
+      }
+      const alreadyLearned = learnedIds.length > 0
+      const teacherMay = teacher.teacher && (source !== 'slack' || cap > 0)
+      if (!isProbe && memGate.mode !== 'observe' && !input.teach && !alreadyLearned && !asking && directive.test(said) && said.length >= 20 && said.length <= 600 && teacherMay) {
+        const capScope = scopeOfSaid()
+        const t = teacherSource(teacher, 8)
+        const saved = await saveMemory({
+          text: said, kind: 'rule', scope: capScope, weight: t.weight, maxWeight: t.maxWeight, source: t.source,
+          why: `Said by ${teacher.label || ctx.email || 'a teacher'} ${source === 'slack' ? 'in Slack' : source === 'telegram' ? 'on Telegram' : 'in chat'} on ${today} — a teacher's standing instruction`,
+          evidence: { chatId, conversationId, capturedFrom: source, teacher: teacher.label || ctx.email || null, directive: true },
+          created_by: ctx.email || null, confidence: 1,
+        }).catch(() => null)
+        if (saved?.ok && saved.id) noteLearned(saved.id, 'auto')
+      } else if (!isProbe && memGate.mode !== 'observe' && !input.teach && !alreadyLearned && source !== 'slack' && cap >= 6 && !asking && directive.test(said) && said.length >= 25 && said.length <= 600) {
+        const kind = /\b(always|never|siempre|nunca)\b/i.test(said) ? 'rule' : 'preference'
+        // The most specific single place the sentence names: one unit, else one building, else one
+        // channel. Two buildings (or none) is a portfolio-wide statement.
+        const capScope = scopeOfSaid()
+        const saved = await saveMemory({
           // FILED AS AN INSIGHT, NOT A RULE (2026-09-28 audit, F15). "The AC in 402 always breaks" is
           // a description, not an instruction, and filed as kind 'rule' from Jon it went straight
           // into her STANDING RULES before he had confirmed anything. It is an insight until he says
@@ -635,27 +739,70 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
           // Only Jon's own words are filed as Jon's; a colleague's directive is Eve's inference.
           source: isSuperadmin(ctx.email) ? 'jon' : source === 'telegram' ? 'telegram' : 'eve',
           why: source === 'telegram' ? 'said on Telegram — auto-captured, awaiting confirmation' : `said in chat by ${ctx.email || 'someone'} — auto-captured, awaiting confirmation`,
-          evidence: chatId ? { chatId, autoCaptured: true, proposedKind: kind } : { autoCaptured: true, proposedKind: kind }, created_by: ctx.email || null,
-        }).then(async saved => {
-          if (!saved.ok || !saved.id || saved.deduped) return
-          const { askQuestion } = await import('./questions')
-          const where = capScope === 'portfolio' ? 'everywhere' : capScope.replace(/^building:/, 'at ').replace(/^unit:/, 'for unit ').replace(/^channel:/, 'on ')
-          return askQuestion({
-            question: `${ctx.email || 'Someone'} told me in chat: "${said.slice(0, 300)}". Should I treat that as a standing ${kind} ${where}?`,
-            why: `I have noted it at low weight. If you confirm it I will follow it as a rule; if not, I will drop it instead of acting on a passing remark.`,
-            scope: capScope, kind: 'verify', source: 'eve',
-            evidence: { memory_ids: [saved.id], chatId, autoCaptured: true },
-          })
-        }).catch(() => {})
+          evidence: chatId ? { chatId, conversationId, autoCaptured: true, proposedKind: kind } : { conversationId, autoCaptured: true, proposedKind: kind }, created_by: ctx.email || null,
+        }).catch(() => null)
+        if (saved?.ok && saved.id) {
+          noteLearned(saved.id, 'auto', 'suggested')
+          if (!saved.deduped) {
+            const { askQuestion } = await import('./questions')
+            const where = capScope === 'portfolio' ? 'everywhere' : capScope.replace(/^building:/, 'at ').replace(/^unit:/, 'for unit ').replace(/^channel:/, 'on ')
+            await askQuestion({
+              question: `${ctx.email || 'Someone'} told me in chat: "${said.slice(0, 300)}". Should I treat that as a standing ${kind} ${where}?`,
+              why: `I have noted it at low weight. If you confirm it I will follow it as a rule; if not, I will drop it instead of acting on a passing remark.`,
+              scope: capScope, kind: 'verify', source: 'eve',
+              evidence: { memory_ids: [saved.id], chatId, autoCaptured: true },
+            }).catch(() => null)
+          }
+        }
+      }
+      // TEACH MODE, MODEL DID NOT SAVE: keep the instruction anyway unless she asked a clarifying
+      // question back — a teacher who pressed "Teach Eve" should never find nothing was kept.
+      if (!isProbe && input.teach && !learnedIds.length && memGate.mode !== 'observe' && effCap > 0 && !/\?\s*$/.test(finalText.trim()) && said.length >= 8) {
+        const t = teacherSource(teacher, 8, Math.min(effCap, STAFF_MAX_WEIGHT))
+        const saved = await saveMemory({
+          text: said.slice(0, 1000), kind: 'rule', scope: scopeOfSaid(), weight: Math.min(t.weight, effCap), maxWeight: Math.min(t.maxWeight, effCap), source: t.source,
+          why: `Taught in Teach mode by ${teacher.label || ctx.email || 'someone'} on ${today}`,
+          evidence: { chatId, conversationId, capturedFrom: source, teachMode: true, ...(teacher.teacher ? { teacher: teacher.label } : {}) },
+          created_by: ctx.email || null, confidence: 1,
+        }).catch(() => null)
+        if (saved?.ok && saved.id) noteLearned(saved.id, 'teach')
       }
     } catch { /* learning is never worth breaking an answer */ }
+
+    /* SHOW WHAT WAS LEARNED, AND WHAT WAS USED (Jon, 2026-11-05: "EVE chat needs to be a learning
+       chat, where we can teach Eve"). Every memory written this turn comes back as a chip the chat
+       can Undo or Edit; the memories the answer drew on come back as text for "What I used". Money
+       in either is masked for anyone not cleared, like the prompt. */
+    const mask = (t: string) => (canMoney ? t : maskMoneyText(t))
+    let learned: LearnedItem[] = []
+    if (learnedIds.length) {
+      try {
+        const { data } = await db.from('eve_memory').select('id,kind,text,scope,weight,source,created_by,evidence').in('id', learnedIds.map(x => x.id))
+        const byId = new Map(((data as any[]) || []).map(r => [String(r.id), r]))
+        learned = learnedIds.map(x => {
+          const r: any = byId.get(x.id)
+          if (!r) return null
+          const sc = String(r.scope || 'portfolio')
+          const scopeLabel = sc === 'portfolio' ? 'Everywhere' : sc.startsWith('unit:') ? (ctx.listingMeta[sc.slice(5)]?.name || sc.slice(5)) : sc.replace(/^(building|channel|person):/, '')
+          return { id: x.id, kind: String(r.kind), text: mask(String(r.text || '')), scope: sc, scopeLabel, weight: Number(r.weight) || 0, source: String(r.source || ''), teacher: r.evidence?.teacher || null, via: x.via, status: x.status } as LearnedItem
+        }).filter(Boolean) as LearnedItem[]
+        // A row saved by `remember` before the chat was logged learns which chat taught it.
+        if (chatId) await Promise.all(((data as any[]) || []).filter(r => !r.evidence?.chatId).map(r => db.from('eve_memory').update({ evidence: { ...(r.evidence && typeof r.evidence === 'object' ? r.evidence : {}), chatId, conversationId } }).eq('id', r.id))).catch(() => null)
+      } catch { learned = [] }
+    }
+    const usedSet = new Set(usedIds)
+    const used: UsedItem[] = memories.filter(m => usedSet.has(m.id)).slice(0, 10).map(m => ({ id: m.id, kind: m.kind, text: mask(String(m.text || '')).slice(0, 400), source: m.source === 'jon' ? 'jon' : (m.evidence?.teacher || (m.created_by ? String(m.created_by) : m.source)) }))
+    if (conversationId && !isProbe) {
+      try { await db.from('eve_conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversationId) } catch { /* migration 171 not run */ }
+    }
 
     return {
       ok: true,
       reply: finalText,
       logReply,
       chatId,
-      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits },
+      conversationId,
+      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits, learned, used, teacher: teacher.teacher ? { tier: teacher.tier, maxWeight: teacher.maxWeight } : null, conversationId },
     }
   } catch (e: any) {
     return { ok: false, status: 500, error: e?.message || String(e) }

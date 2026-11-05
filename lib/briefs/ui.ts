@@ -52,18 +52,26 @@ export type Line = { tone?: 'red' | 'amber' | 'green' | 'none'; html: string; su
 /** A section: an eyebrow title with a count, then lines. Lines over the cap collapse into "+N more". */
 export function section(title: string, lines: Line[], opts: { cap?: number; more?: string; note?: string; accent?: Accent } = {}): string {
   if (!lines.length) return ''
+  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px;overflow:hidden">
+    <div style="padding:10px 18px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${opts.accent ? opts.accent.ink : '#374151'}">${esc(title)} <span style="font-weight:400;color:#9ca3af">· ${lines.length}</span></div>
+    <div style="padding:4px 18px 0">${lineRows(lines, { cap: opts.cap, more: opts.more })}</div>
+    ${opts.note ? `<p style="margin:0;padding:0 18px 10px;font-size:11.5px;color:#9ca3af">${opts.note}</p>` : ''}
+  </div>`
+}
+
+/**
+ * The lines of a section without its card — for a block that holds more than one list (the GM
+ * morning's Labor block). Over the cap: "+N more {more}", where `more` carries the board link.
+ */
+export function lineRows(lines: Line[], opts: { cap?: number; more?: string } = {}): string {
+  if (!lines.length) return ''
   const cap = opts.cap ?? 8
   const shown = lines.slice(0, cap)
   const rest = lines.length - shown.length
   const dot = (t?: Line['tone']) => t === 'red' ? `<span style="${T.red}">●</span>` : t === 'amber' ? `<span style="${T.amber}">●</span>` : t === 'green' ? `<span style="${T.green}">●</span>` : `<span style="color:#cbd5e1">●</span>`
-  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px;overflow:hidden">
-    <div style="padding:10px 18px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${opts.accent ? opts.accent.ink : '#374151'}">${esc(title)} <span style="font-weight:400;color:#9ca3af">· ${lines.length}</span></div>
-    <table width="100%" cellspacing="0" cellpadding="0" style="padding:4px 18px 10px">
+  return `<table width="100%" cellspacing="0" cellpadding="0" style="padding-bottom:6px">
       ${shown.map(l => `<tr><td style="padding:5px 0;font-size:13px;line-height:1.5;border-top:1px solid #f8fafc;vertical-align:top;width:14px">${dot(l.tone)}</td><td style="padding:5px 0 5px 6px;font-size:13px;line-height:1.5;border-top:1px solid #f8fafc">${l.html}${l.sub ? `<div style="font-size:12px;color:#6b7280">${l.sub}</div>` : ''}</td></tr>`).join('')}
-    </table>
-    ${rest > 0 ? `<p style="margin:0;padding:0 18px 10px;font-size:11.5px;color:#9ca3af">+${rest} more ${opts.more || 'on the board'}</p>` : ''}
-    ${opts.note ? `<p style="margin:0;padding:0 18px 10px;font-size:11.5px;color:#9ca3af">${opts.note}</p>` : ''}
-  </div>`
+    </table>${rest > 0 ? `<p style="margin:0;padding:0 0 10px;font-size:11.5px;color:#9ca3af">+${rest} more ${opts.more || 'on the board'}</p>` : ''}`
 }
 
 /** A person's block inside a run: name line, then numbered rows (the run) and bullets (the rest). */
@@ -85,8 +93,9 @@ export function block(title: string, inner: string, accent?: Accent, count?: num
   </div>`
 }
 
-/** The shape of the day: a time column and what to do then. Deterministic, built from the data. */
-export function dayShape(a: Accent, steps: { at: string; do: string }[], title = 'Shape of the day'): string {
+/** How the day runs: a time column and what to do then. Deterministic, built from the data. */
+// "How the day runs", not "Shape of the day" (Jon, 2026-11-05: plain headings).
+export function dayShape(a: Accent, steps: { at: string; do: string }[], title = 'How the day runs'): string {
   if (!steps.length) return ''
   return `<div style="background:${a.soft};border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px;overflow:hidden">
     <div style="padding:10px 18px 6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${a.ink}">${esc(title)}</div>
@@ -96,14 +105,19 @@ export function dayShape(a: Accent, steps: { at: string; do: string }[], title =
   </div>`
 }
 
-/** Four numbers in a row, each with a label and a one-word verdict. */
-export function tiles(items: { label: string; value: string; note?: string; tone?: 'red' | 'amber' | 'green' | 'none' }[]): string {
-  const col = (t: typeof items[number]) => `<td style="padding:10px 6px;text-align:center;vertical-align:top;width:${Math.floor(100 / items.length)}%">
+/** Numbers in a row, each with a label and a one-word verdict. */
+export function tiles(items: TileItem[]): string {
+  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px">${tileTable(items)}</div>`
+}
+export type TileItem = { label: string; value: string; note?: string; tone?: 'red' | 'amber' | 'green' | 'none' }
+/** The tile row without its card — for a block that states its own window in the heading. */
+export function tileTable(items: TileItem[]): string {
+  const col = (t: TileItem) => `<td style="padding:10px 6px;text-align:center;vertical-align:top;width:${Math.floor(100 / items.length)}%">
     <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280">${esc(t.label)}</div>
     <div style="font-size:22px;font-weight:700;margin-top:2px;${t.tone === 'red' ? 'color:#b91c1c' : t.tone === 'amber' ? 'color:#b45309' : t.tone === 'green' ? 'color:#047857' : ''}">${esc(t.value)}</div>
     ${t.note ? `<div style="font-size:10.5px;color:#9ca3af;margin-top:1px">${esc(t.note)}</div>` : ''}
   </td>`
-  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px"><table width="100%" cellspacing="0" cellpadding="0"><tr>${items.map(col).join('')}</tr></table></div>`
+  return `<table width="100%" cellspacing="0" cellpadding="0"><tr>${items.map(col).join('')}</tr></table>`
 }
 
 export function footer(text: string): string {

@@ -572,6 +572,38 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
   } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
 }
 
+/*
+ * TAUGHT RULES REACH EVERYTHING (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we
+ * can teach Eve"). The chat loads memory per question; the briefs, the Slack reader and the nudges
+ * never read eve_memory at all, so a rule taught on Monday was obeyed in chat and ignored by the
+ * hourly pass. This is the short list every other model prompt gets: active rules and corrections
+ * at weight ≥ 7 (a teacher's or Jon's word), not superseded or expired, in scope, one line each.
+ * '' on any failure — a prompt without it is today's prompt.
+ */
+export async function standingRulesForPrompt(scope?: string | string[], cap = 25): Promise<string> {
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    let q: any = supabaseAdmin().from('eve_memory').select('id,kind,text,scope,weight,source,created_by,evidence,expires_on')
+      .is('superseded_by', null).in('kind', ['rule', 'correction']).gte('weight', 7)
+      .order('weight', { ascending: false }).order('updated_at', { ascending: false }).limit(cap * 3)
+    const scopes = scope == null ? null : (Array.isArray(scope) ? scope : [scope]).map(s => normScope(s))
+    if (scopes && scopes.length) q = q.in('scope', Array.from(new Set(['portfolio', ...scopes])))
+    const { data, error } = await q
+    if (error) return ''
+    const rows = ((data as any[]) || [])
+      .filter(r => !r.expires_on || String(r.expires_on) >= today)
+      .filter(r => !(r.evidence && r.evidence.autoCaptured && !r.evidence.teacher))
+      .slice(0, cap)
+    if (!rows.length) return ''
+    const lines = rows.map(r => {
+      const where = r.scope && r.scope !== 'portfolio' ? ` [${String(r.scope).replace(/^building:/, '').replace(/^channel:/, '')}]` : ''
+      const who = r.source === 'jon' ? 'Jon' : (r.evidence?.teacher || (r.created_by ? String(r.created_by).split('@')[0] : r.source))
+      return `- ${String(r.text || '').replace(/\s+/g, ' ').slice(0, 220)}${where} (${r.kind === 'correction' ? 'correction' : 'rule'}, ${who})`
+    })
+    return 'STANDING RULES THE TEAM HAS TAUGHT EVE (follow them; they override your defaults):\n' + lines.join('\n')
+  } catch { return '' }
+}
+
 /** Bump usage so the /eve page can show which memories are actually earning their place. */
 export async function touchMemories(ids: string[]): Promise<void> {
   if (!ids.length) return

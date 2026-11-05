@@ -9,8 +9,8 @@
 //   - A NEW SALATO BOOKING: unit, dates, nights, guest, channel, confirmation code.
 //   - A ONE-NIGHT BOOKING: the same, marked NOT PERMITTED: Salato has a two-night minimum and the
 //     reservation must be canceled (or extended). That is the thing to manage, so it keeps managing it:
-//       · still live 3 hours later, a reminder in the thread (daytime only, and at most every 3 hours),
-//         until it is canceled, extended, or the check-in day has passed;
+//       · still live 3 hours later, a reminder in the thread (9am–8pm ET, at most ONE a day per booking —
+//         Jon, 2026-11-05), until it is canceled, extended, or the check-in day has passed;
 //       · canceled → ✅ in the thread; extended to two nights or more → ✅ in the thread.
 //   - A BOOKING SHORTENED TO ONE NIGHT is treated exactly like a new one-night booking.
 //   - A CANCELED BOOKING that was announced gets a short "canceled" line in its own thread.
@@ -26,6 +26,12 @@
 //
 // Posts go on Eve's decision log (by 'cron:salato-watch', ref = the Slack ts) so she can say where a
 // post came from if anyone asks in the thread (lib/eve/provenance.ts).
+//
+// BEHIND THE GATE (Jon, 2026-11-05: "more effective, more clear and useful"). The watch posted straight
+// to #vr-customercareteam every 5 minutes, outside every cap. Now every post passes lib/eve/room-gate:
+// nothing between 8pm and 7am ET (the run waits for the morning and sees what changed overnight), the
+// said-registry, and the room's daily cap — which only a 1-night booking arriving inside 48 hours skips,
+// the one post that also earns <!channel>. A held post is retried at most hourly.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
@@ -49,7 +55,11 @@ type Entry = {
   ts?: string               // the thread every later message goes in
   oneNight?: boolean        // flagged as a one-night booking and not yet resolved
   lastNudge?: string
+  /** ET date of the last reminder: one a day at most (Jon, 2026-11-05). */
+  lastNudgeDay?: string
   nudges?: number
+  /** The gate held a post: try again an hour later, not every 5 minutes. */
+  heldAt?: string
   resolved?: string
   canceledNoted?: boolean
 }
@@ -116,8 +126,9 @@ function line(r: any, unit: string, n: number): string {
 const NEAR_DAYS = 14
 const daysOut = (ci: string, today: string) => (Date.parse(ci + 'T12:00:00Z') - Date.parse(today + 'T12:00:00Z')) / 86400000
 const isNear = (ci: string, today: string) => !!today && !!ci && daysOut(ci, today) <= NEAR_DAYS
-// @channel wakes the whole room: only a one-night stay inside 48 hours earns it.
-const isUrgent = (ci: string, today: string) => !!today && !!ci && daysOut(ci, today) <= 2
+// @channel wakes the whole room: only a one-night stay arriving in under 48 hours earns it — today or
+// tomorrow (Jon, 2026-11-05; it was "within two days", which reached 72 hours).
+const isUrgent = (ci: string, today: string) => !!today && !!ci && daysOut(ci, today) <= 1
 const oneNightText = (r: any, unit: string, n: number, why = 'New booking', today = '') => {
   const ci = str(r.check_in).slice(0, 10)
   const now = today && ci <= today
@@ -147,6 +158,10 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
     const cfg = await getSetting<{ enabled?: boolean }>(SALATO_WATCH_KEY, {})
     if (cfg && cfg.enabled === false) return { ...out, skipped: 'switched off (app_settings salato_watch.enabled = false)' }
   }
+  // NOTHING BETWEEN 8PM AND 7AM ET (Jon, 2026-11-05). The run itself waits, so the morning pass sees
+  // every change since the evening and nothing is half-recorded. A dry run still reads.
+  const { inPostWindow, roomGate } = await import('@/lib/eve/room-gate')
+  if (!opts.dryRun && !inPostWindow()) return { ...out, skipped: 'outside 7am–8pm ET — the morning run catches up' }
   const db = supabaseAdmin()
   const today = ymdET()
   const { match, ids } = await salatoListings(db)
@@ -163,7 +178,7 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
   const firstRun = !state.seeded
   let dirty = firstRun
   const now = new Date()
-  const daytime = hourET() >= 9 && hourET() < 21
+  const daytime = hourET() >= 9 && hourET() < 20
 
   for (const r of (data as any[]) || []) {
     out.checked++
@@ -176,9 +191,15 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
     const say = async (key: string, text: string, thread?: string, summary?: string): Promise<string | null> => {
       out.items!.push(`${key}: ${text.replace(/\s+/g, ' ').slice(0, 140)}`)
       if (opts.dryRun) return 'dry'
+      // THE GATE (Jon, 2026-11-05). Held → retried in an hour, not every five minutes.
+      if (e.heldAt && now.getTime() - Date.parse(e.heldAt) < 3600_000) return null
+      const g = await roomGate({ channel: CHANNEL, threadTs: thread || null, text, by: 'cron:salato-watch', urgent: /<!channel>/.test(text), summary })
+      if (!g.ok) { e.heldAt = now.toISOString(); dirty = true; out.items!.push(`${key}: held — ${g.why}`); return null }
+      if (e.heldAt) { e.heldAt = undefined; dirty = true }
       if (!(await claim(`${id}:${key}`))) return 'dup'                 // another run already said it
       const ts = await post(text, thread, summary)
       if (!ts) await unclaim(`${id}:${key}`)
+      else { try { const { markSaid } = await import('@/lib/eve/said'); await markSaid({ channel: CHANNEL, threadTs: thread || null, text, by: 'cron:salato-watch', ts }) } catch { /* best effort */ } }
       return ts
     }
     const real = (ts: string | null) => (ts && ts !== 'dry' && ts !== 'dup' ? ts : undefined)
@@ -216,11 +237,12 @@ export async function runSalatoWatch(opts: { dryRun?: boolean; fromCron?: boolea
         e.resolved = 'extended'; out.resolved++; dirty = true
       } else if (ci < today) {
         e.resolved = 'passed'; dirty = true                                                     // nothing left to cancel
-      } else if (live && daytime && Date.parse(e.lastNudge || '') < now.getTime() - NUDGE_HOURS * 3600_000) {
+      } else if (live && daytime && e.lastNudgeDay !== today && Date.parse(e.lastNudge || '') < now.getTime() - NUDGE_HOURS * 3600_000) {
+        // ONE REMINDER A DAY (Jon, 2026-11-05) — it was every three hours. <!channel> only under 48 hours.
         const k = (e.nudges || 0) + 1
-        const soon = ci <= ymdET(new Date(now.getTime() + 36 * 3600_000))
-        await say(`nudge-${k}`, `${soon ? '<!channel> ' : ''}:warning: Still active and still 1 night: ${unit}, check-in ${day(ci)}. It needs to be canceled or extended before the guest arrives.`, e.ts, `Salato 1-night reminder ${k}: ${unit} ${ci}`)
-        e.lastNudge = now.toISOString(); e.nudges = k; out.nudged++; dirty = true
+        const soon = isUrgent(ci, today)
+        const ts = await say(`nudge-${k}`, `${soon ? '<!channel> ' : ''}:warning: Reminder ${day(today)}: still active and still 1 night: ${unit}, check-in ${day(ci)}. It needs to be canceled or extended before the guest arrives.`, e.ts, `Salato 1-night reminder ${k}: ${unit} ${ci}`)
+        if (ts) { e.lastNudge = now.toISOString(); e.lastNudgeDay = today; e.nudges = k; out.nudged++; dirty = true }
       }
     }
 

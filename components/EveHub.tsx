@@ -23,10 +23,12 @@ import { OpenLoops } from '@/components/OpenLoops'
 import { openEve } from '@/components/EveFloat'
 import { NeedsTab, IssuesTab, DayTab, DesksTab } from '@/components/EveBrain'
 import { EveReports } from '@/components/EveReports'
+import { EveChat } from '@/components/EveChat'
 
 // WHAT EACH TAB IS, IN ONE LINE (Jon, 2026-09-30: "We need to better understand what each of those
 // things means in the tabs"). Shown under the tabs so nobody has to guess.
 const TAB_BLURB: Record<string, string> = {
+  chat: 'Talk to her — and teach her. Switch on Teach Eve to give her a rule; what she keeps shows under her answer with Undo and Edit, and every teacher\'s lessons are listed on the left.',
   overview: 'Decisions only a person can make. Open any row to see exactly what she will do, why, and links to the booking, guest thread, Breezeway task, glitch or Slack thread.',
   issues: 'Every problem a guest raised, followed until it is fixed and the guest has heard back: reported → glitch → task → someone on it → started → fixed → guest told. Red is the missing step.',
   loops: 'Things said in Slack she is keeping tabs on. She closes them herself when the matching task finishes or the guest is answered.',
@@ -37,7 +39,7 @@ const TAB_BLURB: Record<string, string> = {
   reports: 'The long reads — Ops Command, the shared-boards digest, the Monday quality audit, the Sunday scorecard, the plans. Filed here so Slack stays for the day-to-day.',
 }
 
-type TabKey = 'overview' | 'issues' | 'loops' | 'questions' | 'day' | 'expectations' | 'desks' | 'reports'
+type TabKey = 'chat' | 'overview' | 'issues' | 'loops' | 'questions' | 'day' | 'expectations' | 'desks' | 'reports'
 type HotLoop = { id: string; kind: string; summary: string; unit: string | null; building: string | null; owner: string | null; urgent: boolean; late: boolean; hours: number; link: string; channel: string | null }
 
 type Overview = {
@@ -66,7 +68,8 @@ const ago = (iso: string | null | undefined): string => {
 }
 
 export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: boolean; loopsLevel: string; initialTab?: TabKey; isAdmin?: boolean }) {
-  const [tab, setTab] = useState<TabKey>(initialTab || 'overview')
+  /* CHAT IS THE FIRST TAB (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can teach Eve"). */
+  const [tab, setTab] = useState<TabKey>(initialTab || 'chat')
   const [reportId, setReportId] = useState<string | null>(null)
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState('')
@@ -91,7 +94,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
     try {
       const sp = new URLSearchParams(window.location.search)
       const t = sp.get('tab')
-      if (t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations' || t === 'issues' || t === 'day' || t === 'desks' || t === 'reports') setTab(t)
+      if (t === 'chat' || t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations' || t === 'issues' || t === 'day' || t === 'desks' || t === 'reports') setTab(t)
       setReportId(sp.get('id'))
     } catch { /* server */ }
   }, [])
@@ -104,6 +107,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
   const hot = ov?.loops.top?.length || 0
   const needsYou = nCount != null ? nCount : waiting + hot
   const tabs = useMemo(() => ([
+    { key: 'chat' as TabKey, label: 'Chat', n: null as number | null },
     { key: 'overview' as TabKey, label: 'Needs you', n: needsYou || null },
     { key: 'issues' as TabKey, label: 'Guest issues', n: iCount || null },
     { key: 'loops' as TabKey, label: 'Watching', n: ov?.loops.open || null },
@@ -133,6 +137,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
       <LeanTabs tabs={tabs} value={tab} onChange={pick} />
       <p className="text-[12.5px] text-muted -mt-1.5 mb-3 px-1">{TAB_BLURB[tab]}</p>
 
+      {tab === 'chat' && <EveChat />}
       {tab === 'overview' && <NeedsTab isAdmin={!!isAdmin} canEdit={canEdit} onCount={setNCount} extras={
         <div className="flex items-center gap-2 flex-wrap mt-1">
           {qCount ? <button onClick={() => pick('questions')} className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[12.5px] font-semibold text-violet-800 hover:bg-violet-100"><HelpCircle size={13} /> {qCount} question{qCount === 1 ? '' : 's'} she needs answered</button> : null}

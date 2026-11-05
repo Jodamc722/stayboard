@@ -16,11 +16,16 @@
 //   3. Typing on a phone is the slowest way to ask a question while you are standing in a lobby.
 //      Hold the mic, say it, let go. Turn the speaker on and she reads the answer back.
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Sparkles, Send, ThumbsUp, ThumbsDown, X, Eraser, Mic, Volume2, VolumeX, KeyRound } from 'lucide-react'
+import { Sparkles, Send, ThumbsUp, ThumbsDown, X, Eraser, Mic, Volume2, VolumeX, KeyRound, GraduationCap } from 'lucide-react'
+import { LearnedChips, WhatIUsed, type Learned } from '@/components/EveChatBits'
 
-type Msg = { role: 'user' | 'assistant'; content: string; chatId?: string | null; meta?: any; rated?: number }
+type Msg = { role: 'user' | 'assistant'; content: string; chatId?: string | null; meta?: any; rated?: number; learned?: Learned[]; teach?: boolean }
 
 const STORE = 'eve-float-chat-v1'
+/* SAME STORE AS THE /eve CHAT (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can
+   teach Eve"). The thread is kept on the server (eve_conversations); sessionStorage stays as the
+   cache that keeps it across tabs, and this key remembers which server conversation it is. */
+const CONV_STORE = 'eve-float-conv-v1'
 
 // Phone-first: the first thing on the list is the thing you ask while standing at a door.
 const SUGGEST = [
@@ -53,6 +58,8 @@ export function EveFloat() {
   // Agent mode pill: null until known. Re-read each time the panel opens, so an OFF flipped in
   // Settings a moment ago shows here without a reload.
   const [agentOn, setAgentOn] = useState<boolean | null>(null)
+  const [convId, setConvId] = useState<string | null>(null)
+  const [teach, setTeach] = useState(false)
   // No "N thoughts" pill here any more (2026-09-28 audit): that count lives on Command Center and
   // /eve, and a third copy in the bubble was a third fetch of the same number.
   const endRef = useRef<HTMLDivElement>(null)
@@ -60,8 +67,9 @@ export function EveFloat() {
   const recRef = useRef<any>(null)
   const voiceRef = useRef<SpeechSynthesisVoice | null>(null)
 
-  useEffect(() => { setMsgs(loadStored()) }, [])
+  useEffect(() => { setMsgs(loadStored()); try { setConvId(sessionStorage.getItem(CONV_STORE) || null) } catch { /* private mode */ } }, [])
   useEffect(() => { try { sessionStorage.setItem(STORE, JSON.stringify(msgs.slice(-40))) } catch { /* full */ } }, [msgs])
+  useEffect(() => { try { if (convId) sessionStorage.setItem(CONV_STORE, convId); else sessionStorage.removeItem(CONV_STORE) } catch { /* private mode */ } }, [convId])
   useEffect(() => { if (open) { endRef.current?.scrollIntoView({ behavior: 'smooth' }); } }, [open, msgs, busy])
   useEffect(() => {
     if (!open) return
@@ -120,21 +128,22 @@ export function EveFloat() {
   const send = useCallback(async (override?: string) => {
     const q = (override ?? text).trim()
     if (!q || busy) return
-    const next: Msg[] = [...msgs, { role: 'user', content: q }]
+    const next: Msg[] = [...msgs, { role: 'user', content: q, teach }]
     setMsgs(next); setText(''); setBusy(true)
     try {
       const res = await fetch('/api/agent', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next.map(m => ({ role: m.role, content: m.content })) }),
+        body: JSON.stringify({ messages: next.map(m => ({ role: m.role, content: m.content })), conversationId: convId, teach }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)
-      setMsgs(m => [...m, { role: 'assistant', content: d.reply || '(no response)', chatId: d.chatId, meta: d.meta }])
+      setMsgs(m => [...m, { role: 'assistant', content: d.reply || '(no response)', chatId: d.chatId, meta: d.meta, learned: d.meta?.learned || [] }])
+      if (d.conversationId) setConvId(d.conversationId)
       say(d.reply || '')
     } catch (e: any) {
       setMsgs(m => [...m, { role: 'assistant', content: '⚠ ' + (e?.message || String(e)) }])
     } finally { setBusy(false) }
-  }, [text, busy, msgs, say])
+  }, [text, busy, msgs, say, convId, teach])
 
   // Opened from anywhere else in the app — the Command Center card, a row action, a deep link.
   useEffect(() => {
@@ -193,13 +202,16 @@ export function EveFloat() {
             )}
             <span className="text-[11px] text-muted hidden sm:inline">ops · money · quality · labor · guests</span>
             <div className="ml-auto flex items-center gap-0.5">
+              <button onClick={() => { setTeach(!teach); setTimeout(() => boxRef.current?.focus(), 30) }}
+                title={teach ? 'Teach mode is on — your message is filed as an instruction' : 'Teach Eve — your next messages are instructions she keeps'}
+                className={`p-2 rounded-lg ${teach ? 'text-white bg-amber-500' : 'text-muted hover:text-ink'}`}><GraduationCap size={15} /></button>
               <button onClick={() => { const n = !speak; setSpeak(n); if (!n && typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel() }}
                 title={speak ? 'Stop reading answers aloud' : 'Read answers aloud'}
                 className={`p-2 rounded-lg ${speak ? 'text-brand-600 bg-brand-50' : 'text-muted hover:text-ink'}`}>
                 {speak ? <Volume2 size={15} /> : <VolumeX size={15} />}
               </button>
               {msgs.length > 0 && (
-                <button onClick={() => setMsgs([])} title="Clear the conversation"
+                <button onClick={() => { setMsgs([]); setConvId(null) }} title="Clear the conversation (start a new one)"
                   className="p-2 rounded-lg text-muted hover:text-ink"><Eraser size={15} /></button>
               )}
               <button onClick={() => setOpen(false)} aria-label="Close" title="Close"
@@ -227,7 +239,13 @@ export function EveFloat() {
             )}
             {msgs.map((m, i) => (
               <div key={i}>
-                <div className={`text-[13.5px] whitespace-pre-wrap rounded-2xl px-3 py-2 max-w-[90%] ${m.role === 'user' ? 'ml-auto bg-brand-600 text-white' : 'bg-app border border-line text-ink'}`}>{m.content}</div>
+                <div className={`text-[13.5px] whitespace-pre-wrap rounded-2xl px-3 py-2 max-w-[90%] ${m.role === 'user' ? (m.teach ? 'ml-auto bg-amber-500 text-white' : 'ml-auto bg-brand-600 text-white') : 'bg-app border border-line text-ink'}`}>{m.content}</div>
+                {m.role === 'assistant' && (
+                  <>
+                    <LearnedChips items={m.learned || []} onChange={next => setMsgs(list => list.map((x, j) => (j === i ? { ...x, learned: next } : x)))} />
+                    <WhatIUsed used={m.meta?.used} tools={m.meta?.tools} chatId={m.chatId} conversationId={convId} />
+                  </>
+                )}
                 {m.role === 'assistant' && m.chatId && (
                   <div className="flex items-center gap-1.5 mt-1 pl-0.5">
                     <button onClick={() => rate(i, 1)} title="Good answer"
@@ -266,7 +284,7 @@ export function EveFloat() {
             )}
             <textarea ref={boxRef} value={text} onChange={e => setText(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-              rows={1} placeholder={listening ? 'Listening…' : 'Ask Eve…'} className={`${input} resize-none max-h-28`} />
+              rows={1} placeholder={listening ? 'Listening…' : teach ? 'Teach Eve a rule…' : 'Ask Eve…'} className={`${input} resize-none max-h-28`} />
             <button onClick={() => send()} disabled={busy || !text.trim()} aria-label="Send" title="Send"
               className="inline-flex items-center justify-center rounded-xl bg-brand-600 text-white p-2.5 flex-shrink-0 hover:bg-brand-700 disabled:opacity-50"><Send size={17} /></button>
           </div>

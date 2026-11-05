@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { lastRuns } from '@/lib/automation-runs'
 import { eveGate } from '../../agent/route'
 import { saveMemory, personSource, STAFF_MAX_WEIGHT } from '@/lib/eve/memory'
+import { teacherFor, identityOfAccess, teacherSource } from '@/lib/eve/teachers'
 import { runSweep } from '@/lib/eve/sweep'
 import { studyPending } from '@/lib/eve/study'
 import { generateQuestions } from '@/lib/eve/questions'
@@ -158,8 +159,11 @@ export async function POST(req: NextRequest) {
     if (text.length < 8) return NextResponse.json({ error: 'Say a little more — a rule she can follow.' }, { status: 400 })
     // Weight 8 and source 'jon' only when Jon is the one teaching; anyone else is 'staff' at the
     // staff ceiling of 6 (Jon, 2026-09-23 review).
-    const who = personSource(by, 8)
-    const res = await saveMemory({ text: text.slice(0, 1000), kind: body?.kind || 'rule', why: `Taught by ${by} in Settings → Eve → Learning on ${new Date().toISOString().slice(0, 10)}`, scope: body?.scope || 'portfolio', weight: who.weight, maxWeight: who.source === 'staff' ? STAFF_MAX_WEIGHT : undefined, source: who.source, confidence: 1, created_by: by })
+    // A teacher teaches at their tier's ceiling (lib/eve/teachers.ts — Jon, 2026-11-05: "She can
+    // learn from any CCS agent, she can also learn from Roberto, Karla & Bernadette").
+    const me = await teacherFor(identityOfAccess(gate.access as any)).catch(() => null)
+    const who = me?.teacher ? teacherSource(me, 8) : { ...personSource(by, 8), maxWeight: STAFF_MAX_WEIGHT }
+    const res = await saveMemory({ text: text.slice(0, 1000), kind: body?.kind || 'rule', why: `Taught by ${by} in Settings → Eve → Learning on ${new Date().toISOString().slice(0, 10)}`, scope: body?.scope || 'portfolio', weight: who.weight, maxWeight: who.source === 'staff' ? who.maxWeight : undefined, source: who.source, confidence: 1, created_by: by, evidence: me?.teacher && me.tier !== 'jon' ? { teacher: me.label || by } : undefined })
     if (!res.ok) return NextResponse.json({ error: res.error || 'could not save' }, { status: 500 })
     // Taught → tested. A probe is written for it now (one Haiku call) and asked tomorrow, with no
     // tools, so "she was told" becomes "she still knows". A reinforced duplicate re-arms its probe.

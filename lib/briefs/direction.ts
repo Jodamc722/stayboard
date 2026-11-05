@@ -1,4 +1,4 @@
-// THE DAY'S DIRECTION — one computation behind the Ops Command email and Eve's single morning post
+// THE DAY'S DIRECTION — one computation behind the Ops morning email (was Ops Command) and Eve's single morning post
 // (Jon, 2026-10-07: "consolidate Eve's engagement in a way that's helpful and direction-focused" ·
 // "bring the ops command brief and make it better").
 //

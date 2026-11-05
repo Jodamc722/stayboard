@@ -126,7 +126,11 @@ export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<Dr
       const r = await routeReport({ kind: rep.kind, title: rep.title, text: body, room: input.channelId || null, meta: { eventKey: input.eventKey, groupKey } })
       if (!r.post) return { ok: false, reason: `filed on the Reports desk (${r.route})` }
       body = r.text
-    } catch { /* the room gets the full text, as before */ }
+    } catch {
+      // ONE LINE OR NOTHING (Jon, 2026-11-05): the labor report and notable arrivals never fall back to
+      // the full text; the other reports still do, as before.
+      if (input.eventKey === 'labor_report' || input.eventKey === 'notable_arrivals') return { ok: false, reason: 'report could not be routed — not posted in full' }
+    }
   }
 
   const row = {
@@ -233,7 +237,12 @@ export async function decideByToken(token: string, approve: boolean): Promise<{ 
   return { ok: true, row }
 }
 
-/** Actually post. Channel first, then any DMs, then a copy to the firehose. */
+export const FIREHOSE_KEY = 'slack_firehose'
+async function firehoseCopyOn(): Promise<boolean> {
+  try { const { getSetting } = await import('./app-settings'); const v = await getSetting<any>(FIREHOSE_KEY, null); return !!(v && v.copy === true) } catch { return false }
+}
+
+/** Actually post. Channel first, then any DMs, then (only when switched on) a copy to the firehose. */
 export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: boolean; error?: string }> {
   const rules = rulesIn || (await getSlackRules())
   const db = supabaseAdmin()
@@ -282,7 +291,10 @@ export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: b
     } else problems.push('dm ' + u + ': ' + (r.error || 'failed'))
   }
   // Jon's copy of everything — but never twice into the same channel.
-  if (rules.firehose && rules.firehose !== row.channel_id) {
+  // OFF BY DEFAULT (Jon, 2026-11-05: "more effective, more clear and useful"): the approver DM already
+  // carries every message, so the second copy in the firehose channel was the same post again.
+  // app_settings `slack_firehose` { copy: true } turns it back on.
+  if (rules.firehose && rules.firehose !== row.channel_id && (await firehoseCopyOn())) {
     const tag = row.building ? '[' + row.building + '] ' : ''
     await postToChannel(rules.firehose, tag + mainBody)
   }

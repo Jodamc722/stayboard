@@ -54,9 +54,11 @@ export const ON_WATCH_KEY = 'eve_on_watch'
 const STATE_KEY = 'eve_on_watch_state'
 
 type Room = 'ops' | 'guest' | 'leadership'
-export type OnWatchConfig = { enabled: boolean; startHour: number; endHour: number; rooms: Record<Room, string> }
+// fixedOnePostPerDay (Jon, 2026-11-05): one "Fixed — a note is ready" post a day in the guest room;
+// what a later pass finds is added in that post's thread, numbered on, never a near-identical new post.
+export type OnWatchConfig = { enabled: boolean; startHour: number; endHour: number; rooms: Record<Room, string>; fixedOnePostPerDay: boolean }
 const DEFAULTS: OnWatchConfig = {
-  enabled: true, startHour: 11, endHour: 19,
+  enabled: true, startHour: 11, endHour: 19, fixedOnePostPerDay: true,
   rooms: { ops: EVE_CHANNELS.approvals, guest: EVE_CHANNELS.ccsJon, leadership: EVE_CHANNELS.leadership },
 }
 
@@ -64,13 +66,14 @@ const MAX_LINES = 6
 const SLACK_ITEM_AFTER_MIN = 45
 const NO_TASK_AFTER_H = 2
 const SLOW_TASK_AFTER_H = 6
-const ESCALATE_AFTER_H = 3
 // Categories a technician or a cleaner fixes — the only ones where "no Breezeway task" means anything.
 const FIELD_CATEGORY = /maint|clean|pest|bed ?bug|plumb|electric|hvac|temperature|applian|water|safety|security|building|common|noise|smell|mold|leak|lock|door|key|access/i
 const OPEN = (s: any) => !/^(closed|done|resolved)$/i.test(String(s || ''))
 
 type Flag = {
-  kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G'; room: Room; line: string; label: string
+  // U — an urgent Slack problem that affects a guest today and has nobody on it (the old separate
+  // "needs a name" post, merged into this one — Jon, 2026-11-05).
+  kind: 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G' | 'U'; room: Room; line: string; label: string
   channel: string | null; ts: string | null; at: string
   escalated?: boolean; resolved?: string | null; resolvedAt?: string | null
   /** D/F: when the fix finished, and how to find the guest's thread — so "did we tell them" can be checked */
@@ -82,7 +85,8 @@ type Flag = {
   /** Pilot One: the guest was told by Eve herself (a notice went out) — nothing to send. */
   sent?: boolean
 }
-type State = { flags: Record<string, Flag>; seen?: Record<string, string> }
+// fixedPost: today's one top-level "Fixed — a note is ready" post; later passes add to its thread.
+type State = { flags: Record<string, Flag>; seen?: Record<string, string>; fixedPost?: { date: string; channel: string; ts: string; count: number } }
 
 export async function getOnWatchConfig(): Promise<OnWatchConfig> {
   const v = await getSetting<any>(ON_WATCH_KEY, null)
@@ -92,6 +96,7 @@ export async function getOnWatchConfig(): Promise<OnWatchConfig> {
     startHour: Number.isFinite(Number(v?.startHour)) ? Number(v.startHour) : DEFAULTS.startHour,
     endHour: Number.isFinite(Number(v?.endHour)) ? Number(v.endHour) : DEFAULTS.endHour,
     rooms,
+    fixedOnePostPerDay: v?.fixedOnePostPerDay === undefined ? DEFAULTS.fixedOnePostPerDay : !!v.fixedOnePostPerDay,
   }
 }
 
@@ -239,32 +244,11 @@ async function sendNotice(db: any, gref: GuestRef, kind: 'work_done' | 'entry_re
   return { state: '' }
 }
 
-/** The Slack tag of the supervisor for the building named in a label ("17WEST 516 · hot water"), else Roberto. */
-async function supervisorTagFor(label: string): Promise<string> {
-  try {
-    const { marketOf } = await import('@/lib/segments')
-    const { getStaff } = await import('@/lib/staffing')
-    const { getDirectory } = await import('@/lib/slack')
-    const { nameMatches } = await import('@/lib/person-name')
-    const { ROBERTO_SLACK_ID } = await import('@/lib/slack-rules')
-    const unit = String(label || '').split('·')[0].trim()
-    const mk = String(marketOf(buildingOf(null, unit) || null, null, unit) || '')
-    const staff = await getStaff()
-    const sups = staff.filter((r: any) => r && r.active !== false && /superv/i.test(String(r.dept || r.role || '')) && (!mk || String(r.area || '').toLowerCase().includes(mk.toLowerCase())))
-    const dir: any = await getDirectory()
-    for (const sp of sups) {
-      const hit = (dir?.users || []).find((u: any) => u && !u.deleted && nameMatches(String(u.realName || u.name || ''), String(sp.name)))
-      if (hit?.id) return `<@${hit.id}>`
-    }
-    return ROBERTO_SLACK_ID ? `<@${ROBERTO_SLACK_ID}>` : ''
-  } catch { return '' }
-}
-
 export type OnWatchRun = { ok: boolean; skipped?: string; found: Record<string, number>; posted: Record<string, number>; resolved: number; escalated: number; notes: string[]; preview?: Record<string, string[]> }
 
 /** preview: find and word everything, post nothing, save nothing — what the next pass would say. */
 export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = {}): Promise<OnWatchRun> {
-  const out: OnWatchRun = { ok: true, found: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 }, posted: {}, resolved: 0, escalated: 0, notes: [] }
+  const out: OnWatchRun = { ok: true, found: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, U: 0 }, posted: {}, resolved: 0, escalated: 0, notes: [] }
   const cfg = await getOnWatchConfig()
   if (!cfg.enabled && !opts.force && !opts.preview) return { ...out, skipped: 'switched off (app_settings eve_on_watch)' }
   const hour = etHourNow()
@@ -279,7 +263,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const now = new Date().toISOString()
 
   // ── Read
-  const { data: itemRows } = await db.from('eve_slack_items').select('id,kind,summary,unit,listing_id,channel_name,status,tracked_in,first_seen,closed_reason,urgent')
+  const { data: itemRows } = await db.from('eve_slack_items').select('id,kind,summary,unit,listing_id,channel_name,status,tracked_in,first_seen,closed_reason,urgent,owner_name')
     .gte('first_seen', new Date(Date.now() - 3 * 86400_000).toISOString()).limit(400)
   const items = (itemRows as any[]) || []
   const { data: gRows } = await db.from('glitches').select('id,unit,listing_id,status,category,overview,assignee,guest_name,check_in,check_out,breezeway_task_id,reservation_id,created_at,closed_at')
@@ -353,6 +337,13 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       const w = await hostWroteSince(db, f.guest, f.since)
       if (w) done = `guest told ${clock(w.at)}${w.by ? ' by ' + first(w.by) : ''}`
       else { const g = byId(id); if (g && !OPEN(g.status)) done = 'glitch closed' }
+    } else if (f.kind === 'U') {
+      const it = items.find(i => String(i.id) === id)
+      if (!it) done = 'no longer on the watch list'
+      else if (it.status !== 'open') done = 'closed' + (it.closed_reason ? ` (${String(it.closed_reason).slice(0, 60)})` : '')
+      else if (it.owner_name) done = 'with ' + first(it.owner_name)
+      else if (it.tracked_in) done = 'now tracked in ' + String(it.tracked_in).split(':')[0]
+      else if (!it.urgent) done = 'no longer affects a guest today'
     } else if (f.kind === 'A') {
       const it = items.find(i => String(i.id) === id)
       if (it && it.status !== 'open') done = 'closed' + (it.closed_reason ? ` (${String(it.closed_reason).slice(0, 60)})` : '')
@@ -422,6 +413,17 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     const label = `${u ? shortUnit(u) + ' · ' : ''}${summary.slice(0, 90)}`
     add('A:' + it.id, { kind: 'A', room: 'ops', label, line: `${label} — raised in #${it.channel_name || 'a channel'} ${age(it.first_seen)} ago, no Breezeway task or glitch yet.` })
     if (uKey) unitSeen[uKey] = 'A:' + it.id
+  }
+  // U — AFFECTS A GUEST TODAY, NOBODY ON IT (Jon, 2026-11-05: merged into this post). The Slack watch
+  // marks the problem urgent the hour it is seen; it used to post its own "needs a name" list in the
+  // same room. Now it is a section of the On-watch post: what is on watch + what has no owner, once.
+  for (const it of items) {
+    if (it.status !== 'open' || !it.urgent || it.owner_name || it.tracked_in || hoursSince(it.first_seen) > 24) continue
+    const u = String(it.unit || '').trim()
+    let summary = String(it.summary || '').replace(/\s+/g, ' ').trim()
+    if (u && summary.toLowerCase().startsWith(u.toLowerCase())) summary = summary.slice(u.length).replace(/^[\s:,\-–—]+/, '').trim()
+    const label = `${u ? shortUnit(u) + ' · ' : ''}${summary.slice(0, 120)}`
+    add('U:' + it.id, { kind: 'U', room: 'ops', label, line: `${label} — #${it.channel_name || 'a channel'}, ${age(it.first_seen)} ago · *nobody on it*` })
   }
   for (const g of glitches) {
     if (!OPEN(g.status)) continue
@@ -528,33 +530,12 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     }
   }
 
-  // ── Escalate what nobody touched
-  const escalate: [string, Flag][] = []
-  for (const [key, f] of Object.entries(flags)) {
-    // Only glitch-backed gaps go up to leadership. A Slack problem often closes without anyone
-    // saying so in the thread, and paging leadership about one of those is noise.
-    if (f.resolved || f.escalated || (f.kind !== 'B' && f.kind !== 'C' && f.kind !== 'E') || !f.ts) continue
-    if (hoursSince(f.at) < ESCALATE_AFTER_H) continue
-    // NOBODY MEANS NOBODY (Eve audit 2026-10-10). "Still open after 3h, nobody on it … with Support" went
-    // to #leadership twice a day: Support IS an owner (the desk), and a task with a technician on it
-    // has an owner too. Only a glitch with no named human and a task with nobody assigned escalate.
-    const [, id] = key.split(':')
-    if (f.kind === 'B' || f.kind === 'C') {
-      const g = byId(id)
-      if (!g) continue
-      const named = String(g.assignee || '').trim()
-      const human = named && !/^(support|lighthouse|eve|team|pool)$/i.test(named)
-      const t2 = tasks[String(g.breezeway_task_id || '')]
-      const taskHasPerson = !!(t2 && Array.isArray(t2.assignees) && t2.assignees.length)
-      if (human || (f.kind === 'C' && taskHasPerson)) continue
-    }
-    if (f.kind === 'E') { const t3 = guestTasks.find(x => String(x.id) === id); if (t3 && Array.isArray(t3.assignees) && t3.assignees.length) continue }
-    escalate.push([key, f])
-  }
+  // NO THREAD ESCALATION HERE ANY MORE (Jon, 2026-11-05). The Slack watch's supervisor nudge already
+  // asks the market's supervisor, by name, in the thread where it was raised; this second "open 3h and
+  // nobody has it" reply was the same ask said again. Unowned work is the U section of the post instead.
 
   if (opts.preview) {
     for (const [, f] of Object.entries(fresh)) (out.preview![f.room] = out.preview![f.room] || []).push(f.line)
-    out.preview!.leadership = escalate.map(([, f]) => f.line)
     return out
   }
 
@@ -569,25 +550,42 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     // "17WEST · AC — glitch open 14h" twice in one post. The same line is said once; the twin rides along.
     const byLine: Record<string, string> = {}
     rows = rows.filter(([k, f]) => { const key = f.line.toLowerCase(); if (byLine[key]) { const prim = rows.find(r => r[0] === byLine[key]); if (prim) (prim[1].also = prim[1].also || []).push(k); return false } byLine[key] = k; return true })
-    const shown = rows.slice(0, MAX_LINES)
-    const more = rows.length > shown.length ? `\n…and ${rows.length - shown.length} more. Ask me for the list.` : ''
+    // WHAT'S ON WATCH + WHAT HAS NO OWNER, ONE POST (Jon, 2026-11-05). The U rows are their own section
+    // with their own six-line cap, so a busy watch list never pushes an unowned guest problem off it.
+    const watchRows = rows.filter(([, f]) => f.kind !== 'U'), noOwner = rows.filter(([, f]) => f.kind === 'U')
+    const shownWatch = watchRows.slice(0, MAX_LINES), shownU = noOwner.slice(0, MAX_LINES)
+    const shown = [...shownWatch, ...shownU]
+    const moreN = rows.length - shown.length
+    const more = moreN > 0 ? `\n…and ${moreN} more. Ask me for the list.` : ''
     // ONE POST PER FIX (Eve audit 2026-10-10): the "fixed, guest not told" line used to be followed an
     // hour later by a "Replies drafted" list carrying the same note. The fixed line now IS the draft:
     // numbered, with the words, and this post's thread is where "1 send" sends it as you.
     const withDrafts = room === 'guest' && shown.some(([, f]) => f.draftId)
-    const body = withDrafts
-      ? shown.map(([, f], i) => `*${i + 1}.* ${f.line}${f.draftText ? `\n      “${f.draftText}”` : ''}`).join('\n')
-      : shown.map(([, f]) => `• ${f.line}`).join('\n')
-    const draftTail = withDrafts ? (shown.length === 1 ? 'Reply *send* here and it goes to the guest as you · *no* drops it · open the thread in Lighthouse to change the wording.' : 'Reply here with `1 send` · `2 no` · `all send` — each goes to the guest as you. Open the thread in Lighthouse to change the wording.') : ''
-    const text = `${head}\n${body}${more}${tail ? '\n' + tail : ''}${draftTail ? '\n' + draftTail : ''}`
+    // ONE "FIXED" POST A DAY (Jon, 2026-11-05: never several near-identical posts). The first pass of the
+    // day posts it; a later pass adds its items in that post's thread, numbered on from where it ended,
+    // so "4 send" there still finds the right draft.
+    const fp = room === 'guest' && cfg.fixedOnePostPerDay && st.fixedPost && st.fixedPost.date === today && st.fixedPost.channel === channel && st.fixedPost.ts ? st.fixedPost : null
+    const offset = fp ? fp.count : 0
+    const watchBody = shownWatch.length
+      ? (withDrafts
+        ? shownWatch.map(([, f], i) => `*${offset + i + 1}.* ${f.line}${f.draftText ? `\n      “${f.draftText}”` : ''}`).join('\n')
+        : shownWatch.map(([, f]) => `• ${f.line}`).join('\n'))
+      : ''
+    const uBody = shownU.length ? `${shownWatch.length ? '\n' : ''}*Needs a name — affects a guest today (${noOwner.length})*\n${shownU.map(([, f]) => `• ${f.line}`).join('\n')}\n_Reply in the original thread with who has it and I'll track it._` : ''
+    const body = watchBody + uBody
+    const draftTail = withDrafts ? (shown.length === 1 && !fp ? 'Reply *send* here and it goes to the guest as you · *no* drops it · open the thread in Lighthouse to change the wording.' : `Reply here with \`${offset + 1} send\` · \`${offset + 1} no\` · \`all send\` — each goes to the guest as you. Open the thread in Lighthouse to change the wording.`) : ''
+    const headHere = fp ? head.replace('Fixed — a note is ready for the guest', 'More fixed since — notes ready') : head
+    const text = `${headHere}\n${body}${more}${tail ? '\n' + tail : ''}${draftTail ? '\n' + draftTail : ''}`
     const gate = await agentAllowed('slack_post', { ask: true })
-    const r = await stepDown(gate, { action: 'slack_post', summary: `on watch · ${room}: ${rows.length} item${rows.length === 1 ? '' : 's'}`, exec: { channel, text }, by: 'cron:on-watch' },
-      async () => { const p = await postToChannel(channel, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
+    const r = await stepDown(gate, { action: 'slack_post', summary: `on watch · ${room}: ${rows.length} item${rows.length === 1 ? '' : 's'}${fp ? ' (in today\'s thread)' : ''}`, exec: fp ? { channel, thread_ts: fp.ts, text } : { channel, text }, by: 'cron:on-watch' },
+      async () => { const p = fp ? await postThreadReply(channel, fp.ts, text) : await postToChannel(channel, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
     if (r.mode !== 'act') out.notes.push(`${room} ${r.mode}: ${gate.reason}`)
     if (r.mode === 'act' && !r.ok) { out.notes.push(`${room}: ${r.error}`); return null }
     if (r.mode === 'observe') return null
     out.posted[room] = (out.posted[room] || 0) + shown.length
-    const ts = r.mode === 'act' ? (r.ref || null) : null
+    // In today's thread the root is the Send slot; a new post is its own root.
+    const ts = r.mode === 'act' ? (fp ? fp.ts : (r.ref || null)) : null
+    if (room === 'guest' && cfg.fixedOnePostPerDay && ts) st.fixedPost = { date: today, channel, ts, count: offset + shown.length }
     // The post's thread is the Send slot: each draft row remembers this post and its number, exactly
     // like the drafts digest does (lib/eve/slack-approvals decideDraftDigest finds them by slack_ts).
     if (withDrafts && ts) {
@@ -597,7 +595,7 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
         try {
           const { data: row } = await db.from('eve_actions').select('payload').eq('id', f.draftId).maybeSingle()
           const pl = (row as any)?.payload || {}
-          await db.from('eve_actions').update({ payload: { ...pl, slack_pending: false, slack_channel: channel, slack_ts: ts, slack_index: i + 1, slack_sent_at: new Date().toISOString() } }).eq('id', f.draftId)
+          await db.from('eve_actions').update({ payload: { ...pl, slack_pending: false, slack_channel: channel, slack_ts: ts, slack_index: offset + i + 1, slack_sent_at: new Date().toISOString() } }).eq('id', f.draftId)
         } catch { /* the draft still waits on /inbox */ }
       }
     }
@@ -625,19 +623,6 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
       for (const k2 of fresh[k].also || []) flags[k2] = { ...fresh[k], also: undefined, label: fresh[k].label + ' (same unit)' }
     }
   }
-  // ESCALATE IN THE THREAD, TO A NAME (Eve audit 2026-10-10) — not a new post in #leadership. The
-  // original #vr-eve line gets one reply tagging the market's supervisor (or Roberto when no supervisor
-  // is known) asking for a name; #leadership hears about it only through the Ops Command brief.
-  for (const [k, f] of escalate) {
-    if (!f.channel || !f.ts) continue
-    const tag = await supervisorTagFor(f.label)
-    const text = `${tag ? tag + ' — ' : ''}open ${Math.round(hoursSince(f.at))}h and nobody has it: ${f.label}. Can you take it or name who does? Reply here.`
-    const gate = await agentAllowed('slack_post', { ask: true })
-    const r = await stepDown(gate, { action: 'slack_post', summary: `escalate in thread: ${f.label.slice(0, 120)}`, exec: { channel: f.channel, thread_ts: f.ts, text }, by: 'cron:on-watch' },
-      async () => { const p = await postThreadReply(f.channel as string, f.ts as string, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
-    if (r.ok && r.mode !== 'observe') { flags[k].escalated = true; out.escalated++ }
-  }
-
   // ── Remember
   for (const [key, f] of Object.entries(flags)) {
     const old = hoursSince(f.resolvedAt || f.at)
@@ -645,6 +630,6 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     // same glitch be flagged again on days 5–7.
     if ((f.resolved && old > 48) || old > 8 * 24) delete flags[key]
   }
-  await setSetting(STATE_KEY, { flags, seen: seenNow }, 'on-watch')
+  await setSetting(STATE_KEY, { flags, seen: seenNow, fixedPost: st.fixedPost && st.fixedPost.date === today ? st.fixedPost : undefined }, 'on-watch')
   return out
 }

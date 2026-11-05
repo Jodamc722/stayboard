@@ -77,6 +77,9 @@ export type Alert = {
   // RESOLVED FOR EVERYONE (Jon, 2026-10-07: "an option to close them for everyone (Resolved)" · "if
   // the immediate issue is resolved attach it to the glitch"). Anyone it reached can resolve it, with
   // a note; when it is about a glitch, the note goes onto that glitch.
+  // HELD FOR THE MORNING (Jon, 2026-11-05: "nothing posts between 8pm and 7am ET"). An Eve alert that
+  // fires overnight is in the Lighthouse bell at once; its Slack post waits for 7am.
+  slackHeld?: boolean
   glitchId?: string | null
   resolvedNote?: string | null
   resolvedGlitchId?: string | null
@@ -226,4 +229,36 @@ export function mark(a: Alert, email: string, name: string, stage: 'seen' | 'rea
   if ((stage === 'read' || stage === 'ack') && !out.read![e]) out.read![e] = nowIso
   if (stage === 'ack' && !out.acks[e]) out.acks[e] = nowIso
   return out
+}
+
+/**
+ * THE GIST, NEVER A FRAGMENT (Jon, 2026-11-05). "Guest issue" posts were cut to "… spoke with Mr." —
+ * the brief cut at the first ". " it found, and "Mr. " is one. Now: the whole line when it fits;
+ * otherwise the last real sentence end at or past `min` characters (an abbreviation — Mr., Dr., St.,
+ * Apt., a.m., a single initial — is not a sentence end); otherwise the last word boundary at or past
+ * `min`, with a dangling abbreviation or joining word dropped, and an ellipsis.
+ */
+const ABBREV = /(?:^|\s)(?:mr|mrs|ms|mx|dr|st|sr|jr|mt|ave|apt|no|vs|etc|inc|ltd|co|approx|dept|est|e\.g|i\.e|a\.m|p\.m|[a-z])\.$/i
+const DANGLING = /\s+(?:mr|mrs|ms|mx|dr|st|sr|jr|apt|no|the|a|an|and|or|but|to|of|in|on|at|for|with|by|from|as|is|was|that|who|which|&|-|–|—)\.?$/i
+export function gist(text: string, max = 240, min = 80): string {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim()
+  if (flat.length <= max) return flat
+  const head = flat.slice(0, max + 1)
+  // The last sentence end inside the limit that is not an abbreviation.
+  let best = -1
+  const re = /[.!?](?=\s)/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(head))) {
+    const end = m.index + 1
+    if (end < min || end > max) continue
+    if (m[0] === '.' && ABBREV.test(head.slice(0, end))) continue
+    best = end
+  }
+  if (best > 0) return head.slice(0, best)
+  // Otherwise a word boundary, without a dangling "Mr" or "and".
+  let cut = head.slice(0, max)
+  const sp = cut.lastIndexOf(' ')
+  cut = sp >= min ? cut.slice(0, sp) : cut
+  for (let k = 0; k < 3; k++) { const c2 = cut.replace(DANGLING, ''); if (c2 === cut || c2.length < min) break; cut = c2 }
+  return cut.replace(/[\s,;:–—-]+$/, '') + '…'
 }

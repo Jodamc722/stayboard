@@ -23,7 +23,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { marketOf } from './segments'
-import { judgeIssue, categoryFor, type IssueSeverity } from './guest-issue-judge'
+import { judgeIssue, categoryFor, noSafetyCall, alertTier, guestWaitingNow, type IssueSeverity, type AlertTier } from './guest-issue-judge'
 export { judgeIssue, categoryFor, severityFor } from './guest-issue-judge'
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
@@ -51,6 +51,8 @@ export type Detection = {
   link: string                      // where to read the whole thing
   /** Settled on the call: file the glitch for the record, tell nobody (judgeIssue). */
   quiet?: boolean
+  /** The guest is waiting on us now (guestWaitingNow) — with a concrete issue, that reaches Slack. */
+  waiting?: boolean
   judged?: string                   // why it was judged the way it was — on the Detected tab
 }
 
@@ -64,7 +66,7 @@ export const SEV_LABEL: Record<IssueSeverity, string> = {
 async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection[]> {
   const db = supabaseAdmin()
   const { data } = await db.from('talkroute_calls')
-    .select('id, call_at, direction, duration, reservation_id, summary, intel, external_number')
+    .select('id, call_at, direction, duration, reservation_id, summary, intel, external_number, match_kind')
     .gte('call_at', sinceISO).not('intel', 'is', null)
     .order('call_at', { ascending: false }).limit(300)
   const rows = (data || []) as any[]
@@ -93,7 +95,9 @@ async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection
     const blob = [issues.join(' · '), str(intel.summary)].join(' ')
     // THE NAMED ISSUES DECIDE, NOT THE SUMMARY (Eve audit 2026-10-10). The summary of a routine call
     // mentions "the code" and "cancel" often enough that it made ordinary calls into Guest issues.
-    const j = judgeIssue(issues, str(intel.summary), sentiment, { followUp: intel.followUp === true })
+    // A welcome or post-checkout call is never a safety matter (Jon, 2026-11-05) — see noSafetyCall.
+    const callKind = str(c.match_kind)
+    const j = judgeIssue(issues, str(intel.summary), sentiment, { followUp: intel.followUp === true, callKind })
     out.push({
       sourceKey: 'call:' + c.id,
       kind: 'call',
@@ -107,7 +111,8 @@ async function fromCalls(sinceISO: string, seen: Set<string>): Promise<Detection
       severity: j.severity,
       quiet: j.quiet,
       judged: j.why,
-      category: categoryFor(issues.length ? issues.join(' · ') : blob),
+      waiting: guestWaitingNow({ kind: 'call', callAt: str(c.call_at), followUp: intel.followUp === true, callKind }),
+      category: categoryFor(issues.length ? issues.join(' · ') : blob, { noSafety: noSafetyCall(callKind) }),
       headline: clean(intel.summary || issues[0], 400),
       issues,
       evidence: clean(intel.summary, 600),
@@ -159,6 +164,7 @@ async function fromThreads(sinceISO: string, seen: Set<string>): Promise<Detecti
       severity: j.severity,
       quiet: j.quiet,
       judged: j.why,
+      waiting: guestWaitingNow({ kind: 'message', lastGuestAt: str(s.last_guest_at) || null, lastMessageAt: str(s.last_message_at) || null }),
       category: categoryFor(blob),
       headline: clean(s.top_issue || s.reason, 400),
       issues: [clean(s.top_issue, 160)].filter(Boolean),
@@ -363,23 +369,31 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
     if (d.severity !== 'security' && d.unit) {
       try {
         const { data: prior } = await db.from('guest_issue_detections').select('source_key')
-          .eq('unit', d.unit).eq('alerted', true).gte('detected_at', new Date(Date.now() - 24 * 3600_000).toISOString()).limit(1)
+          .eq('unit', d.unit).eq('alerted', true).or('note.is.null,note.not.ilike.FYI —%').gte('detected_at', new Date(Date.now() - 24 * 3600_000).toISOString()).limit(1)
         alreadyToday = !!(prior && prior.length)
       } catch { alreadyToday = false }
     }
     // FLAG CUSTOMER CARE (Jon: "we need to flag the customer service team immediately"). raiseEveAlert
     // is the bell entry for everyone AND the one Slack post to #vr-customercareteam. A safety matter
     // tags Jon and Roberto there too — the same post, not a second one.
+    // ONLY SAFETY AND A GUEST WAITING NOW REACH SLACK (Jon, 2026-11-05: "more effective, more clear and
+    // useful"). Everything else — FYI, no reply needed — is the bell in Lighthouse and the glitch, no
+    // post. app_settings `guest_issue_alerts` { slackTiers: ['safety','waiting'] } (the default).
     let alerted = false
+    const tier: AlertTier = alertTier(d)
+    let toSlack = false
     if (!alreadyToday) {
       try {
         const { raiseEveAlert } = await import('./handoff-store')
         const { JON_SLACK_ID, ROBERTO_SLACK_ID } = await import('./slack-rules')
+        toSlack = (await guestIssueSlackTiers()).includes(tier)
         const { title, body } = alertText(d, glitchId)
         alerted = await raiseEveAlert({
           title, body, unit: d.unit || null, dedupe: 'guest-issue:' + d.sourceKey, glitchId,
           severity: d.severity === 'security' ? 'urgent' : 'warn',
           mentions: d.severity === 'security' ? [JON_SLACK_ID, ROBERTO_SLACK_ID].filter(Boolean) : [],
+          // null = Lighthouse only; undefined = the customer care room (raiseEveAlert's default).
+          ...(toSlack ? {} : { channel: null }),
         })
         if (alerted) out.alerted++
       } catch { /* the glitch is filed; the alert is best effort and the Detected tab still shows it */ }
@@ -387,10 +401,24 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
     // ONE ROOM (independent audit 2026-10-10): the customer-care post already tags Jon and Roberto, and
     // #leadership is the same people. The second copy — even one line — was the same alarm twice.
     // Leadership sees safety matters in the Ops Command brief and on the glitch board.
-    await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted, note: glitchId ? (alreadyToday ? 'customer care already alerted about this unit today' : null) : 'glitch not filed' })
+    // An FYI alert (bell only) is noted as such, so it never counts as "customer care already alerted"
+    // for a later report on the same unit that does belong in the room.
+    await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted, note: alerted && !toSlack ? `FYI — in Lighthouse only (${tier}), not posted to Slack` : glitchId ? (alreadyToday ? 'customer care already alerted about this unit today' : null) : 'glitch not filed' })
     out.detections.push({ ...d, verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted })
   }
   return out
+}
+
+export const GUEST_ISSUE_ALERTS_KEY = 'guest_issue_alerts'
+const DEFAULT_SLACK_TIERS: AlertTier[] = ['safety', 'waiting']
+/** Which tiers post to Slack (app_settings guest_issue_alerts.slackTiers). Default: safety and guest waiting now. */
+export async function guestIssueSlackTiers(): Promise<AlertTier[]> {
+  try {
+    const { getSetting } = await import('./app-settings')
+    const v = await getSetting<any>(GUEST_ISSUE_ALERTS_KEY, null)
+    const t = v && Array.isArray(v.slackTiers) ? v.slackTiers.map(String).filter((x: string) => x === 'safety' || x === 'waiting' || x === 'fyi') : null
+    return t ? (t as AlertTier[]) : DEFAULT_SLACK_TIERS
+  } catch { return DEFAULT_SLACK_TIERS }
 }
 
 async function recordDetection(d: Detection, r: { verdict: string; glitchId: string | null; alerted: boolean; note?: string | null }) {

@@ -11,11 +11,20 @@
 //   Waiting on a person — Slack loops, but each one only on its FIRST morning and once more if it
 //     ages past 3 days ("close it or name someone"); after that it lives on the Eve tab, counted.
 //   Yesterday — one win line
-//   links: the full Ops Command brief · the Today board · the Eve tab
+//   links: the full Ops morning email · the Today board · the Eve tab
 //
-// Built from lib/briefs/direction (the same engine as the Ops Command email and the Today board).
-// Once a day, 7–10am ET, at the first slack-watch run. Settings: app_settings eve_morning
-// { enabled (default true), channel (default #vr-eve) }. Switching it off brings back the old posts.
+// Built from lib/briefs/direction (the same engine as the Ops morning email and the Today board).
+//
+// WHAT THE CODE DOES TODAY (2026-11-05 — this header used to say the post went to Slack; it has not
+// by default since 2026-10-09). Settings: app_settings `eve_morning` { enabled (default true),
+// slack (default FALSE), channel (default the approvals room) }.
+//   • enabled: false — nothing at all; morningOn() turns false, which lets the three older posts
+//     (roll-up, ops-desk plan, handoff) back on.
+//   • enabled, slack off (the default) — between 7 and 10am ET, on a slack-watch run, the text is
+//     built and filed on the Eve tab → Reports (routeReport); nothing is posted to Slack, and the
+//     Ops morning email's footer does not claim a Slack post.
+//   • enabled, slack: true — the same report is filed, then posted once a day to the channel
+//     through agent mode (stepDown); the loop memory and "already posted today" are saved only then.
 import 'server-only'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { EVE_CHANNELS } from '@/lib/slack-rules'
@@ -101,7 +110,7 @@ export function morningText(d: DayDirection, picked: { say: (Loop & { aging: boo
     parts.push(`*Waiting on a person*\n${picked.say.map(line).join('\n')}`)
   }
   if (d.wins.length) parts.push(`_Yesterday:_ ${d.wins.join(' · ')}`)
-  const links = [`<${APP}/api/cron/ops-brief?preview=full|Full Ops Command>`, `<${APP}/command|Today board>`, `<${APP}/eve?tab=loops|Eve tab${picked.quiet ? ` (${picked.quiet} more open)` : ''}>`]
+  const links = [`<${APP}/api/cron/ops-brief?preview=full|Full Ops morning>`, `<${APP}/command|Today board>`, `<${APP}/eve?tab=loops|Eve tab${picked.quiet ? ` (${picked.quiet} more open)` : ''}>`]
   parts.push(links.join(' · '))
   if (d.degraded.length) parts.push(`_Partial: ${d.degraded.join('; ')}._`)
   return parts.join('\n\n')
@@ -129,9 +138,13 @@ export async function runMorning(opts: { force?: boolean; preview?: boolean } = 
   // Filed on the Eve tab → Reports every morning, whatever Slack does (Jon, 2026-10-12).
   const { routeReport } = await import('./reports')
   const routed = await routeReport({ kind: 'ops_command', title: `Ops Command · ${today}`, text, room: cfg.channel || EVE_CHANNELS.approvals, pointer: `${d.decide.length} to decide, ${picked.say.length} waiting` })
-  // Email only, unless somebody has switched the Slack post back on.
-  if (!opts.force && !(await morningSlackOn())) return { posted: false, skipped: 'email only — Ops Command goes out as the brief', text }
-  if (!routed.post && !opts.force) return { posted: false, skipped: `filed on the Reports desk (${routed.route})`, text }
+  // ONCE A DAY, FILED OR POSTED (2026-11-05). With Slack off, lastDay was never saved, so every
+  // slack-watch run from 7 to 10am filed another "Ops Command" report. Mark the day as soon as the
+  // report is filed; the Slack branch below still re-saves it with the loops it said.
+  if (!opts.force && (!(await morningSlackOn()) || !routed.post)) {
+    await setSetting(STATE_KEY, { lastDay: today, seen }, 'eve-morning')
+    return { posted: false, skipped: !routed.post ? `filed on the Reports desk (${routed.route})` : 'email only — the Ops morning email carries it', text }
+  }
 
   const channel = cfg.channel || EVE_CHANNELS.approvals
   // A person's schedule, not Eve's initiative — urgent, so the room cap and quiet hours never hold it.

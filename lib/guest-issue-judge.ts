@@ -26,13 +26,25 @@ const RESOLVED_RE = /\b(was resolved|resolved (?:on|during) the call|got it work
 
 const STRONG_SAFETY_RE = /\b(afraid|scared|unsafe|not safe|intrud(?:er|ed|ing)?|broke[rn]? in|break[- ]?in|stranger|911|gas leak|carbon monoxide|weapon|gun|assault(?:ed)?|threat(?:en(?:ed|ing)?)?|robbed|burglar|stalk|harass|smoke (?:in|coming|filling)|fire in|flooding|electrical shock|bleeding|ambulance)\b/i
 
+/**
+ * NEVER SAFETY ON A WELCOME OR FEEDBACK CALL (Jon, 2026-11-05). A pre-arrival welcome call and a
+ * post-checkout feedback call were labelled "Safety/security" — a guest asking where the fire
+ * extinguisher is, or saying the smoke detector chirped last week. Nobody is in the unit on either
+ * call, so neither is ever a safety matter; a concrete problem on one is an ordinary issue.
+ * `callKind` is talkroute_calls.match_kind ('welcome' | 'post_checkout' | 'stay').
+ */
+export function noSafetyCall(callKind: string | null | undefined): boolean {
+  return /^(welcome|post[_-]?checkout)$/i.test(str(callKind).trim())
+}
+
 /** One judgement for a call or a thread: how loud, and whether customer care needs telling at all. */
-export function judgeIssue(issues: string[], context: string, sentiment: string | null | undefined, opts: { followUp?: boolean; sentimentAlone?: boolean } = {}): { severity: IssueSeverity; quiet: boolean; why: string } {
+export function judgeIssue(issues: string[], context: string, sentiment: string | null | undefined, opts: { followUp?: boolean; sentimentAlone?: boolean; callKind?: string | null } = {}): { severity: IssueSeverity; quiet: boolean; why: string } {
   const named = issues.map(s => str(s)).filter(Boolean)
   const namedText = named.join(' · ')
+  const noSafety = noSafetyCall(opts.callKind)
   // Safety: the named issues, plus the unmistakable words wherever they appear — a guest describing
   // somebody at the door belongs here even when the model filed it under the summary, not issues[].
-  if (SECURITY_RE.test(namedText) || STRONG_SAFETY_RE.test(str(context)))
+  if (!noSafety && (SECURITY_RE.test(namedText) || STRONG_SAFETY_RE.test(str(context))))
     return { severity: 'security', quiet: false, why: 'safety words' }
   if (!named.length) return { severity: 'watch', quiet: false, why: 'nothing named' }
   const concrete = named.filter(i => HARD_RE.test(i) || SECURITY_RE.test(i))
@@ -48,13 +60,13 @@ export function judgeIssue(issues: string[], context: string, sentiment: string 
   return { severity: 'watch', quiet: false, why: 'nothing concrete' }
 }
 
-/** Category, from the CAT_CHIPS vocabulary the Glitches board already files under. */
-export function categoryFor(text: string): string {
+/** Category, from the CAT_CHIPS vocabulary the Glitches board already files under. `noSafety`: a welcome / feedback call (noSafetyCall). */
+export function categoryFor(text: string, opts: { noSafety?: boolean } = {}): string {
   const t = text.toLowerCase()
-  if (SECURITY_RE.test(t) || /\block|door|key|fob|entry|access|code\b/.test(t)) {
+  if ((!opts.noSafety && SECURITY_RE.test(t)) || /\block|door|key|fob|entry|access|code\b/.test(t)) {
     // An access problem that is only "the code did not work" is a building/access matter; a lock
     // that will not lock, or somebody at the door, is security.
-    if (SECURITY_RE.test(t)) return 'Safety/Security Concern'
+    if (!opts.noSafety && SECURITY_RE.test(t)) return 'Safety/Security Concern'
     return 'Maintenance - Building/Common Areas'
   }
   if (/\b(a\/?c|air con|heat|hot|cold|temperature|hvac|thermostat)\b/.test(t)) return 'Maintenance - HVAC/Temperature'
@@ -78,3 +90,26 @@ export function severityFor(text: string, sentiment?: string | null): IssueSever
   return 'watch'
 }
 
+
+/**
+ * WHICH ALERTS REACH SLACK (Jon, 2026-11-05: "more effective, more clear and useful"). Only two tiers
+ * post to #vr-customercareteam: a SAFETY matter, and a GUEST WAITING NOW (they wrote last and nobody
+ * has answered, or a call during the stay left us owing them something, in the last few hours).
+ * Everything else is FYI — the glitch is filed and the bell in Lighthouse has it; no Slack post.
+ */
+export type AlertTier = 'safety' | 'waiting' | 'fyi'
+export const WAITING_HOURS = 3
+export function alertTier(d: { severity: IssueSeverity; kind: 'call' | 'message'; waiting?: boolean }): AlertTier {
+  if (d.severity === 'security') return 'safety'
+  if (d.severity === 'issue' && d.waiting) return 'waiting'
+  return 'fyi'
+}
+/** Is the guest waiting on us now? A thread: the guest wrote last, within WAITING_HOURS. A call: during the stay, we owe a follow-up, within WAITING_HOURS. */
+export function guestWaitingNow(p: { kind: 'call' | 'message'; lastGuestAt?: string | null; lastMessageAt?: string | null; callAt?: string | null; followUp?: boolean; callKind?: string | null }, now = Date.now()): boolean {
+  const recent = (iso: any) => { const t = Date.parse(str(iso)); return Number.isFinite(t) && now - t <= WAITING_HOURS * 3600_000 }
+  if (p.kind === 'message') {
+    const g = Date.parse(str(p.lastGuestAt)), m = Date.parse(str(p.lastMessageAt))
+    return recent(p.lastGuestAt) && (!Number.isFinite(m) || g >= m)
+  }
+  return !noSafetyCall(p.callKind) && p.followUp === true && recent(p.callAt)
+}

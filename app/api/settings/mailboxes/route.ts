@@ -26,13 +26,13 @@ export async function GET() {
     if (hit) { if (!hit.usedFor.includes(usedFor)) hit.usedFor += ' · ' + usedFor; return }
     wanted.push({ email: e, usedFor })
   }
-  const [ops, weekly, salato] = await Promise.all([
+  // The labor email's own sender ('labor_weekly') left this list on 2026-11-05: labor rides in the
+  // GM morning, which sends from the morning-brief mailbox.
+  const [ops, salato] = await Promise.all([
     getSetting<any>('ops_brief', null).catch(() => null),
-    getSetting<any>('labor_weekly', null).catch(() => null),
     getSetting<any>('salato_daily', null).catch(() => null),
   ])
   add(ops?.fromEmail || 'jon@stay-hospitality.com', 'morning briefs')
-  add(weekly?.fromEmail, 'labor true-up')
   add(salato?.fromEmail, 'Salato daily')
   add(SUPPORT, 'front-desk drafts')
   const emails = wanted.map(w => w.email)

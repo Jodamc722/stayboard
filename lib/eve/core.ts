@@ -410,6 +410,10 @@ export const CORE_TOOLS: EveTool[] = [
         maxWeight: Number.isFinite(Number(input?._maxWeight)) ? Number(input._maxWeight) : undefined,
         supersedes: input?.supersedes || null,
         expires_on: expiresOn,
+        /* WHO TAUGHT IT, ON THE ROW (Jon, 2026-11-05: "She can learn from Roberto, Karla &
+           Bernadette"). run.ts stamps `_teacher` (lib/eve/teachers.ts) and `_evidence` (the chat it
+           came from) so the Learned panel can group by teacher and by conversation. */
+        evidence: (input?._teacher || input?._evidence) ? { ...(input?._evidence && typeof input._evidence === 'object' ? input._evidence : {}), ...(input?._teacher ? { teacher: String(input._teacher).slice(0, 80) } : {}), taught: true } : undefined,
       })
       if (!res.ok) return { saved: false, error: res.error, hint: `kind must be one of ${kinds}` }
       const expNote = exp && !expiresOn ? ` expires_on "${exp}" was ignored — it must be YYYY-MM-DD, today or later.` : expiresOn ? ` It expires after ${expiresOn}.` : ''

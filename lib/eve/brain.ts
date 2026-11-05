@@ -610,6 +610,11 @@ export function looksLikeCorrection(message: string, hadAnswer: boolean): boolea
 export async function captureCorrection(input: {
   email: string; question: string; answer: string; correction: string; chatId: string | null
   memories: { id: string; text: string }[]; scopeFor: (text: string) => string
+  /* TEACHERS' CORRECTIONS CARRY THEIR WEIGHT (Jon, 2026-11-05: "She can learn from any CCS agent, she
+     can also learn from Roberto, Karla & Bernadette"). run.ts passes the teacher's source and weight
+     (lib/eve/teachers.ts); without it a colleague is capped by personSource() as before. */
+  who?: { source: 'jon' | 'staff'; weight: number; maxWeight?: number; label?: string }
+  evidence?: Record<string, any>
 }): Promise<{ saved: boolean; weakened: number; id?: string; skipped?: string }> {
   const res = await brainCall(
     `You read one exchange: a question, Eve's answer, and the user's reply that pushes back. Decide what Eve got wrong and what is actually true. "durable" is true only when the correct fact would still matter in a future, different conversation (a rule, how something works, a fact about a building, unit, person or process); false for a misunderstanding of this one request ("no, I meant Tuesday"). Return STRICT JSON: {"is_correction":true,"durable":true,"wrong":"<what Eve said that was wrong, <= 30 words>","right":"<the correct fact, as a standalone sentence someone could follow, <= 40 words>","about":"<building or unit name if it is about one, else empty>"}`,
@@ -626,7 +631,7 @@ export async function captureCorrection(input: {
     const inter = mw.filter(w => wrongWords.has(w)).length
     return inter >= 2 && inter / Math.max(1, mw.length) >= 0.3
   }).map(m => m.id)
-  const who = personSource(input.email, 8)
+  const who = input.who || personSource(input.email, 8)
   let weakened = 0
   if (culprits.length) weakened = (await moveBeliefs(culprits, -1, `${who.source === 'jon' ? 'Jon' : input.email.split('@')[0] || 'someone'} corrected an answer that used it: ${str(res.right).slice(0, 100)}`, who.source === 'jon' ? 0.9 : 0.5)).length
   if (!res.durable || str(res.right).trim().length < 12) return { saved: false, weakened, skipped: 'about this conversation only' }
@@ -634,8 +639,9 @@ export async function captureCorrection(input: {
     kind: 'correction', text: str(res.right).trim().slice(0, 600),
     why: `Corrected in chat by ${input.email || 'someone'}: I had said "${str(res.wrong).slice(0, 200)}"`,
     scope: input.scopeFor(str(res.right) + ' ' + str(res.about)), weight: who.weight, source: who.source,
+    maxWeight: (who as any).maxWeight,
     created_by: input.email || null,
-    evidence: { capturedFrom: 'chat', chatId: input.chatId, question: input.question.slice(0, 300), wrong: str(res.wrong).slice(0, 300), weakened: culprits },
+    evidence: { capturedFrom: 'chat', chatId: input.chatId, question: input.question.slice(0, 300), wrong: str(res.wrong).slice(0, 300), weakened: culprits, ...(input.who?.label ? { teacher: input.who.label } : {}), ...(input.evidence || {}) },
   }).catch(() => null)
   // A CORRECTION IS A LESSON TO BE TESTED (Eve audit 2026-10-10). Probes came only from Teach, answered
   // questions, declined thoughts and the OTA playbook — never from the moment somebody told her she

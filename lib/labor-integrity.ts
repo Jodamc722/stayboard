@@ -9,7 +9,9 @@
 //
 // Until 2026-09-28 this was its own cron (/api/cron/labor-integrity at 07:12 UTC) that re-ran the
 // exact 30-day laborEconomics window the Daily Labor job computes five hours later, cold, in another
-// function. The checks now run on the Daily Labor job's own 30-day result (app/api/cron/labor-trueup).
+// function. The checks now run on the 30-day result of whoever computes it: the GM morning's Labor
+// block at 7:01 (lib/briefs/labor-scorecard), where failures are shown to the owner, and the labor
+// ledger at 7:58 (app/api/cron/labor-trueup), which emails them only when the GM morning did not.
 import 'server-only'
 import { sendGmail } from './gmail-send'
 import { nameMatches } from './person-name'
@@ -75,8 +77,7 @@ export function integrityChecks(ec: any, opts: { ignoreNames?: string[] } = {}):
     '/users → People — set their crew and market.')
 
   // 6. Wage sanity: cards priced at zero or wildly under the median. NAME THEM — a count cannot be
-  // fixed by anybody. The same people are flagged in the daily labor email, which is the one
-  // Roberto reads and the only place the Homebase profile actually gets corrected.
+  // fixed by anybody. The same people are named in the GM morning's Labor block.
   const q = (ec && ec.pnl && ec.pnl.quality) || {}
   const oList: any[] = (Array.isArray(q.rateOutliers) ? q.rateOutliers : []).filter((x: any) => !isIgnored(x?.name))
   const nList: any[] = (Array.isArray(q.workedNoPay) ? q.workedNoPay : []).filter((x: any) => !isIgnored(x?.name))

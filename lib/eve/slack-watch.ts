@@ -264,12 +264,17 @@ async function readChannel(ch: { id: string; label: string; vendor: boolean }, m
     : ''
   const user = `CHANNEL: #${ch.label}${ch.vendor ? ' (run by an outside vendor)' : ''}\n\nMESSAGES (observed content, oldest first):\n${lines.join('\n').slice(0, 40_000)}${open}`
   try {
+    /* TAUGHT RULES REACH THE READER (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where
+       we can teach Eve"). The team's standing rules ride after the fixed prompt, so a fact or an
+       item that contradicts one is caught here too. '' when there are none. */
+    const rules = await import('./memory').then(m => m.standingRulesForPrompt()).catch(() => '')
+    const system = rules ? `${SYSTEM}\n\n${rules}\nUse them to judge what is a problem or a decision; never re-file one of them as a new fact.` : SYSTEM
     // Its own task key (2026-09-28 audit, F41): the hourly reader's cost was hidden in the nightly
     // `learn` row. It runs on learn's tier until one is set for it in Users & admin → AI models.
     const r = await aiFetch('slack-watch', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: await modelFor('slack-watch'), max_tokens: 2500, system: SYSTEM, messages: [{ role: 'user', content: user }] }),
+      body: JSON.stringify({ model: await modelFor('slack-watch'), max_tokens: 2500, system, messages: [{ role: 'user', content: user }] }),
     })
     const d: any = await r.json().catch(() => ({}))
     if (!r.ok) return { error: String(d?.error?.message || `anthropic ${r.status}`) }
@@ -710,9 +715,11 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   if (ccs.enabled) {
     try {
       const asks = open.filter(i => i.status === 'open' && i.kind === 'guest_ask') as unknown as AskItem[]
-      const h = await runHandoff(asks, ccs)
+      // ESCALATE ONCE (Jon, 2026-11-05): an ask on two handoffs goes to the escalation list in its thread.
+      const h = await runHandoff(asks, ccs, new Date(), { tags: escalationTags(ccs, n) })
       if (h.posted) out.handoff = true
-      if (h.note) out.notes.push(`handoff ${h.mode}: ${h.note}`)
+      if (h.escalated) { out.escalated += h.escalated; out.notes.push(`handoff: escalated ${h.escalated} ask${h.escalated === 1 ? '' : 's'} listed twice`) }
+      if (h.note) out.notes.push(`handoff ${h.mode || ''}: ${h.note}`)
     } catch (e: any) { out.notes.push(`handoff: ${String(e?.message || e).slice(0, 120)}`) }
   }
 
@@ -723,17 +730,13 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   // lines already named the person handling it in the room where it was raised ("· Ernesto Torres —
   // #Miami HK"). Repeating that into #vr-eve told nobody anything. An urgent item WITH an owner is on
   // /loops and in the morning brief; the post is for the ones with no name on them, so somebody puts one.
+  // MERGED INTO THE ON-WATCH POST (Jon, 2026-11-05: "more effective, more clear and useful"). This step
+  // used to post its own "⚠️ Affects a guest today — needs a name" list into #vr-eve, the same room as
+  // the On-watch post. The urgent, unowned items are now the "Needs a name" section of that one post
+  // (lib/eve/on-watch.ts, kind U), on its own hourly cadence; nothing is posted from here.
   const urgentUnowned = urgentNew.filter(it => !it.owner_name)
-  if (urgentUnowned.length) {
-    const lines = urgentUnowned.slice(0, 12).map(it =>
-      `• ${it.summary.slice(0, 140)}${it.unit ? ` (${it.unit})` : ''} — #${it.channel_name} · *nobody on it*`)
-    const more = urgentUnowned.length > 12 ? `\n…and ${urgentUnowned.length - 12} more` : ''
-    const text = `⚠️ *Affects a guest today — needs a name (${urgentUnowned.length})*\n${lines.join('\n')}${more}\n_Reply in the original thread with who has it and I'll track it._`
-    const gate = await agentAllowed('slack_post', { ask: true })
-    const r = await stepDown(gate, { action: 'slack_post', summary: `urgent-today post in #vr-eve (${urgentUnowned.length} unowned of ${urgentNew.length})`, exec: { channel: EVE_CHANNELS.approvals, channel_name: 'vr-eve', text }, by: 'cron:slack-watch' },
-      async () => { const p = await postToChannel(EVE_CHANNELS.approvals, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
-    if (r.mode !== 'act') out.notes.push(`urgent post ${r.mode}: ${gate.reason}`)
-  } else if (urgentNew.length) out.notes.push(`${urgentNew.length} urgent item${urgentNew.length === 1 ? '' : 's'} already owned — not posted`)
+  if (urgentUnowned.length) out.notes.push(`${urgentUnowned.length} urgent item${urgentUnowned.length === 1 ? '' : 's'} with nobody on it — goes in the next On-watch post`)
+  else if (urgentNew.length) out.notes.push(`${urgentNew.length} urgent item${urgentNew.length === 1 ? '' : 's'} already owned — not posted`)
 
   // ---- 6. The morning roll-up, once a day, in her room. ----------------------------------------
   // BUILT IN THE MORNING, NOT AT MIDNIGHT (2026-09-28 audit, F26). The first run on a new ET date is

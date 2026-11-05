@@ -1,4 +1,6 @@
-// Morning Ops Brief settings — recipients per variant, sender mailbox, on/off.
+// Morning brief settings — recipients per role, sender mailbox, on/off (Jon, 2026-11-05: ONE BRIEF
+// PER ROLE — gm = GM morning, full = Ops morning, miami/broward = Field Runs, techs/maint =
+// Maintenance Run, vendors, eod, and `cc`, copied on every brief).
 // GET: any admin. PUT: owner only, same rule as ops presets — this decides who a daily company
 // email goes to, which is an owner-level control. Stored in app_settings key 'ops_brief'.
 import { NextRequest, NextResponse } from 'next/server'
@@ -9,7 +11,7 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 export const dynamic = 'force-dynamic'
 
 const KEY = 'ops_brief'
-const DEFAULTS = { enabled: false, fromEmail: 'jon@stay-hospitality.com', miami: [] as string[], broward: [] as string[], full: [] as string[], gm: [] as string[] }
+const DEFAULTS = { enabled: false, fromEmail: 'jon@stay-hospitality.com', miami: [] as string[], broward: [] as string[], full: [] as string[], gm: [] as string[], cc: [] as string[] }
 // THE MAINTENANCE RUN (Jon, 2026-10-01): one email per technician, in that person's language.
 // `techs` maps the technician's name (as Breezeway and Homebase spell it) to addresses + language;
 // `maint` is the combined run (Roberto).
@@ -28,16 +30,19 @@ const cleanTechs = (v: any): Record<string, { to: string[]; lang: 'en' | 'es' }>
 const cleanEmails = (v: any): string[] =>
   (Array.isArray(v) ? v : []).map(x => String(x || '').trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 30)
 
-// THE OTHER TWO DAILY EMAILS RIDE ALONG (Jon, 2026-08-17: "make it where we can add who it goes
-// to in user settings... also create one for Salato"). The labor true-up email reads app_settings
-// 'labor_weekly' and the Salato front-desk email reads 'salato_daily' — both had recipients that
-// could only be changed by editing the database. They are surfaced here as two more lists on the
-// same owner-only card, stored back to their own keys so the crons keep reading what they always
-// read. fromEmail follows the ops-brief sender unless one is already set on the key.
+// THE SALATO EMAIL RIDES ALONG (Jon, 2026-08-17: "make it where we can add who it goes to in user
+// settings... also create one for Salato"). It reads app_settings 'salato_daily'; surfaced here on
+// the same owner-only card and stored back to its own key. fromEmail follows the ops-brief sender
+// unless one is already set on the key. `newBookings` (default on) is the new-booking emails' switch.
+//
+// LABOR HAS ONE LIST NOW (Jon, 2026-11-05). The Labor Scorecard's lists ('labor_weekly' and the
+// older 'labor_daily') are no longer read by anything that sends: labor is in the GM morning, which
+// goes to `gm`. They are still READ here — never written or deleted — so the card can show who was
+// on the old labor list and is not on the GM morning yet.
 const digestGet = async (key: string) => {
   const d = await getSetting<any>(key, null).catch(() => null)
   const o = d && typeof d === 'object' ? d : {}
-  return { enabled: o.enabled === true, to: cleanEmails(o.to), fromEmail: typeof o.fromEmail === 'string' ? o.fromEmail : '' }
+  return { enabled: o.enabled === true, to: cleanEmails(o.to), fromEmail: typeof o.fromEmail === 'string' ? o.fromEmail : '', newBookings: o.newBookings !== false }
 }
 
 // LANGUAGE IS A SAVED SETTING, NOT DECORATION (Jon, 2026-08-26 audit).
@@ -61,7 +66,9 @@ export async function GET() {
   if (!isVrLogin(access)) return hotelOnlyRes()
   const stored = await getSetting<any>(KEY, null)
   const s = stored && typeof stored === 'object' ? stored : {}
-  const [trueup, salato] = await Promise.all([digestGet('labor_weekly'), digestGet('salato_daily')])
+  const [trueup, laborDaily, salato] = await Promise.all([digestGet('labor_weekly'), digestGet('labor_daily'), digestGet('salato_daily')])
+  const gm = cleanEmails(s.gm)
+  const legacyLabor = Array.from(new Set([...trueup.to, ...laborDaily.to])).filter(e => !gm.includes(e))
   // The staffing planner's target margin rides along too (Jon, 2026-08-18): a number the owner
   // can set, or blank for automatic (settled 30-day HK margin + 3, computed by the planner).
   const lp = await getSetting<any>('labor_plan', null).catch(() => null)
@@ -71,11 +78,12 @@ export async function GET() {
     config: {
       enabled: s.enabled === true,
       fromEmail: typeof s.fromEmail === 'string' && s.fromEmail ? s.fromEmail : DEFAULTS.fromEmail,
-      miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm: cleanEmails(s.gm),
+      miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm,
       maint: cleanEmails(s.maint), techs: cleanTechs(s.techs),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
-      trueup, salato,
-      // The EOD recap lives on this key (Eve audit 2026-10-10): on unless switched off, to the Ops Command list unless a list is set.
+      cc: cleanEmails(s.cc),
+      trueup, salato, legacyLabor,
+      // The EOD recap lives on this key (Eve audit 2026-10-10): on unless switched off, to its own list or the GM morning list.
       eod: { enabled: !(s.eod && s.eod.enabled === false), to: cleanEmails(s.eod?.to) },
       lang: { miami: asLang(s.lang?.miami), broward: asLang(s.lang?.broward) },
       laborPlan: { targetMarginPct: Number.isFinite(lpTarget) && lpTarget > 0 ? Math.round(lpTarget) : null },
@@ -97,11 +105,12 @@ export async function PUT(req: NextRequest) {
     vendors: { botanica: cleanEmails(c.vendors?.botanica), pt: cleanEmails(c.vendors?.pt), north: cleanEmails(c.vendors?.north) },
     lang: { miami: asLang(c.lang?.miami), broward: asLang(c.lang?.broward) },
     eod: { enabled: !(c.eod && typeof c.eod === 'object' && c.eod.enabled === false), to: cleanEmails(c.eod?.to) },
+    cc: cleanEmails(c.cc),
   }
   const res = await setSetting(KEY, config, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })
-  // The two ride-along digests write back to their own keys, preserving whatever else lives there
-  // (a blind overwrite would eat any other field stored on the key).
+  // The Salato digest writes back to its own key, preserving whatever else lives there (a blind
+  // overwrite would eat any other field stored on the key).
   const saveDigest = async (key: string, incoming: any) => {
     if (!incoming || typeof incoming !== 'object') return null
     const cur = await getSetting<any>(key, null).catch(() => null)
@@ -110,14 +119,14 @@ export async function PUT(req: NextRequest) {
       ...base,
       enabled: incoming.enabled === true,
       to: cleanEmails(incoming.to),
+      ...(typeof incoming.newBookings === 'boolean' ? { newBookings: incoming.newBookings } : {}),
       fromEmail: typeof incoming.fromEmail === 'string' && /@/.test(incoming.fromEmail)
         ? incoming.fromEmail.trim().toLowerCase()
         : (base.fromEmail || config.fromEmail),
     }
     await setSetting(key, next, access.email).catch(() => null)
-    return { enabled: next.enabled, to: next.to, fromEmail: next.fromEmail }
+    return { enabled: next.enabled, to: next.to, fromEmail: next.fromEmail, newBookings: (next as any).newBookings !== false }
   }
-  const trueup = await saveDigest('labor_weekly', c.trueup)
   const salato = await saveDigest('salato_daily', c.salato)
   // Staffing planner target: merge-save into 'labor_plan' (its other keys — forward-booking
   // history lives elsewhere, but stay safe). 20–80 accepted; anything else clears to automatic.
@@ -130,5 +139,7 @@ export async function PUT(req: NextRequest) {
     await setSetting('labor_plan', { ...base, targetMarginPct: target }, access.email).catch(() => null)
     laborPlan = { targetMarginPct: target }
   }
-  return NextResponse.json({ ok: true, config: { ...config, trueup, salato, laborPlan } })
+  const lw = await digestGet('labor_weekly'), ld = await digestGet('labor_daily')
+  const legacyLabor = Array.from(new Set([...lw.to, ...ld.to])).filter(e => !config.gm.includes(e))
+  return NextResponse.json({ ok: true, config: { ...config, trueup: lw, salato, legacyLabor, laborPlan } })
 }

@@ -630,7 +630,19 @@ async function conversationSoFar(channel: string, ev: any, me: string): Promise<
       await recordRun({ name: 'slack-eve', ok: false, ms: Date.now() - t0, error: 'could not answer: ' + String(out.error || out.status).slice(0, 200), detail: { channel, ts: String(ev.ts || ''), retry: isRetry } })
       return ok()
     }
-    const posted = await say(channel, threadTs, out.reply)
+    /* A TEACHER HEARS IT TOOK (Jon, 2026-11-05: "She can learn from any CCS agent, she can also learn
+       from Roberto, Karla & Bernadette"). When this turn saved a rule or correction in force, one short
+       line closes the reply: "Got it — saved as a rule for Botanica." Suggestions are not announced. */
+    let reply = out.reply
+    try {
+      const kept = (out.meta.learned || []).filter(l => l.status === 'saved')
+      if (kept.length && !/\bsaved as\b/i.test(reply)) {
+        const l = kept[0]
+        const where = l.scope === 'portfolio' ? 'everywhere' : `for ${l.scopeLabel}`
+        reply = `${reply}\n_Got it — saved as a ${l.kind} ${where}${kept.length > 1 ? ` (+${kept.length - 1} more)` : ''}._`
+      }
+    } catch { /* the answer goes out either way */ }
+    const posted = await say(channel, threadTs, reply)
     if (posted.ok) { await finish(eventId); await markAnswer(channel, posted.ts) }
     await recordRun({ name: 'slack-eve', ok: posted.ok, itemCount: posted.ok ? 1 : 0, ms: Date.now() - t0, error: posted.ok ? null : 'Slack post failed: ' + posted.error, detail: { channel, ts: String(ev.ts || ''), retry: isRetry } })
     // There used to be a step here that watched her reply for a refusal and posted the question

@@ -84,13 +84,27 @@ export function headlineOf(text: string, fallback: string): string {
  *   { post: true, text: one line + link } — pointer
  *   { post: true, text: the full text }   — slack
  */
+/**
+ * ONE LINE, NEVER THE WALL (Jon, 2026-11-05: "more effective, more clear and useful"). The labor report,
+ * notable arrivals and the shared-boards digests reach a room as the one-line pointer with the link at
+ * most: a stored 'slack' route is read as 'pointer', and a report that could not be filed points at the
+ * Reports tab instead of pasting the full text. 'page' (nothing in Slack) still means nothing.
+ */
+export const POINTER_ONLY = new Set<ReportKind>(['labor_report', 'notable_arrivals', 'shared_boards'])
+
 export async function routeReport(r: { kind: ReportKind; title: string; text: string; room?: string | null; meta?: any; pointer?: string }): Promise<{ post: boolean; text: string; route: Route; id: string | null; url: string | null }> {
   const routing = await getRouting().catch(() => null)
-  const route: Route = routing ? routing[r.kind] : (REPORT_KINDS.find(k => k.key === r.kind)?.defaultRoute || 'page')
+  let route: Route = routing ? routing[r.kind] : (REPORT_KINDS.find(k => k.key === r.kind)?.defaultRoute || 'page')
+  if (POINTER_ONLY.has(r.kind) && route === 'slack') route = 'pointer'
   const filed = await fileReport(r)
+  const head = r.pointer || headlineOf(r.text, r.title)
+  if (!filed && POINTER_ONLY.has(r.kind)) {
+    if (route === 'page') return { post: false, text: '', route, id: null, url: null }
+    const url = `${base()}/eve?tab=reports`
+    return { post: true, text: `📄 *${r.title}* — ${head} · <${url}|the Reports tab>`, route: 'pointer', id: null, url }
+  }
   if (route === 'slack' || !filed) return { post: true, text: r.text, route: filed ? route : 'slack', id: filed?.id || null, url: filed?.url || null }
   if (route === 'page') return { post: false, text: '', route, id: filed.id, url: filed.url }
-  const head = r.pointer || headlineOf(r.text, r.title)
   return { post: true, text: `📄 *${r.title}* — ${head} · <${filed.url}|read it on the Eve tab>`, route, id: filed.id, url: filed.url }
 }
 

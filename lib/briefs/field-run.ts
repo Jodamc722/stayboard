@@ -264,6 +264,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     { html: footer(pick('Field Run · sent every morning at 7 · the board has the live picture.', 'Ruta del día · cada mañana a las 7 · el tablero tiene la foto en vivo.')) },
   ]
   const { html } = fit(parts, 80_000)
-  const subject = `${pick('Field Run', 'Ruta')} ${market} · ${cleans.length} ${cleans.length === 1 ? t('clean') : t('cleans')}${sameDay.length ? ` · ${sameDay.length} ${pick('same-day', 'mismo día')}` : ''}${unassigned.length ? ` · ${unassigned.length} ${pick('UNASSIGNED', 'SIN ASIGNAR')}` : ''}${vipArr.length ? ` · ${vipArr.length} VIP` : ''} · ${niceDay(today)}`
+  // PLAIN SUBJECTS (Jon, 2026-11-05): the brief, the market, the day, two numbers.
+  const subject = `${pick('Field Run', 'Ruta del día')} · ${market} · ${niceDay(today)} · ${cleans.length} ${cleans.length === 1 ? t('clean') : t('cleans')} · ${unassigned.length} ${pick('unassigned', 'sin asignar')}`
   return { subject, html, words: words(html), counts: { cleans: cleans.length, sameDay: sameDay.length, unassigned: unassigned.length, arrivals: arrivals.length, departures: departures.length, priorities: prio.length, inspections: inspLines.length, vip: vipArr.length } }
 }

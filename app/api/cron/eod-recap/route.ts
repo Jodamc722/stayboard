@@ -25,7 +25,9 @@
 // sheet plus the Homebase schedule. Nothing is re-derived, so this email cannot disagree with the
 // Labor board or the morning brief.
 //
-//   GET  (cron ~8:15pm ET)    → send to the Ops Command list (app_settings ops_brief.full)
+//   GET  (cron ~8:15pm ET)    → send to ops_brief.eod.to, or the GM morning list (ops_brief.gm) when
+//                               that is empty; ops_brief.cc copied (Jon, 2026-11-05 — no automatic
+//                               owner or ops-manager addresses any more)
 //   GET ?preview=1            → signed-in: return the HTML, send nothing
 //   GET ?test=1               → signed-in: send to the tester only
 //
@@ -56,7 +58,6 @@ export const maxDuration = 300
 
 const TZ = 'America/New_York'
 const OWNER = 'jon@stay-hospitality.com'
-const STANDING_CC = ['roberto@stay-hospitality.com']
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app'
 
 const dISO = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
@@ -430,22 +431,30 @@ async function send(req: NextRequest) {
       `<a href="${APP_URL}/labor" style="display:block;background:#111827;color:#fff;text-decoration:none;border-radius:10px;padding:12px 16px;text-align:center;font-size:13.5px;font-weight:700">Open the Labor board &rarr;</a></td></tr></table>` +
       `<p style="margin:0;font-size:11px;color:#9ca3af;text-align:center">Sent automatically every evening. Same engine as the Labor board and the morning briefs.</p>` +
       `</div></body></html>`
-    const subject = `EOD ${niceDay(today)}: ${revCleans} cleans · ${money(revenue)} rev · ${r1(hkHours)} HK h · HK profit ${money(hkProfit)}${hkMarginPct != null ? ' (' + hkMarginPct + '%)' : ''} · maint ${mtProfit < 0 ? '-' : '+'}${money(Math.abs(mtProfit))}`
+    // PLAIN SUBJECT (Jon, 2026-11-05): the day, the cleans, the line that pays.
+    const subject = `EOD · ${niceDay(today)} · ${revCleans} clean${revCleans === 1 ? '' : 's'} · HK profit ${money(hkProfit)}`
 
     if (preview) return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 
     const cfg = await getSetting<any>('ops_brief', {})
-    // AN OFF SWITCH (Eve audit 2026-10-10): the recap had none — it went to the Ops Command list and the
-    // owner every night regardless. /users → App settings → Morning briefs → eod: false stops it; the
+    // AN OFF SWITCH (Eve audit 2026-10-10): the recap had none — it went out every night regardless. /users → App settings → Morning briefs → eod: false stops it; the
     // forecast ledger still records and grades below so nothing downstream goes dark.
     if (!test && cfg.eod && cfg.eod.enabled === false) {
       const ledger = await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
       return NextResponse.json({ ok: true, skipped: 'EOD recap is switched off (/users → App settings → Morning briefs)', ledger })
     }
     const fromEmail = String(cfg.fromEmail || OWNER)
-    const eodList: string[] = Array.isArray(cfg.eod?.to) && cfg.eod.to.length ? cfg.eod.to : (cfg.full || [])
-    const to: string[] = test ? [me as string] : Array.from(new Set([...eodList, OWNER].filter(Boolean)))
-    const cc = test ? [] : STANDING_CC.filter(c => !to.includes(c))
+    // ONE BRIEF PER ROLE (Jon, 2026-11-05): its own list, or the GM morning's when that is empty —
+    // no automatic owner or ops-manager addresses; `ops_brief.cc` is copied as on every brief.
+    const eodList: string[] = Array.isArray(cfg.eod?.to) && cfg.eod.to.length ? cfg.eod.to : (Array.isArray(cfg.gm) ? cfg.gm : [])
+    const to: string[] = test ? [me as string] : Array.from(new Set(eodList.map((x: any) => String(x || '').trim().toLowerCase()).filter((x: string) => /@/.test(x))))
+    const cc: string[] = test ? [] : (Array.isArray(cfg.cc) ? cfg.cc : []).map((x: any) => String(x || '').trim().toLowerCase()).filter((x: string) => /@/.test(x) && !to.includes(x))
+    // Nobody on either list is not a quiet night — the owner is told, once, and nothing is sent.
+    if (!to.length) {
+      await sendGmail({ fromEmail, to: [OWNER], subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} has nobody to go to: the EOD list and the GM morning list are both empty in /users → App settings → Morning briefs.</p>` }).catch(() => null)
+      const ledger = await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
+      return NextResponse.json({ ok: false, error: 'no recipients (ops_brief.eod.to and ops_brief.gm are empty)', ledger })
+    }
     const r = await sendGmail({ fromEmail, to, cc, subject: (test ? '[TEST] ' : '') + subject, html })
     // After the email, never before it: tonight's forecast into the ledger, and the grades.
     const ledger = test ? null : await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)

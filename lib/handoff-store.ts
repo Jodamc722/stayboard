@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from './supabase-admin'
 import { setSetting } from './app-settings'
 import {
-  type Alert, type Recipient, isDue, needsNag, shouldClose, pending, pruneAlerts, makeAlert, isQuiet,
+  type Alert, type Recipient, isDue, needsNag, shouldClose, pending, pruneAlerts, makeAlert, isQuiet, gist, isOpen,
 } from './handoff'
 
 const KEY = 'handoff_alerts'
@@ -75,7 +75,7 @@ export async function mentionsFor(people: Recipient[]): Promise<string> {
  * it. So Slack gets a sentence and a link (Jon, 2026-10-07: "it too should just be the link and a
  * small brief").
  */
-function brief(body: string, max = 180): string {
+function brief(body: string, max = 240): string {
   const flat = String(body || '')
     .split('\n')
     // Lines that are links, labels or instructions are not the brief.
@@ -85,12 +85,8 @@ function brief(body: string, max = 180): string {
     .replace(/\s+/g, ' ')
     .trim()
   if (!flat) return ''
-  if (flat.length <= max) return flat
-  // Cut at the end of a sentence where there is one, otherwise at a word.
-  const stop = flat.slice(0, max).lastIndexOf('. ')
-  if (stop > 60) return flat.slice(0, stop + 1)
-  const sp = flat.slice(0, max).lastIndexOf(' ')
-  return flat.slice(0, sp > 60 ? sp : max).trim() + '…'
+  // NEVER A FRAGMENT (Jon, 2026-11-05): "Mr." is not a sentence end; at least ~80 characters (lib/handoff gist).
+  return gist(flat, max, 80)
 }
 
 function slackText(a: Alert, who: string): string {
@@ -121,21 +117,35 @@ export async function runHandoffs(): Promise<{ fired: number; nagged: number; cl
   const notes: string[] = []
   let changed = false
   const { postToChannel, postThreadReply } = await import('./slack')
+  // NOTHING BETWEEN 8PM AND 7AM ET (Jon, 2026-11-05) from Eve's alerts: the bell has it at once, the
+  // Slack post waits for 7am. A person's own handoff fires at the time they set, as before; only its
+  // hourly nags wait for the morning.
+  const { inPostWindow } = await import('./eve/room-gate')
+  const open = inPostWindow(new Date(now))
+  const post = async (a: Alert) => {
+    const extra = (a.slackMentions || []).map(id => '<@' + id + '>').join(' ')
+    const r = await postToChannel(a.channel!, slackText(a, isQuiet(a) ? extra : [await mentionsFor(a.recipients || []), extra].filter(Boolean).join(' ')))
+    if (r.ok) { a.slackTs = r.ts || null; a.slackError = null } else { a.slackError = r.error || 'failed'; notes.push(a.title + ': ' + a.slackError) }
+    // ONE SHARED COUNT (Jon, 2026-11-05): Eve's alerts are recorded in the said-registry, so they count
+    // toward the room's daily cap for her other posts. They are never held BY the cap — a safety post goes.
+    if (r.ok && a.source === 'eve') { try { const { noteSaid } = await import('./eve/room-gate'); await noteSaid({ channel: a.channel!, text: a.title + ' ' + a.body, by: 'cron:eve-alerts', ts: r.ts || null, summary: a.title }) } catch { /* best effort */ } }
+  }
   for (const a of alerts) {
+    if (a.slackHeld && a.channel && isOpen(a) && open) {
+      await post(a); a.slackHeld = false; changed = true; fired++
+      continue
+    }
     if (isDue(a, now)) {
       a.recipients = await recipientsFor(a)
       a.firedAt = new Date(now).toISOString()
-      if (a.channel) {
-        // A quiet alert tags nobody — unless it was raised WITH names (a safety matter tags Jon and
-        // Roberto in the one customer-care post rather than getting a second post in #leadership).
-        const extra = (a.slackMentions || []).map(id => '<@' + id + '>').join(' ')
-        const r = await postToChannel(a.channel, slackText(a, isQuiet(a) ? extra : [await mentionsFor(a.recipients), extra].filter(Boolean).join(' ')))
-        if (r.ok) { a.slackTs = r.ts || null; a.slackError = null } else { a.slackError = r.error || 'failed'; notes.push(a.title + ': ' + a.slackError) }
-      }
+      if (a.channel && a.source === 'eve' && !open) { a.slackHeld = true; notes.push(a.title + ': Slack post held until 7am ET') }
+      // A quiet alert tags nobody — unless it was raised WITH names (a safety matter tags Jon and
+      // Roberto in the one customer-care post rather than getting a second post in #leadership).
+      else if (a.channel) await post(a)
       fired++; changed = true
       continue
     }
-    if (needsNag(a, now) && a.slackTs) {
+    if (open && needsNag(a, now) && a.slackTs) {
       const who = await mentionsFor(pending(a))
       const r = await postThreadReply(a.channel!, a.slackTs, `Still waiting on ${who}: <${APP_URL}/command?alert=${encodeURIComponent(a.id)}|open and confirm>`)
       a.nags = (a.nags || 0) + 1; a.lastNagAt = new Date(now).toISOString()

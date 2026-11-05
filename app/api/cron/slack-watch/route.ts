@@ -88,6 +88,8 @@ export async function POST(req: NextRequest) {
   // THE ONE MORNING POST and THE APPROVALS DIGEST (Eve audit 2026-10-07). The morning post (7–10am ET,
   // once a day) replaces the roll-up, the ops-desk plan and the empty handoffs; the digest lists every
   // queued proposal as one numbered post. Each in its own try, each with its own receipt.
+  // The digest is called every pass but flushes itself only at its slots — 9am and 3pm ET, 8am–7pm,
+  // through the room gate (Jon, 2026-11-05; lib/eve/slack-approvals flushApprovalDigest).
   let morning: any = null, approvals: any = null
   if (digest) {
     const m0 = Date.now()

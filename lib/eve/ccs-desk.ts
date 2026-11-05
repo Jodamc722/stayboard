@@ -23,9 +23,10 @@
 //   "booked". A Breezeway task finishing on the unit does NOT close a guest ask — that is a clean,
 //   not an answer — so the cross-system check the other kinds use is skipped for this one.
 //
-// And a SHIFT HANDOFF: three times a day the open asks are posted to the CCS room as a list — guest,
-// unit, what they want, who has it, how long it has waited — so the next shift starts from the
-// list, not from the scrollback.
+// And a SHIFT HANDOFF: once a day (7am ET) the open asks are posted to the CCS room as a list — guest,
+// unit, what they want, who has it, how long it has waited — so the day starts from the list, not
+// from the scrollback. (It was three times a day — 7, 15, 23 — until Jon, 2026-11-05: "more
+// effective, more clear and useful"; the same ask sat on three handoffs in a row.)
 //
 // PROPOSE, NOT ACT (Jon, 2026-09-28: "propose, you approve"). Every post here goes through the
 // agent-mode gate for slack_post; below "act" it is a proposal in #vr-eve with the text attached,
@@ -53,6 +54,8 @@ export type CcsDeskCfg = {
   escalateNames: string[]
   /** ET hours at which the open-asks handoff is posted to the CCS room. */
   handoffHoursET: number[]
+  /** An ask on this many handoffs is escalated once in its thread, then left off the list until it changes. */
+  escalateAfterLists: number
 }
 export const CCS_DESK_DEFAULTS: CcsDeskCfg = {
   enabled: true,
@@ -61,13 +64,17 @@ export const CCS_DESK_DEFAULTS: CcsDeskCfg = {
   escalateBuildings: ['Salato'],
   escalateValue: 2000,
   escalateNames: ['Jon McGill', 'Karla Valle', 'Roberto Chiriboga', 'Bernadette'],
-  handoffHoursET: [7, 15, 23],
+  // ONCE A DAY (Jon, 2026-11-05): 7am ET only. The 3pm and 11pm handoffs are gone.
+  handoffHoursET: [7],
+  escalateAfterLists: 2,
 }
+// The old default, as it may still be stored from the settings page: read as the new one.
+const OLD_HANDOFF_HOURS = '7,15,23'
 export async function getCcsDesk(): Promise<CcsDeskCfg> {
   const s = await getSetting<any>(CCS_DESK_KEY, null)
   const d = CCS_DESK_DEFAULTS
   if (!s || typeof s !== 'object') return d
-  const nums = (v: any) => (Array.isArray(v) ? v.map(Number).filter(n => Number.isFinite(n) && n >= 0 && n <= 23) : d.handoffHoursET)
+  const nums = (v: any) => (Array.isArray(v) && v.map(Number).join(',') !== OLD_HANDOFF_HOURS ? v.map(Number).filter(n => Number.isFinite(n) && n >= 0 && n <= 23) : d.handoffHoursET)
   const strs = (v: any, dd: string[]) => (Array.isArray(v) ? v.map(String).map(x => x.trim()).filter(Boolean) : dd)
   return {
     enabled: s.enabled !== false,
@@ -77,6 +84,7 @@ export async function getCcsDesk(): Promise<CcsDeskCfg> {
     escalateValue: Number.isFinite(Number(s.escalateValue)) && Number(s.escalateValue) >= 0 ? Number(s.escalateValue) : d.escalateValue,
     escalateNames: strs(s.escalateNames, d.escalateNames),
     handoffHoursET: nums(s.handoffHoursET),
+    escalateAfterLists: Number.isFinite(Number(s.escalateAfterLists)) && Number(s.escalateAfterLists) >= 1 ? Number(s.escalateAfterLists) : d.escalateAfterLists,
   }
 }
 export async function saveCcsDesk(patch: any, by: string): Promise<CcsDeskCfg> {
@@ -116,6 +124,8 @@ export type AskItem = {
   summary: string; owner_name: string | null; owner_slack: string | null
   unit: string | null; building: string | null; listing_id: string | null
   first_seen: string; nudge_count: number; nudged_at: string | null; evidence: any
+  /** Carried from the Slack watch row: what changes when the thread moves (a new message, status, owner). */
+  last_seen?: string | null; status?: string | null
 }
 
 export function shouldEscalate(it: Pick<AskItem, 'unit' | 'building' | 'evidence'>, cfg: CcsDeskCfg): string | null {
@@ -232,35 +242,69 @@ export function handoffText(open: AskItem[], now = Date.now(), listed: Record<st
 }
 const ordinal = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? 'st' : n % 10 === 2 && n % 100 !== 12 ? 'nd' : n % 10 === 3 && n % 100 !== 13 ? 'rd' : 'th')
 
+/** What an ask looks like to the handoff: a new message, a status or an owner change makes it new again. */
+export function askSignature(it: AskItem): string {
+  return [it.owner_name || '', it.owner_slack || '', it.status || 'open', it.last_seen || ''].join('|')
+}
+
 /**
  * Post the handoff once per configured hour. Returns what it did, for the run receipt.
+ *
+ * ESCALATE ONCE, THEN OFF THE LIST (Jon, 2026-11-05). The same open ask was listed on three handoffs
+ * in a row. Now an ask that has been on `escalateAfterLists` handoffs (default 2) is escalated ONCE in
+ * its own thread to the escalation list (the existing `escalate` helper) and then left off the handoff
+ * until it changes — a new message in its thread, a status or an owner (askSignature). The map of
+ * what was escalated, and as what, lives in the handoff state (app_settings eve_ccs_desk_state).
+ * `tags` are the Slack mentions for the escalation (escalationTags, resolved by the caller).
  */
-export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Date()): Promise<{ posted: boolean; mode?: string; note?: string }> {
+export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Date(), opts: { tags?: string[] } = {}): Promise<{ posted: boolean; mode?: string; note?: string; escalated?: number; hidden?: number }> {
   const h = etHour(now), d = etDate(now)
   if (!cfg.handoffHoursET.includes(h)) return { posted: false }
+  // NOTHING BETWEEN 8PM AND 7AM ET (Jon, 2026-11-05), whatever hour the setting names.
+  const { inPostWindow } = await import('./room-gate')
+  if (!inPostWindow(now)) return { posted: false, note: `${h}:00 ET is outside 7am–8pm — not posted` }
   const slot = `${d}T${String(h).padStart(2, '0')}`
   const st = (await getSetting<any>(HANDOFF_STATE_KEY, null)) || {}
   if (st.lastHandoff === slot) return { posted: false }
-  // NOTHING TO HAND OFF, NOTHING POSTED (Eve audit 2026-10-07): "CCS handoff — no open guest asks.
-  // Clean slate." went out up to three times a day. An empty list is not news; the slot is claimed quietly.
-  if (!open.length) { await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, listed: {} }, 'ccs-desk'); return { posted: false, note: 'nothing open — not posted' } }
   // How many handoffs each open ask has already been on — pruned to what is still open.
   const prior: Record<string, number> = st.listed && typeof st.listed === 'object' ? st.listed : {}
+  const priorEsc: Record<string, string> = st.escalated && typeof st.escalated === 'object' ? st.escalated : {}
   const listed: Record<string, number> = {}
-  for (const it of open) if (prior[it.id]) listed[it.id] = Number(prior[it.id]) || 0
-  const text = handoffText(open, now.getTime(), listed)
-  // AT THE HOUR IT WAS SET FOR (2026-09-28 audit, F27). The 23:00 slot falls in quiet hours, so it
-  // was held and posted at 7am next to the fresh 7am handoff — stale on arrival. A handoff runs at
-  // the hours in this desk's settings, which are a person's schedule, not Eve's initiative: urgent.
+  const escalated: Record<string, string> = {}
+  const shown: AskItem[] = []
+  let hidden = 0, escNow = 0
+  for (const it of open) {
+    const sig = askSignature(it)
+    if (priorEsc[it.id] !== undefined) {
+      // Escalated already: off the list while nothing has moved; back on, counted from zero, once it has.
+      if (priorEsc[it.id] === sig) { escalated[it.id] = sig; hidden++; continue }
+      shown.push(it); continue
+    }
+    if (prior[it.id]) listed[it.id] = Number(prior[it.id]) || 0
+    if ((listed[it.id] || 0) >= cfg.escalateAfterLists) {
+      const r = await escalate(it, `on the handoff ${listed[it.id]} times and still open`, opts.tags || [])
+      if (r.ok && r.mode !== 'observe') { escalated[it.id] = sig; escNow++; hidden++; delete listed[it.id]; continue }
+    }
+    shown.push(it)
+  }
+  // NOTHING TO HAND OFF, NOTHING POSTED (Eve audit 2026-10-07): "CCS handoff — no open guest asks.
+  // Clean slate." went out up to three times a day. An empty list is not news; the slot is claimed quietly.
+  if (!shown.length) { await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, listed: {}, escalated }, 'ccs-desk'); return { posted: false, note: hidden ? `nothing new to list (${hidden} escalated and waiting on a change) — not posted` : 'nothing open — not posted', escalated: escNow, hidden } }
+  const text = handoffText(shown, now.getTime(), listed)
+  // AT THE HOUR IT WAS SET FOR (2026-09-28 audit, F27). A handoff runs at the hours in this desk's
+  // settings, which are a person's schedule, not Eve's initiative: urgent (the room cap does not apply).
   const gate = await agentAllowed('slack_post', { ask: true, urgent: true })
-  const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #vr-customercareteam (${open.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'vr-customercareteam', text }, by: 'cron:slack-watch' },
+  const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #vr-customercareteam (${shown.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'vr-customercareteam', text }, by: 'cron:slack-watch' },
     async () => { const p = await postToChannel(EVE_CHANNELS.ccsJon, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
   if (r.ok && r.mode !== 'observe') {
     const next: Record<string, number> = {}
-    for (const it of open) next[it.id] = (listed[it.id] || 0) + 1
-    await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, listed: next }, 'ccs-desk')
+    for (const it of shown) next[it.id] = (listed[it.id] || 0) + 1
+    await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, listed: next, escalated }, 'ccs-desk')
+  } else if (escNow) {
+    // The list was held, but the escalations went out: remember them so they are not said twice.
+    await setSetting(HANDOFF_STATE_KEY, { ...st, escalated: { ...priorEsc, ...escalated } }, 'ccs-desk')
   }
-  return { posted: r.mode === 'act', mode: r.mode, note: r.mode !== 'act' ? gate.reason : undefined }
+  return { posted: r.mode === 'act', mode: r.mode, note: r.mode !== 'act' ? gate.reason : undefined, escalated: escNow, hidden }
 }
 
 /** Escalate one ask in its own thread, gated. */

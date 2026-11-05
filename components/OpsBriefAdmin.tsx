@@ -1,35 +1,37 @@
 'use client'
-// Admin console — MORNING OPS BRIEF. Who gets which variant, which mailbox sends it, and the
-// on/off switch. Also the two buttons that make it trustworthy: Preview (see today's brief in a
-// tab) and Send test (all three variants to YOUR inbox only). Nothing goes to the team until
-// Enabled is on AND a list has addresses — safe by default.
+// Admin console — THE BRIEFS. ONE BRIEF PER ROLE (Jon, 2026-11-05): one card per role with who gets
+// it, what is in it and when it goes; a `cc` copied on every brief; the on/off switch and the
+// sending mailbox. Preview (today's brief in a tab) and Send test (every brief to YOUR inbox only)
+// are what make it trustworthy. Nothing goes to the team until Enabled is on AND a list has
+// addresses — safe by default.
 import { useCallback, useEffect, useState } from 'react'
 import { Sunrise, Loader2, Check, AlertTriangle, Save, Eye, Send, Mail } from 'lucide-react'
 
-type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string }
+type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string; newBookings?: boolean }
 // The retired maintenance briefs' `maint` block (2026-09-09) is no longer edited on this card.
 // Whatever is stored rides back through `...cfg` unchanged on save, so nothing is lost.
 type TechCfg = { to: string[]; lang?: string }
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; trueup?: Digest; salato?: Digest; eod?: Digest; laborPlan?: { targetMarginPct?: number | null }
+// `trueup` (app_settings labor_weekly) is still read, never edited: labor goes to the GM morning list
+// now, and `legacyLabor` is whoever was on the old labor lists and is not on the GM morning yet.
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; cc?: string[]; trueup?: Digest; legacyLabor?: string[]; salato?: Digest; eod?: Digest; laborPlan?: { targetMarginPct?: number | null }
   // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets only —
-  // Ops Command and the GM brief are management documents and stay English.
+  // the Ops morning and the GM morning are management documents and stay English.
   lang?: { miami?: string; broward?: string } }
 
-// The two other daily emails, editable on the same card (Jon, 2026-08-17). Each has its own
-// on/off, its own recipient list, and sends from the ops-brief mailbox unless overridden.
-const DIGESTS: { key: 'trueup' | 'salato' | 'eod'; label: string; blurb: string }[] = [
-  { key: 'trueup', label: 'Labor Scorecard · 7:58am ET', blurb: 'Four numbers against their goals, what moved this week, who the numbers cannot see, and whether they can be trusted. The full three tiers live on the Labor board. Goes to the owner until a list is saved; skips the day rather than send on partial payroll.' },
-  { key: 'salato', label: 'Salato front desk · 7:16am ET', blurb: 'Reservations only: arriving, departing, in-house, upcoming — hotel-related flags highlighted.' },
-  { key: 'eod', label: 'End-of-day recap · evening', blurb: 'Cleans done, revenue, hours and HK profit for the day, tomorrow in one line, the week so far. Goes to the Ops Command list (and the owner) until a list is saved here. Unchecked = off; the forecast ledger still records.' },
+// The other two scheduled emails, each with its own on/off and list (Jon, 2026-08-17). The labor
+// card is gone (2026-11-05): labor is a block of the GM morning, edited on the GM morning card.
+const DIGESTS: { key: 'salato' | 'eod'; label: string; blurb: string }[] = [
+  { key: 'salato', label: 'Salato front desk · 7:14am ET', blurb: 'Upcoming reservations: anything flagged (hotel-related, same-day turn, no name) first, arriving today, then every arrival in the next 14 days by day, with the front-desk board link. In-house and departures are on the board.' },
+  { key: 'eod', label: 'End-of-day recap · 8:15pm ET', blurb: 'Did the morning\'s priorities get done, tomorrow, one money line, housekeeping / supervision / maintenance, cleans completed, the last 7 days. Goes to this list, or the GM morning list when this is empty. Unchecked = off; the forecast ledger still records.' },
 ]
 
-// Four audiences, deliberately different documents (2026-08-07). The blurb is the promise each
-// one makes — if a brief stops matching its blurb, one of the two is wrong.
+// ONE BRIEF PER ROLE (Jon, 2026-11-05). The blurb is the promise each one makes — if a brief stops
+// matching its blurb, one of the two is wrong.
 const LISTS: { key: 'miami' | 'broward' | 'full' | 'gm'; label: string; blurb: string }[] = [
-  { key: 'miami', label: 'Field Run · Miami', blurb: 'The field coordinator: do first, the run per cleaner, the shape of the day. One screen.' },
-  { key: 'broward', label: 'Field Run · Broward', blurb: 'Same, for the Broward coordinator' },
-  { key: 'full', label: 'Ops Desk · manager', blurb: 'Unblock today, the markets at a glance, free trips, maintenance in three lines, paperwork in two' },
-  { key: 'gm', label: 'GM Brief · owner', blurb: 'Decide today, the blocks work can reopen, the tiles, guests & risk' },
+  { key: 'gm', label: 'GM morning · owner', blurb: '7:01am · Decide today, the numbers (last 7 days, last 30 beside each), labor (what moved, missing from the numbers, failing checks), notable arrivals, blocked units. Labor recipients go here.' },
+  { key: 'full', label: 'Ops morning · operations manager', blurb: '7:01am · Decide today, VIP and big arrivals, glitches, Slack items waiting on a person, who\'s working, inspections, units down now, yesterday and tomorrow.' },
+  { key: 'miami', label: 'Field Run · Miami', blurb: '7:01am · Top priorities in order, departure cleans by cleaner, pending inspections, how the day runs, arrivals. English or Spanish.' },
+  { key: 'broward', label: 'Field Run · Broward', blurb: '7:01am · The same, for the Broward coordinator.' },
 ]
 
 export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
@@ -60,7 +62,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '),
     maint: (c.maint || []).join(', '),
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
-    d_trueup: (c.trueup?.to || []).join(', '), d_salato: (c.salato?.to || []).join(', '), d_eod: (c.eod?.to || []).join(', '),
+    d_salato: (c.salato?.to || []).join(', '), d_eod: (c.eod?.to || []).join(', '), cc: (c.cc || []).join(', '),
     lp_target: c.laborPlan?.targetMarginPct != null ? String(c.laborPlan.targetMarginPct) : '',
   })
   const load = useCallback(async () => {
@@ -69,7 +71,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json()
       if (r.ok) {
         const c = j.config || {}
-        setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, de: c.eod?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
+        setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, nb: c.salato?.newBookings !== false, ds: c.salato?.enabled === true, de: c.eod?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
       }
     } catch { /* card stays editable with defaults */ }
   }, [])
@@ -86,7 +88,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     </select>
   )
 
-  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, dt: cfg.trueup?.enabled === true, ds: cfg.salato?.enabled === true, de: cfg.eod?.enabled !== false, lg: langSig }) !== saved
+  const dirty = JSON.stringify({ rw: raw, enabled: cfg.enabled === true, nb: cfg.salato?.newBookings !== false, ds: cfg.salato?.enabled === true, de: cfg.eod?.enabled !== false, lg: langSig }) !== saved
   const parse = (v: string) => v.split(/[,;\s]+/).map(x => x.trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x))
 
   async function save() {
@@ -98,8 +100,8 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         maint: parse(raw.maint || ''),
         techs: Object.fromEntries(techRows.filter(t => t.name.trim()).map(t => [t.name.trim(), { to: parse(t.to), lang: t.lang }])),
         vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
-        trueup: { ...(cfg.trueup || {}), to: parse(raw.d_trueup || '') },
-        salato: { ...(cfg.salato || {}), to: parse(raw.d_salato || '') },
+        cc: parse(raw.cc || ''),
+        salato: { ...(cfg.salato || {}), newBookings: cfg.salato?.newBookings !== false, to: parse(raw.d_salato || '') },
         eod: { enabled: cfg.eod ? cfg.eod.enabled !== false : true, ...(cfg.eod || {}), to: parse(raw.d_eod || '') },
         laborPlan: (() => {
           const t = (raw.lp_target || '').trim()
@@ -111,7 +113,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/settings/ops-brief', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config }) })
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
-      setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, dt: c.trueup?.enabled === true, ds: c.salato?.enabled === true, de: c.eod?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
+      setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, nb: c.salato?.newBookings !== false, ds: c.salato?.enabled === true, de: c.eod?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
       const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length + (c.maint || []).length + (Object.values(c.techs || {}) as TechCfg[]).reduce((a: number, t) => a + (t.to || []).length, 0)
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
@@ -124,7 +126,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const r = await fetch('/api/cron/ops-brief?test=1', { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error((j.results || []).map((x: any) => x.error).filter(Boolean)[0] || j.error || 'Test failed.')
-      setMsg({ tone: 'ok', text: `Test sent — all three variants are in ${j.to}'s inbox.` })
+      setMsg({ tone: 'ok', text: `Test sent — every morning brief is in ${j.to}'s inbox.` })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
   }
 
@@ -150,9 +152,9 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         )}
 
         <p className="text-[12px] text-muted">
-          One role, one email (2026-10-01): the field coordinator gets the Field Run, the operations manager the Ops Desk,
-          each technician his Maintenance Run, the owner the GM Brief, and labor lives only in the Labor Scorecard (7:58).
-          Roberto is copied on all of them.
+          One brief per role: the owner gets the GM morning (labor included), the operations manager the Ops morning,
+          each field coordinator a Field Run, each technician his Maintenance Run, the vendors their buildings.
+          The addresses under <b>Copied on every brief</b> get a copy of each one.
           Sends from <b>{cfg.fromEmail || 'jon@stay-hospitality.com'}</b> via its Google connection — if a test says the
           Gmail permission is missing, reconnect Google from Owner Reports and approve the send-email permission.
         </p>
@@ -172,19 +174,36 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
               <textarea rows={2} disabled={!isOwner} value={raw[l.key] ?? ''} onChange={e => setRaw(x => ({ ...x, [l.key]: e.target.value }))}
                 placeholder="emails, comma separated"
                 className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+              {/* THE OLD LABOR LIST, SHOWN NOT LOST (2026-11-05): whoever got the Labor Scorecard and is not on the GM morning yet. */}
+              {l.key === 'gm' && (cfg.legacyLabor || []).length > 0 && (
+                <div className="mt-1 text-[11px] text-amber-800">
+                  On the old Labor Scorecard list, not here yet: {(cfg.legacyLabor || []).join(', ')}{' '}
+                  <button type="button" disabled={!isOwner} onClick={() => setRaw(x => ({ ...x, gm: [x.gm || '', ...(cfg.legacyLabor || [])].filter(Boolean).join(', ') }))}
+                    className="font-semibold text-brand-700 hover:underline disabled:opacity-50">add them</button>
+                </div>
+              )}
             </div>
           ))}
+        </div>
+
+        {/* COPIED ON EVERY BRIEF (Jon, 2026-11-05) — replaces the hardcoded standing CC. */}
+        <div className="rounded-xl border border-line p-3">
+          <div className="text-[12px] font-bold text-ink">Copied on every brief</div>
+          <div className="text-[11px] text-muted mb-1.5">Gets a copy of every brief above and below — team, vendor, Salato and the EOD recap. Leave empty for nobody. Never doubled for someone already on that brief&apos;s list.</div>
+          <textarea rows={1} disabled={!isOwner} value={raw.cc ?? ''} onChange={e => setRaw(x => ({ ...x, cc: e.target.value }))}
+            placeholder="emails, comma separated"
+            className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
         </div>
 
         {/* MAINTENANCE RUN (Jon, 2026-10-01): one email per technician, in his language. */}
         <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[12px] font-bold text-ink">Maintenance Run · one email per technician</span>
+            <span className="text-[12px] font-bold text-ink">Maintenance Run · 7:01am · one email per technician</span>
             <button type="button" onClick={async () => { try { const r = await fetch('/api/cron/ops-brief?preview=techs', { cache: 'no-store' }); const j = await r.json(); setTechNames(Array.isArray(j.techs) ? j.techs : []) } catch { setTechNames([]) } }}
               className="text-[10px] font-semibold text-brand-700 hover:underline">who is on the board today?</button>
             <a href="/api/cron/ops-brief?preview=maint" target="_blank" rel="noreferrer" className="ml-auto text-[10px] font-semibold text-brand-700 hover:underline">preview combined</a>
           </div>
-          <div className="text-[11px] text-muted mb-1.5">Each technician gets only his own ordered list (urgent → empty units → arrivals → occupied, call first → building), in English or Spanish. The combined run goes to the addresses below (Roberto).</div>
+          <div className="text-[11px] text-muted mb-1.5">Each technician gets only his own ordered list (urgent → empty units → arrivals → occupied, call first → building), in English or Spanish. The combined run (every technician) goes to the addresses below.</div>
           {techNames.length > 0 && <div className="text-[11px] text-muted mb-1.5">On the board today: {techNames.map(n => <button key={n} type="button" disabled={!isOwner || techRows.some(t => t.name === n)} onClick={() => setTechRows(x => x.concat([{ name: n, to: '', lang: 'en' }]))} className="inline-block mr-1 mb-1 px-1.5 py-0.5 rounded border border-line bg-white text-[11px] disabled:opacity-50">{n} +</button>)}</div>}
           {techRows.map((t, i) => (
             <div key={i} className="grid sm:grid-cols-[1fr_2fr_auto_auto] gap-2 items-center mb-1.5">
@@ -201,7 +220,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           ))}
           <button type="button" disabled={!isOwner} onClick={() => setTechRows(x => x.concat([{ name: '', to: '', lang: 'en' }]))} className="text-[11px] font-semibold text-brand-700 hover:underline disabled:opacity-50">+ add a technician</button>
           <div className="mt-2">
-            <div className="text-[11px] font-semibold text-ink mb-1">Combined run (every technician) — the ops manager</div>
+            <div className="text-[11px] font-semibold text-ink mb-1">Combined run (every technician)</div>
             <textarea rows={1} disabled={!isOwner} value={raw.maint ?? ''} onChange={e => setRaw(x => ({ ...x, maint: e.target.value }))} placeholder="emails, comma separated"
               className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
           </div>
@@ -222,6 +241,14 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
               <textarea rows={2} disabled={!isOwner} value={raw['d_' + dg.key] ?? ''} onChange={e => setRaw(x => ({ ...x, ['d_' + dg.key]: e.target.value }))}
                 placeholder="emails, comma separated"
                 className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+              {/* NEW-BOOKING EMAILS (Jon, 2026-10-28): each new Salato booking, as it lands, to the same list — on unless switched off here. */}
+              {dg.key === 'salato' && (
+                <label className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-muted cursor-pointer">
+                  <input type="checkbox" disabled={!isOwner} checked={cfg.salato?.newBookings !== false}
+                    onChange={e => setCfg(x => ({ ...x, salato: { ...(x.salato || {}), newBookings: e.target.checked } }))} />
+                  also email each new booking as it lands (same list)
+                </label>
+              )}
             </div>
           ))}
         </div>
@@ -238,7 +265,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
             <span className="text-[12px] text-muted">% of cleaning revenue kept after housekeeper wages</span>
           </div>
           <div className="text-[11px] text-muted mt-1">
-            Drives the &ldquo;Hours budget&rdquo; on the Weekly planner and the Hours plan line in the full morning brief.
+            Drives the &ldquo;Hours budget&rdquo; on the Weekly planner.
             Blank = automatic: whatever housekeeping actually kept over the settled last 30 days, plus 3 points.
             The planner never recommends fewer hours than the booked cleans physically need, whatever the target.
           </div>
@@ -267,7 +294,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         </div>
 
         <div>
-          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Vendor briefs — external cleaning companies (their buildings only: checkouts, arrivals, tomorrow. No internal data.)</div>
+          <div className="text-[11px] uppercase tracking-wider font-semibold text-muted mb-1.5">Vendor briefs · 7:01am — external cleaning companies (their buildings only: checkouts in cleaning order, arrivals, tomorrow, what guests flagged. No internal data.)</div>
           <div className="grid sm:grid-cols-3 gap-3">
             {([['botanica','Botanica'],['pt','Park Towers'],['north','Capri · Lucerne · Amrit']] as ['botanica'|'pt'|'north', string][]).map(([k, label]) => (
               <div key={k} className="rounded-xl border border-line p-3">
@@ -289,12 +316,12 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           <label className={`inline-flex items-center gap-2 text-[12px] font-semibold ${isOwner ? 'cursor-pointer text-ink' : 'text-muted'}`}>
             <input type="checkbox" disabled={!isOwner} checked={cfg.enabled === true}
               onChange={e => setCfg(c => ({ ...c, enabled: e.target.checked }))} className="accent-brand-600 w-4 h-4" />
-            Enabled — send every morning at 7:00 AM ET
+            Enabled — send every morning at 7:01 AM ET
           </label>
           <span className="flex-1" />
           <a href="/api/cron/ops-brief?preview=full" target="_blank" rel="noreferrer"
             className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-muted hover:border-brand-300">
-            <Eye size={12} /> Preview today&apos;s
+            <Eye size={12} /> Preview Ops morning
           </a>
           <button onClick={sendTest} disabled={busy !== null}
             className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 px-2.5 py-1.5 text-[12px] font-semibold hover:bg-brand-100 disabled:opacity-40">
@@ -304,7 +331,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
 
         <p className="text-[11px] text-muted flex items-start gap-1.5">
           <Mail size={12} className="mt-0.5 flex-shrink-0" />
-          Safe by default: with the switch off or a list empty, that variant goes to nobody. &ldquo;Send test to me&rdquo; only ever emails you.
+          Safe by default: with the switch off or a list empty, that brief goes to nobody. &ldquo;Send test to me&rdquo; only ever emails you.
         </p>
       </div>
     </div>

@@ -2,18 +2,22 @@
 // (2026-10-28, Jon: "a morning email just showing upcoming reservations to front desk, this should
 // also include the link." In-house and departures moved off the email; they are on the board.)
 //
-// Jon, 2026-08-14: "send a daily email to Salato as well, show only reservations, upcoming etc and
-// active reservations. Highlight anything related to the hotel."
+// Jon, 2026-08-14: "send a daily email to Salato as well … Highlight anything related to the hotel."
 //
-// Deliberately NOT the ops brief. No labor, no margins, no cost per clean — the front desk needs
-// who is in the building today, who is arriving, and who is leaving. Three lists and nothing else.
+// Deliberately NOT the ops brief. No labor, no margins, no cost per clean. What it carries, at 7:14am
+// Eastern: "Needs a look" (anything flagged, first), arriving today, and every arrival in the next 14
+// days grouped by day, with the front-desk board link above and below. In-house guests and
+// departures are on the board, not in the email.
 //
 // "Anything related to the hotel" is called out where it lives: a hotel-side booking channel, a
 // note or custom field mentioning the hotel, a same-day turn, or a stay with no name attached yet.
 // Those rows are marked so the desk reads them first instead of scanning every line.
 //
+// The NEW-BOOKING emails are a separate sender (lib/salato-new-bookings, after each booking sync)
+// to the same list, switched off with `salato_daily.newBookings = false`.
+//
 // GET                → send to the configured list (switched on with nobody on it = a failed run
-//                      and one owner bell a day)
+//                      and one owner bell a day); `ops_brief.cc` copied, as on every brief
 // GET ?preview=1     → the HTML, no send (signed-in admin)
 // GET ?test=1        → send to YOU only (signed-in admin)
 import { NextRequest, NextResponse } from 'next/server'
@@ -199,7 +203,10 @@ async function run(req: NextRequest): Promise<Response> {
       const alerted = await alertOwnerOnce(why).catch(() => false)
       return NextResponse.json({ ok: false, sent: false, reason: 'switched on but ' + why, alerted, subject })
     }
-    const r = await sendGmail({ fromEmail, to, subject, html })
+    // COPIED ON EVERY BRIEF (Jon, 2026-11-05): `ops_brief.cc`, empty by default.
+    const ob = await getSetting<{ cc?: string[] }>('ops_brief', {}).catch(() => ({} as any))
+    const cc = (Array.isArray(ob?.cc) ? ob.cc : []).map((x: any) => String(x || '').trim().toLowerCase()).filter((x: string) => /@/.test(x) && !to.map((t: string) => t.toLowerCase()).includes(x))
+    const r = await sendGmail({ fromEmail, to, cc, subject, html })
     return NextResponse.json({ ok: r.ok, sent: r.ok, to: to.length, subject, error: r.error })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })

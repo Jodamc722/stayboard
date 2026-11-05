@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAccess } from '@/lib/access'
 import { runEve, canUseEve } from '@/lib/eve/run'
+import { ensureConversation } from '@/lib/eve/conversations'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -41,7 +42,15 @@ export async function POST(req: NextRequest) {
   const messages = Array.isArray(body?.messages) ? body.messages : []
   const domains = Array.isArray(body?.domains) ? body.domains : []
 
-  const out = await runEve({ access: gate.access, messages, domains, source: 'web' })
+  /* A LEARNING CHAT (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can teach
+     Eve"). `teach: true` is Teach mode; `conversationId` keeps the thread on the server — the /eve
+     Chat tab and the floating bubble send the one they are in, or none and get a new one back.
+     Fail open: before migration 171 conversationId comes back null and nothing else changes. */
+  const teach = body?.teach === true
+  const firstQ = String((messages.find((m: any) => m && m.role === 'user') || {}).content || '')
+  const conversationId = await ensureConversation(gate.access.email, firstQ, body?.conversationId ? String(body.conversationId) : null)
+
+  const out = await runEve({ access: gate.access, messages, domains, source: 'web', teach, conversationId })
   if (!out.ok) return NextResponse.json({ error: out.error }, { status: out.status })
-  return NextResponse.json({ reply: out.reply, chatId: out.chatId, meta: out.meta })
+  return NextResponse.json({ reply: out.reply, chatId: out.chatId, conversationId: out.conversationId, meta: out.meta })
 }

@@ -79,11 +79,48 @@ export async function postProposalToSlack(id: string, p: { summary: string; why?
  * agent-mode notifyProposal and go out here: ONE post, numbered, answered in its thread with
  * "1 yes", "2 no", "1 3 yes", "all yes" (or a bare yes/no when there is only one). Each row keeps the
  * post's ts and its number, so the reply finds it exactly as before. Upkeep proposals are not listed —
- * only counted, with the link to where they wait. Called hourly from the slack-watch cron and right
- * after the morning post. Returns how many it listed.
+ * only counted, with the link to where they wait. Called from the hourly slack-watch cron. Returns how
+ * many it listed.
+ *
+ * TWICE A DAY, THROUGH THE GATE (Jon, 2026-11-05: "more effective, more clear and useful"). It used to
+ * flush every hour and could make three posts a pass. Now:
+ *   · it flushes at most at the slots in app_settings `eve_approvals_digest` (default 9am and 3pm ET),
+ *     and only between 8am and 7pm ET — a slot missed by a pass is caught by the next hourly pass;
+ *   · ONE post per room per flush: the desk's asks and the drafts ready to send are one numbered list
+ *     in #vr-customercareteam (they were two posts); owner asks stay in the approvals room, because
+ *     money and door codes never go to the desk room;
+ *   · every post passes lib/eve/room-gate (the 8pm–7am window, quiet hours, the said-registry and the
+ *     unchanged per-room cap). A held list waits for the next slot; nothing is stamped as sent.
+ * `force` (a person pressing run) skips the slot check, never the gate.
  */
 export const DIGEST_MAX = 10
-export async function flushApprovalDigest(opts: { preview?: boolean } = {}): Promise<{ posted: number; waiting: number; upkeep: number; text?: string; error?: string; desk?: number; drafts?: number }> {
+export const DIGEST_KEY = 'eve_approvals_digest'
+const DIGEST_STATE_KEY = 'eve_approvals_digest_state'
+export type DigestCfg = { slotsET: number[]; startET: number; endET: number }
+export const DIGEST_DEFAULTS: DigestCfg = { slotsET: [9, 15], startET: 8, endET: 19 }
+export async function getDigestCfg(): Promise<DigestCfg> {
+  const v = await getSetting<any>(DIGEST_KEY, null)
+  const d = DIGEST_DEFAULTS
+  if (!v || typeof v !== 'object') return d
+  const hr = (x: any, dd: number) => (Number.isFinite(Number(x)) && Number(x) >= 0 && Number(x) <= 23 ? Number(x) : dd)
+  const slots = Array.isArray(v.slotsET) ? v.slotsET.map(Number).filter((n: number) => Number.isFinite(n) && n >= 0 && n <= 23) : d.slotsET
+  return { slotsET: slots.length ? slots.sort((a: number, b: number) => a - b) : d.slotsET, startET: hr(v.startET, d.startET), endET: hr(v.endET, d.endET) }
+}
+
+export async function flushApprovalDigest(opts: { preview?: boolean; force?: boolean } = {}): Promise<{ posted: number; waiting: number; upkeep: number; text?: string; error?: string; desk?: number; drafts?: number; skipped?: string; held?: string[] }> {
+  // THE SLOT (Jon, 2026-11-05): 8am–7pm ET only, at most at each configured slot once a day.
+  const { etHour, etDate, gatedPost } = await import('./room-gate')
+  const cfg = await getDigestCfg()
+  const h = etHour(), today = etDate()
+  let slotKey = ''
+  if (!opts.preview) {
+    if (h < cfg.startET || h >= cfg.endET) return { posted: 0, waiting: 0, upkeep: 0, skipped: `outside ${cfg.startET}:00–${cfg.endET}:00 ET` }
+    const slot = cfg.slotsET.filter(s => s <= h).pop()
+    if (slot === undefined && !opts.force) return { posted: 0, waiting: 0, upkeep: 0, skipped: 'before the first slot' }
+    slotKey = `${today}@${slot ?? h}`
+    const st = (await getSetting<any>(DIGEST_STATE_KEY, null)) || {}
+    if (!opts.force && st.last === slotKey) return { posted: 0, waiting: 0, upkeep: 0, skipped: `slot ${slotKey} already flushed` }
+  }
   const db = supabaseAdmin()
   const since = new Date(Date.now() - 3 * 86400_000).toISOString()
   const { data } = await db.from('eve_actions').select('id,kind,payload,status,created_at').in('kind', ['ask', 'guest_draft']).eq('status', 'proposed').gte('created_at', since).order('created_at', { ascending: true }).limit(300)
@@ -101,7 +138,8 @@ export async function flushApprovalDigest(opts: { preview?: boolean } = {}): Pro
   // goes to the approvals channel for the approver list, as before.
   const deskRows = pending.filter(r => tierOf(String(r.payload?.action || ''), r.payload) === 'desk')
   const ownerRows = pending.filter(r => !deskRows.includes(r))
-  if (!pending.length && !drafts.length) return { posted: 0, waiting: 0, upkeep, desk: 0, drafts: 0 }
+  const markSlot = async () => { if (slotKey) { try { await setSetting(DIGEST_STATE_KEY, { last: slotKey, at: new Date().toISOString() }, 'slack-approvals') } catch { /* next pass may try again */ } } }
+  if (!pending.length && !drafts.length) { if (!opts.preview) await markSlot(); return { posted: 0, waiting: 0, upkeep, desk: 0, drafts: 0 } }
   const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
   const line = (r: any, i: number) => {
     const pl = r.payload || {}
@@ -110,11 +148,12 @@ export async function flushApprovalDigest(opts: { preview?: boolean } = {}): Pro
     return `*${i + 1}.* ${String(pl.summary || '').replace(/\s+/g, ' ').slice(0, 220)}${usd ? ` · ${money(usd)}` : ''}${why ? `\n      _${why}_` : ''}`
   }
   const previews: string[] = []
+  const held: string[] = []
   let posted = 0, error: string | undefined
-  const stamp = async (list: any[], chId: string, ts: string) => {
+  const stamp = async (list: any[], chId: string, ts: string, offset = 0) => {
     for (let i = 0; i < list.length; i++) {
       const pl = list[i].payload || {}
-      try { await db.from('eve_actions').update({ payload: { ...pl, slack_pending: false, slack_channel: chId, slack_ts: ts, slack_index: i + 1, slack_sent_at: new Date().toISOString() } }).eq('id', list[i].id) } catch { /* the reply will miss this one; it still waits in Lighthouse */ }
+      try { await db.from('eve_actions').update({ payload: { ...pl, slack_pending: false, slack_channel: chId, slack_ts: ts, slack_index: offset + i + 1, slack_sent_at: new Date().toISOString() } }).eq('id', list[i].id) } catch { /* the reply will miss this one; it still waits in Lighthouse */ }
     }
   }
 
@@ -133,53 +172,46 @@ export async function flushApprovalDigest(opts: { preview?: boolean } = {}): Pro
       ].filter(Boolean).join('\n')
       if (opts.preview) previews.push(text)
       else {
-        const r = await postToChannel(ch.id, text)
-        if (!r.ok || !r.ts) error = r.error || 'refused'
+        const r = await gatedPost({ channel: ch.id, text, by: 'cron:approvals-digest', summary: `approvals digest in the approvals room (${list.length})` })
+        if (r.held) held.push(`approvals room: ${r.held}`)
+        else if (!r.ok || !r.ts) error = r.error || 'refused'
         else { await stamp(list, ch.id, String(r.ts)); posted += list.length }
       }
     }
   }
-  // 2. Desk-tier asks → the customer care room, answerable by the team.
-  if (deskRows.length) {
-    const list = deskRows.slice(0, DIGEST_MAX)
-    const one = list.length === 1
-    const text = [
-      `🛎️ *Eve can do these for the desk (${list.length})* — anyone on the team: ${one ? 'reply *yes* or *no* in this thread.' : 'reply in this thread with \`1 yes\` · \`2 no\` · \`all yes\`.'}`,
-      list.map(line).join('\n'),
-      deskRows.length > list.length ? `_…${deskRows.length - list.length} more in the next list._` : '',
-      `_No money and no door codes here — those still go to Jon._`,
-    ].filter(Boolean).join('\n')
-    if (opts.preview) previews.push(text)
-    else {
-      const r = await postToChannel(EVE_CHANNELS.ccsJon, text)
-      if (!r.ok || !r.ts) error = error || r.error || 'refused'
-      else { await stamp(list, EVE_CHANNELS.ccsJon, String(r.ts)); posted += list.length }
-    }
-  }
-  // 3. Drafts ready → the customer care room: the text is right there; "1 send" sends it as the person who said so.
-  if (drafts.length) {
-    const list = drafts.slice(0, DIGEST_MAX)
+  // 2. The desk's asks AND the drafts ready to send → ONE numbered list in the customer care room,
+  // answerable by the team: "1 yes" does an ask, "3 send" sends a draft as the person who said so.
+  if (deskRows.length || drafts.length) {
+    const asks = deskRows.slice(0, DIGEST_MAX)
+    const dList = drafts.slice(0, DIGEST_MAX)
     const dline = (r: any, i: number) => {
       const pl = r.payload || {}
       const who = `${String(pl.guest || 'the guest')}${pl.unit ? ` (${String(pl.unit)})` : ''}`
       const why = String(r.why || '').replace(/\s+/g, ' ').slice(0, 100)
       return `*${i + 1}.* ${who}${why ? ` — _${why}_` : ''}\n      “${String(pl.draft || '').replace(/\s+/g, ' ').slice(0, 320)}${String(pl.draft || '').length > 320 ? '…' : ''}”\n      <${base}/messages/${encodeURIComponent(String(pl.conversationId))}|open the thread to edit>`
     }
-    const one = list.length === 1
+    const total = asks.length + dList.length
+    const one = total === 1
     const text = [
-      `✍️ *Replies drafted, waiting to be sent (${list.length})* — ${one ? 'reply *send* here and it goes to the guest as you; *no* drops it.' : 'reply here with \`1 send\` · \`2 no\` · \`all send\`; each goes to the guest as you.'} To change the wording, open the thread.`,
-      list.map(dline).join('\n'),
-      drafts.length > list.length ? `_…${drafts.length - list.length} more waiting on /messages._` : '',
+      `🛎️ *For the desk (${total})* — anyone on the team: ${one ? (asks.length ? 'reply *yes* or *no* in this thread.' : 'reply *send* here and it goes to the guest as you; *no* drops it.') : 'reply in this thread with \`1 yes\` · \`2 no\` · \`3 send\` · \`all yes\`; a draft goes to the guest as you.'}`,
+      asks.length ? `*Eve can do these (${asks.length})*\n${asks.map(line).join('\n')}` : '',
+      deskRows.length > asks.length ? `_…${deskRows.length - asks.length} more in the next list._` : '',
+      dList.length ? `*Replies drafted, waiting to be sent (${dList.length})* — to change the wording, open the thread.\n${dList.map((r, i) => dline(r, asks.length + i)).join('\n')}` : '',
+      drafts.length > dList.length ? `_…${drafts.length - dList.length} more waiting on /messages._` : '',
+      asks.length ? `_No money and no door codes here — those still go to Jon._` : '',
     ].filter(Boolean).join('\n')
     if (opts.preview) previews.push(text)
     else {
-      const r = await postToChannel(EVE_CHANNELS.ccsJon, text)
-      if (!r.ok || !r.ts) error = error || r.error || 'refused'
-      else { await stamp(list, EVE_CHANNELS.ccsJon, String(r.ts)); posted += list.length }
+      const r = await gatedPost({ channel: EVE_CHANNELS.ccsJon, text, by: 'cron:approvals-digest', summary: `desk list in #vr-customercareteam (${asks.length} asks, ${dList.length} drafts)` })
+      if (r.held) held.push(`customer care room: ${r.held}`)
+      else if (!r.ok || !r.ts) error = error || r.error || 'refused'
+      else { await stamp(asks, EVE_CHANNELS.ccsJon, String(r.ts)); await stamp(dList, EVE_CHANNELS.ccsJon, String(r.ts), asks.length); posted += total }
     }
   }
   if (opts.preview) return { posted: 0, waiting: pending.length, upkeep, text: previews.join('\n\n— — —\n\n'), desk: deskRows.length, drafts: drafts.length }
-  return { posted, waiting: Math.max(0, pending.length + drafts.length - posted), upkeep, error, desk: deskRows.length, drafts: drafts.length }
+  // The slot is spent once it was tried: a held list waits for the next slot, not the next hour.
+  await markSlot()
+  return { posted, waiting: Math.max(0, pending.length + drafts.length - posted), upkeep, error, desk: deskRows.length, drafts: drafts.length, held: held.length ? held : undefined }
 }
 
 /** Which numbers a reply decides, and how. "1 yes 2 no", "1,3 yes", "yes 2", "all yes". */
@@ -241,6 +273,8 @@ export async function handleApprovalReply(ev: { channel?: string; thread_ts?: st
     else proposal = found[0] || null
   } catch { proposal = null }
   if (digest.length && digest.every(r => r.kind === 'guest_draft')) return await decideDraftDigest(channel, root, String(ev.user), text, digest)
+  // ONE DESK LIST (Jon, 2026-11-05): asks and drafts share a numbered list now — each number goes to its own path.
+  if (digest.length && digest.some(r => r.kind === 'guest_draft')) return await decideMixedDigest(channel, root, String(ev.user), text, digest)
   if (digest.length) return await decideDigest(channel, root, String(ev.user), text, digest)
   if (proposal && proposal.kind === 'guest_draft') return await decideDraftDigest(channel, root, String(ev.user), text, [proposal])
   let spend: SpendPost | null = null
@@ -320,19 +354,65 @@ async function decideDigest(channel: string, root: string, user: string, text: s
  */
 async function decideDraftDigest(channel: string, root: string, user: string, text: string, rows: any[]): Promise<boolean> {
   const reply = (t: string) => postThreadReply(channel, root, t).catch(() => null)
-  const n = rows.length
+  // Numbers can run past the row count (Jon, 2026-11-05): the daily "Fixed" post adds items in its thread, numbered on.
+  const n = Math.max(rows.length, ...rows.map(r => Number(r.payload?.slack_index) || 0))
   const picks = parseDigestReply(text, n)
   if (!picks.length) { await reply(n === 1 ? 'Reply *send* to send it to the guest, or *no* to drop the draft.' : 'Reply with the numbers, like `1 send`, `2 no` or `all send`.'); return true }
   const email = await emailForSlackUser(user).catch(() => null)
   const may = await canDecide(email, rows)
   if (!may.ok) { await reply(may.why + '.'); return true }
   const by = String(email)
+  const lines = await sendDraftPicks(rows, picks, by)
+  await reply(`${lines.join('\n')}\n(${by.split('@')[0]})`)
+  return true
+}
+
+/**
+ * A reply under the ONE DESK LIST (Jon, 2026-11-05): numbered asks and drafts together. An ask's number
+ * runs the ask path; a draft's number runs the send path — and a draft goes to a guest only when the
+ * reply says "send", so "all yes" never messages a guest by accident.
+ */
+async function decideMixedDigest(channel: string, root: string, user: string, text: string, rows: any[]): Promise<boolean> {
+  const reply = (t: string) => postThreadReply(channel, root, t).catch(() => null)
+  const n = Math.max(rows.length, ...rows.map(r => Number(r.payload?.slack_index) || 0))
+  const picks = parseDigestReply(text, n)
+  if (!picks.length) { await reply('Reply with the numbers, like `1 yes`, `2 no` or `3 send`.'); return true }
+  const rowAt = (i: number) => rows.find(r => Number(r.payload?.slack_index) === i) || null
+  const email = await emailForSlackUser(user).catch(() => null)
+  const chosen = picks.map(pk => rowAt(pk.idx)).filter(Boolean)
+  const may = await canDecide(email, chosen.length ? chosen : rows)
+  if (!may.ok) { await reply(may.why + '.'); return true }
+  const by = String(email)
+  const saysSend = /\bsend\b/i.test(text)
+  const lines: string[] = []
+  for (const pk of picks.sort((a, b) => a.idx - b.idx)) {
+    const row = rowAt(pk.idx)
+    if (!row) continue
+    if (row.kind === 'guest_draft') {
+      if (pk.yes && !saysSend) { lines.push(`${pk.idx}. a draft to a guest — reply \`${pk.idx} send\` to send it`); continue }
+      lines.push(...(await sendDraftPicks([row], [{ idx: pk.idx, yes: pk.yes }], by)))
+    } else {
+      if (row.status !== 'proposed') { lines.push(`${pk.idx}. already ${row.status}`); continue }
+      if (!pk.yes) { await rejectProposal(String(row.id), by, text); lines.push(`${pk.idx}. dropped`); continue }
+      const res = await executeProposal(String(row.id), by)
+      lines.push(res.ok ? `${pk.idx}. done — ${String(res.done || '').slice(0, 120)}` : `${pk.idx}. couldn't: ${String(res.error || '').slice(0, 120)}`)
+    }
+  }
+  await reply(`${lines.join('\n')}\n(${by.split('@')[0]})`)
+  return true
+}
+
+/** Send (or drop) the picked drafts as `by`. Returns one line per pick. */
+async function sendDraftPicks(rows: any[], picks: { idx: number; yes: boolean }[], by: string): Promise<string[]> {
   const db = supabaseAdmin()
   const nowISO = new Date().toISOString()
   const lines: string[] = []
+  // By its number only; the position fallback is for rows posted before numbers were kept — a number
+  // that names a line with no draft must never send a different guest's draft.
+  const numbered = rows.some(r => Number(r.payload?.slack_index) > 0)
   for (const pk of picks.sort((a, b) => a.idx - b.idx)) {
-    const row = rows.find(r => Number(r.payload?.slack_index) === pk.idx) || rows[pk.idx - 1]
-    if (!row) continue
+    const row = rows.find(r => Number(r.payload?.slack_index) === pk.idx) || (numbered ? null : rows[pk.idx - 1])
+    if (!row) { lines.push(`${pk.idx}. no draft on that line`); continue }
     const pl = row.payload || {}
     // Claim it first — the Lighthouse Send button and this reply must never both send.
     const { data: claim } = await db.from('eve_actions').update({ status: pk.yes ? 'approved' : 'rejected', decided_by: by, decided_at: nowISO }).eq('id', row.id).eq('status', 'proposed').select('id')
@@ -356,6 +436,5 @@ async function decideDraftDigest(channel: string, root: string, user: string, te
       lines.push(`${pk.idx}. couldn't send: ${String(e?.message || e).slice(0, 120)}`)
     }
   }
-  await reply(`${lines.join('\n')}\n(${by.split('@')[0]})`)
-  return true
+  return lines
 }

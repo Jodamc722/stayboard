@@ -11,6 +11,7 @@ import { EveDocsAdmin } from '@/components/EveDocsAdmin'
 import { EveReviewAdmin } from '@/components/EveReviewAdmin'
 import { EveAgentAdmin } from '@/components/EveAgentAdmin'
 import { EveLearningAdmin } from '@/components/EveLearningAdmin'
+import { EveTeachersAdmin } from '@/components/EveTeachersAdmin'
 import { OtaPlaybookAdmin } from '@/components/OtaPlaybookAdmin'
 import { EveThinkingFeed, THOUGHTS_URL } from '@/components/EveThoughts'
 
@@ -68,7 +69,7 @@ export function EveAdmin({ canEdit }: { canEdit: boolean }) {
       </div>
       {cur === 'thinking' && <EveThinkingFeed />}
       {cur === 'agent' && <EveAgentAdmin canEdit={canEdit} />}
-      {cur === 'learning' && <EveLearningAdmin canEdit={canEdit} />}
+      {cur === 'learning' && <><EveTeachersAdmin /><EveLearningAdmin canEdit={canEdit} /></>}
       {cur === 'ota' && <OtaPlaybookAdmin canEdit={canEdit} />}
       {cur === 'review' && <EveReviewAdmin canEdit={canEdit} />}
       {cur === 'memory' && <EveMemoryAdmin canEdit={canEdit} />}
