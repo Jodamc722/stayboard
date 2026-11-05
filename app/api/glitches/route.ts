@@ -203,6 +203,10 @@ export async function POST(req: NextRequest) {
       // EVERY NEW GLITCH STARTS WITH SUPPORT (Jon, 2026-09-22: "it should default to Support").
       // Support owns it until someone hands it on; an unowned card is how issues sit for days.
       assignee: str(b.assignee) || 'Support',
+      // THE TEAM PICKS THE URGENCY (Jon, 2026-11-05: "when a glitch is created it marks high priority
+      // automatically — allow team to select urgency"). The column defaulted every new card to
+      // urgent (migration 086); now the form sends it, and a card filed without one is Normal.
+      priority: ['urgent', 'high', 'normal', 'low'].includes(str(b.priority)) ? str(b.priority) : 'normal',
       created_by: user.email || 'team',
       history: [{ at: new Date().toISOString(), by: user.email || 'team', action: 'created' }],
     }
@@ -217,7 +221,21 @@ export async function POST(req: NextRequest) {
     }
     const { data, error } = ins
     if (error || !data) return NextResponse.json({ ok: false, error: (error && error.message) || 'Insert failed' }, { status: 500 })
-    return NextResponse.json({ ok: true, id: data.id })
+    // GUEST SENSITIVE IN GUESTY (Jon, 2026-11-05: "please make guest sensitive in our Guesty
+    // reservation"). A guest with a glitch is a sensitive guest: tick the reservation's Sensitive box
+    // and add a dated line to its notes — the safe read-merge-write in lib/guest-mood, never a bare
+    // PUT. A Guesty hiccup never loses the glitch; the card just says it did not reach Guesty.
+    let guestySensitive: boolean | null = null
+    if (row.reservation_id) {
+      try {
+        const { markReservationSensitive } = await import('@/lib/sensitive')
+        const why = 'Glitch filed: ' + [str(row.category), overview].filter(Boolean).join(' — ').replace(/\s+/g, ' ').slice(0, 160)
+        const m = await markReservationSensitive(String(row.reservation_id), why)
+        guestySensitive = m.ok
+        try { await db.from('glitches').update({ history: [...row.history, { at: new Date().toISOString(), by: 'lighthouse', action: m.ok ? 'guesty_sensitive' : 'guesty_sensitive_failed', detail: m.ok ? 'Reservation marked Sensitive in Guesty' : String(m.error || 'failed').slice(0, 120) }] }).eq('id', data.id) } catch { /* history is a convenience */ }
+      } catch { guestySensitive = false }
+    }
+    return NextResponse.json({ ok: true, id: data.id, guestySensitive })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }

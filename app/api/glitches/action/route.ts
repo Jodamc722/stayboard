@@ -451,7 +451,8 @@ export async function POST(req: NextRequest) {
       const DEPTS = ['housekeeping', 'maintenance', 'safety', 'inspection']
       const PRIOS = ['urgent', 'high', 'normal', 'low']
       const dept = DEPTS.indexOf(str(b.department)) >= 0 ? str(b.department) : deptFor(category)
-      const prio = PRIOS.indexOf(str(b.priority)) >= 0 ? str(b.priority) : 'urgent'
+      // Unset on the push form → the urgency the team gave the glitch, not a blanket 'urgent'.
+      const prio = PRIOS.indexOf(str(b.priority)) >= 0 ? str(b.priority) : (PRIOS.indexOf(str((g as any).priority)) >= 0 ? str((g as any).priority) : 'normal')
       const wantDate = /^\d{4}-\d{2}-\d{2}$/.test(str(b.scheduledDate)) ? str(b.scheduledDate)
         : (/^\d{4}-\d{2}-\d{2}$/.test(str(g.due_date)) ? str(g.due_date) : ymd(new Date()))
       const payload: Record<string, any> = { template_id: GLITCH_TEMPLATE_ID, name: title, type_department: dept, type_priority: prio, scheduled_date: wantDate, description: parts.join('\n'), home_id: homeId }

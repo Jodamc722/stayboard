@@ -216,6 +216,9 @@ async function fileGlitch(d: Detection): Promise<string | null> {
     guest_tone: d.severity === 'security' ? 'frustrated' : null,
     refund_approved: 0,
     assignee: 'Support',
+    // Auto-filed cards are Normal unless it is a safety matter — the team raises it if it needs to
+    // (Jon, 2026-11-05: glitches were all landing as urgent).
+    priority: d.severity === 'security' ? 'urgent' : 'normal',
     detected_from: d.sourceKey,
     details: 'Filed automatically from the ' + (d.kind === 'call' ? 'recorded call' : 'guest message thread') + '. Read it: ' + d.link,
     history: [{ at: new Date().toISOString(), by: 'lighthouse', action: 'created', detail: 'auto-filed from ' + d.sourceKey }],
@@ -231,7 +234,13 @@ async function fileGlitch(d: Detection): Promise<string | null> {
     if (/duplicate|unique/i.test(str(ins.error.message))) return null
     throw new Error('glitch insert: ' + ins.error.message)
   }
-  return ins.data ? str((ins.data as any).id) : null
+  const newId = ins.data ? str((ins.data as any).id) : null
+  // A guest with a glitch is a sensitive guest (Jon, 2026-11-05): tick Sensitive on the Guesty
+  // reservation, same safe write as the manual form. Never fails the filing.
+  if (newId && row.reservation_id) {
+    try { const { markReservationSensitive } = await import('./sensitive'); await markReservationSensitive(str(row.reservation_id), 'Glitch auto-filed: ' + str(d.headline).slice(0, 140)) } catch { /* the sentiment pass also marks complaints */ }
+  }
+  return newId
 }
 
 /**

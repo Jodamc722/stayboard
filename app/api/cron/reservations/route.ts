@@ -65,7 +65,12 @@ async function run(req: NextRequest) {
     // ops team's bell within minutes. Own try, like the two above. See lib/banned-guests.ts.
     let banned: any = null
     try { const { runBannedWatch } = await import('@/lib/banned-guests'); const b = await runBannedWatch(); banned = { hits: b.hits, notified: b.notified, skipped: b.skipped } } catch (e: any) { banned = { error: String(e?.message || e).slice(0, 120) } }
-    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, salatoEmail, folios, banned, elapsed_ms: Date.now() - started })
+    // MID-STAY CANCELLATIONS (Jon, 2026-11-05): a guest who cancels during the stay → one post in the
+    // customer care room asking CCS to block the unit for the day ("Canceled") and tell the team.
+    // Own try, like the rest. See lib/midstay-cancel.ts.
+    let midstay: any = null
+    try { const { runMidstayCancelWatch } = await import('@/lib/midstay-cancel'); const m = await runMidstayCancelWatch(); midstay = { found: m.found, posted: m.posted, held: m.held, error: m.error } } catch (e: any) { midstay = { error: String(e?.message || e).slice(0, 120) } }
+    return NextResponse.json({ ranAt: new Date().toISOString(), mode, reservations: n, salato, salatoEmail, folios, banned, midstay, elapsed_ms: Date.now() - started })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }

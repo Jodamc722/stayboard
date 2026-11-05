@@ -786,8 +786,8 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
               className="text-[13px] font-semibold border border-line rounded-lg px-2 h-8 bg-white">
               {LANES.map(l => <option key={l.key} value={l.key}>{l.label}</option>)}
             </select>
-            <select value={String(g.priority || 'urgent').toLowerCase()} onChange={e => act(g.id, { action: 'priority', priority: e.target.value })}
-              className={'text-[13px] font-semibold border rounded-lg px-2 h-8 ' + (String(g.priority || 'urgent').toLowerCase() === 'urgent' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-white border-line text-ink')}>
+            <select value={String(g.priority || 'normal').toLowerCase()} onChange={e => act(g.id, { action: 'priority', priority: e.target.value })}
+              className={'text-[13px] font-semibold border rounded-lg px-2 h-8 ' + (String(g.priority || 'normal').toLowerCase() === 'urgent' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-white border-line text-ink')}>
               {[['urgent', 'Urgent'], ['high', 'High'], ['normal', 'Normal'], ['low', 'Low']].map(([k, label]) => <option key={k} value={k}>{label}</option>)}
             </select>
           </span>
@@ -1494,6 +1494,8 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
   // the guest sounded is whoever spoke to them.
   const [guestTone, setGuestTone] = useState('')
   const [reportedVia, setReportedVia] = useState('')
+  // URGENCY IS PICKED, NOT ASSUMED (Jon, 2026-11-05). Starts on Normal.
+  const [priority, setPriority] = useState('normal')
   const [reportedBy, setReportedBy] = useState('')
   const [guestEmail, setGuestEmail] = useState('')
 
@@ -1524,7 +1526,7 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
     setBusy(true); setErr('')
     try {
       const body: Record<string, any> = {
-        glitchType, category, incidentDate, overview, guestTone, reportedVia, photos, reportedBy, guestEmail,
+        glitchType, category, incidentDate, overview, guestTone, reportedVia, photos, reportedBy, guestEmail, priority,
       }
       if (res) Object.assign(body, { reservationId: res.reservationId, listingId: res.listingId, unit: res.unit, market: res.market, guestName: res.guestName, guestPhone: res.guestPhone, channel: res.channel, checkIn: res.checkIn, checkOut: res.checkOut, reservationTotal: res.total, reservationNotes: res.notes, sentiment: res.sentiment })
       const r = await fetch('/api/glitches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -1672,6 +1674,19 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
             />
           </Field>
 
+          <Field label="How urgent is it?" hint="Urgent = the guest can't use the unit right now. Normal is fine for most things; you can change it later on the card.">
+            <Chips
+              options={[
+                { value: 'urgent', label: 'Urgent' },
+                { value: 'high', label: 'High' },
+                { value: 'normal', label: 'Normal' },
+                { value: 'low', label: 'Low' },
+              ]}
+              value={priority}
+              onChange={v => setPriority(v || 'normal')}
+            />
+          </Field>
+
           <Field label="How did the guest sound?" hint="You spoke to them, so only you know this. It changes what a fair refund looks like.">
             <Chips
               options={[
@@ -1756,7 +1771,7 @@ function PushPanel({ g, people, onDone, act }: { g: Glitch; people: { id: number
   const [dept, setDept] = useState('')
   // Priority is the GLITCH's, not the form's (migration 086). Whatever gets filed is written back,
   // so the card and Breezeway cannot disagree about how urgent this is.
-  const [prio, setPrio] = useState(String(g.priority || 'urgent'))
+  const [prio, setPrio] = useState(String(g.priority || 'normal'))
   const [date, setDate] = useState(() => {
     if (g.due_date && /^\d{4}-\d{2}-\d{2}$/.test(g.due_date)) return g.due_date
     return todayET()
