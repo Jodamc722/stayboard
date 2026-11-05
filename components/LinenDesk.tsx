@@ -143,7 +143,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
   }, [initialUnit, units, focus])
 
   const TABS: [View, string, string][] = [
-    ['standard', 'Standard', 'The linen list — what every unit gets, per bed, bath, guest or unit, and what is bought at each tier'],
+    ['standard', 'Par levels', 'The source of truth: what every unit gets — per bed, bathroom, guest or kitchen — and the par. The Calculator, Quote and exports all read it'],
     ['calculator', 'Calculator', 'Pick units, count what is on the shelf, and get the order: what to buy, whole cases per vendor, and cost at your prices'],
     ['quote', 'Quote', 'No listing yet? Type in bedrooms, baths, occupancy, kitchens and beds — the three tiers, the invoice and the vendor order'],
   ]
@@ -218,7 +218,7 @@ function TierCards({ quotes, value, onChange, chosen }: { quotes: Record<LinenTi
               {chosen === t && <Tag tone="emerald" title="The tier picked for this unit — it shows on the onboarding desk and the onboarding deck">chosen</Tag>}
             </span>
             <span className="block mt-1 text-[14px] sm:text-[18px] font-bold tabular-nums text-ink truncate">
-              {q.priced ? money(q.total) : <Tag tone="amber" title={`No line in ${q.label} has a price yet — add prices on the Standard, ${q.label} tier`}>unpriced</Tag>}
+              {q.priced ? money(q.total) : <Tag tone="amber" title={`No line in ${q.label} has a price yet — add prices on Par levels (+ Pricing), ${q.label} tier`}>unpriced</Tag>}
             </span>
             <span className="mt-1 flex items-center gap-1 flex-wrap text-[11.5px] text-muted tabular-nums">
               {q.pieces.toLocaleString('en-US')} pcs
@@ -262,7 +262,7 @@ function QuoteCard({ q }: { q: LinenQuote }) {
                       <td className="px-2 py-1.5 text-muted">{r.size || ''}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{r.qty.toLocaleString('en-US')}</td>
                       <td className="hidden sm:table-cell px-2 py-1.5 text-right tabular-nums text-muted">{r.price != null ? money(r.price) : ''}</td>
-                      <td className="px-3 sm:px-4 py-1.5 text-right tabular-nums">{r.cost != null ? money(r.cost) : <Tag tone="amber" title="No price for this line at this tier — add it on the Standard">unpriced</Tag>}</td>
+                      <td className="px-3 sm:px-4 py-1.5 text-right tabular-nums">{r.cost != null ? money(r.cost) : <Tag tone="amber" title="No price for this line at this tier — add it on Par levels (+ Pricing)">unpriced</Tag>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -280,7 +280,7 @@ function QuoteCard({ q }: { q: LinenQuote }) {
           </table>
         </div>
       )}
-      <p className="px-3 sm:px-4 py-2 border-t border-line text-[12px] text-muted">{q.priced === 0 && q.rows.length ? `No prices at ${q.label} yet — add them on the Standard. ` : ''}{BILLED_LINE}</p>
+      <p className="px-3 sm:px-4 py-2 border-t border-line text-[12px] text-muted">{q.priced === 0 && q.rows.length ? `No prices at ${q.label} yet — add them on Par levels (+ Pricing). ` : ''}{BILLED_LINE}</p>
     </section>
   )
 }
@@ -303,8 +303,8 @@ function VendorOrderCard({ order }: { order: VendorOrder }) {
             name={g.vendor || 'No vendor set'}
             meta={`${g.lines.length} line${g.lines.length === 1 ? '' : 's'} · ${g.piecesOrdered.toLocaleString('en-US')} pcs${g.info?.orderVia ? ' · ' + g.info.orderVia : ''}`}
             tags={<>
-              {!g.vendor && <Tag tone="amber" title="These lines have no vendor at this tier — set one on the Standard">set a vendor</Tag>}
-              {g.vendor && !g.info && <Tag tone="slate" title="Not on the vendor list yet — add it on the Standard for contact, minimum and lead time">not on list</Tag>}
+              {!g.vendor && <Tag tone="amber" title="These lines have no vendor at this tier — set one on Par levels (+ Pricing)">set a vendor</Tag>}
+              {g.vendor && !g.info && <Tag tone="slate" title="Not on the vendor list yet — add it on Par levels (+ Pricing) for contact, minimum and lead time">not on list</Tag>}
               {g.leadDays !== null && <Tag tone="sky" title={`Lead time: ${g.leadDays} day${g.leadDays === 1 ? '' : 's'} from order to delivery`}>{g.leadDays}d lead</Tag>}
               {g.minOrder !== null && !g.belowMinimum && <Tag tone="slate" title={`This vendor's minimum order is ${money(g.minOrder)} — met`}>min {money(g.minOrder)}</Tag>}
               {g.belowMinimum && <Tag tone="rose" title={`Priced lines total ${money(g.subtotal)} — ${money(g.shortBy)} short of the ${money(g.minOrder as number)} minimum. Add stock or combine with another order.`}>below min</Tag>}
@@ -326,7 +326,7 @@ function VendorOrderCard({ order }: { order: VendorOrder }) {
                 <tbody className="divide-y divide-line/70">
                   {g.lines.map(l => (
                     <tr key={l.key}>
-                      <td className="px-3 py-1.5 text-ink">{l.name}{l.sku ? <span className="text-muted text-[11px]"> · {l.sku}</span> : null}{l.conflict ? <> <Tag tone="amber" title="Another line uses this SKU with a different price, pack size or minimum — check the Standard">{l.conflict}</Tag></> : null}</td>
+                      <td className="px-3 py-1.5 text-ink">{l.name}{l.sku ? <span className="text-muted text-[11px]"> · {l.sku}</span> : null}{l.conflict ? <> <Tag tone="amber" title="Another line uses this SKU with a different price, pack size or minimum — check Par levels (+ Pricing)">{l.conflict}</Tag></> : null}</td>
                       <td className="px-2 py-1.5 text-muted">{l.size || ''}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums">{l.piecesNeeded}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-muted" title={l.packSize > 1 ? `${l.cases} case${l.cases === 1 ? '' : 's'} of ${l.packSize}${l.minCases ? ` (minimum ${l.minCases})` : ''}` : 'Sold singly'}>{l.packSize > 1 ? `${l.cases} × ${l.packSize}` : 'singly'}</td>
@@ -370,7 +370,7 @@ function DocActions({ tier, units, dirty, onCopy, copyLabel, priced = 1 }: { tie
       <div className="flex items-center gap-2 flex-wrap">
         <input value={billTo} onChange={e => setBillTo(e.target.value)} maxLength={120} placeholder="Bill to (owner, optional)" title="Printed on the invoice as Bill to"
           className={INPUT + ' py-1.5 w-full sm:w-56'} />
-        <button onClick={() => run('invoice')} disabled={!!busy || !!why || !priced} title={why || (!priced ? 'Nothing in this tier is priced yet — add prices on the Standard' : "The owner's invoice for this tier, as a draft PDF — the pieces the unit gets at owner prices, plus tax")} className={GHOST}>
+        <button onClick={() => run('invoice')} disabled={!!busy || !!why || !priced} title={why || (!priced ? 'Nothing in this tier is priced yet — add prices on Par levels (+ Pricing)' : "The owner's invoice for this tier, as a draft PDF — the pieces the unit gets at owner prices, plus tax")} className={GHOST}>
           {busy === 'invoice' ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />} Owner invoice
         </button>
         <button onClick={() => run('order')} disabled={!!busy || !!why} title={why || 'The vendor order as a PDF — a page per vendor, whole cases, contact, minimum and lead time'} className={GHOST}>
@@ -380,7 +380,7 @@ function DocActions({ tier, units, dirty, onCopy, copyLabel, priced = 1 }: { tie
           {busy === 'order-csv' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} CSV
         </button>
         <button onClick={copy} disabled={none} title={copyLabel} className={GHOST}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}</button>
-        {dirty && <Tag tone="amber" title="Documents use the saved standard — save your edits on the Standard to print them">save to print</Tag>}
+        {dirty && <Tag tone="amber" title="Documents use the saved standard — save your edits on Par levels to print them">save to print</Tag>}
         {msg && <span className="text-[12.5px] text-rose-600 font-semibold">{msg}</span>}
       </div>
     </section>
@@ -411,6 +411,7 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
+  const [pricing, setPricing] = useState(false)   // par levels first; prices, vendors and tiers folded away until pricing is set up
   const [newSize, setNewSize] = useState('')
   const [fresh, setFresh] = useState<string | null>(null)   // the item just added — its name box takes focus
   const [edTier, setEdTierState] = useState<LinenTier>(() => { const t = typeof window === 'undefined' ? null : store.get(TIER_KEY + '.edit'); return isTier(t) ? t : 'mid' })
@@ -455,7 +456,7 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
   const save = () => {
     if (draft.items.some(i => !i.name.trim())) { setMsg({ text: 'Give every item a name (or remove the blank one) before saving.', bad: true }); return }
     if (draft.vendors.some(v => !v.name.trim())) { setMsg({ text: 'Give every vendor a name (or remove the blank one) before saving.', bad: true }); return }
-    put(draft, 'Saved — the calculator, quotes and documents use this list from now on.')
+    put(draft, 'Saved — the Calculator, Quote and every export use these par levels from now on.')
   }
   const reset = () => { setConfirmReset(false); put(normLinenStandard(DEFAULT_LINEN_STANDARD), 'Back to the starting values.') }
   const tl = draft.tierLabels[edTier]
@@ -494,7 +495,7 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
               )}
             </div>
           </div>
-          <div className="block">
+          {pricing && <div className="block">
             <span className={EYEBROW}>Owner bill</span>
             <span className="flex items-center gap-2 mt-1 flex-wrap">
               <span className="inline-flex items-center gap-1" title="Markup on the owner's bill, on top of the piece prices (0 = at cost)">
@@ -508,8 +509,8 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
                 <span className="text-[12px] text-muted">% tax</span>
               </span>
             </span>
-          </div>
-          <div className="block">
+          </div>}
+          {pricing && <div className="block">
             <span className={EYEBROW}>Tier names</span>
             <span className="flex items-center gap-1.5 mt-1 flex-wrap">
               {LINEN_TIERS.map(t => (
@@ -519,25 +520,27 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
                   className={INPUT + ' w-24 py-1.5'} />
               ))}
             </span>
-          </div>
+          </div>}
         </div>
         <div className="mt-3 flex items-center gap-1.5 flex-wrap text-[12px] text-muted">
           {!edited ? <Tag title="Nothing saved yet — these are the starting values to edit">Starting values</Tag>
             : saved.updatedAt ? <span>Last saved{saved.updatedBy ? ' by ' + saved.updatedBy : ''} at {when(saved.updatedAt)}</span>
               : <span>Saved</span>}
-          {!canEdit && <Tag tone="slate" title="Changing the standard needs full access on Onboarding — ask Jon">Read-only</Tag>}
+          {!canEdit && <Tag tone="slate" title="Changing the par levels needs full access on Linens — ask Jon">Read-only</Tag>}
+          <span className="text-muted">The one list the Calculator, Quote and every export read.</span>
+          <button onClick={() => setPricing(p => !p)} title={pricing ? 'Hide prices, vendors and tiers' : 'Show prices, vendors, case sizes and tiers'} className="ml-auto font-semibold text-muted hover:text-ink">{pricing ? '− Hide pricing' : '+ Pricing, vendors & tiers'}</button>
         </div>
       </section>
 
-      <VendorsCard vendors={draft.vendors} canEdit={canEdit} onChange={vendors => setDraft(s => ({ ...s, vendors }))} />
+      {pricing && <VendorsCard vendors={draft.vendors} canEdit={canEdit} onChange={vendors => setDraft(s => ({ ...s, vendors }))} />}
       <datalist id="linen-vendors">{draft.vendors.map(v => <option key={v.name} value={v.name} />)}</datalist>
 
-      <div className="mb-2 px-1 flex items-center gap-2 flex-wrap">
+      {pricing && <div className="mb-2 px-1 flex items-center gap-2 flex-wrap">
         <span className={EYEBROW}>Tier</span>
         <TierSwitch std={draft} value={edTier} onChange={setEdTier} title={t => `Edit what is bought at ${draft.tierLabels[t]}: ${pricedAt(t)} of ${inAt(t)} items priced`} />
         <Tag tone={pricedAt(edTier) === inAt(edTier) && inAt(edTier) > 0 ? 'emerald' : 'amber'} title={`Items in ${tl} that have a price per piece`}>{pricedAt(edTier)}/{inAt(edTier)} priced</Tag>
         <span className="text-[12px] text-muted">Quantities are shared; product, vendor, price and case size are per tier.</span>
-      </div>
+      </div>}
 
       {LINEN_GROUPS.map(g => {
         const rows = draft.items.filter(i => i.group === g)
@@ -555,7 +558,7 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
             {!rows.length && <div className="px-4 py-3 text-[12.5px] text-muted">Nothing here yet.</div>}
             <div className="divide-y divide-line/70">
               {rows.map(it => <ItemRow key={it.id} it={it} std={draft} tier={edTier} canEdit={canEdit} autoFocus={fresh === it.id}
-                patch={p => patch(it.id, p)} patchTier={p => patchTier(it.id, edTier, p)} remove={() => remove(it.id)} />)}
+                patch={p => patch(it.id, p)} patchTier={p => patchTier(it.id, edTier, p)} remove={() => remove(it.id)} pricing={pricing} />)}
             </div>
           </section>
         )
@@ -583,9 +586,25 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
   )
 }
 
-function ItemRow({ it, std, tier, canEdit, autoFocus, patch, patchTier, remove }: {
+const PER_NOUN: Record<string, string> = { bed: 'bed', bathroom: 'bathroom', bedroom: 'bedroom', guest: 'guest (occupancy)', kitchen: 'kitchen', unit: 'unit' }
+const n2 = (x: number) => String(Math.round(x * 100) / 100)
+/** "1 par = 2 per kitchen · × 3 = 6 per kitchen" — the item's rule as Jon writes it on his 1-PAR sheet. */
+function ruleText(it: LinenItem, std: LinenStandard): string {
+  if (it.active === false) return 'Off — not counted.'
+  const noun = PER_NOUN[it.per] || it.per
+  const par = it.rotates ? (it.par ?? std.par) : 1
+  const tail = (q: number) => it.rotates ? ` · × ${par} par = ${n2(q * par)}` : ' · one set, not multiplied by par'
+  if (it.per === 'bed' && it.qtyBySize && Object.keys(it.qtyBySize).length) {
+    const sizes = sortSizes(Array.from(new Set([...std.bedSizes, ...Object.keys(it.qtyBySize)])), std.bedSizes)
+    const parts = sizes.map(sz => { const q = it.qtyBySize?.[sz] ?? it.qty; return `${sz} ${n2(q)}${it.rotates ? ' → ' + n2(q * par) : ''}` })
+    return `1 par per bed, by size: ${parts.join(' · ')}${it.rotates ? ` (× ${par} par)` : ' (one set, not multiplied by par)'}`
+  }
+  return `1 par = ${n2(it.qty)} per ${noun}${tail(it.qty)}${it.rotates ? ' per ' + noun.replace(' (occupancy)', '') : ''}`
+}
+
+function ItemRow({ it, std, tier, canEdit, autoFocus, patch, patchTier, remove, pricing = false }: {
   it: LinenItem; std: LinenStandard; tier: LinenTier; canEdit: boolean; autoFocus: boolean
-  patch: (p: Partial<LinenItem>) => void; patchTier: (p: Partial<TierOption>) => void; remove: () => void
+  patch: (p: Partial<LinenItem>) => void; patchTier: (p: Partial<TierOption>) => void; remove: () => void; pricing?: boolean
 }) {
   const off = it.active === false
   const opt = tierOf(it, tier)
@@ -636,8 +655,10 @@ function ItemRow({ it, std, tier, canEdit, autoFocus, patch, patchTier, remove }
         </button>
         {canEdit ? <IconBtn title="Remove this item from the standard" tone="bad" onClick={remove}><Trash2 size={13} /></IconBtn> : <span className="w-8" />}
       </div>
-      {/* What is bought at the tier being edited. */}
-      <div className={'mt-1.5 flex items-center gap-1.5 flex-wrap ' + (tierOff ? 'opacity-60' : '')}>
+      {/* THE RULE in Jon's words (2026-11-05: "should have rules — kitchen towels, 1 par is 2 per kitchen…"). */}
+      <p className="mt-1 text-[12px] text-muted" title="How this item is counted for a unit">{ruleText(it, std)}</p>
+      {/* What is bought at the tier being edited — only with pricing shown (par levels first, Jon 2026-11-05). */}
+      {pricing && <div className={'mt-1.5 flex items-center gap-1.5 flex-wrap ' + (tierOff ? 'opacity-60' : '')}>
         <Tag tone="violet" title={`The fields on this line are for the ${tl} tier — switch tiers above the list`}>{tl}</Tag>
         <input value={opt.product || ''} onChange={e => patchTier({ product: e.target.value || undefined })} disabled={!canEdit} maxLength={LIMITS.product}
           placeholder={`What you buy at ${tl}`} title={`The product at ${tl} (e.g. T-300 cotton percale) — shown on the quote, the invoice and the deck`} className={INPUT + ' flex-1 min-w-[9rem] py-1'} />
@@ -667,17 +688,17 @@ function ItemRow({ it, std, tier, canEdit, autoFocus, patch, patchTier, remove }
           className={'rounded-lg border px-2 py-1 text-[11.5px] font-semibold whitespace-nowrap ' + (tierOff ? 'border-line bg-white text-muted' : 'border-violet-200 bg-violet-50 text-violet-700') + (canEdit ? '' : ' cursor-default')}>
           {tierOff ? 'Not in ' + tl : 'In ' + tl}
         </button>
-      </div>
+      </div>}
       {it.per === 'bed' && sizes.length > 0 && (
         <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-          <span className="text-[11px] text-muted mr-0.5" title={`Per bed of each size: how many (every tier), and the ${tl} price. Blank = the qty and price above.`}>By size</span>
+          <span className="text-[11px] text-muted mr-0.5" title={pricing ? `Per bed of each size: how many (every tier), and the ${tl} price. Blank = the qty and price above.` : 'How many on one bed of each size. Blank = the qty above.'}>Per bed, by size</span>
           {sizes.map(s => (
             <span key={s} className="inline-flex items-center gap-1 rounded-lg border border-line bg-app/60 pl-2 pr-1 py-0.5">
               <span className="text-[11.5px] font-semibold text-ink">{s}</span>
               <input type="number" inputMode="decimal" min={0} max={LIMITS.num} step="any" value={it.qtyBySize?.[s] ?? ''} placeholder={String(it.qty)} disabled={!canEdit}
                 onChange={e => setSizedQty(s, e.target.value)} title={`How many on a ${s} bed, at every tier (blank = ${it.qty})`} className={NUM + ' w-12 py-1'} />
-              <input type="number" inputMode="decimal" min={0} step="any" value={opt.priceBySize?.[s] ?? ''} placeholder={opt.price != null ? '$' + opt.price : '$'} disabled={!canEdit}
-                onChange={e => setSizedPrice(s, e.target.value)} title={`${tl} price per piece for the ${s} size (blank = ${opt.price != null ? '$' + opt.price : 'no price'})`} className={NUM + ' w-16 py-1'} />
+              {pricing && <input type="number" inputMode="decimal" min={0} step="any" value={opt.priceBySize?.[s] ?? ''} placeholder={opt.price != null ? '$' + opt.price : '$'} disabled={!canEdit}
+                onChange={e => setSizedPrice(s, e.target.value)} title={`${tl} price per piece for the ${s} size (blank = ${opt.price != null ? '$' + opt.price : 'no price'})`} className={NUM + ' w-16 py-1'} />}
             </span>
           ))}
         </div>
@@ -1105,7 +1126,7 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
                       {totals.counted > 0 && <td className="px-2 py-1.5 text-right tabular-nums text-muted">{r.have.toLocaleString('en-US')}</td>}
                       <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{r.qty > 0 ? r.qty.toLocaleString('en-US') : <Tag tone="emerald" title="Stocked to the standard — nothing to buy">stocked</Tag>}</td>
                       <td className="px-2 py-1.5 text-right tabular-nums text-muted">{r.price != null ? money(r.price) : ''}</td>
-                      <td className="px-3 sm:px-4 py-1.5 text-right tabular-nums">{r.qty === 0 ? '' : r.cost != null ? money(r.cost) : <Tag tone="amber" title="No price for this line at this tier — add it on the Standard">unpriced</Tag>}</td>
+                      <td className="px-3 sm:px-4 py-1.5 text-right tabular-nums">{r.qty === 0 ? '' : r.cost != null ? money(r.cost) : <Tag tone="amber" title="No price for this line at this tier — add it on Par levels (+ Pricing)">unpriced</Tag>}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1122,7 +1143,7 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
           </table>
         </div>
       )}
-      {totals.priced === 0 && totals.rows.length > 0 && <p className="px-3 sm:px-4 py-2 border-t border-line text-[12px] text-muted">No prices at {label} yet — add them on the Standard to get a cost.</p>}
+      {totals.priced === 0 && totals.rows.length > 0 && <p className="px-3 sm:px-4 py-2 border-t border-line text-[12px] text-muted">No prices at {label} yet — add them on Par levels (+ Pricing) to get a cost.</p>}
     </section>
   )
 }
