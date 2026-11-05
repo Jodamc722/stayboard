@@ -141,3 +141,40 @@ export async function runDoors(opts: { dryRun?: boolean } = {}) {
   }
   return { ok: true, jobs, lines, created, updated, titled }
 }
+
+// IN THE MORNING BRIEF (Jon, 2026-11-05: "this needs to be in the brief — reason is for walk-ins").
+// A same-day booking of 115/116 can land after the morning clean was planned, so the brief names every
+// combined stay arriving or leaving today or tomorrow, flags a walk-in, and says whether the door task
+// is on the board and who holds it.
+export type DoorBriefItem = { pair: string; door: string; kind: 'open' | 'close'; date: string; when: 'today' | 'tomorrow'; guest: string; walkIn: boolean; task: { id: string; who: string[] } | null; skip?: string }
+export async function doorBriefItems(today = ymdET(new Date())): Promise<DoorBriefItem[]> {
+  const db = supabaseAdmin()
+  const tomorrow = shift(today, 1)
+  const out: DoorBriefItem[] = []
+  for (const pair of PAIRS) {
+    const all = [pair.parentListing, ...pair.childListings]
+    const [{ data: res }, { data: props }] = await Promise.all([
+      db.from('guesty_reservations').select('guest_name,check_in,check_out,status,created_at').eq('listing_id', pair.parentListing)
+        .gte('check_out', today).lte('check_in', tomorrow).limit(50),
+      db.from('breezeway_properties').select('home_id').in('reference_property_id', all),
+    ])
+    const homes = ((props || []) as any[]).map(p => Number(p.home_id)).filter(Number.isFinite)
+    const { data: tks } = homes.length ? await db.from('breezeway_tasks_sync').select('id,name,status,scheduled_date,assignees')
+      .in('home_id', homes).gte('scheduled_date', shift(today, -7)).lte('scheduled_date', tomorrow).limit(300) : { data: [] as any[] }
+    const live = ((res || []) as any[]).filter(r => LIVE(r.status))
+    const taskFor = (kind: 'open' | 'close', from: string, to: string) => {
+      const t = ((tks || []) as any[]).find(x => str(x.name).indexOf(kind === 'open' ? OPEN_T(pair.door) : CLOSE_T(pair.door)) === 0 && !isTaskGone(x.status) && str(x.scheduled_date) >= from && str(x.scheduled_date) <= to)
+      return t ? { id: str(t.id), who: (Array.isArray(t.assignees) ? t.assignees : []).map((a: any) => str(a?.name).trim()).filter(Boolean) } : null
+    }
+    for (const r of live) {
+      const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
+      const walkIn = !!r.created_at && ymdET(new Date(r.created_at)) === today
+      if (ci === today || ci === tomorrow) out.push({ pair: pair.label, door: pair.door, kind: 'open', date: ci, when: ci === today ? 'today' : 'tomorrow', guest: str(r.guest_name), walkIn, task: taskFor('open', shift(ci, -7), ci) })
+      if (co === today || co === tomorrow) {
+        const again = live.some(x => x !== r && str(x.check_in).slice(0, 10) === co)
+        out.push({ pair: pair.label, door: pair.door, kind: 'close', date: co, when: co === today ? 'today' : 'tomorrow', guest: str(r.guest_name), walkIn: false, task: again ? null : taskFor('close', co, co), ...(again ? { skip: 'booked again as one unit from ' + nice(co) + ' — the door stays open' } : {}) })
+      }
+    }
+  }
+  return out
+}

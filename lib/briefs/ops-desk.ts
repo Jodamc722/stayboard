@@ -22,6 +22,7 @@ import { buildReviewQueue, niceDate } from '@/lib/review-queue'
 import { blockedUnits } from '@/lib/blocked-units'
 import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, footer, fit, pill, cleanTitle, unitShort, personName, person, type Line } from './ui'
 import { buildDirection, type DayDirection } from './direction'
+import { doorBriefItems } from '@/lib/connecting-doors'
 import type { Built } from './field-run'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -88,6 +89,14 @@ export async function buildOpsDesk(): Promise<Built> {
 
   // ---- UNBLOCK TODAY (≤7): what only the desk can fix, in the order the day breaks --------------
   const unblock: Line[] = []
+  // CONNECTING DOOR (Jon, 2026-11-05: "this needs to be in the brief — reason is for walk-ins"). A
+  // combined 115/116 stay arriving or leaving today/tomorrow, first in the list when it is today.
+  const doors = await capped(doorBriefItems(today), 15_000) || []
+  for (const dr of doors) {
+    const verb = dr.kind === 'open' ? 'OPEN the connecting door before the guests arrive' : 'CLOSE the connecting door after checkout'
+    const who = dr.task ? (dr.task.who.length ? 'Task on the board with ' + dr.task.who.map(first).map(esc).join(', ') : '<span style="' + T.red + '">Task on the board, nobody on it — assign the cleaner.</span>') : dr.skip ? esc(dr.skip) : '<span style="' + T.red + '">No door task yet — it is created on the next run; if the guest lands within the hour, call the cleaner.</span>'
+    unblock.unshift({ tone: dr.when === 'today' && (dr.walkIn || !dr.task?.who.length) && !dr.skip ? 'red' : 'amber', html: `${pill('CONNECTING DOOR', dr.when === 'today' ? 'red' : 'amber')}${dr.walkIn ? ' ' + pill('WALK-IN', 'red') : ''} <b>${esc(dr.pair)}</b> — ${dr.skip ? 'one-unit stay ends ' + dr.when : esc(verb)} · ${dr.when}${dr.guest ? ' · ' + esc(first(dr.guest)) : ''}`, sub: who })
+  }
   for (const c of unassigned) unblock.push({ tone: 'red', html: `${pill('UNASSIGNED', 'red')} <b>${esc(unitShort(c.unit))}</b> (${esc(mkOf(c) || '—')}) — ${c.sameDayArrival ? 'same-day turn with' : 'clean with'} <b>no one assigned</b>`, sub: idle.length ? `${idle.map(s => first(s.name)).map(esc).join(', ')} ${idle.length === 1 ? 'is' : 'are'} on the clock with nothing assigned — give it to ${idle.length === 1 ? 'them' : 'one of them'}.` : 'Nobody idle on the schedule — reassign or call the on-call.' })
   if (short.length) unblock.push({ tone: 'amber', html: `${pill('SHORT STAFFED', 'amber')} <b>${short.length} short day${short.length === 1 ? '' : 's'} in the next 3</b> — ${short.slice(0, 3).map((x: any) => `${esc(str(x.label || x.date))} ${esc(str(x.market))} needs ${x.needed}, ${x.rostered} rostered`).join(' · ')}${short.length > 3 ? ` +${short.length - 3}` : ''}`, sub: `Add a shift or call in the on-call today — <a href="${APP_URL}/team" style="color:${A.ink}">Weekly Planner</a>.` })
   for (const s of idle.slice(0, 2)) { if (unassigned.length) break; unblock.push({ tone: 'amber', html: `${pill('IDLE ON SHIFT', 'amber')} <b>${esc(s.name)}</b> — on shift ${esc(str(s.label))} with nothing on the board`, sub: 'Give them a strip, a vacant-unit deep clean or an inspection.' }) }
