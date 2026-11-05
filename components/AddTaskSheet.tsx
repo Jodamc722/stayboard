@@ -31,7 +31,7 @@
 // person types — nothing about this particular unit. What the unit has on it is SHOWN beside the
 // box instead, so you can see it while you decide, and attached once by the server on create.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { X, Loader2, Users, CalendarDays, Search, Wrench } from 'lucide-react'
+import { X, Loader2, Users, CalendarDays, Search, Wrench, MessageSquare } from 'lucide-react'
 import { useModal } from '@/components/Modal'
 import { previewRows, type BriefIntel } from '@/lib/task-brief'
 import { matchRoster } from '@/lib/roster-match'
@@ -49,7 +49,9 @@ type BzTpl = { id: number; name: string; department: string; description: string
 // the id is the answer. The text is kept as the label so the picker reads right before it resolves.
 export type AddTaskSeed = { unit?: string; listingId?: string; assigneeName?: string; date?: string
   /** Pre-filled by a recommendation (the Vacant units tab) — the person can still change all three. */
-  title?: string; dept?: string; desc?: string }
+  title?: string; dept?: string; desc?: string
+  /** A reservation the task is about — the sheet picks it and shows the guest's messages. */
+  reservationId?: string }
 
 /** Open the sheet from anywhere, optionally pre-filled. A bare string still means the unit search. */
 export function openAddTask(seed?: AddTaskSeed | string) {
@@ -183,6 +185,15 @@ export function AddTaskSheet({
   const [tsOn, setTsOn] = useState(true)
   const [tsBusy, setTsBusy] = useState(false)
   const [tsErr, setTsErr] = useState('')
+  // THE GUEST (Jon, 2026-11-05: "should be able to see messages from guest … any time a guest or
+  // reservation is added"). The stays around today on the picked unit; in-house is picked for you.
+  type Stay = { id: string; guest: string; code: string | null; checkIn: string; checkOut: string; when: string; source: string | null; conversationId: string | null }
+  type Msg = { id: string; sender: string; sender_name?: string | null; body: string; sent_at: string; is_automated?: boolean }
+  const [stays, setStays] = useState<Stay[]>([])
+  const [stayId, setStayId] = useState<string>('')
+  const [msgs, setMsgs] = useState<Msg[] | null>(null)
+  const [msgsBusy, setMsgsBusy] = useState(false)
+  const [msgsErr, setMsgsErr] = useState('')
   const [err, setErr] = useState('')
   const boxRef = useRef<HTMLInputElement>(null)
   const { panelProps, onScrim } = useModal(onClose)
@@ -369,13 +380,40 @@ export function AddTaskSheet({
   // Say whose row this came from, so a ＋ pressed on a person row is visibly about that person.
   const seededPerson = seedAssignee && picked.length ? roster.find(p => p.id === picked[0])?.name || seedAssignee : ''
 
+  useEffect(() => {
+    setStays([]); setMsgs(null); setMsgsErr('')
+    const lid = unit && !String(unit.id).startsWith('bz:') ? String(unit.id) : ''
+    if (!lid && !seed?.reservationId) { setStayId(''); return }
+    const qs = lid ? 'listingId=' + encodeURIComponent(lid) : 'reservationId=' + encodeURIComponent(String(seed?.reservationId))
+    fetch('/api/ops-today/unit-guests?' + qs, { cache: 'no-store' }).then(r => r.json()).then(j => {
+      const list: Stay[] = Array.isArray(j.stays) ? j.stays : []
+      setStays(list)
+      const want = seed?.reservationId && list.find(x => x.id === seed.reservationId)
+      setStayId(want ? want.id : (list.find(x => x.when === 'in house' || x.when === 'checking out')?.id || ''))
+    }).catch(() => setStays([]))
+  }, [unit, seed?.reservationId])
+  const stay = stays.find(x => x.id === stayId) || null
+  useEffect(() => {
+    setMsgs(null); setMsgsErr('')
+    if (!stay?.conversationId) return
+    setMsgsBusy(true)
+    fetch('/api/messages/thread?live=1&id=' + encodeURIComponent(stay.conversationId), { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (j.ok && j.thread) setMsgs((j.thread.messages || []).filter((m: Msg) => m.sender !== 'system')); else setMsgsErr(j.error || 'Could not load the messages') })
+      .catch(() => setMsgsErr('Could not load the messages')).finally(() => setMsgsBusy(false))
+  }, [stay?.conversationId])
+  const msgBox = useRef<HTMLDivElement>(null)
+  useEffect(() => { if (msgs && msgBox.current) msgBox.current.scrollTop = msgBox.current.scrollHeight }, [msgs])
+  const fmtDay = (d: string) => { const t = new Date(d + 'T12:00:00'); return isNaN(+t) ? d : t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
+  const guestLine = stay ? 'Guest: ' + stay.guest + (stay.code ? ' · ' + stay.code : '') + ' · ' + fmtDay(stay.checkIn) + '–' + fmtDay(stay.checkOut) + ' (' + stay.when + ')' : ''
+  const guestSaid = (msgs || []).filter(m => m.sender === 'guest').slice(-6).map(m => String(m.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300)).join('\n')
+
   const draftTs = async () => {
     if (!title.trim() || tsBusy) { if (!title.trim()) setTsErr('Add a title first — the steps are written for the issue.'); return }
     setTsBusy(true); setTsErr('')
     try {
       const r = await fetch('/api/breezeway/troubleshoot', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: title.trim(), description: desc, listingId: unit && !String(unit.id).startsWith('bz:') ? unit.id : undefined, homeId: unit?.homeId }),
+        body: JSON.stringify({ name: title.trim(), description: desc + (guestSaid ? '\n\nWhat the guest said:\n' + guestSaid : ''), listingId: unit && !String(unit.id).startsWith('bz:') ? unit.id : undefined, homeId: unit?.homeId }),
       })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not draft the steps')
@@ -400,7 +438,7 @@ export function AddTaskSheet({
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           listingId: unit.id, title: title.trim(), department: dept, priority: prio,
-          description: desc, date: date || undefined, assigneeIds: picked, templateId: tplId || undefined,
+          description: (guestLine ? guestLine + '\n\n' : '') + desc, date: date || undefined, assigneeIds: picked, templateId: tplId || undefined,
           // off → '' (none); a draft → exactly it; on with no draft yet → omitted, the server drafts it.
           ...(dept === 'maintenance' && (!tsOn || ts.trim()) ? { troubleshoot: tsOn ? ts.trim() : '' } : {}),
         }),
@@ -464,6 +502,49 @@ export function AddTaskSheet({
             {unit.building && <span className="text-[11.5px] text-muted">{unit.building}</span>}
             {intelBusy && <Loader2 size={12} className="animate-spin text-muted" />}
             <button onClick={() => { setUnit(null); setUq('') }} aria-label="Change unit" title="Change unit" className="ml-auto text-muted hover:text-ink"><X size={14} /></button>
+          </div>
+        )}
+
+        {/* ── THE GUEST + THEIR MESSAGES ────────────────────────────────────────────────────── */}
+        {unit && stays.length > 0 && (
+          <div className="mt-3">
+            <p className={cap + ' mb-1.5'}>Guest</p>
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => setStayId('')} className={'rounded-full border px-2.5 py-1 text-[11.5px] ' + (!stayId ? 'border-ink bg-ink text-white' : 'border-line text-muted')}>No guest</button>
+              {stays.map(x => (
+                <button key={x.id} onClick={() => setStayId(x.id)}
+                  className={'rounded-full border px-2.5 py-1 text-[11.5px] font-semibold ' + (stayId === x.id ? 'border-ink bg-ink text-white' : 'border-line text-ink hover:bg-app')}>
+                  {x.guest} <span className="font-normal opacity-70">· {x.when} · {fmtDay(x.checkIn)}–{fmtDay(x.checkOut)}</span>
+                </button>
+              ))}
+            </div>
+            {stay && (
+              <div className="mt-2 rounded-xl border border-line bg-app/40">
+                <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-line text-[11px] text-muted">
+                  <MessageSquare size={12} /> <span className="font-semibold text-ink">{stay.guest}</span>
+                  {stay.code && <span>· {stay.code}</span>}{stay.source && <span>· {stay.source}</span>}
+                  {stay.conversationId && <a href={'/inbox?id=' + encodeURIComponent(stay.conversationId)} target="_blank" rel="noreferrer" className="ml-auto font-semibold text-brand-700 hover:underline">Open in Messages</a>}
+                </div>
+                <div ref={msgBox} className="max-h-60 overflow-y-auto overscroll-contain px-3 py-2 space-y-1.5">
+                  {!stay.conversationId && <p className="text-[12px] text-muted">No message thread for this reservation.</p>}
+                  {msgsBusy && <p className="text-[12px] text-muted inline-flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> Loading messages…</p>}
+                  {msgsErr && <p className="text-[12px] text-rose-700">{msgsErr}</p>}
+                  {msgs && msgs.length === 0 && <p className="text-[12px] text-muted">No messages yet.</p>}
+                  {(msgs || []).slice(-40).map(m => {
+                    const g = m.sender === 'guest'
+                    return (
+                      <div key={m.id} className={'flex ' + (g ? 'justify-start' : 'justify-end')}>
+                        <div className={'max-w-[85%] rounded-lg px-2.5 py-1.5 text-[12px] leading-[1.45] ' + (g ? 'bg-white border border-line text-ink' : 'bg-ink/5 text-ink/80')}>
+                          <p className="text-[10px] text-muted mb-0.5">{g ? stay.guest : (m.is_automated ? 'Auto' : (m.sender_name || 'Team'))} · {new Date(m.sent_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</p>
+                          <p className="whitespace-pre-wrap break-words">{String(m.body || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').trim()}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            {stay && <p className="mt-1 text-[11px] text-muted">The task opens with &ldquo;{guestLine}&rdquo;.</p>}
           </div>
         )}
 
