@@ -160,6 +160,10 @@ export const AI_TASKS: AiTask[] = [
   { key: 'file-read', title: 'Adam & Eve — reading uploaded files', group: 'Background', def: 'sonnet', background: true,
     what: 'Transcribes an uploaded PDF or image of a document into faithful markdown (headings, lists, tables kept) so it can be filed, searched and learned from.',
     matters: 'What the agents quote as written policy is this transcription. A weak model drops lines; a missing line in an SOP is a rule nobody follows. One call per upload.' },
+  // Cleaning invoices (Jon, 2026-11-05): the office uploads a vendor invoice, the model reads its lines.
+  { key: 'clean-invoice-read', title: 'Cleaning invoices — reading the lines', group: 'Operations', def: 'sonnet',
+    what: 'Reads an uploaded cleaning invoice (PDF, photo or spreadsheet) into lines: date, unit, service, amount, plus the vendor, number and period.',
+    matters: 'Every line is then checked against the cleans on record. A misread unit or date becomes a false flag the office has to clear by hand. One call per upload.' },
   // And what Adam takes from a document: the rules he files as memories.
   { key: 'adam-study', title: 'Adam — learning from an uploaded file', group: 'Garden Hotel', def: 'sonnet', background: true,
     what: 'Reads one uploaded hotel document and lists the rules and facts it states, which become Adam\'s memories.',

@@ -145,6 +145,9 @@ export const FEATURES: Feature[] = [
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
   { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Financials' },
+  // Cleaning invoices (Jon, 2026-11-05): the office uploads a vendor invoice and every line is checked
+  // against the cleans on record; anything that does not match is flagged before it is paid.
+  { key: 'clean-invoices', label: 'Cleaning invoices', path: '/clean-invoices', group: 'Financials' },
   // Owner projections (2026-08-21, Jon): next season's net owner revenue, editable per month.
   { key: 'projections',   label: 'Projections',       path: '/projections', group: 'Owners' },
   // The boss's Revenue App (stay-hospitalitydrr.netlify.app) inside Lighthouse (Jon, 2026-09-25:
