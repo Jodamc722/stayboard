@@ -609,13 +609,13 @@ function ruleText(it: LinenItem, std: LinenStandard): string {
   const par = it.rotates ? (it.par ?? std.par) : 1
   const tail = (q: number) => it.rotates ? ` · × ${par} par = ${n2(q * par)}` : ' · one set, not multiplied by par'
   if (it.per === 'pillow') {
-    const parts = std.bedSizes.map(sz => { const p = pillowsOn(std, sz); return p ? `${sz} ${n2(p)} pillows → ${Math.ceil(Math.round(it.qty * p * par * 1000) / 1000)}` : '' }).filter(Boolean)
-    return `1 par = ${n2(it.qty)} per pillow stocked${it.rotates ? ` · × ${par} par` : ' · one set, not multiplied by par'} — per bed: ${parts.join(' · ') || 'no pillows on the standard'}`
+    const parts = std.bedSizes.map(sz => { const p = pillowsOn(std, sz); return p ? `${sz} ${n2(p)}` : '' }).filter(Boolean)
+    return `1 par = ${n2(it.qty)} per pillow stocked${it.rotates ? ` · × ${par} par` : ' · one set, not multiplied by par'} — listed as King pillows (King beds) and Standard pillows (every other bed), rounded once each. Pillows per bed: ${parts.join(' · ') || 'none on the standard'}`
   }
   if (it.per === 'bed' && it.qtyBySize && Object.keys(it.qtyBySize).length) {
     const sizes = sortSizes(Array.from(new Set([...std.bedSizes, ...Object.keys(it.qtyBySize)])), std.bedSizes)
     const parts = sizes.map(sz => { const q = it.qtyBySize?.[sz] ?? it.qty; return `${sz} ${n2(q)}${it.rotates ? ' → ' + n2(q * par) : ''}` })
-    return `1 par per bed, by size: ${parts.join(' · ')}${it.rotates ? ` (× ${par} par)` : ' (one set, not multiplied by par)'}`
+    return `1 par per bed, by size: ${parts.join(' · ')}${it.rotates ? ` (× ${par} par)` : ' (one set, not multiplied by par)'}${it.id === 'pillows' ? ' — listed as King pillows (King beds) and Standard pillows (every other bed)' : ''}`
   }
   return `1 par = ${n2(it.qty)} per ${noun}${tail(it.qty)}${it.rotates ? ' per ' + noun.replace(' (occupancy)', '') : ''}`
 }

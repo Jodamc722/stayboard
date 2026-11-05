@@ -107,6 +107,13 @@ export const LINEN_PER: { key: LinenPer; label: string }[] = [
 ]
 export const DEFAULT_PAR = 3
 export const SOFA_BED = 'Sofa bed'
+// PILLOW SIZES (Jon, 2026-11-05): pillows, pillow protectors and pillowcases are bought by PILLOW size —
+// King pillows on a King bed (or Cal King), Standard pillows on every other bed, sofa beds included.
+export const KING_PILLOW = 'King'
+export const STANDARD_PILLOW = 'Standard'
+export const pillowSizeFor = (bedSize: string) => /king/i.test(bedSize) ? KING_PILLOW : STANDARD_PILLOW
+/** The pillow family: listed and rounded by pillow size, not bed size. */
+export const isPillowItem = (it: Pick<LinenItem, 'id' | 'per'>) => it.per === 'pillow' || it.id === 'pillows'
 export const DEFAULT_SOFA = { size: 'Queen', par: 2 }
 export const DEFAULT_BED_SIZES = ['King', 'Queen', 'Full', 'Twin', 'Sofa bed']
 
@@ -664,8 +671,11 @@ export function linenNeeds(standard: LinenStandard, unit: LinenUnit): LinenRow[]
     const par = it.rotates ? (it.par ?? standard.par) : 1
     if (it.per === 'pillow' || it.per === 'bed') {
       // One row per bought size. A sofa bed's linen is bought as sofaSize (a Queen) and merges into that
-      // size's row, at the sofa bed's par (2) for rotating items — never the full par.
-      const bySize = new Map<string, LinenRow>()
+      // size's row, at the sofa bed's par (2) for rotating items — never the full par. The pillow family
+      // is listed by pillow size (King / Standard). Each row is rounded up ONCE, after merging, so
+      // 1.5 protectors × 10 Standard pillows is 15, not 8 + 8.
+      const bySize = new Map<string, LinenRow & { exactUnit: number; exact: number }>()
+      const pillowFamily = isPillowItem(it)
       for (const size of sizes) {
         const n = unit.beds[size]
         // PER PILLOW (Jon, 2026-11-05: "calculate by pillows as inventory — protectors 1.5 per pillow, 2
@@ -675,16 +685,19 @@ export function linenNeeds(standard: LinenStandard, unit: LinenUnit): LinenRow[]
           : (it.qtyBySize && it.qtyBySize[size] !== undefined ? it.qtyBySize[size] : it.qty)
         const sofa = isSofa(size)
         const p = sofa && it.rotates ? Math.min(par, sofaPar) : par
-        const label = sofa ? sofaSize : size
-        const perUnitQty = up(q * n)
-        const total = up(q * n * p)
-        if (total <= 0) continue
+        const label = pillowFamily ? pillowSizeFor(size) : sofa ? sofaSize : size
+        const exactUnit = q * n
+        const exact = q * n * p
+        if (exact <= 0) continue
         const cur = bySize.get(label)
-        if (cur) { cur.perUnitQty += perUnitQty; cur.total += total; continue }
-        bySize.set(label, { itemId: it.id, name: it.name, group: it.group, size: label, perUnitQty, par: p, total })
+        if (cur) { cur.exactUnit += exactUnit; cur.exact += exact; continue }
+        bySize.set(label, { itemId: it.id, name: it.name, group: it.group, size: label, perUnitQty: 0, par: p, total: 0, exactUnit, exact })
       }
-      const labels = sortSizes(Array.from(bySize.keys()), standard.bedSizes)
-      for (const l of labels) out.push(bySize.get(l) as LinenRow)
+      const order = pillowFamily ? [KING_PILLOW, STANDARD_PILLOW] : standard.bedSizes
+      for (const l of sortSizes(Array.from(bySize.keys()), order)) {
+        const r = bySize.get(l)!
+        out.push({ itemId: r.itemId, name: r.name, group: r.group, size: r.size, perUnitQty: up(r.exactUnit), par: r.par, total: up(r.exact) })
+      }
       continue
     }
     const c = countOf(it.per, unit)
