@@ -199,7 +199,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
 function ParPicker({ value, onChange, standardPar, note, disabled }: { value: number; onChange: (p: number) => void; standardPar?: number; note?: string; disabled?: boolean }) {
   const choices = Array.from(new Set([...PAR_CHOICES, value, ...(standardPar !== undefined ? [standardPar] : [])])).sort((a, b) => a - b)
   return (
-    <div className="mb-3 flex items-center gap-1.5 flex-wrap">
+    <div className="sticky top-0 z-20 -mx-1 px-1 py-2 mb-2 bg-app/95 backdrop-blur flex items-center gap-1.5 flex-wrap">
       <span className={EYEBROW + ' mr-1'}>Par</span>
       {choices.map(p => (
         <button key={p} type="button" onClick={() => onChange(p)} disabled={disabled} aria-pressed={p === value}
@@ -898,6 +898,7 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
 
       {!chosen.length ? <LeanEmpty>Pick units above to size the order.</LeanEmpty> : (
         <>
+          <NeededList totals={totals} title={title} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
           <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
             <h2 className={EYEBROW}>Selected <span className="tabular-nums">{chosen.length}</span></h2>
             {dirty && <Tag tone="amber" title="The standard has edits that are not saved — these numbers already use them">unsaved standard</Tag>}
@@ -921,7 +922,6 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
               ))}
             </LeanList>
           </div>
-          <NeededList totals={totals} title={title} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
           <PricingFold>
           <TierCards quotes={allTiers} value={tier} onChange={setTier} />
           <TotalsCard totals={totals} label={standard.tierLabels[tier]} onCsv={download} onCopy={copy} copied={copied} />
@@ -980,6 +980,7 @@ function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, on
         </button>
         {!u.live && <Tag tone="violet" title="An onboarding unit that is not live in Guesty yet">not live</Tag>}
         {!u.guests && <Tag tone="rose" title="No max-guest count — per-guest items (towels, washcloths) are not counted for this unit">no guest count</Tag>}
+        <Tag tone="slate" title={`${gap.need} pieces at par ${std.par} for this unit${gap.counted ? ` — ${gap.buy} still to buy after the shelf count` : ''}`}>{gap.need} pcs</Tag>
         {gap.counted
           ? <Tag tone={gap.buy ? 'amber' : 'emerald'} title={`Shelf count${whenText ? ' from ' + whenText : ''}${gap.countedBy ? ' by ' + gap.countedBy : ''} — ${gap.have} of ${gap.need} pieces on hand, ${gap.buy} to buy`}>{gap.buy ? `${gap.buy} to buy` : 'stocked'}{whenText ? ' · ' + whenText : ''}</Tag>
           : <Tag title="Nothing counted yet — sized as an empty unit (the full standard). Click the clipboard to count what it has">not counted</Tag>}
