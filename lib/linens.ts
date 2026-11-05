@@ -27,7 +27,7 @@
 // number the test checks.
 
 export type LinenGroup = 'Bed' | 'Bath' | 'Kitchen' | 'Other'
-export type LinenPer = 'bed' | 'bathroom' | 'bedroom' | 'guest' | 'kitchen' | 'unit'
+export type LinenPer = 'bed' | 'pillow' | 'bathroom' | 'bedroom' | 'guest' | 'kitchen' | 'unit'
 export type LinenTier = 'low' | 'mid' | 'lux'
 
 /** What Jon buys for an item at one tier. Every field is optional; blank means "not set yet". */
@@ -74,6 +74,11 @@ export type LinenStandard = {
   items: LinenItem[]
   tierLabels: Record<LinenTier, string>
   vendors: LinenVendor[]
+  // SOFA BED (Jon, 2026-11-05: "sofa bed should be considered queen standard unless told otherwise, no
+  // need to break out sheets, just the par level is 2 per sofa bed not 3"). Its linen is bought as this
+  // size and listed under it; rotating items on a sofa bed take this par (or the item's own, if lower).
+  sofaSize: string
+  sofaPar: number
   markupPct: number                         // on the owner's bill, on top of the piece prices
   taxPct: number                            // on the owner's bill, on top of prices + markup
   updatedAt?: string
@@ -83,6 +88,7 @@ export type LinenStandard = {
 export const LINEN_STANDARD_KEY = 'linen_standard'   // app_settings: the standard
 export const LINEN_UNIT_BEDS_KEY = 'linen_unit_beds' // app_settings: { [listingId]: { King: 1, Queen: 2 } }
 export const LINEN_QUOTES_KEY = 'linen_quotes'       // app_settings: { [onboardCode]: { tier, updatedAt, updatedBy } }
+export const LINEN_UNIT_KITCHENS_KEY = 'linen_unit_kitchens' // app_settings: { [unitId]: 0 | 1 } — full kitchen or not, set on the Calculator
 export const LINEN_INVENTORY_KEY = 'linen_inventory' // app_settings: { [unitId]: { counts: { 'fitted-sheet|King': 3 }, countedAt, countedBy } }
 /** A unit id as the desk uses it: a Guesty listing id, or onboard:<code> for a unit not live yet. */
 export const LINEN_UNIT_ID = /^(onboard:)?[A-Za-z0-9_-]{1,64}$/
@@ -92,6 +98,7 @@ export const LINEN_TIERS: LinenTier[] = ['low', 'mid', 'lux']
 export const DEFAULT_TIER_LABELS: Record<LinenTier, string> = { low: 'Low', mid: 'Mid', lux: 'Luxury' }
 export const LINEN_PER: { key: LinenPer; label: string }[] = [
   { key: 'bed', label: 'per bed' },
+  { key: 'pillow', label: 'per pillow' },
   { key: 'bathroom', label: 'per bathroom' },
   { key: 'bedroom', label: 'per bedroom' },
   { key: 'guest', label: 'per guest' },
@@ -99,6 +106,8 @@ export const LINEN_PER: { key: LinenPer; label: string }[] = [
   { key: 'unit', label: 'per unit' },
 ]
 export const DEFAULT_PAR = 3
+export const SOFA_BED = 'Sofa bed'
+export const DEFAULT_SOFA = { size: 'Queen', par: 2 }
 export const DEFAULT_BED_SIZES = ['King', 'Queen', 'Full', 'Twin', 'Sofa bed']
 
 // Limits for a hand-edited setting. Counts and par stop at 999; a price at 99,999 (a case price
@@ -142,14 +151,16 @@ export const DEFAULT_LINEN_STANDARD: LinenStandard = {
   bedSizes: [...DEFAULT_BED_SIZES],
   tierLabels: { ...DEFAULT_TIER_LABELS },
   vendors: [],
+  sofaSize: DEFAULT_SOFA.size,
+  sofaPar: DEFAULT_SOFA.par,
   markupPct: 0,
   taxPct: 0,
   items: [
     // Bed — per bed, sized by the bed it goes on.
     { id: 'mattress-protector', name: 'Mattress protector', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, notes: 'One on the bed plus one extra per bed — never the full par', tiers: tiersOf(6, ['Basic waterproof, fitted', 'Waterproof cotton terry, fitted', 'Waterproof, quiet, cooling top']) },
-    { id: 'pillow-protectors', name: 'Pillow protectors', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: true, par: 2, tiers: tiersOf(12, ['Poly, zippered', 'Cotton, zippered, waterproof', 'Cotton sateen, zippered, waterproof']) },
+    { id: 'pillow-protectors', name: 'Pillow protectors', group: 'Bed', per: 'pillow', qty: 1.5, rotates: false, notes: '1.5 per pillow the unit stocks, not multiplied by par', tiers: tiersOf(12, ['Poly, zippered', 'Cotton, zippered, waterproof', 'Cotton sateen, zippered, waterproof']) },
     { id: 'pillows', name: 'Pillows', group: 'Bed', per: 'bed', qty: 3, qtyBySize: { ...PILLOWS_STOCKED }, rotates: false, notes: 'The pillows on the bed plus 1 extra per bed; 2 on a sofa bed', tiers: tiersOf(1, ['Poly fiberfill', 'Gel-fiber down-alternative', 'Hotel down-alternative, cluster fill']) },
-    { id: 'pillowcases', name: 'Pillowcases', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: true, tiers: tiersOf(12, SHEETING) },
+    { id: 'pillowcases', name: 'Pillowcases', group: 'Bed', per: 'pillow', qty: 2, rotates: false, notes: '2 per pillow the unit stocks, not multiplied by par', tiers: tiersOf(12, SHEETING) },
     { id: 'fitted-sheet', name: 'Fitted sheet', group: 'Bed', per: 'bed', qty: 1, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'flat-sheet', name: 'Flat sheet', group: 'Bed', per: 'bed', qty: 2, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'duvet-insert', name: 'Duvet insert', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, tiers: tiersOf(1, ['Poly fill, lightweight', 'Down-alternative, all-season', 'Hotel down-alternative, baffle-box']) },
@@ -325,6 +336,8 @@ export function normLinenStandard(raw: any): LinenStandard {
     items,
     tierLabels,
     vendors: normVendors(src.vendors),
+    sofaSize: text(src.sofaSize, LIMITS.size) || DEFAULT_SOFA.size,
+    sofaPar: (() => { const n = whole(src.sofaPar, LIMITS.num); return n === null ? DEFAULT_SOFA.par : n })(),
     markupPct: num(src.markupPct, LIMITS.markup) ?? 0,
     taxPct: num(src.taxPct, LIMITS.tax) ?? 0,
   }
@@ -442,7 +455,35 @@ export type LinenUnit = {
 }
 
 /** A unit as the linen desk receives it: the beds in use, and what they would be without a save. */
-export type LinenDeskUnit = LinenUnit & { autoBeds: Record<string, number>; autoSource: BedsSource; live: boolean }
+export type LinenDeskUnit = LinenUnit & { autoBeds: Record<string, number>; autoSource: BedsSource; live: boolean; autoKitchens?: number; kitchenSaved?: boolean }
+
+/**
+ * FULL KITCHEN OR NOT (Jon, 2026-11-05: "kitchen full only, kitchenette no kitchen towels"). From the
+ * listing's Guesty amenities: "Kitchen" (or "Full kitchen") = 1 full kitchen; amenities recorded but no
+ * kitchen = 0 (a kitchenette — microwave / mini fridge — gets no kitchen towels). No amenities recorded
+ * at all = 1: we do not know, so the unit is sized as having one (the team can switch it off).
+ */
+export function kitchensFromAmenities(...sources: any[]): number {
+  const names: string[] = []
+  for (const src of sources) if (Array.isArray(src)) for (const a of src) {
+    const t = typeof a === 'string' ? a : String((a && (a.amenity || a.name || a.title || a.label)) || '')
+    if (t.trim()) names.push(t.trim().toLowerCase())
+  }
+  if (!names.length) return 1
+  return names.some(n => n === 'kitchen' || n === 'full kitchen') ? 1 : 0
+}
+
+/** The `linen_unit_kitchens` setting: known unit ids → 0 or 1. */
+export function normUnitKitchens(raw: any): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (!isObj(raw)) return out
+  for (const [k, v] of Object.entries(raw)) {
+    if (!LINEN_UNIT_ID.test(k)) continue
+    const n = whole(v, 1)
+    if (n !== null) out[k] = n
+  }
+  return out
+}
 
 /** A bed-count map as saved from the page: size labels → whole counts 0..20, zeros dropped. */
 export function normBeds(v: any): Record<string, number> {
@@ -598,6 +639,14 @@ function countOf(per: LinenPer, u: LinenUnit): number {
   }
 }
 
+/** Pillows stocked on one bed of a size: the standard's Pillows item (its per-size count, else its qty). */
+export function pillowsOn(standard: LinenStandard, size: string): number {
+  const p = standard.items.find(i => i.id === 'pillows') || standard.items.find(i => /^pillows?$/i.test(i.name.trim()))
+  if (!p) return 0
+  const q = p.qtyBySize && p.qtyBySize[size] !== undefined ? p.qtyBySize[size] : p.qty
+  return Math.max(0, Number(q) || 0)
+}
+
 /**
  * What one unit needs. total = qty × count(per) × (rotates ? (item.par ?? standard.par) : 1).
  * A per-bed item is one row per bed size present in the unit (bed linen is bought by size), with
@@ -607,16 +656,35 @@ function countOf(per: LinenPer, u: LinenUnit): number {
 export function linenNeeds(standard: LinenStandard, unit: LinenUnit): LinenRow[] {
   const out: LinenRow[] = []
   const sizes = sortSizes(Object.keys(unit.beds || {}).filter(k => (unit.beds[k] || 0) > 0), standard.bedSizes)
+  const isSofa = (size: string) => size.toLowerCase() === SOFA_BED.toLowerCase()
+  const sofaSize = standard.sofaSize || DEFAULT_SOFA.size
+  const sofaPar = typeof standard.sofaPar === 'number' ? standard.sofaPar : DEFAULT_SOFA.par
   for (const it of standard.items) {
     if (it.active === false) continue
     const par = it.rotates ? (it.par ?? standard.par) : 1
-    if (it.per === 'bed') {
+    if (it.per === 'pillow' || it.per === 'bed') {
+      // One row per bought size. A sofa bed's linen is bought as sofaSize (a Queen) and merges into that
+      // size's row, at the sofa bed's par (2) for rotating items — never the full par.
+      const bySize = new Map<string, LinenRow>()
       for (const size of sizes) {
-        const q = it.qtyBySize && it.qtyBySize[size] !== undefined ? it.qtyBySize[size] : it.qty
-        const perUnitQty = up(q * unit.beds[size])
-        const total = up(q * unit.beds[size] * par)
-        if (total > 0) out.push({ itemId: it.id, name: it.name, group: it.group, size, perUnitQty, par, total })
+        const n = unit.beds[size]
+        // PER PILLOW (Jon, 2026-11-05: "calculate by pillows as inventory — protectors 1.5 per pillow, 2
+        // per pillow for cases"): the pillows a bed of this size is stocked with, from the Pillows item.
+        const q = it.per === 'pillow'
+          ? it.qty * pillowsOn(standard, size)
+          : (it.qtyBySize && it.qtyBySize[size] !== undefined ? it.qtyBySize[size] : it.qty)
+        const sofa = isSofa(size)
+        const p = sofa && it.rotates ? Math.min(par, sofaPar) : par
+        const label = sofa ? sofaSize : size
+        const perUnitQty = up(q * n)
+        const total = up(q * n * p)
+        if (total <= 0) continue
+        const cur = bySize.get(label)
+        if (cur) { cur.perUnitQty += perUnitQty; cur.total += total; continue }
+        bySize.set(label, { itemId: it.id, name: it.name, group: it.group, size: label, perUnitQty, par: p, total })
       }
+      const labels = sortSizes(Array.from(bySize.keys()), standard.bedSizes)
+      for (const l of labels) out.push(bySize.get(l) as LinenRow)
       continue
     }
     const c = countOf(it.per, unit)

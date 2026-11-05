@@ -32,7 +32,8 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
 import { rollupBuilding } from '@/lib/optimize-score'
 import {
-  LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, LINEN_INVENTORY_KEY, LINEN_UNIT_ID, ONBOARD_CODE,
+  LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, LINEN_INVENTORY_KEY, LINEN_UNIT_KITCHENS_KEY, LINEN_UNIT_ID, ONBOARD_CODE,
+  kitchensFromAmenities, normUnitKitchens,
   normLinenStandard, normBeds, normLinenQuotes, normLinenInventory, normLinenCount, isLinenTier,
   bedsFromGuestyRooms, assumedBeds, resolveLinenUnit,
   type LinenDeskUnit, type BedsSource,
@@ -94,14 +95,15 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin()
     const want = str(req.nextUrl.searchParams.get('unit')).toLowerCase()
     const wantCode = want.startsWith('onboard:') && ONBOARD_CODE.test(want.slice(8)) ? want.slice(8) : ''
-    const [savedStd, savedBedsRaw, quotesRaw, inventoryRaw, listingRead, onboardRead] = await Promise.all([
+    const [savedStd, savedBedsRaw, quotesRaw, inventoryRaw, kitchensRaw, listingRead, onboardRead] = await Promise.all([
       getSetting<any>(LINEN_STANDARD_KEY, null),
       getSetting<any>(LINEN_UNIT_BEDS_KEY, null),
       getSetting<any>(LINEN_QUOTES_KEY, null),
       getSetting<any>(LINEN_INVENTORY_KEY, null),
+      getSetting<any>(LINEN_UNIT_KITCHENS_KEY, null),
       // Only the columns the calculator reads, and only the rooms sub-field of raw (never raw whole).
       pageRows<any>((a, b) => db.from('guesty_listings')
-        .select('id,nickname,title,building,bedrooms,bathrooms,beds,max_occupancy,status,rooms:raw->listingRooms')
+        .select('id,nickname,title,building,bedrooms,bathrooms,beds,max_occupancy,status,amenities,rooms:raw->listingRooms,rawAmen:raw->amenities')
         .order('id').range(a, b), 3),
       // Not yet live: onboarding links with no listing assigned. A link is minted per new unit.
       Promise.resolve(db.from('onboarding_units').select('id,code,name,building,details,status,listing_id')
@@ -110,6 +112,7 @@ export async function GET(req: NextRequest) {
     ])
     if (listingRead.truncated && !listingRead.rows.length) return fail('Could not read the listings — try again.', 502)
     const saved = savedBedsMap(savedBedsRaw)
+    const savedKitchens = normUnitKitchens(kitchensRaw)
     const units: LinenDeskUnit[] = []
 
     for (const l of listingRead.rows) {
@@ -120,15 +123,18 @@ export async function GET(req: NextRequest) {
       const guesty = bedsFromGuestyRooms(l.rooms)
       const auto: [Record<string, number>, BedsSource] = Object.keys(guesty).length ? [guesty, 'guesty'] : [assumedBeds(bedrooms), 'assumed']
       const mine = saved[id]
+      const autoKitchens = kitchensFromAmenities(l.amenities, l.rawAmen)
+      const kSaved = id in savedKitchens
       units.push({
         id, name, building: rollupBuilding(l.building, name), bedrooms, bathrooms: num(l.bathrooms), guests: Math.round(num(l.max_occupancy)),
+        kitchens: kSaved ? savedKitchens[id] : autoKitchens, autoKitchens, kitchenSaved: kSaved,
         beds: mine || auto[0], bedsSource: mine ? 'saved' : auto[1], autoBeds: auto[0], autoSource: auto[1], live: true,
       })
     }
 
     for (const u of onboardRead as any[]) {
       const x = onboardUnit(u, saved)
-      if (x) units.push(x)
+      if (x) { if (x.id in savedKitchens) { x.kitchens = savedKitchens[x.id]; x.kitchenSaved = true } units.push(x) }
     }
 
     // The unit the page was opened for, when it is an onboarding unit already assigned to a listing
@@ -160,7 +166,7 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => null)
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('Send { standard }, { unitBeds }, { linenQuote } or { inventory }.', 400)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail('Send { standard }, { unitBeds }, { unitKitchen }, { linenQuote } or { inventory }.', 400)
 
   if ('standard' in body) {
     const g = await gate('full')
@@ -260,6 +266,31 @@ export async function PUT(req: NextRequest) {
     }
   }
 
+  if ('unitKitchen' in body) {
+    const g = await gate('edit')
+    if (!g.ok) return g.res
+    try {
+      const uk = body.unitKitchen && typeof body.unitKitchen === 'object' ? body.unitKitchen : {}
+      const unitId = str(uk.unitId)
+      if (!UNIT_ID.test(unitId)) return fail('That is not a unit id.', 400)
+      const k = uk.kitchens == null ? null : (Number(uk.kitchens) > 0 ? 1 : 0)
+      const { data, error } = await supabaseAdmin().from('app_settings').select('value').eq('key', LINEN_UNIT_KITCHENS_KEY).limit(1)
+      if (error) return fail('Could not read the saved kitchens — try again.', 502)
+      let cur: any = null
+      const raw = Array.isArray(data) && data[0] ? (data[0] as any).value : null
+      if (raw && typeof raw === 'object') cur = raw
+      else if (typeof raw === 'string' && raw) { try { cur = JSON.parse(raw) } catch { cur = null } }
+      const map = normUnitKitchens(cur)
+      if (k === null) delete map[unitId]; else map[unitId] = k
+      if (Object.keys(map).length > MAX_SAVED_UNITS) return fail('Too many units with a saved kitchen.', 400)
+      const r = await setSetting(LINEN_UNIT_KITCHENS_KEY, map, g.access.email || null)
+      if (!r.ok) return fail(r.error || 'Could not save the kitchen.', 500)
+      return NextResponse.json({ ok: true, unitId, kitchens: unitId in map ? map[unitId] : null })
+    } catch (e: any) {
+      return fail(String(e?.message || e).slice(0, 200), 500)
+    }
+  }
+
   if ('inventory' in body) {
     const g = await gate('edit')
     if (!g.ok) return g.res
@@ -288,5 +319,5 @@ export async function PUT(req: NextRequest) {
     }
   }
 
-  return fail('Send { standard }, { unitBeds }, { linenQuote } or { inventory }.', 400)
+  return fail('Send { standard }, { unitBeds }, { unitKitchen }, { linenQuote } or { inventory }.', 400)
 }

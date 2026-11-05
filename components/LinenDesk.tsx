@@ -17,7 +17,7 @@ import { ArrowLeft, Check, ClipboardList, Copy, Download, FileText, Loader2, Min
 import { Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
 import {
   LINEN_GROUPS, LINEN_PER, LINEN_TIERS, LIMITS, MANUAL_LIMITS, DEFAULT_LINEN_STANDARD, normLinenStandard, linenNeeds, linenTotals, linenCsv, linenText, sortSizes,
-  linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf, linenGap, LINEN_COUNT_LIMITS,
+  linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf, linenGap, LINEN_COUNT_LIMITS, pillowsOn,
   type LinenCount, type LinenGap,
   type LinenStandard, type LinenItem, type LinenGroup, type LinenPer, type LinenDeskUnit, type BedsSource, type LinenTotals, type LinenTier, type TierOption,
   type LinenVendor, type LinenQuote, type VendorOrder, type LinenQuoteChoice, type ManualUnitInput,
@@ -477,6 +477,20 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
               <span className="text-[12px] text-muted">On the bed, in the wash, on the shelf.</span>
             </span>
           </label>
+          <div className="block">
+            <span className={EYEBROW}>Sofa bed</span>
+            <span className="flex items-center gap-1.5 mt-1 flex-wrap">
+              <span className="text-[12px] text-muted">bought as</span>
+              <select value={draft.sofaSize} disabled={!canEdit} onChange={e => setDraft(s => ({ ...s, sofaSize: e.target.value }))}
+                title="A sofa bed's sheets, cases and covers are bought as this size and listed under it" className={INPUT + ' py-1.5 px-2 w-28'}>
+                {draft.bedSizes.filter(z => z.toLowerCase() !== 'sofa bed').map(z => <option key={z} value={z}>{z}</option>)}
+              </select>
+              <span className="text-[12px] text-muted">at par</span>
+              <input type="number" inputMode="numeric" min={0} max={LIMITS.num} value={draft.sofaPar} disabled={!canEdit}
+                onChange={e => setDraft(s => ({ ...s, sofaPar: Math.max(0, Math.min(LIMITS.num, Math.round(toNum(e.target.value) ?? 0))) }))}
+                title="Par for rotating items on a sofa bed (an item with a lower par of its own keeps it)" className={NUM + ' w-14'} />
+            </span>
+          </div>
           <div className="min-w-0">
             <span className={EYEBROW}>Bed sizes</span>
             <div className="flex items-center gap-1.5 flex-wrap mt-1">
@@ -586,7 +600,7 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
   )
 }
 
-const PER_NOUN: Record<string, string> = { bed: 'bed', bathroom: 'bathroom', bedroom: 'bedroom', guest: 'guest (occupancy)', kitchen: 'kitchen', unit: 'unit' }
+const PER_NOUN: Record<string, string> = { bed: 'bed', pillow: 'pillow', bathroom: 'bathroom', bedroom: 'bedroom', guest: 'guest (occupancy)', kitchen: 'kitchen', unit: 'unit' }
 const n2 = (x: number) => String(Math.round(x * 100) / 100)
 /** "1 par = 2 per kitchen · × 3 = 6 per kitchen" — the item's rule as Jon writes it on his 1-PAR sheet. */
 function ruleText(it: LinenItem, std: LinenStandard): string {
@@ -594,6 +608,10 @@ function ruleText(it: LinenItem, std: LinenStandard): string {
   const noun = PER_NOUN[it.per] || it.per
   const par = it.rotates ? (it.par ?? std.par) : 1
   const tail = (q: number) => it.rotates ? ` · × ${par} par = ${n2(q * par)}` : ' · one set, not multiplied by par'
+  if (it.per === 'pillow') {
+    const parts = std.bedSizes.map(sz => { const p = pillowsOn(std, sz); return p ? `${sz} ${n2(p)} pillows → ${Math.ceil(Math.round(it.qty * p * par * 1000) / 1000)}` : '' }).filter(Boolean)
+    return `1 par = ${n2(it.qty)} per pillow stocked${it.rotates ? ` · × ${par} par` : ' · one set, not multiplied by par'} — per bed: ${parts.join(' · ') || 'no pillows on the standard'}`
+  }
   if (it.per === 'bed' && it.qtyBySize && Object.keys(it.qtyBySize).length) {
     const sizes = sortSizes(Array.from(new Set([...std.bedSizes, ...Object.keys(it.qtyBySize)])), std.bedSizes)
     const parts = sizes.map(sz => { const q = it.qtyBySize?.[sz] ?? it.qty; return `${sz} ${n2(q)}${it.rotates ? ' → ' + n2(q * par) : ''}` })
@@ -868,7 +886,8 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
                   onDoneEdit={() => { setEditId(null); setCountId(null) }}
                   onRemove={() => toggle(u.id)}
                   onBeds={(beds, source) => setUnits(list => list.map(x => x.id === u.id ? { ...x, beds, bedsSource: source } : x))}
-                  onCounted={c => setInventory(m => { const x = { ...m }; if (c) x[u.id] = c; else delete x[u.id]; return x })} />
+                  onCounted={c => setInventory(m => { const x = { ...m }; if (c) x[u.id] = c; else delete x[u.id]; return x })}
+                  onKitchen={(k, sv) => setUnits(list => list.map(x => x.id === u.id ? { ...x, kitchens: k, kitchenSaved: sv } : x))} />
               ))}
             </LeanList>
           </div>
@@ -889,12 +908,28 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
 const unitLine = (u: LinenDeskUnit) => [u.bedrooms ? u.bedrooms + ' BR' : 'Studio', (u.bathrooms || 0) + ' BA', u.guests ? 'sleeps ' + u.guests : 'occupancy ?'].join(' · ')
 const bedsText = (beds: Record<string, number>, order: string[]) => sortSizes(Object.keys(beds).filter(k => beds[k] > 0), order).map(k => `${k} ×${beds[k]}`).join(', ') || 'no beds'
 
-function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, onEdit, onCount, onDoneEdit, onRemove, onBeds, onCounted }: {
+function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, onEdit, onCount, onDoneEdit, onRemove, onBeds, onCounted, onKitchen }: {
   u: LinenDeskUnit; std: LinenStandard; canBeds: boolean; count: LinenCount | null; open: boolean; editing: boolean; counting: boolean
   onToggle: () => void; onEdit: () => void; onCount: () => void; onDoneEdit: () => void; onRemove: () => void
   onBeds: (beds: Record<string, number>, source: BedsSource) => void
   onCounted: (c: LinenCount | null) => void
+  onKitchen: (kitchens: number, saved: boolean) => void
 }) {
+  const [kBusy, setKBusy] = useState(false)
+  const full = (u.kitchens ?? 1) > 0
+  const flipKitchen = async () => {
+    if (!canBeds || kBusy) return
+    setKBusy(true)
+    try {
+      // Flip to the other value; flipping back to what Guesty says clears the saved choice.
+      const want = full ? 0 : 1
+      const auto = u.autoKitchens ?? 1
+      const r = await fetch('/api/onboard/linens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unitKitchen: { unitId: u.id, kitchens: want === auto ? null : want } }) })
+      const j = await r.json().catch(() => ({}))
+      if (r.ok && j.ok) onKitchen(want, j.kitchens != null)
+    } catch { /* leave it as it was */ }
+    setKBusy(false)
+  }
   const src = SOURCE[u.bedsSource] || SOURCE.assumed
   const gap = useMemo(() => linenGap(std, u, count), [std, u, count])
   const sizes = sortSizes(Object.keys(u.beds).filter(k => u.beds[k] > 0), std.bedSizes)
@@ -907,6 +942,12 @@ function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, on
       tags={<>
         {sizes.map(s => <Tag key={s} title={`${u.beds[s]} ${s} bed${u.beds[s] > 1 ? 's' : ''}`}>{s} ×{u.beds[s]}</Tag>)}
         <Tag tone={src.tone} title={src.title}>{src.label}</Tag>
+        {u.guests > 0 && <Tag tone="sky" title={`Occupancy ${u.guests} — bath towels, washcloths and pool towels are counted per guest`}>occ {u.guests}</Tag>}
+        <button type="button" onClick={flipKitchen} disabled={!canBeds || kBusy}
+          title={(full ? 'Full kitchen — gets kitchen towels.' : 'Kitchenette or no kitchen — no kitchen towels.') + (u.kitchenSaved ? ' Set here.' : ' From the Guesty amenities.') + (canBeds ? ' Click to switch.' : '')}
+          className={canBeds ? 'cursor-pointer' : 'cursor-default'}>
+          <Tag tone={full ? 'emerald' : 'slate'}>{full ? 'full kitchen' : 'kitchenette'}</Tag>
+        </button>
         {!u.live && <Tag tone="violet" title="An onboarding unit that is not live in Guesty yet">not live</Tag>}
         {!u.guests && <Tag tone="rose" title="No max-guest count — per-guest items (towels, washcloths) are not counted for this unit">no guest count</Tag>}
         {gap.counted
@@ -1317,7 +1358,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
           <Stepper label="Bedrooms" value={d.bedrooms} min={0} max={MANUAL_LIMITS.bedrooms} onChange={n => set({ bedrooms: n })} title="Bedrooms (0 = studio) — throws and extra blankets count per bedroom" />
           <Stepper label="Baths" value={d.bathrooms} min={0} max={MANUAL_LIMITS.bathrooms} step={0.5} onChange={n => set({ bathrooms: n })} title="Bathrooms, halves allowed — a half bath still gets its hand towels and mat" />
           <Stepper label="Occupancy" value={d.guests} min={0} max={MANUAL_LIMITS.guests} onChange={n => set({ guests: n })} title="Maximum occupancy — bath towels, washcloths and pool towels count per guest" />
-          <Stepper label="Kitchens" value={d.kitchens} min={0} max={MANUAL_LIMITS.kitchens} onChange={n => set({ kitchens: n })} title="Kitchens in the unit (0 = none) — kitchen towels count per kitchen" />
+          <Stepper label="Full kitchens" value={d.kitchens} min={0} max={MANUAL_LIMITS.kitchens} onChange={n => set({ kitchens: n })} title="Full kitchens in the unit — a kitchenette (or none) is 0 and gets no kitchen towels" />
         </div>
         <div className="mt-2 flex items-center gap-2 flex-wrap">
           <span className="text-[11px] text-muted" title="Beds by size — a bunk bed is two Twins; a crib takes none of these linens">Beds</span>
