@@ -77,6 +77,48 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
   }
+  // ALL PHOTOS AT ONCE (Jon, 2026-11-05: "a mirror images button that flips all images, and enhance
+  // actually enhances all images … a combo option … with redo caption as a bulk change"). Tick any
+  // mix, press Apply: every photo is flipped and/or enhanced (none skipped as "already good") and/or
+  // re-captioned. Results stage on the cards like a single edit; Save sends them all.
+  const [bulk, setBulk] = useState({ mirror: false, enhance: true, captions: false })
+  const [bulkNote, setBulkNote] = useState('')
+  const applyAll = async () => {
+    const ids = order.filter(id => !del.has(id) && !id.startsWith('idx-'))
+    if (!ids.length || !(bulk.mirror || bulk.enhance || bulk.captions)) return
+    setBusy('bulk'); setErr(''); setMsg('')
+    let done = 0, failed = 0, capsDone = 0
+    try {
+      if (bulk.mirror || bulk.enhance) {
+        const size = bulk.mirror ? 6 : 8
+        const label = bulk.mirror && bulk.enhance ? 'Flipped + enhanced' : bulk.mirror ? 'Flipped' : 'Enhanced'
+        for (let i = 0; i < ids.length; i += size) {
+          setBulkNote('Photos ' + Math.min(i + size, ids.length) + ' of ' + ids.length + '…')
+          const chunk = ids.slice(i, i + size)
+          const body: any = { photoIds: chunk, force: true }
+          if (bulk.mirror) { body.flip = true; if (bulk.enhance) body.flipEnhance = true }
+          const j = await call(body).catch(() => { failed += chunk.length; return null })
+          if (!j) continue
+          const add: Record<string, { url: string; label: string }> = {}
+          for (const p of (j.photos || []) as any[]) { const u = p.flippedUrl || p.enhancedUrl; if (u) { add[String(p._id)] = { url: u, label }; done++ } }
+          failed += (j.errors || []).length
+          setSwap(s => ({ ...s, ...add }))
+        }
+      }
+      if (bulk.captions) {
+        for (let i = 0; i < ids.length; i += 3) {
+          setBulkNote('Captions ' + Math.min(i + 3, ids.length) + ' of ' + ids.length + '…')
+          const got = await Promise.all(ids.slice(i, i + 3).map(id => fetch('/api/photo-caption', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, photoId: id }) })
+            .then(r => r.json()).then(d => (d && d.caption ? [id, String(d.caption)] as [string, string] : null)).catch(() => null)))
+          const add: Record<string, string> = {}
+          for (const g of got) if (g) { add[g[0]] = g[1]; capsDone++ }
+          setCaps(c => ({ ...c, ...add }))
+        }
+      }
+      setMsg([(bulk.mirror || bulk.enhance) ? done + ' photo' + (done === 1 ? '' : 's') + ' ' + (bulk.mirror && bulk.enhance ? 'flipped + enhanced' : bulk.mirror ? 'flipped' : 'enhanced') : '', bulk.captions ? capsDone + ' new captions' : ''].filter(Boolean).join(' · ') + (failed ? ' · ' + failed + ' could not be done' : '') + ' — check them below, then Save.')
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBulkNote(''); setBusy('')
+  }
   const save = async () => {
     if (del.size && !window.confirm(`Delete ${del.size} photo${del.size === 1 ? '' : 's'} from this listing on every channel? The originals are backed up to Stay storage first.`)) return
     setBusy('save'); setErr(''); setMsg('')
@@ -108,6 +150,19 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
           </button>
           <button onClick={() => setOpen(o => !o)} className="text-[12px] font-semibold text-muted hover:text-ink">{open ? 'Hide' : 'Show'}</button>
         </span>
+      </div>
+      <div className="mx-4 mb-2 rounded-lg border border-line bg-app px-3 py-2 flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-muted">All photos</span>
+        {([['mirror', 'Mirror', FlipHorizontal2], ['enhance', 'Enhance', Sparkles], ['captions', 'Redo captions', Wand2]] as const).map(([k, l, I]) => (
+          <button key={k} onClick={() => setBulk(b => ({ ...b, [k]: !b[k] }))} disabled={busy === 'bulk'}
+            className={'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[12px] font-semibold ' + (bulk[k] ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}>
+            {bulk[k] ? <Check size={12} /> : <I size={12} />} {l}
+          </button>
+        ))}
+        <button onClick={applyAll} disabled={!!busy || !(bulk.mirror || bulk.enhance || bulk.captions)} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 text-white px-2.5 py-1 text-[12px] font-bold disabled:opacity-40">
+          {busy === 'bulk' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Apply to all {order.filter(id => !del.has(id)).length}
+        </button>
+        <span className="text-[11.5px] text-muted">{bulkNote || 'Any mix in one pass. Staged on the cards — nothing goes live until Save.'}</span>
       </div>
       {(err || msg) && <div className={'mx-4 mb-2 rounded-lg px-3 py-1.5 text-[12.5px] ' + (err ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200')}>{err || msg}</div>}
       {open && (

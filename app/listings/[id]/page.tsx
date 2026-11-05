@@ -33,6 +33,7 @@ import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { AreaFacts } from '@/components/AreaFacts'
 import { GuidebookLauncher } from '@/components/GuidebookLauncher'
 import { ListingWorkspace, type WorkTab } from '@/components/ListingWorkspace'
+import { ListingRegenerate } from '@/components/ListingRegenerate'
 import { ContentTable } from '@/components/ContentTable'
 import {
   computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars,
@@ -282,6 +283,8 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           One tool at a time, each tab carrying the number that says whether it needs you. This
           replaces five stacked accordions sitting under ~1,400px of diagnosis — see the header of
           components/ListingWorkspace for why that arrangement was the actual complaint. */}
+      {/* REGENERATE THE WHOLE LISTING (Jon, 2026-11-05) — at the listing level, above the tabs. */}
+      <div className="mb-4"><ListingRegenerate listingId={listing.id} name={name} /></div>
       <ListingWorkspace storeKey={`stay:listing-tab`} tabs={[
         {
           id: 'fix', label: 'Fix next',

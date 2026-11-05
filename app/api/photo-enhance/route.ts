@@ -111,7 +111,7 @@ async function processOne(
   pic: any,
   preset: EnhancePreset,
   mirrorOnly = false,
-  extra: { flip?: boolean; variants?: EnhancePreset[]; custom?: { preset: EnhancePreset; turn: number; flip: boolean } } = {},
+  extra: { flip?: boolean; flipPreset?: EnhancePreset; variants?: EnhancePreset[]; custom?: { preset: EnhancePreset; turn: number; flip: boolean } } = {},
 ) {
   const id = String(pic?._id || '')
   const src = str(pic?.original) || str(pic?.large) || str(pic?.thumbnail)
@@ -143,9 +143,12 @@ async function processOne(
   // FLIP (Jon, 2026-10-30: "when you click it, it mirrors the photo"): the photo turned left-to-right,
   // nothing else changed — for a shot that reads better facing the other way. A version to approve.
   if (extra.flip) {
-    const v = await renderVersion(sb, listingId, id, buf, NONE_PRESET, 'flipped', true)
+    // FLIP + ENHANCE in one pass (Jon, 2026-11-05: "mirror … and enhance … as a combo option"):
+    // the chosen preset is applied to the flipped image, one version, one upload.
+    const fp = extra.flipPreset || NONE_PRESET
+    const v = await renderVersion(sb, listingId, id, buf, fp, fp.key === 'none' ? 'flipped' : 'flipped-' + fp.key, true)
     if ('error' in v) return { _id: id, error: v.error }
-    return { _id: id, mirroredUrl, flippedUrl: v.url, preset: 'none', presetName: 'Flipped', bytesBefore: buf.length }
+    return { _id: id, mirroredUrl, flippedUrl: v.url, preset: fp.key, presetName: fp.key === 'none' ? 'Flipped' : 'Flipped + ' + fp.name, bytesBefore: buf.length }
   }
   // OPTIONS (Jon, 2026-10-30: "have multiple enhancement options when you enhance"): the same photo
   // through several presets at once, so the host picks the one that looks right instead of trusting
@@ -209,6 +212,10 @@ export async function POST(req: NextRequest) {
   // Per-photo overrides from the UI: { photoId: presetKey }.
   const perPhoto: Record<string, string> = (body?.presets && typeof body.presets === 'object') ? body.presets : {}
   const flip = body?.flip === true
+  // force: every photo gets an enhanced version — "already good" (None) becomes Auto (Jon,
+  // 2026-11-05: "enhance actually enhances all images"). flipEnhance: the flip also gets enhanced.
+  const force = body?.force === true
+  const flipEnhance = body?.flipEnhance === true
   const c0 = body?.custom && typeof body.custom === 'object' ? body.custom : null
   const custom = c0 ? (() => {
     const p = clampPreset({ key: 'custom', name: 'Custom', brightness: c0.brightness, saturation: c0.saturation, contrast: c0.contrast, sharpen: c0.sharpen, warmth: Math.max(0, Number(c0.warmth) || 0) })
@@ -233,6 +240,10 @@ export async function POST(req: NextRequest) {
   // persisting _photoIndex — the dim bathroom gets Bright without anyone picking it by hand.
   const photoIndex: Record<string, any> = (raw._photoIndex && typeof raw._photoIndex === 'object') ? raw._photoIndex : {}
   const presetFor = (id: string): EnhancePreset => {
+    const p0 = presetFor0(id)
+    return force && p0.key === 'none' ? presetByKey(cfg, 'auto') : p0
+  }
+  const presetFor0 = (id: string): EnhancePreset => {
     if (perPhoto[id]) return presetByKey(cfg, perPhoto[id])
     if (globalPreset) return presetByKey(cfg, globalPreset)
     if (cfg.enhance.autoPick && photoIndex[id]?.enhance) return presetByKey(cfg, photoIndex[id].enhance)
@@ -257,7 +268,7 @@ export async function POST(req: NextRequest) {
     const chunk = targets.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(chunk.map(p => {
       const id = String(p?._id || '')
-      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly, { flip, variants: variantPresets, ...(custom ? { custom } : {}) })
+      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly, { flip, ...(flip && flipEnhance ? { flipPreset: presetFor(id) } : {}), variants: variantPresets, ...(custom ? { custom } : {}) })
         .catch((e: any) => ({ _id: id, error: e?.message || String(e) }))
     }))
     results.push(...settled)
