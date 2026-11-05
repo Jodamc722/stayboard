@@ -1,6 +1,6 @@
 // LINENS (Jon, 2026-09-29; tiers, quotes and ordering 2026-09-30) — the linen standard Jon edits, the
 // calculator that sizes it for a set of units at a tier, and the quote for a unit with no listing.
-// Sits under /onboarding, so the `onboarding` feature level decides who sees it: view reads, edit
+// Its own feature key `linens` (2026-11-05; follows Onboarding until a role sets it) decides who sees it: view reads, edit
 // sets a unit's bed sizes and its chosen tier, full changes the standard (enforced by
 // /api/onboard/linens, which also tells the page which of those this person has).
 //

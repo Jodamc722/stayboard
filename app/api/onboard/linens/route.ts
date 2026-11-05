@@ -49,11 +49,11 @@ const num = (v: any) => { const x = Number(v); return Number.isFinite(x) && x > 
 const fail = (error: string, status: number) => NextResponse.json({ ok: false, error }, { status })
 
 /**
- * requireLevel on Onboarding, and a vacation-rental login — requireVrUser's question (lib/vr-gate.ts)
+ * requireLevel on Linens (its own key since 2026-11-05; follows Onboarding until a role sets it), and a vacation-rental login — requireVrUser's question (lib/vr-gate.ts)
  * asked of the same access read, so the request resolves the signed-in user once, not twice.
  */
 async function gate(need: 'view' | 'edit' | 'full'): Promise<Gate> {
-  const g = await requireLevel('onboarding', need)
+  const g = await requireLevel('linens', need)
   if (!g.ok) return g
   if (!isVrLogin(g.access)) return { ok: false, res: hotelOnlyRes(), access: g.access }
   return g
@@ -144,7 +144,7 @@ export async function GET(req: NextRequest) {
     units.sort((a, b) => String(a.building || '').localeCompare(String(b.building || '')) || a.name.localeCompare(b.name, undefined, { numeric: true }))
     return NextResponse.json({
       ok: true,
-      level: g.access.levels['onboarding'] || 'view',
+      level: g.access.levels['linens'] || 'view',
       standard: normLinenStandard(savedStd),
       edited: !!savedStd,
       units,

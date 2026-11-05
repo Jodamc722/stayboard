@@ -35,7 +35,7 @@ const str = (v: any, max: number) => (typeof v === 'string' ? v : '').replace(/\
 
 /** Same door as /api/onboard/linens: Onboarding at view, and a vacation-rental login. */
 async function gate(): Promise<Gate> {
-  const g = await requireLevel('onboarding', 'view')
+  const g = await requireLevel('linens', 'view')
   if (!g.ok) return g
   if (!isVrLogin(g.access)) return { ok: false, res: hotelOnlyRes(), access: g.access }
   return g
