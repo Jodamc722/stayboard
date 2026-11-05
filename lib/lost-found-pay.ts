@@ -88,7 +88,7 @@ export function deliveryTuesday(fromISO = todayET()): string {
 let _lfHome: { at: number; id: number | null; name: string } | null = null
 /** Breezeway's "Lost and Found" property — where every delivery task lives. */
 export async function lostFoundHome(): Promise<{ id: number | null; name: string }> {
-  if (_lfHome && Date.now() - _lfHome.at < 10 * 60_000) return _lfHome
+  if (_lfHome && _lfHome.id && Date.now() - _lfHome.at < 10 * 60_000) return _lfHome   // a miss is never remembered
   const db = supabaseAdmin()
   const { data } = await db.from('breezeway_properties').select('home_id,name').limit(2000)
   const hit = ((data || []) as any[]).find(p => /lost\s*(?:&|and|n|\+)?\s*found/i.test(str(p.name)))
