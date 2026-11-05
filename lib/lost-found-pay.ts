@@ -13,6 +13,11 @@
 //      Roberto plus the county's supervisor — the same people and settings the auto-inspections use
 //      (task automation: assignAlways + supervisors by market), never-assign respected. Its id is kept
 //      on the item; a failed push is recorded and can be retried from the page.
+//      WHERE AND WHEN (Jon, 2026-11-05: "Delivery is going be Tuesday, so tasks should be created for
+//      Tuesday. Assigned to lost and found Property… Should be as an inspection"): the task is an
+//      INSPECTION on Breezeway's own "Lost and Found" property (not the guest's unit), dated the next
+//      Tuesday. "It should keep moving the task not recreating it if not done": a delivery still open
+//      after its Tuesday is moved to the next Tuesday — the same task, never a second one.
 //   5. "Once they complete task it shows sent": syncSent() reads the task's status from the Breezeway
 //      mirror and moves the item to Sent with who closed it.
 import 'server-only'
@@ -72,13 +77,33 @@ async function deliveryPeople(market: string | null): Promise<{ ids: number[]; n
 
 const SITE = 'https://lighthouse-stay.vercel.app'
 
+/** Delivery day: Tuesday. Today if it is Tuesday, otherwise the next one (Eastern time). */
+export function deliveryTuesday(fromISO = todayET()): string {
+  const d = new Date(fromISO + 'T12:00:00Z')
+  const add = (2 - d.getUTCDay() + 7) % 7          // 2 = Tuesday
+  d.setUTCDate(d.getUTCDate() + add)
+  return d.toISOString().slice(0, 10)
+}
+
+let _lfHome: { at: number; id: number | null; name: string } | null = null
+/** Breezeway's "Lost and Found" property — where every delivery task lives. */
+export async function lostFoundHome(): Promise<{ id: number | null; name: string }> {
+  if (_lfHome && Date.now() - _lfHome.at < 10 * 60_000) return _lfHome
+  const db = supabaseAdmin()
+  const { data } = await db.from('breezeway_properties').select('home_id,name').limit(2000)
+  const hit = ((data || []) as any[]).find(p => /lost\s*(?:&|and|n|\+)?\s*found/i.test(str(p.name)))
+  _lfHome = { at: Date.now(), id: hit ? Number(hit.home_id) : null, name: hit ? str(hit.name) : '' }
+  return _lfHome
+}
+
 /** Create the "Lost & Found Delivery" task for a paid item, assigned to Roberto + the county supervisor. */
 export async function pushShipTask(item: any): Promise<{ ok: boolean; taskId?: string; error?: string }> {
   if (item.breezeway_task_id) return { ok: true, taskId: String(item.breezeway_task_id) }
-  if (!item.listing_id) return { ok: false, error: 'The item has no unit on it — set the unit before the task can go to Breezeway.' }
   const db = supabaseAdmin()
-  const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', item.listing_id).limit(1)
-  const homeId = Number((((props || [])[0]) || {} as any).home_id)
+  const home = await lostFoundHome()
+  if (!home.id || !Number.isFinite(home.id)) return { ok: false, error: 'No "Lost and Found" property found in Breezeway — create it there (or sync Breezeway properties), then Retry.' }
+  const homeId = home.id
+  const date = deliveryTuesday()
   const guest = str(item.guest_name) || 'Guest'
   const title = 'Lost & Found Delivery — ' + guest
   const charged = item.shipping_cost != null ? money(Number(item.shipping_cost)) : 'not recorded'
@@ -96,12 +121,13 @@ export async function pushShipTask(item: any): Promise<{ ok: boolean; taskId?: s
     'Kept at: ' + (str(item.storage_location) || 'not recorded — check Lost & Found in Lighthouse'),
     'Receipt' + (receipts === 1 ? '' : 's') + ': ' + (receipts ? receipts + ' attached in Lighthouse' : 'none attached yet'),
     '',
+    'Delivery day: Tuesday. Not done by then? Lighthouse moves this same task to the next Tuesday.',
     'Ship USPS at the price quoted (postcalc.usps.com). Add the tracking number on the item in Lighthouse; completing this task marks it Sent.',
     SITE + '/lost-found?item=' + str(item.id),
   ].join('\n')
-  const payload: Record<string, any> = { name: title, type_department: 'housekeeping', type_priority: 'high', scheduled_date: todayET(), description }
-  if (Number.isFinite(homeId)) payload.home_id = homeId
-  else payload.reference_property_id = item.listing_id
+  // allowDuplicate: every delivery is its own job (one per item) on the one Lost and Found property;
+  // the item itself holds the task id, so a second press never makes a second task.
+  const payload: Record<string, any> = { name: title, type_department: 'inspection', type_priority: 'high', scheduled_date: date, description, home_id: homeId, allowDuplicate: true }
   const r = await createBreezewayTask(payload)
   if (!r.ok || !r.data || !r.data.id) return { ok: false, error: 'Breezeway ' + r.status + ': ' + str(r.text).slice(0, 160) }
   const taskId = String(r.data.id)
@@ -109,12 +135,12 @@ export async function pushShipTask(item: any): Promise<{ ok: boolean; taskId?: s
   if (who.ids.length) { try { await updateBreezewayTask(taskId, { assignments: who.ids }) } catch { /* shows unassigned; the item says who it was meant for */ } }
   try {
     await db.from('breezeway_tasks_sync').upsert({
-      id: taskId, reference_property_id: item.listing_id, home_id: Number.isFinite(homeId) ? homeId : null, name: title, status: 'created',
-      scheduled_date: todayET(), type_department: 'housekeeping', assignees: who.names, report_url: r.data.report_url || null,
+      id: taskId, reference_property_id: null, home_id: homeId, name: title, status: 'created',
+      scheduled_date: date, type_department: 'inspection', assignees: who.names, report_url: r.data.report_url || null,
       raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
     }, { onConflict: 'id' })
   } catch { /* the next Breezeway sync mirrors it */ }
-  return { ok: true, taskId, assignedTo: who.names } as any
+  return { ok: true, taskId, assignedTo: who.names, date } as any
 }
 
 /** Completed Breezeway delivery tasks → the item shows Sent. Cheap: one read of the mirror. */
@@ -124,9 +150,25 @@ export async function syncSent(): Promise<number> {
     .not('breezeway_task_id', 'is', null).in('status', ['held', 'contacted', 'claimed'])
   const rows = (open || []) as any[]
   if (!rows.length) return 0
-  const { data: tasks } = await db.from('breezeway_tasks_sync').select('id,status,assignees,finished_at:raw->>finished_at').in('id', rows.map(r => String(r.breezeway_task_id)))
-  const done: Record<string, any> = {}
-  for (const t of (tasks || []) as any[]) if (/\b(complete|finish|close|approv)/i.test(str(t.status))) done[String(t.id)] = t
+  const { data: tasks } = await db.from('breezeway_tasks_sync').select('id,status,assignees,scheduled_date,finished_at:raw->>finished_at').in('id', rows.map(r => String(r.breezeway_task_id)))
+  const done: Record<string, any> = {}, late: any[] = []
+  const today = todayET()
+  for (const t of (tasks || []) as any[]) {
+    if (/\b(complete|finish|close|approv)/i.test(str(t.status))) done[String(t.id)] = t
+    else if (!/cancel|delet/i.test(str(t.status)) && str(t.scheduled_date) && str(t.scheduled_date).slice(0, 10) < today) late.push(t)
+  }
+  // MOVE, NEVER RECREATE: an open delivery past its Tuesday goes to the next Tuesday, same task.
+  for (const t of late) {
+    const to = deliveryTuesday(today)
+    const u = await updateBreezewayTask(String(t.id), { scheduled_date: to }).catch(() => null)
+    if (!u || !u.ok) continue
+    await db.from('breezeway_tasks_sync').update({ scheduled_date: to, synced_at: new Date().toISOString() }).eq('id', String(t.id))
+    const r = rows.find(x => String(x.breezeway_task_id) === String(t.id))
+    if (r) {
+      r.history = [...(Array.isArray(r.history) ? r.history : []), { at: new Date().toISOString(), who: 'Lighthouse', what: 'moved', note: 'Delivery not done on ' + str(t.scheduled_date).slice(0, 10) + ' — the same Breezeway task moved to Tuesday ' + to }].slice(-60)
+      await db.from('lost_found_items').update({ history: r.history, updated_at: new Date().toISOString() }).eq('id', r.id)
+    }
+  }
   let n = 0
   for (const r of rows) {
     const t = done[String(r.breezeway_task_id)]

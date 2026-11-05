@@ -437,7 +437,7 @@ function ShipPay({ i, run, busy }: { i: Item; run: (body: any) => Promise<void>;
 
       {/* 3 · Breezeway */}
       {i.shipping_paid && (i.breezeway_task_id
-        ? <div className="text-[12px] flex items-center gap-1.5 flex-wrap"><ClipboardList size={12} className="text-emerald-700" /> {i.sent_at ? <b className="text-emerald-700">Sent {fmtWhen(i.sent_at)}{i.sent_by ? ' · ' + i.sent_by : ''}</b> : 'Lost & Found Delivery in Breezeway — Sent once the task is completed'} <a href={'https://app.breezeway.io/task/' + i.breezeway_task_id} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5">#{i.breezeway_task_id} <ExternalLink size={10} /></a></div>
+        ? <div className="text-[12px] flex items-center gap-1.5 flex-wrap"><ClipboardList size={12} className="text-emerald-700" /> {i.sent_at ? <b className="text-emerald-700">Sent {fmtWhen(i.sent_at)}{i.sent_by ? ' · ' + i.sent_by : ''}</b> : 'Lost & Found Delivery (inspection, Lost and Found property, Tuesday) — Sent once the task is completed'} <a href={'https://app.breezeway.io/task/' + i.breezeway_task_id} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5">#{i.breezeway_task_id} <ExternalLink size={10} /></a></div>
         : <div className="text-[12px] text-rose-700 flex items-center gap-2 flex-wrap">Breezeway task not created{i.breezeway_error ? ' — ' + i.breezeway_error : ''} <button disabled={busy} onClick={() => run({ action: 'push_task' })} className={btn}>Retry</button></div>)}
       {/* RECEIPTS (Jon, 2026-11-05: "can we also have receipt attached") — the payment confirmation
           and the postage receipt, photos or PDFs, kept on the item. */}

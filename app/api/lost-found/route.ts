@@ -10,7 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { unitLabel } from '@/lib/unit-label'
-import { payContext, billOnFolio, pushShipTask, syncSent } from '@/lib/lost-found-pay'
+import { payContext, billOnFolio, pushShipTask, syncSent, lostFoundHome, deliveryTuesday } from '@/lib/lost-found-pay'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -53,6 +53,9 @@ export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams
   try {
     const db = supabaseAdmin()
+
+    // ---- Where delivery tasks go: Breezeway's Lost and Found property and the next delivery Tuesday ----
+    if (str(p.get('bzhome')) === '1') { const h = await lostFoundHome(); return NextResponse.json({ ok: !!h.id, homeId: h.id, name: h.name, nextDelivery: deliveryTuesday() }) }
 
     // ---- How to ask this guest to pay: the booking's channel and its Guesty conversation ----
     if (str(p.get('pay')).trim()) return NextResponse.json({ ok: true, ...(await payContext(str(p.get('pay')).trim(), str(p.get('unit')))) })
@@ -231,7 +234,7 @@ export async function PATCH(req: NextRequest) {
     // written on the item and the page offers a retry.
     if (after === 'push') {
       const t = await pushShipTask(data)
-      const h2 = [...(Array.isArray(data.history) ? data.history : []), t.ok ? entry('Lighthouse', 'breezeway task', 'Lost & Found Delivery #' + t.taskId + ' created in Breezeway' + ((t as any).assignedTo?.length ? ' — assigned to ' + (t as any).assignedTo.join(', ') : ' — unassigned (nobody matched in Breezeway)')) : entry('Lighthouse', 'breezeway task failed', t.error || '')].slice(-60)
+      const h2 = [...(Array.isArray(data.history) ? data.history : []), t.ok ? entry('Lighthouse', 'breezeway task', 'Lost & Found Delivery #' + t.taskId + ' created in Breezeway for Tuesday ' + ((t as any).date || '') + ((t as any).assignedTo?.length ? ' — assigned to ' + (t as any).assignedTo.join(', ') : ' — unassigned (nobody matched in Breezeway)')) : entry('Lighthouse', 'breezeway task failed', t.error || '')].slice(-60)
       const { data: d2 } = await db.from('lost_found_items').update({ breezeway_task_id: t.ok ? t.taskId : data.breezeway_task_id, breezeway_error: t.ok ? null : (t.error || 'failed'), history: h2, updated_at: new Date().toISOString() }).eq('id', id).select('*').single()
       return NextResponse.json({ ok: true, item: d2 || data, task: t })
     }
