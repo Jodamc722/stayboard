@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
 
   if (probe === 'guestinfo') {
     // READ ONLY. The unit page's Guest info editor prefill — live from Guesty, not the mirror.
-    const rr = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=${GUEST_INFO.join(' ')}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+    const rr = await guestyFetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=${GUEST_INFO.join(' ')}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
     const tt = await rr.text()
     if (!rr.ok) return NextResponse.json({ error: `Guesty ${rr.status}: ${tt.slice(0, 200)}` }, { status: 200 })
     let lf: any = {}; try { lf = JSON.parse(tt) } catch { lf = {} }
