@@ -177,7 +177,7 @@ export async function POST(req: NextRequest) {
   if (typeof p.checkOutTime === 'string' && /^\d{1,2}:\d{2}$/.test(p.checkOutTime)) change.checkOutTime = p.checkOutTime
   if (p.minNights != null && Number.isFinite(Number(p.minNights)) && Number(p.minNights) > 0) change.minNights = Math.round(Number(p.minNights))
   if (p.maxNights != null && Number.isFinite(Number(p.maxNights)) && Number(p.maxNights) > 0) change.maxNights = Math.round(Number(p.maxNights))
-  if (typeof p.houseRules === 'string' && p.houseRules.trim()) change.houseRules = p.houseRules.trim().slice(0, 4000)
+  if (typeof p.houseRules === 'string' && p.houseRules.trim()) change.houseRules = p.houseRules.trim().slice(0, 10000)
   // Cleaning fee (Jon, 2026-10-30: "Bulk edit cleaning fee"): prices.cleaningFee, what the GUEST pays.
   if (p.cleaningFee != null && p.cleaningFee !== '' && Number.isFinite(Number(p.cleaningFee)) && Number(p.cleaningFee) >= 0 && Number(p.cleaningFee) <= 5000) change.cleaningFee = Math.round(Number(p.cleaningFee) * 100) / 100
   // Guest info: a value is applied as typed; '__clear__' empties the field on Guesty.
