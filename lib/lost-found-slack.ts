@@ -207,8 +207,11 @@ export async function scanLostFound(opts: { days?: number; by?: string | null } 
   const { data: have } = ids.length ? await db.from('lost_found_items').select('id,slack_ts,photos').in('slack_ts', ids) : { data: [] as any[] }
   const known: Record<string, any> = {}
   for (const h of (have || []) as any[]) known[str(h.slack_ts)] = h
+  // Deleted on /lost-found = never read again (lib/lost-found-cleanup).
+  const ignored = await (await import('./lost-found-cleanup')).ignoredSlackTs()
   const fresh: Group[] = []
   for (const g of groups) {
+    if (ignored.has(g.id)) continue
     const h = known[g.id]
     if (!h) { fresh.push(g); continue }
     const havePhotos = Array.isArray(h.photos) ? h.photos.length : 0

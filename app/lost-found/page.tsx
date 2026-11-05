@@ -7,10 +7,13 @@
 //   Contacted → guest told; waiting on them
 //   Claimed   → guest wants it back (pick up or ship)
 //   Shipping  → in the mail (carrier + tracking + who paid)
-//   Returned / Donated / Discarded → closed
+//   Returned / Donated / Discarded / Not lost & found → closed
+// Clean-up (2026-11-05): Delete (one row or many), "Not lost & found" to close a row that isn't a
+// find, and Held / Contacted items 30 days past the find with nothing requested are Discarded
+// automatically (lib/lost-found-cleanup).
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Shell } from '@/components/Shell'
-import { RefreshCw, Search, ExternalLink, Plus, X, Camera, Link2, Slack, Settings2, Phone, Mail, Truck, Check, Trash2, Gift, PackageCheck, DollarSign, Send, ClipboardList } from 'lucide-react'
+import { RefreshCw, Search, ExternalLink, Plus, X, Camera, Ban, CheckSquare, Square, Link2, Slack, Settings2, Phone, Mail, Truck, Check, Trash2, Gift, PackageCheck, DollarSign, Send, ClipboardList } from 'lucide-react'
 import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
 
 type Stay = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; confirmationCode: string | null; guestyUrl: string }
@@ -27,11 +30,11 @@ type Listing = { id: string; name: string }
 
 const STATUS: Record<string, { label: string; tone: Tone }> = {
   held: { label: 'Held', tone: 'amber' }, contacted: { label: 'Contacted', tone: 'sky' }, claimed: { label: 'Claimed', tone: 'violet' },
-  shipping: { label: 'Sent', tone: 'brand' }, returned: { label: 'Returned', tone: 'emerald' }, donated: { label: 'Donated', tone: 'slate' }, discarded: { label: 'Discarded', tone: 'slate' },
+  shipping: { label: 'Sent', tone: 'brand' }, returned: { label: 'Returned', tone: 'emerald' }, donated: { label: 'Donated', tone: 'slate' }, discarded: { label: 'Discarded', tone: 'slate' }, not_lost_found: { label: 'Not lost & found', tone: 'slate' },
 }
 const CATS = ['clothing', 'electronics', 'documents', 'jewelry', 'toiletries', 'toys', 'keys_cards', 'other']
 const catLabel = (c: string) => c === 'keys_cards' ? 'Keys / cards' : c.charAt(0).toUpperCase() + c.slice(1)
-const RESOLVED = ['returned', 'donated', 'discarded']
+const RESOLVED = ['returned', 'donated', 'discarded', 'not_lost_found']
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso.slice(0, 10) + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 function fmtWhen(iso: string) { const d = new Date(iso); return isNaN(d.getTime()) ? iso : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) }
 function daysBetween(a: string, b: string) { return Math.round((Date.parse(b + 'T12:00:00') - Date.parse(a + 'T12:00:00')) / 86400000) }
@@ -56,6 +59,10 @@ export default function LostFoundPage() {
   const [slack, setSlack] = useState<any>(null)
   const [slackOpen, setSlackOpen] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  // CLEAN-UP MODE: tick rows, then close them as not lost & found or delete them.
+  const [selecting, setSelecting] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const togglePick = (id: string) => setPicked(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   const load = useCallback(async () => {
     try {
@@ -98,6 +105,21 @@ export default function LostFoundPage() {
     return j.item as Item
   }
 
+  const remove = async (ids: string[]) => {
+    if (!ids.length) return false
+    if (!confirm(ids.length === 1 ? 'Delete this item for good? It cannot be undone.' : 'Delete ' + ids.length + ' items for good? This cannot be undone.')) return false
+    const r = await fetch('/api/lost-found', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok || !j.ok) { setErr(j.error || 'Delete failed'); return false }
+    setItems(list => list.filter(i => ids.indexOf(i.id) < 0)); setPicked(new Set())
+    return true
+  }
+  const closeNotLF = async (ids: string[]) => {
+    for (const id of ids) await patch(id, { status: 'not_lost_found', note: 'Not a lost & found item' })
+    if (tab === 'open') setItems(list => list.filter(i => ids.indexOf(i.id) < 0))
+    setPicked(new Set())
+  }
+
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase()
     if (!needle) return items
@@ -113,7 +135,7 @@ export default function LostFoundPage() {
         {tab !== 'resolved' && held > 0 && <Pill tone="amber" title="Logged, guest not yet contacted">{held} held</Pill>}
         {tab !== 'resolved' && contacted > 0 && <Pill tone="sky" title="Guest told, waiting on them">{contacted} contacted</Pill>}
         {tab !== 'resolved' && inMotion > 0 && <Pill tone="brand" title="Claimed or in the mail">{inMotion} going back</Pill>}
-        {overdue > 0 && <Pill tone="rose" title={'Unresolved past the ' + holdDays + '-day hold'}>{overdue} past hold</Pill>}
+        {overdue > 0 && <Pill tone="rose" title={'Held ' + holdDays + '+ days with nothing requested — tossed automatically'}>{overdue} to toss</Pill>}
         {slack?.channel && <Pill tone={slack.state?.lastError ? 'rose' : 'slate'} onClick={() => setSlackOpen(o => !o)} title={slack.state?.lastScanAt ? 'Last read ' + fmtWhen(slack.state.lastScanAt) + (slack.state.lastError ? ' — ' + slack.state.lastError : '') : 'Not read yet'}>#{slack.channel.name}</Pill>}
       </LeanHead>
 
@@ -131,8 +153,22 @@ export default function LostFoundPage() {
           <IconBtn title={slack?.channel ? 'Read #' + slack.channel.name + ' now' : 'Choose the Slack channel first'} onClick={() => slack?.channel ? syncNow() : setSlackOpen(true)} disabled={syncing}><Slack size={13} className={syncing ? 'animate-pulse' : ''} /></IconBtn>
           <IconBtn title="Slack channel settings" onClick={() => setSlackOpen(o => !o)}><Settings2 size={13} /></IconBtn>
           <IconBtn title="Reload" onClick={() => { setLoading(true); load() }}><RefreshCw size={13} /></IconBtn>
+          <button onClick={() => { setSelecting(v => !v); setPicked(new Set()) }} className={btn}>{selecting ? 'Done' : 'Clean up'}</button>
           <button onClick={() => setAdding(a => !a)} className={btnP}><Plus size={13} /> Log a find</button>
         </>} />
+
+      <p className="text-[11.5px] text-muted mb-2">Not collected or requested within {holdDays} days of the find → marked Discarded automatically (toss it). Items the guest asked for are never tossed.</p>
+
+      {selecting && (
+        <div className="sticky top-0 z-10 mb-2 flex items-center gap-2 flex-wrap rounded-lg border border-line bg-white px-3 py-2 text-[12px] shadow-sm">
+          <button onClick={() => setPicked(picked.size === rows.length ? new Set() : new Set(rows.map(r => r.id)))} className="inline-flex items-center gap-1 font-semibold">
+            {picked.size && picked.size === rows.length ? <CheckSquare size={14} /> : <Square size={14} />} {picked.size ? picked.size + ' selected' : 'Select all'}
+          </button>
+          <span className="flex-1" />
+          <button disabled={!picked.size} onClick={() => closeNotLF(Array.from(picked))} className={btn}><Ban size={12} /> Not lost &amp; found</button>
+          <button disabled={!picked.size} onClick={() => remove(Array.from(picked))} className={btn + ' text-rose-700'}><Trash2 size={12} /> Delete</button>
+        </div>
+      )}
 
       {err && <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3 flex items-start gap-2"><span className="flex-1">{err}</span><button onClick={() => setErr('')}><X size={13} /></button></div>}
 
@@ -148,7 +184,12 @@ export default function LostFoundPage() {
         <LeanEmpty>{tab === 'open' ? 'Nothing held right now. Finds posted in Slack appear here within 15 minutes, or log one by hand.' : 'Nothing here.'}</LeanEmpty>
       ) : (
         <LeanList>
-          {rows.map(i => <div key={i.id} id={'lf-' + i.id}><ItemRow i={i} today={today} holdDays={holdDays} patch={patch} focus={i.id === focusId} /></div>)}
+          {rows.map(i => (
+            <div key={i.id} id={'lf-' + i.id} className={selecting ? 'flex items-stretch gap-2' : undefined}>
+              {selecting && <button onClick={() => togglePick(i.id)} aria-label="Select" className="shrink-0 px-1 text-muted hover:text-ink">{picked.has(i.id) ? <CheckSquare size={16} className="text-brand-700" /> : <Square size={16} />}</button>}
+              <div className={selecting ? 'flex-1 min-w-0' : undefined}><ItemRow i={i} today={today} holdDays={holdDays} patch={patch} focus={i.id === focusId} onDelete={() => remove([i.id])} onNotLF={() => closeNotLF([i.id])} /></div>
+            </div>
+          ))}
         </LeanList>
       )}
     </Shell>
@@ -156,7 +197,7 @@ export default function LostFoundPage() {
 }
 
 // ── one item ────────────────────────────────────────────────────────────────────────────────────
-function ItemRow({ i, today, holdDays, patch, focus }: { i: Item; today: string; holdDays: number; patch: (id: string, body: any) => Promise<Item | null>; focus?: boolean }) {
+function ItemRow({ i, today, holdDays, patch, focus, onDelete, onNotLF }: { i: Item; today: string; holdDays: number; patch: (id: string, body: any) => Promise<Item | null>; focus?: boolean; onDelete: () => void; onNotLF: () => void }) {
   const st = STATUS[i.status] || STATUS.held
   const age = daysBetween(i.found_date, today)
   const holdLeft = holdDays - age
@@ -176,10 +217,14 @@ function ItemRow({ i, today, holdDays, patch, focus }: { i: Item; today: string;
       tags={<>
         <Tag tone={st.tone}>{st.label}</Tag>
         {i.guest_name ? <Tag tone="emerald" title={(i.check_in ? fmtShort(i.check_in) + ' → ' + fmtShort(i.check_out) : '')}>{i.guest_name}</Tag> : open && <Tag tone="rose">No stay attached</Tag>}
-        {open && (holdLeft < 0 ? <Tag tone="rose">{-holdLeft}d past hold</Tag> : holdLeft <= 7 ? <Tag tone="amber">hold ends in {holdLeft}d</Tag> : null)}
+        {open && (i.status === 'held' || i.status === 'contacted') && (holdLeft <= 0 ? <Tag tone="rose">toss</Tag> : holdLeft <= 7 ? <Tag tone="amber">tossed in {holdLeft}d</Tag> : null)}
         {i.slack_ts && <Tag title="Read from Slack">Slack</Tag>}
       </>}
-      actions={open && !i.reservation_id ? <button onClick={e => { e.stopPropagation(); setPickOpen(true) }} className={btn}><Link2 size={12} /> Attach stay</button> : null}
+      actions={<span className="inline-flex items-center gap-1">
+        {open && !i.reservation_id ? <button onClick={e => { e.stopPropagation(); setPickOpen(true) }} className={btn}><Link2 size={12} /> Attach stay</button> : null}
+        {open ? <button title="Not a lost & found item — close it" onClick={e => { e.stopPropagation(); onNotLF() }} className={btn}><Ban size={12} /><span className="hidden sm:inline">Not L&amp;F</span></button> : null}
+        <button title="Delete for good" aria-label="Delete" onClick={e => { e.stopPropagation(); onDelete() }} className="p-1.5 rounded-lg text-muted hover:text-rose-700 hover:bg-rose-50"><Trash2 size={13} /></button>
+      </span>}
     >
       <div className="grid sm:grid-cols-2 gap-3 text-[12.5px]">
         <div className="space-y-1.5">

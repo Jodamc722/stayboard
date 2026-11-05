@@ -10,17 +10,17 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { unitLabel } from '@/lib/unit-label'
+import { HOLD_DAYS, autoToss, ignoreSlackTs } from '@/lib/lost-found-cleanup'
 import { payContext, billOnFolio, pushShipTask, syncSent, lostFoundHome, deliveryTuesday } from '@/lib/lost-found-pay'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
-const STATUSES = ['held', 'contacted', 'claimed', 'shipping', 'returned', 'donated', 'discarded'] as const
+const STATUSES = ['held', 'contacted', 'claimed', 'shipping', 'returned', 'donated', 'discarded', 'not_lost_found'] as const
 const CATEGORIES = ['clothing', 'electronics', 'documents', 'jewelry', 'toiletries', 'toys', 'keys_cards', 'other'] as const
-const RESOLVED = ['returned', 'donated', 'discarded']
-// Hold window (how long we keep an unclaimed item before it may be donated/discarded). The page
-// shows a "hold ends" tag from this; nothing is thrown out automatically.
-const HOLD_DAYS = 30
+const RESOLVED = ['returned', 'donated', 'discarded', 'not_lost_found']
+// Hold window: Held / Contacted items 30 days past the find with nothing requested are marked
+// Discarded automatically (lib/lost-found-cleanup autoToss — on page load and every cron run).
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function num(v: any): number | null { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : null }
@@ -87,6 +87,7 @@ export async function GET(req: NextRequest) {
     // ---- The list ----
     // A delivery task completed in Breezeway shows as Sent the next time anyone looks.
     try { await syncSent() } catch { /* the cron catches up */ }
+    try { await autoToss() } catch { /* the cron catches it next */ }
     const status = str(p.get('status')) || 'open'
     let qy = db.from('lost_found_items').select('*')
     if (status === 'open') qy = qy.not('status', 'in', '(' + RESOLVED.join(',') + ')')
@@ -239,6 +240,30 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: true, item: d2 || data, task: t })
     }
     return NextResponse.json({ ok: true, item: data })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
+  }
+}
+
+// DELETE { ids: string[] } — gone for good (Jon, 2026-11-05: "have delete options"). Photos are
+// removed from storage; a Slack-read row's post is remembered so the reader never re-adds it.
+export async function DELETE(req: NextRequest) {
+  const gate = await requireLevel('lost-found', 'edit')
+  if (!gate.ok) return gate.res
+  const who = gate.access.email || 'unknown'
+  try {
+    const b = await req.json().catch(() => ({} as any))
+    const ids: string[] = (Array.isArray(b.ids) ? b.ids : [b.id]).map(str).filter(Boolean).slice(0, 200)
+    if (!ids.length) return NextResponse.json({ ok: false, error: 'Nothing picked' }, { status: 400 })
+    const db = supabaseAdmin()
+    const { data: rows } = await db.from('lost_found_items').select('id,slack_ts,photos').in('id', ids)
+    const ts = (rows || []).map((r: any) => str(r.slack_ts)).filter(Boolean)
+    await ignoreSlackTs(ts, who)
+    const paths = (rows || []).flatMap((r: any) => Array.isArray(r.photos) ? r.photos : []).filter((x: any) => typeof x === 'string' && !/^https?:/.test(x))
+    if (paths.length) { try { await db.storage.from('lost-found-files').remove(paths) } catch { /* storage is best effort */ } }
+    const { error } = await db.from('lost_found_items').delete().in('id', ids)
+    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, deleted: ids.length })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }

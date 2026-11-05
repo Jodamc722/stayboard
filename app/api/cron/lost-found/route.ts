@@ -6,6 +6,7 @@ import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { scanLostFound } from '@/lib/lost-found-slack'
 import { syncSent } from '@/lib/lost-found-pay'
+import { autoToss } from '@/lib/lost-found-cleanup'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -17,7 +18,10 @@ async function run(req: NextRequest) {
   // Delivery tasks completed in Breezeway → the item shows Sent (lib/lost-found-pay).
   let sent = 0
   try { sent = await syncSent() } catch { /* next run */ }
-  return NextResponse.json({ ok: r.ok, count: r.added, sent, ...(r.error ? { error: r.error } : {}) })
+  // 30 days, not collected or requested → Discarded (lib/lost-found-cleanup).
+  let tossed = 0
+  try { tossed = await autoToss() } catch { /* next run */ }
+  return NextResponse.json({ ok: r.ok, count: r.added, sent, tossed, ...(r.error ? { error: r.error } : {}) })
 }
 const receipted = withRouteReceipt('lost-found', run)
 export async function GET(req: NextRequest) { return receipted(req) }
