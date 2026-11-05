@@ -19,25 +19,28 @@ export const LINK_KINDS = [
   // Minted on the project itself, not here — the hub is the one place every live link is listed,
   // and a board handed to an owner that this page cannot see is exactly the link nobody revokes.
   'project-board',
+  // THE PHOTO LIBRARY BY LINK (Jon, 2026-11-05: "create a shareable link with all library").
+  // Every property and unit photo, view and download only, behind this link's own passcode.
+  'photo-library',
 ] as const
 export type LinkKind = typeof LINK_KINDS[number]
 export const AUDIENCES = ['crew', 'vendor', 'owner', 'guest', 'partner', 'internal'] as const
 export type Audience = typeof AUDIENCES[number]
 
 /** Kinds the hub can CREATE (the rest are minted by their own tabs, or are one-per-page fixtures). */
-export const CREATABLE_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'marketing', 'owner-audit', 'botanica', 'custom-page']
+export const CREATABLE_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'marketing', 'owner-audit', 'botanica', 'custom-page', 'photo-library']
 
 /** Kinds whose link never expires by nature — the crew boards. Everything else is "generated". */
 // 'project-board' is standing on purpose: a board handed to an owner is open until somebody
 // revokes it, which makes it exactly the kind of link that must not hide behind a filter.
-export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'project-board']
+export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'project-board', 'photo-library']
 
 export const KIND_LABEL: Record<LinkKind, string> = {
   'vendor-board': 'Vendor cleaning board', scheduler: 'Team scheduler', 'field-board': 'Live field board', parking: 'Parking board',
   'day-sheet': 'Day sheet', delivery: 'Delivery log', 'orders-live': 'Guest orders — live', 'salato-desk': 'Salato desk board',
   marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Botanica report', 'botanica-bookings': 'Botanica bookings export',
   'owner-report': 'Owner report', guidebook: 'Guidebook', guide: 'Guest guide page', 'order-form': 'Order form', count: 'Inventory count', 'custom-page': 'Custom report',
-  'project-board': 'Project board',
+  'project-board': 'Project board', 'photo-library': 'Photo library',
 }
 export const AUDIENCE_LABEL: Record<Audience, string> = {
   crew: 'Our crew', vendor: 'Vendors', owner: 'Owners', guest: 'Guests', partner: 'Partners & front desks', internal: 'Internal / reviewers',
@@ -91,6 +94,7 @@ export function pathFor(kind: string, code: string): string {
     case 'order-form': return code === 'new-order' ? '/new-order' : '/owner-orders'
     case 'count': return '/count/' + code
     case 'project-board': return '/project/' + code
+    case 'photo-library': return '/library/' + code
     default: return '/share/' + code
   }
 }
@@ -177,6 +181,7 @@ export function describeLink(l: Pick<ShareLinkRow, 'kind' | 'scope' | 'audience'
     case 'guide': parts.push('guest guide page'); break
     case 'order-form': parts.push('open form, no passcode'); break
     case 'count': parts.push('inventory count sheet'); break
+    case 'photo-library': parts.push('every property and unit photo'); parts.push('view & download, nothing editable'); break
     default: {
       parts.push(scopeWords())
       const keys = Object.keys(s.sections || {}).filter(k => s.sections && s.sections[k])
