@@ -275,7 +275,7 @@ export const OPEN_PREFIXES = [
   // capability and the optional passcode is checked server-side in /api/public/inventory-count.
   '/count/',
   // PHOTO LIBRARY LINK (Jon, 2026-11-05): /library/<code> is the whole photo library, view and
-  // download only, for people without a Lighthouse account. The link's own passcode is checked
+  // download only, for people without a Lighthouse account. The passcode of the link is checked
   // server-side in /api/public/photo-library on every call.
   '/library/',
   // TEAM SCHEDULER LINK (Jon, 2026-09-03): one link per market; picks land in schedule_staged, Submit emails Jon.
