@@ -28,6 +28,7 @@ import { UnitAudit } from '@/components/UnitAudit'
 import { FaqDesk } from '@/components/FaqDesk'
 import { AmenityEditor } from '@/components/AmenityEditor'
 import { SettingsEditor } from '@/components/SettingsEditor'
+import { GuestInfoEditor } from '@/components/GuestInfoEditor'
 import { ScoreDelta } from '@/components/ScoreDelta'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { AreaFacts } from '@/components/AreaFacts'
@@ -374,6 +375,8 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
                     the same five fields as values. Four of five rows were the same fields twice. The
                     scored version now lives in the breakdown; this one shows what they are set to. */}
                 <SettingsEditor listingId={listing.id} meta={res.settings.meta} />
+                {/* Guest info — Wi-Fi, house manual, trash, parking, additional house rules (2026-11-05). */}
+                <GuestInfoEditor listingId={listing.id} />
                 <p className="text-[11px] text-muted leading-snug px-0.5">
                   Title and description sync to <b className="text-ink">Airbnb</b> and <b className="text-ink">Vrbo</b> once written to Guesty.
                   {' '}<b className="text-ink">Booking.com</b> writes its own description — there the lever is amenities and settings.

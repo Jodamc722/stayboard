@@ -21,6 +21,39 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 // Note: cancellation policy is NOT settable via Guesty's API (the integrations object is read-only),
 // so it's intentionally not handled here. Set cancellation in Guesty's UI.
 
+// GUEST INFO (Bernadette via Jon, 2026-11-05: "On Guesty, Details & Layout > Location & details: Wifi
+// name, Wifi password, House manual, Trash pick up instructions, Parking instructions. Then Pricing &
+// policies > Reservation policies > House rules > Additional house rules — where the detailed house
+// rules are entered"). The five are top-level listing fields (PUT /listings/{id}); Additional house
+// rules lives on Guesty's house-rules resource (/properties/house-rules/unit-type/{id}) and is
+// read-merged-written so the pets / smoking / events / quiet-hours toggles stay as they are.
+const GUEST_INFO = ['wifiName', 'wifiPassword', 'houseManual', 'trashCollectedOn', 'parkingInstructions'] as const
+const HR_KEYS = ['additionalRules', 'childrenRules', 'petsAllowed', 'quietBetween', 'smokingAllowed', 'suitableForEvents', 'minimumAge']
+async function readHouseRules(tok: string, id: string): Promise<{ ok: boolean; rules: any; wrapped: boolean; error?: string }> {
+  try {
+    const r = await guestyFetch(`${BASE}/properties/house-rules/unit-type/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+    const t = await r.text()
+    if (!r.ok) return { ok: false, rules: null, wrapped: false, error: `Guesty ${r.status}: ${t.slice(0, 140)}` }
+    let j: any = {}; try { j = JSON.parse(t) } catch { j = {} }
+    const d = j?.data && typeof j.data === 'object' && !Array.isArray(j.data) ? j.data : j
+    const wrapped = !!(d && typeof d.houseRules === 'object' && d.houseRules)
+    return { ok: true, rules: wrapped ? d.houseRules : (d || {}), wrapped }
+  } catch (e: any) { return { ok: false, rules: null, wrapped: false, error: String(e?.message || e) } }
+}
+async function writeAdditionalRules(tok: string, id: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  const cur = await readHouseRules(tok, id)
+  if (!cur.ok) return { ok: false, error: 'Could not read the current house rules from Guesty — nothing changed. ' + (cur.error || '') }
+  const body: any = {}
+  for (const k of HR_KEYS) if (cur.rules && cur.rules[k] !== undefined && cur.rules[k] !== null) body[k] = cur.rules[k]
+  body.additionalRules = text
+  const put = (b: any) => guestyFetch(`${BASE}/properties/house-rules/unit-type/${encodeURIComponent(id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(b) })
+  let r = await put(cur.wrapped ? { houseRules: body } : body)
+  let t = await r.text().catch(() => '')
+  // The docs don't say whether the body is wrapped — try the other shape once on a 400.
+  if (r.status === 400) { r = await put(cur.wrapped ? body : { houseRules: body }); t = await r.text().catch(() => '') }
+  return r.ok ? { ok: true } : { ok: false, error: r.status === 429 ? 'Guesty asked us to slow down — run again in a minute.' : `House rules: Guesty ${r.status}: ${t.slice(0, 140)}` }
+}
+
 async function token(sb: any): Promise<string | null> {
   const { data: tok } = await sb.from('guesty_tokens').select('access_token, expires_at').eq('id', 'singleton').maybeSingle()
   const valid = tok?.access_token && (!tok.expires_at || new Date(tok.expires_at).getTime() > Date.now() + 30_000)
@@ -53,6 +86,20 @@ export async function GET(req: NextRequest) {
       get(`/basic-fees/listings/${encodeURIComponent(id)}/channels/airbnb2`),
     ])
     return NextResponse.json({ financials: fin, basicFees: basic, airbnbEffective: air })
+  }
+
+  if (probe === 'guestinfo') {
+    // READ ONLY. The unit page's Guest info editor prefill — live from Guesty, not the mirror.
+    const rr = await fetch(`${BASE}/listings/${encodeURIComponent(id)}?fields=${GUEST_INFO.join(' ')}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' } })
+    const tt = await rr.text()
+    if (!rr.ok) return NextResponse.json({ error: `Guesty ${rr.status}: ${tt.slice(0, 200)}` }, { status: 200 })
+    let lf: any = {}; try { lf = JSON.parse(tt) } catch { lf = {} }
+    const hr = await readHouseRules(tok, id)
+    const out: any = {}
+    for (const k of GUEST_INFO) out[k] = typeof lf[k] === 'string' ? lf[k] : (lf[k] == null ? '' : String(lf[k]))
+    out.additionalRules = hr.ok ? String(hr.rules?.additionalRules || '') : ''
+    out.houseRulesError = hr.ok ? null : hr.error
+    return NextResponse.json(out)
   }
 
   if (probe === 'pictures') {
@@ -133,6 +180,12 @@ export async function POST(req: NextRequest) {
   if (typeof p.houseRules === 'string' && p.houseRules.trim()) change.houseRules = p.houseRules.trim().slice(0, 4000)
   // Cleaning fee (Jon, 2026-10-30: "Bulk edit cleaning fee"): prices.cleaningFee, what the GUEST pays.
   if (p.cleaningFee != null && p.cleaningFee !== '' && Number.isFinite(Number(p.cleaningFee)) && Number(p.cleaningFee) >= 0 && Number(p.cleaningFee) <= 5000) change.cleaningFee = Math.round(Number(p.cleaningFee) * 100) / 100
+  // Guest info: a value is applied as typed; '__clear__' empties the field on Guesty.
+  for (const k of GUEST_INFO) {
+    const v = (p as any)[k]
+    if (typeof v === 'string' && v.trim()) change[k] = v.trim() === '__clear__' ? '' : v.trim().slice(0, k === 'houseManual' ? 8000 : 2000)
+  }
+  if (typeof p.additionalRules === 'string' && p.additionalRules.trim()) change.additionalRules = p.additionalRules.trim() === '__clear__' ? '' : p.additionalRules.trim().slice(0, 8000)
   if (Object.keys(change).length === 0 && !dryRunPictures) return NextResponse.json({ error: 'No valid policy changes provided.' }, { status: 400 })
 
   const sb = supabaseAdmin()
@@ -194,6 +247,7 @@ export async function POST(req: NextRequest) {
       payload.terms = terms
     }
     if (change.houseRules) payload.publicDescription = { houseRules: change.houseRules }
+    for (const k of GUEST_INFO) if (change[k] !== undefined) payload[k] = change[k]
     let oldFee: number | null = null
     if (change.cleaningFee != null) {
       // prices is read FRESH from Guesty (not the synced raw) so the base price, currency and other
@@ -206,6 +260,14 @@ export async function POST(req: NextRequest) {
       if (!prices) { results.push({ id, name, ok: false, error: 'Could not read the current prices from Guesty — nothing changed.' }); failCount++; continue }
       oldFee = Number.isFinite(Number(prices.cleaningFee)) ? Number(prices.cleaningFee) : null
       payload.prices = { ...prices, cleaningFee: change.cleaningFee }
+    }
+
+    // Additional house rules first (its own resource). If the listing PUT then fails, the row says so.
+    if (change.additionalRules !== undefined) {
+      const hr = await writeAdditionalRules(tok, id, change.additionalRules)
+      if (!hr.ok) { results.push({ id, name, ok: false, error: hr.error }); failCount++; continue }
+      try { await sb.from('guesty_listings').update({ raw: { ...raw, _additionalRules: change.additionalRules } }).eq('id', id); raw._additionalRules = change.additionalRules } catch { /* best effort */ }
+      if (!Object.keys(payload).length) { results.push({ id, name, ok: true }); okCount++; continue }
     }
 
     try {
@@ -224,6 +286,7 @@ export async function POST(req: NextRequest) {
         if (payload.terms) newRaw.terms = payload.terms
         if (payload.prices) newRaw.prices = payload.prices
         if (change.houseRules) newRaw.publicDescription = { ...(raw.publicDescription || {}), houseRules: change.houseRules }
+        for (const k of GUEST_INFO) if (change[k] !== undefined) newRaw[k] = change[k]
         await sb.from('guesty_listings').update({ raw: newRaw }).eq('id', id)
       } catch { /* best effort */ }
       results.push({ id, name, ok: true, ...(note ? { note } : {}), ...(change.cleaningFee != null ? { from: oldFee, to: change.cleaningFee } : {}) }); okCount++

@@ -4,7 +4,8 @@
 // units you pick, after you confirm. Writes to Guesty via /api/bulk-policies (PUT per listing).
 // Note: cancellation policy is channel-specific in Guesty and handled separately, so it's not here.
 import { useState } from 'react'
-import { Check, SlidersHorizontal, AlertTriangle, RefreshCw, X } from 'lucide-react'
+import { Check, SlidersHorizontal, AlertTriangle, RefreshCw, X, Wifi, ChevronDown } from 'lucide-react'
+import { GuestInfoFields, guestInfoPolicy, GUEST_INFO_EMPTY, GUEST_INFO_LABEL, type GuestInfo } from '@/components/GuestInfoEditor'
 
 type Unit = { id: string; name: string; cleaningFee?: number | null }
 type Res = { id: string; name: string; ok: boolean; error?: string; from?: number | null; to?: number; note?: string }
@@ -17,6 +18,9 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   const [maxNights, setMaxNights] = useState('')
   const [houseRules, setHouseRules] = useState('')
   const [cleaningFee, setCleaningFee] = useState('')
+  // Guest info (2026-11-05): Wi-Fi, house manual, trash, parking, additional house rules.
+  const [gi, setGi] = useState<GuestInfo>(GUEST_INFO_EMPTY)
+  const [giOpen, setGiOpen] = useState(false)
   const [sel, setSel] = useState<Set<string>>(new Set(units.map(u => u.id)))
   const [busy, setBusy] = useState(false)
   const [confirming, setConfirming] = useState(false)
@@ -32,6 +36,8 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   if (maxNights && Number(maxNights) > 0) policy.maxNights = Number(maxNights)
   if (houseRules.trim()) policy.houseRules = houseRules.trim()
   if (cleaningFee !== '' && Number.isFinite(Number(cleaningFee)) && Number(cleaningFee) >= 0) policy.cleaningFee = Number(cleaningFee)
+  const giPolicy = guestInfoPolicy(gi)
+  Object.assign(policy, giPolicy)
   const fieldCount = Object.keys(policy).length
   const minAboveMax = policy.minNights != null && policy.maxNights != null && policy.minNights > policy.maxNights
   const canApply = fieldCount > 0 && sel.size > 0 && !minAboveMax
@@ -43,6 +49,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
     policy.maxNights != null && `max ${policy.maxNights}n`,
     policy.houseRules && 'house rules',
     policy.cleaningFee != null && `cleaning fee $${policy.cleaningFee}`,
+    ...(Object.keys(giPolicy) as (keyof GuestInfo)[]).map(k => GUEST_INFO_LABEL[k].toLowerCase()),
   ].filter(Boolean).join(', ')
 
   async function apply() {
@@ -64,7 +71,7 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
   if (!open) {
     return (
       <button onClick={() => setOpen(true)} className="inline-flex items-center gap-1.5 text-[13px] font-semibold rounded-lg border border-brand-200 text-brand-700 bg-brand-50 px-3 py-2 hover:bg-brand-100">
-        <SlidersHorizontal size={14} /> Bulk set policies &amp; cleaning fee
+        <SlidersHorizontal size={14} /> Bulk set policies, cleaning fee &amp; guest info
       </button>
     )
   }
@@ -117,6 +124,15 @@ export function BulkPolicyPanel({ units }: { units: Unit[] }) {
           <label className="block text-[11px] text-muted mb-3 max-w-[220px]">Cleaning fee — what the guest pays ($)
             <input value={cleaningFee} onChange={e => setCleaningFee(e.target.value.replace(/[^\d.]/g, ''))} inputMode="decimal" placeholder="e.g. 150" className="w-full mt-0.5 px-2 py-1.5 text-[13px] rounded-lg border border-line bg-app focus:outline-none focus:ring-2 focus:ring-brand-200" />
           </label>
+
+          <div className="rounded-xl border border-line mb-3">
+            <button onClick={() => setGiOpen(o => !o)} className="w-full flex items-center gap-2 px-3 py-2 text-left">
+              <Wifi size={13} className="text-muted" />
+              <span className="text-[12px] font-semibold text-ink flex-1">Guest info — Wi-Fi, house manual, trash, parking, additional house rules{Object.keys(giPolicy).length ? <span className="text-brand-700"> · {Object.keys(giPolicy).length} set</span> : null}</span>
+              <ChevronDown size={14} className={'text-muted transition-transform ' + (giOpen ? 'rotate-180' : '')} />
+            </button>
+            {giOpen ? <div className="px-3 pb-3"><GuestInfoFields value={gi} onChange={setGi} hint="Same text on every unit you pick — leave a box blank to keep each unit's own. Wi-Fi usually differs per unit: set it on the unit page instead." /></div> : null}
+          </div>
 
           <div className="flex items-center justify-between mb-1.5">
             <div className="text-[10px] uppercase tracking-wider text-muted font-semibold">2. Apply to units <span className="text-brand-700">· {sel.size}/{units.length}</span></div>
