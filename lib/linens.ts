@@ -265,7 +265,7 @@ function normItem(v: any, taken: Set<string>): LinenItem | null {
   taken.add(id)
   const it: LinenItem = { id, name, group, per, qty: num(v.qty, LIMITS.num) ?? 1, rotates: v.rotates === true, tiers: {} }
   if (per === 'bed') { const q = sizeMap(v.qtyBySize, LIMITS.num); if (q) it.qtyBySize = q }
-  const par = num(v.par, LIMITS.num); if (par !== null) it.par = Math.round(par)
+  const par = num(v.par, LIMITS.num); if (par !== null) it.par = Math.round(par * 2) / 2
 
   // THE TIERS, AND THE STANDARD SAVED BEFORE THERE WERE ANY. A standard saved on 2026-09-29 has
   // vendor / sku / price / per-size prices on the item itself and no `tiers`. Those are Jon's Mid
@@ -338,7 +338,7 @@ export function normLinenStandard(raw: any): LinenStandard {
   const tierLabels = {} as Record<LinenTier, string>
   for (const t of LINEN_TIERS) tierLabels[t] = text(labels[t], LIMITS.tierLabel) || DEFAULT_TIER_LABELS[t]
   const out: LinenStandard = {
-    par: parN === null ? DEFAULT_PAR : Math.round(parN),
+    par: parN === null ? DEFAULT_PAR : Math.round(parN * 2) / 2,   // halves allowed (Jon, 2026-11-05: "1.5 par, .5 par")
     bedSizes: normBedSizes(src.bedSizes),
     items,
     tierLabels,
@@ -643,6 +643,24 @@ function countOf(per: LinenPer, u: LinenUnit): number {
     case 'kitchen': return u.kitchens === undefined || u.kitchens === null ? 1 : Math.max(0, Math.round(Number(u.kitchens) || 0))
     case 'unit': return 1
     default: return 0
+  }
+}
+
+/** The par choices offered as buttons (Jon, 2026-11-05: "maybe you want 1.5 par, 1 par, .5 par, 2 par"). */
+export const PAR_CHOICES = [0.5, 1, 1.5, 2, 2.5, 3, 4]
+
+/**
+ * The standard counted at another par, for a quick look — never saved. Rotating items follow the new
+ * par, but an item with its own lower par (mattress protector 2, duvet 2) and the sofa bed's par never
+ * go above it. Items that do not rotate (pillows, pool towels) are unchanged.
+ */
+export function atPar(standard: LinenStandard, par: number): LinenStandard {
+  const p = Math.max(0, Math.round(Number(par) * 2) / 2)
+  return {
+    ...standard,
+    par: p,
+    sofaPar: Math.min(typeof standard.sofaPar === 'number' ? standard.sofaPar : DEFAULT_SOFA.par, p),
+    items: standard.items.map(i => (i.rotates && typeof i.par === 'number' ? { ...i, par: Math.min(i.par, p) } : i)),
   }
 }
 

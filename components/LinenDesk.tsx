@@ -17,7 +17,7 @@ import { ArrowLeft, Check, ClipboardList, Copy, Download, FileText, Loader2, Min
 import { Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
 import {
   LINEN_GROUPS, LINEN_PER, LINEN_TIERS, LIMITS, MANUAL_LIMITS, DEFAULT_LINEN_STANDARD, normLinenStandard, linenNeeds, linenTotals, linenCsv, linenText, sortSizes,
-  linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf, linenGap, LINEN_COUNT_LIMITS, pillowsOn,
+  linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf, linenGap, LINEN_COUNT_LIMITS, pillowsOn, atPar, PAR_CHOICES,
   type LinenCount, type LinenGap,
   type LinenStandard, type LinenItem, type LinenGroup, type LinenPer, type LinenDeskUnit, type BedsSource, type LinenTotals, type LinenTier, type TierOption,
   type LinenVendor, type LinenQuote, type VendorOrder, type LinenQuoteChoice, type ManualUnitInput,
@@ -120,6 +120,10 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
   }, [initialUnit])
 
   const dirty = !same(draft, saved)
+  // PAR BUTTONS on the Calculator and Quote (Jon, 2026-11-05): count at another par for a quick look —
+  // page only, the saved par levels are untouched. null = the standard's own par.
+  const [viewPar, setViewPar] = useState<number | null>(null)
+  const calcStd = useMemo(() => (viewPar === null ? draft : atPar(draft, viewPar)), [draft, viewPar])
   // Leaving with unsaved edits to the standard asks first (the browser's own prompt).
   useEffect(() => {
     if (!dirty) return
@@ -176,10 +180,12 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
         : <>
           {view === 'standard' && <StandardView draft={draft} setDraft={setDraft} saved={saved} edited={edited} canEdit={canStd}
               onSaved={(s) => { setSaved(s); setDraft(s); setEdited(true) }} />}
-          {view === 'calculator' && <CalculatorView standard={draft} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
+          {view !== 'standard' && <ParPicker value={viewPar ?? draft.par} standardPar={draft.par} onChange={p => setViewPar(p === draft.par ? null : p)}
+            note={viewPar === null ? 'Counting at the standard par' : `Counting at par ${viewPar} for this view only — the saved par is ${draft.par}`} />}
+          {view === 'calculator' && <CalculatorView standard={calcStd} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
           {/* The Quote view stays mounted once opened, so what was typed (and Bill to) survives a tab switch. */}
           <div hidden={view !== 'quote'}>
-            {(view === 'quote' || quoteOpened) && <QuoteView standard={draft} dirty={dirty} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
+            {(view === 'quote' || quoteOpened) && <QuoteView standard={calcStd} dirty={dirty} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
                 quotes={quotes} canChoose={canBeds} onChosen={(code, q) => setQuotes(m => { const n = { ...m }; if (q) n[code] = q; else delete n[code]; return n })} />}
           </div>
         </>}
@@ -189,6 +195,24 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
 
 // ── shared pieces ─────────────────────────────────────────────────────────────────────────────────
 /** A segmented Low | Mid | Luxury switch. */
+/** Par as buttons: tap one and every count on the page follows. */
+function ParPicker({ value, onChange, standardPar, note, disabled }: { value: number; onChange: (p: number) => void; standardPar?: number; note?: string; disabled?: boolean }) {
+  const choices = Array.from(new Set([...PAR_CHOICES, value, ...(standardPar !== undefined ? [standardPar] : [])])).sort((a, b) => a - b)
+  return (
+    <div className="mb-3 flex items-center gap-1.5 flex-wrap">
+      <span className={EYEBROW + ' mr-1'}>Par</span>
+      {choices.map(p => (
+        <button key={p} type="button" onClick={() => onChange(p)} disabled={disabled} aria-pressed={p === value}
+          title={`Count at ${p} par${standardPar === p ? ' (the standard)' : ''}`}
+          className={'min-w-[2.6rem] px-2.5 py-1 rounded-lg border text-[12.5px] font-bold tabular-nums ' + (p === value ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink') + (standardPar === p && p !== value ? ' ring-1 ring-brand-300' : '')}>
+          {p}
+        </button>
+      ))}
+      {note && <span className="text-[12px] text-muted ml-1">{note}</span>}
+    </div>
+  )
+}
+
 function TierSwitch({ std, value, onChange, title }: { std: LinenStandard; value: LinenTier; onChange: (t: LinenTier) => void; title: (t: LinenTier) => string }) {
   return (
     <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" role="tablist">
@@ -471,11 +495,17 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
           <label className="block">
             <span className={EYEBROW}>Par (sets in rotation)</span>
             <span className="flex items-center gap-2 mt-1">
-              <input type="number" inputMode="numeric" min={0} max={LIMITS.num} value={draft.par} disabled={!canEdit}
-                onChange={e => setDraft(s => ({ ...s, par: Math.max(0, Math.min(LIMITS.num, Math.round(toNum(e.target.value) ?? 0))) }))}
-                title="How many sets of each rotating item a unit owns" className={NUM + ' w-16'} />
+              <input type="number" inputMode="decimal" min={0} max={LIMITS.num} step={0.5} value={draft.par} disabled={!canEdit}
+                onChange={e => setDraft(s => ({ ...s, par: Math.max(0, Math.min(LIMITS.num, Math.round((toNum(e.target.value) ?? 0) * 2) / 2)) }))}
+                title="How many sets of each rotating item a unit owns — halves allowed" className={NUM + ' w-16'} />
               <span className="text-[12px] text-muted">On the bed, in the wash, on the shelf.</span>
             </span>
+            {canEdit && <span className="flex items-center gap-1 mt-1.5 flex-wrap">
+              {PAR_CHOICES.map(p => (
+                <button key={p} type="button" onClick={() => setDraft(s => ({ ...s, par: p }))} aria-pressed={draft.par === p} title={`Set the standard par to ${p} (Save to keep it)`}
+                  className={'min-w-[2.4rem] px-2 py-0.5 rounded-md border text-[12px] font-bold tabular-nums ' + (draft.par === p ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink')}>{p}</button>
+              ))}
+            </span>}
           </label>
           <div className="block">
             <span className={EYEBROW}>Sofa bed</span>
@@ -663,7 +693,7 @@ function ItemRow({ it, std, tier, canEdit, autoFocus, patch, patchTier, remove, 
         </button>
         <input type="number" inputMode="numeric" min={0} max={LIMITS.num} value={it.rotates ? (it.par ?? '') : ''} disabled={!canEdit || !it.rotates}
           placeholder={it.rotates ? String(std.par) : '–'}
-          onChange={e => { const n = toNum(e.target.value); patch({ par: n === null ? null : Math.max(0, Math.round(n)) }) }}
+          onChange={e => { const n = toNum(e.target.value); patch({ par: n === null ? null : Math.max(0, Math.round(n * 2) / 2) }) }}
           title={it.rotates ? `This item's own par. Blank = the standard's par (${std.par}).` : 'One set — par does not apply'}
           className={NUM + ' w-14'} />
         <button onClick={() => canEdit && patch({ active: off })} disabled={!canEdit}
@@ -891,7 +921,7 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
               ))}
             </LeanList>
           </div>
-          <NeededList totals={totals} title={title} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '')} />
+          <NeededList totals={totals} title={title} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
           <PricingFold>
           <TierCards quotes={allTiers} value={tier} onChange={setTier} />
           <TotalsCard totals={totals} label={standard.tierLabels[tier]} onCsv={download} onCopy={copy} copied={copied} />
@@ -1368,7 +1398,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
         </div>
       </section>
 
-      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '')} />
+      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
       <PricingFold>
       <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
         <h2 className={EYEBROW}>Tiers</h2>
