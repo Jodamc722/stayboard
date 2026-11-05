@@ -110,6 +110,8 @@ export const LIMITS = {
 export const MANUAL_LIMITS = { units: 200, bedrooms: 20, bathrooms: 20, guests: 50, bedsPerSize: 20, name: 80 }
 
 const PILLOWS: Record<string, number> = { King: 4, Queen: 4, Full: 4, Twin: 2, 'Sofa bed': 2 }
+// Pillows stocked (Jon, 2026-11-05): the bed's pillows plus 1 extra per bed; a sofa bed has 2.
+const PILLOWS_STOCKED: Record<string, number> = { King: 5, Queen: 5, Full: 5, Twin: 3, 'Sofa bed': 2 }
 
 // STARTING TIERS — pieces per case and a product line per tier. These are STARTING VALUES only, for
 // Jon to overwrite: the pack sizes are how linen is commonly sold (by the dozen for sheets, cases and
@@ -130,7 +132,9 @@ const towel = (low: number, mid: number, lux: number): Hints => [`Cotton blend, 
  * 4 on a King, Queen or Full, mattress protector, duvet insert and cover 1 each); hand towels 4,
  * bath mat 1 and makeup towels 2 PER BATHROOM; washcloths 2, bath towels 2 and pool towels 1 PER
  * GUEST; kitchen towels 2 per unit. Rotation: sheets, cases and towels at the par (3); the duvet
- * cover 2; the mattress protector "1 extra per bed, never 3 par" = 2; pillows and inserts 1.
+ * cover and duvet insert 2; pillow protectors 2; the mattress protector "1 extra per bed, never 3
+ * par" = 2; pillows are the bed's pillows + 1 extra per bed (2 on a sofa bed), not multiplied.
+ * Dish cloths, oven mitts, pot holders and the extra blanket are not on his sheet: kept, switched off.
  */
 export const DEFAULT_LINEN_STANDARD: LinenStandard = {
   par: DEFAULT_PAR,
@@ -142,12 +146,12 @@ export const DEFAULT_LINEN_STANDARD: LinenStandard = {
   items: [
     // Bed — per bed, sized by the bed it goes on.
     { id: 'mattress-protector', name: 'Mattress protector', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, notes: 'One on the bed plus one extra per bed — never the full par', tiers: tiersOf(6, ['Basic waterproof, fitted', 'Waterproof cotton terry, fitted', 'Waterproof, quiet, cooling top']) },
-    { id: 'pillow-protectors', name: 'Pillow protectors', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: true, tiers: tiersOf(12, ['Poly, zippered', 'Cotton, zippered, waterproof', 'Cotton sateen, zippered, waterproof']) },
-    { id: 'pillows', name: 'Pillows', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: false, tiers: tiersOf(1, ['Poly fiberfill', 'Gel-fiber down-alternative', 'Hotel down-alternative, cluster fill']) },
+    { id: 'pillow-protectors', name: 'Pillow protectors', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: true, par: 2, tiers: tiersOf(12, ['Poly, zippered', 'Cotton, zippered, waterproof', 'Cotton sateen, zippered, waterproof']) },
+    { id: 'pillows', name: 'Pillows', group: 'Bed', per: 'bed', qty: 3, qtyBySize: { ...PILLOWS_STOCKED }, rotates: false, notes: 'The pillows on the bed plus 1 extra per bed; 2 on a sofa bed', tiers: tiersOf(1, ['Poly fiberfill', 'Gel-fiber down-alternative', 'Hotel down-alternative, cluster fill']) },
     { id: 'pillowcases', name: 'Pillowcases', group: 'Bed', per: 'bed', qty: 2, qtyBySize: { ...PILLOWS }, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'fitted-sheet', name: 'Fitted sheet', group: 'Bed', per: 'bed', qty: 1, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'flat-sheet', name: 'Flat sheet', group: 'Bed', per: 'bed', qty: 2, rotates: true, tiers: tiersOf(12, SHEETING) },
-    { id: 'duvet-insert', name: 'Duvet insert', group: 'Bed', per: 'bed', qty: 1, rotates: false, tiers: tiersOf(1, ['Poly fill, lightweight', 'Down-alternative, all-season', 'Hotel down-alternative, baffle-box']) },
+    { id: 'duvet-insert', name: 'Duvet insert', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, tiers: tiersOf(1, ['Poly fill, lightweight', 'Down-alternative, all-season', 'Hotel down-alternative, baffle-box']) },
     { id: 'duvet-cover', name: 'Duvet cover', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, tiers: tiersOf(6, ['Poly-cotton, white', 'T-300 cotton percale, white', 'T-400+ cotton sateen, white']) },
     // Bath
     { id: 'bath-towels', name: 'Bath towels', group: 'Bath', per: 'guest', qty: 2, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
@@ -158,12 +162,12 @@ export const DEFAULT_LINEN_STANDARD: LinenStandard = {
     { id: 'pool-towels', name: 'Pool towels', group: 'Bath', per: 'guest', qty: 1, rotates: false, tiers: tiersOf(1, ['Cotton blend, striped', '100% cotton, ~450 GSM', 'Cotton velour, 500+ GSM']) },
     // Kitchen — per unit
     { id: 'kitchen-towels', name: 'Kitchen towels', group: 'Kitchen', per: 'unit', qty: 2, rotates: true, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
-    { id: 'dish-cloths', name: 'Dish cloths', group: 'Kitchen', per: 'unit', qty: 2, rotates: true, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
-    { id: 'oven-mitts', name: 'Oven mitts', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
-    { id: 'pot-holders', name: 'Pot holders', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
+    { id: 'dish-cloths', name: 'Dish cloths', group: 'Kitchen', per: 'unit', qty: 2, rotates: true, active: false, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
+    { id: 'oven-mitts', name: 'Oven mitts', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, active: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
+    { id: 'pot-holders', name: 'Pot holders', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, active: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
     // Other
     { id: 'throw-blanket', name: 'Throw blanket', group: 'Other', per: 'bedroom', qty: 1, rotates: false, tiers: tiersOf(1, ['Fleece', 'Cotton knit', 'Wool-blend knit']) },
-    { id: 'extra-blanket', name: 'Extra blanket', group: 'Other', per: 'bedroom', qty: 1, rotates: false, tiers: tiersOf(1, ['Fleece', 'Cotton thermal', 'Wool-blend']) },
+    { id: 'extra-blanket', name: 'Extra blanket', group: 'Other', per: 'bedroom', qty: 1, rotates: false, active: false, tiers: tiersOf(1, ['Fleece', 'Cotton thermal', 'Wool-blend']) },
   ],
 }
 
