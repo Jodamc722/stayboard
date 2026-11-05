@@ -187,6 +187,10 @@
     {
       "path": "/api/cron/owner-arrivals",
       "schedule": "45 19,20 * * *"
+    },
+    {
+      "path": "/api/cron/connecting-doors",
+      "schedule": "38 11,14,17,20,23 * * *"
     }
   ]
 }
