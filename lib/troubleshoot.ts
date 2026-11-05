@@ -12,12 +12,34 @@
 //      what you tried + photo/video, and leave the task open.
 // The MARKER makes it idempotent: a description that already has it is never touched again, so the
 // webhook's own PATCH (which fires another webhook) cannot loop.
-// Planned work is skipped: a task with a Breezeway template (it has its own checklist) and
-// programme / preventive names (filter changes, inspections, exterior cleans, PMs).
+// Planned work is skipped: a task on one of OUR programme templates (deep clean, A/C deep clean,
+// exterior clean, inspections — they carry their own checklist) and programme / preventive names
+// (filter changes, inspections, exterior cleans, PMs). Ad-hoc templates such as "Guest Reported /
+// Glitch" DO get it — that is where reported issues are filed (the 2026-11-05 miss).
+// DRAFT FIRST (Jon, 2026-11-05: "have it where we can draft it before pushing"): the Add-a-task sheet
+// drafts the block through /api/breezeway/troubleshoot, the coordinator edits or turns it off, and
+// the task carries exactly what they approved (`troubleshoot` on the create body). Turned off = the
+// task id is remembered (setting troubleshoot_optout) so the webhook does not add it back.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSlackRules, groupForBuilding, channelFor } from '@/lib/slack-rules'
 import { buildingOf } from '@/lib/segments'
+import { BZ_TEMPLATES } from '@/lib/breezeway'
+import { getSettingFresh, setSetting } from '@/lib/app-settings'
+
+const PLANNED_TEMPLATES = new Set<number>(Object.values(BZ_TEMPLATES).map(Number))
+const OPTOUT_KEY = 'troubleshoot_optout'
+/** A coordinator turned the checklist off for this task — the webhook must not add it back. */
+export async function rememberOptOut(taskId: string): Promise<void> {
+  try {
+    const cur = await getSettingFresh<string[]>(OPTOUT_KEY, [])
+    const next = [String(taskId), ...(Array.isArray(cur) ? cur : []).filter(x => x !== String(taskId))].slice(0, 300)
+    await setSetting(OPTOUT_KEY, next, 'troubleshoot')
+  } catch { /* best effort */ }
+}
+export async function optedOut(taskId: string): Promise<boolean> {
+  try { const cur = await getSettingFresh<string[]>(OPTOUT_KEY, []); return Array.isArray(cur) && cur.indexOf(String(taskId)) >= 0 } catch { return false }
+}
 
 export const TROUBLESHOOT_MARKER = 'TROUBLESHOOT FIRST'
 
@@ -39,7 +61,7 @@ const PLANNED = /\b(filter (change|replace)|preventa?tive|\bpm\b|inspection|walk
 /** Does this task get the block? Reactive maintenance only, once. */
 export function wantsTroubleshoot(t: { type_department?: any; name?: any; description?: any; template_id?: any }): boolean {
   if (!isMaintenance(t.type_department)) return false
-  if (Number(t.template_id) > 0) return false
+  if (PLANNED_TEMPLATES.has(Number(t.template_id))) return false
   if (String(t.description || '').includes(TROUBLESHOOT_MARKER)) return false
   if (PLANNED.test(String(t.name || ''))) return false
   return true

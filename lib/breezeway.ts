@@ -231,7 +231,15 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
   // TROUBLESHOOT FIRST (lib/troubleshoot; Jon, 2026-11-05) — reactive MAINTENANCE tasks only: the
   // description gets issue-specific steps and the "not fixed → post in Slack, leave it open" rule.
   // Never blocks the create: capped at ~6 s and any failure leaves the description as it was.
-  if (isMaintenanceDept(body?.type_department)) {
+  // `troubleshoot` from the Add-a-task sheet = the coordinator's approved draft (already in the
+  // description, or '' = off). Either way nothing is generated here.
+  let tsOptOut = false
+  if (body && 'troubleshoot' in body) {
+    const draft = String(body.troubleshoot ?? '').trim()
+    body = { ...body }; delete body.troubleshoot
+    if (draft) body.description = (String(body.description || '').trimEnd() + '\n\n' + draft).trim()
+    else tsOptOut = isMaintenanceDept(body.type_department)
+  } else if (isMaintenanceDept(body?.type_department)) {
     try {
       const { withTroubleshoot } = await import('@/lib/troubleshoot')
       const d = await withTroubleshoot(body)
@@ -248,6 +256,7 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
     r = await bzApi('/task', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bare) })
   }
   if (landed(r)) bustBoards()
+  if (tsOptOut && r.ok && r.data?.id != null) { try { const { rememberOptOut } = await import('@/lib/troubleshoot'); await rememberOptOut(String(r.data.id)) } catch { /* best effort */ } }
   // Remember it, and mirror it WITH its home id at once, so the next create of the same job — here
   // or on another server — finds it instead of making a second one.
   try {

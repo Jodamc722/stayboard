@@ -31,13 +31,13 @@
 // person types — nothing about this particular unit. What the unit has on it is SHOWN beside the
 // box instead, so you can see it while you decide, and attached once by the server on create.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { X, Loader2, Users, CalendarDays, Search } from 'lucide-react'
+import { X, Loader2, Users, CalendarDays, Search, Wrench } from 'lucide-react'
 import { useModal } from '@/components/Modal'
 import { previewRows, type BriefIntel } from '@/lib/task-brief'
 import { matchRoster } from '@/lib/roster-match'
 
 export type Roster = { id: number; name: string; departments: string[] }
-type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null; status?: string | null }
+type Listing = { id: string; nickname?: string | null; title?: string | null; building?: string | null; status?: string | null; homeId?: number; bzName?: string | null }
 type BzTpl = { id: number; name: string; department: string; description: string }
 
 // WHAT THE CALLER ALREADY KNOWS (Jon, 2026-09-14: "add task should be in today in ops at the team
@@ -177,6 +177,12 @@ export function AddTaskSheet({
   const [intelBusy, setIntelBusy] = useState(false)
   const [roster, setRoster] = useState<Roster[]>(rosterProp || [])
   const [busy, setBusy] = useState(false)
+  // TROUBLESHOOT DRAFT — maintenance only (Jon, 2026-11-05: "have it where we can draft it before
+  // pushing"). Drafted on request, edited here, and the task carries exactly this text; off = none.
+  const [ts, setTs] = useState('')
+  const [tsOn, setTsOn] = useState(true)
+  const [tsBusy, setTsBusy] = useState(false)
+  const [tsErr, setTsErr] = useState('')
   const [err, setErr] = useState('')
   const boxRef = useRef<HTMLInputElement>(null)
   const { panelProps, onScrim } = useModal(onClose)
@@ -186,13 +192,19 @@ export function AddTaskSheet({
   useEffect(() => {
     // ?slim=1: the unfiltered route is select('*') — the whole Guesty raw blob for 233 listings —
     // to populate a name picker.
-    fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json())
+    // EVERY BREEZEWAY UNIT (Jon, 2026-11-05: "not all were populating. This should show all
+    // Breezeway units") — Breezeway's own property list, Guesty names where linked. Falls back to
+    // the Guesty listings if that read fails.
+    const guesty = () => fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json())
       .then(j => {
         // A failed read must not read as "no such unit" — three states, not two.
         if (!Array.isArray(j.results)) { setUnitsErr(true); setUnitsReady(true); return }
         setListings(j.results); setUnitsReady(true)
       })
       .catch(() => { setUnitsErr(true); setUnitsReady(true) })
+    fetch('/api/breezeway/units', { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (Array.isArray(j.units) && j.units.length) { setListings(j.units); setUnitsReady(true) } else guesty() })
+      .catch(guesty)
     fetch('/api/breezeway/templates', { cache: 'no-store' }).then(r => r.json())
       .then(j => setBzTpls(Array.isArray(j.templates) ? j.templates : [])).catch(() => {})
     if (!rosterProp?.length) {
@@ -223,7 +235,7 @@ export function AddTaskSheet({
   }, [seedAssignee, roster, picked.length])
 
   useEffect(() => {
-    if (!unit) { setIntel(null); return }
+    if (!unit || String(unit.id).startsWith('bz:')) { setIntel(null); return }
     setIntelBusy(true)
     fetch('/api/schedule/listing-ops?listingId=' + encodeURIComponent(unit.id), { cache: 'no-store' })
       .then(r => r.json()).then(j => setIntel(j || null)).catch(() => setIntel(null))
@@ -300,15 +312,17 @@ export function AddTaskSheet({
   const hits = useMemo(() => {
     const words = uq.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean)
     if (!words.length) return []
+    // ALL matches, in a scrolling list (was the first 7, active only — 2026-11-05). Inactive units
+    // still match; they sort last and say so.
     const scored = listings
-      .filter(l => String(l.status || 'active').trim().toLowerCase() === 'active')
       .map(l => {
-        const hay = ((l.nickname || l.title || '') + ' ' + (l.building || '')).toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+        const hay = ((l.nickname || l.title || '') + ' ' + (l.bzName || '') + ' ' + (l.building || '')).toLowerCase().replace(/[^a-z0-9]+/g, ' ')
         if (!words.every(w => hay.includes(w))) return null
-        return { l, rank: hay.startsWith(words.join(' ')) ? 0 : hay.indexOf(words[0]) }
+        const off = String(l.status || 'active').trim().toLowerCase() !== 'active' ? 1000 : 0
+        return { l, rank: off + (hay.startsWith(words.join(' ')) ? 0 : hay.indexOf(words[0])) }
       })
       .filter(Boolean) as { l: Listing; rank: number }[]
-    return scored.sort((a, b) => a.rank - b.rank).slice(0, 7).map(x => x.l)
+    return scored.sort((a, b) => a.rank - b.rank || String(a.l.nickname || '').localeCompare(String(b.l.nickname || ''), undefined, { numeric: true })).map(x => x.l)
   }, [uq, listings])
 
   // What each list offers for the type currently chosen. A Breezeway template with no department
@@ -355,6 +369,29 @@ export function AddTaskSheet({
   // Say whose row this came from, so a ＋ pressed on a person row is visibly about that person.
   const seededPerson = seedAssignee && picked.length ? roster.find(p => p.id === picked[0])?.name || seedAssignee : ''
 
+  const draftTs = async () => {
+    if (!title.trim() || tsBusy) { if (!title.trim()) setTsErr('Add a title first — the steps are written for the issue.'); return }
+    setTsBusy(true); setTsErr('')
+    try {
+      const r = await fetch('/api/breezeway/troubleshoot', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: title.trim(), description: desc, listingId: unit && !String(unit.id).startsWith('bz:') ? unit.id : undefined, homeId: unit?.homeId }),
+      })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not draft the steps')
+      setTs(String(j.text || '')); setTsOn(true)
+    } catch (e: any) { setTsErr(String(e?.message || e)) } finally { setTsBusy(false) }
+  }
+
+  // Draft it as soon as there is something to draft from — once per sheet, never over an edit.
+  const tsAuto = useRef(false)
+  useEffect(() => {
+    if (dept !== 'maintenance' || !tsOn || ts || tsAuto.current || !unit || title.trim().length < 4) return
+    const t = setTimeout(() => { tsAuto.current = true; draftTs() }, 1200)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dept, tsOn, ts, unit, title])
+
   const create = async () => {
     if (!unit || !title.trim() || busy) return
     setBusy(true); setErr('')
@@ -364,6 +401,8 @@ export function AddTaskSheet({
         body: JSON.stringify({
           listingId: unit.id, title: title.trim(), department: dept, priority: prio,
           description: desc, date: date || undefined, assigneeIds: picked, templateId: tplId || undefined,
+          // off → '' (none); a draft → exactly it; on with no draft yet → omitted, the server drafts it.
+          ...(dept === 'maintenance' && (!tsOn || ts.trim()) ? { troubleshoot: tsOn ? ts.trim() : '' } : {}),
         }),
       })
       const j = await r.json()
@@ -403,13 +442,16 @@ export function AddTaskSheet({
             {/* SAY WHY THE LIST IS EMPTY. Silence reads as a broken box. */}
             {uq.trim() && !unitsReady && <p className="mt-2 text-[12px] text-muted inline-flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> Loading units…</p>}
             {unitsErr && <p className="mt-2 text-[12px] text-rose-700">Could not load the unit list — this is not &ldquo;no match&rdquo;. Try again in a moment.</p>}
-            {uq.trim() && unitsReady && !unitsErr && hits.length === 0 && <p className="mt-2 text-[12px] text-muted">No active unit matches &ldquo;{uq.trim()}&rdquo;.</p>}
+            {uq.trim() && unitsReady && !unitsErr && hits.length === 0 && <p className="mt-2 text-[12px] text-muted">No unit matches &ldquo;{uq.trim()}&rdquo;.</p>}
             {hits.length > 0 && (
-              <div className="mt-1.5 rounded-xl border border-line overflow-hidden">
+              <div className="mt-1.5 rounded-xl border border-line overflow-y-auto max-h-72 overscroll-contain">
+                <p className="sticky top-0 bg-app/95 px-3.5 py-1 text-[10.5px] font-bold uppercase tracking-wider text-muted border-b border-line">{hits.length} unit{hits.length === 1 ? '' : 's'} · scroll for more</p>
                 {hits.map(l => (
                   <button key={l.id} onClick={() => setUnit(l)}
                     className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left text-[13.5px] bg-white hover:bg-app border-b border-line last:border-0">
                     <span className="font-semibold text-ink">{uname(l)}</span>
+                    {String(l.status || 'active').toLowerCase() !== 'active' && <span className="text-[10px] font-bold uppercase text-amber-700 bg-amber-50 rounded px-1">inactive</span>}
+                    {String(l.id).startsWith('bz:') && <span className="text-[10px] font-bold uppercase text-muted bg-app rounded px-1">Breezeway only</span>}
                     {l.building && <span className="text-[11.5px] text-muted ml-auto">{l.building}</span>}
                   </button>
                 ))}
@@ -483,6 +525,41 @@ export function AddTaskSheet({
         <textarea value={desc} onChange={e => { setDesc(e.target.value); setDescAuto(false) }} rows={4}
           placeholder="The instruction for this job. What the unit has on it is attached automatically."
           className="w-full rounded-xl border border-line px-3 py-2 text-[12.5px] leading-[1.5] text-ink/85" />
+
+        {/* ── TROUBLESHOOT FIRST (maintenance only) — draft, edit, then push ─────────────────── */}
+        {dept === 'maintenance' && (
+          <div className="mt-3 rounded-xl border border-line p-3">
+            <div className="flex items-center gap-2">
+              <Wrench size={13} className="text-muted" />
+              <p className={cap + ' flex-1'}>Troubleshoot steps</p>
+              <label className="inline-flex items-center gap-1 text-[11.5px] text-muted">
+                <input type="checkbox" checked={tsOn} onChange={e => setTsOn(e.target.checked)} /> Add to task
+              </label>
+            </div>
+            {tsOn && (ts ? (
+              <>
+                <textarea value={ts} onChange={e => setTs(e.target.value)} rows={10}
+                  className="mt-2 w-full rounded-lg border border-line px-3 py-2 text-[12px] leading-[1.5] text-ink/85 font-mono" />
+                <div className="flex items-center gap-3 mt-1">
+                  <p className="text-[11px] text-muted flex-1">Edit anything — this exact text goes in the Breezeway description.</p>
+                  <button onClick={draftTs} disabled={tsBusy} className="text-[11px] font-semibold text-brand-700 hover:underline disabled:opacity-50">
+                    {tsBusy ? 'Drafting…' : 'Redraft'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="mt-2 flex items-center gap-2">
+                <button onClick={draftTs} disabled={tsBusy || !title.trim()}
+                  className="rounded-lg border border-ink px-3 py-1.5 text-[12px] font-semibold text-ink hover:bg-app disabled:opacity-40 inline-flex items-center gap-1.5">
+                  {tsBusy ? <Loader2 size={11} className="animate-spin" /> : null} Draft troubleshoot steps
+                </button>
+                <p className="text-[11px] text-muted">Steps for this issue + &ldquo;not fixed → post in Slack, leave the task open&rdquo;.</p>
+              </div>
+            ))}
+            {!tsOn && <p className="mt-1.5 text-[11.5px] text-muted">Off — the task goes out without troubleshoot steps.</p>}
+            {tsErr && <p className="mt-1.5 text-[11.5px] text-rose-700">{tsErr}</p>}
+          </div>
+        )}
 
         {/* ── WHAT THE UNIT HAS ON IT ───────────────────────────────────────────────────────────
             SHOWN, NOT PASTED. The server attaches the real brief (lib/listingIntel) on create, in

@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { breezewayConfigured, getBreezewayToken, retrieveBreezewayTask, mapBreezewayTask, updateBreezewayTask } from '@/lib/breezeway'
-import { withTroubleshoot, TROUBLESHOOT_MARKER } from '@/lib/troubleshoot'
+import { withTroubleshoot, optedOut, TROUBLESHOOT_MARKER } from '@/lib/troubleshoot'
 import { requireVrAdmin } from '@/lib/vr-gate'
 import { bustBoards } from '@/lib/bust'
 import { isTaskDone } from '@/lib/task-categories'
@@ -74,6 +74,7 @@ export async function POST(req: NextRequest) {
       const notStarted = !task.started_at && !/start|progress/.test(String(row.status || ''))
       if (Number.isFinite(made) && Date.now() - made < 48 * 3600_000 && notStarted) {
         waitUntil((async () => {
+          if (await optedOut(String(task.id))) return
           const d = await withTroubleshoot({ type_department: row.type_department, name: task.name, description: task.description, template_id: task.template_id ?? task.template?.id, home_id: task.home_id })
           if (!d) return
           const u = await updateBreezewayTask(String(task.id), { description: d })

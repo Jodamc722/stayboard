@@ -77,9 +77,13 @@ async function handlePost(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const body = await req.json().catch(() => ({}))
-    const listingId = String(body?.listingId || '').trim()
+    // A Breezeway-only unit (no Guesty listing — exteriors, common areas, offline units) comes in as
+    // "bz:<home_id>" from the picker (/api/breezeway/units, 2026-11-05).
+    const rawId = String(body?.listingId || '').trim()
+    const bzOnly = /^bz:\d+$/.test(rawId)
+    const listingId = bzOnly ? '' : rawId
     const title = String(body?.title || '').trim().slice(0, 120)
-    if (!listingId || !title) return NextResponse.json({ ok: false, error: 'listingId and title are required' }, { status: 400 })
+    if (!rawId || !title) return NextResponse.json({ ok: false, error: 'listingId and title are required' }, { status: 400 })
     const department = DEPTS.indexOf(String(body?.department)) >= 0 ? String(body.department) : 'maintenance'
     const priority = PRIOS.indexOf(String(body?.priority)) >= 0 ? String(body.priority) : 'normal'
     const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body?.date || '')) ? String(body.date) : todayET()
@@ -89,7 +93,7 @@ async function handlePost(req: NextRequest) {
     const wantIds = (Array.isArray(body?.assigneeIds) ? body.assigneeIds : []).map((x: any) => Number(x)).filter((n: number) => Number.isFinite(n))
     const refusal = await neverAssignRefusal({ ids: wantIds })
     if (refusal) return NextResponse.json({ ok: false, error: refusal }, { status: 400 })
-    if (department === 'inspection' && INSPECTION_TITLE.test(title) && body?.force !== true) {
+    if (listingId && department === 'inspection' && INSPECTION_TITLE.test(title) && body?.force !== true) {
       let open: Awaited<ReturnType<typeof openAutoInspection>> = null
       try { open = await openAutoInspection(db, listingId) } catch { open = null }   // unreadable: the button works as before
       if (open) return NextResponse.json({
@@ -102,13 +106,13 @@ async function handlePost(req: NextRequest) {
     // mint an audit link.
     const wantsLink = body?.auditLink === true || (body?.auditLink !== false && /\bannual\b/i.test(title) && /\baudit\b/i.test(title))
     let link = ''
-    if (wantsLink) { try { link = await auditLinkFor(db, listingId, req.nextUrl.origin, user.email || null) } catch { link = '' } }
+    if (wantsLink && listingId) { try { link = await auditLinkFor(db, listingId, req.nextUrl.origin, user.email || null) } catch { link = '' } }
     // WHOEVER OPENS THIS TASK GETS THE BRIEF FOR THEIR JOB. An inspector needs the review that
     // triggered the visit and the unit's weak category; a maintenance tech needs whether this fault
     // has happened here before, whether anyone is inside right now, and whether the part is already
     // on order. Best-effort: a failure here must never stop the task being created.
     let intel: string | null = null
-    try { intel = await buildIntel(listingId, { kind: intelKindFor(title, department), date, taskName: title }) } catch (e) { console.error('add-task: intel failed', e) }
+    if (listingId) try { intel = await buildIntel(listingId, { kind: intelKindFor(title, department), date, taskName: title }) } catch (e) { console.error('add-task: intel failed', e) }
     // A CALLER MUST NOT SHIP ITS OWN INTEL BLOCK. The sheet used to compose guest feedback and a
     // quoted review in the browser, and this route then appended the real thing underneath — so the
     // crew opened a task carrying the same complaint twice, in two formats. The sheet sends the
@@ -117,7 +121,7 @@ async function handlePost(req: NextRequest) {
       + (link ? '\n\nAUDIT LINK (open on your phone): ' + link + '\nLog every finding in that link as you walk — fixes and cleans become team tasks, and anything below par becomes an order automatically. Photograph anything below standard.' : '')
       + (intel ? '\n\n' + intel : '')
       + (user.email ? '\n\nAdded from Today in Ops by ' + user.email : '')
-    const { data: props } = await db.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
+    const { data: props } = bzOnly ? { data: [{ home_id: Number(rawId.slice(3)) }] } : await db.from('breezeway_properties').select('home_id').eq('reference_property_id', listingId).limit(1)
     const homeId = Number(((props || [])[0] || {}).home_id)
     const payload: Record<string, any> = { name: title, type_department: department, type_priority: priority, scheduled_date: date, description }
     // TEMPLATE — when the sheet picked one of OUR Breezeway templates, the created task carries
@@ -127,6 +131,9 @@ async function handlePost(req: NextRequest) {
     const templateId = Number(body?.templateId)
     if (Number.isFinite(templateId) && templateId > 0) payload.template_id = templateId
     if (Number.isFinite(homeId)) payload.home_id = homeId
+    // THE DRAFTED TROUBLESHOOT BLOCK (maintenance): exactly what the coordinator approved in the sheet;
+    // '' = they turned it off. Absent (older client) = createBreezewayTask drafts it itself.
+    if (department === 'maintenance' && typeof body?.troubleshoot === 'string') payload.troubleshoot = String(body.troubleshoot).slice(0, 2500)
     else payload.reference_property_id = listingId
     const r = await createBreezewayTask(payload)
     if (!r.ok || !r.data || !r.data.id) return NextResponse.json({ ok: false, error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
@@ -153,7 +160,7 @@ async function handlePost(req: NextRequest) {
     // 30 minutes — without this a task you just created was invisible until the next sync.
     try {
       await db.from('breezeway_tasks_sync').upsert({
-        id: String(r.data.id), reference_property_id: listingId, name: title,
+        id: String(r.data.id), reference_property_id: listingId || null, home_id: Number.isFinite(homeId) ? homeId : null, name: title,
         status: 'created', scheduled_date: date, type_department: department,
         // NOT `[]` (2026-09-09 audit). Writing an empty array after a successful assign put a rose
         // "nobody has this" dot on the task the coordinator had just given to someone, for fifteen
