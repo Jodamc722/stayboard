@@ -120,8 +120,8 @@ export const LIMITS = {
 export const MANUAL_LIMITS = { units: 200, bedrooms: 20, bathrooms: 20, guests: 50, kitchens: 10, bedsPerSize: 20, name: 80 }
 
 const PILLOWS: Record<string, number> = { King: 4, Queen: 4, Full: 4, Twin: 2, 'Sofa bed': 2 }
-// Pillows stocked (Jon, 2026-11-05): the bed's pillows plus 1 extra per bed; a sofa bed has 2.
-const PILLOWS_STOCKED: Record<string, number> = { King: 5, Queen: 5, Full: 5, Twin: 3, 'Sofa bed': 2 }
+// Pillows stocked (Jon, 2026-11-05): King 5, Queen 5, Full 4, Twin 2, sofa bed 2.
+const PILLOWS_STOCKED: Record<string, number> = { King: 5, Queen: 5, Full: 4, Twin: 2, 'Sofa bed': 2 }
 
 // STARTING TIERS — pieces per case and a product line per tier. These are STARTING VALUES only, for
 // Jon to overwrite: the pack sizes are how linen is commonly sold (by the dozen for sheets, cases and
@@ -159,7 +159,7 @@ export const DEFAULT_LINEN_STANDARD: LinenStandard = {
     // Bed — per bed, sized by the bed it goes on.
     { id: 'mattress-protector', name: 'Mattress protector', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, notes: 'One on the bed plus one extra per bed — never the full par', tiers: tiersOf(6, ['Basic waterproof, fitted', 'Waterproof cotton terry, fitted', 'Waterproof, quiet, cooling top']) },
     { id: 'pillow-protectors', name: 'Pillow protectors', group: 'Bed', per: 'pillow', qty: 1.5, rotates: false, notes: '1.5 per pillow the unit stocks, not multiplied by par', tiers: tiersOf(12, ['Poly, zippered', 'Cotton, zippered, waterproof', 'Cotton sateen, zippered, waterproof']) },
-    { id: 'pillows', name: 'Pillows', group: 'Bed', per: 'bed', qty: 3, qtyBySize: { ...PILLOWS_STOCKED }, rotates: false, notes: 'The pillows on the bed plus 1 extra per bed; 2 on a sofa bed', tiers: tiersOf(1, ['Poly fiberfill', 'Gel-fiber down-alternative', 'Hotel down-alternative, cluster fill']) },
+    { id: 'pillows', name: 'Pillows', group: 'Bed', per: 'bed', qty: 3, qtyBySize: { ...PILLOWS_STOCKED }, rotates: false, notes: 'Pillows stocked per bed: King 5, Queen 5, Full 4, Twin 2, sofa bed 2', tiers: tiersOf(1, ['Poly fiberfill', 'Gel-fiber down-alternative', 'Hotel down-alternative, cluster fill']) },
     { id: 'pillowcases', name: 'Pillowcases', group: 'Bed', per: 'pillow', qty: 2, rotates: false, notes: '2 per pillow the unit stocks, not multiplied by par', tiers: tiersOf(12, SHEETING) },
     { id: 'fitted-sheet', name: 'Fitted sheet', group: 'Bed', per: 'bed', qty: 1, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'flat-sheet', name: 'Flat sheet', group: 'Bed', per: 'bed', qty: 2, rotates: true, tiers: tiersOf(12, SHEETING) },
