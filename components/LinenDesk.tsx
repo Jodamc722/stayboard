@@ -851,11 +851,14 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
               ))}
             </LeanList>
           </div>
+          <NeededList totals={totals} title={title} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '')} />
+          <PricingFold>
           <TierCards quotes={allTiers} value={tier} onChange={setTier} />
           <TotalsCard totals={totals} label={standard.tierLabels[tier]} onCsv={download} onCopy={copy} copied={copied} />
           <VendorOrderCard order={order} />
           <DocActions tier={tier} units={shapes} dirty={dirty} priced={allTiers[tier].priced} copyLabel="Copy the owner quote for this tier as text"
             onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(allTiers[tier], title)); return true } catch { return false } }} />
+          </PricingFold>
         </>
       )}
     </div>
@@ -1124,6 +1127,113 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
   )
 }
 
+
+// ── WHAT'S NEEDED: the editable list you export (Jon, 2026-11-05: "we should be able to modify what we
+// need, the download should allow us to modify at the page before export… export is what's needed, does
+// not need to be invoice"). Starts from the standard (net of shelf counts on the Calculator); every
+// quantity can be typed over, a line can be zeroed out, and lines can be added. Edits live on this page
+// only — they never change the standard — and reset when the units or the standard change.
+type NeedLine = { key: string; group: string; name: string; size: string; qty: number; base: number | null }
+const csvSafe = (v: any) => { let x = String(v ?? ''); if (/^[=+\-@\t\r]/.test(x)) x = "'" + x; return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x }
+
+function NeededList({ totals, title, resetKey }: { totals: LinenTotals; title: string; resetKey: string }) {
+  const [edits, setEdits] = useState<Record<string, number>>({})
+  const [extra, setExtra] = useState<NeedLine[]>([])
+  const [copied, setCopied] = useState(false)
+  useEffect(() => { setEdits({}); setExtra([]) }, [resetKey])
+  const base: NeedLine[] = totals.rows.map(r => ({ key: r.key, group: r.group, name: r.name, size: r.size || '', qty: r.qty, base: r.qty }))
+  const lines: NeedLine[] = [...base.map(l => (l.key in edits ? { ...l, qty: edits[l.key] } : l)), ...extra]
+  const out = lines.filter(l => l.qty > 0 && l.name.trim())
+  const pieces = out.reduce((a, l) => a + l.qty, 0)
+  const changed = Object.keys(edits).filter(k => base.some(b => b.key === k && b.base !== edits[k])).length + extra.length
+  const setQty = (key: string, v: string) => { const n = Math.max(0, Math.min(99_999, Math.round(toNum(v) ?? 0))); setEdits(e => ({ ...e, [key]: n })) }
+  const patchExtra = (key: string, p: Partial<NeedLine>) => setExtra(x => x.map(l => (l.key === key ? { ...l, ...p } : l)))
+  const addLine = () => setExtra(x => [...x, { key: 'extra-' + Date.now() + '-' + x.length, group: 'Other', name: '', size: '', qty: 1, base: null }])
+  const csv = () => ['Group,Item,Size,Qty', ...out.map(l => [l.group, l.name.trim(), l.size.trim(), l.qty].map(csvSafe).join(','))].join('\n') + '\n'
+  const text = () => {
+    const o: string[] = [title]
+    for (const g of [...LINEN_GROUPS, 'Other'].filter((g, i, a) => a.indexOf(g) === i)) {
+      const rows = out.filter(l => l.group === g)
+      if (!rows.length) continue
+      o.push('', g)
+      for (const l of rows) o.push(`${l.qty} × ${l.name.trim()}${l.size.trim() ? ' (' + l.size.trim() + ')' : ''}`)
+    }
+    o.push('', `Total: ${pieces.toLocaleString('en-US')} pieces`)
+    return o.join('\n') + '\n'
+  }
+  const download = () => saveBlob(new Blob([csv()], { type: 'text/csv;charset=utf-8' }), 'linen-needed-' + new Date().toISOString().slice(0, 10) + '.csv')
+  const copy = async () => { try { await navigator.clipboard.writeText(text()); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked — the CSV still works */ } }
+  const groups = [...LINEN_GROUPS, 'Other'].filter((g, i, a) => a.indexOf(g) === i)
+
+  return (
+    <section className={CARD + ' mb-3 overflow-hidden'}>
+      <div className="px-3 sm:px-4 py-2.5 flex items-center gap-2 flex-wrap border-b border-line">
+        <h2 className={EYEBROW}>What's needed</h2>
+        <span className="text-[12.5px] text-muted tabular-nums">{pieces.toLocaleString('en-US')} pieces · {out.length} lines</span>
+        {totals.counted > 0 && <Tag tone="emerald" title="Net of what was counted on the shelf">net of {totals.counted} count{totals.counted === 1 ? '' : 's'}</Tag>}
+        {changed > 0 && <Tag tone="amber" title="Lines you changed or added on this page — the standard itself is not changed">{changed} edited</Tag>}
+        <span className="ml-auto flex items-center gap-1.5 flex-wrap">
+          {changed > 0 && <button onClick={() => { setEdits({}); setExtra([]) }} title="Put every quantity back to the standard and drop added lines" className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><RotateCcw size={12} /> Reset</button>}
+          <button onClick={download} disabled={!out.length} title="Download this list as a spreadsheet (CSV) — exactly what is on the page" className={PRIMARY}><Download size={13} /> Download list</button>
+          <button onClick={copy} disabled={!out.length} title="Copy this list as text for an email or a message" className={GHOST}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}</button>
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[380px] text-[13px]">
+          <thead className="text-[10.5px] uppercase tracking-wider text-muted">
+            <tr><th className="text-left font-semibold px-3 sm:px-4 py-2">Item</th><th className="text-left font-semibold px-2 py-2">Size</th>
+              <th className="text-right font-semibold px-2 py-2" title="What the standard gives">Standard</th><th className="text-right font-semibold px-3 sm:px-4 py-2" title="Type to change — 0 leaves the line out of the export">Qty</th></tr>
+          </thead>
+          {groups.map(g => {
+            const rows = lines.filter(l => l.group === g)
+            if (!rows.length) return null
+            return (
+              <tbody key={g} className="border-t border-line">
+                <tr className="bg-app/60"><td colSpan={4} className={EYEBROW + ' px-3 sm:px-4 py-1.5'}>{g}</td></tr>
+                {rows.map(l => {
+                  const isExtra = l.base === null
+                  const edited = !isExtra && l.qty !== l.base
+                  return (
+                    <tr key={l.key} className={'border-t border-line/60' + (l.qty === 0 ? ' opacity-50' : '')}>
+                      <td className="px-3 sm:px-4 py-1 text-ink">{isExtra
+                        ? <input value={l.name} onChange={e => patchExtra(l.key, { name: e.target.value.slice(0, LIMITS.name) })} placeholder="Item name" title="What to add" className={INPUT + ' py-1 w-full min-w-[140px]'} autoFocus={!l.name} />
+                        : l.name}</td>
+                      <td className="px-2 py-1 text-muted">{isExtra
+                        ? <input value={l.size} onChange={e => patchExtra(l.key, { size: e.target.value.slice(0, LIMITS.size) })} placeholder="Size" title="Size, if it has one" className={INPUT + ' py-1 w-24'} />
+                        : l.size}</td>
+                      <td className="px-2 py-1 text-right tabular-nums text-muted">{isExtra ? <button onClick={() => setExtra(x => x.filter(y => y.key !== l.key))} title="Remove this added line" className="text-muted hover:text-rose-600"><Trash2 size={13} /></button> : l.base}</td>
+                      <td className="px-3 sm:px-4 py-1 text-right">
+                        <input type="number" inputMode="numeric" min={0} value={l.qty} onChange={e => isExtra ? patchExtra(l.key, { qty: Math.max(0, Math.round(toNum(e.target.value) ?? 0)) }) : setQty(l.key, e.target.value)}
+                          title={edited ? `Changed from ${l.base}` : 'Type to change'} className={NUM + ' w-[76px] py-1' + (edited ? ' border-amber-400 bg-amber-50' : '')} />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            )
+          })}
+        </table>
+      </div>
+      <div className="px-3 sm:px-4 py-2 border-t border-line flex items-center gap-2 flex-wrap">
+        <button onClick={addLine} title="Add a line that is not on the standard" className="text-[12.5px] font-bold text-brand-700 hover:underline inline-flex items-center gap-1"><Plus size={13} /> Add a line</button>
+        <span className="text-[12px] text-muted">Changes here are for this export only — the standard stays as it is.</span>
+      </div>
+    </section>
+  )
+}
+
+/** Pricing, the owner quote, the vendor order and the documents — kept, but folded away until pricing is set up. */
+function PricingFold({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mb-3">
+      <button onClick={() => setOpen(o => !o)} title={open ? 'Hide pricing and documents' : 'Tiers, prices, the owner quote, the vendor order (whole cases) and the invoice'}
+        className="text-[12.5px] font-semibold text-muted hover:text-ink">{open ? '− Hide pricing, vendor order & invoice' : '+ Pricing, vendor order & invoice'}</button>
+      {open && <div className="mt-2">{children}</div>}
+    </div>
+  )
+}
+
 // ── QUOTE: a unit with no listing ─────────────────────────────────────────────────────────────────
 type Draft = { name: string; bedrooms: number; bathrooms: number; guests: number; kitchens: number; beds: Record<string, number>; copies: number }
 const BLANK: Draft = { name: '', bedrooms: 1, bathrooms: 1, guests: 2, kitchens: 1, beds: { Queen: 1 }, copies: 1 }
@@ -1148,6 +1258,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
   const units = useMemo(() => manualUnits([input]).units, [input])
   const all = useMemo(() => linenQuoteAllTiers(standard, units), [standard, units])
   const order = useMemo(() => vendorOrder(standard, units, tier), [standard, units, tier])
+  const needTotals = useMemo(() => linenTotals(standard, units, tier), [standard, units, tier])
   const sizes = sortSizes(Array.from(new Set([...standard.bedSizes, ...Object.keys(d.beds)])), standard.bedSizes)
   const bedCount = Object.values(d.beds).reduce((a, b) => a + (b || 0), 0)
   const set = (p: Partial<Draft>) => setD(x => ({ ...x, ...p }))
@@ -1195,6 +1306,8 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
         </div>
       </section>
 
+      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '')} />
+      <PricingFold>
       <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
         <h2 className={EYEBROW}>Tiers</h2>
         {dirty && <Tag tone="amber" title="The standard has edits that are not saved — these numbers already use them">unsaved standard</Tag>}
@@ -1211,6 +1324,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
       <VendorOrderCard order={order} />
       <DocActions tier={tier} units={[input]} dirty={dirty} priced={all[tier].priced} copyLabel="Copy this tier's quote as text — for an email or a message to the owner"
         onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(all[tier], label + (d.copies > 1 ? ' ×' + d.copies : ''))); return true } catch { return false } }} />
+      </PricingFold>
     </div>
   )
 }
