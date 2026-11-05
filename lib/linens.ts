@@ -27,7 +27,7 @@
 // number the test checks.
 
 export type LinenGroup = 'Bed' | 'Bath' | 'Kitchen' | 'Other'
-export type LinenPer = 'bed' | 'bathroom' | 'bedroom' | 'guest' | 'unit'
+export type LinenPer = 'bed' | 'bathroom' | 'bedroom' | 'guest' | 'kitchen' | 'unit'
 export type LinenTier = 'low' | 'mid' | 'lux'
 
 /** What Jon buys for an item at one tier. Every field is optional; blank means "not set yet". */
@@ -95,6 +95,7 @@ export const LINEN_PER: { key: LinenPer; label: string }[] = [
   { key: 'bathroom', label: 'per bathroom' },
   { key: 'bedroom', label: 'per bedroom' },
   { key: 'guest', label: 'per guest' },
+  { key: 'kitchen', label: 'per kitchen' },
   { key: 'unit', label: 'per unit' },
 ]
 export const DEFAULT_PAR = 3
@@ -107,7 +108,7 @@ export const LIMITS = {
   product: 120, vendors: 30, contact: 80, email: 120, phone: 40, orderVia: 120, leadDays: 365, markup: 500, tax: 100, tierLabel: 30,
 }
 /** A quote or a document is for at most this many units, and a unit at most these counts. */
-export const MANUAL_LIMITS = { units: 200, bedrooms: 20, bathrooms: 20, guests: 50, bedsPerSize: 20, name: 80 }
+export const MANUAL_LIMITS = { units: 200, bedrooms: 20, bathrooms: 20, guests: 50, kitchens: 10, bedsPerSize: 20, name: 80 }
 
 const PILLOWS: Record<string, number> = { King: 4, Queen: 4, Full: 4, Twin: 2, 'Sofa bed': 2 }
 // Pillows stocked (Jon, 2026-11-05): the bed's pillows plus 1 extra per bed; a sofa bed has 2.
@@ -161,10 +162,10 @@ export const DEFAULT_LINEN_STANDARD: LinenStandard = {
     { id: 'bath-mat', name: 'Bath mat', group: 'Bath', per: 'bathroom', qty: 1, rotates: true, tiers: tiersOf(12, towel(650, 800, 900)) },
     { id: 'pool-towels', name: 'Pool towels', group: 'Bath', per: 'guest', qty: 1, rotates: false, tiers: tiersOf(1, ['Cotton blend, striped', '100% cotton, ~450 GSM', 'Cotton velour, 500+ GSM']) },
     // Kitchen — per unit
-    { id: 'kitchen-towels', name: 'Kitchen towels', group: 'Kitchen', per: 'unit', qty: 2, rotates: true, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
-    { id: 'dish-cloths', name: 'Dish cloths', group: 'Kitchen', per: 'unit', qty: 2, rotates: true, active: false, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
-    { id: 'oven-mitts', name: 'Oven mitts', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, active: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
-    { id: 'pot-holders', name: 'Pot holders', group: 'Kitchen', per: 'unit', qty: 2, rotates: false, active: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
+    { id: 'kitchen-towels', name: 'Kitchen towels', group: 'Kitchen', per: 'kitchen', qty: 2, rotates: true, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
+    { id: 'dish-cloths', name: 'Dish cloths', group: 'Kitchen', per: 'kitchen', qty: 2, rotates: true, active: false, tiers: tiersOf(12, ['Cotton blend', '100% cotton', 'Cotton waffle weave']) },
+    { id: 'oven-mitts', name: 'Oven mitts', group: 'Kitchen', per: 'kitchen', qty: 2, rotates: false, active: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
+    { id: 'pot-holders', name: 'Pot holders', group: 'Kitchen', per: 'kitchen', qty: 2, rotates: false, active: false, tiers: tiersOf(1, ['Quilted cotton', 'Cotton, silicone grip', 'Heat-rated, silicone grip']) },
     // Other
     { id: 'throw-blanket', name: 'Throw blanket', group: 'Other', per: 'bedroom', qty: 1, rotates: false, tiers: tiersOf(1, ['Fleece', 'Cotton knit', 'Wool-blend knit']) },
     { id: 'extra-blanket', name: 'Extra blanket', group: 'Other', per: 'bedroom', qty: 1, rotates: false, active: false, tiers: tiersOf(1, ['Fleece', 'Cotton thermal', 'Wool-blend']) },
@@ -435,6 +436,7 @@ export type LinenUnit = {
   bedrooms: number
   bathrooms: number
   guests: number
+  kitchens?: number                   // kitchens in the unit; blank = 1 (Jon, 2026-11-05: the quote adds kitchen units)
   beds: Record<string, number>        // bed size label → count
   bedsSource: BedsSource
 }
@@ -526,7 +528,7 @@ export function sortSizes(sizes: string[], order: string[]): string[] {
 
 // ── a unit with no listing: typed into the quote ──────────────────────────────────────────────────
 /** What the Quote view (and the documents route) sends for a unit that has no listing to read. */
-export type ManualUnitInput = { name?: string; bedrooms?: number; bathrooms?: number; guests?: number; beds?: Record<string, number>; copies?: number }
+export type ManualUnitInput = { name?: string; bedrooms?: number; bathrooms?: number; guests?: number; kitchens?: number; beds?: Record<string, number>; copies?: number }
 
 /**
  * One typed-in unit, validated: bedrooms 0..20 (0 = studio), bathrooms 0..20 in halves, guests
@@ -541,6 +543,7 @@ export function normManualUnit(raw: any, i = 0): { unit: LinenUnit; copies: numb
     bedrooms: whole(v.bedrooms, MANUAL_LIMITS.bedrooms) ?? 0,
     bathrooms: baths === null ? 0 : Math.round(baths * 2) / 2,
     guests: whole(v.guests, MANUAL_LIMITS.guests) ?? 0,
+    kitchens: whole(v.kitchens, MANUAL_LIMITS.kitchens) ?? 1,
     beds: normBeds(v.beds),
     bedsSource: 'manual',
   }
@@ -588,6 +591,8 @@ function countOf(per: LinenPer, u: LinenUnit): number {
     // A studio (0 bedrooms) still has a sleeping room — its throw and extra blanket count once.
     case 'bedroom': return Math.max(1, Math.round(Number(u.bedrooms) || 0))
     case 'guest': return Math.max(0, Math.round(Number(u.guests) || 0))
+    // A unit with no kitchen count has one; 0 is allowed (a hotel room with none).
+    case 'kitchen': return u.kitchens === undefined || u.kitchens === null ? 1 : Math.max(0, Math.round(Number(u.kitchens) || 0))
     case 'unit': return 1
     default: return 0
   }

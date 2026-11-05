@@ -40,7 +40,7 @@ const SOURCE: Record<BedsSource, { label: string; tone: Tone; title: string }> =
   assumed: { label: 'assumed', tone: 'amber', title: 'No bed data yet — assumed one Queen per bedroom (a studio counts as one). Set the real sizes with the pencil.' },
   manual: { label: 'typed in', tone: 'slate', title: 'Beds typed into the quote' },
 }
-const DEFAULT_PER: Record<LinenGroup, LinenPer> = { Bed: 'bed', Bath: 'guest', Kitchen: 'unit', Other: 'unit' }
+const DEFAULT_PER: Record<LinenGroup, LinenPer> = { Bed: 'bed', Bath: 'guest', Kitchen: 'kitchen', Other: 'unit' }
 const BILLED_LINE = 'The owner is billed for the pieces the unit gets, not whole cases — the case overage goes to stock.'
 
 /** '' → null, otherwise a finite number (the server clamps it again). */
@@ -145,7 +145,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
   const TABS: [View, string, string][] = [
     ['standard', 'Standard', 'The linen list — what every unit gets, per bed, bath, guest or unit, and what is bought at each tier'],
     ['calculator', 'Calculator', 'Pick units, count what is on the shelf, and get the order: what to buy, whole cases per vendor, and cost at your prices'],
-    ['quote', 'Quote', 'No listing yet? Type in bedrooms, baths, guests and beds — the three tiers, the invoice and the vendor order'],
+    ['quote', 'Quote', 'No listing yet? Type in bedrooms, baths, occupancy, kitchens and beds — the three tiers, the invoice and the vendor order'],
   ]
 
   return (
@@ -743,7 +743,7 @@ function VendorsCard({ vendors, canEdit, onChange }: { vendors: LinenVendor[]; c
 }
 
 // ── CALCULATOR ────────────────────────────────────────────────────────────────────────────────────
-const shapeOf = (u: LinenDeskUnit): ManualUnitInput => ({ name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, beds: u.beds })
+const shapeOf = (u: LinenDeskUnit): ManualUnitInput => ({ name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, kitchens: u.kitchens, beds: u.beds })
 
 function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pick, canBeds, tier, setTier, inventory, setInventory }: {
   standard: LinenStandard; dirty: boolean; units: LinenDeskUnit[]; setUnits: (f: (u: LinenDeskUnit[]) => LinenDeskUnit[]) => void; partial: boolean
@@ -862,7 +862,7 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
   )
 }
 
-const unitLine = (u: LinenDeskUnit) => [u.bedrooms ? u.bedrooms + ' BR' : 'Studio', (u.bathrooms || 0) + ' BA', u.guests ? u.guests + ' guests' : 'guests ?'].join(' · ')
+const unitLine = (u: LinenDeskUnit) => [u.bedrooms ? u.bedrooms + ' BR' : 'Studio', (u.bathrooms || 0) + ' BA', u.guests ? 'sleeps ' + u.guests : 'occupancy ?'].join(' · ')
 const bedsText = (beds: Record<string, number>, order: string[]) => sortSizes(Object.keys(beds).filter(k => beds[k] > 0), order).map(k => `${k} ×${beds[k]}`).join(', ') || 'no beds'
 
 function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, onEdit, onCount, onDoneEdit, onRemove, onBeds, onCounted }: {
@@ -1125,15 +1125,15 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
 }
 
 // ── QUOTE: a unit with no listing ─────────────────────────────────────────────────────────────────
-type Draft = { name: string; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; copies: number }
-const BLANK: Draft = { name: '', bedrooms: 1, bathrooms: 1, guests: 2, beds: { Queen: 1 }, copies: 1 }
+type Draft = { name: string; bedrooms: number; bathrooms: number; guests: number; kitchens: number; beds: Record<string, number>; copies: number }
+const BLANK: Draft = { name: '', bedrooms: 1, bathrooms: 1, guests: 2, kitchens: 1, beds: { Queen: 1 }, copies: 1 }
 
 function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, canChoose, onChosen }: {
   standard: LinenStandard; dirty: boolean; tier: LinenTier; setTier: (t: LinenTier) => void
   prefill: LinenDeskUnit | null; missing: boolean
   quotes: Record<string, LinenQuoteChoice>; canChoose: boolean; onChosen: (code: string, q: LinenQuoteChoice | null) => void
 }) {
-  const fromUnit = (u: LinenDeskUnit): Draft => ({ name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, beds: { ...u.beds }, copies: 1 })
+  const fromUnit = (u: LinenDeskUnit): Draft => ({ name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, kitchens: u.kitchens ?? 1, beds: { ...u.beds }, copies: 1 })
   const [d, setD] = useState<Draft>(() => prefill ? fromUnit(prefill) : { ...BLANK, beds: { ...BLANK.beds } })
   const [linked, setLinked] = useState<LinenDeskUnit | null>(prefill)
   const [busy, setBusy] = useState(false)
@@ -1144,7 +1144,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (chosen) setTier(chosen) }, [code])
 
-  const input: ManualUnitInput = useMemo(() => ({ name: d.name, bedrooms: d.bedrooms, bathrooms: d.bathrooms, guests: d.guests, beds: d.beds, copies: d.copies }), [d])
+  const input: ManualUnitInput = useMemo(() => ({ name: d.name, bedrooms: d.bedrooms, bathrooms: d.bathrooms, guests: d.guests, kitchens: d.kitchens, beds: d.beds, copies: d.copies }), [d])
   const units = useMemo(() => manualUnits([input]).units, [input])
   const all = useMemo(() => linenQuoteAllTiers(standard, units), [standard, units])
   const order = useMemo(() => vendorOrder(standard, units, tier), [standard, units, tier])
@@ -1184,13 +1184,14 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
         <div className="mt-2 flex items-center gap-2 flex-wrap">
           <Stepper label="Bedrooms" value={d.bedrooms} min={0} max={MANUAL_LIMITS.bedrooms} onChange={n => set({ bedrooms: n })} title="Bedrooms (0 = studio) — throws and extra blankets count per bedroom" />
           <Stepper label="Baths" value={d.bathrooms} min={0} max={MANUAL_LIMITS.bathrooms} step={0.5} onChange={n => set({ bathrooms: n })} title="Bathrooms, halves allowed — a half bath still gets its hand towels and mat" />
-          <Stepper label="Guests" value={d.guests} min={0} max={MANUAL_LIMITS.guests} onChange={n => set({ guests: n })} title="Maximum occupancy — towels and washcloths count per guest" />
+          <Stepper label="Occupancy" value={d.guests} min={0} max={MANUAL_LIMITS.guests} onChange={n => set({ guests: n })} title="Maximum occupancy — bath towels, washcloths and pool towels count per guest" />
+          <Stepper label="Kitchens" value={d.kitchens} min={0} max={MANUAL_LIMITS.kitchens} onChange={n => set({ kitchens: n })} title="Kitchens in the unit (0 = none) — kitchen towels count per kitchen" />
         </div>
         <div className="mt-2 flex items-center gap-2 flex-wrap">
           <span className="text-[11px] text-muted" title="Beds by size — a bunk bed is two Twins; a crib takes none of these linens">Beds</span>
           {sizes.map(s => <Stepper key={s} label={s} value={d.beds[s] || 0} min={0} max={MANUAL_LIMITS.bedsPerSize} onChange={n => setBed(s, n)} title={`How many ${s} beds${s === 'Twin' ? ' (a bunk is two Twins)' : ''}`} />)}
           {bedCount === 0 && <Tag tone="rose" title="No beds — nothing per bed (sheets, pillows, duvets) is counted">no beds</Tag>}
-          {d.guests === 0 && <Tag tone="rose" title="No guests — per-guest items (towels, washcloths) are not counted">no guests</Tag>}
+          {d.guests === 0 && <Tag tone="rose" title="No occupancy — per-guest items (towels, washcloths) are not counted">no occupancy</Tag>}
         </div>
       </section>
 
