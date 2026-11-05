@@ -10,7 +10,7 @@
 //   Returned / Donated / Discarded → closed
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Shell } from '@/components/Shell'
-import { RefreshCw, Search, ExternalLink, Plus, X, Camera, Link2, Slack, Settings2, Phone, Mail, Truck, Check, Trash2, Gift, PackageCheck } from 'lucide-react'
+import { RefreshCw, Search, ExternalLink, Plus, X, Camera, Link2, Slack, Settings2, Phone, Mail, Truck, Check, Trash2, Gift, PackageCheck, DollarSign, Send, ClipboardList } from 'lucide-react'
 import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
 
 type Stay = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; confirmationCode: string | null; guestyUrl: string }
@@ -19,6 +19,8 @@ type Item = {
   found_where: string | null; found_date: string; found_by: string | null; storage_location: string | null; photos: string[]
   reservation_id: string | null; guest_name: string | null; guest_phone: string | null; guest_email: string | null; check_in: string | null; check_out: string | null
   status: string; contacted_at: string | null; contact_note: string | null; shipping_carrier: string | null; tracking: string | null; shipping_cost: number | null; shipping_paid: boolean
+  ship_to?: string | null; pay_requested_at?: string | null; pay_requested_via?: string | null; paid_at?: string | null; paid_by?: string | null; paid_via?: string | null
+  breezeway_task_id?: string | null; breezeway_error?: string | null
   resolved_at: string | null; notes: string | null; history: { at: string; who: string; what: string; note?: string }[]; slack_ts: string | null; slack_permalink: string | null; created_by: string | null; created_at: string
 }
 type Listing = { id: string; name: string }
@@ -220,14 +222,7 @@ function ItemRow({ i, today, holdDays, patch, focus }: { i: Item; today: string;
                 </>}
               </div>
               <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note with the next step (optional) — e.g. left voicemail, guest wants it shipped to NYC" className={inp} />
-              {i.status === 'shipping' || i.status === 'claimed' ? (
-                <div className="grid grid-cols-2 gap-1.5">
-                  <InlineField label="Carrier" value={i.shipping_carrier} onSave={v => run({ shippingCarrier: v })} placeholder="USPS" />
-                  <InlineField label="Tracking" value={i.tracking} onSave={v => run({ tracking: v })} placeholder="9400…" />
-                  <InlineField label="Cost $" value={i.shipping_cost != null ? String(i.shipping_cost) : ''} onSave={v => run({ shippingCost: v })} placeholder="12.50" />
-                  <label className="flex items-center gap-1.5 text-[12px] pt-5"><input type="checkbox" checked={!!i.shipping_paid} onChange={e => run({ shippingPaid: e.target.checked })} /> Guest paid shipping</label>
-                </div>
-              ) : null}
+              {i.reservation_id && <ShipPay i={i} run={run} busy={busy} />}
             </>
           )}
           {!open && <button disabled={busy} onClick={() => run({ status: 'held', note: 'Reopened' })} className={btn}>Reopen</button>}
@@ -380,6 +375,125 @@ function SlackPanel({ slack, syncing, onSync, onPick, onClose }: { slack: any; s
       {!chans.length && <div className="text-rose-700">Slack is not connected, or the bot can see no channels — check Integrations.</div>}
       {slack?.channel && !chans.find(c => c.id === slack.channel.id)?.isMember && chans.length > 0 && <div className="text-amber-700">Lighthouse is not in #{slack.channel.name} yet. In that channel type <code>/invite @Eve</code>.</div>}
       {st?.lastScanAt && <div className="text-muted">Last read {fmtWhen(st.lastScanAt)}{st.lastAdded ? ' — ' + st.lastAdded + ' new' : ''}{st.lastError ? <span className="text-rose-700"> — {st.lastError}</span> : null}</div>}
+    </div>
+  )
+}
+
+// ── PAID SHIPPING (Jon, 2026-11-05: "once you identify cost you can update here, then ask for guest to
+// pay, once paid mark paid in the tab and then once paid should send breezeway task"). Cost and address
+// → Ask the guest to pay (a message on their booking, plus the folio line for bookings Guesty bills;
+// Airbnb guests through the Resolution Center) → Mark paid → the Breezeway ship task goes out.
+const PAID_VIA = ['Card on file', 'Payment link', 'Airbnb Resolution Center', 'Cash / other']
+function ShipPay({ i, run, busy }: { i: Item; run: (body: any) => Promise<void>; busy: boolean }) {
+  const [asking, setAsking] = useState(false)
+  const [paying, setPaying] = useState(false)
+  const [via, setVia] = useState(PAID_VIA[0])
+  const cost = i.shipping_cost != null ? Number(i.shipping_cost) : null
+  const fmt$ = (n: number) => '$' + n.toFixed(2)
+  const step = i.shipping_paid ? (i.breezeway_task_id ? 3 : 2) : i.pay_requested_at ? 1 : 0
+  return (
+    <div className="rounded-lg border border-line bg-white px-2.5 py-2 space-y-1.5 mt-1">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] uppercase tracking-wide text-muted font-semibold">Ship it · paid by the guest</span>
+        {(['Cost', 'Asked', 'Paid', 'Breezeway task'] as const).map((l, k) => (
+          <span key={l} className={'text-[10.5px] px-1.5 py-0.5 rounded ' + (k <= step ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-muted')}>{k < step || (k === 0 && cost) ? '✓ ' : ''}{l}</span>
+        ))}
+      </div>
+      {/* THE COST COMES FROM USPS (Jon, 2026-11-05: "https://postcalc.usps.com/ here how you calculate"):
+          weigh and measure the item, open the USPS calculator with the ship-to ZIP, type the price here. */}
+      <div className="text-[11.5px] text-muted flex items-center gap-1.5 flex-wrap">
+        Weigh and measure it, then
+        <a href="https://postcalc.usps.com/" target="_blank" rel="noreferrer" className="text-brand-700 font-semibold hover:underline inline-flex items-center gap-0.5">get the price on USPS <ExternalLink size={10} /></a>
+        {(() => { const zip = (String(i.ship_to || '').match(/\b\d{5}(?:-\d{4})?\b(?!.*\b\d{5}\b)/) || [])[0]; return zip ? <span>· destination ZIP <b className="text-ink">{zip}</b></span> : <span>· add the ship-to address for the destination ZIP</span> })()}
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <InlineField label="Shipping cost $ (from USPS)" value={cost != null ? String(cost) : ''} onSave={v => run({ shippingCost: v })} placeholder="18.50" />
+        <InlineField label="Carrier" value={i.shipping_carrier} onSave={v => run({ shippingCarrier: v })} placeholder="USPS" />
+      </div>
+      <InlineField label="Ship to" value={i.ship_to} onSave={v => run({ shipTo: v })} placeholder="Name, street, city, state, ZIP" />
+
+      {/* 1 · ask */}
+      {!i.shipping_paid && (
+        i.pay_requested_at
+          ? <div className="text-[12px] text-muted">Asked {fmtWhen(i.pay_requested_at)} · {i.pay_requested_via}{cost != null ? ' · ' + fmt$(cost) : ''} <button onClick={() => setAsking(a => !a)} className="underline hover:text-ink ml-1">ask again</button></div>
+          : <button disabled={busy || !cost} onClick={() => setAsking(a => !a)} title={cost ? '' : 'Type the shipping cost first'} className={btnP}><DollarSign size={12} /> Ask guest to pay{cost ? ' ' + fmt$(cost) : ''}</button>
+      )}
+      {asking && cost != null && <PayAsk i={i} cost={cost} onDone={() => setAsking(false)} run={run} />}
+
+      {/* 2 · paid */}
+      {!i.shipping_paid ? (
+        paying ? (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[12px]">Paid via</span>
+            <select value={via} onChange={e => setVia(e.target.value)} className="text-[12px] border border-line rounded-lg px-2 py-1 bg-white">{PAID_VIA.map(v => <option key={v}>{v}</option>)}</select>
+            <button disabled={busy} onClick={async () => { await run({ action: 'paid', via }); setPaying(false) }} className={btnP}><Check size={12} /> Mark paid &amp; send to Breezeway</button>
+            <button onClick={() => setPaying(false)} className={btn}>Cancel</button>
+          </div>
+        ) : <button disabled={busy || !cost} onClick={() => setPaying(true)} className={btn}><Check size={12} /> Mark paid</button>
+      ) : (
+        <div className="text-[12px] text-emerald-700">Paid{cost != null ? ' ' + fmt$(cost) : ''} · {i.paid_via}{i.paid_at ? ' · ' + fmtWhen(i.paid_at) : ''}{i.paid_by ? ' · ' + i.paid_by.replace(/@.*/, '') : ''}</div>
+      )}
+
+      {/* 3 · Breezeway */}
+      {i.shipping_paid && (i.breezeway_task_id
+        ? <div className="text-[12px] flex items-center gap-1.5"><ClipboardList size={12} className="text-emerald-700" /> Ship task in Breezeway <a href={'https://app.breezeway.io/task/' + i.breezeway_task_id} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5">#{i.breezeway_task_id} <ExternalLink size={10} /></a></div>
+        : <div className="text-[12px] text-rose-700 flex items-center gap-2 flex-wrap">Breezeway task not created{i.breezeway_error ? ' — ' + i.breezeway_error : ''} <button disabled={busy} onClick={() => run({ action: 'push_task' })} className={btn}>Retry</button></div>)}
+      {i.shipping_paid && <InlineField label="Tracking" value={i.tracking} onSave={v => run({ tracking: v, ...(i.status !== 'shipping' && v ? { status: 'shipping' } : {}) })} placeholder="9400… (marks it shipped)" />}
+    </div>
+  )
+}
+
+function PayAsk({ i, cost, run, onDone }: { i: Item; cost: number; run: (body: any) => Promise<void>; onDone: () => void }) {
+  const [ctx, setCtx] = useState<{ airbnb: boolean; conversationId: string | null; guestFirst: string; signOff: string } | null>(null)
+  const [text, setText] = useState('')
+  const [folio, setFolio] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    fetch('/api/lost-found?pay=' + encodeURIComponent(String(i.reservation_id)) + '&unit=' + encodeURIComponent(i.unit), { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (!j.ok) { setMsg(j.error || 'Could not read the booking'); return }
+      setCtx(j); setFolio(!j.airbnb)
+      const first = j.guestFirst || (i.guest_name || '').split(' ')[0] || 'there'
+      const amt = '$' + cost.toFixed(2)
+      setText('Hi ' + first + ',\n\nOur housekeeping team found your ' + i.item.toLowerCase() + ' in ' + i.unit + ' after your stay, and we have it safe. We can ship it to you — shipping is ' + amt + '. '
+        + (j.airbnb ? 'We will send the ' + amt + ' as a payment request through Airbnb; once it is accepted, it goes out.' : 'We have added it to your booking — you can pay with the card on file or the payment link we send you; once it is paid, it goes out.')
+        + (i.ship_to ? '\n\nWe will send it to: ' + i.ship_to + ' — let us know if that should change.' : '\n\nPlease reply with the full address you would like it sent to.')
+        + '\n\n' + (j.signOff || 'Stay Hospitality'))
+    }).catch(e => setMsg(String(e)))
+  }, [i.reservation_id, i.unit, i.item, i.ship_to, i.guest_name, cost])
+
+  const send = async (how: 'message' | 'by hand') => {
+    setBusy(true); setMsg('')
+    try {
+      // Record the ask (and the folio line) first: if Guesty refuses the folio line, nothing goes to the guest.
+      const r = await fetch('/api/lost-found', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: i.id, action: 'request_pay', amount: cost, folio: !!(ctx && !ctx.airbnb && folio), via: how === 'by hand' ? 'by hand' : ctx?.airbnb ? 'guesty message + Airbnb request' : 'guesty message' }) })
+      const j = await r.json()
+      if (!j.ok) { setMsg(j.error || 'Could not record it'); return }
+      if (how === 'message' && ctx?.conversationId) {
+        const m = await fetch('/api/messages/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: ctx.conversationId, body: text }) })
+        const mj = await m.json().catch(() => ({}))
+        if (!m.ok || !mj.ok) { setMsg('The ask is recorded' + (folio && !ctx.airbnb ? ' and the folio line is on the booking' : '') + ', but the message did not go: ' + (mj.error || m.status) + ' — copy it and send from Guesty.'); await run({}); return }
+      }
+      await run({}); onDone()
+    } finally { setBusy(false) }
+  }
+
+  if (!ctx) return <div className="text-[12px] text-muted">{msg || 'Reading the booking…'}</div>
+  return (
+    <div className="rounded-lg bg-app/60 border border-line p-2 space-y-1.5">
+      {ctx.airbnb
+        ? <div className="text-[12px] text-amber-800">Airbnb booking — request <b>${cost.toFixed(2)}</b> in the Airbnb Resolution Center (Guesty can’t bill an Airbnb guest), and send the message below so the guest knows it’s coming.</div>
+        : <label className="flex items-center gap-1.5 text-[12px]"><input type="checkbox" checked={folio} onChange={e => setFolio(e.target.checked)} /> Add ${cost.toFixed(2)} “Lost &amp; found shipping” to the Guesty folio (so the card on file or payment link covers it)</label>}
+      <textarea value={text} onChange={e => setText(e.target.value)} rows={7} className={inp + ' font-normal'} />
+      {msg && <div className="text-[12px] text-rose-700">{msg}</div>}
+      <div className="flex flex-wrap gap-1.5">
+        {ctx.conversationId
+          ? <button disabled={busy || !text.trim()} onClick={() => send('message')} className={btnP}><Send size={12} /> {busy ? 'Sending…' : 'Send to guest'}</button>
+          : <span className="text-[12px] text-muted">No Guesty conversation for this booking in Lighthouse — send it from Guesty, then:</span>}
+        <button disabled={busy} onClick={() => send('by hand')} className={btn}>I asked another way</button>
+        <button onClick={() => { try { navigator.clipboard.writeText(text) } catch {} }} className={btn}>Copy</button>
+        <button onClick={onDone} className={btn}>Cancel</button>
+      </div>
     </div>
   )
 }

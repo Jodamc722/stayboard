@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { unitLabel } from '@/lib/unit-label'
+import { payContext, billOnFolio, pushShipTask } from '@/lib/lost-found-pay'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -52,6 +53,9 @@ export async function GET(req: NextRequest) {
   const p = req.nextUrl.searchParams
   try {
     const db = supabaseAdmin()
+
+    // ---- How to ask this guest to pay: the booking's channel and its Guesty conversation ----
+    if (str(p.get('pay')).trim()) return NextResponse.json({ ok: true, ...(await payContext(str(p.get('pay')).trim(), str(p.get('unit')))) })
 
     // ---- Stay picker: who was in this unit when the item turned up? ----
     if (str(p.get('stays')) === '1' || str(p.get('guest')).trim()) {
@@ -181,12 +185,49 @@ export async function PATCH(req: NextRequest) {
     }
     if (b.category !== undefined && (CATEGORIES as readonly string[]).includes(str(b.category))) upd.category = str(b.category)
     if (b.shippingCost !== undefined) upd.shipping_cost = num(b.shippingCost)
-    if (b.shippingPaid !== undefined) upd.shipping_paid = !!b.shippingPaid
+    if (b.shipTo !== undefined) upd.ship_to = str(b.shipTo).trim().slice(0, 500) || null
+
+    // ── PAID SHIPPING (lib/lost-found-pay). Ask → paid → Breezeway task. ──
+    let after: 'push' | null = null
+    if (b.action === 'request_pay') {
+      const amount = num(b.amount ?? cur.shipping_cost)
+      if (!amount || amount <= 0) return NextResponse.json({ ok: false, error: 'Type the shipping cost first.' }, { status: 400 })
+      if (!cur.reservation_id) return NextResponse.json({ ok: false, error: 'Attach the stay first — the guest is asked on their booking.' }, { status: 400 })
+      upd.shipping_cost = amount
+      const via = str(b.via) || 'guesty message'
+      if (b.folio === true) {
+        const f = await billOnFolio(cur, amount)
+        if (!f.ok) return NextResponse.json({ ok: false, error: 'Could not add it to the Guesty folio: ' + (f.error || 'unknown') }, { status: 502 })
+        upd.folio_item_ids = [...(Array.isArray(cur.folio_item_ids) ? cur.folio_item_ids : []), ...f.ids]
+        history.push(entry(who, 'billed', 'Lost & found shipping $' + amount.toFixed(2) + ' added to the Guesty folio'))
+      }
+      upd.pay_requested_at = new Date().toISOString(); upd.pay_requested_via = via
+      if (cur.status === 'held' || cur.status === 'contacted') upd.status = 'claimed'
+      if (!cur.contacted_at) upd.contacted_at = new Date().toISOString()
+      history.push(entry(who, 'payment requested', '$' + amount.toFixed(2) + ' via ' + via))
+    }
+    if (b.action === 'paid') {
+      if (cur.shipping_paid) return NextResponse.json({ ok: true, item: cur })
+      upd.shipping_paid = true; upd.paid_at = new Date().toISOString(); upd.paid_by = who; upd.paid_via = str(b.via).slice(0, 60) || 'not recorded'
+      if (cur.status === 'held' || cur.status === 'contacted') upd.status = 'claimed'
+      history.push(entry(who, 'paid', (cur.shipping_cost != null ? '$' + Number(cur.shipping_cost).toFixed(2) + ' ' : '') + 'via ' + upd.paid_via))
+      after = 'push'
+    }
+    if (b.action === 'push_task') after = 'push'
+    if (b.shippingPaid !== undefined && b.action === undefined) upd.shipping_paid = !!b.shippingPaid
     if (Array.isArray(b.addPhotos)) upd.photos = [...(Array.isArray(cur.photos) ? cur.photos : []), ...b.addPhotos.filter((x: any) => typeof x === 'string')].slice(0, 12)
-    if (Object.keys(upd).length === 0 && history.length === (Array.isArray(cur.history) ? cur.history.length : 0)) return NextResponse.json({ ok: true, item: cur })
+    if (Object.keys(upd).length === 0 && history.length === (Array.isArray(cur.history) ? cur.history.length : 0) && !after) return NextResponse.json({ ok: true, item: cur })
     upd.history = history.slice(-60); upd.updated_at = new Date().toISOString()
     const { data, error } = await db.from('lost_found_items').update(upd).eq('id', id).select('*').single()
-    if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    if (error) return NextResponse.json({ ok: false, error: /column|schema cache/i.test(error.message) ? 'Lost & Found needs migration 173_lost_found_payment.sql run in Supabase first.' : error.message }, { status: 500 })
+    // Paid → the Breezeway task that ships it. The payment is saved either way; a failed push is
+    // written on the item and the page offers a retry.
+    if (after === 'push') {
+      const t = await pushShipTask(data)
+      const h2 = [...(Array.isArray(data.history) ? data.history : []), t.ok ? entry('Lighthouse', 'breezeway task', 'Ship task created in Breezeway (#' + t.taskId + ')') : entry('Lighthouse', 'breezeway task failed', t.error || '')].slice(-60)
+      const { data: d2 } = await db.from('lost_found_items').update({ breezeway_task_id: t.ok ? t.taskId : data.breezeway_task_id, breezeway_error: t.ok ? null : (t.error || 'failed'), history: h2, updated_at: new Date().toISOString() }).eq('id', id).select('*').single()
+      return NextResponse.json({ ok: true, item: d2 || data, task: t })
+    }
     return NextResponse.json({ ok: true, item: data })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })

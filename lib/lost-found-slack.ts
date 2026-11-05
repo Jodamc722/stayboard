@@ -191,8 +191,12 @@ export async function scanLostFound(opts: { days?: number; by?: string | null } 
   if (!ch) { s.lastError = 'No lost-and-found channel chosen yet'; s.lastScanAt = now; await writeState(s, opts.by || null); return { ok: false, added: 0, error: s.lastError, channel: null } }
   if (!s.channelId) { s.channelId = ch.id; s.channelName = ch.name }
   const fromWanted = s.lastTs && !opts.days ? Number(s.lastTs) : Math.floor(Date.now() / 1000) - (opts.days || 10) * 86400
-  const oldest = String(Math.max(fromWanted, LF_START_TS))
-  const since = String(Math.max(LF_START_TS, Number(oldest) - 1800))   // photos trail the text by minutes
+  // A BACKFILL ASKED FOR BY A PERSON (Jon, 2026-11-05: "pull last week from lost and found on slack")
+  // reaches back past the start date; the regular 15-minute read never does. Posts already logged are
+  // skipped by their Slack timestamp (the unique index), so a backfill can run twice safely.
+  const floor = opts.days ? 0 : LF_START_TS
+  const oldest = String(Math.max(fromWanted, floor))
+  const since = String(Math.max(floor, Number(oldest) - 1800))   // photos trail the text by minutes
   const { msgs, error } = await history(ch.id, ch.name, since)
   if (error && !msgs.length) { s.lastError = error; s.lastScanAt = now; await writeState(s, opts.by || null); return { ok: false, added: 0, error, channel: ch.name } }
   const users: Record<string, string> = {}
