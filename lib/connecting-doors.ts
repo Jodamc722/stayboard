@@ -20,6 +20,8 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { createBreezewayTask, updateBreezewayTask, breezewayConfigured, mapBreezewayTask, isDepartureCleanName } from './breezeway'
 import { isTaskDone, isTaskGone } from './task-categories'
+import { postToChannel } from './slack'
+import { EVE_CHANNELS } from './slack-rules'
 
 type Pair = { label: string; door: string; parentListing: string; childListings: string[] }
 export const PAIRS: Pair[] = [
@@ -133,11 +135,22 @@ export async function runDoors(opts: { dryRun?: boolean } = {}) {
     }
     const title = (j.kind === 'open' ? OPEN_T(door) : CLOSE_T(door)) + ' — ' + (j.kind === 'open' ? 'guests arrive ' : 'after checkout ') + nice(j.at)
     const desc = j.kind === 'open'
-      ? 'Capri 115/116 is booked as ONE unit (' + j.reservationDates + ', ' + j.guest + '). During the clean before arrival, UNLOCK and OPEN the connecting door between 115 and 116, and leave it open. Photo of the open door.\n\nAbrir la puerta que conecta 115 y 116 durante la limpieza antes de la llegada. Foto de la puerta abierta.'
+      ? 'Capri 115/116 is booked as ONE unit (' + j.reservationDates + ', ' + j.guest + '). The door is LOCKED and CLOSED by default. During the clean before arrival, UNLOCK and OPEN the connecting door between 115 and 116, and leave it open for this stay only. Photo of the open door.\n\nAbrir la puerta que conecta 115 y 116 durante la limpieza antes de la llegada. Foto de la puerta abierta.'
       : 'The combined 115/116 stay ends today (' + j.reservationDates + '). During the departure clean, CLOSE and LOCK the connecting door between 115 and 116 so each can be rented on its own. Photo of the locked door.\n\nCerrar con llave la puerta que conecta 115 y 116 durante la limpieza de salida. Foto de la puerta cerrada.'
     if (opts.dryRun) { lines.push(tag + ': would create "' + title + '" on ' + date + ' for ' + (who.length ? who.length + ' cleaner(s)' : 'nobody yet — added when the clean is assigned')); continue }
     const r = await createBreezewayTask({ home_id: j.homeId, name: title, type_department: 'housekeeping', scheduled_date: date, description: desc, ...(who.length ? { assignments: who } : {}), allowDuplicate: true })
-    if (r.ok && r.data?.id) { created++; lines.push(tag + ': created ' + str(r.data.id) + ' on ' + date); await mirror(r, j.homeId) } else lines.push(tag + ': create said ' + r.status + ' ' + str(r.text).slice(0, 120))
+    if (r.ok && r.data?.id) {
+      created++; lines.push(tag + ': created ' + str(r.data.id) + ' on ' + date); await mirror(r, j.homeId)
+      // CUSTOMER CARE HEARS IT (Jon, 2026-11-05: "Slack messages in customer care — default should be
+      // locked and closed, only opened if 115/116 is booked"). One post when each door task is made,
+      // which is once per stay per door move, so a walk-in reaches the room the hour it lands.
+      const names = (r.data?.assignments || r.data?.assignees || []).map((a: any) => str(a?.name || a?.assignee_name || '').split(' ')[0]).filter(Boolean)
+      const who = names.length ? names.join(', ') : 'the cleaner on that clean (not assigned yet)'
+      const text = j.kind === 'open'
+        ? `🚪 *${j.pair} booked as ONE unit* — ${j.guest || 'guest'}, ${j.reservationDates}. The connecting door between ${door.replace('/', ' and ')} stays *LOCKED and CLOSED by default*; it is *opened for this stay only*, during the clean on ${nice(date)} — ${who}.`
+        : `🚪 *${j.pair} one-unit stay ends ${nice(j.at)}* (${j.guest || 'guest'}). Back to default: the connecting door between ${door.replace('/', ' and ')} is *LOCKED and CLOSED* during the departure clean — ${who} — so ${door.split('/')[0]} and ${door.split('/')[1]} can be rented on their own.`
+      try { const pr = await postToChannel(EVE_CHANNELS.ccsJon, text); lines.push(tag + ': customer care ' + (pr.ok ? 'told' : 'post failed (' + str(pr.error) + ')')) } catch { lines.push(tag + ': customer care post failed') }
+    } else lines.push(tag + ': create said ' + r.status + ' ' + str(r.text).slice(0, 120))
   }
   return { ok: true, jobs, lines, created, updated, titled }
 }
