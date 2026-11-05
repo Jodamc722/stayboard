@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const pub = (c: Awaited<ReturnType<typeof getVendorEmailCfg>>) => ({
-  enabled: c.enabled, code: c.code, to: c.to, hour: c.hour, lastDaily: c.lastDaily, lastSentAt: c.lastSentAt,
+  enabled: c.enabled, code: c.code, to: c.to, cc: c.cc, hour: c.hour, lastDaily: c.lastDaily, lastSentAt: c.lastSentAt,
   hasPasscode: !!c.passcode, hint: c.passcode ? c.passcode.slice(-2) : null,
 })
 
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     if (r.error || !r.sent) return NextResponse.json({ ok: false, error: r.error || 'Not sent: ' + (r.skipped || 'unknown') }, { status: 400 })
     return NextResponse.json({ ok: true, sent: r.sent, cfg: pub(await getVendorEmailCfg()) })
   }
-  const r = await saveVendorEmailCfg({ code: b?.code, to: b?.to, passcode: b?.passcode, hour: b?.hour, enabled: b?.enabled }, by)
+  const r = await saveVendorEmailCfg({ code: b?.code, to: b?.to, cc: b?.cc, passcode: b?.passcode, hour: b?.hour, enabled: b?.enabled }, by)
   if (!r.ok || !r.cfg) return NextResponse.json({ ok: false, error: r.error }, { status: 400 })
   return NextResponse.json({ ok: true, cfg: pub(r.cfg) })
 }

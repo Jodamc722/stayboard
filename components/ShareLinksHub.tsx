@@ -74,10 +74,11 @@ const emptyForm = (): Draft => ({ kind: 'custom-page', title: '', audience: 'int
 
 // THE GARAGE'S DAILY EMAIL (Jon, 2026-11-05) — on a parking link's row. Link + passcode every
 // morning, and again the same day when new reservations land (lib/parking-vendor-email).
-type VendorCfg = { enabled: boolean; code: string; to: string[]; hour: number; lastDaily: string | null; lastSentAt: string | null; hasPasscode: boolean; hint: string | null }
+type VendorCfg = { enabled: boolean; code: string; to: string[]; cc: string[]; hour: number; lastDaily: string | null; lastSentAt: string | null; hasPasscode: boolean; hint: string | null }
 function ParkingEmail({ code }: { code: string }) {
   const [cfg, setCfg] = useState<VendorCfg | null>(null)
   const [to, setTo] = useState('access@southparkmgmt.com')
+  const [cc, setCc] = useState('bernadette@stay-hospitality.com, support@stay-hospitality.com')
   const [pw, setPw] = useState('')
   const [hour, setHour] = useState(8)
   const [busy, setBusy] = useState('')
@@ -86,6 +87,7 @@ function ParkingEmail({ code }: { code: string }) {
     fetch('/api/share-links/parking-email', { cache: 'no-store' }).then(r => r.json()).then(j => {
       if (!j.cfg) return
       setCfg(j.cfg)
+      if (Array.isArray(j.cfg.cc)) setCc(j.cfg.cc.join(', '))
       if (j.cfg.code === code) { if (j.cfg.to?.length) setTo(j.cfg.to.join(', ')); setHour(j.cfg.hour ?? 8) }
     }).catch(() => {})
   }, [code])
@@ -101,7 +103,7 @@ function ParkingEmail({ code }: { code: string }) {
       setMsg(label === 'send' ? 'Sent.' : j.cfg.enabled ? 'Saved — sends every day.' : 'Saved — off.')
     } catch (e: any) { setMsg(String(e?.message || e)) } finally { setBusy('') }
   }
-  const save = (enabled: boolean) => call({ code, to, passcode: pw || undefined, hour, enabled }, 'save')
+  const save = (enabled: boolean) => call({ code, to, cc, passcode: pw || undefined, hour, enabled }, 'save')
   const fmtH = (h: number) => (h % 12 || 12) + (h < 12 ? ' am' : ' pm')
   return (
     <div className="rounded-xl border border-line p-3 mt-1 space-y-2">
@@ -119,6 +121,7 @@ function ParkingEmail({ code }: { code: string }) {
           {Array.from({ length: 15 }, (_, i) => i + 6).map(h => <option key={h} value={h}>{fmtH(h)}</option>)}
         </select>
       </div>
+      <input value={cc} onChange={e => setCc(e.target.value)} placeholder="Copy (cc)" aria-label="Copy (cc)" className="w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
       <div className="flex items-center gap-3 text-[12px] flex-wrap">
         <button onClick={() => save(true)} disabled={!!busy} className="rounded-lg bg-ink text-white px-3 py-1.5 font-semibold disabled:opacity-50">{busy === 'save' ? 'Saving…' : on ? 'Save' : 'Turn on'}</button>
         {on ? <button onClick={() => save(false)} disabled={!!busy} className="text-muted hover:text-rose-600">Turn off</button> : null}

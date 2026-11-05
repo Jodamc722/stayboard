@@ -24,6 +24,8 @@ export type VendorEmailCfg = {
   enabled: boolean
   code: string
   to: string[]
+  /** Copied on every send (Jon, 2026-11-05: "copy Bernadette and Support"). */
+  cc: string[]
   passcode: string
   /** ET hour of the daily send (0–23). */
   hour: number
@@ -32,7 +34,7 @@ export type VendorEmailCfg = {
   /** Reservation ids already announced — the next email lists only the ones not in here. */
   seen: string[]
 }
-export const VENDOR_EMAIL_DEFAULTS: VendorEmailCfg = { enabled: false, code: '', to: [], passcode: '', hour: 8, lastDaily: null, lastSentAt: null, seen: [] }
+export const VENDOR_EMAIL_DEFAULTS: VendorEmailCfg = { enabled: false, code: '', to: [], cc: ['bernadette@stay-hospitality.com', 'support@stay-hospitality.com'], passcode: '', hour: 8, lastDaily: null, lastSentAt: null, seen: [] }
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
 const TZ = 'America/New_York'
@@ -43,7 +45,7 @@ const day = (ymd: string) => { const t = new Date(ymd + 'T12:00:00'); return isN
 
 export async function getVendorEmailCfg(): Promise<VendorEmailCfg> {
   const v = await getSettingFresh<Partial<VendorEmailCfg>>(VENDOR_EMAIL_KEY, {})
-  return { ...VENDOR_EMAIL_DEFAULTS, ...(v || {}), to: Array.isArray(v?.to) ? v!.to : [], seen: Array.isArray(v?.seen) ? v!.seen : [] }
+  return { ...VENDOR_EMAIL_DEFAULTS, ...(v || {}), to: Array.isArray(v?.to) ? v!.to : [], cc: Array.isArray(v?.cc) ? v!.cc : VENDOR_EMAIL_DEFAULTS.cc, seen: Array.isArray(v?.seen) ? v!.seen : [] }
 }
 
 /** Save from the hub. Returns an error string when the passcode does not open the link. */
@@ -52,6 +54,7 @@ export async function saveVendorEmailCfg(patch: Partial<VendorEmailCfg>, by: str
   const next: VendorEmailCfg = { ...cur }
   if (patch.code !== undefined) next.code = String(patch.code || '').trim()
   if (patch.to !== undefined) next.to = (Array.isArray(patch.to) ? patch.to : String(patch.to).split(/[,;\s]+/)).map(x => String(x).trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 10)
+  if (patch.cc !== undefined) next.cc = (Array.isArray(patch.cc) ? patch.cc : String(patch.cc).split(/[,;\s]+/)).map(x => String(x).trim().toLowerCase()).filter(x => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 10)
   if (patch.hour !== undefined) next.hour = Math.min(Math.max(Math.round(Number(patch.hour) || 8), 0), 23)
   if (patch.enabled !== undefined) next.enabled = patch.enabled === true
   if (patch.passcode !== undefined && String(patch.passcode).trim()) next.passcode = String(patch.passcode).trim()
@@ -128,7 +131,7 @@ export async function runVendorEmail(opts: { force?: 'daily' } = {}): Promise<{ 
     ? `${board.label || link.label} parking QR codes — ${day(today)}${need.length ? ` · ${need.length} needed` : ''}`
     : `New reservation${fresh.length === 1 ? '' : 's'} at ${board.label || link.label} — QR code${fresh.length === 1 ? '' : 's'} needed`
   const html = emailHtml({ kind, label: board.label || link.label, url, passcode: cfg.passcode, open: link.open, fresh, need, total: rows.length })
-  const r = await sendResendEmail({ to: cfg.to, subject, html })
+  const r = await sendResendEmail({ to: cfg.to, cc: cfg.cc, subject, html, replyTo: 'support@stay-hospitality.com' })
   if (!r.ok) return { sent: null, error: r.error }
   const next: VendorEmailCfg = {
     ...cfg, lastSentAt: new Date().toISOString(),

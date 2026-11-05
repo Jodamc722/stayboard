@@ -11,6 +11,7 @@ export async function sendResendEmail(opts: {
   html: string
   attachments?: MailAttachment[]
   replyTo?: string
+  cc?: string[]
 }): Promise<{ ok: boolean; error?: string; id?: string }> {
   const key = process.env.RESEND_API_KEY || ''
   const from = process.env.NOTIFY_FROM_EMAIL || ''
@@ -20,6 +21,8 @@ export async function sendResendEmail(opts: {
   if (!to.length) return { ok: false, error: 'no recipients' }
   const body: any = { from, to, subject: opts.subject, html: opts.html }
   if (opts.replyTo) body.reply_to = opts.replyTo
+  const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
+  if (cc.length) body.cc = cc
   if (opts.attachments && opts.attachments.length) {
     body.attachments = opts.attachments.map(a => {
       const o: any = { filename: a.filename, content: a.content.toString('base64') }
