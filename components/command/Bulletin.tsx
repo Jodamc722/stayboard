@@ -72,6 +72,13 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
   // THE REPORT (Jon, 2026-10-26: "get the bulletin report to show KPI, welcome call completion, avg
   // review scores, etc. Highlights and low lights") — three slides at the front of the card.
   const sq = useCachedFetch<StatsRes>(BULLETIN_URL + '/stats', { ttl: 300_000 })
+  // THE LAST STATS, KEPT IN THIS BROWSER (Jon, 2026-11-05: "why is bulletin board not working"). The
+  // stats take ~5s to build on a cache miss and the board used to start after 4s with only the quote,
+  // so it sat on one slide with no dots — it looked broken. Now the last KPIs show at once from the
+  // browser and are swapped for fresh ones when they land.
+  const [kept, setKept] = useState<StatsRes | null>(null)
+  useEffect(() => { try { const v = JSON.parse(localStorage.getItem('lh-bulletin-stats') || 'null'); if (v?.ok) setKept(v) } catch { /* private window */ } }, [])
+  useEffect(() => { if (sq.data?.ok) try { localStorage.setItem('lh-bulletin-stats', JSON.stringify(sq.data)) } catch { /* full or blocked */ } }, [sq.data])
   // THE REPORT IS SLOW TO WAKE (2026-10-26, Jon: "the bulletin was working and now it's not"). The
   // stats behind it take ~30s the first time after a deploy; a miss used to leave the card on the
   // quote alone for the hook's five-minute tick. Ask again in ten seconds, a few times, so the first
@@ -111,7 +118,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     // quote, the birthdays, employee of the month, shout-outs and five-star reviews.
 
     // THE REPORT FIRST: the numbers, then what went well, then what needs attention.
-    const st = sq.data
+    const st = sq.data?.ok ? sq.data : kept
     if (st?.ok) {
       const order = ['welcome7', 'avgStars', 'avg30', 'occ7', 'adr7', 'onTime7', 'mood7', 'glitchClose', 'glitchOpen', 'arr7', 'occTonight', 'turnToday']
       const kpis = order.map(k => st.facts.find(f => f.key === k)).filter(Boolean) as StatFact[]
@@ -133,7 +140,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     if (cel.length) out.push({ key: 'bday:' + cel.map(c => c.name).join('+'), label: cel.some(c => !c.inDays) ? 'Birthday' : 'Birthdays this week', secs: 9, node: <BirthdaySlide cel={cel} today={data?.today || ''} /> })
     for (const p of others) out.push({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
     return out
-  }, [data, act, sq.data])
+  }, [data, act, sq.data, kept])
 
   // ── ONE CLOCK FOR EVERYONE (Jon, 2026-10-07: "it flows weird when you land … keep it where everyone
   // is seeing the same thing at the same time unless they move it forward — set on a timer vs on
@@ -155,10 +162,10 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     return () => { clearTimeout(t); document.removeEventListener('visibilitychange', vis) }
   }, [])
   const [waited, setWaited] = useState(false)
-  useEffect(() => { const t = setTimeout(() => setWaited(true), 4000); return () => clearTimeout(t) }, [])
-  // One source feeds the card now, so ready is simply: the posts are in, or four seconds passed.
-  // Waiting on three other fetches is what made it flicker on landing.
-  const ready = !!data || waited
+  useEffect(() => { const t = setTimeout(() => setWaited(true), 9000); return () => clearTimeout(t) }, [])
+  // Ready when the posts AND the KPIs are in (fresh or kept from last time), or nine seconds passed —
+  // starting on the posts alone left the board on the quote with nothing to cycle to.
+  const ready = (!!data && (!!sq.data || !!kept)) || waited
   const [manual, setManual] = useState<{ key: string; until: number } | null>(null)
   const [held, setHeld] = useState<string | null>(null)
   const N = slides.length
