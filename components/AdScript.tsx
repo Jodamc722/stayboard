@@ -20,12 +20,14 @@ function Grow({ value, onChange, disabled, placeholder, style }: { value: string
     onFocus={e => (e.currentTarget.style.borderColor = 'rgba(210,176,119,0.5)')} onBlur={e => (e.currentTarget.style.borderColor = 'transparent')} />
 }
 
-export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stale, display, tall, onPick, onPlayFrom, setScene, move, del, addAfter, setScenes }: {
+export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stale, display, tall, picked = [], onTogglePick, onPick, onPlayFrom, setScene, move, del, addAfter, setScenes }: {
   p: AdProject; tl: Timeline; t: number; playing: boolean; sel: number; canEdit: boolean
   /** a voice take exists and matches the script */ voiced: boolean
   /** a voice take exists but the script changed since */ stale: boolean
   display: string
   /** beside the player: fill the height of the screen */ tall?: boolean
+  /** scene ids picked together — design changes go to all of them */ picked?: string[]
+  onTogglePick?: (i: number) => void
   onPick: (i: number) => void
   onPlayFrom: (i: number) => void
   setScene: (i: number, patch: Partial<AdScene>) => void
@@ -96,10 +98,13 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
             const fast = !voiced && w > 0 && rate > 3.1
             const kind = KINDS.find(k => k.kind === x.kind)?.label || x.kind
             return (
-              <div key={x.id || i} ref={el => { rows.current[i] = el }} onClick={() => onPick(i)}
-                style={{ display: 'grid', gridTemplateColumns: '64px 1fr auto', gap: 10, padding: '10px 14px', borderLeft: '3px solid ' + (on ? UI.gold : 'transparent'), background: on ? 'rgba(210,176,119,0.07)' : 'transparent', cursor: 'pointer', transition: 'background .15s' }}>
+              <div key={x.id || i} ref={el => { rows.current[i] = el }} onClick={e => { if ((e.shiftKey || e.metaKey || e.ctrlKey) && onTogglePick) { onTogglePick(i); return } onPick(i) }}
+                style={{ display: 'grid', gridTemplateColumns: '78px 1fr auto', gap: 10, padding: '10px 14px', borderLeft: '3px solid ' + (on ? UI.gold : 'transparent'), background: picked.indexOf(x.id) >= 0 ? 'rgba(210,176,119,0.13)' : on ? 'rgba(210,176,119,0.07)' : 'transparent', boxShadow: picked.indexOf(x.id) >= 0 ? 'inset 0 0 0 1px rgba(210,176,119,0.45)' : 'none', cursor: 'pointer', transition: 'background .15s' }}>
                 <div style={{ paddingTop: 4 }}>
-                  <div style={{ fontFamily: display, fontWeight: 800, fontSize: 15, color: on ? UI.gold : UI.ink }}>{i + 1}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {canEdit && onTogglePick ? <input type="checkbox" checked={picked.indexOf(x.id) >= 0} onClick={e => e.stopPropagation()} onChange={() => onTogglePick(i)} title="Select this scene to change several together" style={{ accentColor: UI.gold, cursor: 'pointer', margin: 0 }} /> : null}
+                    <span style={{ fontFamily: display, fontWeight: 800, fontSize: 15, color: on ? UI.gold : UI.ink }}>{i + 1}</span>
+                  </div>
                   <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, color: UI.mut }}>{fmt(tl.starts[i] || 0)}</div>
                   <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10.5, color: fast ? UI.red : UI.mut }}>{d.toFixed(1)} s</div>
                 </div>

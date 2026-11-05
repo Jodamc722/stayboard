@@ -103,6 +103,18 @@ function LookPreview({ proj, look, style, assets, w = 168 }: { proj: AdProject; 
   return <canvas ref={ref} width={w * 2} height={h * 2} style={{ width: '100%', aspectRatio: `${w}/${h}`, display: 'block', background: '#000' }} />
 }
 
+/** A collapsible inspector section (Jon, 2026-11-05: "make features collapsible"). */
+function Fold({ id, title, folded, onToggle, children }: { id: string; title: string; folded: boolean; onToggle: (id: string) => void; children: React.ReactNode }) {
+  return (
+    <div style={{ borderTop: '1px solid ' + UI.line, marginTop: 12 }}>
+      <button type="button" onClick={() => onToggle(id)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 0, color: UI.ink, padding: '10px 0 2px', cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ fontSize: 10, color: UI.mut, width: 10 }}>{folded ? '▸' : '▾'}</span>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{title}</span>
+      </button>
+      {folded ? null : <div>{children}</div>}
+    </div>
+  )
+}
 /** One labelled option row in a graphic's settings card. */
 function FxRow({ name, children }: { name: string; children: React.ReactNode }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><span style={{ fontSize: 10, color: UI.mut, width: 58, flex: '0 0 58px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{name}</span>{children}</div>
@@ -130,6 +142,14 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** The first-pass review shown when an ad is freshly built: score before → after the touch-up, and what changed. */
   const [firstPass, setFirstPass] = useState<{ before: number; after: number; changes: string[] } | null>(null)
   const [safe, setSafe] = useState(true)
+  /** Scenes picked together (Jon, 2026-11-05: "highlight scenes so I can apply changes to all — leaves falling on all of them").
+   *  By id, so reordering keeps the pick. Shift / ⌘-click on the timeline or the script, or the tick on a script line. */
+  const [picked, setPicked] = useState<string[]>([])
+  /** Collapsed inspector sections, remembered per browser. */
+  const [folded, setFolded] = useState<Record<string, boolean>>({})
+  useEffect(() => { try { const v = localStorage.getItem('ads.folded'); if (v) setFolded(JSON.parse(v)) } catch { /* fine */ } }, [])
+  const toggleFold = (id: string) => setFolded(f => { const n = { ...f, [id]: !f[id] }; try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } return n })
+  const setAllFolds = (v: boolean) => { const n: Record<string, boolean> = {}; ['ai', 'design', 'motion', 'words', 'photos', 'graphics', 'sound', 'whole'].forEach(k => (n[k] = v)); setFolded(n); try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } }
   /** Script beside the player (Jon, 2026-11-04: "the script the most important part of walking through the video ads"). */
   const [beside, setBeside] = useState(true)
   useEffect(() => { try { const v = localStorage.getItem('ads.scriptBeside'); if (v != null) setBeside(v === '1') } catch { /* fine */ } }, [])
@@ -206,6 +226,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   }, [])
   const open = useCallback(async (id: string, quiet?: boolean) => {
     stop()
+    setPicked([])
     const r = await fetch('/api/ads?id=' + encodeURIComponent(id)).then(x => x.json()).catch(() => null)
     if (!r?.ok) {
       // The last ad opened was deleted: forget it quietly instead of showing an error on arrival.
@@ -310,6 +331,17 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     else { setSaved('dirty'); setErr(r?.error || 'Save failed — your changes are still here; try again.') }
   }
   const setScene = (i: number, patch: Partial<AdScene>) => change(d => ({ ...d, scenes: d.scenes.map((s, k) => (k === i ? { ...s, ...patch } : s)) }))
+  /** The scenes a design / motion / graphics / sound change goes to: the picked ones (plus the one open), else the one open. */
+  const targetIdx = (): number[] => {
+    const cur = pRef.current; if (!cur) return [sel]
+    if (!picked.length) return [sel]
+    const out = cur.scenes.map((x, k) => (picked.indexOf(x.id) >= 0 || k === sel ? k : -1)).filter(k => k >= 0)
+    return out.length ? out : [sel]
+  }
+  const setMany = (fn: (s: AdScene, i: number) => Partial<AdScene>) => { const t = targetIdx(); change(d => ({ ...d, scenes: d.scenes.map((s, k) => (t.indexOf(k) >= 0 ? { ...s, ...fn(s, k) } : s)) })) }
+  const togglePick = (i: number) => { const cur = pRef.current; if (!cur) return; const id = cur.scenes[i]?.id; if (!id) return
+    setPicked(ps => { const base = ps.length ? ps : (cur.scenes[sel] ? [cur.scenes[sel].id] : []); return base.indexOf(id) >= 0 ? base.filter(x => x !== id) : base.concat([id]) }) }
+  const pickAll = () => { const cur = pRef.current; if (cur) setPicked(cur.scenes.map(x => x.id)) }
   const move = (from: number, to: number) => {
     if (!p || from === to || to < 0 || to >= p.scenes.length) return
     change(d => { const a = d.scenes.slice(); const [x] = a.splice(from, 1); a.splice(to, 0, x); return { ...d, scenes: a } })
@@ -1747,6 +1779,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               {tl && (p.kind || 'video') !== 'flyer' && p.kind !== 'post' ? (
                 <div style={{ width: '100%', maxWidth: scriptSide ? 'none' : Math.max(FW >= FH ? pw : 520, 760) }}>
                   <AdScript p={p} tl={tl} t={t} playing={playing} sel={sel} canEdit={canEdit} voiced={hasVoice} stale={!!p.voice && !hasVoice} display={display} tall={scriptSide}
+                    picked={picked} onTogglePick={togglePick}
                     onPick={i => pick(i)}
                     onPlayFrom={i => { stop(); setSel(i); start(tl.starts[i]) }}
                     setScene={setScene}
@@ -1777,8 +1810,25 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
         <div style={{ borderLeft: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0, maxHeight: full ? 'calc(100vh - 230px)' : 760, overflowY: 'auto' }}>
           {p && sc ? (
             <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12 }}>
+              {(() => { const n = targetIdx().length; return n > 1 ? (
+                <div style={{ marginTop: 12, background: 'rgba(210,176,119,0.1)', border: '1px solid rgba(210,176,119,0.45)', borderRadius: 9, padding: '8px 10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <b style={{ fontSize: 12.5, color: UI.gold }}>{n} scenes selected</b>
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                      <Btn small onClick={pickAll} disabled={n === p.scenes.length}>All</Btn>
+                      <Btn small onClick={() => setPicked([])}>Clear</Btn>
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 11, color: UI.mut, margin: '4px 0 0', lineHeight: 1.45 }}>Design, motion, graphics, sound, hold time and photo darkness change on all {n}. Words and photos stay per scene — those edit scene {sel + 1}.</p>
+                </div>
+              ) : null })()}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
                 <span style={{ fontSize: 12, fontWeight: 700 }}>Scene {sel + 1} of {p.scenes.length}</span>
+                <span style={{ display: 'flex', gap: 3 }}>
+                  <button type="button" onClick={() => setAllFolds(true)} title="Collapse every section" style={{ background: 'none', border: 0, color: UI.mut, fontSize: 10.5, cursor: 'pointer' }}>Collapse all</button>
+                  <button type="button" onClick={() => setAllFolds(false)} title="Open every section" style={{ background: 'none', border: 0, color: UI.mut, fontSize: 10.5, cursor: 'pointer' }}>Open all</button>
+                  {canEdit && p.scenes.length > 1 && !picked.length ? <button type="button" onClick={pickAll} title="Select every scene, then change them together" style={{ background: 'none', border: 0, color: UI.gold, fontSize: 10.5, cursor: 'pointer' }}>Select all scenes</button> : null}
+                </span>
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
                   <Btn small disabled={sel === 0} onClick={() => move(sel, sel - 1)} title="Earlier">↑</Btn>
                   <Btn small disabled={sel === p.scenes.length - 1} onClick={() => move(sel, sel + 1)} title="Later">↓</Btn>
@@ -1787,6 +1837,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </span>
               </div>
               {canEdit ? (
+                <Fold id="ai" title="Change with AI" folded={!!folded['ai']} onToggle={toggleFold}>
                 <div style={{ marginTop: 10, background: '#18243a', border: '1px solid #2b4470', borderRadius: 9, padding: 9 }}>
                   <p style={{ fontSize: 11.5, fontWeight: 700, margin: '0 0 6px', color: '#BFD4FA' }}>✦ Change this scene with AI</p>
                   <textarea value={ask} onChange={e => setAsk(e.target.value)} rows={2} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) askScene(ask) }}
@@ -1797,32 +1848,38 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                     {undo && undo.id === sc.id ? <Btn small onClick={undoScene} title="Back to the scene before the AI change">↶ Undo</Btn> : null}
                   </div>
                 </div>
+                </Fold>
               ) : null}
+              <Fold id="design" title="Design" folded={!!folded['design']} onToggle={toggleFold}>
               <Label>Look</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) < 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setScene(sel, { kind: k.kind })}>{k.label}</Btn>)}
+                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) < 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setMany(() => ({ kind: k.kind }))}>{k.label}</Btn>)}
                 <span style={{ width: '100%', fontSize: 10, color: UI.gold, letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 6 }}>Pro designs · from the sales videos</span>
-                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) >= 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setScene(sel, { kind: k.kind })}>{k.label}</Btn>)}
+                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) >= 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setMany(() => ({ kind: k.kind }))}>{k.label}</Btn>)}
               </div>
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 6 }}>{KINDS.find(k => k.kind === sc.kind)?.hint}</p>
-              {sel > 0 ? (
+              </Fold>
+              <Fold id="motion" title="Motion" folded={!!folded['motion']} onToggle={toggleFold}>
+              {sel > 0 || targetIdx().length > 1 ? (
                 <>
                   <Label>Comes in with</Label>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {TRANSITIONS.map(x => <Btn key={x} small on={(sc.tr || 'auto') === x} disabled={!canEdit} onClick={() => { setScene(sel, { tr: x as AdTransition }); if (tl) setT(tl.starts[sel] - 0.15) }}>{x === 'auto' ? 'Auto' : x[0].toUpperCase() + x.slice(1)}</Btn>)}
+                    {TRANSITIONS.map(x => <Btn key={x} small on={(sc.tr || 'auto') === x} disabled={!canEdit} onClick={() => { setMany(() => ({ tr: x as AdTransition })); if (tl) setT(tl.starts[sel] - 0.15) }}>{x === 'auto' ? 'Auto' : x[0].toUpperCase() + x.slice(1)}</Btn>)}
                   </div>
                 </>
               ) : null}
               {!isFlyer ? (<>
               <Label>Headline animation</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {TEXT_ANIMS.map(x => <Btn key={x.key} small on={(sc.anim || 'auto') === x.key} disabled={!canEdit} onClick={() => { setScene(sel, { anim: x.key as AdTextAnim }); if (tl) setT(tl.starts[sel] + 0.05) }}>{x.label}</Btn>)}
+                {TEXT_ANIMS.map(x => <Btn key={x.key} small on={(sc.anim || 'auto') === x.key} disabled={!canEdit} onClick={() => { setMany(() => ({ anim: x.key as AdTextAnim })); if (tl) setT(tl.starts[sel] + 0.05) }}>{x.label}</Btn>)}
               </div>
               <Label>Camera</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {CAMS.map(x => <Btn key={x.key} small on={(sc.cam || 'auto') === x.key} disabled={!canEdit} onClick={() => setScene(sel, { cam: x.key as AdCam })}>{x.label}</Btn>)}
+                {CAMS.map(x => <Btn key={x.key} small on={(sc.cam || 'auto') === x.key} disabled={!canEdit} onClick={() => setMany(() => ({ cam: x.key as AdCam }))}>{x.label}</Btn>)}
               </div>
               </>) : null}
+              </Fold>
+              <Fold id="words" title="Words & layout" folded={!!folded['words']} onToggle={toggleFold}>
               {sc.kind === 'poster' ? (<>
                 <Label>Poster style</Label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -1873,7 +1930,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                       <textarea rows={Math.min(9, Math.max(3, sc.items.length + 1))} value={sc.items.join('\n')} disabled={!canEdit} onChange={e => setScene(sel, { items: e.target.value.split('\n') })} style={{ ...field, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }} />
                       <Label>Photo behind</Label>
                       <div style={{ display: 'flex', gap: 4 }}>
-                        {([[1, 'Light'], [0, 'Normal'], [2, 'Dark']] as [number, string][]).map(([v, l]) => <Btn key={v} small disabled={!canEdit} on={(sc.dim ?? PRO_DIM_OF(sc.kind)) === v} onClick={() => setScene(sel, { dim: v })}>{l}</Btn>)}
+                        {([[1, 'Light'], [0, 'Normal'], [2, 'Dark']] as [number, string][]).map(([v, l]) => <Btn key={v} small disabled={!canEdit} on={(sc.dim ?? PRO_DIM_OF(sc.kind)) === v} onClick={() => setMany(() => ({ dim: v }))}>{l}</Btn>)}
                       </div>
                     </>
                   ) : null}
@@ -1898,12 +1955,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               {!hasVoice ? (
                 <>
                   <Label>Hold for (seconds)</Label>
-                  <input type="number" min={1} max={30} step={0.5} value={sc.dur || ''} placeholder={tl ? tl.durs[sel].toFixed(1) + ' (auto)' : ''} disabled={!canEdit} onChange={e => setScene(sel, { dur: e.target.value ? Number(e.target.value) : null })} style={{ ...field, width: 140 }} />
+                  <input type="number" min={1} max={30} step={0.5} value={sc.dur || ''} placeholder={tl ? tl.durs[sel].toFixed(1) + ' (auto)' : ''} disabled={!canEdit} onChange={e => { const v = e.target.value ? Number(e.target.value) : null; setMany(() => ({ dur: v })) }} style={{ ...field, width: 140 }} />
                 </>
               ) : null}
 
-              <Label>Photos</Label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6 }}>
+              </Fold>
+              <Fold id="photos" title="Photos" folded={!!folded['photos']} onToggle={toggleFold}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginTop: 4 }}>
                 {sc.photos.map((u, k) => (
                   <div key={u + k} style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 6, overflow: 'hidden', background: UI.panel2 }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1945,24 +2003,29 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </>
               ) : null}
 
-              <Label>Graphics on this scene</Label>
+              </Fold>
+              <Fold id="graphics" title="Graphics" folded={!!folded['graphics']} onToggle={toggleFold}>
+              <Label>{targetIdx().length > 1 ? 'Graphics on the ' + targetIdx().length + ' selected scenes' : 'Graphics on this scene'}</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {FX.map(f => { const on = (sc.fx || []).indexOf(f.key) >= 0; return <Btn key={f.key} small on={on} disabled={!canEdit} title={f.hint} onClick={() => setScene(sel, { fx: on ? (sc.fx || []).filter(x => x !== f.key) : (sc.fx || []).concat([f.key]).slice(-6) })}>{f.label}</Btn> })}
-                {(sc.fx || []).length ? <Btn small tone="red" disabled={!canEdit} onClick={() => setScene(sel, { fx: [], fxo: {} })}>Clear</Btn> : null}
+                {FX.map(f => { const on = (sc.fx || []).indexOf(f.key) >= 0; return <Btn key={f.key} small on={on} disabled={!canEdit} title={f.hint}
+                  onClick={() => setMany(x => on
+                    ? (() => { const o = { ...(x.fxo || {}) }; delete o[f.key]; return { fx: (x.fx || []).filter(k => k !== f.key), fxo: o } })()
+                    : { fx: (x.fx || []).filter(k => k !== f.key).concat([f.key]).slice(-6), fxo: { ...(x.fxo || {}), ...(sc.fxo && sc.fxo[f.key] ? { [f.key]: { ...sc.fxo[f.key] } } : {}) } })}>{f.label}</Btn> })}
+                {(sc.fx || []).length ? <Btn small tone="red" disabled={!canEdit} onClick={() => setMany(() => ({ fx: [], fxo: {} }))}>Clear</Btn> : null}
                 {canEdit && p.scenes.length > 1 ? <Btn small disabled={!(sc.fx || []).length} title="Put these graphics, with their settings, on every scene" onClick={() => change(d => ({ ...d, scenes: d.scenes.map(x => ({ ...x, fx: (sc.fx || []).slice(), fxo: { ...(sc.fxo || {}) } })) }))}>→ All scenes</Btn> : null}
               </div>
               <p style={{ fontSize: 10.5, color: UI.mut, marginTop: 4 }}>{(sc.fx || []).length ? 'Up to six per scene. Each one has its own placement, size and colour below. They render in the export too.' : 'None picked — the look’s own graphics show (if it has any).'}</p>
               {(sc.fx || []).map(k => {
                 const m = fxMeta(k); if (!m) return null
                 const o = fxOpts(sc, k)
-                const set = (patch: Partial<FxOpts>) => setScene(sel, { fxo: { ...(sc.fxo || {}), [k]: { ...((sc.fxo || {})[k] || {}), ...patch } } })
+                const set = (patch: Partial<FxOpts>) => setMany(x => ((x.fx || []).indexOf(k) >= 0 ? { fxo: { ...(x.fxo || {}), [k]: { ...((x.fxo || {})[k] || {}), ...patch } } } : {}))
                 return (
                   <div key={k} style={{ marginTop: 8, padding: '8px 10px', background: UI.panel2, borderRadius: 8, border: '1px solid ' + UI.line }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <b style={{ fontSize: 11.5 }}>{m.label}</b>
                       <span style={{ display: 'flex', gap: 4 }}>
-                        <Btn small disabled={!canEdit || !(sc.fxo && sc.fxo[k])} title="Back to this graphic’s defaults" onClick={() => { const n = { ...(sc.fxo || {}) }; delete n[k]; setScene(sel, { fxo: n }) }}>Reset</Btn>
-                        <Btn small tone="red" disabled={!canEdit} onClick={() => { const n = { ...(sc.fxo || {}) }; delete n[k]; setScene(sel, { fx: (sc.fx || []).filter(x => x !== k), fxo: n }) }}>✕</Btn>
+                        <Btn small disabled={!canEdit || !(sc.fxo && sc.fxo[k])} title="Back to this graphic’s defaults" onClick={() => setMany(x => { const n = { ...(x.fxo || {}) }; delete n[k]; return { fxo: n } })}>Reset</Btn>
+                        <Btn small tone="red" disabled={!canEdit} onClick={() => setMany(x => { const n = { ...(x.fxo || {}) }; delete n[k]; return { fx: (x.fx || []).filter(y => y !== k), fxo: n } })}>✕</Btn>
                       </span>
                     </div>
                     {m.variants ? <FxRow name="Style">{m.variants.map(v => <Btn key={v.key} small on={o.variant === v.key} disabled={!canEdit} onClick={() => set({ variant: v.key })}>{v.label}</Btn>)}</FxRow> : null}
@@ -1975,13 +2038,17 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </div>
                 )
               })}
+              </Fold>
+              <Fold id="sound" title="Sound effect" folded={!!folded['sound']} onToggle={toggleFold}>
               <Label>Sound effect</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                <Btn small on={!sc.sfx} disabled={!canEdit} onClick={() => setScene(sel, { sfx: '' })}>None</Btn>
-                {sounds.filter(x => x.kind === 'sfx').slice(0, 12).map(x => <Btn key={x.key} small on={sc.sfx === x.key} disabled={!canEdit} title={x.prompt} onClick={() => { setScene(sel, { sfx: x.key }); preview(x.url) }}>{x.name}</Btn>)}
+                <Btn small on={!sc.sfx} disabled={!canEdit} onClick={() => setMany(() => ({ sfx: '' }))}>None</Btn>
+                {sounds.filter(x => x.kind === 'sfx').slice(0, 12).map(x => <Btn key={x.key} small on={sc.sfx === x.key} disabled={!canEdit} title={x.prompt} onClick={() => { setMany(() => ({ sfx: x.key })); preview(x.url) }}>{x.name}</Btn>)}
                 {canEdit ? <Btn small onClick={() => { setSide('sounds'); setSndKind('sfx'); setSndSecs(2) }}>+ Make one</Btn> : null}
               </div>
 
+              </Fold>
+              <Fold id="whole" title="Whole ad — look, style, voice, music" folded={!!folded['whole']} onToggle={toggleFold}>
               <Label>Whole ad</Label>
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Vibe · one tap sets look, style, graphics and music</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
@@ -2088,6 +2155,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10, cursor: 'pointer' }}>
                 <input type="checkbox" checked={p.captions} onChange={e => change(d => ({ ...d, captions: e.target.checked }))} /> Burn in captions (most people watch muted)
               </label>
+              </Fold>
             </>
           ) : <p style={{ fontSize: 12, color: UI.mut, marginTop: 16 }}>Pick a scene on the timeline to edit it.</p>}
         </div>
@@ -2098,7 +2166,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
         <div style={{ borderTop: '1px solid ' + UI.line, padding: '10px 14px 14px', background: UI.panel }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut }}>Timeline</span>
-            <span style={{ fontSize: 11, color: UI.mut }}>Drag scenes to reorder · click to edit · click the ruler to jump</span>
+            <span style={{ fontSize: 11, color: UI.mut }}>Drag to reorder · click to edit · shift / ⌘-click to select several</span>
+            {canEdit && p.scenes.length > 1 ? (picked.length
+              ? <><span style={{ fontSize: 11, color: UI.gold, fontWeight: 700 }}>{targetIdx().length} selected</span><Btn small onClick={() => setPicked([])}>Clear</Btn></>
+              : <Btn small onClick={pickAll} title="Select every scene, then change them together">Select all</Btn>) : null}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
               {canEdit ? KINDS.map(k => <Btn key={k.kind} small onClick={() => addScene(k.kind)} title={'Add a ' + k.label + ' scene after this one'}>+ {k.label}</Btn>) : null}
             </span>
@@ -2115,10 +2186,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             <div style={{ position: 'relative', height: 58 }}>
               {p.scenes.map((s, i) => (
                 <div key={s.id} draggable={canEdit} onDragStart={() => setDragFrom(i)} onDragOver={e => e.preventDefault()} onDrop={() => { if (dragFrom != null) move(dragFrom, i); setDragFrom(null) }}
-                  onClick={() => pick(i)} title={(s.head || s.vo || KINDS.find(k => k.kind === s.kind)?.label || '').replace(/\*\*/g, '')}
+                  onClick={e => { if (e.shiftKey || e.metaKey || e.ctrlKey) { togglePick(i); return } pick(i) }} title={(s.head || s.vo || KINDS.find(k => k.kind === s.kind)?.label || '').replace(/\*\*/g, '') + ' · shift / ⌘-click to select several'}
                   style={{ position: 'absolute', left: pct(tl.starts[i]) + '%', width: `calc(${pct(tl.durs[i])}% - 3px)`, top: 0, bottom: 0, borderRadius: 7, cursor: 'pointer', overflow: 'hidden',
-                    background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), borderLeft: '4px solid ' + KIND_COLOR[s.kind], border: '2px solid ' + (i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
-                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}</span>
+                    background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), borderLeft: '4px solid ' + KIND_COLOR[s.kind], border: '2px solid ' + (picked.indexOf(s.id) >= 0 ? UI.gold : i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
+                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{picked.indexOf(s.id) >= 0 ? '✓ ' : ''}{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}{(s.fx || []).length ? ' · ✦' : ''}</span>
                   <span style={{ display: 'block', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(s.head || s.vo).replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
                   {canEdit && p.scenes.length > 1 ? (
                     <button type="button" onClick={e => { e.stopPropagation(); delSceneAt(i) }} title="Delete this scene"
