@@ -123,10 +123,10 @@ export async function checkInvoice(read: Read, opts: { id: string; excludeId?: s
   const dates = read.lines.map(l => l.date).filter(Boolean) as string[]
   const from = addDays([read.periodFrom, ...dates].filter(Boolean).sort()[0] || addDays(new Date().toISOString().slice(0, 10), -45), -3)
   const to = addDays([read.periodTo, ...dates].filter(Boolean).sort().reverse()[0] || new Date().toISOString().slice(0, 10), 3)
-  const tasks: Task[] = ids.length ? await pageRows((a, b) => db.from('breezeway_tasks_sync')
+  const tasks: Task[] = ids.length ? (await pageRows((a, b) => db.from('breezeway_tasks_sync')
     .select('id,reference_property_id,scheduled_date,status,name,assignee_name,finished_by_name,finished_at,report_url')
     .eq('type_department', 'housekeeping').in('reference_property_id', ids).gte('scheduled_date', from).lte('scheduled_date', to)
-    .order('scheduled_date').order('id').range(a, b), 10) as any : []
+    .order('scheduled_date').order('id').range(a, b), 10)).rows as any : []
   const byUnit = new Map<string, Task[]>()
   for (const t of tasks) { const k = String(t.reference_property_id); (byUnit.get(k) || byUnit.set(k, []).get(k)!).push(t) }
 
