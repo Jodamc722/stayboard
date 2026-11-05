@@ -1003,7 +1003,7 @@ function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, on
 
 /** One unit's need, and against it what was counted. Without a count the Have / Buy columns stay out of the way. */
 function NeedsTable({ gap }: { gap: LinenGap }) {
-  const rows = gap.rows
+  const rows = sectioned(gap.rows).flatMap(sec => sec.rows)   // King items together, Queen together, … (same order as What's needed)
   if (!rows.length) return <p className="text-[12.5px] text-muted">Nothing on the standard applies to this unit.</p>
   const c = gap.counted
   return (
@@ -1047,7 +1047,7 @@ function CountEditor({ u, gap, onDone, onCounted }: { u: LinenDeskUnit; gap: Lin
   const [counts, setCounts] = useState<Record<string, number>>(() => { const o: Record<string, number> = {}; for (const r of gap.rows) if (r.have) o[r.key] = r.have; return o })
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const live = gap.rows.map(r => { const have = counts[r.key] || 0; return { ...r, have, buy: Math.max(0, r.total - have) } })
+  const live = sectioned(gap.rows).flatMap(sec => sec.rows).map(r => { const have = counts[r.key] || 0; return { ...r, have, buy: Math.max(0, r.total - have) } })
   const toBuy = live.reduce((a, r) => a + r.buy, 0)
   const typed = Object.keys(counts).length > 0
   const send = async (next: Record<string, number> | null) => {
@@ -1229,6 +1229,29 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
 type NeedLine = { key: string; group: string; name: string; size: string; qty: number; base: number | null }
 const csvSafe = (v: any) => { let x = String(v ?? ''); if (/^[=+\-@\t\r]/.test(x)) x = "'" + x; return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x }
 
+// SECTIONS (Jon, 2026-11-05: "organize by linen type and make it visually easier to see and read —
+// king items together, queen items together"). Bed linen by bed size, the Standard pillows on their own,
+// then Bath, Kitchen, Other. King pillows sit with the King bed.
+const BED_ORDER = ['King', 'Cal King', 'Queen', 'Full', 'Twin', 'Sofa bed']
+function sectionOf(l: { group: string; size?: string }): { key: string; label: string; order: number } {
+  if (l.group === 'Bed' && l.size) {
+    if (l.size === 'Standard') return { key: 'pillows-standard', label: 'Standard pillows', order: 50 }
+    const i = BED_ORDER.findIndex(b => b.toLowerCase() === l.size!.toLowerCase())
+    return { key: 'bed-' + l.size, label: l.size + ' bed', order: i < 0 ? 40 : i }
+  }
+  const g = LINEN_GROUPS.indexOf(l.group as LinenGroup)
+  return { key: 'g-' + l.group, label: l.group === 'Bed' ? 'Bedding' : l.group, order: 60 + (g < 0 ? 9 : g) }
+}
+function sectioned<T extends { group: string; size?: string }>(rows: T[]): { key: string; label: string; rows: T[] }[] {
+  const m = new Map<string, { key: string; label: string; order: number; rows: T[] }>()
+  for (const r of rows) {
+    const s = sectionOf(r)
+    const cur = m.get(s.key)
+    if (cur) cur.rows.push(r); else m.set(s.key, { ...s, rows: [r] })
+  }
+  return Array.from(m.values()).sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
+}
+
 function NeededList({ totals, title, resetKey }: { totals: LinenTotals; title: string; resetKey: string }) {
   const [edits, setEdits] = useState<Record<string, number>>({})
   const [extra, setExtra] = useState<NeedLine[]>([])
@@ -1242,74 +1265,75 @@ function NeededList({ totals, title, resetKey }: { totals: LinenTotals; title: s
   const setQty = (key: string, v: string) => { const n = Math.max(0, Math.min(99_999, Math.round(toNum(v) ?? 0))); setEdits(e => ({ ...e, [key]: n })) }
   const patchExtra = (key: string, p: Partial<NeedLine>) => setExtra(x => x.map(l => (l.key === key ? { ...l, ...p } : l)))
   const addLine = () => setExtra(x => [...x, { key: 'extra-' + Date.now() + '-' + x.length, group: 'Other', name: '', size: '', qty: 1, base: null }])
-  const csv = () => ['Group,Item,Size,Qty', ...out.map(l => [l.group, l.name.trim(), l.size.trim(), l.qty].map(csvSafe).join(','))].join('\n') + '\n'
+  const sections = sectioned(lines)
+  const outSections = sectioned(out)
+  const csv = () => ['Section,Item,Size,Qty', ...outSections.flatMap(sec => sec.rows.map(l => [sec.label, l.name.trim(), l.size.trim(), l.qty].map(csvSafe).join(',')))].join('\n') + '\n'
   const text = () => {
     const o: string[] = [title]
-    for (const g of [...LINEN_GROUPS, 'Other'].filter((g, i, a) => a.indexOf(g) === i)) {
-      const rows = out.filter(l => l.group === g)
-      if (!rows.length) continue
-      o.push('', g)
-      for (const l of rows) o.push(`${l.qty} × ${l.name.trim()}${l.size.trim() ? ' (' + l.size.trim() + ')' : ''}`)
+    for (const sec of outSections) {
+      o.push('', `${sec.label.toUpperCase()} (${sec.rows.reduce((a, l) => a + l.qty, 0)})`)
+      for (const l of sec.rows) o.push(`${l.qty} × ${l.name.trim()}`)
     }
     o.push('', `Total: ${pieces.toLocaleString('en-US')} pieces`)
     return o.join('\n') + '\n'
   }
   const download = () => saveBlob(new Blob([csv()], { type: 'text/csv;charset=utf-8' }), 'linen-needed-' + new Date().toISOString().slice(0, 10) + '.csv')
   const copy = async () => { try { await navigator.clipboard.writeText(text()); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked — the CSV still works */ } }
-  const groups = [...LINEN_GROUPS, 'Other'].filter((g, i, a) => a.indexOf(g) === i)
 
   return (
     <section className={CARD + ' mb-3 overflow-hidden'}>
-      <div className="px-3 sm:px-4 py-2.5 flex items-center gap-2 flex-wrap border-b border-line">
-        <h2 className={EYEBROW}>What's needed</h2>
-        <span className="text-[12.5px] text-muted tabular-nums">{pieces.toLocaleString('en-US')} pieces · {out.length} lines</span>
+      <div className="px-3 sm:px-4 py-3 flex items-center gap-2 flex-wrap border-b border-line">
+        <h2 className="text-[15px] font-bold text-ink">What's needed</h2>
+        <span className="text-[13px] text-muted tabular-nums"><b className="text-ink text-[15px]">{pieces.toLocaleString('en-US')}</b> pieces</span>
         {totals.counted > 0 && <Tag tone="emerald" title="Net of what was counted on the shelf">net of {totals.counted} count{totals.counted === 1 ? '' : 's'}</Tag>}
-        {changed > 0 && <Tag tone="amber" title="Lines you changed or added on this page — the standard itself is not changed">{changed} edited</Tag>}
+        {changed > 0 && <Tag tone="amber" title="Lines you changed or added on this page — the par levels themselves are not changed">{changed} edited</Tag>}
         <span className="ml-auto flex items-center gap-1.5 flex-wrap">
-          {changed > 0 && <button onClick={() => { setEdits({}); setExtra([]) }} title="Put every quantity back to the standard and drop added lines" className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><RotateCcw size={12} /> Reset</button>}
-          <button onClick={download} disabled={!out.length} title="Download this list as a spreadsheet (CSV) — exactly what is on the page" className={PRIMARY}><Download size={13} /> Download list</button>
-          <button onClick={copy} disabled={!out.length} title="Copy this list as text for an email or a message" className={GHOST}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}</button>
+          {changed > 0 && <button onClick={() => { setEdits({}); setExtra([]) }} title="Put every quantity back and drop added lines" className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><RotateCcw size={12} /> Reset</button>}
+          <button onClick={download} disabled={!out.length} title="Download this list as a spreadsheet (CSV) — exactly what is on the page, by section" className={PRIMARY}><Download size={13} /> Download list</button>
+          <button onClick={copy} disabled={!out.length} title="Copy this list as text, by section, for an email or a message" className={GHOST}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}</button>
         </span>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[380px] text-[13px]">
-          <thead className="text-[10.5px] uppercase tracking-wider text-muted">
-            <tr><th className="text-left font-semibold px-3 sm:px-4 py-2">Item</th><th className="text-left font-semibold px-2 py-2">Size</th>
-              <th className="text-right font-semibold px-2 py-2" title="What the standard gives">Standard</th><th className="text-right font-semibold px-3 sm:px-4 py-2" title="Type to change — 0 leaves the line out of the export">Qty</th></tr>
-          </thead>
-          {groups.map(g => {
-            const rows = lines.filter(l => l.group === g)
-            if (!rows.length) return null
-            return (
-              <tbody key={g} className="border-t border-line">
-                <tr className="bg-app/60"><td colSpan={4} className={EYEBROW + ' px-3 sm:px-4 py-1.5'}>{g}</td></tr>
-                {rows.map(l => {
+
+      {/* One card per linen type: King bed, Queen bed, …, Standard pillows, Bath, Kitchen, Other. */}
+      <div className="p-2 sm:p-3 grid gap-2 sm:gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {sections.map(sec => {
+          const sub = sec.rows.reduce((a, l) => a + (l.qty || 0), 0)
+          return (
+            <div key={sec.key} className="rounded-xl border border-line bg-white overflow-hidden min-w-0">
+              <div className="px-3 py-2 flex items-baseline gap-2 bg-app/70 border-b border-line">
+                <h3 className="text-[13.5px] font-bold text-ink">{sec.label}</h3>
+                <span className="ml-auto text-[12px] text-muted tabular-nums" title="Pieces in this section">{sub.toLocaleString('en-US')} pcs</span>
+              </div>
+              <ul className="divide-y divide-line/60">
+                {sec.rows.map(l => {
                   const isExtra = l.base === null
                   const edited = !isExtra && l.qty !== l.base
                   return (
-                    <tr key={l.key} className={'border-t border-line/60' + (l.qty === 0 ? ' opacity-50' : '')}>
-                      <td className="px-3 sm:px-4 py-1 text-ink">{isExtra
-                        ? <input value={l.name} onChange={e => patchExtra(l.key, { name: e.target.value.slice(0, LIMITS.name) })} placeholder="Item name" title="What to add" className={INPUT + ' py-1 w-full min-w-[140px]'} autoFocus={!l.name} />
-                        : l.name}</td>
-                      <td className="px-2 py-1 text-muted">{isExtra
-                        ? <input value={l.size} onChange={e => patchExtra(l.key, { size: e.target.value.slice(0, LIMITS.size) })} placeholder="Size" title="Size, if it has one" className={INPUT + ' py-1 w-24'} />
-                        : l.size}</td>
-                      <td className="px-2 py-1 text-right tabular-nums text-muted">{isExtra ? <button onClick={() => setExtra(x => x.filter(y => y.key !== l.key))} title="Remove this added line" className="text-muted hover:text-rose-600"><Trash2 size={13} /></button> : l.base}</td>
-                      <td className="px-3 sm:px-4 py-1 text-right">
-                        <input type="number" inputMode="numeric" min={0} value={l.qty} onChange={e => isExtra ? patchExtra(l.key, { qty: Math.max(0, Math.round(toNum(e.target.value) ?? 0)) }) : setQty(l.key, e.target.value)}
-                          title={edited ? `Changed from ${l.base}` : 'Type to change'} className={NUM + ' w-[76px] py-1' + (edited ? ' border-amber-400 bg-amber-50' : '')} />
-                      </td>
-                    </tr>
+                    <li key={l.key} className={'px-3 py-1.5 flex items-center gap-2 ' + (l.qty === 0 ? 'opacity-45' : '')}>
+                      {isExtra ? (
+                        <>
+                          <input value={l.name} onChange={e => patchExtra(l.key, { name: e.target.value.slice(0, LIMITS.name) })} placeholder="Item name" title="What to add" className={INPUT + ' py-1 flex-1 min-w-0'} autoFocus={!l.name} />
+                          <button onClick={() => setExtra(x => x.filter(y => y.key !== l.key))} title="Remove this added line" className="text-muted hover:text-rose-600"><Trash2 size={13} /></button>
+                        </>
+                      ) : (
+                        <span className="flex-1 min-w-0 text-[13.5px] text-ink truncate" title={l.name + (l.size ? ' — ' + l.size : '')}>{l.name}</span>
+                      )}
+                      {edited && <span className="text-[11px] text-muted tabular-nums line-through" title={`Standard: ${l.base}`}>{l.base}</span>}
+                      <input type="number" inputMode="numeric" min={0} value={l.qty}
+                        onChange={e => isExtra ? patchExtra(l.key, { qty: Math.max(0, Math.round(toNum(e.target.value) ?? 0)) }) : setQty(l.key, e.target.value)}
+                        title={edited ? `Changed from ${l.base} — 0 leaves it out of the export` : 'Type to change — 0 leaves it out of the export'}
+                        className={NUM + ' w-[72px] py-1 text-[15px] font-bold' + (edited ? ' border-amber-400 bg-amber-50' : '')} />
+                    </li>
                   )
                 })}
-              </tbody>
-            )
-          })}
-        </table>
+              </ul>
+            </div>
+          )
+        })}
       </div>
       <div className="px-3 sm:px-4 py-2 border-t border-line flex items-center gap-2 flex-wrap">
-        <button onClick={addLine} title="Add a line that is not on the standard" className="text-[12.5px] font-bold text-brand-700 hover:underline inline-flex items-center gap-1"><Plus size={13} /> Add a line</button>
-        <span className="text-[12px] text-muted">Changes here are for this export only — the standard stays as it is.</span>
+        <button onClick={addLine} title="Add a line that is not on the par levels" className="text-[12.5px] font-bold text-brand-700 hover:underline inline-flex items-center gap-1"><Plus size={13} /> Add a line</button>
+        <span className="text-[12px] text-muted">Changes here are for this export only — the par levels stay as they are.</span>
       </div>
     </section>
   )
