@@ -20,14 +20,14 @@ type Item = {
   reservation_id: string | null; guest_name: string | null; guest_phone: string | null; guest_email: string | null; check_in: string | null; check_out: string | null
   status: string; contacted_at: string | null; contact_note: string | null; shipping_carrier: string | null; tracking: string | null; shipping_cost: number | null; shipping_paid: boolean
   ship_to?: string | null; pay_requested_at?: string | null; pay_requested_via?: string | null; paid_at?: string | null; paid_by?: string | null; paid_via?: string | null
-  breezeway_task_id?: string | null; breezeway_error?: string | null
+  breezeway_task_id?: string | null; breezeway_error?: string | null; receipts?: string[]; sent_at?: string | null; sent_by?: string | null
   resolved_at: string | null; notes: string | null; history: { at: string; who: string; what: string; note?: string }[]; slack_ts: string | null; slack_permalink: string | null; created_by: string | null; created_at: string
 }
 type Listing = { id: string; name: string }
 
 const STATUS: Record<string, { label: string; tone: Tone }> = {
   held: { label: 'Held', tone: 'amber' }, contacted: { label: 'Contacted', tone: 'sky' }, claimed: { label: 'Claimed', tone: 'violet' },
-  shipping: { label: 'Shipping', tone: 'brand' }, returned: { label: 'Returned', tone: 'emerald' }, donated: { label: 'Donated', tone: 'slate' }, discarded: { label: 'Discarded', tone: 'slate' },
+  shipping: { label: 'Sent', tone: 'brand' }, returned: { label: 'Returned', tone: 'emerald' }, donated: { label: 'Donated', tone: 'slate' }, discarded: { label: 'Discarded', tone: 'slate' },
 }
 const CATS = ['clothing', 'electronics', 'documents', 'jewelry', 'toiletries', 'toys', 'keys_cards', 'other']
 const catLabel = (c: string) => c === 'keys_cards' ? 'Keys / cards' : c.charAt(0).toUpperCase() + c.slice(1)
@@ -214,7 +214,7 @@ function ItemRow({ i, today, holdDays, patch, focus }: { i: Item; today: string;
               <div className="flex flex-wrap gap-1.5">
                 {i.status === 'held' && <button disabled={busy} onClick={() => run({ status: 'contacted', note })} className={btnP}><Phone size={12} /> Guest contacted</button>}
                 {(i.status === 'held' || i.status === 'contacted') && <button disabled={busy} onClick={() => run({ status: 'claimed', note })} className={btn}><Check size={12} /> Guest wants it</button>}
-                {(i.status === 'claimed' || i.status === 'contacted') && <button disabled={busy} onClick={() => run({ status: 'shipping', note })} className={btn}><Truck size={12} /> Shipped</button>}
+                {(i.status === 'claimed' || i.status === 'contacted') && <button disabled={busy} onClick={() => run({ status: 'shipping', note })} className={btn}><Truck size={12} /> Sent</button>}
                 <button disabled={busy} onClick={() => run({ status: 'returned', note })} className={btn}><PackageCheck size={12} /> Returned</button>
                 {holdLeft <= 0 && <>
                   <button disabled={busy} onClick={() => run({ status: 'donated', note })} className={btn}><Gift size={12} /> Donated</button>
@@ -390,12 +390,12 @@ function ShipPay({ i, run, busy }: { i: Item; run: (body: any) => Promise<void>;
   const [via, setVia] = useState(PAID_VIA[0])
   const cost = i.shipping_cost != null ? Number(i.shipping_cost) : null
   const fmt$ = (n: number) => '$' + n.toFixed(2)
-  const step = i.shipping_paid ? (i.breezeway_task_id ? 3 : 2) : i.pay_requested_at ? 1 : 0
+  const step = i.sent_at || i.status === 'shipping' ? 4 : i.shipping_paid ? (i.breezeway_task_id ? 3 : 2) : i.pay_requested_at ? 1 : 0
   return (
     <div className="rounded-lg border border-line bg-white px-2.5 py-2 space-y-1.5 mt-1">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-[11px] uppercase tracking-wide text-muted font-semibold">Ship it · paid by the guest</span>
-        {(['Cost', 'Asked', 'Paid', 'Breezeway task'] as const).map((l, k) => (
+        {(['Cost', 'Message sent', 'Paid', 'Delivery task', 'Sent'] as const).map((l, k) => (
           <span key={l} className={'text-[10.5px] px-1.5 py-0.5 rounded ' + (k <= step ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-muted')}>{k < step || (k === 0 && cost) ? '✓ ' : ''}{l}</span>
         ))}
       </div>
@@ -416,7 +416,8 @@ function ShipPay({ i, run, busy }: { i: Item; run: (body: any) => Promise<void>;
       {!i.shipping_paid && (
         i.pay_requested_at
           ? <div className="text-[12px] text-muted">Asked {fmtWhen(i.pay_requested_at)} · {i.pay_requested_via}{cost != null ? ' · ' + fmt$(cost) : ''} <button onClick={() => setAsking(a => !a)} className="underline hover:text-ink ml-1">ask again</button></div>
-          : <button disabled={busy || !cost} onClick={() => setAsking(a => !a)} title={cost ? '' : 'Type the shipping cost first'} className={btnP}><DollarSign size={12} /> Ask guest to pay{cost ? ' ' + fmt$(cost) : ''}</button>
+          : <span className="inline-flex gap-1.5 flex-wrap"><button disabled={busy || !cost} onClick={() => setAsking(a => !a)} title={cost ? '' : 'Type the shipping cost first'} className={btnP}><DollarSign size={12} /> Ask guest to pay{cost ? ' ' + fmt$(cost) : ''}</button>
+            <button disabled={busy || !cost} onClick={() => run({ action: 'request_pay', amount: cost, via: 'by hand' })} title="The team already messaged the guest (Guesty, phone, text)" className={btn}><Check size={12} /> Mark message sent</button></span>
       )}
       {asking && cost != null && <PayAsk i={i} cost={cost} onDone={() => setAsking(false)} run={run} />}
 
@@ -426,7 +427,7 @@ function ShipPay({ i, run, busy }: { i: Item; run: (body: any) => Promise<void>;
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[12px]">Paid via</span>
             <select value={via} onChange={e => setVia(e.target.value)} className="text-[12px] border border-line rounded-lg px-2 py-1 bg-white">{PAID_VIA.map(v => <option key={v}>{v}</option>)}</select>
-            <button disabled={busy} onClick={async () => { await run({ action: 'paid', via }); setPaying(false) }} className={btnP}><Check size={12} /> Mark paid &amp; send to Breezeway</button>
+            <button disabled={busy} onClick={async () => { await run({ action: 'paid', via }); setPaying(false) }} className={btnP}><Check size={12} /> Paid — create Lost &amp; Found Delivery</button>
             <button onClick={() => setPaying(false)} className={btn}>Cancel</button>
           </div>
         ) : <button disabled={busy || !cost} onClick={() => setPaying(true)} className={btn}><Check size={12} /> Mark paid</button>
@@ -436,8 +437,15 @@ function ShipPay({ i, run, busy }: { i: Item; run: (body: any) => Promise<void>;
 
       {/* 3 · Breezeway */}
       {i.shipping_paid && (i.breezeway_task_id
-        ? <div className="text-[12px] flex items-center gap-1.5"><ClipboardList size={12} className="text-emerald-700" /> Ship task in Breezeway <a href={'https://app.breezeway.io/task/' + i.breezeway_task_id} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5">#{i.breezeway_task_id} <ExternalLink size={10} /></a></div>
+        ? <div className="text-[12px] flex items-center gap-1.5 flex-wrap"><ClipboardList size={12} className="text-emerald-700" /> {i.sent_at ? <b className="text-emerald-700">Sent {fmtWhen(i.sent_at)}{i.sent_by ? ' · ' + i.sent_by : ''}</b> : 'Lost & Found Delivery in Breezeway — Sent once the task is completed'} <a href={'https://app.breezeway.io/task/' + i.breezeway_task_id} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5">#{i.breezeway_task_id} <ExternalLink size={10} /></a></div>
         : <div className="text-[12px] text-rose-700 flex items-center gap-2 flex-wrap">Breezeway task not created{i.breezeway_error ? ' — ' + i.breezeway_error : ''} <button disabled={busy} onClick={() => run({ action: 'push_task' })} className={btn}>Retry</button></div>)}
+      {/* RECEIPTS (Jon, 2026-11-05: "can we also have receipt attached") — the payment confirmation
+          and the postage receipt, photos or PDFs, kept on the item. */}
+      <div className="flex items-center gap-2 flex-wrap text-[12px]">
+        <span className="text-[10.5px] uppercase tracking-wide text-muted">Receipts</span>
+        {(i.receipts || []).map((p, k) => <a key={p} href={photoSrc(p)} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5">{/\.pdf$/i.test(p) ? 'PDF' : 'Receipt'} {k + 1} <ExternalLink size={10} /></a>)}
+        <ReceiptAdd id={i.id} onAdded={paths => run({ addReceipts: paths })} />
+      </div>
       {i.shipping_paid && <InlineField label="Tracking" value={i.tracking} onSave={v => run({ tracking: v, ...(i.status !== 'shipping' && v ? { status: 'shipping' } : {}) })} placeholder="9400… (marks it shipped)" />}
     </div>
   )
@@ -489,11 +497,33 @@ function PayAsk({ i, cost, run, onDone }: { i: Item; cost: number; run: (body: a
       <div className="flex flex-wrap gap-1.5">
         {ctx.conversationId
           ? <button disabled={busy || !text.trim()} onClick={() => send('message')} className={btnP}><Send size={12} /> {busy ? 'Sending…' : 'Send to guest'}</button>
-          : <span className="text-[12px] text-muted">No Guesty conversation for this booking in Lighthouse — send it from Guesty, then:</span>}
-        <button disabled={busy} onClick={() => send('by hand')} className={btn}>I asked another way</button>
+          : <span className="text-[12px] text-muted">No Guesty conversation for this booking in Lighthouse — send it from Guesty, then mark it sent:</span>}
+        <button disabled={busy} onClick={() => send('by hand')} className={btn}>Mark message sent</button>
         <button onClick={() => { try { navigator.clipboard.writeText(text) } catch {} }} className={btn}>Copy</button>
         <button onClick={onDone} className={btn}>Cancel</button>
       </div>
     </div>
   )
+}
+
+function ReceiptAdd({ id, onAdded }: { id: string; onAdded: (paths: string[]) => void }) {
+  const ref = useRef<HTMLInputElement>(null)
+  const [busy, setBusy] = useState(false)
+  const up = async (files: FileList | null) => {
+    if (!files || !files.length) return
+    setBusy(true)
+    try {
+      const paths: string[] = []
+      for (const f of Array.from(files).slice(0, 4)) {
+        const b64 = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = rej; r.readAsDataURL(f) })
+        const r = await fetch('/api/lost-found/photo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ b64, filename: 'receipt_' + f.name, contentType: f.type || 'application/octet-stream', itemId: id }) })
+        const j = await r.json(); if (j.ok && j.path) paths.push(j.path)
+      }
+      if (paths.length) onAdded(paths)
+    } finally { setBusy(false); if (ref.current) ref.current.value = '' }
+  }
+  return <>
+    <input ref={ref} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={e => up(e.target.files)} />
+    <button onClick={() => ref.current?.click()} disabled={busy} className="inline-flex items-center gap-1 text-[11.5px] text-brand-700 hover:underline"><Plus size={11} /> {busy ? 'Uploading…' : 'Attach receipt'}</button>
+  </>
 }

@@ -10,7 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { unitLabel } from '@/lib/unit-label'
-import { payContext, billOnFolio, pushShipTask } from '@/lib/lost-found-pay'
+import { payContext, billOnFolio, pushShipTask, syncSent } from '@/lib/lost-found-pay'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -82,6 +82,8 @@ export async function GET(req: NextRequest) {
     }
 
     // ---- The list ----
+    // A delivery task completed in Breezeway shows as Sent the next time anyone looks.
+    try { await syncSent() } catch { /* the cron catches up */ }
     const status = str(p.get('status')) || 'open'
     let qy = db.from('lost_found_items').select('*')
     if (status === 'open') qy = qy.not('status', 'in', '(' + RESOLVED.join(',') + ')')
@@ -215,6 +217,11 @@ export async function PATCH(req: NextRequest) {
     }
     if (b.action === 'push_task') after = 'push'
     if (b.shippingPaid !== undefined && b.action === undefined) upd.shipping_paid = !!b.shippingPaid
+    if (Array.isArray(b.addReceipts)) {
+      const add = b.addReceipts.filter((x: any) => typeof x === 'string')
+      upd.receipts = [...(Array.isArray(cur.receipts) ? cur.receipts : []), ...add].slice(0, 12)
+      if (add.length) history.push(entry(who, 'receipt', add.length + ' receipt' + (add.length === 1 ? '' : 's') + ' attached'))
+    }
     if (Array.isArray(b.addPhotos)) upd.photos = [...(Array.isArray(cur.photos) ? cur.photos : []), ...b.addPhotos.filter((x: any) => typeof x === 'string')].slice(0, 12)
     if (Object.keys(upd).length === 0 && history.length === (Array.isArray(cur.history) ? cur.history.length : 0) && !after) return NextResponse.json({ ok: true, item: cur })
     upd.history = history.slice(-60); upd.updated_at = new Date().toISOString()
@@ -224,7 +231,7 @@ export async function PATCH(req: NextRequest) {
     // written on the item and the page offers a retry.
     if (after === 'push') {
       const t = await pushShipTask(data)
-      const h2 = [...(Array.isArray(data.history) ? data.history : []), t.ok ? entry('Lighthouse', 'breezeway task', 'Ship task created in Breezeway (#' + t.taskId + ')') : entry('Lighthouse', 'breezeway task failed', t.error || '')].slice(-60)
+      const h2 = [...(Array.isArray(data.history) ? data.history : []), t.ok ? entry('Lighthouse', 'breezeway task', 'Lost & Found Delivery #' + t.taskId + ' created in Breezeway' + ((t as any).assignedTo?.length ? ' — assigned to ' + (t as any).assignedTo.join(', ') : ' — unassigned (nobody matched in Breezeway)')) : entry('Lighthouse', 'breezeway task failed', t.error || '')].slice(-60)
       const { data: d2 } = await db.from('lost_found_items').update({ breezeway_task_id: t.ok ? t.taskId : data.breezeway_task_id, breezeway_error: t.ok ? null : (t.error || 'failed'), history: h2, updated_at: new Date().toISOString() }).eq('id', id).select('*').single()
       return NextResponse.json({ ok: true, item: d2 || data, task: t })
     }

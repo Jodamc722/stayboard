@@ -12,3 +12,9 @@ alter table lost_found_items add column if not exists paid_by            text;
 alter table lost_found_items add column if not exists paid_via           text;         -- 'card on file' | 'payment link' | 'airbnb resolution' | 'cash/other'
 alter table lost_found_items add column if not exists breezeway_task_id  text;
 alter table lost_found_items add column if not exists breezeway_error    text;
+-- Receipts (Jon, 2026-11-05: "can we also have receipt attached") — payment and postage receipts,
+-- storage paths in the private lost-found-files bucket, like the item photos.
+alter table lost_found_items add column if not exists receipts           jsonb not null default '[]'::jsonb;
+-- "Once they complete task it show sent": when the Breezeway delivery task was completed, and by whom.
+alter table lost_found_items add column if not exists sent_at            timestamptz;
+alter table lost_found_items add column if not exists sent_by            text;
