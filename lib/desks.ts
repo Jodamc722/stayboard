@@ -80,12 +80,13 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'guests', label: 'Guest Experience',
-    blurb: 'Every guest touch: the inbox, calls, glitches, claims, reservations, guest orders and guidebooks.',
+    blurb: 'Every guest touch: the inbox, calls, glitches, claims, lost & found, reservations, guest orders and guidebooks.',
     views: [
       { to: '/inbox', label: 'Inbox', hint: 'Guest inbox — Guesty and Talkroute threads, who is waiting on a reply, and sentiment' },
       { to: '/welcome-calls', label: 'Calls', hint: 'Calls owed today: welcome, recovery and post-checkout' },
       { to: '/glitches', label: 'Glitches', hint: 'Guest-reported problems: fix, refund advice, vendor, history and patterns', match: ['/refunds'] },
       { to: '/claims', label: 'Claims', hint: 'Damage claims with the filing countdown per channel' },
+      { to: '/lost-found', label: 'Lost & Found', hint: 'Items found in units, read from the lost-and-found Slack channel: attach the stay, contact the guest, ship or close' },
       { to: '/reservations', label: 'Reservations', hint: 'Arriving, departing, in-house and upcoming bookings' },
       { to: '/guest-orders', label: 'Guest orders', hint: 'Pre-arrival orders, links, catalog, stock and coupons' },
       { to: '/guidebooks', label: 'Guidebooks', hint: 'Guest guidebooks by building: build, fix and push to Guesty' },

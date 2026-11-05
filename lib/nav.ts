@@ -22,13 +22,16 @@ export const MAX_PINS = 12
 // that order — nobody has to star anything to get a useful top (his earlier point: "be able to
 // arrange without having to favorite it"). Drag still reorders; the star still adds extras for
 // whoever wants more; canSee() hides whatever a role can't open.
+// + Lost & Found (Jon, 2026-11-04: "add it to tabs on main page"). Someone who already saved
+// their own pins keeps them — star Lost & Found in the sidebar to add it to a custom band.
 const DAILY_SIX = [
-  '/command',   // Command Center
-  '/schedule',  // Scheduler
-  '/reviews',   // Reviews
-  '/plan',      // Today in Ops
-  '/claims',    // Claims
-  '/glitches',  // Glitches
+  '/command',    // Command Center
+  '/schedule',   // Scheduler
+  '/reviews',    // Reviews
+  '/plan',       // Today in Ops
+  '/claims',     // Claims
+  '/glitches',   // Glitches
+  '/lost-found', // Lost & Found
 ]
 
 // Every role starts from the same six; role visibility trims what a role can't see at render.

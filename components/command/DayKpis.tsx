@@ -44,11 +44,11 @@ import type { GuestCheckRow } from '@/app/api/guest-checks/route'
 import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
 export const CALLS_URL = '/api/command/calls'
-type Key = 'team' | 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid' | 'glitches' | 'claims' | 'checklist' | 'reviews' | 'notices' | 'checks' | 'blocked' | 'channels'
+type Key = 'team' | 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid' | 'glitches' | 'claims' | 'lostfound' | 'reviews' | 'notices' | 'checks' | 'blocked' | 'channels'
 const GROUPS: { label: string; keys: Key[] }[] = [
   { label: 'Housekeeping & maintenance', keys: ['team', 'cleans', 'insp', 'maint', 'blocked'] },
   { label: 'Guests', keys: ['welcome', 'recovery', 'notices', 'checks', 'reviews'] },
-  { label: 'Office', keys: ['checklist', 'glitches', 'claims', 'unpaid', 'channels'] },
+  { label: 'Office', keys: ['lostfound', 'glitches', 'claims', 'unpaid', 'channels'] },
 ]
 const CHECKS_URL = '/api/guest-checks'
 const BLOCKED_URL = '/api/blocked-units?days=30'
@@ -60,8 +60,12 @@ const NOTICES_URL = '/api/reservation-notices'
 type ReviewT = { id: string; rating: number | null; channel: string; guest: string; created_at: string; hasReply: boolean; listing_name: string; dismissed?: boolean; removed?: boolean }
 type NoticeT = { id: string; guest_name: string; unit_no: string; propertyName?: string; arrival_date: string; sent_at: string | null; sent_by?: string | null; urgency?: string; hasRecipient?: boolean }
 const fiveStar = (r: number | null, ch: string) => r == null ? null : /booking/i.test(ch) && r > 5 ? Math.round((r / 2) * 10) / 10 : r
-const CK_URL = '/api/daily-checklist'
-type CkRowT = { id: string; title: string; by_time: string | null; owner_role: string | null; link: string | null; done: boolean; late: boolean; in_minutes: number | null; done_by: string | null }
+// LOST & FOUND REPLACES THE CHECKLIST TILE (Jon, 2026-11-05: "remove the tab checklist in today page
+// and replace with lost and found"). The standing checklist still lives at /checklist and on the
+// Admin lane; the Today strip shows found items instead — which have no stay yet, which still need
+// the guest contacted, which are with the guest, and which are past the hold window.
+const LF_URL = '/api/lost-found?status=open'
+type LfItemT = { id: string; item: string; unit: string; found_date: string; status: string; guest_name: string | null; reservation_id: string | null; storage_location: string | null; slack_permalink: string | null }
 const UNPAID_URL = '/api/unpaid'   // today → +30 days, direct / VRBO / Google only
 type Seg = { label: string; n: number; cls: string; tone: Tone; filter: string }
 type Item = { key: string; state: string; taskId?: string; who?: string; node: ReactNode; sort: number }
@@ -288,12 +292,15 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const gl = t.glitches, cl = t.claims
   const glCovered = Math.max(0, gl.open - gl.overdue - gl.noTask)
   const clOk = Math.max(0, cl.open - cl.dueSoon)
-  const ckQ = useCachedFetch<{ ok?: boolean; rows?: CkRowT[]; progress?: { total: number; done: number; late: number; pct: number }; canTick?: boolean }>(CK_URL, { ttl: 60_000 })
-  const ckRows = ckQ.data?.rows || []
-  const ckDone = ckRows.filter(r => r.done).length, ckLate = ckRows.filter(r => r.late).length
-  const ckSoon = ckRows.filter(r => !r.done && !r.late && r.in_minutes != null && r.in_minutes <= 60).length
-  const [ckBusy, setCkBusy] = useState('')
-  const tickCk = async (id: string) => { setCkBusy(id); try { await fetch(CK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'tick', itemId: id, done: true }) }); invalidateCache(CK_URL); ckQ.refresh() } finally { setCkBusy('') } }
+  const lfQ = useCachedFetch<{ ok?: boolean; today?: string; holdDays?: number; items?: LfItemT[] }>(LF_URL, { ttl: 120_000 })
+  const lfRows = lfQ.data?.items || []
+  const lfHold = lfQ.data?.holdDays || 30
+  const lfToday = lfQ.data?.today || new Date().toISOString().slice(0, 10)
+  const lfAge = (r: LfItemT) => Math.round((new Date(lfToday + 'T12:00:00').getTime() - new Date(String(r.found_date).slice(0, 10) + 'T12:00:00').getTime()) / 86400000)
+  const lfState = (r: LfItemT): 'nostay' | 'contact' | 'withguest' | 'holdover' =>
+    lfAge(r) > lfHold && !r.reservation_id ? 'holdover' : !r.reservation_id ? 'nostay' : r.status === 'held' ? 'contact' : 'withguest'
+  const lfN = { nostay: 0, contact: 0, withguest: 0, holdover: 0 }
+  for (const r of lfRows) lfN[lfState(r)]++
   const clock12 = (tm: string | null) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(tm || '')); if (!m) return ''; const h = Number(m[1]); return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'AM' : 'PM'}` }
 
   // ── reviews responded, front-desk notices sent (Jon, 2026-10-02) ──
@@ -448,9 +455,9 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       big: { value: String(cl.open), unit: 'open', tone: cl.dueSoon ? 'text-rose-700' : cl.open ? 'text-ink' : 'text-emerald-700' },
       segs: [{ label: 'on track', n: clOk, cls: 'bg-emerald-500', tone: 'emerald', filter: 'ok' }, { label: 'due soon', n: cl.dueSoon, cls: 'bg-rose-500', tone: 'rose', filter: 'due' }],
       sub: cl.open ? [cl.dueSoon ? cl.dueSoon + ' due within 3 days' : 'nothing due soon', cl.review ? cl.review + ' in review' : ''].filter(Boolean).join(' · ') : 'no open claims' },
-    { key: 'checklist', label: 'Checklist', done: ckDone, needed: ckRows.length, loading: !ckQ.data && ckQ.loading, title: 'Today’s standing checklist: done, late, due within the hour, and the rest of the day',
-      segs: [{ label: 'done', n: ckDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'late', n: ckLate, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due soon', n: ckSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: Math.max(0, ckRows.length - ckDone - ckLate - ckSoon), cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
-      sub: ckRows.length ? [ckLate ? ckLate + ' late' : '', ckSoon ? ckSoon + ' due within the hour' : '', !ckLate && !ckSoon ? (ckDone === ckRows.length ? 'all done' : 'nothing due right now') : ''].filter(Boolean).join(' · ') : 'no checklist yet' },
+    { key: 'lostfound', label: 'Lost & Found', done: lfN.withguest, needed: lfRows.length, loading: !lfQ.data && lfQ.loading, title: 'Found items still open: no stay attached yet, guest still to contact, with the guest (contacted, claimed, shipping), and past the hold window',
+      segs: [{ label: 'with guest', n: lfN.withguest, cls: 'bg-emerald-500', tone: 'emerald', filter: 'withguest' }, { label: 'no stay yet', n: lfN.nostay, cls: 'bg-rose-500', tone: 'rose', filter: 'nostay' }, { label: 'contact guest', n: lfN.contact, cls: 'bg-amber-400', tone: 'amber', filter: 'contact' }, { label: 'hold ended', n: lfN.holdover, cls: 'bg-slate-400', tone: 'slate', filter: 'holdover' }],
+      sub: lfRows.length ? [lfN.nostay ? lfN.nostay + ' with no stay' : '', lfN.contact ? lfN.contact + ' to contact' : '', lfN.holdover ? lfN.holdover + ' past the hold' : '', !lfN.nostay && !lfN.contact ? 'every item is with its guest' : ''].filter(Boolean).join(' · ') : 'nothing open' },
     { key: 'reviews', label: 'Reviews responded', done: rvDone.length, needed: rvAll.length, loading: !rvQ.data && rvQ.loading, title: 'Reviews from the last 60 days: answered publicly (or set aside) against the ones still waiting on a reply — low scores first',
       segs: [{ label: 'responded', n: rvDone.length, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: '3★ or under', n: rvLow.length, cls: 'bg-rose-500', tone: 'rose', filter: 'low' }, { label: 'waiting', n: Math.max(0, rvWait.length - rvLow.length), cls: 'bg-amber-400', tone: 'amber', filter: 'wait' }],
       sub: rvQ.error ? 'could not read the reviews' : rvAll.length ? [rvWait.length ? rvWait.length + ' waiting on a reply' : 'all answered', rvLow.length ? rvLow.length + ' at 3★ or under' : ''].filter(Boolean).join(' · ') : 'no reviews in 60 days' },
@@ -490,7 +497,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'welcome' && w) for (const r of w.rows.filter(x => x.today)) out.push({ key: r.id, state: r.done ? 'done' : r.today ? 'today' : 'open', sort: r.done ? 9 : r.today ? (r.mandatory ? 0 : 1) : 3, node: <DayCallRowView r={r} canLog={can.calls || !!calls?.canEdit} callers={calls?.callers || []} onChanged={changed} /> })
     if (open === 'glitches') for (const g of gl.rows) out.push({ key: 'gl:' + g.id, state: g.overdue ? 'overdue' : !g.hasTask ? 'notask' : 'covered', sort: g.overdue ? 0 : !g.hasTask ? 1 : 3, node: <GlitchRow g={g} canEdit={can.plan} canApprove={can.glitchApprove} onChanged={onChanged} /> })
     if (open === 'claims') for (const c of cl.rows) out.push({ key: 'cl:' + c.id, state: c.daysLeft != null && c.daysLeft <= 3 ? 'due' : 'ok', sort: c.daysLeft ?? 999, node: <Row dot={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : null} title={c.unit + (c.guest ? ' · ' + c.guest : '')} tags={<>{<Tag tone={c.daysLeft != null && c.daysLeft <= 3 ? 'rose' : 'slate'}>{c.daysLeft != null ? (c.daysLeft <= 0 ? 'due today' : c.daysLeft + 'd left') : c.stageLabel}</Tag>}{c.amount != null && <Tag>{money(c.amount)}</Tag>}</>} meta={[c.stageLabel, c.waitingOn ? 'waiting on ' + c.waitingOn : ''].filter(Boolean).join(' · ')} actions={<Link href={'/claims/' + c.id} prefetch={false} className={GHOST}>Open</Link>} /> })
-    if (open === 'checklist') for (const r of ckRows) out.push({ key: 'ck:' + r.id, state: r.done ? 'done' : r.late ? 'late' : r.in_minutes != null && r.in_minutes <= 60 ? 'soon' : 'later', sort: r.done ? 9 : r.late ? 0 : (r.in_minutes ?? 9999) / 1000 + 1, node: <Row dot={r.late ? 'rose' : null} title={r.title} tags={<>{r.late ? <Tag tone="rose">late</Tag> : r.in_minutes != null && !r.done && r.in_minutes <= 60 ? <Tag tone="amber">in {r.in_minutes}m</Tag> : null}{r.owner_role ? <Tag>{r.owner_role}</Tag> : null}{r.done ? <Tag tone="emerald">done · {String(r.done_by || '').split(/[\s@]/)[0]}</Tag> : null}</>} meta={r.by_time ? 'by ' + clock12(r.by_time) : 'anytime today'} actions={<>{r.link && !r.done && <Link href={r.link} prefetch={false} className={GHOST}>Open</Link>}{!r.done && ckQ.data?.canTick && <button onClick={() => tickCk(r.id)} disabled={ckBusy === r.id} className={DARK}>{ckBusy === r.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>}</>} /> })
+    if (open === 'lostfound') for (const r of lfRows) { const st = lfState(r); out.push({ key: 'lf:' + r.id, state: st, sort: st === 'nostay' ? 0 : st === 'contact' ? 1 : st === 'holdover' ? 2 : 5, node: <Row dot={st === 'nostay' ? 'rose' : null} title={r.item + ' · ' + r.unit} tags={<>{st === 'nostay' ? <Tag tone="rose">no stay yet</Tag> : st === 'contact' ? <Tag tone="amber">contact guest</Tag> : st === 'holdover' ? <Tag>hold ended</Tag> : <Tag tone="emerald">{r.status}</Tag>}{r.guest_name ? <Tag>{r.guest_name}</Tag> : null}</>} meta={'found ' + lfAge(r) + 'd ago' + (r.storage_location ? ' · ' + r.storage_location : '')} actions={<Link href={'/lost-found?item=' + r.id} prefetch={false} className={GHOST}>Open</Link>} /> }) }
     if (open === 'reviews') for (const r of rvAll) { const f = fiveStar(r.rating, r.channel); const low = f != null && f <= 3; const done = r.hasReply || r.dismissed; out.push({ key: 'rv:' + r.id, state: done ? 'done' : low ? 'low' : 'wait', sort: done ? 9 : low ? 0 : 2, node: <Row dot={!done && low ? 'rose' : null} title={(r.guest || 'Guest') + (r.listing_name ? ' · ' + r.listing_name : '')} tags={<>{f != null && <Tag tone={low ? 'rose' : f >= 4.5 ? 'emerald' : 'slate'}>{f}★</Tag>}<Tag>{String(r.channel || '').replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking')}</Tag>{done ? <Tag tone="emerald">{r.hasReply ? 'responded' : 'set aside'}</Tag> : <Tag tone="amber">waiting</Tag>}</>} meta={new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })} actions={!done ? <Link href="/reviews" prefetch={false} className={DARK}>Reply</Link> : null} /> }) }
     if (open === 'notices') for (const n of ntToday) out.push({ key: 'nt:' + n.id, state: n.sent_at ? 'sent' : n.urgency === 'late' ? 'late' : n.urgency === 'due' ? 'due' : 'open', sort: n.sent_at ? 9 : n.urgency === 'late' ? 0 : n.urgency === 'due' ? 1 : 3, node: <Row dot={!n.sent_at && n.urgency === 'late' ? 'rose' : null} title={n.guest_name} tags={<>{n.propertyName && <Tag tone="violet">{n.propertyName}</Tag>}{n.sent_at ? <Tag tone="emerald">sent{n.sent_by ? ' · ' + n.sent_by : ''}</Tag> : n.urgency === 'late' ? <Tag tone="rose">late</Tag> : n.urgency === 'due' ? <Tag tone="amber">due now</Tag> : null}{!n.sent_at && n.hasRecipient === false && <Tag tone="amber">no recipient</Tag>}</>} meta={'Unit ' + n.unit_no + ' · arrives ' + String(n.arrival_date).slice(5)} actions={<>{!n.sent_at && <Link href="/reservation-emails" prefetch={false} className={GHOST}>Open</Link>}{!n.sent_at && <button onClick={() => sendNotice(n.id)} disabled={ntBusy === n.id} className={DARK}>{ntBusy === n.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Sent</button>}</>} /> })
     if (open === 'checks') for (const r of gcRows) {
@@ -532,7 +539,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'recovery' && rc) for (const r of rc.rows.filter(x => x.today)) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls || !!calls?.canEdit} callers={calls?.callers || []} onChanged={changed} /> })
     return out.sort((a, b) => a.sort - b.sort)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, d, teamRead.length, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, ckQ.data, ckBusy, rvQ.data, ntQ.data, ntBusy, gcQ.data, gcBusy, gcOpen, gcByHand, blQ.data, chQ.data])
+  }, [open, d, teamRead.length, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, lfQ.data, rvQ.data, ntQ.data, ntBusy, gcQ.data, gcBusy, gcOpen, gcByHand, blQ.data, chQ.data])
 
   const tile = tiles.find(x => x.key === open) || null
   const chips = tile ? tile.segs.filter(s => s.n > 0) : []
@@ -561,7 +568,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     calls: { todayOwed: wOwedToday, todayDone: wTodayDone, recoveryOwed: Math.max(0, rcToday.length - rcTodayDone), recoveryDone: rcTodayDone, loaded: !!calls },
     notices: { toSend: ntC.toSend, late: ntC.late },
     reviews: { waiting: rvWait.length, lowWaiting: rvLow.length },
-    checklist: { total: ckRows.length, done: ckDone, late: ckLate },
+    checklist: { total: 0, done: 0, late: 0 },   // the checklist left the Today strip (2026-11-05); it no longer moves the score
     claims: { open: cl.open, dueSoon: cl.dueSoon, review: cl.review },
     unpaid: { open: uOpen, today: unpaidRows.filter(r => r.tracking.status === 'open' && (r.bucket === 'in_house' || r.bucket === 'today')).length },
   })
@@ -594,7 +601,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       { key: 'claims', n: cl.dueSoon, text: 'claims due within 3 days', done: 'no claim deadline close', tone: 'rose' },
       { key: 'glitches', n: gl.overdue, text: 'glitches overdue', done: 'no glitch overdue', tone: 'rose' },
       { key: 'glitches', n: gl.noTask, text: 'glitches with no task', done: 'every glitch has a task', tone: 'amber' },
-      { key: 'checklist', n: ckLate + ckSoon, text: 'checklist items late or due within the hour', done: 'checklist on time', tone: 'amber' },
+      { key: 'lostfound', n: lfN.nostay + lfN.contact, text: 'found items with no stay or no guest contacted', done: 'every found item is with its guest', tone: 'amber' },
     ] },
     { title: 'Background', hint: 'standing — not today’s to-do', quiet: true, lines: [
       { key: 'blocked', n: blLive, text: 'units blocked right now' + (blSoon ? ` · ${blSoon} starting this week` : ''), done: 'nothing blocked', tone: 'slate' },
@@ -675,7 +682,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
               {(can.assign || can.plan) && (open === 'cleans' || open === 'insp' || open === 'maint') && nudgeIds.length > 0 && (
                 <NudgeBtn taskIds={nudgeIds} label={'Message the team · ' + nudgePeople} className={DARK} title={'One Slack message per person, listing their open ' + (open === 'cleans' ? 'cleans' : open === 'insp' ? 'inspections' : 'jobs') + ' in view — posted in the building’s channel tagging them, or a DM when the building has no channel'} />
               )}
-              {open === 'team' ? <Link href="/schedule" className="text-[11px] font-semibold text-brand-700 hover:underline">Schedule →</Link> : open === 'checks' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'blocked' ? <Link href="/blocked" className="text-[11px] font-semibold text-brand-700 hover:underline">Blocked units →</Link> : open === 'channels' ? <Link href="/channels" className="text-[11px] font-semibold text-brand-700 hover:underline">Channels →</Link> : open === 'reviews' ? <Link href="/reviews" className="text-[11px] font-semibold text-brand-700 hover:underline">Reviews →</Link> : open === 'notices' ? <Link href="/reservation-emails" className="text-[11px] font-semibold text-brand-700 hover:underline">Front-desk notices →</Link> : open === 'glitches' ? <Link href="/glitches" className="text-[11px] font-semibold text-brand-700 hover:underline">Glitch board →</Link> : open === 'claims' ? <Link href="/claims" className="text-[11px] font-semibold text-brand-700 hover:underline">Claims →</Link> : open === 'checklist' ? <Link href="/checklist" className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link> : open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
+              {open === 'team' ? <Link href="/schedule" className="text-[11px] font-semibold text-brand-700 hover:underline">Schedule →</Link> : open === 'checks' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'blocked' ? <Link href="/blocked" className="text-[11px] font-semibold text-brand-700 hover:underline">Blocked units →</Link> : open === 'channels' ? <Link href="/channels" className="text-[11px] font-semibold text-brand-700 hover:underline">Channels →</Link> : open === 'reviews' ? <Link href="/reviews" className="text-[11px] font-semibold text-brand-700 hover:underline">Reviews →</Link> : open === 'notices' ? <Link href="/reservation-emails" className="text-[11px] font-semibold text-brand-700 hover:underline">Front-desk notices →</Link> : open === 'glitches' ? <Link href="/glitches" className="text-[11px] font-semibold text-brand-700 hover:underline">Glitch board →</Link> : open === 'claims' ? <Link href="/claims" className="text-[11px] font-semibold text-brand-700 hover:underline">Claims →</Link> : open === 'lostfound' ? <Link href="/lost-found" className="text-[11px] font-semibold text-brand-700 hover:underline">Lost &amp; Found →</Link> : open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
               <button onClick={() => setOpen(null)} className="text-muted hover:text-ink" aria-label="Close the list" title="Close"><ChevronUp size={15} /></button>
             </span>
           </div>

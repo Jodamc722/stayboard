@@ -138,7 +138,7 @@ export function opsHealth(i: HealthInputs): OpsHealth {
     if (i.unpaid.today) why.push(`${i.unpaid.today} unpaid in house / arriving, not contacted`)
     else if (i.unpaid.open) why.push(`${i.unpaid.open} unpaid not contacted`)
     if (!why.length) why.push('checklist on pace, nothing overdue')
-    dims.push({ key: 'office', label: 'Office', weight: 10, score: clamp(s), why: why.join(' · '), tile: 'checklist' })
+    dims.push({ key: 'office', label: 'Office', weight: 10, score: clamp(s), why: why.join(' · '), tile: 'claims' })
   }
 
   const wsum = dims.reduce((a, d) => a + d.weight, 0)
