@@ -177,6 +177,10 @@
       "schedule": "7,22,37,52 * * * *"
     },
     {
+      "path": "/api/cron/parking-vendor-email",
+      "schedule": "4,34 * * * *"
+    },
+    {
       "path": "/api/cron/owner-arrivals",
       "schedule": "15 12,13 * * *"
     },

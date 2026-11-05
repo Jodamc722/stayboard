@@ -239,6 +239,8 @@ export async function POST(req: NextRequest) {
     const pw = given || generatePasscode()
     const { data, error } = await db.from('share_links').update({ passcode_hash: storablePasscode(pw), passcode_hint: hintOf(pw), open: false, updated_at: now }).eq('id', id).select('*').limit(1)
     if (error) return NextResponse.json({ ok: false, error: dbErr(error) }, { status: 500 })
+    // The garage's daily email carries this link's passcode — keep it in step (lib/parking-vendor-email).
+    if (row.kind === 'parking') { const { vendorPasscodeRotated } = await import('@/lib/parking-vendor-email'); await vendorPasscodeRotated(str(row.code), pw) }
     // THE ONE TIME THE PASSCODE LEAVES THE SERVER. It is not stored; the hub shows it once.
     return NextResponse.json({ ok: true, link: shape((data || [])[0], names), passcode: pw })
   }

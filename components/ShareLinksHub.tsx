@@ -8,7 +8,7 @@
 // Generated (one-offs). A passcode is shown ONCE — at create or rotate — then only its last two
 // characters. Built for a phone first: every row wraps, every action is a tap.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, Copy, Check, Trash2, Pencil, Lock, X, ExternalLink, Sparkles, RefreshCw, CalendarClock, Search, KeyRound, Eye, EyeOff, Undo2 } from 'lucide-react'
+import { Loader2, Plus, Copy, Check, Trash2, Pencil, Lock, X, ExternalLink, Sparkles, RefreshCw, CalendarClock, Search, KeyRound, Eye, EyeOff, Undo2, Mail } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, IconBtn, Tip, Clamp, type Tone } from '@/components/lean'
 import { AUDIENCES, AUDIENCE_LABEL, CREATABLE_KINDS, KIND_LABEL, STANDING_KINDS, FIXED_CODE_KINDS, type LinkScope } from '@/lib/share-links'
 
@@ -71,6 +71,65 @@ const scopeFor = (k: string): LinkScope => {
   return { scopeType: 'portfolio', scopeIds: [], sections, showMoney: false, guestNames: false, windowDays: k === 'parking' ? 45 : 30 }
 }
 const emptyForm = (): Draft => ({ kind: 'custom-page', title: '', audience: 'internal', scope: { scopeType: 'portfolio', scopeIds: [], sections: { reservations: true }, showMoney: false, guestNames: false, windowDays: 30 }, expiresAt: null, showMoney: false })
+
+// THE GARAGE'S DAILY EMAIL (Jon, 2026-11-05) — on a parking link's row. Link + passcode every
+// morning, and again the same day when new reservations land (lib/parking-vendor-email).
+type VendorCfg = { enabled: boolean; code: string; to: string[]; hour: number; lastDaily: string | null; lastSentAt: string | null; hasPasscode: boolean; hint: string | null }
+function ParkingEmail({ code }: { code: string }) {
+  const [cfg, setCfg] = useState<VendorCfg | null>(null)
+  const [to, setTo] = useState('access@southparkmgmt.com')
+  const [pw, setPw] = useState('')
+  const [hour, setHour] = useState(8)
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    fetch('/api/share-links/parking-email', { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (!j.cfg) return
+      setCfg(j.cfg)
+      if (j.cfg.code === code) { if (j.cfg.to?.length) setTo(j.cfg.to.join(', ')); setHour(j.cfg.hour ?? 8) }
+    }).catch(() => {})
+  }, [code])
+  const mine = !!cfg && cfg.code === code
+  const on = mine && cfg!.enabled
+  const call = async (body: any, label: string) => {
+    setBusy(label); setMsg('')
+    try {
+      const r = await fetch('/api/share-links/parking-email', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Failed')
+      setCfg(j.cfg); setPw('')
+      setMsg(label === 'send' ? 'Sent.' : j.cfg.enabled ? 'Saved — sends every day.' : 'Saved — off.')
+    } catch (e: any) { setMsg(String(e?.message || e)) } finally { setBusy('') }
+  }
+  const save = (enabled: boolean) => call({ code, to, passcode: pw || undefined, hour, enabled }, 'save')
+  const fmtH = (h: number) => (h % 12 || 12) + (h < 12 ? ' am' : ' pm')
+  return (
+    <div className="rounded-xl border border-line p-3 mt-1 space-y-2">
+      <div className="flex items-center gap-2">
+        <Mail size={13} className="text-muted" />
+        <p className="text-[11px] uppercase tracking-wider font-bold text-muted flex-1">Daily email to the garage</p>
+        {on ? <Tag tone="emerald">On · {fmtH(cfg!.hour)} ET</Tag> : <Tag>Off</Tag>}
+      </div>
+      <p className="text-[11.5px] text-muted">Link + passcode every morning, and again the same day whenever a new reservation is booked.</p>
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_9rem_6rem] gap-2">
+        <input value={to} onChange={e => setTo(e.target.value)} placeholder="email@vendor.com, another@…" aria-label="Send to" className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+        <input value={pw} onChange={e => setPw(e.target.value)} type="password" autoComplete="off" aria-label="Link passcode"
+          placeholder={mine && cfg!.hasPasscode ? 'Saved ••' + (cfg!.hint || '') : 'Link passcode'} className="rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+        <select value={hour} onChange={e => setHour(Number(e.target.value))} aria-label="Send time" className="rounded-lg border border-line px-2 py-1.5 text-[12.5px] bg-white">
+          {Array.from({ length: 15 }, (_, i) => i + 6).map(h => <option key={h} value={h}>{fmtH(h)}</option>)}
+        </select>
+      </div>
+      <div className="flex items-center gap-3 text-[12px] flex-wrap">
+        <button onClick={() => save(true)} disabled={!!busy} className="rounded-lg bg-ink text-white px-3 py-1.5 font-semibold disabled:opacity-50">{busy === 'save' ? 'Saving…' : on ? 'Save' : 'Turn on'}</button>
+        {on ? <button onClick={() => save(false)} disabled={!!busy} className="text-muted hover:text-rose-600">Turn off</button> : null}
+        {on ? <button onClick={() => call({ action: 'send-now' }, 'send')} disabled={!!busy} className="text-brand-700 font-semibold hover:underline">{busy === 'send' ? 'Sending…' : 'Send today’s now'}</button> : null}
+        {mine && cfg!.lastSentAt ? <span className="text-muted">Last sent {new Date(cfg!.lastSentAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span> : null}
+        {msg ? <span className={/sent|saved/i.test(msg) ? 'text-emerald-700' : 'text-rose-700'}>{msg}</span> : null}
+      </div>
+      {cfg && cfg.enabled && cfg.code && !mine ? <p className="text-[11px] text-amber-700">Another parking link is emailed now — turning this on switches the email to this link.</p> : null}
+    </div>
+  )
+}
 
 export function ShareLinksHub() {
   const [links, setLinks] = useState<Row[] | null>(null)
@@ -295,6 +354,7 @@ export function ShareLinksHub() {
           {l.created_by ? <span>by {l.created_by}</span> : null}
         </p>
         {l.notes ? <Clamp text={l.notes} /> : null}
+        {l.kind === 'parking' && !l.generated && !l.revoked_at && rowOpen ? <ParkingEmail code={l.code} /> : null}
         <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[12px]">
           {!l.generated && !l.revoked_at ? (
             <>
