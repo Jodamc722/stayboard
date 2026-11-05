@@ -47,19 +47,22 @@ async function writeAdditionalRules(tok: string, id: string, text: string): Prom
   for (const k of HR_KEYS) if (cur.rules && cur.rules[k] !== undefined && cur.rules[k] !== null) body[k] = cur.rules[k]
   body.additionalRules = text
   const put = (b: any) => guestyFetch(`${BASE}/properties/house-rules/unit-type/${encodeURIComponent(id)}`, { method: 'PUT', headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify(b) })
-  let r = await put(cur.wrapped ? { houseRules: body } : body)
-  let t = await r.text().catch(() => '')
-  // The docs don't say whether the body is wrapped — try the other shape once on a 400.
-  if (r.status === 400) { r = await put(cur.wrapped ? body : { houseRules: body }); t = await r.text().catch(() => '') }
-  // Guesty can answer 200 and keep the old text — read it back so the row tells the truth.
-  if (r.ok) {
+  // The GET answers wrapped ({houseRules:{…}}) but a wrapped PUT is answered 200 and ignored
+  // (seen live 2026-11-05) — so try the flat body first, then the wrapped one, and read back after each.
+  const shapes = [body, { houseRules: body }]
+  let last = ''
+  for (const b of shapes) {
+    const r = await put(b)
+    const t = await r.text().catch(() => '')
+    last = `put ${r.status} ${b.houseRules ? 'wrapped' : 'flat'}: ${t.slice(0, 160)}`
+    if (r.status === 429) return { ok: false, error: 'Guesty asked us to slow down — run again in a minute.', trace: last }
+    if (!r.ok && r.status !== 400) return { ok: false, error: `House rules: Guesty ${r.status}: ${t.slice(0, 140)}`, trace: last }
+    if (!r.ok) continue
     const back = await readHouseRules(tok, id)
     const got = back.ok ? String(back.rules?.additionalRules ?? '') : null
-    const trace = `put ${r.status} wrapped=${cur.wrapped} keys=${Object.keys(cur.rules || {}).join('|').slice(0, 160)} resp=${t.slice(0, 200)}`
-    if (got !== null && got.trim() !== text.trim()) return { ok: false, error: 'Guesty accepted the house-rules write but still shows the old text.', trace }
-    return { ok: true, trace }
+    if (got === null || got.trim() === text.trim()) return { ok: true, trace: last }
   }
-  return r.ok ? { ok: true } : { ok: false, error: r.status === 429 ? 'Guesty asked us to slow down — run again in a minute.' : `House rules: Guesty ${r.status}: ${t.slice(0, 140)}` }
+  return { ok: false, error: 'Guesty accepted the house-rules write but still shows the old text.', trace: last }
 }
 
 async function token(sb: any): Promise<string | null> {
