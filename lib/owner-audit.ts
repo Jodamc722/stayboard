@@ -1250,9 +1250,13 @@ export async function buildAudit(month: string): Promise<AuditData> {
               detail: 'Resolution Center refund of $' + Math.abs(allocation.arc).toFixed(2) + ' to the guest' + (allocation.what ? ' (' + allocation.what + ')' : '') + ' — confirm it was authorized and that the owner side was adjusted.',
             })
           } else if (allocation.state === 'unposted') {
+            // ADJUSTED TO $0 = HANDLED (Jon, 2026-11-05: "if airbnb resolution is changed to zero, it
+            // has likely been updated in the folio to reflect the correct fee. Could be a refund,
+            // parking fee, extension, extra cleaning etc"). A person zeroed it, so the money was put
+            // where it belongs on the folio — the fare, the cleaning, a service, a refund. Not a review.
             flags.push({
-              type: 'resolution', severity: 'review', amount: allocation.service.reduce((a, x) => a + x.amount, 0),
-              detail: 'Resolution allocated on the folio' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ', but no matching line is on this month’s statement yet — it may sit on another month, or the mirror is behind (Refresh from Guesty).',
+              type: 'resolution', severity: 'info', amount: allocation.original || 0,
+              detail: 'Resolution' + (allocation.original ? ' of $' + allocation.original.toFixed(2) : '') + ' adjusted to $0' + (allocation.by ? ' by ' + allocation.by : '') + ' — the folio was updated to carry the right charge' + (svcTxt ? ' (' + svcTxt + ')' : '') + '.',
             })
           } else if (allocation.splitOk === false) {
             flags.push({

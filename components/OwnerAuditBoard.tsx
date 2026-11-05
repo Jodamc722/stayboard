@@ -161,7 +161,8 @@ const STAY_LABEL: Record<'owner' | 'owner_guest' | 'ff', string> = {
   owner: 'Owner stay', owner_guest: 'Owner’s guest', ff: 'Friends & family',
 }
 type TagKey = 'canceled' | 'cancel_fee' | 'inquiry' | 'declined' | 'expired' | 'owner' | 'owner_guest' | 'ff'
-type Lens = '' | 'review' | 'action' | 'done' | 'flagged' | 'fresh' | `flag:${FlagType}` | `tag:${TagKey}`
+type Lens = '' | 'action' | 'fresh' | `flag:${FlagType}` | `tag:${TagKey}`
+type Scope = 'review' | 'done' | 'all'
 const TAG_CHIPS: [TagKey, string][] = [['canceled', 'Canceled'], ['cancel_fee', 'Cancellation fee'], ['inquiry', 'Inquiry'], ['declined', 'Declined'], ['expired', 'Expired'], ['owner', 'Owner stay'], ['owner_guest', 'Owner’s guest'], ['ff', 'Friends & family']]
 const STATUS_LABEL: Record<Status, string> = {
   review: 'Needs review', action: 'Action needed', done: 'Approved', clear: 'No issues found',
@@ -331,15 +332,17 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [stmtOwner, setStmtOwner] = useState('')          // '' = overview grid
 
   const [q, setQ] = useState('')
-  // ONE LENS AT A TIME (Jon, 2026-11-04: "if a filter has a tag it needs review and should auto
-  // populate without having to select action needed or approved… We should not have to click
-  // multiple filters. One at a time, or all flagged"). Every chip is a complete view on its own:
-  //   Needs review   rows waiting on a person (review + action)
-  //   Approved       pre-approved by Lighthouse (nothing found) + approved by a team member
-  //   Flagged        every row carrying a real flag, whatever its status
-  //   Posted this week  rows whose line items moved in the last 7 days — the Monday-morning lens
-  //   a flag type / a booking kind   every row with that flag or tag, open or approved
-  // Clicking a chip replaces the previous one. Channel, owner and search narrow whichever lens is on.
+  // WHAT THE BOARD IS FOR (Jon, 2026-11-05: "the tags are for only items that need to be reviewed.
+  // Completed should live in approved… when selected can open up filters in separate view if you
+  // want to audit. But it should default to needs review"). Two layers:
+  //   scope  Needs review (the default — open rows a person still has to approve, update or fix)
+  //          · Approved (Lighthouse pre-approved + approved by a team member — the audit view)
+  //          · Everything (the whole statement)
+  //   lens   one tag at a time — a flag type, a booking kind, Action needed or Posted this week —
+  //          counted and applied INSIDE the scope, so an approved row never shows up in a tag
+  //          while you are working the review pile.
+  // Channel, owner and search narrow whichever scope and tag are on.
+  const [scope, setScope] = useState<Scope>('review')
   const [lens, setLens] = useState<Lens>('')
   const [fOwner, setFOwner] = useState('')
   const [fSource, setFSource] = useState('')                                 // channel filter (label)
@@ -448,7 +451,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   // filter: an owner collapsed by hand stayed collapsed when a chip was clicked, and the Approved /
   // No-issues sections are shut by default, so the Approved chip opened every owner onto a shut
   // section with the count on it and no rows. Any change to the filters clears those overrides.
-  const filterKey = [q.trim(), lens, fOwner, fSource].join('|')
+  const filterKey = [q.trim(), scope, lens, fOwner, fSource].join('|')
   useEffect(() => { setExpandedOwners({}); setOpenSections({}); setShowAllRows({}) }, [filterKey])
 
   const unlock = async () => {
@@ -781,18 +784,19 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const weekAgo = useMemo(() => new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10), [])
   const needle = q.trim().toLowerCase()
   const tagPass = (it: Item, t: TagKey) => t === 'owner' || t === 'owner_guest' || t === 'ff' ? it.stayTag === t : t === 'cancel_fee' ? isCancelFee(it) : it.statusTag === t
+  const scopePass = useCallback((it: Item, S: Scope): boolean =>
+    S === 'review' ? (it.status === 'review' || it.status === 'action')
+      : S === 'done' ? (it.status === 'done' || it.status === 'clear') : true, [])
   const lensPass = useCallback((it: Item, L: Lens): boolean => {
     if (!L) return true
-    if (L === 'review') return it.status === 'review' || it.status === 'action'
     if (L === 'action') return it.status === 'action'
-    if (L === 'done') return it.status === 'done' || it.status === 'clear'
-    if (L === 'flagged') return it.flags.some(f => f.severity !== 'info')
     if (L === 'fresh') return !!it.lastPosted && it.lastPosted >= weekAgo
     if (L.startsWith('flag:')) { const t = L.slice(5); return it.flags.some(f => f.type === t) }
     if (L.startsWith('tag:')) return tagPass(it, L.slice(4) as TagKey)
     return true
   }, [weekAgo])
-  const passes = useCallback((it: Item, skip: '' | 'lens' | 'owner' | 'source' | 'q' = '') => {
+  const passes = useCallback((it: Item, skip: '' | 'scope' | 'lens' | 'owner' | 'source' | 'q' = '') => {
+    if (skip !== 'scope' && skip !== 'lens' && !scopePass(it, scope)) return false
     if (skip !== 'lens' && !lensPass(it, lens)) return false
     if (skip !== 'owner' && fOwner && it.ownerId !== fOwner) return false
     if (skip !== 'source' && fSource && sourceLabel(it.source) !== fSource) return false
@@ -805,20 +809,22 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (hay.indexOf(needle) < 0) return false
     }
     return true
-  }, [lens, lensPass, fOwner, fSource, needle, ownerName])
+  }, [scope, scopePass, lens, lensPass, fOwner, fSource, needle, ownerName])
   const filtered = useMemo(() => (data ? data.items.filter(it => passes(it)) : [] as Item[]), [data, passes])
   // What each chip would return, given the channel / owner / search — the number printed on it.
   const facet = useMemo(() => {
     const items = data?.items || []
-    const lensN: Record<string, number> = {}, src: Record<string, number> = {}, owner: Record<string, number> = {}
-    const lenses: Lens[] = ['review', 'action', 'done', 'flagged', 'fresh', ...(Object.keys(FLAG_LABEL) as FlagType[]).map(f => ('flag:' + f) as Lens), ...TAG_CHIPS.map(([k]) => ('tag:' + k) as Lens)]
+    const lensN: Record<string, number> = {}, scopeN: Record<string, number> = {}, src: Record<string, number> = {}, owner: Record<string, number> = {}
+    const lenses: Lens[] = ['action', 'fresh', ...(Object.keys(FLAG_LABEL) as FlagType[]).map(f => ('flag:' + f) as Lens), ...TAG_CHIPS.map(([k]) => ('tag:' + k) as Lens)]
     for (const it of items) {
-      if (passes(it, 'lens')) for (const L of lenses) if (lensPass(it, L)) lensN[L] = (lensN[L] || 0) + 1
+      // Tag counts live inside the current scope: in Needs review, an approved row counts nowhere.
+      if (passes(it, 'lens') && scopePass(it, scope)) for (const L of lenses) if (lensPass(it, L)) lensN[L] = (lensN[L] || 0) + 1
+      if (passes(it, 'scope')) for (const S of ['review', 'done', 'all'] as Scope[]) if (scopePass(it, S)) scopeN[S] = (scopeN[S] || 0) + 1
       if (passes(it, 'source')) { const l = sourceLabel(it.source); if (l) src[l] = (src[l] || 0) + 1 }
       if (passes(it, 'owner')) owner[it.ownerId] = (owner[it.ownerId] || 0) + 1
     }
-    return { lens: lensN, src, owner }
-  }, [data, passes, lensPass])
+    return { lens: lensN, scope: scopeN, src, owner }
+  }, [data, passes, lensPass, scopePass, scope])
 
   // Tag + channel counts for the filter chips.
   const tagCounts = useMemo(() => {
@@ -1111,18 +1117,18 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 resolution on it was handled. */}
             {it.allocation && (() => {
               const a = it.allocation!
-              const cls = a.state === 'allocated' && a.splitOk !== false ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : a.state === 'refund' ? 'bg-rose-50 text-rose-800 ring-rose-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
+              const cls = (a.state === 'allocated' && a.splitOk !== false) || a.state === 'unposted' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : a.state === 'refund' ? 'bg-rose-50 text-rose-800 ring-rose-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
               const svc = a.service.map(x => x.title + ' ' + fmt(x.amount)).join(', ')
               return (
                 <div className={'max-w-2xl mb-2 rounded-xl ring-1 ring-inset px-3 py-2 text-[12px] ' + cls}>
                   <div className="font-semibold">
-                    {a.state === 'allocated' ? (a.splitOk === false ? 'Airbnb resolution allocated — split is off' : 'Airbnb resolution allocated') : a.state === 'unposted' ? 'Airbnb resolution allocated on the folio — not on this statement yet' : a.state === 'refund' ? 'Airbnb resolution — refund to the guest' : 'Airbnb resolution not allocated'}
+                    {a.state === 'allocated' ? (a.splitOk === false ? 'Airbnb resolution allocated — split is off' : 'Airbnb resolution allocated') : a.state === 'unposted' ? 'Airbnb resolution handled on the folio' : a.state === 'refund' ? 'Airbnb resolution — refund to the guest' : 'Airbnb resolution not allocated'}
                     {a.what ? <span className="font-normal opacity-80"> · {a.what}</span> : null}
                   </div>
                   <div className="mt-0.5">
                     {a.state === 'unallocated' && <>Resolution Center item still carries <b className="tabular-nums">{fmt(a.arc)}</b>. Adjust it to $0 and add the money as the service it paid for, so it splits to the owner by the management fee.</>}
                     {a.state === 'refund' && <>Resolution Center item carries <b className="tabular-nums">{fmt(a.arc)}</b> going back to the guest — confirm it was authorized and the owner side was adjusted.</>}
-                    {a.state === 'unposted' && <>Adjusted to $0{a.by ? ' by ' + a.by : ''}{svc ? ' and re-added as ' + svc : ' but no service item was added'}. No matching line on this month’s statement — it may sit on another month, or the mirror is behind: Refresh from Guesty below.</>}
+                    {a.state === 'unposted' && <>{a.original ? <>Was <b className="tabular-nums">{fmt(a.original)}</b>, adjusted</> : 'Adjusted'} to $0{a.by ? ' by ' + a.by : ''} — the folio carries the right charge{svc ? ' (' + svc + ')' : ' (refund, parking, extension, extra cleaning…)'}. Nothing to do.</>}
                     {a.state === 'allocated' && <>Adjusted to $0{a.by ? ' by ' + a.by : ''} and re-added as {svc} → owner <b className="tabular-nums">{fmt(a.ownerShare || 0)}</b>, Stay <b className="tabular-nums">{fmt(a.pmcShare || 0)}</b>{a.splitOk === false && a.expectedOwner != null ? <> — the split says the owner should get <b className="tabular-nums">{fmt(a.expectedOwner)}</b></> : a.splitOk ? ' — split checks out' : ''}.</>}
                   </div>
                 </div>
@@ -1934,29 +1940,29 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* ═══ WORKLIST ═══ */}
           {view === 'work' && (
             <>
-              {/* filters — one lens at a time; every chip is a complete view (see `lens`). */}
+              {/* filters — the scope first (Needs review by default), then one tag inside it. */}
               <div className="lh-actions flex flex-wrap items-center gap-2">
-                {(() => {
-                  const chip = (L: Lens, label: React.ReactNode, cls: string, title?: string) => (
-                    <button key={L} onClick={() => setLens(lens === L ? '' : L)} title={title}
-                      className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + cls + (lens === L ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
-                      {label} {facet.lens[L] || 0}
+                <div className="inline-flex rounded-full ring-1 ring-inset ring-line bg-white p-0.5">
+                  {([['review', 'Needs review', 'Open rows a person still has to approve, update or fix'], ['done', 'Approved', 'Pre-approved by Lighthouse (nothing found) and approved by a team member — open this to audit'], ['all', 'Everything', 'Every row on the statements']] as [Scope, string, string][]).map(([S, label, title]) => (
+                    <button key={S} onClick={() => { setScope(S); setLens('') }} title={title}
+                      className={'text-xs font-semibold px-3 py-1 rounded-full transition ' + (scope === S ? (S === 'review' ? 'bg-amber-100 text-amber-800' : S === 'done' ? 'bg-emerald-100 text-emerald-800' : 'bg-ink text-white') : 'text-muted hover:text-ink')}>
+                      {label} {facet.scope[S] || 0}
                     </button>
-                  )
-                  return (
-                    <>
-                      {chip('review', 'Needs review', STATUS_CLS.review, 'Everything waiting on a person — flagged rows nobody has approved yet')}
-                      {(facet.lens.action || lens === 'action') ? chip('action', 'Action needed', STATUS_CLS.action, 'Rows a reviewer marked as needing a fix in Guesty') : null}
-                      {chip('done', 'Approved', STATUS_CLS.done, 'Pre-approved by Lighthouse (nothing found) and approved by a team member')}
-                      <span className="w-px h-5 bg-line mx-1" />
-                      {chip('flagged', <><ShieldAlert size={11} className="inline -mt-0.5 mr-1" />Flagged</>, 'bg-rose-50 text-rose-700 ring-rose-200', 'Every row carrying a real flag, open or approved')}
-                      {chip('fresh', <><RefreshCw size={11} className="inline -mt-0.5 mr-1" />Posted this week</>, 'bg-teal-50 text-teal-700 ring-teal-200', 'Rows with line items posted in the last 7 days — what changed since last week')}
-                    </>
-                  )
-                })()}
+                  ))}
+                </div>
+                {(facet.lens.action || lens === 'action') ? (
+                  <button onClick={() => setLens(lens === 'action' ? '' : 'action')} title="Rows a reviewer marked as needing a fix in Guesty"
+                    className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + STATUS_CLS.action + (lens === 'action' ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
+                    Action needed {facet.lens.action || 0}
+                  </button>
+                ) : null}
+                <button onClick={() => setLens(lens === 'fresh' ? '' : 'fresh')} title="Rows with line items posted in the last 7 days — what changed since last week"
+                  className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-teal-50 text-teal-700 ring-teal-200 transition' + (lens === 'fresh' ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
+                  <RefreshCw size={11} className="inline -mt-0.5 mr-1" />Posted this week {facet.lens.fresh || 0}
+                </button>
               </div>
-              {/* flag types and booking kinds — one click shows every row with that tag, whatever its
-                  status, bucketed by status underneath. Chips with nothing behind them stay hidden. */}
+              {/* flag types and booking kinds — counted inside the scope above. In Needs review they
+                  are only the rows still waiting; open Approved to audit by the same tags. */}
               <div className="lh-actions flex flex-wrap items-center gap-2">
                 {(Object.keys(FLAG_LABEL) as FlagType[]).filter(f => facet.lens['flag:' + f] || lens === 'flag:' + f).map(f => (
                   <button key={f} onClick={() => setLens(lens === 'flag:' + f ? '' : ('flag:' + f) as Lens)}
@@ -1996,11 +2002,11 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, code…"
                     className="text-[12px] border border-line rounded-lg pl-7 pr-2.5 py-1 w-full sm:w-48 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200" />
                 </div>
-                {(lens || fSource || fOwner || q) && (
-                  <button onClick={() => { setLens(''); setFSource(''); setFOwner(''); setQ('') }}
+                {(lens || fSource || fOwner || q || scope !== 'review') && (
+                  <button onClick={() => { setScope('review'); setLens(''); setFSource(''); setFOwner(''); setQ('') }}
                     className="text-[11px] font-medium text-muted hover:text-ink underline">Clear all</button>
                 )}
-                {(lens || fSource || fOwner || q) && (
+                {(lens || fSource || fOwner || q || scope !== 'all') && (
                   <span className="text-[11.5px] text-muted tabular-nums" title="What the filters return — every row is shown, in every owner, with the sections open">
                     {filtered.length} row{filtered.length === 1 ? '' : 's'} · {Object.keys(byOwner).length} owner{Object.keys(byOwner).length === 1 ? '' : 's'} · net {fmt(filtered.reduce((a, it) => a + it.net, 0))}
                   </span>
@@ -2011,7 +2017,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   and open rows first, with the full statement one click further */}
               {data.owners.filter(o => byOwner[o.ownerId] && byOwner[o.ownerId].length).map(o => {
                 const items = byOwner[o.ownerId]
-                const filterActive = !!(q.trim() || lens || fOwner || fSource)
+                // Needs review opens straight onto its rows; Approved and Everything stay folded to the
+                // owner totals until a tag, owner or search narrows them (1,250 open rows is not a view).
+                const filterActive = !!(q.trim() || lens || fOwner || fSource || scope === 'review')
                 const isOpen = expandedOwners[o.ownerId] !== undefined ? expandedOwners[o.ownerId] : filterActive
                 const s = stats[o.ownerId] || { notes: 0, comments: 0 }
                 const attention = items.filter(it => it.status !== 'done' || it.flags.some(f => f.severity !== 'info') || it.note || it.comments.length > 0)
