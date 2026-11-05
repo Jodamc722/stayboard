@@ -69,6 +69,8 @@ export default function LostFoundPage() {
   useEffect(() => { setLoading(true); load() }, [load])
   // Opened from the Today strip's Lost & Found tile (?item=<id>): that item opens and scrolls into view.
   const [focusId] = useState(() => { try { return new URLSearchParams(window.location.search).get('item') || '' } catch { return '' } })
+  // Opened from the Today tile's "Log a find" (?new=1): the form is already open.
+  useEffect(() => { try { if (new URLSearchParams(window.location.search).get('new') === '1') setAdding(true) } catch { /* fine */ } }, [])
   useEffect(() => { if (focusId && items.some(i => i.id === focusId)) document.getElementById('lf-' + focusId)?.scrollIntoView({ block: 'center' }) }, [focusId, items])
   useEffect(() => {
     fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json()).then(j => {
