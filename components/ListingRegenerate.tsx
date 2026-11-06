@@ -1,4 +1,5 @@
 'use client'
+import { call, verifyPush, type RegenResult } from '@/lib/regenerate-client'
 // REGENERATE THE WHOLE LISTING, ONE PASS (Jon, 2026-11-05: "a full regenerate option — gives you the
 // option to redo all title, description, all sections, captions … keep same content but redo it all
 // at once … mirror, enhance, reorganize photos, reselect first 5, redo captions … add photos of
@@ -24,13 +25,9 @@ type Borrow = { url: string; thumb: string; caption: string; amenity: string; la
 type Opts = { title: boolean; sections: boolean; order: boolean; captions: boolean; enhance: boolean; mirror: boolean; amenities: boolean }
 type Step = { key: string; label: string; state: 'wait' | 'run' | 'done' | 'fail' | 'skip'; note?: string }
 
-async function j(url: string, body?: any): Promise<any> {
-  const r = await fetch(url, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined)
-  const t = await r.text()
-  let d: any = null; try { d = JSON.parse(t) } catch { d = { error: r.status === 504 ? 'That step took longer than the server allows — run it again.' : 'Server problem (' + r.status + ').' } }
-  if (!r.ok || d?.error) throw new Error(d?.error || 'HTTP ' + r.status)
-  return d
-}
+// Every step goes through the shared caller: a rate limit or overload waits and retries instead of
+// failing the step (Jon, 2026-11-06: "says too many requests").
+const j = (url: string, body?: any) => call(url, body)
 
 export function ListingRegenerate({ listingId, name }: { listingId: string; name: string }) {
   const [open, setOpen] = useState(false)
@@ -41,7 +38,8 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   // results
-  const [copy, setCopy] = useState<{ current: Content; proposed: Content; titleMax: number } | null>(null)
+  const [copy, setCopy] = useState<{ current: Content; proposed: Content; titleMax: number; factIssues: string[] } | null>(null)
+  const [synced, setSynced] = useState<{ ok: boolean; missing: string[] } | null>(null)
   const [title, setTitle] = useState('')
   const [base, setBase] = useState<Pic[]>([])
   const [order, setOrder] = useState<string[] | null>(null)
@@ -71,6 +69,7 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
     setSteps(plan)
     // The live photos, always — the base every photo step works from.
     let pics: Pic[] = []
+    let factHold = false
     try {
       const lib = await j('/api/photos/library?listing=' + encodeURIComponent(listingId))
       pics = (lib.photos || []).map((p: any) => ({ id: String(p.id), url: String(p.url), thumb: String(p.thumb || p.url), caption: String(p.caption || '') }))
@@ -83,8 +82,10 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
       try {
         const instruction = 'REGENERATE THIS LISTING: rewrite the title and all six sections with fresh wording and a fresh structure. KEEP THE SAME CONTENT — the same facts, features, rules and details already in the listing, nothing added that is not true of this unit, nothing important dropped. Keep the house voice exactly as specified.' + (steer.trim() ? ' Also make sure to: ' + steer.trim() : '')
         const d = await j('/api/optimize-listing', { listingId, instruction })
-        setCopy({ current: d.current, proposed: d.proposed, titleMax: d.titleMax || 50 }); setTitle(String(d.proposed?.title || ''))
-        mark('copy', 'done')
+        const fi: string[] = Array.isArray(d.factIssues) ? d.factIssues : []
+        factHold = fi.length > 0
+        setCopy({ current: d.current, proposed: d.proposed, titleMax: d.titleMax || 50, factIssues: fi }); setTitle(String(d.proposed?.title || ''))
+        mark('copy', fi.length ? 'fail' : 'done', fi.length ? 'held back — the new copy disagrees with the listing (see below)' : undefined)
       } catch (e: any) { mark('copy', 'fail', String(e?.message || e)) }
     }
     // 2 — photos: order, first five, captions.
@@ -132,7 +133,9 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
         mark('amenities', 'done', b.length ? b.length + ' found at ' + d.building : (d.note || 'nothing missing — this listing already shows the property’s amenities'))
       } catch (e: any) { mark('amenities', 'fail', String(e?.message || e)) }
     }
-    setUse({ title: true, sections: true, order: true, captions: true, images: true })
+    // Copy that disagrees with the listing's own numbers starts unticked; the person decides.
+    setUse({ title: !factHold, sections: !factHold, order: true, captions: true, images: true })
+    setSynced(null)
     setRunning(false)
   }
 
@@ -148,18 +151,20 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
   async function pushAll() {
     if (!anything || pushing) return
     if (copy && use.title && titleChanged && title.trim().length > copy.titleMax) { setErr('The new title is over the ' + copy.titleMax + '-character limit — trim it first.'); return }
+    if (copy && use.sections && opts.sections && copy.proposed.summary.trim().length > 500 && sectionsChanged.some(x => x.key === 'summary')) { setErr('The summary is ' + copy.proposed.summary.trim().length + ' characters — Airbnb allows 500. Trim it first.'); return }
     const parts = [
       titleChanged && use.title ? 'the title' : '', sectionsChanged.length && opts.sections && use.sections ? sectionsChanged.length + ' description section' + (sectionsChanged.length === 1 ? '' : 's') : '',
       use.order && order ? 'the photo order (new first five)' : '', use.captions && capChanged.length ? capChanged.length + ' captions' : '',
       use.images && Object.keys(imgs).length ? Object.keys(imgs).length + ' ' + imgLabel.toLowerCase() + ' photos' : '', borrowed.length ? borrowed.length + ' amenity photo' + (borrowed.length === 1 ? '' : 's') + ' from the same property' : '',
     ].filter(Boolean)
     if (!window.confirm('Push to Guesty for "' + name + '": ' + parts.join(', ') + '? This updates the live listing on every connected channel.')) return
-    setPushing(true); setErr(''); setMsg('')
+    setPushing(true); setErr(''); setMsg(''); setSynced(null)
     const done: string[] = []
+    const pushedSections: string[] = []
     try {
       if (copy && ((titleChanged && use.title) || (sectionsChanged.length && opts.sections && use.sections))) {
         const sections: Record<string, string> = {}
-        if (opts.sections && use.sections) for (const s of sectionsChanged) sections[s.key] = copy.proposed[s.key].trim()
+        if (opts.sections && use.sections) for (const s of sectionsChanged) { sections[s.key] = copy.proposed[s.key].trim(); pushedSections.push(s.key) }
         await j('/api/listing-content', { listingId, title: titleChanged && use.title ? title.trim() : undefined, publicDescription: sections, recreate: true })
         done.push('copy')
       }
@@ -174,9 +179,16 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
         await j('/api/photo-order', body)
         done.push('photos')
       }
-      setMsg('Pushed to Guesty (' + done.join(' + ') + '). Airbnb and the site update within hours, Vrbo in 24–48h. Refreshing…')
-      try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
-      setTimeout(() => { try { window.location.reload() } catch { /* fine */ } }, 2500)
+      // DID IT SYNC? Read Guesty back and say so — and keep everything here so it can be pushed again.
+      setMsg('Pushed to Guesty (' + done.join(' + ') + '). Checking that Guesty has it…')
+      await new Promise(r => setTimeout(r, 6000))
+      const r: RegenResult = { listingId, base, copy: copy ? { current: copy.current, proposed: { ...copy.proposed, title: title.trim() }, titleMax: copy.titleMax, factIssues: [], warnings: [] } : null, order, caps, imgs, imgLabel, borrow, errors: [] }
+      const c = await verifyPush(r, { titleChanged: !!(titleChanged && use.title), title: title.trim(), sections: pushedSections } as any, done)
+      setSynced({ ok: c.synced, missing: c.missing })
+      if (c.synced) {
+        setMsg('✓ Pushed and synced — Guesty has the new ' + done.join(' and ') + '. Airbnb and the site update within hours, Vrbo in 24–48h.')
+        try { window.dispatchEvent(new CustomEvent('stay:score-refresh')) } catch { /* no-op */ }
+      } else { setMsg(''); setErr('Pushed, but Guesty does not show: ' + c.missing.join(', ') + '. Use Push again.') }
     } catch (e: any) { setErr((done.length ? 'Pushed ' + done.join(' + ') + ', then: ' : '') + String(e?.message || e)) }
     setPushing(false)
   }
@@ -250,6 +262,13 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
 
           {!running && steps.length > 0 && (
             <div className="space-y-3">
+              {copy?.factIssues?.length ? (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-800">
+                  <p className="font-semibold">The new copy disagrees with this listing, so the title and sections start unticked:</p>
+                  {copy.factIssues.map((f, i) => <p key={i}>• {f}</p>)}
+                  <p className="mt-1">Fix the wording below (or run again), then tick them to push.</p>
+                </div>
+              ) : null}
               {copy && opts.title && (
                 <div className="rounded-lg border border-line p-3">
                   <div className="flex items-center gap-2 mb-1.5"><Use k="title" label="New title" /><span className="text-[11px] text-muted ml-auto tabular-nums">{title.trim().length}/{copy.titleMax}</span></div>
@@ -265,7 +284,7 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
                     <div className="mt-2 space-y-2">
                       {sectionsChanged.map(s => (
                         <div key={s.key}>
-                          <p className="text-[11px] font-bold uppercase tracking-wide text-muted">{s.label}</p>
+                          <p className="text-[11px] font-bold uppercase tracking-wide text-muted flex">{s.label}{s.key === 'summary' ? <span className={'ml-auto normal-case tracking-normal font-semibold tabular-nums ' + (copy.proposed.summary.trim().length > 500 ? 'text-rose-700' : 'text-muted')}>{copy.proposed.summary.trim().length}/500</span> : null}</p>
                           <textarea value={copy.proposed[s.key]} onChange={e => setCopy(c => c ? { ...c, proposed: { ...c.proposed, [s.key]: e.target.value } } : c)} rows={4} className="w-full rounded-md border border-line px-2 py-1 text-[12.5px]" />
                         </div>
                       ))}
@@ -314,7 +333,7 @@ export function ListingRegenerate({ listingId, name }: { listingId: string; name
               )}
               <div className="flex items-center gap-2">
                 <button onClick={pushAll} disabled={!anything || pushing} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3.5 py-1.5 text-[13px] font-bold disabled:opacity-40">
-                  {pushing ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />} Push everything
+                  {pushing ? <Loader2 size={13} className="animate-spin" /> : <UploadCloud size={13} />} {synced && !synced.ok ? 'Push again' : 'Push everything'}
                 </button>
                 {!anything && <span className="text-[11.5px] text-muted">Nothing to push yet.</span>}
               </div>

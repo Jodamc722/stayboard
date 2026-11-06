@@ -3,6 +3,8 @@
 // functions, so the listing page and the property page's bulk run do exactly the same thing.
 // Browser-side: each step is one of the existing routes; nothing is written until push().
 
+import { fitToCap } from './listing-fit'
+
 export type RegenOpts = { title: boolean; sections: boolean; order: boolean; captions: boolean; enhance: boolean; mirror: boolean; amenities: boolean }
 export type Content = { title: string; summary: string; space: string; access: string; neighborhood: string; transit: string; notes: string }
 export const SECTION_KEYS: (keyof Content)[] = ['summary', 'space', 'access', 'neighborhood', 'transit', 'notes']
@@ -11,7 +13,7 @@ export type Borrow = { url: string; thumb: string; caption: string; amenity: str
 export type RegenResult = {
   listingId: string
   base: Pic[]
-  copy: { current: Content; proposed: Content; titleMax: number } | null
+  copy: { current: Content; proposed: Content; titleMax: number; factIssues: string[]; warnings: string[] } | null
   order: string[] | null
   caps: Record<string, string>
   imgs: Record<string, string>
@@ -20,12 +22,30 @@ export type RegenResult = {
   errors: string[]
 }
 
-async function call(url: string, body?: any): Promise<any> {
-  const r = await fetch(url, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined)
-  const t = await r.text()
-  let d: any = null; try { d = JSON.parse(t) } catch { d = { error: r.status === 504 ? 'took longer than the server allows — run it again' : 'server problem (' + r.status + ')' } }
-  if (!r.ok || d?.error) throw new Error(d?.error || 'HTTP ' + r.status)
-  return d
+// A STEP THAT HITS A RATE LIMIT WAITS AND TRIES AGAIN (Jon, 2026-11-06: "says too many requests").
+// Anthropic, the image service and Guesty all answer "slow down" when a run sends many calls close
+// together; that used to fail the step outright. Now a rate limit, an overload, a gateway error or a
+// timeout is retried up to three more times (6s, 15s, 30s). A real refusal (a rule, a missing unit)
+// is not retried — it is reported as it is.
+const TRANSIENT = /too many|rate.?limit|429|overload|529|503|502|504|timed out|took longer|temporar|try again|fetch failed|network|ECONN/i
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+export async function call(url: string, body?: any, method?: string): Promise<any> {
+  let last: Error | null = null
+  for (const wait of [0, 6000, 15000, 30000]) {
+    if (wait) await sleep(wait)
+    try {
+      const r = await fetch(url, body ? { method: method || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : undefined)
+      const t = await r.text()
+      let d: any = null; try { d = JSON.parse(t) } catch { d = { error: r.status === 504 ? 'took longer than the server allows' : 'server problem (' + r.status + ')' } }
+      if (r.ok && !d?.error) return d
+      last = new Error(d?.error || 'HTTP ' + r.status)
+      if (!(TRANSIENT.test(String(d?.error || '')) || [429, 502, 503, 504, 529].includes(r.status))) throw last
+    } catch (e: any) {
+      last = e instanceof Error ? e : new Error(String(e))
+      if (!TRANSIENT.test(last.message)) throw last
+    }
+  }
+  throw new Error((last?.message || 'failed') + ' — still busy after 3 retries; run it again in a minute')
 }
 
 export const REGEN_INSTRUCTION = (steer: string) =>
@@ -41,7 +61,7 @@ export async function runRegenerate(listingId: string, opts: RegenOpts, steer: s
     onStep('copy')
     try {
       const d = await call('/api/optimize-listing', { listingId, instruction: REGEN_INSTRUCTION(steer) })
-      res.copy = { current: d.current, proposed: d.proposed, titleMax: d.titleMax || 50 }
+      res.copy = { current: d.current, proposed: d.proposed, titleMax: d.titleMax || 50, factIssues: Array.isArray(d.factIssues) ? d.factIssues : [], warnings: Array.isArray(d.warnings) ? d.warnings : [] }
     } catch (e: any) { res.errors.push('copy: ' + String(e?.message || e)) }
   }
   if (opts.order || opts.captions) {
@@ -95,12 +115,13 @@ export function regenDiff(r: RegenResult, opts: RegenOpts, use: { copy: boolean;
 }
 
 /** Write one listing's regenerate to Guesty: copy, then photos. Returns what went. */
-export async function pushRegenerate(r: RegenResult, diff: ReturnType<typeof regenDiff>): Promise<string[]> {
+export async function pushRegenerate(r: RegenResult, diff: ReturnType<typeof regenDiff>, opts: { allowFactIssues?: boolean } = {}): Promise<string[]> {
   const done: string[] = []
   if (r.copy && (diff.titleChanged || diff.sections.length)) {
+    if (r.copy.factIssues?.length && !opts.allowFactIssues) throw new Error('copy held back — ' + r.copy.factIssues[0])
     if (diff.titleChanged && diff.title.length > r.copy.titleMax) throw new Error('title over ' + r.copy.titleMax + ' characters')
     const sections: Record<string, string> = {}
-    for (const k of diff.sections) sections[k] = r.copy.proposed[k].trim()
+    for (const k of diff.sections) sections[k] = k === 'summary' ? fitToCap(r.copy.proposed[k], 500).text : r.copy.proposed[k].trim()
     await call('/api/listing-content', { listingId: r.listingId, title: diff.titleChanged ? diff.title : undefined, publicDescription: sections, recreate: true })
     done.push('copy')
   }
@@ -115,4 +136,32 @@ export async function pushRegenerate(r: RegenResult, diff: ReturnType<typeof reg
     done.push('photos')
   }
   return done
+}
+
+
+// ── DID IT SYNC? (Jon, 2026-11-06: "have ability to push again if changes did not sync") ──────────
+// After a push, read Guesty back: the title and every pushed section must be there word for word,
+// and the photos must be in the order sent. Anything that is not is listed, and Push again resends.
+const same = (a: string, b: string) => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
+export type SyncCheck = { synced: boolean; missing: string[] }
+export async function verifyPush(r: RegenResult, diff: ReturnType<typeof regenDiff>, done: string[]): Promise<SyncCheck> {
+  const missing: string[] = []
+  if (done.includes('copy') && r.copy) {
+    try {
+      const live = await call('/api/listing-content?listingId=' + encodeURIComponent(r.listingId))
+      if (diff.titleChanged && !same(live.title || '', diff.title)) missing.push('title')
+      for (const k of diff.sections) {
+        const sent = k === 'summary' ? fitToCap(r.copy.proposed[k], 500).text : r.copy.proposed[k]
+        if (!same(live.sections?.[k] || '', sent)) missing.push(k)
+      }
+    } catch (e: any) { missing.push('copy (could not read Guesty: ' + String(e?.message || e) + ')') }
+  }
+  if (done.includes('photos')) {
+    try {
+      const c = await call('/api/photos/guesty-check?listing=' + encodeURIComponent(r.listingId))
+      const row = (c.results || [])[0]
+      if (row && (row.orderDiffers || row.onlyInLighthouse > 0 || row.captionDiffs > 0)) missing.push('photos' + (row.orderDiffers ? ' (order)' : '') + (row.captionDiffs ? ` (${row.captionDiffs} captions)` : ''))
+    } catch (e: any) { missing.push('photos (could not read Guesty: ' + String(e?.message || e) + ')') }
+  }
+  return { synced: missing.length === 0, missing }
 }

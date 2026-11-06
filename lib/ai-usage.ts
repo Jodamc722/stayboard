@@ -194,7 +194,17 @@ export async function aiFetch(task: string, init: RequestInit): Promise<Response
     return new Response(JSON.stringify({ type: 'error', error: { type: 'budget_exceeded', message: blocked } }), { status: 429, headers: { 'content-type': 'application/json' } })
   }
   if (typeof init.body === 'string') init = { ...init, body: withAutoSystemCache(adaptForModel(init.body)) }
-  const r = await fetch(ANTHROPIC_URL, init)
+  // RATE LIMITS AND OVERLOAD ARE WAITED OUT, NOT PASSED ON (Jon, 2026-11-06: "the regenerate option
+  // breaks, says too many requests"). A 429 (rate limit), 529 (overloaded) or 503 is retried up to
+  // three times — Anthropic's retry-after when it sends one, else 3s, 8s, 15s — so a busy minute costs
+  // a short wait instead of a failed step. A budget stop never reaches here (returned above).
+  let r = await fetch(ANTHROPIC_URL, init)
+  for (const wait of [3000, 8000, 15000]) {
+    if (![429, 503, 529].includes(r.status) || init.signal?.aborted) break
+    const ra = Number(r.headers.get('retry-after'))
+    await new Promise(res => setTimeout(res, Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 20000) : wait))
+    try { r = await fetch(ANTHROPIC_URL, init) } catch (e) { if (init.signal?.aborted) throw e }
+  }
   const ms = Date.now() - t0
   try {
     const ct = r.headers.get('content-type') || ''

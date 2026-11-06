@@ -17,6 +17,7 @@
 //    are the same text, so an unset key behaves exactly as before. The HONESTY BLOCK below is NOT
 //    editable and is assembled here on every call.
 import { NextRequest, NextResponse } from 'next/server'
+import { fitToCap, factIssues } from '@/lib/listing-fit'
 import { lintField } from '@/lib/channel-lint'
 import { buildingFactsFor, factsPrompt } from '@/lib/building-facts'
 import { areaFactsFor, areaPrompt, listingLatLng } from '@/lib/local-area'
@@ -365,9 +366,13 @@ ${JSON.stringify(currentDraft || (current as any)[sk] || '')}`
           truncated: d?.stop_reason === 'max_tokens',
         }, { status: 502 })
       }
-      const value = String(parsed.text).trim()
-      const warnings = warnFor(sk, value, cfg, location.streetAddress)
-      return NextResponse.json({ listingId, section: sk, text: value, titleMax: cfg.sections.title.hardCap || TITLE_MAX, rationale: String(parsed.rationale || '').trim(), warnings, photosUsed: sel.photos.length, photosLabelled: sel.labelled })
+      // Fitted to the field's limit before anyone sees it, and checked against the unit's own numbers.
+      const capOf = sk === 'title' ? (cfg.sections.title.hardCap || TITLE_MAX) : cfg.sections[sk].hardCap
+      const fit = fitToCap(String(parsed.text).trim(), capOf, sk === 'title' ? 'title' : 'prose')
+      const value = fit.text
+      const factsWrong = factIssues(value, { bedrooms: facts.bedrooms, bathrooms: facts.bathrooms, sleeps: facts.sleeps })
+      const warnings = [...(fit.cut ? [`Shortened to ${value.length} characters to fit the ${capOf}-character limit.`] : []), ...factsWrong, ...warnFor(sk, value, cfg, location.streetAddress)]
+      return NextResponse.json({ listingId, section: sk, text: value, titleMax: cfg.sections.title.hardCap || TITLE_MAX, rationale: String(parsed.rationale || '').trim(), warnings, factIssues: factsWrong, photosUsed: sel.photos.length, photosLabelled: sel.labelled })
     } catch (e: any) {
       return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })
     }
@@ -456,7 +461,17 @@ ${JSON.stringify(current)}`
       proposed[k] = cfg.sections[k].enabled ? String(parsed[k] || '').trim() : (current as any)[k]
     }
 
+    // Every capped field fitted to its limit (the summary's 500 above all), and every field checked
+    // against the unit's bedrooms, bathrooms and guest count before anyone can push it.
     const warnings: string[] = []
+    const factsWrong: string[] = []
+    for (const k of SECTION_KEYS) {
+      const cap = k === 'title' ? (cfg.sections.title.hardCap || TITLE_MAX) : cfg.sections[k].hardCap
+      const fit = fitToCap(proposed[k] || '', cap, k === 'title' ? 'title' : 'prose')
+      if (fit.cut) { proposed[k] = fit.text; warnings.push(`${k === 'title' ? 'Title' : 'The ' + cfg.sections[k].label.toLowerCase() + ' section'} was shortened to ${fit.text.length} characters to fit the ${cap}-character limit.`) }
+      factsWrong.push(...factIssues(proposed[k] || '', { bedrooms: facts.bedrooms, bathrooms: facts.bathrooms, sleeps: facts.sleeps }, k === 'title' ? 'The title' : 'The ' + cfg.sections[k].label.toLowerCase() + ' section'))
+    }
+    warnings.push(...factsWrong)
     for (const k of SECTION_KEYS) warnings.push(...warnFor(k, proposed[k] || '', cfg, location.streetAddress))
 
     return NextResponse.json({
@@ -467,7 +482,7 @@ ${JSON.stringify(current)}`
       bookingSettings: settings,
       location: { city: location.city, state: location.state, neighborhood: location.neighborhood },
       rationale: String(parsed.rationale || '').trim(),
-      warnings,
+      warnings, factIssues: factsWrong,
       // Shown in the UI so it is obvious WHY the copy improved — and obvious when it can't.
       photosUsed: sel.photos.length,
       photosLabelled: sel.labelled,
