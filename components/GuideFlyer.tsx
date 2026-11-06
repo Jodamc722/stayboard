@@ -69,7 +69,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
 
       <div className="gf">
         {/* PHOTO */}
-        <div style={{ position: 'relative', height: '3.6in', flex: 'none', background: color ? t.cover : '#222' }}>
+        <div style={{ position: 'relative', height: '3.25in', flex: 'none', background: color ? t.cover : '#222' }}>
           {d.cover ? <img src={d.cover} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,.28) 0%, rgba(0,0,0,0) 22%)' }} />
           <img src={LOGO_URL} alt="" style={{ position: 'absolute', top: '.4in', left: '50%', transform: 'translateX(-50%)', height: '15pt', filter: 'brightness(0) invert(1)' }} />
