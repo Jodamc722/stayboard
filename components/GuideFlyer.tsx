@@ -44,7 +44,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
   const lab = (k: string) => { const v = (d.s._labels || {})[k]; return typeof v === 'string' && v.trim() ? v.trim() : '' }
   const surfside = /surfside|boynton/i.test([gb?._unit, gb?._building, gb?._nickname, gb?.listing_name, gb?.title, d.address].join(' '))
   // A welcome, not a road map (Jon, 2026-11-06): thanks for booking, have a wonderful time.
-  const welcome = lab('flyer.welcome') || "Thank you so much for choosing to stay with us. We hope this place feels like home from the moment you walk in — that you slow down, sleep well and make some wonderful memories here. It's a pleasure to host you. Enjoy every minute of your stay."
+  const welcome = lab('flyer.welcome') || "Thank you so much for choosing to stay with us. We hope this place feels like home from the moment you walk in, and that you make some wonderful memories here. We're a small, local team, so reviews mean the world to our business — if you love your stay, a few kind words in your booking app truly help us. Enjoy every minute."
   const signoff = lab('flyer.signoff') || (surfside ? 'Vanessa & Taylor' : 'Your hosts at Stay Hospitality')
 
   return (
@@ -100,8 +100,8 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
             to get them to the digital guidebook and to our direct site"). The only two codes on the page. */}
         <div style={{ margin: '.24in .8in 0', display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '16pt', flex: 'none' }}>
           {[
-            { k: 'Your digital guide', h: 'Everything for your stay', b: 'Parking map, the walk to the beach, how things work and our local picks.', url: guideUrl, foot: '' },
-            { k: 'Come back soon', h: 'Book direct & save', b: 'Your next stay, straight from us — better rates, no booking fees.', url: d.bookUrl, foot: site },
+            { k: 'Your digital guide', h: 'Explore the area', b: 'Things to do, where to eat, the beaches and everything for your stay.', url: guideUrl, foot: '' },
+            { k: 'Come back soon', h: 'Book with us direct & save', b: 'Next time, book straight with us — better rates, no booking fees.', url: d.bookUrl, foot: site },
           ].map((c, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '13pt', padding: '13pt 14pt', borderRadius: '10pt', background: i ? band : '#fff', border: '.7pt solid ' + (i ? 'transparent' : hair) }}>
               <div style={{ background: '#fff', padding: '4pt', borderRadius: '6pt', flex: 'none' }}><img src={qrSrc(c.url)} alt="" style={{ width: '70pt', height: '70pt', display: 'block' }} /></div>
