@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
 import { themeForBook } from '@/lib/guide-themes'
+import { printPrefs, howtoShown, FAQ_COVERED } from '@/lib/guide-print'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -94,7 +95,9 @@ export function guideData(gb: any) {
     signoff: str(s.contact?.signoff) || 'Jon McGill, General Manager',
     about: has('about', true) ? str(s.about?.body) : '',
     highlights: has('special', true) ? list(s.special?.groups).filter((g: any) => g && list(g.items).length) : [],
-    howto: has('houseGuide', true) ? list(s.houseGuide?.items).filter((x: any) => x && (x.title || x.body)) : [],
+    // Common-sense how-tos (microwave, kettle, fridge…) are left out unless brought back in the editor's
+    // Print options; ones taken off there are gone from the phone too (lib/guide-print).
+    howto: has('houseGuide', true) ? list(s.houseGuide?.items).filter((x: any) => x && (x.title || x.body) && howtoShown(x.title, printPrefs(s))) : [],
     rules: has('guidelines', true) ? list(s.guidelines?.items).filter((x: any) => x && (x.title || x.body)) : [],
     rulesIntro: str(s.guidelines?.intro),
     // _i = the item's index in the saved list (the photo-repair route addresses items by it).
@@ -552,22 +555,184 @@ function PlaceList({ items, city, c, gbId, section, token }: { items: any[]; cit
   )
 }
 
-// ── PRINT FAQ — ITS OWN PAGE ──────────────────────────────────────────────────────────────────────
-// Jon, 2026-11-06: parking and the way to the beach "should have the FAQ as a standalone page … on all
-// guidebooks" — the phone guide already has them; the printed manual buried parking in a paragraph and
-// had no beach at all. One sheet, the questions guests actually ask, with QR codes for the two maps a
-// printer can't draw: directions to the building and the walk to the beach.
+// ── THE PRINTED HOUSE MANUAL ──────────────────────────────────────────────────────────────────────
+// Jon, 2026-11-06: "make sure the printable guidebook is optimized, formatted perfectly for printouts,
+// make sure we have themes and editable option". Letter, half-inch margins, built to fill its sheets:
+//
+//   PAGE 1  the at-a-glance card — name, the UNIT in a box, address, QR to the live guide; Wi-Fi,
+//           check-in/out, contact; a short welcome; house rules; the check-out list.
+//   PAGE 2  "Parking, your unit & the beach" — its own sheet (the FAQ guests ask), with QR maps for the
+//           building and the beach. The beach answer is the unit's own walking steps when the book has them.
+//   PAGE 3+ the house guide (no common-sense how-tos, nothing the FAQ already answered), around you,
+//           help & emergencies — flowing two-column text, nothing split mid-item.
+//
+// Colours follow the book's theme on headings, rules and boxes (text stays near-black for legibility,
+// nothing relies on background printing). The editor's Print options (sections._print) switch to black
+// & white, leave sections off and bring back or drop single how-tos. Hidden on screen.
 const qrSrc = (url: string) => 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(url)
-function PrintFaq({ d }: { d: ReturnType<typeof guideData> }) {
+const firstSentences = (t: string, max: number) => {
+  const parts = String(t || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/)
+  let out = ''
+  for (const p of parts) { if ((out + ' ' + p).trim().length > max) break; out = (out + ' ' + p).trim() }
+  return out || String(t || '').slice(0, max)
+}
+
+export function GuidePrint({ gb }: { gb: any }) {
+  const d = guideData(gb)
+  const prefs = printPrefs(d.s)
+  const on = (k: string) => prefs.hide.indexOf(k) < 0
+  const theme = themeForBook(gb)
+  // Accent for the print: the theme's, darkened toward ink on light themes so it holds up on paper.
+  const acc = prefs.color ? theme.accent : '#111111'
+  const link = 'https://lighthouse-stay.vercel.app/g/' + String(gb?.id || '')
+  const allHow = (Array.isArray(d.s.houseGuide?.items) ? d.s.houseGuide.items : []).filter((x: any) => x && (x.title || x.body))
+  const pick = (re: RegExp) => allHow.find((x: any) => re.test(String(x.title || ''))) || null
+  const beachHow = pick(/beach/i), parkHow = pick(/park/i), doorHow = pick(/door|entry|keypad|check[- ]?in/i)
+  // On paper, the house guide skips what the FAQ page already answers (only when that page prints).
+  const howto = d.howto.filter((x: any) => !(on('faq') && FAQ_COVERED.test(String(x.title || ''))))
+  const welcome = d.about ? firstSentences(d.about, 330) : ''
+  const H = ({ children, first }: { children: any; first?: boolean }) => <h2 className="gp-h" style={first ? { marginTop: 0 } : undefined}>{children}</h2>
+  const showRules = on('rules') && d.rules.length > 0
+  const showCheckout = on('checkout')
+  const after = (on('howto') && howto.length) || (on('around') && (d.places.length || d.eats.length)) || on('help')
+
+  return (
+    <div className="gp hidden print:block">
+      <style>{`
+        @media print {
+          @page { size: letter; margin: 0.5in 0.55in; }
+          html, body { background: #fff !important; }
+          .gp { font-family: ${SANS}; color: #1a1a1a; font-size: 10pt; line-height: 1.42; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .gp p { margin: 0; }
+          .gp-h { font-family: ${SERIF}; font-size: 14.5pt; font-weight: 600; color: #111; margin: 15pt 0 6pt; padding-bottom: 3pt; border-bottom: 1.4pt solid ${acc}; break-after: avoid; }
+          .gp-cols { column-count: 2; column-gap: 24pt; column-fill: balance; }
+          .gp-item { break-inside: avoid; margin: 0 0 7pt; }
+          .gp-item b { display: block; font-size: 10.2pt; color: #111; }
+          .gp-muted { color: #5a5a5a; }
+          .gp-box { border: 1.3pt solid ${acc}; border-radius: 8pt; padding: 10pt 12pt; break-inside: avoid; }
+          .gp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8pt 16pt; }
+          .gp-k { font-size: 7.4pt; text-transform: uppercase; letter-spacing: .13em; color: ${acc}; font-weight: 600; }
+          .gp-v { font-size: 12pt; font-weight: 600; }
+          .gp-big { font-size: 14.5pt; font-weight: 700; letter-spacing: .01em; word-break: break-all; }
+          .gp-check { display: inline-block; width: 9pt; height: 9pt; border: 1.1pt solid ${acc}; border-radius: 2pt; margin-right: 7pt; vertical-align: -1pt; }
+          .gp-unit { display: inline-block; margin-top: 6pt; padding: 3pt 11pt; border: 1.8pt solid ${acc}; color: #111; border-radius: 6pt; font-size: 17pt; font-weight: 800; letter-spacing: .03em; }
+          .gp-page { break-before: page; }
+          .gp-q { break-inside: avoid; margin: 0 0 11pt; padding-left: 10pt; border-left: 2.2pt solid ${acc}; }
+          .gp-q b { display: block; font-size: 11.5pt; margin-bottom: 1.5pt; color: #111; }
+          .gp-qr { display: flex; gap: 26pt; margin-top: 16pt; break-inside: avoid; }
+          .gp-qr div { text-align: center; width: 112pt; }
+          .gp-qr img { width: 98pt; height: 98pt; }
+          .gp-band { height: 5pt; background: ${acc}; border-radius: 3pt; margin-bottom: 12pt; }
+          .gp-foot { margin-top: 14pt; text-align: center; font-size: 8.4pt; }
+        }
+      `}</style>
+
+      {/* PAGE 1 — the at-a-glance card */}
+      {prefs.color ? <div className="gp-band" /> : null}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16pt' }}>
+        <div style={{ flex: 1 }}>
+          <img src={LOGO_URL} alt="Stay Hospitality" style={{ height: '17pt', width: 'auto' }} />
+          <p className="gp-k" style={{ marginTop: '11pt' }}>House manual</p>
+          <h1 style={{ fontFamily: SERIF, fontSize: '22pt', fontWeight: 600, lineHeight: 1.12, margin: '2pt 0 0', color: '#111' }}>{d.name}</h1>
+          {d.unit ? <p className="gp-unit">{d.unit}</p> : null}
+          {d.address ? <p className="gp-muted" style={{ marginTop: '5pt' }}>{d.address}</p> : null}
+        </div>
+        <div style={{ textAlign: 'center', width: '84pt' }}>
+          <img src={qrSrc(link)} alt="" style={{ width: '78pt', height: '78pt' }} />
+          <p className="gp-muted" style={{ fontSize: '7.4pt', marginTop: '3pt' }}>Scan for the live guide on your phone</p>
+        </div>
+      </div>
+
+      <div className="gp-box" style={{ marginTop: '13pt' }}>
+        <div className="gp-grid">
+          {d.wifiNet ? <div style={{ gridColumn: d.wifiPw ? 'span 2' : '1 / -1' }}><p className="gp-k">Wi-Fi network</p><p className="gp-big">{d.wifiNet}</p></div> : null}
+          {d.wifiPw ? <div><p className="gp-k">Wi-Fi password</p><p className="gp-big">{d.wifiPw}</p></div> : null}
+          {d.checkIn ? <div><p className="gp-k">Check-in</p><p className="gp-v">{d.checkIn}</p></div> : null}
+          {d.checkOut ? <div><p className="gp-k">Check-out</p><p className="gp-v">{d.checkOut}</p></div> : null}
+          {d.phone ? <div><p className="gp-k">Urgent · 24/7</p><p className="gp-v">{d.phone}</p></div> : null}
+          <div style={{ gridColumn: '1 / -1', fontSize: '9.4pt' }}><b>Questions?</b> Message us in the app you booked with (Airbnb, Vrbo, Booking.com…) — we reply fast.</div>
+        </div>
+      </div>
+
+      {on('welcome') && welcome ? (
+        <>
+          <H>Welcome</H>
+          <p>{welcome}</p>
+        </>
+      ) : null}
+
+      {showRules ? (
+        <>
+          <H>House rules</H>
+          {d.rulesIntro ? <p className="gp-muted" style={{ marginBottom: '6pt' }}>{d.rulesIntro}</p> : null}
+          <div className="gp-cols">
+            {d.rules.slice(0, 12).map((it: any, i: number) => <div key={i} className="gp-item"><b>{sentence(it.title)}</b>{str(it.body)}</div>)}
+          </div>
+        </>
+      ) : null}
+
+      {showCheckout ? (
+        <>
+          <H>Check-out{d.checkOut ? ' · by ' + d.checkOut : ''}</H>
+          {d.checkoutList.length
+            ? <div className="gp-cols">{d.checkoutList.slice(0, 10).map((it: string, i: number) => <div key={i} className="gp-item" style={{ display: 'flex' }}><span className="gp-check" style={{ flexShrink: 0, marginTop: '2pt' }} /><span>{it}</span></div>)}</div>
+            : <p>Please leave by {d.checkOut || 'the agreed time'}.</p>}
+        </>
+      ) : null}
+
+      {/* PAGE 2 — the FAQ sheet */}
+      {on('faq') ? <PrintFaq d={d} beachHow={beachHow} parkHow={parkHow} doorHow={doorHow} /> : null}
+
+      {/* PAGE 3+ */}
+      {after ? <div className="gp-page" /> : null}
+      {on('howto') && howto.length ? (
+        <>
+          <H first>House guide</H>
+          <div className="gp-cols">
+            {howto.slice(0, 16).map((it: any, i: number) => <div key={i} className="gp-item"><b>{sentence(it.title)}</b><span style={{ whiteSpace: 'pre-line' }}>{str(it.body)}</span></div>)}
+          </div>
+        </>
+      ) : null}
+
+      {on('around') && (d.places.length || d.eats.length) ? (
+        <>
+          <H first={!(on('howto') && howto.length)}>Around you</H>
+          <div className="gp-cols">
+            {d.places.slice(0, 8).map((p: any, i: number) => <div key={'p' + i} className="gp-item"><b>{p.name}</b>{p.note ? <span>{p.note} </span> : null}<span className="gp-muted">{[String(p.address || '').replace(/,\s*(United States|USA)$/i, ''), p.phone].filter(Boolean).join(' · ')}</span></div>)}
+            {d.eats.slice(0, 8).map((p: any, i: number) => <div key={'e' + i} className="gp-item"><b>{p.name} <span className="gp-muted" style={{ fontWeight: 400, display: 'inline' }}>· eat</span></b>{p.note ? <span>{p.note} </span> : null}<span className="gp-muted">{[String(p.address || '').replace(/,\s*(United States|USA)$/i, ''), p.phone].filter(Boolean).join(' · ')}</span></div>)}
+          </div>
+        </>
+      ) : null}
+
+      {on('help') ? (
+        <div style={{ breakInside: 'avoid' }}>
+          <H first={!(on('howto') && howto.length) && !(on('around') && (d.places.length || d.eats.length))}>Help &amp; emergencies</H>
+          <p style={{ marginBottom: '8pt' }}><b>In an emergency, dial 911</b> — police, fire, ambulance. Then let us know{d.phone ? ' at ' + d.phone : ''}.</p>
+          <div className="gp-cols">
+            {d.police ? <div className="gp-item"><b>{d.policeLabel} · non-emergency</b>{d.police}</div> : null}
+            {d.contacts.map((x: any, i: number) => <div key={i} className="gp-item"><b>{x.label}</b>{x.value}{x.note ? <span className="gp-muted"> · {x.note}</span> : null}</div>)}
+            {d.hospitals.slice(0, 3).map((h: any, i: number) => <div key={'h' + i} className="gp-item"><b>{h.name}{h.miles != null ? ' · ' + h.miles + ' mi' : ''}</b>{[h.address, h.phone].filter(Boolean).join(' · ')}</div>)}
+          </div>
+        </div>
+      ) : null}
+
+      <p className="gp-muted gp-foot">Book your next stay direct at {d.bookUrl.replace(/^https?:\/\//, '')} · code {d.code}</p>
+    </div>
+  )
+}
+
+function PrintFaq({ d, beachHow, parkHow, doorHow }: { d: ReturnType<typeof guideData>; beachHow: any; parkHow: any; doorHow: any }) {
   const beachQ = d.address ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('beach access near ' + d.address) : ''
+  const dot = (t: string) => (/[.!?]$/.test(t.trim()) ? t.trim() : t.trim() + '.')
+  const beachText = beachHow ? str(beachHow.body) : d.beach ? dot(d.beach.replace(/\s+-\s+/g, ' — ')) : ''
+  const hasBeach = !!beachText
   const qa: { q: string; a: string }[] = [
     d.unit ? { q: 'Which unit is mine?', a: d.unit + (d.address ? ' at ' + d.address : '') + '.' } : null,
-    d.parking ? { q: 'Where do I park?', a: d.parking } : null,
-    d.entry ? { q: 'How do I get in?', a: d.entry } : null,
-    d.beach ? { q: 'How do I get to the beach?', a: d.beach.replace(/\s+-\s+/g, ' — ') + (/\.$/.test(d.beach) ? '' : '.') + ' Scan the beach code below for the map.' } : null,
+    (d.parking || parkHow) ? { q: 'Where do I park?', a: d.parking || str(parkHow.body) } : null,
+    (d.entry || doorHow) ? { q: 'How do I get in?', a: d.entry || str(doorHow.body) } : null,
+    hasBeach ? { q: 'How do I get to the beach?', a: beachText } : null,
     d.gettingThere ? { q: 'How do I find the building?', a: d.gettingThere } : null,
     (d.checkIn || d.checkOut) ? { q: 'When are check-in and check-out?', a: [d.checkIn && 'Check-in from ' + d.checkIn, d.checkOut && 'check-out by ' + d.checkOut].filter(Boolean).join(', ') + '.' } : null,
-    d.wifiNet ? { q: 'What is the Wi-Fi?', a: d.wifiNet + (d.wifiPw ? ' · password ' + d.wifiPw : '') } : null,
     { q: 'Something is not working?', a: 'Message us in the app you booked with — we reply fast.' + (d.phone ? ' Urgent: ' + d.phone + '.' : '') },
   ].filter(Boolean) as { q: string; a: string }[]
   return (
@@ -576,122 +741,10 @@ function PrintFaq({ d }: { d: ReturnType<typeof guideData> }) {
       {qa.map((x, i) => <div key={i} className="gp-q"><b>{x.q}</b><span style={{ whiteSpace: 'pre-line' }}>{x.a}</span></div>)}
       {d.address ? (
         <div className="gp-qr">
-          <div><img src={qrSrc(mapsUrl(d.address))} alt="" /><p className="gp-muted" style={{ fontSize: '8pt', marginTop: '3pt' }}>Directions to the building</p></div>
-          {d.beach ? <div><img src={qrSrc(beachQ)} alt="" /><p className="gp-muted" style={{ fontSize: '8pt', marginTop: '3pt' }}>Map to the beach</p></div> : null}
+          <div><img src={qrSrc(mapsUrl(d.address))} alt="" /><p className="gp-k" style={{ marginTop: '4pt' }}>Directions to the building</p></div>
+          {hasBeach ? <div><img src={qrSrc(beachQ)} alt="" /><p className="gp-k" style={{ marginTop: '4pt' }}>Map to the beach</p></div> : null}
         </div>
       ) : null}
-    </div>
-  )
-}
-
-// ── THE PRINTED HOUSE MANUAL ──────────────────────────────────────────────────────────────────────
-// Letter, half-inch margins, black on white (prints on any office printer, no background graphics
-// needed). Flowing columns, never a fixed page box, so a long how-to simply runs onto the next sheet
-// instead of being clipped; nothing is split mid-item. Hidden on screen.
-export function GuidePrint({ gb }: { gb: any }) {
-  const d = guideData(gb)
-  const link = 'https://lighthouse-stay.vercel.app/g/' + String(gb?.id || '')
-  const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(link)
-  const H = ({ children }: { children: any }) => <h2 className="gp-h">{children}</h2>
-  return (
-    <div className="gp hidden print:block">
-      <style>{`
-        @media print {
-          @page { size: letter; margin: 0.5in; }
-          html, body { background: #fff !important; }
-          .gp { font-family: ${SANS}; color: #111; font-size: 10.5pt; line-height: 1.45; }
-          .gp-h { font-family: ${SERIF}; font-size: 15pt; font-weight: 600; margin: 16pt 0 6pt; padding-bottom: 3pt; border-bottom: 1.2pt solid #111; break-after: avoid; }
-          .gp-cols { column-count: 2; column-gap: 22pt; }
-          .gp-item { break-inside: avoid; margin: 0 0 7pt; }
-          .gp-item b { display: block; font-size: 10.5pt; }
-          .gp-muted { color: #555; }
-          .gp-box { border: 1.2pt solid #111; border-radius: 8pt; padding: 10pt 12pt; break-inside: avoid; }
-          .gp-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8pt 16pt; }
-          .gp-k { font-size: 7.5pt; text-transform: uppercase; letter-spacing: .12em; color: #555; }
-          .gp-v { font-size: 12pt; font-weight: 600; }
-          .gp-big { font-size: 15pt; font-weight: 700; letter-spacing: .02em; }
-          .gp-check { display: inline-block; width: 9pt; height: 9pt; border: 1pt solid #111; border-radius: 2pt; margin-right: 6pt; vertical-align: -1pt; }
-          .gp-sos { border: 2pt solid #b42318; color: #b42318; }
-          .gp-unit { display: inline-block; margin-top: 6pt; padding: 3pt 10pt; border: 1.6pt solid #111; border-radius: 6pt; font-size: 16pt; font-weight: 700; letter-spacing: .03em; }
-          .gp-page { break-before: page; break-after: page; }
-          .gp-q { break-inside: avoid; margin: 0 0 11pt; }
-          .gp-q b { display: block; font-size: 11.5pt; margin-bottom: 1pt; }
-          .gp-qr { display: flex; gap: 22pt; margin-top: 14pt; break-inside: avoid; }
-          .gp-qr div { text-align: center; width: 110pt; }
-          .gp-qr img { width: 96pt; height: 96pt; }
-        }
-      `}</style>
-
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16pt' }}>
-        <div style={{ flex: 1 }}>
-          <img src={LOGO_URL} alt="Stay Hospitality" style={{ height: '18pt', width: 'auto' }} />
-          <p className="gp-k" style={{ marginTop: '12pt' }}>House manual</p>
-          <h1 style={{ fontFamily: SERIF, fontSize: '22pt', fontWeight: 600, lineHeight: 1.15, margin: '2pt 0 0' }}>{d.name}</h1>
-          {d.unit ? <p className="gp-unit">{d.unit}</p> : null}
-          {d.subtitle ? <p className="gp-muted" style={{ marginTop: '2pt' }}>{d.subtitle}</p> : null}
-          {d.address ? <p className="gp-muted">{d.address}</p> : null}
-        </div>
-        <div style={{ textAlign: 'center', width: '84pt' }}>
-          <img src={qr} alt="" style={{ width: '78pt', height: '78pt' }} />
-          <p className="gp-muted" style={{ fontSize: '7.5pt', marginTop: '3pt' }}>Scan for the live guide on your phone</p>
-        </div>
-      </div>
-
-      <div className="gp-box" style={{ marginTop: '14pt' }}>
-        <div className="gp-grid">
-          {d.wifiNet ? <div style={{ gridColumn: 'span 2' }}><p className="gp-k">Wi-Fi network</p><p className="gp-big">{d.wifiNet}</p></div> : null}
-          {d.wifiPw ? <div><p className="gp-k">Wi-Fi password</p><p className="gp-big">{d.wifiPw}</p></div> : null}
-          <div style={{ gridColumn: '1 / -1', fontSize: '9.5pt' }}><b>Questions?</b> Message us in the app you booked with (Airbnb, Vrbo, Booking.com…) — we reply fast.</div>
-          {d.checkIn ? <div><p className="gp-k">Check-in</p><p className="gp-v">{d.checkIn}</p></div> : null}
-          {d.checkOut ? <div><p className="gp-k">Check-out</p><p className="gp-v">{d.checkOut}</p></div> : null}
-          {d.phone ? <div><p className="gp-k">Urgent issues · 24/7</p><p className="gp-v">{d.phone}</p></div> : null}
-        </div>
-      </div>
-
-      <PrintFaq d={d} />
-
-      {d.rules.length ? (
-        <>
-          <H>House rules</H>
-          <div className="gp-cols">
-            {d.rules.slice(0, 12).map((it: any, i: number) => <div key={i} className="gp-item"><b>{sentence(it.title)}</b>{str(it.body)}</div>)}
-          </div>
-        </>
-      ) : null}
-
-      {d.howto.length ? (
-        <>
-          <H>House guide</H>
-          <div className="gp-cols">
-            {d.howto.slice(0, 16).map((it: any, i: number) => <div key={i} className="gp-item"><b>{sentence(it.title)}</b><span style={{ whiteSpace: 'pre-line' }}>{str(it.body)}</span></div>)}
-          </div>
-        </>
-      ) : null}
-
-      <H>Check-out{d.checkOut ? ' · ' + d.checkOut : ''}</H>
-      {d.checkoutList.length ? d.checkoutList.slice(0, 10).map((it: string, i: number) => <div key={i} className="gp-item"><span className="gp-check" />{it}</div>) : <p>Please leave by {d.checkOut || 'the agreed time'}.</p>}
-
-      {(d.places.length || d.eats.length) ? (
-        <>
-          <H>Around you</H>
-          <div className="gp-cols">
-            {d.places.slice(0, 8).map((p: any, i: number) => <div key={'p' + i} className="gp-item"><b>{p.name}</b>{p.note ? <span>{p.note} </span> : null}<span className="gp-muted">{[String(p.address || '').replace(/,\s*(United States|USA)$/i, ''), p.phone].filter(Boolean).join(' · ')}</span></div>)}
-            {d.eats.slice(0, 8).map((p: any, i: number) => <div key={'e' + i} className="gp-item"><b>{p.name} <span className="gp-muted" style={{ fontWeight: 400, display: 'inline' }}>· eat</span></b>{p.note ? <span>{p.note} </span> : null}<span className="gp-muted">{[String(p.address || '').replace(/,\s*(United States|USA)$/i, ''), p.phone].filter(Boolean).join(' · ')}</span></div>)}
-          </div>
-        </>
-      ) : null}
-
-      <H>Help &amp; emergencies</H>
-      <p style={{ marginBottom: '8pt' }}><b>In an emergency, dial 911</b> — police, fire, ambulance. Then let us know{d.phone ? ' at ' + d.phone : ''}.</p>
-      <div className="gp-cols">
-        {d.police ? <div className="gp-item"><b>{d.policeLabel} · non-emergency</b>{d.police}</div> : null}
-        {d.contacts.map((x: any, i: number) => <div key={i} className="gp-item"><b>{x.label}</b>{x.value}{x.note ? <span className="gp-muted"> · {x.note}</span> : null}</div>)}
-        {d.hospitals.slice(0, 3).map((h: any, i: number) => <div key={'h' + i} className="gp-item"><b>{h.name}{h.miles != null ? ' · ' + h.miles + ' mi' : ''}</b>{[h.address, h.phone].filter(Boolean).join(' · ')}</div>)}
-      </div>
-
-      <p className="gp-muted" style={{ marginTop: '16pt', textAlign: 'center', fontSize: '8.5pt' }}>
-        Book your next stay direct at {d.bookUrl.replace(/^https?:\/\//, '')} · code {d.code}
-      </p>
     </div>
   )
 }

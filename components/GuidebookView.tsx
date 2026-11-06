@@ -5,6 +5,7 @@
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact US Letter (8.5x11) output (@page, exact colors, no app chrome).
 import { themeForBook, THEME_CHOICES, SMART } from '@/lib/guide-themes'
+import { printPrefs, isCommonSense, howtoShown, PRINT_SECTIONS } from '@/lib/guide-print'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -34,6 +35,8 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
   const [askOpen, setAskOpen] = useState(false)
+  const [printOpen, setPrintOpen] = useState(false)
+  const [printSaved, setPrintSaved] = useState('')
   const [askText, setAskText] = useState('')
   const [askBusy, setAskBusy] = useState(false)
   const [askErr, setAskErr] = useState('')
@@ -645,11 +648,64 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           {!guest && <button onClick={() => { const next = JSON.parse(JSON.stringify(gb)); next.sections._showTags = showTags ? false : true; setGb(next); fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: next.id, sections: next.sections }) }) }} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (showTags ? 'border-neutral-300' : 'border-neutral-800 bg-neutral-800 text-white')} title="Show/hide the // labels and accent lines on photos">Photo tags {showTags ? 'on' : 'off'}</button>}
           {!guest && <button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/g/' + gb.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="Copy the public guest link — no login needed to view">{copied ? <Save size={13} /> : <Share2 size={13} />} {copied ? 'Copied!' : 'Share'}</button>}
           {!guest && <a href={'/g/' + gb.id} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="What the guest sees on their phone">Guest view</a>}
+          {!guest && <button onClick={() => setPrintOpen(o => !o)} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (printOpen ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300')} title="What goes on the printed house manual, colour or black & white"><Printer size={13} /> Print options</button>}
+          {!guest && <a href={'/g/' + gb.id + '?print=1'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="The short house manual to leave in the unit — Letter, opens the print dialog">Print manual</a>}
           <button onClick={() => window.print()} className={'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ' + (guest ? 'border border-neutral-300' : 'bg-neutral-900 text-white')} title="Print the magazine to leave in the unit — Letter, print at 100% with background graphics on"><Printer size={13} /> {guest ? 'Print / PDF' : 'Print magazine'}</button>
           {!guest && <button onClick={del} title="Delete this guidebook" className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>}
         </div>
       </div>
       )}
+
+      {/* PRINT OPTIONS (Jon, 2026-11-06) — saved on the book in sections._print, read by the printed
+          house manual at /g/<id>?print=1 and, for the how-to picks, by the phone guide (lib/guide-print). */}
+      {!guest && printOpen && (() => {
+        const pp = printPrefs(s)
+        const raw = (s._print && typeof s._print === 'object') ? s._print : {}
+        const hows: any[] = (Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).filter((x: any) => x && x.title)
+        const keyOf = (t: any) => String(t || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+        const savePrint = (next: any) => {
+          const g2 = JSON.parse(JSON.stringify(gb)); g2.sections._print = { ...raw, ...next }; setGb(g2); setPrintSaved('Saving…')
+          fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, sections: g2.sections }) })
+            .then(r => setPrintSaved(r.ok ? 'Saved' : 'Not saved')).catch(() => setPrintSaved('Not saved'))
+        }
+        const toggleIn = (arr: string[], k: string, want: boolean) => want ? Array.from(new Set(arr.concat(k))) : arr.filter(x => x !== k)
+        return (
+          <div className="gb-chrome sticky top-[57px] z-10 border-b border-black/10 bg-white/95 px-4 py-3 text-neutral-800 backdrop-blur">
+            <div className="mx-auto grid max-w-[760px] gap-4 sm:grid-cols-2">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">On the printout</p>
+                <label className="mt-2 flex items-center gap-2 text-[13px]"><input type="checkbox" checked={pp.color} onChange={e => savePrint({ color: e.target.checked })} /> In colour <span className="text-neutral-500">— {theme.label}{pp.color ? '' : ' (off: black & white)'}</span></label>
+                {PRINT_SECTIONS.map(x => (
+                  <label key={x.key} className="mt-1.5 flex items-center gap-2 text-[13px]"><input type="checkbox" checked={pp.hide.indexOf(x.key) < 0} onChange={e => savePrint({ hide: toggleIn(pp.hide, x.key, !e.target.checked) })} /> {x.label}</label>
+                ))}
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">House guide how-tos</p>
+                <p className="mt-1 text-[12px] text-neutral-500">Common-sense ones (microwave, kettle, fridge…) are off by default. Ticks apply to the phone guide and the print.</p>
+                {hows.length ? hows.map((h: any, i: number) => {
+                  const k = keyOf(h.title), common = isCommonSense(h.title)
+                  const shown = pp.drop.indexOf(k) < 0 && (!common || pp.show.indexOf(k) >= 0)
+                  return (
+                    <label key={i} className="mt-1.5 flex items-center gap-2 text-[13px]">
+                      <input type="checkbox" checked={shown} onChange={e => {
+                        const want = e.target.checked
+                        if (common) savePrint({ show: toggleIn(Array.isArray(raw.show) ? raw.show.map(keyOf) : [], k, want), drop: (Array.isArray(raw.drop) ? raw.drop.map(keyOf) : []).filter((x: string) => x !== k) })
+                        else savePrint({ drop: toggleIn(Array.isArray(raw.drop) ? raw.drop.map(keyOf) : [], k, !want) })
+                      }} />
+                      <span>{h.title}{common ? <span className="ml-1 text-[11px] text-neutral-400">common sense</span> : null}</span>
+                    </label>
+                  )
+                }) : <p className="mt-2 text-[13px] text-neutral-500">No how-tos in this book.</p>}
+              </div>
+            </div>
+            <div className="mx-auto mt-3 flex max-w-[760px] items-center gap-3 text-[12px] text-neutral-500">
+              <a href={'/g/' + gb.id + '?print=1'} target="_blank" rel="noreferrer" className="rounded-lg bg-neutral-900 px-3 py-1.5 font-semibold text-white">Print manual</a>
+              <span>Text is edited in the book itself (Edit) — the printout uses the same words.</span>
+              {printSaved ? <span className="ml-auto">{printSaved}</span> : null}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ASK AI — tell it what to change; the book rewrites itself */}
       {!guest && askOpen && (
@@ -887,9 +943,9 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
                 margins instead — same optical centring, and auto margins collapse to 0 when the
                 content is taller than the box, so a full page still can't overflow. */}
             <div className={'mb-auto mt-6 gap-x-8 ' + ((s.houseGuide.items || []).length > 3 ? 'columns-1 sm:columns-2' : 'columns-1')}>
-              {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (
+              {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (!edit && !howtoShown(it.title, printPrefs(s))) ? null : (
                 <div key={i} className="flex gap-3 border-b pb-3 mb-3 break-inside-avoid" style={{ borderColor: accentColor + '22' }}>
-                  <span className="text-[24px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String(i + 1).padStart(2, '0')}</span>
+                  <span className="text-[24px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String((edit ? i : (s.houseGuide.items).slice(0, i).filter((x: any) => howtoShown(x && x.title, printPrefs(s))).length) + 1).padStart(2, '0')}</span>
                   <div className="flex-1">
                     <p className="text-[14px] lowercase font-medium leading-tight" style={{ fontFamily: SERIF }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
                     <div className="mt-1.5 h-px w-8" style={{ background: accentColor + '66' }} />
