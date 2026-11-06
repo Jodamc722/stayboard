@@ -106,7 +106,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
               <div style={{ width: '26pt', height: '26pt', borderRadius: '50%', border: '.8pt solid ' + acc, color: acc, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}><n.Icon size={13} strokeWidth={1.6} /></div>
               <p className="gf-val" style={{ fontSize: '12.5pt', marginTop: '8pt' }}>{n.title}</p>
               <p className="gf-note" style={{ marginTop: '4pt' }}>{n.body}</p>
-              {n.qr ? <div style={{ marginTop: '7pt' }}><img src={n.qr} alt="" style={{ width: '40pt', height: '40pt' }} /><p className="gf-cap" style={{ fontSize: '5.6pt', letterSpacing: '.18em' }}>Scan for the route</p></div> : null}
+              {n.qr ? <div style={{ marginTop: '7pt' }}><img src={n.qr} alt="" style={{ width: '40pt', height: '40pt', display: 'block', margin: '0 auto 2pt' }} /><p className="gf-cap" style={{ fontSize: '5.6pt', letterSpacing: '.18em' }}>Scan for the route</p></div> : null}
             </div>
           ))}
         </div>
