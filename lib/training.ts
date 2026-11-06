@@ -48,6 +48,8 @@ const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0
 const isYmd = (s: any) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''))
 const ymdET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 const slug = (s: string) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+/** A field person's training key — the same `crew:<slug>` candidates() hands out (lib/inspection-results attributes scores with it). */
+export const crewKey = (name: string) => 'crew:' + slug(name)
 const newCode = () => {
   const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789'
   let s = ''
@@ -215,7 +217,7 @@ export async function candidates(): Promise<Candidate[]> {
     for (const s of staff) {
       const name = String(s.name || '').trim()
       if (!name) continue
-      const k = 'crew:' + slug(name)
+      const k = crewKey(name)
       if (seen.has(k) || out.some(c => c.name.toLowerCase() === name.toLowerCase())) continue
       seen.add(k)
       out.push({ key: k, name, email: null, dept: s.dept || null, market: s.area || null, source: 'staff' })

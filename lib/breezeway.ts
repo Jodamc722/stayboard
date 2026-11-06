@@ -297,6 +297,10 @@ export const BZ_TEMPLATES = {
   departureClean: 203344,
   /** Property Exterior Clean 1.0 — Maintenance: walk the grounds and trash area, water plants, blow walkways; photos (Upkeep → Property programs, lib/site-programs). */
   exteriorClean: 921654,
+  /** HK Post Clean Inspection 1.0 — Inspection, bilingual: scores a housekeeper's clean AS FOUND (23 lines, NO = a miss). Read back by lib/inspection-results. */
+  hkPostClean: 927920,
+  /** Preventative Maintenance Inspection 1.0 — Maintenance, bilingual: lock, A/C, leaks, safety, appliances, Wi-Fi (27 lines, NO = something wrong). Read back by lib/inspection-results. */
+  pmInspection: 927921,
 } as const
 
 /**
@@ -311,6 +315,8 @@ export const BZ_TEMPLATES = {
  *   "Departure Clean", "Departure clean — …"        → Departure Clean 1.0      (housekeeping)
  *   "Quality inspection — …"                        → Bad Review Inspection 1.0 (inspection)
  *   "Pre-arrival inspection — …"                    → Big Arrival Inspection 1.0 (inspection)
+ *   "HK post clean inspection", "HK audit — …"      → HK Post Clean Inspection 1.0 (inspection)
+ *   "Preventative maintenance inspection — …"       → Preventative Maintenance Inspection 1.0 (maintenance)
  *
  * "Touch-up clean after A/C deep clean" is housekeeping but does not START with "deep clean", so it
  * stays a plain task — the touch-up is not a billable deep clean.
@@ -329,10 +335,15 @@ export function templateForTask(name: any, department: any): number | null {
   const isAc = /(a\/?c\b|hvac|air ?con|air ?handler|mini ?split|wall unit|ptac|ductless|coil)/i.test(n)
   if (isAc && /(deep[ -]?clean|coil clean|deep[ -]?sanit)/i.test(n)) return dept === 'housekeeping' ? null : BZ_TEMPLATES.acDeepClean
   if (/^deep[ -]?clean(ing)?\b/i.test(n) && !/touch[ -]?up/i.test(n)) return dept && dept !== 'housekeeping' ? null : BZ_TEMPLATES.deepClean
+  // INSPECTION SCORES → TRAINING (Jon, 2026-11-05: "It should read those scores and use it in database
+  // for training"). The PM INSPECTION is maintenance's walk; the plain "Preventative Maintenance Task"
+  // is not an inspection and keeps no template.
+  if (/^preventative maintenance inspection\b/i.test(n)) return dept && dept !== 'maintenance' ? null : BZ_TEMPLATES.pmInspection
   if (/^(departure|turnover|check-?out|move-?out)[ -]?clean(ing)?\b/i.test(n) || /^limpieza de salida\b/i.test(n)) return dept && dept !== 'housekeeping' ? null : BZ_TEMPLATES.departureClean
   if (dept && dept !== 'inspection') return null
   if (/^quality inspection\b/i.test(n) || /^bad[ -]review inspection\b/i.test(n)) return BZ_TEMPLATES.badReviewInspection
   if (/^pre-?arrival inspection\b/i.test(n) || /^big[ -]arrival inspection\b/i.test(n)) return BZ_TEMPLATES.bigArrivalInspection
+  if (/^(hk )?post[ -]?clean inspection\b/i.test(n) || /^hk audit\b/i.test(n) || /^housekeeping audit\b/i.test(n)) return BZ_TEMPLATES.hkPostClean
   return null
 }
 

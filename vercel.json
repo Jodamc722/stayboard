@@ -165,6 +165,10 @@
       "schedule": "7,22,37,52 * * * *"
     },
     {
+      "path": "/api/cron/inspection-results",
+      "schedule": "27 * * * *"
+    },
+    {
       "path": "/api/cron/site-programs",
       "schedule": "46 11,13,15,17 * * *"
     },

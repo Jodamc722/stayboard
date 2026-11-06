@@ -8,7 +8,7 @@
 // people — Lighthouse users get a bell item; field staff with no login get a /learn/<code> link the
 // manager sends by text or WhatsApp. No drop-downs: every choice is a row of buttons.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Loader2, RefreshCw, Plus, Play, Check, Copy, Link2, Pencil, Archive, RotateCcw, Users, Search, X, Upload, BookOpen, FileText, Video, Languages } from 'lucide-react'
+import { Loader2, RefreshCw, Plus, Play, Check, Copy, Link2, Pencil, Archive, RotateCcw, Users, Search, X, Upload, BookOpen, FileText, Video, Languages, ArrowUp, ArrowDown, ArrowRight, ExternalLink, ChevronDown, ClipboardCheck } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, LeanTabs, LeanPick, Tip } from '@/components/lean'
 import { Sheet } from '@/components/Sheet'
 
@@ -23,7 +23,7 @@ type Person = { key: string; name: string; email: string | null; lang: Lang; cod
 type Assignment = { id: string; itemId: string; personKey: string; assignedBy: string | null; assignedAt: string; dueOn: string | null; completedAt: string | null; completedLang: string | null; completedVia: string | null }
 type Candidate = { key: string; name: string; email: string | null; dept: string | null; market: string | null; source: 'user' | 'staff' }
 type Bundle = { items: Item[]; urls: Record<string, { en: string | null; es: string | null }>; people: Person[]; assignments: Assignment[]; candidates: Candidate[]; can: { edit: boolean; full: boolean }; me: string }
-type TabKey = 'library' | 'people' | 'mine'
+type TabKey = 'library' | 'people' | 'mine' | 'inspections'
 
 const TAGS = ['breezeway', 'housekeeping', 'maintenance', 'inspection', 'ccs', 'office', 'safety', 'lighthouse']
 const AUDIENCES = ['housekeeping', 'maintenance', 'inspection', 'supervision', 'ccs', 'office']
@@ -162,6 +162,7 @@ export function TrainingDesk() {
           { key: 'library', label: lang === 'es' ? 'Biblioteca' : 'Library', n: items.length },
           ...(can.edit ? [{ key: 'people' as TabKey, label: lang === 'es' ? 'Personas' : 'People', n: people.length }] : []),
           { key: 'mine', label: lang === 'es' ? 'Lo mío' : 'Mine', n: mine.filter(a => !a.completedAt).length },
+          ...(can.edit ? [{ key: 'inspections' as TabKey, label: lang === 'es' ? 'Inspecciones' : 'Inspections' }] : []),
         ]}
         right={tab === 'library' ? (
           <div className="flex items-center gap-2 flex-wrap">
@@ -214,6 +215,8 @@ export function TrainingDesk() {
           </LeanList>
         )
       ) : null}
+
+      {tab === 'inspections' && data && can.edit ? <InspectionsView can={can} say={say} onAssigned={() => load(true)} /> : null}
 
       {editing ? <EditSheet item={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={(m) => { setEditing(null); say(m); load(true) }} /> : null}
       {assigning ? <AssignSheet items={items} candidates={data?.candidates || []} people={people} preset={assigning} lang={lang} onClose={() => setAssigning(null)} onDone={(m) => { setAssigning(null); say(m); load(true) }} /> : null}
@@ -577,5 +580,305 @@ function EditSheet({ item, onClose, onSaved }: { item: Item | null; onClose: () 
         </div>
       </div>
     </Sheet>
+  )
+}
+
+// ---------------------------------------------------------------- inspections → training
+// INSPECTION SCORES → TRAINING (Jon, 2026-11-05: "It should read those scores and use it in database
+// for training"). Completed HK Post Clean Inspection 1.0 audits, scored per housekeeper (lib/
+// inspection-results): the clean as found (1–5), the Yes/No pass rate, where they miss, and the
+// training that covers it — one tap to assign. Maintenance PM inspections sit underneath, per technician.
+type Miss = { section: string; item_en: string; item_es: string | null; photos: string[] }
+type MissGroup = { section: string; count: number; items: { en: string; es: string | null }[] }
+type Audit = { task_id: string; unit: string | null; finished_at: string | null; score: number | null; pass_rate: number | null; clean_finished: boolean | null; misses: Miss[]; coaching: string | null; fixed: string | null; inspector: string | null; source: string | null; link: string }
+type HkPerson = { key: string; name: string; audits: number; avgScore: number | null; avgPassRate: number | null; cleanNotFinished: number; lastAudit: string | null; misses: MissGroup[]; trend: { recent: number | null; prior: number | null; dir: 'up' | 'down' | 'flat' | null }; recent: Audit[] }
+type PmPerson = { key: string; name: string; inspections: number; avgScore: number | null; issues: number; lastAt: string | null; misses: MissGroup[]; recent: Audit[] }
+type Suggest = { weak: { section: string; misses: number; passRate: number | null }[]; items: { itemId: string; title: { en: string; es: string | null }; kind: Item['kind']; sections: string[]; reason: string }[] }
+type RecentRow = { task_id: string; kind: 'hk_post_clean' | 'pm' | 'arrival'; unit: string | null; finished_at: string | null; inspector: string | null; subject_name: string | null; subject_source: string | null; score: number | null; pass_rate: number | null; misses: number; link: string }
+type InspBundle = { ok: boolean; needsMigration?: boolean; note?: string; days?: number; people?: { hk: HkPerson[]; pm: PmPerson[]; unattributed: number }; suggestions?: Record<string, Suggest>; recent?: RecentRow[]; can?: { edit: boolean; full: boolean } }
+
+const pct = (n: number | null | undefined) => n == null ? '—' : `${Math.round(n * 100)}%`
+const scoreTone = (n: number | null | undefined) => n == null ? 'slate' : n < 3 ? 'rose' : n < 4 ? 'amber' : 'emerald'
+const passTone = (n: number | null | undefined) => n == null ? 'slate' : n < 0.8 ? 'rose' : n < 0.9 ? 'amber' : 'emerald'
+const dayOf = (iso: string | null) => iso ? dayShort(iso.slice(0, 10)) : '—'
+const KIND_NAME: Record<RecentRow['kind'], string> = { hk_post_clean: 'HK post clean', pm: 'PM inspection', arrival: 'Arrival' }
+const SOURCE_NAME: Record<string, string> = { answer: 'named on the audit', last_clean: 'last cleaner of the unit', assignee: 'did the inspection' }
+
+function InspectionsView({ can, say, onAssigned }: { can: { edit: boolean; full: boolean }; say: (m: string) => void; onAssigned: () => void }) {
+  const [d, setD] = useState<InspBundle | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [syncDays, setSyncDays] = useState<'7' | '30' | '60'>('7')
+  const [syncing, setSyncing] = useState(false)
+  const [open, setOpen] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true)
+    setErr(null)
+    try {
+      const r = await fetch('/api/training/inspections', { cache: 'no-store' })
+      const j = await r.json()
+      if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`)
+      setD(j)
+    } catch (e: any) { setErr(e?.message || String(e)) } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  const sync = async () => {
+    setSyncing(true)
+    try {
+      const r = await fetch('/api/training/inspections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'sync', days: Number(syncDays) }) })
+      const j = await r.json().catch(() => ({}))
+      if (j?.needsMigration) { setD({ ok: true, needsMigration: true, note: j.error }); return }
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`)
+      say(`Read ${j.fetched} inspection${j.fetched === 1 ? '' : 's'} from Breezeway · ${j.stored} scored${j.skipped ? ` · ${j.skipped} not on the 1.0 templates` : ''}${j.stoppedEarly ? ' · more left, press Sync again' : ''}.`)
+      load(true)
+    } catch (e: any) { say(e?.message || String(e)) } finally { setSyncing(false) }
+  }
+  const assignItems = async (personKey: string, itemIds: string[], dept: 'housekeeping' | 'maintenance') => {
+    setBusy(personKey + ':' + itemIds.join(','))
+    try {
+      const r = await fetch('/api/training/inspections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'assign', personKey, itemIds, dept }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`)
+      say(itemIds.length === 1 ? 'Assigned.' : `Assigned ${itemIds.length} items.`)
+      onAssigned()
+      load(true)
+    } catch (e: any) { say(e?.message || String(e)) } finally { setBusy(null) }
+  }
+
+  const hk = d?.people?.hk || []
+  const pm = d?.people?.pm || []
+  const recent = d?.recent || []
+  const toolbar = (
+    <div className="mb-3 flex items-center gap-2 flex-wrap">
+      <span className="text-[12px] text-muted">Last {d?.days || 60} days · HK Post Clean Inspection 1.0 scores the clean as found; every NO is a miss.</span>
+      <span className="ml-auto inline-flex items-center gap-2">
+        {can.full ? <>
+          <LeanPick<'7' | '30' | '60'> value={syncDays} size="sm" title="How far back to read" onPick={setSyncDays} options={[{ v: '7', label: '7d' }, { v: '30', label: '30d' }, { v: '60', label: '60d' }]} />
+          <button onClick={sync} disabled={syncing} className={btn('ghost')}>{syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Sync from Breezeway</button>
+        </> : null}
+        <IconBtn title="Reload" onClick={() => load(true)}><RefreshCw size={14} /></IconBtn>
+      </span>
+    </div>
+  )
+
+  if (loading && !d) return <div className="flex items-center gap-2 text-muted text-[13px] py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading…</div>
+  if (err && !d) return <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 px-3 py-2 text-[12.5px] mb-3">{err}</div>
+  if (d?.needsMigration) return <LeanEmpty>Run migration <span className="font-mono">174_inspection_results.sql</span> in Supabase, then sync — inspection scores are stored there.</LeanEmpty>
+
+  return (
+    <>
+      {toolbar}
+      {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 px-3 py-2 text-[12.5px] mb-3">{err}</div> : null}
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5 px-1 flex items-center gap-2"><ClipboardCheck size={13} /> Housekeepers <span className="tabular-nums">{hk.length}</span>
+        {d?.people?.unattributed ? <span className="normal-case tracking-normal font-medium text-amber-700" title="Audits where the housekeeper could not be worked out (no name on the audit and no departure clean found)">· {d.people.unattributed} audit{d.people.unattributed === 1 ? '' : 's'} not matched to a person</span> : null}
+      </h2>
+      {!hk.length ? <LeanEmpty>No scores yet. They appear here once <b>HK Post Clean Inspection 1.0</b> tasks are completed in Breezeway — read hourly{can.full ? ', or press Sync from Breezeway' : ''}.</LeanEmpty> : (
+        <div className="rounded-2xl border border-line bg-white overflow-x-auto mb-5">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted border-b border-line">
+                <th className="px-3 py-2 font-semibold">Housekeeper</th>
+                <th className="px-2 py-2 font-semibold text-right">Audits</th>
+                <th className="px-2 py-2 font-semibold text-right" title="The 1–5 score the inspector gave the clean as found">Score</th>
+                <th className="px-2 py-2 font-semibold text-right" title="Yes answers of all Yes/No lines">Pass</th>
+                <th className="px-2 py-2 font-semibold" title="Score, last 30 days vs the 30 before">Trend</th>
+                <th className="px-2 py-2 font-semibold">Top missed areas</th>
+                <th className="px-2 py-2 font-semibold">Last audit</th>
+                <th className="w-6" />
+              </tr>
+            </thead>
+            <tbody>
+              {hk.map(p => {
+                const isOpen = open === 'hk:' + p.key
+                const sug = d?.suggestions?.[p.key]
+                return (
+                  <HkRows key={p.key} p={p} isOpen={isOpen} onToggle={() => setOpen(isOpen ? null : 'hk:' + p.key)} sug={sug} canAssign={can.edit} busy={busy}
+                    onAssign={(ids) => assignItems(p.key, ids, 'housekeeping')} />
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5 px-1">Maintenance · PM inspections <span className="tabular-nums">{pm.length}</span></h2>
+      {!pm.length ? <LeanEmpty>No Preventative Maintenance Inspection 1.0 tasks completed in this window yet.</LeanEmpty> : (
+        <div className="rounded-2xl border border-line bg-white overflow-x-auto mb-5">
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted border-b border-line">
+                <th className="px-3 py-2 font-semibold">Technician</th>
+                <th className="px-2 py-2 font-semibold text-right">Inspections</th>
+                <th className="px-2 py-2 font-semibold text-right" title="Average overall condition (1–5) the technician gave the units">Condition</th>
+                <th className="px-2 py-2 font-semibold text-right" title="NO answers — something wrong found in the unit">Issues found</th>
+                <th className="px-2 py-2 font-semibold">Where</th>
+                <th className="px-2 py-2 font-semibold">Last</th>
+                <th className="w-6" />
+              </tr>
+            </thead>
+            <tbody>
+              {pm.map(p => {
+                const isOpen = open === 'pm:' + p.key
+                const sug = d?.suggestions?.[p.key]
+                return (
+                  <PmRows key={p.key} p={p} isOpen={isOpen} onToggle={() => setOpen(isOpen ? null : 'pm:' + p.key)} sug={sug} canAssign={can.edit} busy={busy}
+                    onAssign={(ids) => assignItems(p.key, ids, 'maintenance')} />
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {recent.length ? (
+        <details className="rounded-2xl border border-line bg-white mb-5">
+          <summary className="px-3 py-2 text-[12px] font-semibold text-muted cursor-pointer">All recent inspections ({recent.length})</summary>
+          <ul className="divide-y divide-line/70">
+            {recent.map(r => (
+              <li key={r.task_id} className="flex items-center gap-2 px-3 py-1.5 text-[12px] flex-wrap">
+                <Tag>{KIND_NAME[r.kind] || r.kind}</Tag>
+                <span className="font-medium">{r.unit || '—'}</span>
+                <span className="text-muted">{dayOf(r.finished_at)}</span>
+                {r.subject_name ? <span title={r.subject_source ? SOURCE_NAME[r.subject_source] || r.subject_source : ''}>{r.subject_name}</span> : null}
+                {r.score != null ? <Tag tone={scoreTone(r.score)}>{r.score}/5</Tag> : null}
+                {r.pass_rate != null ? <Tag tone={passTone(r.pass_rate)}>{pct(r.pass_rate)}</Tag> : null}
+                {r.misses ? <Tag tone="rose">{r.misses} miss{r.misses === 1 ? '' : 'es'}</Tag> : null}
+                <span className="text-muted">by {r.inspector || '—'}</span>
+                <a href={r.link} target="_blank" rel="noopener noreferrer" className="ml-auto text-muted hover:text-ink inline-flex items-center gap-1">Breezeway <ExternalLink size={11} /></a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </>
+  )
+}
+
+function TrendArrow({ dir, recent, prior }: { dir: 'up' | 'down' | 'flat' | null; recent: number | null; prior: number | null }) {
+  if (!dir) return <span className="text-muted">—</span>
+  const title = `Last 30 days ${recent ?? '—'} vs ${prior ?? '—'} the 30 before`
+  if (dir === 'up') return <span title={title} className="inline-flex text-emerald-700"><ArrowUp size={14} /></span>
+  if (dir === 'down') return <span title={title} className="inline-flex text-rose-700"><ArrowDown size={14} /></span>
+  return <span title={title} className="inline-flex text-muted"><ArrowRight size={14} /></span>
+}
+
+function MissChips({ misses }: { misses: MissGroup[] }) {
+  if (!misses.length) return <span className="text-muted">none</span>
+  return <span className="inline-flex flex-wrap gap-1">{misses.slice(0, 3).map(m => <Tag key={m.section} tone={m.count >= 2 ? 'rose' : 'amber'} title={m.items.map(i => i.en).join(' · ')}>{m.section} · {m.count}</Tag>)}</span>
+}
+
+function AuditList({ audits, kind }: { audits: Audit[]; kind: 'hk' | 'pm' }) {
+  if (!audits.length) return <p className="text-[12.5px] text-muted">No inspections in this window.</p>
+  return (
+    <ul className="divide-y divide-line/70 rounded-xl border border-line bg-white">
+      {audits.map(a => (
+        <li key={a.task_id} className="px-3 py-2 text-[12.5px] space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold">{a.unit || '—'}</span>
+            <span className="text-muted">{dayOf(a.finished_at)}</span>
+            {a.score != null ? <Tag tone={scoreTone(a.score)} title={kind === 'hk' ? 'Clean as found' : 'Overall condition'}>{a.score}/5</Tag> : null}
+            {a.pass_rate != null ? <Tag tone={passTone(a.pass_rate)}>{pct(a.pass_rate)} pass</Tag> : null}
+            {kind === 'hk' && a.clean_finished === false ? <Tag tone="amber" title="The inspector started before the clean was finished">clean not finished</Tag> : null}
+            {kind === 'hk' && a.source && a.source !== 'answer' ? <Tag tone="sky" title="No housekeeper name on the audit matched the roster">{SOURCE_NAME[a.source] || a.source}</Tag> : null}
+            <span className="text-muted">by {a.inspector || '—'}</span>
+            <a href={a.link} target="_blank" rel="noopener noreferrer" className="ml-auto text-muted hover:text-ink inline-flex items-center gap-1">Breezeway <ExternalLink size={11} /></a>
+          </div>
+          {a.misses.length ? (
+            <ul className="space-y-0.5 pl-1">
+              {a.misses.map((m, i) => (
+                <li key={i} className="flex gap-1.5">
+                  <X size={12} className="text-rose-600 mt-[3px] shrink-0" />
+                  <span><span className="text-muted">{m.section}:</span> {m.item_en}{m.item_es ? <span className="block text-muted text-[11.5px]">{m.item_es}</span> : null}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-emerald-700 text-[12px]">No misses.</p>}
+          {a.fixed ? <p className="text-[12px]"><span className="text-muted">{kind === 'hk' ? 'Inspector fixed:' : 'Fixed today:'}</span> {a.fixed}</p> : null}
+          {a.coaching ? <p className="text-[12px]"><span className="text-muted">Coaching:</span> {a.coaching}</p> : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function Suggestions({ sug, canAssign, busy, personKey, onAssign }: { sug?: Suggest; canAssign: boolean; busy: string | null; personKey: string; onAssign: (ids: string[]) => void }) {
+  const items = sug?.items || []
+  const weak = sug?.weak || []
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 mb-1">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-muted">Suggested training</p>
+        {canAssign && items.length > 1 ? <button onClick={() => onAssign(items.map(i => i.itemId))} disabled={!!busy} className={`ml-auto ${btn('ink')} !py-1 !px-2 !text-[11.5px]`}>{busy === personKey + ':' + items.map(i => i.itemId).join(',') ? <Loader2 size={12} className="animate-spin" /> : <Users size={12} />} Assign all</button> : null}
+      </div>
+      {weak.length ? <p className="text-[11.5px] text-muted mb-1">Weak areas: {weak.map(w => `${w.section} (${w.misses}${w.passRate != null ? `, ${pct(w.passRate)}` : ''})`).join(' · ')}</p> : <p className="text-[12px] text-muted">No weak area yet — fewer than 2 misses in every section.</p>}
+      {weak.length && !items.length ? <p className="text-[12px] text-muted">Nothing in the library covers these yet (or it is already assigned). Tag a video Housekeeping / Maintenance with the area in its title to have it suggested.</p> : null}
+      {items.length ? (
+        <ul className="divide-y divide-line/70 rounded-xl border border-line bg-white">
+          {items.map(i => (
+            <li key={i.itemId} className="flex items-center gap-2 px-3 py-1.5 text-[12.5px]">
+              <span className="text-muted">{KIND_ICON[i.kind] || null}</span>
+              <span className="min-w-0"><span className="font-medium block truncate">{i.title.en}</span><span className="text-[11px] text-muted block truncate">{i.reason}</span></span>
+              {canAssign ? <button onClick={() => onAssign([i.itemId])} disabled={!!busy} className={`ml-auto ${btn('ghost')} !py-1 !px-2 !text-[11.5px]`}>{busy === personKey + ':' + i.itemId ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />} Assign</button> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function HkRows({ p, isOpen, onToggle, sug, canAssign, busy, onAssign }: { p: HkPerson; isOpen: boolean; onToggle: () => void; sug?: Suggest; canAssign: boolean; busy: string | null; onAssign: (ids: string[]) => void }) {
+  return (
+    <>
+      <tr onClick={onToggle} className={`border-b border-line/70 cursor-pointer hover:bg-app/50 ${isOpen ? 'bg-app/40' : ''}`}>
+        <td className="px-3 py-2 font-semibold text-ink">{p.name}{p.cleanNotFinished ? <span className="ml-1.5"><Tag tone="amber" title="Audits started before the clean was finished">{p.cleanNotFinished} unfinished</Tag></span> : null}</td>
+        <td className="px-2 py-2 text-right tabular-nums">{p.audits}</td>
+        <td className="px-2 py-2 text-right"><Tag tone={scoreTone(p.avgScore)}>{p.avgScore == null ? '—' : p.avgScore.toFixed(1)}</Tag></td>
+        <td className="px-2 py-2 text-right"><Tag tone={passTone(p.avgPassRate)}>{pct(p.avgPassRate)}</Tag></td>
+        <td className="px-2 py-2"><TrendArrow {...p.trend} /></td>
+        <td className="px-2 py-2"><MissChips misses={p.misses} /></td>
+        <td className="px-2 py-2 text-muted whitespace-nowrap">{dayOf(p.lastAudit)}</td>
+        <td className="pr-2"><ChevronDown size={14} className={`text-muted transition ${isOpen ? 'rotate-180' : ''}`} /></td>
+      </tr>
+      {isOpen ? (
+        <tr className="border-b border-line/70 bg-app/30">
+          <td colSpan={8} className="px-3 py-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Recent audits</p><AuditList audits={p.recent} kind="hk" /></div>
+              <Suggestions sug={sug} canAssign={canAssign} busy={busy} personKey={p.key} onAssign={onAssign} />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
+  )
+}
+
+function PmRows({ p, isOpen, onToggle, sug, canAssign, busy, onAssign }: { p: PmPerson; isOpen: boolean; onToggle: () => void; sug?: Suggest; canAssign: boolean; busy: string | null; onAssign: (ids: string[]) => void }) {
+  return (
+    <>
+      <tr onClick={onToggle} className={`border-b border-line/70 cursor-pointer hover:bg-app/50 ${isOpen ? 'bg-app/40' : ''}`}>
+        <td className="px-3 py-2 font-semibold text-ink">{p.name}</td>
+        <td className="px-2 py-2 text-right tabular-nums">{p.inspections}</td>
+        <td className="px-2 py-2 text-right"><Tag tone={scoreTone(p.avgScore)}>{p.avgScore == null ? '—' : p.avgScore.toFixed(1)}</Tag></td>
+        <td className="px-2 py-2 text-right tabular-nums">{p.issues}</td>
+        <td className="px-2 py-2"><MissChips misses={p.misses} /></td>
+        <td className="px-2 py-2 text-muted whitespace-nowrap">{dayOf(p.lastAt)}</td>
+        <td className="pr-2"><ChevronDown size={14} className={`text-muted transition ${isOpen ? 'rotate-180' : ''}`} /></td>
+      </tr>
+      {isOpen ? (
+        <tr className="border-b border-line/70 bg-app/30">
+          <td colSpan={7} className="px-3 py-3">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+              <div className="min-w-0"><p className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1">Recent PM inspections · a NO here is something wrong in the unit</p><AuditList audits={p.recent} kind="pm" /></div>
+              <Suggestions sug={sug} canAssign={canAssign} busy={busy} personKey={p.key} onAssign={onAssign} />
+            </div>
+          </td>
+        </tr>
+      ) : null}
+    </>
   )
 }
