@@ -25,6 +25,7 @@
 // Stored in app_settings (no migration). The first read seeds the Property Exterior Clean program
 // Jon set up the same morning.
 import 'server-only'
+import { getNoService, skipsInspectionsIn } from './no-service'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting } from './app-settings'
 import { buildingOf } from './segments'
@@ -548,6 +549,7 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
   const programs = await loadPrograms()
   const lines: string[] = []
   let created = 0, moved = 0, updated = 0, cancelled = 0
+  const noSvc = await getNoService()
   if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured', day, plans, created, moved, updated, cancelled, lines }
   const db = supabaseAdmin()
   const mirror = async (res: any, homeId?: number | null) => {
@@ -564,6 +566,9 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
     const p = programs.find(x => x.id === pl.programId)
     if (!p) continue
     const tag = p.name + ' · ' + pl.label
+    // NO-INSPECTION BUILDINGS (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+    // for any Botanica units. So don't draft them or auto create them.")
+    if (p.department === 'inspection' && skipsInspectionsIn(noSvc, pl.label, pl.where)) { lines.push(tag + ': no-inspection building — skipped'); continue }
     const want = pl.people.concat(pl.cleaners).map(x => x.id)
     // Duplicates first: one open task per place.
     for (const x of pl.extras) {

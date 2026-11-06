@@ -35,6 +35,7 @@ import { CADENCE_KEY, resolveCadences, type CadenceDef } from './cadences'
 import { workableDays } from './unit-windows'
 import { updateBreezewayTask, breezewayConfigured } from './breezeway'
 import { getTaskAutomation } from './auto-inspections'
+import { getNoService, skipsInspectionsIn } from './no-service'
 import { marketOf } from './segments'
 import { openCadenceTaskMap, pickOpen } from './pm-dedupe'
 
@@ -93,7 +94,12 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
 
   const maxLead = live.reduce((m, c) => Math.max(m, c.leadDays ?? 14), 14)
   const cal = await buildDueCalendar(today, { horizonDays: Math.max(30, maxLead + 7) })
+  // NO-INSPECTION BUILDINGS (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+  // for any Botanica units. So don't draft them or auto create them.") — an inspection cadence there
+  // never books a successor or a follow-on.
+  const noSvc = await getNoService()
   const items: DueItem[] = cal.buildings.flatMap(b => b.items).filter(i => byKey[i.cadenceKey] && byKey[i.cadenceKey].successor !== false && i.lastDone)
+    .filter(i => !(byKey[i.cadenceKey].dept === 'inspection' && skipsInspectionsIn(noSvc, i.building, i.unit)))
 
   // NEVER A SECOND TASK (Jon, 2026-10-28: "We should never create a duplicate task for filter
   // changes, we should move if not completed"). The due calendar's "already scheduled" check vetoes a
@@ -150,6 +156,7 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
   // ── 1b. follow-ons ─────────────────────────────────────────────────────────────
   for (const { it, c } of followOns.slice(0, 10)) {
     const fo = c.followOn!
+    if (fo.dept === 'inspection' && skipsInspectionsIn(noSvc, it.building, it.unit)) { out.skipped++; out.lines.push(`skipped follow-on ${fo.label} on ${it.unit}: no-inspection building`); continue }
     const date = (() => { const d = shift(it.lastDone!, fo.offsetDays); return d < today ? today : d })()
     const title = `${fo.label} — ${it.unit}`
     if (opts.dryRun) { out.lines.push(`would create follow-on: ${title} on ${date}`); continue }

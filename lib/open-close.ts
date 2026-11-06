@@ -610,7 +610,7 @@ export async function buildOpenClose(opts: { mode: OcMode; date?: string | null;
           if (r.check_in !== day) continue
           const flags = arrivalFlags(r, { today: day, long: LONG, big: BIG, vips: vips || new Set<string>(), departsSameDay })
           const a = byRes[r.id] || null
-          if (!flags.length && (!a || (a.welcomeDone && a.inspection !== 'none'))) continue
+          if (!flags.length && (!a || ((a.welcomeDone || a.welcomeSkip) && a.inspection !== 'none'))) continue
           const tags = flags.slice()
           let state: OcState = 'done'
           if (a) {
@@ -618,7 +618,9 @@ export async function buildOpenClose(opts: { mode: OcMode; date?: string | null;
             else if (a.inspection === 'open') { tags.push({ label: 'inspection open', tone: 'sky' }); state = 'active' }
             else if (a.inspection === 'auto') tags.push({ label: 'inspection auto', tone: 'violet', title: 'Task automation files it on its next run' })
             else if (a.inspection === 'done') tags.push({ label: 'inspected', tone: 'emerald' })
-            if (!a.welcomeDone) { tags.push({ label: 'call owed', tone: 'amber', title: 'Welcome call not logged yet' }); state = state === 'done' ? 'pending' : state }
+            // No-service buildings owe no welcome call (Jon, 2026-11-06) — no tag either way.
+            if (a.welcomeSkip && !a.welcomeDone) { /* nothing owed */ }
+            else if (!a.welcomeDone) { tags.push({ label: 'call owed', tone: 'amber', title: 'Welcome call not logged yet' }); state = state === 'done' ? 'pending' : state }
             else tags.push({ label: 'called', tone: 'emerald' })
           } else state = flags.length ? 'pending' : 'done'
           rows.push({ key: 'arr:' + r.id, kind: 'arrival', unit: a ? a.unit : str(r.listing_name) || 'Unit', meta: [r.guest_name || 'Guest', r.nights + ' night' + (r.nights === 1 ? '' : 's'), a && a.value ? '$' + Math.round(a.value).toLocaleString('en-US') : ''].filter(Boolean).join(' · '), state, tags, reservationId: r.id, href: '/reservations?id=' + r.id })
@@ -686,7 +688,8 @@ export async function buildOpenClose(opts: { mode: OcMode; date?: string | null;
           const flags = r ? arrivalFlags(r, { today: day, long: LONG, big: BIG, vips: vips || new Set<string>(), departsSameDay }) : []
           const tags = flags.slice()
           let state: OcState = 'done'
-          if (!a.welcomeDone) { tags.push({ label: 'call owed', tone: 'amber', title: 'No welcome call logged — is the guest in?' }); state = 'pending' }
+          if (a.welcomeSkip && !a.welcomeDone) { /* no-service building: no call owed (Jon, 2026-11-06) */ }
+          else if (!a.welcomeDone) { tags.push({ label: 'call owed', tone: 'amber', title: 'No welcome call logged — is the guest in?' }); state = 'pending' }
           else tags.push({ label: 'called', tone: 'emerald' })
           if (a.inspection === 'none' && flags.length) { tags.push({ label: 'no inspection', tone: 'amber' }); state = 'pending' }
           if (state === 'done' && !flags.length) continue

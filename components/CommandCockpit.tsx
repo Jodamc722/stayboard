@@ -184,7 +184,7 @@ export function TilePanel({ k, d, roster, onChanged }: { k: TileKey; d: CommandD
             : r.inspection === 'done' ? <Pill cls="bg-emerald-100 text-emerald-700">Inspected</Pill>
             : r.inspection === 'auto' ? <span title="Task automation creates and assigns this inspection on its next run — nobody needs to"><Pill cls="bg-sky-50 text-sky-700">Auto</Pill></span>
             : <Pill cls="bg-app text-muted">Vendor</Pill>)}
-          {r.today && !r.welcomeDone && <Link href="/welcome-calls" className="text-[11.5px] font-semibold text-brand-700 inline-flex items-center gap-1 min-h-[32px]"><Phone size={11} /> call</Link>}
+          {r.today && !r.welcomeDone && !r.welcomeSkip && <Link href="/welcome-calls" className="text-[11.5px] font-semibold text-brand-700 inline-flex items-center gap-1 min-h-[32px]"><Phone size={11} /> call</Link>}
         </div>
       ))}
       <div className="px-4 py-2 text-[11.5px] text-muted">Big = value at or above the bar in /users → Task automation. Inspected = an inspection open or completed on the unit in the last 45 days.</div>

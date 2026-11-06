@@ -224,6 +224,9 @@ export function TaskAutomationAdmin({ isOwner }: { isOwner: boolean }) {
       {/* ── NEVER ASSIGN IN BREEZEWAY (Jon, 2026-09-30) ───────────────────────────────────── */}
       <NeverAssign isOwner={isOwner} />
 
+      {/* ── NO INSPECTIONS / NO WELCOME CALLS (Jon, 2026-11-06) ────────────────────────────── */}
+      <NoService isOwner={isOwner} />
+
       {/* ── AUTOMATION: TRIP CONSOLIDATION ────────────────────────────────────────────────── */}
       <div className="border-t border-line pt-3 mt-1">
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -600,6 +603,65 @@ function NeverAssign({ isOwner }: { isOwner: boolean }) {
         </div>
       )}
       {err && <p className="text-[11.5px] text-rose-600 font-semibold mt-1">{err}</p>}
+    </div>
+  )
+}
+
+// NO INSPECTIONS / NO WELCOME CALLS (Jon, 2026-11-06: "We do not need to do any inspections or
+// welcome calls for any Botanica units. So don't draft them or auto create them."). Two
+// comma-separated building lists, saved on their own key (lib/no-service) — the automations, the
+// Calls desk and the Today tiles all read it. A person can still add a task or log a call by hand.
+function NoService({ isOwner }: { isOwner: boolean }) {
+  const [insp, setInsp] = useState<string | null>(null)
+  const [calls, setCalls] = useState<string | null>(null)
+  const [saved, setSaved] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
+  const apply = (c: any) => {
+    const i = (c?.inspections || []).join(', '), w = (c?.welcomeCalls || []).join(', ')
+    setInsp(i); setCalls(w); setSaved(i + '|' + w)
+  }
+  useEffect(() => {
+    fetch('/api/settings/no-service', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.config) apply(j.config) }).catch(() => { setInsp(''); setCalls('') })
+  }, [])
+  async function save() {
+    setBusy(true); setNote(null)
+    try {
+      const r = await fetch('/api/settings/no-service', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: { inspections: insp || '', welcomeCalls: calls || '' } }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
+      apply(j.config); setNote({ tone: 'ok', text: 'Saved.' })
+    } catch (e: any) { setNote({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(false) }
+  }
+  const dirty = insp !== null && calls !== null && (insp + '|' + calls) !== saved
+  const field = 'rounded-lg border border-line px-2.5 py-1 text-[12.5px] w-full max-w-[360px] disabled:opacity-60'
+  return (
+    <div className="border-t border-line pt-3 mt-1">
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <ClipboardCheck size={14} className="text-muted" aria-hidden />
+        <span className="text-[13px] font-bold text-ink">No inspections / no welcome calls</span>
+      </div>
+      <p className="text-[12px] text-muted mt-1 max-w-[74ch]">
+        Buildings where Lighthouse never drafts or auto-creates an inspection, and never lists a welcome call as owed. Comma-separated; matches any unit whose name or building contains the word. Adding a task or logging a call by hand still works.
+      </p>
+      {insp === null ? <p className="text-[12px] text-muted mt-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin inline mr-1.5" />Loading…</p> : (
+        <div className="mt-2 grid gap-2">
+          <label className="flex flex-col gap-1 text-[12px] text-muted">No inspections
+            <input value={insp} onChange={e => setInsp(e.target.value)} className={field} disabled={!isOwner || busy} placeholder="e.g. Botanica" />
+          </label>
+          <label className="flex flex-col gap-1 text-[12px] text-muted">No welcome calls
+            <input value={calls || ''} onChange={e => setCalls(e.target.value)} className={field} disabled={!isOwner || busy} placeholder="e.g. Botanica" />
+          </label>
+          {isOwner && (
+            <div className="flex items-center gap-2">
+              <button onClick={save} disabled={busy || !dirty}
+                className="rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-40">
+                {busy ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />} Save
+              </button>
+              {note && <span className={'text-[11.5px] font-semibold ' + (note.tone === 'ok' ? 'text-emerald-700' : 'text-rose-600')}>{note.text}</span>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

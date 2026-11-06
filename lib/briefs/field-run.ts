@@ -13,6 +13,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { gather, lowReviewInspections, niceDay } from '@/lib/ops-brief'
 import { upcomingAutoInspections } from '@/lib/auto-inspections'
+import { getNoService, skipsInspectionsIn } from '@/lib/no-service'
 import { getShifts, nameMatches } from '@/lib/homebase'
 import { translator, type BriefLang } from '@/lib/brief-lang'
 import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, crewOf, unitShort, personName, crewNote, isOfficeLike, type Line } from './ui'
@@ -39,6 +40,9 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     lowReviewInspections().catch(() => [] as any[]),
     Promise.resolve(supabaseAdmin().from('share_links').select('code,passcode_hint,scope,created_at').eq('kind', 'scheduler').is('revoked_at', null).order('created_at', { ascending: false }).limit(50)).then(r => (r.data || []) as any[]).catch(() => [] as any[]),
   ])
+  // No-inspection buildings (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+  // for any Botanica units.") — a VIP landing there is still listed, never with "walk it".
+  const noSvc = await getNoService().catch(() => null)
   const onShift = new Set<string>()
   for (const s of shiftsRes as any[]) if (!s.open && s.startAt) onShift.add(str(s.name))
   const shiftOf = (n: string) => Array.from(onShift).some(x => nameMatches(x, n))
@@ -142,7 +146,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   for (const a of arrivals.filter(a => isVip(str(a.listingId)))) {
     const lid = str(a.listingId)
     const insp = autoInsp.find(i => str(i.listing_id) === lid)
-    P(pick('VIP ARRIVAL', 'LLEGADA VIP'), 'amber', `<b>${esc(unitShort(str(a.unit)))}</b> ${vipWhy(lid)} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, insp ? `${pick('Pre-arrival inspection', 'Inspección previa')}: ${insp.assignees?.length ? esc(insp.assignees.map(first).join(', ')) : `<span style="${T.red}">${pick('not assigned', 'sin asignar')}</span>`} · ${/progress|start/i.test(str(insp.status)) ? t('in progress') : pick('open', 'pendiente')}` : pick('Walk it before 3pm — no inspection is on the board.', 'Revísala antes de las 3pm — no hay inspección en el tablero.'), 'amber')
+    P(pick('VIP ARRIVAL', 'LLEGADA VIP'), 'amber', `<b>${esc(unitShort(str(a.unit)))}</b> ${vipWhy(lid)} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, insp ? `${pick('Pre-arrival inspection', 'Inspección previa')}: ${insp.assignees?.length ? esc(insp.assignees.map(first).join(', ')) : `<span style="${T.red}">${pick('not assigned', 'sin asignar')}</span>`} · ${/progress|start/i.test(str(insp.status)) ? t('in progress') : pick('open', 'pendiente')}` : (noSvc && skipsInspectionsIn(noSvc, a.unit)) ? '' : pick('Walk it before 3pm — no inspection is on the board.', 'Revísala antes de las 3pm — no hay inspección en el tablero.'), 'amber')
   }
   const walkToday = reviewInsp.filter(i => i.check_in <= today)
   for (const i of walkToday.slice(0, 3)) P(pick('BAD REVIEW', 'MALA RESEÑA'), 'red', `<b>${esc(unitShort(i.unit_name))}</b> — ${esc(i.reason)} · ${pick('unit is empty today, walk it before the next guest does', 'la unidad está vacía hoy, revísala antes que el próximo huésped')}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'), 'amber')

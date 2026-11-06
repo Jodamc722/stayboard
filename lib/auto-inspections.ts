@@ -26,6 +26,7 @@ import { marketOf } from './segments'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { noBreezewayRegex } from './ops-presets'
 import { dutyIsOurs } from './eve/operating-model'
+import { getNoService, skipsInspectionsIn } from './no-service'
 import { worstFeedbackReview, keywordsOf } from './review-feedback'
 import { ratingDisplay } from './review-scale'
 import { pageRows } from './db-page'
@@ -240,7 +241,9 @@ export async function upcomingAutoInspections(days = 2): Promise<(AutoInspection
   // Arrival rows only: the deep clean inspections (dc: keys) are not tied to an arrival and read
   // like one on the brief's arrival card ("… lands at 4pm"); they show as ordinary open inspections.
   const { data } = await db.from('auto_inspections').select('*').gte('check_in', today).lte('check_in', until).not('reservation_id', 'like', 'dc:%').order('check_in')
-  const rows = (data || []) as any[]
+  // A row filed before the no-service rule (Jon, 2026-11-06) must not read as owed on the brief.
+  const ns = await getNoService()
+  const rows = ((data || []) as any[]).filter(r => !skipsInspectionsIn(ns, r.unit_name))
   if (!rows.length) return []
   const ids = rows.map(r => str(r.task_id)).filter(Boolean)
   const st: Record<string, string> = {}
@@ -257,6 +260,7 @@ export async function upcomingAutoInspections(days = 2): Promise<(AutoInspection
  */
 export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled?: boolean; scanned: number; candidates: any[]; created: number; failed: number; skippedNoBreezeway: number
+  skippedNoService?: number; skipped?: { reservation_id: string; unit_name: string; reason: string }[]
 }> {
   const cfg = await getTaskAutomation()
   // Disabled = the cron is a no-op; a dry-run preview still shows what WOULD fire so the
@@ -296,6 +300,10 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
   // Why each reservation fires — first match wins, in the order Jon listed them.
   const candidates: any[] = []
   const oursInsp = await dutyIsOurs('inspections')
+  // NO-SERVICE BUILDINGS (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+  // for any Botanica units. So don't draft them or auto create them."). Counted, not silently lost.
+  const ns = await getNoService()
+  const skipped: { reservation_id: string; unit_name: string; reason: string }[] = []
   for (const r of resRows || []) {
     const rid = str((r as any).id)
     if (done.has(rid)) continue
@@ -313,6 +321,10 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
           : ''
     if (!reason) continue
     const meta = lmeta[lid] || {}
+    if (skipsInspectionsIn(ns, meta.building, meta.nickname, meta.title, (r as any).listing_name)) {
+      skipped.push({ reservation_id: rid, unit_name: str(meta.nickname || meta.title || (r as any).listing_name), reason: 'no-inspection building' })
+      continue
+    }
     // NOT OUR INSPECTIONS (Jon, 2026-10-16): a hotel or vendor building (Botanica, Opal's three) files
     // and assigns its own — the operating model says so, and nothing is created or asked.
     if (!oursInsp(meta.building, meta.nickname || meta.title)) continue
@@ -328,7 +340,7 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
   }
 
   if (opts.dryRun || !breezewayConfigured()) {
-    return { ok: true, scanned: (resRows || []).length, candidates, created: 0, failed: 0, skippedNoBreezeway: candidates.filter(c => !c.hasBreezeway).length }
+    return { ok: true, scanned: (resRows || []).length, candidates, created: 0, failed: 0, skippedNoBreezeway: candidates.filter(c => !c.hasBreezeway).length, skippedNoService: skipped.length, skipped }
   }
 
   // Resolve assignees once per run, not per task (never-assign people come back null).
@@ -390,7 +402,7 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
       console.error('auto-inspections: create failed for', c.reservation_id, e)
     }
   }
-  return { ok: true, scanned: (resRows || []).length, candidates, created, failed, skippedNoBreezeway }
+  return { ok: true, scanned: (resRows || []).length, candidates, created, failed, skippedNoBreezeway, skippedNoService: skipped.length, skipped }
 }
 
 // ── LOW-REVIEW INSPECTIONS (Jon, 2026-08-25) ───────────────────────────────────────────────────
@@ -630,6 +642,7 @@ async function moveReviewInspectionsForward(db: any, existing: any[], today: str
 export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled?: boolean; scanned: number; candidates: any[]
   created: number; failed: number; movedForward: number; alreadyCovered: number; waitingForCheckout: number
+  skippedNoService?: number; skipped?: { reviewId: string; unit_name: string; reason: string }[]
 }> {
   const cfg = await getTaskAutomation()
   if ((!cfg.enabled || !cfg.lowReviews) && !opts.dryRun) {
@@ -694,7 +707,17 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
   const nextOut = await nextCheckouts(db, lids, today)
 
   const oursInspLow = await dutyIsOurs('inspections')
-  const candidates = lowRows.filter(r => { const m = lmeta[str(r.listing_id)] || {}; return oursInspLow(m.building, m.nickname || m.title) }).map(r => {
+  // NO-SERVICE BUILDINGS (Jon, 2026-11-06: "don't draft them or auto create them") — counted.
+  const ns = await getNoService()
+  const skipped: { reviewId: string; unit_name: string; reason: string }[] = []
+  const candidates = lowRows.filter(r => {
+    const m = lmeta[str(r.listing_id)] || {}
+    if (skipsInspectionsIn(ns, m.building, m.nickname, m.title)) {
+      skipped.push({ reviewId: str(r.id), unit_name: str(m.nickname || m.title || 'Unit'), reason: 'no-inspection building' })
+      return false
+    }
+    return oursInspLow(m.building, m.nickname || m.title)
+  }).map(r => {
     const lid = str(r.listing_id)
     const meta = lmeta[lid] || {}
     return {
@@ -715,7 +738,7 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
   const movedForward = (!opts.dryRun && breezewayConfigured()) ? await moveReviewInspectionsForward(db, existing || [], today) : 0
 
   if (opts.dryRun || !breezewayConfigured()) {
-    return { ok: true, scanned: (revRows || []).length, candidates, created: 0, failed: 0, movedForward, alreadyCovered, waitingForCheckout: candidates.filter(c => !c.nextCheckout).length }
+    return { ok: true, scanned: (revRows || []).length, candidates, created: 0, failed: 0, movedForward, alreadyCovered, waitingForCheckout: candidates.filter(c => !c.nextCheckout).length, skippedNoService: skipped.length, skipped }
   }
 
   const idOf = await resolveAssignees(cfg)
@@ -801,7 +824,7 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
       console.error('low-review inspections: create failed for review', c.reviewId, e)
     }
   }
-  return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, alreadyCovered, waitingForCheckout }
+  return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, alreadyCovered, waitingForCheckout, skippedNoService: skipped.length, skipped }
 }
 
 // ── ARRIVAL INTO A UNIT WITH A BAD REVIEW (Jon, 2026-09-30) ─────────────────────────────────────
@@ -834,7 +857,7 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
 // lib/task-audit recognises), scheduled on the arrival day — after the turn, before the guest.
 export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled?: boolean; scanned: number; candidates: any[]; created: number; failed: number
-  covered: number; skippedNoBreezeway: number; movedForward: number
+  covered: number; skippedNoBreezeway: number; movedForward: number; skippedNoService?: number
 }> {
   const cfg = await getTaskAutomation()
   const none0 = { ok: true, scanned: 0, candidates: [] as any[], created: 0, failed: 0, covered: 0, skippedNoBreezeway: 0, movedForward: 0 }
@@ -875,6 +898,9 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
   for (const p of bzProps || []) homeOf[str((p as any).reference_property_id)] = Number((p as any).home_id)
   const noBzRe = noBreezewayRegex((presets && presets.vendorBuildings) || [])
   const oursInspArr = await dutyIsOurs('inspections')
+  // NO-SERVICE BUILDINGS (Jon, 2026-11-06): no feedback walk is filed there — counted below.
+  const ns = await getNoService()
+  let skippedNoService = 0
   const lids = Array.from(new Set(arrivals.map(r => str(r.listing_id))))
 
   // The units' reviews (newest first, the Command Center's own read) and their open inspections.
@@ -922,6 +948,7 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
     seenUnit.add(lid)
     const meta = lmeta[lid] || {}
     const unit = str(meta.nickname || meta.title || r.listing_name) || 'Unit'
+    if (skipsInspectionsIn(ns, meta.building, meta.nickname, meta.title, r.listing_name)) { skippedNoService++; continue }
     if (noBzRe.test(str(meta.building) + ' ' + unit)) continue
     if (!oursInspArr(meta.building, unit)) continue
     if (walked.has(str(w.id)) || filed.has(REV_KEY(str(w.id))) || openOn.has(lid)) { covered++; continue }
@@ -940,7 +967,7 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
 
   const skippedNoBreezeway = candidates.filter(c => !c.hasBreezeway).length
   if (opts.dryRun || !breezewayConfigured()) {
-    return { ok: true, scanned: arrivals.length, candidates, created: 0, failed: 0, covered, skippedNoBreezeway, movedForward }
+    return { ok: true, scanned: arrivals.length, candidates, created: 0, failed: 0, covered, skippedNoBreezeway, movedForward, skippedNoService }
   }
 
   const idOf = await resolveAssignees(cfg)
@@ -992,7 +1019,7 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
       console.error('arrival-feedback inspections: create failed for', c.reservation_id, e)
     }
   }
-  return { ok: true, scanned: arrivals.length, candidates, created, failed, covered, skippedNoBreezeway, movedForward }
+  return { ok: true, scanned: arrivals.length, candidates, created, failed, covered, skippedNoBreezeway, movedForward, skippedNoService }
 }
 
 // ── ARRIVAL INSPECTIONS ARE TIME-SENSITIVE: MISSED = GONE ───────────────────────────────────────
@@ -1089,7 +1116,7 @@ const DC_KEY = (taskId: string) => 'dc:' + taskId
 const DEEP_CLEAN_NAME = /^deep[ -]?clean(ing)?\b/i
 const DEEP_CLEAN_NOT = /(inspection|touch[ -]?up|a\/?c\b|hvac|air ?con|air ?handler|mini ?split|wall unit|ptac|ductless|coil|departure|turnover)/i
 export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): Promise<{
-  ok: boolean; enabled?: boolean; scanned: number; candidates: any[]; created: number; failed: number; alreadyFiled: number; notOurs: number; error?: string
+  ok: boolean; enabled?: boolean; scanned: number; candidates: any[]; created: number; failed: number; alreadyFiled: number; notOurs: number; skippedNoService?: number; error?: string
 }> {
   const cfg = await getTaskAutomation()
   const none = { ok: true, scanned: 0, candidates: [] as any[], created: 0, failed: 0, alreadyFiled: 0, notOurs: 0 }
@@ -1131,6 +1158,9 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
   const openOn: Record<string, any[]> = {}
   for (const t of ((openInsp || []) as any[])) { if (isTaskGone(t.status)) continue; (openOn[str(t.reference_property_id)] = openOn[str(t.reference_property_id)] || []).push(t) }
   const oursInsp = await dutyIsOurs('inspections')
+  // NO-SERVICE BUILDINGS (Jon, 2026-11-06: "don't draft them or auto create them") — counted.
+  const ns = await getNoService()
+  let skippedNoService = 0
 
   const candidates: any[] = []
   let alreadyFiled = 0, notOurs = 0
@@ -1140,6 +1170,7 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
     if (done.has(DC_KEY(taskId))) { alreadyFiled++; continue }
     const lid = str(t.reference_property_id)
     const meta = lmeta[lid] || {}
+    if (skipsInspectionsIn(ns, meta.building, meta.nickname, meta.title, t.raw?.property?.name)) { skippedNoService++; continue }
     if (!oursInsp(meta.building, meta.nickname || meta.title)) { notOurs++; continue }
     // Two deep cleans on one unit inside the window (a redo after a fail): one inspection, the newest.
     if (seenUnit.has(lid)) { continue }
@@ -1160,7 +1191,7 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
     })
   }
 
-  if (opts.dryRun || !breezewayConfigured()) return { ...none, scanned: cleans.length, candidates, alreadyFiled, notOurs }
+  if (opts.dryRun || !breezewayConfigured()) return { ...none, scanned: cleans.length, candidates, alreadyFiled, notOurs, skippedNoService }
 
   const idOf = await resolveAssignees(cfg)
   let created = 0, failed = 0
@@ -1220,7 +1251,7 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
       console.error('deep clean inspections: create failed for deep clean', c.deepCleanTaskId, e)
     }
   }
-  return { ok: true, scanned: cleans.length, candidates, created, failed, alreadyFiled, notOurs }
+  return { ok: true, scanned: cleans.length, candidates, created, failed, alreadyFiled, notOurs, skippedNoService }
 }
 
 // ── THE TEMPLATES, ON THE TASKS ALREADY ON THE BOARD (Jon, 2026-10-16: "start using big arrival

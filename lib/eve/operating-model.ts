@@ -34,6 +34,7 @@ import { vendorNameOf } from '@/lib/ops-presets'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { saveMemory } from './memory'
 import { todayET, shiftDay } from './ctx'
+import { getNoService, skipsInspectionsIn } from '@/lib/no-service'
 
 export const OPERATING_MODEL_KEY = 'eve_operating_model'
 
@@ -148,7 +149,12 @@ export async function getOperatingModel(): Promise<OperatingModel> {
 export async function dutyIsOurs(duty: Duty): Promise<(building?: string | null, unit?: string | null) => boolean> {
   const m = await getOperatingModel()
   const { buildingOf } = await import('@/lib/segments')
+  // NO-SERVICE BACKSTOP (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+  // for any Botanica units. So don't draft them or auto create them."). The explicit list in
+  // lib/no-service wins over whatever the learned model says, so an Eve answer cannot undo it.
+  const ns = duty === 'inspections' ? await getNoService().catch(() => null) : null
   return (building, unit) => {
+    if (ns && skipsInspectionsIn(ns, building, unit)) return false
     const b = String(building || '').trim() || buildingOf(null, String(unit || '')) || ''
     const roll = buildingOf(b, String(unit || '')) || b
     return weDo(m, roll, duty) && weDo(m, b, duty)

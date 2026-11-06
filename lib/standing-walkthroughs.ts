@@ -13,6 +13,7 @@
 //   NEVER TWICE  a walkthrough already on that property for the week (open or done) is the week's.
 // The run is idempotent, so the daily cron only creates on the first run of each week.
 import 'server-only'
+import { getNoService, skipsInspectionsIn } from './no-service'
 import { supabaseAdmin } from './supabase-admin'
 import { createBreezewayTask, breezewayConfigured, breezewayPeopleLite, mapBreezewayTask } from './breezeway'
 import { marketOf } from './segments'
@@ -116,7 +117,11 @@ export async function runWalkthroughs(opts: { dryRun?: boolean } = {}) {
   if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured', ...r, created, lines }
   const db = supabaseAdmin()
   const day = r.today > r.week ? r.today : r.week
+  const noSvc = await getNoService()
   for (const t of r.targets) {
+    // NO-INSPECTION BUILDINGS (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+    // for any Botanica units. So don't draft them or auto create them.")
+    if (skipsInspectionsIn(noSvc, t.label, t.where)) { lines.push(t.label + ': no-inspection building — skipped'); continue }
     if (t.homeId == null) { lines.push(t.label + ': no Breezeway property found — skipped'); continue }
     if (t.existing) { lines.push(t.label + ': already has this week’s walkthrough (' + (t.existing.scheduled || '') + ')'); continue }
     if (opts.dryRun) { lines.push(t.label + ': would create on ' + day + ' at ' + t.where + ' for ' + t.assignees.map(a => a.name).join(', ')); continue }

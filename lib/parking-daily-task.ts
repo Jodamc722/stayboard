@@ -14,6 +14,7 @@
 //   NEVER TWICE  a task with this title on that property for the day is the day's.
 // Hendricks is deliberately NOT in TARGETS (Jon). Adding a building = one line below.
 import 'server-only'
+import { getNoService, skipsInspectionsIn } from './no-service'
 import { supabaseAdmin } from './supabase-admin'
 import { createBreezewayTask, updateBreezewayTask, breezewayConfigured, breezewayPeopleLite, mapBreezewayTask } from './breezeway'
 import { listLots, lotByCode } from './parking-lots'
@@ -121,7 +122,11 @@ export async function runParkingTasks(opts: { dryRun?: boolean } = {}) {
   let created = 0, updated = 0
   if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured', ...plan, created, updated, lines }
   const db = supabaseAdmin()
+  const noSvc = await getNoService()
   for (const t of plan.targets) {
+    // NO-INSPECTION BUILDINGS (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+    // for any Botanica units. So don't draft them or auto create them.")
+    if (skipsInspectionsIn(noSvc, t.label, t.where)) { lines.push(t.label + ': no-inspection building — skipped'); continue }
     if (t.homeId == null) { lines.push(t.label + ': no Breezeway property found — skipped'); continue }
     if (!t.link) { lines.push(t.label + ': no active parking lot in Lighthouse — skipped'); continue }
     const want = t.supervisors.concat(t.housekeepers).map(p => p.id)

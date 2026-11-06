@@ -47,6 +47,7 @@ import { parkingBooked } from '@/lib/parking'
 import { isLowReview, clearsRecovery } from '@/lib/review-scale'
 import { pctOrCount } from '@/lib/money'
 import { phoneDigits } from '@/lib/talkroute'
+import { getNoService, skipsWelcomeCallsIn } from '@/lib/no-service'
 
 export const HIGH_VALUE = 2500    // a stay worth calling about on money alone
 
@@ -445,10 +446,12 @@ export async function welcomeRate(sb: any, from: string, to: string, inScope?: (
 export async function welcomeCallsDue(sb: any, today: string): Promise<{ id: string; listingId: string }[]> {
   const dueDate = addDays(today, WELCOME_AHEAD_DAYS)
   const { rows, truncated } = await pageRows<any>((a, b) => sb.from('guesty_reservations')
-    .select('id,listing_id,status,custom_fields')
+    .select('id,listing_id,listing_name,status,custom_fields')
     .gte('check_in', today).lte('check_in', dueDate).order('id').range(a, b), 4)
   if (truncated) throw new Error('welcome calls due: the arrivals read came back short')
-  const live = rows.filter((r: any) => isLiveStay(r.status))
+  // No-welcome-call buildings owe nothing (Jon, 2026-11-06) — same rule as loadCallsDesk.
+  const noSvc = await getNoService().catch(() => null)
+  const live = rows.filter((r: any) => isLiveStay(r.status) && !(noSvc && skipsWelcomeCallsIn(noSvc, r.listing_name)))
   const ids = live.map((r: any) => String(r.id))
   const logged = new Set<string>()
   for (let i = 0; i < ids.length; i += 200) {
@@ -759,8 +762,17 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
     for (const l of (data || [])) if ((l as any).building) buildingOfListing.set(String((l as any).id), String((l as any).building))
   }
 
+  // NO WELCOME CALLS THERE (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+  // for any Botanica units. So don't draft them or auto create them."). A pre-arrival (kind
+  // 'welcome') call in a no-welcome-call building is never listed as owed, never counted as due and
+  // never closed out as missed. One already made stays — that is history. Post-checkout recovery
+  // follow-ups (kind 'post_checkout') are untouched: those are a guest problem, not the program.
+  const noSvc = await getNoService().catch(() => null)
+  const skipWelcome = (r: any) => !!noSvc && skipsWelcomeCallsIn(noSvc, buildingOfListing.get(String(r.listing_id || '')), r.listing_name)
+    && !(guestyCalled(r.custom_fields) || isCompleted(logOf(r.id, 'welcome')?.outcome))
+
   // ── WELCOME CALLS ─────────────────────────────────────────────────────────────────────────────
-  const rows: WelcomeRow[] = (arrivals || []).filter((r: any) => isLiveStay(r.status)).map((r: any) => {
+  const rows: WelcomeRow[] = (arrivals || []).filter((r: any) => isLiveStay(r.status) && !skipWelcome(r)).map((r: any) => {
     const listing = String(r.listing_name || '')
     const check_in = String(r.check_in).slice(0, 10)
     const recv = recOf(r.listing_id)

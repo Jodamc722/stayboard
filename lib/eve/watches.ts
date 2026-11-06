@@ -462,7 +462,7 @@ async function noShowRisk(env: WatchEnv): Promise<Prepared[]> {
   const cd = await env.commandDay()
   if (!cd) return []
   const tomorrow = shift(env.today, 1)
-  const arrivals = cd.tiles.arrivals.rows.filter(a => !a.welcomeDone && (a.today || a.checkIn === tomorrow))
+  const arrivals = cd.tiles.arrivals.rows.filter(a => !a.welcomeDone && !a.welcomeSkip && (a.today || a.checkIn === tomorrow))   // no-service buildings owe no call (Jon, 2026-11-06)
   if (!arrivals.length) return []
   const db = env.db
   const resIds = arrivals.map(a => a.reservationId)

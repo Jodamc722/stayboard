@@ -855,7 +855,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const createFor = (resId: string) => live.find(i => i.key === 'insp:' + resId && i.action?.type === 'create_task') || null
 
   // ── GUESTS ──
-  const calls = t.arrivals.rows.filter(a => a.today && !a.welcomeDone)
+  const calls = t.arrivals.rows.filter(a => a.today && !a.welcomeDone && !a.welcomeSkip)
   const inbox = live.filter(i => i.kind === 'guest')
   const unhappy = inbox.filter(i => (i.tags || []).some(x => x.label === 'Unhappy'))
   const lateReplies = inbox.filter(i => (i.tags || []).some(x => /^Late/.test(x.label)))

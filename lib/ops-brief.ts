@@ -567,7 +567,10 @@ export async function lowReviewInspections(): Promise<ReviewInspection[]> {
   const db = supabaseAdmin()
   const { data } = await db.from('auto_inspections').select('*')
     .like('reservation_id', 'rev:%').order('check_in', { ascending: true }).limit(60)
-  const rows = (data || []) as any[]
+  // No-inspection buildings (Jon, 2026-11-06) never read as a walk due, even from an older row.
+  const { getNoService, skipsInspectionsIn } = await import('./no-service')
+  const noSvc = await getNoService().catch(() => null)
+  const rows = ((data || []) as any[]).filter(r => !(noSvc && skipsInspectionsIn(noSvc, r.unit_name)))
   if (!rows.length) return []
   const ids = rows.map(r => str(r.task_id)).filter(Boolean)
   const st: Record<string, string> = {}

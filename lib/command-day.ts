@@ -59,6 +59,7 @@ import { buildOpsDay } from './ops-day'
 import { buildDayPicture, type DayPicture, type PersonTask, type PersonClock } from './capacity-day'
 import { getTaskAutomation, complaintGist } from './auto-inspections'
 import { dutyIsOurs } from './eve/operating-model'
+import { getNoService, skipsWelcomeCallsIn } from './no-service'
 // The feedback rule is shared with the automation that files these inspections (lib/review-feedback).
 import { keywordsOf, worstFeedbackReview } from './review-feedback'
 import { getOpsPresets } from './app-settings'
@@ -171,7 +172,9 @@ export type CleanRow = {
   arrivingAt: string | null; sameDay: boolean; outAt: string | null
 }
 /** inspection 'auto' = a big arrival with none yet that Task automation files on its next run — nobody is asked. */
-export type ArrivalRow = { reservationId: string; guest: string; unit: string; listingId: string | null; checkIn: string; nights: number; value: number; big: boolean; today: boolean; inspection: 'none' | 'open' | 'done' | 'n/a' | 'auto'; inspectionTaskId: string | null; welcomeDone: boolean }
+export type ArrivalRow = { reservationId: string; guest: string; unit: string; listingId: string | null; checkIn: string; nights: number; value: number; big: boolean; today: boolean; inspection: 'none' | 'open' | 'done' | 'n/a' | 'auto'; inspectionTaskId: string | null; welcomeDone: boolean
+  /** No welcome call is owed here at all — a no-service building (lib/no-service, Jon 2026-11-06). */
+  welcomeSkip?: boolean }
 export type TaskRow = { taskId: string; unit: string; market: string; name: string; dept: string; type: string; who: string; state: 'done' | 'running' | 'open'; prio: string; late: boolean }
 // WHO'S WORKING IS THE FIELD TEAM (Jon, 2026-10-05: "Who is working should be field team, Karla is
 // field coordinator not field team"). Housekeeping, supervisors, maintenance and inspectors are in the
@@ -409,6 +412,9 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   // "no inspection" — there is nothing for us to file (Jon, 2026-10-16).
   const oursInsp = await dutyIsOurs('inspections').catch(() => () => true)
   const canFile = (lid: string) => { const m = meta[lid]; return !!m && !noBzRe.test((m.building || '') + ' ' + m.name) && oursInsp(m.building, m.name) }
+  // NO WELCOME CALLS THERE (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+  // for any Botanica units. So don't draft them or auto create them.") — never "call owed".
+  const noSvc = await getNoService().catch(() => null)
 
   const openTasks = guard<any[]>('open tasks', openTasksP as any, [])
   const openByListing: Record<string, any[]> = {}
@@ -603,7 +609,8 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     const openInsp = (openByListing[lid] || []).find((t: any) => INSPECT.test(str(t.name)))
     const inspection: ArrivalRow['inspection'] = !canFile(lid) && !openInsp && !doneInsp[lid] ? 'n/a' : openInsp ? 'open' : (doneInsp[lid] || inspByRes.has(str(r.id))) ? 'done' : (big && autoBig) ? 'auto' : 'none'
     const welcomeDone = guestyCalled(r.custom_fields) || welcomeCalled.has(str(r.id))
-    arrivalRows.push({ reservationId: str(r.id), guest: str(r.guest_name) || 'Guest', unit, listingId: lid || null, checkIn, nights, value, big, today: isToday, inspection, inspectionTaskId: openInsp ? str(openInsp.id) : (doneInsp[lid] || null), welcomeDone })
+    const welcomeSkip = !!noSvc && skipsWelcomeCallsIn(noSvc, (meta[lid] || {} as any).building, unit, r.listing_name)
+    arrivalRows.push({ reservationId: str(r.id), guest: str(r.guest_name) || 'Guest', unit, listingId: lid || null, checkIn, nights, value, big, today: isToday, inspection, inspectionTaskId: openInsp ? str(openInsp.id) : (doneInsp[lid] || null), welcomeDone, welcomeSkip })
 
     if (!isToday && !isTomorrow) continue
     const when = isToday ? 'today' : 'tomorrow'
@@ -905,7 +912,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   // Messages = guests waiting on a reply (the one rule), the ones due soonest — or latest — first.
   const dueMs = (id: string) => { const r = replyOf[id]; const t = r && r.at ? Date.parse(r.at) : NaN; return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER }
   const waitingFirst = waiting.rows.slice().sort((a, b) => dueMs(a.conversation_id) - dueMs(b.conversation_id))
-  const welcomeDue = arrivalRows.filter(a => a.today && !a.welcomeDone)
+  const welcomeDue = arrivalRows.filter(a => a.today && !a.welcomeDone && !a.welcomeSkip)
   const approvals = guard<any[]>('approvals', approvalsRes as any, []).filter(r => !/^(approved|rejected)$/i.test(str(r.approval_status)))
   const deskRows: GuestDeskRow[] = []
   for (const r of reviews.slice(0, 8)) deskRows.push({ key: 'rv:' + str(r.id), kind: 'review', who: str(r.guest_name) || 'Guest', unit: nameOf(r.listing_id), text: str(r.content).replace(/\s+/g, ' ').slice(0, 140), meta: (Number.isFinite(norm5(r.rating)) ? starsText(r.rating, r.channel) + ' · ' : '') + str(r.channel), href: '/reviews' })

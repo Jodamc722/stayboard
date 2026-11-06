@@ -984,7 +984,7 @@ export const RELOCATED = {
 
   welcome_calls: {
     name: 'welcome_calls',
-    description: 'Pre-arrival WELCOME CALL tracker. Lists upcoming check-ins (default next 7 days; set days up to 30) and whether each guest\'s welcome call is done (from the welcome_call custom field), plus a sensitive-guest flag. status: "pending"|"done"|"all" (default all). Optional building.',
+    description: 'Pre-arrival WELCOME CALL tracker. Lists upcoming check-ins (default next 7 days; set days up to 30) and whether each guest\'s welcome call is done (from the welcome_call custom field), plus a sensitive-guest flag. welcome_call_not_needed = a building where we make no welcome calls (Botanica by default) — never pending, never chase it. status: "pending"|"done"|"all" (default all). Optional building.',
     input_schema: obj({ days: S.num, status: S.str, building: S.str }),
     run: async (input: any, ctx: any) => {
       const win = Math.min(Math.max(Number(input?.days) || 7, 1), 30)
@@ -998,16 +998,21 @@ export const RELOCATED = {
         return ff ? ff.value : undefined
       }
       const truthy = (v: any) => v === true || v === 1 || (typeof v === 'string' && /^(y|yes|true|done|complete|1|x)/i.test(v.trim()))
+      // NO WELCOME CALLS THERE (Jon, 2026-11-06: "We do not need to do any inspections or welcome
+      // calls for any Botanica units. So don't draft them or auto create them.") — listed, never pending.
+      const { getNoService, skipsWelcomeCallsIn } = await import('@/lib/no-service')
+      const noSvc = await getNoService().catch(() => null)
       const list = rows.map((r: any) => ({
         guest: r.guest_name, listing: r.listing_name, building: ctx.buildingOf(r.listing_id),
         check_in: String(r.check_in).slice(0, 10),
         welcome_call_done: truthy(fieldVal(r.custom_fields, 'welcome')),
+        welcome_call_not_needed: !!noSvc && skipsWelcomeCallsIn(noSvc, ctx.buildingOf(r.listing_id), r.listing_name),
         sensitive_guest: truthy(fieldVal(r.custom_fields, 'sensitive')),
       }))
-      const pending = list.filter((x: any) => !x.welcome_call_done)
+      const pending = list.filter((x: any) => !x.welcome_call_done && !x.welcome_call_not_needed)
       const mode = input?.status
       const out = mode === 'pending' ? pending : mode === 'done' ? list.filter((x: any) => x.welcome_call_done) : list
-      return { window_days: win, total: list.length, welcome_done: list.length - pending.length, welcome_pending: pending.length, sensitive_upcoming: list.filter((x: any) => x.sensitive_guest).length, reservations: out.slice(0, 100) }
+      return { window_days: win, total: list.length, welcome_done: list.filter((x: any) => x.welcome_call_done).length, welcome_pending: pending.length, welcome_not_needed: list.filter((x: any) => x.welcome_call_not_needed && !x.welcome_call_done).length, sensitive_upcoming: list.filter((x: any) => x.sensitive_guest).length, reservations: out.slice(0, 100) }
     },
   } as EveTool,
 

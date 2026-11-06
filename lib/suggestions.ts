@@ -39,6 +39,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { vendorRegex } from './ops-presets'
+import { getNoService, skipsInspectionsIn } from './no-service'
 import { marketOf, buildingOf } from './segments'
 import { linkedSets } from './linked-units'
 import { pendingForUnits, stampDescription, type PendingTask } from './pending-work'
@@ -347,6 +348,7 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   const db = supabaseAdmin()
   const presets = await getOpsPresets()
   const VENDOR_RE = vendorRegex(presets.vendorBuildings)
+  const noSvc = await getNoService()
   // Capped at three years. `everyDays` accepts up to 3650, and one cadence set to a ten-year
   // interval used to widen the history read to 3,680 days FOR EVERY CADENCE, guaranteeing the page
   // ceiling was hit and silently degrading the whole portfolio's history.
@@ -682,6 +684,9 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
 
       // Vendor-cleaned buildings: we do not staff them, so housekeeping cadences there are not ours.
       if (meta.vendor && c.dept === 'housekeeping') { drop('vendor building'); continue }
+      // NO-INSPECTION BUILDINGS (Jon, 2026-11-06: "We do not need to do any inspections or welcome
+      // calls for any Botanica units. So don't draft them or auto create them.")
+      if (c.dept === 'inspection' && skipsInspectionsIn(noSvc, meta.building, meta.name)) { drop('no-inspection building'); continue }
 
       const bKey = `${meta.bucket}|${c.dept}`
       const mKey = `${meta.market}|${c.dept}`

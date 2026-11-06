@@ -44,7 +44,8 @@ export function healthFromDay(day: CommandDay): OpsHealth {
     cleans: { total: c.total, done: c.done, late: c.late, atRisk: c.atRisk, nobody: c.rows.filter(r => r.status !== 'done' && r.status !== 'vendor' && nobody(r.who)).length, sameDay: sameDay.length, sameDayDone: sameDay.filter(r => r.status === 'done').length, sameDayTrouble: sameDay.filter(trouble).length },
     glitches: { open: day.tiles.glitches.open, overdue: day.tiles.glitches.overdue, noTask: day.tiles.glitches.noTask, awaitingApproval: Number(day.tiles.glitches.byLane?.manager_review || 0) },
     maint: { open: maint.length, urgentOpen: maint.filter(t => /urgent|high/i.test(t.prio)).length, nobody: maint.filter(t => nobody(t.who)).length },
-    insp: { needed: arr.bigToday, done: arr.rows.filter(r => r.today && r.big && r.inspection === 'done').length, nobody: 0, missingBig: arr.missingInspection },
+    // 'n/a' = not ours to inspect (operating model / no-service list, Jon 2026-11-06) — never needed.
+    insp: { needed: arr.rows.filter(r => r.today && r.big && r.inspection !== 'n/a').length, done: arr.rows.filter(r => r.today && r.big && r.inspection === 'done').length, nobody: 0, missingBig: arr.missingInspection },
     calls: { todayOwed: day.tiles.guestDesk.welcome, todayDone: day.completed.callsDone, recoveryOwed: 0, recoveryDone: 0, loaded: true },
     notices: { toSend: 0, late: 0 },
     reviews: { waiting: day.tiles.guestDesk.reviews, lowWaiting: 0 },

@@ -62,7 +62,7 @@ const NEEDS_HUMAN: ActionType[] = ['guest_reply_send', 'guesty_write', 'calendar
 
 // ---- Listing resolution (the same shape auto-inspections and add-task use) ------------------------
 
-type Home = { listingId: string; unit: string; homeId: number | null; market: string | null }
+type Home = { listingId: string; unit: string; homeId: number | null; market: string | null; building?: string; title?: string }
 
 async function resolveHome(input: { listingId?: string; unit?: string; name?: string }): Promise<Home | null> {
   const db = supabaseAdmin()
@@ -92,7 +92,7 @@ async function resolveHome(input: { listingId?: string; unit?: string; name?: st
   } catch { homeId = null }
   let market: string | null = null
   try { const { marketOf } = await import('@/lib/segments'); market = marketOf(row.building, row.address_city, row.nickname || row.title) } catch { market = null }
-  return { listingId: str(row.id), unit: str(row.nickname || row.title), homeId, market }
+  return { listingId: str(row.id), unit: str(row.nickname || row.title), homeId, market, building: str(row.building), title: str(row.title) }
 }
 
 async function liveTaskName(taskId: string): Promise<string> {
@@ -128,7 +128,7 @@ async function personIds(names: string[]): Promise<{ ids: number[]; matched: str
 
 // ---- The executors -------------------------------------------------------------------------------
 
-const task_create: Executor = async (p) => {
+const task_create: Executor = async (p, ctx) => {
   const { createBreezewayTask, updateBreezewayTask, breezewayConfigured } = await import('@/lib/breezeway')
   if (!breezewayConfigured()) return { ok: false, summary: 'Breezeway is not configured', error: 'Breezeway not configured' }
   const title = str(p?.title || p?.name).trim().slice(0, 120)
@@ -136,6 +136,15 @@ const task_create: Executor = async (p) => {
   const home = await resolveHome({ listingId: p?.listingId || p?.listing_id, unit: p?.unit, name: p?.name_of_unit })
   if (!home) return { ok: false, summary: `no listing matches "${str(p?.unit || p?.listingId)}"`, error: 'listing not found' }
   const department = DEPTS.indexOf(str(p?.department)) >= 0 ? str(p.department) : 'maintenance'
+  // NO-INSPECTION BUILDINGS (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
+  // for any Botanica units. So don't draft them or auto create them."). Only the AUTOMATED path is
+  // refused — a person's own yes (human:true: chat, Upkeep, a ✅) still creates it.
+  if (department === 'inspection' && !(ctx && ctx.human)) {
+    const { skipsInspections } = await import('@/lib/no-service')
+    if (await skipsInspections(home.building, home.unit, home.title, p?.unit)) {
+      return { ok: false, summary: `skipped: no inspections at ${home.unit} (no-service building)`, error: 'no-inspection building' }
+    }
+  }
   const priority = PRIOS.indexOf(str(p?.priority)) >= 0 ? str(p.priority) : 'normal'
   const date = /^\d{4}-\d{2}-\d{2}$/.test(str(p?.date || p?.scheduled_date)) ? str(p.date || p.scheduled_date) : todayET()
   const description = (str(p?.description).trim().slice(0, 1200) + '\n\nCreated by Eve (Lighthouse agent mode).').trim()

@@ -12,6 +12,7 @@
 //
 // Nothing here creates a task. It ranks what is worth doing and says why, and a human decides.
 import 'server-only'
+import { getNoService, skipsInspectionsIn } from './no-service'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
 import { getOpsPresets } from '@/lib/app-settings'
@@ -69,6 +70,8 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
   const idSet = new Set(ids)
   const db = supabaseAdmin()
   const presets = await getOpsPresets()
+  // No-inspection buildings (Jon, 2026-11-06: "don't draft them or auto create them").
+  const noSvc = await getNoService().catch(() => null)
   const auditDueDays = Math.max(30, Number((presets as any)?.timing?.auditDueDays) || 365)
 
   const [tasksRead, auditRead, reqRead, glitchRead, listRes] = await Promise.all([
@@ -185,7 +188,7 @@ export async function vacantWork(vacants: VacantUnit[], today: string): Promise<
       else if (age != null && age > auditDueDays) s.push({ key: 'audit', priority: 2, needsDays: 2, label: 'Property audit overdue', why: `last one ${age} days ago, cadence is ${auditDueDays}` })
     }
 
-    if (!openInspection.has(id)) {
+    if (!openInspection.has(id) && !(noSvc && skipsInspectionsIn(noSvc, v.unit))) {
       const li = lastInspection[id] || null
       const age = li ? daysBetween(li, today) : null
       // A unit nobody has walked in two months, sitting empty, is worth twenty minutes.
