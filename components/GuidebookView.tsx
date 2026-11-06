@@ -959,9 +959,8 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
                     <div className="mt-1.5 h-px w-8" style={{ background: accentColor + '66' }} />
                     {(!edit && isMapItem(it)) ? (() => { const st = splitSteps(it.body); return (
                       <div className="mt-1 text-[10px] font-light leading-[1.5]">
-                        {st.intro ? <p>{st.intro}</p> : null}
-                        {st.steps.length ? <ol className="mt-1 list-decimal space-y-0.5 pl-4">{st.steps.map((x, j) => <li key={j}>{x}</li>)}</ol> : null}
-                        <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-[0.18em]" style={{ color: accentColor }}>Map on its own page →</p>
+                        <p>{st.steps.length ? (st.intro || st.steps[0]) : (String(it.body || '').split(/(?<=[.!?])\s+/)[0] || '')}</p>
+                        <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-[0.18em]" style={{ color: accentColor }}>Map{st.steps.length ? ' & steps' : ''} on its own page →</p>
                       </div>) })()
                       : <p className="mt-1 text-[10px] font-light leading-[1.5]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>}
                     {edit && it.photo ? (
@@ -1018,7 +1017,9 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
                 {f.qa.map((x, i) => (
                   <div key={i} className="break-inside-avoid border-l-2 pl-3" style={{ borderColor: accentColor }}>
                     <p className="text-[13px] font-semibold" style={{ fontFamily: SERIF }}>{x.q}</p>
-                    {x.steps.steps.length
+                    {x.map
+                      ? <p className="mt-0.5 text-[10.5px] font-light leading-[1.55]">{x.steps.steps.length ? (x.steps.intro || x.steps.steps[0]) : String(x.a).split(/(?<=[.!?])\s+/)[0]} <span className="font-semibold" style={{ color: accentColor }}>See the “{String(x.map).toLowerCase()}” map page.</span></p>
+                      : x.steps.steps.length
                       ? <div className="mt-0.5 text-[10.5px] font-light leading-[1.55]">{x.steps.intro ? <p>{x.steps.intro}</p> : null}<ol className="mt-0.5 list-decimal pl-4">{x.steps.steps.map((y, j) => <li key={j}>{y}</li>)}</ol></div>
                       : <p className="mt-0.5 text-[10.5px] font-light leading-[1.55] whitespace-pre-line">{x.a}</p>}
                   </div>

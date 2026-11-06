@@ -170,6 +170,10 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
   // The "Where to park" how-to (with its map): opened in place and scrolled to.
   const parkIdx = useMemo(() => d.howto.slice(0, 16).findIndex((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))), [d])
   const openParking = () => { setOpen(o => ({ ...o, ['h' + parkIdx]: true })); setTimeout(() => go('h' + parkIdx), 60) }
+  // One way to the beach (Jon, 2026-11-06: "two walk to the beach tabs"): the chip opens the book's own
+  // "Walking to the beach" how-to; Google Maps only when the book has no beach how-to.
+  const beachIdx = useMemo(() => d.howto.slice(0, 16).findIndex((x: any) => /beach/i.test(String(x.title || '')) && /walk|access|path|getting|way to/i.test(String(x.title || ''))), [d])
+  const openBeach = () => { setOpen(o => ({ ...o, ['h' + beachIdx]: true })); setTimeout(() => go('h' + beachIdx), 60) }
   const go = (id: string) => { const el = document.getElementById('g-' + id); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 64, behavior: 'smooth' }) }
 
   const [copied, setCopied] = useState('')
@@ -271,7 +275,8 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
               {(d.parkingMap || d.beach || d.address) ? (
                 <div className="gm-x -mx-1 mt-3 flex gap-2 overflow-x-auto px-1">
                   {d.parkingMap && parkIdx >= 0 ? <button type="button" onClick={openParking} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Car size={15} style={{ color: c.accent }} /> Parking map</button> : null}
-                  {(d.beach || d.maps.some((m: any) => /beach/i.test(m.title))) && d.address ? <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('beach access near ' + d.address)} target="_blank" rel="noreferrer" className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Waves size={15} style={{ color: c.accent }} /> To the beach</a> : null}
+                  {beachIdx >= 0 ? <button type="button" onClick={openBeach} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Waves size={15} style={{ color: c.accent }} /> To the beach</button>
+                  : d.beach && d.address ? <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('beach access near ' + d.address)} target="_blank" rel="noreferrer" className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Waves size={15} style={{ color: c.accent }} /> To the beach</a> : null}
                   {d.wifiNet ? <button type="button" onClick={() => setWifiQr(v => !v)} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><QrCode size={15} style={{ color: c.accent }} /> Wi-Fi QR</button> : null}
                   <button type="button" onClick={share} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Share2 size={15} style={{ color: c.accent }} /> {copied === 'link' ? 'Link copied' : 'Share with your group'}</button>
                 </div>
@@ -662,15 +667,15 @@ export function guideFaq(gb: any) {
   const beachHow = pick(/(walk\w*|access|path|getting|way)\b.*\bbeach|beach\b.*\b(walk\w*|access|path)/i) || pick(/^\s*(the )?beach\s*$/i), parkHow = pick(/park/i), doorHow = pick(/door|entry|keypad|check[- ]?in/i)
   const dot = (t: string) => (/[.!?]$/.test(t.trim()) ? t.trim() : t.trim() + '.')
   const beachText = beachHow ? str(beachHow.body) : d.beach ? dot(d.beach.replace(/\s+-\s+/g, ' — ')) : ''
-  const qa: { q: string; a: string; steps: { intro: string; steps: string[] } }[] = ([
+  const qa: { q: string; a: string; map?: string; steps: { intro: string; steps: string[] } }[] = ([
     d.unit ? { q: 'Which unit is mine?', a: d.unit + (d.address ? ' at ' + d.address : '') + '.' } : null,
-    (d.parking || parkHow) ? { q: 'Where do I park?', a: d.parking || str(parkHow.body) } : null,
+    (d.parking || parkHow) ? { q: 'Where do I park?', a: d.parking || str(parkHow.body), map: parkHow && isMapItem(parkHow) ? String(parkHow.title) : '' } : null,
     (d.entry || doorHow) ? { q: 'How do I get in?', a: d.entry || str(doorHow.body) } : null,
-    beachText ? { q: 'How do I get to the beach?', a: beachText } : null,
+    beachText ? { q: 'How do I get to the beach?', a: beachText, map: beachHow && isMapItem(beachHow) ? String(beachHow.title) : '' } : null,
     d.gettingThere ? { q: 'How do I find the building?', a: d.gettingThere } : null,
     (d.checkIn || d.checkOut) ? { q: 'When are check-in and check-out?', a: [d.checkIn && 'Check-in from ' + d.checkIn, d.checkOut && 'check-out by ' + d.checkOut].filter(Boolean).join(', ') + '.' } : null,
     { q: 'Something is not working?', a: 'Message us in the app you booked with — we reply fast.' + (d.phone ? ' Urgent: ' + d.phone + '.' : '') },
-  ].filter(Boolean) as { q: string; a: string }[]).map(x => ({ ...x, steps: splitSteps(x.a) }))
+  ].filter(Boolean) as { q: string; a: string; map?: string }[]).map(x => ({ ...x, steps: splitSteps(x.a) }))
   return {
     qa,
     buildingQr: d.address ? qrSrc(mapsUrl(d.address)) : '',
