@@ -95,6 +95,8 @@ export const FEATURES: Feature[] = [
   // is on the list, so the standing list is agreed once and then worked by everybody.
   { key: 'checklist',     label: 'Open & Close',      path: '/checklist', group: 'Operations' },
   { key: 'projects',      label: 'Projects',          path: '/projects', group: 'Operations' },
+  // THE LEADERSHIP BOARD (Jon, 2026-11-06): the big picture — projects, tasks, vendor follow-ups, misc.
+  { key: 'leadership',    label: 'Leadership',        path: '/leadership', group: 'Operations' },
   // FF&E Audit (2026-08-10, Jon): one phone link per unit, room by room, EN/ES. A furniture
   // PURCHASING list — deliberately not wired to Breezeway, maintenance or billing.
   { key: 'ffe',           label: 'FF&E Audit',        path: '/ffe', group: 'Owners' },

@@ -75,6 +75,7 @@ export const DESKS: Desk[] = [
       { to: '/checklist', label: 'Open & Close', hint: 'Opening and closing roadmap: who is in, every clean has a person, extensions, arrivals, glitches — sign off, carry to tomorrow, print' },
       { to: '/maintenance', label: 'Maintenance', hint: 'Work orders, open Breezeway maintenance and glitches in one aged list', match: ['/requests'] },
       { to: '/projects', label: 'Projects', hint: 'Work that is bigger than a task: renovations, rollouts, building onboarding', match: ['/projects/plan'] },
+      { to: '/leadership', label: 'Leadership', hint: 'The big picture on one screen — projects, tasks, vendor follow-ups, misc; meeting notes become tasks you approve one by one' },
       { to: '/blocked', label: 'Blocked units', hint: 'Units off the calendar right now, longest first, with the block note', more: true },
     ],
   },

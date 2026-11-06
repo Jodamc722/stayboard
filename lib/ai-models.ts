@@ -154,6 +154,9 @@ export const AI_TASKS: AiTask[] = [
   { key: 'expectations', title: 'Eve — expectation notes for CS and admin', group: 'Eve', def: 'sonnet', background: true,
     what: 'One call a week over the evidence pack (reviews of every rating, inbound guest messages that ask or complain about things upfront copy should cover, unhappy threads). Returns up to twelve notes: building, theme, what guests hit, their words, the gap, where the fix belongs and the proposed copy.',
     matters: 'The copy it proposes is what a person pastes into the listing or the pre-arrival message. A weak model writes vague notes nobody acts on; nothing reaches a guest without a person.' },
+  { key: 'leadership_notes', title: 'Leadership board — meeting notes into proposed tasks', group: 'Operations', def: 'sonnet', background: false,
+    what: 'Reads pasted meeting notes and proposes action items for the Leadership board; each is approved by a person before it exists.',
+    matters: 'Leadership reads the list once and approves or skips each line. A weak model invents tasks or misses the commitment that mattered.' },
   // FILE READING (2026-09-29, lib/files/extract.ts). Jon: "Adam and Eve should have file upload…
   // for learning or reference for handbooks, SOPs". A PDF (typed or scanned) or a photo of a page
   // is transcribed to text once, at upload, so the agents can search and quote it.
