@@ -152,6 +152,7 @@ export const DESKS: Desk[] = [
     views: [
       { to: '/owner-audit', label: 'Statement review', hint: 'Owner statements checked against bookings — review, approve, sign off' },
       { to: '/billing', label: 'Billable hours', hint: 'Owner billables: ops review, then final review, then export' },
+      { to: '/clean-invoices', label: 'Cleaning invoices', hint: 'Upload a vendor cleaning invoice — every line checked against the cleans on record, mismatches flagged before it is paid' },
       { to: '/revenue', label: 'Revenue', hint: 'Revenue, occupancy, ADR and RevPAR by building and unit, with the checks behind them' },
       { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made' },
       { to: '/revenue-app', label: 'Revenue App', hint: 'The Revenue App, where budgets and forecasting live' },
