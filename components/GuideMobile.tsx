@@ -87,6 +87,8 @@ export function guideData(gb: any) {
     // Map how-tos (lib/guide-print isMapItem): the parking one also shows under Parking on the phone,
     // and every one gets a full-size sheet in the printed manual.
     maps: (Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).filter((x: any) => isMapItem(x) && howtoShown(x.title, printPrefs(s))).map((x: any) => ({ title: String(x.title || 'Map'), src: purl(x.photo) || '' })).filter((m: any) => m.src),
+    // Parking map lives in its own how-to ("Where to park") — the arrival section and the quick action
+    // OPEN that item instead of repeating the map (Jon, 2026-11-06: "I liked the way it was").
     parkingMap: ((Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).find((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))) ? purl((s.houseGuide.items as any[]).find((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))).photo) : null) as string | null,
     subtitle: str(s.cover?.subtitle).replace(/\s{2,}/g, ' '),
     line1: str(s.cover?.line1), line2: str(s.cover?.line2),
@@ -165,6 +167,9 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
     // Scroll only the strip itself — scrollIntoView would also nudge the page.
     if (strip && el) strip.scrollTo({ left: el.offsetLeft - strip.clientWidth / 2 + el.offsetWidth / 2, behavior: 'smooth' })
   }, [active])
+  // The "Where to park" how-to (with its map): opened in place and scrolled to.
+  const parkIdx = useMemo(() => d.howto.slice(0, 16).findIndex((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))), [d])
+  const openParking = () => { setOpen(o => ({ ...o, ['h' + parkIdx]: true })); setTimeout(() => go('h' + parkIdx), 60) }
   const go = (id: string) => { const el = document.getElementById('g-' + id); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 64, behavior: 'smooth' }) }
 
   const [copied, setCopied] = useState('')
@@ -264,7 +269,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
               {/* QUICK ACTIONS (2026-11-06 audit) — the three things guests hunt for, one tap each. */}
               {(d.parkingMap || d.beach || d.address) ? (
                 <div className="gm-x -mx-1 mt-3 flex gap-2 overflow-x-auto px-1">
-                  {d.parkingMap ? <button type="button" onClick={() => go('arrival')} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Car size={15} style={{ color: c.accent }} /> Parking map</button> : null}
+                  {d.parkingMap && parkIdx >= 0 ? <button type="button" onClick={openParking} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Car size={15} style={{ color: c.accent }} /> Parking map</button> : null}
                   {(d.beach || d.maps.some((m: any) => /beach/i.test(m.title))) && d.address ? <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('beach access near ' + d.address)} target="_blank" rel="noreferrer" className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Waves size={15} style={{ color: c.accent }} /> To the beach</a> : null}
                   {d.wifiNet ? <button type="button" onClick={() => setWifiQr(v => !v)} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><QrCode size={15} style={{ color: c.accent }} /> Wi-Fi QR</button> : null}
                   <button type="button" onClick={share} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Share2 size={15} style={{ color: c.accent }} /> {copied === 'link' ? 'Link copied' : 'Share with your group'}</button>
@@ -302,12 +307,12 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
 
           <main className="space-y-4 px-4 pt-4">
             {/* ARRIVAL */}
-            {(d.entry || d.parking || d.gettingThere || d.parkingMap) ? (
+            {(d.entry || d.parking || d.gettingThere) ? (
               <Section id="arrival" kicker={lbl('arrival.kicker', 'Your arrival')} title={lbl('m.arrival', 'getting in')} c={c} shadow={shadow} photo={d.pa.arrival || null}>
                 <div className="space-y-4">
                   {d.entry ? <Fact Icon={KeyRound} label={lbl('arrival.entryLabel', 'The door')} body={d.entry} k="entry" open={open} toggle={toggle} c={c} /> : null}
                   {d.parking ? <Fact Icon={Car} label={lbl('arrival.parkingLabel', 'Parking')} body={d.parking} k="parking" open={open} toggle={toggle} c={c} /> : null}
-                  {d.parkingMap ? <MapImage src={d.parkingMap} title="Parking map" c={c} /> : null}
+                  {d.parkingMap && parkIdx >= 0 ? <button type="button" onClick={openParking} className="ml-12 -mt-2 inline-flex items-center gap-1 text-[13px] font-semibold" style={{ color: c.accent }}><Car size={14} /> See the parking map</button> : null}
                   {d.gettingThere ? <Fact Icon={MapPin} label={lbl('arrival.thereLabel', 'Finding us')} body={d.gettingThere} k="there" open={open} toggle={toggle} c={c} /> : null}
                   {d.gettingAround ? <Fact Icon={Compass} label={lbl('arrival.aroundLabel', 'Getting around')} body={d.gettingAround} k="around" open={open} toggle={toggle} c={c} /> : null}
                 </div>
@@ -321,7 +326,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
                   {d.howto.slice(0, 16).map((it: any, i: number) => {
                     const k = 'h' + i, isOpen = !!open[k], photo = purl(it.photo)
                     return (
-                      <div key={i} style={{ borderTop: i ? '1px solid ' + c.line : 'none' }}>
+                      <div key={i} id={'g-h' + i} className="scroll-mt-16" style={{ borderTop: i ? '1px solid ' + c.line : 'none' }}>
                         <button type="button" onClick={() => toggle(k)} aria-expanded={isOpen} className="flex w-full items-center gap-3 px-1 py-3 text-left">
                           <span className="flex-1 text-[15px] font-semibold leading-snug">{sentence(it.title || 'Item ' + (i + 1))}</span>
                           <ChevronDown size={18} className="shrink-0 transition-transform" style={{ color: c.accent, transform: isOpen ? 'rotate(180deg)' : 'none' }} />
