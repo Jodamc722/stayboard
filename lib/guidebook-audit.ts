@@ -24,7 +24,15 @@ export const REVIEW_PAGES: { key: string; label: string }[] = [
 ]
 
 const str = (v: any): string => (typeof v === 'string' ? v.trim() : (v && typeof v === 'object' && typeof v.body === 'string') ? v.body.trim() : '')
-const PLACEHOLDER = /provided in your confirmation|follow the check-in instructions in your confirmation|\bTBD\b|\bTBA\b|lorem ipsum|\[[^\]]{0,30}\]|\bXX+\b|\{\{|insert /i
+// Words a writer leaves when they had nothing: TBD, lorem, [brackets], XX, {{…}}.
+const PLACEHOLDER = /\bTBD\b|\bTBA\b|lorem ipsum|\[[^\]]{0,30}\]|\bXX+\b|\{\{|\binsert (the|your|here)\b/i
+// The generator's own fallback sentences when it knew nothing (buildFallback) — short and generic.
+// "…the code provided in your confirmation message" inside a real instruction is fine; the bare
+// sentence on its own is not.
+const FALLBACK = /^(arrival|parking) details are provided in your confirmation message\.?$|^follow the check-in instructions in your confirmation message/i
+const isEmptyish = (t: string) => !t || PLACEHOLDER.test(t) || FALLBACK.test(t.trim())
+// A door code written into the guide: a 4–6 digit number right after "code", "pin" or "passcode".
+const CODE_IN_TEXT = /\b(door|entry|lock|access|gate|lockbox|key)?\s*(code|pin|passcode)\b\s*(is|:|=|-)?\s*#?\d{4,6}\b/i
 // The house defaults buildFallback writes when nothing better is known (app/api/guidebook).
 const DEFAULT_RULES = [/strictly non-smoking, including balconies/i, /not permitted unless approved in advance/i, /maximum occupancy must be observed/i, /keep the peace for neighbors/i]
 
@@ -50,13 +58,14 @@ export function auditGuidebook(gb: any, listing?: { nickname?: string | null; bu
 
   // ARRIVAL
   const parking = str(s.arrival?.parking), entry = str(s.arrival?.entry)
-  if (!parking || PLACEHOLDER.test(parking)) add('block', 'arrival', 'No parking details — only a placeholder')
+  const how0: any[] = Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []
+  if (isEmptyish(parking)) add('block', 'arrival', 'No parking details — only a placeholder')
   else if (!sourced('parking')) add('ask', 'arrival', 'Parking was written by the AI without a source (no typed answer, no Guesty field) — confirm it')
-  if (!entry || PLACEHOLDER.test(entry)) add('block', 'arrival', 'No entry / door instructions — only a placeholder')
+  if (isEmptyish(entry)) add('block', 'arrival', 'No entry / door instructions — only a placeholder')
   else if (!sourced('entry')) add('ask', 'arrival', 'Entry instructions were written by the AI without a source — confirm them')
-  if (/\b\d{4,6}\s*#?\b/.test(entry) && /code/i.test(entry)) add('block', 'arrival', 'The entry text may contain a door code — codes must never be in the guide')
+  if (CODE_IN_TEXT.test(entry) || how0.some((x: any) => CODE_IN_TEXT.test(str(x.body)))) add('block', 'arrival', 'A door code is written in the guide (entry or a how-to) — codes must never be in it')
   const gt = str(s.gettingThere?.body)
-  if (gt && PLACEHOLDER.test(gt)) add('tidy', 'arrival', '"Finding us" is a placeholder — write it or hide it')
+  if (gt && isEmptyish(gt)) add('tidy', 'arrival', '"Finding us" is a placeholder — write it or hide it')
   if (/surfside|boynton/i.test(tag)) {
     const maps = (Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).filter((x: any) => x && x.photo && /park|beach/i.test(String(x.title || '')))
     if (maps.length < 2) add('ask', 'arrival', 'Surfside: the parking map and the beach map should both be in the house guide')
