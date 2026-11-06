@@ -26,7 +26,7 @@ import {
 import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
 import { themeForBook } from '@/lib/guide-themes'
 import { GuideFlyer } from '@/components/GuideFlyer'
-import { printPrefs, howtoShown, isMapItem, splitSteps } from '@/lib/guide-print'
+import { printPrefs, howtoShown, isMapItem, splitSteps, dedupeHowtos } from '@/lib/guide-print'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -112,7 +112,7 @@ export function guideData(gb: any) {
     highlights: has('special', true) ? list(s.special?.groups).filter((g: any) => g && list(g.items).length) : [],
     // Common-sense how-tos (microwave, kettle, fridge…) are left out unless brought back in the editor's
     // Print options; ones taken off there are gone from the phone too (lib/guide-print).
-    howto: has('houseGuide', true) ? list(s.houseGuide?.items).filter((x: any) => x && (x.title || x.body) && howtoShown(x.title, printPrefs(s))) : [],
+    howto: has('houseGuide', true) ? dedupeHowtos(list(s.houseGuide?.items).filter((x: any) => x && (x.title || x.body) && howtoShown(x.title, printPrefs(s)))) : [],
     rules: has('guidelines', true) ? list(s.guidelines?.items).filter((x: any) => x && (x.title || x.body)) : [],
     rulesIntro: str(s.guidelines?.intro),
     // _i = the item's index in the saved list (the photo-repair route addresses items by it).

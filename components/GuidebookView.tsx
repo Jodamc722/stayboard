@@ -6,7 +6,7 @@
 // print-exact US Letter (8.5x11) output (@page, exact colors, no app chrome).
 import { themeForBook, THEME_CHOICES, SMART } from '@/lib/guide-themes'
 import { guideFaq } from '@/components/GuideMobile'
-import { printPrefs, isCommonSense, howtoShown, isMapItem, splitSteps } from '@/lib/guide-print'
+import { printPrefs, isCommonSense, howtoShown, isMapItem, splitSteps, dedupeHowtos } from '@/lib/guide-print'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
@@ -87,7 +87,9 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
   const omit: string[] = Array.isArray(s.omit) ? s.omit : []
   // The first 8 how-tos a guest sees — hidden common-sense ones don't use up a place (Air conditioning and
   // Smart TV were cut off behind a hidden microwave and kettle). In Edit every item shows.
-  const hgShow: number[] = (Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).map((_: any, i: number) => i).filter((i: number) => edit || howtoShown(s.houseGuide.items[i]?.title, printPrefs(s))).slice(0, edit ? 99 : 8)
+  const hgAll: any[] = Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []
+  const hgKeep = dedupeHowtos(hgAll)   // one how-to per topic (no second "walk to the beach")
+  const hgShow: number[] = hgAll.map((_: any, i: number) => i).filter((i: number) => edit || (hgKeep.indexOf(hgAll[i]) >= 0 && howtoShown(hgAll[i]?.title, printPrefs(s)))).slice(0, edit ? 99 : 8)
   const purl = (p: any): string | null => { if (!p) return null; if (typeof p === 'object') return p.original || p.thumbnail || p.url || null; if (typeof p === 'string') { const s = p.trim(); if (s.charAt(0) === '{') { try { const o = JSON.parse(s); return o.original || o.thumbnail || o.url || null } catch { return null } } return s } return null }
   const _paRaw = s._photoAssign || {}
   const pa: any = {}

@@ -106,3 +106,21 @@ export function printFormat(gb: any): PrintFormat {
   const f = gb?.sections?._print?.format
   return f === 'flyer' ? 'flyer' : 'magazine'
 }
+
+// ── ONE HOW-TO PER TOPIC (Jon, 2026-11-06: "why is the walk to the beach twice") ──
+// A book can end up with "Walking to the beach" (the one with the map) and "Walk to the beach" (written
+// again by the AI or an audit how-to). Same topic → keep one: the one with a map/photo, else the longer.
+const STOP = new Set(['the', 'a', 'an', 'to', 'your', 'our', 'and', 'of', 'for', 'how', 'use', 'using', 'in', 'on', 'at', 'from'])
+export function howtoTopic(title: any): string {
+  const t = String(title || '').toLowerCase()
+  if (/beach/.test(t) && /\b(walk\w*|access|path|way|getting|route|steps)\b/.test(t)) return 'beach-walk'
+  if (/\bpark(ing)?\b/.test(t) && !/\bpark (beach|avenue|ave)\b/.test(t)) return 'parking'
+  if (/keypad|smart lock|door (lock|code|entry)|(unit|front) door/.test(t) && !/building|lobby|fob|gate|garage/.test(t)) return 'unit-door'
+  return t.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w && !STOP.has(w)).map(w => w.replace(/(ing|s)$/, '')).sort().join(' ')
+}
+export function dedupeHowtos<T = any>(items: T[]): T[] {
+  const best: Record<string, number> = {}
+  const score = (x: any) => (x && x.photo ? 1000 : 0) + String(x?.body || '').length
+  items.forEach((x: any, i) => { const k = howtoTopic(x?.title); if (!k) return; if (best[k] === undefined || score(x) > score(items[best[k]])) best[k] = i })
+  return items.filter((x: any, i) => { const k = howtoTopic(x?.title); return !k || best[k] === i })
+}

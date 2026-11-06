@@ -13,7 +13,7 @@ import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { photoForPlace } from '@/lib/place-photo'
 import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
-import { isStandardHowto } from '@/lib/guide-print'
+import { isStandardHowto, dedupeHowtos } from '@/lib/guide-print'
 import { aiFetch } from '@/lib/ai-usage'
 import { buildEmergency, mergeEmergency } from '@/lib/emergency'
 
@@ -396,7 +396,7 @@ ${JSON.stringify(fallback)}`
   // Collages never reach a page — not even the guest guide's first-photo fallback.
   sections._photos = pool.filter(u => !photoMeta.some(m => m.url === u && m.collage))
   // Standard items never get a how-to (Jon, 2026-11-06) — even if the writer slipped one in.
-  if (sections.houseGuide && Array.isArray(sections.houseGuide.items)) sections.houseGuide.items = sections.houseGuide.items.filter((x: any) => !isStandardHowto(x))
+  if (sections.houseGuide && Array.isArray(sections.houseGuide.items)) sections.houseGuide.items = dedupeHowtos(sections.houseGuide.items.filter((x: any) => !isStandardHowto(x)))
   sections._photoMeta = photoMeta
   sections._photoAssign = photoAssign
   if (!Array.isArray(sections.omit)) sections.omit = []

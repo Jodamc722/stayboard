@@ -1,14 +1,17 @@
 'use client'
 // THE ONE-PAGER (Jon, 2026-11-06: "a 1 page flyer option with Book now, Wi-Fi details, contact, QR code to
-// rebook etc. — a printable option for properties if we do not want to do the full magazine" → "3 versions:
-// guest digital view, magazine and 1-pager … magazine and 1-pager should not have clickable sections or
-// tap things on it").
+// rebook … 3 versions: guest digital view, magazine and 1-pager … magazine and 1-pager should not have
+// clickable sections or tap things" → "enhance the 1 pager please. Needs to be beautiful").
 //
-// One Letter sheet to frame or leave on the counter: the stay's photo with its name and UNIT, Wi-Fi in big
-// type with a join-by-camera QR, check-in / check-out, the address, how to reach us, a QR to the live
-// guide, the house rules and the check-out list in short, and a Book direct band with the code and a QR.
-// Nothing on it is a link — it is paper. Colours follow the book's theme (or black & white from Print
-// options). /g/<id>?flyer=1 shows it on screen; ?flyer=1&print=1 opens the print dialog.
+// One Letter sheet, made to be framed or left on the counter. Editorial layout:
+//   · a full-bleed photo with the stay's name in serif and the unit on a pill
+//   · a Wi-Fi card that overlaps the photo — network and password large, join-by-camera QR
+//   · a three-up strip: check-in · check-out · urgent line
+//   · "Good to know" (parking, the walk to the beach — steps numbered) beside "House rules"
+//   · "Before you leave" as a tick list
+//   · a closing band: Book direct & save with the code, QR to book, QR to the full guide
+// Paper only — nothing is a link. Colours follow the book's theme (or black & white from Print options).
+// /g/<id>?flyer=1 shows it on screen; ?flyer=1&print=1 opens the print dialog.
 import { useEffect } from 'react'
 import { guideData, guideFaq, wifiQrSrc, qrSrc, LOGO_URL, sentence } from '@/components/GuideMobile'
 import { themeForBook } from '@/lib/guide-themes'
@@ -18,106 +21,136 @@ const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
 const str = (v: any): string => (typeof v === 'string' ? v.trim() : (v && typeof v === 'object' && typeof v.body === 'string') ? v.body.trim() : '')
 const short = (t: string, n: number) => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n - 1).replace(/[\s,;:.—-]+\S*$/, '') + '…' : x }
+const firstSentence = (t: string) => (String(t || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/)[0] || '')
 
 export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any; screen?: boolean; autoPrint?: boolean }) {
   const d = guideData(gb)
   const t = themeForBook(gb)
   const color = printPrefs(d.s).color
-  const acc = color ? t.accent : '#111111'
-  const deep = color ? t.cover : '#111111'
+  const acc = color ? t.accent : '#1a1a1a'
+  const deep = color ? t.cover : '#151515'
+  const tint = color ? t.tint : 'rgba(0,0,0,0.05)'
   const guideUrl = 'https://lighthouse-stay.vercel.app/g/' + String(gb?.id || '')
-  const rules = d.rules.slice(0, 6)
+  const rules = d.rules.slice(0, 5)
   const outList = d.checkoutList.slice(0, 5)
-  // Parking and the beach in a line each — the full answers (and maps) live in the guide and the magazine.
-  const faq = guideFaq(gb).qa.filter(x => /park|beach/i.test(x.q)).map(x => ({ q: x.q, a: x.steps.steps.length ? [x.steps.intro, ...x.steps.steps.map((y, j) => (j + 1) + '. ' + y)].filter(Boolean).join(' ') : x.a }))
-  useEffect(() => { if (autoPrint) { const x = setTimeout(() => window.print(), 900); return () => clearTimeout(x) } }, [autoPrint])
+  const gf = guideFaq(gb)
+  const faq = gf.qa.filter(x => /park|beach/i.test(x.q)).slice(0, 2)
+  const site = d.bookUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  useEffect(() => { if (autoPrint) { const x = setTimeout(() => window.print(), 1100); return () => clearTimeout(x) } }, [autoPrint])
+
+  const Label = ({ children }: { children: any }) => <p className="gf-k">{children}</p>
 
   return (
     <div className={'gf-wrap' + (screen ? ' gf-screen' : '')}>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Inter:wght@400;500;600;700;800&display=swap" />
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&display=swap" />
       <style>{`
-        @page { size: letter; margin: 0.35in; }
-        .gf { font-family: ${SANS}; color: #1a1a1a; width: 7.8in; height: 10.25in; overflow: hidden; display: flex; flex-direction: column; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        @page { size: letter; margin: 0; }
+        .gf { font-family: ${SANS}; color: #1c1c1c; width: 8.5in; height: 11in; overflow: hidden; position: relative; background: #fff; box-sizing: border-box; display: flex; flex-direction: column; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        .gf * { box-sizing: border-box; }
         .gf p { margin: 0; }
-        .gf-screen { background: #e7e7e7; min-height: 100vh; padding: 28px 12px; }
-        .gf-screen .gf { margin: 0 auto; padding: 0.35in; width: 8.5in; height: 11in; box-shadow: 0 2px 18px rgba(0,0,0,.14); box-sizing: border-box; }
-        @media print { .gf-screen { background: #fff; padding: 0; min-height: 0; } .gf-screen .gf { box-shadow: none; padding: 0; width: 7.8in; height: 10.25in; } }
-        .gf-k { font-size: 7.6pt; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; color: ${acc}; }
-        .gf-box { border: 1.4pt solid ${acc}; border-radius: 9pt; padding: 9pt 11pt; }
-        .gf-h { font-family: ${SERIF}; font-size: 13pt; font-weight: 600; margin: 0 0 4pt; padding-bottom: 2pt; border-bottom: 1.2pt solid ${acc}; }
-        .gf-li { font-size: 8.8pt; line-height: 1.32; margin: 0 0 3.5pt; }
-        .gf-li b { font-weight: 700; }
-        .gf-check { display: inline-block; width: 8pt; height: 8pt; border: 1pt solid ${acc}; border-radius: 2pt; margin-right: 5pt; vertical-align: -1pt; }
+        .gf-screen { background: #e9e7e3; min-height: 100vh; padding: 32px 12px; }
+        .gf-screen .gf { margin: 0 auto; box-shadow: 0 6px 30px rgba(0,0,0,.16); }
+        @media print { html, body { margin: 0 !important; background: #fff !important; } .gf-screen { background: #fff; padding: 0; min-height: 0; } .gf-screen .gf { box-shadow: none; margin: 0; } }
+        .gf-k { font-size: 7.2pt; letter-spacing: .2em; text-transform: uppercase; font-weight: 600; color: ${acc}; }
+        .gf-h { font-family: ${SERIF}; font-size: 14pt; font-weight: 500; letter-spacing: -.005em; color: #161616; margin: 0 0 7pt; display: flex; align-items: center; gap: 8pt; }
+        .gf-h:after { content: ''; flex: 1; height: .8pt; background: ${acc}; opacity: .45; }
+        .gf-t { font-size: 8.9pt; line-height: 1.45; color: #333; }
+        .gf-t b { color: #161616; font-weight: 600; }
+        .gf-ol { margin: 3pt 0 0; padding: 0; list-style: none; counter-reset: s; }
+        .gf-ol li { counter-increment: s; position: relative; padding-left: 15pt; margin: 0 0 2.5pt; font-size: 8.6pt; line-height: 1.4; color: #333; }
+        .gf-ol li:before { content: counter(s); position: absolute; left: 0; top: .5pt; width: 10.5pt; height: 10.5pt; border-radius: 50%; background: ${acc}; color: #fff; font-size: 6.6pt; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+        .gf-rule { padding: 0 0 4pt; margin: 0 0 4pt; border-bottom: .6pt solid #e6e3de; }
+        .gf-rule:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
+        .gf-tick { display: flex; gap: 7pt; align-items: flex-start; margin: 0 0 5pt; font-size: 8.8pt; line-height: 1.4; color: #333; }
+        .gf-tick i { flex: none; width: 9pt; height: 9pt; margin-top: 1.5pt; border: 1pt solid ${acc}; border-radius: 2.5pt; }
       `}</style>
+
       <div className="gf">
-        {/* PHOTO + NAME + UNIT */}
-        <div style={{ position: 'relative', height: '2.55in', borderRadius: '10pt', overflow: 'hidden', background: deep }}>
+        {/* HERO */}
+        <div style={{ position: 'relative', height: '3.4in', background: deep, flex: 'none' }}>
           {d.cover ? <img src={d.cover} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
-          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to bottom, rgba(0,0,0,.15), rgba(0,0,0,0) 35%, rgba(0,0,0,.72))' }} />
-          <img src={LOGO_URL} alt="" style={{ position: 'absolute', top: '11pt', left: '13pt', height: '15pt', filter: 'brightness(0) invert(1)' }} />
-          <div style={{ position: 'absolute', left: '14pt', right: '14pt', bottom: '12pt', color: '#fff' }}>
-            <p style={{ fontSize: '8pt', letterSpacing: '.3em' }}>WELCOME</p>
-            <p style={{ fontFamily: SERIF, fontSize: '23pt', fontWeight: 600, lineHeight: 1.08 }}>{d.name}</p>
-            {d.unit ? <p style={{ display: 'inline-block', marginTop: '5pt', background: '#fff', color: '#111', borderRadius: '5pt', padding: '2pt 9pt', fontSize: '13pt', fontWeight: 800 }}>{d.unit}</p> : null}
+          <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,.38) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 45%, rgba(0,0,0,.66) 100%)' }} />
+          <img src={LOGO_URL} alt="" style={{ position: 'absolute', top: '.42in', left: '.55in', height: '16pt', filter: 'brightness(0) invert(1)', opacity: .95 }} />
+          <div style={{ position: 'absolute', left: '.55in', right: '.55in', bottom: '.9in', color: '#fff' }}>
+            <p style={{ fontSize: '8pt', letterSpacing: '.34em', fontWeight: 600, opacity: .9 }}>WELCOME TO</p>
+            <p style={{ fontFamily: SERIF, fontSize: '34pt', fontWeight: 500, lineHeight: 1.02, marginTop: '4pt', letterSpacing: '-.01em', maxWidth: '6.2in' }}>{d.name}</p>
+            {d.unit || d.address ? <div style={{ display: 'flex', alignItems: 'center', gap: '10pt', marginTop: '9pt', flexWrap: 'wrap' }}>
+            {d.unit ? <p style={{ display: 'inline-block', border: '1pt solid rgba(255,255,255,.85)', borderRadius: '20pt', padding: '3pt 12pt', fontSize: '10.5pt', fontWeight: 600, letterSpacing: '.04em' }}>{d.unit}</p> : null}
+            {d.address ? <p style={{ fontSize: '9pt', opacity: .9 }}>{d.address}</p> : null}
+            </div> : null}
           </div>
         </div>
 
-        {/* WI-FI + TIMES */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: '10pt', marginTop: '10pt' }}>
-          <div className="gf-box" style={{ display: 'flex', gap: '10pt', alignItems: 'center' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p className="gf-k">Wi-Fi</p>
-              <p style={{ fontSize: '17pt', fontWeight: 800, lineHeight: 1.15, wordBreak: 'break-word' }}>{d.wifiNet || 'Ask us'}</p>
-              {d.wifiPw ? <><p className="gf-k" style={{ marginTop: '5pt' }}>Password</p><p style={{ fontSize: '17pt', fontWeight: 800, lineHeight: 1.15, wordBreak: 'break-all' }}>{d.wifiPw}</p></> : null}
-            </div>
-            {d.wifiNet ? <div style={{ textAlign: 'center' }}><img src={wifiQrSrc(d.wifiNet, d.wifiPw)} alt="" style={{ width: '72pt', height: '72pt' }} /><p style={{ fontSize: '6.8pt', color: '#555' }}>Scan to join</p></div> : null}
+        {/* WI-FI CARD, overlapping the photo */}
+        <div style={{ margin: '-.72in .55in 0', position: 'relative', background: '#fff', borderRadius: '12pt', boxShadow: '0 8pt 24pt rgba(0,0,0,.12)', border: '.6pt solid #ebe8e3', padding: '15pt 18pt', display: 'flex', alignItems: 'center', gap: '18pt', flex: 'none' }}>
+          <div style={{ flex: 1, display: 'grid', gridTemplateColumns: d.wifiPw ? '1fr 1fr' : '1fr', gap: '14pt' }}>
+            <div><Label>Wi-Fi network</Label><p style={{ fontFamily: SERIF, fontSize: '19pt', fontWeight: 500, lineHeight: 1.15, marginTop: '3pt', wordBreak: 'break-word' }}>{d.wifiNet || 'Ask us'}</p></div>
+            {d.wifiPw ? <div style={{ borderLeft: '.6pt solid #e6e3de', paddingLeft: '14pt' }}><Label>Password</Label><p style={{ fontFamily: SERIF, fontSize: '19pt', fontWeight: 500, lineHeight: 1.15, marginTop: '3pt', wordBreak: 'break-all' }}>{d.wifiPw}</p></div> : null}
           </div>
-          <div className="gf-box">
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6pt' }}>
-              <div><p className="gf-k">Check-in</p><p style={{ fontSize: '15pt', fontWeight: 700 }}>{d.checkIn || '—'}</p></div>
-              <div><p className="gf-k">Check-out</p><p style={{ fontSize: '15pt', fontWeight: 700 }}>{d.checkOut || '—'}</p></div>
-            </div>
-            {d.address ? <p style={{ fontSize: '8.6pt', marginTop: '7pt', color: '#444' }}>{d.address}</p> : null}
+          {d.wifiNet ? <div style={{ textAlign: 'center', flex: 'none' }}><img src={wifiQrSrc(d.wifiNet, d.wifiPw)} alt="" style={{ width: '64pt', height: '64pt', display: 'block' }} /><p style={{ fontSize: '6.5pt', color: '#777', marginTop: '3pt', letterSpacing: '.08em' }}>SCAN TO JOIN</p></div> : null}
+        </div>
+
+        {/* TIMES + CONTACT */}
+        <div style={{ margin: '14pt .55in 0', display: 'grid', gridTemplateColumns: '1fr 1fr 1.5fr', borderTop: '.6pt solid #e6e3de', borderBottom: '.6pt solid #e6e3de', flex: 'none' }}>
+          <div style={{ padding: '9pt 0' }}><Label>Check-in</Label><p style={{ fontFamily: SERIF, fontSize: '17pt', marginTop: '2pt' }}>{d.checkIn || '—'}</p></div>
+          <div style={{ padding: '9pt 0 9pt 14pt', borderLeft: '.6pt solid #e6e3de' }}><Label>Check-out</Label><p style={{ fontFamily: SERIF, fontSize: '17pt', marginTop: '2pt' }}>{d.checkOut || '—'}</p></div>
+          <div style={{ padding: '9pt 0 9pt 14pt', borderLeft: '.6pt solid #e6e3de' }}>
+            <Label>Questions</Label>
+            <p className="gf-t" style={{ marginTop: '3pt' }}>Message us in your booking app — we reply fast.</p>
+            <p className="gf-t">{d.phone ? <>Urgent, 24/7 <b>{d.phone}</b> · </> : null}Emergency <b>911</b></p>
           </div>
         </div>
 
-        {/* CONTACT + LIVE GUIDE */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '10pt', marginTop: '10pt', alignItems: 'center' }}>
-          <div>
-            <p style={{ fontSize: '11pt', fontWeight: 700 }}>Questions? Message us in your booking app.</p>
-            <p style={{ fontSize: '9pt', color: '#444', marginTop: '2pt' }}>Airbnb, Vrbo, Booking.com or wherever you booked — we reply fast.{d.phone ? <> Urgent, 24/7: <b style={{ color: '#111' }}>{d.phone}</b>.</> : null} Emergency: <b style={{ color: '#111' }}>911</b>.</p>
+        {/* BODY */}
+        <div style={{ margin: '15pt .55in 0', display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '24pt', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ minHeight: 0, overflow: 'hidden' }}>
+            {faq.length ? (
+              <div style={{ marginBottom: '12pt' }}>
+                <p className="gf-h">Good to know</p>
+                {faq.map((x, i) => (
+                  <div key={i} style={{ marginBottom: '8pt' }}>
+                    <p className="gf-t"><b>{x.q.replace(/\?$/, '')}</b></p>
+                    {x.steps.steps.length
+                      ? <>{x.steps.intro ? <p className="gf-t">{x.steps.intro}</p> : null}<ol className="gf-ol">{x.steps.steps.slice(0, 5).map((y, j) => <li key={j}>{short(y, 110)}</li>)}</ol></>
+                      : <p className="gf-t">{short(x.a, 230)}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {gf.buildingQr ? (
+              <div style={{ display: 'flex', gap: '16pt', marginTop: '4pt' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7pt' }}><img src={gf.buildingQr} alt="" style={{ width: '46pt', height: '46pt' }} /><p className="gf-k" style={{ lineHeight: 1.5 }}>Directions<br />to us</p></div>
+                {gf.beachQr ? <div style={{ display: 'flex', alignItems: 'center', gap: '7pt' }}><img src={gf.beachQr} alt="" style={{ width: '46pt', height: '46pt' }} /><p className="gf-k" style={{ lineHeight: 1.5 }}>Map to<br />the beach</p></div> : null}
+              </div>
+            ) : null}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '7pt' }}>
-            <div style={{ textAlign: 'right' }}><p className="gf-k">Your full guide</p><p style={{ fontSize: '8pt', color: '#444', maxWidth: '1.3in' }}>Parking, how-tos, places to eat and more</p></div>
-            <img src={qrSrc(guideUrl)} alt="" style={{ width: '62pt', height: '62pt' }} />
+          <div style={{ minHeight: 0, overflow: 'hidden' }}>
+            {rules.length ? (
+              <>
+                <p className="gf-h">House rules</p>
+                {rules.map((r: any, i: number) => <div key={i} className="gf-rule"><p className="gf-t"><b>{sentence(r.title)}</b>{str(r.body) ? ' — ' + short(firstSentence(str(r.body)) || str(r.body), 90) : ''}</p></div>)}
+              </>
+            ) : null}
+            <p className="gf-h" style={{ marginTop: rules.length ? '12pt' : 0 }}>Before you leave</p>
+            {outList.length ? outList.map((x: string, i: number) => <div key={i} className="gf-tick"><i /><span>{short(x, 100)}</span></div>) : <p className="gf-t">Please leave by {d.checkOut || 'the agreed time'} — thank you!</p>}
           </div>
         </div>
 
-        {faq.length ? (
-          <div style={{ display: 'grid', gridTemplateColumns: faq.length > 1 ? '1fr 1fr' : '1fr', gap: '14pt', marginTop: '11pt' }}>
-            {faq.map((x, i) => <div key={i}><p className="gf-h">{x.q.replace(/\?$/, '')}</p><p className="gf-li">{short(x.a, 420)}</p></div>)}
-          </div>
-        ) : null}
-
-        {/* RULES + CHECK-OUT */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14pt', marginTop: '11pt', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <div>
-            {rules.length ? <><p className="gf-h">House rules</p>{rules.map((r: any, i: number) => <p key={i} className="gf-li"><b>{sentence(r.title)}</b>{str(r.body) ? ' — ' + short(str(r.body), 90) : ''}</p>)}</> : null}
-          </div>
-          <div>
-            <p className="gf-h">Check-out{d.checkOut ? ' · by ' + d.checkOut : ''}</p>
-            {outList.length ? outList.map((x: string, i: number) => <p key={i} className="gf-li"><span className="gf-check" />{short(x, 95)}</p>) : <p className="gf-li">Please leave by {d.checkOut || 'the agreed time'} — thank you!</p>}
-          </div>
-        </div>
-
-        {/* BOOK DIRECT */}
-        <div style={{ marginTop: '10pt', borderRadius: '10pt', background: deep, color: '#fff', padding: '11pt 14pt', display: 'flex', alignItems: 'center', gap: '12pt' }}>
+        {/* CLOSING BAND */}
+        <div style={{ flex: 'none', marginTop: '12pt', background: tint, padding: '16pt .55in 18pt', display: 'flex', alignItems: 'center', gap: '18pt' }}>
           <div style={{ flex: 1 }}>
-            <p style={{ fontSize: '8pt', letterSpacing: '.25em', opacity: .8 }}>COME BACK SOON</p>
-            <p style={{ fontFamily: SERIF, fontSize: '18pt', fontWeight: 600, lineHeight: 1.1 }}>Book direct next time &amp; save</p>
-            <p style={{ fontSize: '9.5pt', marginTop: '3pt', opacity: .92 }}>{d.bookUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')} · code <b style={{ letterSpacing: '.08em' }}>{d.code}</b></p>
+            <p className="gf-k">Come back soon</p>
+            <p style={{ fontFamily: SERIF, fontSize: '21pt', fontWeight: 500, lineHeight: 1.08, marginTop: '4pt', color: '#161616' }}>Book direct next time <i style={{ fontWeight: 500 }}>&amp; save</i></p>
+            <p className="gf-t" style={{ marginTop: '6pt' }}>{site} · use code <span style={{ display: 'inline-block', background: acc, color: '#fff', borderRadius: '4pt', padding: '1pt 7pt', fontWeight: 700, letterSpacing: '.1em', fontSize: '8.6pt' }}>{d.code}</span></p>
           </div>
-          <div style={{ background: '#fff', padding: '4pt', borderRadius: '6pt' }}><img src={qrSrc(d.bookUrl)} alt="" style={{ width: '66pt', height: '66pt', display: 'block' }} /></div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ background: '#fff', padding: '5pt', borderRadius: '7pt' }}><img src={qrSrc(d.bookUrl)} alt="" style={{ width: '62pt', height: '62pt', display: 'block' }} /></div>
+            <p style={{ fontSize: '6.5pt', letterSpacing: '.12em', color: '#555', marginTop: '3pt' }}>BOOK DIRECT</p>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ background: '#fff', padding: '5pt', borderRadius: '7pt' }}><img src={qrSrc(guideUrl)} alt="" style={{ width: '62pt', height: '62pt', display: 'block' }} /></div>
+            <p style={{ fontSize: '6.5pt', letterSpacing: '.12em', color: '#555', marginTop: '3pt' }}>YOUR FULL GUIDE</p>
+          </div>
         </div>
       </div>
     </div>

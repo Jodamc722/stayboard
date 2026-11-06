@@ -18,7 +18,7 @@ import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 import { parseJson } from '@/lib/json-repair'
 import { POST as pushToGuesty } from '../push-guesty/route'
 import { auditGuidebook, reviewOf, stageOf } from '@/lib/guidebook-audit'
-import { isStandardHowto } from '@/lib/guide-print'
+import { isStandardHowto, dedupeHowtos } from '@/lib/guide-print'
 import { guestUnitFull } from '@/lib/guest-unit'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
       const items = sec && sec.houseGuide && Array.isArray(sec.houseGuide.items) ? sec.houseGuide.items : null
       if (!items) continue
       const keep = Array.isArray(sec._print?.show) ? sec._print.show.map((x: any) => String(x).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()) : []
-      const kept = items.filter((x: any) => !isStandardHowto(x) || keep.indexOf(String(x?.title || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()) >= 0)
+      const kept = dedupeHowtos(items.filter((x: any) => !isStandardHowto(x) || keep.indexOf(String(x?.title || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()) >= 0))
       if (kept.length === items.length) continue
       for (const x of items) if (kept.indexOf(x) < 0) names[String(x?.title || '?')] = (names[String(x?.title || '?')] || 0) + 1
       sec.houseGuide.items = kept
