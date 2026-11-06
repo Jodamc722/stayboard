@@ -39,6 +39,19 @@ export function GuidebookLauncher({ listingId, name, compact }: {
   const [highlights, setHighlights] = useState('')
   const [ups, setUps] = useState<Up[]>([])
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  // Filled-in Guesty custom fields prefill the matching questions (Jon, 2026-11-06).
+  const [fromGuesty, setFromGuesty] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!listingId) return
+    fetch('/api/guidebook/guesty-facts?ids=' + encodeURIComponent(listingId)).then(r => r.json()).then(d => {
+      const g = d?.listings?.[listingId]
+      if (!g?.facts) return
+      const pre: Record<string, string> = {}, src: Record<string, string> = {}
+      for (const q of QUESTIONS) { const v = String(g.facts[q.key] || '').trim(); if (v) { pre[q.key] = v; src[q.key] = (g.sources?.[q.key] || []).join(', ') } }
+      setFromGuesty(src)
+      setAnswers(a => ({ ...pre, ...Object.fromEntries(Object.entries(a).filter(([, v]) => String(v).trim())) }))
+    }).catch(() => {})
+  }, [listingId])
   const [recs, setRecs] = useState<{ name: string; type?: string; blurb?: string; area?: string }[]>([])
   const [recPick, setRecPick] = useState<Record<number, boolean>>({})
   const [recBusy, setRecBusy] = useState(false)
@@ -237,6 +250,7 @@ export function GuidebookLauncher({ listingId, name, compact }: {
                   <textarea rows={2} placeholder={q.hint} value={answers[q.key] || ''}
                     onChange={e => setAnswers(a => ({ ...a, [q.key]: e.target.value }))}
                     className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ink/20" />
+                  {fromGuesty[q.key] && <p className="mt-0.5 text-[11px] text-emerald-700">From Guesty ({fromGuesty[q.key]}) — edit if needed.</p>}
                 </div>
               ))}
             </div>

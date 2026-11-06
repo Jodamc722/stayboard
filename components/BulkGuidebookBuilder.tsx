@@ -29,6 +29,9 @@ export function BulkGuidebookBuilder() {
   const [running, setRunning] = useState(false)
   const [overwrite, setOverwrite] = useState(false)
   const [results, setResults] = useState<Res[]>([])
+  // GUESTY FILLS THE BLANKS (Jon, 2026-11-06): the units' filled-in Guesty custom fields.
+  const [gfacts, setGfacts] = useState<Record<string, { facts: Record<string, string>; sources: Record<string, string[]> }>>({})
+  const [gLoading, setGLoading] = useState(false)
 
   useEffect(() => {
     fetch('/api/guidebook/buildings').then((r) => r.json()).then((d) => setBuildings(Array.isArray(d?.buildings) ? d.buildings : [])).catch(() => {}).finally(() => setLoading(false))
@@ -44,6 +47,32 @@ export function BulkGuidebookBuilder() {
     const p: Record<string, boolean> = {}
     ;(b?.listings || []).forEach((l) => { p[l.id] = true })
     setPicked(p); setResults([])
+    const ids = (b?.listings || []).map((l) => l.id)
+    setGfacts({}); setAnswers({})
+    if (!ids.length) return
+    setGLoading(true)
+    fetch('/api/guidebook/guesty-facts?ids=' + encodeURIComponent(ids.join(','))).then((r) => r.json()).then((d) => {
+      const g = (d && d.listings) || {}
+      setGfacts(g)
+      // A section every unit has the SAME value for is shown in the box; one that differs by unit is
+      // left blank so each book takes its own unit's value.
+      const pre: Record<string, string> = {}
+      for (const q of SHARED) {
+        const vals = ids.map((id) => String(g[id]?.facts?.[q.key] || '').trim())
+        if (vals.every((v) => v) && vals.every((v) => v === vals[0])) pre[q.key] = vals[0]
+      }
+      setAnswers((a) => ({ ...pre, ...a }))
+    }).catch(() => {}).finally(() => setGLoading(false))
+  }
+
+  function guestyNote(key: string): string {
+    const ids = listings.map((l) => l.id)
+    const filled = ids.filter((id) => String(gfacts[id]?.facts?.[key] || '').trim())
+    if (!filled.length) return ''
+    const vals = Array.from(new Set(filled.map((id) => String(gfacts[id].facts[key]).trim())))
+    const src = Array.from(new Set(filled.flatMap((id) => gfacts[id].sources?.[key] || []))).join(', ')
+    if (filled.length === ids.length && vals.length === 1) return 'From Guesty (' + src + ') — same for every unit.'
+    return 'From Guesty (' + src + '): ' + filled.length + ' of ' + ids.length + ' units filled' + (vals.length > 1 ? ', different per unit' : '') + ' — leave this blank and each book uses its own unit\u2019s value. Anything typed here replaces it for every unit.'
   }
 
   async function suggestRecs() {
@@ -113,6 +142,7 @@ export function BulkGuidebookBuilder() {
             <div key={q.key}>
               <label className="text-xs font-semibold text-ink">{q.label}</label>
               <textarea rows={2} value={answers[q.key] || ''} onChange={(e) => setAnswers((a) => ({ ...a, [q.key]: e.target.value }))} placeholder={q.hint} className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-sm" />
+              {guestyNote(q.key) && <p className="mt-0.5 text-[11px] text-emerald-700">{guestyNote(q.key)}</p>}
             </div>
           ))}
           <div>
@@ -132,7 +162,7 @@ export function BulkGuidebookBuilder() {
               </div>
             )}
           </div>
-          <p className="text-[11px] text-muted">Wi-Fi, door codes, bedrooms and photos are pulled per unit automatically.</p>
+          <p className="text-[11px] text-muted">{gLoading ? 'Reading Guesty custom fields… ' : ''}Wi-Fi, bedrooms and photos are pulled per unit automatically. Any section left blank takes that unit&rsquo;s filled-in Guesty custom field (parking, trash, entry instructions, FAQ…), then Guesty&rsquo;s own access / transit / house-rules text. Codes are never printed in a guidebook.</p>
         </div>
       )}
 

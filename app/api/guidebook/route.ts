@@ -5,6 +5,7 @@
 // copywriter prompt REWRITES the operator's raw answers into polished editorial prose, keeps the book
 // LEAN (only sections that earn their place; appliance how-tos only for non-traditional gear), and
 // assigns photos per page. GET/PUT/DELETE unchanged. AI failure falls back to a clean template.
+import { guideFactsFor, type GuideFacts } from '@/lib/guidebook-guesty'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -159,7 +160,7 @@ export async function POST(req: NextRequest) {
   const selectedRecs = Array.isArray(body?.selectedRecs) ? body.selectedRecs.map((x: any) => String(x).trim()).filter(Boolean) : []
   const selectedAuditHowTos: any[] = Array.isArray(body?.selectedAuditHowTos) ? body.selectedAuditHowTos.slice(0, 10).map((x: any) => ({ title: String(x && x.title || '').slice(0, 120), body: String(x && x.body || '').slice(0, 600) })).filter((x: any) => x.title && x.body) : []
   const force = body?.force === true
-  const answers = (body?.answers && typeof body.answers === 'object') ? body.answers : {}
+  const typed = (body?.answers && typeof body.answers === 'object') ? body.answers : {}
   const theme = str(body?.theme) || 'editorial'
   const tone = str(body?.tone) || 'warm'
   const audience = str(body?.audience) || 'all guests'
@@ -184,6 +185,27 @@ export async function POST(req: NextRequest) {
   ])
   const l: any = (rows || [])[0]
   if (!l) return NextResponse.json({ error: 'listing not found' }, { status: 404 })
+
+  // GUESTY FILLS THE BLANKS (Jon, 2026-11-06). Whatever the operator typed wins; any section left
+  // empty takes this unit's filled-in Guesty custom field (parking, trash, entry instructions…),
+  // then Guesty's own access / transit / house-rules text. lib/guidebook-guesty says what is never pulled.
+  const gf = (await guideFactsFor(db, [listingId]).catch(() => ({} as Record<string, GuideFacts>)))[listingId]
+  const answers: Record<string, any> = { ...typed }
+  const fromGuesty: string[] = []
+  if (gf) for (const [k, v] of Object.entries(gf.facts)) {
+    if (k === 'wifi' || !v) continue
+    if (!str(answers[k]).trim()) { answers[k] = v; fromGuesty.push(k) }
+  }
+  // Wi-Fi from a custom field only when Guesty's own Wi-Fi boxes are empty: "Network: X / Password: Y".
+  if (gf?.facts.wifi && !str(l.wifiName) && !str(l.wifiPassword)) {
+    const t = gf.facts.wifi
+    const net = (t.match(/(?:network|ssid|name)\s*[:\-]\s*([^\n,;|]+)/i) || [])[1]
+    const pw = (t.match(/(?:password|pass|pw)\s*[:\-]\s*([^\n,;|]+)/i) || [])[1]
+    if (net) l.wifiName = net.trim()
+    if (pw) l.wifiPassword = pw.trim()
+    if (!net && !pw) answers.wifiNotes = t
+    else fromGuesty.push('wifi')
+  }
 
   const name = l.title || l.nickname || 'Your Residence'
   const building = str(l.building)
@@ -383,7 +405,7 @@ ${JSON.stringify(fallback)}`
     title: `${name} — Guest Guidebook`,
     theme,
     status: 'draft',
-    answers: { ...answers, _tone: tone, _audience: audience, _highlights: highlights },
+    answers: { ...answers, _tone: tone, _audience: audience, _highlights: highlights, _fromGuesty: fromGuesty },
     sections,
     created_by: user.email || null,
   }).select('id').limit(1)
