@@ -1255,7 +1255,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
       // (raw.money.totalPaid) above the payout the booking itself earns (hostPayout), or a negative
       // balance due. That extra is almost always a Resolution Center / damage payout that has to be
       // allocated (to the folio as the service it paid for, or to the claim) so it reaches the owner.
-      if (on.ota_overpaid && res && !canceled) {
+      if (on.ota_overpaid && res && !canceled && /airbnb|booking|vrbo|homeaway|expedia|hotels/i.test(String(res.source || ''))) {
         const tp = Number((res as any).tp), hp = Number((res as any).hp), bd = Number((res as any).bd)
         const over = money(Math.max(isFinite(bd) ? -bd : 0, isFinite(tp) && isFinite(hp) && hp > 0 ? tp - hp : 0))
         if (over >= 5) flags.push({ type: 'ota_overpaid', severity: 'review', amount: over,
@@ -1560,6 +1560,17 @@ export async function buildAudit(month: string): Promise<AuditData> {
       }
     }
 
+    // A NEGATIVE RESOLUTION IS A REFUND (Jon, 2026-11-06: "if it's a negative resolution we need to add
+    // that to the refund tag vs resolution tag in filters"). Money going back to the guest through
+    // the Resolution Center files under Refund, so the Resolution filter is only money coming in.
+    for (let i = 0; i < flags.length; i++) {
+      const f = flags[i]
+      if (f.type === 'resolution' && (f.amount || 0) < -0.005) {
+        const dup = flags.some((x, j) => j !== i && x.type === 'refund')
+        flags[i] = { type: 'refund', severity: f.severity === 'info' ? 'review' : f.severity, amount: f.amount, detail: 'Negative Airbnb resolution — money back to the guest ($' + Math.abs(f.amount || 0).toFixed(2) + '). ' + f.detail }
+        if (dup) { flags.splice(i, 1); i-- }
+      }
+    }
     const worst: AuditSeverity = flags.some(f => f.severity === 'high') ? 'high'
       : flags.some(f => f.severity === 'review') ? 'review' : 'info'
     const key = g.resCode || g.lineKey
