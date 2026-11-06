@@ -623,6 +623,9 @@ export function GuidePrint({ gb }: { gb: any }) {
           .gp-qr div { text-align: center; width: 112pt; }
           .gp-qr img { width: 98pt; height: 98pt; }
           .gp-band { height: 5pt; background: ${acc}; border-radius: 3pt; margin-bottom: 12pt; }
+          .gp-tight { font-size: 9pt; line-height: 1.34; }
+          .gp-tight .gp-item { margin-bottom: 5.5pt; }
+          .gp-tight .gp-item b { font-size: 9.4pt; }
           .gp-foot { margin-top: 14pt; text-align: center; font-size: 8.4pt; }
         }
       `}</style>
@@ -697,7 +700,7 @@ export function GuidePrint({ gb }: { gb: any }) {
       {on('around') && (d.places.length || d.eats.length) ? (
         <>
           <H first={!(on('howto') && howto.length)}>Around you</H>
-          <div className="gp-cols">
+          <div className="gp-cols gp-tight">
             {d.places.slice(0, 8).map((p: any, i: number) => <div key={'p' + i} className="gp-item"><b>{p.name}</b>{p.note ? <span>{p.note} </span> : null}<span className="gp-muted">{[String(p.address || '').replace(/,\s*(United States|USA)$/i, ''), p.phone].filter(Boolean).join(' · ')}</span></div>)}
             {d.eats.slice(0, 8).map((p: any, i: number) => <div key={'e' + i} className="gp-item"><b>{p.name} <span className="gp-muted" style={{ fontWeight: 400, display: 'inline' }}>· eat</span></b>{p.note ? <span>{p.note} </span> : null}<span className="gp-muted">{[String(p.address || '').replace(/,\s*(United States|USA)$/i, ''), p.phone].filter(Boolean).join(' · ')}</span></div>)}
           </div>
@@ -705,10 +708,10 @@ export function GuidePrint({ gb }: { gb: any }) {
       ) : null}
 
       {on('help') ? (
-        <div style={{ breakInside: 'avoid' }}>
+        <div>
           <H first={!(on('howto') && howto.length) && !(on('around') && (d.places.length || d.eats.length))}>Help &amp; emergencies</H>
           <p style={{ marginBottom: '8pt' }}><b>In an emergency, dial 911</b> — police, fire, ambulance. Then let us know{d.phone ? ' at ' + d.phone : ''}.</p>
-          <div className="gp-cols">
+          <div className="gp-cols gp-tight">
             {d.police ? <div className="gp-item"><b>{d.policeLabel} · non-emergency</b>{d.police}</div> : null}
             {d.contacts.map((x: any, i: number) => <div key={i} className="gp-item"><b>{x.label}</b>{x.value}{x.note ? <span className="gp-muted"> · {x.note}</span> : null}</div>)}
             {d.hospitals.slice(0, 3).map((h: any, i: number) => <div key={'h' + i} className="gp-item"><b>{h.name}{h.miles != null ? ' · ' + h.miles + ' mi' : ''}</b>{[h.address, h.phone].filter(Boolean).join(' · ')}</div>)}
