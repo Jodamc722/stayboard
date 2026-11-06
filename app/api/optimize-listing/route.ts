@@ -370,7 +370,7 @@ ${JSON.stringify(currentDraft || (current as any)[sk] || '')}`
       const capOf = sk === 'title' ? (cfg.sections.title.hardCap || TITLE_MAX) : cfg.sections[sk].hardCap
       const fit = fitToCap(String(parsed.text).trim(), capOf, sk === 'title' ? 'title' : 'prose')
       const value = fit.text
-      const factsWrong = factIssues(value, { bedrooms: facts.bedrooms, bathrooms: facts.bathrooms, sleeps: facts.sleeps })
+      const factsWrong = factIssues(value, { bedrooms: facts.bedrooms, bathrooms: facts.bathrooms, sleeps: facts.sleeps, roomType: [facts.roomType, facts.nickname].filter(Boolean).join(' ') })
       const warnings = [...(fit.cut ? [`Shortened to ${value.length} characters to fit the ${capOf}-character limit.`] : []), ...factsWrong, ...warnFor(sk, value, cfg, location.streetAddress)]
       return NextResponse.json({ listingId, section: sk, text: value, titleMax: cfg.sections.title.hardCap || TITLE_MAX, rationale: String(parsed.rationale || '').trim(), warnings, factIssues: factsWrong, photosUsed: sel.photos.length, photosLabelled: sel.labelled })
     } catch (e: any) {
@@ -469,7 +469,7 @@ ${JSON.stringify(current)}`
       const cap = k === 'title' ? (cfg.sections.title.hardCap || TITLE_MAX) : cfg.sections[k].hardCap
       const fit = fitToCap(proposed[k] || '', cap, k === 'title' ? 'title' : 'prose')
       if (fit.cut) { proposed[k] = fit.text; warnings.push(`${k === 'title' ? 'Title' : 'The ' + cfg.sections[k].label.toLowerCase() + ' section'} was shortened to ${fit.text.length} characters to fit the ${cap}-character limit.`) }
-      factsWrong.push(...factIssues(proposed[k] || '', { bedrooms: facts.bedrooms, bathrooms: facts.bathrooms, sleeps: facts.sleeps }, k === 'title' ? 'The title' : 'The ' + cfg.sections[k].label.toLowerCase() + ' section'))
+      factsWrong.push(...factIssues(proposed[k] || '', { bedrooms: facts.bedrooms, bathrooms: facts.bathrooms, sleeps: facts.sleeps, roomType: [facts.roomType, facts.nickname].filter(Boolean).join(' ') }, k === 'title' ? 'The title' : 'The ' + cfg.sections[k].label.toLowerCase() + ' section'))
     }
     warnings.push(...factsWrong)
     for (const k of SECTION_KEYS) warnings.push(...warnFor(k, proposed[k] || '', cfg, location.streetAddress))

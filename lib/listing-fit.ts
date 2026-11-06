@@ -44,10 +44,12 @@ export function factIssues(text: string, f: Facts, where = 'The copy'): string[]
   const t = String(text || '')
   const out = new Set<string>()
   const N = '(\\d+(?:\\.5)?|one|two|three|four|five|six|seven|eight|nine|ten|twelve)'
-  const beds = f.bedrooms == null ? null : Number(f.bedrooms)
+  // Guesty records a studio as 1 bedroom; the unit's room type or name ("STU", "Studio") says which it is.
+  const studio = /\bstudio\b|\bstu\b/i.test(String(f.roomType || ''))
+  const beds = f.bedrooms == null ? null : studio ? 0 : Number(f.bedrooms)
   if (beds != null) {
     for (const m of Array.from(t.matchAll(new RegExp(N + '[\\s-]*(?:bedroom|bed room|br)\\b', 'gi')))) {
-      const n = num(m[1]); if (n !== beds) out.add(`${where} says ${m[0].trim()}, but the unit has ${beds === 0 ? 'no separate bedroom (studio)' : beds + ' bedroom' + (beds === 1 ? '' : 's')}.`)
+      const n = num(m[1]); if (n !== beds && !(studio && n <= 1)) out.add(`${where} says ${m[0].trim()}, but the unit has ${beds === 0 ? 'no separate bedroom (studio)' : beds + ' bedroom' + (beds === 1 ? '' : 's')}.`)
     }
     if (beds >= 1 && /\bstudio\b/i.test(t) && !/studio (?:city|apartment complex|district)/i.test(t)) out.add(`${where} calls it a studio, but the unit has ${beds} bedroom${beds === 1 ? '' : 's'}.`)
   }

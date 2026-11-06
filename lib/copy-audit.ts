@@ -12,7 +12,7 @@ export type SyncNote = { at: string; synced: boolean; missing: string[]; by?: st
 
 export type AuditRow = {
   id: string; name: string; building: string
-  bedrooms: number | null; bathrooms: number | null; sleeps: number | null
+  bedrooms: number | null; bathrooms: number | null; sleeps: number | null; roomType: string
   title: string; summaryLen: number; syncedAt: string | null
   findings: Finding[]; push: SyncNote | null
 }
@@ -22,7 +22,7 @@ const str = (v: any) => (v == null ? '' : String(v))
 export async function buildCopyAudit(): Promise<{ at: string; rows: AuditRow[] }> {
   const sb = supabaseAdmin()
   const { rows: ls } = await pageRows<any>((a, b) => sb.from('guesty_listings')
-    .select('id, title, nickname, building, status, bedrooms, bathrooms, max_occupancy, synced_at, rawTitle:raw->>title, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions')
+    .select('id, title, nickname, building, room_type, status, bedrooms, bathrooms, max_occupancy, synced_at, rawTitle:raw->>title, rawPub:raw->publicDescription, rawPubs:raw->publicDescriptions')
     .order('id').range(a, b))
   const pushes = await getSettingFresh<Record<string, SyncNote>>(SYNC_KEY, {}).catch(() => ({} as Record<string, SyncNote>))
   const rows: AuditRow[] = []
@@ -31,13 +31,13 @@ export async function buildCopyAudit(): Promise<{ at: string; rows: AuditRow[] }
     const pub = l.rawPub || l.rawPubs || {}
     const sections = Object.fromEntries(AUDIT_SECTIONS.map(k => [k, str(pub?.[k]).trim()]))
     const title = str(l.rawTitle || l.title).trim()
-    const facts = { bedrooms: l.bedrooms, bathrooms: l.bathrooms, sleeps: l.max_occupancy }
+    const facts = { bedrooms: l.bedrooms, bathrooms: l.bathrooms, sleeps: l.max_occupancy, roomType: [l.room_type, l.nickname].filter(Boolean).join(' ') }
     const findings = auditCopy({ title, sections }, facts)
     const push = pushes[l.id] || null
     if (push && !push.synced) findings.unshift({ level: 'fix', kind: 'sync', field: 'Push', message: `The last Regenerate push did not stick in Guesty: ${push.missing.join(', ') || 'unknown'}. Open the unit and push again.` })
     rows.push({
       id: l.id, name: str(l.nickname || l.title || l.id), building: str(l.building) || 'Other',
-      bedrooms: l.bedrooms ?? null, bathrooms: l.bathrooms ?? null, sleeps: l.max_occupancy ?? null,
+      roomType: [l.room_type, l.nickname].filter(Boolean).join(' '), bedrooms: l.bedrooms ?? null, bathrooms: l.bathrooms ?? null, sleeps: l.max_occupancy ?? null,
       title, summaryLen: sections.summary.length, syncedAt: l.synced_at || null, findings, push,
     })
   }

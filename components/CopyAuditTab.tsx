@@ -15,7 +15,7 @@ import { Tag, LeanList, LeanRow, LeanEmpty, LeanPick, LeanSection, Pill, type To
 import { auditCopy, type Finding } from '@/lib/copy-audit-core'
 
 type Row = {
-  id: string; name: string; building: string; bedrooms: number | null; bathrooms: number | null; sleeps: number | null
+  id: string; name: string; building: string; bedrooms: number | null; bathrooms: number | null; sleeps: number | null; roomType: string
   title: string; summaryLen: number; syncedAt: string | null; findings: Finding[]
   push: { at: string; synced: boolean; missing: string[]; by?: string | null } | null
 }
@@ -75,7 +75,7 @@ export function CopyAuditTab() {
         if (!j?.error || !/429|503|too many/i.test(j.error)) break
       }
       if (!j?.ok) { setLive(m => ({ ...m, [r.id]: { error: j?.error || 'Could not read Guesty' } })); return }
-      const found = auditCopy({ title: j.title, sections: j.sections }, { bedrooms: r.bedrooms, bathrooms: r.bathrooms, sleeps: r.sleeps })
+      const found = auditCopy({ title: j.title, sections: j.sections }, { bedrooms: r.bedrooms, bathrooms: r.bathrooms, sleeps: r.sleeps, roomType: r.roomType })
       // A push that did not stick stays flagged until the live copy is clean of it — or a later push syncs.
       const sync = r.findings.filter(f => f.kind === 'sync')
       setLive(m => ({ ...m, [r.id]: { findings: [...sync, ...found], at: new Date().toISOString(), summaryLen: String(j.sections?.summary || '').length } }))
@@ -137,7 +137,7 @@ export function CopyAuditTab() {
               return (
                 <LeanRow key={r.id} tint={lv === 'fix' ? 'rose' : undefined}
                   name={r.name}
-                  meta={`${r.building} · ${r.bedrooms === 0 ? 'studio' : (r.bedrooms ?? '?') + ' bd'} · ${r.bathrooms ?? '?'} ba · sleeps ${r.sleeps ?? '?'}`}
+                  meta={`${r.building} · ${r.bedrooms === 0 || /\bstudio\b|\bstu\b/i.test(r.roomType) ? 'studio' : (r.bedrooms ?? '?') + ' bd'} · ${r.bathrooms ?? '?'} ba · sleeps ${r.sleeps ?? '?'}`}
                   tags={<>
                     {r.summaryLen > 500 ? <Tag tone="rose" title="Airbnb cuts everything past 500">Summary {r.summaryLen}/500</Tag> : null}
                     {ks.filter(k => !(k === 'limit' && r.summaryLen > 500 && r.findings.filter(f => f.kind === 'limit').length === 1)).map(k => <Tag key={k} tone={KIND_TONE[k]}>{KIND_LABEL[k]}</Tag>)}
