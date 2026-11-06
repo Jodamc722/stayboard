@@ -61,6 +61,11 @@ export function LotSweep({ code }: { code: string }) {
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
   const [notice, setNotice] = useState<Incident | null>(null)
+  // IDENTIFY THE CAR (Jon, 2026-11-06): every car that comes back NOT registered asks the person in
+  // the lot for its colour, make and model before they move on — prefilled from the camera read,
+  // all three required. Flags wait here in order; the sheet sits above the scanner.
+  const [idQueue, setIdQueue] = useState<Incident[]>([])
+  const needsId = (i: Incident) => ![i.color, i.make, i.model].every(v => String(v || '').trim())
   const [now, setNow] = useState(Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t) }, [])
   useEffect(() => { try { setName(localStorage.getItem('lot-staff-name') || '') } catch {} }, [])
@@ -138,7 +143,7 @@ export function LotSweep({ code }: { code: string }) {
         <input value={name} onChange={e => saveName(e.target.value)} placeholder="So the record says who checked" className={field + ' mt-1'} />
       </label>
 
-      <CheckPlate spots={spots} post={post} onFlagged={inc => { patchIncident(inc); say('Flagged. Send the notice below when you are ready.') }}
+      <CheckPlate spots={spots} post={post} onFlagged={inc => { patchIncident(inc); setIdQueue(q => q.some(x => x.id === inc.id) ? q : q.concat(inc)); say('Flagged — now identify the car.') }}
         onRegister={(plate, read) => setRegister({ open: true, draft: { plate, make: read?.make || null, model: read?.model || null, color: read?.color || null, plateState: read?.state || null } })} />
 
       <Tonight lot={lot} spots={spots} arriving={arriving} date={date} post={post}
@@ -146,7 +151,7 @@ export function LotSweep({ code }: { code: string }) {
         onRegister={() => setRegister({ open: true, draft: {} })}
         say={say} />
 
-      <Walk spots={spots} date={date} sweep={sweep} setSweep={setSweep} post={post} onFinished={(sw, made) => { setSweep(sw); made.forEach(patchIncident); say(made.length ? `${made.length} ${made.length === 1 ? 'car' : 'cars'} flagged — send the notice below.` : 'Sweep done — every car is where it should be.') }} />
+      <Walk spots={spots} date={date} sweep={sweep} setSweep={setSweep} post={post} onFinished={(sw, made) => { setSweep(sw); made.forEach(patchIncident); setIdQueue(q => q.concat(made.filter(m => !q.some(x => x.id === m.id)))); say(made.length ? `${made.length} ${made.length === 1 ? 'car' : 'cars'} flagged — send the notice below.` : 'Sweep done — every car is where it should be.') }} />
 
       <section className="mt-6">
         <h2 style={serif} className="text-[22px] text-neutral-900 mb-1">Flags <span className="text-neutral-400">{open.length}</span></h2>
@@ -162,6 +167,7 @@ export function LotSweep({ code }: { code: string }) {
                   <span className="text-[14px] text-neutral-800">{carLabel(i)}</span>
                   {i.spotLabel && <span className="text-[13px] text-neutral-500">spot {i.spotLabel}</span>}
                 </div>
+                {needsId(i) && <button onClick={() => setIdQueue(q => q.some(x => x.id === i.id) ? q : [i].concat(q))} className="mt-2 w-full rounded-xl border-2 border-rose-400 bg-white px-3 py-2 text-[14px] font-bold text-rose-700">Identify the car — colour, make and model missing</button>}
                 <div className="mt-1 text-[13px] text-neutral-700">
                   {i.status === 'open' && 'Flagged — notice not sent yet.'}
                   {i.status === 'notified' && left != null && (left > 0 ? `Notice sent ${timeET(i.noticeSentAt as string)} to ${i.noticeSentN} guests · ${left} min left (until ${timeET(i.towDueAt as string)}).` : `The hour is up (deadline ${timeET(i.towDueAt as string)}) — the tow email drafts itself; the office sends it.`)}
@@ -184,6 +190,10 @@ export function LotSweep({ code }: { code: string }) {
 
       {lot.rules && <details className="mt-6 text-[13px] text-neutral-600"><summary className="cursor-pointer font-semibold">Lot rules</summary><p className="mt-1">{lot.rules}</p></details>}
       <p className="mt-6 text-[12px] text-neutral-400">Lighthouse · the office sees everything you do here on the Parking tab.</p>
+
+      {idQueue[0] && <IdentifyCar inc={idQueue[0]} left={idQueue.length} post={post}
+        onSaved={inc => { patchIncident(inc); setIdQueue(q => q.slice(1)); say('Car saved.') }}
+        onLater={() => setIdQueue(q => q.slice(1))} />}
 
       <NoticeSheet open={!!notice} onClose={() => setNotice(null)} lot={lot} incident={notice} publicCode={code} publicPass={pass} staffName={name}
         onSent={(inc, sent, failed) => { patchIncident(inc); say(`Notice sent to ${sent} ${sent === 1 ? 'guest' : 'guests'}${failed ? `, ${failed} failed` : ''}. The clock runs until ${inc.towDueAt ? timeET(inc.towDueAt) : 'the deadline'}.`) }} />
@@ -652,5 +662,41 @@ function Walk({ spots, date, sweep, setSweep, post, onFinished }: { spots: SpotT
       <Scanner open={scanFor !== false} onClose={() => setScanFor(false)} mode="single" title={scanFor ? `Spot ${spots.find(s => s.id === scanFor)?.label || ''} — scan the plate` : 'Scan the plate'} scan={readFrame}
         onPick={(rd, ph) => { setPlate(rd.plate || ''); setRead(rd); setPhoto(ph); setErr('') }} />
     </section>
+  )
+}
+
+// ── IDENTIFY THE CAR ─────────────────────────────────────────────────────────────────────────────
+// Not registered → who is it? Colour, make and model, all three, before the next car. The notice to
+// the guests and the tow email both name the car, so a blank here is a blank there.
+function IdentifyCar({ inc, left, post, onSaved, onLater }: { inc: Incident; left: number; post: (b: Record<string, any>) => Promise<any>; onSaved: (i: Incident) => void; onLater: () => void }) {
+  const [car, setCar] = useState({ color: inc.color || '', make: inc.make || '', model: inc.model || '' })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  useEffect(() => { setCar({ color: inc.color || '', make: inc.make || '', model: inc.model || '' }); setErr('') }, [inc.id])
+  const ok = car.color.trim() && car.make.trim() && car.model.trim()
+  const save = async () => {
+    if (!ok) { setErr('Colour, make and model are all needed.'); return }
+    setBusy(true); setErr('')
+    try { const j = await post({ action: 'incident.car', incidentId: inc.id, ...car }); onSaved(j.incident) } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/50 flex items-end sm:items-center justify-center p-3">
+      <div className="w-full max-w-md rounded-3xl bg-white p-4 shadow-2xl">
+        <div className="text-[12px] font-bold uppercase tracking-wider text-rose-700">Not registered{left > 1 ? ` · ${left} cars to identify` : ''}</div>
+        <div className="mt-1 text-[20px] font-bold" style={serif}>Identify the car <span className="font-mono">{inc.plate || ''}</span></div>
+        <p className="text-[13px] text-neutral-500 mb-3">{inc.spotLabel ? 'Spot ' + inc.spotLabel + ' · ' : ''}Look at the car — the notice to the guests names it.</p>
+        {inc.photoUrl && <img src={inc.photoUrl} alt="" className="mb-3 rounded-xl max-h-40 w-full object-cover border border-neutral-200" />}
+        <div className="space-y-2">
+          <input autoFocus value={car.color} onChange={e => setCar({ ...car, color: e.target.value })} placeholder="Colour (e.g. black)" className={field} />
+          <input value={car.make} onChange={e => setCar({ ...car, make: e.target.value })} placeholder="Make (e.g. Toyota)" className={field} />
+          <input value={car.model} onChange={e => setCar({ ...car, model: e.target.value })} placeholder="Model (e.g. Highlander)" className={field} />
+        </div>
+        {err && <p className="mt-2 text-[13px] text-rose-700">{err}</p>}
+        <div className="mt-3 flex gap-2">
+          <button onClick={save} disabled={busy || !ok} className={big('bad')}>{busy ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Save the car</button>
+          <button onClick={onLater} disabled={busy} className={big('muted')}>Later</button>
+        </div>
+      </div>
+    </div>
   )
 }

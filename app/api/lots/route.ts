@@ -11,7 +11,7 @@ import { isYmd, addDays } from '@/lib/plate'
 import {
   listLots, lotBundle, lotById, createLot, updateLot, updateSpot, addSpot, buildingsWithoutLot,
   staysForBuilding, inHouseStays, createBooking, updateBooking, deleteBooking, suggestSpot, judgePlate,
-  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, sendNotice, draftTowEmail, closeIncident, noteIncident,
+  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, updateIncidentCar, sendNotice, draftTowEmail, closeIncident, noteIncident,
   storePhoto, readPlateFromPhoto, ymdET, lotsOverview, getStaffLink, setStaffLink,
 } from '@/lib/parking-lots'
 
@@ -111,6 +111,10 @@ export async function POST(req: NextRequest) {
         if (body.photo) { const p = await storePhoto(lotId, String(body.photo), String(body.photoMime || 'image/jpeg')); if (p.ok) photoPath = p.path || null }
         const inc = await openIncident({ lotId, spotId: body.spotId || null, spotLabel: body.spotLabel || null, kind: body.kind || 'unregistered', bookingId: body.bookingId || null, plate: body.plate, plateState: body.plateState, make: body.make, model: body.model, color: body.color, photoPath, seenBy: by, notes: body.notes })
         return inc ? NextResponse.json({ ok: true, incident: inc }) : bad('Could not save the flag.')
+      }
+      case 'incident.car': {
+        const out = await updateIncidentCar(String(body.incidentId || ''), { make: body.make, model: body.model, color: body.color, plateState: body.plateState })
+        return out ? NextResponse.json({ ok: true, incident: out }) : bad('Could not save the car.')
       }
       case 'incident.noticeText': {
         const inc = await incidentById(String(body.incidentId || ''))

@@ -627,6 +627,17 @@ async function alertFirstFlag(inc: Incident): Promise<void> {
   })
 }
 
+/** Who the car is (Jon, 2026-11-06: "if a car comes back not registered it should prompt the team to
+ *  identify the car — make, model and colour"). The flag is saved first; the field fills this in. */
+export async function updateIncidentCar(id: string, car: { make?: any; model?: any; color?: any; plateState?: any }): Promise<Incident | null> {
+  const up: Record<string, any> = { updated_at: new Date().toISOString() }
+  if (car.make !== undefined) up.make = clean(car.make, 60)
+  if (car.model !== undefined) up.model = clean(car.model, 60)
+  if (car.color !== undefined) up.color = clean(car.color, 40)
+  if (car.plateState !== undefined) up.plate_state = clean(car.plateState, 20)?.toUpperCase() || null
+  const { data } = await supabaseAdmin().from('parking_incidents').update(up).eq('id', id).select('*').single()
+  return data ? incidentOf(data) : null
+}
 export async function incidentById(id: string): Promise<Incident | null> {
   const { data } = await supabaseAdmin().from('parking_incidents').select('*').eq('id', id).maybeSingle()
   return data ? incidentOf(data) : null

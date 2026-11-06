@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   resolveStaffCode, lotToday, judgePlate, readPlateFromPhoto, storePhoto, startSweep, recordCheck, finishSweep, sweepById,
-  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
+  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, updateIncidentCar, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
   createBooking, updateBooking, bookingById,
   type SweepCheck,
 } from '@/lib/parking-lots'
@@ -138,6 +138,13 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
         if (body.photo) { const p = await storePhoto(lot.id, String(body.photo), String(body.photoMime || 'image/jpeg')); if (p.ok) photoPath = p.path || null }
         const inc = await openIncident({ lotId: lot.id, spotId: body.spotId || null, spotLabel: body.spotLabel || null, kind: ['unregistered', 'wrong_spot', 'staff_in_sell', 'blocking', 'other'].indexOf(body.kind) >= 0 ? body.kind : 'unregistered', bookingId: body.bookingId || null, plate: body.plate, plateState: body.plateState, make: body.make, model: body.model, color: body.color, photoPath, seenBy: by, notes: body.notes })
         return inc ? NextResponse.json({ ok: true, incident: inc }) : bad('Could not save the flag.')
+      }
+      case 'incident.car': {
+        const inc = await incidentById(String(body.incidentId || ''))
+        if (!inc || inc.lotId !== lot.id) return bad('That flag is not on this lot.', 404)
+        if (![body.make, body.model, body.color].every(v => String(v || '').trim())) return bad('Colour, make and model are all needed.')
+        const out = await updateIncidentCar(inc.id, { make: body.make, model: body.model, color: body.color, plateState: body.plateState })
+        return out ? NextResponse.json({ ok: true, incident: out.photoPath ? { ...out, photoUrl: await signedPhotoUrl(out.photoPath, 900) } : out }) : bad('Could not save the car.')
       }
       case 'incident.noticeText': {
         const inc = await incidentById(String(body.incidentId || ''))
