@@ -700,7 +700,7 @@ function StepOutcome({ claim, patch, busy, canClose }: { claim: Claim; patch: (b
 
       <div className="grid md:grid-cols-2 gap-3 mt-3">
         <label className="block">
-          <span className="text-[11px] uppercase tracking-wide text-muted">Decision</span>
+          <span className="text-[11px] uppercase tracking-wide text-muted">Decision{claim.outcome === 'denied' && <span className="ml-2 normal-case tracking-normal text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white">🚩 DENIED · not paid</span>}</span>
           <select value={claim.outcome || ''} onChange={e => { const v = e.target.value; const n = Number(String(paid).replace(/[$,\s]/g, '')); patch(v === 'partial' && isFinite(n) && n > 0 ? { outcome: v, amount_paid: n } : { outcome: v }) }} disabled={busy}
             className="mt-1 w-full text-sm border border-line rounded-lg px-2 py-1.5 bg-white">
             <option value="">Waiting on the channel</option>
