@@ -522,7 +522,7 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
             <HardChip claim={claim} />
             <TurnoverChip claim={claim} />
             {claim.channel && <Tag>{claim.channel}</Tag>}
-            {claim.waiting_on && <Tag tone="sky">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</Tag>}
+            {claim.waiting_on && stage === 'submitted' && <Tag tone="sky">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</Tag>}
             {claim.outcome && (
               <Tag tone={claim.outcome === 'denied' ? 'rose' : claim.outcome === 'won' || claim.outcome === 'partial' ? 'emerald' : 'slate'}>
                 {claim.outcome === 'won' ? 'Paid · full' : claim.outcome === 'partial' ? 'Paid · partial' : claim.outcome === 'denied' ? 'Denied · not paid' : claim.outcome.charAt(0).toUpperCase() + claim.outcome.slice(1)}
