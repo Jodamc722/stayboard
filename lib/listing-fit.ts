@@ -48,15 +48,26 @@ export function factIssues(text: string, f: Facts, where = 'The copy'): string[]
   const studio = /\bstudio\b|\bstu\b/i.test(String(f.roomType || ''))
   const beds = f.bedrooms == null ? null : studio ? 0 : Number(f.bedrooms)
   if (beds != null) {
-    for (const m of Array.from(t.matchAll(new RegExp(N + '[\\s-]*(?:bedroom|bed room|br)\\b', 'gi')))) {
+    for (const m of Array.from(t.matchAll(new RegExp(N + '[ \\t-]*(?:bedroom|bed room|br)\\b', 'gi')))) {
       const n = num(m[1]); if (n !== beds && !(studio && n <= 1)) out.add(`${where} says ${m[0].trim()}, but the unit has ${beds === 0 ? 'no separate bedroom (studio)' : beds + ' bedroom' + (beds === 1 ? '' : 's')}.`)
     }
-    if (beds >= 1 && /\bstudio\b/i.test(t) && !/studio (?:city|apartment complex|district)/i.test(t)) out.add(`${where} calls it a studio, but the unit has ${beds} bedroom${beds === 1 ? '' : 's'}.`)
+    // Only "studio" said of the unit itself: not a yoga or fitness studio, not "two studio units" or
+    // "studio bedroom" (Arya's combined suites, Capri 110's second bedroom).
+    if (beds >= 1) {
+      const claims = Array.from(t.matchAll(/(\b[\w-]+\s+)?studio\b(\s*-?\s*[\w-]+)?/gi)).filter(m => {
+        const prev = String(m[1] || '').trim().toLowerCase(), next = String(m[2] || '').replace(/^[\s-]+/, '').toLowerCase()
+        if (/^(yoga|fitness|wellness|art|arts|dance|pilates|recording|photo|music|tattoo|two|second|both|each|separate|connected|twin)$/.test(prev)) return false
+        if (/^(units?|suites?|bedrooms?|rooms?|style|apartments|city|district|space|area|layout|setup)$/.test(next)) return false
+        return true
+      })
+      if (claims.length) out.add(`${where} calls it a studio, but the unit has ${beds} bedroom${beds === 1 ? '' : 's'}.`)
+    }
   }
   const baths = f.bathrooms == null ? null : Number(f.bathrooms)
   if (baths != null && baths > 0) {
-    for (const m of Array.from(t.matchAll(new RegExp(N + '[\\s-]*(?:full\\s+)?(?:bathrooms?|baths?|ba)\\b', 'gi')))) {
-      const n = num(m[1]); if (Math.abs(n - baths) >= 0.5) out.add(`${where} says ${m[0].trim()}, but the unit has ${baths} bathroom${baths === 1 ? '' : 's'}.`)
+    for (const m of Array.from(t.matchAll(new RegExp(N + '[ \\t-]*(full[ \\t]+)?(?:bathrooms?|baths?|ba)\\b', 'gi')))) {
+      // "2 full bathrooms" on a 2.5-bath unit is right: full baths are the whole number.
+      const n = num(m[1]); if (m[2] ? n !== Math.floor(baths) : Math.abs(n - baths) >= 0.5) out.add(`${where} says ${m[0].trim()}, but the unit has ${baths} bathroom${baths === 1 ? '' : 's'}.`)
     }
   }
   const sleeps = f.sleeps == null ? null : Number(f.sleeps)
