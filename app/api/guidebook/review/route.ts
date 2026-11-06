@@ -18,6 +18,7 @@ import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 import { parseJson } from '@/lib/json-repair'
 import { POST as pushToGuesty } from '../push-guesty/route'
 import { auditGuidebook, reviewOf, stageOf } from '@/lib/guidebook-audit'
+import { isStandardHowto } from '@/lib/guide-print'
 import { guestUnitFull } from '@/lib/guest-unit'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
@@ -66,6 +67,27 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const id = String(body?.id || '')
   const action = String(body?.action || '')
+  // REMOVE STANDARD HOW-TOS from every book (Jon, 2026-11-06: "remove them" — microwave, espresso, Smart TV,
+  // A/C…). Map how-tos (parking, the beach walk) and ones brought back in Print options stay.
+  if (action === 'prune_all') {
+    const db0 = supabaseAdmin()
+    const { rows } = await pageRows<any>((a, b) => db0.from('guidebooks').select('id, sections').order('id').range(a, b), 6)
+    let books = 0, removed = 0
+    const names: Record<string, number> = {}
+    for (const r of rows || []) {
+      const sec = r.sections
+      const items = sec && sec.houseGuide && Array.isArray(sec.houseGuide.items) ? sec.houseGuide.items : null
+      if (!items) continue
+      const keep = Array.isArray(sec._print?.show) ? sec._print.show.map((x: any) => String(x).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()) : []
+      const kept = items.filter((x: any) => !isStandardHowto(x) || keep.indexOf(String(x?.title || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()) >= 0)
+      if (kept.length === items.length) continue
+      for (const x of items) if (kept.indexOf(x) < 0) names[String(x?.title || '?')] = (names[String(x?.title || '?')] || 0) + 1
+      sec.houseGuide.items = kept
+      const { error } = await db0.from('guidebooks').update({ sections: sec }).eq('id', r.id)
+      if (!error) { books++; removed += items.length - kept.length }
+    }
+    return NextResponse.json({ ok: true, books, removed, titles: names })
+  }
   if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const db = supabaseAdmin()
   const { data } = await db.from('guidebooks').select('id, status, sections, listing_id').eq('id', id).limit(1)

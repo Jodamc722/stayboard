@@ -12,20 +12,37 @@
 //     show    how-to titles to include even though they are common sense
 //     drop    how-to titles to leave off the printout (and the phone guide)
 
-export const COMMON_SENSE = /\b(microwave|kettle|toaster|refrigerator|fridge|freezer|mini[- ]?fridge|ice (tray|maker)|light(s|ing)?( switch(es)?)?|lamps?|toilet|faucet|sink|towels?|hair ?dryer|iron(ing board)?|hangers?|blinds|curtains|shades|dishes|dishware|cutlery|utensils|pots? (and|&) pans|cookware)\b/i
-// A plain coffee maker is common sense; a Nespresso, Keurig or espresso machine is not.
-const PLAIN_COFFEE = /^\s*(drip\s+)?coffee ?maker\s*$/i
-const NOT_COMMON = /nespresso|keurig|espresso|induction|smart|thermostat|key ?fob|keypad|lock|code|safe|gate|elevator|garage|pool|grill|washer|(?<!hair\s?)dryer|dishwasher|beach|parking|wi-?fi|router|tv|television|stream/i
+// STANDARD vs SPECIAL (Jon, 2026-11-06: "if not induction stove don't put it on it; if espresso is standard
+// don't put instructions on it. Only remote blinds, or new tech, smart homes etc. — standard items leave it
+// be"). A how-to earns its place only when a guest could get it wrong:
+//   SPECIAL  — induction cooktops, remote / motorised blinds, smart-home controls (hubs, smart locks, smart
+//              thermostats, smart lights), anything about getting in or around (door, keypad, fob, gate,
+//              elevator, garage, parking, the beach, maps), the pool / hot tub, the safe, alarm, shutters,
+//              trash & recycling rules, EV charging.
+//   STANDARD — every ordinary appliance: stove, oven, microwave, kettle, toaster, fridge, coffee maker,
+//              espresso / Nespresso / Keurig, dishwasher, washer & dryer, TV / Smart TV / streaming, A/C and
+//              a plain thermostat, lights, toilet, shower, blinds by hand, grill, iron, hair dryer…
+// Standard ones are left out of every version (digital, magazine, 1-pager) and the generator is told not
+// to write them. The editor's Print options can still bring one back for a unit where it really is odd.
+const SPECIAL = /\b(induction|remote[- ]?(controlled\s+)?(blinds?|shades?|curtains?)|motori[sz]ed|automated|power(ed)? (blinds?|shades?)|smart[- ]?(home|hub|lock|blinds?|shades?|curtains?|thermostat|lights?|lighting|switch(es)?|panel|speaker)|alexa|google (home|nest)|nest|ecobee|lutron|control4|crestron|savant|sonos|home ?assistant|key ?fob|key ?card|keypad|door|entry|access|lock ?box|gate|elevator|lift|garage|park(ing)?|beach|walk|map|directions?|minutes? (away|walk|drive)|pool|hot ?tub|jacuzzi|spa|sauna|safe|alarm|security|shutters?|hurricane|generator|trash|recycl|garbage|ev charg|charger|tesla|solar)\b/i
+const STANDARD = /\b(microwave|kettle|toaster|refrigerator|fridge|freezer|ice (tray|maker)|stove|stovetop|cook ?top|oven|range|coffee|espresso|nespresso|keurig|dishwasher|washer|dryer|washing machine|laundry|tv|television|streaming|roku|fire ?stick|cable|air ?condition(ing|er)?|a\/?c|ac unit|mini[- ]?split|thermostat|heater|ceiling fan|fan|lights?|lighting|lamps?|toilet|faucet|sink|shower|bath ?tub|towels?|linens?|hair ?dryer|iron(ing board)?|hangers?|blinds|curtains|shades|dishes|dishware|cutlery|utensils|pots?|pans|cookware|grill|bbq|barbecue|vacuum|blender|wi-?fi|internet|router)\b/i
+export const COMMON_SENSE = STANDARD
 
 const norm = (t: any) => String(t || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
 
-/** True for how-tos nobody needs explained ("Microwave", "Electric kettle", "Mini fridge & freezer"). */
+/** True for a how-to about a standard item nobody needs explained (a Smart TV, an espresso machine, the A/C). */
 export function isCommonSense(title: any): boolean {
   const t = String(title || '')
   if (!t.trim()) return true
-  if (PLAIN_COFFEE.test(t)) return true
-  if (NOT_COMMON.test(t)) return false
-  return COMMON_SENSE.test(t)
+  if (SPECIAL.test(t)) return false
+  return STANDARD.test(t)
+}
+
+/** A how-to to delete: a standard item, never one carrying a map (parking, the walk to the beach…). */
+export function isStandardHowto(it: any): boolean {
+  if (!it) return false
+  if (it.photo && (it.photoFull === true || isMapItem(it))) return false
+  return isCommonSense(it.title)
 }
 
 export type PrintPrefs = { color: boolean; hide: string[]; show: string[]; drop: string[] }

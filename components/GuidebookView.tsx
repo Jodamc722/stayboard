@@ -690,7 +690,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">House guide how-tos</p>
-                <p className="mt-1 text-[12px] text-neutral-500">Common-sense ones (microwave, kettle, fridge…) are off by default. Ticks apply to the phone guide and the print.</p>
+                <p className="mt-1 text-[12px] text-neutral-500">Standard items (stove, espresso, Smart TV, A/C…) are left out — only induction, remote blinds, smart-home, access, parking and beach how-tos show. Ticks apply to every version.</p>
                 {hows.length ? hows.map((h: any, i: number) => {
                   const k = keyOf(h.title), common = isCommonSense(h.title)
                   const shown = pp.drop.indexOf(k) < 0 && (!common || pp.show.indexOf(k) >= 0)
