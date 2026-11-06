@@ -305,13 +305,21 @@ export function resolutionAllocation(inv: any[], lines: AuditLine[], ownerPct: n
   if (!service.length) return { state: 'unposted', arc: 0, original, what, by: touched, service: [], ownerShare: null, pmcShare: null, expectedOwner: null, splitOk: null }
   // The owner's side: statement lines whose label shares a word with a service item ("Parking" ~
   // "Nightly Parking"), as owner money. Only this month's lines are in view.
-  const words = new Set(service.flatMap(x => x.title.toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4)))
+  // 3-letter words count ("Pet Fee" ~ "Pet fee" — at 4+ letters the pet fee never matched and every
+  // pet-fee allocation read as short, 2026-11-06); "fee" and other filler words do not.
+  const STOP = new Set(['fee', 'fees', 'the', 'and', 'for', 'nightly', 'adjustment', 'income', 'charge'])
+  const words = new Set(service.flatMap(x => x.title.toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 3 && !STOP.has(w))))
   const owner = lines.filter(l => !RESOLUTION_RE.test(l.label) && !REVFEE_RE.test(l.label) && l.label.toLowerCase().split(/[^a-z]+/).some(w => words.has(w)))
   const total = money(service.reduce((a, x) => a + x.amount, 0))
   if (!owner.length) return { state: 'unposted', arc: 0, original, what, by: touched, service, ownerShare: null, pmcShare: null, expectedOwner: null, splitOk: null }
   const ownerShare = money(owner.reduce((a, l) => a + l.amount, 0))
   const expectedOwner = ownerPct != null ? money(total * ownerPct) : null
-  const splitOk = expectedOwner != null ? Math.abs(expectedOwner - ownerShare) <= 1 : null
+  // Parking splits 50/50 at some properties (Eden by rule; Rustic and Salato post it that way too) —
+  // a 50% owner share on parking is accepted alongside the management-fee split.
+  const parkingOnly = service.every(x => /parking/i.test(x.title))
+  const splitOk = expectedOwner != null
+    ? Math.abs(expectedOwner - ownerShare) <= 1 || (parkingOnly && Math.abs(total * 0.5 - ownerShare) <= 1)
+    : null
   return { state: 'allocated', arc: 0, original, what, by: touched, service, ownerShare, pmcShare: money(total - ownerShare), expectedOwner, splitOk }
 }
 export type ResolutionClaim = {
@@ -1290,6 +1298,13 @@ export async function buildAudit(month: string): Promise<AuditData> {
             flags.push({
               type: 'resolution', severity: 'info', amount: allocation.original || 0,
               detail: 'Resolution' + (allocation.original ? ' of $' + allocation.original.toFixed(2) : '') + ' adjusted to $0' + (allocation.by ? ' by ' + allocation.by : '') + ' — the folio was updated to carry the right charge' + (svcTxt ? ' (' + svcTxt + ')' : '') + '.',
+            })
+          } else if (allocation.splitOk === false && monthNights < totalNights) {
+            // A stay that runs into another month posts its service lines across both — this month
+            // holds only part of the owner's share, so the split cannot be judged here.
+            flags.push({
+              type: 'resolution', severity: 'info', amount: allocation.service.reduce((a, x) => a + x.amount, 0),
+              detail: 'Resolution allocated' + (allocation.by ? ' by ' + allocation.by : '') + ' as ' + svcTxt + ' — this stay runs into another month (' + monthNights + ' of ' + totalNights + ' nights here), so only part of the owner\'s $' + (allocation.expectedOwner || 0).toFixed(2) + ' is on this statement ($' + (allocation.ownerShare || 0).toFixed(2) + ' so far).',
             })
           } else if (allocation.splitOk === false) {
             flags.push({
