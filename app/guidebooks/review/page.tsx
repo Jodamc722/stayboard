@@ -17,6 +17,7 @@ import { pageRows } from '@/lib/db-page'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { auditGuidebook, flagCounts, reviewOf, stageOf, REVIEW_PAGES, type Flag } from '@/lib/guidebook-audit'
 import { guestUnitFull } from '@/lib/guest-unit'
+import { CheckPhotosAll } from '@/components/CheckPhotosAll'
 
 export const dynamic = 'force-dynamic'
 
@@ -123,7 +124,7 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
         const missing = rows.filter(r => !r.book).length
         const shown = rows.filter(r => show !== 'open' || !r.book || stageOf(r.book) === 'draft')
         return (
-          <LeanSection key={n} title={n} n={rows.length} right={missing ? <Link href={'/guidebooks/bulk?building=' + encodeURIComponent(n)} className="text-[12px] font-semibold text-brand-700 hover:underline">Create {missing} missing →</Link> : undefined}>
+          <LeanSection key={n} title={n} n={rows.length} right={<span className="flex items-center gap-3"><CheckPhotosAll ids={rows.filter(r => r.book && !reviewOf(r.book).photosCheckedAt).map(r => r.book.id)} />{missing ? <Link href={'/guidebooks/bulk?building=' + encodeURIComponent(n)} className="text-[12px] font-semibold text-brand-700 hover:underline">Create {missing} missing →</Link> : null}</span>}>
             <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70">
               {shown.map(r => {
                 const c = flagCounts(r.flags)
