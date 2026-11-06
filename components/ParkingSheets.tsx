@@ -309,27 +309,29 @@ export function NoticeSheet({ open, onClose, lot, incident, publicCode, publicPa
   const [text, setText] = useState('')
   const [recipients, setRecipients] = useState<number | null>(null)
   const [inHouse, setInHouse] = useState(0)
+  // Every car flagged in the same check goes in one notice (lib/parking-lots checkGroup).
+  const [group, setGroup] = useState<{ id: string; plate: string | null; car: string; spot: string | null }[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const call = useCallback(async (body: Record<string, any>) => {
     if (publicCode) {
-      const r = await fetch('/api/public/lot/' + encodeURIComponent(publicCode), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pass: publicPass || '', name: staffName || '' }) })
+      const r = await fetch('/api/public/lot/' + encodeURIComponent(publicCode), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, pass: publicPass || '', name: staffName || '', lotId: lot.id }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`)
       return j
     }
     return lotsApi(body)
-  }, [publicCode, publicPass, staffName])
+  }, [publicCode, publicPass, staffName, lot.id])
   useEffect(() => {
     if (!open || !incident) return
     setErr(null); setText(''); setRecipients(null)
-    call({ action: 'incident.noticeText', incidentId: incident.id }).then(j => { setText(j.text || ''); setRecipients(j.recipients ?? 0); setInHouse(j.inHouse ?? 0) }).catch(e => setErr(e?.message || String(e)))
+    call({ action: 'incident.noticeText', incidentId: incident.id }).then(j => { setText(j.text || ''); setRecipients(j.recipients ?? 0); setInHouse(j.inHouse ?? 0); setGroup(Array.isArray(j.group) ? j.group : []) }).catch(e => setErr(e?.message || String(e)))
   }, [open, incident, call])
   const send = async () => {
     if (!incident) return
     setBusy(true); setErr(null)
     try {
-      const j = await call({ action: 'incident.notify', incidentId: incident.id, text })
+      const j = await call({ action: 'incident.notify', incidentId: incident.id, text, groupIds: group.map(g => g.id) })
       onSent(j.incident, j.sent, j.failed)
       onClose()
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(false) }
@@ -351,7 +353,8 @@ export function NoticeSheet({ open, onClose, lot, incident, publicCode, publicPa
           {recipients == null ? 'Counting who is in house…' : <>{inHouse} {inHouse === 1 ? 'stay' : 'stays'} in house tonight, {recipients} with a message thread.{recipients < inHouse ? ' The rest have no Guesty conversation yet — call them.' : ''}</>}
           {already && <> Sent before at {whenET(incident.noticeSentAt as string)} to {incident.noticeSentN}; the deadline stays {incident.towDueAt ? timeET(incident.towDueAt) : '—'}.</>}
         </p>
-        <textarea rows={9} value={text} onChange={e => setText(e.target.value)} className={input + ' leading-relaxed'} />
+        {group.length > 1 && <p className="text-[12px] rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5"><b>{group.length} cars</b> from this check go in this one notice: {group.map(g => g.car + (g.plate ? ' ' + g.plate : '')).join(' · ')}</p>}
+        <textarea rows={12} value={text} onChange={e => setText(e.target.value)} className={input + ' leading-relaxed'} />
         <p className="text-[11.5px] text-muted">Sending starts the {lot.noticeMinutes === 60 ? 'one-hour' : lot.noticeMinutes + '-minute'} clock. When it runs out the tow email is drafted for the tow company automatically — a person still presses send on it.</p>
       </div>
     </Sheet>

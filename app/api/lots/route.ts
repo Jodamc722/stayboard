@@ -11,7 +11,7 @@ import { isYmd, addDays } from '@/lib/plate'
 import {
   listLots, lotBundle, lotById, createLot, updateLot, updateSpot, addSpot, buildingsWithoutLot,
   staysForBuilding, inHouseStays, createBooking, updateBooking, deleteBooking, suggestSpot, judgePlate,
-  openIncident, incidentById, noticeTextFor, sendNotice, draftTowEmail, closeIncident, noteIncident,
+  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, sendNotice, draftTowEmail, closeIncident, noteIncident,
   storePhoto, readPlateFromPhoto, ymdET, lotsOverview, getStaffLink, setStaffLink,
 } from '@/lib/parking-lots'
 
@@ -117,10 +117,14 @@ export async function POST(req: NextRequest) {
         const lot = inc ? await lotById(inc.lotId) : null
         if (!inc || !lot) return bad('That flag is gone.', 404)
         const stays = await inHouseStays(lot.building, ymdET())
-        return NextResponse.json({ ok: true, text: inc.noticeText || noticeTextFor(lot, inc, new Date(Date.now() + lot.noticeMinutes * 60000)), recipients: stays.filter(s => s.conversationId).length, inHouse: stays.length })
+        // One notice for every car flagged in this check (lib/parking-lots checkGroup), deadline from now.
+        const group = inc.noticeSentAt ? [inc] : await checkGroup(inc)
+        const due = new Date(Date.now() + lot.noticeMinutes * 60000)
+        const text = inc.noticeSentAt && inc.noticeText ? inc.noticeText : checkNoticeText(lot, group, due)
+        return NextResponse.json({ ok: true, text, group: group.map(g => ({ id: g.id, plate: g.plate, car: [g.color, g.make, g.model].filter(Boolean).join(' ') || 'Vehicle', spot: g.spotLabel })), recipients: stays.filter(s => s.conversationId).length, inHouse: stays.length })
       }
       case 'incident.notify': {
-        const r = await sendNotice(String(body.incidentId || ''), String(body.text || ''), by)
+        const r = await sendNotice(String(body.incidentId || ''), String(body.text || ''), by, Array.isArray(body.groupIds) ? body.groupIds.map(String) : [])
         return NextResponse.json(r, { status: r.ok ? 200 : 400 })
       }
       case 'incident.tow': {

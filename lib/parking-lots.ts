@@ -594,8 +594,39 @@ export async function openIncident(inp: { lotId: string; spotId?: string | null;
     plate, plate_norm: plateNorm, plate_state: clean(inp.plateState, 20)?.toUpperCase() || null, make: clean(inp.make, 60), model: clean(inp.model, 60), color: clean(inp.color, 40),
     photo_path: inp.photoPath || null, seen_by: clean(inp.seenBy, 80), notes: clean(inp.notes, 1000),
   }).select('*').single()
-  return error || !data ? null : incidentOf(data)
+  if (error || !data) return null
+  const inc = incidentOf(data)
+  // THE TEAM HEARS AT ONCE (Jon, 2026-11-06: "4 cars not registered … this should immediately notify
+  // the team and draft a message to all Eden guests that should be sent by the CCS team"). The first
+  // flag of a check raises one alert in the customer care room + the bell; later flags of the same
+  // check ride in the same notice (checkGroup below), so the room hears once per check, not per car.
+  try { await alertFirstFlag(inc) } catch { /* the Flags tab still shows it */ }
+  return inc
 }
+
+/** Every open, not-yet-noticed flag on the lot from the same check (seen within 3 h of this one). */
+export async function checkGroup(inc: Incident): Promise<Incident[]> {
+  const t = Date.parse(inc.seenAt) || Date.now()
+  const { data } = await supabaseAdmin().from('parking_incidents').select('*').eq('lot_id', inc.lotId).eq('status', 'open').is('notice_sent_at', null)
+    .gte('seen_at', new Date(t - 3 * 3600_000).toISOString()).lte('seen_at', new Date(t + 3 * 3600_000).toISOString()).order('seen_at', { ascending: true }).limit(40)
+  const list = (data || []).map(incidentOf)
+  return list.some(x => x.id === inc.id) ? list : [inc, ...list]
+}
+
+async function alertFirstFlag(inc: Incident): Promise<void> {
+  const others = (await checkGroup(inc)).filter(x => x.id !== inc.id)
+  if (others.length) return // this check already raised its alert
+  const lot = await lotById(inc.lotId)
+  if (!lot) return
+  const { raiseEveAlert } = await import('./handoff-store')
+  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+  await raiseEveAlert({
+    title: `Parking: unregistered car in the ${lot.building} lot — CCS, send the notice`,
+    body: `${lot.building} lot check · ${timeET(inc.seenAt)}${inc.seenBy ? ' by ' + inc.seenBy : ''}: ${carLabel(inc)}${inc.plate ? ' · ' + inc.plate : ''}${inc.spotLabel ? ' · spot ' + inc.spotLabel : ''} is not registered.\nThe notice to every ${lot.building} guest is drafted (every car flagged in this check goes in the one message, with the 1-hour deadline and the offer to buy parking). Open Parking → Flags → ✉ to read and send it: ${base}/parking`,
+    unit: lot.building, dedupe: 'parking-check:' + inc.id, severity: 'urgent',
+  })
+}
+
 export async function incidentById(id: string): Promise<Incident | null> {
   const { data } = await supabaseAdmin().from('parking_incidents').select('*').eq('id', id).maybeSingle()
   return data ? incidentOf(data) : null
@@ -617,8 +648,20 @@ export function noticeTextFor(lot: Lot, inc: Pick<Incident, 'plate' | 'make' | '
   return `Parking notice — ${lot.building}\n\nA ${car}${inc.plate ? `, plate ${inc.plate},` : ''} is parked ${where} ${why}. If this is your vehicle, please move it or register it with us within ${mins === 60 ? '1 hour' : mins + ' minutes'} (by ${by}). Vehicles still unregistered after that are towed at the owner's expense.\n\n${lot.rateCents > 0 ? `Parking is ${cents(lot.rateCents, lot.currency)} per night` : 'Parking is included with your stay'}, one space per reservation, in the spot you are given. Reply to this message with your make, model and plate to register.`
 }
 
+/** ONE notice for every car flagged in the check (Jon, 2026-11-06): when the lot was checked, each
+ *  car, the 1-hour deadline, and the offer to buy parking if a spot is free. */
+export function checkNoticeText(lot: Lot, incs: Pick<Incident, 'plate' | 'make' | 'model' | 'color' | 'spotLabel' | 'kind' | 'seenAt'>[], dueAt: Date): string {
+  const checkedAt = incs.map(i => i.seenAt).filter(Boolean).sort()[0] || new Date().toISOString()
+  const mins = lot.noticeMinutes
+  const window = mins === 60 ? '1 hour' : mins + ' minutes'
+  const n = incs.length
+  const cars = incs.map(i => `• ${carLabel(i)}${i.plate ? `, plate ${i.plate}` : ''}${i.spotLabel ? ` (spot ${i.spotLabel})` : ''}${i.kind === 'wrong_spot' ? ' — parked in a spot it is not registered for' : ''}`).join('\n')
+  const buy = lot.rateCents > 0 ? `If you would like to purchase parking (${cents(lot.rateCents, lot.currency)} per night), please reply to this message with your car's make, model and plate and we will check if a spot is available.` : 'If you need parking, please reply with your car\'s make, model and plate and we will check if a spot is available.'
+  return `Parking notice — ${lot.building}\n\nOur team checked the ${lot.building} parking lot at ${timeET(checkedAt)} today and found ${n === 1 ? 'a vehicle that is' : n + ' vehicles that are'} not registered with us:\n${cars}\n\nIf ${n === 1 ? 'this is' : 'one of these is'} your vehicle, please register it with us or move it within ${window} — by ${timeET(dueAt)}. Vehicles still unregistered after that will be towed at the owner's expense.\n\n${buy}`
+}
+
 /** Send the notice to every stay in house at the lot's building right now. */
-export async function sendNotice(incidentId: string, text: string, by: string): Promise<{ ok: boolean; error?: string; sent: number; failed: number; recipients: number; incident?: Incident }> {
+export async function sendNotice(incidentId: string, text: string, by: string, alsoIds: string[] = []): Promise<{ ok: boolean; error?: string; sent: number; failed: number; recipients: number; incident?: Incident }> {
   const inc = await incidentById(incidentId)
   if (!inc) return { ok: false, error: 'That flag is gone.', sent: 0, failed: 0, recipients: 0 }
   const lot = await lotById(inc.lotId)
@@ -649,6 +692,12 @@ export async function sendNotice(incidentId: string, text: string, by: string): 
   }
   if (sent > 0) { up.notice_sent_at = inc.noticeSentAt || now.toISOString(); up.tow_due_at = inc.towDueAt || due.toISOString(); if (inc.status === 'open') up.status = 'notified' }
   const { data } = await supabaseAdmin().from('parking_incidents').update(up).eq('id', inc.id).select('*').single()
+  // The other cars in the same notice share its send time and deadline.
+  const rest = alsoIds.filter(x => x && x !== inc.id)
+  if (sent > 0 && rest.length) {
+    await supabaseAdmin().from('parking_incidents').update({ notice_text: body, notice_sent_n: sent, notice_sent_by: by, notice_log: log, notice_sent_at: up.notice_sent_at, tow_due_at: up.tow_due_at, status: 'notified', updated_at: now.toISOString() })
+      .in('id', rest).eq('lot_id', inc.lotId).eq('status', 'open')
+  }
   return { ok: sent > 0, error: sent > 0 ? undefined : `Could not send to anyone (${log[0]?.error || 'no detail'}).`, sent, failed, recipients: withThread.length, incident: data ? incidentOf(data) : inc }
 }
 

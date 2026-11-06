@@ -10,7 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   resolveStaffCode, lotToday, judgePlate, readPlateFromPhoto, storePhoto, startSweep, recordCheck, finishSweep, sweepById,
-  openIncident, incidentById, noticeTextFor, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
+  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
   createBooking, updateBooking, bookingById,
   type SweepCheck,
 } from '@/lib/parking-lots'
@@ -143,12 +143,16 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
         const inc = await incidentById(String(body.incidentId || ''))
         if (!inc || inc.lotId !== lot.id) return bad('That flag is not on this lot.', 404)
         const stays = await inHouseStays(lot.building, today)
-        return NextResponse.json({ ok: true, text: inc.noticeText || noticeTextFor(lot, inc, new Date(Date.now() + lot.noticeMinutes * 60000)), recipients: stays.filter(s => s.conversationId).length, inHouse: stays.length })
+        // One notice for every car flagged in this check (lib/parking-lots checkGroup), deadline from now.
+        const group = inc.noticeSentAt ? [inc] : await checkGroup(inc)
+        const due = new Date(Date.now() + lot.noticeMinutes * 60000)
+        const text = inc.noticeSentAt && inc.noticeText ? inc.noticeText : checkNoticeText(lot, group, due)
+        return NextResponse.json({ ok: true, text, group: group.map(g => ({ id: g.id, plate: g.plate, car: [g.color, g.make, g.model].filter(Boolean).join(' ') || 'Vehicle', spot: g.spotLabel })), recipients: stays.filter(s => s.conversationId).length, inHouse: stays.length })
       }
       case 'incident.notify': {
         const inc = await incidentById(String(body.incidentId || ''))
         if (!inc || inc.lotId !== lot.id) return bad('That flag is not on this lot.', 404)
-        const r = await sendNotice(inc.id, String(body.text || ''), by)
+        const r = await sendNotice(inc.id, String(body.text || ''), by, Array.isArray(body.groupIds) ? body.groupIds.map(String) : [])
         return NextResponse.json(r, { status: r.ok ? 200 : 400 })
       }
       case 'incident.tow': {
