@@ -8,7 +8,7 @@
 //   (sections._print.show) — e.g. a microwave that really is unusual.
 // · PRINT OPTIONS live on the book in sections._print, edited from the guidebook editor:
 //     color   true (default) = the book's colour theme on headings, rules and boxes; false = black & white
-//     hide    sections left off the printout: 'welcome' | 'rules' | 'faq' | 'howto' | 'checkout' | 'around' | 'help'
+//     hide    sections left off the printout: 'welcome' | 'rules' | 'faq' | 'maps' | 'howto' | 'checkout' | 'around' | 'help'
 //     show    how-to titles to include even though they are common sense
 //     drop    how-to titles to leave off the printout (and the phone guide)
 
@@ -34,6 +34,7 @@ export const PRINT_SECTIONS: { key: string; label: string }[] = [
   { key: 'rules', label: 'House rules' },
   { key: 'checkout', label: 'Check-out list' },
   { key: 'faq', label: 'Parking, your unit & the beach (own page)' },
+  { key: 'maps', label: 'Maps — full-size sheets' },
   { key: 'howto', label: 'House guide' },
   { key: 'around', label: 'Around you' },
   { key: 'help', label: 'Help & emergencies' },
@@ -55,3 +56,28 @@ export function howtoShown(title: any, prefs: PrintPrefs): boolean {
 
 /** How-tos the FAQ page already answers — on paper they are not repeated in the house guide. */
 export const FAQ_COVERED = /\b(park(ing)?|where to park|door|entry|keypad|check[- ]?in|wi-?fi|internet|beach)\b/i
+
+// ── MAPS AND DIAGRAMS (Jon, 2026-11-06, the Surfside parking map shrunk to a thumbnail: "when images
+// attached like maps should not be like this format, can't read it, small … need to be a page") ──
+// A how-to whose picture is a map — parking, the walk to the beach, the drive to Delray, a unit layout —
+// gets the picture at full size: its own page in the magazine, full width (tap to open) on the phone,
+// and a map sheet in the printed manual. Decided by the title; the editor can force it either way
+// with the item's `photoFull` (true = always full size, false = keep the small photo).
+const MAP_TITLE = /\b(map|park(ing)?|beach|walk(ing)?|direction|route|getting (there|to)|min(ute)?s? (away|walk|drive)|access|lot|layout|floor ?plan|find(ing)? (your|the)|where is)\b/i
+export function isMapItem(it: any): boolean {
+  if (!it || !it.photo) return false
+  if (it.photoFull === true) return true
+  if (it.photoFull === false) return false
+  return MAP_TITLE.test(String(it.title || ''))
+}
+
+/** "About 3–5 minutes on foot. 1. From the lot… 2. Turn left…" → intro + one line per step. */
+export function splitSteps(body: any): { intro: string; steps: string[] } {
+  const t = String(body || '').replace(/\r/g, '').trim()
+  if (!t) return { intro: '', steps: [] }
+  const parts = t.split(/(?:^|\s|\n)(?=\d{1,2}[.)]\s+\S)/)
+  if (parts.length < 3) return { intro: t, steps: [] }
+  const first = /^\d{1,2}[.)]\s/.test(parts[0]) ? '' : parts.shift() || ''
+  const steps = parts.map(p => p.replace(/^\d{1,2}[.)]\s+/, '').trim()).filter(Boolean)
+  return steps.length >= 2 ? { intro: first.trim(), steps } : { intro: t, steps: [] }
+}

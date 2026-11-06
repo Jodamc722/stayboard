@@ -25,7 +25,7 @@ import {
 } from 'lucide-react'
 import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
 import { themeForBook } from '@/lib/guide-themes'
-import { printPrefs, howtoShown, FAQ_COVERED } from '@/lib/guide-print'
+import { printPrefs, howtoShown, isMapItem, splitSteps } from '@/lib/guide-print'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -82,6 +82,10 @@ export function guideData(gb: any) {
     // Set by /g/[id] from the listing ("Unit 3"); empty when the listing has no unit number.
     unit: str(gb?._unit),
     beach: str(gb?._beach),
+    // Map how-tos (lib/guide-print isMapItem): the parking one also shows under Parking on the phone,
+    // and every one gets a full-size sheet in the printed manual.
+    maps: (Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).filter((x: any) => isMapItem(x) && howtoShown(x.title, printPrefs(s))).map((x: any) => ({ title: String(x.title || 'Map'), src: purl(x.photo) || '' })).filter((m: any) => m.src),
+    parkingMap: ((Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).find((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))) ? purl((s.houseGuide.items as any[]).find((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))).photo) : null) as string | null,
     subtitle: str(s.cover?.subtitle).replace(/\s{2,}/g, ' '),
     line1: str(s.cover?.line1), line2: str(s.cover?.line2),
     cover: pa.cover || photos[0] || null,
@@ -272,11 +276,12 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
 
           <main className="space-y-4 px-4 pt-4">
             {/* ARRIVAL */}
-            {(d.entry || d.parking || d.gettingThere) ? (
+            {(d.entry || d.parking || d.gettingThere || d.parkingMap) ? (
               <Section id="arrival" kicker={lbl('arrival.kicker', 'Your arrival')} title={lbl('m.arrival', 'getting in')} c={c} shadow={shadow} photo={d.pa.arrival || null}>
                 <div className="space-y-4">
                   {d.entry ? <Fact Icon={KeyRound} label={lbl('arrival.entryLabel', 'The door')} body={d.entry} k="entry" open={open} toggle={toggle} c={c} /> : null}
                   {d.parking ? <Fact Icon={Car} label={lbl('arrival.parkingLabel', 'Parking')} body={d.parking} k="parking" open={open} toggle={toggle} c={c} /> : null}
+                  {d.parkingMap ? <MapImage src={d.parkingMap} title="Parking map" c={c} /> : null}
                   {d.gettingThere ? <Fact Icon={MapPin} label={lbl('arrival.thereLabel', 'Finding us')} body={d.gettingThere} k="there" open={open} toggle={toggle} c={c} /> : null}
                   {d.gettingAround ? <Fact Icon={Compass} label={lbl('arrival.aroundLabel', 'Getting around')} body={d.gettingAround} k="around" open={open} toggle={toggle} c={c} /> : null}
                 </div>
@@ -297,8 +302,8 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
                         </button>
                         {isOpen ? (
                           <div className="px-1 pb-4">
-                            {photo ? <img src={photo} alt="" loading="lazy" className="mb-3 max-h-[300px] w-full rounded-xl object-contain" style={{ background: '#f3efe6' }} onError={(e: any) => { e.currentTarget.style.display = 'none' }} /> : null}
-                            <p className="text-[14.5px] leading-[1.65] whitespace-pre-line">{str(it.body)}</p>
+                            {photo && isMapItem(it) ? <MapImage src={photo} title={String(it.title || 'Map')} c={c} /> : photo ? <img src={photo} alt="" loading="lazy" className="mb-3 max-h-[300px] w-full rounded-xl object-contain" style={{ background: '#f3efe6' }} onError={(e: any) => { e.currentTarget.style.display = 'none' }} /> : null}
+                            <Steps body={str(it.body)} />
                           </div>
                         ) : null}
                       </div>
@@ -469,6 +474,28 @@ function Section({ id, kicker, title, children, c, shadow, photo }: { id: string
   )
 }
 
+/** A map or diagram at full width — never cropped; tap opens it full size to pinch-zoom. */
+function MapImage({ src, title, c }: { src: string; title: string; c: C }) {
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="mb-3 block overflow-hidden rounded-xl" style={{ background: '#fff', border: '1px solid ' + c.line }} aria-label={'Open ' + title + ' full size'}>
+      <img src={src} alt={title} loading="lazy" className="block h-auto w-full" onError={(e: any) => { e.currentTarget.closest('a').style.display = 'none' }} />
+      <span className="flex items-center justify-between px-3 py-2 text-[12px] font-semibold" style={{ color: c.accent }}>{title}<span className="inline-flex items-center gap-1"><ExternalLink size={12} /> Tap to open full size</span></span>
+    </a>
+  )
+}
+
+/** Steps on their own lines ("1. … 2. …" written as one paragraph reads as a wall of text). */
+function Steps({ body }: { body: string }) {
+  const st = splitSteps(body)
+  if (!st.steps.length) return <p className="text-[14.5px] leading-[1.65] whitespace-pre-line">{body}</p>
+  return (
+    <div className="text-[14.5px] leading-[1.6]">
+      {st.intro ? <p className="mb-1.5">{st.intro}</p> : null}
+      <ol className="list-decimal space-y-1.5 pl-5">{st.steps.map((x, i) => <li key={i}>{x}</li>)}</ol>
+    </div>
+  )
+}
+
 function Clamp({ text, k, lines, open, toggle, c }: { text: string; k: string; lines: number; open: Record<string, boolean>; toggle: (k: string) => void; c: C }) {
   const long = text.length > lines * 55
   const isOpen = !!open[k]
@@ -587,9 +614,12 @@ export function GuidePrint({ gb }: { gb: any }) {
   const link = 'https://lighthouse-stay.vercel.app/g/' + String(gb?.id || '')
   const allHow = (Array.isArray(d.s.houseGuide?.items) ? d.s.houseGuide.items : []).filter((x: any) => x && (x.title || x.body))
   const pick = (re: RegExp) => allHow.find((x: any) => re.test(String(x.title || ''))) || null
-  const beachHow = pick(/beach/i), parkHow = pick(/park/i), doorHow = pick(/door|entry|keypad|check[- ]?in/i)
+  const beachHow = pick(/(walk\w*|access|path|getting|way)\b.*\bbeach|beach\b.*\b(walk\w*|access|path)/i) || pick(/^\s*(the )?beach\s*$/i), parkHow = pick(/park/i), doorHow = pick(/door|entry|keypad|check[- ]?in/i)
   // On paper, the house guide skips what the FAQ page already answers (only when that page prints).
-  const howto = d.howto.filter((x: any) => !(on('faq') && FAQ_COVERED.test(String(x.title || ''))))
+  // Only the how-tos the FAQ actually used (and Wi-Fi / check-in, which page 1 has) — "Delray Beach &
+  // Atlantic Avenue" mentions a beach but is not the walk to it, so it stays.
+  const usedByFaq = (x: any) => x === beachHow || x === parkHow || x === doorHow || /\b(wi-?fi|internet|check[- ]?in)\b/i.test(String(x.title || ''))
+  const howto = d.howto.filter((x: any) => !(on('faq') && usedByFaq(x)))
   const welcome = d.about ? firstSentences(d.about, 330) : ''
   const H = ({ children, first }: { children: any; first?: boolean }) => <h2 className="gp-h" style={first ? { marginTop: 0 } : undefined}>{children}</h2>
   const showRules = on('rules') && d.rules.length > 0
@@ -626,6 +656,11 @@ export function GuidePrint({ gb }: { gb: any }) {
           .gp-tight { font-size: 9pt; line-height: 1.34; }
           .gp-tight .gp-item { margin-bottom: 5.5pt; }
           .gp-tight .gp-item b { font-size: 9.4pt; }
+          .gp-map { break-inside: avoid; }
+          .gp-map:nth-child(odd):not(:first-child) { break-before: page; }
+          .gp-map img { display: block; width: 100%; max-height: 4.05in; object-fit: contain; border: 0.8pt solid #ddd; border-radius: 4pt; }
+          .gp-steps { margin: 2pt 0 0; padding-left: 14pt; list-style: decimal outside; }
+          .gp-steps li { margin: 0 0 1.5pt; }
           .gp-foot { margin-top: 14pt; text-align: center; font-size: 8.4pt; }
         }
       `}</style>
@@ -686,13 +721,25 @@ export function GuidePrint({ gb }: { gb: any }) {
       {/* PAGE 2 — the FAQ sheet */}
       {on('faq') ? <PrintFaq d={d} beachHow={beachHow} parkHow={parkHow} doorHow={doorHow} /> : null}
 
+      {/* MAP SHEETS — every map how-to at full page width, two to a sheet, never cropped. */}
+      {on('maps') && d.maps.length ? (
+        <div className="gp-page">
+          {d.maps.map((m: any, i: number) => (
+            <div key={i} className="gp-map">
+              <h2 className="gp-h" style={{ marginTop: i % 2 ? '14pt' : 0 }}>{sentence(m.title)}</h2>
+              <img src={m.src} alt="" />
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       {/* PAGE 3+ */}
       {after ? <div className="gp-page" /> : null}
       {on('howto') && howto.length ? (
         <>
           <H first>House guide</H>
           <div className="gp-cols">
-            {howto.slice(0, 16).map((it: any, i: number) => <div key={i} className="gp-item"><b>{sentence(it.title)}</b><span style={{ whiteSpace: 'pre-line' }}>{str(it.body)}</span></div>)}
+            {howto.slice(0, 16).map((it: any, i: number) => { const st = splitSteps(str(it.body)); return <div key={i} className="gp-item"><b>{sentence(it.title)}</b>{st.steps.length ? <>{st.intro ? <span>{st.intro}</span> : null}<ol className="gp-steps">{st.steps.map((y, j) => <li key={j}>{y}</li>)}</ol></> : <span style={{ whiteSpace: 'pre-line' }}>{str(it.body)}</span>}{isMapItem(it) && on('maps') ? <span className="gp-muted" style={{ display: 'block', fontSize: '8pt' }}>Map on the map sheet.</span> : null}</div> })}
           </div>
         </>
       ) : null}
@@ -741,7 +788,7 @@ function PrintFaq({ d, beachHow, parkHow, doorHow }: { d: ReturnType<typeof guid
   return (
     <div className="gp-page">
       <h2 className="gp-h" style={{ marginTop: 0 }}>Parking, your unit &amp; the beach</h2>
-      {qa.map((x, i) => <div key={i} className="gp-q"><b>{x.q}</b><span style={{ whiteSpace: 'pre-line' }}>{x.a}</span></div>)}
+      {qa.map((x, i) => { const st = splitSteps(x.a); return <div key={i} className="gp-q"><b>{x.q}</b>{st.steps.length ? <>{st.intro ? <span>{st.intro}</span> : null}<ol className="gp-steps">{st.steps.map((y, j) => <li key={j}>{y}</li>)}</ol></> : <span style={{ whiteSpace: 'pre-line' }}>{x.a}</span>}</div> })}
       {d.address ? (
         <div className="gp-qr">
           <div><img src={qrSrc(mapsUrl(d.address))} alt="" /><p className="gp-k" style={{ marginTop: '4pt' }}>Directions to the building</p></div>

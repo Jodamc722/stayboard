@@ -5,9 +5,10 @@
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact US Letter (8.5x11) output (@page, exact colors, no app chrome).
 import { themeForBook, THEME_CHOICES, SMART } from '@/lib/guide-themes'
-import { printPrefs, isCommonSense, howtoShown, PRINT_SECTIONS } from '@/lib/guide-print'
+import { printPrefs, isCommonSense, howtoShown, PRINT_SECTIONS, isMapItem, splitSteps } from '@/lib/guide-print'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import { ArrowLeft, Paperclip, Pencil, Printer, Save, Share2, Sparkles, Trash2, Loader2, X } from 'lucide-react'
 import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
@@ -132,6 +133,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   const [pickPath, setPickPath] = useState<string[] | null>(null)
   const [pickPool, setPickPool] = useState<string[]>([])
   const [pickBusy, setPickBusy] = useState(false)
+  const [pickLoaded, setPickLoaded] = useState(false)
   const pickRef = useRef<HTMLInputElement>(null)
   async function openPick(path: string[]) {
     setPickPath(path)
@@ -145,6 +147,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
       } catch {}
       setPickPool(pool)
     }
+    setPickLoaded(true)
   }
   function applyPick(url: string | null) { if (pickPath) set(pickPath, url); setPickPath(null) }
   async function uploadPick(files: FileList | null) {
@@ -617,7 +620,10 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           {!guest ? <span className="hidden sm:inline-flex items-center gap-0.5" title={theme.label + ' · ' + (theme.smart ? theme.smart.why : theme.vibe)}>{theme.swatch.map((x, i) => <span key={i} className="h-3.5 w-3.5 rounded-full border border-black/10" style={{ background: x }} />)}</span> : null}
           {!guest && <button onClick={() => matRef.current?.click()} disabled={matBusy} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-60" title="Upload building info, appliance photos, or manuals — the AI folds them into the book">{matBusy ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />} {matBusy ? 'Reading…' : 'Add materials'}</button>}
           {!guest && <input ref={matRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" onChange={e => addMaterials(e.target.files)} />}
-          {pickPath ? (
+          {/* The picker is portalled to <body> (Jon, 2026-11-06: "the edit does not allow me to edit the
+              house guide photos"): rendered here, inside the sticky toolbar, its backdrop-blur became the
+              containing block for this fixed overlay, so the picker was trapped in the toolbar strip. */}
+          {pickPath && typeof document !== 'undefined' ? createPortal(
             <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 print:hidden" onClick={() => setPickPath(null)}>
               <div className="max-h-[85dvh] w-full max-w-3xl overflow-auto rounded-xl bg-white p-4 text-neutral-900 sm:max-h-[80vh]" onClick={(e: any) => e.stopPropagation()}>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -628,7 +634,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
                     <button onClick={() => setPickPath(null)} className="rounded-lg bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-white">Cancel</button>
                   </div>
                 </div>
-                {pickPool.length === 0 ? <p className="py-8 text-center text-sm text-neutral-500">Loading photos…</p> : (
+                {pickPool.length === 0 ? <p className="py-8 text-center text-sm text-neutral-500">{pickLoaded ? 'No photos yet — use ⬆ Upload new.' : 'Loading photos…'}</p> : (
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                     {pickPool.map((u, i) => (
                       <button key={i} onClick={() => applyPick(u)} className="group relative overflow-hidden rounded-lg ring-1 ring-neutral-200 focus:ring-2 focus:ring-neutral-900">
@@ -638,8 +644,9 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
                   </div>
                 )}
                 <input ref={pickRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e: any) => uploadPick(e.target.files)} />
+                <p className="mt-3 text-[11px] text-neutral-500">Maps and diagrams: upload the image as it is — it shows full size on its own page, on the phone and in the printed manual. Remember to Save.</p>
               </div>
-            </div>
+            </div>, document.body
           ) : null}
           {!guest && <button onClick={() => setAskOpen(o => !o)} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (askOpen ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300')} title="Tell the AI what to change — it rewrites the book for you"><Sparkles size={13} /> Ask AI</button>}
           {!guest && (edit
@@ -949,9 +956,18 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
                   <div className="flex-1">
                     <p className="text-[14px] lowercase font-medium leading-tight" style={{ fontFamily: SERIF }}><T path={['houseGuide', 'items', String(i), 'title'] as any} value={it.title} rows={1} /></p>
                     <div className="mt-1.5 h-px w-8" style={{ background: accentColor + '66' }} />
-                    <p className="mt-1 text-[10px] font-light leading-[1.5]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>
+                    {(!edit && isMapItem(it)) ? (() => { const st = splitSteps(it.body); return (
+                      <div className="mt-1 text-[10px] font-light leading-[1.5]">
+                        {st.intro ? <p>{st.intro}</p> : null}
+                        {st.steps.length ? <ol className="mt-1 list-decimal space-y-0.5 pl-4">{st.steps.map((x, j) => <li key={j}>{x}</li>)}</ol> : null}
+                        <p className="mt-1.5 text-[9px] font-semibold uppercase tracking-[0.18em]" style={{ color: accentColor }}>Map on its own page →</p>
+                      </div>) })()
+                      : <p className="mt-1 text-[10px] font-light leading-[1.5]"><T path={['houseGuide', 'items', String(i), 'body'] as any} value={it.body} rows={3} /></p>}
+                    {edit && it.photo ? (
+                      <button type="button" onClick={() => set(['houseGuide', 'items', String(i), 'photoFull'], !isMapItem(it))} className="mt-1 rounded border border-dashed border-neutral-400 px-1.5 py-0.5 text-[10px]">{isMapItem(it) ? '✓ Full-page map — click for small photo' : 'Small photo — click to make it a full-page map'}</button>
+                    ) : null}
                   </div>
-                  {(it.photo || edit) ? (
+                  {((it.photo && !(isMapItem(it) && !edit)) || edit) ? (
                     <div className="flex shrink-0 flex-col items-end">
                       {it.photo ? <img loading="lazy" decoding="async" src={it.photo} alt="" className={((s.houseGuide.items || []).length > 3 ? 'h-24 w-28' : 'h-28 w-40') + ' shrink-0 rounded-sm object-cover ring-1 ring-black/10'} /> : null}
                       {pickBtn(['houseGuide', 'items', String(i), 'photo'], false)}
@@ -962,6 +978,32 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
             </div>
           </Page>
         )}
+
+        {/* MAP PAGES (Jon, 2026-11-06) — a how-to whose picture is a map (parking, the walk to the beach,
+            the drive into town) gets a page of its own: the map as large as the sheet allows, never
+            cropped, tap to open it full size, with the steps beside it. lib/guide-print isMapItem. */}
+        {has('houseGuide', true) && (s.houseGuide?.items || []).slice(0, 8).map((it: any, i: number) => {
+          if (!isMapItem(it) || !howtoShown(it.title, printPrefs(s))) return null
+          const src = purl(it.photo)
+          if (!src) return null
+          const st = splitSteps(it.body)
+          return (
+            <Page key={'map' + i} num={++pageNo} id={'map-' + i} ghost="map">
+              <Kicker>MAP</Kicker>
+              <H size="text-[32px]">{String(it.title || 'map').toLowerCase()}</H>
+              <a href={edit ? undefined : src} target="_blank" rel="noreferrer" className="mt-5 block overflow-hidden rounded-md ring-1 ring-black/10" style={{ background: '#fff' }} title="Open the map full size">
+                <img src={src} alt={String(it.title || 'Map')} className="block w-full object-contain" style={{ maxHeight: 'min(640px, 80vw)' }} />
+              </a>
+              {(st.intro || st.steps.length) ? (
+                <div className="mt-4 text-[11px] font-light leading-[1.6]">
+                  {st.intro ? <p className="font-normal">{st.intro}</p> : null}
+                  {st.steps.length ? <ol className={'mt-1.5 list-decimal space-y-1 pl-5 ' + (st.steps.length > 3 ? 'sm:columns-2 sm:gap-x-8' : '')}>{st.steps.map((x, j) => <li key={j} className="break-inside-avoid">{x}</li>)}</ol> : null}
+                </div>
+              ) : null}
+              <p className="mt-auto pt-3 text-[9px] uppercase tracking-[0.2em] opacity-50 print:hidden">Tap the map to open it full size</p>
+            </Page>
+          )
+        })}
 
         {/* GUIDELINES + CONTACT — combined, lean */}
         <Page num={++pageNo} id="guidelines" ghost="notes">
