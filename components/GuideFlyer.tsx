@@ -67,11 +67,11 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
 
       <div className="gf">
         {/* HERO */}
-        <div style={{ position: 'relative', height: '3.25in', background: deep, flex: 'none' }}>
+        <div style={{ position: 'relative', height: '3.05in', background: deep, flex: 'none' }}>
           {d.cover ? <img src={d.cover} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,.38) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 45%, rgba(0,0,0,.66) 100%)' }} />
           <img src={LOGO_URL} alt="" style={{ position: 'absolute', top: '.42in', left: '.55in', height: '16pt', filter: 'brightness(0) invert(1)', opacity: .95 }} />
-          <div style={{ position: 'absolute', left: '.55in', right: '.55in', bottom: '.9in', color: '#fff' }}>
+          <div style={{ position: 'absolute', left: '.55in', right: '.55in', bottom: '.86in', color: '#fff' }}>
             <p style={{ fontSize: '8pt', letterSpacing: '.34em', fontWeight: 600, opacity: .9 }}>WELCOME TO</p>
             <p style={{ fontFamily: SERIF, fontSize: '34pt', fontWeight: 500, lineHeight: 1.02, marginTop: '4pt', letterSpacing: '-.01em', maxWidth: '6.2in' }}>{d.name}</p>
             {d.unit || d.address ? <div style={{ display: 'flex', alignItems: 'center', gap: '10pt', marginTop: '9pt', flexWrap: 'wrap' }}>
