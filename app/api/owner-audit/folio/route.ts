@@ -89,5 +89,7 @@ export async function GET(req: NextRequest) {
     pmcError = errs.join(' | ')
     pmc = list.map((x: any) => ({ date: str(x.transactionDate || x.date || x.createdAt).slice(0, 10), ledger: str(x.ledger), sub: str(x.subLedger?.name || x.subledger?.name || x.subLedger || ''), code: str(x.chargeCode), name: str(x.name), amount: Number(x.amount?.value ?? x.amount) || 0, status: str(x.payoutStatus || x.status || ''), res: str(x.reservationConfirmationCode?.title || x.reservationId || ''), raw: sp.get('raw') === '1' ? x : undefined }))
   } catch (e: any) { pmcError = str(e?.message || e).slice(0, 160) }
-  return NextResponse.json({ ok: true, reservation: { id: str(r.id), code: conf, guest: str(r.guest_name), checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), source: str(r.source), status: str(r.status) }, invoice, owners, pmc, pmcError: pmcError || undefined, moneyKeys: r.money && typeof r.money === 'object' ? Object.keys(r.money) : [] })
+  return NextResponse.json({ ok: true, reservation: { id: str(r.id), code: conf, guest: str(r.guest_name), checkIn: str(r.check_in).slice(0, 10), checkOut: str(r.check_out).slice(0, 10), source: str(r.source), status: str(r.status) }, invoice, owners, pmc, pmcError: pmcError || undefined, moneyKeys: r.money && typeof r.money === 'object' ? Object.keys(r.money) : [],
+    // The booking's money summary (numbers only) — channel commission, payout, owner revenue.
+    money: r.money && typeof r.money === 'object' ? Object.fromEntries(Object.entries(r.money).filter(([, v]) => typeof v === 'number')) : {} })
 }

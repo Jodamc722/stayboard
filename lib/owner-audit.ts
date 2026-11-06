@@ -37,6 +37,8 @@ export type AuditFlagType =
   | 'owner_stay_cleaning'
   | 'cleaning_fee'
   | 'resolution'
+  | 'double_commission'
+  | 'overpaid'
 export type AuditSeverity = 'high' | 'review' | 'info'
 export type AuditFlag = { type: AuditFlagType; severity: AuditSeverity; detail: string; amount?: number }
 
@@ -439,7 +441,7 @@ export const DEFAULT_AUDIT_RULES: AuditRules = {
   offBookingMin: 25,
   // Three. Under that, "the unit normally charges" is an opinion about two bookings.
   cleaningPeerMin: 3,
-  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true, owner_stay_cleaning: true, cleaning_fee: true, resolution: true },
+  enabled: { negative: true, low_rate: true, orphan_reimb: true, refund: true, zero_rev: true, passthru: true, no_reservation: true, commission_off: true, off_booking: true, empty_statement: true, owner_stay: true, owner_stay_cleaning: true, cleaning_fee: true, resolution: true, double_commission: true, overpaid: true },
 }
 export const AUDIT_RULES_KEY = 'owner_audit_rules'
 
@@ -793,7 +795,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const chunks: string[][] = []
     for (let i = 0; i < codes.length; i += 200) chunks.push(codes.slice(i, i + 200))
     const results = await Promise.all(chunks.map(c => sb.from('guesty_reservations')
-      .select("id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, money_total, custom_fields, tags:raw->tags, fare:raw->money->>fareAccommodation, inv:raw->money->invoiceItems")
+      .select("id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, created_at, money_total, custom_fields, tags:raw->tags, fare:raw->money->>fareAccommodation, hsf:raw->money->>hostServiceFee, inv:raw->money->invoiceItems")
       .in('confirmation_code', c)))
     for (const { data, error } of results) {
       if (error) { warnings.push('Some bookings could not be matched to their statement lines (' + error.message.slice(0, 80) + ').'); continue }
@@ -1231,6 +1233,39 @@ export async function buildAudit(month: string): Promise<AuditData> {
 
       if (on.negative && g.rental < -0.005) {
         flags.push({ type: 'negative', severity: 'high', amount: g.rental, detail: 'Negative rental income — check for erroneous refund, chargeback or duplicate reversal.' })
+      }
+      // CHANNEL COMMISSION TAKEN TWICE (Jon, 2026-11-06 — Watson Jesyca, Capri 111: −$9.19 rental).
+      // Owner net rental should be (accommodation + markup) − the channel's commission. When Guesty
+      // processes a booking wrong it deducts the commission a second time, so the per-night shortfall
+      // is ~2× the channel commission. Compared per night so split-month stays work. Every channel,
+      // every booking with a commission on it; the fix is "Re-process reservation" in Guesty.
+      if (on.double_commission && !canceled && res && monthNights > 0 && totalNights > 0) {
+        const chan = Number((res as any).hsf) || 0
+        const inv = folioItems
+        const base = inv.filter(x => x.type === 'AF' || x.type === 'MAR').reduce((a, x) => a + x.amount, 0)
+        if (chan > 5 && base > 0) {
+          const perNightBase = base / totalNights
+          const perNightChan = chan / totalNights
+          const shortfall = perNightBase - g.rental / monthNights        // what came off each night
+          const ratio = perNightChan > 0 ? shortfall / perNightChan : 0
+          const extra = money((shortfall - perNightChan) * monthNights)
+          // OVERPAYMENTS (Jon, 2026-11-06: "also add overpayment flags"). The other direction: the
+          // channel commission was NOT (or only partly) taken off the owner's rental, so the owner is
+          // paid money that went to the channel.
+          const over = money((perNightChan - shortfall) * monthNights)
+          if (on.overpaid && ratio <= 0.5 && over >= 5) {
+            flags.push({
+              type: 'overpaid', severity: 'high', amount: over,
+              detail: 'Owner looks OVERPAID by about $' + over.toFixed(2) + ' — the channel commission ($' + chan.toFixed(2) + ') was not taken off the rental' + (ratio > 0.05 ? ' in full' : '') + (totalNights !== monthNights ? ' (' + monthNights + ' of ' + totalNights + ' nights)' : '') + '. Expected rental ≈ $' + money((perNightBase - perNightChan) * monthNights).toFixed(2) + ', statement shows $' + g.rental.toFixed(2) + '. Check the booking in Guesty (re-process if the folio changed), then pull the month again.',
+            })
+          }
+          if (ratio >= 1.6 && ratio <= 2.4 && extra >= 5) {
+            flags.push({
+              type: 'double_commission', severity: 'high', amount: extra,
+              detail: 'The channel commission ($' + chan.toFixed(2) + ') looks deducted TWICE from the owner\'s rental — about $' + extra.toFixed(2) + ' too little rental this month' + (totalNights !== monthNights ? ' (' + monthNights + ' of ' + totalNights + ' nights)' : '') + '. Expected rental ≈ $' + money((perNightBase - perNightChan) * monthNights).toFixed(2) + ', statement shows $' + g.rental.toFixed(2) + '. Fix: Guesty → reservation → Accounting → Re-process reservation, then pull the month again.',
+            })
+          }
+        }
       }
       if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
         flags.push({ type: 'refund', severity: 'review', amount: refundAmt, detail: 'Refund on this reservation — verify it was authorized.' })

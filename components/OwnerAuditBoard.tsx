@@ -32,7 +32,7 @@ const CODE_WORD: Record<string, string> = {
 const lineWord = (l: { label: string; code: string }) => (l.label && l.label !== l.code ? l.label : (CODE_WORD[l.code] || l.label || l.code))
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee' | 'resolution'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee' | 'resolution' | 'double_commission' | 'overpaid'
 type Severity = 'high' | 'review' | 'info'
 // 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
 // and never counted as completed work — see the ladder in lib/owner-audit.ts.
@@ -127,6 +127,8 @@ type Data = {
 }
 
 const FLAG_LABEL: Record<FlagType, string> = {
+  double_commission: 'Channel commission ×2',
+  overpaid: 'Owner overpaid',
   negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Fees with no rental',
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through (commission ≈ rental)', no_reservation: 'No booking found',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
@@ -136,6 +138,8 @@ const FLAG_LABEL: Record<FlagType, string> = {
   resolution: 'Airbnb resolution',
 }
 const FLAG_HELP: Record<FlagType, string> = {
+  overpaid: 'Owner rental is more than accommodation + markup minus the channel commission — the commission was not (fully) taken off, so the owner is paid money that went to the channel. Check the booking in Guesty, re-process if needed, then pull the month again.',
+  double_commission: 'Owner rental should be accommodation + markup minus the channel commission. When the shortfall is about twice the commission, Guesty deducted it twice — re-process the reservation in Guesty, then pull the month again.',
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
   low_rate: 'Revenue far below what this stay’s night mix (midweek vs weekend) normally earns in its building/size cohort, with slack for last-minute bookings — or under the hard floor.',
   orphan_reimb: 'A REIMBURSEMENT with no stay behind it — an RM or channel-fee reimbursement, or a cleaning fee, standing on a booking with zero rental income. Netted, so a posting that was fully reversed does not count, and never fired on an owner stay: a bare owner charge there is the turnover, and it has its own category. Parking and other non-reimbursement revenue on a $0 booking is picked up by $0 revenue instead.',
@@ -943,7 +947,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.leadDays != null && it.leadDays <= (data?.rules.lastMinDays ?? 3) && <Tag tone="sky" title={'Booked ' + it.leadDays + ' days before check-in — last-minute stays get rate slack'}>last-minute</Tag>}
               {it.flags.filter(f => f.severity !== 'info').map((f, i) => (
                 <span key={i} title={f.detail} className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ring-1 ring-inset ' + FLAG_CLS[f.severity]}>
-                  {FLAG_LABEL[f.type]}{(f.type === 'orphan_reimb' || f.type === 'owner_stay_cleaning' || f.type === 'resolution') && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
+                  {FLAG_LABEL[f.type]}{(f.type === 'orphan_reimb' || f.type === 'owner_stay_cleaning' || f.type === 'resolution' || f.type === 'double_commission' || f.type === 'overpaid') && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
                 </span>
               ))}
               {it.flags.filter(f => f.severity === 'info').map((f, i) => (
