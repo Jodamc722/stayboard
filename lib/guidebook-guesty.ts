@@ -47,6 +47,12 @@ function valueText(v: any): string {
   return str(v).trim()
 }
 
+// A code typed inside an instruction ("door code 4821", "gate code: 1234#", "PIN 0000") is replaced
+// — the guide says the code arrives with the booking instead (Lucerne 101/1 carried one, 2026-11-06).
+export function scrubCodes(t: string): string {
+  return t.replace(/\b((?:door|gate|lock|lockbox|key ?box|building|entry|access|garage|unit)?\s*(?:code|pin|passcode))\b(\s*(?:is|=|:|#|-)?\s*)[#*]?\d[\d#*\s-]{2,}\d#?/gi, '$1 (sent to you before arrival)')
+}
+
 export async function guideFactsFor(db: any, listingIds: string[]): Promise<Record<string, GuideFacts>> {
   const out: Record<string, GuideFacts> = {}
   if (!listingIds.length) return out
@@ -61,7 +67,8 @@ export async function guideFactsFor(db: any, listingIds: string[]): Promise<Reco
   }
   for (const r of (rows || []) as any[]) {
     const g: GuideFacts = { facts: {}, sources: {} }
-    const add = (k: GuideKey, label: string, text: string) => {
+    const add = (k: GuideKey, label: string, raw: string) => {
+      const text = k === 'wifi' ? raw : scrubCodes(raw)
       if (!text) return
       const prev = g.facts[k]
       g.facts[k] = prev ? (k === 'houseFacts' || k === 'quietHours' ? prev + '\n' + (k === 'houseFacts' ? label + ': ' : '') + text : prev) : (k === 'houseFacts' ? label + ': ' + text : text)
