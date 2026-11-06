@@ -442,9 +442,6 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
                 <p className="mt-1 text-[13.5px] leading-[1.6]" style={{ color: c.mute }}>{lbl('booknext.body', 'Book directly with us next time and save.')}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <a href={d.bookUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-[13.5px] font-semibold text-white" style={{ background: c.accent }}><ExternalLink size={15} /> Book direct</a>
-                  <button type="button" onClick={() => copy('code', d.code)} className="inline-flex min-h-[44px] items-center gap-2 rounded-xl px-3.5 text-[13.5px] font-semibold" style={{ background: c.tint }}>
-                    Code <span className="tracking-[0.12em]" style={{ color: c.accent }}>{d.code}</span> {copied === 'code' ? <Check size={14} /> : <Copy size={14} style={{ color: c.mute }} />}
-                  </button>
                 </div>
               </div>
             </Section>

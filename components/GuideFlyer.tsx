@@ -8,14 +8,13 @@
 //   · WELCOME TO / the name in serif / unit · address in small caps, centred, with a short accent rule
 //   · Wi-Fi as the hero line (network | password)
 //   · check-in · check-out · the urgent line
-//   · three quiet notes with line icons: parking, the beach, house rules (titles only)
+//   · a short welcome message, signed (editable: labels flyer.welcome / flyer.signoff)
 //   · exactly two QR codes, side by side: Your digital guide · Book direct & save (the goal of the page)
 // Everything long (the beach steps, the check-out list, how-tos) lives in the digital guide — the QR says so.
 // Paper only: nothing is a link. Colours follow the book's theme, or black & white from Print options.
 // /g/<id>?flyer=1 shows it on screen; ?flyer=1&print=1 opens the print dialog.
 import { useEffect } from 'react'
-import { Car, Waves, ScrollText } from 'lucide-react'
-import { guideData, guideFaq, qrSrc, LOGO_URL, sentence } from '@/components/GuideMobile'
+import { guideData, qrSrc, LOGO_URL } from '@/components/GuideMobile'
 import { themeForBook } from '@/lib/guide-themes'
 import { printPrefs } from '@/lib/guide-print'
 
@@ -36,20 +35,16 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
   const band = color ? t.tint : 'rgba(0,0,0,0.045)'
   const guideUrl = 'https://lighthouse-stay.vercel.app/g/' + String(gb?.id || '')
   const site = d.bookUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
-  const gf = guideFaq(gb)
-  const parkQ = gf.qa.find(x => /park/i.test(x.q))
-  const beachQ = gf.qa.find(x => /beach/i.test(x.q))
-  const parking = parkQ ? short(firstSentence(parkQ.a), 120) : ''
-  const beach = beachQ ? short(beachQ.steps.steps.length ? (beachQ.steps.intro || 'A short walk from your door.') : firstSentence(beachQ.a), 90) : ''
-  const rules = d.rules.slice(0, 6).map((r: any) => sentence(String(r.title || '')).replace(/\.$/, '')).filter(Boolean)
   const meta = [d.unit, d.address].filter(Boolean)
   useEffect(() => { if (autoPrint) { const x = setTimeout(() => window.print(), 1100); return () => clearTimeout(x) } }, [autoPrint])
 
-  const notes = [
-    parking ? { Icon: Car, title: 'Parking', body: parking, qr: '' } : null,
-    beach ? { Icon: Waves, title: 'The beach', body: beach + ' The route and map are in your digital guide.', qr: '' } : null,
-    rules.length ? { Icon: ScrollText, title: 'House rules', body: rules.join(' · '), qr: '' } : null,
-  ].filter(Boolean) as { Icon: any; title: string; body: string; qr: string }[]
+  // THE WELCOME (Jon, 2026-11-06: "have a welcome message and get rid of the parking, the beach etc.").
+  // Editable per book in the editor's labels (flyer.welcome / flyer.signoff). Surfside speaks as Vanessa &
+  // Taylor, never Stay Hospitality.
+  const lab = (k: string) => { const v = (d.s._labels || {})[k]; return typeof v === 'string' && v.trim() ? v.trim() : '' }
+  const surfside = /surfside|boynton/i.test([gb?._unit, gb?._building, gb?._nickname, gb?.listing_name, gb?.title, d.address].join(' '))
+  const welcome = lab('flyer.welcome') || "We're so glad you're here. Everything for your stay — the parking map, the walk to the beach, how things work and the places we love nearby — is in your digital guide below. If anything at all comes up, message us any time and we'll take care of it. Enjoy every minute."
+  const signoff = lab('flyer.signoff') || (surfside ? 'Vanessa & Taylor' : 'Your hosts at Stay Hospitality')
 
   return (
     <div className={'gf-wrap' + (screen ? ' gf-screen' : '')}>
@@ -81,6 +76,8 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
           <p className="gf-val" style={{ fontSize: '31pt', marginTop: '7pt', letterSpacing: '-.01em' }}>{d.name}</p>
           {meta.length ? <p className="gf-cap" style={{ marginTop: '9pt', letterSpacing: '.18em' }}>{meta.join('   ·   ')}</p> : null}
           <div style={{ width: '34pt', height: '1pt', background: acc, margin: '14pt auto 0' }} />
+          <p style={{ fontFamily: SERIF, fontStyle: 'italic', fontSize: '11.5pt', lineHeight: 1.6, color: '#3a3936', maxWidth: '5.6in', margin: '14pt auto 0' }}>{welcome}</p>
+          <p className="gf-cap" style={{ marginTop: '9pt', letterSpacing: '.22em', color: acc }}>— {signoff}</p>
         </div>
 
         {/* WI-FI */}
@@ -103,7 +100,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
         <div style={{ margin: '.24in .8in 0', display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '16pt', flex: 'none' }}>
           {[
             { k: 'Your digital guide', h: 'Everything for your stay', b: 'Parking map, the walk to the beach, how things work and our local picks.', url: guideUrl, foot: '' },
-            { k: 'Come back soon', h: 'Book direct & save', b: 'Your next stay, straight from us — better rates, no booking fees.', url: d.bookUrl, foot: site + ' · code ' + d.code },
+            { k: 'Come back soon', h: 'Book direct & save', b: 'Your next stay, straight from us — better rates, no booking fees.', url: d.bookUrl, foot: site },
           ].map((c, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '13pt', padding: '13pt 14pt', borderRadius: '10pt', background: i ? band : '#fff', border: '.7pt solid ' + (i ? 'transparent' : hair) }}>
               <div style={{ background: '#fff', padding: '4pt', borderRadius: '6pt', flex: 'none' }}><img src={qrSrc(c.url)} alt="" style={{ width: '70pt', height: '70pt', display: 'block' }} /></div>
@@ -113,18 +110,6 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
                 <p className="gf-note" style={{ marginTop: '3pt', fontSize: '8pt', lineHeight: 1.45 }}>{c.b}</p>
                 {c.foot ? <p className="gf-note" style={{ marginTop: '3pt', fontSize: '7.6pt', color: ink, fontWeight: 600, letterSpacing: '.04em' }}>{c.foot}</p> : <p className="gf-cap" style={{ marginTop: '4pt', fontSize: '6pt' }}>Scan with your camera</p>}
               </div>
-            </div>
-          ))}
-        </div>
-
-        {/* NOTES */}
-        <div style={{ margin: '.24in .8in 0', display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, notes.length) + ', 1fr)', columnGap: '22pt', flex: 'none' }}>
-          {notes.map((n, i) => (
-            <div key={i} style={{ textAlign: 'center' }}>
-              <div style={{ width: '26pt', height: '26pt', borderRadius: '50%', border: '.8pt solid ' + acc, color: acc, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}><n.Icon size={13} strokeWidth={1.6} /></div>
-              <p className="gf-val" style={{ fontSize: '12.5pt', marginTop: '8pt' }}>{n.title}</p>
-              <p className="gf-note" style={{ marginTop: '4pt' }}>{n.body}</p>
-              {n.qr ? <div style={{ marginTop: '7pt' }}><img src={n.qr} alt="" style={{ width: '40pt', height: '40pt', display: 'block', margin: '0 auto 2pt' }} /><p className="gf-cap" style={{ fontSize: '5.6pt', letterSpacing: '.18em' }}>Scan for the route</p></div> : null}
             </div>
           ))}
         </div>
