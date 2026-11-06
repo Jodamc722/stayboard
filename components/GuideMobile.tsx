@@ -75,7 +75,10 @@ export function guideData(gb: any) {
   for (const k of Object.keys(s._photoAssign || {})) pa[k] = purl(s._photoAssign[k])
   const photos: string[] = (Array.isArray(s._photos) ? s._photos : []).map(purl).filter(Boolean) as string[]
   const em = s.emergency || {}
+  // Tidy the address (2026-11-06 polish): "4621 North Ocean Boulevard, 33435 Boynton Beach" reads backwards —
+  // it becomes "4621 North Ocean Boulevard, Boynton Beach, FL 33435".
   const address = str(s.guidelines?.address).replace(/,\s*United States( of America)?$/i, '')
+    .replace(/,\s*(\d{5})\s+([A-Za-z .'-]+)$/, (_m: string, zip: string, city: string) => ', ' + city.trim() + ', FL ' + zip)
   const list = (v: any) => (Array.isArray(v) ? v : [])
   return {
     s, has, lbl, pa, photos, em,
@@ -90,7 +93,11 @@ export function guideData(gb: any) {
     // Parking map lives in its own how-to ("Where to park") — the arrival section and the quick action
     // OPEN that item instead of repeating the map (Jon, 2026-11-06: "I liked the way it was").
     parkingMap: ((Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).find((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))) ? purl((s.houseGuide.items as any[]).find((x: any) => isMapItem(x) && /park/i.test(String(x.title || ''))).photo) : null) as string | null,
-    subtitle: str(s.cover?.subtitle).replace(/\s{2,}/g, ' '),
+    subtitle: (() => {
+      // "BOYNTON · BOYNTON BEACH" → "BOYNTON BEACH": drop a part another part already contains.
+      const parts = str(s.cover?.subtitle).replace(/\s{2,}/g, ' ').split(/\s*[·|•]\s*/).map(x => x.trim()).filter(Boolean)
+      return parts.filter((p, i) => !parts.some((q, j) => j !== i && q.length > p.length && q.toLowerCase().includes(p.toLowerCase()))).join(' · ')
+    })(),
     line1: str(s.cover?.line1), line2: str(s.cover?.line2),
     cover: pa.cover || photos[0] || null,
     wifiNet: str(s.wifi?.network), wifiPw: str(s.wifi?.password),
@@ -190,7 +197,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
   useEffect(() => { try { const r = localStorage.getItem('gb-ticks-' + gb?.id); if (r) setTicked(JSON.parse(r)) } catch { /* private mode */ } }, [gb?.id])
   const tick = (i: number) => setTicked(t => { const n = { ...t, [i]: !t[i] }; try { localStorage.setItem('gb-ticks-' + gb?.id, JSON.stringify(n)) } catch { /* fine */ } return n })
   // Map how-tos (Where to park, Walking to the beach…) start OPEN — the map is the point; the rest fold.
-  const [open, setOpen] = useState<Record<string, boolean>>(() => { const o: Record<string, boolean> = {}; d.howto.slice(0, 16).forEach((x: any, i: number) => { if (isMapItem(x)) o['h' + i] = true }); return o })
+  const [open, setOpen] = useState<Record<string, boolean>>(() => { const o: Record<string, boolean> = {}; d.howto.slice(0, 16).forEach((x: any, i: number) => { if (isMapItem(x) && /park|beach/i.test(String(x.title || '')) && !/\bmin(ute)?s?\s+(away|drive)\b|delray|avenue/i.test(String(x.title || ''))) o['h' + i] = true }); return o })
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }))
 
   useEffect(() => { if (autoPrint) { const t = setTimeout(() => window.print(), 900); return () => clearTimeout(t) } }, [autoPrint])
@@ -213,7 +220,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
               <img src={LOGO_URL} alt="Stay Hospitality" className="h-6 w-auto" style={{ filter: 'brightness(0) invert(1)' }} />
             </div>
             <div className="absolute inset-x-0 bottom-0 px-5 pb-10">
-              {!/^welcome/i.test(d.line1) ? <p className="text-[10px] tracking-[0.45em] text-white/80">{lbl('cover.kicker', 'WELCOME')}</p> : null}
+              {!/^welcome/i.test(d.line1) ? <p className="text-[10.5px] font-semibold tracking-[0.3em] text-white/85">{lbl('cover.kicker', 'WELCOME')}</p> : null}
               <h1 className="mt-2 text-[38px] leading-[1.02] font-medium lowercase text-white" style={{ fontFamily: SERIF, textWrap: 'balance' as any }}>{d.line1 ? <>{d.line1}{d.line2 ? <><br />{d.line2}</> : null}</> : d.name}</h1>
               {d.subtitle ? <p className="mt-2.5 text-[11px] uppercase tracking-[0.3em] text-white/75">{d.subtitle}</p> : null}
               {d.unit ? <p className="mt-3 inline-flex rounded-full bg-white px-3.5 py-1.5 text-[14px] font-bold tracking-[0.04em]" style={{ color: '#1f1d1a' }}>{d.unit}</p> : null}
@@ -501,11 +508,11 @@ type C = { paper: string; card: string; ink: string; mute: string; accent: strin
 
 function Section({ id, kicker, title, children, c, shadow, photo }: { id: string; kicker: string; title: string; children: any; c: C; shadow: string; photo?: string | null }) {
   return (
-    <section id={'g-' + id} className="scroll-mt-16 overflow-hidden rounded-2xl" style={{ background: c.card, boxShadow: shadow }}>
-      {photo ? <img src={photo} alt="" loading="lazy" className="h-[170px] w-full object-cover" onError={(e: any) => { e.currentTarget.style.display = 'none' }} /> : null}
-      <div className="p-4">
-        <p className="text-[10px] uppercase tracking-[0.4em]" style={{ color: c.accent }}>{kicker}</p>
-        <h2 className="mb-3 mt-1 text-[27px] font-medium lowercase leading-[1.05]" style={{ fontFamily: SERIF }}>{title}</h2>
+    <section id={'g-' + id} className="scroll-mt-16 overflow-hidden rounded-2xl" style={{ background: c.card, boxShadow: shadow, border: '1px solid ' + c.line }}>
+      {photo ? <img src={photo} alt="" loading="lazy" className="h-[180px] w-full object-cover" onError={(e: any) => { e.currentTarget.style.display = 'none' }} /> : null}
+      <div className="px-5 pb-5 pt-[18px]">
+        <p className="text-[10.5px] font-semibold uppercase tracking-[0.24em]" style={{ color: c.accent }}>{kicker}</p>
+        <h2 className="mb-4 mt-1.5 text-[28px] font-medium lowercase leading-[1.05] tracking-[-0.01em]" style={{ fontFamily: SERIF }}>{title}</h2>
         {children}
       </div>
     </section>
@@ -551,7 +558,7 @@ function MapImage({ src, title, c }: { src: string; title: string; c: C }) {
   return (
     <a href={src} target="_blank" rel="noreferrer" className="mb-3 block overflow-hidden rounded-xl" style={{ background: '#fff', border: '1px solid ' + c.line }} aria-label={'Open ' + title + ' full size'}>
       <img src={src} alt={title} loading="lazy" className="block h-auto w-full" onError={(e: any) => { e.currentTarget.closest('a').style.display = 'none' }} />
-      <span className="flex items-center justify-between px-3 py-2 text-[12px] font-semibold" style={{ color: c.accent }}>{title}<span className="inline-flex items-center gap-1"><ExternalLink size={12} /> Tap to open full size</span></span>
+      <span className="flex items-center gap-3 px-3 py-2 text-[12px] font-semibold" style={{ color: c.accent }}><span className="min-w-0 flex-1 truncate">{title}</span><span className="inline-flex shrink-0 items-center gap-1"><ExternalLink size={12} /> Full size</span></span>
     </a>
   )
 }
