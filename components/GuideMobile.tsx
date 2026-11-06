@@ -196,8 +196,9 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
   const [ticked, setTicked] = useState<Record<number, boolean>>({})
   useEffect(() => { try { const r = localStorage.getItem('gb-ticks-' + gb?.id); if (r) setTicked(JSON.parse(r)) } catch { /* private mode */ } }, [gb?.id])
   const tick = (i: number) => setTicked(t => { const n = { ...t, [i]: !t[i] }; try { localStorage.setItem('gb-ticks-' + gb?.id, JSON.stringify(n)) } catch { /* fine */ } return n })
-  // Map how-tos (Where to park, Walking to the beach…) start OPEN — the map is the point; the rest fold.
-  const [open, setOpen] = useState<Record<string, boolean>>(() => { const o: Record<string, boolean> = {}; d.howto.slice(0, 16).forEach((x: any, i: number) => { if (isMapItem(x) && /park|beach/i.test(String(x.title || '')) && !/\bmin(ute)?s?\s+(away|drive)\b|delray|avenue/i.test(String(x.title || ''))) o['h' + i] = true }); return o })
+  // Every how-to is a drop-down, maps included (Jon, 2026-11-06: "everything should be a drop down in the
+  // how-to section"). The parking chip and "See the parking map" open theirs on tap.
+  const [open, setOpen] = useState<Record<string, boolean>>({})
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }))
 
   useEffect(() => { if (autoPrint) { const t = setTimeout(() => window.print(), 900); return () => clearTimeout(t) } }, [autoPrint])
