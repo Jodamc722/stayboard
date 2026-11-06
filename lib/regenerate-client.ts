@@ -163,5 +163,7 @@ export async function verifyPush(r: RegenResult, diff: ReturnType<typeof regenDi
       if (row && (row.orderDiffers || row.onlyInLighthouse > 0 || row.captionDiffs > 0)) missing.push('photos' + (row.orderDiffers ? ' (order)' : '') + (row.captionDiffs ? ` (${row.captionDiffs} captions)` : ''))
     } catch (e: any) { missing.push('photos (could not read Guesty: ' + String(e?.message || e) + ')') }
   }
+  // The Admin desk's Copy audit lists every push that did not stick (Jon, 2026-11-06).
+  fetch('/api/admin-desk/copy-audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId: r.listingId, synced: missing.length === 0, missing }) }).catch(() => {})
   return { synced: missing.length === 0, missing }
 }

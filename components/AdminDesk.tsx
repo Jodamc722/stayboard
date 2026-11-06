@@ -10,6 +10,8 @@
 //             filter) · the channels strip · admin projects · listings offline in Guesty
 //   Listings  one row per listing — channel chips, score, last optimized, photos, reviews, blocked —
 //             with search, market / building / quick-view buttons
+//   Copy audit  every listing's copy: over the channel limits, wrong facts, empty sections, Regenerate
+//             pushes that did not stick — Check live re-reads Guesty (components/CopyAuditTab)
 //   Reviews   the review report on the same engine as /reviews: window, market, building, channel;
 //             stats, top issues, what guests praise, where it is heading
 // Rules live in lib/admin-desk-shared.ts (tested); rows come from /api/admin-desk; blocks from
@@ -22,6 +24,7 @@ import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { LeanHead, Pill, Tag, LeanTabs, LeanSection, LeanList, LeanRow, LeanEmpty, IconBtn, LeanPick, Tip, type Tone } from '@/components/lean'
 import { TILES, tileCounts, rowInTile, worklist, channelCounts, rowWeight, optimizeState, photoFlags, performance, coverVerdict, agoShort, RULES, channelLabel, type AdminRow, type TileKey, type WorkItem, type Severity } from '@/lib/admin-desk-shared'
 import { VERDICT_LABEL, type CellVerdict } from '@/lib/channel-types'
+import { CopyAuditTab } from '@/components/CopyAuditTab'
 
 type DeskRes = { ok: boolean; error?: string; at: string; today: string; rows: AdminRow[]; channels: { key: string; label: string; major: boolean }[]; channelCheckedAt: string | null; read: { listings: number; reviews: number } }
 type BlockedRes = { ok: boolean; error?: string; runs?: any[]; linkedRuns?: any[]; liveNow?: number }
@@ -46,7 +49,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
   // Blocks walk Guesty's live calendar — slow, and a Guesty hiccup must never blank the rest.
   const blocked = useCachedFetch<BlockedRes>('/api/blocked-units?days=14', { ttl: 600_000 })
   const projects = useCachedFetch<ProjectsRes>('/api/projects', { ttl: 300_000 })
-  const [tab, setTab] = useState<'desk' | 'listings' | 'reviews'>('desk')
+  const [tab, setTab] = useState<'desk' | 'listings' | 'copy' | 'reviews'>('desk')
   const [tile, setTile] = useState<TileKey>('all')
   const [refreshing, setRefreshing] = useState(false)
   const today = desk.data?.today || todayET()
@@ -94,6 +97,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
       <LeanTabs value={tab} onChange={setTab} tabs={[
         { key: 'desk', label: 'Desk', n: work.filter(w => w.severity === 'high').length || null },
         { key: 'listings', label: 'Listings', n: rows.length || null },
+        { key: 'copy', label: 'Copy audit' },
         { key: 'reviews', label: 'Reviews' },
       ]} />
 
@@ -103,6 +107,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
       {tab === 'listings' && (
         <ListingsTab rows={rows} today={today} tile={tile} setTile={setTile} counts={counts} channels={(desk.data?.channels || []).filter(c => c.major || c.key === 'googleVacationRentals')} loading={desk.loading && !desk.data} />
       )}
+      {tab === 'copy' && <CopyAuditTab />}
       {tab === 'reviews' && <ReviewsTab />}
     </div>
   )
