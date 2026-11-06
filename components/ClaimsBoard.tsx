@@ -285,9 +285,9 @@ export function ClaimsBoard() {
             empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
           <Section title="Pending" blurb="On our desk — waiting on approval, or approved and waiting to be filed" rows={sec.pending}
             empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="Submitted" blurb="Waiting on the channel — when they decide, mark it Paid in full, Partially paid or Denied" rows={sec.submitted}
+          <Section title="Submitted" blurb="Waiting on the channel — when they pay, Mark paid with the amount and the date; or Denied" rows={sec.submitted}
             empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="Paid — to close out" blurb={'The channel decided — amount received shows on each row. ' + (canClose ? 'Tick money in and owner adjusted, then close.' : 'Accounting, the GM or an Admin closes it out.')} rows={sec.settle} moneyOf="paid"
+          <Section title="Paid — to close out" blurb={'Each row shows what was paid and when — click it to change. ' + (canClose ? 'Tick money in and owner adjusted, then close.' : 'Accounting, the GM or an Admin closes it out.')} rows={sec.settle} moneyOf="paid"
             empty="Nothing waiting to be closed out." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
           <Section title="🚩 Denied — not paid" blurb={'The channel said no — nothing received. ' + (canClose ? 'Close it out.' : 'Accounting, the GM or an Admin closes it out.')} rows={sec.denied}
             empty="No denied claims waiting to be closed." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
@@ -490,19 +490,34 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
   // they decide, mark it Paid in full / Partially paid (with the amount actually received) or
   // Denied (not paid). The server moves it: paid → "Paid — to close out", denied → same section,
   // tagged, nothing received.
-  const [decide, setDecide] = useState<'' | 'won' | 'partial'>('')
+  // ONE CONTROL FOR THE ANSWER (Jon, 2026-11-06: "can we have a date of paid, ask when marked. Once paid
+  // it should say paid, date paid. We should not have two sections"). Mark paid asks the amount and the
+  // date it was paid; a paid row then reads "Paid $356.25 · Nov 3" and that is the button to change it.
+  // The decision dropdown and the stage dropdown no longer both sit on a paid row.
+  const [editing, setEditing] = useState(false)
   const [amt, setAmt] = useState('')
-  const pickDecision = (v: string) => {
+  const [paidOn, setPaidOn] = useState('')
+  const sought0 = num(claim.amount_sought) || itemsTotal(claim.items || [])
+  const openEditor = () => {
     setMoveErr('')
-    if (v === 'won' || v === 'partial') { setDecide(v); setAmt(v === 'won' ? String(num(claim.amount_sought) || itemsTotal(claim.items || []) || '') : ''); return }
-    if (v === 'denied') { if (window.confirm('Mark this claim DENIED — not paid? It is flagged and moves to "Denied — not paid" with $0 received.')) quick({ outcome: 'denied' }, 'dec'); return }
-    if (v === 'waiting') { quick({ outcome: null }, 'dec'); return }
+    const paid = num(claim.amount_paid) || 0
+    setAmt(paid > 0 ? String(paid) : sought0 ? String(sought0) : '')
+    setPaidOn(claim.paid_on || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()))
+    setEditing(true)
   }
-  const saveDecision = () => {
+  const savePaid = () => {
     const n = Number(String(amt).replace(/[$,\s]/g, ''))
     if (!isFinite(n) || n <= 0) { setMoveErr('Enter the amount received'); return }
-    quick({ outcome: decide, amount_paid: n }, 'dec').then(() => setDecide(''))
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)) { setMoveErr('Pick the date it was paid'); return }
+    // Full or partial follows from the amount: at least what we asked is paid in full.
+    const outcome = sought0 > 0 && n < sought0 - 0.005 ? 'partial' : 'won'
+    quick({ outcome, amount_paid: n, paid_on: paidOn }, 'dec').then(() => setEditing(false))
   }
+  const markDenied = () => {
+    if (window.confirm('Mark this claim DENIED — not paid? It moves to "Denied — not paid" with $0 received.')) quick({ outcome: 'denied' }, 'dec').then(() => setEditing(false))
+  }
+  const backToWaiting = () => quick({ outcome: null, paid_on: null }, 'dec').then(() => setEditing(false))
+  const shortDate = (d?: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.slice(0, 4) === String(new Date().getFullYear()) ? undefined : 'numeric' }) : ''
   const mg = useContext(MergeCtx)
   const items = claim.items || []
   const gates = gatesFor(claim, items)
@@ -531,40 +546,42 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
             <TurnoverChip claim={claim} />
             {claim.channel && <Tag>{claim.channel}</Tag>}
             {claim.waiting_on && stage === 'submitted' && <Tag tone="sky">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</Tag>}
-            {claim.outcome && (
+            {claim.outcome && !(settling && (claim.outcome === 'won' || claim.outcome === 'partial')) && (
               <Tag tone={claim.outcome === 'denied' ? 'roseSolid' : claim.outcome === 'won' || claim.outcome === 'partial' ? 'emerald' : 'slate'} title={claim.outcome === 'denied' ? 'The channel denied this claim — nothing was paid' : undefined}>
                 {claim.outcome === 'won' ? 'Paid · full' : claim.outcome === 'partial' ? 'Paid · partial' : claim.outcome === 'denied' ? '🚩 DENIED · not paid' : claim.outcome.charAt(0).toUpperCase() + claim.outcome.slice(1)}
               </Tag>
             )}
             <Tag tone={done === gates.length ? 'emerald' : 'slate'} title={gates.map(g => (g.ok ? '✓ ' : '· ') + g.label).join('\n') + '\n' + items.length + ' item' + (items.length === 1 ? '' : 's')}>{done}/{gates.length} evidence</Tag>
-            {settling && !claim.outcome && <Tag tone="amber" title="Marked decided but no decision recorded — pick Paid in full, Partially paid or Denied">Pick the decision</Tag>}
+            {settling && !claim.outcome && <Tag tone="amber" title="In this section but no payment recorded yet — Mark paid with the amount and date, or Denied">Not marked paid</Tag>}
             {claim.payment_verified === true && claim.owner_adjusted !== true && stage === 'settle' && <Tag tone="amber" title="Paid — owner statement still to adjust">Adjust owner</Tag>}
             {settling && !canClose && <Tag tone="slate" title="Only Accounting, the GM or an Admin can close a claim"><Lock size={10} className="inline -mt-0.5" /> Accounting closes</Tag>}
           </div>
         </button>
-        {settling && claim.outcome ? (
-          <span className="shrink-0 text-right leading-tight" title={'Asked ' + money(amount) + ' · received ' + money(num(claim.amount_paid) || 0) + (claim.paid_on ? ' on ' + claim.paid_on : '')}>
-            <span className={'block text-[13px] font-bold tabular-nums ' + ((num(claim.amount_paid) || 0) > 0 ? 'text-emerald-700' : 'text-rose-700')}>{claim.outcome === 'denied' ? 'Not paid · $0' : money(num(claim.amount_paid) || 0) + ' received'}</span>
-            {amount > 0 && <span className="block text-[10.5px] text-muted tabular-nums">of {money(amount)}</span>}
-          </span>
-        ) : amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>}
-        {(stage === 'submitted' || settling) && !decide && (
-          <select value="" onChange={e => pickDecision(e.target.value)} disabled={!!quickBusy || moving} title={stage === 'submitted' ? 'The channel answered — record it' : 'Change the channel\'s decision'}
-            className={'shrink-0 text-[11.5px] font-semibold border rounded-md px-1.5 py-1 max-w-[9.5rem] disabled:opacity-50 ' + (claim.outcome === 'denied' ? 'border-rose-400 bg-rose-50 text-rose-800' : claim.outcome === 'won' || claim.outcome === 'partial' ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-sky-300 bg-sky-50 text-sky-900')}>
-            <option value="">{claim.outcome === 'won' ? 'Paid in full ▾' : claim.outcome === 'partial' ? 'Partially paid ▾' : claim.outcome === 'denied' ? 'Denied ▾' : stage === 'submitted' ? 'Waiting on channel ▾' : 'Decision ▾'}</option>
-            <option value="won">Paid in full</option>
-            <option value="partial">Partially paid</option>
-            <option value="denied">Denied — not paid</option>
-            {settling && <option value="waiting">Back to waiting on channel</option>}
-          </select>
-        )}
-        {decide && (
-          <span className="shrink-0 inline-flex items-center gap-1">
-            <span className="text-[11px] font-semibold text-muted">{decide === 'won' ? 'Full' : 'Partial'} · received $</span>
-            <input autoFocus value={amt} onChange={e => setAmt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveDecision(); if (e.key === 'Escape') setDecide('') }}
+        {!editing && (settling && (claim.outcome === 'won' || claim.outcome === 'partial') ? (
+          <button onClick={openEditor} disabled={!!quickBusy || moving} className="shrink-0 text-right leading-tight rounded-md px-1.5 py-0.5 hover:bg-emerald-50"
+            title={'Asked ' + money(amount) + ' · received ' + money(num(claim.amount_paid) || 0) + (claim.paid_on ? ' on ' + claim.paid_on : '') + ' — click to change'}>
+            <span className="block text-[13px] font-bold tabular-nums text-emerald-700">Paid {money(num(claim.amount_paid) || 0)}{claim.paid_on ? ' · ' + shortDate(claim.paid_on) : ''}</span>
+            <span className="block text-[10.5px] text-muted tabular-nums">{claim.outcome === 'partial' ? 'partial · ' : ''}{amount > 0 ? 'of ' + money(amount) : ''}{!claim.paid_on ? ' · no date' : ''}</span>
+          </button>
+        ) : settling && claim.outcome === 'denied' ? (
+          <button onClick={openEditor} disabled={!!quickBusy || moving} title="Denied — click to change" className="shrink-0 text-[13px] font-bold text-rose-700 tabular-nums rounded-md px-1.5 py-0.5 hover:bg-rose-50">Not paid · $0</button>
+        ) : (stage === 'submitted' || settling) ? (
+          <>
+            {amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>}
+            <button onClick={openEditor} disabled={!!quickBusy || moving} title="The channel paid — enter the amount and the date it was paid" className={chip + 'border-emerald-600 bg-emerald-600 text-white'}>Mark paid</button>
+          </>
+        ) : amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>)}
+        {editing && (
+          <span className="shrink-0 inline-flex items-center gap-1 flex-wrap">
+            <span className="text-[11px] font-semibold text-muted">Received $</span>
+            <input autoFocus value={amt} onChange={e => setAmt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') savePaid(); if (e.key === 'Escape') setEditing(false) }}
               inputMode="decimal" placeholder="0.00" className="w-20 text-[12px] border border-line rounded-md px-1.5 py-1 tabular-nums" />
-            <button onClick={saveDecision} disabled={!!quickBusy} className={chip + 'border-emerald-600 bg-emerald-600 text-white'}>{quickBusy === 'dec' ? <Loader2 size={11} className="animate-spin" /> : null} Mark paid</button>
-            <button onClick={() => setDecide('')} className="text-muted hover:text-ink"><X size={13} /></button>
+            <span className="text-[11px] font-semibold text-muted">on</span>
+            <input type="date" value={paidOn} onChange={e => setPaidOn(e.target.value)} className="text-[12px] border border-line rounded-md px-1.5 py-[3px]" title="The date the money was paid" />
+            <button onClick={savePaid} disabled={!!quickBusy} className={chip + 'border-emerald-600 bg-emerald-600 text-white'}>{quickBusy === 'dec' ? <Loader2 size={11} className="animate-spin" /> : null} Save</button>
+            {claim.outcome !== 'denied' && <button onClick={markDenied} disabled={!!quickBusy} className={chip + 'border-rose-300 bg-white text-rose-700'} title="The channel said no — nothing paid">Denied</button>}
+            {settling && <button onClick={backToWaiting} disabled={!!quickBusy} className={chip + 'border-line bg-white text-muted hover:text-ink'} title="Not decided after all — back to Submitted">Back to waiting</button>}
+            <button onClick={() => setEditing(false)} className="text-muted hover:text-ink" title="Cancel"><X size={13} /></button>
           </span>
         )}
         {settling && (
@@ -586,10 +603,10 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
             </button>}
           </span>
         )}
-        <select value={stage} onChange={e => move(e.target.value)} disabled={moving} title="Move this claim to another stage"
+        {!settling && <select value={stage} onChange={e => move(e.target.value)} disabled={moving} title="Move this claim to another stage"
           className="shrink-0 text-[11.5px] font-semibold border border-line rounded-md bg-white px-1.5 py-1 max-w-[9.5rem] disabled:opacity-50">
           {STAGES.filter(s2 => canClose || s2.key !== 'closed' || stage === 'closed').map(s2 => <option key={s2.key} value={s2.key} disabled={!canClose && stage === 'closed' && s2.key !== 'closed'}>{s2.key === stage ? '● ' : 'Move to: '}{s2.label}</option>)}
-        </select>
+        </select>}
         {/* On a mouse the delete appears on hover; a touch screen has no hover, so on a phone it is
             always there. It sits outside the open button, so it can never open the claim. */}
         <span className="shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition">
