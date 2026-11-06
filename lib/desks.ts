@@ -136,12 +136,15 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'team', label: 'Team',
-    blurb: 'Team management: hours and labor, each cleaner’s record, and training.',
+    blurb: 'Team management: hours and labor, each cleaner’s record, training and the inspection scoreboard.',
     views: [
       { to: '/labor', label: 'Labor', hint: 'Payroll against cleans: cost per clean, people, days and the dashboard' },
       { to: '/cleaners', label: 'Cleaners', hint: 'Each cleaner’s last 90 days: pace, same-day rate and quality' },
       // Training (Jon, 2026-10-26): how-to videos and FAQs, English and Spanish, assigned to people.
       { to: '/training', label: 'Training', hint: 'How-to videos and FAQs for the team, in English and Spanish — assign them, see who finished' },
+      // Team scoreboard (Jon, 2026-11-06: "a scoreboard for our team, a way to organize the feedback, read
+      // the inspection and be able to share the inspection reports with the girls"). Gated by training.
+      { to: '/training/scoreboard', label: 'Scoreboard', hint: 'Housekeepers ranked by inspection score, reports to send every 5 inspections, feedback to follow up, every inspection to read', match: ['/scoreboard'] },
     ],
   },
   {

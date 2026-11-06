@@ -302,6 +302,10 @@ export const OPEN_PREFIXES = [
   // on their phone, English or Spanish, with a Done button. No Lighthouse account — housekeepers and
   // technicians do not have one — so the code is the capability, checked in /api/public/training.
   '/learn/',
+  // HER INSPECTION REPORT (Jon, 2026-11-06: "Personal link shared by supervisor or managers"). /ir/<code>
+  // is one housekeeper, five inspections, in her language. No login: the code is the capability,
+  // checked in /api/public/inspection-report. Not /r/ because owner reports already live there.
+  '/ir/',
   // The did-it-work confirmation after a door-code release. Open on purpose: the people who know
   // whether a code worked are field techs without logins, and a question only answerable by people
   // who were not at the door is a question that never gets a true answer. The token is the auth.
@@ -328,7 +332,9 @@ export function isOpenPath(path: string): boolean {
 // NOT in OPEN_PREFIXES on purpose: releasing a door code must require a login, unlike /approve/.
 // /front-desk is a view over two gated desks (welcome-calls + reservation-emails); its API requires
 // 'view' on either, so it needs no level of its own — whoever can see calls or notices sees it.
-export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk']
+// /scoreboard (2026-11-06) is only a redirect to /training/scoreboard, the Team scoreboard, which the
+// training key gates like the rest of /training.
+export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk', '/scoreboard']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)

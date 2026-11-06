@@ -55,8 +55,13 @@ export function isMissingTable(err: any): boolean {
 }
 
 // ---------------------------------------------------------------- reading one checklist
-export type Miss = { section: string; item_en: string; item_es: string | null; photos: string[] }
-export type Line = { section: string; text: string; type: string; response: string | null; yn: 'yes' | 'no' | null; photos: number; note?: string | null }
+// PHOTO URLS ON EVERY LINE (Jon, 2026-11-06: "read the inspection and be able to share the inspection
+// reports with the girls"). The reader on the Team scoreboard shows each line's photos, so a line keeps
+// its URLs in `photo_urls` — `photos` stays the COUNT, because Training already reads it as a number.
+// `section_es` / `text_es` keep the Spanish half for the housekeeper's own report. All three are
+// optional: rows stored before 2026-11-06 do not have them.
+export type Miss = { section: string; section_es?: string | null; item_en: string; item_es: string | null; photos: string[] }
+export type Line = { section: string; section_es?: string | null; text: string; text_es?: string | null; type: string; response: string | null; yn: 'yes' | 'no' | null; photos: number; photo_urls?: string[]; note?: string | null }
 export type Parsed = {
   yes_count: number; no_count: number; pass_rate: number | null; score: number | null; clean_finished: boolean | null
   misses: Miss[]; readings: Record<string, number | null>; fixed: string | null; coaching: string | null; notes: string | null
@@ -148,7 +153,7 @@ export function parseRequirements(rows: any[], kind: InspectionKind): Parsed {
     out.total++
     if (resp || ph) out.answered++
     out.photos += ph
-    out.items.push({ section: sec.en, text: line.en, type, response: resp || null, yn, photos: ph, ...(note ? { note } : {}) })
+    out.items.push({ section: sec.en, section_es: sec.es, text: line.en, text_es: line.es, type, response: resp || null, yn, photos: ph, photo_urls: urls.slice(0, 8), ...(note ? { note } : {}) })
     if (note) notes.push(`${line.en}: ${note}`)
 
     if (type === 'yesno') {
@@ -158,7 +163,7 @@ export function parseRequirements(rows: any[], kind: InspectionKind): Parsed {
       if (yn === 'yes') out.yes_count++
       if (yn === 'no') {
         out.no_count++
-        out.misses.push({ section: sec.en, item_en: line.en, item_es: line.es, photos: urls.slice(0, 3) })
+        out.misses.push({ section: sec.en, section_es: sec.es, item_en: line.en, item_es: line.es, photos: urls.slice(0, 3) })
       }
       continue
     }
@@ -264,6 +269,8 @@ export type SyncResult = {
   ok: boolean; needsMigration?: boolean; error?: string
   days: number; considered: number; already: number; fetched: number; stored: number; skipped: number; failed: number
   byKind: Record<InspectionKind, number>; stoppedEarly: boolean
+  /** What the team scoreboard did after the sync (lib/inspection-reports afterSync): feedback rows and 5-inspection reports. */
+  reports?: { feedback: number; created: number; needsMigration?: boolean; error?: string }
 }
 
 /**
@@ -295,7 +302,7 @@ export async function syncInspectionResults(opts: { days?: number; max?: number;
     return (tpl != null && !!KIND_BY_TEMPLATE[tpl]) || !!kindFromName(t.name)
   })
   out.considered = pool.length
-  if (!pool.length) return out
+  if (!pool.length) return withReports(out, [])
 
   const ms = (v: any) => { const n = new Date(str(v)).getTime(); return Number.isFinite(n) ? n : 0 }
   const have: Record<string, number> = {}
@@ -323,6 +330,7 @@ export async function syncInspectionResults(opts: { days?: number; max?: number;
   const roster = await loadRoster()
 
   let skipChanged = Object.keys(skipped).length !== Object.keys(skippedBefore || {}).length
+  const storedIds: string[] = []
   for (const t of todo) {
     if (Date.now() > deadline) { out.stoppedEarly = true; break }
     const id = str(t.id)
@@ -365,8 +373,23 @@ export async function syncInspectionResults(opts: { days?: number; max?: number;
     if (upErr) { out.failed++; if (!out.error) out.error = 'upsert: ' + upErr.message.slice(0, 160); continue }
     out.stored++
     out.byKind[kind]++
+    storedIds.push(id)
   }
   if (skipChanged) await setSetting(SKIP_KEY, skipped, 'cron:inspection-results').catch(() => {})
+  return withReports(out, storedIds)
+}
+
+/*
+ * EVERY 5 INSPECTIONS, A REPORT TO SEND (Jon, 2026-11-06: "Every 5 inspections is when it should be
+ * flagged to send"). After each sync the new results become feedback rows and any housekeeper with five
+ * unreported audits gets a report flagged for her supervisor. Imported lazily — lib/inspection-reports
+ * reads this file's types — and never allowed to fail the sync: the scores are stored either way.
+ */
+async function withReports(out: SyncResult, storedIds: string[]): Promise<SyncResult> {
+  try {
+    const { afterSync } = await import('./inspection-reports')
+    out.reports = await afterSync(storedIds)
+  } catch (e: any) { out.reports = { feedback: 0, created: 0, error: String(e?.message || e).slice(0, 160) } }
   return out
 }
 

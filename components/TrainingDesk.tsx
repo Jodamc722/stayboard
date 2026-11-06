@@ -664,12 +664,23 @@ function InspectionsView({ can, say, onAssigned }: { can: { edit: boolean; full:
     </div>
   )
 
+  // THE SCOREBOARD IS THE MAIN PLACE NOW (Jon, 2026-11-06: "a scoreboard for our team, a way to organize
+  // the feedback, read the inspection and be able to share the inspection reports with the girls").
+  // This tab keeps the scores-to-training view; ranking, reports, feedback and the reader live there.
+  const scoreboardBanner = (
+    <a href="/training/scoreboard" className="mb-3 flex items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 hover:bg-brand-100/60">
+      <ClipboardCheck size={18} className="text-brand-700 shrink-0" />
+      <span className="flex-1 min-w-0 text-[13px] text-ink"><b>Team scoreboard</b> <span className="text-muted">— rankings, the report to send every 5 inspections, feedback to follow up, and every inspection to read.</span></span>
+      <ArrowRight size={16} className="text-brand-700 shrink-0" />
+    </a>
+  )
   if (loading && !d) return <div className="flex items-center gap-2 text-muted text-[13px] py-10 justify-center"><Loader2 size={15} className="animate-spin" /> Loading…</div>
   if (err && !d) return <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 px-3 py-2 text-[12.5px] mb-3">{err}</div>
   if (d?.needsMigration) return <LeanEmpty>Run migration <span className="font-mono">174_inspection_results.sql</span> in Supabase, then sync — inspection scores are stored there.</LeanEmpty>
 
   return (
     <>
+      {scoreboardBanner}
       {toolbar}
       {err ? <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-800 px-3 py-2 text-[12.5px] mb-3">{err}</div> : null}
       <h2 className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5 px-1 flex items-center gap-2"><ClipboardCheck size={13} /> Housekeepers <span className="tabular-nums">{hk.length}</span>
