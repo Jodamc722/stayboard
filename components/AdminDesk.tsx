@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { ExternalLink, Home, Images, MessageSquareText, Radio, RefreshCw, Search, Wrench, ArrowUpRight, ArrowDownRight, Minus, Sparkles } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
+import { GuidebookWalk } from '@/components/GuidebookWalk'
 import { LeanHead, Pill, Tag, LeanTabs, LeanSection, LeanList, LeanRow, LeanEmpty, IconBtn, LeanPick, Tip, type Tone } from '@/components/lean'
 import { TILES, tileCounts, rowInTile, worklist, channelCounts, rowWeight, optimizeState, photoFlags, performance, coverVerdict, agoShort, RULES, channelLabel, type AdminRow, type TileKey, type WorkItem, type Severity } from '@/lib/admin-desk-shared'
 import { VERDICT_LABEL, type CellVerdict } from '@/lib/channel-types'
@@ -49,7 +50,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
   // Blocks walk Guesty's live calendar — slow, and a Guesty hiccup must never blank the rest.
   const blocked = useCachedFetch<BlockedRes>('/api/blocked-units?days=14', { ttl: 600_000 })
   const projects = useCachedFetch<ProjectsRes>('/api/projects', { ttl: 300_000 })
-  const [tab, setTab] = useState<'desk' | 'listings' | 'copy' | 'reviews'>('desk')
+  const [tab, setTab] = useState<'desk' | 'listings' | 'copy' | 'reviews' | 'guidebooks'>('desk')
   const [tile, setTile] = useState<TileKey>('all')
   const [refreshing, setRefreshing] = useState(false)
   const today = desk.data?.today || todayET()
@@ -99,6 +100,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
         { key: 'listings', label: 'Listings', n: rows.length || null },
         { key: 'copy', label: 'Copy audit' },
         { key: 'reviews', label: 'Reviews' },
+        { key: 'guidebooks', label: 'Guidebooks' },
       ]} />
 
       {tab === 'desk' && (
@@ -109,6 +111,8 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
       )}
       {tab === 'copy' && <CopyAuditTab />}
       {tab === 'reviews' && <ReviewsTab />}
+      {/* GUIDEBOOKS (Jon, 2026-11-06): approve them one by one, property by property, without opening each. */}
+      {tab === 'guidebooks' && <GuidebookWalk />}
     </div>
   )
 }

@@ -138,6 +138,7 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
                         <span className="flex-1" />
                         {c.block ? <Tag tone="rose" title={r.flags.filter(f => f.level === 'block').map(f => f.text).join('\n')}>{c.block} missing</Tag> : null}
                         {c.ask ? <Tag tone="amber" title={r.flags.filter(f => f.level === 'ask').map(f => f.text).join('\n')}>{c.ask} to confirm</Tag> : null}
+                        {reviewOf(r.book).needsFix ? <Tag tone="roseSolid" title={reviewOf(r.book).needsFix?.note}>Needs fix</Tag> : null}
                         <Tag tone="slate" title="Review pages ticked">{r.ticked}/{REVIEW_PAGES.length} pages</Tag>
                         <Tag tone={st === 'live' ? 'emerald' : st === 'approved' ? 'sky' : 'amber'}>{st === 'live' ? 'Live in Guesty' : st === 'approved' ? 'Approved' : 'Draft'}</Tag>
                         <ArrowRight size={15} className="shrink-0 text-muted group-hover:text-ink" />

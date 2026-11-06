@@ -121,7 +121,7 @@ export function flagCounts(flags: Flag[]) {
 }
 
 /** Review state kept on the book: sections._review. */
-export type ReviewState = { pages?: Record<string, string>; note?: string; approvedAt?: string; approvedBy?: string; pushedAt?: string; pushError?: string; photosCheckedAt?: string }
+export type ReviewState = { pages?: Record<string, string>; note?: string; needsFix?: { note: string; at: string; by: string }; approvedAt?: string; approvedBy?: string; pushedAt?: string; pushError?: string; photosCheckedAt?: string }
 export function reviewOf(gb: any): ReviewState { const r = gb?.sections?._review; return r && typeof r === 'object' ? r : {} }
 export function stageOf(gb: any): 'draft' | 'approved' | 'live' {
   const st = String(gb?.status || '')

@@ -76,6 +76,12 @@ export function GuidebookReview({ id, unit, name, stage: stage0, review: review0
     } catch (e: any) { setMsg(String(e.message || e)) }
     setBusy('')
   }
+  async function needsFix() {
+    const n = window.prompt('What needs fixing on ' + (unit || name) + '?', review.needsFix?.note || '')
+    if (n == null) return
+    if (!n.trim()) { try { const j = await post({ action: 'fix', clear: true }); setReview(j.review || review); setMsg('"Needs fix" cleared.') } catch (e: any) { setMsg(String(e.message || e)) } return }
+    try { const j = await post({ action: 'fix', note: n.trim() }); setReview(j.review || review); setStage('draft'); setMsg('Marked "needs fix" — it shows on the queue and on Admin › Guidebooks.') } catch (e: any) { setMsg(String(e.message || e)) }
+  }
   async function unapprove() {
     setBusy('approve')
     try { const j = await post({ action: 'unapprove' }); setReview(j.review || review); setStage('draft'); setMsg('Back to draft. (The link already in Guesty stays until you approve again or clear it there.)') } catch (e: any) { setMsg(String(e.message || e)) }
@@ -109,6 +115,7 @@ export function GuidebookReview({ id, unit, name, stage: stage0, review: review0
           <a href={'/g/' + id + '?book=1'} target="_blank" rel="noreferrer" className={btn}><BookOpen size={13} /> Magazine</a>
           <a href={'/guidebooks/' + id} target="_blank" rel="noreferrer" className={btn}><Pencil size={13} /> Edit</a>
           <button onClick={checkPhotos} disabled={!!busy} className={btn + ' disabled:opacity-50'} title="Find collages and photos with text; replace them on any page">{busy === 'photos' ? <Loader2 size={13} className="animate-spin" /> : <Images size={13} />} Check photos</button>
+          <button onClick={needsFix} className={btn + (review.needsFix ? ' !border-rose-400 !text-rose-700' : '')} title={review.needsFix ? 'Needs fix: ' + review.needsFix.note : 'Send back to the team with a note'}>{review.needsFix ? 'Needs fix ✎' : 'Needs fix'}</button>
           {stage === 'draft'
             ? <button onClick={approve} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[12px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{busy === 'approve' ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Approve &amp; push to Guesty</button>
             : <>
@@ -117,6 +124,7 @@ export function GuidebookReview({ id, unit, name, stage: stage0, review: review0
               </>}
           {nextId ? <Link href={'/guidebooks/review/' + nextId} className="inline-flex items-center gap-1 rounded-lg bg-ink px-3 py-1.5 text-[12px] font-semibold text-white">Next book →</Link> : null}
         </div>
+        {review.needsFix ? <div className="mx-auto max-w-[1400px] px-4 pb-2 text-[12.5px] font-semibold text-rose-700">Needs fix: {review.needsFix.note}</div> : null}
         {msg ? <div className="mx-auto max-w-[1400px] px-4 pb-2 text-[12.5px] text-ink">{msg}</div> : null}
       </header>
 

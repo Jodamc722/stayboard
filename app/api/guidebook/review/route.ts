@@ -17,12 +17,46 @@ import { modelFor } from '@/lib/ai-models'
 import { anthropicMessages, textOf } from '@/lib/anthropic-call'
 import { parseJson } from '@/lib/json-repair'
 import { POST as pushToGuesty } from '../push-guesty/route'
+import { auditGuidebook, reviewOf, stageOf } from '@/lib/guidebook-audit'
+import { guestUnitFull } from '@/lib/guest-unit'
+import { rollupBuilding } from '@/lib/optimize-score'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 const urlOf = (p: any): string => (typeof p === 'string' ? p : p && (p.original || p.url || p.thumbnail)) || ''
 const SCENE = ['bedroom', 'living', 'kitchen', 'dining', 'bathroom', 'pool', 'beach', 'view', 'exterior', 'amenity']
+
+// GET ?queue=1 — the one-by-one walk on the Admin desk (Guidebooks tab): every book, property by
+// property (Surfside, then Salato, then A–Z), units in number order, with its flags and review state.
+const ORDER = [/surfside|boynton/i, /salato/i]
+const rankB = (b: string) => { const i = ORDER.findIndex(re => re.test(b)); return i < 0 ? 99 : i }
+export async function GET() {
+  const gate = await requireLevel('guidebooks', 'view')
+  if (!gate.ok) return gate.res
+  const db = supabaseAdmin()
+  const { rows: books } = await pageRows<any>((a, b) => db.from('guidebooks').select('id, listing_id, listing_name, title, status, updated_at, sections, answers').order('updated_at', { ascending: false }).order('id').range(a, b), 6)
+  const newest: Record<string, any> = {}
+  for (const b of books || []) { const k = String(b.listing_id || b.id); if (!newest[k]) newest[k] = b }
+  const { data: ls } = await db.from('guesty_listings').select('id, nickname, title, building, unit, status').not('building', 'is', null).limit(1000)
+  const listings = (ls || []).filter((l: any) => !/\bfull\b/i.test(String(l.nickname || l.title || '')) && !/inactive|disabled|archived|deleted/i.test(String(l.status || '')))
+  const items: any[] = []
+  const missing: Record<string, number> = {}
+  for (const l of listings as any[]) {
+    const building = rollupBuilding(String(l.building || '').trim())
+    if (!building || building === 'Unassigned') continue
+    const gb = newest[l.id]
+    if (!gb || !gb.sections) { missing[building] = (missing[building] || 0) + 1; continue }
+    const rv = reviewOf(gb)
+    items.push({
+      id: gb.id, building, unit: guestUnitFull(l) || String(l.nickname || l.title || ''), name: String(gb.listing_name || gb.title || '').split(/\s+\|\s+/)[0],
+      stage: stageOf(gb), flags: auditGuidebook(gb, l), printOk: !!(rv.pages && rv.pages.print), needsFix: rv.needsFix || null, note: rv.note || '', photosChecked: !!rv.photosCheckedAt, pushError: rv.pushError || '',
+    })
+  }
+  items.sort((a, b) => rankB(a.building) - rankB(b.building) || a.building.localeCompare(b.building) || a.unit.localeCompare(b.unit, undefined, { numeric: true }))
+  return NextResponse.json({ items, missing })
+}
 
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('guidebooks', 'edit')
@@ -60,13 +94,22 @@ export async function POST(req: NextRequest) {
     const err = await save()
     return err ? NextResponse.json({ error: err }, { status: 500 }) : NextResponse.json({ ok: true, review: rv })
   }
+  // NEEDS FIX (Jon, 2026-11-06: "have a way to mark need to fix and add note") — flagged back to the team
+  // with what is wrong; cleared by { action: 'fix', clear: true } or by approving.
+  if (action === 'fix') {
+    if (body?.clear === true) delete rv.needsFix
+    else rv.needsFix = { note: String(body?.note || '').slice(0, 2000), at: now, by: who }
+    const err = await save(body?.clear === true ? {} : { status: 'draft' })
+    return err ? NextResponse.json({ error: err }, { status: 500 }) : NextResponse.json({ ok: true, review: rv })
+  }
   if (action === 'unapprove') {
     delete rv.approvedAt; delete rv.approvedBy
     const err = await save({ status: 'draft' })
     return err ? NextResponse.json({ error: err }, { status: 500 }) : NextResponse.json({ ok: true, status: 'draft', review: rv })
   }
   if (action === 'approve') {
-    rv.approvedAt = now; rv.approvedBy = who
+    rv.approvedAt = now; rv.approvedBy = who; delete rv.needsFix
+    rv.pages = { ...(rv.pages || {}), guest: now + ' ' + who }
     let err = await save({ status: 'approved' })
     if (err) return NextResponse.json({ error: err }, { status: 500 })
     // Write the guest link into Guesty (same route as the Guidebooks "Push to Guesty" button).
