@@ -43,7 +43,8 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
   // Taylor, never Stay Hospitality.
   const lab = (k: string) => { const v = (d.s._labels || {})[k]; return typeof v === 'string' && v.trim() ? v.trim() : '' }
   const surfside = /surfside|boynton/i.test([gb?._unit, gb?._building, gb?._nickname, gb?.listing_name, gb?.title, d.address].join(' '))
-  const welcome = lab('flyer.welcome') || "We're so glad you're here. Everything for your stay — the parking map, the walk to the beach, how things work and the places we love nearby — is in your digital guide below. If anything at all comes up, message us any time and we'll take care of it. Enjoy every minute."
+  // A welcome, not a road map (Jon, 2026-11-06): thanks for booking, have a wonderful time.
+  const welcome = lab('flyer.welcome') || "Thank you so much for choosing to stay with us. We hope this place feels like home from the moment you walk in — that you slow down, sleep well and make some wonderful memories here. It's a pleasure to host you. Enjoy every minute of your stay."
   const signoff = lab('flyer.signoff') || (surfside ? 'Vanessa & Taylor' : 'Your hosts at Stay Hospitality')
 
   return (
