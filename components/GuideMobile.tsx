@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Wifi, Copy, Check, Phone, MapPin, Car, KeyRound, ChevronDown, ListChecks,
   Compass, Siren, ExternalLink, MessageSquare, Navigation, Hospital, ShieldAlert, LogOut,
+  Share2, Waves, QrCode, Sun, Sunset,
 } from 'lucide-react'
 import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
 import { themeForBook } from '@/lib/guide-themes'
@@ -80,7 +81,8 @@ export function guideData(gb: any) {
     s, has, lbl, pa, photos, em,
     name: stayName(gb),
     // Set by /g/[id] from the listing ("Unit 3"); empty when the listing has no unit number.
-    unit: str(gb?._unit),
+    unit: str(gb?._unit),            // "Surfside · Unit 4" — the unit's name and number
+    geo: (gb?._geo && typeof gb._geo.lat === 'number') ? gb._geo as { lat: number; lng: number } : null,
     beach: str(gb?._beach),
     // Map how-tos (lib/guide-print isMapItem): the parking one also shows under Parking on the phone,
     // and every one gets a full-size sheet in the printed manual.
@@ -167,6 +169,13 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
 
   const [copied, setCopied] = useState('')
   const copy = async (what: string, v: string) => { try { await navigator.clipboard.writeText(v); setCopied(what); setTimeout(() => setCopied(''), 1600) } catch { /* selectable */ } }
+  const [wifiQr, setWifiQr] = useState(false)
+  // Share the guide with the rest of the party — the phone's own share sheet, else copy the link.
+  const share = async () => {
+    const url = typeof window !== 'undefined' ? window.location.origin + '/g/' + String(gb?.id || '') : ''
+    try { if ((navigator as any).share) { await (navigator as any).share({ title: (d.unit ? d.unit + ' — ' : '') + d.name, text: 'Our guide for the stay — Wi-Fi, parking, check-out and more.', url }); return } } catch { return }
+    copy('link', url)
+  }
 
   const [ticked, setTicked] = useState<Record<number, boolean>>({})
   useEffect(() => { try { const r = localStorage.getItem('gb-ticks-' + gb?.id); if (r) setTicked(JSON.parse(r)) } catch { /* private mode */ } }, [gb?.id])
@@ -251,6 +260,23 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
                   </div>
                 </a>
               ) : null}
+
+              {/* QUICK ACTIONS (2026-11-06 audit) — the three things guests hunt for, one tap each. */}
+              {(d.parkingMap || d.beach || d.address) ? (
+                <div className="gm-x -mx-1 mt-3 flex gap-2 overflow-x-auto px-1">
+                  {d.parkingMap ? <button type="button" onClick={() => go('arrival')} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Car size={15} style={{ color: c.accent }} /> Parking map</button> : null}
+                  {(d.beach || d.maps.some((m: any) => /beach/i.test(m.title))) && d.address ? <a href={'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('beach access near ' + d.address)} target="_blank" rel="noreferrer" className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Waves size={15} style={{ color: c.accent }} /> To the beach</a> : null}
+                  {d.wifiNet ? <button type="button" onClick={() => setWifiQr(v => !v)} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><QrCode size={15} style={{ color: c.accent }} /> Wi-Fi QR</button> : null}
+                  <button type="button" onClick={share} className="inline-flex min-h-[40px] shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold" style={{ background: c.tint }}><Share2 size={15} style={{ color: c.accent }} /> {copied === 'link' ? 'Link copied' : 'Share with your group'}</button>
+                </div>
+              ) : null}
+              {wifiQr && d.wifiNet ? (
+                <div className="mt-3 flex items-center gap-3 rounded-xl p-3" style={{ background: c.tint }}>
+                  <img src={wifiQrSrc(d.wifiNet, d.wifiPw)} alt="Wi-Fi QR code" className="h-28 w-28 rounded-lg bg-white p-1.5" />
+                  <p className="text-[13px] leading-snug" style={{ color: c.mute }}>Point another phone's camera here to join <b style={{ color: c.ink }}>{d.wifiNet}</b> — no typing.</p>
+                </div>
+              ) : null}
+              {d.geo ? <Weather geo={d.geo} city={d.placeCity} c={c} /> : null}
 
               {/* CONTACT (Jon, 2026-10-29): guests message us through the app they booked with — no
                   call or text buttons. Our number is shown for anything urgent. */}
@@ -474,6 +500,40 @@ function Section({ id, kicker, title, children, c, shadow, photo }: { id: string
   )
 }
 
+/** WIFI:… payload — any phone camera joins the network from it. */
+export const wifiQrSrc = (net: string, pw: string) => {
+  const esc = (v: string) => String(v || '').replace(/([\\;,:"])/g, '\\$1')
+  const payload = 'WIFI:T:' + (pw ? 'WPA' : 'nopass') + ';S:' + esc(net) + ';' + (pw ? 'P:' + esc(pw) + ';' : '') + ';'
+  return 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(payload)
+}
+
+/**
+ * TODAY HERE (2026-11-06 audit) — the beach question every guest asks: how warm, when is sunset, how
+ * strong is the sun. Open-Meteo (free, no key), read in the guest's browser; shows nothing on failure.
+ */
+function Weather({ geo, city, c }: { geo: { lat: number; lng: number }; city: string; c: C }) {
+  const [w, setW] = useState<any>(null)
+  useEffect(() => {
+    let off = false
+    const u = 'https://api.open-meteo.com/v1/forecast?latitude=' + geo.lat.toFixed(4) + '&longitude=' + geo.lng.toFixed(4) +
+      '&current=temperature_2m&daily=temperature_2m_max,temperature_2m_min,sunset,uv_index_max,precipitation_probability_max&temperature_unit=fahrenheit&timezone=America%2FNew_York&forecast_days=1'
+    fetch(u).then(r => r.ok ? r.json() : null).then(j => { if (!off && j && j.daily) setW(j) }).catch(() => {})
+    return () => { off = true }
+  }, [geo.lat, geo.lng])
+  if (!w) return null
+  const dly = w.daily, n = (v: any) => Math.round(Number(v))
+  const sunset = String(dly.sunset?.[0] || '').slice(11, 16)
+  const sunsetTxt = sunset ? new Date('2000-01-01T' + sunset + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''
+  const uv = n(dly.uv_index_max?.[0]), rain = n(dly.precipitation_probability_max?.[0])
+  return (
+    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+      <div className="rounded-xl px-2 py-2.5" style={{ background: c.tint }}><Sun size={15} className="mx-auto" style={{ color: c.accent }} /><p className="mt-1 text-[16px] font-semibold tabular-nums">{n(w.current?.temperature_2m)}°</p><p className="text-[11px]" style={{ color: c.mute }}>{n(dly.temperature_2m_max?.[0])}° / {n(dly.temperature_2m_min?.[0])}°{city ? ' · ' + city : ''}</p></div>
+      <div className="rounded-xl px-2 py-2.5" style={{ background: c.tint }}><Sunset size={15} className="mx-auto" style={{ color: c.accent }} /><p className="mt-1 text-[16px] font-semibold">{sunsetTxt || '—'}</p><p className="text-[11px]" style={{ color: c.mute }}>Sunset today</p></div>
+      <div className="rounded-xl px-2 py-2.5" style={{ background: c.tint }}><Waves size={15} className="mx-auto" style={{ color: c.accent }} /><p className="mt-1 text-[16px] font-semibold tabular-nums">UV {isFinite(uv) ? uv : '—'}</p><p className="text-[11px]" style={{ color: c.mute }}>{uv >= 8 ? 'Very strong — sunscreen' : uv >= 6 ? 'High — sunscreen' : 'Moderate'}{isFinite(rain) && rain >= 40 ? ' · ' + rain + '% rain' : ''}</p></div>
+    </div>
+  )
+}
+
 /** A map or diagram at full width — never cropped; tap opens it full size to pinch-zoom. */
 function MapImage({ src, title, c }: { src: string; title: string; c: C }) {
   return (
@@ -684,7 +744,7 @@ export function GuidePrint({ gb }: { gb: any }) {
       <div className="gp-box" style={{ marginTop: '13pt' }}>
         <div className="gp-grid">
           {d.wifiNet ? <div style={{ gridColumn: d.wifiPw ? 'span 2' : '1 / -1' }}><p className="gp-k">Wi-Fi network</p><p className="gp-big">{d.wifiNet}</p></div> : null}
-          {d.wifiPw ? <div><p className="gp-k">Wi-Fi password</p><p className="gp-big">{d.wifiPw}</p></div> : null}
+          {d.wifiPw ? <div style={{ display: 'flex', gap: '8pt', alignItems: 'flex-start' }}><div style={{ flex: 1 }}><p className="gp-k">Wi-Fi password</p><p className="gp-big">{d.wifiPw}</p></div><div style={{ textAlign: 'center' }}><img src={wifiQrSrc(d.wifiNet, d.wifiPw)} alt="" style={{ width: '46pt', height: '46pt' }} /><p className="gp-muted" style={{ fontSize: '6.5pt' }}>Scan to join</p></div></div> : null}
           {d.checkIn ? <div><p className="gp-k">Check-in</p><p className="gp-v">{d.checkIn}</p></div> : null}
           {d.checkOut ? <div><p className="gp-k">Check-out</p><p className="gp-v">{d.checkOut}</p></div> : null}
           {d.phone ? <div><p className="gp-k">Urgent · 24/7</p><p className="gp-v">{d.phone}</p></div> : null}

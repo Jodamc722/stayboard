@@ -20,16 +20,34 @@ function unitLabel(l: any): string {
   return m ? 'Unit ' + m[1] : ''
 }
 
+/**
+ * The unit's NAME as the team and the signs use it (Jon, 2026-11-06: "we need the unit's name in the title
+ * and the unit number, not just the unit number"): the nickname without its number — "Surfside - 4" →
+ * "Surfside", "Salato 302" → "Salato" — else the building. Owner names in brackets are dropped.
+ */
+function unitName(l: any): string {
+  const nick = String(l?.nickname || '').replace(/\([^)]*\)/g, ' ').replace(/(?:^|[\s\-#])(?:unit\s*)?\d{1,4}[A-Za-z]?\s*$/i, '').replace(/[\s\-–—·|#,]+$/, '').replace(/\s+/g, ' ').trim()
+  if (nick && /[A-Za-z]{3,}/.test(nick) && nick.length <= 40) return nick
+  return String(l?.building || '').trim()
+}
+/** "Surfside · Unit 4" — name and number together; either alone when that is all there is. */
+function unitFull(l: any): string {
+  const name = unitName(l), num = unitLabel(l)
+  return [name, num].filter(Boolean).join(' · ')
+}
+
 /** What the page adds to the book at render time: the unit, and the walk to the beach for the print FAQ. */
 async function withListing(gb: any): Promise<any> {
   let l: any = null
   if (gb?.listing_id) {
-    try { const { data } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building, unit').eq('id', gb.listing_id).limit(1); l = (data || [])[0] || null } catch { /* the book alone */ }
+    try { const { data } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building, unit, lat:raw->address->>lat, lng:raw->address->>lng').eq('id', gb.listing_id).limit(1); l = (data || [])[0] || null } catch { /* the book alone */ }
   }
   const bg = buildingGuideFor([l?.nickname, l?.building, gb?.listing_name, gb?.title].filter(Boolean).join(' '))
   // The building's beach line only when it is written for guests (staff notes say "confirm…").
   const beach = bg && bg.recs.beach && !/confirm/i.test(bg.recs.beach) ? bg.recs.beach : ''
-  return { ...gb, _unit: unitLabel(l), _beach: beach, _building: l?.building || '', _nickname: l?.nickname || '' }
+  const lat = Number(l?.lat), lng = Number(l?.lng)
+  return { ...gb, _unit: unitFull(l), _unitName: unitName(l), _unitNo: unitLabel(l), _beach: beach, _building: l?.building || '', _nickname: l?.nickname || '',
+    _geo: isFinite(lat) && isFinite(lng) && (lat || lng) ? { lat, lng } : null }
 }
 
 export const dynamic = 'force-dynamic'
@@ -40,7 +58,9 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
   const { data } = await supabaseAdmin().from('guidebooks').select('*').eq('id', id).limit(1)
   const gb = (data || [])[0]
   if (!gb) return base
-  const name = gb.title || 'Your Stay'
+  let unit = ''
+  try { if (gb.listing_id) { const { data: ls } = await supabaseAdmin().from('guesty_listings').select('nickname, building, unit').eq('id', gb.listing_id).limit(1); if (ls && ls[0]) unit = unitFull(ls[0]) } } catch { /* title without it */ }
+  const name = (unit ? unit + ' — ' : '') + String(gb.title || 'Your Stay').replace(/\s*[—–-]\s*Guest Guidebook\s*$/i, '').split(/\s+\|\s+/)[0]
   let img = ''
   try {
     const photos = (gb as any)?.sections?._photos

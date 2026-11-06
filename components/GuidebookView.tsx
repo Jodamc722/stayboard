@@ -763,6 +763,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
             </div>
             <div className="mx-auto mt-7 h-px w-14 opacity-60" style={{ background: 'currentColor' }} />
             <p className="mt-5 text-[10px] tracking-[0.4em] opacity-85"><T path={['cover', 'subtitle']} value={s.cover?.subtitle} /></p>
+            {gb._unit ? <p className="mt-3 inline-block rounded bg-white px-3 py-1 text-[13px] font-bold tracking-[0.06em] text-neutral-900">{gb._unit}</p> : null}
           </div>
           <div className="pb-2"><StayLogo light={!!coverBleed} /></div>
         </Page>
