@@ -47,7 +47,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
 
   const notes = [
     parking ? { Icon: Car, title: 'Parking', body: parking, qr: '' } : null,
-    beach ? { Icon: Waves, title: 'The beach', body: beach, qr: gf.beachQr } : null,
+    beach ? { Icon: Waves, title: 'The beach', body: beach + ' The route and map are in your digital guide.', qr: '' } : null,
     rules.length ? { Icon: ScrollText, title: 'House rules', body: rules.join(' · '), qr: '' } : null,
   ].filter(Boolean) as { Icon: any; title: string; body: string; qr: string }[]
 
@@ -69,10 +69,17 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
 
       <div className="gf">
         {/* PHOTO */}
-        <div style={{ position: 'relative', height: '3.25in', flex: 'none', background: color ? t.cover : '#222' }}>
+        <div style={{ position: 'relative', height: '3.6in', flex: 'none', background: color ? t.cover : '#222' }}>
           {d.cover ? <img src={d.cover} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,.28) 0%, rgba(0,0,0,0) 22%)' }} />
           <img src={LOGO_URL} alt="" style={{ position: 'absolute', top: '.4in', left: '50%', transform: 'translateX(-50%)', height: '15pt', filter: 'brightness(0) invert(1)' }} />
+          {/* THE DIGITAL GUIDE, at the top (Jon, 2026-11-06: "the route should be the digital guidebook — do it at
+              the top"): parking map, the walk to the beach, how-tos, places — all one scan away. */}
+          <div style={{ position: 'absolute', right: '.45in', bottom: '.35in', background: '#fff', borderRadius: '8pt', padding: '7pt 7pt 6pt', boxShadow: '0 4pt 16pt rgba(0,0,0,.14)', textAlign: 'center', width: '1.18in' }}>
+            <img src={qrSrc(guideUrl)} alt="" style={{ width: '68pt', height: '68pt', display: 'block', margin: '0 auto' }} />
+            <p className="gf-cap" style={{ fontSize: '5.9pt', marginTop: '4pt', letterSpacing: '.16em', color: acc }}>Your digital guide</p>
+            <p style={{ fontSize: '6.2pt', color: mute, lineHeight: 1.35, marginTop: '1pt' }}>Parking map, beach route &amp; more</p>
+          </div>
         </div>
 
         {/* TITLE */}
@@ -113,7 +120,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
 
         <div style={{ flex: 1, minHeight: '.2in' }} />
         {/* CLOSING BAND */}
-        <div style={{ flex: 'none', background: band, padding: '.26in .8in .3in', display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'center', columnGap: '22pt' }}>
+        <div style={{ flex: 'none', background: band, padding: '.26in .8in .3in', display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', columnGap: '22pt' }}>
           <div>
             <p className="gf-cap" style={{ color: acc, letterSpacing: '.32em' }}>Come back soon</p>
             <p className="gf-val" style={{ fontSize: '20pt', marginTop: '5pt' }}>Book direct <i>&amp; save</i></p>
@@ -122,10 +129,6 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
           <div style={{ textAlign: 'center' }}>
             <div style={{ background: '#fff', padding: '5pt', borderRadius: '4pt' }}><img src={qrSrc(d.bookUrl)} alt="" style={{ width: '52pt', height: '52pt', display: 'block' }} /></div>
             <p className="gf-cap" style={{ fontSize: '5.8pt', marginTop: '4pt', letterSpacing: '.18em' }}>Book direct</p>
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ background: '#fff', padding: '5pt', borderRadius: '4pt' }}><img src={qrSrc(guideUrl)} alt="" style={{ width: '52pt', height: '52pt', display: 'block' }} /></div>
-            <p className="gf-cap" style={{ fontSize: '5.8pt', marginTop: '4pt', letterSpacing: '.18em' }}>Full guide</p>
           </div>
         </div>
       </div>
