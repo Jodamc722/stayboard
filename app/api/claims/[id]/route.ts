@@ -116,7 +116,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // and the amount received should show — tag partial, full, and denied meaning not paid." So the
     // outcome IS the move: Paid in full / Partially paid → Paid (settle), with the amount received
     // and the paid date stamped; Denied / withdrawn / duplicate → Decided, nothing received. Both sit
-    // in the close-out section until Accounting, the GM or an Admin closes them. An explicit stage
+    // in the close-out section until Accounting, the GM or Admin closes them. An explicit stage
     // in the same request still wins.
     if ('outcome' in b && !b.stage && ['submitted', 'decided', 'settle'].includes(str(before.stage))) {
       const o = patch.outcome
@@ -137,7 +137,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // ── stage move ───────────────────────────────────────────────────────
     const nextStage = STAGES.includes(str(b.stage)) ? str(b.stage) : null
     const moved = nextStage && nextStage !== before.stage ? nextStage : null
-    // CLOSING IS THE BOOKS STEP — Accounting, the GM or an Admin only. Reopening a closed claim is
+    // CLOSING IS THE BOOKS STEP — Accounting, the GM or Admin only. Reopening a closed claim is
     // the same authority (it un-does a close-out).
     if (moved && (moved === 'closed' || str(before.stage) === 'closed') && !(await canCloseClaims(__gate.access))) {
       return NextResponse.json({ ok: false, error: CLOSE_DENIED }, { status: 403 })

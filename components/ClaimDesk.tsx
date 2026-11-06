@@ -728,7 +728,7 @@ function StepOutcome({ claim, patch, busy, canClose }: { claim: Claim; patch: (b
           </button>
         )}
         {(claim.stage === 'settle' || claim.stage === 'decided') && !canClose && (
-          <span className="text-[12px] text-muted">Accounting, the GM or an Admin closes this out.</span>
+          <span className="text-[12px] text-muted">Accounting, the GM or Admin closes this out.</span>
         )}
         {(claim.stage === 'settle' || claim.stage === 'decided') && canClose && (
           <button onClick={() => patch({ stage: 'closed' })} disabled={busy} className="text-sm font-semibold px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-40">

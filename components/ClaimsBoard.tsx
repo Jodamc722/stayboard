@@ -287,9 +287,9 @@ export function ClaimsBoard() {
             empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
           <Section title="Submitted" blurb="Waiting on the channel — when they pay, Mark paid with the amount and the date; or Denied" rows={sec.submitted}
             empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="Paid — to close out" blurb={'Each row shows what was paid and when — click it to change. ' + (canClose ? 'Tick money in and owner adjusted, then close.' : 'Accounting, the GM or an Admin closes it out.')} rows={sec.settle} moneyOf="paid"
+          <Section title="Paid — to close out" blurb={'Each row shows what was paid and when — click it to change. ' + (canClose ? 'Tick money in and owner adjusted, then close.' : 'Accounting, the GM or Admin closes it out.')} rows={sec.settle} moneyOf="paid"
             empty="Nothing waiting to be closed out." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="🚩 Denied — not paid" blurb={'The channel said no — nothing received. ' + (canClose ? 'Close it out.' : 'Accounting, the GM or an Admin closes it out.')} rows={sec.denied}
+          <Section title="🚩 Denied — not paid" blurb={'The channel said no — nothing received. ' + (canClose ? 'Close it out.' : 'Accounting, the GM or Admin closes it out.')} rows={sec.denied}
             empty="No denied claims waiting to be closed." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
 
           {/* CLOSED — the one section behind tabs, and the tabs are how it ended. */}
@@ -458,7 +458,7 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
   const move = async (to: string) => {
     if (to === String(claim.stage || 'draft')) return
     if (to === 'review') { onOpen(); return }
-    if ((to === 'closed' || claim.stage === 'closed') && !canClose) { setMoveErr('Accounting, the GM or an Admin closes claims'); return }
+    if ((to === 'closed' || claim.stage === 'closed') && !canClose) { setMoveErr('Accounting, the GM or Admin closes claims'); return }
     setMoving(true); setMoveErr('')
     try {
       const send = (force: boolean) => fetch('/api/claims/' + claim.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(force ? { stage: to, force: true } : { stage: to }) })
@@ -554,7 +554,7 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
             <Tag tone={done === gates.length ? 'emerald' : 'slate'} title={gates.map(g => (g.ok ? '✓ ' : '· ') + g.label).join('\n') + '\n' + items.length + ' item' + (items.length === 1 ? '' : 's')}>{done}/{gates.length} evidence</Tag>
             {settling && !claim.outcome && <Tag tone="amber" title="In this section but no payment recorded yet — Mark paid with the amount and date, or Denied">Not marked paid</Tag>}
             {claim.payment_verified === true && claim.owner_adjusted !== true && stage === 'settle' && <Tag tone="amber" title="Paid — owner statement still to adjust">Adjust owner</Tag>}
-            {settling && !canClose && <Tag tone="slate" title="Only Accounting, the GM or an Admin can close a claim"><Lock size={10} className="inline -mt-0.5" /> Accounting closes</Tag>}
+            {settling && !canClose && <Tag tone="slate" title="Only Accounting, the GM or Admin can close a claim"><Lock size={10} className="inline -mt-0.5" /> Accounting closes</Tag>}
           </div>
         </button>
         {!editing && (settling && (claim.outcome === 'won' || claim.outcome === 'partial') ? (
