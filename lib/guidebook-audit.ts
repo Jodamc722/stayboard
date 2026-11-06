@@ -20,7 +20,7 @@ export const REVIEW_PAGES: { key: string; label: string }[] = [
   { key: 'local', label: 'Local places' },
   { key: 'checkout', label: 'Check-out' },
   { key: 'help', label: 'Help & emergencies' },
-  { key: 'print', label: 'Printed manual' },
+  { key: 'print', label: 'Printable (magazine / 1-pager)' },
 ]
 
 const str = (v: any): string => (typeof v === 'string' ? v.trim() : (v && typeof v === 'object' && typeof v.body === 'string') ? v.body.trim() : '')

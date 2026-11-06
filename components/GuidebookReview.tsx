@@ -148,7 +148,7 @@ export function GuidebookReview({ id, unit, name, stage: stage0, review: review0
         {/* PREVIEW */}
         <div className="flex flex-col items-center">
           <div className="mb-2 flex w-full items-center justify-between text-[12px] text-muted">
-            <span>{isPrint ? 'Printed house manual (Letter) — the same file the team prints' : 'The guest guide exactly as guests see it'}</span>
+            <span>{isPrint ? 'What prints for this unit — the magazine or the 1-pager (set in Admin › Guidebooks)' : 'The guest guide exactly as guests see it'}</span>
             <button onClick={() => setFrameKey(k => k + 1)} className="inline-flex items-center gap-1 font-semibold hover:text-ink"><RotateCw size={12} /> Reload after editing</button>
           </div>
           {isPrint ? (

@@ -3,7 +3,9 @@
 import { notFound } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GuidebookView } from '@/components/GuidebookView'
-import { GuideMobile, GuidePrint } from '@/components/GuideMobile'
+import { GuideMobile } from '@/components/GuideMobile'
+import { GuideFlyer } from '@/components/GuideFlyer'
+import { printFormat } from '@/lib/guide-print'
 import { signPlacePhotoToken } from '@/lib/place-photo-token'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
 import { guestUnitNo, guestUnitName, guestUnitFull } from '@/lib/guest-unit'
@@ -51,20 +53,24 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
   return { ...base, title, description, openGraph: { title, description, type: 'website', images: img ? [{ url: img }] : undefined }, twitter: { card: img ? 'summary_large_image' : 'summary', title, description, images: img ? [img] : undefined } }
 }
 
-export default async function PublicGuidebookPage({ params, searchParams }: { params: { id: string }; searchParams?: { book?: string; print?: string; printview?: string } }) {
+export default async function PublicGuidebookPage({ params, searchParams }: { params: { id: string }; searchParams?: { book?: string; print?: string; printview?: string; flyer?: string } }) {
   const id = String(params.id || '')
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound()
   const { data } = await supabaseAdmin().from('guidebooks').select('*').eq('id', id).limit(1)
   const row = (data || [])[0]
   if (!row) notFound()
   const gb = await withListing(row)
-  // ONE GUIDE, EVERY SCREEN (2026-10-29, Jon: "revamp all guidebooks, clean it up and make it
-  // great … optimized for the phone and have a printable setting"). The clean guide (GuideMobile)
-  // on phones and laptops alike; printing it gives the short house manual (GuidePrint, inside it).
-  // ?print=1 opens the print dialog straight away. The old 12-page magazine book still opens at
-  // ?book=1 for anyone who wants it.
-  // ?printview=1 — the printed house manual ON SCREEN (the review page's "Printable view").
-  if (String((searchParams as any)?.printview || '') === '1') return <div style={{ background: '#e7e7e7', minHeight: '100vh', padding: '1px 12px' }}><GuidePrint gb={gb} screen /></div>
-  if (String(searchParams?.book || '') === '1') return <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
+  // THREE VERSIONS (Jon, 2026-11-06: "guest digital view, magazine and 1-pager"):
+  //   /g/<id>            the digital guide (GuideMobile) — tappable, phone first; Cmd-P prints the 1-pager
+  //   /g/<id>?book=1     the magazine (GuidebookView) — paper: nothing on it is a link
+  //   /g/<id>?flyer=1    the 1-pager (GuideFlyer) — paper
+  // ?print=1 opens the print dialog on any of them. ?printview=1 shows the property's chosen printable
+  // (sections._print.format: 'magazine' | 'flyer') — what the review and admin walk show.
+  const sp: any = searchParams || {}
+  const autoPrint = String(sp.print || '') === '1'
+  const fmt = printFormat(gb)
+  if (String(sp.printview || '') === '1') return fmt === 'flyer' ? <GuideFlyer gb={gb} screen /> : <GuidebookView initial={gb} guest paper photoToken={signPlacePhotoToken(String(gb.id))} />
+  if (String(sp.flyer || '') === '1') return <GuideFlyer gb={gb} screen autoPrint={autoPrint} />
+  if (String(sp.book || '') === '1') return <GuidebookView initial={gb} guest paper autoPrint={autoPrint} photoToken={signPlacePhotoToken(String(gb.id))} />
   return <GuideMobile gb={gb} autoPrint={String(searchParams?.print || '') === '1'} photoToken={signPlacePhotoToken(String(gb.id))} />
 }

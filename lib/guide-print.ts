@@ -81,3 +81,11 @@ export function splitSteps(body: any): { intro: string; steps: string[] } {
   const steps = parts.map(p => p.replace(/^\d{1,2}[.)]\s+/, '').trim()).filter(Boolean)
   return steps.length >= 2 ? { intro: first.trim(), steps } : { intro: t, steps: [] }
 }
+
+// ── PRINT FORMAT (Jon, 2026-11-06: "3 versions: guest digital view, magazine and 1-pager") ──
+// Each book (set per property from Admin › Guidebooks) prints as the full magazine or the 1-pager.
+export type PrintFormat = 'magazine' | 'flyer'
+export function printFormat(gb: any): PrintFormat {
+  const f = gb?.sections?._print?.format
+  return f === 'flyer' ? 'flyer' : 'magazine'
+}

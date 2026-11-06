@@ -5,7 +5,8 @@
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact US Letter (8.5x11) output (@page, exact colors, no app chrome).
 import { themeForBook, THEME_CHOICES, SMART } from '@/lib/guide-themes'
-import { printPrefs, isCommonSense, howtoShown, PRINT_SECTIONS, isMapItem, splitSteps } from '@/lib/guide-print'
+import { guideFaq } from '@/components/GuideMobile'
+import { printPrefs, isCommonSense, howtoShown, isMapItem, splitSteps } from '@/lib/guide-print'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
@@ -29,7 +30,11 @@ function StayLogo({ light = false, small = false }: { light?: boolean; small?: b
   )
 }
 
-export function GuidebookView({ initial, guest = false, photoToken = '' }: { initial: any; guest?: boolean; photoToken?: string }) {
+// THE MAGAZINE IS PAPER (Jon, 2026-11-06: "3 versions — guest digital view, magazine and 1-pager … magazine
+// and 1-pager should not have clickable sections or tap things on it"). Phones, addresses, places, the map
+// pages and the QR are plain print: nothing on a page is a link, and a page click does nothing. The
+// digital guide (/g/<id>) is the tappable one. `autoPrint` opens the print dialog (/g/<id>?book=1&print=1).
+export function GuidebookView({ initial, guest = false, photoToken = '', paper: asPaper = true, autoPrint = false }: { initial: any; guest?: boolean; photoToken?: string; paper?: boolean; autoPrint?: boolean }) {
   const router = useRouter()
   const [gb, setGb] = useState<any>(initial)
   const [edit, setEdit] = useState(false)
@@ -37,6 +42,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   const [copied, setCopied] = useState(false)
   const [askOpen, setAskOpen] = useState(false)
   const [printOpen, setPrintOpen] = useState(false)
+  useEffect(() => { if (autoPrint) { const t = setTimeout(() => window.print(), 1500); return () => clearTimeout(t) } }, [autoPrint])
   const [printSaved, setPrintSaved] = useState('')
   const [askText, setAskText] = useState('')
   const [askBusy, setAskBusy] = useState(false)
@@ -274,19 +280,16 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   // unmounts and rebuilds the whole subtree on every keystroke — that collapsed the document
   // height and bounced the editor back to the top of the book. Never inline a component here.
   const Tel = useMemo(() => function Tel({ v, children }: { v?: string; children: any }) {
-    const { edit } = _live.current
-    const num = String(v || '').replace(/[^\d+]/g, '')
-    return !edit && num.length >= 7 ? <a href={'tel:' + num} className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
+    void v
+    return <>{children}</> // the magazine is paper: never a link (2026-11-06)
   }, [])
   const MapLink = useMemo(() => function MapLink({ v, children }: { v?: string; children: any }) {
-    const { edit } = _live.current
-    const q = String(v || '').trim()
-    return !edit && q ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(q)} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
+    void v
+    return <>{children}</>
   }, [])
   const Mail = useMemo(() => function Mail({ v, children }: { v?: string; children: any }) {
-    const { edit } = _live.current
-    const m = String(v || '').trim()
-    return !edit && m.includes('@') ? <a href={'mailto:' + m} className="hover:underline" style={{ color: 'inherit' }}>{children}</a> : <>{children}</>
+    void v
+    return <>{children}</>
   }, [])
   // Local places & restaurants click through to Google Maps (venue + city) on the digital view.
   const placeCity = String(s.guidelines?.address || '').split(',')[1]?.trim() || ''
@@ -294,16 +297,12 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   // participates in the card's column and the photo inside it can stretch. In edit mode there is
   // no anchor and the children sit directly in the card, which is already that same column.
   const PlaceLink = useMemo(() => function PlaceLink({ name, addr, cls, children }: { name?: string; addr?: string; cls?: string; children: any }) {
-    const { edit, placeCity } = _live.current
-    const nm = String(name || '').trim()
-    const mq = String(addr || '').trim() ? nm + ', ' + String(addr || '').trim() : nm + (placeCity ? ', ' + placeCity : '')
-    return !edit && nm
-      ? <a href={'https://maps.google.com/?q=' + encodeURIComponent(mq)} target="_blank" rel="noreferrer" className={'block transition-opacity hover:opacity-85 ' + (cls || '')} style={{ color: 'inherit' }}>{children}</a>
-      : <>{children}</>
+    void name; void addr; void cls
+    return <>{children}</>
   }, [])
 
   // Pages the operator can remove from the book (Edit mode → "Hide page"; restore from the bar).
-  const PAGE_LABELS: Record<string, string> = { special: 'What makes it special', houseGuide: 'How-to guide', addons: 'Add-ons', localPlaces: 'Local places', restaurants: 'Where to eat', gettingThere: 'Finding the residence', gettingAround: 'Getting around', retreat: 'Retreat lines', host: 'Meet your host' }
+  const PAGE_LABELS: Record<string, string> = { special: 'What makes it special', houseGuide: 'How-to guide', addons: 'Add-ons', localPlaces: 'Local places', restaurants: 'Where to eat', gettingThere: 'Finding the residence', gettingAround: 'Getting around', retreat: 'Retreat lines', host: 'Meet your host', faq: 'Parking, your unit & the beach' }
   function hidePage(key: string) {
     setGb((g: any) => {
       const next = JSON.parse(JSON.stringify(g))
@@ -355,7 +354,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           {!noFooter && <div className={'mt-auto pt-5 flex items-end justify-between text-[8.5px] tracking-[0.28em] ' + (bleed ? 'text-white/70' : '')} style={bleed ? {} : { color: accentColor }}>
             <span><Tel v={s.contact?.customerService || '954-526-8998'}>{s.contact?.customerService || '954-526-8998'}</Tel></span>
             <span className="tabular-nums">{String(n).padStart(2, '0')}</span>
-            <span>{edit ? <L k="footer.site" def="STAY-HOSPITALITY.COM" /> : <a href={'https://' + lbl('footer.site', 'STAY-HOSPITALITY.COM').toLowerCase().replace(/[^a-z0-9.-]/g, '')} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'inherit' }}>{lbl('footer.site', 'STAY-HOSPITALITY.COM')}</a>}</span>
+            <span>{edit ? <L k="footer.site" def="STAY-HOSPITALITY.COM" /> : lbl('footer.site', 'STAY-HOSPITALITY.COM')}</span>
           </div>}
         </div>
       </div>
@@ -399,7 +398,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   ].filter(Boolean) as any[]
 
   return (
-    <div style={{ background: dark ? theme.cover : '#eceae6', minHeight: '100vh' }}>
+    <div className={asPaper ? 'gb-paper' : ''} style={{ background: dark ? theme.cover : '#eceae6', minHeight: '100vh' }}>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" />
       {/* Inner HTML, not a text child: React escapes '>' and quotes in a <style> text child and the
           browser keeps them literally, which breaks the selectors and fails hydration (see ReportView). */}
@@ -602,7 +601,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
         .gb-lens .gb-page { transform: none !important; margin: 0 !important; box-shadow: none !important; }
         @media print { .gb-reader { display: none !important; } }
       ` }} />
-      <script dangerouslySetInnerHTML={{ __html: "(function(){var NAV_H=58;function isDark(el){var s=getComputedStyle(el).backgroundColor;var i=s.indexOf('(');if(i<0)return false;var m=s.substring(i+1).split(',');var r=+m[0],g=+m[1],b=+m[2];return (0.299*r+0.587*g+0.114*b)<128;}var built=false,nav,dotsWrap,countEl,wrapper,allPages=[];function bookEl(){return (wrapper&&wrapper.parentElement)||(document.querySelector('.gb-chrome')&&document.querySelector('.gb-chrome').parentElement)||document.body;}var rdOv,rdWrap,rdCount,rdPrev,rdNext,rdPage,rdIdx,rdFit,rdZoom;function rdApplyZoom(){document.documentElement.style.setProperty('--rdScale',rdZoom);rdWrap.style.width=(760*rdZoom)+'px';rdWrap.style.height=(1073*rdZoom)+'px';}function rdBuild(){rdOv=document.createElement('div');rdOv.className='gb-reader';rdOv.style.background=getComputedStyle(bookEl()).backgroundColor;rdWrap=document.createElement('div');rdWrap.className='gb-reader-wrap';rdOv.appendChild(rdWrap);var ctr=document.createElement('div');ctr.className='gb-reader-ctr';function mk(t){var b=document.createElement('button');b.textContent=t;return b;}var cls=mk('✕');cls.onclick=closeReader;ctr.appendChild(cls);rdOv.appendChild(ctr);var bar=document.createElement('div');bar.className='gb-reader-bar';rdPrev=document.createElement('button');rdPrev.className='gb-reader-nav';rdPrev.textContent='‹';rdPrev.onclick=function(){rdShow(rdIdx-1);};rdCount=document.createElement('span');rdCount.className='gb-reader-pos';rdNext=document.createElement('button');rdNext.className='gb-reader-nav';rdNext.textContent='›';rdNext.onclick=function(){rdShow(rdIdx+1);};bar.appendChild(rdPrev);bar.appendChild(rdCount);bar.appendChild(rdNext);rdOv.appendChild(bar);var lens,lensC,LSZ=230,MAG=3;function lensBuild(){lens=document.createElement('div');lens.className='gb-lens';lensC=document.createElement('div');lensC.className='gb-lens-c';lens.appendChild(lensC);rdOv.appendChild(lens);}function lensShow(cx,cy){if(!rdPage)return;if(!lens)lensBuild();if(!lensC.firstChild){var c=rdPage.cloneNode(true);c.style.transform='none';c.style.margin='0';c.style.width='760px';lensC.appendChild(c);}var r=rdWrap.getBoundingClientRect();var px=(cx-r.left)/rdZoom,py=(cy-r.top)/rdZoom;if(px<0||py<0||px>760||py>1073){lensHide();return;}var Sc=rdZoom*MAG;lensC.style.transform='translate('+(LSZ/2-px*Sc)+'px,'+(LSZ/2-py*Sc)+'px) scale('+Sc+')';var lx=Math.max(8,Math.min(window.innerWidth-LSZ-8,cx-LSZ/2));var ly=cy-LSZ-36;if(ly<8)ly=Math.min(window.innerHeight-LSZ-8,cy+36);lens.style.left=lx+'px';lens.style.top=ly+'px';lens.style.display='block';}function lensHide(){if(lens){lens.style.display='none';while(lensC.firstChild)lensC.removeChild(lensC.firstChild);}}rdWrap.addEventListener('touchstart',function(e){if(e.target.closest('a,button'))return;var t=e.touches[0];lensShow(t.clientX,t.clientY);},{passive:true});rdWrap.addEventListener('touchmove',function(e){if(lens&&lens.style.display==='block'){e.preventDefault();var t=e.touches[0];lensShow(t.clientX,t.clientY);}},{passive:false});rdWrap.addEventListener('touchend',function(){lensHide();});rdWrap.addEventListener('touchcancel',function(){lensHide();});var mDown=false;rdWrap.addEventListener('mousedown',function(e){if(e.target.closest('a,button'))return;mDown=true;lensShow(e.clientX,e.clientY);e.preventDefault();});window.addEventListener('mousemove',function(e){if(mDown)lensShow(e.clientX,e.clientY);});window.addEventListener('mouseup',function(){mDown=false;lensHide();});document.body.appendChild(rdOv);}function rdShow(idx){if(idx<0||idx>=allPages.length)return;if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);}rdIdx=idx;rdPage=allPages[idx];rdPage.__slide=rdPage.parentElement;rdWrap.appendChild(rdPage);rdFit=Math.min(window.innerWidth/760,1);rdZoom=rdFit;rdApplyZoom();rdOv.scrollTo(0,0);rdCount.textContent=(idx+1)+' / '+allPages.length;rdPrev.style.visibility=idx>0?'visible':'hidden';rdNext.style.visibility=idx<allPages.length-1?'visible':'hidden';if(wrapper)wrapper.scrollTo({left:idx*window.innerWidth});}function openReader(page){var i=allPages.indexOf(page);if(i<0)i=0;if(!rdOv)rdBuild();rdOv.style.display='block';rdShow(i);}function closeReader(){if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);rdPage=null;}if(rdOv)rdOv.style.display='none';document.documentElement.style.removeProperty('--rdScale');}function build(){wrapper=document.querySelector('.gb-pages')||((document.querySelector('.gb-page')||{}).parentElement);if(!wrapper)return;wrapper.classList.add('gb-pages');var pages=[].slice.call(document.querySelectorAll('.gb-page'));allPages=pages;pages.forEach(function(p){if(!(p.parentElement&&p.parentElement.classList.contains('gb-slide'))){var s=document.createElement('div');s.className='gb-slide';p.parentElement.insertBefore(s,p);s.appendChild(p);}if(!p.__rd){p.__rd=1;p.addEventListener('click',function(e){if(window.innerWidth>820||window.innerWidth<=767)return;if(e.target.closest('a,button'))return;if(rdOv&&rdOv.style.display!=='none')return;openReader(p);});}});if(!nav){nav=document.createElement('div');nav.className='gb-nav';dotsWrap=document.createElement('div');dotsWrap.className='gb-dots';pages.forEach(function(p,i){var dt=document.createElement('div');dt.className='gb-dot'+(i===0?' on':'');dt.addEventListener('click',function(){wrapper.scrollTo({left:i*window.innerWidth,behavior:'smooth'});});dotsWrap.appendChild(dt);});countEl=document.createElement('div');countEl.className='gb-count';countEl.textContent='01 / '+pages.length;function navBtn(ic,lb,fn){var b=document.createElement('button');b.className='gb-nav-btn';var s=document.createElement('span');s.className='ic';s.textContent=ic;b.appendChild(s);b.appendChild(document.createTextNode(' '+lb));b.addEventListener('click',fn);return b;}var center=document.createElement('div');center.className='gb-nav-center';center.appendChild(dotsWrap);center.appendChild(countEl);nav.appendChild(navBtn('↓','Save',function(){window.print();}));nav.appendChild(center);nav.appendChild(navBtn('🔍','Magnify',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);if(allPages[idx])openReader(allPages[idx]);}));document.body.appendChild(nav);wrapper.addEventListener('scroll',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);var ds=dotsWrap.children;for(var i=0;i<ds.length;i++){ds[i].className='gb-dot'+(i===idx?' on':'');}countEl.textContent=(idx+1<10?'0':'')+(idx+1)+' / '+pages.length;});}built=true;}function fit(){var w=window.innerWidth,mobile=w>767&&w<=820;if(mobile){if(!built)build();if(!wrapper)return;var chrome=document.querySelector('.gb-chrome');var topH=chrome?Math.ceil(chrome.getBoundingClientRect().height):0;var de=document.documentElement;de.style.setProperty('--bkTop',topH+'px');de.style.setProperty('--bkBottom',NAV_H+'px');var availH=window.innerHeight-topH-NAV_H;var scale=Math.min((w-12)/760,(availH-12)/1073);de.style.setProperty('--bkScale',scale);[].slice.call(document.querySelectorAll('.gb-page')).forEach(function(p){if(rdPage===p)return;p.style.transform='';p.style.width='';p.style.maxWidth='';p.style.marginBottom='';p.style.marginLeft='';p.style.marginRight='';p.style.transformOrigin='';});if(nav){var el=bookEl();nav.className='gb-nav'+(isDark(el)?' gb-dark':'');nav.style.background=getComputedStyle(el).backgroundColor;nav.style.display='flex';}}else{if(nav)nav.style.display='none';}}fit();window.addEventListener('resize',fit);window.addEventListener('load',function(){setTimeout(fit,60);});window.addEventListener('beforeprint',function(){if(nav)nav.style.display='none';});window.addEventListener('afterprint',fit);})();" }} />
+      <script dangerouslySetInnerHTML={{ __html: "(function(){var NAV_H=58;function isDark(el){var s=getComputedStyle(el).backgroundColor;var i=s.indexOf('(');if(i<0)return false;var m=s.substring(i+1).split(',');var r=+m[0],g=+m[1],b=+m[2];return (0.299*r+0.587*g+0.114*b)<128;}var built=false,nav,dotsWrap,countEl,wrapper,allPages=[];function bookEl(){return (wrapper&&wrapper.parentElement)||(document.querySelector('.gb-chrome')&&document.querySelector('.gb-chrome').parentElement)||document.body;}var rdOv,rdWrap,rdCount,rdPrev,rdNext,rdPage,rdIdx,rdFit,rdZoom;function rdApplyZoom(){document.documentElement.style.setProperty('--rdScale',rdZoom);rdWrap.style.width=(760*rdZoom)+'px';rdWrap.style.height=(1073*rdZoom)+'px';}function rdBuild(){rdOv=document.createElement('div');rdOv.className='gb-reader';rdOv.style.background=getComputedStyle(bookEl()).backgroundColor;rdWrap=document.createElement('div');rdWrap.className='gb-reader-wrap';rdOv.appendChild(rdWrap);var ctr=document.createElement('div');ctr.className='gb-reader-ctr';function mk(t){var b=document.createElement('button');b.textContent=t;return b;}var cls=mk('✕');cls.onclick=closeReader;ctr.appendChild(cls);rdOv.appendChild(ctr);var bar=document.createElement('div');bar.className='gb-reader-bar';rdPrev=document.createElement('button');rdPrev.className='gb-reader-nav';rdPrev.textContent='‹';rdPrev.onclick=function(){rdShow(rdIdx-1);};rdCount=document.createElement('span');rdCount.className='gb-reader-pos';rdNext=document.createElement('button');rdNext.className='gb-reader-nav';rdNext.textContent='›';rdNext.onclick=function(){rdShow(rdIdx+1);};bar.appendChild(rdPrev);bar.appendChild(rdCount);bar.appendChild(rdNext);rdOv.appendChild(bar);var lens,lensC,LSZ=230,MAG=3;function lensBuild(){lens=document.createElement('div');lens.className='gb-lens';lensC=document.createElement('div');lensC.className='gb-lens-c';lens.appendChild(lensC);rdOv.appendChild(lens);}function lensShow(cx,cy){if(!rdPage)return;if(!lens)lensBuild();if(!lensC.firstChild){var c=rdPage.cloneNode(true);c.style.transform='none';c.style.margin='0';c.style.width='760px';lensC.appendChild(c);}var r=rdWrap.getBoundingClientRect();var px=(cx-r.left)/rdZoom,py=(cy-r.top)/rdZoom;if(px<0||py<0||px>760||py>1073){lensHide();return;}var Sc=rdZoom*MAG;lensC.style.transform='translate('+(LSZ/2-px*Sc)+'px,'+(LSZ/2-py*Sc)+'px) scale('+Sc+')';var lx=Math.max(8,Math.min(window.innerWidth-LSZ-8,cx-LSZ/2));var ly=cy-LSZ-36;if(ly<8)ly=Math.min(window.innerHeight-LSZ-8,cy+36);lens.style.left=lx+'px';lens.style.top=ly+'px';lens.style.display='block';}function lensHide(){if(lens){lens.style.display='none';while(lensC.firstChild)lensC.removeChild(lensC.firstChild);}}rdWrap.addEventListener('touchstart',function(e){if(e.target.closest('a,button'))return;var t=e.touches[0];lensShow(t.clientX,t.clientY);},{passive:true});rdWrap.addEventListener('touchmove',function(e){if(lens&&lens.style.display==='block'){e.preventDefault();var t=e.touches[0];lensShow(t.clientX,t.clientY);}},{passive:false});rdWrap.addEventListener('touchend',function(){lensHide();});rdWrap.addEventListener('touchcancel',function(){lensHide();});var mDown=false;rdWrap.addEventListener('mousedown',function(e){if(e.target.closest('a,button'))return;mDown=true;lensShow(e.clientX,e.clientY);e.preventDefault();});window.addEventListener('mousemove',function(e){if(mDown)lensShow(e.clientX,e.clientY);});window.addEventListener('mouseup',function(){mDown=false;lensHide();});document.body.appendChild(rdOv);}function rdShow(idx){if(idx<0||idx>=allPages.length)return;if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);}rdIdx=idx;rdPage=allPages[idx];rdPage.__slide=rdPage.parentElement;rdWrap.appendChild(rdPage);rdFit=Math.min(window.innerWidth/760,1);rdZoom=rdFit;rdApplyZoom();rdOv.scrollTo(0,0);rdCount.textContent=(idx+1)+' / '+allPages.length;rdPrev.style.visibility=idx>0?'visible':'hidden';rdNext.style.visibility=idx<allPages.length-1?'visible':'hidden';if(wrapper)wrapper.scrollTo({left:idx*window.innerWidth});}function openReader(page){var i=allPages.indexOf(page);if(i<0)i=0;if(!rdOv)rdBuild();rdOv.style.display='block';rdShow(i);}function closeReader(){if(rdPage&&rdPage.__slide){rdPage.__slide.appendChild(rdPage);rdPage=null;}if(rdOv)rdOv.style.display='none';document.documentElement.style.removeProperty('--rdScale');}function build(){wrapper=document.querySelector('.gb-pages')||((document.querySelector('.gb-page')||{}).parentElement);if(!wrapper)return;wrapper.classList.add('gb-pages');var pages=[].slice.call(document.querySelectorAll('.gb-page'));allPages=pages;pages.forEach(function(p){if(!(p.parentElement&&p.parentElement.classList.contains('gb-slide'))){var s=document.createElement('div');s.className='gb-slide';p.parentElement.insertBefore(s,p);s.appendChild(p);}if(!p.__rd){p.__rd=1;p.addEventListener('click',function(e){if(document.querySelector('.gb-paper'))return;if(window.innerWidth>820||window.innerWidth<=767)return;if(e.target.closest('a,button'))return;if(rdOv&&rdOv.style.display!=='none')return;openReader(p);});}});if(!nav){nav=document.createElement('div');nav.className='gb-nav';dotsWrap=document.createElement('div');dotsWrap.className='gb-dots';pages.forEach(function(p,i){var dt=document.createElement('div');dt.className='gb-dot'+(i===0?' on':'');dt.addEventListener('click',function(){wrapper.scrollTo({left:i*window.innerWidth,behavior:'smooth'});});dotsWrap.appendChild(dt);});countEl=document.createElement('div');countEl.className='gb-count';countEl.textContent='01 / '+pages.length;function navBtn(ic,lb,fn){var b=document.createElement('button');b.className='gb-nav-btn';var s=document.createElement('span');s.className='ic';s.textContent=ic;b.appendChild(s);b.appendChild(document.createTextNode(' '+lb));b.addEventListener('click',fn);return b;}var center=document.createElement('div');center.className='gb-nav-center';center.appendChild(dotsWrap);center.appendChild(countEl);nav.appendChild(navBtn('↓','Save',function(){window.print();}));nav.appendChild(center);nav.appendChild(navBtn('🔍','Magnify',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);if(allPages[idx])openReader(allPages[idx]);}));document.body.appendChild(nav);wrapper.addEventListener('scroll',function(){var idx=Math.round(wrapper.scrollLeft/window.innerWidth);var ds=dotsWrap.children;for(var i=0;i<ds.length;i++){ds[i].className='gb-dot'+(i===idx?' on':'');}countEl.textContent=(idx+1<10?'0':'')+(idx+1)+' / '+pages.length;});}built=true;}function fit(){var w=window.innerWidth,mobile=w>767&&w<=820;if(mobile){if(!built)build();if(!wrapper)return;var chrome=document.querySelector('.gb-chrome');var topH=chrome?Math.ceil(chrome.getBoundingClientRect().height):0;var de=document.documentElement;de.style.setProperty('--bkTop',topH+'px');de.style.setProperty('--bkBottom',NAV_H+'px');var availH=window.innerHeight-topH-NAV_H;var scale=Math.min((w-12)/760,(availH-12)/1073);de.style.setProperty('--bkScale',scale);[].slice.call(document.querySelectorAll('.gb-page')).forEach(function(p){if(rdPage===p)return;p.style.transform='';p.style.width='';p.style.maxWidth='';p.style.marginBottom='';p.style.marginLeft='';p.style.marginRight='';p.style.transformOrigin='';});if(nav){var el=bookEl();nav.className='gb-nav'+(isDark(el)?' gb-dark':'');nav.style.background=getComputedStyle(el).backgroundColor;nav.style.display='flex';}}else{if(nav)nav.style.display='none';}}fit();window.addEventListener('resize',fit);window.addEventListener('load',function(){setTimeout(fit,60);});window.addEventListener('beforeprint',function(){if(nav)nav.style.display='none';});window.addEventListener('afterprint',fit);})();" }} />
 
       {/* Toolbar */}
       {!guest && (
@@ -656,7 +655,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           {!guest && <button onClick={() => { navigator.clipboard.writeText(window.location.origin + '/g/' + gb.id).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="Copy the public guest link — no login needed to view">{copied ? <Save size={13} /> : <Share2 size={13} />} {copied ? 'Copied!' : 'Share'}</button>}
           {!guest && <a href={'/g/' + gb.id} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="What the guest sees on their phone">Guest view</a>}
           {!guest && <button onClick={() => setPrintOpen(o => !o)} className={'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold ' + (printOpen ? 'border-neutral-800 bg-neutral-800 text-white' : 'border-neutral-300')} title="What goes on the printed house manual, colour or black & white"><Printer size={13} /> Print options</button>}
-          {!guest && <a href={'/g/' + gb.id + '?print=1'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="The short house manual to leave in the unit — Letter, opens the print dialog">Print manual</a>}
+          {!guest && <a href={'/g/' + gb.id + '?flyer=1'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold" title="The 1-page flyer: Wi-Fi, times, contact, rules, book direct">1-pager</a>}
           <button onClick={() => window.print()} className={'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ' + (guest ? 'border border-neutral-300' : 'bg-neutral-900 text-white')} title="Print the magazine to leave in the unit — Letter, print at 100% with background graphics on"><Printer size={13} /> {guest ? 'Print / PDF' : 'Print magazine'}</button>
           {!guest && <button onClick={del} title="Delete this guidebook" className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600"><Trash2 size={13} /></button>}
         </div>
@@ -680,11 +679,11 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           <div className="gb-chrome sticky top-[57px] z-10 border-b border-black/10 bg-white/95 px-4 py-3 text-neutral-800 backdrop-blur">
             <div className="mx-auto grid max-w-[760px] gap-4 sm:grid-cols-2">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">On the printout</p>
-                <label className="mt-2 flex items-center gap-2 text-[13px]"><input type="checkbox" checked={pp.color} onChange={e => savePrint({ color: e.target.checked })} /> In colour <span className="text-neutral-500">— {theme.label}{pp.color ? '' : ' (off: black & white)'}</span></label>
-                {PRINT_SECTIONS.map(x => (
-                  <label key={x.key} className="mt-1.5 flex items-center gap-2 text-[13px]"><input type="checkbox" checked={pp.hide.indexOf(x.key) < 0} onChange={e => savePrint({ hide: toggleIn(pp.hide, x.key, !e.target.checked) })} /> {x.label}</label>
-                ))}
+                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">What prints for this unit</p>
+                <label className="mt-2 flex items-center gap-2 text-[13px]"><input type="radio" checked={(raw.format || 'magazine') !== 'flyer'} onChange={() => savePrint({ format: 'magazine' })} /> The magazine <a href={'/g/' + gb.id + '?book=1'} target="_blank" rel="noreferrer" className="text-neutral-500 underline">see it</a></label>
+                <label className="mt-1.5 flex items-center gap-2 text-[13px]"><input type="radio" checked={raw.format === 'flyer'} onChange={() => savePrint({ format: 'flyer' })} /> The 1-pager <a href={'/g/' + gb.id + '?flyer=1'} target="_blank" rel="noreferrer" className="text-neutral-500 underline">see it</a></label>
+                <label className="mt-3 flex items-center gap-2 text-[13px]"><input type="checkbox" checked={pp.color} onChange={e => savePrint({ color: e.target.checked })} /> In colour <span className="text-neutral-500">— {theme.label}{pp.color ? '' : ' (off: black & white)'}</span></label>
+                <p className="mt-2 text-[12px] text-neutral-500">Set it for a whole property from Admin › Guidebooks.</p>
               </div>
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">House guide how-tos</p>
@@ -706,7 +705,8 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
               </div>
             </div>
             <div className="mx-auto mt-3 flex max-w-[760px] items-center gap-3 text-[12px] text-neutral-500">
-              <a href={'/g/' + gb.id + '?print=1'} target="_blank" rel="noreferrer" className="rounded-lg bg-neutral-900 px-3 py-1.5 font-semibold text-white">Print manual</a>
+              <a href={'/g/' + gb.id + '?book=1&print=1'} target="_blank" rel="noreferrer" className="rounded-lg bg-neutral-900 px-3 py-1.5 font-semibold text-white">Print magazine</a>
+              <a href={'/g/' + gb.id + '?flyer=1&print=1'} target="_blank" rel="noreferrer" className="rounded-lg border border-neutral-300 px-3 py-1.5 font-semibold text-neutral-800">Print 1-pager</a>
               <span>Text is edited in the book itself (Edit) — the printout uses the same words.</span>
               {printSaved ? <span className="ml-auto">{printSaved}</span> : null}
             </div>
@@ -992,19 +992,47 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
             <Page key={'map' + i} num={++pageNo} id={'map-' + i} ghost="map">
               <Kicker>MAP</Kicker>
               <H size="text-[32px]">{String(it.title || 'map').toLowerCase()}</H>
-              <a href={edit ? undefined : src} target="_blank" rel="noreferrer" className="mt-5 block overflow-hidden rounded-md ring-1 ring-black/10" style={{ background: '#fff' }} title="Open the map full size">
+              <div className="mt-5 block overflow-hidden rounded-md ring-1 ring-black/10" style={{ background: '#fff' }}>
                 <img src={src} alt={String(it.title || 'Map')} className="block w-full object-contain" style={{ maxHeight: 'min(640px, 80vw)' }} />
-              </a>
+              </div>
               {(st.intro || st.steps.length) ? (
                 <div className="mt-4 text-[11px] font-light leading-[1.6]">
                   {st.intro ? <p className="font-normal">{st.intro}</p> : null}
                   {st.steps.length ? <ol className={'mt-1.5 list-decimal space-y-1 pl-5 ' + (st.steps.length > 3 ? 'sm:columns-2 sm:gap-x-8' : '')}>{st.steps.map((x, j) => <li key={j} className="break-inside-avoid">{x}</li>)}</ol> : null}
                 </div>
               ) : null}
-              <p className="mt-auto pt-3 text-[9px] uppercase tracking-[0.2em] opacity-50 print:hidden">Tap the map to open it full size</p>
             </Page>
           )
         })}
+
+        {/* PARKING, YOUR UNIT & THE BEACH — its own page (Jon, 2026-11-06: "the FAQ should have them as a
+            standalone page … on all guidebooks"). Same questions as the 1-pager and the digital guide. */}
+        {(() => {
+          const f = guideFaq(gb)
+          if (!f.qa.length || omit.includes('faq')) return null
+          return (
+            <Page num={++pageNo} id="faq" ghost="faq" hideKey="faq">
+              <Kicker>GOOD TO KNOW</Kicker>
+              <H size="text-[32px]">parking, your unit &amp; the beach</H>
+              <div className="mt-5 space-y-3.5">
+                {f.qa.map((x, i) => (
+                  <div key={i} className="break-inside-avoid border-l-2 pl-3" style={{ borderColor: accentColor }}>
+                    <p className="text-[13px] font-semibold" style={{ fontFamily: SERIF }}>{x.q}</p>
+                    {x.steps.steps.length
+                      ? <div className="mt-0.5 text-[10.5px] font-light leading-[1.55]">{x.steps.intro ? <p>{x.steps.intro}</p> : null}<ol className="mt-0.5 list-decimal pl-4">{x.steps.steps.map((y, j) => <li key={j}>{y}</li>)}</ol></div>
+                      : <p className="mt-0.5 text-[10.5px] font-light leading-[1.55] whitespace-pre-line">{x.a}</p>}
+                  </div>
+                ))}
+              </div>
+              {f.buildingQr ? (
+                <div className="mt-auto flex gap-8 pt-4">
+                  <div className="text-center"><img src={f.buildingQr} alt="" className="h-20 w-20" /><p className="mt-1 text-[8px] uppercase tracking-[0.2em]" style={{ color: accentColor }}>Directions</p></div>
+                  {f.beachQr ? <div className="text-center"><img src={f.beachQr} alt="" className="h-20 w-20" /><p className="mt-1 text-[8px] uppercase tracking-[0.2em]" style={{ color: accentColor }}>Map to the beach</p></div> : null}
+                </div>
+              ) : null}
+            </Page>
+          )
+        })()}
 
         {/* GUIDELINES + CONTACT — combined, lean */}
         <Page num={++pageNo} id="guidelines" ghost="notes">
@@ -1172,7 +1200,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
             <h2 className="mt-4 text-[40px] lowercase font-medium leading-[1.05]" style={{ fontFamily: SERIF }}><L k="booknext.heading" def="book your next stay" /></h2>
             <p className="mt-4 max-w-[42ch] text-[13px] font-light leading-[1.8]" style={{ fontFamily: SERIF }}><L k="booknext.body" def="We would love to host you again. Scan the code to book directly with us and enjoy a little something off your next stay." rows={3} /></p>
             <div className="mt-7 rounded-2xl bg-white p-3 shadow-[0_2px_20px_rgba(0,0,0,0.10)]">
-              <a href={lbl('booknext.url', 'https://stay-hospitality.com')} target="_blank" rel="noopener noreferrer"><img src={'https://api.qrserver.com/v1/create-qr-code/?size=340x340&data=' + encodeURIComponent(lbl('booknext.url', 'https://stay-hospitality.com'))} alt="Book your next stay" className="h-40 w-40" /></a>
+              <img src={'https://api.qrserver.com/v1/create-qr-code/?size=340x340&data=' + encodeURIComponent(lbl('booknext.url', 'https://stay-hospitality.com'))} alt="Book your next stay" className="h-40 w-40" />
             </div>
             <div className="mt-6 flex items-center gap-2 text-[12px]">
               <span style={{ fontFamily: SERIF }}><L k="booknext.codeLabel" def="Use code" /></span>

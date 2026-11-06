@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Check, ExternalLink, Loader2, Pencil, Printer, Smartphone, SkipForward, Wrench, ShieldCheck, Images, ArrowLeft } from 'lucide-react'
 
 type Flag = { level: 'block' | 'ask' | 'tidy'; page: string; text: string }
-type Item = { id: string; building: string; unit: string; name: string; stage: 'draft' | 'approved' | 'live'; flags: Flag[]; printOk: boolean; needsFix: { note: string; at: string; by: string } | null; note: string; photosChecked: boolean; pushError: string }
+type Item = { format: 'magazine' | 'flyer'; id: string; building: string; unit: string; name: string; stage: 'draft' | 'approved' | 'live'; flags: Flag[]; printOk: boolean; needsFix: { note: string; at: string; by: string } | null; note: string; photosChecked: boolean; pushError: string }
 
 const btn = 'inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:bg-app disabled:opacity-50'
 const go = 'inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-[13px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50'
@@ -116,6 +116,15 @@ export function GuidebookWalk() {
   async function clearFix(it: Item) {
     try { await post({ id: it.id, action: 'fix', clear: true }); patch(it.id, { needsFix: null }); setCur(it.id) } catch (e: any) { setMsg(String(e.message || e)) }
   }
+  // Magazine or 1-pager — set for every unit of the property at once.
+  async function setFormat(f: 'magazine' | 'flyer') {
+    setBusy('format')
+    const ids = inProp.map(x => x.id)
+    for (const id of ids) { try { await post({ id, action: 'format', format: f }) } catch { /* shown below if all fail */ } }
+    setItems(xs => xs.map(x => (x.building === prop ? { ...x, format: f } : x)))
+    setMsg(prop + ' prints as ' + (f === 'flyer' ? 'the 1-pager' : 'the magazine') + ' (' + ids.length + ' units).')
+    setBusy('')
+  }
   async function unitCheck() {
     const ids = inProp.filter(x => !x.photosChecked).map(x => x.id)
     if (!ids.length) { setMsg('Every book in ' + prop + ' has had its unit check.'); return }
@@ -192,12 +201,22 @@ export function GuidebookWalk() {
                 <p className="truncate text-[12px] text-muted">{item.name} · {queue.findIndex(x => x.id === item.id) + 1} of {queue.length} in {prop}</p>
               </div>
               <div className="flex overflow-hidden rounded-lg border border-line text-[12px] font-semibold">
-                <button onClick={() => setStep('print')} className={'inline-flex items-center gap-1 px-3 py-1.5 ' + (step === 'print' ? 'bg-ink text-white' : 'bg-white text-ink')}>{item.printOk ? <Check size={13} /> : <Printer size={13} />} 1 · Printable</button>
+                <button onClick={() => setStep('print')} className={'inline-flex items-center gap-1 px-3 py-1.5 ' + (step === 'print' ? 'bg-ink text-white' : 'bg-white text-ink')}>{item.printOk ? <Check size={13} /> : <Printer size={13} />} 1 · {item.format === 'flyer' ? '1-pager' : 'Magazine'}</button>
                 <button onClick={() => setStep('guest')} className={'inline-flex items-center gap-1 px-3 py-1.5 ' + (step === 'guest' ? 'bg-ink text-white' : 'bg-white text-ink')}>{item.stage === 'live' ? <Check size={13} /> : <Smartphone size={13} />} 2 · Guest guide</button>
               </div>
             </div>
             {step === 'print'
-              ? <iframe key={'p' + item.id} src={'/g/' + item.id + '?printview=1'} className="h-[72vh] w-full rounded-lg border border-line bg-white" title="Printable" />
+              ? <>
+                  <div className="mb-2 flex items-center gap-2 text-[12px]">
+                    <span className="text-muted">{prop} prints as</span>
+                    <div className="flex overflow-hidden rounded-lg border border-line font-semibold">
+                      <button disabled={!!busy} onClick={() => setFormat('magazine')} className={'px-2.5 py-1 ' + (item.format !== 'flyer' ? 'bg-ink text-white' : 'bg-white text-ink')}>Magazine</button>
+                      <button disabled={!!busy} onClick={() => setFormat('flyer')} className={'px-2.5 py-1 ' + (item.format === 'flyer' ? 'bg-ink text-white' : 'bg-white text-ink')}>1-pager</button>
+                    </div>
+                    <span className="text-muted">— for every unit of the property</span>
+                  </div>
+                  <iframe key={'p' + item.id + item.format} src={'/g/' + item.id + '?printview=1'} className="h-[72vh] w-full rounded-lg border border-line bg-white" title="Printable" />
+                </>
               : <div className="flex justify-center"><div className="rounded-[32px] border-[9px] border-neutral-900 bg-neutral-900 shadow-lg"><iframe key={'g' + item.id} src={'/g/' + item.id} className="h-[70vh] max-h-[760px] w-[380px] max-w-[84vw] rounded-[22px] bg-white" title="Guest guide" /></div></div>}
           </div>
 

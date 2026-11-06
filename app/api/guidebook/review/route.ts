@@ -51,7 +51,7 @@ export async function GET() {
     const rv = reviewOf(gb)
     items.push({
       id: gb.id, building, unit: guestUnitFull(l) || String(l.nickname || l.title || ''), name: String(gb.listing_name || gb.title || '').split(/\s+\|\s+/)[0],
-      stage: stageOf(gb), flags: auditGuidebook(gb, l), printOk: !!(rv.pages && rv.pages.print), needsFix: rv.needsFix || null, note: rv.note || '', photosChecked: !!rv.photosCheckedAt, pushError: rv.pushError || '',
+      stage: stageOf(gb), flags: auditGuidebook(gb, l), printOk: !!(rv.pages && rv.pages.print), needsFix: rv.needsFix || null, format: gb.sections?._print?.format === 'flyer' ? 'flyer' : 'magazine', note: rv.note || '', photosChecked: !!rv.photosCheckedAt, pushError: rv.pushError || '',
     })
   }
   items.sort((a, b) => rankB(a.building) - rankB(b.building) || a.building.localeCompare(b.building) || a.unit.localeCompare(b.unit, undefined, { numeric: true }))
@@ -101,6 +101,13 @@ export async function POST(req: NextRequest) {
     else rv.needsFix = { note: String(body?.note || '').slice(0, 2000), at: now, by: who }
     const err = await save(body?.clear === true ? {} : { status: 'draft' })
     return err ? NextResponse.json({ error: err }, { status: 500 }) : NextResponse.json({ ok: true, review: rv })
+  }
+  // PRINT FORMAT — what prints for this unit: the magazine or the 1-pager (set per property from Admin).
+  if (action === 'format') {
+    const f = body?.format === 'flyer' ? 'flyer' : 'magazine'
+    sections._print = { ...(sections._print || {}), format: f }
+    const err = await save()
+    return err ? NextResponse.json({ error: err }, { status: 500 }) : NextResponse.json({ ok: true, format: f })
   }
   if (action === 'unapprove') {
     delete rv.approvedAt; delete rv.approvedBy
