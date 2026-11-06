@@ -23,7 +23,7 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 const urlOf = (p: any): string => (typeof p === 'string' ? p : p && (p.original || p.url || p.thumbnail)) || ''
 const SCENE = ['bedroom', 'living', 'kitchen', 'dining', 'bathroom', 'pool', 'beach', 'view', 'exterior', 'amenity']
@@ -133,22 +133,39 @@ export async function POST(req: NextRequest) {
     for (const u of [...Object.values(pa).map(urlOf), ...(Array.isArray(sections._photos) ? sections._photos.map(urlOf) : [])]) if (u && /^https?:/.test(u) && pool.indexOf(u) < 0) pool.push(u)
     const list = pool.slice(0, 18)
     if (!list.length) return NextResponse.json({ ok: true, checked: 0 })
-    const content: any[] = list.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
-    content.push({ type: 'text', text: 'For EACH image return a JSON array of {"i":index,"collage":true|false,"hasText":true|false,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|map|logo|other","quality":1-5,"coverWorthy":true|false}. collage = several photos combined in one frame (grid, split screen, side-by-side, before/after, montage, picture-in-picture) — when in doubt, true. hasText = any overlaid text, badges, logos, watermarks or captions. category "map" = a map, floor plan or diagram. coverWorthy = one striking, well-lit single photo that works full-bleed behind white text. STRICT minified JSON array only.' })
     const model = await modelFor('guidebook')
-    const call = await anthropicMessages(key, { model, max_tokens: 2500, messages: [{ role: 'user', content }] }, 'claude-sonnet-4-6', 'guidebook')
-    const parsed = call.ok ? parseJson(textOf(call.data) || '') : null
-    if (!Array.isArray(parsed)) return NextResponse.json({ error: 'The photo check did not answer — try again.' }, { status: 502 })
+    const ASK = 'For EACH image return a JSON array of {"i":index,"collage":true|false,"hasText":true|false,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|map|logo|other","quality":1-5,"coverWorthy":true|false}. collage = several photos combined in one frame (grid, split screen, side-by-side, before/after, montage, picture-in-picture) — when in doubt, true. hasText = any overlaid text, badges, logos, watermarks or captions. category "map" = a map, floor plan or diagram. coverWorthy = one striking, well-lit single photo that works full-bleed behind white text. STRICT minified JSON array only.'
+    // One bad picture (a dead link, an unsupported file) fails the whole request, so a failed batch is
+    // split until the bad ones are isolated; those are marked dead and never used on a page.
+    const results: Record<string, any> = {}
+    const dead: string[] = []
+    let lastErr = ''
+    const classify = async (urls: string[]): Promise<void> => {
+      if (!urls.length) return
+      const content: any[] = urls.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
+      content.push({ type: 'text', text: ASK })
+      const call = await anthropicMessages(key, { model, max_tokens: 2500, messages: [{ role: 'user', content }] }, 'claude-sonnet-4-6', 'guidebook')
+      const parsed = call.ok ? parseJson(textOf(call.data) || '') : null
+      if (Array.isArray(parsed)) { for (const p of parsed) { const u = urls[Number(p?.i)]; if (u) results[u] = p } return }
+      lastErr = String(call.data?.error?.message || ('HTTP ' + call.status)).slice(0, 200)
+      if (urls.length === 1) { if (!call.ok && call.status === 400) dead.push(urls[0]); return }
+      const half = Math.ceil(urls.length / 2)
+      await classify(urls.slice(0, half)); await classify(urls.slice(half))
+    }
+    await classify(list)
+    if (!Object.keys(results).length && !dead.length) return NextResponse.json({ error: 'The photo check did not answer — ' + (lastErr || 'try again') }, { status: 502 })
+    const parsed: any[] = Object.entries(results).map(([u, p]) => ({ ...p, i: list.indexOf(u) }))
+    for (const u of dead) parsed.push({ i: list.indexOf(u), collage: false, hasText: true, category: 'other', quality: 0, coverWorthy: false, dead: true })
     const meta: any[] = Array.isArray(sections._photoMeta) ? sections._photoMeta.slice() : []
     const byUrl: Record<string, any> = {}
     for (const m of meta) if (m && m.url) byUrl[m.url] = m
     for (const p of parsed) {
       const i = Number(p?.i); const u = list[i]
       if (!u) continue
-      byUrl[u] = { ...(byUrl[u] || { url: u, brightness: 'mid', label: '' }), url: u, collage: p.collage === true, hasText: p.hasText === true, category: String(p.category || byUrl[u]?.category || 'other'), quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true }
+      byUrl[u] = { ...(byUrl[u] || { url: u, brightness: 'mid', label: '' }), url: u, collage: p.collage === true, hasText: p.hasText === true, dead: p.dead === true, category: String(p.category || byUrl[u]?.category || 'other'), quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true }
     }
     sections._photoMeta = Object.values(byUrl)
-    const ok = (u: string) => { const m = byUrl[u]; return m && !m.collage && !m.hasText && m.category !== 'map' && m.category !== 'logo' && m.category !== 'appliance' }
+    const ok = (u: string) => { const m = byUrl[u]; return m && !m.dead && !m.collage && !m.hasText && m.category !== 'map' && m.category !== 'logo' && m.category !== 'appliance' }
     const ranked = list.filter(ok).sort((a, b) => ((SCENE.includes(byUrl[b].category) ? 1 : 0) - (SCENE.includes(byUrl[a].category) ? 1 : 0)) || (byUrl[b].quality - byUrl[a].quality))
     const used = new Set(Object.values(pa).map(urlOf).filter(ok))
     const swapped: string[] = []
@@ -166,7 +183,7 @@ export async function POST(req: NextRequest) {
     rv.photosCheckedAt = now
     const err = await save()
     const collages = list.filter(u => byUrl[u]?.collage).length
-    return err ? NextResponse.json({ error: err }, { status: 500 }) : NextResponse.json({ ok: true, checked: list.length, collages, swapped })
+    return err ? NextResponse.json({ error: err }, { status: 500 }) : NextResponse.json({ ok: true, checked: list.length, collages, dead: dead.length, swapped })
   }
   return NextResponse.json({ error: 'unknown action' }, { status: 400 })
 }
