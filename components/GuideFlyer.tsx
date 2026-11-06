@@ -29,7 +29,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
   const rules = d.rules.slice(0, 6)
   const outList = d.checkoutList.slice(0, 5)
   // Parking and the beach in a line each — the full answers (and maps) live in the guide and the magazine.
-  const faq = guideFaq(gb).qa.filter(x => /park|beach/i.test(x.q)).map(x => ({ q: x.q, a: x.steps.steps.length ? (x.steps.intro || x.steps.steps[0]) : x.a }))
+  const faq = guideFaq(gb).qa.filter(x => /park|beach/i.test(x.q)).map(x => ({ q: x.q, a: x.steps.steps.length ? [x.steps.intro, ...x.steps.steps.map((y, j) => (j + 1) + '. ' + y)].filter(Boolean).join(' ') : x.a }))
   useEffect(() => { if (autoPrint) { const x = setTimeout(() => window.print(), 900); return () => clearTimeout(x) } }, [autoPrint])
 
   return (
@@ -95,7 +95,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
 
         {faq.length ? (
           <div style={{ display: 'grid', gridTemplateColumns: faq.length > 1 ? '1fr 1fr' : '1fr', gap: '14pt', marginTop: '11pt' }}>
-            {faq.map((x, i) => <div key={i}><p className="gf-h">{x.q.replace(/\?$/, '')}</p><p className="gf-li">{short(x.a, 260)}</p></div>)}
+            {faq.map((x, i) => <div key={i}><p className="gf-h">{x.q.replace(/\?$/, '')}</p><p className="gf-li">{short(x.a, 420)}</p></div>)}
           </div>
         ) : null}
 
