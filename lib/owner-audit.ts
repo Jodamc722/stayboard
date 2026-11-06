@@ -1184,6 +1184,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   }
 
   const items: AuditItem[] = []
+  const ccByKey: Record<string, { chan: number; perNightBase: number; perNightChan: number; ratio: number; monthNights: number; totalNights: number; rental: number; split: boolean }> = {}
   const prep: PrepItem[] = []
   // HOW MUCH THIS COMPANY DISCOUNTS FOR LENGTH, measured from the month's own book (see
   // lib/owner-audit-rate for why this is one portfolio-wide number and not another cohort axis).
@@ -1234,37 +1235,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
       if (on.negative && g.rental < -0.005) {
         flags.push({ type: 'negative', severity: 'high', amount: g.rental, detail: 'Negative rental income — check for erroneous refund, chargeback or duplicate reversal.' })
       }
-      // CHANNEL COMMISSION TAKEN TWICE (Jon, 2026-11-06 — Watson Jesyca, Capri 111: −$9.19 rental).
-      // Owner net rental should be (accommodation + markup) − the channel's commission. When Guesty
-      // processes a booking wrong it deducts the commission a second time, so the per-night shortfall
-      // is ~2× the channel commission. Compared per night so split-month stays work. Every channel,
-      // every booking with a commission on it; the fix is "Re-process reservation" in Guesty.
-      if (on.double_commission && !canceled && res && monthNights > 0 && totalNights > 0) {
+      // CHANNEL-COMMISSION CHECK — measured here, judged after every row exists (see the post-pass
+      // "THE CHANNEL COMMISSION, AGAINST ITS OWN PATTERN" below).
+      if (!canceled && res && monthNights > 0 && totalNights > 0) {
         const chan = Number((res as any).hsf) || 0
-        const inv = folioItems
-        const base = inv.filter(x => x.type === 'AF' || x.type === 'MAR').reduce((a, x) => a + x.amount, 0)
+        const base = folioItems.filter(x => x.type === 'AF' || x.type === 'MAR').reduce((a, x) => a + x.amount, 0)
         if (chan > 5 && base > 0) {
-          const perNightBase = base / totalNights
-          const perNightChan = chan / totalNights
-          const shortfall = perNightBase - g.rental / monthNights        // what came off each night
-          const ratio = perNightChan > 0 ? shortfall / perNightChan : 0
-          const extra = money((shortfall - perNightChan) * monthNights)
-          // OVERPAYMENTS (Jon, 2026-11-06: "also add overpayment flags"). The other direction: the
-          // channel commission was NOT (or only partly) taken off the owner's rental, so the owner is
-          // paid money that went to the channel.
-          const over = money((perNightChan - shortfall) * monthNights)
-          if (on.overpaid && ratio <= 0.5 && over >= 5) {
-            flags.push({
-              type: 'overpaid', severity: 'high', amount: over,
-              detail: 'Owner looks OVERPAID by about $' + over.toFixed(2) + ' — the channel commission ($' + chan.toFixed(2) + ') was not taken off the rental' + (ratio > 0.05 ? ' in full' : '') + (totalNights !== monthNights ? ' (' + monthNights + ' of ' + totalNights + ' nights)' : '') + '. Expected rental ≈ $' + money((perNightBase - perNightChan) * monthNights).toFixed(2) + ', statement shows $' + g.rental.toFixed(2) + '. Check the booking in Guesty (re-process if the folio changed), then pull the month again.',
-            })
-          }
-          if (ratio >= 1.6 && ratio <= 2.4 && extra >= 5) {
-            flags.push({
-              type: 'double_commission', severity: 'high', amount: extra,
-              detail: 'The channel commission ($' + chan.toFixed(2) + ') looks deducted TWICE from the owner\'s rental — about $' + extra.toFixed(2) + ' too little rental this month' + (totalNights !== monthNights ? ' (' + monthNights + ' of ' + totalNights + ' nights)' : '') + '. Expected rental ≈ $' + money((perNightBase - perNightChan) * monthNights).toFixed(2) + ', statement shows $' + g.rental.toFixed(2) + '. Fix: Guesty → reservation → Accounting → Re-process reservation, then pull the month again.',
-            })
-          }
+          const perNightBase = base / totalNights, perNightChan = chan / totalNights
+          const shortfall = perNightBase - g.rental / monthNights
+          ccByKey[g.resCode] = { chan, perNightBase, perNightChan, ratio: shortfall / perNightChan, monthNights, totalNights, rental: g.rental, split: monthNights < totalNights }
         }
       }
       if (on.refund && g.lines.some(l => REFUND_RE.test(l.label))) {
@@ -1743,6 +1722,46 @@ export async function buildAudit(month: string): Promise<AuditData> {
         if (!it.flags.some(x => x.severity !== 'info')) { it.needsReview = false; if (!it.touched && it.status === 'review') it.status = 'clear' }
       }
       void oid
+    }
+  }
+
+  // THE CHANNEL COMMISSION, AGAINST ITS OWN PATTERN (Jon, 2026-11-06: Watson Jesyca, Capri 111,
+  // −$9.19 rental — "add this audit to all reservations in the statement review, also add
+  // overpayment flags"). For each booking: ratio = what came off the owner's rental per night ÷ the
+  // channel's commission per night (raw.money.hostServiceFee). The NORMAL ratio differs by building
+  // and channel (Booking.com is 1.0 — the commission comes off the rental once; some owner set-ups
+  // put the cleaning share on the owner too), so each booking is judged against the median of its
+  // own building + channel this month, not a fixed rule:
+  //   about one commission MORE than normal  → deducted twice (owner underpaid)
+  //   well BELOW normal                       → commission not taken off (owner overpaid)
+  // Split-month stays are judged on their in-month nights with a wider margin (nightly rates vary).
+  if (rules.enabled.double_commission || rules.enabled.overpaid) {
+    const groupOf = (it: AuditItem) => (it.unit || '').split(/[\s-]/)[0].toLowerCase() + '|' + (it.source || '').toLowerCase()
+    const samples: Record<string, number[]> = {}
+    for (const it of items) { const c = ccByKey[it.resCode]; if (c && !c.split && it.kind === 'reservation') (samples[groupOf(it)] = samples[groupOf(it)] || []).push(c.ratio) }
+    const med = (a: number[]) => { const b = a.slice().sort((x, y) => x - y); return b[Math.floor(b.length / 2)] }
+    for (const it of items) {
+      const c = ccByKey[it.resCode]
+      if (!c || it.kind !== 'reservation') continue
+      const smp = samples[groupOf(it)] || []
+      const norm = smp.length >= 4 ? med(smp) : 1
+      const d = c.ratio - norm
+      const nightsTxt = c.split ? ' (' + c.monthNights + ' of ' + c.totalNights + ' nights this month)' : ''
+      const expected = money((c.perNightBase - c.perNightChan * norm) * c.monthNights)
+      const normTxt = smp.length >= 4 && Math.abs(norm - 1) > 0.15 ? ' Normal for ' + (it.unit || '').split(/[\s-]/)[0] + ' on this channel is ' + norm.toFixed(1) + '× the commission.' : ''
+      const flag = (f: AuditFlag) => {
+        it.flags.push(f)
+        if (!it.needsReview) { it.needsReview = true; if (!it.touched && it.status === 'clear') it.status = 'review' }
+      }
+      if (rules.enabled.double_commission && d >= 0.65 && d <= 1.35 && (!c.split || (d >= 0.8 && d <= 1.2))) {
+        const extra = money(d * c.perNightChan * c.monthNights)
+        if (extra >= 5) flag({ type: 'double_commission', severity: 'high', amount: extra,
+          detail: 'Channel commission ($' + c.chan.toFixed(2) + ') looks deducted TWICE — owner rental about $' + extra.toFixed(2) + ' short' + nightsTxt + '. Expected ≈ $' + expected.toFixed(2) + ', statement shows $' + c.rental.toFixed(2) + '.' + normTxt + ' Fix: Guesty → reservation → Accounting → Re-process reservation, then pull the month again.' })
+      } else if (rules.enabled.overpaid && d <= (c.split ? -0.85 : -0.6)) {
+        const over = money(-d * c.perNightChan * c.monthNights)
+        if (over >= 5) flag({ type: 'overpaid', severity: 'high', amount: over,
+          detail: 'Owner looks OVERPAID by about $' + over.toFixed(2) + nightsTxt + ' — the channel commission ($' + c.chan.toFixed(2) + ') was not fully taken off the rental. Expected ≈ $' + expected.toFixed(2) + ', statement shows $' + c.rental.toFixed(2) + '.' + normTxt + ' Check the booking in Guesty (re-process if the folio changed), then pull the month again.' })
+      }
     }
   }
 
