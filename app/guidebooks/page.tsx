@@ -10,6 +10,7 @@ import { LeanHead, Pill, Tag, LeanSection, LeanEmpty } from '@/components/lean'
 import { PushGuestyButton } from '@/components/PushGuestyButton'
 import { EmergencyBackfillButton } from '@/components/EmergencyBackfillButton'
 import { pageRows } from '@/lib/db-page'
+import { rollupBuilding } from '@/lib/optimize-score'
 import { themeForBook, themeById } from '@/lib/guide-themes'
 import { SmartThemesButton } from '@/components/SmartThemesButton'
 
@@ -44,7 +45,8 @@ export default async function GuidebooksPage() {
   if (gbIds.length) {
     try {
       const { data: ls } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building').in('id', gbIds)
-      for (const l of (ls || [])) { nickById[l.id] = l.nickname || l.title || ''; buildingById[l.id] = l.building || 'Other' }
+      // Rolled up to the property (Jon, 2026-11-06: "Salato is one building" — Guesty has Salato 302, Salato 304…).
+      for (const l of (ls || [])) { nickById[l.id] = l.nickname || l.title || ''; buildingById[l.id] = (l.building ? rollupBuilding(l.building, l.nickname) : '') || 'Other' }
     } catch { /* listings table missing */ }
   }
   const _groups: Record<string, any[]> = {}
