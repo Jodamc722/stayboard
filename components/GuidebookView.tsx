@@ -4,6 +4,7 @@
 // gradient scrim (text always readable over photos), vision-assigned imagery per page, lean page
 // set (respects sections.omit + empty content), Salato-style hairline accents, page numbers, and
 // print-exact US Letter (8.5x11) output (@page, exact colors, no app chrome).
+import { themeForBook, THEME_CHOICES, SMART } from '@/lib/guide-themes'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -118,7 +119,8 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   const [badPhotos, setBadPhotos] = useState<string[]>([])
   const photoOk = (u?: string | null): boolean => !!u && badPhotos.indexOf(u) < 0
   const photoFailed = (u?: string | null) => { if (u) setBadPhotos(b => b.indexOf(u) < 0 ? b.concat(u) : b) }
-  const dark = gb.theme === 'dark'
+  const theme = themeForBook(gb)
+  const dark = theme.dark
   const showTags = s._showTags !== false
 
   // v3.9: PHOTO PICKER — every photo in the book is swappable in Edit mode. Pool = the book's
@@ -253,9 +255,10 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   // Keeps tap-to-call on the digital view when an editable text contains the service number.
   const withTel = (txt: string) => { const num = String(s.contact?.customerService || ''); if (edit || !num || !txt.includes(num)) return <>{txt}</>; const i = txt.indexOf(num); return <>{txt.slice(0, i)}<Tel v={num}>{num}</Tel>{txt.slice(i + num.length)}</> }
 
-  const paper = dark ? '#141311' : '#fbf9f5'
-  const ink = dark ? '#efeae2' : '#1f1d1a'
-  const accentColor = dark ? '#c9a96a' : '#8a7350'
+  // Colour theme (lib/guide-themes). Dark luxe and Coastal editorial keep their original book colours.
+  const paper = theme.id === 'editorial' ? '#fbf9f5' : theme.paper
+  const ink = theme.ink
+  const accentColor = theme.accent
   const has = (key: string, contentOk: boolean) => !omit.includes(key) && contentOk
 
   // Clickable contact details for the digital/shared view: phones dial, addresses open Maps,
@@ -390,7 +393,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
   ].filter(Boolean) as any[]
 
   return (
-    <div style={{ background: dark ? '#1c1a17' : '#eceae6', minHeight: '100vh' }}>
+    <div style={{ background: dark ? theme.cover : '#eceae6', minHeight: '100vh' }}>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" />
       {/* Inner HTML, not a text child: React escapes '>' and quotes in a <style> text child and the
           browser keeps them literally, which breaks the selectors and fails hydration (see ReportView). */}
@@ -605,10 +608,10 @@ export function GuidebookView({ initial, guest = false, photoToken = '' }: { ini
           ? <input value={gb.title || ''} onChange={e => setGb({ ...gb, title: e.target.value })} className="max-w-[40%] flex-1 rounded-lg border border-dashed border-neutral-400 px-2 py-1 text-sm font-semibold text-neutral-800" />
           : <div className="gb-title truncate max-w-[40%] text-sm font-semibold text-neutral-800">{gb.title}</div>}
         <div className="gb-tools flex flex-wrap items-center gap-2">
-          {!guest && <select value={gb.theme} onChange={e => setGb({ ...gb, theme: e.target.value })} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
-            <option value="editorial">Coastal editorial</option>
-            <option value="dark">Dark luxe</option>
+          {!guest && <select value={gb.theme || 'editorial'} onChange={e => setGb({ ...gb, theme: e.target.value })} title={theme.smart ? 'Smart pick: ' + theme.label + ' — ' + theme.smart.why : theme.vibe} className="rounded-lg border border-neutral-300 px-2 py-1.5 text-xs">
+            {THEME_CHOICES.map(o => <option key={o.id} value={o.id}>{o.id === SMART && theme.smart ? 'Smart → ' + theme.label : o.label}</option>)}
           </select>}
+          {!guest ? <span className="hidden sm:inline-flex items-center gap-0.5" title={theme.label + ' · ' + (theme.smart ? theme.smart.why : theme.vibe)}>{theme.swatch.map((x, i) => <span key={i} className="h-3.5 w-3.5 rounded-full border border-black/10" style={{ background: x }} />)}</span> : null}
           {!guest && <button onClick={() => matRef.current?.click()} disabled={matBusy} className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold disabled:opacity-60" title="Upload building info, appliance photos, or manuals — the AI folds them into the book">{matBusy ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />} {matBusy ? 'Reading…' : 'Add materials'}</button>}
           {!guest && <input ref={matRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" className="hidden" onChange={e => addMaterials(e.target.files)} />}
           {pickPath ? (

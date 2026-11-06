@@ -95,7 +95,7 @@ export function BulkGuidebookBuilder() {
     for (const l of chosen) {
       setResults((rs) => rs.map((x) => (x.id === l.id ? { ...x, status: 'running' } : x)))
       try {
-        const r = await fetch('/api/guidebook', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId: l.id, answers, theme: 'editorial', tone: 'warm', audience: 'all guests', highlights: '', selectedRecs, force: overwrite }) })
+        const r = await fetch('/api/guidebook', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ listingId: l.id, answers, theme: 'smart', tone: 'warm', audience: 'all guests', highlights: '', selectedRecs, force: overwrite }) })
         const d = await r.json().catch(() => ({}))
         const skipped = !!(d?.exists && !d?.id)
         const ok = r.ok && d?.id

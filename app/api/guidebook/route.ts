@@ -107,6 +107,14 @@ export async function PUT(req: NextRequest) {
   const user = await requireUser()
   if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const body = await req.json().catch(() => ({} as any))
+  // ONE THEME FOR EVERY BOOK (Jon, 2026-11-06: smart themes for every property). { action: 'theme_all',
+  // theme: 'smart' } sets the saved theme on every guidebook; 'smart' then resolves per property.
+  if (body?.action === 'theme_all') {
+    const theme = str(body?.theme || 'smart').slice(0, 40)
+    const { data, error } = await supabaseAdmin().from('guidebooks').update({ theme, updated_at: new Date().toISOString() }).neq('theme', theme).select('id')
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, changed: (data || []).length })
+  }
   const id = str(body?.id)
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const patch: Record<string, any> = { updated_at: new Date().toISOString() }
@@ -161,7 +169,8 @@ export async function POST(req: NextRequest) {
   const selectedAuditHowTos: any[] = Array.isArray(body?.selectedAuditHowTos) ? body.selectedAuditHowTos.slice(0, 10).map((x: any) => ({ title: String(x && x.title || '').slice(0, 120), body: String(x && x.body || '').slice(0, 600) })).filter((x: any) => x.title && x.body) : []
   const force = body?.force === true
   const typed = (body?.answers && typeof body.answers === 'object') ? body.answers : {}
-  const theme = str(body?.theme) || 'editorial'
+  // New books pick their colours from the property (lib/guide-themes smart); 'editorial' was the old default.
+  const theme = str(body?.theme) || 'smart'
   const tone = str(body?.tone) || 'warm'
   const audience = str(body?.audience) || 'all guests'
   const highlights = str(body?.highlights).slice(0, 1500)

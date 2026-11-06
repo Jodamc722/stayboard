@@ -29,7 +29,7 @@ async function withListing(gb: any): Promise<any> {
   const bg = buildingGuideFor([l?.nickname, l?.building, gb?.listing_name, gb?.title].filter(Boolean).join(' '))
   // The building's beach line only when it is written for guests (staff notes say "confirm…").
   const beach = bg && bg.recs.beach && !/confirm/i.test(bg.recs.beach) ? bg.recs.beach : ''
-  return { ...gb, _unit: unitLabel(l), _beach: beach }
+  return { ...gb, _unit: unitLabel(l), _beach: beach, _building: l?.building || '', _nickname: l?.nickname || '' }
 }
 
 export const dynamic = 'force-dynamic'

@@ -24,6 +24,7 @@ import {
   Compass, Siren, ExternalLink, MessageSquare, Navigation, Hospital, ShieldAlert, LogOut,
 } from 'lucide-react'
 import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
+import { themeForBook } from '@/lib/guide-themes'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -116,12 +117,10 @@ export function guideData(gb: any) {
 export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: any; autoPrint?: boolean; photoToken?: string }) {
   const d = useMemo(() => guideData(gb), [gb])
   const { lbl } = d
-  const dark = gb?.theme === 'dark'
-  const c = {
-    paper: dark ? '#141311' : '#f7f4ee', card: dark ? '#1d1b18' : '#ffffff', ink: dark ? '#efeae2' : '#1f1d1a',
-    mute: dark ? 'rgba(239,234,226,0.64)' : 'rgba(31,29,26,0.62)', accent: dark ? '#c9a96a' : '#8a7350',
-    line: dark ? 'rgba(239,234,226,0.1)' : 'rgba(31,29,26,0.08)', tint: dark ? 'rgba(201,169,106,0.12)' : 'rgba(138,115,80,0.09)',
-  }
+  // Colour theme (lib/guide-themes): the saved one, or the smart pick for this property.
+  const t = useMemo(() => themeForBook(gb), [gb])
+  const dark = t.dark
+  const c = { paper: t.paper, card: t.card, ink: t.ink, mute: t.mute, accent: t.accent, line: t.line, tint: t.tint }
 
   const nav = useMemo(() => ([
     (d.entry || d.parking || d.gettingThere) && { id: 'arrival', label: 'Arrival' },
@@ -181,7 +180,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
         <div className="mx-auto max-w-[680px]">
 
           {/* COVER */}
-          <header className="relative overflow-hidden md:mt-6 md:rounded-3xl" style={{ height: 'min(46vh, 440px)', minHeight: 300, background: '#1c1a17' }}>
+          <header className="relative overflow-hidden md:mt-6 md:rounded-3xl" style={{ height: 'min(46vh, 440px)', minHeight: 300, background: t.cover }}>
             {d.cover ? <img src={d.cover} alt="" className="absolute inset-0 h-full w-full object-cover" fetchPriority="high" /> : null}
             <div className="absolute inset-0" style={{ background: 'linear-gradient(to bottom, rgba(10,10,12,0.35), rgba(10,10,12,0) 30%, rgba(10,10,12,0.78) 100%)' }} />
             <div className="absolute inset-x-0 top-0 flex items-center justify-between px-5" style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 14px)' }}>
@@ -438,7 +437,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
         </div>
 
         {/* THUMB BAR */}
-        <nav className="fixed inset-x-0 bottom-0 z-30" style={{ background: dark ? 'rgba(20,19,17,0.94)' : 'rgba(247,244,238,0.94)', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', borderTop: '1px solid ' + c.line, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        <nav className="fixed inset-x-0 bottom-0 z-30" style={{ background: t.paper + 'f0', backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)', borderTop: '1px solid ' + c.line, paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
           <div className="mx-auto flex max-w-[680px] items-stretch">
             {d.wifiNet ? <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold"><Wifi size={19} style={{ color: c.accent }} />Wi-Fi</button> : null}
             {d.howto.length ? <button type="button" onClick={() => go('howto')} className="flex flex-1 flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold"><ListChecks size={19} style={{ color: c.accent }} />Guide</button> : null}

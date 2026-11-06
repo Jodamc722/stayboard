@@ -10,6 +10,8 @@ import { LeanHead, Pill, Tag, LeanSection, LeanEmpty } from '@/components/lean'
 import { PushGuestyButton } from '@/components/PushGuestyButton'
 import { EmergencyBackfillButton } from '@/components/EmergencyBackfillButton'
 import { pageRows } from '@/lib/db-page'
+import { themeForBook, themeById } from '@/lib/guide-themes'
+import { SmartThemesButton } from '@/components/SmartThemesButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,6 +64,7 @@ export default async function GuidebooksPage() {
         <Link href="/guidebooks/fix" title="Fix many guidebooks at once with AI" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line bg-white text-ink px-2.5 py-1 hover:bg-app">Bulk fix <Sparkles size={13} /></Link>
         <EmergencyBackfillButton />
         <PushGuestyButton />
+        <SmartThemesButton />
       </LeanHead>
       {rows.length === 0 ? (
         <LeanEmpty>No guidebooks yet — generate one from a unit under <Link href="/buildings" className="underline font-semibold">Properties</Link>.</LeanEmpty>
@@ -75,7 +78,7 @@ export default async function GuidebooksPage() {
                     <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
                       <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{g.listing_name || g.title}</span>
                       <span className="text-[12px] text-muted truncate max-w-[18rem]">{[nickById[g.listing_id], new Date(g.updated_at).toLocaleDateString()].filter(Boolean).join(' · ')}</span>
-                      <Tag tone={g.theme === 'dark' ? 'violet' : 'sky'} title="Theme">{g.theme === 'dark' ? 'Dark luxe' : 'Coastal'}</Tag>
+                      <Tag tone={g.theme === 'dark' ? 'violet' : 'sky'} title="Colour theme">{g.theme === 'smart' ? 'Smart · ' + themeForBook(g, { building: buildingById[g.listing_id], nickname: nickById[g.listing_id] }).label : themeById(g.theme).label}</Tag>
                       {g.status ? <Tag tone={g.status === 'draft' ? 'amber' : 'emerald'}>{g.status}</Tag> : null}
                     </div>
                     <ArrowRight size={15} className="shrink-0 text-muted group-hover:text-ink transition" />
