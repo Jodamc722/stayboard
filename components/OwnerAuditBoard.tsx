@@ -32,7 +32,7 @@ const CODE_WORD: Record<string, string> = {
 const lineWord = (l: { label: string; code: string }) => (l.label && l.label !== l.code ? l.label : (CODE_WORD[l.code] || l.label || l.code))
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
-type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee' | 'resolution' | 'double_commission' | 'overpaid'
+type FlagType = 'negative' | 'low_rate' | 'orphan_reimb' | 'refund' | 'zero_rev' | 'passthru' | 'no_reservation' | 'commission_off' | 'off_booking' | 'empty_statement' | 'owner_stay' | 'owner_stay_cleaning' | 'cleaning_fee' | 'resolution' | 'double_commission' | 'ota_overpaid'
 type Severity = 'high' | 'review' | 'info'
 // 'clear' = the engine found nothing and no human decision is needed. It is computed, never saved,
 // and never counted as completed work — see the ladder in lib/owner-audit.ts.
@@ -128,7 +128,7 @@ type Data = {
 
 const FLAG_LABEL: Record<FlagType, string> = {
   double_commission: 'Channel commission ×2',
-  overpaid: 'Owner overpaid',
+  ota_overpaid: 'OTA overpaid',
   negative: 'Negative', low_rate: 'Low rate', orphan_reimb: 'Fees with no rental',
   refund: 'Refund', zero_rev: '$0 revenue', passthru: 'Pass-through (commission ≈ rental)', no_reservation: 'No booking found',
   commission_off: 'Commission off', off_booking: 'No booking behind it',
@@ -138,7 +138,7 @@ const FLAG_LABEL: Record<FlagType, string> = {
   resolution: 'Airbnb resolution',
 }
 const FLAG_HELP: Record<FlagType, string> = {
-  overpaid: 'Owner rental is more than accommodation + markup minus the channel commission — the commission was not (fully) taken off, so the owner is paid money that went to the channel. Check the booking in Guesty, re-process if needed, then pull the month again.',
+  ota_overpaid: 'The channel paid us more than the booking earns — usually a resolution or damage payout. Match it to the claim and allocate it on the folio so it reaches the owner.',
   double_commission: 'Owner rental should be accommodation + markup minus the channel commission. When the shortfall is about twice the commission, Guesty deducted it twice — re-process the reservation in Guesty, then pull the month again.',
   negative: 'Rental income below zero — erroneous refund, chargeback or duplicate reversal.',
   low_rate: 'Revenue far below what this stay’s night mix (midweek vs weekend) normally earns in its building/size cohort, with slack for last-minute bookings — or under the hard floor.',
@@ -155,6 +155,28 @@ const FLAG_HELP: Record<FlagType, string> = {
   cleaning_fee: 'Every reservation should collect a cleaning fee, and the fee is judged by what it NETS to — one that was charged and refunded counts as none. A channel that bills a single lump instead of itemising (Expedia\u2019s "Service" line) HAS collected the fee, so it is noted but never flagged; splitting it out is the Expedia prep list\u2019s job. Where a unit has charged nobody all month the listing is the finding, flagged once on its earliest stay instead of once per booking.',
   resolution: 'An Airbnb Resolution Center payment or AirCover reimbursement on this reservation — a folio line item (or a statement line) whose name says resolution, AirCover, damage protection or guest damage. Shows the folio amounts and whether the money is on this month\u2019s statement, so you can check it belongs to this stay and the owner gets the right share.',
 }
+// THE FILTER MATRIX (Jon, 2026-11-06: "explain each of these filters and what they mean and add a
+// matrix to the statement review so we can understand what you are looking at"). One row per
+// filter: where the numbers come from, the exact rule, how loud it is, and what to do about it.
+const FLAG_MATRIX: { f: FlagType; source: string; rule: string; sev: string; action: string }[] = [
+  { f: 'double_commission', source: 'Guest folio (accommodation + markup) · the channel commission Guesty recorded · statement rental lines', rule: 'Booking.com only (the rule is proven there). Per night: what came off the owner’s rental ÷ the channel commission. Normal is 1×; about 2× (judged against the same building + channel this month) and $5 or more = deducted twice.', sev: 'High', action: 'Guesty → reservation → Accounting → Re-process reservation, then pull the month again. The owner was underpaid by the amount shown.' },
+  { f: 'ota_overpaid', source: 'Guesty money on the booking: received (total paid) vs the booking’s own payout, and balance due', rule: 'Received is $5+ more than the booking pays out, or the balance due is negative.', sev: 'Review', action: 'Usually a Resolution Center / damage payout. Match it to the claim, add it to the folio as the service it paid for so it splits to the owner, and mark the claim paid.' },
+  { f: 'negative', source: 'Statement rental lines for the booking', rule: 'Rental income for the month is below $0.', sev: 'High', action: 'Find the refund, chargeback or reversal that caused it; often a mis-processed folio — re-process in Guesty.' },
+  { f: 'low_rate', source: 'Whole-stay average nightly rental vs the building/size cohort for the same night mix', rule: 'Under the set % of the cohort (with slack for last-minute bookings) or under the hard floor.', sev: 'Review / info on owner, F&F and tagged stays', action: 'Confirm the rate was intended (promo, long stay, owner deal) or fix the pricing.' },
+  { f: 'orphan_reimb', source: 'Statement lines for the booking', rule: 'A reimbursement (RM, channel fee, cleaning) with $0 rental behind it, netted; never on owner stays.', sev: 'Review', action: 'Reverse it or attach it to the stay it belongs to.' },
+  { f: 'refund', source: 'Statement lines', rule: 'Any line whose name looks like a refund.', sev: 'Review', action: 'Confirm the refund was authorised and charged to the right party.' },
+  { f: 'zero_rev', source: 'Statement lines', rule: 'Booking with $0 rental that is not an obvious owner / F&F stay.', sev: 'Review (info when tagged)', action: 'Confirm it is a comp, owner stay or cancellation; otherwise the revenue is missing.' },
+  { f: 'passthru', source: 'Rental vs commission on the booking', rule: 'Commission is 90–110% of rental — a wash.', sev: 'Info', action: 'Usually by design; just confirm.' },
+  { f: 'no_reservation', source: 'Statement lines vs our reservations mirror', rule: 'The confirmation code on the line has no booking in Lighthouse.', sev: 'Info', action: 'Check the code in Guesty; dates and links are unavailable until it syncs.' },
+  { f: 'commission_off', source: 'Commission ÷ rental on the booking vs the owner’s usual rate', rule: 'More than the set tolerance away from the owner’s normal %; high when it leaves the owner negative.', sev: 'High / review', action: 'Most often a cancellation fee taken entirely as commission — correct the split.' },
+  { f: 'off_booking', source: 'Statement lines with no booking code', rule: '$25 or more moving with no booking behind it.', sev: 'Review (info when small)', action: 'Confirm what it is (management fee, owner charge, adjustment) and that it belongs on this statement.' },
+  { f: 'empty_statement', source: 'Owner statements', rule: 'A statement generated with no line items.', sev: 'Review', action: 'Usually a listing not mapped to the owner in Guesty — map it and regenerate.' },
+  { f: 'owner_stay', source: 'Booking source / tags', rule: 'Owner or friends & family stay.', sev: 'Info', action: 'Confirm it was authorised and its costs landed correctly.' },
+  { f: 'owner_stay_cleaning', source: 'Guest folio + statement lines on owner stays', rule: 'No cleaning charged to the owner (red), or only as a bare owner charge / statement line (amber).', sev: 'High / review', action: 'Charge the turnover to the owner, labelled as cleaning.' },
+  { f: 'cleaning_fee', source: 'Guest folio, netted', rule: 'The booking nets $0 cleaning while the unit normally charges (3+ charged stays). Lump-sum channels are noted, never flagged.', sev: 'Review', action: 'Add the cleaning fee or confirm the waiver; if the whole unit charges nobody, fix the listing.' },
+  { f: 'resolution', source: 'Guest folio + statement lines named resolution / AirCover / damage', rule: 'Resolution money still sitting on the resolution item (not allocated), or a "resolution" line on the statement.', sev: 'Review (info when it is a standing pattern)', action: 'Adjust the resolution item to $0 and add the money as the service it paid for, so it splits by the management fee.' },
+]
+
 const FLAG_CLS: Record<Severity, string> = {
   high: 'bg-rose-50 text-rose-700 ring-rose-200',
   review: 'bg-amber-50 text-amber-700 ring-amber-200',
@@ -366,6 +388,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [covBusy, setCovBusy] = useState(false)
   const [cov, setCov] = useState<any>(null)    // coverage check result (revenue not reaching the ledger)
   const [routineOpen, setRoutineOpen] = useState(false)
+  const [matrixOpen, setMatrixOpen] = useState(false)
   // LEAN PASS (2026-09-22): rarely used worklist filters and the per-row note boxes on the prep and
   // resolution lists open on demand instead of standing on every row.
   const [noteOpen, setNoteOpen] = useState<Record<string, boolean>>({})
@@ -947,7 +970,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {it.leadDays != null && it.leadDays <= (data?.rules.lastMinDays ?? 3) && <Tag tone="sky" title={'Booked ' + it.leadDays + ' days before check-in — last-minute stays get rate slack'}>last-minute</Tag>}
               {it.flags.filter(f => f.severity !== 'info').map((f, i) => (
                 <span key={i} title={f.detail} className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ring-1 ring-inset ' + FLAG_CLS[f.severity]}>
-                  {FLAG_LABEL[f.type]}{(f.type === 'orphan_reimb' || f.type === 'owner_stay_cleaning' || f.type === 'resolution' || f.type === 'double_commission' || f.type === 'overpaid') && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
+                  {FLAG_LABEL[f.type]}{(f.type === 'orphan_reimb' || f.type === 'owner_stay_cleaning' || f.type === 'resolution' || f.type === 'double_commission' || f.type === 'ota_overpaid') && f.amount !== undefined ? ' ' + fmt(f.amount) : ''}
                 </span>
               ))}
               {it.flags.filter(f => f.severity === 'info').map((f, i) => (
@@ -1331,6 +1354,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           )}
           <IconBtn title="Reload this page (no pull from Guesty)" onClick={() => load(month)}><RotateCw size={14} className={loading ? 'animate-spin' : ''} /></IconBtn>
           <IconBtn title={view === 'prep' ? 'Download the Expedia prep list (CSV)' : 'Download CSV of this view'} onClick={view === 'prep' ? exportPrepCsv : exportCsv}><Download size={14} /></IconBtn>
+          {data && <button onClick={() => setMatrixOpen(v => !v)} title="What every filter checks, the rule, and what to do"
+            className="text-[12px] font-semibold px-2 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app">Filter guide</button>}
           {data && <IconBtn title="How to run the week" onClick={() => setRoutineOpen(v => !v)}><HelpCircle size={14} /></IconBtn>}
         </>} />
 
@@ -1375,6 +1400,36 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         </div>
       )}
       {/* WEEKLY ROUTINE — the team's checklist, one click away (the ? button). */}
+      {data && matrixOpen && (
+        <div className="rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-line">
+            <span className="text-[13.5px] font-semibold text-ink">Filter guide — what the statement review checks</span>
+            <span className="text-[11.5px] text-muted">count = rows with that flag in the current scope</span>
+            <span className="ml-auto"><IconBtn title="Close" onClick={() => setMatrixOpen(false)}><X size={13} /></IconBtn></span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px] align-top">
+              <thead className="bg-app text-muted text-[10.5px] uppercase tracking-wide">
+                <tr>{['Filter', 'Looks at', 'Flags it when', 'Severity', 'What to do'].map(h => <th key={h} className="text-left font-semibold px-3 py-2 whitespace-nowrap">{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {FLAG_MATRIX.map(m => (
+                  <tr key={m.f} className="align-top">
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <button onClick={() => { setLens(('flag:' + m.f) as Lens); setMatrixOpen(false) }} className="font-semibold text-ink hover:underline" title="Show these rows">{FLAG_LABEL[m.f]}</button>
+                      <span className="ml-1 text-muted tabular-nums">{data.rules?.enabled && (data.rules.enabled as any)[m.f] === false ? 'off' : ''}</span>
+                    </td>
+                    <td className="px-3 py-2 text-muted min-w-[180px]">{m.source}</td>
+                    <td className="px-3 py-2 text-ink min-w-[220px]">{m.rule}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{m.sev}</td>
+                    <td className="px-3 py-2 text-muted min-w-[220px]">{m.action}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {data && routineOpen && (
         <div className="rounded-xl border border-line bg-white px-4 py-3 text-[12.5px] text-ink space-y-1">
           <div className="flex items-center gap-2 mb-1">
@@ -1982,7 +2037,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     </button>
                   ))}
                 </div>
-                {(facet.lens.action || lens === 'action') ? (
+                {true ? (
                   <button onClick={() => setLens(lens === 'action' ? '' : 'action')} title="Rows a reviewer marked as needing a fix in Guesty"
                     className={'text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset transition ' + STATUS_CLS.action + (lens === 'action' ? ' outline outline-2 outline-offset-1 outline-brand-300' : '')}>
                     Action needed {facet.lens.action || 0}
@@ -1996,14 +2051,15 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               {/* flag types and booking kinds — counted inside the scope above. In Needs review they
                   are only the rows still waiting; open Approved to audit by the same tags. */}
               <div className="lh-actions flex flex-wrap items-center gap-2">
-                {(Object.keys(FLAG_LABEL) as FlagType[]).filter(f => facet.lens['flag:' + f] || lens === 'flag:' + f).map(f => (
+                {/* EVERY FILTER, ALWAYS (Jon, 2026-11-06: "Bethany needs to see all filters") — a chip with 0 in this scope is dimmed, never hidden. */}
+                {(Object.keys(FLAG_LABEL) as FlagType[]).map(f => (
                   <button key={f} onClick={() => setLens(lens === 'flag:' + f ? '' : ('flag:' + f) as Lens)}
                     className={'text-xs font-medium px-2.5 py-1 rounded-full ring-1 ring-inset bg-white text-muted ring-line hover:text-ink transition' + (lens === 'flag:' + f ? ' outline outline-2 outline-offset-1 outline-brand-300' : '') + (!facet.lens['flag:' + f] ? ' opacity-40' : '')}>
                     {FLAG_LABEL[f]} {facet.lens['flag:' + f] || 0}
                   </button>
                 ))}
-                {TAG_CHIPS.some(([k]) => facet.lens['tag:' + k] || lens === 'tag:' + k) && <span className="w-px h-5 bg-line mx-1" />}
-                {TAG_CHIPS.filter(([k]) => facet.lens['tag:' + k] || lens === 'tag:' + k)
+                <span className="w-px h-5 bg-line mx-1" />
+                {TAG_CHIPS
                   .map(([k, label]) => (
                     <button key={k} onClick={() => setLens(lens === 'tag:' + k ? '' : ('tag:' + k) as Lens)}
                       title={k === 'cancel_fee' ? 'Canceled bookings that still left money on the statement this month — the cancellation fee — plus any line item named as one' : k === 'canceled' ? 'Every canceled booking with line items this month, fee or not' : undefined}
@@ -2021,12 +2077,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 <select value={fSource} onChange={e => setFSource(e.target.value)} aria-label="Channel"
                   className="text-[12px] border border-line rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 max-w-[170px]">
                   <option value="">All channels</option>
-                  {Object.keys(tagCounts.src).sort().map(s => <option key={s} value={s} disabled={!facet.src[s] && fSource !== s}>{s} ({facet.src[s] || 0})</option>)}
+                  {Object.keys(tagCounts.src).sort().map(s => <option key={s} value={s}>{s} ({facet.src[s] || 0})</option>)}
                 </select>
                 <select value={fOwner} onChange={e => setFOwner(e.target.value)} aria-label="Owner"
                   className="text-[12px] border border-line rounded-lg px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 max-w-[220px]">
                   <option value="">All owners</option>
-                  {data.owners.slice().sort((a, b) => Number(!!facet.owner[b.ownerId]) - Number(!!facet.owner[a.ownerId]) || a.ownerName.localeCompare(b.ownerName)).map(o => <option key={o.ownerId} value={o.ownerId} disabled={!facet.owner[o.ownerId] && fOwner !== o.ownerId}>{o.ownerName} ({facet.owner[o.ownerId] || 0})</option>)}
+                  {data.owners.slice().sort((a, b) => Number(!!facet.owner[b.ownerId]) - Number(!!facet.owner[a.ownerId]) || a.ownerName.localeCompare(b.ownerName)).map(o => <option key={o.ownerId} value={o.ownerId}>{o.ownerName} ({facet.owner[o.ownerId] || 0})</option>)}
                 </select>
                 </div>
                 <div className="relative w-full sm:w-auto">
