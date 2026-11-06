@@ -132,7 +132,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
               </>
             ) : null}
             <p className="gf-h" style={{ marginTop: rules.length ? '12pt' : 0 }}>Before you leave</p>
-            {outList.length ? outList.map((x: string, i: number) => <div key={i} className="gf-tick"><i /><span>{short(x, 74)}</span></div>) : <p className="gf-t">Please leave by {d.checkOut || 'the agreed time'} — thank you!</p>}
+            {outList.length ? outList.map((x: string, i: number) => <div key={i} className="gf-tick"><i /><span>{short(x, 84)}</span></div>) : <p className="gf-t">Please leave by {d.checkOut || 'the agreed time'} — thank you!</p>}
           </div>
         </div>
 
