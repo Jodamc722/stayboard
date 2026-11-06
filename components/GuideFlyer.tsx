@@ -6,16 +6,16 @@
 // Designed like a hotel's in-room welcome card, not a manual: few words, lots of air, one typeface pair.
 //   · the stay's photo, clean, edge to edge — no text over it
 //   · WELCOME TO / the name in serif / unit · address in small caps, centred, with a short accent rule
-//   · Wi-Fi as the hero line (network | password | scan to join)
+//   · Wi-Fi as the hero line (network | password)
 //   · check-in · check-out · the urgent line
 //   · three quiet notes with line icons: parking, the beach, house rules (titles only)
-//   · a tinted closing band: Book direct & save with the code, QR to book, QR to the full digital guide
+//   · exactly two QR codes, side by side: Your digital guide · Book direct & save (the goal of the page)
 // Everything long (the beach steps, the check-out list, how-tos) lives in the digital guide — the QR says so.
 // Paper only: nothing is a link. Colours follow the book's theme, or black & white from Print options.
 // /g/<id>?flyer=1 shows it on screen; ?flyer=1&print=1 opens the print dialog.
 import { useEffect } from 'react'
 import { Car, Waves, ScrollText } from 'lucide-react'
-import { guideData, guideFaq, wifiQrSrc, qrSrc, LOGO_URL, sentence } from '@/components/GuideMobile'
+import { guideData, guideFaq, qrSrc, LOGO_URL, sentence } from '@/components/GuideMobile'
 import { themeForBook } from '@/lib/guide-themes'
 import { printPrefs } from '@/lib/guide-print'
 
@@ -73,13 +73,6 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
           {d.cover ? <img src={d.cover} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,.28) 0%, rgba(0,0,0,0) 22%)' }} />
           <img src={LOGO_URL} alt="" style={{ position: 'absolute', top: '.4in', left: '50%', transform: 'translateX(-50%)', height: '15pt', filter: 'brightness(0) invert(1)' }} />
-          {/* THE DIGITAL GUIDE, at the top (Jon, 2026-11-06: "the route should be the digital guidebook — do it at
-              the top"): parking map, the walk to the beach, how-tos, places — all one scan away. */}
-          <div style={{ position: 'absolute', right: '.45in', bottom: '.35in', background: '#fff', borderRadius: '8pt', padding: '7pt 7pt 6pt', boxShadow: '0 4pt 16pt rgba(0,0,0,.14)', textAlign: 'center', width: '1.18in' }}>
-            <img src={qrSrc(guideUrl)} alt="" style={{ width: '68pt', height: '68pt', display: 'block', margin: '0 auto' }} />
-            <p className="gf-cap" style={{ fontSize: '5.9pt', marginTop: '4pt', letterSpacing: '.16em', color: acc }}>Your digital guide</p>
-            <p style={{ fontSize: '6.2pt', color: mute, lineHeight: 1.35, marginTop: '1pt' }}>Parking map, beach route &amp; more</p>
-          </div>
         </div>
 
         {/* TITLE */}
@@ -91,11 +84,10 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
         </div>
 
         {/* WI-FI */}
-        <div style={{ margin: '.24in .8in 0', borderTop: '.6pt solid ' + hair, borderBottom: '.6pt solid ' + hair, padding: '11pt 0', display: 'grid', gridTemplateColumns: d.wifiPw ? '1fr .6pt 1fr auto' : '1fr auto', alignItems: 'center', columnGap: '20pt', flex: 'none' }}>
+        <div style={{ margin: '.24in .8in 0', borderTop: '.6pt solid ' + hair, borderBottom: '.6pt solid ' + hair, padding: '11pt 0', display: 'grid', gridTemplateColumns: d.wifiPw ? '1fr .6pt 1fr' : '1fr', alignItems: 'center', columnGap: '20pt', flex: 'none' }}>
           <div style={{ textAlign: 'center' }}><p className="gf-cap">Wi-Fi network</p><p className="gf-val" style={{ fontSize: '17pt', marginTop: '5pt', wordBreak: 'break-word' }}>{d.wifiNet || 'Ask us'}</p></div>
           {d.wifiPw ? <div style={{ height: '34pt', background: hair }} /> : null}
           {d.wifiPw ? <div style={{ textAlign: 'center' }}><p className="gf-cap">Password</p><p className="gf-val" style={{ fontSize: '17pt', marginTop: '5pt', wordBreak: 'break-all' }}>{d.wifiPw}</p></div> : null}
-          {d.wifiNet ? <div style={{ textAlign: 'center' }}><img src={wifiQrSrc(d.wifiNet, d.wifiPw)} alt="" style={{ width: '50pt', height: '50pt', display: 'block' }} /><p className="gf-cap" style={{ fontSize: '5.6pt', marginTop: '3pt', letterSpacing: '.18em' }}>Scan to join</p></div> : null}
         </div>
 
         {/* TIMES */}
@@ -105,6 +97,25 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
           {d.phone ? <div style={{ borderLeft: '.6pt solid ' + hair }}><p className="gf-cap">Urgent · 24/7</p><p className="gf-val" style={{ fontSize: '15pt', marginTop: '4pt' }}>{d.phone}</p></div> : null}
         </div>
         <p className="gf-note" style={{ textAlign: 'center', margin: '10pt .8in 0', color: mute, flex: 'none' }}>Anything else? Message us in your booking app — we reply fast. In an emergency, dial 911.</p>
+
+        {/* TWO THINGS TO SCAN (Jon, 2026-11-06: "too many QR codes — have book now and guidebook … the goal is
+            to get them to the digital guidebook and to our direct site"). The only two codes on the page. */}
+        <div style={{ margin: '.24in .8in 0', display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: '16pt', flex: 'none' }}>
+          {[
+            { k: 'Your digital guide', h: 'Everything for your stay', b: 'Parking map, the walk to the beach, how things work and our local picks.', url: guideUrl, foot: '' },
+            { k: 'Come back soon', h: 'Book direct & save', b: 'Your next stay, straight from us — better rates, no booking fees.', url: d.bookUrl, foot: site + ' · code ' + d.code },
+          ].map((c, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '13pt', padding: '13pt 14pt', borderRadius: '10pt', background: i ? band : '#fff', border: '.7pt solid ' + (i ? 'transparent' : hair) }}>
+              <div style={{ background: '#fff', padding: '4pt', borderRadius: '6pt', flex: 'none' }}><img src={qrSrc(c.url)} alt="" style={{ width: '70pt', height: '70pt', display: 'block' }} /></div>
+              <div style={{ minWidth: 0 }}>
+                <p className="gf-cap" style={{ color: acc, letterSpacing: '.24em' }}>{c.k}</p>
+                <p className="gf-val" style={{ fontSize: '14.5pt', marginTop: '4pt' }}>{c.h}</p>
+                <p className="gf-note" style={{ marginTop: '3pt', fontSize: '8pt', lineHeight: 1.45 }}>{c.b}</p>
+                {c.foot ? <p className="gf-note" style={{ marginTop: '3pt', fontSize: '7.6pt', color: ink, fontWeight: 600, letterSpacing: '.04em' }}>{c.foot}</p> : <p className="gf-cap" style={{ marginTop: '4pt', fontSize: '6pt' }}>Scan with your camera</p>}
+              </div>
+            </div>
+          ))}
+        </div>
 
         {/* NOTES */}
         <div style={{ margin: '.24in .8in 0', display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, notes.length) + ', 1fr)', columnGap: '22pt', flex: 'none' }}>
@@ -118,18 +129,9 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
           ))}
         </div>
 
-        <div style={{ flex: 1, minHeight: '.2in' }} />
-        {/* CLOSING BAND */}
-        <div style={{ flex: 'none', background: band, padding: '.26in .8in .3in', display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', columnGap: '22pt' }}>
-          <div>
-            <p className="gf-cap" style={{ color: acc, letterSpacing: '.32em' }}>Come back soon</p>
-            <p className="gf-val" style={{ fontSize: '20pt', marginTop: '5pt' }}>Book direct <i>&amp; save</i></p>
-            <p className="gf-note" style={{ marginTop: '5pt', color: mute }}>{site}  ·  code <span style={{ color: ink, fontWeight: 600, letterSpacing: '.12em' }}>{d.code}</span></p>
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <div style={{ background: '#fff', padding: '5pt', borderRadius: '4pt' }}><img src={qrSrc(d.bookUrl)} alt="" style={{ width: '52pt', height: '52pt', display: 'block' }} /></div>
-            <p className="gf-cap" style={{ fontSize: '5.8pt', marginTop: '4pt', letterSpacing: '.18em' }}>Book direct</p>
-          </div>
+        <div style={{ flex: 1, minHeight: '.15in' }} />
+        <div style={{ flex: 'none', borderTop: '.6pt solid ' + hair, margin: '0 .8in', padding: '10pt 0 .32in', textAlign: 'center' }}>
+          <p className="gf-cap" style={{ letterSpacing: '.22em' }}>Thank you for staying with us</p>
         </div>
       </div>
     </div>
