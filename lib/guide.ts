@@ -608,7 +608,58 @@ export const GARDEN: Guide = {
   omit: [],
 }
 
-export const SEEDS: Record<string, Guide> = { garden: GARDEN, botanica: GARDEN }
+
+// ---------------------------------------------------------------------------
+// SURFSIDE (Boynton Beach, 9 units) — the one link for every Surfside automation (Jon, 2026-11-06:
+// "a link for the parking map and unit map and how to access the beach. One file, one sharable link,
+// no password, that we can add to all Surfside automations"). Only confirmed facts are seeded: the
+// address, one free on-site parking space per stay, the smart-lock check-in and the 3–5 minute walk
+// to the sand (from the live listing). The parking map, the unit map and the beach path go in the
+// gallery and the beach card as soon as the team has them — same link, nothing to re-send.
+// Guest-facing voice for Boynton Beach is Vanessa & Taylor, never "Stay Hospitality".
+// ---------------------------------------------------------------------------
+export const SURFSIDE: Guide = {
+  slug: 'surfside',
+  theme: { ink: '#123B4A', deep: '#0B2630', leaf: '#2E8B8B', sand: '#F6F1E7', accent: '#E0A458' },
+  hero: {
+    eyebrow: 'Surfside · Boynton Beach',
+    title: 'Parking, your unit and the beach',
+    subtitle: 'Everything you need from the moment you pull in — where to park, how to find your door, and the short walk to the sand.',
+    image: '',
+    chips: ['1 free parking space per stay', 'Self check-in with your door code', 'Beach about a 3–5 minute walk'],
+    ctas: [
+      { label: 'Directions', url: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('4621 N Ocean Blvd, Boynton Beach, FL 33435') },
+    ],
+  },
+  quick: {
+    title: 'Good to know',
+    items: [
+      { label: 'Address', value: '4617–4621 N Ocean Blvd, Boynton Beach, FL 33435', note: 'On Ocean Boulevard (A1A)' },
+      { label: 'Parking', value: 'One free space in the on-site lot', note: 'Included with every reservation' },
+      { label: 'Your door', value: 'Smart lock — your personal code', note: 'Sent to you before arrival' },
+      { label: 'The beach', value: 'About a 3–5 minute walk', note: 'No car needed for a beach morning' },
+    ],
+  },
+  activations: { title: 'This week', note: '', items: [] },
+  venues: { title: 'Eat and drink', note: '', items: [] },
+  menu: { title: 'On the menu', note: '', link: '', linkLabel: 'See the full menu', groups: [] },
+  quotes: { title: 'What guests are saying', note: '', auto: false, keywords: [], items: [] },
+  todo: { title: 'Things to do', note: '', groups: [] },
+  gallery: { title: 'Parking map and unit map', note: 'Find your parking space and your door at a glance.', images: [] },
+  place: {
+    title: 'Getting to the beach',
+    address: '4617–4621 N Ocean Blvd, Boynton Beach, FL 33435',
+    mapQuery: '4621 N Ocean Blvd, Boynton Beach, FL 33435',
+    note: 'The sand is about a 3–5 minute walk from your door — leave the car in its space and head out on foot.',
+    items: [],
+  },
+  contact: { title: 'Reach us', note: 'Message us through your booking any time — we are happy to help.', items: [] },
+  footer: { note: 'Questions about parking or your unit? Message us through your booking and we will sort it out.', signature: 'Vanessa & Taylor' },
+  // Hidden until there is something real to show: the maps appear the moment images are added.
+  omit: ['activations', 'venues', 'menu', 'quotes', 'todo', 'gallery'],
+}
+
+export const SEEDS: Record<string, Guide> = { garden: GARDEN, botanica: GARDEN, surfside: SURFSIDE }
 
 export function seedFor(slug: string): Guide {
   const s = normSlug(slug)
