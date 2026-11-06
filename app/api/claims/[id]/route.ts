@@ -16,6 +16,7 @@ import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { bustDay } from '@/lib/bust'
 import { claimReviewers } from '@/lib/claim-reviewers'
+import { canCloseClaims, CLOSE_DENIED } from '@/lib/claim-closers'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -56,6 +57,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     ok: true, today: todayET(),
     claim: { ...found.claim, items: found.items, next_check_in: arrival },
     policy: policyFor(found.claim.channel, pol),
+    canClose: await canCloseClaims(gate.access),
   })
 }
 
@@ -109,9 +111,37 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       patch.deposit_held = policyFor(chNext, pol).deposit
     }
 
+    // ── THE CHANNEL'S DECISION MOVES THE CLAIM (Jon, 2026-11-06) ─────────
+    // "Submitted means waiting on the channel. Once the channel has determined, we mark it as paid
+    // and the amount received should show — tag partial, full, and denied meaning not paid." So the
+    // outcome IS the move: Paid in full / Partially paid → Paid (settle), with the amount received
+    // and the paid date stamped; Denied / withdrawn / duplicate → Decided, nothing received. Both sit
+    // in the close-out section until Accounting, the GM or an Admin closes them. An explicit stage
+    // in the same request still wins.
+    if ('outcome' in b && !b.stage && ['submitted', 'decided', 'settle'].includes(str(before.stage))) {
+      const o = patch.outcome
+      if (o === 'won' || o === 'partial') {
+        b.stage = 'settle'
+        if (o === 'won' && !('amount_paid' in b) && before.amount_paid == null) patch.amount_paid = num(before.amount_sought) ?? itemsTotal(items)
+        if (!('paid_on' in b) && !before.paid_on) patch.paid_on = todayET()
+      } else if (o) {
+        b.stage = 'decided'
+        if (o === 'denied' && !('amount_paid' in b)) patch.amount_paid = 0
+      } else if (!o && str(before.stage) !== 'submitted') {
+        b.stage = 'submitted'
+      }
+      if (o && !before.decided_on && !patch.decided_on) patch.decided_on = todayET()
+      if (o) patch.waiting_on = null
+    }
+
     // ── stage move ───────────────────────────────────────────────────────
     const nextStage = STAGES.includes(str(b.stage)) ? str(b.stage) : null
     const moved = nextStage && nextStage !== before.stage ? nextStage : null
+    // CLOSING IS THE BOOKS STEP — Accounting, the GM or an Admin only. Reopening a closed claim is
+    // the same authority (it un-does a close-out).
+    if (moved && (moved === 'closed' || str(before.stage) === 'closed') && !(await canCloseClaims(__gate.access))) {
+      return NextResponse.json({ ok: false, error: CLOSE_DENIED }, { status: 403 })
+    }
     if (moved) {
       // The gates are a real gate, not a nag. A claim cannot be filed with a missing photo or a
       // placeholder cost — that is exactly the claim the channel denies. `force` exists because Jon
@@ -167,7 +197,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // Only real, outward-facing events. Editing a typo does not deserve a line on the booking.
     let noteEvent: 'submitted' | 'decided' | 'paid' | 'closed' | null = null
     if (moved === 'submitted') noteEvent = 'submitted'
-    else if (moved === 'decided') noteEvent = 'decided'
+    else if (moved === 'decided' || (moved === 'settle' && 'outcome' in b)) noteEvent = 'decided'
     else if (moved === 'closed') noteEvent = 'closed'
     if (!moved && b.payment_verified === true && before.payment_verified !== true) noteEvent = 'paid'
     let note: { ok: boolean; error?: string } | null = null
@@ -191,7 +221,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         if (to.length) await notify(to, { kind: 'claim', title: 'Claim needs review: ' + claimTitle(after), body: 'Deadline ' + str(after.deadline_on), link: '/claims/' + params.id, actor: me })
       } else if (moved === 'ready' || moved === 'settle') {
         const owner = str(after.assignee_email).toLowerCase()
-        if (owner) await notify([owner], { kind: 'claim', title: (moved === 'ready' ? 'Approved to file: ' : 'Money and owner: ') + claimTitle(after), link: '/claims/' + params.id, actor: me })
+        if (owner) await notify([owner], { kind: 'claim', title: (moved === 'ready' ? 'Approved to file: ' : 'Paid — to close out: ') + claimTitle(after), link: '/claims/' + params.id, actor: me })
       }
     } catch { /* notifications never block the move */ }
 
@@ -204,6 +234,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       claim: fresh ? { ...fresh.claim, items: fresh.items, next_check_in: freshArrival } : null,
       policy: policyFor(after.channel, pol),
       note,
+      canClose: await canCloseClaims(__gate.access),
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })

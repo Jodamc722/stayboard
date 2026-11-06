@@ -78,6 +78,7 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
   const router = useRouter()
   const [claim, setClaim] = useState<Claim | null>(null)
   const [policy, setPolicy] = useState<ChannelPolicy | null>(null)
+  const [canClose, setCanClose] = useState(false)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -95,6 +96,7 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
       if (!r.ok || j.ok === false) { setErr(j.error || 'Could not load this claim.'); return }
       setClaim(j.claim)
       if (j.policy) setPolicy(j.policy)
+      setCanClose(j.canClose === true)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [id, onChanged])
   useEffect(() => { load() }, [load])
@@ -258,7 +260,7 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
           <StepWriteUp claim={claim} items={items} patch={patch} busy={busy} />
           <StepFile claim={claim} gates={gates} failing={failing} blocked={blocked} patch={patch} busy={busy} reviewers={reviewers} />
           {(claim.stage === 'submitted' || claim.stage === 'decided' || claim.stage === 'settle' || claim.stage === 'closed') && (
-            <StepOutcome claim={claim} patch={patch} busy={busy} />
+            <StepOutcome claim={claim} patch={patch} busy={busy} canClose={canClose} />
           )}
           <section className="rounded-2xl border border-line bg-white p-4">
             <h2 className="text-sm font-semibold text-ink mb-2">Discussion</h2>
@@ -675,7 +677,7 @@ function StepFile({ claim, gates, failing, blocked, patch, busy, reviewers }: {
 }
 
 // ── step 5: what happened ──────────────────────────────────────────────────
-function StepOutcome({ claim, patch, busy }: { claim: Claim; patch: (b: any) => Promise<boolean>; busy: boolean }) {
+function StepOutcome({ claim, patch, busy, canClose }: { claim: Claim; patch: (b: any) => Promise<boolean>; busy: boolean; canClose: boolean }) {
   const [paid, setPaid] = useState(claim.amount_paid == null ? '' : String(claim.amount_paid))
   useEffect(() => { setPaid(claim.amount_paid == null ? '' : String(claim.amount_paid)) }, [claim.amount_paid])
   return (
@@ -699,14 +701,14 @@ function StepOutcome({ claim, patch, busy }: { claim: Claim; patch: (b: any) => 
       <div className="grid md:grid-cols-2 gap-3 mt-3">
         <label className="block">
           <span className="text-[11px] uppercase tracking-wide text-muted">Decision</span>
-          <select value={claim.outcome || ''} onChange={e => patch({ outcome: e.target.value, stage: e.target.value && claim.stage === 'submitted' ? 'decided' : claim.stage })} disabled={busy}
+          <select value={claim.outcome || ''} onChange={e => { const v = e.target.value; const n = Number(String(paid).replace(/[$,\s]/g, '')); patch(v === 'partial' && isFinite(n) && n > 0 ? { outcome: v, amount_paid: n } : { outcome: v }) }} disabled={busy}
             className="mt-1 w-full text-sm border border-line rounded-lg px-2 py-1.5 bg-white">
-            <option value="">Not decided yet</option>
+            <option value="">Waiting on the channel</option>
             {OUTCOMES.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
         </label>
         <label className="block">
-          <span className="text-[11px] uppercase tracking-wide text-muted">Amount actually paid</span>
+          <span className="text-[11px] uppercase tracking-wide text-muted">Amount received</span>
           <input value={paid} onChange={e => setPaid(e.target.value)} onBlur={() => patch({ amount_paid: paid })} inputMode="decimal"
             placeholder="0.00" className="mt-1 w-full text-sm border border-line rounded-lg px-2 py-1.5 bg-white tabular-nums" />
         </label>
@@ -720,17 +722,20 @@ function StepOutcome({ claim, patch, busy }: { claim: Claim; patch: (b: any) => 
       )}
 
       <div className="mt-4 flex items-center gap-2 flex-wrap">
-        {claim.stage === 'decided' && (
+        {claim.stage === 'decided' && (claim.outcome === 'won' || claim.outcome === 'partial') && (
           <button onClick={() => patch({ stage: 'settle' })} disabled={busy} className="text-sm font-semibold px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">
-            Move to money &amp; owner
+            Move to paid — to close out
           </button>
         )}
-        {claim.stage === 'settle' && (
+        {(claim.stage === 'settle' || claim.stage === 'decided') && !canClose && (
+          <span className="text-[12px] text-muted">Accounting, the GM or an Admin closes this out.</span>
+        )}
+        {(claim.stage === 'settle' || claim.stage === 'decided') && canClose && (
           <button onClick={() => patch({ stage: 'closed' })} disabled={busy} className="text-sm font-semibold px-3 py-2 rounded-lg bg-emerald-600 text-white disabled:opacity-40">
             Close the claim
           </button>
         )}
-        {claim.stage === 'closed' && (
+        {claim.stage === 'closed' && canClose && (
           <button onClick={() => patch({ stage: 'settle' })} disabled={busy} className="text-sm font-medium px-3 py-2 rounded-lg border border-line bg-white hover:bg-app inline-flex items-center gap-1.5">
             <RotateCcw size={13} /> Reopen
           </button>

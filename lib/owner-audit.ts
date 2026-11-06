@@ -320,6 +320,10 @@ export type ResolutionClaim = {
   resCode: string
   reservationId: string
   stage: string                  // submitted | decided | settle | closed | …
+  channel: string                // Airbnb | VRBO | Booking.com | Direct …
+  outcome: string                // won | partial | denied | … ('' = waiting on the channel)
+  ownerAdjusted: boolean         // claims board "Owner adjusted" — allocated to the owner
+  paymentVerified: boolean       // claims board "Money in"
   amountSought: number | null
   amountPaid: number | null
   decidedOn: string
@@ -1798,15 +1802,26 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const prevCal = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
     const isPrepMonth = month >= prevCal
     const { data: clRows, error: clErr } = await sb.from('claims')
-      .select('id, guest_name, property, unit_no, channel, confirmation_code, reservation_id, stage, amount_sought, amount_paid, decided_on, paid_on, summary')
+      .select('id, guest_name, property, unit_no, channel, confirmation_code, reservation_id, stage, outcome, owner_adjusted, payment_verified, amount_sought, amount_paid, decided_on, paid_on, summary')
       .is('deleted_at', null)
-      .ilike('channel', '%airbnb%')
       .limit(500)
     if (!clErr) {
       const inMonth = (d: any) => String(d || '').slice(0, 7) === month
       resolutionClaims = ((clRows || []) as any[])
-        .filter(c => inMonth(c.paid_on) || inMonth(c.decided_on)
-          || (isPrepMonth && ['submitted', 'decided', 'settle'].includes(String(c.stage || ''))))
+        // EVERY CHANNEL, AND PAID-NOT-ALLOCATED CARRIES FORWARD (Jon, 2026-11-06: "there should be
+        // a section in owner audits about this too, we need to pull this into it when they are paid
+        // so we can allocate to owner"). Airbnb-only became all channels; and while the month is
+        // being prepped, any claim marked paid on the claims board whose money has not been
+        // allocated to the owner yet shows here whatever month it was paid in, until someone
+        // ticks Allocated to owner.
+        .filter(c => {
+          const paidOut = String(c.outcome || '') === 'won' || String(c.outcome || '') === 'partial'
+          const isAirbnb = /airbnb/i.test(String(c.channel || ''))
+          if (inMonth(c.paid_on) || (inMonth(c.decided_on) && (isAirbnb || paidOut))) return true
+          if (!isPrepMonth) return false
+          if (paidOut && c.owner_adjusted !== true) return true
+          return isAirbnb && ['submitted', 'decided', 'settle'].includes(String(c.stage || ''))
+        })
         .map(c => {
           const code = String(c.confirmation_code || '')
           return {
@@ -1817,6 +1832,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
             resCode: code,
             reservationId: String(c.reservation_id || ''),
             stage: String(c.stage || ''),
+            channel: String(c.channel || ''),
+            outcome: String(c.outcome || ''),
+            ownerAdjusted: c.owner_adjusted === true,
+            paymentVerified: c.payment_verified === true,
             amountSought: c.amount_sought == null ? null : Number(c.amount_sought) || 0,
             amountPaid: c.amount_paid == null ? null : Number(c.amount_paid) || 0,
             decidedOn: String(c.decided_on || '').slice(0, 10),

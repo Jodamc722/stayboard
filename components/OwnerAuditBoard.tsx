@@ -72,6 +72,7 @@ type PrepItem = {
 const prepResolved = (p: PrepItem) => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null) || !!p.saved
 type PrepFilter = '' | 'open' | 'nofees' | 'split' | 'marked'
 type ResolutionClaim = {
+  channel: string; outcome: string; ownerAdjusted: boolean; paymentVerified: boolean
   id: string; guest: string; property: string; unit: string
   resCode: string; reservationId: string; stage: string
   amountSought: number | null; amountPaid: number | null
@@ -635,6 +636,21 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       patchPrep(p, j.saved || null)
     } catch (e: any) { setError(String(e?.message || e)) }
     setPrepBusy('')
+  }
+
+  // ALLOCATE A PAID CLAIM TO THE OWNER (Jon, 2026-11-06). The same box as "Owner adjusted" on the
+  // claims board — one fact, two places to tick it — so the claims board's close-out and this
+  // statement-prep list never disagree.
+  const [allocBusy, setAllocBusy] = useState('')
+  const allocateClaim = async (id: string, on: boolean) => {
+    setAllocBusy(id)
+    try {
+      const r = await fetch('/api/claims/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owner_adjusted: on }) })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok || j.ok === false) setError(j.error || 'Could not save the allocation.')
+      else setData(d => d ? { ...d, resolutions: { ...d.resolutions, claims: d.resolutions.claims.map(x => x.id === id ? { ...x, ownerAdjusted: on } : x) } } : d)
+    } catch (e: any) { setError(String(e?.message || e)) }
+    setAllocBusy('')
   }
 
   // A note on ANYTHING — statement, prep row, resolution. Saves only the note; whatever
@@ -1847,7 +1863,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                   const decided = rc.filter(c => c.decidedOn && !c.paidOn)
                   const paid = rc.filter(c => !!c.paidOn)
                   const collected = paid.reduce((a, c) => a + (c.amountPaid || 0), 0)
-                  const missing = rc.filter(c => (c.paidOn || c.decidedOn) && !c.onStatement)
+                  const missing = rc.filter(c => (c.paidOn || c.decidedOn) && !c.onStatement && c.outcome !== 'denied')
+                  const toAllocate = rc.filter(c => (c.outcome === 'won' || c.outcome === 'partial') && !c.ownerAdjusted)
+                  const toAllocateAmt = toAllocate.reduce((a, c) => a + (c.amountPaid || 0), 0)
                   const stageChip = (c: ResolutionClaim) => c.paidOn
                     ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">Paid {dateShort(c.paidOn)}</span>
                     : c.decidedOn
@@ -1857,9 +1875,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <>
                       <div className="rounded-2xl border border-line bg-white shadow-soft px-4 py-3">
                         <div className="flex items-center gap-2"
-                          title="Every Airbnb Resolution Center case decided or paid this month (plus anything still pending while the month is being prepped), from the claims board, reconciled against the statements: a paid resolution that has not landed on the owner's statement is money the owner has not seen.">
+                          title="Every damage claim the channel paid (any channel — from the claims board), plus Airbnb Resolution Center cases decided or pending this month (plus anything still pending while the month is being prepped), from the claims board, reconciled against the statements: a paid resolution that has not landed on the owner's statement is money the owner has not seen.">
                           <ShieldAlert size={15} className="text-muted" />
-                          <div className="text-[13.5px] font-semibold text-ink">Airbnb resolutions</div>
+                          <div className="text-[13.5px] font-semibold text-ink">Paid claims &amp; resolutions — allocate to owner</div>
                           <a href="/claims" className="ml-auto text-xs font-medium text-brand-700 hover:underline">Open the claims board →</a>
                         </div>
                         <div className="flex flex-wrap gap-2 mt-2">
@@ -1868,6 +1886,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                           {decided.length > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-sky-50 text-sky-700 ring-sky-200">{decided.length} decided</span>}
                           <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">{paid.length} paid · {fmt0(collected)}</span>
                           {missing.length > 0 && <span className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-rose-50 text-rose-700 ring-rose-200">{missing.length} not on a statement</span>}
+                          {toAllocate.length > 0 && <span title="Paid by the channel, not yet ticked Allocated to owner — add it to the owner's statement (as the service it paid for, split by the management fee), then tick it" className="text-xs font-semibold px-2.5 py-1 rounded-full ring-1 ring-inset bg-amber-50 text-amber-800 ring-amber-200">{toAllocate.length} to allocate · {fmt0(toAllocateAmt)}</span>}
                         </div>
                       </div>
 
@@ -1879,6 +1898,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                                 <div className="min-w-[200px] flex-1">
                                   <div className="text-sm font-medium text-ink truncate">
                                     {c.guest || '(guest unknown)'} {c.resCode && <span className="text-muted font-normal">· {c.resCode}</span>}
+                                    {c.channel && <span className="text-muted font-normal"> · {c.channel}</span>}
                                   </div>
                                   <div className="text-[11px] text-muted truncate">
                                     {[c.property, c.unit].filter(Boolean).join(' ')}{c.summary ? ' · ' + c.summary : ''}
@@ -1889,7 +1909,15 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                                   <div className="text-[11px] text-muted">{c.amountPaid != null ? 'paid' : 'sought'}{c.amountPaid != null && c.amountSought != null && c.amountSought !== c.amountPaid ? ' of ' + fmt0(c.amountSought) : ''}</div>
                                 </div>
                                 {stageChip(c)}
-                                {(c.paidOn || c.decidedOn) && (
+                                {c.outcome && <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + (c.outcome === 'denied' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200')}>{c.outcome === 'won' ? 'Full' : c.outcome === 'partial' ? 'Partial' : c.outcome === 'denied' ? 'Denied · not paid' : c.outcome}</span>}
+                                {(c.outcome === 'won' || c.outcome === 'partial') && (share
+                                  ? <span className={'text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset ' + (c.ownerAdjusted ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-amber-50 text-amber-800 ring-amber-200')}>{c.ownerAdjusted ? 'Allocated to owner' : 'Not allocated yet'}</span>
+                                  : <button onClick={() => allocateClaim(c.id, !c.ownerAdjusted)} disabled={allocBusy === c.id}
+                                      title={c.ownerAdjusted ? 'Allocated to the owner — click to undo (also clears "Owner adjusted" on the claims board)' : 'Tick once the money is on the owner\'s statement — same box as "Owner adjusted" on the claims board'}
+                                      className={'text-[11px] font-semibold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 disabled:opacity-50 ' + (c.ownerAdjusted ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-amber-300 bg-white text-amber-800 hover:bg-amber-50')}>
+                                      {c.ownerAdjusted ? '✓ Allocated to owner' : 'Allocate to owner'}
+                                    </button>)}
+                                {(c.paidOn || c.decidedOn) && c.outcome !== 'denied' && (
                                   c.onStatement
                                     ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-emerald-50 text-emerald-700 ring-emerald-200">On statement{c.stmtAmount != null ? ' ' + fmt(c.stmtAmount) : ''}</span>
                                     : <Tag tone="rose" title="No resolution line found on this month's statements for this reservation — add it in Guesty so the owner sees the money">Not on a statement</Tag>
@@ -1928,7 +1956,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                         </div>
                       )}
                       {rc.length === 0 && orphans.length === 0 && (
-                        <LeanEmpty>No Airbnb resolutions found for {data.label}.</LeanEmpty>
+                        <LeanEmpty>No paid claims or Airbnb resolutions for {data.label}.</LeanEmpty>
                       )}
                     </>
                   )

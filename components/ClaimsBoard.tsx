@@ -5,12 +5,12 @@
 // filing window closes 14 days after checkout. So a claim that has not been filed shows a
 // countdown, and a claim whose countdown has gone red sorts to the top of its lane. Everything
 // else — money, channel, evidence completeness — is secondary to "is this going to expire".
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, createContext, useContext } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ClaimDesk } from '@/components/ClaimDesk'
 import {
-  ShieldAlert, Search, RefreshCw, Plus, X, CalendarClock, Loader2, ExternalLink, CheckCircle2, Trash2,
+  ShieldAlert, Search, RefreshCw, Plus, X, CalendarClock, Loader2, ExternalLink, CheckCircle2, Trash2, FileText, Lock, Combine,
 } from 'lucide-react'
 import { DeleteButton, UndoBar, TrashDrawer } from '@/components/DeleteControl'
 import { Tag, Pill, LeanHead, LeanTabs, IconBtn, Tip, LeanList, LeanEmpty, type Tone } from '@/components/lean'
@@ -20,8 +20,9 @@ import {
 } from '@/lib/claims'
 import { ClaimPolicyPanel } from '@/components/ClaimPolicy'
 import { HkDamageQueue } from '@/components/HkDamageQueue'
+import { PayablesReport } from '@/components/ClaimsPayablesReport'
 
-type Board = { ok: boolean; today: string; claims: Claim[]; totals: { open: number; sought: number; recovered: number }; error?: string }
+type Board = { ok: boolean; today: string; claims: Claim[]; totals: { open: number; sought: number; recovered: number }; canClose?: boolean; error?: string }
 type Match = {
   reservationId: string; listingId: string; unitLabel: string; property: string; unitNo: string
   guestName: string; guestEmail: string | null; checkIn: string; checkOut: string; channel: string
@@ -29,6 +30,9 @@ type Match = {
   daysLeft: number | null; hardDaysLeft: number | null; route: string | null
   guestyUrl: string; existingClaimId: string | null
 }
+
+// MERGE MODE (Jon, 2026-11-06): tick claims on the board, pick the one to keep, merge.
+const MergeCtx = createContext<{ on: boolean; picked: Set<string>; toggle: (id: string) => void }>({ on: false, picked: new Set(), toggle: () => {} })
 
 const URGENCY_TONE: Record<string, Tone> = { expired: 'roseSolid', critical: 'rose', soon: 'amber', ok: 'emerald', none: 'slate' }
 
@@ -105,6 +109,12 @@ export function ClaimsBoard() {
   const [hkFocus, setHkFocus] = useState<string | null>(null)
   useEffect(() => { try { setHkFocus(new URLSearchParams(window.location.search).get('hk')) } catch { /* no focus */ } }, [])
   const [showPolicy, setShowPolicy] = useState(false)
+  const [showReport, setShowReport] = useState(false)
+  const [mergeOn, setMergeOn] = useState(false)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [keepId, setKeepId] = useState('')
+  const [merging, setMerging] = useState(false)
+  const togglePick = useCallback((id: string) => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n }), [])
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
 
   const removeClaim = useCallback(async (id: string): Promise<string | null> => {
@@ -212,6 +222,7 @@ export function ClaimsBoard() {
   const closedRecovered = closedRows.reduce((t, c) => t + (num(c.amount_paid) || 0), 0)
 
   const ctl = 'text-[12px] border border-line rounded-lg bg-white py-1'
+  const canClose = data?.canClose === true
 
   return (
     <>
@@ -221,6 +232,14 @@ export function ClaimsBoard() {
         <Pill tone="amber" title="Total sought across claims">{money(totals.sought)} sought</Pill>
         <Pill tone="emerald" title="Total recovered">{money(totals.recovered)} recovered</Pill>
         <Pill tone="brand" title={decided.length ? decided.length + ' decided (won or partial counts as a win)' : 'Nothing decided yet'}>{winRate === null ? '—' : winRate + '%'} win</Pill>
+        <button onClick={() => { setMergeOn(v => !v); setPicked(new Set()); setKeepId('') }} title="Merge claims — tick two or more, pick the one to keep; every item moves into it"
+          className={'text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 ' + (mergeOn ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink hover:bg-app')}>
+          <Combine size={13} /> {mergeOn ? 'Merging…' : 'Merge'}
+        </button>
+        <button onClick={() => setShowReport(true)} title="Claims report for payables — paid claims, amounts received, CSV / copy / print"
+          className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app inline-flex items-center gap-1">
+          <FileText size={13} /> Payables report
+        </button>
         <button onClick={() => setNewOpen(true)} className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90 inline-flex items-center gap-1">
           <Plus size={13} /> New claim
         </button>
@@ -244,6 +263,7 @@ export function ClaimsBoard() {
 
       {err && <div className="text-[12.5px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
       {showPolicy && <ClaimPolicyPanel onClose={() => setShowPolicy(false)} onSaved={load} />}
+      {showReport && <PayablesReport claims={all} onClose={() => setShowReport(false)} />}
       {showTrash && <TrashDrawer kind="claim" onRestored={load} onClose={() => setShowTrash(false)} />}
 
       {/* HK DAMAGE REPORTS (Jon, 2026-10-07) — new reports from #vr-hkdamagereports, to autofill or close. */}
@@ -254,15 +274,16 @@ export function ClaimsBoard() {
       {data && all.length === 0 && <LeanEmpty>No claims yet — start one from the reservation with <b>New claim</b>.</LeanEmpty>}
 
       {data && all.length > 0 && (
+        <MergeCtx.Provider value={{ on: mergeOn, picked, toggle: togglePick }}>
         <div className="space-y-5">
           <Section title="New" blurb="Started, nobody has worked it yet" rows={sec.new}
-            empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
+            empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
           <Section title="Pending" blurb="On our desk — waiting on approval, or approved and waiting to be filed" rows={sec.pending}
-            empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
-          <Section title="Submitted" blurb="With the channel — filed, waiting on their answer" rows={sec.submitted}
-            empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
-          <Section title="Money & owner" blurb="They answered — verify the payment landed, adjust the owner, then close" rows={sec.settle} moneyOf="paid"
-            empty="Nothing waiting on money or the owner." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} />
+            empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
+          <Section title="Submitted" blurb="Waiting on the channel — when they decide, mark it Paid in full, Partially paid or Denied" rows={sec.submitted}
+            empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
+          <Section title="Paid — to close out" blurb={'The channel decided — amount received shows on each row. ' + (canClose ? 'Tick money in and owner adjusted, then close.' : 'Accounting, the GM or an Admin closes it out.')} rows={sec.settle} moneyOf="paid"
+            empty="Nothing waiting to be closed out." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
 
           {/* CLOSED — the one section behind tabs, and the tabs are how it ended. */}
           <section>
@@ -285,7 +306,7 @@ export function ClaimsBoard() {
                   <>
                     <LeanList>
                       {(showAllClosed ? closedRows : closedRows.slice(0, 12)).map(c =>
-                        <ClaimRow key={c.id} claim={c} showStage={false} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} onMoved={load} />)}
+                        <ClaimRow key={c.id} claim={c} showStage={false} canClose={canClose} onDelete={() => removeClaim(c.id)} onOpen={() => setOpenId(c.id)} onMoved={load} />)}
                     </LeanList>
                     {!showAllClosed && closedRows.length > 12 && (
                       <button onClick={() => setShowAllClosed(true)} className="mt-1.5 text-[12px] font-semibold text-muted hover:text-ink px-1">
@@ -298,7 +319,46 @@ export function ClaimsBoard() {
             )}
           </section>
         </div>
+        </MergeCtx.Provider>
       )}
+
+      {mergeOn && (() => {
+        const list = all.filter(c => picked.has(c.id))
+        const keep = keepId && picked.has(keepId) ? keepId : (list[0]?.id || '')
+        const resIds = new Set(list.map(c => String(c.reservation_id || '')).filter(Boolean))
+        const nItems = list.reduce((t, c) => t + (c.items || []).length, 0)
+        const go = async () => {
+          if (list.length < 2 || !keep) return
+          if (!window.confirm('Merge ' + list.length + ' claims into "' + claimTitle(list.find(c => c.id === keep)!) + '"?\n\nAll ' + nItems + ' items move into it; the others are removed (their history keeps where they went).' + (resIds.size > 1 ? '\n\nHeads up: these are on ' + resIds.size + ' different reservations — the merged claim stays on the kept one\'s reservation.' : ''))) return
+          setMerging(true)
+          try {
+            const r = await fetch('/api/claims/merge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keepId: keep, mergeIds: list.map(c => c.id).filter(id => id !== keep) }) })
+            const j = await r.json().catch(() => ({}))
+            if (!r.ok || j.ok === false) { setErr(j.error || 'Merge failed.') }
+            else { setMergeOn(false); setPicked(new Set()); setKeepId(''); await load(); setOpenId(keep) }
+          } catch (e: any) { setErr(String(e?.message || e)) }
+          setMerging(false)
+        }
+        return (
+          <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] z-40 w-[calc(100%-2rem)] max-w-2xl rounded-xl border border-line bg-white shadow-xl px-3 py-2.5 flex items-center gap-2 flex-wrap">
+            <Combine size={15} className="text-ink" />
+            <span className="text-[12.5px] font-semibold text-ink">{list.length < 2 ? 'Tick two or more claims to merge' : list.length + ' claims · ' + nItems + ' items'}</span>
+            {list.length >= 2 && (<>
+              <span className="text-[12px] text-muted">keep</span>
+              <select value={keep} onChange={e => setKeepId(e.target.value)} className="text-[12px] border border-line rounded-lg px-2 py-1 max-w-[14rem]">
+                {list.map(c => <option key={c.id} value={c.id}>{claimTitle(c)}</option>)}
+              </select>
+              {resIds.size > 1 && <Tag tone="amber" title="Different reservations — the merged claim keeps the kept claim's reservation">{resIds.size} reservations</Tag>}
+            </>)}
+            <span className="ml-auto flex gap-1.5">
+              <button onClick={() => { setMergeOn(false); setPicked(new Set()) }} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white">Cancel</button>
+              <button onClick={go} disabled={list.length < 2 || merging} className="text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-40 inline-flex items-center gap-1">
+                {merging ? <Loader2 size={12} className="animate-spin" /> : <Combine size={12} />} Merge
+              </button>
+            </span>
+          </div>
+        )
+      })()}
 
       {newOpen && <NewClaimModal onClose={() => setNewOpen(false)} onCreated={(id: string) => { setNewOpen(false); load(); setOpenId(id) }} />}
       {openId && <ClaimDrawer id={openId} onClose={() => { setOpenId(null); load() }} onChanged={load} />}
@@ -315,27 +375,27 @@ export function ClaimsBoard() {
  * the difference between whose move it is. An empty section still prints, because a board that
  * hides its empty lanes makes you wonder whether you filtered them away.
  */
-function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved, moneyOf = 'sought' }: {
-  title: string; blurb: string; rows: Claim[]; empty: string
+function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved, moneyOf = 'sought', canClose }: {
+  title: string; blurb: string; rows: Claim[]; empty: string; canClose: boolean
   onDelete: (id: string) => Promise<string | null>; onOpen: (id: string) => void; onMoved: () => void
   /** Which money the section's pill adds up: what we asked for, or (Money & owner) what was actually awarded. */
   moneyOf?: 'sought' | 'paid'
 }) {
   const sought = rows.reduce((t, c) => t + (num(c.amount_sought) || itemsTotal(c.items)), 0)
   const paid = rows.reduce((t, c) => t + (num(c.amount_paid) || 0), 0)
-  const settling = moneyOf === 'paid' ? rows.filter(c => c.payment_verified !== true || c.owner_adjusted !== true).length : 0
+  const settling = moneyOf === 'paid' ? rows.filter(c => (c.outcome === 'won' || c.outcome === 'partial') && (c.payment_verified !== true || c.owner_adjusted !== true)).length : 0
   return (
     <section>
       <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
         <h2 className="text-[13px] font-bold text-ink">{title}</h2>
         <span className="text-[12px] text-muted">{rows.length ? rows.length + ' claim' + (rows.length === 1 ? '' : 's') + ' · ' + blurb : blurb}</span>
         {moneyOf === 'sought' && sought > 0 && <Pill tone="amber" title="Total sought in this section">{money(sought)}</Pill>}
-        {moneyOf === 'paid' && paid > 0 && <Pill tone="emerald" title="Awarded across this section — amount actually paid, as recorded on each claim">{money(paid)} awarded</Pill>}
-        {moneyOf === 'paid' && settling > 0 && <Pill tone="amber" title="Claims with a step still open: payment not yet verified in the account, or the owner statement not yet adjusted">{settling} to finish</Pill>}
+        {moneyOf === 'paid' && paid > 0 && <Pill tone="emerald" title="Awarded across this section — amount actually paid, as recorded on each claim">{money(paid)} received</Pill>}
+        {moneyOf === 'paid' && settling > 0 && <Pill tone="amber" title="Paid claims with a step still open: money not yet verified in the account, or the owner statement not yet adjusted">{settling} to finish</Pill>}
       </div>
       {rows.length === 0 ? <LeanEmpty>{empty}</LeanEmpty> : (
         <LeanList>
-          {rows.map(c => <ClaimRow key={c.id} claim={c} showStage onDelete={() => onDelete(c.id)} onOpen={() => onOpen(c.id)} onMoved={onMoved} />)}
+          {rows.map(c => <ClaimRow key={c.id} claim={c} showStage canClose={canClose} onDelete={() => onDelete(c.id)} onOpen={() => onOpen(c.id)} onMoved={onMoved} />)}
         </LeanList>
       )}
     </section>
@@ -382,7 +442,7 @@ function ClaimDrawer({ id, onClose, onChanged }: { id: string; onClose: () => vo
   )
 }
 
-function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Claim; showStage: boolean; onDelete: () => Promise<string | null>; onOpen: () => void; onMoved: () => void }) {
+function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { claim: Claim; showStage: boolean; canClose: boolean; onDelete: () => Promise<string | null>; onOpen: () => void; onMoved: () => void }) {
   const [moving, setMoving] = useState(false)
   const [moveErr, setMoveErr] = useState('')
   const rev = reviewerOf(claim)
@@ -391,6 +451,7 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
   const move = async (to: string) => {
     if (to === String(claim.stage || 'draft')) return
     if (to === 'review') { onOpen(); return }
+    if ((to === 'closed' || claim.stage === 'closed') && !canClose) { setMoveErr('Accounting, the GM or an Admin closes claims'); return }
     setMoving(true); setMoveErr('')
     try {
       const send = (force: boolean) => fetch('/api/claims/' + claim.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(force ? { stage: to, force: true } : { stage: to }) })
@@ -408,7 +469,7 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
   // — the money landed, the owner's statement reflects it — and then it closes. Both toggles and
   // the Close button sit on the row, so the person working the section never opens each claim.
   const [quickBusy, setQuickBusy] = useState('')
-  const quick = async (patch: Record<string, any>, key: string) => {
+  const quick = async (patch: Record<string, any>, key: string): Promise<void> => {
     setQuickBusy(key); setMoveErr('')
     try {
       const r = await fetch('/api/claims/' + claim.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
@@ -418,6 +479,23 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
     } catch (e: any) { setMoveErr(String(e?.message || e)) }
     setQuickBusy('')
   }
+  // THE CHANNEL'S ANSWER, ON THE ROW (Jon, 2026-11-06): Submitted = waiting on the channel; once
+  // they decide, mark it Paid in full / Partially paid (with the amount actually received) or
+  // Denied (not paid). The server moves it: paid → "Paid — to close out", denied → same section,
+  // tagged, nothing received.
+  const [decide, setDecide] = useState<'' | 'won' | 'partial'>('')
+  const [amt, setAmt] = useState('')
+  const pickDecision = (v: string) => {
+    setMoveErr('')
+    if (v === 'won' || v === 'partial') { setDecide(v); setAmt(v === 'won' ? String(num(claim.amount_sought) || itemsTotal(claim.items || []) || '') : ''); return }
+    if (v === 'denied') { if (window.confirm('Mark this claim Denied — not paid? It moves to "Paid — to close out" with $0 received.')) quick({ outcome: 'denied' }, 'dec'); return }
+  }
+  const saveDecision = () => {
+    const n = Number(String(amt).replace(/[$,\s]/g, ''))
+    if (!isFinite(n) || n <= 0) { setMoveErr('Enter the amount received'); return }
+    quick({ outcome: decide, amount_paid: n }, 'dec').then(() => setDecide(''))
+  }
+  const mg = useContext(MergeCtx)
   const items = claim.items || []
   const gates = gatesFor(claim, items)
   const done = gates.filter(g => g.ok).length
@@ -432,7 +510,8 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
   return (
     <li className={'group ' + (u === 'expired' ? 'bg-rose-50/60' : u === 'critical' ? 'bg-rose-50/30' : '')}>
       <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
-        <button type="button" onClick={onOpen} className="flex-1 min-w-0 text-left">
+        {mg.on && stage !== 'closed' && <input type="checkbox" checked={mg.picked.has(claim.id)} onChange={() => mg.toggle(claim.id)} className="shrink-0 w-4 h-4" title="Pick to merge" />}
+        <button type="button" onClick={mg.on && stage !== 'closed' ? () => mg.toggle(claim.id) : onOpen} className="flex-1 min-w-0 text-left">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{claimTitle(claim)}</span>
             {showStage && <Tag tone="brand">{STAGE_LABEL[stage] || stage}</Tag>}
@@ -446,14 +525,38 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
             {claim.waiting_on && <Tag tone="sky">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</Tag>}
             {claim.outcome && (
               <Tag tone={claim.outcome === 'denied' ? 'rose' : claim.outcome === 'won' || claim.outcome === 'partial' ? 'emerald' : 'slate'}>
-                {claim.outcome === 'won' ? 'Paid in full' : claim.outcome === 'partial' ? 'Partial' : claim.outcome.charAt(0).toUpperCase() + claim.outcome.slice(1)}
+                {claim.outcome === 'won' ? 'Paid · full' : claim.outcome === 'partial' ? 'Paid · partial' : claim.outcome === 'denied' ? 'Denied · not paid' : claim.outcome.charAt(0).toUpperCase() + claim.outcome.slice(1)}
               </Tag>
             )}
             <Tag tone={done === gates.length ? 'emerald' : 'slate'} title={gates.map(g => (g.ok ? '✓ ' : '· ') + g.label).join('\n') + '\n' + items.length + ' item' + (items.length === 1 ? '' : 's')}>{done}/{gates.length} evidence</Tag>
             {claim.payment_verified === true && claim.owner_adjusted !== true && stage === 'settle' && <Tag tone="amber" title="Paid — owner statement still to adjust">Adjust owner</Tag>}
+            {settling && !canClose && <Tag tone="slate" title="Only Accounting, the GM or an Admin can close a claim"><Lock size={10} className="inline -mt-0.5" /> Accounting closes</Tag>}
           </div>
         </button>
-        {amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>}
+        {settling && claim.outcome ? (
+          <span className="shrink-0 text-right leading-tight" title={'Asked ' + money(amount) + ' · received ' + money(num(claim.amount_paid) || 0) + (claim.paid_on ? ' on ' + claim.paid_on : '')}>
+            <span className={'block text-[13px] font-bold tabular-nums ' + ((num(claim.amount_paid) || 0) > 0 ? 'text-emerald-700' : 'text-rose-700')}>{money(num(claim.amount_paid) || 0)} received</span>
+            {amount > 0 && <span className="block text-[10.5px] text-muted tabular-nums">of {money(amount)}</span>}
+          </span>
+        ) : amount > 0 && <span className="text-[13px] font-bold text-ink tabular-nums shrink-0">{money(amount)}</span>}
+        {stage === 'submitted' && !decide && (
+          <select value="" onChange={e => pickDecision(e.target.value)} disabled={!!quickBusy || moving} title="The channel answered — record it"
+            className="shrink-0 text-[11.5px] font-semibold border border-sky-300 rounded-md bg-sky-50 text-sky-900 px-1.5 py-1 max-w-[9.5rem] disabled:opacity-50">
+            <option value="">Waiting on channel ▾</option>
+            <option value="won">Paid in full</option>
+            <option value="partial">Partially paid</option>
+            <option value="denied">Denied — not paid</option>
+          </select>
+        )}
+        {decide && (
+          <span className="shrink-0 inline-flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-muted">{decide === 'won' ? 'Full' : 'Partial'} · received $</span>
+            <input autoFocus value={amt} onChange={e => setAmt(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveDecision(); if (e.key === 'Escape') setDecide('') }}
+              inputMode="decimal" placeholder="0.00" className="w-20 text-[12px] border border-line rounded-md px-1.5 py-1 tabular-nums" />
+            <button onClick={saveDecision} disabled={!!quickBusy} className={chip + 'border-emerald-600 bg-emerald-600 text-white'}>{quickBusy === 'dec' ? <Loader2 size={11} className="animate-spin" /> : null} Mark paid</button>
+            <button onClick={() => setDecide('')} className="text-muted hover:text-ink"><X size={13} /></button>
+          </span>
+        )}
         {settling && (
           <span className="hidden sm:inline-flex items-center gap-1 shrink-0">
             {moneyDue && <button onClick={() => quick({ payment_verified: !claim.payment_verified }, 'pay')} disabled={!!quickBusy || moving}
@@ -466,16 +569,16 @@ function ClaimRow({ claim, showStage, onDelete, onOpen, onMoved }: { claim: Clai
               className={chip + (claim.owner_adjusted ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-line bg-white text-muted hover:text-ink')}>
               {quickBusy === 'own' ? <Loader2 size={11} className="animate-spin" /> : claim.owner_adjusted ? <CheckCircle2 size={11} /> : null} Owner adjusted
             </button>}
-            <button onClick={() => move('closed')} disabled={moving || !!quickBusy}
+            {canClose && <button onClick={() => move('closed')} disabled={moving || !!quickBusy}
               title={!moneyDue ? 'Nothing to collect — close the claim' : bothDone ? 'Both steps done — close the claim' : 'Close the claim now (a step is still open — it stays recorded as not done)'}
               className={chip + (!moneyDue || bothDone ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-line bg-white text-muted hover:text-ink')}>
               {moving ? <Loader2 size={11} className="animate-spin" /> : null} Close
-            </button>
+            </button>}
           </span>
         )}
         <select value={stage} onChange={e => move(e.target.value)} disabled={moving} title="Move this claim to another stage"
           className="shrink-0 text-[11.5px] font-semibold border border-line rounded-md bg-white px-1.5 py-1 max-w-[9.5rem] disabled:opacity-50">
-          {STAGES.map(s2 => <option key={s2.key} value={s2.key}>{s2.key === stage ? '● ' : 'Move to: '}{s2.label}</option>)}
+          {STAGES.filter(s2 => canClose || s2.key !== 'closed' || stage === 'closed').map(s2 => <option key={s2.key} value={s2.key} disabled={!canClose && stage === 'closed' && s2.key !== 'closed'}>{s2.key === stage ? '● ' : 'Move to: '}{s2.label}</option>)}
         </select>
         {/* On a mouse the delete appears on hover; a touch screen has no hover, so on a phone it is
             always there. It sits outside the open button, so it can never open the claim. */}

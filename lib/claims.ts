@@ -10,7 +10,7 @@ export const STAGES: { key: Stage; label: string; blurb: string }[] = [
   { key: 'ready',     label: 'Ready to file',  blurb: 'Approved — file it before the clock runs out' },
   { key: 'submitted', label: 'Submitted',      blurb: 'With the channel' },
   { key: 'decided',   label: 'Decided',        blurb: 'They answered — won, partial or denied' },
-  { key: 'settle',    label: 'Money & owner',  blurb: 'Verify the payment landed, then adjust the owner' },
+  { key: 'settle',    label: 'Paid',           blurb: 'Amount received — Accounting, the GM or an Admin closes it out' },
   { key: 'closed',    label: 'Closed',         blurb: 'Done' },
 ]
 

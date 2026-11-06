@@ -11,6 +11,7 @@ import { nextCheckInMap } from '@/lib/claim-turnover'
 import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { bustDay } from '@/lib/bust'
+import { canCloseClaims } from '@/lib/claim-closers'
 
 const POLICY_KEY = 'claims_channel_policy'
 const loadPolicy = () => getSetting<Record<string, ChannelPolicy>>(POLICY_KEY, {})
@@ -133,7 +134,7 @@ export async function GET(req: NextRequest) {
       recovered += num(c.amount_paid) || 0
     }
     return NextResponse.json({
-      ok: true, today: todayET(), claims: out,
+      ok: true, today: todayET(), claims: out, canClose: await canCloseClaims(gate.access),
       totals: { open: openCount, sought: Math.round(sought * 100) / 100, recovered: Math.round(recovered * 100) / 100 },
     })
   } catch (e: any) {
