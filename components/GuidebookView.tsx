@@ -85,6 +85,9 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
   }
   const s = gb.sections || {}
   const omit: string[] = Array.isArray(s.omit) ? s.omit : []
+  // The first 8 how-tos a guest sees — hidden common-sense ones don't use up a place (Air conditioning and
+  // Smart TV were cut off behind a hidden microwave and kettle). In Edit every item shows.
+  const hgShow: number[] = (Array.isArray(s.houseGuide?.items) ? s.houseGuide.items : []).map((_: any, i: number) => i).filter((i: number) => edit || howtoShown(s.houseGuide.items[i]?.title, printPrefs(s))).slice(0, edit ? 99 : 8)
   const purl = (p: any): string | null => { if (!p) return null; if (typeof p === 'object') return p.original || p.thumbnail || p.url || null; if (typeof p === 'string') { const s = p.trim(); if (s.charAt(0) === '{') { try { const o = JSON.parse(s); return o.original || o.thumbnail || o.url || null } catch { return null } } return s } return null }
   const _paRaw = s._photoAssign || {}
   const pa: any = {}
@@ -951,7 +954,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
                 margins instead — same optical centring, and auto margins collapse to 0 when the
                 content is taller than the box, so a full page still can't overflow. */}
             <div className={'mb-auto mt-6 gap-x-8 ' + ((s.houseGuide.items || []).length > 3 ? 'columns-1 sm:columns-2' : 'columns-1')}>
-              {(s.houseGuide.items).slice(0, 8).map((it: any, i: number) => (!edit && !howtoShown(it.title, printPrefs(s))) ? null : (
+              {(s.houseGuide.items).map((it: any, i: number) => !hgShow.includes(i) ? null : (
                 <div key={i} className="flex gap-3 border-b pb-3 mb-3 break-inside-avoid" style={{ borderColor: accentColor + '22' }}>
                   <span className="text-[24px] leading-none opacity-25" style={{ fontFamily: SERIF }}>{String((edit ? i : (s.houseGuide.items).slice(0, i).filter((x: any) => howtoShown(x && x.title, printPrefs(s))).length) + 1).padStart(2, '0')}</span>
                   <div className="flex-1">
@@ -982,7 +985,8 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
         {/* MAP PAGES (Jon, 2026-11-06) — a how-to whose picture is a map (parking, the walk to the beach,
             the drive into town) gets a page of its own: the map as large as the sheet allows, never
             cropped, tap to open it full size, with the steps beside it. lib/guide-print isMapItem. */}
-        {has('houseGuide', true) && (s.houseGuide?.items || []).slice(0, 8).map((it: any, i: number) => {
+        {has('houseGuide', true) && (s.houseGuide?.items || []).map((it: any, i: number) => {
+          if (!hgShow.includes(i)) return null
           if (!isMapItem(it) || !howtoShown(it.title, printPrefs(s))) return null
           const src = purl(it.photo)
           if (!src) return null
