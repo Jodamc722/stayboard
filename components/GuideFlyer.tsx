@@ -59,15 +59,15 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
         .gf-ol { margin: 3pt 0 0; padding: 0; list-style: none; counter-reset: s; }
         .gf-ol li { counter-increment: s; position: relative; padding-left: 15pt; margin: 0 0 2.5pt; font-size: 8.6pt; line-height: 1.4; color: #333; }
         .gf-ol li:before { content: counter(s); position: absolute; left: 0; top: .5pt; width: 10.5pt; height: 10.5pt; border-radius: 50%; background: ${acc}; color: #fff; font-size: 6.6pt; font-weight: 700; display: flex; align-items: center; justify-content: center; }
-        .gf-rule { padding: 0 0 4pt; margin: 0 0 4pt; border-bottom: .6pt solid #e6e3de; }
+        .gf-rule { padding: 0 0 3pt; margin: 0 0 3pt; border-bottom: .6pt solid #e6e3de; }
         .gf-rule:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
-        .gf-tick { display: flex; gap: 7pt; align-items: flex-start; margin: 0 0 5pt; font-size: 8.8pt; line-height: 1.4; color: #333; }
+        .gf-tick { display: flex; gap: 7pt; align-items: flex-start; margin: 0 0 3.5pt; font-size: 8.5pt; line-height: 1.4; color: #333; }
         .gf-tick i { flex: none; width: 9pt; height: 9pt; margin-top: 1.5pt; border: 1pt solid ${acc}; border-radius: 2.5pt; }
       `}</style>
 
       <div className="gf">
         {/* HERO */}
-        <div style={{ position: 'relative', height: '3.4in', background: deep, flex: 'none' }}>
+        <div style={{ position: 'relative', height: '3.25in', background: deep, flex: 'none' }}>
           {d.cover ? <img src={d.cover} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
           <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,.38) 0%, rgba(0,0,0,0) 30%, rgba(0,0,0,0) 45%, rgba(0,0,0,.66) 100%)' }} />
           <img src={LOGO_URL} alt="" style={{ position: 'absolute', top: '.42in', left: '.55in', height: '16pt', filter: 'brightness(0) invert(1)', opacity: .95 }} />
@@ -111,7 +111,7 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
                   <div key={i} style={{ marginBottom: '8pt' }}>
                     <p className="gf-t"><b>{x.q.replace(/\?$/, '')}</b></p>
                     {x.steps.steps.length
-                      ? <>{x.steps.intro ? <p className="gf-t">{x.steps.intro}</p> : null}<ol className="gf-ol">{x.steps.steps.slice(0, 5).map((y, j) => <li key={j}>{short(y, 110)}</li>)}</ol></>
+                      ? <>{x.steps.intro ? <p className="gf-t">{x.steps.intro}</p> : null}<ol className="gf-ol">{x.steps.steps.slice(0, 5).map((y, j) => <li key={j}>{short(y, 150)}</li>)}</ol></>
                       : <p className="gf-t">{short(x.a, 230)}</p>}
                   </div>
                 ))}
@@ -128,11 +128,11 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
             {rules.length ? (
               <>
                 <p className="gf-h">House rules</p>
-                {rules.map((r: any, i: number) => <div key={i} className="gf-rule"><p className="gf-t"><b>{sentence(r.title)}</b>{str(r.body) ? ' — ' + short(firstSentence(str(r.body)) || str(r.body), 90) : ''}</p></div>)}
+                {rules.map((r: any, i: number) => <div key={i} className="gf-rule"><p className="gf-t"><b>{sentence(r.title)}</b>{str(r.body) ? ' — ' + short(firstSentence(str(r.body)) || str(r.body), 64) : ''}</p></div>)}
               </>
             ) : null}
             <p className="gf-h" style={{ marginTop: rules.length ? '12pt' : 0 }}>Before you leave</p>
-            {outList.length ? outList.map((x: string, i: number) => <div key={i} className="gf-tick"><i /><span>{short(x, 100)}</span></div>) : <p className="gf-t">Please leave by {d.checkOut || 'the agreed time'} — thank you!</p>}
+            {outList.length ? outList.map((x: string, i: number) => <div key={i} className="gf-tick"><i /><span>{short(x, 74)}</span></div>) : <p className="gf-t">Please leave by {d.checkOut || 'the agreed time'} — thank you!</p>}
           </div>
         </div>
 
