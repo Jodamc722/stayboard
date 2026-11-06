@@ -201,6 +201,8 @@ export function buildingGuideFor(listingName?: string): BuildingGuide | null {
   for (const key of ['elser', 'arya', 'eden', 'botanica', 'rustic', 'amrit', 'hendricks', 'capri', 'lucerne', 'pelican', 'waves', 'oasis', 'boynton']) {
     if (s.includes(key)) return BUILDINGS.find(b => b.key === key) || null
   }
+  // Surfside is Jon's name for the Boynton Beach property (listings "Surfside - 1..9").
+  if (/surfside/.test(s)) return BUILDINGS.find(b => b.key === 'boynton') || null
   if (/mango|jasmine|sapodilla|bamboo|bougainvillea|mahogany|royal\s*palm/.test(s)) return BUILDINGS.find(b => b.key === 'oasis') || null
   return null
 }

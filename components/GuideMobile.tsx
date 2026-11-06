@@ -77,6 +77,9 @@ export function guideData(gb: any) {
   return {
     s, has, lbl, pa, photos, em,
     name: stayName(gb),
+    // Set by /g/[id] from the listing ("Unit 3"); empty when the listing has no unit number.
+    unit: str(gb?._unit),
+    beach: str(gb?._beach),
     subtitle: str(s.cover?.subtitle).replace(/\s{2,}/g, ' '),
     line1: str(s.cover?.line1), line2: str(s.cover?.line2),
     cover: pa.cover || photos[0] || null,
@@ -188,12 +191,22 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
               {!/^welcome/i.test(d.line1) ? <p className="text-[10px] tracking-[0.45em] text-white/80">{lbl('cover.kicker', 'WELCOME')}</p> : null}
               <h1 className="mt-2 text-[38px] leading-[1.02] font-medium lowercase text-white" style={{ fontFamily: SERIF, textWrap: 'balance' as any }}>{d.line1 ? <>{d.line1}{d.line2 ? <><br />{d.line2}</> : null}</> : d.name}</h1>
               {d.subtitle ? <p className="mt-2.5 text-[11px] uppercase tracking-[0.3em] text-white/75">{d.subtitle}</p> : null}
+              {d.unit ? <p className="mt-3 inline-flex rounded-full bg-white px-3.5 py-1.5 text-[14px] font-bold tracking-[0.04em]" style={{ color: '#1f1d1a' }}>{d.unit}</p> : null}
             </div>
           </header>
 
           {/* ESSENTIALS */}
           <div className="relative z-10 -mt-6 px-4" id="g-essentials">
             <div className="rounded-2xl p-4" style={{ background: c.card, boxShadow: shadow }}>
+              {d.unit ? (
+                <div className={'flex items-center gap-3 ' + (d.wifiNet ? 'mb-4 pb-4' : '')} style={d.wifiNet ? { borderBottom: '1px solid ' + c.line } : undefined}>
+                  {iconDot(KeyRound)}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: c.mute }}>Your unit</p>
+                    <p className="text-[22px] font-bold leading-tight">{d.unit}</p>
+                  </div>
+                </div>
+              ) : null}
               {d.wifiNet ? (
                 <div className="flex items-center gap-3">
                   {iconDot(Wifi)}
@@ -540,6 +553,38 @@ function PlaceList({ items, city, c, gbId, section, token }: { items: any[]; cit
   )
 }
 
+// ── PRINT FAQ — ITS OWN PAGE ──────────────────────────────────────────────────────────────────────
+// Jon, 2026-11-06: parking and the way to the beach "should have the FAQ as a standalone page … on all
+// guidebooks" — the phone guide already has them; the printed manual buried parking in a paragraph and
+// had no beach at all. One sheet, the questions guests actually ask, with QR codes for the two maps a
+// printer can't draw: directions to the building and the walk to the beach.
+const qrSrc = (url: string) => 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(url)
+function PrintFaq({ d }: { d: ReturnType<typeof guideData> }) {
+  const beachQ = d.address ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent('beach access near ' + d.address) : ''
+  const qa: { q: string; a: string }[] = [
+    d.unit ? { q: 'Which unit is mine?', a: d.unit + (d.address ? ' at ' + d.address : '') + '.' } : null,
+    d.parking ? { q: 'Where do I park?', a: d.parking } : null,
+    d.entry ? { q: 'How do I get in?', a: d.entry } : null,
+    d.beach ? { q: 'How do I get to the beach?', a: d.beach.replace(/\s+-\s+/g, ' — ') + (/\.$/.test(d.beach) ? '' : '.') + ' Scan the beach code below for the map.' } : null,
+    d.gettingThere ? { q: 'How do I find the building?', a: d.gettingThere } : null,
+    (d.checkIn || d.checkOut) ? { q: 'When are check-in and check-out?', a: [d.checkIn && 'Check-in from ' + d.checkIn, d.checkOut && 'check-out by ' + d.checkOut].filter(Boolean).join(', ') + '.' } : null,
+    d.wifiNet ? { q: 'What is the Wi-Fi?', a: d.wifiNet + (d.wifiPw ? ' · password ' + d.wifiPw : '') } : null,
+    { q: 'Something is not working?', a: 'Message us in the app you booked with — we reply fast.' + (d.phone ? ' Urgent: ' + d.phone + '.' : '') },
+  ].filter(Boolean) as { q: string; a: string }[]
+  return (
+    <div className="gp-page">
+      <h2 className="gp-h" style={{ marginTop: 0 }}>Parking, your unit &amp; the beach</h2>
+      {qa.map((x, i) => <div key={i} className="gp-q"><b>{x.q}</b><span style={{ whiteSpace: 'pre-line' }}>{x.a}</span></div>)}
+      {d.address ? (
+        <div className="gp-qr">
+          <div><img src={qrSrc(mapsUrl(d.address))} alt="" /><p className="gp-muted" style={{ fontSize: '8pt', marginTop: '3pt' }}>Directions to the building</p></div>
+          {d.beach ? <div><img src={qrSrc(beachQ)} alt="" /><p className="gp-muted" style={{ fontSize: '8pt', marginTop: '3pt' }}>Map to the beach</p></div> : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 // ── THE PRINTED HOUSE MANUAL ──────────────────────────────────────────────────────────────────────
 // Letter, half-inch margins, black on white (prints on any office printer, no background graphics
 // needed). Flowing columns, never a fixed page box, so a long how-to simply runs onto the next sheet
@@ -568,6 +613,13 @@ export function GuidePrint({ gb }: { gb: any }) {
           .gp-big { font-size: 15pt; font-weight: 700; letter-spacing: .02em; }
           .gp-check { display: inline-block; width: 9pt; height: 9pt; border: 1pt solid #111; border-radius: 2pt; margin-right: 6pt; vertical-align: -1pt; }
           .gp-sos { border: 2pt solid #b42318; color: #b42318; }
+          .gp-unit { display: inline-block; margin-top: 6pt; padding: 3pt 10pt; border: 1.6pt solid #111; border-radius: 6pt; font-size: 16pt; font-weight: 700; letter-spacing: .03em; }
+          .gp-page { break-before: page; break-after: page; }
+          .gp-q { break-inside: avoid; margin: 0 0 11pt; }
+          .gp-q b { display: block; font-size: 11.5pt; margin-bottom: 1pt; }
+          .gp-qr { display: flex; gap: 22pt; margin-top: 14pt; break-inside: avoid; }
+          .gp-qr div { text-align: center; width: 110pt; }
+          .gp-qr img { width: 96pt; height: 96pt; }
         }
       `}</style>
 
@@ -576,6 +628,7 @@ export function GuidePrint({ gb }: { gb: any }) {
           <img src={LOGO_URL} alt="Stay Hospitality" style={{ height: '18pt', width: 'auto' }} />
           <p className="gp-k" style={{ marginTop: '12pt' }}>House manual</p>
           <h1 style={{ fontFamily: SERIF, fontSize: '22pt', fontWeight: 600, lineHeight: 1.15, margin: '2pt 0 0' }}>{d.name}</h1>
+          {d.unit ? <p className="gp-unit">{d.unit}</p> : null}
           {d.subtitle ? <p className="gp-muted" style={{ marginTop: '2pt' }}>{d.subtitle}</p> : null}
           {d.address ? <p className="gp-muted">{d.address}</p> : null}
         </div>
@@ -596,14 +649,7 @@ export function GuidePrint({ gb }: { gb: any }) {
         </div>
       </div>
 
-      {(d.entry || d.parking) ? (
-        <>
-          <H>Arrival</H>
-          {d.entry ? <div className="gp-item"><b>The door</b>{d.entry}</div> : null}
-          {d.parking ? <div className="gp-item"><b>Parking</b>{d.parking}</div> : null}
-          {d.gettingThere ? <div className="gp-item"><b>Finding us</b>{d.gettingThere}</div> : null}
-        </>
-      ) : null}
+      <PrintFaq d={d} />
 
       {d.rules.length ? (
         <>
