@@ -185,7 +185,8 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
   const [ticked, setTicked] = useState<Record<number, boolean>>({})
   useEffect(() => { try { const r = localStorage.getItem('gb-ticks-' + gb?.id); if (r) setTicked(JSON.parse(r)) } catch { /* private mode */ } }, [gb?.id])
   const tick = (i: number) => setTicked(t => { const n = { ...t, [i]: !t[i] }; try { localStorage.setItem('gb-ticks-' + gb?.id, JSON.stringify(n)) } catch { /* fine */ } return n })
-  const [open, setOpen] = useState<Record<string, boolean>>({})
+  // Map how-tos (Where to park, Walking to the beach…) start OPEN — the map is the point; the rest fold.
+  const [open, setOpen] = useState<Record<string, boolean>>(() => { const o: Record<string, boolean> = {}; d.howto.slice(0, 16).forEach((x: any, i: number) => { if (isMapItem(x)) o['h' + i] = true }); return o })
   const toggle = (k: string) => setOpen(o => ({ ...o, [k]: !o[k] }))
 
   useEffect(() => { if (autoPrint) { const t = setTimeout(() => window.print(), 900); return () => clearTimeout(t) } }, [autoPrint])
