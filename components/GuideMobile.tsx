@@ -664,7 +664,7 @@ const firstSentences = (t: string, max: number) => {
   return out || String(t || '').slice(0, max)
 }
 
-export function GuidePrint({ gb }: { gb: any }) {
+export function GuidePrint({ gb, screen = false }: { gb: any; screen?: boolean }) {
   const d = guideData(gb)
   const prefs = printPrefs(d.s)
   const on = (k: string) => prefs.hide.indexOf(k) < 0
@@ -687,9 +687,13 @@ export function GuidePrint({ gb }: { gb: any }) {
   const after = (on('howto') && howto.length) || (on('around') && (d.places.length || d.eats.length)) || on('help')
 
   return (
-    <div className="gp hidden print:block">
+    <div className={screen ? 'gp gp-screen' : 'gp hidden print:block'}>
       <style>{`
-        @media print {
+        ${screen ? `.gp-screen { max-width: 8.5in; margin: 24px auto; background: #fff; padding: 0.5in 0.55in; box-shadow: 0 2px 18px rgba(0,0,0,.12); }
+        .gp-screen .gp-page { border-top: 1.5px dashed #c8c8c8; margin-top: 30px; padding-top: 30px; }
+        .gp-screen .gp-page:empty { margin-top: 0; }
+        @media print { .gp-screen { box-shadow: none; margin: 0; padding: 0; max-width: none; } .gp-screen .gp-page { border: 0; margin: 0; padding: 0; } }` : ''}
+        ${screen ? '@media all' : '@media print'} {
           @page { size: letter; margin: 0.5in 0.55in; }
           html, body { background: #fff !important; }
           .gp { font-family: ${SANS}; color: #1a1a1a; font-size: 10pt; line-height: 1.42; -webkit-print-color-adjust: exact; print-color-adjust: exact; }

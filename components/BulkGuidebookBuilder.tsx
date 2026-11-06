@@ -36,6 +36,9 @@ export function BulkGuidebookBuilder() {
   useEffect(() => {
     fetch('/api/guidebook/buildings').then((r) => r.json()).then((d) => setBuildings(Array.isArray(d?.buildings) ? d.buildings : [])).catch(() => {}).finally(() => setLoading(false))
   }, [])
+  // ?building=<name> (from the review queue's "Create N missing") picks the building straight away.
+  const [wanted] = useState(() => { try { return new URLSearchParams(window.location.search).get('building') || '' } catch { return '' } })
+  useEffect(() => { if (wanted && !sel && buildings.some((b) => b.name === wanted)) selectBuilding(wanted) }, [buildings]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const building = buildings.find((b) => b.name === sel)
   const listings = building?.listings || []
@@ -170,6 +173,7 @@ export function BulkGuidebookBuilder() {
         <div className="rounded-2xl border border-line bg-white p-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted">{running ? ('Generating… ' + doneCount + ' of ' + results.length) : (chosen.length + ' guidebook' + (chosen.length === 1 ? '' : 's') + ' will be created')}</div>
+            {!running && doneCount ? <a href={'/guidebooks/review?b=' + encodeURIComponent(sel)} className="text-sm font-semibold text-emerald-700 hover:underline">Review &amp; approve these {doneCount} →</a> : null}
             <label className="flex items-center gap-1.5 text-xs text-muted cursor-pointer select-none">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} disabled={running} className="accent-neutral-900" />
               Overwrite existing

@@ -3,38 +3,10 @@
 import { notFound } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GuidebookView } from '@/components/GuidebookView'
-import { GuideMobile } from '@/components/GuideMobile'
+import { GuideMobile, GuidePrint } from '@/components/GuideMobile'
 import { signPlacePhotoToken } from '@/lib/place-photo-token'
 import { buildingGuideFor } from '@/lib/welcome-call-guide'
-
-/**
- * "Unit 3" from the listing (Jon, 2026-11-06: "make sure the unit number is clear"). The guidebook's
- * own title is the marketing name, which rarely says which door is yours. Guesty's unit field wins;
- * otherwise the number at the end of the nickname ("Surfside - 3", "Salato 302"). Nothing when neither
- * has one — never a guess.
- */
-function unitLabel(l: any): string {
-  const u = String(l?.unit || '').trim()
-  if (u) return /^(unit|apt|suite|room|#)/i.test(u) ? u.replace(/^#\s*/, 'Unit ') : 'Unit ' + u
-  const m = String(l?.nickname || '').match(/(?:^|[\s\-#])(\d{1,4}[A-Za-z]?)\s*$/)
-  return m ? 'Unit ' + m[1] : ''
-}
-
-/**
- * The unit's NAME as the team and the signs use it (Jon, 2026-11-06: "we need the unit's name in the title
- * and the unit number, not just the unit number"): the nickname without its number — "Surfside - 4" →
- * "Surfside", "Salato 302" → "Salato" — else the building. Owner names in brackets are dropped.
- */
-function unitName(l: any): string {
-  const nick = String(l?.nickname || '').replace(/\([^)]*\)/g, ' ').replace(/(?:^|[\s\-#])(?:unit\s*)?\d{1,4}[A-Za-z]?\s*$/i, '').replace(/[\s\-–—·|#,]+$/, '').replace(/\s+/g, ' ').trim()
-  if (nick && /[A-Za-z]{3,}/.test(nick) && nick.length <= 40) return nick
-  return String(l?.building || '').trim()
-}
-/** "Surfside · Unit 4" — name and number together; either alone when that is all there is. */
-function unitFull(l: any): string {
-  const name = unitName(l), num = unitLabel(l)
-  return [name, num].filter(Boolean).join(' · ')
-}
+import { guestUnitNo, guestUnitName, guestUnitFull } from '@/lib/guest-unit'
 
 /** What the page adds to the book at render time: the unit, and the walk to the beach for the print FAQ. */
 async function withListing(gb: any): Promise<any> {
@@ -46,7 +18,7 @@ async function withListing(gb: any): Promise<any> {
   // The building's beach line only when it is written for guests (staff notes say "confirm…").
   const beach = bg && bg.recs.beach && !/confirm/i.test(bg.recs.beach) ? bg.recs.beach : ''
   const lat = Number(l?.lat), lng = Number(l?.lng)
-  return { ...gb, _unit: unitFull(l), _unitName: unitName(l), _unitNo: unitLabel(l), _beach: beach, _building: l?.building || '', _nickname: l?.nickname || '',
+  return { ...gb, _unit: guestUnitFull(l), _unitName: guestUnitName(l), _unitNo: guestUnitNo(l), _beach: beach, _building: l?.building || '', _nickname: l?.nickname || '',
     _geo: isFinite(lat) && isFinite(lng) && (lat || lng) ? { lat, lng } : null }
 }
 
@@ -59,7 +31,7 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
   const gb = (data || [])[0]
   if (!gb) return base
   let unit = ''
-  try { if (gb.listing_id) { const { data: ls } = await supabaseAdmin().from('guesty_listings').select('nickname, building, unit').eq('id', gb.listing_id).limit(1); if (ls && ls[0]) unit = unitFull(ls[0]) } } catch { /* title without it */ }
+  try { if (gb.listing_id) { const { data: ls } = await supabaseAdmin().from('guesty_listings').select('nickname, building, unit').eq('id', gb.listing_id).limit(1); if (ls && ls[0]) unit = guestUnitFull(ls[0]) } } catch { /* title without it */ }
   const name = (unit ? unit + ' — ' : '') + String(gb.title || 'Your Stay').replace(/\s*[—–-]\s*Guest Guidebook\s*$/i, '').split(/\s+\|\s+/)[0]
   let img = ''
   try {
@@ -79,7 +51,7 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
   return { ...base, title, description, openGraph: { title, description, type: 'website', images: img ? [{ url: img }] : undefined }, twitter: { card: img ? 'summary_large_image' : 'summary', title, description, images: img ? [img] : undefined } }
 }
 
-export default async function PublicGuidebookPage({ params, searchParams }: { params: { id: string }; searchParams?: { book?: string; print?: string } }) {
+export default async function PublicGuidebookPage({ params, searchParams }: { params: { id: string }; searchParams?: { book?: string; print?: string; printview?: string } }) {
   const id = String(params.id || '')
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound()
   const { data } = await supabaseAdmin().from('guidebooks').select('*').eq('id', id).limit(1)
@@ -91,6 +63,8 @@ export default async function PublicGuidebookPage({ params, searchParams }: { pa
   // on phones and laptops alike; printing it gives the short house manual (GuidePrint, inside it).
   // ?print=1 opens the print dialog straight away. The old 12-page magazine book still opens at
   // ?book=1 for anyone who wants it.
+  // ?printview=1 — the printed house manual ON SCREEN (the review page's "Printable view").
+  if (String((searchParams as any)?.printview || '') === '1') return <div style={{ background: '#e7e7e7', minHeight: '100vh', padding: '1px 12px' }}><GuidePrint gb={gb} screen /></div>
   if (String(searchParams?.book || '') === '1') return <GuidebookView initial={gb} guest photoToken={signPlacePhotoToken(String(gb.id))} />
   return <GuideMobile gb={gb} autoPrint={String(searchParams?.print || '') === '1'} photoToken={signPlacePhotoToken(String(gb.id))} />
 }

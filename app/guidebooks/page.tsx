@@ -60,6 +60,7 @@ export default async function GuidebooksPage() {
         <Pill title="Guidebooks (newest per unit)">{rows.length} books</Pill>
         <Pill title="Buildings with at least one guidebook">{groups.length} bldgs</Pill>
         {drafts ? <Pill tone="amber" title="Still in draft">{drafts} draft</Pill> : null}
+        <Link href="/guidebooks/review" title="Go one by one: flags, page-by-page review, approve and push to Guesty" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg bg-emerald-600 text-white px-2.5 py-1 hover:bg-emerald-700">Review &amp; approve <ArrowRight size={13} /></Link>
         <Link href="/guidebooks/bulk" title="Generate guidebooks for every unit in a building" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg bg-neutral-900 text-white px-2.5 py-1 hover:bg-neutral-700">Bulk build <ArrowRight size={13} /></Link>
         <Link href="/guidebooks/fix" title="Fix many guidebooks at once with AI" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg border border-line bg-white text-ink px-2.5 py-1 hover:bg-app">Bulk fix <Sparkles size={13} /></Link>
         <EmergencyBackfillButton />

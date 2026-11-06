@@ -233,18 +233,18 @@ export async function POST(req: NextRequest) {
   const key = process.env.ANTHROPIC_API_KEY
 
   // ---- PASS 1: VISION — know what every photo shows before laying out pages. ----
-  let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean; hasText: boolean; label?: string }[] =
+  let photoMeta: { url: string; category: string; brightness: string; quality: number; coverWorthy: boolean; hasText: boolean; collage?: boolean; label?: string }[] =
     pool.map(u => ({ url: u, category: 'other', brightness: 'mid', quality: 3, coverWorthy: false, hasText: false, label: '' }))
   if (key && pool.length) {
     const content: any[] = pool.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
-    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"label":""}. coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image has ANY overlaid text, tags, logos, badges, watermarks, promotional banners, graphic overlays, framed borders with text, captions, labels, map text, signage, menus, instruction sheets, documents, or screenshots. When in ANY doubt set hasText TRUE - a clean text-free cover matters more than one extra usable photo (we overlay type, so text-bearing images are unusable as page art). A photo that is PRIMARILY a document, flyer, service menu, or info sheet is category "other" with hasText true, even if artfully shot. category "appliance" = a close-up of a specific appliance or control (cooktop, oven, thermostat, washer, smart panel) - never coverWorthy; for appliance photos ONLY, set "label" to the appliance with BRAND and MODEL when visible - READ any text printed on the appliance or its badge (e.g. "Keurig K-Elite coffee maker", "Wolf E-series wall oven"). A logo/graphic is category "logo" and never coverWorthy. quality judges EDITORIAL usability: sharp, well-lit, well-framed = 4-5; casual phone snapshots, harsh flash, crooked framing, plain control panels or labels = 3 or lower. STRICT minified JSON array only.` })
+    content.push({ type: 'text', text: `You are a photo editor for a luxury rental guidebook. For EACH of the ${pool.length} images above, in order, return a JSON array of objects: {"i":index,"category":"bedroom|living|kitchen|dining|bathroom|pool|beach|view|exterior|amenity|appliance|logo|other","brightness":"dark|mid|bright","quality":1-5,"coverWorthy":true|false,"hasText":true|false,"collage":true|false,"label":""}. collage = several photos combined in one frame (grid, split screen, side-by-side, before/after, montage, picture-in-picture) - when in doubt true; a collage is NEVER used in the guidebook (Jon, 2026-11-06). coverWorthy = striking, well-lit, works full-bleed behind white text. hasText = the image has ANY overlaid text, tags, logos, badges, watermarks, promotional banners, graphic overlays, framed borders with text, captions, labels, map text, signage, menus, instruction sheets, documents, or screenshots. When in ANY doubt set hasText TRUE - a clean text-free cover matters more than one extra usable photo (we overlay type, so text-bearing images are unusable as page art). A photo that is PRIMARILY a document, flyer, service menu, or info sheet is category "other" with hasText true, even if artfully shot. category "appliance" = a close-up of a specific appliance or control (cooktop, oven, thermostat, washer, smart panel) - never coverWorthy; for appliance photos ONLY, set "label" to the appliance with BRAND and MODEL when visible - READ any text printed on the appliance or its badge (e.g. "Keurig K-Elite coffee maker", "Wolf E-series wall oven"). A logo/graphic is category "logo" and never coverWorthy. quality judges EDITORIAL usability: sharp, well-lit, well-framed = 4-5; casual phone snapshots, harsh flash, crooked framing, plain control panels or labels = 3 or lower. STRICT minified JSON array only.` })
     for (let attempt = 0; attempt < 2; attempt++) {
       const text = await anthropic(key, { model: await modelFor('guidebook'), max_tokens: 2500, messages: [{ role: 'user', content }] })
       const parsed = parseJson(text || '')
       if (Array.isArray(parsed) && parsed.length) {
         parsed.forEach((p: any) => {
           const i = Number(p?.i)
-          if (Number.isFinite(i) && photoMeta[i]) photoMeta[i] = { url: pool[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true, hasText: p.hasText === true, label: str(p.label).slice(0, 60) }
+          if (Number.isFinite(i) && photoMeta[i]) photoMeta[i] = { url: pool[i], category: str(p.category) || 'other', brightness: str(p.brightness) || 'mid', quality: Number(p.quality) || 3, coverWorthy: p.coverWorthy === true && p.collage !== true, hasText: p.hasText === true, collage: p.collage === true, label: str(p.label).slice(0, 60) }
         })
         break
       }
@@ -252,7 +252,7 @@ export async function POST(req: NextRequest) {
   }
   // Text-bearing images (captions, map labels, watermarks) are NEVER used behind our type.
   // Appliance close-ups are reserved for the House Guide, never full-bleed pages.
-  const usable = photoMeta.filter(p => p.category !== 'logo' && p.category !== 'appliance' && !p.hasText)
+  const usable = photoMeta.filter(p => p.category !== 'logo' && p.category !== 'appliance' && !p.hasText && !p.collage)
   // Every page gets a DIFFERENT photo whenever the pool allows: picks consume a shared used-set,
   // and real scene photography always outranks 'other' (informational uploads) for page slots.
   const SCENE = ['bedroom', 'living', 'kitchen', 'dining', 'bathroom', 'pool', 'beach', 'view', 'exterior', 'amenity']
@@ -392,7 +392,8 @@ ${JSON.stringify(fallback)}`
     }))
   }
 
-  sections._photos = pool
+  // Collages never reach a page — not even the guest guide's first-photo fallback.
+  sections._photos = pool.filter(u => !photoMeta.some(m => m.url === u && m.collage))
   sections._photoMeta = photoMeta
   sections._photoAssign = photoAssign
   if (!Array.isArray(sections.omit)) sections.omit = []
