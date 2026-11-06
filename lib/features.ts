@@ -94,7 +94,6 @@ export const FEATURES: Feature[] = [
   // things that have to happen every single day". Edit rights tick an item; full rights change what
   // is on the list, so the standing list is agreed once and then worked by everybody.
   { key: 'checklist',     label: 'Open & Close',      path: '/checklist', group: 'Operations' },
-  { key: 'projects',      label: 'Projects',          path: '/projects', group: 'Operations' },
   // THE LEADERSHIP BOARD (Jon, 2026-11-06): the big picture — projects, tasks, vendor follow-ups, misc.
   { key: 'leadership',    label: 'Leadership',        path: '/leadership', group: 'Operations' },
   // FF&E Audit (2026-08-10, Jon): one phone link per unit, room by room, EN/ES. A furniture
@@ -363,7 +362,9 @@ export type RoleDef = {
 
 // A feature that borrows another's level until a role sets it explicitly (new pages that are really
 // part of an existing area: nobody should have to touch every role to see them).
-const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding' }
+// leadership → projects (2026-11-06): the Leadership board REPLACED Projects, so whoever could see
+// Projects sees the board until a role says otherwise.
+const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects' }
 export function roleLevel(role: RoleDef | null | undefined, featureKey: string): Level {
   if (!role || !role.perms || typeof role.perms !== 'object') return 'off'
   const explicit = role.perms[featureKey] ?? (LEVEL_FALLBACK[featureKey] ? role.perms[LEVEL_FALLBACK[featureKey]] : null)
@@ -469,7 +470,7 @@ export const WORKSPACES: { key: Workspace; label: string; landing: string; blurb
   { key: 'admin', label: 'Admin',            landing: '/command', blurb: 'Everything + user management', pages: 'all' },
   { key: 'gm',    label: 'GM',               landing: '/command', blurb: 'Everything except admin tools', pages: 'all' },
   { key: 'ops',   label: 'Ops',              landing: '/command',    blurb: 'Field operations: cleans, glitches, audits, orders',
-    pages: ['home', 'plan', 'upkeep', 'schedule', 'glitches', 'lost-found', 'audits', 'orders', 'requests', 'projects', 'ffe', 'catalogs', 'onboarding', 'linens', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
+    pages: ['home', 'plan', 'upkeep', 'schedule', 'glitches', 'lost-found', 'audits', 'orders', 'requests', 'leadership', 'ffe', 'catalogs', 'onboarding', 'linens', 'cleaners', 'labor', 'labor-dashboard', 'buildings', 'blocked', 'faq', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'cs',    label: 'Customer Service', landing: '/reservations', blurb: 'Guests: reservations, messages, reviews, calls',
     pages: ['home', 'reservations', 'reservation-emails', 'messages', 'reviews', 'welcome-calls', 'guidebooks', 'faq', 'glitches', 'lost-found', 'requests', 'claims', 'guests', 'guest-orders', 'api-keys', 'loops'] },
   { key: 'data',  label: 'Data',             landing: '/revenue', blurb: 'Money & performance: revenue, channels, reports',

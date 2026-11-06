@@ -186,7 +186,7 @@ export async function POST(req: NextRequest) {
   const type = str(b.type); const id = str(b.id); const body = str(b.body).trim()
   // A direct MESSAGE thread (type 'message', Messages page) is people talking to people — any
   // Lighthouse login can reply. Comments on work still need edit on one of the work tabs.
-  const gate = type === 'message' ? await requireVrUser() : await requireAnyLevel(['plan', 'glitches', 'command', 'maintenance'], 'edit')
+  const gate = type === 'message' ? await requireVrUser() : await requireAnyLevel(['plan', 'glitches', 'command', 'maintenance', 'leadership'], 'edit')
   if (!gate.ok) return gate.res
   const user = gate.access.user
   const me = user.email.toLowerCase()
@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   const actorName = me.split('@')[0]
   const label = str(b.label) || type
-  const link = type === 'glitch' ? '/glitches?id=' + encodeURIComponent(id) : type === 'message' ? '/messages' : (str(b.link) || (type === 'task' ? '/plan' : null))
+  const link = type === 'glitch' ? '/glitches?id=' + encodeURIComponent(id) : type === 'message' ? '/messages' : type === 'board' ? '/leadership?item=' + encodeURIComponent(id) : (str(b.link) || (type === 'task' ? '/plan' : null))
   // THREAD FOLLOWERS: anyone who already commented here hears about the reply; on glitches the
   // creator hears about every comment.
   const followers: string[] = []
@@ -221,6 +221,11 @@ export async function POST(req: NextRequest) {
     // TASK COMMENTS ARE MESSAGES (Jon, 2026-10-16: "all task comments in Lighthouse are messages and
     // show in Messages and in the task"). The people ON the task — its Breezeway assignees, matched
     // to Lighthouse logins by name — hear every comment, tagged or not.
+    // BOARD ROWS (Leadership, 2026-11-06): the people assigned to the row hear every comment on it.
+    if (type === 'board') {
+      const { data: it } = await db.from('board_items').select('assignees,created_by').eq('id', id).maybeSingle()
+      for (const e of ((it as any)?.assignees || []).concat([str((it as any)?.created_by)])) { const k = str(e).toLowerCase(); if (k && team.includes(k)) followers.push(k) }
+    }
     if (type === 'task') {
       const { data: t } = await db.from('breezeway_tasks_sync').select('assignees,assignee_name').eq('id', id).maybeSingle()
       const names = (Array.isArray((t as any)?.assignees) ? (t as any).assignees : []).map((a: any) => str(a && typeof a === 'object' ? a.name : a)).concat([str((t as any)?.assignee_name)]).filter(Boolean)

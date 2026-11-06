@@ -63,7 +63,7 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'operations', label: 'Operations',
-    blurb: 'The field: today’s board, the cleaning schedule, Open & Close, maintenance and projects.',
+    blurb: 'The field: today’s board, the cleaning schedule, Open & Close, maintenance and the Leadership board.',
     views: [
       { to: '/plan', label: 'Today board', hint: 'Every unit’s work today against the 4pm deadline; assign and add tasks' },
       // Upkeep (Jon, 2026-10-03): the recurring programs — PM, deep cleans, A/C filters and coils, batteries, inspections, FF&E — late / due soon / on track, per unit.
@@ -74,8 +74,7 @@ export const DESKS: Desk[] = [
       // Open & Close (Jon, 2026-10-19): the opening and closing roadmap — gates with their real rows, carry-over, handover, print sheet.
       { to: '/checklist', label: 'Open & Close', hint: 'Opening and closing roadmap: who is in, every clean has a person, extensions, arrivals, glitches — sign off, carry to tomorrow, print' },
       { to: '/maintenance', label: 'Maintenance', hint: 'Work orders, open Breezeway maintenance and glitches in one aged list', match: ['/requests'] },
-      { to: '/projects', label: 'Projects', hint: 'Work that is bigger than a task: renovations, rollouts, building onboarding', match: ['/projects/plan'] },
-      { to: '/leadership', label: 'Leadership', hint: 'The big picture on one screen — projects, tasks, vendor follow-ups, misc; meeting notes become tasks you approve one by one' },
+      { to: '/leadership', label: 'Leadership', hint: 'Everyone’s work on one screen — projects, tasks, vendor follow-ups, misc; filter by owner, property, due; meeting notes become tasks you approve one by one', match: ['/projects'] },
       { to: '/blocked', label: 'Blocked units', hint: 'Units off the calendar right now, longest first, with the block note', more: true },
     ],
   },

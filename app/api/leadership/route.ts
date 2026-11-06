@@ -1,64 +1,84 @@
-// THE LEADERSHIP BOARD API (Jon, 2026-11-06). The read is one call; edits to an existing item go
-// straight to the project engine (/api/projects/<board>/ taskSet · comment · photo), so the
-// notifications, reminders and @tags are the same ones every board has.
-//   GET                                   → board, lanes, items, real projects, open AI proposals, people
-//   POST { action: 'add', lane, title, details?, assignees?, due?, priority? }
-//   POST { action: 'propose', text, source? }   → AI reads the notes, returns proposals (saved)
-//   POST { action: 'approve', id, ...edits }    → one proposal becomes one item
+// THE LEADERSHIP BOARD API (Jon, 2026-11-06). One standalone board, one flat table (lib/board).
+//   GET                                      → lanes, items (open + done ≤60d), proposals, people, properties, importable
+//   POST { action: 'add', lane, title, details?, assignees?, due?, priority?, property?, vendor? }
+//   POST { action: 'set', id, ...patch }     → any field; status 'done' | 'open' completes / reopens
+//   POST { action: 'delete', id }
+//   POST { action: 'propose', text, source? } → AI reads the notes, returns proposals (saved)
+//   POST { action: 'approve', id, ...edits }  → one proposal becomes one item
 //   POST { action: 'skip', id }
+//   POST { action: 'import' }                 → the open tasks of the old Projects boards, once
+// Comments go through /api/comments with type 'board' (so they land in Messages); photos through
+// /api/leadership/photo.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { readLeadership, addLeadershipItem, proposeFromNotes, settleProposal, ensureLeadershipBoard, LANES, type Lane } from '@/lib/leadership'
+import { readBoard, addItem, setItem, deleteItem, proposeFromNotes, settleProposal, importFromProjects, BoardNotReady, LANES, type Lane } from '@/lib/board'
 import { rosterForPicker } from '@/lib/mentions'
 import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
+const MIGRATION_HINT = 'The board table is not there yet — run supabase/migrations/176_board.sql in the Supabase SQL editor, then reload.'
 
 export async function GET() {
   const gate = await requireLevel('leadership', 'view')
   if (!gate.ok) return gate.res
   const me = gate.access.user.email.toLowerCase()
   try {
-    const viewer = { email: me, superadmin: gate.access.role === 'admin' }
-    const [data, people] = await Promise.all([readLeadership(viewer, gate.access.profile?.name || null), rosterForPicker()])
-    return NextResponse.json({ ok: true, me, ...data, people, canEdit: gate.access.role === 'admin' || ['edit', 'full'].includes(String(gate.access.levels['leadership'] || '')) })
-  } catch (e: any) { return NextResponse.json({ ok: false, error: str(e?.message || e).slice(0, 200) }, { status: 500 }) }
+    const data = await readBoard()
+    return NextResponse.json({ ok: true, me, ...data, canEdit: gate.access.role === 'admin' || ['edit', 'full'].includes(String(gate.access.levels['leadership'] || '')) })
+  } catch (e: any) {
+    if (e instanceof BoardNotReady) return NextResponse.json({ ok: false, needsMigration: true, error: MIGRATION_HINT }, { status: 503 })
+    return NextResponse.json({ ok: false, error: str(e?.message || e).slice(0, 200) }, { status: 500 })
+  }
 }
 
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('leadership', 'edit')
   if (!gate.ok) return gate.res
   const me = gate.access.user.email.toLowerCase()
+  const myName = str(gate.access.profile?.name) || null
   const b = await req.json().catch(() => ({} as any))
   const action = str(b.action)
+  const bad = (error: string, status = 400) => NextResponse.json({ ok: false, error }, { status })
   try {
-    const board = await ensureLeadershipBoard(me, gate.access.profile?.name || null)
     if (action === 'add') {
-      const r = await addLeadershipItem(board.id, me, { lane: b.lane, title: b.title, details: b.details, assignees: Array.isArray(b.assignees) ? b.assignees.map(String) : [], due: b.due || null, priority: b.priority })
-      return 'error' in r ? NextResponse.json({ ok: false, error: r.error }, { status: 400 }) : NextResponse.json({ ok: true, id: r.id })
+      const r = await addItem(me, myName, b)
+      return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true, id: r.id })
+    }
+    if (action === 'set') {
+      const r = await setItem(me, myName, str(b.id), b)
+      return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true })
+    }
+    if (action === 'delete') {
+      const r = await deleteItem(str(b.id))
+      return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true })
     }
     if (action === 'propose') {
       const people = (await rosterForPicker()).map(p => ({ name: p.name, email: p.email }))
       const r = await proposeFromNotes(str(b.text), me, people, str(b.source) || 'notes')
-      return r.ok ? NextResponse.json({ ok: true, proposals: r.proposals }) : NextResponse.json({ ok: false, error: r.error }, { status: 400 })
+      return r.ok ? NextResponse.json({ ok: true, proposals: r.proposals }) : bad(r.error)
     }
     if (action === 'approve') {
       const id = str(b.id)
       const cur = (await getSetting<any[]>('leadership_proposals', [])).find(x => x.id === id)
-      if (!cur) return NextResponse.json({ ok: false, error: 'That proposal is gone — reload.' }, { status: 404 })
+      if (!cur) return bad('That proposal is gone — reload.', 404)
       const lane: Lane = (LANES as readonly string[]).includes(str(b.lane)) ? str(b.lane) as Lane : cur.lane
-      const r = await addLeadershipItem(board.id, me, {
-        lane, title: b.title !== undefined ? str(b.title) : cur.title, details: b.details !== undefined ? str(b.details) : cur.details,
-        assignees: Array.isArray(b.assignees) ? b.assignees.map(String) : (cur.assignee ? [cur.assignee] : []),
-        due: b.due !== undefined ? (b.due || null) : cur.due, priority: b.priority !== undefined ? str(b.priority) : cur.priority,
+      const r = await addItem(me, myName, {
+        lane, title: b.title !== undefined ? b.title : cur.title, details: b.details !== undefined ? b.details : cur.details,
+        assignees: Array.isArray(b.assignees) ? b.assignees : (cur.assignee ? [cur.assignee] : []),
+        due: b.due !== undefined ? b.due : cur.due, priority: b.priority !== undefined ? b.priority : cur.priority,
+        property: b.property !== undefined ? b.property : cur.property, source: 'notes',
       })
-      if ('error' in r) return NextResponse.json({ ok: false, error: r.error }, { status: 400 })
+      if ('error' in r) return bad(r.error)
       await settleProposal(id, 'approved', me, r.id)
       return NextResponse.json({ ok: true, id: r.id })
     }
     if (action === 'skip') { await settleProposal(str(b.id), 'skipped', me); return NextResponse.json({ ok: true }) }
-    return NextResponse.json({ ok: false, error: 'Bad action.' }, { status: 400 })
-  } catch (e: any) { return NextResponse.json({ ok: false, error: str(e?.message || e).slice(0, 200) }, { status: 500 }) }
+    if (action === 'import') { const r = await importFromProjects(me); return NextResponse.json({ ok: true, ...r }) }
+    return bad('Bad action.')
+  } catch (e: any) {
+    if (e instanceof BoardNotReady || /board_items/.test(str(e?.message))) return NextResponse.json({ ok: false, needsMigration: true, error: MIGRATION_HINT }, { status: 503 })
+    return NextResponse.json({ ok: false, error: str(e?.message || e).slice(0, 200) }, { status: 500 })
+  }
 }

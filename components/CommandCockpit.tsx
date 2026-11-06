@@ -12,7 +12,7 @@
 //                   turn, cancel the duplicate. Each row: one action, Done, Skip.
 //   4. PENDING      what is already in motion and needs following — an open glitch, a claim in
 //                   review, a guest waiting, a late clean somebody is on. Each row opens the thing.
-//   5. MY TASKS     everything with your name on it across every Projects board (/api/projects/mine),
+//   5. MY TASKS     everything with your name on it on the Leadership board (/api/projects/mine),
 //                   with a done-toggle and quick add — the same list as /projects/mine, shorter.
 //   and COMPLETED   what landed today: cleans, tasks, calls, and every row cleared here (by whom).
 //

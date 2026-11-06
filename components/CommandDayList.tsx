@@ -18,7 +18,7 @@
 //   CLEAR   batches, one row per batch: cancel every duplicate (admin password once), copy one vendor
 //           note for every vendor-run arrival with a bad past review, open the overdue-backlog units
 //           in Today in Ops.
-//   YOURS   the Projects tasks with Jon's name on them (/api/projects/mine), done-toggle, quick add.
+//   YOURS   the Leadership-board tasks with Jon's name on them (/api/projects/mine), done-toggle, quick add.
 //
 // WHAT v4 SHOWED THAT IS NOT HERE, AND WHY (what the live page looked like on 2026-09-18):
 //   · 8 of 9 "create inspection for an arrival into a unit with an old low review" rows said "an
@@ -972,7 +972,7 @@ function YoursBand() {
   const toggle = async (it: MineItem) => {
     setBusy(it.id); setErr('')
     try {
-      await post('/api/projects/' + it.projectId, { action: 'taskSet', taskId: it.id, status: it.status === 'done' ? 'todo' : 'done' })
+      await post('/api/leadership', { action: 'set', id: it.id, status: it.status === 'done' ? 'open' : 'done' })
       reload()
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy(null) }
   }
@@ -997,7 +997,7 @@ function YoursBand() {
         <span>Yours {total ? <span className="tabular-nums">{total}</span> : null}</span>
         {loading && !data && <Loader2 size={11} className="animate-spin" />}
         {data && shown.length === 0 && <span className="normal-case tracking-normal font-medium">— {total === 0 ? 'nothing has your name on it' : 'nothing due this week' + (later.length ? ', ' + later.length + ' later' : '')}</span>}
-        <Link href="/projects/mine" className="ml-auto normal-case tracking-normal text-[11.5px] font-semibold text-brand-700">All boards</Link>
+        <Link href="/leadership" className="ml-auto normal-case tracking-normal text-[11.5px] font-semibold text-brand-700">Leadership board</Link>
       </h2>
       {error && !data && <p className="px-1 text-[12px] text-rose-700">{error}</p>}
       <div className={LIST}>
@@ -1012,13 +1012,13 @@ function YoursBand() {
                   {busy === it.id ? <Loader2 size={10} className="animate-spin" /> : <I size={11} strokeWidth={3} />}
                 </button>
               </Tip>
-              <Link href={'/projects/' + it.projectId} className="min-w-0 flex-1 flex items-center gap-x-1.5 flex-wrap">
+              <Link href={'/leadership?item=' + it.id} className="min-w-0 flex-1 flex items-center gap-x-1.5 flex-wrap">
                 <span className="text-[13px] font-semibold text-ink truncate max-w-full">{it.title}</span>
                 {it.priority === 'urgent' && <Tag tone="rose">urgent</Tag>}
                 {it.priority === 'high' && <Tag tone="amber">high</Tag>}
                 {it.oneOnOne && <Tag title="Private 1:1 task">1:1</Tag>}
                 <span className="text-[11.5px] text-muted truncate max-w-full">
-                  {it.mine ? 'My board' : it.project}
+                  {it.project}
                   {it.where && <> · <MapPin size={9} className="inline -mt-0.5" /> {it.where}</>}
                 </span>
               </Link>

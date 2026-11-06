@@ -22,7 +22,7 @@
 // Every row is ONE line with its action buttons, never a menu. Actions a role cannot take are not
 // drawn (useAccess); the server checks again. Reads: the day (/api/command/day, shared with the rest
 // of the page), the reply queue (/api/reviews), the checklist (/api/daily-checklist), your tasks
-// (/api/projects/mine), the listing fixes (/api/listing-health?slim=1) and the week (/api/command/scoreboard).
+// (/api/projects/mine — the Leadership board since 2026-11-06), the listing fixes (/api/listing-health?slim=1) and the week (/api/command/scoreboard).
 import { cloneElement, createContext, isValidElement, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp, StickyNote, Circle, CheckCircle2 } from 'lucide-react'
@@ -664,14 +664,14 @@ function OptimizeRow({ o, lane }: { o: OptimizeDue; lane?: string }) {
 function MineRow({ it, late, pending, onChanged, lane }: { it: MineItem; late: boolean; pending?: boolean; onChanged: () => void; lane?: string }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const done = async () => { setBusy(true); setErr(''); try { await post('/api/projects/' + it.projectId, { action: 'taskSet', taskId: it.id, status: 'done' }); onChanged() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
+  const done = async () => { setBusy(true); setErr(''); try { await post('/api/leadership', { action: 'set', id: it.id, status: 'done' }); onChanged() } catch (e: any) { setErr(String(e?.message || e)) } setBusy(false) }
   return (
     <Row lane={lane} noteKey={'mine:' + it.id} dot={late ? 'rose' : null} title={it.title}
       tags={<>{late ? <Tag tone="rose" title={'Was due ' + (it.due || '')}>overdue</Tag> : it.due ? <Tag tone={pending ? 'slate' : 'amber'} title="Due date">{pending ? 'due ' : ''}{String(it.due).slice(5)}</Tag> : pending ? <Tag tone="slate" title="No date on it">pending</Tag> : null}{it.status === 'doing' && <Tag tone="sky" title="In progress">doing</Tag>}{it.status === 'blocked' && <Tag tone="rose" title="Blocked">blocked</Tag>}</>}
       meta={it.project} err={err}
       actions={<>
         <button onClick={done} disabled={busy} className={GHOST} title="Mark done">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>
-        <Link href={'/projects/' + it.projectId} prefetch={false} className={GHOST} title="Open the project">Open</Link>
+        <Link href={'/leadership?item=' + it.id} prefetch={false} className={GHOST} title="Open on the Leadership board">Open</Link>
       </>} />
   )
 }

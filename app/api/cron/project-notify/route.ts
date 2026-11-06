@@ -52,7 +52,10 @@ async function digestPass(dry: boolean): Promise<any> {
   const out = await withReceipt('project-digest', async () => {
     const reminders = dry ? { dueSoon: -1, overdue: -1 } : await generateReminders()
     const sent = await sendDigest({ dryRun: dry })
-    return { reminders, ...sent }
+    // THE LEADERSHIP BOARD (2026-11-06): late or due-today rows remind the people on them, once a morning.
+    let board = { reminded: 0 }
+    if (!dry) { try { board = await (await import('@/lib/board')).boardReminders() } catch { /* best effort */ } }
+    return { reminders, board, ...sent }
   }, o => ({ itemCount: o.sent, detail: o }))
   return { ok: true, digest: true, dry, ...out }
 }
