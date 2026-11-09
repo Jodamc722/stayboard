@@ -67,6 +67,8 @@ export type AdminRow = {
   active: boolean
   guestyStatus: string
   channels: Record<string, ChannelCellLite>
+  /** The live guest-facing page on each channel, from Guesty's integrations (lib/ota-links) — keyed like `channels`. */
+  links?: Record<string, string>
   /** Worst verdict across the major channels. */
   verdict: CellVerdict
   score: number | null

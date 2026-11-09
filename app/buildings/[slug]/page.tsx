@@ -13,10 +13,11 @@ import { BulkPhotoPanel } from '@/components/BulkPhotoPanel'
 import { BulkListingCopy } from '@/components/BulkListingCopy'
 import { BulkRegenerate } from '@/components/BulkRegenerate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon, Sparkles, MessageSquare } from 'lucide-react'
+import { Building2, BedDouble, Bath, Users, MapPin, ArrowLeft, ArrowRight, Image as ImageIcon, Sparkles, MessageSquare, ExternalLink } from 'lucide-react'
 import { ratingToStars } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
 import { resolveAmenity } from '@/lib/guesty-amenities'
+import { otaLinksFrom } from '@/lib/ota-links'
 
 export const dynamic = 'force-dynamic'
 
@@ -143,8 +144,11 @@ export default async function BuildingPage({ params }: { params: { slug: string 
           const photoCount = Array.isArray(l.pictures) ? l.pictures.length : (Array.isArray(l.raw?.pictures) ? l.raw.pictures.length : 0)
           const topFix = [...mustFix.map((m: string) => m), ...suggestions.slice(0, 3).map((s: any) => s.name)].slice(0, 3)
           return (
-            <Link key={l.id} href={`/listings/${l.id}`} prefetch={false}
-              className={`group block rounded-2xl border border-line bg-white overflow-hidden hover:border-brand-300 hover:shadow-soft transition-all ${dead ? 'opacity-70' : ''}`}>
+            // The whole card opens the unit (a stretched link underneath); the channel chips sit above it
+            // and open the live listing on that channel in a new tab (Jon, 2026-11-09).
+            <div key={l.id}
+              className={`group relative rounded-2xl border border-line bg-white overflow-hidden [&>div:not(.ota)]:pointer-events-none hover:border-brand-300 hover:shadow-soft transition-all ${dead ? 'opacity-70' : ''}`}>
+              <Link href={`/listings/${l.id}`} prefetch={false} className="absolute inset-0 z-0" aria-label={'Open ' + name} />
               <div className="px-4 py-3 border-b border-line">
                 <div className="flex items-start justify-between gap-2">
                   <h2 className={`font-semibold text-ink text-sm leading-snug ${dead ? 'line-through text-muted' : ''}`}>{name}</h2>
@@ -174,6 +178,13 @@ export default async function BuildingPage({ params }: { params: { slug: string 
                 )}
               </div>
 
+              {(() => { const links = otaLinksFrom(l.raw); return links.length ? (
+                <div className="ota relative z-10 px-4 py-2 border-t border-line flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] uppercase tracking-wider text-muted font-semibold mr-0.5">Live on</span>
+                  {links.map(o => <a key={o.name} href={o.url} target="_blank" rel="noopener noreferrer" title={'Open the live ' + o.name + ' listing in a new tab'} className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 py-0.5 text-[11px] font-semibold text-ink hover:border-brand-300 hover:text-brand-700">{o.name}<ExternalLink size={10} /></a>)}
+                </div>
+              ) : <div className="px-4 py-2 border-t border-line text-[11px] text-muted">Not live on any channel</div> })()}
+
               <div className="px-4 py-2 border-t border-line flex items-center justify-between gap-2 text-[11px] font-medium flex-wrap">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`inline-flex items-center gap-1 ${(l.last_optimized || l.raw?._lastOptimized) ? 'text-emerald-700' : 'text-muted'}`} title="Last time content or photos were pushed">
@@ -187,7 +198,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
                 </div>
                 <ArrowRight size={13} className="text-muted group-hover:text-brand-700 group-hover:translate-x-0.5 transition-all" />
               </div>
-            </Link>
+            </div>
           )
         })}
       </div>

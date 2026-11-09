@@ -307,7 +307,10 @@ function ListingRow({ r, today, channels }: { r: AdminRow; today: string; channe
             + (cell.since ? ' · since ' + String(cell.since).slice(0, 10) : '')
             + (cell.lastBookingAt ? ' · last booking ' + String(cell.lastBookingAt).slice(0, 10) : ' · no booking in 12 months')
             + (cell.bookings90d ? ' · ' + cell.bookings90d + ' in 90d' : '')
-          return <Tag key={c.key} tone={VERDICT_TONE[cell.verdict]} title={title}>{CH_SHORT[c.key] || c.label}</Tag>
+          // Click a channel to open the live listing there, in a new tab (Jon, 2026-11-09).
+          const href = cell.url || (r.links || {})[c.key] || ''
+          const tag = <Tag tone={VERDICT_TONE[cell.verdict]} title={title + (href ? ' · click to open the live listing' : '')}>{CH_SHORT[c.key] || c.label}{href ? ' ↗' : ''}</Tag>
+          return href ? <a key={c.key} href={href} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="hover:opacity-80">{tag}</a> : <span key={c.key}>{tag}</span>
         })}
         {r.score != null && <Tag tone={r.score >= 80 ? 'emerald' : r.score >= RULES.lowScore ? 'slate' : 'amber'} title={'Optimize score ' + r.score + ' of 100 (title, description, photos, amenities, settings, reviews)'}>{r.score}</Tag>}
         {r.active && <Tag tone={os === 'ok' ? 'slate' : os === 'stale' ? 'slate' : 'amber'} title={r.lastOptimized ? 'Last optimized ' + String(r.lastOptimized).slice(0, 10) : 'The optimizer has never written this listing'}>{os === 'never' ? 'never optimized' : 'opt ' + agoShort(r.lastOptimized, today)}</Tag>}

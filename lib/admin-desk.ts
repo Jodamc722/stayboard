@@ -29,6 +29,7 @@ import { isLowReview } from './review-scale'
 import { isJunkCaption } from './photo-order'
 import { pageRows } from './db-page'
 import { RULES, isCombined, unitToken, type AdminRow, type ChannelCellLite } from './admin-desk-shared'
+import { otaLinksFrom } from './ota-links'
 
 export const ADMIN_DESK_CACHE_TAG = 'admin-desk'
 
@@ -228,6 +229,7 @@ async function assemble(): Promise<AdminDesk> {
     return {
       id, name, building, market, active, guestyStatus: str(l.status) || '(none)',
       channels, verdict: h ? h.verdict : 'missing',
+      links: (() => { const m: Record<string, string> = {}; const key: Record<string, string> = { Airbnb: 'airbnb2', Vrbo: 'homeaway2', 'Booking.com': 'bookingCom', Expedia: 'expedia' }; for (const o of otaLinksFrom({ integrations: l.rawInts })) if (key[o.name]) m[key[o.name]] = o.url; return m })(),
       score,
       lastOptimized: lastOptimizedOf(slim).at,
       photos: { count: caps.count || (Array.isArray(l.pictures) ? l.pictures.length : 0), noCaption: caps.noCaption, analyzedAt: ps && ps.at ? str(ps.at) : null, photoScore: ps && Number.isFinite(Number(ps.score)) ? Number(ps.score) : null },
