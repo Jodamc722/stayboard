@@ -18,6 +18,7 @@ import { ratingToStars } from '@/lib/optimize-score'
 import { pageRows } from '@/lib/db-page'
 import { resolveAmenity } from '@/lib/guesty-amenities'
 import { otaLinksFrom } from '@/lib/ota-links'
+import { isCurrentChannelReview } from '@/lib/channel-current-review'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,6 +75,9 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   // 5-star scale; Booking.com is shown back on its own /10 (lib/review-scale).
   const chOf = (c: any): string => { const x = String(c || ''); return /airbnb/i.test(x) ? 'Airbnb' : /homeaway|vrbo/i.test(x) ? 'Vrbo' : /booking/i.test(x) ? 'Booking.com' : /expedia/i.test(x) ? 'Expedia' : '' }
   const chU: Record<string, Record<string, { sum: number; n: number }>> = {}
+  const _retired: Record<string, number> = {}
+  const unitById: Record<string, any> = {}
+  for (const u of units) unitById[String((u as any).id)] = u
   try {
     const sb = supabaseAdmin()
     // PAGED + ORDERED + STAR-NORMALISED (2026-09-03). This read was `.limit(5000)` with no order —
@@ -84,6 +88,10 @@ export default async function BuildingPage({ params }: { params: { slug: string 
       if ((r as any).excluded_from_score) continue
       const stars = ratingToStars((r as any).rating)
       if (stars == null) continue
+      // Only reviews left on the listing that is live now (a recreated Airbnb room starts over).
+      const _ch0 = chOf((r as any).channel || (r as any).raw?.channel || (r as any).raw?.channelId)
+      const _l = unitById[String((r as any).listing_id)]
+      if (_l && !isCurrentChannelReview((r as any).raw, _l.raw, _ch0)) { _retired[_ch0] = (_retired[_ch0] || 0) + 1; continue }
       const _rid = String((r as any).listing_id); _sum[_rid] = (_sum[_rid] || 0) + stars; _cnt[_rid] = (_cnt[_rid] || 0) + 1
       const _ch = chOf((r as any).channel || (r as any).raw?.channel || (r as any).raw?.channelId)
       if (_ch) { const m = (chU[_rid] = chU[_rid] || {}); const g = (m[_ch] = m[_ch] || { sum: 0, n: 0 }); g.sum += stars; g.n++ }
@@ -138,7 +146,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
             <span>{units.length} units</span>
           </p>
           {bChan.length ? (
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               {bChan.map(x => (
                 <span key={x.ch} className="inline-flex items-baseline gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5" title={'Average review score on ' + x.ch + ' across ' + x.units + ' active unit' + (x.units === 1 ? '' : 's') + ' (' + x.n + ' reviews)'}>
                   <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">{x.ch}</span>
@@ -146,6 +154,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
                   <span className="text-[11px] text-muted tabular-nums">{x.n} reviews</span>
                 </span>
               ))}
+              {Object.keys(_retired).length ? <span className="text-[11px] text-muted" title="Reviews left on channel listings that have since been recreated — the guest-facing score no longer includes them">Current listings only · {Object.entries(_retired).map(([c, n]) => n + ' old ' + c + ' review' + (n === 1 ? '' : 's') + ' left out').join(' · ')}</span> : null}
             </div>
           ) : null}
         </div>

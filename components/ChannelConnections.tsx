@@ -70,7 +70,9 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   const [channel, setChannel] = useState<string>(() => { const c = params.get('channel') || ''; return CHANNELS.some(x => x.key === c) ? c : 'all' })
   const [market, setMarket] = useState('all')
   const [building, setBuilding] = useState(params.get('building') || 'all')
-  const [q, setQ] = useState('')
+  const [q, setQ] = useState(params.get('q') || '')
+  // ORGANIZE (Jon, 2026-11-09: "make that the admin standard channel page and be able to organize by search").
+  const [org, setOrg] = useState<'building' | 'problems' | 'name'>('building')
   const [tab, setTab] = useState<'matrix' | 'missing' | 'inactive'>('matrix')
   const showInactive = tab === 'inactive'   // the CSV includes inactive rows while that tab is open
   const [sel, setSel] = useState<{ l: ListingHealth; key: string } | null>(null)
@@ -120,7 +122,12 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
     return all.filter(l => {
       if (market !== 'all' && l.market !== market) return false
       if (building !== 'all' && l.building !== building) return false
-      if (needle && (l.name + ' ' + l.building).toLowerCase().indexOf(needle) < 0) return false
+      // Search matches the unit, the building, the market and each channel's status — "failed",
+      // "suspended", "airbnb missing" all find the rows they describe.
+      if (needle) {
+        const hay = (l.name + ' ' + l.building + ' ' + l.market + ' ' + CHANNELS.map(c => { const v = l.cells[c.key]?.verdict || 'missing'; return c.label + ' ' + v + ' ' + v + ' ' + c.label }).join(' ')).toLowerCase()
+        if (!needle.split(/\s+/).every(w => hay.indexOf(w) >= 0)) return false
+      }
       if (onlyProblems) {
         const keys = channel === 'all' ? CHANNELS.map(c => c.key) : [channel]
         if (!keys.some(k => { const v = l.cells[k]?.verdict; return v && v !== 'live' })) return false
@@ -133,9 +140,11 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   // — a GM scans by building, not by verdict.
   const groups = useMemo(() => {
     const m: Record<string, ListingHealth[]> = {}
+    if (org === 'problems') return rows.length ? [{ building: 'All units — problems first', rows: rows.slice().sort((a, c) => verdictRank(a.verdict) - verdictRank(c.verdict) || a.name.localeCompare(c.name, undefined, { numeric: true })) }] : []
+    if (org === 'name') return rows.length ? [{ building: 'All units — A to Z', rows: rows.slice().sort((a, c) => a.name.localeCompare(c.name, undefined, { numeric: true })) }] : []
     for (const l of rows) (m[l.building] ||= []).push(l)
     return Object.keys(m).sort().map(b => ({ building: b, rows: m[b].slice().sort((a, c) => verdictRank(a.verdict) - verdictRank(c.verdict) || a.name.localeCompare(c.name)) }))
-  }, [rows])
+  }, [rows, org])
 
   const notConnected = useMemo(() => (data?.listings || []).filter(l => l.missingMajor.length > 0)
     .filter(l => (market === 'all' || l.market === market) && (building === 'all' || l.building === building)), [data, market, building])
@@ -228,7 +237,12 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
             <option value="all">All buildings</option>
             {buildings.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit…" className="rounded-lg border border-line bg-white px-2 py-1 w-36" aria-label="Search unit" />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building or status — e.g. “airbnb failed”" className="rounded-lg border border-line bg-white px-2.5 py-1 w-72 max-w-full" aria-label="Search" />
+          <select value={org} onChange={e => setOrg(e.target.value as any)} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Organize by">
+            <option value="building">Organize: by building</option>
+            <option value="problems">Organize: problems first</option>
+            <option value="name">Organize: unit A–Z</option>
+          </select>
         </div>
       ) : null}
       {runNote ? <div className="rounded-lg border border-line bg-white px-3 py-2 text-[12.5px] text-ink">{runNote}</div> : null}
