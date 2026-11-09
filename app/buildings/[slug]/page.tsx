@@ -69,17 +69,24 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   const notResponded: Record<string, number> = {}
   const _sum: Record<string, number> = {}
   const _cnt: Record<string, number> = {}
+  // Average review score PER CHANNEL (Jon, 2026-11-09: "need to see average score of the active units per
+  // channel too, super important"): per unit and for the building's active units. Ratings are stored on the
+  // 5-star scale; Booking.com is shown back on its own /10 (lib/review-scale).
+  const chOf = (c: any): string => { const x = String(c || ''); return /airbnb/i.test(x) ? 'Airbnb' : /homeaway|vrbo/i.test(x) ? 'Vrbo' : /booking/i.test(x) ? 'Booking.com' : /expedia/i.test(x) ? 'Expedia' : '' }
+  const chU: Record<string, Record<string, { sum: number; n: number }>> = {}
   try {
     const sb = supabaseAdmin()
     // PAGED + ORDERED + STAR-NORMALISED (2026-09-03). This read was `.limit(5000)` with no order —
     // an arbitrary 1,000-review sample — and averaged raw ratings, so a Booking.com 9/10 counted
     // as nine stars. The same unit scored differently here than on /buildings and /listings/[id].
-    const { rows: revs } = await pageRows<any>((a, b) => sb.from('guesty_reviews').select('id, listing_id, rating, reply, raw, excluded_from_score').in('listing_id', unitIds).order('id').range(a, b), 12)
+    const { rows: revs } = await pageRows<any>((a, b) => sb.from('guesty_reviews').select('id, listing_id, rating, reply, raw, excluded_from_score, channel').in('listing_id', unitIds).order('id').range(a, b), 12)
     for (const r of (revs ?? [])) {
       if ((r as any).excluded_from_score) continue
       const stars = ratingToStars((r as any).rating)
       if (stars == null) continue
       const _rid = String((r as any).listing_id); _sum[_rid] = (_sum[_rid] || 0) + stars; _cnt[_rid] = (_cnt[_rid] || 0) + 1
+      const _ch = chOf((r as any).channel || (r as any).raw?.channel || (r as any).raw?.channelId)
+      if (_ch) { const m = (chU[_rid] = chU[_rid] || {}); const g = (m[_ch] = m[_ch] || { sum: 0, n: 0 }); g.sum += stars; g.n++ }
       if (hasHostReply((r as any).raw, (r as any).reply)) continue
       const id = (r as any).listing_id
       notResponded[id] = (notResponded[id] || 0) + 1
@@ -108,6 +115,13 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   })
 
   const activeScores = scored.filter(s => !s.dead).map(s => s.score)
+  const CH_ORDER = ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia']
+  const showRating = (avg5: number, ch: string) => ch === 'Booking.com' || ch === 'Expedia' ? (Math.round(avg5 * 2 * 10) / 10) + '/10' : (Math.round(avg5 * 100) / 100).toFixed(2)
+  const bChan = CH_ORDER.map(ch => {
+    let sum = 0, n = 0, units = 0
+    for (const sc of scored) { if (sc.dead) continue; const g = chU[String(sc.l.id)]?.[ch]; if (g && g.n) { sum += g.sum; n += g.n; units++ } }
+    return { ch, avg: n ? sum / n : null, n, units }
+  }).filter(x => x.n > 0)
   const avg = activeScores.length ? Math.round(activeScores.reduce((s, n) => s + n, 0) / activeScores.length) : null
   const ui = avg != null ? bandUi(band(avg)) : null
 
@@ -123,6 +137,17 @@ export default async function BuildingPage({ params }: { params: { slug: string 
             {city && <span className="inline-flex items-center gap-1"><MapPin size={12} /> {city}</span>}
             <span>{units.length} units</span>
           </p>
+          {bChan.length ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {bChan.map(x => (
+                <span key={x.ch} className="inline-flex items-baseline gap-1.5 rounded-xl border border-line bg-white px-3 py-1.5" title={'Average review score on ' + x.ch + ' across ' + x.units + ' active unit' + (x.units === 1 ? '' : 's') + ' (' + x.n + ' reviews)'}>
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">{x.ch}</span>
+                  <span className="text-[15px] font-bold tabular-nums text-ink">★ {showRating(x.avg as number, x.ch)}</span>
+                  <span className="text-[11px] text-muted tabular-nums">{x.n} reviews</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
         {avg != null && ui && (
           <div className={`flex flex-col items-center justify-center w-20 h-20 rounded-2xl ring-1 flex-shrink-0 ${ui.ring}`} title="Building Optimize Score">
@@ -181,7 +206,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
               {(() => { const links = otaLinksFrom(l.raw); return links.length ? (
                 <div className="ota relative z-10 px-4 py-2 border-t border-line flex items-center gap-1.5 flex-wrap">
                   <span className="text-[10px] uppercase tracking-wider text-muted font-semibold mr-0.5">Live on</span>
-                  {links.map(o => <a key={o.name} href={o.url} target="_blank" rel="noopener noreferrer" title={'Open the live ' + o.name + ' listing in a new tab'} className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 py-0.5 text-[11px] font-semibold text-ink hover:border-brand-300 hover:text-brand-700">{o.name}<ExternalLink size={10} /></a>)}
+                  {links.map(o => { const g = chU[String(l.id)]?.[o.name]; return <a key={o.name} href={o.url} target="_blank" rel="noopener noreferrer" title={'Open the live ' + o.name + ' listing in a new tab' + (g ? ' · average ' + showRating(g.sum / g.n, o.name) + ' from ' + g.n + ' reviews' : ' · no reviews yet on ' + o.name)} className="inline-flex items-center gap-1 rounded-md border border-line bg-white px-1.5 py-0.5 text-[11px] font-semibold text-ink hover:border-brand-300 hover:text-brand-700">{o.name}{g ? <span className="font-bold tabular-nums text-amber-700">★{showRating(g.sum / g.n, o.name)}<span className="font-medium text-muted"> ·{g.n}</span></span> : null}<ExternalLink size={10} /></a> })}
                 </div>
               ) : <div className="px-4 py-2 border-t border-line text-[11px] text-muted">Not live on any channel</div> })()}
 
