@@ -321,7 +321,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     headlineP,
     // The question rides along so retrieval can rank by RELEVANCE, not just weight — the memories
     // about the thing being asked beat equally-weighted trivia about everything else.
-    loadMemories(scopes, ctx.email, 60, lastUser || wholeThread, { nearScopes }),
+    loadMemories(scopes, ctx.email, 40, lastUser || wholeThread, { nearScopes }),
     // THE LIVING MIND (lib/eve/brain.ts): the dossiers of whatever is in play, last night's reflection
     // and her track record, in her head before she reaches for a tool. Not for a probe: the learning
     // audit tests what she REMEMBERS, and handing her the file would pass it for her. Not in a room
@@ -407,7 +407,8 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   const toolsUsed: string[] = []
   // Codes door_code_check released to a Direct person this turn — scrubbed from everything stored.
   const released: string[] = []
-  const limit = Math.min(Math.max(Number(input.maxTurns) || MAX_TURNS, 4), MAX_TURNS)
+  // Ten rounds of tools is plenty for a question; agent mode keeps the full sixteen (2026-11-09 cost pass).
+  const limit = Math.min(Math.max(Number(input.maxTurns) || (agentMode ? MAX_TURNS : 10), 4), MAX_TURNS)
 
   try {
     let finalText = ''
@@ -422,6 +423,11 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // called in the last hour (a working session, a tool loop, agent mode), the 1.25x 5-minute kind
     // when she is cold. Inside a tool loop the first turn decides and the rest follow it.
     let longCache = await eveWasBusy(db)
+    // THE CHEAP PATH (2026-11-09). Short, plain questions start on 'eve-fast' (the small model); a
+    // question that asks for judgement, money, a plan or a report — or agent mode, or a long thread —
+    // goes straight to 'eve'. The quick path moves up to 'eve' if it needs more than four rounds.
+    const DEEP_RE = /\b(why|compare|comparison|trend|analy[sz]|plan|strategy|forecast|projection|revenue|profit|money|budget|payout|statement|owner report|recommend|should we|what do you think|audit|investigate|root cause|explain|summar|report|draft|write|email|policy|decide|decision)\b/i
+    let task: 'eve' | 'eve-fast' = (!agentMode && !input.teach && lastUser.length <= 220 && messages.length <= 6 && !DEEP_RE.test(lastUser)) ? 'eve-fast' : 'eve'
     for (let turn = 0; turn < limit; turn++) {
       turns = turn + 1
       // The atlas rides with the memories: what every page of the app is for, and a live census of
@@ -475,9 +481,10 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // room as "Anthropic 429" and stop. A rate limit or an overloaded model now waits (2s, then 6s)
       // and retries; a third failure goes to the task's fallback model (lib/ai-models) once, so a
       // busy minute costs a slower answer rather than no answer.
-      const pair = await modelPairFor('eve')
+      if (task === 'eve-fast' && turn >= 4) { task = 'eve'; toolsUsed.push('_escalated') }
+      const pair = await modelPairFor(task)
       const call = async (model: string, body: Record<string, any>) => {
-        const rr = await aiFetch('eve', { method: 'POST', headers: HEADERS, body: JSON.stringify({ model, ...body }) })
+        const rr = await aiFetch(task, { method: 'POST', headers: HEADERS, body: JSON.stringify({ model, ...body }) })
         return { r: rr, d: (await rr.json().catch(() => ({}))) as any }
       }
       const baseBody = { max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }
@@ -577,7 +584,11 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
           if (block.name === 'door_code_check' && output && typeof output === 'object') {
             for (const k of ['code', 'previous_code']) if (output[k] != null && String(output[k]).trim()) released.push(String(output[k]).trim())
           }
-          results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output) })
+          // Every turn after this re-sends every tool result, so a 30k-character list costs on every
+          // later round. Capped, with a note so she narrows the next call instead of guessing.
+          let outStr = JSON.stringify(output)
+          if (outStr.length > 7000) outStr = outStr.slice(0, 7000) + '…[TRUNCATED — ' + outStr.length + ' chars. Ask the tool for a narrower slice (one building, fewer days) if you need the rest.]'
+          results.push({ type: 'tool_result', tool_use_id: block.id, content: outStr })
         }
         convo.push({ role: 'user', content: results })
         continue

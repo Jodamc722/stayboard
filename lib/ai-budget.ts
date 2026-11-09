@@ -26,7 +26,7 @@ export const DEFAULT_BUDGET: AiBudget = { automaticUsd: 5, totalUsd: 9, monthUsd
 // Typed by a person, on the spot — the only calls that keep going after the automatic cap.
 // 'translate' is a person tagging Eve in a thread and waiting (Jon, 2026-10-01: "100% of the time") —
 // interactive, never paused by the automatic cap (independent audit 2026-10-10).
-const INTERACTIVE = new Set(['eve', 'eve-vision', 'eve-investigate', 'listing-copy', 'review-reply', 'reports', 'guidebook', 'project-plan', 'expectations', 'guest-reply', 'translate'])
+const INTERACTIVE = new Set(['eve', 'eve-fast', 'eve-vision', 'eve-investigate', 'listing-copy', 'review-reply', 'reports', 'guidebook', 'project-plan', 'expectations', 'guest-reply', 'translate'])
 
 const etMidnightIso = () => {
   const now = new Date()

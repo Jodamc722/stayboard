@@ -79,6 +79,13 @@ export const AI_TASKS: AiTask[] = [
   // So the lever is price per token, not calls and not turns. Sonnet 5 is $2/$10 against Opus
   // 4.8's $5/$25 for the same 100k — and orchestrating tools and summarising what they return is
   // what Sonnet is good at. Reverse it in Users & admin in ten seconds if her judgement slips.
+  // QUICK QUESTIONS ON THE SMALL MODEL (Jon, 2026-11-09: "fix the Eve chat, make it more efficient
+  // and cheaper"). A plain lookup ("who cleans 1105 tomorrow", "what's the door code process") runs
+  // here; anything that asks for judgement — why, compare, plan, money, a report — goes to 'eve'.
+  // A quick question that turns into a long tool hunt moves up to 'eve' after four rounds.
+  { key: 'eve-fast', title: 'Eve — quick questions', group: 'Eve', def: 'haiku',
+    what: 'Short lookups and how-to questions in Eve chat, Slack and Telegram.',
+    matters: 'Most of what people ask Eve. A fraction of the price of the full model; hard questions still go to Eve’s main model.' },
   { key: 'eve', title: 'Eve — chat & Telegram', group: 'Eve', def: 'sonnet',
     what: 'Answers questions by reasoning across up to sixteen tool calls: reservations, tasks, money, Slack, the web.',
     matters: 'Jon and the managers act on what she says. Every call is large, so the tier is where the money is.' },
