@@ -225,6 +225,9 @@ export async function POST(req: NextRequest) {
       })
       if (r.ok) { d = await r.json(); break }
       const ed: any = await r.json().catch(() => ({}))
+      // The daily / monthly AI budget stop (lib/ai-budget) is not Anthropic being busy — say so,
+      // and do not retry (it read as "briefly overloaded" all day on 2026-11-09).
+      if (ed?.error?.type === 'budget_exceeded') return NextResponse.json({ error: String(ed.error.message || 'AI budget reached for today.') + ' Raise it in Settings → AI models, or it resets at midnight.' }, { status: 429 })
       lastErr = `Anthropic ${r.status}: ${(ed?.error?.message || JSON.stringify(ed)).slice(0, 200)}`
       overloaded = r.status === 429 || r.status === 503 || r.status === 529
       if (!RETRYABLE.has(r.status)) return NextResponse.json({ error: lastErr }, { status: 502 })
