@@ -11,7 +11,7 @@ export { textOf } from './anthropic-text'
 export type AnthropicCall = { ok: boolean; status: number; data: any; model: string }
 
 /** `task` is the AI_TASKS key the call is billed to in the usage ledger (lib/ai-usage). */
-export async function anthropicMessages(key: string, body: Record<string, any>, fallbackModel = 'claude-sonnet-4-6', task = 'unknown'): Promise<AnthropicCall> {
+export async function anthropicMessages(key: string, body: Record<string, any>, fallbackModel = 'claude-sonnet-5', task = 'unknown'): Promise<AnthropicCall> {
   const call = async (model: string) => {
     const r = await aiFetch(task, {
       method: 'POST',

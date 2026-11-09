@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 // MODEL is resolved per request via modelFor('guidebook') — see lib/ai-models (editable on Users & admin).
-const VISION_MODEL = 'claude-sonnet-4-6'
+const VISION_MODEL = 'claude-sonnet-5-5' // was claude-sonnet-4-6; current Sonnet (2026-11-09)
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 

@@ -9,15 +9,15 @@
 // call within about a minute and costs nothing per request.
 //
 // The tiers, so the setting page can say what a change means:
+//   UPDATED 2026-11-09 (Jon: "the model selection is not up to date on Lighthouse") against the
+//   Claude Platform models page: Opus 5.5 and Sonnet 5.5 are current; Fable 5.1 is priced $10/$50.
 //   fable   — Fable 5.1. The Mythos-class tier above Opus; the judgement calls (Jon, 2026-09-09:
-//             "make sure the suggestions use fable to determine real things to focus on"). Price
-//             below is a placeholder until the console confirms it — treat it as at-least-Opus.
-//   opus    — Opus 4.8. Deepest reasoning. $5 in / $25 out per million tokens.
-//   sonnet  — Sonnet 5. Newer generation, very strong, 2.5x cheaper than Opus. $2 / $10.
-//   sonnet-prev — Sonnet 4.6. What most of the app ran on before 2026-09-09. $3 / $15. NOTHING
-//             defaults here any more: Sonnet 5 is both newer and cheaper ($2/$10), so every task
-//             that sat on 4.6 moved up and down at the same time. Kept as an option only because
-//             an account that cannot see Sonnet 5 falls back to it.
+//             "make sure the suggestions use fable to determine real things to focus on"). $10 / $50.
+//   opus    — Opus 5.5 (was Opus 4.8). Deepest reasoning of the everyday tiers. $4 in / $20 out per
+//             million tokens — cheaper than Opus 4.8 was ($5/$25).
+//   sonnet  — Sonnet 5.5 (was Sonnet 5). Very strong, the workhorse. $2 / $10.
+//   sonnet-prev — Sonnet 5 (was Sonnet 4.6). The previous Sonnet, same price; kept as an option and as
+//             the fallback for an account that cannot see Sonnet 5.5.
 //   haiku   — Haiku 5.5 (was Haiku 4.5 until 2026-10-29). Fast and cheap for classification and short
 //             answers. $0.10 / $0.50 — a tenth of Haiku 4.5. lib/ai-usage adapts the request (no
 //             sampling params, low effort) so callers written for 4.5 need no change.
@@ -34,21 +34,21 @@ export const AI_MODELS_KEY = 'ai_models'
 export type ModelTier = 'fable' | 'opus' | 'sonnet' | 'sonnet-prev' | 'haiku'
 export const MODEL_IDS: Record<ModelTier, string> = {
   fable: 'claude-fable-5-1',
-  opus: 'claude-opus-4-8',
-  sonnet: 'claude-sonnet-5',
-  'sonnet-prev': 'claude-sonnet-4-6',
+  opus: 'claude-opus-5-5',
+  sonnet: 'claude-sonnet-5-5',
+  'sonnet-prev': 'claude-sonnet-5',
   haiku: 'claude-haiku-5-5',
 }
 export const MODEL_LABEL: Record<ModelTier, string> = {
-  fable: 'Fable 5.1', opus: 'Opus 4.8', sonnet: 'Sonnet 5', 'sonnet-prev': 'Sonnet 4.6', haiku: 'Haiku 5.5',
+  fable: 'Fable 5.1', opus: 'Opus 5.5', sonnet: 'Sonnet 5.5', 'sonnet-prev': 'Sonnet 5', haiku: 'Haiku 5.5',
 }
 /** $ per million tokens, in / out — for the settings page to show what a change costs. */
 export const MODEL_PRICE: Record<ModelTier, { in: number; out: number }> = {
-  fable: { in: 5, out: 25 }, opus: { in: 5, out: 25 }, sonnet: { in: 2, out: 10 }, 'sonnet-prev': { in: 3, out: 15 }, haiku: { in: 0.1, out: 0.5 },
+  fable: { in: 10, out: 50 }, opus: { in: 4, out: 20 }, sonnet: { in: 2, out: 10 }, 'sonnet-prev': { in: 2, out: 10 }, haiku: { in: 0.1, out: 0.5 },
 }
 /** If the account cannot see a tier's model id, the call retries once on this one (lib/anthropic-call). */
 export const MODEL_FALLBACK: Record<ModelTier, string> = {
-  fable: MODEL_IDS.opus, opus: MODEL_IDS['sonnet-prev'], sonnet: MODEL_IDS['sonnet-prev'], 'sonnet-prev': MODEL_IDS.sonnet, haiku: 'claude-haiku-4-5',
+  fable: MODEL_IDS.opus, opus: 'claude-opus-5', sonnet: MODEL_IDS['sonnet-prev'], 'sonnet-prev': 'claude-sonnet-4-6', haiku: 'claude-haiku-4-5-20251001',
 }
 
 export type AiTask = {

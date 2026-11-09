@@ -80,7 +80,7 @@ function parseJson(text: string | null): any | null {
   try { return JSON.parse(m[0]) } catch { return null }
 }
 
-const DOC_MODEL = 'claude-sonnet-4-6'
+const DOC_MODEL = 'claude-sonnet-5-5' // was claude-sonnet-4-6; current Sonnet (2026-11-09)
 
 async function fetchDocBlock(url: string): Promise<any | null> {
   try {

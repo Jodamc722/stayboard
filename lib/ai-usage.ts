@@ -30,7 +30,7 @@ export function tierOfModel(model: string): ModelTier {
   if (m.includes('fable') || m.includes('mythos')) return 'fable'
   if (m.includes('opus')) return 'opus'
   if (m.includes('haiku')) return 'haiku'
-  if (m.includes('sonnet-4')) return 'sonnet-prev'
+  if (m.includes('sonnet-4') || /sonnet-5(?!-5)/.test(m)) return 'sonnet-prev'
   return 'sonnet'
 }
 
@@ -50,7 +50,12 @@ export function costUsd(model: string, u: Usage): number {
   // A call that fell back to the old Haiku bills at the old Haiku's price, not the tier's; the newest
   // Haiku charges 5x list on prompts over 100k tokens.
   const longHaiku = /haiku-5-5/.test(m) && (u.input + u.cacheRead + u.cacheWrite) > 100_000
-  const p = /haiku-4/.test(m) ? { in: 1, out: 5 } : longHaiku ? { in: 0.5, out: 2.5 } : MODEL_PRICE[tierOfModel(model)]
+  // Older models a fallback can land on bill at their own list price, not the tier's (2026-11-09).
+  const p = /haiku-4/.test(m) ? { in: 1, out: 5 }
+    : longHaiku ? { in: 0.5, out: 2.5 }
+    : /sonnet-4/.test(m) ? { in: 3, out: 15 }
+    : /opus-4|opus-5(?!-5)/.test(m) ? { in: 5, out: 25 }
+    : MODEL_PRICE[tierOfModel(model)]
   const perM = (n: number, rate: number) => (n / 1_000_000) * rate
   const w1h = Math.min(Number(u.cacheWrite1h) || 0, u.cacheWrite)
   return perM(u.input, p.in) + perM(u.output, p.out) + perM(u.cacheRead, p.in * cacheReadRate(model)) + perM(u.cacheWrite - w1h, p.in * 1.25) + perM(w1h, p.in * 2)

@@ -24,7 +24,7 @@ import { requireLevel } from '@/lib/access'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const VISION_MODEL = 'claude-sonnet-4-6'
+const VISION_MODEL = 'claude-sonnet-5-5' // was claude-sonnet-4-6; current Sonnet (2026-11-09)
 const LAYOUTS = ['feature', 'gallery', 'stats', 'list', 'quote', 'text'] as const
 type Layout = typeof LAYOUTS[number]
 

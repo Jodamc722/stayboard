@@ -26,7 +26,7 @@ async function visionOne(key: string, content: any[], room: string): Promise<{ i
     const doCall = (model: string) => aiFetch('audit', { method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' }, signal: ac.signal, body: JSON.stringify({ model, max_tokens: 2000, system: SYS, messages: [{ role: 'user', content }] }) })
     let r: any = null
     // The chosen model first (Users & admin → AI models), then the older fallbacks if it is refused.
-    for (const model of Array.from(new Set([await modelFor('audit'), 'claude-opus-4-8', 'claude-sonnet-4-6']))) {
+    for (const model of Array.from(new Set([await modelFor('audit'), 'claude-opus-5-5', 'claude-sonnet-5-5']))) {
       try { r = await doCall(model) } catch (e) { r = null; continue }
       if (r && r.ok) break
     }

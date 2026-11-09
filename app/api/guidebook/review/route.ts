@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
       if (!urls.length) return
       const content: any[] = urls.flatMap((u, i) => [{ type: 'text', text: 'IMAGE ' + i + ':' }, { type: 'image', source: { type: 'url', url: u } }])
       content.push({ type: 'text', text: ASK })
-      const call = await anthropicMessages(key, { model, max_tokens: 2500, messages: [{ role: 'user', content }] }, 'claude-sonnet-4-6', 'guidebook')
+      const call = await anthropicMessages(key, { model, max_tokens: 2500, messages: [{ role: 'user', content }] }, 'claude-sonnet-5', 'guidebook')
       const parsed = call.ok ? parseJson(textOf(call.data) || '') : null
       if (Array.isArray(parsed)) { for (const p of parsed) { const u = urls[Number(p?.i)]; if (u) results[u] = p } return }
       lastErr = String(call.data?.error?.message || ('HTTP ' + call.status)).slice(0, 200)
