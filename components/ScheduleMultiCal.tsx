@@ -27,6 +27,8 @@ const dow = (d: string) => new Date(d + 'T12:00:00Z').getUTCDay()
 const nice = (d: string) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
 const short = (d: string) => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
 const guestShort = (n: string) => { const p = String(n || 'Guest').trim().split(/\s+/); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : p[0] }
+/** The newest line of a note — what fits on a bar. */
+const lastLine = (t: string | null) => { const ls = String(t || '').split('\n').map(x => x.trim()).filter(Boolean); return ls.length ? ls[ls.length - 1] : '' }
 const nightsBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000)
 
 /** Channel edge colour — a hint, not a fill. */
@@ -77,13 +79,18 @@ export function ScheduleMultiCal() {
   const [confirm, setConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null)
+  const [newNote, setNewNote] = useState('')
+  const [full, setFull] = useState(false)
+  useEffect(() => { if (!full) return; const k = (e: KeyboardEvent) => { if (e.key === 'Escape') setFull(false) }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k) }, [full])
+  const [lift, setLift] = useState(false)
+  const [panelMsg, setPanelMsg] = useState<{ text: string; bad: boolean } | null>(null)
 
   // Day width stretches to fill the calendar; never below 46px.
   const calRef = useRef<HTMLDivElement>(null)
   const [W, setW] = useState(46)
   useEffect(() => {
     const el = calRef.current; if (!el) return
-    const fit = () => setW(Math.max(46, Math.floor((el.clientWidth - 212) / Math.max(1, days.length))))
+    const fit = () => setW(Math.max(46, Math.floor((el.clientWidth - 182) / Math.max(1, days.length))))
     fit()
     const ro = new ResizeObserver(fit); ro.observe(el)
     return () => ro.disconnect()
@@ -139,6 +146,34 @@ export function ScheduleMultiCal() {
     setBusy(false)
   }
 
+  async function addNote(st: McStay) {
+    const text = newNote.trim(); if (!text || busy) return
+    setBusy(true); setPanelMsg(null)
+    try {
+      const r = await fetch('/api/schedule/multical', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'note', reservationId: st.id, note: text }) })
+      const j = await r.json().catch(() => ({}))
+      if (r.ok && j.ok) {
+        const line = '[' + (today || '') + '] you: ' + text
+        setDrawer({ type: 'stay', s: { ...st, note: st.note ? st.note + '\n' + line : line } })
+        setNewNote(''); setPanelMsg({ text: 'Saved to the reservation in Guesty.', bad: false }); refresh()
+      } else setPanelMsg({ text: String(j.error || 'Could not save the note.'), bad: true })
+    } catch { setPanelMsg({ text: 'Could not save the note.', bad: true }) }
+    setBusy(false)
+  }
+  async function liftBlock(b: McBlock) {
+    if (busy) return
+    if (!lift) { setLift(true); return }
+    setBusy(true); setPanelMsg(null)
+    try {
+      const r = await fetch('/api/schedule/multical', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'unblock', listingId: b.listingId, from: b.from, to: b.to }) })
+      const j = await r.json().catch(() => ({}))
+      if (r.ok && j.ok) { setDrawer(null); setLift(false); setMsg({ text: 'Block lifted in Guesty — ' + short(j.from) + (j.to !== j.from ? ' – ' + short(j.to) : '') + ' open again.', bad: false }); refresh() }
+      else setPanelMsg({ text: String(j.error || 'Could not lift the block.'), bad: true })
+    } catch { setPanelMsg({ text: 'Could not lift the block.', bad: true }) }
+    setBusy(false)
+  }
+  const openDrawer = (dr: Drawer) => { setDrawer(dr); setNewNote(''); setLift(false); setPanelMsg(null) }
+
   const nd = days.length || 1
   const xOf = (day: string, edge: 'start' | 'end') => {
     const i = days.indexOf(day)
@@ -155,18 +190,18 @@ export function ScheduleMultiCal() {
   const selUnit = sel ? unitOf[sel.listingId] : null
 
   return (
-    <div className="mc">
+    <div className={'mc' + (full ? ' mc-full' : '')}>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
 
-      {/* THE DAY'S NUMBERS — also the filters */}
+      {/* THE DAY'S NUMBERS — also the filters. One slim row (Jon, 2026-11-10: "need more space"). */}
       <div className="mc-strip">
+        <span className="mc-day">{focus === today ? 'Today' : focus ? nice(focus) : ''}</span>
         {FILTERS.map(x => {
           const n = inScope.filter(u => x.match(stateOn(u.listingId, focus))).length
           return (
             <button key={x.k} className={'mc-stat' + (filter === x.k ? ' on' : '')} onClick={() => setFilter(filter === x.k ? 'all' : x.k)}>
-              <div className="k"><span className="sw" style={{ background: x.sw, border: x.k === 'vacant' ? '1px solid rgb(var(--c-line))' : undefined }} />{x.label}</div>
-              <div className="n">{d ? n : '–'}</div>
-              <div className="s">{focus === today ? 'Today' : focus ? nice(focus) : ''} · {x.s}</div>
+              <span className="n">{d ? n : '–'}</span>
+              <span className="k"><span className="sw" style={{ background: x.sw, border: x.k === 'vacant' ? '1px solid rgb(var(--c-line))' : undefined }} />{x.label}</span>
             </button>
           )
         })}
@@ -183,6 +218,7 @@ export function ScheduleMultiCal() {
         </div>
         <input className="mc-search" value={q} onChange={e => setQ(e.target.value)} placeholder="Find a unit or building" />
         <button className={'mc-btn' + (showNotes ? ' mc-on' : '')} onClick={() => setShowNotes(!showNotes)}>✎ Notes on bars</button>
+        <button className={'mc-btn' + (full ? ' mc-on' : '')} onClick={() => setFull(!full)} title="Fill the screen (Esc to leave)">{full ? '✕ Exit full screen' : '⤢ Full screen'}</button>
         {loading ? <span className="mc-hint">Reading calendars…</span> : null}
         {d && d.canBlock ? (
           <button className={'mc-block' + (blockMode ? ' on' : '')} onClick={() => { const on = !blockMode; setBlockMode(on); setSel(null); setConfirm(false); setDrawer(on ? { type: 'pick' } : null) }}>
@@ -251,12 +287,12 @@ export function ScheduleMultiCal() {
                                   <div key={s.id} className={'mc-b ' + (s.owner ? 'owner' : 'guest')}
                                     style={{ left: L + 2, width: R - L - 4, ['--ch' as any]: chColor(s.source) }}
                                     title={(s.owner ? 'Owner stay' : s.guest) + ' · ' + short(s.ci) + ' → ' + short(s.co) + ' · ' + s.nights + 'n' + (s.owner ? '' : ' · ' + chName(s.source)) + (s.isNew ? ' · New booking' : '') + (s.note ? '\n✎ ' + s.note : '')}
-                                    onClick={e => { e.stopPropagation(); setDrawer({ type: 'stay', s }); setSel(null) }}>
+                                    onClick={e => { e.stopPropagation(); openDrawer({ type: 'stay', s }); setSel(null) }}>
                                     {wide ? (
                                       <>
                                         {s.isNew ? <span className="new">New booking</span> : null}
                                         {s.owner ? <span className="tag">Owner</span> : <>{guestShort(s.guest)} <span className="nts">{s.nights}n</span></>}
-                                        {s.note ? <span className="bn">✎{showNotes ? ' ' + s.note : ''}</span> : null}
+                                        {s.note ? <span className="bn">✎{showNotes ? ' ' + lastLine(s.note) : ''}</span> : null}
                                       </>
                                     ) : (s.isNew ? <span className="new dot" /> : null)}
                                   </div>
@@ -269,8 +305,8 @@ export function ScheduleMultiCal() {
                                   <div key={b.listingId + b.from} className={'mc-b ' + (b.kind === 'owner' ? 'owner' : 'block')}
                                     style={{ left: L + 2, width: R - L - 4 }}
                                     title={b.label + ' · ' + short(b.from) + ' → ' + short(plus(b.to, 1)) + (b.note ? '\n✎ ' + b.note : '')}
-                                    onClick={e => { e.stopPropagation(); setDrawer({ type: 'block', b }); setSel(null) }}>
-                                    {R - L > 70 ? <><span className="tag">{b.kind === 'owner' ? 'Owner' : 'Blocked'}</span> {b.label}{b.note ? <span className="bn">✎{showNotes ? ' ' + b.note : ''}</span> : null}</> : null}
+                                    onClick={e => { e.stopPropagation(); openDrawer({ type: 'block', b }); setSel(null) }}>
+                                    {R - L > 70 ? <><span className="tag">{b.kind === 'owner' ? 'Owner' : 'Blocked'}</span> {b.label}{b.note ? <span className="bn">✎{showNotes ? ' ' + lastLine(b.note) : ''}</span> : null}</> : null}
                                   </div>
                                 )
                               })}
@@ -315,6 +351,10 @@ export function ScheduleMultiCal() {
                     {s.isNew ? <><dt>Booking</dt><dd><span className="mc-newchip">New booking</span></dd></> : null}
                   </dl>
                   <div className="field"><label>Notes</label><div className="notebox">{s.note || <span style={{ color: 'rgb(var(--c-muted))' }}>No notes on this reservation.</span>}</div></div>
+                  {/* ADD A NOTE — appended to the reservation's notes in Guesty, never replacing them. */}
+                  <div className="field"><label>Add a note</label><textarea className="note" value={newNote} onChange={e => setNewNote(e.target.value)} placeholder="Saved to the reservation in Guesty" /></div>
+                  {panelMsg ? <div className={panelMsg.bad ? 'warn' : 'ok'}>{panelMsg.text}</div> : null}
+                  <button className="go" disabled={!newNote.trim() || busy} style={!newNote.trim() ? { opacity: 0.4 } : undefined} onClick={() => addNote(s)}>{busy ? 'Saving…' : 'Save note'}</button>
                   <button className="cancel" onClick={() => setDrawer(null)}>Close</button>
                 </>
               )
@@ -331,7 +371,12 @@ export function ScheduleMultiCal() {
                     <dt>Nights</dt><dd>{nightsBetween(b.from, b.to) + 1}</dd>
                   </dl>
                   <div className="field"><label>Note</label><div className="notebox">{b.note || <span style={{ color: 'rgb(var(--c-muted))' }}>No note in Guesty.</span>}</div></div>
-                  <p className="mc-hint" style={{ marginTop: 12 }}>To lift a block, open the unit’s calendar in Guesty.</p>
+                  {panelMsg ? <div className={panelMsg.bad ? 'warn' : 'ok'}>{panelMsg.text}</div> : null}
+                  {d && d.canBlock && b.to >= today ? (
+                    <button className={'go' + (lift ? ' confirm' : '')} disabled={busy} onClick={() => liftBlock(b)}>
+                      {busy ? 'Lifting…' : lift ? 'Confirm — reopen ' + short(b.from < today ? today : b.from) + (b.to !== b.from ? ' – ' + short(b.to) : '') + ' for booking' : 'Lift this block'}
+                    </button>
+                  ) : null}
                   <button className="cancel" onClick={() => setDrawer(null)}>Close</button>
                 </>
               )
@@ -387,14 +432,17 @@ const CSS = `
   --ink: rgb(var(--c-ink)); --muted: rgb(var(--c-muted)); --line: rgb(var(--c-line)); --line2: rgb(var(--c-line) / .55);
   --brass: rgb(var(--c-brand-600)); --brass-50: rgb(var(--c-brand-50)); --brass-100: rgb(var(--c-brand-100)); --brass-300: rgb(var(--c-brand-300)); color: var(--ink); }
 .mc button { cursor: pointer; }
-.mc-strip { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; margin-bottom:14px; }
-@media (max-width: 900px) { .mc-strip { grid-template-columns:repeat(3,minmax(0,1fr)); } }
-.mc-stat { text-align:left; background:#fff; border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+.mc-strip { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:10px; }
+.mc-day { font-family: var(--font-display); font-size:20px; margin-right:6px; }
+.mc-stat { display:inline-flex; align-items:center; gap:9px; background:#fff; border:1px solid var(--line); border-radius:10px; padding:5px 12px 5px 10px; }
 .mc-stat:hover { border-color: var(--brass-300); }
 .mc-stat.on { border-color: var(--brass); box-shadow: inset 0 0 0 1px var(--brass); background: var(--brass-50); }
-.mc-stat .k { font-size:10.5px; font-weight:600; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); display:flex; align-items:center; gap:7px; }
-.mc-stat .n { font-family: var(--font-display); font-size:34px; line-height:1; margin-top:8px; font-variant-numeric: tabular-nums; }
-.mc-stat .s { font-size:11.5px; color:var(--muted); opacity:.8; margin-top:3px; }
+.mc-stat .k { font-size:10.5px; font-weight:600; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); display:inline-flex; align-items:center; gap:6px; }
+.mc-stat .n { font-family: var(--font-display); font-size:24px; line-height:1; font-variant-numeric: tabular-nums; min-width:16px; }
+.mc.mc-full { position:fixed; inset:0; z-index:60; background: rgb(var(--c-app)); padding:14px 18px; display:flex; flex-direction:column; }
+.mc.mc-full .mc-main { flex:1; min-height:0; }
+.mc.mc-full .mc-main > div:first-child { display:flex; flex-direction:column; min-height:0; }
+.mc.mc-full .mc-cal { max-height:none; flex:1; }
 .mc .sw { width:10px; height:10px; border-radius:3px; display:inline-block; }
 .mc-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 .mc-btn { padding:6px 11px; font-size:12.5px; font-weight:600; border:1px solid var(--line); border-radius:9px; background:#fff; color:var(--muted); }
@@ -412,11 +460,10 @@ const CSS = `
 .mc-err { color: rgb(var(--s-rose-600)); font-size:12.5px; margin:0 0 8px; }
 .mc-warn-line { color: rgb(var(--s-amber-700)); font-size:12px; margin:0 0 8px; }
 .mc-ok-line { color: rgb(var(--s-emerald-700)); font-size:12.5px; margin:0 0 8px; }
-.mc-main { display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
-.mc-main.drawer { grid-template-columns:minmax(0,1fr) 340px; }
-.mc-cal { background:#fff; border:1px solid var(--line); border-radius:14px; overflow:auto; max-height: calc(100vh - 300px); min-height: 320px; position:relative; }
+.mc-main { position:relative; }
+.mc-cal { background:#fff; border:1px solid var(--line); border-radius:14px; overflow:auto; max-height: calc(100vh - 205px); min-height: 360px; position:relative; }
 .mc-empty { padding:40px; text-align:center; color:var(--muted); font-size:13px; }
-.mc-grid { --unitw:210px; position:relative; width:max-content; min-width:100%; user-select:none; }
+.mc-grid { --unitw:180px; position:relative; width:max-content; min-width:100%; user-select:none; }
 .mc-row { display:flex; height:44px; border-bottom:1px solid var(--line2); }
 .mc-row .u { position:sticky; left:0; z-index:3; width:var(--unitw); flex:0 0 auto; background:#fff; border-right:1px solid var(--line); padding:0 12px; display:flex; flex-direction:column; justify-content:center; }
 .mc-row .u b { font-weight:600; font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -464,7 +511,7 @@ const CSS = `
 .mc-mark.in { background: rgb(var(--s-emerald-500)); }
 .mc-legend { display:flex; gap:16px; flex-wrap:wrap; align-items:center; font-size:12px; color:var(--muted); margin:10px 2px 0; }
 .mc-legend i { display:inline-block; width:22px; height:12px; border-radius:4px; vertical-align:-2px; margin-right:6px; }
-.mc-drawer { background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px; align-self:start; position:sticky; top:12px; }
+.mc-drawer { position:absolute; top:0; right:0; width:340px; max-height:100%; overflow:auto; z-index:20; background:#fff; border:1px solid var(--line); border-radius:14px; padding:20px; box-shadow: 0 12px 40px -12px rgba(16,17,20,.28); }
 .mc-drawer .eyebrow { font-size:10.5px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color: var(--brass); }
 .mc-drawer h2 { font-family: var(--font-display); font-weight:400; font-size:28px; line-height:1.05; margin:6px 0 2px; }
 .mc-drawer .sub { color:var(--muted); font-size:12.5px; }
@@ -488,5 +535,4 @@ const CSS = `
 .mc-drawer .kv { display:grid; grid-template-columns:96px 1fr; gap:8px 10px; margin-top:16px; font-size:13px; }
 .mc-drawer .kv dt { color:var(--muted); font-size:12px; }
 .mc-drawer .kv dd { margin:0; font-weight:500; }
-@media (max-width: 1100px) { .mc-main.drawer { grid-template-columns:minmax(0,1fr); } }
 `
