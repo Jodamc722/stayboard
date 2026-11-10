@@ -90,9 +90,6 @@ export function StarterKitDesk() {
           title="The need list calculator: one link anyone can open, enter bedrooms, bathrooms, guests and the kitchen, and get every item the home needs with counts"
           className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">{copied === 'calc' ? <><Check size={13} /> Copied</> : <><ClipboardList size={13} /> Need list link</>}</button>
         <a href="/kit/list" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><ExternalLink size={13} /> Open calculator</a>
-        <button type="button" onClick={async () => { const link = window.location.origin + '/kit/linens'; try { await navigator.clipboard.writeText(link); setCopied('linen'); setTimeout(() => setCopied(''), 1800) } catch { window.prompt('Copy this link', link) } }}
-          title="The linen calculator: one link anyone can open, no login or password, counted from the saved linen standard"
-          className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">{copied === 'linen' ? <><Check size={13} /> Copied</> : <><ClipboardList size={13} /> Linen calculator link</>}</button>
         <button type="button" onClick={() => setOpen(o => !o)} className={BTN + ' bg-ink text-white lh-primary'}><Plus size={14} /> New starter kit</button>
       </LeanHead>
 
