@@ -26,7 +26,7 @@ const DOC_MODEL = 'claude-sonnet-5-5' // was claude-sonnet-4-6; current Sonnet (
 // matched any line with "linen", "trash", "strip" or "turn", so notes like "new linens for 405" or
 // "trash chute repaired" were thrown away and a short note could come back with nothing at all —
 // "Could not read work items from that note."
-const ROUTINE_TURN_RE = /(departure clean|turnover clean|\bturnovers?\b|\bturn clean|unit strips?\b|\bstrip(ped)? the unit|linen\s*(and|&|\/)\s*trash walk|walk\s?-?through clean)/i
+const ROUTINE_TURN_RE = /(strip\s*(&|and|\+)\s*walk|departure clean|turnover clean|\bturnovers?\b|\bturn clean|unit strips?\b|\bstrip(ped)? the unit|linen\s*(and|&|\/)\s*trash walk|walk\s?-?through clean)/i
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
