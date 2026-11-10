@@ -108,8 +108,9 @@ export async function pullReservationNotes(): Promise<number> {
   const t0 = ymd(new Date(Date.now() - 86400000)), t7 = ymd(new Date(Date.now() + 7 * 86400000))
   const { data: res } = await db.from('garden_reservations').select('id,guest_name,source,check_in,check_out').lte('check_in', t7).gte('check_out', t0).neq('status', 'canceled').limit(150)
   let n = 0
-  for (const r of ((res || []) as any[])) {
-    try {
+  const { pool } = await import('./res-detail')
+  await pool((res || []) as any[], 8, async (r: any) => {
+    {
       const { data } = await cbGet<any>('getReservationNotes', { reservationID: r.id })
       for (const note of (Array.isArray(data) ? data : [])) {
         const body = String(note.reservationNote || note.note || '').trim()
@@ -117,8 +118,8 @@ export async function pullReservationNotes(): Promise<number> {
         await ingestMessage({ threadId: `note:${r.id}`, reservationId: r.id, guest: r.guest_name, channel: r.source, source: 'note', id: `note:${note.reservationNoteID || note.id || body.slice(0, 40)}`, direction: 'out', author: note.userName || 'Front desk', body, sentAt: note.dateCreated ? new Date(String(note.dateCreated).replace(' ', 'T') + 'Z').toISOString() : null, quiet: true })
         n++
       }
-    } catch { /* one reservation's notes failing never stops the rest */ }
-  }
+    }
+  })
   return n
 }
 

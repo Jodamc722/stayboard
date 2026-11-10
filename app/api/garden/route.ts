@@ -40,6 +40,15 @@ export async function POST(req: NextRequest) {
     if (!cloudbedsConfigured()) return NextResponse.json({ ok: false, error: 'Not connected — no Cloudbeds key in the environment yet.' })
     try { return NextResponse.json({ ok: true, hotel: await getHotel() }) } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e) }) }
   }
+  // Totals, ID / card on file and Operto on demand, outside the sync's budget (lib/garden/res-detail).
+  if (action === 'enrich') {
+    const { pullTotals, pullDetails } = await import('@/lib/garden/res-detail')
+    const out: any = {}
+    try { out.totals = await pullTotals(120, 365, true) } catch (e: any) { out.totals = 'error: ' + String(e?.message || e).slice(0, 160) }
+    try { out.details = await pullDetails() } catch (e: any) { out.details = 'error: ' + String(e?.message || e).slice(0, 160) }
+    try { const o = await import('@/lib/garden/operto'); out.operto = o.opertoConfigured() ? (await o.pullOperto()).matched : 'not connected' } catch (e: any) { out.operto = 'error: ' + String(e?.message || e).slice(0, 160) }
+    return NextResponse.json({ ok: true, ...out })
+  }
   if (action === 'sync') {
     const r = await syncGarden({ full: !!b?.full })
     return NextResponse.json(r)
