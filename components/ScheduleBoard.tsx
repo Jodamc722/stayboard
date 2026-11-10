@@ -626,7 +626,10 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   for (const c of dayCleans) { if (isNewUnseen(c) && c.newBooking && newRowIds.indexOf(c.newBooking.id) < 0) newRowIds.push(c.newBooking.id) }
   const newCount = newRowIds.length + newArrivalsUnseen.length
   const onlyNewOn = onlyNew && newCount > 0
-  const dayWord = (d: string) => { const t = (data && data.today) || ''; return d === t ? 'today' : (t && d === nextIso(t)) ? 'tomorrow' : fmtDate(d) }
+  // THE ARRIVAL DAY, NOT "TOMORROW" (Jon, 2026-11-10: "confusing due to tomorrow vs the day I am on").
+  // The board is usually looking at another day than today, so a relative word reads against the wrong
+  // day. Every chip names the weekday and date it means: "arrives Wed Nov 11 4 PM".
+  const dayWord = (d: string) => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); return x.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + fmtDate(d) }
 
   // TWELVE AT ONCE IS NOISE. What leads is a new ARRIVAL today or tomorrow — the booking that puts a
   // deadline on a unit. Everything else that is new (a fresh checkout, an arrival two days out) keeps
