@@ -26,7 +26,7 @@ export async function weekSchedule(from: string, days = 7) {
     db.from('garden_shifts').select('*').gte('date', from).lte('date', to).order('date').order('start_time'),
     staffList(),
     db.from('garden_tasks').select('date,kind,status').gte('date', from).lte('date', to).neq('status', 'cancelled'),
-    db.from('garden_reservations').select('check_in,check_out,status').in('status', ['confirmed', 'not_confirmed', 'checked_in', 'checked_out']).lte('check_in', to).gte('check_out', from),
+    db.from('garden_reservations').select('check_in,check_out,status,room_ids').in('status', ['confirmed', 'not_confirmed', 'checked_in', 'checked_out']).lte('check_in', to).gte('check_out', from),
   ])
   const byName: Record<string, any> = {}
   for (const s of staff) byName[s.id] = s
@@ -35,7 +35,14 @@ export async function weekSchedule(from: string, days = 7) {
     const d = addDays(from, i)
     const T = ((tasks || []) as any[]).filter(t => t.date === d)
     const R = (res || []) as any[]
-    const load = { cleans: T.filter(t => t.kind === 'clean').length, stayovers: T.filter(t => t.kind === 'stayover').length, maintenance: T.filter(t => t.kind === 'maintenance').length, other: T.filter(t => !['clean', 'stayover', 'maintenance'].includes(t.kind)).length, arrivals: R.filter(r => r.check_in === d).length, departures: R.filter(r => r.check_out === d).length, inHouse: R.filter(r => r.check_in < d && r.check_out > d).length }
+    // Cleans are only made two days out, so the rest of the week reads the bookings: a room whose stay
+    // ends that day is a checkout clean, a room with a stay running through it is a stayover
+    // (Jon, 2026-11-10: "make the scheduler better" — Wednesday on showed 0 cleans and no HK need).
+    const rooms = (r: any) => Math.max(1, Array.isArray(r.room_ids) ? r.room_ids.length : 0)
+    const live = R.filter(r => r.status !== 'canceled' && r.status !== 'no_show')
+    const coRooms = live.filter(r => r.check_out === d).reduce((a, r) => a + rooms(r), 0)
+    const soRooms = live.filter(r => r.check_in < d && r.check_out > d).reduce((a, r) => a + rooms(r), 0)
+    const load = { cleans: Math.max(T.filter(t => t.kind === 'clean').length, coRooms), stayovers: Math.max(T.filter(t => t.kind === 'stayover').length, soRooms), maintenance: T.filter(t => t.kind === 'maintenance').length, other: T.filter(t => !['clean', 'stayover', 'maintenance'].includes(t.kind)).length, arrivals: R.filter(r => r.check_in === d).length, departures: R.filter(r => r.check_out === d).length, inHouse: R.filter(r => r.check_in < d && r.check_out > d).length }
     const S = ((shifts || []) as any[]).filter(x => x.date === d).map(x => ({ ...x, staff: byName[x.staff_id] || null }))
     daysOut.push({ date: d, load, shifts: S, suggest: suggestFor(load, S, staff) })
   }

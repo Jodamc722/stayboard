@@ -180,7 +180,7 @@ export function GardenHKBoard({ canEdit }: { canEdit: boolean }) {
                           {r.arriving ? <ArrowUpRight size={13} className="text-emerald-600" aria-label="arriving" /> : null}
                           {r.dnd ? <Moon size={12} className="text-violet-600" aria-label="do not disturb" /> : null}
                         </div>
-                        <div className="text-[10.5px] text-muted truncate">{r.oos ? (r.oos.reason || 'Out of service') : r.stay ? r.stay.guest : r.arriving ? '→ ' + r.arriving : 'vacant'}</div>
+                        <div className="text-[10.5px] text-muted truncate">{r.oos ? (r.oos.reason || 'Out of service') : r.arriving ? '→ ' + r.arriving : r.stay ? r.stay.guest + (r.departing ? ' · out' : '') : 'vacant'}</div>
                         <div className="flex items-center gap-1 mt-0.5 min-h-[16px]">
                           {t ? <span className={`text-[9.5px] font-semibold rounded px-1 ${t.status === 'in_progress' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'}`}>{t.kind === 'clean' ? 'C/O' : t.kind === 'stayover' ? 'S/O' : t.kind.slice(0, 4)} {t.status === 'in_progress' ? '…' : ''}</span> : r.tasks.some(x => x.status === 'done') ? <Check size={11} className="text-emerald-600" /> : null}
                           <span className="flex-1" />
