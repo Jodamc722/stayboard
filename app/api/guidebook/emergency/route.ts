@@ -24,7 +24,12 @@ import { pageRows } from '@/lib/db-page'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-async function run(write: boolean) {
+// onlyChanged (2026-11-10): write only the books whose computed hospitals differ from what they show
+// now — how a new row in the table (Bethesda East, Delray Medical) reaches the books near it and
+// leaves every other book, and any hand edits in it, exactly as it is.
+const names = (em: any) => (Array.isArray(em?.hospitals) ? em.hospitals : []).filter((h: any) => h && !h.custom).map((h: any) => String(h.name || '')).join(' | ')
+
+async function run(write: boolean, onlyChanged = false) {
   const db = supabaseAdmin()
   // EVERY book, paged in id order — "every single guidebook" cannot be the first 1,000 returned. A
   // read that fails or runs out of pages stops the run before anything is written, as an error did.
@@ -41,7 +46,7 @@ async function run(write: boolean) {
   const byId: Record<string, any> = {}
   for (const l of ((listings || []) as any[])) byId[String(l.id)] = l
 
-  const results: { id: string; book: string; hospital: string | null; hospitals: number; police: string | null; ok: boolean; note?: string }[] = []
+  const results: { id: string; book: string; hospital: string | null; hospitals: number; police: string | null; ok: boolean; note?: string; changed?: { from: string; to: string } }[] = []
   for (const b of ((books || []) as any[])) {
     const l = byId[String(b.listing_id || '')] || {}
     const em = buildEmergency({ lat: l.lat, lng: l.lng, city: l.address_city, address: l.address_full })
@@ -51,6 +56,9 @@ async function run(write: boolean) {
       results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: null, hospitals: 0, police: em.police, ok: false, note: 'no coordinates or known city on the listing' })
       continue
     }
+    const before = names(b.sections && b.sections.emergency), after = names(em)
+    const changed = before !== after ? { from: before, to: after } : undefined
+    if (onlyChanged && !changed) continue
     if (write) {
       const sections = (b.sections && typeof b.sections === 'object') ? { ...b.sections } : {}
       sections.emergency = mergeEmergency(b.sections && b.sections.emergency, em)
@@ -58,7 +66,7 @@ async function run(write: boolean) {
       const { error: uErr } = await db.from('guidebooks').update({ sections, updated_at: new Date().toISOString() }).eq('id', b.id)
       if (uErr) { results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospitals[0].name, hospitals: em.hospitals.length, police: em.police, ok: false, note: uErr.message }); continue }
     }
-    results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospitals[0].name, hospitals: em.hospitals.length, police: em.police, ok: true })
+    results.push({ id: String(b.id), book: String(b.listing_name || ''), hospital: em.hospitals[0].name, hospitals: em.hospitals.length, police: em.police, ok: true, changed })
   }
   const missed = results.filter(r => !r.ok)
   return NextResponse.json({
@@ -70,14 +78,15 @@ async function run(write: boolean) {
 
 // GET never writes, whatever it is passed — it is behind the VIEW gate, and a view gate that can
 // rewrite a thousand books is not a view gate.
-export async function GET() {
+export async function GET(req: Request) {
   const gate = await requireLevel('guidebooks', 'view')
   if (!gate.ok) return gate.res
-  return run(false)
+  return run(false, new URL(req.url).searchParams.get('onlyChanged') === '1')
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const gate = await requireLevel('guidebooks', 'edit')
   if (!gate.ok) return gate.res
-  return run(true)
+  const b = await req.json().catch(() => ({} as any))
+  return run(true, b?.onlyChanged === true || new URL(req.url).searchParams.get('onlyChanged') === '1')
 }

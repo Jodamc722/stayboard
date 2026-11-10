@@ -47,6 +47,11 @@ export const HOSPITALS: Hospital[] = [
   { name: 'HCA Florida JFK North Hospital', address: '2201 45th St, West Palm Beach, FL 33407', phone: '561-842-6141', lat: 26.7616, lng: -80.0879 },
   { name: 'Good Samaritan Medical Center', address: '1309 N Flagler Dr, West Palm Beach, FL 33401', phone: '561-655-5511', lat: 26.7250, lng: -80.0516 },
   { name: 'HCA Florida JFK Hospital', address: '5301 S Congress Ave, Atlantis, FL 33462', phone: '561-965-7300', lat: 26.5979, lng: -80.0919 },
+  // Added 2026-11-10 (Jon: "Bethesda in Boynton and Delray Medical are your closest" — the Surfside
+  // books were getting JFK and Broward Health North). Address and phone from baptisthealth.net's own
+  // Bethesda East ER page and delraybeach.com; coordinates placed from the street address to the block.
+  { name: 'Bethesda Hospital East', address: '2815 S Seacrest Blvd, Boynton Beach, FL 33435', phone: '561-737-7733', lat: 26.4966, lng: -80.0662 },
+  { name: 'Delray Medical Center', address: '5352 Linton Blvd, Delray Beach, FL 33484', phone: '561-498-4440', lat: 26.4389, lng: -80.1263 },
   // ── Broward County ────────────────────────────────────────────────────────────────────────────
   { name: 'Broward Health North', address: '201 E Sample Rd, Deerfield Beach, FL 33064', phone: '954-941-8300', lat: 26.2770, lng: -80.1215, trauma: 'Level II trauma center' },
   { name: 'Broward Health Coral Springs', address: '3000 Coral Hills Dr, Coral Springs, FL 33065', phone: '954-344-3000', lat: 26.2691, lng: -80.2557 },
@@ -199,6 +204,7 @@ const CITY_POINTS: Record<string, [number, number]> = {
   'lake worth': [26.6168, -80.0684], 'riviera beach': [26.7753, -80.0581],
   'palm beach': [26.7056, -80.0364], 'palm beach gardens': [26.8234, -80.1387],
   'boca raton': [26.3683, -80.1289], 'delray beach': [26.4615, -80.0728],
+  'boynton beach': [26.5318, -80.0905], 'lantana': [26.5868, -80.0520], 'ocean ridge': [26.5270, -80.0484], 'highland beach': [26.3995, -80.0656],
 }
 
 export function nearestHospitalForCity(city: unknown, address?: unknown): NearestHospital | null {
