@@ -12,6 +12,10 @@
 //     with a Standard / Mid / Luxury Amazon link (Stay's own picks are marked).
 //   • SEVERAL UNITS (Jon: "if onboarding multiple units, create a full order — add unit"): one tab per
 //     unit, and a Full order tab that adds them up, with a column per unit.
+//   • TWO DOORS (Jon, 2026-11-10: "one link shareable that does not ask for email, and one we can add to
+//     our website that does — before they can download the Excel it asks for their email"):
+//     mode 'share' (/kit/list) downloads straight away; mode 'site' (/kit/plan, the public, indexed
+//     page) asks for an email first (lib/need-list-leads.ts) and shows Stay's contact on the way.
 import { useEffect, useMemo, useState } from 'react'
 import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, Copy, ExternalLink, FileSpreadsheet, Link2, Minus, Package, Plus, RotateCcw, Star, Trash2, Users } from 'lucide-react'
 import { APPLIANCES, SIZE_LIMITS, describeSize, type KitCount, type KitSize } from '@/lib/starter-kit'
@@ -19,6 +23,8 @@ import { GROUP_NOTE, NEED_ROOMS, needList, type NeedLine } from '@/lib/need-list
 import { GRADES, buyList, howBought, type BuyLine, type Grade } from '@/lib/need-buy'
 import { NeedPicture } from '@/components/NeedIcons'
 import { needQuery, sizeFromParams, unitsFromParam, type NeedParams, type NeedUnit } from '@/lib/starter-kit-params'
+import { STAY_CONTACT, callTel, callMail } from '@/lib/need-list-contact'
+import { Mail, Phone, X } from 'lucide-react'
 
 const TYPE = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
 const COUNTS: { k: KitCount; label: string; Icon: any }[] = [
@@ -26,7 +32,7 @@ const COUNTS: { k: KitCount; label: string; Icon: any }[] = [
 ]
 const SINGLE = 'This home'
 
-export function NeedListCalculator({ initial }: { initial: NeedParams }) {
+export function NeedListCalculator({ initial, mode = 'share', children }: { initial: NeedParams; mode?: 'share' | 'site'; children?: React.ReactNode }) {
   const [units, setUnits] = useState<NeedUnit[]>(() => unitsFromParam(initial.u) || [{ name: SINGLE, size: sizeFromParams(initial) }])
   const [view, setView] = useState<number | 'order'>(0)
   const [showOpt, setShowOpt] = useState(initial.opt === '1')
@@ -34,7 +40,14 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
   const [copied, setCopied] = useState('')
   const query = needQuery(units, showOpt, grade)
   // The address stays the plain link: strip anything an older shared link carried, once, on open.
-  useEffect(() => { try { if (window.location.search) window.history.replaceState(null, '', '/kit/list') } catch { /* the list still works */ } }, [])
+  const home = mode === 'site' ? '/kit/plan' : '/kit/list'
+  useEffect(() => { try { if (window.location.search) window.history.replaceState(null, '', home) } catch { /* the list still works */ } }, [home])
+  // The website's email gate: once given (this visit), downloads go straight through.
+  const [gate, setGate] = useState(false)
+  const [given, setGiven] = useState(false)
+  useEffect(() => { try { if (mode === 'site' && sessionStorage.getItem('stay-need-email') === '1') setGiven(true) } catch { /* fine */ } }, [mode])
+  const xlsxUrl = '/api/public/starter-kit/list/xlsx?' + query
+  const download = () => { if (mode === 'site' && !given) { setGate(true); return } window.location.href = xlsxUrl }
   const startOver = () => { setUnits([{ name: SINGLE, size: sizeFromParams({}) }]); setView(0); setShowOpt(false); setGrade('mid') }
 
   const multi = units.length > 1
@@ -90,7 +103,7 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
     return out.join('\n')
   }
   const shopA = (b: BuyLine, label = 'Shop') => (
-    <a className="nlc-shop" href={b.shop[grade].url} target="_blank" rel="noopener noreferrer">{b.shop[grade].pinned ? <><Star size={12} /> Stay’s pick</> : <><ExternalLink size={12} /> {label}</>}</a>
+    <span className="nlc-shopw"><a className="nlc-shop" href={b.shop[grade].url} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /> {label}</a>{b.shop[grade].pinned && <span className="nlc-pick" title="The exact product on Stay’s own list"><Star size={11} /> Stay’s pick</span>}</span>
   )
 
   return (
@@ -100,8 +113,8 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
         <header className="nlc-head">
           <img src="/stay-logo.png" alt="Stay Hospitality" className="nlc-logo" />
         </header>
-        <div className="nlc-eyebrow">Need list</div>
-        <h1>{multi ? 'What your units need' : 'What your home needs'}</h1>
+        <div className="nlc-eyebrow">{mode === 'site' ? 'Free vacation rental supply calculator' : 'Need list'}</div>
+        <h1>{mode === 'site' ? (multi ? 'Supply list for your units' : 'What does your rental need?') : multi ? 'What your units need' : 'What your home needs'}</h1>
         <p className="nlc-lede">Tell us about the home and the list sizes itself: every item a short-term rental needs, how many, and how to buy it. Onboarding several units? Add each one and get the full order. Your changes are only on your screen; download the Excel or copy the list to keep them.</p>
 
         <div className="nlc-tabs" role="tablist" aria-label="Units">
@@ -158,10 +171,10 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
             {GRADES.map(g => <button key={g.k} type="button" role="radio" aria-checked={grade === g.k} title={g.hint} className={grade === g.k ? 'on' : ''} onClick={() => setGrade(g.k)}>{g.label}</button>)}
           </div>
           <div className="nlc-acts">
-            <button type="button" onClick={() => copyText(window.location.origin + '/kit/list', 'link')} title="The plain link: whoever opens it starts with a blank list of their own"><Link2 size={14} /> {copied === 'link' ? 'Link copied' : 'Copy link'}</button>
+            <button type="button" onClick={() => copyText(window.location.origin + home, 'link')} title="The plain link: whoever opens it starts with a blank list of their own"><Link2 size={14} /> {copied === 'link' ? 'Link copied' : 'Copy link'}</button>
             <button type="button" onClick={startOver} title="Clear everything and start from a blank home"><RotateCcw size={14} /> Start over</button>
             <button type="button" onClick={() => copyText(asText(), 'list')}><ClipboardCopy size={14} /> {copied === 'list' ? 'Copied' : 'Copy list'}</button>
-            <a href={'/api/public/starter-kit/list/xlsx?' + query}><FileSpreadsheet size={14} /> Excel</a>
+            <button type="button" onClick={download}><FileSpreadsheet size={14} /> {mode === 'site' ? 'Download Excel' : 'Excel'}</button>
           </div>
         </div>
 
@@ -209,8 +222,60 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
             })}
           </table>
         ) : null}
-        <p className="nlc-fine">Counts are pieces, sized to the home. Dinner plates, bowls, tall glasses, dinner forks, table knives and soup spoons follow the vacation-rental standard of two place settings per guest, so a full house can eat twice before anything is washed; side plates, mugs, wine and short glasses and teaspoons are one per guest. Where things are sold as a set we list the set, and anything the sets leave short is bought separately. Bath items are per bathroom; hangers (20) and luggage racks per bedroom; smoke alarms one per bedroom plus one outside the bedrooms (check local code). Homes for 10 or more guests get a second coffee maker and extra pans, boards and serving pieces. Links marked Stay’s pick are products from Stay’s own list; the others open an Amazon search for that grade of the item. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
+        <p className="nlc-fine">Counts are pieces, sized to the home. Dinner plates, bowls, tall glasses, dinner forks, table knives and soup spoons follow the vacation-rental standard of two place settings per guest, so a full house can eat twice before anything is washed; side plates, mugs, wine and short glasses and teaspoons are one per guest. Where things are sold as a set we list the set, and anything the sets leave short is bought separately. Bath items are per bathroom; hangers (20) and luggage racks per bedroom; smoke alarms one per bedroom plus one outside the bedrooms (check local code). Homes for 10 or more guests get a second coffee maker and extra pans, boards and serving pieces. Shop opens Amazon; where it says Stay’s pick next to it, the link is the exact product on Stay’s own list, otherwise it is an Amazon search for that grade of the item. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
+        <section className="nlc-cta" aria-label="Contact Stay Hospitality">
+          <div><b>Want it bought, delivered and set up for you?</b><span>Book a call with {STAY_CONTACT.person ? `${STAY_CONTACT.person.name}, ${STAY_CONTACT.person.role.toLowerCase()} at ${STAY_CONTACT.company}` : STAY_CONTACT.company}. We furnish and manage short-term rentals across Miami-Dade and Broward and will quote the whole kit.</span></div>
+          <div className="nlc-cta-c">
+            <a href={callTel()}><Phone size={14} /> Book a call · {STAY_CONTACT.person?.phone || STAY_CONTACT.phone}</a>
+            <a href={callMail()}><Mail size={14} /> {STAY_CONTACT.person?.email || STAY_CONTACT.email}</a>
+            <a href={STAY_CONTACT.webUrl} target="_blank" rel="noopener">{STAY_CONTACT.web}</a>
+          </div>
+        </section>
+        {children}
       </main>
+      {gate && <EmailGate units={units} onClose={() => setGate(false)} onDone={() => { try { sessionStorage.setItem('stay-need-email', '1') } catch { /* fine */ } setGiven(true); setGate(false); window.location.href = xlsxUrl }} />}
+    </div>
+  )
+}
+
+/** The website's email gate: an email before the Excel; name, phone and who they are, optional. */
+function EmailGate({ units, onClose, onDone }: { units: NeedUnit[]; onClose: () => void; onDone: () => void }) {
+  const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [owner, setOwner] = useState('')
+  const [hp, setHp] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault(); setErr('')
+    if (!/^[^ @]+@[^ @]+[.][^ @]{2,}$/.test(email.trim())) { setErr('Enter a valid email address.'); return }
+    setBusy(true)
+    const r = await fetch('/api/public/need-list/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name, phone, owner, website: hp, units: units.length, homes: units.map(u => `${u.name === 'This home' ? '' : u.name + ': '}${describeSize(u.size)}`).join(' | '), source: typeof document !== 'undefined' ? document.referrer : '' }) })
+      .then(x => x.json()).catch(() => ({ ok: false, error: 'That did not go through. Check your connection and try again.' }))
+    setBusy(false)
+    if (!r.ok) { setErr(r.error || 'That did not go through.'); return }
+    onDone()
+  }
+  return (
+    <div className="nlc-modal" role="dialog" aria-modal="true" aria-labelledby="nlc-gate-h">
+      <form className="nlc-gate" onSubmit={submit}>
+        <button type="button" className="nlc-x" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        <h2 id="nlc-gate-h">Get your list in Excel</h2>
+        <p>Free. We may follow up once in case you want help setting the home up; nothing else.</p>
+        <label>Email<input type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" /></label>
+        <div className="nlc-gate-2">
+          <label>Name (optional)<input value={name} onChange={e => setName(e.target.value)} autoComplete="name" /></label>
+          <label>Phone (optional)<input type="tel" value={phone} onChange={e => setPhone(e.target.value)} autoComplete="tel" /></label>
+        </div>
+        <label>You are…<select value={owner} onChange={e => setOwner(e.target.value)}>
+          <option value="">Choose (optional)</option><option>An owner with a rental</option><option>Buying a property to rent</option><option>A property manager</option><option>Something else</option>
+        </select></label>
+        <input className="nlc-hp" tabIndex={-1} autoComplete="off" value={hp} onChange={e => setHp(e.target.value)} aria-hidden="true" placeholder="Leave empty" />
+        {err && <p className="nlc-err" role="alert">{err}</p>}
+        <button type="submit" className="nlc-go" disabled={busy}>{busy ? 'One moment…' : 'Download Excel'}</button>
+      </form>
     </div>
   )
 }
@@ -283,12 +348,27 @@ const CSS = `
 .nlc-uhead .nlc-del{color:#A3302A}
 .nlc-grade{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px}
 .nlc-grade button{border:0;background:none;border-radius:999px;padding:6px 14px;font:600 13px var(--ui);color:var(--muted);cursor:pointer}.nlc-grade button.on{background:var(--accent);color:#fff}
+.nlc-shopw{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}.nlc-pick{display:inline-flex;align-items:center;gap:3px;background:var(--soft,#E2EFED);color:var(--accent);border-radius:999px;padding:2px 8px;font:600 11px var(--ui)}
 .nlc-shop{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font:600 12.5px var(--ui);text-decoration:none;white-space:nowrap}.nlc-shop:hover{text-decoration:underline}
 .nlc-how{color:var(--ink)!important;margin-top:2px}
 .nlc-setrow td{background:var(--soft);border-bottom:1px solid var(--line)}
 .nlc-set{display:flex;justify-content:space-between;align-items:center;gap:12px}.nlc-set small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
 .nlc-scroll{overflow-x:auto}
 .nlc-order{min-width:520px}.nlc-order td small{display:block;color:var(--muted);font-size:12px}
+.nlc-cta{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:14px;margin-top:26px;background:var(--ink);color:#fff;border-radius:14px;padding:18px 20px}
+.nlc-cta b{display:block;font-size:16px}.nlc-cta span{display:block;color:#C9D3D1;font-size:13px;margin-top:3px;max-width:52ch}
+.nlc-cta-c{display:flex;flex-wrap:wrap;gap:8px}.nlc-cta-c a{display:inline-flex;align-items:center;gap:6px;color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:999px;padding:7px 13px;font:600 13px var(--ui);text-decoration:none}.nlc-cta-c a:hover{background:rgba(255,255,255,.1)}
+.nlc-modal{position:fixed;inset:0;background:rgba(21,33,43,.55);display:grid;place-items:center;padding:16px;z-index:50}
+.nlc-gate{position:relative;box-sizing:border-box;background:var(--paper);border-radius:18px;padding:26px;width:100%;max-width:440px;display:grid;gap:12px;box-shadow:0 20px 60px rgba(0,0,0,.25)}
+.nlc-gate h2{font-family:var(--display);font-weight:400;font-size:30px;margin:0}.nlc-gate p{margin:0;color:var(--muted);font-size:13.5px}
+.nlc-gate label{display:grid;gap:5px;font-size:13px;font-weight:500;color:var(--ink)}
+.nlc-gate *{box-sizing:border-box}.nlc-gate input,.nlc-gate select{width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:15px var(--ui);color:var(--ink);background:var(--paper)}
+.nlc-gate-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.nlc-hp{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
+.nlc-go{border:0;border-radius:999px;background:var(--accent);color:#fff;padding:12px;font:600 15px var(--ui);cursor:pointer}.nlc-go:disabled{opacity:.6}
+.nlc-x{position:absolute;top:12px;right:12px;border:0;background:none;color:var(--muted);cursor:pointer}
+.nlc-err{color:#A3302A!important}
+@media (max-width:480px){.nlc-gate-2{grid-template-columns:1fr}}
 .nlc-q{font-family:var(--display);font-size:24px}
 .nlc-fine{margin-top:22px;font-size:12.5px;color:var(--muted)}
 @media (max-width:560px){.nlc-counts{grid-template-columns:1fr}.nlc-t th:nth-child(2),.nlc-t td:nth-child(2){padding-inline:4px}}

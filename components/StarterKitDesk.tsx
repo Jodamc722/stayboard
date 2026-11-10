@@ -4,9 +4,10 @@
 // report sized to the home, makes their choices and presses Send to Stay. This table shows who
 // opened it, what they sent back and the total.
 import { useEffect, useMemo, useState } from 'react'
-import { Check, ClipboardList, Copy, Download, ExternalLink, Loader2, Lock, Plus, RotateCcw, Search, X, Package } from 'lucide-react'
+import { Check, ClipboardList, Copy, Download, ExternalLink, Loader2, Lock, Plus, RotateCcw, Search, X, Package, Globe } from 'lucide-react'
 import { LeanHead, Pill, Tag } from '@/components/lean'
 import { APPLIANCES, DEFAULT_SIZE, SIZE_LIMITS, describeSize, fmtMoney, kitTotals, type KitCount, type KitLink, type KitSize } from '@/lib/starter-kit'
+import type { NeedLead } from '@/lib/need-list-leads'
 
 const BTN = 'inline-flex items-center gap-1.5 rounded-xl font-bold text-[13px] min-h-[38px] px-3.5 disabled:opacity-50'
 const INPUT = 'rounded-xl border border-line bg-white px-3 py-2.5 text-[14px] text-ink font-normal focus:outline-none focus:border-ink'
@@ -29,6 +30,8 @@ function Stepper({ k, v, set }: { k: KitCount; v: number; set: (n: number) => vo
 
 export function StarterKitDesk() {
   const [links, setLinks] = useState<KitLink[]>([])
+  const [leads, setLeads] = useState<NeedLead[]>([])
+  const [leadsOpen, setLeadsOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
@@ -50,7 +53,7 @@ export function StarterKitDesk() {
     try {
       const j = await fetch('/api/onboard/kits', { cache: 'no-store' }).then(r => r.json())
       if (!j.ok) throw new Error(j.error || 'Could not load the starter kits.')
-      setLinks(j.links || []); setErr('')
+      setLinks(j.links || []); setLeads(j.leads || []); setErr('')
     } catch (e: any) { setErr(String(e?.message || e)) }
     setLoading(false)
   }
@@ -90,6 +93,9 @@ export function StarterKitDesk() {
           title="The need list calculator: one link anyone can open, enter bedrooms, bathrooms, guests and the kitchen, and get every item the home needs with counts"
           className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">{copied === 'calc' ? <><Check size={13} /> Copied</> : <><ClipboardList size={13} /> Need list link</>}</button>
         <a href="/kit/list" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><ExternalLink size={13} /> Open calculator</a>
+        <button type="button" onClick={async () => { const link = window.location.origin + '/kit/plan'; try { await navigator.clipboard.writeText(link); setCopied('site'); setTimeout(() => setCopied(''), 1800) } catch { window.prompt('Copy this link', link) } }}
+          title="The website version of the need list: indexed by Google, with Stay's contact, and it asks for an email before the Excel download. Link it from stay-hospitality.com"
+          className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">{copied === 'site' ? <><Check size={13} /> Copied</> : <><Globe size={13} /> Website link</>}</button>
         <button type="button" onClick={() => setOpen(o => !o)} className={BTN + ' bg-ink text-white lh-primary'}><Plus size={14} /> New starter kit</button>
       </LeanHead>
 
@@ -192,6 +198,35 @@ export function StarterKitDesk() {
             {!loading && !shown.length && <tr><td colSpan={5} className="px-4 py-8 text-sm text-muted">No starter kits yet. Press <b>New starter kit</b>, enter the client and the home’s size, and send them the link.</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-6 rounded-2xl border border-line bg-white shadow-soft overflow-hidden">
+        <button type="button" onClick={() => setLeadsOpen(o => !o)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-app">
+          <span className="flex items-center gap-2 text-[14px] font-semibold text-ink"><Globe size={15} /> Website leads <span className="text-muted font-normal text-[12.5px]">· emails left on the free need list before downloading the Excel</span></span>
+          <span className="text-[12.5px] font-semibold text-ink tabular-nums">{leads.length} {leadsOpen ? '▴' : '▾'}</span>
+        </button>
+        {leadsOpen && (
+          <div className="overflow-x-auto border-t border-line">
+            <table className="w-full text-[13px]">
+              <thead><tr className="text-left text-[11.5px] uppercase tracking-wide text-muted bg-app">
+                <th className="px-4 py-2">When</th><th className="px-3 py-2">Email</th><th className="px-3 py-2">Name / phone</th><th className="px-3 py-2">They are</th><th className="px-3 py-2">Home</th><th className="px-3 py-2 text-right">Downloads</th>
+              </tr></thead>
+              <tbody>
+                {leads.map(l => (
+                  <tr key={l.email + l.at} className="border-t border-line align-top">
+                    <td className="px-4 py-2 whitespace-nowrap text-muted">{new Date(l.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</td>
+                    <td className="px-3 py-2 select-all"><a href={`mailto:${l.email}`} className="text-ink font-semibold hover:underline">{l.email}</a></td>
+                    <td className="px-3 py-2">{l.name || <span className="text-muted">—</span>}{l.phone && <div className="text-muted select-all">{l.phone}</div>}</td>
+                    <td className="px-3 py-2">{l.owner || <span className="text-muted">—</span>}</td>
+                    <td className="px-3 py-2">{l.homes}{l.units > 1 && <div className="text-muted">{l.units} units</div>}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{l.downloads}</td>
+                  </tr>
+                ))}
+                {!leads.length && <tr><td colSpan={6} className="px-4 py-6 text-muted">No website leads yet. Put the <b>Website link</b> (/kit/plan) on stay-hospitality.com; anyone who downloads the Excel there shows up here.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )
