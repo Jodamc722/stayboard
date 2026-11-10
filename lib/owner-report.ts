@@ -9,7 +9,7 @@ import { getSetting } from './app-settings'
 import { rollupBuilding } from './optimize-score'
 import type { Basis } from './basis'
 import { isOwnerOrFriendsFamily } from './owner-audit'
-import { channelLabel, type ReportCalendar, type BigDatesSection, type BigEvent } from './report-calendar'
+import { type ReportCalendar, type BigDatesSection, type BigEvent } from './report-calendar'
 
 // ---------- ENGINE VERSION (2026-11-09, pass 3) ----------
 // A report's numbers are computed under the engine it was GENERATED with, forever. The engine is
@@ -600,7 +600,8 @@ export async function calendarFor(listings: ReportListing[], periodStart: string
       const n = Math.max(1, r.nights)
       return {
         u: ix[r.listing_id], ci: r.check_in, co: r.check_out,
-        ch: channelLabel(r.source, own), own,
+        // No channel names on the owner link (Jon, 2026-11-10: "Calendar view should not show OTAs").
+        ch: own ? 'Owner' : '', own,
         g: own ? 0 : r2(r.grossFare / n), f: own ? 0 : r2(r.fee / n), c: own ? 0 : r2(r.cleaning / n),
       }
     })
