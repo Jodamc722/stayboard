@@ -120,6 +120,8 @@ export function normalize(p: any): AdProject {
     id: String(s?.id || 's' + (i + 1)).slice(0, 20),
     kind: (KIND_KEYS.indexOf(s?.kind) >= 0 ? s.kind : 'title') as AdKind,
     tr: (TRANSITIONS.indexOf(s?.tr) >= 0 ? s.tr : 'auto') as AdTransition,
+    ...(['short', 'long'].indexOf(s?.trs) >= 0 ? { trs: s.trs } : {}),
+    ...(['left', 'right', 'up', 'down'].indexOf(s?.trd) >= 0 ? { trd: s.trd } : {}),
     anim: (TEXT_ANIMS.some(x => x.key === s?.anim) ? s.anim : 'auto') as AdTextAnim,
     cam: (CAMS.some(x => x.key === s?.cam) ? s.cam : 'auto') as AdCam,
     badge: String(s?.badge || '').slice(0, 22),
@@ -153,7 +155,7 @@ export function normalize(p: any): AdProject {
     kind: (['video', 'flyer', 'post', 'story'].indexOf(p?.kind) >= 0 ? p.kind : 'video'),
     moment: typeof p?.moment === 'string' ? p.moment.slice(0, 40) : undefined,
     audience: (['owners', 'partners', 'guests'].indexOf(p?.audience) >= 0 ? p.audience : 'owners'),
-    look: /^[a-z]{2,12}$/.test(String(p?.look || '')) ? String(p.look) : 'stay',
+    look: /^[a-z]{2,12}$/.test(String(p?.look || '')) ? String(p.look) : 'house',
     style: (() => {
       const st: any = { ...STYLE_DEFAULT }
       const src = p?.style || {}
@@ -279,7 +281,7 @@ ${facts}
 ${rules}
 - Every scene's spoken line ("vo") must be readable aloud in the time the scene holds: about 2.5 words a second. Open strong — the first two seconds decide whether anyone keeps watching.
 - NEVER put the words "Salato" or "Pompano Beach" in a spoken line (the voice mispronounces them). They may appear on screen.
-- On-screen headlines ("head") are short (2 to 8 words). Mark one or two key words gold with **double stars**. Use \\n to break lines.
+- On-screen headlines ("head") are short (2 to 8 words). Mark one or two key words with **double stars** (they take the accent colour). Use \\n to break lines.
 - A music-only beat is allowed: a scene with an empty "vo" (good for a montage right after the opening).
 
 CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a collage photo ever"):
@@ -450,7 +452,7 @@ export function scenePrompt(p: AdProject, index: number, ask: string, props?: st
 FACTS YOU MAY USE (never invent numbers, prices, fees or promises):
 ${withProps(guests ? GUEST_FACTS : HOUSE_FACTS, props)}
 
-RULES: one short spoken line ("vo", about 2.5 words a second), a short on-screen headline ("head", **gold** one or two words, \\n for a new line). Never put "Salato" or "Pompano Beach" in "vo". ${guests ? 'Guest ad: no prices, no "call us"; a closing scene is kind "cta" with row 1 "Book at stay-hospitality.com".' : 'Owner ad: "listings" not "homes", "40+ channels", no fee or revenue numbers; Lighthouse does not do the owner report.'}
+RULES: one short spoken line ("vo", about 2.5 words a second), a short on-screen headline ("head", **accent** on one or two words, \\n for a new line). Never put "Salato" or "Pompano Beach" in "vo". ${guests ? 'Guest ad: no prices, no "call us"; a closing scene is kind "cta" with row 1 "Book at stay-hospitality.com".' : 'Owner ad: "listings" not "homes", "40+ channels", no fee or revenue numbers; Lighthouse does not do the owner report.'}
 
 SCENE KINDS:
 ${kinds}

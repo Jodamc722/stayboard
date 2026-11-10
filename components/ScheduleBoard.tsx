@@ -640,11 +640,11 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   const isLeadBooking = (c: Clean): boolean => isNewUnseen(c) && !!c.newBooking && c.newBooking.kind === 'arrival' && soon(c.newBooking.arrival)
   const leadArrivals = newArrivalsUnseen.filter(a => soon(a.date))
   const moreNew: { id: string; listingId: string; unit: string; date: string; what: string; bookedAt: string }[] = []
-  for (const a of newArrivalsUnseen) { if (!soon(a.date)) moreNew.push({ id: a.id, listingId: a.listingId, unit: a.unit, date: a.date, what: 'arrives ' + dayWord(a.date), bookedAt: a.bookedAt }) }
+  for (const a of newArrivalsUnseen) { if (!soon(a.date)) moreNew.push({ id: a.id, listingId: a.listingId, unit: a.unit, date: a.date, what: 'New booking · ' + dayWord(a.date), bookedAt: a.bookedAt }) }
   for (const c of dayCleans) {
     const nb = c.newBooking
     if (!nb || !isNewUnseen(c) || isLeadBooking(c) || moreNew.some(x => x.id === nb.id)) continue
-    moreNew.push({ id: nb.id, listingId: c.listingId, unit: c.unit, date: c.date, what: nb.kind === 'arrival' ? 'new guest arrives ' + dayWord(nb.arrival || c.date) : 'checks out ' + dayWord(c.date), bookedAt: nb.bookedAt })
+    moreNew.push({ id: nb.id, listingId: c.listingId, unit: c.unit, date: c.date, what: 'New booking · ' + dayWord(nb.kind === 'arrival' ? (nb.arrival || c.date) : c.date), bookedAt: nb.bookedAt })
   }
 
   const rows = useMemo(() => {
@@ -1202,9 +1202,8 @@ async function pushBlocks() {
             <div key={a.id} className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[12px] bg-white rounded-lg border border-line px-2.5 py-1.5">
               <button type="button" onClick={() => { markSeen([a.id]); setOpsFor({ listingId: a.listingId, unit: a.unit, date: a.date }) }} className="font-semibold text-ink hover:underline decoration-dotted underline-offset-2">{a.unit}</button>
               {a.vendor && <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-700">vendor</span>}
-              <span className="font-semibold text-fuchsia-800">arrives {dayWord(a.date)}{fmtClock(a.arrivalTime) ? ' ' + fmtClock(a.arrivalTime) : ''}</span>
+              <span className="font-semibold text-fuchsia-800">New booking · {dayWord(a.date)}</span>
               {a.guest && <span className="text-muted truncate max-w-[160px]">{a.guest}{a.nights ? ' · ' + a.nights + ' nt' : ''}</span>}
-              <span className="text-muted">booked {agoLabel(a.bookedAt)}</span>
               <button type="button" onClick={() => markSeen([a.id])} className="ml-auto text-[11px] font-semibold text-fuchsia-800 hover:underline">Seen</button>
             </div>
           ))}
@@ -1216,7 +1215,6 @@ async function pushBlocks() {
                   <div key={x.id} className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[12px] bg-white rounded-lg border border-line px-2.5 py-1">
                     <button type="button" onClick={() => { markSeen([x.id]); setOpsFor({ listingId: x.listingId, unit: x.unit, date: x.date }) }} className="font-semibold text-ink hover:underline decoration-dotted underline-offset-2">{x.unit}</button>
                     <span className="text-fuchsia-800">{x.what}</span>
-                    <span className="text-muted">booked {agoLabel(x.bookedAt)}</span>
                     <button type="button" onClick={() => markSeen([x.id])} className="ml-auto text-[11px] font-semibold text-fuchsia-800 hover:underline">Seen</button>
                   </div>
                 ))}
@@ -1339,10 +1337,11 @@ async function pushBlocks() {
                           const nbk = c.newBooking
                           if (!nbk || !isFreshBooking(nbk.bookedAt)) return null
                           const unseen = !seen[nbk.id]
-                          const clock = fmtClock(nbk.arrivalTime)
-                          const what = nbk.kind === 'arrival' ? 'arrives ' + dayWord(nbk.arrival || c.date) + (clock ? ' ' + clock : '') : 'checks out ' + dayWord(c.date)
+                          // JUST THE DATE (Jon, 2026-11-10: "just say new booking for the date, arrival we
+                          // know is always 4pm") — no clock, no "booked 2h ago"; the hover keeps the detail.
+                          const forDate = nbk.kind === 'arrival' ? (nbk.arrival || c.date) : c.date
                           return <button type="button" onClick={() => markSeen([nbk.id])} title={(nbk.kind === 'arrival' ? 'A new guest' + (nbk.guest ? ' (' + nbk.guest + ')' : '') + ' booked this unit ' + agoLabel(nbk.bookedAt) + ' — the clean now has a deadline.' : 'This stay was booked ' + agoLabel(nbk.bookedAt) + ', so this clean is new on the list.') + (unseen ? ' Click to mark it seen.' : ' Seen on this device.')}
-                            className={'flex w-fit max-w-full items-center gap-1 text-[10px] rounded px-1.5 py-0.5 mb-0.5 border whitespace-normal text-left ' + (unseen ? 'font-bold text-fuchsia-900 bg-fuchsia-100 border-fuchsia-400' : 'font-medium text-muted bg-white border-line')}>{unseen && <span className="inline-block w-1.5 h-1.5 rounded-full bg-fuchsia-600 shrink-0" />}{unseen ? 'New booking' : 'Recent booking'} · booked {agoLabel(nbk.bookedAt)} · {what}</button>
+                            className={'flex w-fit max-w-full items-center gap-1 text-[10px] rounded px-1.5 py-0.5 mb-0.5 border whitespace-normal text-left ' + (unseen ? 'font-bold text-fuchsia-900 bg-fuchsia-100 border-fuchsia-400' : 'font-medium text-muted bg-white border-line')}>{unseen && <span className="inline-block w-1.5 h-1.5 rounded-full bg-fuchsia-600 shrink-0" />}{unseen ? 'New booking' : 'Recent booking'} · {dayWord(forDate)}</button>
                         })()}{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
                         
                         <td className="hidden sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap">{c.cleaningFee != null && c.cleaningFee > 0

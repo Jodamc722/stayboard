@@ -46,8 +46,39 @@ export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: st
 }
 
 /** How a scene arrives from the one before it. 'auto' varies them across the ad. */
-export type AdTransition = 'auto' | 'fade' | 'zoom' | 'push' | 'wipe' | 'flash' | 'cut' | 'slide' | 'iris' | 'blinds' | 'spin' | 'blur' | 'doors' | 'glitch' | 'whip' | 'dip' | 'diamond'
-export const TRANSITIONS: AdTransition[] = ['auto', 'fade', 'zoom', 'push', 'slide', 'whip', 'wipe', 'iris', 'diamond', 'doors', 'blinds', 'spin', 'blur', 'glitch', 'dip', 'flash', 'cut']
+export type AdTransition = 'auto' | 'fade' | 'zoom' | 'push' | 'wipe' | 'flash' | 'cut' | 'slide' | 'iris' | 'blinds' | 'spin' | 'blur' | 'doors' | 'glitch' | 'whip' | 'dip' | 'diamond' | 'crosszoom' | 'leak' | 'split' | 'dipwhite'
+export const TRANSITIONS: AdTransition[] = ['auto', 'fade', 'crosszoom', 'zoom', 'push', 'slide', 'whip', 'wipe', 'iris', 'diamond', 'doors', 'split', 'blinds', 'spin', 'blur', 'leak', 'glitch', 'dip', 'dipwhite', 'flash', 'cut']
+/** THE TRANSITIONS BROWSER (Jon, 2026-11-10: "build transitions between scenes like Final Cut Pro"). Each one
+ *  named the way an editor knows it, grouped the way Final Cut groups them, with its own length and — where it
+ *  moves — a direction. */
+export type TrDir = 'left' | 'right' | 'up' | 'down'
+export type TrLen = 'short' | 'normal' | 'long'
+export const TR_DIRECTIONAL: AdTransition[] = ['push', 'slide', 'whip', 'wipe']
+export const TR_LEN: Record<TrLen, number> = { short: 0.6, normal: 1, long: 1.7 }
+export const TRANSITION_META: { key: AdTransition; label: string; hint: string; group: 'Dissolves' | 'Movements' | 'Wipes' | 'Lights' | 'Stylized' }[] = [
+  { key: 'auto', label: 'Auto', hint: 'Picked for the look and the pace', group: 'Dissolves' },
+  { key: 'fade', label: 'Cross dissolve', hint: 'The classic: one picture melts into the next', group: 'Dissolves' },
+  { key: 'dip', label: 'Fade to black', hint: 'Out to black, then in — a chapter break', group: 'Dissolves' },
+  { key: 'dipwhite', label: 'Fade to white', hint: 'Out to white, then in — bright and airy', group: 'Dissolves' },
+  { key: 'blur', label: 'Blur dissolve', hint: 'Soft focus between the two', group: 'Dissolves' },
+  { key: 'cut', label: 'Hard cut', hint: 'No transition — cut on the beat', group: 'Dissolves' },
+  { key: 'crosszoom', label: 'Cross zoom', hint: 'Zooms through the first picture into the next, with motion blur', group: 'Movements' },
+  { key: 'zoom', label: 'Zoom in', hint: 'The next scene settles in from slightly larger', group: 'Movements' },
+  { key: 'push', label: 'Push', hint: 'The new scene pushes the old one off screen', group: 'Movements' },
+  { key: 'slide', label: 'Slide', hint: 'The new scene slides over the old one', group: 'Movements' },
+  { key: 'whip', label: 'Whip pan', hint: 'A fast camera whip with motion blur', group: 'Movements' },
+  { key: 'spin', label: 'Spin', hint: 'Rotates and scales in', group: 'Movements' },
+  { key: 'wipe', label: 'Wipe', hint: 'A clean angled edge sweeps across', group: 'Wipes' },
+  { key: 'iris', label: 'Circle', hint: 'Opens from the centre in a circle', group: 'Wipes' },
+  { key: 'diamond', label: 'Diamond', hint: 'Opens from the centre in a diamond', group: 'Wipes' },
+  { key: 'doors', label: 'Doors open', hint: 'Opens from the middle outwards', group: 'Wipes' },
+  { key: 'split', label: 'Split', hint: 'The old scene splits top and bottom to reveal the next', group: 'Wipes' },
+  { key: 'blinds', label: 'Blinds', hint: 'Horizontal bands roll open', group: 'Wipes' },
+  { key: 'leak', label: 'Light leak', hint: 'A warm film light-leak washes across', group: 'Lights' },
+  { key: 'flash', label: 'Flash', hint: 'A white camera flash on the cut', group: 'Lights' },
+  { key: 'glitch', label: 'Glitch', hint: 'Digital tearing — tech, nightlife', group: 'Stylized' },
+]
+export const trMeta = (k: string) => TRANSITION_META.find(x => x.key === k)
 /** How a scene's headline arrives (Jon, 2026-11-03: "more everything"). */
 export type AdTextAnim = 'auto' | 'rise' | 'pop' | 'type' | 'wipe' | 'blur' | 'words' | 'drop'
 export const TEXT_ANIMS: { key: AdTextAnim; label: string }[] = [{ key: 'auto', label: 'Auto' }, { key: 'rise', label: 'Rise' }, { key: 'pop', label: 'Pop' }, { key: 'words', label: 'Word by word' }, { key: 'type', label: 'Typewriter' }, { key: 'wipe', label: 'Wipe' }, { key: 'blur', label: 'Focus' }, { key: 'drop', label: 'Drop' }]
@@ -65,13 +96,16 @@ export type AdScene = {
   kind: AdKind
   /** How this scene comes in (default auto). */
   tr?: AdTransition
+  /** The transition's length and, for push / slide / whip / wipe, which way it travels. */
+  trs?: TrLen
+  trd?: TrDir
   /** Headline animation, camera move and an optional badge/sticker. */
   anim?: AdTextAnim
   cam?: AdCam
   badge?: string
   /** What the voice says over this scene. Empty = a music-only beat. */
   vo: string
-  /** On-screen headline. Wrap a word in **double stars** to make it gold. A newline forces a break. */
+  /** On-screen headline. Wrap a word in **double stars** to give it the accent colour. A newline forces a break. */
   head: string
   sub: string
   /** Per-kind rows: stats "450+|listings", cards "Priced daily|Dedicated revenue managers", feed/checks "Title|detail". */
@@ -440,7 +474,7 @@ export function polishAd(p0: AdProject): { project: AdProject; changes: string[]
     if (!m) return
     lines[L] = (m[1] || '') + '**' + m[2] + '**'; x.head = lines.join('\n'); golds++
   })
-  if (golds) ch.push(`Gold accent on ${golds} headline${golds > 1 ? 's' : ''}`)
+  if (golds) ch.push(`Accent on ${golds} headline${golds > 1 ? 's' : ''}`)
   // timing without a voice take: lines get time to land, the end card holds long enough to read
   if (!p.voice) {
     let paced = 0
@@ -562,9 +596,16 @@ type Palette = { serif?: boolean; light?: boolean; def?: LookDef; gold: string; 
 /** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
  *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
 /** The curated set shown first (Jon, 2026-11-04: "quality vs quantity"): six designed looks; the rest sit under "More looks". */
-export const LOOKS_FEATURED = ['stay', 'pure', 'editorial', 'blackgold', 'ivory', 'miami', 'sand', 'festival', 'holiday']
+// THE HOUSE LOOK IS BLACK (Jon, 2026-11-10: "we are not gold theme color, look at our logo, it's black — ok to
+// play with it during holiday season or be able to select it, but need to default it"). Stay black is what every
+// new ad starts in and what "Default look" puts back; gold lives on as a look you pick (Navy & gold, Black & gold,
+// Holiday, Champagne).
+export const DEFAULT_LOOK = 'house'
+export const LOOKS_FEATURED = ['house', 'housewhite', 'pure', 'editorial', 'ivory', 'stay', 'blackgold', 'miami', 'holiday']
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
-  { key: 'stay', label: 'Stay navy & gold', blurb: 'The house look', c: { gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
+  { key: 'house', label: 'Stay black', blurb: 'The house look — black, white type, the Stay logo', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#FFFFFF', ink: '#FFFFFF', mut: '#B4B4B4', navy: '#0A0A0A', navy2: '#1B1B1B', deep: '#000000', tint: '0,0,0', glass: 'rgba(0,0,0,0.58)', line: 'rgba(255,255,255,0.24)', green: '#9BE3B5' } },
+  { key: 'housewhite', label: 'Stay white', blurb: 'White, black type, black logo, the website’s navy — like stay-hospitality.com', c: { light: true, def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'black', wash: 'none' }, gold: '#0A175F', ink: '#0B0B0B', mut: '#55565E', navy: '#FFFFFF', navy2: '#FFFFFF', deep: '#EEEEEE', tint: '255,255,255', glass: 'rgba(255,255,255,0.88)', line: 'rgba(0,0,0,0.12)', green: '#1F9D55' } },
+  { key: 'stay', label: 'Navy & gold', blurb: 'Navy with gold — holidays and special pieces', c: { def: { logo: 'gold' }, gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
   { key: 'sunset', label: 'Sunset', blurb: 'Warm coral, golden hour', c: { def: { grade: 'warm', finish: 'glow' }, gold: '#FFB37A', ink: '#FFF4EA', mut: '#E7C3B0', navy: '#2A1220', navy2: '#4A1E2C', deep: '#1A0A14', tint: '38,12,22', glass: 'rgba(48,16,30,0.6)', line: 'rgba(255,220,200,0.22)', green: '#7FD1A6' } },
   { key: 'ocean', label: 'Ocean', blurb: 'Aqua and deep blue, beachy', c: { def: { grade: 'cool' }, gold: '#5FE0D2', ink: '#EFFBFF', mut: '#A8CFDA', navy: '#062A3A', navy2: '#0A4258', deep: '#031B27', tint: '2,26,38', glass: 'rgba(4,36,52,0.6)', line: 'rgba(200,245,255,0.2)', green: '#5FE0A0' } },
   { key: 'editorial', label: 'Editorial', blurb: 'Serif type, cream on deep green, magazine feel', c: { serif: true, def: { font: 'serif', finish: 'film' }, gold: '#E9D8B4', ink: '#F7F1E6', mut: '#C8C0AE', navy: '#0F1F1A', navy2: '#1D3A31', deep: '#08120F', tint: '8,20,16', glass: 'rgba(14,30,25,0.6)', line: 'rgba(240,230,210,0.25)', green: '#9FD3B0' } },
@@ -648,7 +689,7 @@ export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
     pace: st.pace,
     finish: st.finish === 'auto' ? (d.finish || 'film') : st.finish,
     frame: st.frame,
-    logo: st.logo === 'auto' ? (d.logo || (L.light ? 'black' : 'gold')) : st.logo,
+    logo: st.logo === 'auto' ? (d.logo || (L.light ? 'black' : 'white')) : st.logo,
     accent: st.accent || '', base: st.base || '', text: st.text || '',
   }
 }
@@ -672,6 +713,7 @@ export const PLATFORMS: { key: string; label: string; format: AdFormat; max: num
   { key: 'reel', label: 'Instagram Reel', format: '9:16', max: 60, best: '15–30 s', safe: { top: 0.11, bottom: 0.2, right: 0.12 } },
   { key: 'story', label: 'Story', format: '9:16', max: 15, best: '≤ 15 s', safe: { top: 0.14, bottom: 0.2, right: 0.06 } },
   { key: 'tiktok', label: 'TikTok', format: '9:16', max: 60, best: '15–30 s', safe: { top: 0.12, bottom: 0.22, right: 0.14 } },
+  { key: 'shorts', label: 'YouTube Shorts', format: '9:16', max: 60, best: '15–35 s', safe: { top: 0.1, bottom: 0.21, right: 0.14 } },
   { key: 'feed', label: 'Feed post', format: '4:5', max: 60, best: '15–25 s', safe: { top: 0, bottom: 0, right: 0 } },
   { key: 'square', label: 'Square', format: '1:1', max: 60, best: '15–25 s', safe: { top: 0, bottom: 0, right: 0 } },
   { key: 'web', label: 'YouTube / web', format: '16:9', max: 120, best: '30–60 s', safe: { top: 0, bottom: 0.1, right: 0 } },
@@ -2858,42 +2900,80 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   FXS = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c.def?.fx || []
   PD = R.pace === 'calm' ? 1.35 : R.pace === 'fast' ? 0.72 : 1; CAPS = R.caps
   ctx.save()
+  ctx.imageSmoothingEnabled = true; try { (ctx as any).imageSmoothingQuality = 'high' } catch { /* */ }
   ctx.fillStyle = C.navy; ctx.fillRect(0, 0, W, H)
   if (!p.scenes.length) { ctx.restore(); return }
   const i = sceneAt(tl, t)
   const local = t - tl.starts[i]
   const tr = transitionOf(p, i)
-  const XF = (tr === 'push' || tr === 'wipe' || tr === 'iris' || tr === 'doors' || tr === 'diamond' || tr === 'blinds' ? 0.65 : tr === 'dip' ? 0.8 : tr === 'whip' || tr === 'glitch' ? 0.4 : tr === 'cut' ? 0 : XFADE) * PD
-  if (i > 0 && local < XF) {
-    const a = ease(local / XF)
-    drawSceneFx(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
-    ctx.save()
-    if (tr === 'fade') ctx.globalAlpha = a
-    else if (tr === 'zoom') { ctx.globalAlpha = Math.min(1, a * 1.4); const z = 1.08 - 0.08 * a; ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
-    else if (tr === 'push') ctx.translate(W * (1 - a), 0)
-    else if (tr === 'wipe') { const e = a * (W + H * 0.6); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.lineTo(0, H); ctx.closePath(); ctx.clip() }
-    else if (tr === 'flash' || tr === 'glitch') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
-    else if (tr === 'slide') ctx.translate(0, H * (1 - a))
-    else if (tr === 'whip') { ctx.translate(W * (1 - a), 0); try { ctx.filter = `blur(${Math.round((1 - a) * 40 * u)}px)` } catch { /* */ } }
-    else if (tr === 'iris') { ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.hypot(W, H) * 0.52 * a + 1, 0, Math.PI * 2); ctx.clip() }
-    else if (tr === 'diamond') { const r = (W + H) * 0.55 * a; ctx.beginPath(); ctx.moveTo(W / 2, H / 2 - r); ctx.lineTo(W / 2 + r, H / 2); ctx.lineTo(W / 2, H / 2 + r); ctx.lineTo(W / 2 - r, H / 2); ctx.closePath(); ctx.clip() }
-    else if (tr === 'doors') { ctx.beginPath(); ctx.rect(W / 2 - W / 2 * a, 0, W * a, H); ctx.clip() }
-    else if (tr === 'blinds') { const n = 9, bh = H / n; ctx.beginPath(); for (let k = 0; k < n; k++) ctx.rect(0, k * bh, W, bh * clamp(a * 1.4 - k * 0.04)); ctx.clip() }
-    else if (tr === 'spin') { ctx.globalAlpha = a; ctx.translate(W / 2, H / 2); ctx.rotate((1 - a) * -0.35); const z = 0.55 + 0.45 * a; ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
-    else if (tr === 'blur') { ctx.globalAlpha = a; try { ctx.filter = `blur(${Math.round((1 - a) * 30 * u)}px)` } catch { /* */ } }
-    else if (tr === 'dip') ctx.globalAlpha = local / XF > 0.5 ? 1 : 0
-    drawSceneFx(ctx, p, i, local, tl.durs[i], A)
-    ctx.restore()
-    if ((tr === 'iris' || tr === 'diamond' || tr === 'doors') && a < 1) {
-      ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 6 * u; ctx.beginPath()
-      if (tr === 'iris') ctx.arc(W / 2, H / 2, Math.hypot(W, H) * 0.52 * a + 1, 0, Math.PI * 2)
-      else if (tr === 'diamond') { const r = (W + H) * 0.55 * a; ctx.moveTo(W / 2, H / 2 - r); ctx.lineTo(W / 2 + r, H / 2); ctx.lineTo(W / 2, H / 2 + r); ctx.lineTo(W / 2 - r, H / 2); ctx.closePath() }
-      else { ctx.moveTo(W / 2 - W / 2 * a, 0); ctx.lineTo(W / 2 - W / 2 * a, H); ctx.moveTo(W / 2 + W / 2 * a, 0); ctx.lineTo(W / 2 + W / 2 * a, H) }
-      ctx.stroke(); ctx.restore()
+  const scIn = p.scenes[i]
+  // How long the hand-over runs: the transition's own pace, the ad's pace, the length picked for it — and never
+  // more than 60% of either scene, so a short scene is never all transition.
+  const XB = tr === 'push' || tr === 'slide' || tr === 'wipe' || tr === 'iris' || tr === 'doors' || tr === 'diamond' || tr === 'blinds' || tr === 'split' ? 0.65
+    : tr === 'dip' || tr === 'dipwhite' ? 0.8 : tr === 'leak' ? 0.9 : tr === 'crosszoom' ? 0.6 : tr === 'whip' || tr === 'glitch' ? 0.4 : tr === 'cut' ? 0 : XFADE
+  const XF = i > 0 ? Math.min(XB * PD * TR_LEN[scIn?.trs || 'normal'], tl.durs[i] * 0.6, tl.durs[i - 1] * 0.6) : 0
+  if (i > 0 && XF > 0 && local < XF) {
+    const q = local / XF, a = ease(q)
+    // Movements ease in AND out, the way an editor's push does — not a slam that slows down.
+    const m = q < 0.5 ? 4 * q * q * q : 1 - Math.pow(-2 * q + 2, 3) / 2
+    // Where the new scene comes FROM (push / slide / whip / wipe).
+    const from: TrDir = scIn?.trd || (tr === 'slide' ? 'down' : tr === 'wipe' ? 'left' : 'right')
+    const fx = from === 'right' ? 1 : from === 'left' ? -1 : 0, fy = from === 'down' ? 1 : from === 'up' ? -1 : 0
+    const blurF = (px: number) => { if (px > 0.5) try { ctx.filter = `blur(${Math.round(px * u)}px)` } catch { /* */ } }
+    const zoomAt = (z: number) => { ctx.translate(W / 2, H / 2); ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
+    const outgoing = () => drawSceneFx(ctx, p, i - 1, tl.durs[i - 1] + local, tl.durs[i - 1], A)
+    const incoming = () => drawSceneFx(ctx, p, i, local, tl.durs[i], A)
+    if (tr === 'split') {
+      // the new scene underneath, the old one parting top and bottom
+      incoming()
+      for (const half of [0, 1]) {
+        ctx.save(); ctx.translate(0, (half ? 1 : -1) * (H / 2) * m)
+        ctx.beginPath(); ctx.rect(0, half ? H / 2 : 0, W, H / 2); ctx.clip()
+        outgoing(); ctx.restore()
+      }
+      ctx.save(); ctx.fillStyle = `rgba(0,0,0,${0.35 * (1 - m)})`; ctx.fillRect(0, H / 2 - (H / 2) * m, W, H * m); ctx.restore()
+    } else {
+      // the outgoing scene: it moves, zooms or blurs for the transitions that carry it off
+      ctx.save()
+      if (tr === 'push' || tr === 'whip') { ctx.translate(-fx * W * m, -fy * H * m); if (tr === 'whip') blurF(m * 40) }
+      else if (tr === 'crosszoom') { zoomAt(1 + 1.1 * q); blurF(q * 34) }
+      else if (tr === 'blur') blurF(a * 24)
+      outgoing()
+      ctx.restore()
+      if (tr === 'slide') { ctx.save(); ctx.fillStyle = `rgba(0,0,0,${0.4 * m})`; ctx.fillRect(0, 0, W, H); ctx.restore() }
+      ctx.save()
+      if (tr === 'fade' || tr === 'leak') ctx.globalAlpha = a
+      else if (tr === 'zoom') { ctx.globalAlpha = Math.min(1, a * 1.4); zoomAt(1.08 - 0.08 * a) }
+      else if (tr === 'crosszoom') { const k = clamp((q - 0.3) / 0.4); ctx.globalAlpha = k * k * (3 - 2 * k); zoomAt(1 + 1.1 * (1 - q)); blurF((1 - q) * 34) }
+      else if (tr === 'push' || tr === 'slide' || tr === 'whip') { ctx.translate(fx * W * (1 - m), fy * H * (1 - m)); if (tr === 'whip') blurF((1 - m) * 40) }
+      else if (tr === 'wipe') {
+        const SX = H * 0.6, SY = W * 0.4
+        ctx.beginPath()
+        if (fy === 0) { const e = a * (W + SX), X = (x: number) => (fx < 0 ? x : W - x); ctx.moveTo(X(0), 0); ctx.lineTo(X(e), 0); ctx.lineTo(X(e - SX), H); ctx.lineTo(X(0), H) }
+        else { const e = a * (H + SY), Y = (y: number) => (fy < 0 ? y : H - y); ctx.moveTo(0, Y(0)); ctx.lineTo(0, Y(e)); ctx.lineTo(W, Y(e - SY)); ctx.lineTo(W, Y(0)) }
+        ctx.closePath(); ctx.clip()
+      }
+      else if (tr === 'flash' || tr === 'glitch' || tr === 'dip' || tr === 'dipwhite') ctx.globalAlpha = q > 0.5 ? 1 : 0
+      else if (tr === 'iris') { ctx.beginPath(); ctx.arc(W / 2, H / 2, Math.hypot(W, H) * 0.52 * a + 1, 0, Math.PI * 2); ctx.clip() }
+      else if (tr === 'diamond') { const r = (W + H) * 0.55 * a; ctx.beginPath(); ctx.moveTo(W / 2, H / 2 - r); ctx.lineTo(W / 2 + r, H / 2); ctx.lineTo(W / 2, H / 2 + r); ctx.lineTo(W / 2 - r, H / 2); ctx.closePath(); ctx.clip() }
+      else if (tr === 'doors') { ctx.beginPath(); ctx.rect(W / 2 - W / 2 * a, 0, W * a, H); ctx.clip() }
+      else if (tr === 'blinds') { const n = 9, bh = H / n; ctx.beginPath(); for (let k = 0; k < n; k++) ctx.rect(0, k * bh, W, bh * clamp(a * 1.4 - k * 0.04)); ctx.clip() }
+      else if (tr === 'spin') { ctx.globalAlpha = a; ctx.translate(W / 2, H / 2); ctx.rotate((1 - a) * -0.35); const z = 0.55 + 0.45 * a; ctx.scale(z, z); ctx.translate(-W / 2, -H / 2) }
+      else if (tr === 'blur') { ctx.globalAlpha = a; blurF((1 - a) * 24) }
+      if (tr === 'slide') { ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 50 * u }
+      incoming()
+      ctx.restore()
     }
-    if (tr === 'dip') { const q = 1 - Math.abs(2 * (local / XF) - 1); ctx.save(); ctx.globalAlpha = q; ctx.fillStyle = C.gold; ctx.fillRect(0, 0, W, H); ctx.restore() }
+    // overlays on the cut: no accent-coloured edges — a clean edit reads as film, not a slideshow
+    if (tr === 'dip' || tr === 'dipwhite') { const k = 1 - Math.abs(2 * q - 1); ctx.save(); ctx.globalAlpha = Math.min(1, k * 1.15); ctx.fillStyle = tr === 'dip' ? '#000000' : '#FFFFFF'; ctx.fillRect(0, 0, W, H); ctx.restore() }
+    if (tr === 'leak') {
+      const pk = Math.sin(Math.PI * q), cx = W * (-0.25 + 1.5 * q), cy = H * (0.25 + 0.2 * q), R0 = Math.max(W, H) * 0.85
+      ctx.save(); ctx.globalCompositeOperation = 'screen'
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, R0)
+      g.addColorStop(0, `rgba(255,214,150,${0.9 * pk})`); g.addColorStop(0.35, `rgba(255,140,70,${0.55 * pk})`); g.addColorStop(0.7, `rgba(220,60,40,${0.18 * pk})`); g.addColorStop(1, 'rgba(200,40,30,0)')
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore()
+    }
     if (tr === 'glitch') {
-      const q = local / XF
       if (q > 0.1 && q < 0.9) {
         const seed = Math.floor(t * 30)
         for (let k = 0; k < 9; k++) {
@@ -2901,11 +2981,10 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
           const sy = rnd(1) * H, sh = (0.02 + rnd(2) * 0.06) * H, dx = (rnd(3) - 0.5) * W * 0.12
           ctx.drawImage(ctx.canvas, 0, sy, W, sh, dx, sy, W, sh)
         }
-        ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.18; ctx.fillStyle = C.gold; ctx.fillRect(0, H * ((seed % 7) / 7), W, H * 0.06); ctx.restore()
+        ctx.save(); ctx.globalCompositeOperation = 'screen'; ctx.globalAlpha = 0.16; ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, H * ((seed % 7) / 7), W, H * 0.05); ctx.restore()
       }
     }
-    if (tr === 'wipe' && a < 1) { const e = a * (W + H * 0.6); ctx.save(); ctx.strokeStyle = C.gold; ctx.lineWidth = 8 * u; ctx.beginPath(); ctx.moveTo(e, 0); ctx.lineTo(e - H * 0.6, H); ctx.stroke(); ctx.restore() }
-    if (tr === 'flash') { ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(2 * (local / XF) - 1)})`; ctx.fillRect(0, 0, W, H) }
+    if (tr === 'flash') { ctx.fillStyle = `rgba(255,255,255,${1 - Math.abs(2 * q - 1)})`; ctx.fillRect(0, 0, W, H) }
   } else drawSceneFx(ctx, p, i, local, tl.durs[i], A)
   ctx.globalAlpha = 1
   // FRAME: a thin inset border in the accent, or letterbox bars on every scene.
