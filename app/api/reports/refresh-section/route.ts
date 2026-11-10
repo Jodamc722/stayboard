@@ -24,7 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
-  resolveScope, pullReservations, metricsFor, fmtK, monthsAhead, planSectionFor, etToday, bookingsSince, lastReportDate, engineOf, type CalcOpts,
+  resolveScope, pullReservations, metricsFor, fmtK, monthsAhead, planSectionFor, etToday, bookingsSince, lastReportDate, engineOf, calendarFor, type CalcOpts,
 } from '@/lib/owner-report'
 import { buildStatementSection } from '@/lib/statement-section'
 import { basisTriple, isBasis, BASIS_NOTE, type Basis } from '@/lib/basis'
@@ -57,6 +57,8 @@ const LABEL: Record<string, string> = {
   ahead: 'Looking ahead',
   statement: 'Owner statement',
   newBookings: 'New bookings',
+  calendar: 'Calendar',
+  bigDates: 'Big dates',
 }
 /** Named refusals, so the UI can say why instead of showing a button that does nothing. */
 const NO_SOURCE: Record<string, string> = {
@@ -282,6 +284,20 @@ export async function POST(req: NextRequest) {
     ;(content as any).newBookings = await bookingsSince(ids, since, until, nm)
     if ((content as any).newBookings && prevHead) (content as any).newBookings.headline = prevHead
     summary = 'Bookings ' + since + ' to ' + until + ' recounted.'
+  }
+
+  // ── THE MULTI-CALENDAR + BIG DATES (Jon, 2026-11-10) ──
+  // Both slides read content.calendar, so refreshing either re-pulls the same stays. The big-dates
+  // copy and the events the team added or removed on this report are kept.
+  if (section === 'calendar' || section === 'bigDates') {
+    content.calendar = await calendarFor(listings, from, etToday())
+    if (!content.bigDates) {
+      content.bigDates = {
+        headline: 'The dates that matter, and how they are selling.',
+        subtitle: 'Holidays and Miami event weekends in this report month and the next two — booked occupancy and rate on each.',
+      }
+    }
+    summary = content.calendar.stays.length + ' stays across ' + content.calendar.units.length + ' units, ' + content.calendar.from + ' to ' + content.calendar.toIncl + ', as of today.'
   }
 
   // ── OWNER STATEMENT ────────────────────────────────────────────────────────
