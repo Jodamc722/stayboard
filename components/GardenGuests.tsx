@@ -49,7 +49,7 @@ export function GardenGuests() {
         <label className="relative"><Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Name, email, phone, room" className="h-8 w-60 rounded-lg border border-line bg-white pl-7 pr-2 text-[12.5px]" /></label>
       </div>
       <div className="mb-3"><LeanPick<View> size="sm" value={view} onPick={setView} options={[
-        { v: 'now', label: <>Here &amp; arriving <span className="opacity-60 tabular-nums">{counts.now}</span></> },
+        { v: 'now', label: <>Here &amp; arriving this week <span className="opacity-60 tabular-nums">{counts.now}</span></> },
         { v: 'vip', label: <>VIP <span className="opacity-60 tabular-nums">{counts.vip}</span></> },
         { v: 'repeat', label: <>Repeat <span className="opacity-60 tabular-nums">{counts.repeat}</span></> },
         { v: 'all', label: <>All <span className="opacity-60 tabular-nums">{counts.all}</span></> },

@@ -68,11 +68,13 @@ export async function pullDetails(): Promise<number> {
       const { data: d } = await cbGet<any>('getReservation', { reservationID: r.id })
       if (!d) return
       const gl = Object.values(d.guestList || {}) as any[]
-      const withId = gl.filter(g => String(g?.guestDocumentType || '').trim() && String(g?.guestDocumentNumber || '').trim())
+      // A document number is what counts; the type is often left blank. "N/A" / zeros are not an ID.
+      const real = (v: any) => { const t = String(v ?? '').trim(); return !!t && !/^(n\/?a|none|null|0+|-+)$/i.test(t) }
+      const withId = gl.filter(g => real(g?.guestDocumentNumber))
       const main = gl.find(g => g?.isMainGuest) || gl[0] || null
       const cards = Array.isArray(d.cardsOnFile) ? d.cardsOnFile.length : d.cardsOnFile && typeof d.cardsOnFile === 'object' ? Object.keys(d.cardsOnFile).length : 0
       out[r.id] = {
-        idOnFile: withId.length > 0, idType: withId[0] ? String(withId[0].guestDocumentType).replace(/_/g, ' ').slice(0, 40) : null,
+        idOnFile: withId.length > 0, idType: withId[0] && real(withId[0].guestDocumentType) ? String(withId[0].guestDocumentType).replace(/_/g, ' ').slice(0, 40) : null,
         idGuests: withId.length, guests: gl.length, cardOnFile: cards > 0, cards, guestStatus: main?.guestStatus ? String(main.guestStatus) : null, at: new Date().toISOString(),
       }
       if (n(d.total) != null) await db.from('garden_reservations').update({ total: n(d.total), ...(n(d.balance) != null ? { balance: n(d.balance) } : {}) }).eq('id', r.id)

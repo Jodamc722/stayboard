@@ -48,8 +48,10 @@ export async function guestList(): Promise<{ guests: GuestRow[]; reservations: n
   for (const [key, rs] of Array.from(by.entries())) {
     const live = rs.filter(r => !['canceled', 'no_show'].includes(s(r.status)))
     const use = live.length ? live : rs
-    const cur = use.find(r => r.check_in <= today && r.check_out > today) || null
-    const next = [...use].filter(r => r.check_in > today).sort((a, b) => a.check_in.localeCompare(b.check_in))[0] || null
+    // In house / arriving only from stays that are still on (a cancelled booking is history).
+    const wk = new Date(Date.now() + 7 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+    const cur = live.find(r => r.check_in <= today && r.check_out > today) || null
+    const next = [...live].filter(r => r.check_in > today && r.check_in <= wk).sort((a, b) => a.check_in.localeCompare(b.check_in))[0] || null
     const nts = use.flatMap(r => notes[s(r.id)] || [])
     const tags = readNotes(nts).tags
     const top = use[0]
