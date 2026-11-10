@@ -679,9 +679,34 @@ export async function POST(req: NextRequest) {
   const shown = basisTriple(snapRaw, SNAP_PRIMARY)
   const shownGross = basisTriple(snapRaw, 'gross')
 
-  // ---- YTD + months ahead ----
-  const ytd = await ytdStats(ids, asOf, units)
-  const mAhead = await monthsAhead(ids, asOf, units, 6) // [prev, current, +1..+5]
+  // ---- everything the report reads, in ONE round of parallel pulls (2026-11-09 audit) ----
+  // YTD, the months ahead, reviews, tasks, the pacing PDF, the statement section and the
+  // bookings-since slide are independent of one another. They used to run one after the other —
+  // seven-plus sequential database round-trips (and a PDF read) before the AI pass even started,
+  // which is most of why "Generate" felt like thirty seconds.
+  const reviewFrom = addDaysIso(periodStart, -14) // small lookback so a slow review week still fills the section
+  const buckets = weekBuckets(periodStart, periodEnd)
+  const periodLabel = prettyDate(periodStart) + ' - ' + prettyDate(periodEnd)
+  // BOOKINGS SINCE THE LAST OWNER REPORT (Jon, 2026-11-03: "a slide before that … a big Bookings
+  // since last owner report"). Since the last report on these units; 30 days back when there is none.
+  const newBookingsFor = async (): Promise<ReportContent['newBookings']> => {
+    try {
+      const since = (await lastReportDate(ids, scopeLabel, asOf)) || new Date(Date.parse(asOf + 'T12:00:00Z') - 30 * 86400000).toISOString().slice(0, 10)
+      const nm: Record<string, string> = {}
+      for (const l of listings) nm[l.id] = l.unit || l.name
+      return await bookingsSince(ids, since, asOf, nm)
+    } catch { return null }
+  }
+  const [ytd, mAhead, reviews, tasks, pacingSection, statementSection, newBookings] = await Promise.all([
+    ytdStats(ids, asOf, units),
+    monthsAhead(ids, asOf, units, 6), // [prev, current, +1..+5]
+    pullReviews(ids, reviewFrom, asOf),
+    pullTasks(ids, byId, periodStart, periodEnd),
+    // PriceLabs pacing PDF (optional upload) + selected owner statements (from the mirror)
+    pacingUrl ? parsePacing(pacingUrl, scopeLabel, periodLabel, { listingIds: ids, periodStart, periodEnd }) : Promise.resolve(null),
+    statementIds.length ? buildStatementSection(statementIds, scopeLabel) : Promise.resolve(null),
+    newBookingsFor(),
+  ])
 
   // ---- budgets (Performance vs Plan only if rows exist) ----
   // The section itself is built by planSectionFor() in lib/owner-report, shared with the per-slide
@@ -690,18 +715,14 @@ export async function POST(req: NextRequest) {
   for (const l of listings) if (scopeBuildings.indexOf(l.building) < 0) scopeBuildings.push(l.building)
   const plan = await planSectionFor(ids, scopeBuildings, asOf, units, mAhead)
 
-  // ---- reviews + tasks ----
-  const reviewFrom = addDaysIso(periodStart, -14) // small lookback so a slow review week still fills the section
-  const reviews = await pullReviews(ids, reviewFrom, asOf)
-  const tasks = await pullTasks(ids, byId, periodStart, periodEnd)
-  const buckets = weekBuckets(periodStart, periodEnd)
-
-  // ---- PriceLabs pacing PDF (optional upload) + selected owner statements (from the mirror) ----
-  const periodLabel = prettyDate(periodStart) + ' - ' + prettyDate(periodEnd)
-  const [pacingSection, statementSection] = await Promise.all([
-    pacingUrl ? parsePacing(pacingUrl, scopeLabel, periodLabel, { listingIds: ids, periodStart, periodEnd }) : Promise.resolve(null),
-    statementIds.length ? buildStatementSection(statementIds, scopeLabel) : Promise.resolve(null),
-  ])
+  // OWNER STAYS, SAID OUT LOUD (2026-11-09 audit). An owner's own nights are confirmed reservations
+  // with no fare: they count as occupied, and they sit in ADR's denominator at $0. The method is
+  // unchanged here (see the audit notes — changing it is Jon's call), but the report now states how
+  // many of the occupied nights were the owner's, so a soft ADR is explained instead of mysterious.
+  const ownerNights = period.ownerNights || 0
+  const ownerNightsNote = ownerNights > 0
+    ? 'includes ' + ownerNights + ' owner-stay night' + (ownerNights === 1 ? '' : 's') + ' (no rate)'
+    : ''
 
   // ---- AI narrative pass (single call; template fallback) ----
   const goodReviews = reviews.filter(r => (r.rating == null || r.rating >= 4.2) && r.content && r.content.length > 15).slice(0, 30)
@@ -724,7 +745,8 @@ export async function POST(req: NextRequest) {
       + ' | RevPAR: $' + shown.revpar + ' (gross $' + shownGross.revpar + ')',
     'USE ONLY THESE FIGURES. Any dollar or percent you write must match one of them exactly.',
     'Months ahead (OTB occupancy): ' + mAhead.map(m => m.short + ' ' + m.m.occupancyPct + '%').join(', '),
-  ].join('\n')
+    ownerNightsNote ? 'Note: occupancy ' + ownerNightsNote + ' — the owner\'s own use, counted as occupied and carrying no revenue, so ADR reads lower than the paid rate. Do not describe these as discounted or unsold nights.' : '',
+  ].filter(Boolean).join('\n')
 
   const sys = 'You write owner-report copy for Stay Hospitality, a Florida short-term-rental operator. Voice: data-forward, confident, zero fluff, short declarative sentences. Never admit fault or liability, never mention pests/bed bugs/security incidents, never disparage a guest. Output STRICT JSON only, no markdown.'
   const prompt = 'FACTS:\n' + factBlock
@@ -881,16 +903,6 @@ export async function POST(req: NextRequest) {
   // (kind 'projection') still builds it — that report says PROJECTION on its face.
   const projection: ReportContent['projection'] = null
 
-  // BOOKINGS SINCE THE LAST OWNER REPORT (Jon, 2026-11-03: "a slide before that … a big Bookings
-  // since last owner report"). Since the last report on these units; 30 days back when there is none.
-  let newBookings: ReportContent['newBookings'] = null
-  try {
-    const since = (await lastReportDate(ids, scopeLabel, asOf)) || new Date(Date.parse(asOf + 'T12:00:00Z') - 30 * 86400000).toISOString().slice(0, 10)
-    const nm: Record<string, string> = {}
-    for (const l of listings) nm[l.id] = l.unit || l.name
-    newBookings = await bookingsSince(ids, since, asOf, nm)
-  } catch { newBookings = null }
-
   const content: ReportContent = {
     meta: {
       scopeLabel, periodStart, periodEnd, asOf,
@@ -906,7 +918,7 @@ export async function POST(req: NextRequest) {
     },
     snapshot: {
       headline: str(ai.snapshotHeadline) || 'Where the period stands today.',
-      subtitle: 'On-the-books as of ' + prettyDate(asOf) + '  ·  ' + units + ' active listings' + (daysRemaining ? '  ·  ' + daysRemaining + ' days remaining' : ''),
+      subtitle: 'On-the-books as of ' + prettyDate(asOf) + '  ·  ' + units + ' active listing' + (units === 1 ? '' : 's') + (daysRemaining ? '  ·  ' + daysRemaining + ' day' + (daysRemaining === 1 ? '' : 's') + ' remaining' : '') + (ownerNightsNote ? '  ·  ' + ownerNightsNote : ''),
       cards: [
         { key: 'revenue', label: 'REVENUE', value: fmtK(shown.revenue), sub: BASIS_NOTE[SNAP_PRIMARY] + ' · Gross (incl. cleaning + channel fees): ' + fmtK(shownGross.revenue), gross: fmtK(shownGross.revenue) },
         { key: 'occupancy', label: 'OCCUPANCY', value: period.occupancyPct + '%', sub: 'Occupied ÷ available nights' },
@@ -914,7 +926,9 @@ export async function POST(req: NextRequest) {
         { key: 'revpar', label: 'REVPAR', value: '$' + shown.revpar, sub: 'Accommodation ÷ available nights · Gross RevPAR: $' + shownGross.revpar, gross: '$' + shownGross.revpar },
       ],
       ytd: ytd.reservations > 0 ? {
-        text: ytd.reservations + ' reservations booked YTD with an average stay of ' + ytd.avgStay + ' nights and a ' + ytd.avgWindow + '-day booking window.',
+        // "stays", not "booked": the count is reservations that have STAYED this year to date, not
+        // bookings made this year (future stays booked this year are not in it).
+        text: ytd.reservations + ' reservation' + (ytd.reservations === 1 ? '' : 's') + ' stayed year to date, averaging ' + ytd.avgStay + ' nights and booked ' + ytd.avgWindow + ' days ahead.',
         stats: [
           { value: ytd.occupancyPct + '%', label: 'OCCUPANCY' },
           { value: ytd.avgStay + ' d', label: 'AVG STAY' },

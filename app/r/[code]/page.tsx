@@ -42,11 +42,23 @@ export default async function PublicReportPage({ params }: { params: { code: str
   // Section photography and the per-unit table, both derived from the report row rather than
   // stored on it, so every review that already exists gets them. Either failing costs its own
   // slide, never the report.
+  // ONLY A REVIEW READS THE REVIEW'S TABLES (2026-11-09 audit). The per-unit table, the guest
+  // recommendations and the since-last-time chips are owner-REVIEW slides. An onboarding deck, a
+  // sales proposal or a projection never draws them, yet every open of those links — including
+  // every time a prospect opened a proposal — still pulled the period's reservations and paged
+  // every review the units have ever had before the page could render.
+  //
+  // A PROJECTION keeps the guest slide (a 90-day read of what guests raise is fair context for a
+  // forecast) but loses the per-unit table: its "period" is the single day it was generated, so
+  // that slide was printing one night of performance per unit under a season forecast.
+  const docKind = String((rep.content as any)?.meta?.kind || '')
+  const isDeckDoc = docKind === 'onboarding' || docKind === 'sales'
+  const isReview = !isDeckDoc && docKind !== 'projection'
   const [gallery, listingTable, recs, delta] = await Promise.all([
     reportGallery(rep).catch(() => [] as string[]),
-    reportByListing(rep).catch(() => null),
-    reportRecommendations(rep).catch(() => null),
-    reportDelta(rep).catch(() => null),
+    isReview ? reportByListing(rep).catch(() => null) : Promise.resolve(null),
+    !isDeckDoc ? reportRecommendations(rep).catch(() => null) : Promise.resolve(null),
+    isReview ? reportDelta(rep).catch(() => null) : Promise.resolve(null),
   ])
   return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} listingTable={listingTable} recs={recs} delta={delta} />
 }

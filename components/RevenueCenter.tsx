@@ -42,14 +42,14 @@ function mdLabel(iso: string): string {
   return `${MO[m - 1]} ${dd}`
 }
 
-function Delta({ cur, prev, money }: { cur: number; prev: number; money?: boolean }) {
-  if (!Number.isFinite(prev) || prev === 0) return <span className="text-[11px] text-muted">—</span>
+function Delta({ cur, prev, money, vs = 'vs prior' }: { cur: number; prev: number; money?: boolean; vs?: string }) {
+  if (!Number.isFinite(prev) || prev === 0) return <span className="text-[11px] text-muted">— {vs}</span>
   const d = money ? (cur - prev) / Math.abs(prev) : cur - prev
   const up = d > 0.001, down = d < -0.001
   const cls = up ? 'text-emerald-600' : down ? 'text-red-600' : 'text-muted'
   const Icon = up ? TrendingUp : down ? TrendingDown : Minus
   const label = money ? `${d > 0 ? '+' : ''}${Math.round(d * 100)}%` : `${d > 0 ? '+' : ''}${Math.round(d * 100)}pts`
-  return <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold ${cls}`}><Icon size={11} />{label} vs prior</span>
+  return <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold ${cls}`}><Icon size={11} />{label} {vs}</span>
 }
 
 const SEV: Record<Rec['severity'], { dot: string; chip: string; label: string }> = {
@@ -232,11 +232,16 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
   // ---- KPIs from the filtered scope ----
   const k = useMemo(() => {
     let nights = 0, gross = 0, net = 0, cleaning = 0, parking = 0, other = 0, commission = 0, total = 0, prevTotal = 0, prevNights = 0, otbN = 0
+    let prevGross = 0, lyTotal = 0, lyGross = 0, lyNights = 0
     for (const u of filtered) {
       nights += u.nightsSold; gross += u.grossAccom; net += u.netAccom; cleaning += u.cleaning; commission += u.commission
       parking += u.parking; other += u.other; total += u.total
       prevTotal += u.prevTotal; prevNights += u.prevOcc * d.days; otbN += u.otb30 * 30
+      prevGross += u.prevGross; lyTotal += u.lyTotal; lyGross += u.lyGross; lyNights += u.lyNights
     }
+    // Last year only when that read came back (d.ly.ok) — NaN makes <Delta> print a dash, not a
+    // change measured against zero.
+    const ly = d.ly.ok
     const avail = filtered.length * d.days
     return {
       nights, gross, net, cleaning, parking, other, commission, total, avail,
@@ -246,12 +251,19 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
       revpar: avail > 0 ? gross / avail : 0,
       adrT: nights > 0 ? total / nights : 0,
       revparT: avail > 0 ? total / avail : 0,
-      prevAdr: prevNights > 0 ? prevTotal / prevNights : NaN,
-      prevRevparT: avail > 0 ? prevTotal / avail : NaN,
+      // ADR and RevPAR deltas are ROOM revenue against ROOM revenue (2026-11-09). They compared the
+      // all-in figure (room + cleaning + fees) with the prior all-in figure while the tile itself
+      // showed room-only ADR, so a cleaning-fee change moved "ADR vs prior" with no rate change.
+      prevAdr: prevNights > 0 ? prevGross / prevNights : NaN,
+      prevRevpar: avail > 0 ? prevGross / avail : NaN,
       prevTotal,
+      lyTotal: ly ? lyTotal : NaN,
+      lyOcc: ly && avail > 0 ? lyNights / avail : NaN,
+      lyAdr: ly && lyNights > 0 ? lyGross / lyNights : NaN,
+      lyRevpar: ly && avail > 0 ? lyGross / avail : NaN,
       otb30: filtered.length > 0 ? otbN / (filtered.length * 30) : 0,
     }
-  }, [filtered, d.days])
+  }, [filtered, d.days, d.ly.ok])
 
   // ---- grouped rows for Buildings / Owners views (indexed vs whole portfolio) ----
   type GRow = UnitRow & { unitCount: number }
@@ -336,6 +348,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
   }
 
   const chMax = d.channels.reduce((m, c) => Math.max(m, c.revenue), 0) || 1
+  const lyPct = Number.isFinite(k.lyTotal) && k.lyTotal > 0 ? Math.round(((k.total - k.lyTotal) / k.lyTotal) * 100) : null
   const selCls = 'rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink focus:outline-none focus:border-brand-500'
   const redCount = d.recs.filter(r => r.severity === 'red').length
   const totalOpportunity = d.recs.reduce((s, r) => s + r.impact, 0)
@@ -354,9 +367,12 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     <>
       <header className="mb-4 flex items-end justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5"><TrendingUp size={13} /> Money</p>
-          <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Revenue Center</h1>
-          <p className="text-sm text-muted mt-1">{d.from} to {d.to} · {d.days} days · prorated per night · Δ vs {d.prev.from} – {d.prev.to} · <a href="/revenue/reconcile" className="text-brand-700 font-semibold hover:underline">Money source ↗</a></p>
+          <h1 className="text-2xl font-bold text-ink tracking-tight">Revenue Center</h1>
+          <p className="text-[13px] text-muted mt-0.5">
+            Stays {mdLabel(d.from)} – {mdLabel(d.to)} · {d.days} days · prorated per night
+            {' · '}<a href="/revenue/sales" className="text-brand-700 font-semibold hover:underline" title="What we booked today, this week and this month against last year; which units are behind pace; what was cancelled">Sales report</a>
+            {' · '}<a href="/revenue/reconcile" className="text-brand-700 font-semibold hover:underline">Money source</a>
+          </p>
         </div>
         {/* Two date fields and six presets wrapped to three rows on a phone. One swipeable strip
             instead — the dates lead it, so they are still there without a swipe. `sm:contents`
@@ -422,17 +438,25 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
             <Kpi label="Total collected" value={fmtMoney(k.total)} Icon={DollarSign} accent
               sub={`${k.nights.toLocaleString()} nights · ${fmtExact(k.adrT)} / night all-in`}
-              extra={<Delta cur={k.total} prev={k.prevTotal} money />} />
+              extra={<><Delta cur={k.total} prev={k.lyTotal} money vs="vs last year" /><br /><Delta cur={k.total} prev={k.prevTotal} money /></>} />
             <Kpi label="Occupancy" value={pct(k.occ)} Icon={Percent}
               sub={`${k.nights.toLocaleString()} of ${k.avail.toLocaleString()} available nights`}
-              extra={<Delta cur={k.occ} prev={k.prevOcc} />} />
+              extra={<><Delta cur={k.occ} prev={k.lyOcc} vs="vs last year" /><br /><Delta cur={k.occ} prev={k.prevOcc} /></>} />
             <Kpi label="ADR" value={fmtExact(k.adr)} Icon={TrendingUp}
               sub="room revenue per night sold"
-              extra={<Delta cur={k.adrT} prev={k.prevAdr} money />} />
+              extra={<><Delta cur={k.adr} prev={k.lyAdr} money vs="vs last year" /><br /><Delta cur={k.adr} prev={k.prevAdr} money /></>} />
             <Kpi label="RevPAR" value={fmtExact(k.revpar)} Icon={BedDouble}
               sub="room revenue per available night"
-              extra={<Delta cur={k.revparT} prev={k.prevRevparT} money />} />
+              extra={<><Delta cur={k.revpar} prev={k.lyRevpar} money vs="vs last year" /><br /><Delta cur={k.revpar} prev={k.prevRevpar} money /></>} />
           </div>
+
+          {/* One sentence of "so what", then the detail. */}
+          <p className="rounded-2xl border border-line bg-white px-4 py-2.5 text-[13.5px] text-ink leading-snug mb-4"
+            title={`Last year = the same weekdays 52 weeks earlier (${d.ly.from} – ${d.ly.to}). Prior = the ${d.days} days before this range (${d.prev.from} – ${d.prev.to}).`}>
+            Stays in this range collected {fmtExact(k.total)} at {pct(k.occ)} occupancy
+            {lyPct == null ? '' : `, ${Math.abs(lyPct)}% ${lyPct >= 0 ? 'up' : 'down'} on the same weekdays last year`}
+            {d.recs.length > 0 ? <>; biggest open check: <button onClick={() => setTab('actions')} className="font-semibold text-brand-700 hover:underline text-left">{d.recs[0].title}</button>{d.recs[0].impact > 0 ? ` (≈ ${fmtMoney(d.recs[0].impact)}/mo)` : ''}</> : null}.
+          </p>
 
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4">
             {/* Money flow — statement-validated waterfall */}

@@ -1,9 +1,41 @@
 'use client'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, XCircle, RefreshCw, Trash2, ChevronDown, Undo2 } from 'lucide-react'
+import { CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, XCircle, RefreshCw, Trash2, ChevronDown, Undo2, Play, Pencil, SkipForward, Check, Circle, Lock, ShieldAlert, ExternalLink } from 'lucide-react'
 import { Tag, Clamp, IconBtn, LeanList, LeanEmpty, type Tone } from '@/components/lean'
+import { rootCausesOf, removalGrounds, removalDraft, removalPath, recoverySteps, guestNoteDraft, lintReply, openerOf, type OpsState, type PlaybookReview } from '@/lib/review-playbook'
 
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string }
+type Cat = { key: string; label: string; rating: number; comment?: string }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string; categories?: Cat[]; privateFeedback?: string | null }
+
+// A LOW SCORE, on the review's own scale: 3 and under out of 5, 7 and under out of 10. Ratings are
+// stored out of 5 for every channel, so a Booking.com 7/10 arrives as 3.5 and is read as low here
+// exactly as lib/review-scale reads it everywhere else.
+const lowScore = (n: number | null, ch?: string | null) => n != null && (/booking/i.test(String(ch || '')) && n <= 5 ? n <= 3.5 : (n <= 3 || (n > 5 && n <= 7)))
+
+// DRAFTS SURVIVE A RELOAD (2026-11-09). A draft costs an AI call; losing ten of them to a refresh or
+// a phone that slept the tab meant paying for them twice. Kept in this browser only, three weeks.
+const DRAFT_KEY = 'lh.reviews.drafts.v1'
+function loadDrafts(): Record<string, string> {
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(DRAFT_KEY) || '{}')
+    const out: Record<string, string> = {}
+    const cut = Date.now() - 21 * 86400000
+    for (const id of Object.keys(raw || {})) { const e = raw[id]; if (e && typeof e.t === 'string' && e.t.trim() && Number(e.at) > cut) out[id] = e.t }
+    return out
+  } catch { return {} }
+}
+/** Write or clear ONE draft. Only ever touches the entry it is given, so nothing is wiped by accident. */
+function persistDraft(id: string, text: string) {
+  try {
+    const all = JSON.parse(window.localStorage.getItem(DRAFT_KEY) || '{}') || {}
+    if (text && text.trim()) all[id] = { t: text, at: Date.now() }
+    else delete all[id]
+    const ids = Object.keys(all)
+    // Two hundred is far more than a queue ever holds; past that the oldest go.
+    if (ids.length > 200) ids.sort((a, b) => Number(all[a].at) - Number(all[b].at)).slice(0, ids.length - 200).forEach(k => { delete all[k] })
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(all))
+  } catch { /* private mode or full: drafts simply do not persist */ }
+}
 
 // THE FEED OBEYS THE BOARD ABOVE IT (Jon, 2026-09-09: "the main page should be KPI and where we can
 // review or respond to reviews"). One filter bar on /reviews drives the numbers AND this list, so a
@@ -63,6 +95,22 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   const [loadedAt, setLoadedAt] = useState<number | null>(null)
   // Which rows have their "More" open.
   const [more, setMore] = useState<Record<string, boolean>>({})
+  // ── THE REPLY RUN (2026-11-09) ─────────────────────────────────────────────────────────────────
+  // "Start" puts the queue in a run: one review is in focus, its draft is written the moment it
+  // takes focus (and the next one's behind it), and each review is one key or one tap — Approve,
+  // Edit, Skip. Nothing is drafted until a person starts a run, so opening the page costs nothing,
+  // and nothing posts without that person's key or tap on that review.
+  const [flow, setFlow] = useState(false)
+  const [cur, setCur] = useState<string | null>(null)
+  const autoTried = useRef<Record<string, boolean>>({})
+  const autoOff = useRef(false)
+  const draftsRef = useRef<Record<string, string>>({})
+  const act = useRef<(key: string, e: KeyboardEvent) => void>(() => {})
+  // The panel stays mounted (hidden) while another tab of the page is open, so half-written drafts
+  // survive. A key press must never post from a queue nobody is looking at — the keys check this.
+  const rootRef = useRef<HTMLElement | null>(null)
+  useEffect(() => { const saved = loadDrafts(); if (Object.keys(saved).length) setDrafts(d => ({ ...saved, ...d })) }, [])
+  useEffect(() => { draftsRef.current = drafts }, [drafts])
 
   // "Answer N reviews" on a failing unit upstairs types that unit into this box, rather than
   // re-scoping the whole page behind the manager's back.
@@ -115,7 +163,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
 
   // Auto-drafting disabled: drafts are written on demand via the AI buttons below.
 
-  const isLow = (n: number | null) => n != null && (n <= 3 || (n > 5 && n <= 7))
+  const isLow = (n: number | null, ch?: string | null) => lowScore(n, ch)
   // Booking.com shows the guest a 0-10 score, so its reviews read on that native scale here;
   // everything else (and every combined average) stays out of 5.
   const fmtRating = (n: number | null, ch?: string | null) => {
@@ -131,7 +179,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
     if (!r.created_at) return null
     const ageH = (Date.now() - new Date(r.created_at).getTime()) / 3600000
     if (!Number.isFinite(ageH)) return null
-    const dueH = isLow(r.rating) ? 24 : 72
+    const dueH = isLow(r.rating, r.channel) ? 24 : 72
     const over = ageH - dueH
     if (over >= 0) return { overdueH: over, label: 'overdue ' + (over >= 48 ? Math.round(over / 24) + 'd' : Math.max(1, Math.round(over)) + 'h'), tone: 'rose' }
     return { overdueH: over, label: 'due in ' + (-over >= 48 ? Math.round(-over / 24) + 'd' : Math.max(1, Math.round(-over)) + 'h'), tone: -over <= 8 ? 'amber' : 'slate' }
@@ -181,7 +229,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   // Locked to the reply queue on the page's "To reply" tab; otherwise the panel's own sub-tab.
   const view = mode === 'needs' ? 'needs' : tab
 
-  function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })) }
+  function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })); persistDraft(id, v) }
 
   // RESEARCH — the 360 look-before-you-claim step. Pulls the property's recently COMPLETED work
   // (Breezeway tasks, resolved guest issues, closed work orders) and shows it to the operator, so
@@ -205,28 +253,36 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
     }
   }
 
-  async function rewriteAI(r: Review, instruction?: string, withEvidence?: boolean) {
+  async function rewriteAI(r: Review, instruction?: string, withEvidence?: boolean): Promise<boolean> {
     setAiBusy(b => ({ ...b, [r.id]: true })); setErr(null)
     try {
       // Retry on the org's 5-req/min rate limit with a backoff so drafts still land.
       for (let attempt = 0; attempt < 4; attempt++) {
         const res = await fetch('/api/reviews/draft', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction, currentDraft: drafts[r.id] || '', listingId: r.listingId, withEvidence: !!withEvidence })
+          // `avoid`: the drafts already sitting in this queue, so ten replies do not open the same way.
+          body: JSON.stringify({ reviewId: r.id, content: r.content, rating: r.rating, listing_name: r.listing_name, guest: r.guest, channel: r.channel, instruction, currentDraft: draftsRef.current[r.id] || '', listingId: r.listingId, withEvidence: !!withEvidence,
+            avoid: Object.keys(draftsRef.current).filter(id => id !== r.id).map(id => openerOf(draftsRef.current[id])).filter(Boolean).slice(-10) })
         })
         const d = await res.json()
-        if (res.ok && d.draft) { setDraft(r.id, d.draft); return }
+        if (res.ok && d.draft) { setDraft(r.id, d.draft); draftsRef.current = { ...draftsRef.current, [r.id]: d.draft }; return true }
         const msg = d.error || `HTTP ${res.status}`
+        // The AI budget stop is not a rate limit: waiting does nothing, so the run stops asking.
+        if (d.budget) { autoOff.current = true; throw new Error(msg) }
         if (/429|rate limit/i.test(msg) && attempt < 3) { await sleep(15000); continue }
         throw new Error(msg)
       }
     } catch (e: any) { setErr(e?.message || String(e)) }
     finally { setAiBusy(b => ({ ...b, [r.id]: false })) }
+    return false
   }
 
   async function draftAllAI() {
     setAllAi(true); setErr(null)
-    for (let i = 0; i < needs.length; i++) { await rewriteAI(needs[i]); if (i < needs.length - 1) await sleep(13000) }   // ~5/min org limit
+    // Only the ones with no draft yet, and it stops at the first failure (a budget stop or an outage
+    // would otherwise be retried once per review).
+    const todo = needs.filter(r => !(draftsRef.current[r.id] || '').trim())
+    for (let i = 0; i < todo.length; i++) { const ok = await rewriteAI(todo[i]); if (!ok) break; if (i < todo.length - 1) await sleep(4000) }
     setAllAi(false)
   }
 
@@ -261,12 +317,97 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
     return true
   }
 
-  async function post(r: Review) {
+  /** True when the review left the queue (posted, or closed because its listing is gone). */
+  async function post(r: Review): Promise<boolean> {
+    if (!(drafts[r.id] || '').trim()) return false
     setRowBusy(b => ({ ...b, [r.id]: true })); setErr(null)
-    try { if (await postOne(r)) { setPosted(p => ({ ...p, [r.id]: true })); setPostedAt(pa => ({ ...pa, [r.id]: Date.now() })) } }
+    let gone = false
+    try {
+      if (await postOne(r)) { setPosted(p => ({ ...p, [r.id]: true })); setPostedAt(pa => ({ ...pa, [r.id]: Date.now() })) }
+      setDrafts(d => { const n = { ...d }; delete n[r.id]; return n })
+      persistDraft(r.id, '')
+      gone = true
+    }
     catch (e: any) { setErr(e?.message || String(e)) }
     finally { setRowBusy(b => ({ ...b, [r.id]: false })) }
+    return gone
   }
+
+  // ── THE RUN: which review is next, and what each key does ─────────────────────────────────────
+  const neighbour = (id: string, dir: 1 | -1, leaving: boolean): string | null => {
+    const i = needs.findIndex(x => x.id === id)
+    if (i < 0) return needs.length ? needs[0].id : null
+    const j = i + dir
+    if (j >= 0 && j < needs.length) return needs[j].id
+    // Off the end: a review that is leaving the queue hands focus back; a skipped one wraps round.
+    if (leaving) return needs.length > 1 ? needs[dir === 1 ? i - 1 : i + 1].id : null
+    return needs.length > 1 ? needs[dir === 1 ? 0 : needs.length - 1].id : id
+  }
+  const startFlow = () => { autoOff.current = false; setFlow(true); setCur(c => (c && needs.some(x => x.id === c) ? c : (needs[0] ? needs[0].id : null))) }
+  const focusBox = (id: string) => { const el = document.getElementById('rv-ta-' + id) as HTMLTextAreaElement | null; if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) } }
+  async function approveCur(r: Review, viaKey: boolean) {
+    const txt = (draftsRef.current[r.id] || '').trim()
+    if (!txt || rowBusy[r.id] || aiBusy[r.id]) return
+    // A key press never posts over a blocking flag — the person reads it and uses the button.
+    const blocks = lintReply(txt, r).filter(f => f.block)
+    if (viaKey && blocks.length) { setErr('Not posted — this draft ' + blocks.map(b => b.label).join(' and ') + '. Edit it, or press the Approve button if that is intended.'); return }
+    const next = neighbour(r.id, 1, true)
+    if (await post(r)) setCur(next)
+  }
+  act.current = (key, e) => {
+    if (!flow || view !== 'needs' || !needs.length) return
+    if (!rootRef.current || rootRef.current.offsetParent === null) return
+    const r = needs.find(x => x.id === cur) || needs[0]
+    if (!r) return
+    const k = key.toLowerCase()
+    if (k === 'escape') { setFlow(false); return }
+    if (k === 'a') { e.preventDefault(); approveCur(r, true) }
+    else if (k === 'e') { e.preventDefault(); focusBox(r.id) }
+    else if (k === 's' || k === 'j' || k === 'arrowdown') { e.preventDefault(); setCur(neighbour(r.id, 1, false)) }
+    else if (k === 'k' || k === 'arrowup') { e.preventDefault(); setCur(neighbour(r.id, -1, false)) }
+    else if (k === 'r') { e.preventDefault(); if (!aiBusy[r.id]) rewriteAI(r) }
+    else if (k === 'd') { e.preventDefault(); const next = neighbour(r.id, 1, true); dismiss(r); setCur(next) }
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      const tag = t && t.tagName ? t.tagName.toLowerCase() : ''
+      // Typing is typing. Escape leaves the box and gives the keys back to the run.
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || (t && t.isContentEditable)) { if (e.key === 'Escape' && t) t.blur(); return }
+      act.current(e.key, e)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  // The review in focus gets its draft written, and the one behind it — so the next is ready when
+  // this one is approved. Once per review; a failure never loops.
+  const curIdx = flow && cur ? needs.findIndex(x => x.id === cur) : -1
+  const curId = curIdx >= 0 ? needs[curIdx].id : null
+  const nextId = curIdx >= 0 && curIdx + 1 < needs.length ? needs[curIdx + 1].id : null
+  useEffect(() => {
+    if (!flow || view !== 'needs' || autoOff.current) return
+    for (const id of [curId, nextId]) {
+      if (!id || autoTried.current[id]) continue
+      const r = needs.find(x => x.id === id)
+      if (!r || (draftsRef.current[id] || '').trim()) continue
+      autoTried.current[id] = true
+      rewriteAI(r)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow, view, curId, nextId])
+  useEffect(() => {
+    if (!flow || !curId) return
+    const el = document.getElementById('rv-' + curId)
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [flow, curId])
+  // A run with nothing left, or one whose focus left the list, settles itself.
+  useEffect(() => {
+    if (!flow) return
+    if (!needs.length) { setFlow(false); return }
+    if (!cur || !needs.some(x => x.id === cur)) setCur(needs[0].id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow, cur, needs.length])
 
   async function postSelected() {
     if (!selectedIds.length) return
@@ -276,6 +417,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
       for (const r of selectedIds) { try { if (await postOne(r)) done[r.id] = true } catch (e: any) { setErr(e?.message || String(e)) } }
     } finally {
       setPosted(p => ({ ...p, ...done })); setPostedAt(pa => ({ ...pa, ...Object.fromEntries(Object.keys(done).map(id => [id, Date.now()])) })); setSelected({}); setBulkBusy(false)
+      Object.keys(done).forEach(id => persistDraft(id, ''))
     }
   }
 
@@ -326,14 +468,31 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   }
 
   // ── ROW PARTS (plain functions, not components, so a re-render never remounts a row) ─────────
+  // Sub-scores worth a chip on the line are the ones the guest marked down; six fives are noise.
+  const catChips = (r: Review) => {
+    const low = (r.categories || []).filter(c => c.rating <= 3).slice(0, 3)
+    if (!low.length) return null
+    return <>{low.map(c => <Tag key={c.key} tone="rose" title={c.label + ' scored ' + c.rating + ' out of 5' + (c.comment ? ' — “' + c.comment + '”' : '')}>{c.label} {c.rating}</Tag>)}</>
+  }
+  // Airbnb takes a public response for about 30 days after a review; after that the box is gone.
+  const windowTag = (r: Review) => {
+    if (!/airbnb/i.test(r.channel || '') || !r.created_at) return null
+    const age = Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86400000)
+    if (!Number.isFinite(age) || age < 21) return null
+    return age >= 30
+      ? <Tag title="Airbnb accepts a public response for about 30 days after the review. This one is older, so the post may be refused — mark it no-reply-needed if it is.">window likely closed</Tag>
+      : <Tag tone="amber" title="Airbnb accepts a public response for about 30 days after the review">closes in {30 - age}d</Tag>
+  }
   const head = (r: Review, extra?: ReactNode) => (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <Tag tone={isLow(r.rating) ? 'rose' : 'emerald'} title="Guest score">{'★ '}{fmtRating(r.rating, r.channel)}</Tag>
-      <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.listing_name}</span>
-      {r.guest && <span className="text-[12px] text-muted truncate max-w-[10rem]">{r.guest}</span>}
+      <Tag tone={isLow(r.rating, r.channel) ? 'rose' : 'emerald'} title="Guest score">{'★ '}{fmtRating(r.rating, r.channel)}</Tag>
+      <span className="text-[13.5px] font-semibold text-ink truncate max-w-[11rem] sm:max-w-[14rem]">{r.listing_name}</span>
+      {r.guest && <span className="text-[12px] text-muted truncate max-w-[8rem] sm:max-w-[10rem]">{r.guest}</span>}
       {r.channel && <Tag>{r.channel}</Tag>}
       {r.created_at && <span className="text-[11.5px] text-muted whitespace-nowrap">{fmtDate(r.created_at)}</span>}
       {extra}
+      {catChips(r)}
+      {r.privateFeedback ? <Tag tone="violet" title="The guest also left private feedback. Open the row to read it — it informs the draft and is never part of the public reply."><Lock size={9} className="inline -mt-px mr-0.5" />private note</Tag> : null}
       {isRemoved(r) && <Tag title={'The channel took this review down — not counted in scores' + (r.removedReason ? ' · ' + r.removedReason : '')}>Removed</Tag>}
     </div>
   )
@@ -364,9 +523,10 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
       {label} <span className="opacity-70 tabular-nums">{s.loading ? '…' : n}</span>{extra}
     </button>
   )
+  const draftedCount = needs.filter(r => (drafts[r.id] || '').trim()).length
 
   return (
-    <section>
+    <section ref={rootRef}>
       {/* ── TOOLBAR: status sub-tabs (All reviews), search, queue tools, refresh — one line ─────── */}
       <div className="flex items-center gap-1.5 flex-wrap mb-2">
         {mode !== 'needs' && (
@@ -374,9 +534,17 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
             {subTab('needs', 'Needs a reply', needs.length, 'Unreplied, most overdue first',
               !s.loading && overdueCount > 0 ? <span className="ml-0.5 px-1 rounded bg-rose-100 text-rose-700 font-bold" title="Unreplied past SLA (24h for low scores, 72h otherwise)">{overdueCount}</span> : null)}
             {subTab('replied', 'Replied', replied.length)}
-            {subTab('unmapped', 'Not synced', unmapped.length, 'Reviews on listings not connected to their channel — can’t be replied to, and never count toward scores')}
+            {subTab('unmapped', 'Not counted', unmapped.length, 'Reviews that cannot be replied to and never count toward scores: the listing is not connected to its channel, is no longer active, or the review was left on a channel listing that has since been replaced')}
             {subTab('dismissed', 'Dismissed', dismissedList.length, 'Cleared as no-reply-needed — off the list but still counted in scores. Undo moves one back.')}
           </div>
+        )}
+        {/* THE RUN. One review in focus, its draft already written, one key or tap each. */}
+        {view === 'needs' && !s.loading && needs.length > 0 && (
+          <button onClick={() => (flow ? setFlow(false) : startFlow())}
+            title={flow ? 'Stop the run (Esc)' : 'Work the queue one review at a time: the draft is written for you, then Approve, Edit or Skip'}
+            className={'inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg ' + (flow ? 'border border-line bg-white text-ink hover:bg-app' : 'bg-brand-600 text-white hover:bg-brand-700')}>
+            {flow ? <><XCircle size={12} /> Stop</> : <><Play size={12} /> Start replying</>}
+          </button>
         )}
         <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search unit, building, owner, channel"
           title="e.g. Capri, 214, airbnb"
@@ -396,7 +564,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
           <IconBtn title={sortDir === 'desc' ? 'Ties: high to low rating — click for low to high' : 'Ties: low to high rating — click for high to low'} onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}>
             {sortDir === 'desc' ? <ArrowDownWideNarrow size={14} /> : <ArrowUpNarrowWide size={14} />}
           </IconBtn>
-          <button onClick={draftAllAI} disabled={allAi} title="Write an AI draft for every review in the queue (about 5 a minute)"
+          <button onClick={draftAllAI} disabled={allAi || draftedCount === needs.length} title="Write an AI draft for every review in the queue that does not have one yet"
             className={`${btn2} text-brand-700 border-brand-200 bg-brand-50 hover:bg-brand-100`}>
             <Sparkles size={12} /> {allAi ? 'Drafting…' : 'Draft all'}
           </button>
@@ -410,6 +578,13 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
           <RefreshCw size={13} className={s.loading ? 'animate-spin' : ''} />
         </IconBtn>
       </div>
+      {flow && view === 'needs' && needs.length > 0 && (
+        <p className="text-[11.5px] text-muted mb-2 px-1">
+          <span className="font-semibold text-ink tabular-nums">{curIdx >= 0 ? curIdx + 1 : 1} of {needs.length}</span>
+          <span className="hidden sm:inline"> · <kbd className="font-semibold text-ink">A</kbd> approve &amp; post · <kbd className="font-semibold text-ink">E</kbd> edit · <kbd className="font-semibold text-ink">S</kbd> skip · <kbd className="font-semibold text-ink">R</kbd> rewrite · <kbd className="font-semibold text-ink">D</kbd> no reply needed · <kbd className="font-semibold text-ink">Esc</kbd> stop</span>
+          <span className="sm:hidden"> · the draft is written for you — approve, edit or skip</span>
+        </p>
+      )}
       {err && <p className="text-[12px] text-rose-700 mb-2">{err}</p>}
       {note && <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 flex items-center gap-2"><span className="flex-1">{note}</span><button onClick={() => setNote(null)} className="text-amber-700 hover:text-amber-900 font-semibold">OK</button></p>}
 
@@ -457,7 +632,8 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
                     )}
                     {/* A reply does not fix a dirty unit. On a low review the follow-up matters MORE
                         once the public answer is out — but only where the score warrants it. */}
-                    {isLow(r.rating) && <ReviewFollowUp r={r} />}
+                    {isLow(r.rating, r.channel) && <LowPlaybook r={r} replied />}
+                    {isLow(r.rating, r.channel) && <ReviewFollowUp r={r} />}
                   </div>
                 )}
               </li>
@@ -465,14 +641,14 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
           </LeanList>
         )
       ) : view === 'unmapped' ? (
-        unmapped.length === 0 ? <LeanEmpty>No unsynced listings — everything is connected.</LeanEmpty> : (
+        unmapped.length === 0 ? <LeanEmpty>Nothing here — every review is on a live, connected listing.</LeanEmpty> : (
           <LeanList>
             {unmapped.map(r => (
               <li key={r.id} className="bg-slate-50/40">
                 <div className="px-3 sm:px-4 py-2 space-y-1">
                   {head(r, <>
-                    <Tag tone="rose" title="The listing is not connected to its channel, so there is nothing to reply through">Can&rsquo;t reply</Tag>
-                    <Tag title="Excluded from health and OTA scores, positive or negative">{r.reason || 'Not synced'}</Tag>
+                    <Tag tone="rose" title="There is no live public page for this review to be answered on">Can&rsquo;t reply</Tag>
+                    <Tag title="Shown for the record; excluded from health and OTA scores, positive or negative">{r.reason || 'Not synced'}</Tag>
                   </>)}
                   {text(r)}
                 </div>
@@ -509,69 +685,111 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
       ) : (
         <LeanList>
           {needs.map(r => {
-            const hasDraft = !!(drafts[r.id] || '').trim()
+            const draftText = drafts[r.id] ?? ''
+            const hasDraft = !!draftText.trim()
             const sla = slaState(r)
             const busy = !!aiBusy[r.id] || !!rowBusy[r.id]
+            const focused = flow && curId === r.id
+            const low = isLow(r.rating, r.channel)
+            const flags = hasDraft ? lintReply(draftText, r) : []
+            const showBox = hasDraft || !!aiBusy[r.id] || !!more[r.id] || focused
             return (
-              <li key={r.id} className={selected[r.id] ? 'bg-brand-50/60' : ''}>
-                <div className="flex items-start gap-2.5 px-3 sm:px-4 py-2">
-                  <IconBtn title={selected[r.id] ? 'Unselect' : 'Select for bulk posting'} tone={selected[r.id] ? 'brand' : undefined}
-                    onClick={() => setSelected(sel => ({ ...sel, [r.id]: !sel[r.id] }))}>
-                    {selected[r.id] ? <CheckSquare size={14} /> : <Square size={14} />}
-                  </IconBtn>
-                  <div className="flex-1 min-w-0 space-y-1">
-                    {/* Reply-due clock — the queue is ordered by it, so it belongs on the row. */}
-                    {head(r, sla ? <Tag tone={sla.tone} title="Reply due within 24h for a low score, 72h otherwise">{sla.label}</Tag> : null)}
-                    {text(r)}
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end">
-                    {hasDraft ? (
-                      <button onClick={() => post(r)} disabled={rowBusy[r.id] || bulkBusy} title={'Posts publicly to ' + (r.channel || 'the channel') + ' via Guesty'}
-                        className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
-                        <Send size={12} /> {rowBusy[r.id] ? 'Posting…' : 'Approve & post'}
-                      </button>
-                    ) : (
-                      <button onClick={() => rewriteAI(r)} disabled={busy} title="Write a reply with AI — you review it before anything posts"
-                        className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
-                        <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Draft reply'}
-                      </button>
+              <li key={r.id} id={'rv-' + r.id}
+                className={focused ? 'bg-brand-50/40 ring-2 ring-inset ring-brand-300' : selected[r.id] ? 'bg-brand-50/60' : ''}>
+                {/* On a phone the actions sit on their own line under the review, not beside it. */}
+                <div className="flex flex-col sm:flex-row sm:items-start gap-1.5 sm:gap-2.5 px-3 sm:px-4 py-2">
+                  <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                    {!flow && (
+                      <IconBtn title={selected[r.id] ? 'Unselect' : 'Select for bulk posting'} tone={selected[r.id] ? 'brand' : undefined}
+                        onClick={() => setSelected(sel => ({ ...sel, [r.id]: !sel[r.id] }))}>
+                        {selected[r.id] ? <CheckSquare size={14} /> : <Square size={14} />}
+                      </IconBtn>
                     )}
-                    {moreBtn(r)}
+                    <div className="flex-1 min-w-0 space-y-1" onClick={() => { if (flow && !focused) setCur(r.id) }}>
+                      {/* Reply-due clock — the queue is ordered by it, so it belongs on the row. */}
+                      {head(r, <>
+                        {sla ? <Tag tone={sla.tone} title="Reply due within 24h for a low score, 72h otherwise">{sla.label}</Tag> : null}
+                        {windowTag(r)}
+                      </>)}
+                      {text(r)}
+                    </div>
                   </div>
+                  {!focused && (
+                    <div className="flex items-center gap-1 shrink-0 justify-end">
+                      {hasDraft ? (
+                        <button onClick={() => post(r)} disabled={rowBusy[r.id] || bulkBusy} title={'Posts publicly to ' + (r.channel || 'the channel') + ' via Guesty'}
+                          className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 sm:py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                          <Send size={12} /> {rowBusy[r.id] ? 'Posting…' : 'Approve & post'}
+                        </button>
+                      ) : (
+                        <button onClick={() => rewriteAI(r)} disabled={busy} title="Write a reply with AI — you review it before anything posts"
+                          className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 sm:py-1 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                          <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Draft reply'}
+                        </button>
+                      )}
+                      {moreBtn(r)}
+                    </div>
+                  )}
                 </div>
 
-                {(hasDraft || aiBusy[r.id] || more[r.id]) && (
-                  <div className="px-3 sm:px-4 pb-2">
-                    <textarea value={drafts[r.id] ?? ''} onChange={e => setDraft(r.id, e.target.value)} rows={3}
-                      placeholder={aiBusy[r.id] ? 'Writing the AI reply…' : 'Type a reply, or hit Draft reply.'}
-                      className="w-full text-[12px] text-ink bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                {showBox && (
+                  <div className="px-3 sm:px-4 pb-2 space-y-1.5">
+                    <textarea id={'rv-ta-' + r.id} value={draftText} onChange={e => setDraft(r.id, e.target.value)} rows={focused ? 4 : 3}
+                      onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); approveCur(r, false) } }}
+                      placeholder={aiBusy[r.id] ? 'Writing the reply…' : 'Type a reply, or hit Draft reply.'}
+                      className="w-full text-[13px] sm:text-[12.5px] leading-relaxed text-ink bg-white border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                    {flags.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <ShieldAlert size={12} className="text-amber-600 shrink-0" />
+                        {flags.map(f => <Tag key={f.key} tone={f.block ? 'rose' : 'amber'} title={f.block ? 'Read this before it goes public — the A key will not post it' : 'Worth a second look before it goes public'}>{f.label}</Tag>)}
+                      </div>
+                    )}
+                    {focused && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button onClick={() => approveCur(r, false)} disabled={!hasDraft || busy || bulkBusy} title={'Posts publicly to ' + (r.channel || 'the channel') + ' via Guesty, then moves to the next review (A)'}
+                          className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold px-4 py-2.5 sm:py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-50">
+                          <Send size={13} /> {rowBusy[r.id] ? 'Posting…' : aiBusy[r.id] ? 'Writing…' : 'Approve & post'}
+                        </button>
+                        <button onClick={() => focusBox(r.id)} title="Change the wording (E)"
+                          className="inline-flex items-center justify-center gap-1 text-[13px] font-semibold px-3 py-2.5 sm:py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app">
+                          <Pencil size={13} /> Edit
+                        </button>
+                        <button onClick={() => setCur(neighbour(r.id, 1, false))} title="Leave it in the queue and move on (S)"
+                          className="inline-flex items-center justify-center gap-1 text-[13px] font-semibold px-3 py-2.5 sm:py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app">
+                          <SkipForward size={13} /> Skip
+                        </button>
+                        {moreBtn(r)}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {more[r.id] && (
+                {(more[r.id] || (focused && low)) && (
                   <div className="px-3 sm:px-4 pb-3 space-y-2">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      {hasDraft && (
-                        <button onClick={() => rewriteAI(r)} disabled={busy} className={`${btn2} text-brand-700 border-brand-200 bg-brand-50 hover:bg-brand-100`}>
-                          <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
+                    {more[r.id] && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {hasDraft && (
+                          <button onClick={() => rewriteAI(r)} disabled={busy} className={`${btn2} text-brand-700 border-brand-200 bg-brand-50 hover:bg-brand-100`}>
+                            <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
+                          </button>
+                        )}
+                        <button onClick={() => { const i = window.prompt('How should the AI adjust this reply? (e.g. warmer, shorter, more professional, or: let them know we resolved the issue)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
+                          disabled={busy} className={`${btn2} text-muted border-line hover:bg-app`}>
+                          Rephrase…
                         </button>
-                      )}
-                      <button onClick={() => { const i = window.prompt('How should the AI adjust this reply? (e.g. warmer, shorter, more professional, or: let them know we resolved the issue)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
-                        disabled={busy} className={`${btn2} text-muted border-line hover:bg-app`}>
-                        Rephrase…
-                      </button>
-                      <button onClick={() => doResearch(r)} disabled={busy}
-                        title="Check what our ops systems show was actually completed at this property, then draft a reply that can say so with confidence"
-                        className={`${btn2} text-muted border-line hover:bg-app`}>
-                        {research[r.id]?.loading ? 'Checking…' : research[r.id]?.open ? 'Hide research' : 'Research'}
-                      </button>
-                      <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
-                        className={`${btn2} text-muted border-line hover:bg-app`}>
-                        <XCircle size={12} /> Dismiss
-                      </button>
-                      {removedBtn(r, rowBusy[r.id])}
-                    </div>
-                    {research[r.id]?.open && !research[r.id]?.loading && (
+                        <button onClick={() => doResearch(r)} disabled={busy}
+                          title="Check what our ops systems show was actually completed at this property, then draft a reply that can say so with confidence"
+                          className={`${btn2} text-muted border-line hover:bg-app`}>
+                          {research[r.id]?.loading ? 'Checking…' : research[r.id]?.open ? 'Hide research' : 'Research'}
+                        </button>
+                        <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
+                          className={`${btn2} text-muted border-line hover:bg-app`}>
+                          <XCircle size={12} /> Dismiss
+                        </button>
+                        {removedBtn(r, rowBusy[r.id])}
+                      </div>
+                    )}
+                    {more[r.id] && research[r.id]?.open && !research[r.id]?.loading && (
                       <div className="rounded-lg border border-line bg-app/60 p-2.5">
                         {research[r.id]?.evidence ? (
                           <>
@@ -587,6 +805,8 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
                         )}
                       </div>
                     )}
+                    {low && <LowPlaybook r={r} />}
+                    {!low && r.privateFeedback ? <PrivateNote text={r.privateFeedback} /> : null}
                     <ReviewFollowUp r={r} />
                   </div>
                 )}
@@ -596,6 +816,171 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
         </LeanList>
       )}
     </section>
+  )
+}
+
+// What the guest told only us. Read it, act on it, never answer it in public.
+function PrivateNote({ text }: { text: string }) {
+  return (
+    <div className="rounded-lg border border-violet-200 bg-violet-50/60 px-2.5 py-1.5">
+      <div className="text-[10px] uppercase tracking-wider font-semibold text-violet-700 inline-flex items-center gap-1"><Lock size={10} /> Private feedback — told only to us, never quote it publicly</div>
+      <p className="text-[12px] text-ink whitespace-pre-wrap leading-relaxed mt-0.5">{text}</p>
+    </div>
+  )
+}
+
+// ── THE LOW-STAR PLAYBOOK, ON THE ROW ─────────────────────────────────────────────────────────────
+// A 1–3 star review is four questions, and they used to live on four pages: what went wrong, is
+// anyone already on it, what do we do next, and can the review be challenged. The first and last are
+// read off the review itself (lib/review-playbook, instantly); the middle two are one read of our own
+// systems (/api/reviews/playbook). Every draft here — the removal request, the private note — is text
+// for a person to copy and send themselves. Nothing leaves Lighthouse from this panel.
+type PlaybookData = { signOff: string; stay: { checkIn: string; checkOut: string } | null; ops: OpsState; score: { channel: string; n: number; onOldListing: number; display: number; scale: number; holds: string | null; next: string | null; fivesToNext: number | null; lowsToDrop: number | null; risk: string | null } | null }
+
+function LowPlaybook({ r, replied }: { r: Review; replied?: boolean }) {
+  const [d, setD] = useState<PlaybookData | null>(null)
+  const [state, setState] = useState<'loading' | 'ok' | 'err'>('loading')
+  const [pane, setPane] = useState<'' | 'removal' | 'note'>('')
+  const [removalText, setRemovalText] = useState('')
+  const [noteText, setNoteText] = useState('')
+  const [copied, setCopied] = useState('')
+
+  useEffect(() => {
+    let live = true
+    setState('loading')
+    fetch('/api/reviews/playbook?reviewId=' + encodeURIComponent(r.id), { cache: 'no-store' })
+      .then(x => x.json())
+      .then(j => { if (!live) return; if (j && j.ok) { setD(j as PlaybookData); setState('ok') } else setState('err') })
+      .catch(() => { if (live) setState('err') })
+    return () => { live = false }
+  }, [r.id])
+
+  const pr: PlaybookReview = {
+    rating: r.rating, content: r.content, channel: r.channel, guest: r.guest, listing_name: r.listing_name, created_at: r.created_at,
+    privateFeedback: r.privateFeedback || null,
+    categories: (r.categories || []).map(c => ({ key: c.key, label: c.label, rating: c.rating, comment: c.comment })),
+  }
+  const causes = rootCausesOf(pr)
+  const grounds = removalGrounds(pr)
+  const ops: OpsState = { ...(d ? d.ops : {}), replied: !!replied || r.hasReply }
+  const steps = recoverySteps(pr, causes, ops, grounds)
+  const path = removalPath(r.channel)
+  const cats = r.categories || []
+
+  const openPane = (p: 'removal' | 'note') => {
+    if (pane === p) { setPane(''); return }
+    if (p === 'removal' && !removalText) setRemovalText(removalDraft(pr, grounds))
+    if (p === 'note' && !noteText) setNoteText(guestNoteDraft(pr, causes, d ? d.signOff : 'Stay Hospitality'))
+    setPane(p)
+  }
+  const copy = async (what: string, textToCopy: string) => {
+    try { await navigator.clipboard.writeText(textToCopy); setCopied(what); setTimeout(() => setCopied(''), 2200) } catch { setCopied('') }
+  }
+  const lbl = 'text-[10px] uppercase tracking-wider font-semibold text-muted'
+  const btn = 'inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app'
+
+  return (
+    <div className="rounded-xl border border-rose-200/70 bg-rose-50/30 p-2.5 space-y-2">
+      {/* WHAT WENT WRONG */}
+      <div>
+        <div className={lbl}>What went wrong</div>
+        {causes.length === 0 && cats.length === 0 ? (
+          <p className="text-[12px] text-muted">The guest named nothing specific — the walk is how we find what earned the score.</p>
+        ) : (
+          <ul className="mt-0.5 space-y-1">
+            {causes.map(c => (
+              <li key={c.key} className="text-[12px] text-ink">
+                <span className="font-semibold capitalize">{c.label}</span>{' '}
+                <Tag tone={c.owner === 'maintenance' ? 'amber' : c.owner === 'clean' ? 'sky' : c.owner === 'inspection' ? 'violet' : 'slate'} title="Who owns fixing it">{c.owner}</Tag>
+                {c.source === 'private' ? <> <Tag tone="violet" title="From the private feedback — do not repeat it publicly">private</Tag></> : null}
+                {c.quote ? <span className="text-muted"> — “{c.quote}”</span> : null}
+                <div className="text-[11.5px] text-muted">{c.action}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {cats.length > 0 && (
+          <div className="flex items-center gap-1 flex-wrap mt-1">
+            {cats.map(c => <Tag key={c.key} tone={c.rating <= 3 ? 'rose' : c.rating < 5 ? 'amber' : 'slate'} title={c.comment ? '“' + c.comment + '”' : c.label + ' — the guest’s own category score'}>{c.label} {c.rating}</Tag>)}
+          </div>
+        )}
+      </div>
+
+      {r.privateFeedback ? <PrivateNote text={r.privateFeedback} /> : null}
+
+      {/* WHAT TO DO — each line true of this review */}
+      <div>
+        <div className={lbl}>Recovery {state === 'loading' ? '· checking tasks and inspections…' : state === 'err' ? '· could not read tasks — the steps below assume nothing is open' : ''}</div>
+        <ul className="mt-0.5 space-y-0.5">
+          {steps.map(st => (
+            <li key={st.key} className="flex items-start gap-1.5 text-[12px] text-ink">
+              {st.done ? <Check size={12} className="text-emerald-600 shrink-0 mt-0.5" /> : <Circle size={11} className="text-muted shrink-0 mt-0.5" />}
+              <span className={st.done ? 'text-muted' : ''}>{st.text}</span>
+            </li>
+          ))}
+        </ul>
+        {d && (d.ops.openTasks || []).length > 0 && (
+          <div className="flex items-center gap-1 flex-wrap mt-1">
+            {(d.ops.openTasks || []).slice(0, 4).map(t => (
+              <a key={t.id} href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" title={(t.dept ? t.dept + ' · ' : '') + 'opens in Breezeway'}
+                className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-white text-ink hover:bg-app max-w-full">
+                <span className="truncate max-w-[14rem]">{t.name}</span>{t.date ? <span className="text-muted">{t.date.slice(5)}</span> : null}<ExternalLink size={10} className="text-muted shrink-0" />
+              </a>
+            ))}
+          </div>
+        )}
+        {d && d.score && (
+          <p className="text-[11.5px] text-muted mt-1">
+            <span className="font-semibold text-ink">{d.score.channel} {d.score.display}{d.score.scale === 10 ? '/10' : ''}</span> on {d.score.n} review{d.score.n === 1 ? '' : 's'}
+            {d.score.onOldListing ? ' (' + d.score.onOldListing + ' more on a replaced listing, not counted)' : ''}
+            {d.score.risk ? ' — ' + d.score.risk + '.' : d.score.holds ? ' — holding ' + d.score.holds + '.' : '.'}
+          </p>
+        )}
+      </div>
+
+      {/* CAN IT BE CHALLENGED? */}
+      <div>
+        <div className={lbl}>Removal request</div>
+        {grounds.length ? (
+          <ul className="mt-0.5 space-y-1">
+            {grounds.map(g => (
+              <li key={g.key} className="text-[12px] text-ink">
+                <span className="font-semibold">{g.label}</span>{' '}
+                <Tag tone={g.strength === 'worth filing' ? 'emerald' : 'amber'} title={g.strength === 'worth filing' ? 'The review itself is the evidence' : 'Holds only with the evidence named here'}>{g.strength}</Tag>
+                <div className="text-[11.5px] text-muted">Needs: {g.evidence}</div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[12px] text-muted">Nothing in the wording points at a policy breach. A low score on a fair complaint is not removable — the reply and the fix are the answer.</p>
+        )}
+        <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+          <button onClick={() => openPane('removal')} className={btn}>{grounds.length ? 'Draft the removal request' : 'Draft one anyway'}</button>
+          <button onClick={() => openPane('note')} className={btn}>Private note to the guest</button>
+          {copied && <span className="text-[11px] font-semibold text-emerald-700">Copied — {copied}</span>}
+        </div>
+        {pane === 'removal' && (
+          <div className="mt-1.5">
+            <textarea value={removalText} onChange={e => setRemovalText(e.target.value)} rows={10}
+              className="w-full text-[12px] text-ink bg-white border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              <button onClick={() => copy('paste it into the channel’s form', removalText)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white">Copy</button>
+              <span className="text-[11px] text-muted flex-1 min-w-[12rem]">A draft for a person to complete and submit — Lighthouse sends nothing. File it at: {path.where}{d && d.stay && d.stay.checkIn ? ' Stay: ' + d.stay.checkIn + ' to ' + d.stay.checkOut + '.' : ''}</span>
+            </div>
+          </div>
+        )}
+        {pane === 'note' && (
+          <div className="mt-1.5">
+            <textarea value={noteText} onChange={e => setNoteText(e.target.value)} rows={7}
+              className="w-full text-[12px] text-ink bg-white border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              <button onClick={() => copy('send it from the inbox', noteText)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white">Copy</button>
+              <span className="text-[11px] text-muted flex-1 min-w-[12rem]">Not sent from here — paste it into the guest’s thread if you want it to go. Never ask for the review to be changed and never offer anything for it.</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 

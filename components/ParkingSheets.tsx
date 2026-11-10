@@ -27,7 +27,7 @@ export function Pick<T extends string>({ value, options, onChange, disabled, sma
     <div className="flex items-center gap-1 flex-wrap">
       {options.map(o => (
         <button key={o.value} type="button" disabled={disabled || o.off} title={o.hint} onClick={() => onChange(o.value)} aria-pressed={value === o.value}
-          className={`${small ? 'text-[11px] px-2 py-0.5' : 'text-[12px] px-2.5 py-1'} font-semibold rounded-full border disabled:opacity-40 disabled:cursor-not-allowed ${value === o.value ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{o.label}</button>
+          className={`${small ? 'text-[11.5px] px-2.5 min-h-[32px]' : 'text-[12.5px] px-3 min-h-[36px]'} font-semibold rounded-full border disabled:opacity-40 disabled:cursor-not-allowed ${value === o.value ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{o.label}</button>
       ))}
     </div>
   )
@@ -207,10 +207,10 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
     <Sheet open={open} onClose={onClose} title={existing ? `Parking · ${name}` : 'Add parking'} wide
       subtitle={<>{lot.name} · {lot.rateCents > 0 ? `${cents(lot.rateCents, lot.currency)} a night` : 'parking included, one space per reservation'} · held spots are never sold</>}
       footer={
-        <div className="flex items-center gap-2">
-          {existing && canFull && <button type="button" onClick={del} disabled={busy} className="text-[12px] font-semibold text-rose-700 hover:underline mr-auto">Delete</button>}
+        <div className="flex items-center gap-2 flex-wrap">
+          {existing && canFull && <button type="button" onClick={del} disabled={busy} className="text-[12px] font-semibold text-muted hover:text-rose-700 hover:underline mr-auto py-2">Delete</button>}
           {err && <span className="text-[12px] text-rose-700 inline-flex items-center gap-1 mr-auto"><AlertTriangle size={13} /> {err}</span>}
-          <button type="button" onClick={onClose} className="text-[12.5px] font-semibold text-muted hover:text-ink px-3 py-2">Cancel</button>
+          <button type="button" onClick={onClose} className="text-[12.5px] font-semibold text-muted hover:text-ink px-3 py-2 ml-auto">Cancel</button>
           <button type="button" onClick={save} disabled={busy || !spotId} className="rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-4 py-2 disabled:opacity-50 inline-flex items-center gap-1.5">{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {existing ? 'Save' : 'Book the spot'}</button>
         </div>
       }>
@@ -226,12 +226,12 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
         {kind === 'guest' && (
           <div>
             {stay ? (
-              <div className="flex items-center gap-2 rounded-xl border border-line bg-app px-3 py-2 text-[13px]">
+              <div className="flex items-center gap-x-2 gap-y-1 flex-wrap rounded-xl border border-line bg-app px-3 py-2 text-[13px]">
                 <span className="font-semibold text-ink">{stay.guest}</span>
                 {stay.unit && <span className="text-muted">· {stay.unit}</span>}
                 {stay.phone && <span className="text-muted">· {stay.phone}</span>}
                 {stay.id ? <Tag tone="emerald">Guesty stay</Tag> : <Tag>no stay attached</Tag>}
-                <button type="button" onClick={() => setStay(null)} title="Pick someone else" className="ml-auto text-muted hover:text-ink"><X size={14} /></button>
+                <button type="button" onClick={() => setStay(null)} title="Pick someone else" aria-label="Pick someone else" className="ml-auto -my-1 -mr-1.5 p-2 text-muted hover:text-ink"><X size={14} /></button>
               </div>
             ) : (
               <div>
@@ -245,7 +245,7 @@ export function BookingSheet({ open, onClose, lot, spots, bookings, draft, canFu
                   {(hits || []).slice(0, 40).map(s => {
                     const has = bookings.filter(b => b.reservationId === s.id && (b.status === 'reserved' || b.status === 'parked'))
                     return (
-                      <button key={s.id} type="button" onClick={() => pickStay(s)} className="w-full text-left px-3 py-1.5 text-[12.5px] hover:bg-app flex items-center gap-2 flex-wrap">
+                      <button key={s.id} type="button" onClick={() => pickStay(s)} className="w-full text-left px-3 py-2 min-h-[40px] text-[12.5px] hover:bg-app flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-ink">{s.guest}</span>
                         <span className="text-muted">{s.unit} · {dayShort(s.checkIn)} → {dayShort(s.checkOut)} · {s.nights}n</span>
                         {s.checkIn <= today && today < s.checkOut && <Tag tone="emerald">in house</Tag>}
@@ -304,7 +304,8 @@ export function NoticeSheet({ open, onClose, lot, incident, publicCode, publicPa
   open: boolean; onClose: () => void; lot: Pick<Lot, 'id' | 'name' | 'building' | 'noticeMinutes'>; incident: Incident | null
   /** When set, the sheet talks to the public lot route (the staff link) instead of /api/lots. */
   publicCode?: string; publicPass?: string; staffName?: string
-  onSent: (inc: Incident, sent: number, failed: number) => void
+  /** `warning` is set when the guests got the message but our own record of it could not be saved. */
+  onSent: (inc: Incident, sent: number, failed: number, warning?: string) => void
 }) {
   const [text, setText] = useState('')
   const [recipients, setRecipients] = useState<number | null>(null)
@@ -332,7 +333,7 @@ export function NoticeSheet({ open, onClose, lot, incident, publicCode, publicPa
     setBusy(true); setErr(null)
     try {
       const j = await call({ action: 'incident.notify', incidentId: incident.id, text, groupIds: group.map(g => g.id) })
-      onSent(j.incident, j.sent, j.failed)
+      onSent(j.incident, j.sent, j.failed, j.warning || undefined)
       onClose()
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(false) }
   }
@@ -342,7 +343,7 @@ export function NoticeSheet({ open, onClose, lot, incident, publicCode, publicPa
     <Sheet open={open} onClose={onClose} title={already ? 'Send the notice again' : 'Send the 1-hour notice'}
       subtitle={<>{carLabel(incident)}{incident.plate ? ` · ${incident.plate}` : ''}{incident.spotLabel ? ` · spot ${incident.spotLabel}` : ''} — goes to every guest in house at {lot.building} through their Guesty thread</>}
       footer={
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {err && <span className="text-[12px] text-rose-700 inline-flex items-center gap-1 mr-auto"><AlertTriangle size={13} /> {err}</span>}
           <button type="button" onClick={onClose} className="text-[12.5px] font-semibold text-muted hover:text-ink px-3 py-2 ml-auto">Cancel</button>
           <button type="button" onClick={send} disabled={busy || !text.trim() || !recipients} className="rounded-lg bg-rose-600 text-white text-[12.5px] font-semibold px-4 py-2 disabled:opacity-50 inline-flex items-center gap-1.5">{busy ? <Loader2 size={13} className="animate-spin" /> : null} Send to {recipients ?? '…'} {recipients === 1 ? 'guest' : 'guests'}</button>

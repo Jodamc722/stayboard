@@ -94,10 +94,15 @@ export function ProjectionsBoard() {
     if (!quiet) { setLoading(true); setErr(null) }
     try {
       const r = await fetch('/api/projections', { cache: 'no-store' })
-      const j = await r.json()
-      if (!r.ok || !j.ok) throw new Error(j.error || 'Load failed')
+      const j = await r.json().catch(() => null)
+      if (!r.ok || !j || !j.ok) throw new Error((j && (j.message || j.error)) || (r.status === 504 ? 'The projection took too long to build — press Refresh.' : 'The projection did not load (' + r.status + ').'))
       setData(j)
-    } catch (e: any) { if (!quiet) setErr(String(e?.message || e)) }
+      if (quiet) setErr(null)
+    } catch (e: any) {
+      // A quiet reload runs right after a save. If it fails the edit IS saved but the totals on
+      // screen are the old ones — say so, rather than leave stale numbers looking current.
+      setErr(quiet ? 'Saved, but the board did not refresh — the totals below are from before your last edit. Press Refresh.' : String(e?.message || e))
+    }
     if (!quiet) setLoading(false)
   }, [])
   useEffect(() => { load() }, [load])
@@ -152,9 +157,11 @@ export function ProjectionsBoard() {
             Net owner revenue for next season ({seasonLabel}) — baseline is the same month last year, adjusted by the market outlook; every month is editable per unit.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {saving ? <span className="text-[12px] text-muted">Saving…</span>
-            : data.updatedAt ? <span className="text-[11.5px] text-muted">assumptions saved {String(data.updatedAt).slice(0, 10)}{data.updatedBy ? ' · ' + data.updatedBy : ''}</span> : null}
+            : data.updatedAt ? <span className="text-[11.5px] text-muted">assumptions saved {new Date(String(data.updatedAt)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}{data.updatedBy ? ' · ' + data.updatedBy : ''}</span> : null}
+          <a href="/reports" title="Owner Reports → New report → Season projection builds the owner-facing version of these numbers"
+            className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft text-ink hover:border-ink/30">Make an owner report →</a>
           <button onClick={() => load()} className="rounded-xl border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold shadow-soft inline-flex items-center gap-1.5">
             <RefreshCw className={'w-3.5 h-3.5 ' + (loading ? 'animate-spin' : '')} /> Refresh
           </button>
@@ -165,7 +172,7 @@ export function ProjectionsBoard() {
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Kpi label="Net owner revenue" value={money0(data.combined.net)} sub={'combined · ' + seasonLabel} />
-        <Kpi label="Gross accommodation" value={money0(data.combined.gross)} sub="net of channel, before mgmt fee" />
+        <Kpi label="Accommodation revenue" value={money0(data.combined.gross)} sub="after channel fees, before the mgmt fee" />
         <Kpi label="Projected nights" value={data.combined.nights.toLocaleString()} sub={avgOcc + '% portfolio occupancy'} />
         <Kpi label="Management fee" value={data.mgmtPct + '%'} sub="default — override per building below" />
       </div>

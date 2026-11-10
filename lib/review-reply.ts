@@ -57,9 +57,11 @@ export async function postReviewReply(reviewId: string, reviewReply: string): Pr
   try {
     const { data: rv } = await sb.from('guesty_reviews').select('listing_id').eq('id', id).maybeSingle()
     if (rv?.listing_id) {
-      const { data: l } = await sb.from('guesty_listings').select('nickname,title,building').eq('id', rv.listing_id).maybeSingle()
+      // The city is read too (2026-11-09): a Boynton Beach home whose nickname does not say "Boynton"
+      // is still Vanessa & Taylor's, and must never post under the company name.
+      const { data: l } = await sb.from('guesty_listings').select('nickname,title,building,address_city').eq('id', rv.listing_id).maybeSingle()
       const { hostVoiceFor, applyHostVoice } = await import('./host-voice')
-      const hv = l ? hostVoiceFor(l.nickname, l.title, l.building) : null
+      const hv = l ? hostVoiceFor(l.nickname, l.title, l.building, l.address_city) : null
       if (hv) text = applyHostVoice(text, hv, 'review')
     }
   } catch { /* posts as written */ }

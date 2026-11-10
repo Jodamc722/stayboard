@@ -37,6 +37,8 @@ import { ratingToStars } from '@/lib/optimize-score'
 import { isFiveStarReview, isLowReview, clearsRecovery } from '@/lib/review-scale'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { pageRows } from '@/lib/db-page'
+import { isCurrentChannelReview } from '@/lib/channel-current-review'
+import { standingOf, riskOf, linesFor, inChannelScale } from '@/lib/review-thresholds'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -203,7 +205,7 @@ function replyMinutes(raw: any): number | null {
 // fresh review shows within a minute of landing, not five.
 const cachedBuild = unstable_cache(
   async (qs: string, canSeeCleaners: boolean) => build(new URLSearchParams(qs), canSeeCleaners),
-  ['reviews-kpi-v1'], { tags: ['reviews'], revalidate: 300 },
+  ['reviews-kpi-v2'], { tags: ['reviews'], revalidate: 300 },
 )
 
 export async function GET(req: NextRequest) {
@@ -269,6 +271,17 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     }
     throw new Error('the ' + table + ' scan stopped early — more rows than the page budget')
   }
+  // THE LIFETIME PASS ALSO CARRIES THE CHANNEL'S OWN LISTING ID (2026-11-09), as JSON paths so the
+  // raw payload stays in the database. That id is how a review left on a since-replaced Airbnb
+  // listing is kept out of the PUBLISHED score (lib/channel-current-review). If the database refuses
+  // the paths, the pass runs without them and every review counts as before — never a failed page.
+  const LIFE_BASE = 'id,listing_id,rating,channel,created_at'
+  const LIFE_IDS = ',ext:raw->>externalListingId,ext2:raw->>external_listing_id,rl:raw->rawReview->>listing_id,rl2:raw->rawReview->>listingId,rl3:raw->rawReview->>external_listing_id'
+  const lifeApply = (q: any) => q.eq('excluded_from_score', false).order('created_at', { ascending: false }).order('id')
+  const lifeRead = async (): Promise<any[]> => {
+    try { return await page('guesty_reviews', LIFE_BASE + LIFE_IDS, lifeApply, 20) }
+    catch { return await page('guesty_reviews', LIFE_BASE, lifeApply, 20) }
+  }
   const [reviewRows, lRes, ownerRows, stayRows, lifeRows] = await Promise.all([
     page('guesty_reviews', 'id,listing_id,rating,content,channel,guest_name,created_at,has_reply,dismissed,excluded_from_score,raw',
       // EXCLUDED MEANS EXCLUDED. A review the app has told the user is "excluded from your average
@@ -294,8 +307,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     // THE LISTING SCORE (2026-08-06, Jon). The number a guest sees on the live Airbnb / Booking /
     // Vrbo page is the listing's LIFETIME average on that channel — not our 90-day window. So this
     // pass is deliberately unwindowed: every synced review, ever, per listing per channel.
-    page('guesty_reviews', 'id,listing_id,rating,channel,created_at',
-      q => q.eq('excluded_from_score', false).order('created_at', { ascending: false }).order('id'), 20),
+    lifeRead(),
   ])
   const rRes = { data: reviewRows }
   const resRes = { data: stayRows }
@@ -331,7 +343,24 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       waves: bld.toLowerCase() === 'waves',
       ownerId: own ? own.id : '', ownerName: own ? own.name : 'Unassigned',
       urls: listingUrls(l.ints),
+      ints: Array.isArray(l.ints) ? l.ints : null,
     }
+  }
+  // IS THIS REVIEW ON THE LISTING THAT IS LIVE NOW? (Jon, 2026-11-09: "we recreated listings on
+  // Airbnb, so make sure the review score is the current score, not what you're pulling from
+  // Guesty".) Unknown on either side means yes — a review is never guessed away.
+  //
+  // WHERE IT IS APPLIED ON THIS PAGE, AND WHERE IT IS NOT:
+  //   applied  — the published per-channel score of a unit and a building (`ota`), the channel strip,
+  //              the at-risk list and its thresholds, and "waiting on a reply" (a replaced listing
+  //              has no public page to answer on).
+  //   not      — the window averages, par, complaints and recovery. Those measure how stays went,
+  //              and a stay on the old listing was still a stay in this unit; each unit row says how
+  //              many of its window reviews sit on a replaced listing.
+  const isLive = (lid: string, ch: string, reviewRaw: any): boolean => {
+    const li = lmap[lid]
+    if (!li || !li.ints) return true
+    try { return isCurrentChannelReview(reviewRaw, { integrations: li.ints }, ch) } catch { return true }
   }
   // Can a human actually reply to this review? Mirrors app/api/reviews/route.ts exactly:
   // an inactive/dead listing or a review the channel will not accept a response on is not
@@ -421,6 +450,11 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   const worstByUnit: Record<string, any> = {}
   const replyTimes: number[] = []
   let replied = 0, replyableN = 0
+  // REPLY KPIs (2026-11-09). Speed is only known where the channel stamps both ends (Airbnb's
+  // submitted_at / responded_at), so `replyTimes` is a sample and the page says how big.
+  let lowN = 0, lowReplied = 0, lowAwaiting = 0, oldestAwaitDays = 0
+  const retiredWin: Record<string, number> = {}
+  const catByBld: Record<string, Record<string, { n: number; sum: number }>> = {}
   // THE BREAKDOWN (2026-08-06, Jon: "break down of properties, units, etc"). Same numbers the
   // headline uses, kept per unit and per building so the page can show property → unit as a table
   // instead of two flat top-12 lists. `await*` uses the SAME replyable() rule as the headline, so a
@@ -431,7 +465,18 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   const chByUnit: Record<string, Record<string, Agg>> = {}
   // LIFETIME per-channel — the published listing score. Unwindowed on purpose (see listingUrls
   // above); the date filters on this page move the window numbers, never this one.
-  const lifeUnit: Record<string, Record<string, { n: number; sum: number; last: string }>> = {}
+  const lifeUnit: Record<string, Record<string, { n: number; sum: number; last: string; recent: number[] }>> = {}
+  // Reviews left on a replaced channel listing: kept, counted here, and out of the published score.
+  const retiredUnit: Record<string, Record<string, number>> = {}
+  const retiredCh: Record<string, number> = {}
+  // Per channel: this window against the one before it, and month by month — live listings only.
+  const chWin: Record<string, { n: number; sum: number; pn: number; psum: number }> = {}
+  const chMonth: Record<string, Record<string, { n: number; sum: number }>> = {}
+  // The last 365 days per channel across the WHOLE portfolio, replaced listings included: Superhost
+  // and Premier Host are judged on the host account, and a retired listing's reviews stay on it.
+  const acct: Record<string, { n: number; sum: number }> = {}
+  const yearAgo = addDays(today, -365)
+  const trendFrom = addDays(today, -185).slice(0, 7)
   const lifeBld: Record<string, Record<string, { n: number; sum: number; units: Set<string> }>> = {}
   // RECOVERY, without the wall of quotes. A unit is in recovery from its last review of 3 or under
   // (7/10 on Booking) until a genuinely good one lands after it — the same rule the welcome-call
@@ -445,14 +490,34 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     if (rating == null || rating <= 0) continue
     const lid = String(r.listing_id)
     const li = lmap[lid]
-    if (!li || !inScope(lid)) continue
+    if (!li) continue
     const ch = str(r.channel) || 'Other'
     const ts = str(r.created_at)
     const at = etDay(ts)
+    if (!li.waves && at >= yearAgo) { const ac = acct[ch] = acct[ch] || { n: 0, sum: 0 }; ac.n++; ac.sum += rating }
+    if (!inScope(lid)) continue
     ;(lifeByListing[lid] = lifeByListing[lid] || []).push({ rating, channel: ch, at, ts })
+    // Left on a listing the channel has since replaced: visible, labelled, not in the public score.
+    if (!isLive(lid, ch, { externalListingId: r.ext, external_listing_id: r.ext2, rawReview: { listing_id: r.rl, listingId: r.rl2, external_listing_id: r.rl3 } })) {
+      const ru = retiredUnit[lid] = retiredUnit[lid] || {}
+      ru[ch] = (ru[ch] || 0) + 1
+      retiredCh[ch] = (retiredCh[ch] || 0) + 1
+      continue
+    }
     const u = lifeUnit[lid] = lifeUnit[lid] || {}
-    const ue = u[ch] = u[ch] || { n: 0, sum: 0, last: '' }
+    const ue = u[ch] = u[ch] || { n: 0, sum: 0, last: '', recent: [] }
     ue.n++; ue.sum += rating; if (at > ue.last) ue.last = at
+    // Rows arrive newest first, so the first five kept are the five most recent on the live listing.
+    if (ue.recent.length < 5) ue.recent.push(rating)
+    const cw = chWin[ch] = chWin[ch] || { n: 0, sum: 0, pn: 0, psum: 0 }
+    if (at >= from && at <= to) { cw.n++; cw.sum += rating }
+    else if (at >= prevFrom && at < from) { cw.pn++; cw.psum += rating }
+    const mon = at.slice(0, 7)
+    if (mon >= trendFrom) {
+      const cm = chMonth[ch] = chMonth[ch] || {}
+      const me = cm[mon] = cm[mon] || { n: 0, sum: 0 }
+      me.n++; me.sum += rating
+    }
     const b = lifeBld[li.building] = lifeBld[li.building] || {}
     const be = b[ch] = b[ch] || { n: 0, sum: 0, units: new Set<string>() }
     be.n++; be.sum += rating; be.units.add(lid)
@@ -489,9 +554,32 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
         display: CHANNEL_SCALE10[ch] ? round(avg * 2, 1) : avg,
         scale: CHANNEL_SCALE10[ch] ? 10 : 5,
         url: ((lmap[lid] || {}).urls || {})[ch] || null,
+        // Reviews on a replaced listing for this channel — held, shown, not in `avg`.
+        retired: (retiredUnit[lid] || {})[ch] || 0,
       }
     })
     .sort((a, b) => chRank(a.channel) - chRank(b.channel) || b.n - a.n)
+  // HOW CLOSE IS THIS UNIT TO A LINE? (lib/review-thresholds.) The sharpest finding across its
+  // channels: the next disappointed guest takes it under a line it holds, or a handful of five-star
+  // stays clears the next one. Three reviews minimum — under that the score is not a score yet.
+  const riskFor = (lid: string): any => {
+    let best: any = null
+    const chans = lifeUnit[lid] || {}
+    for (const ch of Object.keys(chans)) {
+      if (channel !== 'all' && ch !== channel) continue
+      const e = chans[ch]
+      if (e.n < 3) continue
+      const avg = e.sum / e.n
+      const st = standingOf(avg, e.n, ch)
+      if (!st) continue
+      const last5 = e.recent.length >= 3 ? e.recent.reduce((a, b) => a + b, 0) / e.recent.length : null
+      const rk = riskOf(st, last5)
+      if (rk && (!best || rk.weight > best.weight)) {
+        best = { kind: rk.kind, weight: round(rk.weight, 1), reason: rk.reason, line: rk.line, channel: ch, n: e.n, display: inChannelScale(avg, ch), scale: CHANNEL_SCALE10[ch] ? 10 : 5 }
+      }
+    }
+    return best
+  }
   const otaForBuilding = (bname: string) => Object.keys(lifeBld[bname] || {})
     .map(ch => {
       const e = lifeBld[bname][ch]
@@ -520,13 +608,20 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     // per-unit channel mix — a unit can be fine on Airbnb and bleeding on Booking.com
     const cu2 = chByUnit[lid] = chByUnit[lid] || {}
     push(cu2[chKey] = cu2[chKey] || emptyAgg(), rating, chKey, p)
-    const canReply = replyable(lid, r)
+    // A review on a replaced channel listing has nowhere public to be answered.
+    const live = isLive(lid, chKey, r.raw)
+    if (!live) retiredWin[lid] = (retiredWin[lid] || 0) + 1
+    const canReply = replyable(lid, r) && live
     if (canReply) replyableN++
+    const lowOne = isLowReview(rating, chKey)
+    if (canReply && lowOne) { lowN++; if (r.has_reply) lowReplied++ }
     // NUMERATOR AND DENOMINATOR FROM THE SAME POPULATION. Counting every answered review against
     // only the answerable ones printed 100.4% answered on the live board — an impossible number,
     // and the exact class of thing that teaches a team to stop reading the page.
     if (r.has_reply) { if (canReply) replied++; const m = replyMinutes(r.raw); if (m != null) replyTimes.push(m) }
     else if (!r.dismissed && canReply) {
+      if (lowOne) lowAwaiting++
+      oldestAwaitDays = Math.max(oldestAwaitDays, daysBetween(etDay(r.created_at), today))
       awaitByUnit[lid] = (awaitByUnit[lid] || 0) + 1
       awaitByBuilding[li.building] = (awaitByBuilding[li.building] || 0) + 1
       awaitByOwner[li.ownerId] = (awaitByOwner[li.ownerId] || 0) + 1
@@ -550,6 +645,9 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       const cu = catByUnit[k] = catByUnit[k] || {}
       const cue = cu[lid] = cu[lid] || { n: 0, sum: 0 }
       cue.n++; cue.sum += c.rating
+      const cb = catByBld[li.building] = catByBld[li.building] || {}
+      const cbe = cb[k] = cb[k] || { n: 0, sum: 0 }
+      cbe.n++; cbe.sum += c.rating
       // Split the tags by what they actually SAY, not by the score they arrived with. The tag's own
       // polarity decides; only an unmarked tag falls back to the category score, and there a 4/5
       // still reads as a gripe (the old rule) while a 5/5 reads as praise.
@@ -592,6 +690,18 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     return k ? { tag: k, n: t[k] } : null
   }
 
+  // SUB-SCORES PER UNIT AND PER BUILDING, weakest first. Airbnb's categories only — the channel that
+  // sends them — so each is read against the Airbnb average (`categoryBase`), not the blended one.
+  const CAT_NAME: Record<string, string> = { cleanliness: 'Cleanliness', accuracy: 'Accuracy', checkin: 'Check-in', communication: 'Communication', location: 'Location', value: 'Value' }
+  const catName = (k: string) => CAT_NAME[k] || (k.charAt(0).toUpperCase() + k.slice(1))
+  const catsOfUnit = (lid: string) => Object.keys(catByUnit).filter(k => !!catByUnit[k][lid])
+    .map(k => ({ key: k, label: catName(k), avg: round(catByUnit[k][lid].sum / catByUnit[k][lid].n), n: catByUnit[k][lid].n, ops: OPS_CATEGORIES.has(k) }))
+    .sort((a, b) => a.avg - b.avg)
+  const catsOfBuilding = (b: string) => Object.keys(catByBld[b] || {})
+    .map(k => ({ key: k, label: catName(k), avg: round(catByBld[b][k].sum / catByBld[b][k].n), n: catByBld[b][k].n, ops: OPS_CATEGORIES.has(k) }))
+    .sort((a, c) => a.avg - c.avg)
+  const retiredOf = (lid: string) => Object.keys(retiredUnit[lid] || {}).reduce((s, ch) => s + retiredUnit[lid][ch], 0)
+
   const units = Object.keys(byUnit).map(lid => {
     const li = lmap[lid] || { name: 'Unknown unit', building: 'Other', market: '', ownerId: '', ownerName: 'Unassigned' }
     const s = summarise(byUnit[lid], mean)
@@ -607,6 +717,10 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       channels: Object.keys(chByUnit[lid] || {}).map(c => ({ channel: c, n: chByUnit[lid][c].n, avg: round(chByUnit[lid][c].sum / chByUnit[lid][c].n), low: chByUnit[lid][c].low }))
         .sort((a, b) => b.n - a.n),
       ota: otaFor(lid),
+      cats: catsOfUnit(lid),
+      // On a replaced channel listing: all-time, and inside this window.
+      retired: retiredOf(lid), retiredInWindow: retiredWin[lid] || 0,
+      risk: li.active ? riskFor(lid) : null,
     }
   })
   // THE UNITS NOBODY HAS REVIEWED SINCE THE BAD ONE.
@@ -633,6 +747,9 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
         topTheme: null as any,
         channels: [] as any[],
         ota: otaFor(lid),
+        cats: [] as any[],
+        retired: retiredOf(lid), retiredInWindow: 0,
+        risk: li.active ? riskFor(lid) : null,
       }
     })
     .sort((a, b) => (b.recoveryDays || 0) - (a.recoveryDays || 0))
@@ -723,6 +840,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     inRecovery: recByBuilding[b] || 0,
     // the published listing score per OTA, all-time — independent of the window controls above
     ota: otaForBuilding(b),
+    cats: catsOfBuilding(b),
   } }).sort((a, b) => (a.vsPar ?? 9) - (b.vsPar ?? 9))
 
   // OWNERS. Same numbers, grouped by whoever gets the statement — which is who asks "how is my
@@ -1011,6 +1129,80 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   // The tiles must count exactly what the list under them renders. These used to run over every
   // unit including the sub-MIN_N ones, so the headline could read "3 below par" above a list of 2 —
   // or, worse, "9 still waiting for a good review" above the words "nothing to send anyone to".
+  // ── AT RISK: RANKED BY WHAT THE NEXT REVIEW DOES TO THE PUBLIC SCORE ───────────────────────────
+  // Every active unit, whether or not it was reviewed inside the window: a unit at 4.81 on fourteen
+  // reviews is one disappointed guest from losing a line, and that is true on a quiet month too.
+  const atRisk: any[] = []
+  for (const lid of Object.keys(lifeUnit)) {
+    const li = lmap[lid]
+    if (!li || !li.active) continue
+    const rk = riskFor(lid)
+    if (!rk) continue
+    const rec = recoveryOf(lid)
+    const waiting = awaitByUnit[lid] || 0
+    atRisk.push({
+      listingId: lid, unit: li.name, building: li.building, ownerName: li.ownerName,
+      ...rk,
+      // An unanswered review or an open recovery on a unit this close to a line moves it up.
+      weight: round(rk.weight + Math.min(10, waiting * 5) + (rec ? 8 : 0), 1),
+      awaiting: waiting,
+      recoveryDays: rec ? rec.days : null,
+      change: byUnit[lid] ? delta(byUnit[lid], byUnitPrev[lid] || emptyAgg()) : null,
+      topTheme: topThemeOf(lid),
+      url: (li.urls || {})[rk.channel] || null,
+      retired: retiredOf(lid),
+    })
+  }
+  atRisk.sort((a, b) => b.weight - a.weight || String(a.unit).localeCompare(String(b.unit)))
+
+  // ── THE PUBLIC SCORE, PER CHANNEL (Jon: "average review score of active units per channel") ────
+  // unitAvg is the mean of each ACTIVE unit's own published score (three reviews minimum, so one
+  // review cannot stand in for a unit); reviewAvg weights by review. Both count live listings only.
+  const chStat: Record<string, { units: number; scored: number; unitSum: number; n: number; sum: number; at: Record<string, number> }> = {}
+  for (const lid of Object.keys(lifeUnit)) {
+    const li = lmap[lid]
+    if (!li || !li.active) continue
+    for (const ch of Object.keys(lifeUnit[lid])) {
+      const e = lifeUnit[lid][ch]
+      const cs = chStat[ch] = chStat[ch] || { units: 0, scored: 0, unitSum: 0, n: 0, sum: 0, at: {} }
+      cs.units++; cs.n += e.n; cs.sum += e.sum
+      if (e.n >= 3) {
+        const avg = e.sum / e.n
+        cs.scored++; cs.unitSum += avg
+        for (const ln of linesFor(ch)) if (avg >= ln.at) cs.at[ln.key] = (cs.at[ln.key] || 0) + 1
+      }
+    }
+  }
+  const channelScores = Object.keys(chStat).filter(ch => chStat[ch].n > 0).map(ch => {
+    const cs = chStat[ch]
+    const cw = chWin[ch] || { n: 0, sum: 0, pn: 0, psum: 0 }
+    const yr = acct[ch] || { n: 0, sum: 0 }
+    const show = (v: number) => inChannelScale(v, ch)
+    const yearAvg = yr.n ? yr.sum / yr.n : null
+    return {
+      channel: ch, scale: CHANNEL_SCALE10[ch] ? 10 : 5,
+      units: cs.units, scored: cs.scored,
+      unitAvg: cs.scored ? show(cs.unitSum / cs.scored) : null,
+      reviewAvg: show(cs.sum / cs.n), n: cs.n,
+      window: {
+        n: cw.n, avg: cw.n ? show(cw.sum / cw.n) : null,
+        prevN: cw.pn, prevAvg: cw.pn ? show(cw.psum / cw.pn) : null,
+        change: cw.n && cw.pn ? round(show(cw.sum / cw.n) - show(cw.psum / cw.pn)) : null,
+      },
+      // Whole portfolio, replaced listings included — the basis an account-level badge is judged on.
+      year: { n: yr.n, avg: yearAvg != null ? show(yearAvg) : null },
+      months: Object.keys(chMonth[ch] || {}).sort().slice(-6).map(m => ({ month: m, n: chMonth[ch][m].n, avg: show(chMonth[ch][m].sum / chMonth[ch][m].n) })),
+      lines: linesFor(ch).map(ln => ({
+        key: ln.key, label: ln.label, kind: ln.kind, scope: ln.scope, note: ln.note,
+        // A listing-level line: how many scored units stand at or above it. An account-level line:
+        // whether the 365-day portfolio average clears it (ten reviews minimum to say either way).
+        unitsAt: ln.scope === 'listing' ? (cs.at[ln.key] || 0) : null,
+        held: ln.scope === 'account' ? (yearAvg != null && yr.n >= 10 ? yearAvg >= ln.at : null) : null,
+      })),
+      retired: retiredCh[ch] || 0,
+    }
+  }).sort((a, b) => chRank(a.channel) - chRank(b.channel) || b.n - a.n)
+
   const belowPar = units.filter(u => u.ranked && u.vsPar != null && (u.vsPar as number) <= -BELOW_PAR)
   const inRecovery = units.filter(u => u.ranked && u.recoveryDays != null).concat(recoveryOnly as any[])
 
@@ -1046,7 +1238,17 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       // AWAITING = work someone can actually do (same rule as the /reviews feed): skip dismissed,
       // skip inactive/unsynced listings, skip Waves, skip channel-unreplyable. Re-applied 2026-08-04
       // after a parallel edit reverted it — if you touch this line, keep the replyable() filter.
-      awaitingReply: cur.filter(r => !r.has_reply && !r.dismissed && replyable(String(r.listing_id), r)).length,
+      awaitingReply: cur.filter(r => !r.has_reply && !r.dismissed && replyable(String(r.listing_id), r) && isLive(String(r.listing_id), str(r.channel) || 'Other', r.raw)).length,
+      // REPLY KPIs. Speed comes only from reviews whose channel stamps both ends, so it is a sample
+      // (`replyTimedN` says how many); the low-review numbers are the ones a prospect actually reads.
+      replyTimedN: replyTimes.length,
+      replyWithin24hPct: replyTimes.length ? round((replyTimes.filter(m => m <= 24 * 60).length / replyTimes.length) * 100, 1) : null,
+      lowReviews: lowN,
+      lowReplyCoverage: lowN ? round((lowReplied / lowN) * 100, 1) : null,
+      lowAwaiting,
+      oldestAwaitingDays: oldestAwaitDays || null,
+      unitsAtRisk: atRisk.length,
+      retiredReviews: Object.keys(retiredCh).reduce((t, ch) => t + retiredCh[ch], 0),
       staysEnded: stays.length,
       reviewRate: stays.length && channel === 'all' ? round((overall.n / stays.length) * 100, 1) : null,
       reviewRateNote: 'reviews received in this window against stays that ended in time to be reviewed',
@@ -1055,6 +1257,8 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       unmappedReviews,
     },
     months,
+    channelScores,
+    atRisk: atRisk.slice(0, 60),
     buildings,
     owners,
     // Ranked units worst-first, then the burned units with nothing in the window at all.

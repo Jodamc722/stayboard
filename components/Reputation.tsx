@@ -37,7 +37,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   ChevronRight, RefreshCw, ExternalLink,
-  AlertTriangle, MessageSquare, ClipboardCheck, Check, X,
+  AlertTriangle, MessageSquare, ClipboardCheck, Check, X, TrendingDown, TrendingUp,
 } from 'lucide-react'
 import { Tag, Pill, LeanHead, LeanTabs, IconBtn, LeanList, LeanRow, LeanEmpty } from '@/components/lean'
 import { isBookingChannel, ratingDisplay } from '@/lib/review-scale'
@@ -190,7 +190,37 @@ function WalkIt({ unit }: { unit: any }) {
 // One line per unit: name, building · owner, tags, then count / score / par bar at the right. The
 // review that put it there and the two verbs (walk it, answer it) are behind the row's expand.
 
-function UnitRow({ u, onReply }: { u: any; onReply: (u: any) => void }) {
+/** A unit's (or a building's) Airbnb category scores, weakest first; under the Airbnb average reads red. */
+function CatLine({ cats, base }: { cats: any[]; base: number | null }) {
+  if (!cats || !cats.length) return null
+  return (
+    <div className="flex items-center gap-1 flex-wrap" title="Airbnb category scores in this window, weakest first">
+      {cats.map((c: any) => {
+        const under = base != null && c.avg <= base - 0.1
+        return <Tag key={c.key} tone={under ? 'rose' : 'slate'} title={c.label + ' ' + c.avg + ' on ' + c.n + ' rating' + (c.n === 1 ? '' : 's') + (base != null ? ' · Airbnb average ' + base : '') + (c.ops ? ' · operations can move this' : ' · set by the listing')}>{c.label} {c.avg}</Tag>
+      })}
+    </div>
+  )
+}
+
+/** The risk flag: about to lose a line it holds, or a few five-star stays from the next one. */
+function RiskTag({ risk }: { risk: any }) {
+  if (!risk) return null
+  return risk.kind === 'hold'
+    ? <Tag tone="rose" title={risk.reason}><TrendingDown size={10} className="inline -mt-px mr-0.5" />{risk.line} at risk</Tag>
+    : <Tag tone="sky" title={risk.reason}><TrendingUp size={10} className="inline -mt-px mr-0.5" />close to {risk.line}</Tag>
+}
+
+function RetiredNote({ n, inWindow }: { n: number; inWindow?: number }) {
+  if (!n) return null
+  return (
+    <p className="text-[11px] text-muted">
+      {n} review{n === 1 ? '' : 's'} on a channel listing that has since been replaced{inWindow ? ' (' + inWindow + ' in this window)' : ''} — kept for the record, not in the public score.
+    </p>
+  )
+}
+
+function UnitRow({ u, onReply, base }: { u: any; onReply: (u: any) => void; base: number | null }) {
   const single = (u.channels || []).length === 1 ? u.channels[0].channel : null
   const bad = u.vsPar != null && u.vsPar <= -0.15
   // A unit carried here purely by recovery has no reviews inside the window, so no average and no
@@ -202,6 +232,7 @@ function UnitRow({ u, onReply }: { u: any; onReply: (u: any) => void }) {
       meta={u.building + (u.ownerName && u.ownerName !== 'Unassigned' ? ' · ' + u.ownerName : '')}
       tags={<>
         {u.recoveryDays != null && <Tag tone="rose" title={'No good review since ' + u.recoverySince}>{u.recoveryDays}d waiting</Tag>}
+        <RiskTag risk={u.risk} />
         {u.topTheme && <Tag title={u.topTheme.n + ' guests mentioned this'}>{String(u.topTheme.tag).toLowerCase()}</Tag>}
         {!!u.awaiting && <Tag tone="amber" title="Reviews on this unit still waiting on a reply">{u.awaiting} to answer</Tag>}
         {windowless && <Tag title="Here because of an earlier low review — nothing scored inside this window">no reviews in window</Tag>}
@@ -224,6 +255,8 @@ function UnitRow({ u, onReply }: { u: any; onReply: (u: any) => void }) {
             Rated {ratingDisplay(u.worst.rating, u.worst.channel)} on {u.worst.channel || 'the channel'} ({u.worst.at}), no comment{windowless ? ', nothing since' : ''}.
           </p>
           : <p className="text-[12px] text-muted">Below par on the spread of its scores, not on one bad review.</p>}
+      {u.risk && <p className="text-[12px] text-ink">{u.risk.channel}: {u.risk.reason}.</p>}
+      <CatLine cats={u.cats || []} base={base} />
       <div className="flex items-center gap-1.5 flex-wrap">
         <WalkIt unit={u} />
         {!!u.awaiting && (
@@ -248,13 +281,107 @@ function UnitRow({ u, onReply }: { u: any; onReply: (u: any) => void }) {
           {(u.channels || []).map((c: any) => c.channel + ' ' + ratingDisplay(c.avg, c.channel) + ' (' + c.n + ')').join(' · ')}
         </div>
       )}
+      <RetiredNote n={u.retired || 0} inWindow={u.retiredInWindow || 0} />
     </LeanRow>
+  )
+}
+
+// ── AT RISK ─────────────────────────────────────────────────────────────────────────────────────
+// Ranked by what the NEXT review does to the public score, not by how the window went: the unit one
+// disappointed guest away from losing a line leads, whether or not anyone reviewed it this month.
+function RiskRow({ u, onReply }: { u: any; onReply: (u: any) => void }) {
+  return (
+    <LeanRow
+      name={u.unit}
+      meta={u.building + (u.ownerName && u.ownerName !== 'Unassigned' ? ' · ' + u.ownerName : '')}
+      tint={u.kind === 'hold' ? 'rose' : undefined}
+      tags={<>
+        <RiskTag risk={u} />
+        {u.recoveryDays != null && <Tag tone="rose" title="Waiting for a good review since its last low one">{u.recoveryDays}d waiting</Tag>}
+        {!!u.awaiting && <Tag tone="amber" title="Reviews on this unit still waiting on a reply">{u.awaiting} to answer</Tag>}
+        {u.change != null && u.change <= -0.1 && <Tag tone="amber" title="This window against the one before it">{u.change} vs prior</Tag>}
+      </>}
+      actions={<>
+        <span className="hidden sm:inline text-[11px] text-muted" title="Channel the finding is on">{u.channel}</span>
+        <span className="text-[13.5px] font-bold tabular-nums text-ink" title={'Published score on ' + u.channel + ' — live listing only, ' + u.n + ' reviews'}>{u.display}{u.scale === 10 ? '/10' : ''}</span>
+        <span className="hidden sm:inline text-[11px] text-muted tabular-nums w-6 text-right" title="Reviews behind the score">{u.n}</span>
+      </>}>
+      <p className="text-[12px] text-ink">{u.channel}: {u.reason}.</p>
+      {u.topTheme && <p className="text-[11.5px] text-muted">Guests here mention {String(u.topTheme.tag).toLowerCase()} most ({u.topTheme.n}×) — that is the thing to get ahead of.</p>}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {!!u.awaiting && (
+          <button onClick={() => onReply(u)}
+            className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line hover:bg-app text-ink">
+            <MessageSquare size={12} /> Answer {u.awaiting} review{u.awaiting === 1 ? '' : 's'}
+          </button>
+        )}
+        <a href={'/listings/' + u.listingId}
+          className="inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line hover:bg-app text-ink">
+          Unit page <ExternalLink size={11} />
+        </a>
+        {u.url && (
+          <a href={u.url} target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[11.5px] px-2 py-1 rounded-lg border border-line hover:bg-app text-muted hover:text-ink">
+            Check it on {u.channel} <ExternalLink size={10} />
+          </a>
+        )}
+      </div>
+      <RetiredNote n={u.retired || 0} />
+    </LeanRow>
+  )
+}
+
+// ── THE PUBLIC SCORE, PER CHANNEL ───────────────────────────────────────────────────────────────
+// Jon: "the average review score of active units per channel" — the number a guest sees, averaged
+// over the units we run today, counting only reviews on the listing that is live now. Under it, the
+// channel's own lines: how many units stand on a listing-level line, and whether the 365-day
+// portfolio average clears an account-level one. Tap a card to put the whole page on that channel.
+function ChannelCard({ c, on, onPick }: { c: any; on: boolean; onPick: () => void }) {
+  const suffix = c.scale === 10 ? '/10' : '★'
+  const ch = c.window && c.window.change != null ? c.window.change : null
+  const months: any[] = c.months || []
+  const lo = c.scale === 10 ? 7 : 4
+  const badge = (c.lines || []).filter((l: any) => l.kind === 'badge')
+  const title = c.channel + ' — mean of ' + c.scored + ' active unit' + (c.scored === 1 ? '' : 's') + ' with 3+ reviews'
+    + ' · ' + c.reviewAvg + ' weighted by review (' + c.n + ')'
+    + (c.window && c.window.avg != null ? '\nThis window ' + c.window.avg + ' on ' + c.window.n + (c.window.prevAvg != null ? ' · before it ' + c.window.prevAvg + ' on ' + c.window.prevN : '') : '')
+    + (c.year && c.year.avg != null ? '\nLast 365 days, whole portfolio ' + c.year.avg + ' on ' + c.year.n : '')
+    + (months.length ? '\nBy month: ' + months.map(m => m.month.slice(5) + ' ' + m.avg).join(' · ') : '')
+    + (c.retired ? '\n' + c.retired + ' review' + (c.retired === 1 ? '' : 's') + ' on replaced listings are not counted.' : '')
+  return (
+    <button onClick={onPick} title={title} aria-pressed={on}
+      className={'text-left rounded-xl border px-2.5 py-2 min-w-0 ' + (on ? 'border-ink bg-white ring-1 ring-ink' : 'border-line bg-white hover:bg-app')}>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[11px] font-semibold text-muted truncate">{c.channel}</span>
+        {ch != null && Math.abs(ch) >= 0.02 && (
+          <span className={'ml-auto text-[10.5px] font-semibold tabular-nums whitespace-nowrap ' + (ch > 0 ? 'text-emerald-600' : 'text-rose-700')}>{ch > 0 ? '▲' : '▼'} {Math.abs(ch)}</span>
+        )}
+      </div>
+      <div className="flex items-end gap-2 mt-0.5">
+        <span className="text-[19px] leading-none font-bold tabular-nums text-ink">{c.unitAvg ?? c.reviewAvg}<span className="text-[11px] font-semibold text-muted">{suffix}</span></span>
+        {months.length >= 2 && (
+          <span className="inline-flex items-end gap-px h-4 ml-auto" aria-hidden="true">
+            {months.map(m => <span key={m.month} className="w-1.5 rounded-sm bg-slate-300" style={{ height: Math.max(15, Math.min(100, ((m.avg - lo) / (c.scale - lo)) * 100)) + '%' }} />)}
+          </span>
+        )}
+      </div>
+      <div className="text-[10.5px] text-muted mt-0.5 truncate">{c.units} unit{c.units === 1 ? '' : 's'} · {c.n} reviews</div>
+      {badge.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap mt-1">
+          {badge.map((l: any) => l.scope === 'listing'
+            ? <Tag key={l.key} tone={c.scored && l.unitsAt / c.scored >= 0.5 ? 'emerald' : 'slate'} title={l.note}>{l.unitsAt}/{c.scored} at {l.label}</Tag>
+            : <Tag key={l.key} tone={l.held == null ? 'slate' : l.held ? 'emerald' : 'rose'} title={l.note + (c.year && c.year.avg != null ? ' Our last-365-day average on ' + c.channel + ' is ' + c.year.avg + ' across the portfolio; each host account is judged on its own listings.' : '')}>
+              {l.held == null ? l.label : l.held ? l.label + ' ✓' : 'under ' + l.label}
+            </Tag>)}
+        </div>
+      )}
+    </button>
   )
 }
 
 // ── LEAGUE TABLES ───────────────────────────────────────────────────────────────────────────────
 
-function League({ rows, nameOf, subOf, href }: { rows: any[]; nameOf: (r: any) => string; subOf: (r: any) => string; href?: (r: any) => string | null }) {
+function League({ rows, nameOf, subOf, href, extraOf }: { rows: any[]; nameOf: (r: any) => string; subOf: (r: any) => string; href?: (r: any) => string | null; extraOf?: (r: any) => ReactNode }) {
   if (!rows.length) return <p className="text-[12px] text-muted py-2">Nothing in this window.</p>
   return (
     <ul className="divide-y divide-line">
@@ -283,6 +410,7 @@ function League({ rows, nameOf, subOf, href }: { rows: any[]; nameOf: (r: any) =
             {link
               ? <a href={link} className="flex items-center gap-2 hover:bg-app rounded px-1 -mx-1">{inner}</a>
               : <div className="flex items-center gap-2 px-1 -mx-1">{inner}</div>}
+            {extraOf ? extraOf(r) : null}
           </li>
         )
       })}
@@ -369,7 +497,10 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
   const page = tabProp ?? ownTab
   const setPage = setTabProp ?? setOwnTab
   const [tab, setTab] = useState<Tab>('buildings')
-  const [showAll, setShowAll] = useState(false)
+  // The Units tab has three readings of the same portfolio: the units that need work now (below
+  // par, or waiting for a good review), the ones the NEXT review would cost a line, and everything.
+  const [unitView, setUnitView] = useState<'work' | 'risk' | 'all'>('work')
+  const showAll = unitView === 'all'
   const [d, setD] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -437,6 +568,17 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
 
   const sel = 'text-[12px] border border-line rounded-lg px-1.5 py-1 bg-white max-w-[8.5rem] sm:max-w-[11rem]'
   const unranked: any[] = d?.unranked || []
+  const atRisk: any[] = d?.atRisk || []
+  const holdN = atRisk.filter(u => u.kind === 'hold').length
+  const base: number | null = d?.categoryBase ?? null
+  // Four cards at most, biggest channels first: the ones with lines to stand on, then by volume.
+  const channelCards: any[] = ((d?.channelScores || []) as any[]).filter(c => (c.lines || []).length > 0 || c.n >= 10).slice(0, 4)
+  const replyKpi = [
+    h.replyCoverage != null ? h.replyCoverage + '% answered' : '',
+    h.lowReplyCoverage != null ? 'low reviews ' + h.lowReplyCoverage + '% answered' : '',
+    h.medianReplyHours != null ? 'median reply ' + h.medianReplyHours + 'h' : '',
+    h.replyWithin24hPct != null ? h.replyWithin24hPct + '% within 24h' : '',
+  ].filter(Boolean)
 
   return (
     <section className="mb-5">
@@ -444,20 +586,37 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         <Pill tone={change != null && change > 0.02 ? 'emerald' : change != null && change < -0.02 ? 'rose' : 'slate'} title={scoreTitle}>
           {headAvg ?? '—'}{bookingOnly ? '/10' : '★'}{change != null ? ' ' + (change > 0 ? '+' : '') + change : ''}
         </Pill>
-        <Pill title={'Share of reviews that are top-rated' + (h.prevFiveShare != null ? ' · was ' + h.prevFiveShare + '%' : '')}>
-          Top-rated {h.fiveShare != null ? h.fiveShare + '%' : '—'}
-        </Pill>
+        <span className="hidden sm:contents">
+          <Pill title={'Share of reviews that are top-rated' + (h.prevFiveShare != null ? ' · was ' + h.prevFiveShare + '%' : '')}>
+            Top-rated {h.fiveShare != null ? h.fiveShare + '%' : '—'}
+          </Pill>
+        </span>
         <Pill tone={replyN ? 'rose' : 'slate'} onClick={() => setPage('reply')}
-          title={'Guests waiting on a reply' + (h.medianReplyHours != null ? ' · ' + h.medianReplyHours + 'h median reply · ' + (h.replyCoverage ?? 0) + '% answered' : '')}>
-          To reply {replyN ?? '—'}
+          title={'Guests waiting on a reply' + (replyKpi.length ? ' · ' + replyKpi.join(' · ') : '') + (h.lowAwaiting ? ' · ' + h.lowAwaiting + ' of them low reviews' : '') + (h.oldestAwaitingDays ? ' · oldest ' + h.oldestAwaitingDays + 'd' : '')}>
+          To reply {replyN ?? '—'}{h.replyCoverage != null ? ' · ' + Math.round(h.replyCoverage) + '% answered' : ''}
         </Pill>
-        <Pill onClick={() => setPage('units')} title={'Units more than ' + (d?.belowPar ?? 0.15) + ' below our normal for their channel'}>
+        <Pill tone={holdN ? 'amber' : 'slate'} onClick={() => { setUnitView('risk'); setPage('units') }}
+          title={'Units whose next disappointed review takes the public score under a line it holds today (' + holdN + '), or that are a few five-star stays from the next line up'}>
+          At risk {d ? atRisk.length : '—'}
+        </Pill>
+        <Pill onClick={() => { setUnitView('work'); setPage('units') }} title={'Units more than ' + (d?.belowPar ?? 0.15) + ' below our normal for their channel'}>
           Below par {h.unitsBelowPar ?? '—'}
         </Pill>
-        <Pill onClick={() => setPage('units')} title="Units waiting for a good review since their last low one">
-          Waiting {h.unitsInRecovery ?? '—'}
-        </Pill>
+        <span className="hidden sm:contents">
+          <Pill onClick={() => { setUnitView('work'); setPage('units') }} title="Units waiting for a good review since their last low one">
+            Waiting {h.unitsInRecovery ?? '—'}
+          </Pill>
+        </span>
       </LeanHead>
+
+      {/* THE PUBLIC SCORE PER CHANNEL — live listings only. Two across on a phone, four on a desk. */}
+      {channelCards.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 mb-3">
+          {channelCards.map(c => (
+            <ChannelCard key={c.channel} c={c} on={channel === c.channel} onPick={() => setChannel(channel === c.channel ? 'all' : c.channel)} />
+          ))}
+        </div>
+      )}
 
       {/* FILTER BAR — one line. Everything on the page, including the feed, obeys it. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-3">
@@ -511,23 +670,40 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
       {/* ── UNITS THAT NEED SOMEONE ──────────────────────────────────────────────────────────── */}
       {/* id="recovery": the Calls desk links to /reviews#recovery; ReviewsPage opens this tab for it. */}
       <div id="recovery" className={page === 'units' ? 'scroll-mt-4' : 'hidden'}>
-        <div className="flex items-center gap-1.5 flex-wrap justify-end mb-1.5 px-1">
-          {!showAll && !!unranked.length && (
+        <div className="flex items-center gap-1.5 flex-wrap mb-1.5 px-1">
+          <div className="inline-flex rounded-lg border border-line overflow-hidden">
+            {([
+              { k: 'work', l: 'Needs work', n: failing.length, t: 'Below par in this window, or waiting for a good review since a low one — worst first' },
+              { k: 'risk', l: 'At risk', n: atRisk.length, t: 'Ranked by what the next review does to the public score: about to lose a line it holds, or close to the next one' },
+              { k: 'all', l: 'All', n: units.length, t: 'Every unit with ' + (d?.minReviews ?? 5) + '+ reviews in this window, worst first' },
+            ] as { k: 'work' | 'risk' | 'all'; l: string; n: number; t: string }[]).map(v => (
+              <button key={v.k} onClick={() => setUnitView(v.k)} title={v.t} aria-pressed={unitView === v.k}
+                className={'text-[12px] font-semibold px-2 py-1 border-l border-line first:border-l-0 whitespace-nowrap ' + (unitView === v.k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>
+                {v.l} <span className="opacity-70 tabular-nums">{d ? v.n : '…'}</span>
+              </button>
+            ))}
+          </div>
+          <span className="ml-auto" />
+          {unitView === 'work' && !!unranked.length && (
             <Tag title={'Have reviews but fewer than ' + (d?.minReviews ?? 5) + ' — too few to rank, so not scored here'}>+{unranked.length} unranked</Tag>
           )}
-          <button onClick={() => setShowAll(s => !s)}
-            title={showAll ? 'Back to units below par or waiting for a good review' : 'Every unit with ' + (d?.minReviews ?? 5) + '+ reviews, worst first'}
-            className="text-[12px] font-semibold text-muted hover:text-ink px-1.5 py-0.5 rounded hover:bg-app">
-            {showAll ? 'Only the ones that need work' : 'Show all ' + units.length}
-          </button>
+          {!!h.retiredReviews && (
+            <Tag title="Reviews left on channel listings that have since been replaced. They stay visible and are left out of every published score on this page.">{h.retiredReviews} on replaced listings</Tag>
+          )}
         </div>
         {loading && !d ? (
           <LeanEmpty>Working out where we stand…</LeanEmpty>
+        ) : unitView === 'risk' ? (
+          !atRisk.length ? <LeanEmpty>No unit is within a review or two of a line. Nothing to get ahead of.</LeanEmpty> : (
+            <LeanList>
+              {atRisk.map(u => <RiskRow key={u.listingId} u={u} onReply={onReply} />)}
+            </LeanList>
+          )
         ) : !shown.length ? (
           <LeanEmpty>{units.length ? 'Every ranked unit is at or above par, nothing waiting.' : 'No unit has enough reviews in this window to rank.'}</LeanEmpty>
         ) : (
           <LeanList>
-            {shown.map(u => <UnitRow key={u.listingId} u={u} onReply={onReply} />)}
+            {shown.map(u => <UnitRow key={u.listingId} u={u} onReply={onReply} base={base} />)}
           </LeanList>
         )}
       </div>
@@ -545,11 +721,13 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
           ))}
         </div>
         <div className="px-3 py-2">
+          {/* Under each building: its three weakest Airbnb categories — where its stars are going. */}
           {tab === 'buildings' && (
             <League rows={d?.buildings || []}
               nameOf={r => r.building}
               subOf={r => [r.market, r.unitsReviewed + ' of ' + r.unitsTotal + ' units reviewed', r.unitsRetired ? r.unitsRetired + ' retired' : ''].filter(Boolean).join(' · ')}
-              href={r => null} />
+              href={() => null}
+              extraOf={r => (r.cats || []).length ? <div className="px-1 pt-0.5"><CatLine cats={(r.cats as any[]).slice(0, 3)} base={base} /></div> : null} />
           )}
           {tab === 'owners' && (
             <League rows={d?.owners || []}
@@ -669,7 +847,21 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
       {actions && page === 'actions' ? actions : null}
 
       {/* ── THE FEED (To reply / All reviews) ────────────────────────────────────────────────── */}
-      {feed ? <div className={page === 'reply' || page === 'all' ? '' : 'hidden'}>{feed}</div> : null}
+      {feed ? (
+        <div className={page === 'reply' || page === 'all' ? '' : 'hidden'}>
+          {/* REPLY KPIs — one quiet line. Speed is a sample: only reviews whose channel stamps both ends. */}
+          {replyKpi.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap mb-2 px-1">
+              {h.replyCoverage != null && <Tag tone={h.replyCoverage >= 95 ? 'emerald' : h.replyCoverage >= 80 ? 'slate' : 'amber'} title="Answered reviews over the ones that can be answered, in this window">{h.replyCoverage}% answered</Tag>}
+              {h.lowReplyCoverage != null && <Tag tone={h.lowReplyCoverage >= 95 ? 'emerald' : 'amber'} title={'Of ' + h.lowReviews + ' low reviews in this window — the replies a prospect reads first'}>low reviews {h.lowReplyCoverage}%</Tag>}
+              {h.medianReplyHours != null && <Tag tone={h.medianReplyHours <= 24 ? 'emerald' : h.medianReplyHours <= 72 ? 'slate' : 'amber'} title={'Median time from review to reply, on the ' + (h.replyTimedN ?? 0) + ' replies whose channel records both times'}>median {h.medianReplyHours}h</Tag>}
+              {h.replyWithin24hPct != null && <Tag title="Share of those replies posted within 24 hours">{h.replyWithin24hPct}% in 24h</Tag>}
+              {!!h.oldestAwaitingDays && <Tag tone={h.oldestAwaitingDays > 3 ? 'rose' : 'slate'} title="The longest a guest in this window has waited for a reply">oldest waiting {h.oldestAwaitingDays}d</Tag>}
+            </div>
+          )}
+          {feed}
+        </div>
+      ) : null}
     </section>
   )
 }

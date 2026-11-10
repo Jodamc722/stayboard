@@ -41,6 +41,7 @@ export const TAB_SETS: TabSet[] = [
       // Money row to Revenue Center instead of making the whole row vanish. Put the line back to
       // bring it home.
       // { to: '/kpi', label: 'KPI board' },
+      { to: '/revenue/sales', label: 'Sales' },
       { to: '/revenue', label: 'Revenue Center' },
       { to: '/marketing', label: 'Direct bookings' },
     ],

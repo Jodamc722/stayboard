@@ -9,7 +9,7 @@
 // so they land in Messages like every other comment; photos are board_photos.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getSetting, setSetting } from '@/lib/app-settings'
+import { getSettingFresh, setSetting } from '@/lib/app-settings'
 import { notify } from '@/lib/notify'
 import { rosterForPicker } from '@/lib/mentions'
 import { KNOWN_BUILDINGS } from '@/lib/segments'
@@ -46,19 +46,29 @@ const rowToItem = (r: any, comments: BoardItem['comments'], photos: BoardItem['p
   createdBy: r.created_by || null, createdAt: str(r.created_at), doneAt: r.done_at || null, doneBy: r.done_by || null, source: r.source || null,
 })
 
-/** Everything open, plus what was completed in the last 60 days (for "show completed" and search). */
-export async function readBoard() {
+// Only what a row shows. source_ref / reminded_on / updated_at never leave the server.
+const ITEM_COLS = 'id,lane,title,details,status,priority,due_on,property,vendor,assignees,created_by,created_at,done_at,done_by,source'
+
+/**
+ * Everything open, plus what was completed in the last 60 days (for "Done" and search).
+ * `countImportable` is for people who can edit: only they are offered the one-time import, so only
+ * their read pays for counting it (and that count is remembered for a few minutes — see below).
+ * Proposals are read FRESH: the settings reader keeps a 60s copy per server instance, and a
+ * proposal approved on one instance kept coming back as "open" from another, inviting a second
+ * approval of the same line.
+ */
+export async function readBoard(opts: { countImportable?: boolean } = {}) {
   const sb = supabaseAdmin()
   const since = new Date(Date.now() - 60 * 86400_000).toISOString()
-  const { data: rows, error } = await sb.from('board_items').select('*').or(`status.eq.open,done_at.gte.${since}`).order('created_at', { ascending: false }).limit(2000)
+  const { data: rows, error } = await sb.from('board_items').select(ITEM_COLS).or(`status.eq.open,done_at.gte.${since}`).order('created_at', { ascending: false }).limit(2000)
   if (error) { if (notReady(error)) throw new BoardNotReady(error.message); throw new Error(error.message) }
   const ids = (rows || []).map((r: any) => String(r.id))
   const [{ data: comments }, { data: photos }, proposals, people, importable] = await Promise.all([
     ids.length ? sb.from('app_comments').select('id,entity_id,author_email,body,created_at').eq('entity_type', 'board').in('entity_id', ids).order('created_at').limit(5000) : Promise.resolve({ data: [] as any[] }),
     ids.length ? sb.from('board_photos').select('id,item_id,url,caption,created_at').in('item_id', ids).order('created_at').limit(5000) : Promise.resolve({ data: [] as any[] }),
-    getSetting<Proposal[]>('leadership_proposals', []),
+    getSettingFresh<Proposal[]>('leadership_proposals', []),
     rosterForPicker(),
-    importableCount(),
+    opts.countImportable ? importableCount() : Promise.resolve(0),
   ])
   const cBy: Record<string, BoardItem['comments']> = {}
   for (const c of ((comments || []) as any[])) (cBy[String(c.entity_id)] = cBy[String(c.entity_id)] || []).push({ id: String(c.id), by: str(c.author_email), body: str(c.body), at: str(c.created_at) })
@@ -68,6 +78,12 @@ export async function readBoard() {
   // The property picker: every building we know, plus anything someone typed that is not one.
   const properties = Array.from(new Set(KNOWN_BUILDINGS.map(b => b.label).concat(items.map(i => i.property || '').filter(Boolean))))
   return { lanes: [...LANES], items, proposals: proposals.filter(x => x.status === 'open').slice(-60), people: people.map(p => ({ email: p.email, name: p.name })), properties, importable }
+}
+
+/** One open proposal, read fresh (never the 60s in-process copy). */
+export async function openProposal(id: string): Promise<Proposal | null> {
+  const cur = await getSettingFresh<Proposal[]>('leadership_proposals', [])
+  return cur.find(x => x.id === id && x.status === 'open') || null
 }
 
 type ItemInput = { lane?: any; title?: any; details?: any; assignees?: any; due?: any; priority?: any; property?: any; vendor?: any; source?: string; source_ref?: string }
@@ -112,8 +128,10 @@ export async function setItem(by: string, byName: string | null | undefined, id:
   if (patch.vendor !== undefined) upd.vendor = str(patch.vendor).trim().slice(0, 120) || null
   if (patch.assignees !== undefined) upd.assignees = emailsOf(patch.assignees)
   if (patch.status !== undefined) {
+    // Only a real change stamps it: a second "done" (two people, a double tap, the Command Center
+    // and the board at once) used to overwrite who finished it and when.
     const done = str(patch.status) === 'done'
-    upd.status = done ? 'done' : 'open'; upd.done_at = done ? new Date().toISOString() : null; upd.done_by = done ? by : null
+    if (done !== (str(cur.status) === 'done')) { upd.status = done ? 'done' : 'open'; upd.done_at = done ? new Date().toISOString() : null; upd.done_by = done ? by : null }
   }
   const { error } = await sb.from('board_items').update(upd).eq('id', id)
   if (error) return { error: error.message }
@@ -135,52 +153,93 @@ export async function deleteItem(id: string): Promise<{ ok: true } | { error: st
 // own rows — those come over too but under their lanes) becomes one row here, tagged with the
 // project's building as its property and "From <project>" at the top of its notes. source_ref
 // makes it idempotent: run it twice and the second run finds nothing to do.
+const STEP_REF = 'project_step:'
+const chunk = <T,>(arr: T[], n: number): T[][] => { const out: T[][] = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out }
+
+/** The projects whose open tasks could still come over: not archived, not finished. */
+async function liveProjects(): Promise<Record<string, any>> {
+  const { data: projs } = await supabaseAdmin().from('projects').select('id,title,kind,building,stage').eq('archived', false).limit(2000)
+  const pmap: Record<string, any> = {}
+  for (const p of ((projs || []) as any[])) if (!['done', 'cancelled'].includes(str(p.stage))) pmap[String(p.id)] = p
+  return pmap
+}
+/** Every step already on the board, by its source_ref. One indexed read instead of a giant IN list. */
+async function importedRefs(): Promise<Set<string>> {
+  // Paged: the database hands back at most 1000 rows a request whatever limit is asked for.
+  const seen = new Set<string>()
+  for (let from = 0; from < 20000; from += 1000) {
+    const { data } = await supabaseAdmin().from('board_items').select('source_ref').like('source_ref', STEP_REF + '%').order('source_ref').range(from, from + 999)
+    const rows = (data || []) as any[]
+    rows.forEach(h => seen.add(str(h.source_ref)))
+    if (rows.length < 1000) break
+  }
+  return seen
+}
 async function openProjectSteps() {
   const sb = supabaseAdmin()
-  const { data: projs } = await sb.from('projects').select('id,title,kind,building,archived,stage').eq('archived', false)
-  const keep = ((projs || []) as any[]).filter(p => !['done', 'cancelled'].includes(str(p.stage)))
-  const pmap: Record<string, any> = {}; for (const p of keep) pmap[String(p.id)] = p
+  const pmap = await liveProjects()
   const pids = Object.keys(pmap)
   if (!pids.length) return { steps: [] as any[], pmap, assignees: {} as Record<string, string[]> }
-  const { data: steps } = await sb.from('project_steps').select('id,project_id,title,description,status,section,priority,due_on,vendor_name,created_by,created_at').in('project_id', pids).neq('status', 'done').is('parent_id', null).limit(5000)
-  const { data: asg } = await sb.from('project_task_assignees').select('task_id,email').in('task_id', ((steps || []) as any[]).map(s => String(s.id)))
+  // IN lists go out in the URL; a few hundred ids at a time keeps every request under the limit
+  // (one list of every project, then one of every step, was failing silently on a big account).
+  const stepParts = await Promise.all(chunk(pids, 150).map(part => sb.from('project_steps').select('id,project_id,title,description,status,section,priority,due_on,vendor_name,created_by,created_at').in('project_id', part).neq('status', 'done').is('parent_id', null).limit(5000)))
+  const steps = stepParts.flatMap(r => (r.data || []) as any[])
+  const asgParts = await Promise.all(chunk(steps.map(s => String(s.id)), 150).map(part => sb.from('project_task_assignees').select('task_id,email').in('task_id', part)))
   const assignees: Record<string, string[]> = {}
-  for (const a of ((asg || []) as any[])) if (a.email) (assignees[String(a.task_id)] = assignees[String(a.task_id)] || []).push(str(a.email).toLowerCase())
-  return { steps: (steps || []) as any[], pmap, assignees }
+  for (const a of asgParts.flatMap(r => (r.data || []) as any[])) if (a.email) (assignees[String(a.task_id)] = assignees[String(a.task_id)] || []).push(str(a.email).toLowerCase())
+  return { steps, pmap, assignees }
 }
+
+// The import banner's number. It was recomputed on EVERY read of the board — every project, every
+// open step with its full text, every assignee — which made each tap on the board wait on tables
+// the board no longer uses. Now: ids only, and the answer is kept for five minutes per instance.
+// Once everything is over (0) it is kept for an hour; an import resets it.
+let _importable: { at: number; n: number } | null = null
 async function importableCount(): Promise<number> {
+  if (_importable && Date.now() - _importable.at < (_importable.n === 0 ? 3600_000 : 300_000)) return _importable.n
   try {
-    const { steps } = await openProjectSteps()
-    if (!steps.length) return 0
     const sb = supabaseAdmin()
-    const refs = steps.map(s => 'project_step:' + s.id)
-    const { data: have } = await sb.from('board_items').select('source_ref').in('source_ref', refs)
-    return steps.length - ((have || []) as any[]).length
+    const pids = Object.keys(await liveProjects())
+    let n = 0
+    if (pids.length) {
+      const [parts, seen] = await Promise.all([
+        Promise.all(chunk(pids, 150).map(part => sb.from('project_steps').select('id').in('project_id', part).neq('status', 'done').is('parent_id', null).limit(5000))),
+        importedRefs(),
+      ])
+      for (const r of parts) for (const st of ((r.data || []) as any[])) if (!seen.has(STEP_REF + st.id)) n++
+    }
+    _importable = { at: Date.now(), n }
+    return n
   } catch { return 0 }
 }
 export async function importFromProjects(by: string): Promise<{ imported: number; skipped: number }> {
   const sb = supabaseAdmin()
-  const { steps, pmap, assignees } = await openProjectSteps()
-  const refs = steps.map(s => 'project_step:' + s.id)
-  const { data: have } = refs.length ? await sb.from('board_items').select('source_ref').in('source_ref', refs) : { data: [] as any[] }
-  const seen = new Set(((have || []) as any[]).map(h => str(h.source_ref)))
+  const [{ steps, pmap, assignees }, seen] = await Promise.all([openProjectSteps(), importedRefs()])
   let imported = 0, skipped = 0
+  const fresh: any[] = []
   for (const s of steps) {
-    const ref = 'project_step:' + s.id
+    const ref = STEP_REF + s.id
     if (seen.has(ref)) { skipped++; continue }
     const p = pmap[String(s.project_id)] || {}
     const isLead = str(p.kind) === 'leadership'
     const lane: Lane = isLead ? laneOf(s.section) : (str(p.kind) === 'personal' ? 'Tasks' : 'Projects')
     const head = isLead || str(p.kind) === 'personal' ? '' : `From project: ${str(p.title)}`
     const details = [head, str(s.description).trim()].filter(Boolean).join('\n\n').slice(0, 4000) || null
-    const { error } = await sb.from('board_items').insert({
+    fresh.push({
       lane, title: str(s.title).slice(0, 300) || 'Untitled', details, status: 'open', priority: priOf(s.priority), due_on: dateOf(s.due_on),
       property: p.building || null, vendor: s.vendor_name || null, assignees: emailsOf(assignees[String(s.id)] || []),
       created_by: s.created_by || by, created_at: s.created_at || new Date().toISOString(), source: 'project', source_ref: ref,
     })
-    if (error) { skipped++; continue }
-    imported++
   }
+  // A hundred rows a request instead of one request a row (a 400-task import was 400 round trips
+  // and could run out the clock half way). If a batch is refused, its rows go one at a time so a
+  // single bad row costs only itself.
+  for (const part of chunk(fresh, 100)) {
+    const { error } = await sb.from('board_items').insert(part)
+    if (!error) { imported += part.length; continue }
+    for (const row of part) { const { error: e1 } = await sb.from('board_items').insert(row); if (e1) skipped++; else imported++ }
+  }
+  _importable = null
   return { imported, skipped }
 }
 
@@ -240,13 +299,16 @@ Roster:\n${roster}`
     due: dateOf(x?.due), priority: priOf(x?.priority), property: known.get(str(x?.property).trim().toLowerCase()) || '',
     status: 'open' as const, from: source, at: now, by,
   })).filter(x => x.title)
-  const cur = await getSetting<Proposal[]>('leadership_proposals', [])
-  await setSetting('leadership_proposals', [...cur.filter(x => x.status === 'open'), ...made].slice(-80), by)
+  if (!made.length) return { ok: true, proposals: [] }
+  const cur = await getSettingFresh<Proposal[]>('leadership_proposals', [])
+  const saved = await setSetting('leadership_proposals', [...cur.filter(x => x.status === 'open'), ...made].slice(-80), by)
+  // The list on screen comes from what was saved; saying "done" over a failed save showed nothing.
+  if (!saved.ok) return { ok: false, error: 'The tasks were read but could not be saved — try again. ' + str(saved.error).slice(0, 120) }
   return { ok: true, proposals: made }
 }
 
 export async function settleProposal(id: string, status: 'approved' | 'skipped', by: string, itemId?: string): Promise<void> {
-  const cur = await getSetting<Proposal[]>('leadership_proposals', [])
+  const cur = await getSettingFresh<Proposal[]>('leadership_proposals', [])
   const next = cur.map(x => x.id === id ? { ...x, status, itemId } : x).filter(x => x.status === 'open' || Date.parse(x.at) > Date.now() - 7 * 86400_000)
   await setSetting('leadership_proposals', next, by)
 }

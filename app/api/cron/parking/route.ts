@@ -15,7 +15,9 @@ async function run(req: NextRequest) {
   const gate = await requireCron(req)
   if (!gate.ok) return gate.res
   const r = await processDueTows()
-  return NextResponse.json({ ok: true, ...r, count: r.drafted })
+  // A draft that should have been written and was not is a failed run, so the receipt shows it.
+  // (A lot with no tow email on file is counted in noTowEmail and is not a failure of the run.)
+  return NextResponse.json({ ok: r.errors.length === 0, ...r, error: r.errors.length ? r.errors.slice(0, 3).join(' · ') : undefined, count: r.drafted })
 }
 const receipted = withRouteReceipt<NextRequest>('parking-tows', run)
 export async function GET(req: NextRequest) { return receipted(req) }

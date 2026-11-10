@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { hasEditCookie } from '@/lib/edit-access'
 import { requireReportLevel } from '@/lib/garden/access'
 import { makeCode } from '@/lib/owner-report'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,12 +40,35 @@ export async function GET(req: NextRequest) {
   // marked listing_ids ['garden']. The VR desk lists the portfolio's; the hotel's page lists its own.
   const { data, error } = await db
     .from('owner_reports')
-    .select('id, code, title, scope_label, period_start, period_end, as_of, theme, status, created_at, updated_at')
+    .select('id, code, title, scope_label, period_start, period_end, as_of, theme, status, created_by, created_at, updated_at')
     .not('listing_ids', 'cs', '["garden"]')
     .order('updated_at', { ascending: false })
     .limit(200)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, reports: data || [] })
+  // HAS THE OWNER OPENED IT? (2026-11-09.) The view beacon has recorded every share-link session
+  // since 2026-10-29, but the only place to see it was the Views panel inside each report — so the
+  // desk could not answer the one question asked after sending: did they look. One paged read of
+  // two small columns for the listed reports; a missing table or a failed read costs the counts,
+  // never the list.
+  const reports = ((data || []) as any[]).map(r => ({ ...r, views: 0, last_viewed: null as string | null }))
+  const ids = reports.map(r => String(r.id))
+  if (ids.length) {
+    const seen = await pageRows<{ report_id: string; last_seen: string | null }>((a, b) => db.from('report_views')
+      .select('report_id, last_seen').in('report_id', ids)
+      .order('started_at', { ascending: false }).order('session_id').range(a, b), 5)
+    const byId: Record<string, { n: number; last: string | null }> = {}
+    for (const v of seen.rows) {
+      const k = String(v.report_id)
+      const e = (byId[k] = byId[k] || { n: 0, last: null })
+      e.n += 1
+      if (v.last_seen && (!e.last || String(v.last_seen) > e.last)) e.last = String(v.last_seen)
+    }
+    for (const r of reports) {
+      const e = byId[String(r.id)]
+      if (e) { r.views = e.n; r.last_viewed = e.last }
+    }
+  }
+  return NextResponse.json({ ok: true, reports })
 }
 
 export async function PUT(req: NextRequest) {

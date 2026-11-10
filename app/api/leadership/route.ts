@@ -11,9 +11,8 @@
 // /api/leadership/photo.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { readBoard, addItem, setItem, deleteItem, proposeFromNotes, settleProposal, importFromProjects, BoardNotReady, LANES, type Lane } from '@/lib/board'
+import { readBoard, addItem, setItem, deleteItem, proposeFromNotes, settleProposal, openProposal, importFromProjects, BoardNotReady, LANES, type Lane } from '@/lib/board'
 import { rosterForPicker } from '@/lib/mentions'
-import { getSetting } from '@/lib/app-settings'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -25,8 +24,9 @@ export async function GET() {
   if (!gate.ok) return gate.res
   const me = gate.access.user.email.toLowerCase()
   try {
-    const data = await readBoard()
-    return NextResponse.json({ ok: true, me, ...data, canEdit: gate.access.role === 'admin' || ['edit', 'full'].includes(String(gate.access.levels['leadership'] || '')) })
+    const canEdit = gate.access.role === 'admin' || ['edit', 'full'].includes(String(gate.access.levels['leadership'] || ''))
+    const data = await readBoard({ countImportable: canEdit })
+    return NextResponse.json({ ok: true, me, ...data, canEdit })
   } catch (e: any) {
     if (e instanceof BoardNotReady) return NextResponse.json({ ok: false, needsMigration: true, error: MIGRATION_HINT }, { status: 503 })
     return NextResponse.json({ ok: false, error: str(e?.message || e).slice(0, 200) }, { status: 500 })
@@ -61,16 +61,23 @@ export async function POST(req: NextRequest) {
     }
     if (action === 'approve') {
       const id = str(b.id)
-      const cur = (await getSetting<any[]>('leadership_proposals', [])).find(x => x.id === id)
-      if (!cur) return bad('That proposal is gone — reload.', 404)
+      // Read fresh and only while still open: an approved line stays in the list for a week, and a
+      // second tap (or a second leader) used to turn it into a second task.
+      const cur = await openProposal(id)
+      if (!cur) return bad('That one was already approved or skipped.', 409)
       const lane: Lane = (LANES as readonly string[]).includes(str(b.lane)) ? str(b.lane) as Lane : cur.lane
       const r = await addItem(me, myName, {
         lane, title: b.title !== undefined ? b.title : cur.title, details: b.details !== undefined ? b.details : cur.details,
         assignees: Array.isArray(b.assignees) ? b.assignees : (cur.assignee ? [cur.assignee] : []),
         due: b.due !== undefined ? b.due : cur.due, priority: b.priority !== undefined ? b.priority : cur.priority,
-        property: b.property !== undefined ? b.property : cur.property, source: 'notes',
+        property: b.property !== undefined ? b.property : cur.property, source: 'notes', source_ref: 'proposal:' + id,
       })
-      if ('error' in r) return bad(r.error)
+      // source_ref is unique on the table, so two approvals racing each other make ONE task: the
+      // loser lands here, and the proposal is settled either way.
+      if ('error' in r) {
+        if (/duplicate key|unique/i.test(r.error)) { await settleProposal(id, 'approved', me); return NextResponse.json({ ok: true, already: true }) }
+        return bad(r.error)
+      }
       await settleProposal(id, 'approved', me, r.id)
       return NextResponse.json({ ok: true, id: r.id })
     }

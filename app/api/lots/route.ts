@@ -1,7 +1,8 @@
 // PARKING — the tab's API (Jon, 2026-10-26). Feature key `parking`: view reads the calendar, edit
 // books / moves / pays / flags / notifies, full changes the lot (price, spots, tow company, link).
 //
-//   GET  ?lot=<id>&from=&to=            the bundle for one lot (or, with no lot, the list of lots)
+//   GET  ?lot=<id>&from=&to=            the bundle for one lot (lot=auto opens the first lot in the
+//                                       same request; with no lot, just the list of lots)
 //   GET  ?lot=<id>&stays=<q>&from=&to=  stays at the building to attach a booking to
 //   GET  ?lot=<id>&plate=<p>&spot=<id>  judge a plate (the "check a plate" box)
 //   POST { action, ... }                see the switch below
@@ -11,7 +12,7 @@ import { isYmd, addDays } from '@/lib/plate'
 import {
   listLots, lotBundle, lotById, createLot, updateLot, updateSpot, addSpot, buildingsWithoutLot,
   staysForBuilding, inHouseStays, createBooking, updateBooking, deleteBooking, suggestSpot, judgePlate,
-  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, updateIncidentCar, sendNotice, draftTowEmail, closeIncident, noteIncident,
+  openIncident, incidentById, checkNoticeText, checkGroup, updateIncidentCar, sendNotice, draftTowEmail, closeIncident, noteIncident,
   storePhoto, readPlateFromPhoto, ymdET, lotsOverview, getStaffLink, setStaffLink,
 } from '@/lib/parking-lots'
 
@@ -30,31 +31,38 @@ export async function GET(req: NextRequest) {
   const level = lvl(gate)
   const can = { edit: level === 'edit' || level === 'full' || gate.access.role === 'admin', full: level === 'full' || gate.access.role === 'admin' }
   try {
-    const staff = await getStaffLink()
-    const staffLink = staff ? { code: staff.code, hasPasscode: !!staff.passcode, passcode: can.full ? staff.passcode : null, derived: staff.derived } : null
-    if (!lotId) {
-      const [lots, overview] = await Promise.all([listLots(), lotsOverview(ymdET())])
-      return NextResponse.json({ ok: true, lots, overview, staffLink, can, today: ymdET(), buildings: can.full ? await buildingsWithoutLot() : [] })
-    }
-    const lot = await lotById(lotId)
-    if (!lot) return bad('That lot does not exist.', 404)
     const today = ymdET()
-    const from = isYmd(sp.get('from')) ? String(sp.get('from')) : addDays(today, -7)
-    const to = isYmd(sp.get('to')) ? String(sp.get('to')) : addDays(today, 60)
-    if (sp.has('stays')) {
-      const stays = await staysForBuilding(lot.building, from, to, String(sp.get('stays') || ''))
-      return NextResponse.json({ ok: true, stays: stays.slice(0, 60) })
-    }
-    if (sp.has('plate')) {
-      const v = await judgePlate(lot.id, String(sp.get('plate') || ''), sp.get('spot') || null, isYmd(sp.get('date')) ? String(sp.get('date')) : today)
-      return NextResponse.json({ ok: true, ...v })
-    }
-    if (sp.has('inhouse')) {
-      const stays = await inHouseStays(lot.building, today)
+    // The quick questions first — they need one lot and nothing else.
+    if (lotId && lotId !== 'auto' && (sp.has('stays') || sp.has('plate') || sp.has('inhouse'))) {
+      const one = await lotById(lotId)
+      if (!one) return bad('That lot does not exist.', 404)
+      if (sp.has('stays')) {
+        const sFrom = isYmd(sp.get('from')) ? String(sp.get('from')) : addDays(today, -7)
+        const sTo = isYmd(sp.get('to')) ? String(sp.get('to')) : addDays(today, 60)
+        const stays = await staysForBuilding(one.building, sFrom, sTo, String(sp.get('stays') || ''))
+        return NextResponse.json({ ok: true, stays: stays.slice(0, 60) })
+      }
+      if (sp.has('plate')) {
+        const v = await judgePlate(one.id, String(sp.get('plate') || ''), sp.get('spot') || null, isYmd(sp.get('date')) ? String(sp.get('date')) : today)
+        return NextResponse.json({ ok: true, ...v })
+      }
+      const stays = await inHouseStays(one.building, today)
       return NextResponse.json({ ok: true, stays: stays.map(s => ({ id: s.id, guest: s.guest, unit: s.unit, canMessage: !!s.conversationId })) })
     }
-    const [bundle, lots, overview] = await Promise.all([lotBundle(lot.id, from, to), listLots(), lotsOverview(today)])
-    return NextResponse.json({ ok: true, ...bundle, from, to, lots, overview, staffLink, can, buildings: can.full ? await buildingsWithoutLot() : [] })
+    // ONE READ OF THE LOTS for everything below (it was read three times per open, and the lot a
+    // fourth). `lot=auto` opens the first lot in this same request, so the tab loads in one call.
+    const [lots, staff] = await Promise.all([listLots(), getStaffLink()])
+    const staffLink = staff ? { code: staff.code, hasPasscode: !!staff.passcode, passcode: can.full ? staff.passcode : null, derived: staff.derived } : null
+    const lot = lotId === 'auto' ? (lots[0] || null) : lotId ? (lots.find(l => l.id === lotId) || await lotById(lotId)) : null
+    if (!lot) {
+      if (lotId && lotId !== 'auto') return bad('That lot does not exist.', 404)
+      const overview = await lotsOverview(today, lots)
+      return NextResponse.json({ ok: true, lots, overview, staffLink, can, today, buildings: can.full ? await buildingsWithoutLot(lots) : [] })
+    }
+    const from = isYmd(sp.get('from')) ? String(sp.get('from')) : addDays(today, -7)
+    const to = isYmd(sp.get('to')) ? String(sp.get('to')) : addDays(today, 60)
+    const [bundle, overview, buildings] = await Promise.all([lotBundle(lot, from, to), lotsOverview(today, lots), can.full ? buildingsWithoutLot(lots) : Promise.resolve([] as string[])])
+    return NextResponse.json({ ok: true, ...bundle, from, to, lots, overview, staffLink, can, buildings })
   } catch (e: any) { return bad(String(e?.message || e), 500) }
 }
 
@@ -107,10 +115,13 @@ export async function POST(req: NextRequest) {
       case 'incident.open': {
         // A car flagged by hand from the tab (no sweep): plate, car, where.
         const lotId = String(body.lotId || '')
+        if (!(await lotById(lotId))) return bad('That lot does not exist.', 404)
         let photoPath: string | null = null
-        if (body.photo) { const p = await storePhoto(lotId, String(body.photo), String(body.photoMime || 'image/jpeg')); if (p.ok) photoPath = p.path || null }
-        const inc = await openIncident({ lotId, spotId: body.spotId || null, spotLabel: body.spotLabel || null, kind: body.kind || 'unregistered', bookingId: body.bookingId || null, plate: body.plate, plateState: body.plateState, make: body.make, model: body.model, color: body.color, photoPath, seenBy: by, notes: body.notes })
-        return inc ? NextResponse.json({ ok: true, incident: inc }) : bad('Could not save the flag.')
+        let photoError: string | null = null
+        if (body.photo) { const p = await storePhoto(lotId, String(body.photo), String(body.photoMime || 'image/jpeg')); if (p.ok) photoPath = p.path || null; else photoError = p.error || 'The photo could not be saved.' }
+        const kind = ['unregistered', 'wrong_spot', 'staff_in_sell', 'blocking', 'other'].indexOf(body.kind) >= 0 ? body.kind : 'unregistered'
+        const inc = await openIncident({ lotId, spotId: body.spotId || null, spotLabel: body.spotLabel || null, kind, bookingId: body.bookingId || null, plate: body.plate, plateState: body.plateState, make: body.make, model: body.model, color: body.color, photoPath, seenBy: by, notes: body.notes })
+        return inc ? NextResponse.json({ ok: true, incident: inc, photoError }) : bad('Could not save the flag.')
       }
       case 'incident.car': {
         const out = await updateIncidentCar(String(body.incidentId || ''), { make: body.make, model: body.model, color: body.color, plateState: body.plateState })

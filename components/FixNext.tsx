@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { ArrowRight } from 'lucide-react'
-import { LeanList, LeanRow, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
+import { LeanList, LeanRow, LeanEmpty, Tag, Pill } from '@/components/lean'
 
 export type FixItem = {
   unitId: string; unitName: string; building: string
@@ -22,6 +22,18 @@ const PANEL_FOR: Record<FixItem['pillar'], string> = {
 }
 const PILLAR_LABEL: Record<FixItem['pillar'], string> = {
   title: 'Title', description: 'Description', photos: 'Photos', amenities: 'Amenities', settings: 'Booking settings',
+}
+
+// ONE PRIMARY ACTION PER ROW, IN WORDS (2026-11-09). The same verbs the unit page uses, so "Write it"
+// here opens the panel where "Write it" is the button. Two settings cannot be changed from Lighthouse
+// at all; their rows say where they are changed instead of promising an edit.
+export function fixAction(pillar: FixItem['pillar'], label: string): string {
+  if (pillar === 'title' || pillar === 'description') return 'Write it'
+  if (pillar === 'photos') return label === 'First five photos' ? 'Review first 5' : label === 'Photo captions' ? 'Write captions' : label === 'Photo count' ? 'Add photos' : 'Check photos'
+  if (pillar === 'amenities') return label === 'Amenities your photos show' ? 'Add them' : label === 'Amenity listed that is not true' ? 'Remove it' : 'Add amenities'
+  if (label === 'Cancellation policy') return 'In Guesty'
+  if (label === 'Instant Book') return 'In Airbnb/Vrbo'
+  return 'Edit'
 }
 
 const UNITS_SHOWN = 12   // per group, before "show all"
@@ -100,7 +112,7 @@ export function FixNext({ items, buildings }: { items: FixItem[]; buildings: str
                   lead={<Tag tone={g.severity === 'bad' ? 'rose' : 'amber'} title={`Optimize points across all ${g.units.length} units · up to +${best.toFixed(1)} on one unit`}>+{Math.round(g.points)}</Tag>}
                   name={g.label}
                   meta={`${g.units.length} unit${g.units.length === 1 ? '' : 's'}`}
-                  tags={<Tag>{PILLAR_LABEL[g.pillar]}</Tag>}
+                  tags={<><Tag>{PILLAR_LABEL[g.pillar]}</Tag><Tag tone="slate" title="What you do on each unit's page">{fixAction(g.pillar, g.label)}</Tag></>}
                 >
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
                     {shown.map((u, i) => (
@@ -140,7 +152,7 @@ export function FixNext({ items, buildings }: { items: FixItem[]; buildings: str
                   name={<Link href={href} className="hover:text-brand-700">{u.unitName}</Link>}
                   meta={u.building}
                   tags={<Tag title={u.note}>{u.label}</Tag>}
-                  actions={<IconBtn title={`Open the ${PILLAR_LABEL[u.pillar]} panel`} href={href}><ArrowRight size={14} /></IconBtn>}
+                  actions={<Link href={href} title={`Open the ${PILLAR_LABEL[u.pillar]} panel`} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink/40 whitespace-nowrap min-h-[32px]">{fixAction(u.pillar, u.label)} <ArrowRight size={13} /></Link>}
                 />
               )
             })}

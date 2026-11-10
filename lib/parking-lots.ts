@@ -163,19 +163,33 @@ export async function resolveStaffCode(code: string, lotId?: string | null): Pro
 
 /** Every lot at a glance (Jon, 2026-10-29: "a visual of all properties … see by lot / properties"). */
 export type LotOverview = { lot: Lot; spots: (Spot & { tonight: Booking | null; flagged: boolean })[]; sold: number; sellable: number; unpaid: number; flags: number; revenueCents: number }
-export async function lotsOverview(date: string): Promise<LotOverview[]> {
-  const lots = await listLots()
-  return Promise.all(lots.map(async lot => {
-    const [spots, bookings, incidents] = await Promise.all([spotsFor(lot.id), bookingsFor(lot.id, date, date), incidentsFor(lot.id, { openOnly: true, limit: 50 })])
-    const live = bookings.filter(b => LIVE_BOOKING.indexOf(b.status) >= 0 && b.startsOn <= date && date < b.endsOn)
-    const flaggedSpots = incidents.map(i => i.spotId).filter(Boolean)
+// THREE READS FOR EVERY LOT TOGETHER (2026-11-09 audit): this used to be three reads PER lot, and it
+// runs on every open of the tab and every move of the calendar. Pass `lots` when the caller has them.
+export async function lotsOverview(date: string, known?: Lot[]): Promise<LotOverview[]> {
+  const lots = known || await listLots()
+  if (!lots.length) return []
+  const ids = lots.map(l => l.id)
+  const db = supabaseAdmin()
+  const [sp, bk, inc] = await Promise.all([
+    db.from('parking_spots').select('id, lot_id, label, kind, sort, active, note').in('lot_id', ids).eq('active', true).order('sort').order('label').limit(2000),
+    db.from('parking_bookings').select('*').in('lot_id', ids).in('status', LIVE_BOOKING).lte('starts_on', date).gt('ends_on', date).limit(2000),
+    db.from('parking_incidents').select('id, lot_id, spot_id').in('lot_id', ids).in('status', OPEN_INCIDENT).limit(500),
+  ])
+  const allSpots = (sp.data || []).map(spotOf)
+  const allLive = (bk.data || []).map(bookingOf)
+  const allOpen = (inc.data || []) as any[]
+  return lots.map(lot => {
+    const spots = allSpots.filter(s => s.lotId === lot.id)
+    const live = allLive.filter(b => b.lotId === lot.id)
+    const incidents = allOpen.filter(i => str(i.lot_id) === lot.id)
+    const flaggedSpots = incidents.map(i => (i.spot_id ? str(i.spot_id) : '')).filter(Boolean)
     const rows = spots.map(s => ({ ...s, tonight: live.find(b => b.spotId === s.id) || null, flagged: flaggedSpots.indexOf(s.id) >= 0 }))
     const sellable = spots.filter(s => s.kind === 'sell').length
     const sold = rows.filter(s => s.kind === 'sell' && s.tonight && s.tonight.kind === 'guest').length
     const unpaid = live.filter(b => b.kind === 'guest' && b.paid === 'unpaid').length
     const revenueCents = live.filter(b => b.kind === 'guest').reduce((a, b) => a + (b.nights ? b.amountCents / b.nights : 0), 0)
     return { lot, spots: rows, sold, sellable, unpaid, flags: incidents.length, revenueCents }
-  }))
+  })
 }
 
 export async function spotsFor(lotId: string, includeInactive = false): Promise<Spot[]> {
@@ -193,8 +207,8 @@ const newCode = () => {
 }
 
 /** The buildings a new lot can be made for — every known building that has no active lot yet. */
-export async function buildingsWithoutLot(): Promise<string[]> {
-  const lots = await listLots()
+export async function buildingsWithoutLot(known?: Lot[]): Promise<string[]> {
+  const lots = known || await listLots()
   const taken = lots.map(l => l.building.toLowerCase())
   return KNOWN_BUILDINGS.map(b => b.label).filter(b => taken.indexOf(b.toLowerCase()) < 0)
 }
@@ -220,7 +234,14 @@ export async function createLot(inp: { building: string; name?: string; sell: nu
   const rows: any[] = []
   for (let i = 1; i <= sell; i++) rows.push({ lot_id: data.id, label: String(i), kind: 'sell', sort: i })
   for (let i = 1; i <= hold; i++) rows.push({ lot_id: data.id, label: 'S' + i, kind: 'hold', sort: 100 + i, note: 'Staff & buffer — never sold' })
-  if (rows.length) await db.from('parking_spots').insert(rows)
+  if (rows.length) {
+    // A lot with no spots looks set up and books nothing — say so instead of failing quietly.
+    const { error: spotErr } = await db.from('parking_spots').insert(rows)
+    if (spotErr) {
+      await db.from('parking_lots').update({ active: false }).eq('id', data.id)
+      return { ok: false, error: `The lot was made but its spots could not be saved (${spotErr.message}). Try again.` }
+    }
+  }
   return { ok: true, lot: lotOf(data) }
 }
 
@@ -268,15 +289,23 @@ export type Stay = {
   id: string; guest: string; phone: string | null; email: string | null; unit: string; listingId: string
   checkIn: string; checkOut: string; nights: number; status: string; source: string; conversationId: string | null; confirmationCode: string | null
 }
+// Which units are in a building changes a few times a year; this read (every listing we have) ran on
+// every open of the staff link, every stay search and every notice. Kept for five minutes per warm
+// server; an empty or failed read is never kept.
+const UNITS_TTL_MS = 5 * 60 * 1000
+const unitsCache: Record<string, { at: number; units: Record<string, string> }> = {}
 async function listingsOfBuilding(building: string): Promise<Record<string, string>> {
   // id -> unit label. Canonicalised through lib/segments so "Eden 1203" and "EDEN-1203" both count.
-  const { data } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building').limit(3000)
-  const out: Record<string, string> = {}
   const want = building.toLowerCase()
+  const hit = unitsCache[want]
+  if (hit && Date.now() - hit.at < UNITS_TTL_MS) return hit.units
+  const { data, error } = await supabaseAdmin().from('guesty_listings').select('id, nickname, title, building').limit(3000)
+  const out: Record<string, string> = {}
   for (const l of (data || []) as any[]) {
     const b = buildingOf(l.building, l.nickname || l.title)
     if (b && b.toLowerCase() === want) out[str(l.id)] = str(l.nickname || l.title || l.id)
   }
+  if (!error && Object.keys(out).length) unitsCache[want] = { at: Date.now(), units: out }
   return out
 }
 const stayOf = (r: any, units: Record<string, string>): Stay => ({
@@ -560,6 +589,8 @@ const tally = (checks: SweepCheck[]) => ({
 export async function finishSweep(sweepId: string, byName: string): Promise<{ sweep: Sweep; incidents: Incident[] } | null> {
   const sw = await sweepById(sweepId)
   if (!sw) return null
+  // Finished already (a second tap, a retry on bad signal): do not open the same flags again.
+  if (sw.finishedAt) return { sweep: sw, incidents: [] }
   const db = supabaseAdmin()
   const flagged = sw.checks.filter(c => c.verdict === 'unregistered' || c.verdict === 'wrong_spot' || c.verdict === 'staff_in_sell')
   const made: Incident[] = []
@@ -622,7 +653,7 @@ async function alertFirstFlag(inc: Incident): Promise<void> {
   const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
   await raiseEveAlert({
     title: `Parking: unregistered car in the ${lot.building} lot — CCS, send the notice`,
-    body: `${lot.building} lot check · ${timeET(inc.seenAt)}${inc.seenBy ? ' by ' + inc.seenBy : ''}: ${carLabel(inc)}${inc.plate ? ' · ' + inc.plate : ''}${inc.spotLabel ? ' · spot ' + inc.spotLabel : ''} is not registered.\nThe notice to every ${lot.building} guest is drafted (every car flagged in this check goes in the one message, with the 1-hour deadline and the offer to buy parking). Open Parking → Flags → ✉ to read and send it: ${base}/parking`,
+    body: `${lot.building} lot check · ${timeET(inc.seenAt)}${inc.seenBy ? ' by ' + inc.seenBy : ''}: ${carLabel(inc)}${inc.plate ? ' · ' + inc.plate : ''}${inc.spotLabel ? ' · spot ' + inc.spotLabel : ''} is not registered.\nThe notice to every ${lot.building} guest is drafted (every car flagged in this check goes in the one message, with the 1-hour deadline and the offer to buy parking). Open Parking → Flags → Send notice to read and send it: ${base}/lots?lot=${lot.id}&tab=flags`,
     unit: lot.building, dedupe: 'parking-check:' + inc.id, severity: 'urgent',
   })
 }
@@ -672,7 +703,7 @@ export function checkNoticeText(lot: Lot, incs: Pick<Incident, 'plate' | 'make' 
 }
 
 /** Send the notice to every stay in house at the lot's building right now. */
-export async function sendNotice(incidentId: string, text: string, by: string, alsoIds: string[] = []): Promise<{ ok: boolean; error?: string; sent: number; failed: number; recipients: number; incident?: Incident }> {
+export async function sendNotice(incidentId: string, text: string, by: string, alsoIds: string[] = []): Promise<{ ok: boolean; error?: string; warning?: string; sent: number; failed: number; recipients: number; incident?: Incident }> {
   const inc = await incidentById(incidentId)
   if (!inc) return { ok: false, error: 'That flag is gone.', sent: 0, failed: 0, recipients: 0 }
   const lot = await lotById(inc.lotId)
@@ -702,20 +733,24 @@ export async function sendNotice(incidentId: string, text: string, by: string, a
     notice_text: body, notice_sent_n: inc.noticeSentN + sent, notice_sent_by: by, notice_log: inc.noticeLog.concat(log), updated_at: now.toISOString(),
   }
   if (sent > 0) { up.notice_sent_at = inc.noticeSentAt || now.toISOString(); up.tow_due_at = inc.towDueAt || due.toISOString(); if (inc.status === 'open') up.status = 'notified' }
-  const { data } = await supabaseAdmin().from('parking_incidents').update(up).eq('id', inc.id).select('*').single()
+  const { data, error: saveErr } = await supabaseAdmin().from('parking_incidents').update(up).eq('id', inc.id).select('*').single()
+  // The guests have the message even if our own record of it failed — say so, or the next person
+  // sees "notice not sent" and sends it to the whole building a second time.
+  let warning: string | undefined = sent > 0 && (saveErr || !data) ? 'The notice went out, but the flag could not be updated — do not send it again. Refresh, and mark the deadline by hand.' : undefined
   // The other cars in the same notice share its send time and deadline.
   const rest = alsoIds.filter(x => x && x !== inc.id)
   if (sent > 0 && rest.length) {
-    await supabaseAdmin().from('parking_incidents').update({ notice_text: body, notice_sent_n: sent, notice_sent_by: by, notice_log: log, notice_sent_at: up.notice_sent_at, tow_due_at: up.tow_due_at, status: 'notified', updated_at: now.toISOString() })
+    const { error: restErr } = await supabaseAdmin().from('parking_incidents').update({ notice_text: body, notice_sent_n: sent, notice_sent_by: by, notice_log: log, notice_sent_at: up.notice_sent_at, tow_due_at: up.tow_due_at, status: 'notified', updated_at: now.toISOString() })
       .in('id', rest).eq('lot_id', inc.lotId).eq('status', 'open')
+    if (restErr && !warning) warning = 'The notice went out, but the other cars in it still show as not notified — refresh before sending anything again.'
   }
-  return { ok: sent > 0, error: sent > 0 ? undefined : `Could not send to anyone (${log[0]?.error || 'no detail'}).`, sent, failed, recipients: withThread.length, incident: data ? incidentOf(data) : inc }
+  return { ok: sent > 0, error: sent > 0 ? undefined : `Could not send to anyone (${log[0]?.error || 'no detail'}).`, warning, sent, failed, recipients: withThread.length, incident: data ? incidentOf(data) : inc }
 }
 
 const esc = (s: any) => str(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c])
 
 /** The email to the tow company, as a DRAFT in the notice mailbox — a person reads it and presses send. */
-export async function draftTowEmail(incidentId: string, by: string): Promise<{ ok: boolean; error?: string; draftId?: string; incident?: Incident; preview: { to: string; subject: string; text: string } }> {
+export async function draftTowEmail(incidentId: string, by: string): Promise<{ ok: boolean; error?: string; reason?: 'no_tow_email'; draftId?: string; incident?: Incident; preview: { to: string; subject: string; text: string } }> {
   const inc = await incidentById(incidentId)
   const lot = inc ? await lotById(inc.lotId) : null
   const empty = { to: '', subject: '', text: '' }
@@ -741,7 +776,7 @@ export async function draftTowEmail(incidentId: string, by: string): Promise<{ o
   ].filter(l => l !== undefined)
   const text = lines.join('\n')
   const preview = { to: lot.towEmail || '', subject, text }
-  if (!lot.towEmail) return { ok: false, error: `Add the tow company's email on the lot's Settings first.`, preview, incident: inc }
+  if (!lot.towEmail) return { ok: false, reason: 'no_tow_email', error: `Add the tow company's email on the lot's Settings first.`, preview, incident: inc }
   try {
     const [{ draftGmail }, { getTaskAutomation }] = await Promise.all([import('./gmail-send'), import('./auto-inspections')])
     const cfg = await getTaskAutomation()
@@ -775,14 +810,18 @@ export async function noteIncident(id: string, notes: string): Promise<Incident 
 }
 
 /** THE HOUR IS UP (cron + lazy on every lot load): draft the tow email for every notified car past its deadline. */
-export async function processDueTows(lotId?: string): Promise<{ checked: number; drafted: number; errors: string[] }> {
+export async function processDueTows(lotId?: string): Promise<{ checked: number; drafted: number; noTowEmail: number; errors: string[] }> {
   let q = supabaseAdmin().from('parking_incidents').select('id').eq('status', 'notified').is('tow_draft_id', null).lte('tow_due_at', new Date().toISOString()).limit(20)
   if (lotId) q = q.eq('lot_id', lotId)
   const { data } = await q
-  const out = { checked: (data || []).length, drafted: 0, errors: [] as string[] }
+  // `noTowEmail` is a lot waiting on its Settings, not a failure of this run; `errors` are drafts
+  // that should have been written and were not (the cron reports those as a failed run).
+  const out = { checked: (data || []).length, drafted: 0, noTowEmail: 0, errors: [] as string[] }
   for (const row of data || []) {
     const r = await draftTowEmail(str((row as any).id), 'Lighthouse (the notice period ended)')
-    if (r.ok) out.drafted++; else out.errors.push(str(r.error))
+    if (r.ok) out.drafted++
+    else if (r.reason === 'no_tow_email') out.noTowEmail++
+    else out.errors.push(str(r.error))
   }
   return out
 }
@@ -839,8 +878,8 @@ export async function readPlateFromPhoto(base64: string, mime: string): Promise<
 }
 
 // ── The bundle the Parking tab opens with ───────────────────────────────────────────────────────
-export async function lotBundle(lotId: string, from: string, to: string): Promise<{ lot: Lot; spots: Spot[]; bookings: Booking[]; incidents: Incident[]; lastSweep: Sweep | null; today: string } | null> {
-  const lot = await lotById(lotId)
+export async function lotBundle(lotOrId: string | Lot, from: string, to: string): Promise<{ lot: Lot; spots: Spot[]; bookings: Booking[]; incidents: Incident[]; lastSweep: Sweep | null; today: string } | null> {
+  const lot = typeof lotOrId === 'string' ? await lotById(lotOrId) : lotOrId
   if (!lot) return null
   // Lazy tow drafts: anyone opening the lot after the hour gets the email drafted (idempotent).
   processDueTows(lot.id).catch(() => null)
@@ -858,7 +897,17 @@ export type FieldStay = { id: string; guest: string; unit: string; checkIn: stri
  * each, the cars arriving tomorrow, and the stays a car can be registered to — in house first, then
  * arrivals over the next week. No phone numbers or emails leave through this door.
  */
-export async function lotToday(lot: Lot, date: string): Promise<{ date: string; spots: (Spot & { expected: Booking[] })[]; arriving: Booking[]; stays: FieldStay[]; incidents: Incident[]; sweep: Sweep | null }> {
+/** The car a spot should hold on `date` (leaving-today last) — the one read "As expected" needs. */
+export async function expectedAt(lotId: string, spotId: string | null, date: string): Promise<Booking | null> {
+  if (!spotId) return null
+  const { data } = await supabaseAdmin().from('parking_bookings').select('*').eq('lot_id', lotId).eq('spot_id', spotId).in('status', LIVE_BOOKING).lte('starts_on', date).gte('ends_on', date).limit(5)
+  const live = (data || []).map(bookingOf).sort((a, b) => (a.endsOn === date ? 1 : 0) - (b.endsOn === date ? 1 : 0))
+  return live[0] || null
+}
+
+/** Nights a spot is already taken over the next week, so the phone can grey it out before saving. */
+export type SpotBusy = { startsOn: string; endsOn: string }
+export async function lotToday(lot: Lot, date: string): Promise<{ date: string; spots: (Spot & { expected: Booking[]; busy: SpotBusy[] })[]; arriving: Booking[]; stays: FieldStay[]; incidents: Incident[]; sweep: Sweep | null }> {
   processDueTows(lot.id).catch(() => null)
   const tomorrow = addDays(date, 1)
   const [spots, bookings, incidents, sweep, stays] = await Promise.all([
@@ -871,7 +920,11 @@ export async function lotToday(lot: Lot, date: string): Promise<{ date: string; 
   const upcoming = bookings.filter(b => LIVE_BOOKING.indexOf(b.status) >= 0 && b.reservationId)
   return {
     date,
-    spots: spots.map(s => ({ ...s, expected: live.filter(b => b.spotId === s.id).sort((a, b) => (a.endsOn === date ? 1 : 0) - (b.endsOn === date ? 1 : 0)) })),
+    spots: spots.map(s => ({
+      ...s,
+      expected: live.filter(b => b.spotId === s.id).sort((a, b) => (a.endsOn === date ? 1 : 0) - (b.endsOn === date ? 1 : 0)),
+      busy: bookings.filter(b => b.spotId === s.id && LIVE_BOOKING.indexOf(b.status) >= 0).map(b => ({ startsOn: b.startsOn, endsOn: b.endsOn })),
+    })),
     arriving,
     stays: stays
       .filter(s => s.checkOut >= date)

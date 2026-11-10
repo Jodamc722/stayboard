@@ -14,17 +14,30 @@
 //   DELETE
 // Hold the image to see the original. ← → step through the set without closing. Nothing goes to
 // Guesty until "Save" on the photo grid — the editor stages, the grid pushes.
+//
+// 2026-11-09 (Jon: "improve the enhance photo mode, have watermark feature"):
+//   COMPARE      a before / after slider over the photo, once there is an edit to compare
+//   STRENGTH     Subtle · Standard · Stronger for the looks (the server scales every look, still capped)
+//   BRANDED COPY the Stay watermark, see-through, as a DOWNLOAD of this photo — for the direct site,
+//                social, email and print. It is never staged and never sent to Guesty: the booking
+//                sites do not allow logos on listing photos (lib/photo-watermark has the one rule).
 import { useEffect, useState } from 'react'
-import { X, ChevronLeft, ChevronRight, Loader2, Sparkles, RotateCcw, RotateCw, FlipHorizontal2, Crown, Trash2, LibraryBig, Wand2, Check, Undo2, SlidersHorizontal } from 'lucide-react'
+import { X, ChevronLeft, ChevronRight, Loader2, Sparkles, RotateCcw, RotateCw, FlipHorizontal2, Crown, Trash2, LibraryBig, Wand2, Check, Undo2, SlidersHorizontal, Columns2, Download, Stamp } from 'lucide-react'
 import { LibraryPicker, type LibraryPick } from '@/components/LibraryPicker'
+import { WatermarkOptions, useWatermark, withWatermark } from '@/components/WatermarkOptions'
 
 export type EditorPhoto = { id: string; url: string; caption: string }
 type Variant = { preset: string; name: string; url: string; why?: string }
 type Dials = { brightness: number; contrast: number; saturation: number; warmth: number; sharpen: number; rotate: number; flip: boolean }
 const ZERO: Dials = { brightness: 1, contrast: 1, saturation: 1, warmth: 0, sharpen: 0, rotate: 0, flip: false }
 const LOOKS = ['auto', 'natural', 'bright', 'warm', 'crisp']
+const STRENGTHS: { v: number; label: string; title: string }[] = [
+  { v: 0.6, label: 'Subtle', title: 'About half the correction — for a photo that is nearly right' },
+  { v: 1, label: 'Standard', title: 'The look as designed' },
+  { v: 1.3, label: 'Stronger', title: 'A little more — still inside the limits that keep a photo honest' },
+]
 
-export function ListingPhotoEditor({ listingId, photo, position, total, current, onClose, onPrev, onNext, onUse, onRevert, onCaption, caption, onMove, deleted, onDelete }: {
+export function ListingPhotoEditor({ listingId, photo, position, total, current, onClose, onPrev, onNext, onUse, onRevert, onCaption, caption, onMove, deleted, onDelete, strength: strengthProp, onStrength }: {
   listingId: string
   photo: EditorPhoto
   position: number
@@ -41,6 +54,9 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
   onCaption: (text: string) => void
   onMove: (pos: number) => void
   onDelete: () => void
+  /** How far the looks move the photo (0.6 / 1 / 1.3). Owned by the grid when given, so both agree. */
+  strength?: number
+  onStrength?: (v: number) => void
 }) {
   const [dials, setDials] = useState<Dials>(ZERO)
   const [preview, setPreview] = useState<string | null>(null)
@@ -51,9 +67,14 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
   const [steer, setSteer] = useState('')
   const [libOpen, setLibOpen] = useState(false)
   const [pos, setPos] = useState(String(position))
+  const [cmp, setCmp] = useState(false)      // before / after slider
+  const [cmpX, setCmpX] = useState(50)       // where the divider sits, percent from the left
+  const [ownStrength, setOwnStrength] = useState(1)
+  const strength = strengthProp ?? ownStrength
+  const [wm, setWm] = useWatermark()
 
   // A new photo → a clean editor.
-  useEffect(() => { setDials(ZERO); setPreview(null); setLooks(null); setErr(''); setPeek(false); setSteer(''); setPos(String(position)) }, [photo.id, position])
+  useEffect(() => { setDials(ZERO); setPreview(null); setLooks(null); setErr(''); setPeek(false); setSteer(''); setPos(String(position)); setCmp(false); setCmpX(50) }, [photo.id, position])
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
@@ -72,10 +93,16 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
     if (p?.error) throw new Error(p.error)
     return p
   }
-  const makeLooks = async () => {
+  const makeLooks = async (s: number = strength) => {
     setBusy('looks'); setErr('')
-    try { const p = await call({ variants: LOOKS }); setLooks(p?.variants || []) } catch (e: any) { setErr(String(e?.message || e)) }
+    try { const p = await call({ variants: LOOKS, strength: s }); setLooks(p?.variants || []) } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
+  }
+  const pickStrength = (v: number) => {
+    if (v === strength) return
+    if (onStrength) onStrength(v); else setOwnStrength(v)
+    // Looks already on screen were made at the old strength — make them again at the new one.
+    if (looks) makeLooks(v)
   }
   const renderCustom = async (d: Dials = dials) => {
     setBusy('custom'); setErr('')
@@ -95,6 +122,12 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
   const set = (k: keyof Dials, v: number | boolean) => { setDials(d => ({ ...d, [k]: v })); setPreview(null) }
   const dirty = JSON.stringify(dials) !== JSON.stringify(ZERO)
   const shown = peek ? photo.url : (preview || current?.url || photo.url)
+  const edited = preview || current?.url || ''
+  // A quarter turn changes the shape, so the two images no longer line up under a slider.
+  const canCompare = !!edited && dials.rotate % 180 === 0
+  const comparing = cmp && canCompare
+  // The watermark is made from the photo Guesty holds — a photo not saved to the listing yet has none.
+  const brandHref = photo.id.startsWith('idx-') ? null : '/api/photos/file?listing=' + encodeURIComponent(listingId) + '&pic=' + encodeURIComponent(photo.id)
 
   const slider = (k: keyof Dials, label: string, min: number, max: number, step: number, fmt: (v: number) => string) => (
     <label className="block">
@@ -110,13 +143,35 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
       <div className="bg-white w-full max-w-6xl sm:rounded-2xl overflow-hidden flex flex-col lg:flex-row max-h-full" onClick={e => e.stopPropagation()}>
         {/* the photo */}
         <div className="relative bg-black flex-1 min-h-[260px] flex items-center justify-center select-none">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={shown} alt={caption} className={'max-h-[70vh] max-w-full object-contain ' + (deleted ? 'opacity-30 grayscale' : '')}
-            onMouseDown={() => setPeek(true)} onMouseUp={() => setPeek(false)} onMouseLeave={() => setPeek(false)} onTouchStart={() => setPeek(true)} onTouchEnd={() => setPeek(false)} />
+          {comparing ? (
+            // BEFORE / AFTER: the edit underneath, the original on top, cut at the divider. The range
+            // input covers the photo, so dragging anywhere on it moves the divider (mouse or finger).
+            <div className="relative inline-block max-w-full leading-none">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={edited} alt={caption} className="block max-h-[70vh] max-w-full" draggable={false} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={photo.url} alt="" aria-hidden className="absolute inset-0 w-full h-full object-cover" style={{ clipPath: `inset(0 ${100 - cmpX}% 0 0)` }} draggable={false} />
+              <span className="absolute top-0 bottom-0 w-0.5 bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.25)] pointer-events-none" style={{ left: cmpX + '%' }} />
+              <span className="absolute bottom-2 left-2 text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-white/90 text-ink pointer-events-none">Before</span>
+              <span className="absolute bottom-2 right-2 text-[10.5px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white pointer-events-none">After</span>
+              <input type="range" min={0} max={100} step={1} value={cmpX} onChange={e => setCmpX(Number(e.target.value))} aria-label="Before and after — drag to compare"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-ew-resize" />
+            </div>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={shown} alt={caption} className={'max-h-[70vh] max-w-full object-contain ' + (deleted ? 'opacity-30 grayscale' : '')}
+              onMouseDown={() => setPeek(true)} onMouseUp={() => setPeek(false)} onMouseLeave={() => setPeek(false)} onTouchStart={() => setPeek(true)} onTouchEnd={() => setPeek(false)} />
+          )}
+          {canCompare && (
+            <button onClick={() => setCmp(c => !c)} aria-pressed={comparing} title="Before / after slider"
+              className={'absolute top-3 right-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11.5px] font-bold ' + (comparing ? 'bg-ink text-white' : 'bg-white/90 text-ink hover:bg-white')}>
+              <Columns2 size={12} /> {comparing ? 'Done comparing' : 'Compare'}
+            </button>
+          )}
           <span className="absolute top-3 left-3 text-[11px] font-bold px-2 py-0.5 rounded bg-white/90 text-ink">{position === 1 ? 'Cover · ' : ''}{position} of {total}</span>
           {(preview || current) && !peek && <span className="absolute top-3 left-28 text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-600 text-white">{preview ? 'Preview' : current!.label}</span>}
           {peek && <span className="absolute top-3 left-28 text-[11px] font-bold px-2 py-0.5 rounded bg-white/90 text-ink">Original</span>}
-          <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10.5px] text-white/80">Hold the photo to see the original · ← → to move through the set</span>
+          {!comparing && <span className="absolute bottom-3 left-1/2 -translate-x-1/2 text-[10.5px] text-white/80 text-center w-[90%]">Hold the photo to see the original · ← → to move through the set</span>}
           <button onClick={onPrev} className="absolute left-2 top-1/2 -translate-y-1/2 grid place-items-center w-9 h-9 rounded-full bg-white/80 hover:bg-white" aria-label="Previous photo"><ChevronLeft size={18} /></button>
           <button onClick={onNext} className="absolute right-2 top-1/2 -translate-y-1/2 grid place-items-center w-9 h-9 rounded-full bg-white/80 hover:bg-white" aria-label="Next photo"><ChevronRight size={18} /></button>
           {busy && busy !== 'caption' && <span className="absolute inset-0 grid place-items-center"><Loader2 size={28} className="animate-spin text-white" /></span>}
@@ -133,7 +188,15 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
           {/* LOOKS */}
           <section className="space-y-2">
             <div className="flex items-center gap-2"><Sparkles size={13} className="text-brand-600" /><span className="text-[12px] font-bold uppercase tracking-wide text-muted flex-1">Looks</span>
-              {!looks && <button onClick={makeLooks} disabled={!!busy} className={btn}>{busy === 'looks' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} Show 5 looks</button>}</div>
+              {!looks && <button onClick={() => makeLooks()} disabled={!!busy} className={btn}>{busy === 'looks' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} Show 5 looks</button>}</div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11.5px] text-muted">Strength</span>
+              {STRENGTHS.map(o => (
+                <button key={o.v} onClick={() => pickStrength(o.v)} disabled={!!busy} aria-pressed={strength === o.v} title={o.title}
+                  className={'rounded-md border px-2 py-0.5 text-[11.5px] font-semibold disabled:opacity-40 ' + (strength === o.v ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}>{o.label}</button>
+              ))}
+            </div>
+            {looks && looks.length === 0 && <p className="text-[11.5px] text-muted">No look came back for this photo. <button onClick={() => makeLooks()} disabled={!!busy} className="font-semibold text-ink underline">Try again</button></p>}
             {looks && (
               <div className="grid grid-cols-3 gap-1.5">
                 {looks.map(v => (
@@ -190,6 +253,18 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
                 <button onClick={() => { const n = Math.max(1, Math.min(total, Number(pos) || position)); onMove(n) }} className={btn}>Go</button>
               </span>
             </div>
+          </section>
+
+          {/* BRANDED COPY — a download, never staged for Guesty */}
+          <section className="space-y-1.5">
+            <div className="flex items-center gap-2"><Stamp size={13} className="text-brand-600" /><span className="text-[12px] font-bold uppercase tracking-wide text-muted">Branded copy</span></div>
+            <WatermarkOptions value={wm} onChange={setWm} previewHref={brandHref} compact />
+            {wm.on && (brandHref ? (
+              <>
+                <a href={withWatermark(brandHref, wm)} className={btn}><Download size={12} /> Download watermarked copy</a>
+                <p className="text-[10.5px] text-muted leading-snug">Made from this photo as it is live now{current ? ' — the edit staged here is included once you Save it' : ''}. Save never sends a watermark to Guesty.</p>
+              </>
+            ) : <p className="text-[11px] text-muted">Save this photo to the listing first — the watermarked copy is made from the saved photo.</p>)}
           </section>
 
           {/* REPLACE / DELETE */}

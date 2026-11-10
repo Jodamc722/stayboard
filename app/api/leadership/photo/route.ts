@@ -23,6 +23,11 @@ export async function POST(req: NextRequest) {
     if (!itemId) return NextResponse.json({ ok: false, error: 'itemId required' }, { status: 400 })
     if (file.size > MAX_BYTES) return NextResponse.json({ ok: false, error: 'That image is too large (max 15MB).' }, { status: 400 })
     const sb = supabaseAdmin()
+    // The row first: a photo for a row that was deleted in another tab used to be resized, stored,
+    // and then refused by the table — leaving a file nothing points to.
+    if (!/^[0-9a-f-]{36}$/i.test(itemId)) return NextResponse.json({ ok: false, error: 'That item is gone — reload.' }, { status: 404 })
+    const { data: item } = await sb.from('board_items').select('id').eq('id', itemId).maybeSingle()
+    if (!item) return NextResponse.json({ ok: false, error: 'That item is gone — reload.' }, { status: 404 })
     const { data: bucket } = await sb.storage.getBucket(BUCKET)
     if (!bucket) { const { error } = await sb.storage.createBucket(BUCKET, { public: true }); if (error && !/already exists/i.test(error.message || '')) throw new Error('storage bucket: ' + error.message) }
     const jpeg = await sharp(Buffer.from(await file.arrayBuffer())).rotate().resize(1600, 1600, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 82 }).toBuffer()
@@ -30,7 +35,7 @@ export async function POST(req: NextRequest) {
     const { error: upErr } = await sb.storage.from(BUCKET).upload(key, jpeg, { contentType: 'image/jpeg', upsert: false })
     if (upErr) return NextResponse.json({ ok: false, error: 'upload failed: ' + upErr.message }, { status: 500 })
     const { data: pub } = sb.storage.from(BUCKET).getPublicUrl(key)
-    const { data, error } = await sb.from('board_photos').insert({ item_id: itemId, url: pub.publicUrl, caption: caption || null, uploaded_by: me }).select('*').single()
+    const { data, error } = await sb.from('board_photos').insert({ item_id: itemId, url: pub.publicUrl, caption: caption || null, uploaded_by: me }).select('id,url,caption,created_at').single()
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true, photo: data })
   } catch (e: any) {

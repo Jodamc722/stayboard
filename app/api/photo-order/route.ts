@@ -8,6 +8,7 @@ import { requireAnyLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { guestyFetch } from '@/lib/guesty-retry'
 import { picUrls } from '@/lib/pic-url'
+import { WATERMARK_PUSH_BLOCK, looksWatermarked } from '@/lib/photo-watermark'
 
 export const maxDuration = 60   // one PUT plus a verify GET, each with backoff
 
@@ -37,6 +38,11 @@ export async function POST(req: NextRequest) {
   const adds: Record<string, { url?: string; caption?: string }> = (body?.adds && typeof body.adds === 'object') ? body.adds : {}
   if (!listingId) return NextResponse.json({ error: 'listingId required' }, { status: 400 })
   if (order.length === 0) return NextResponse.json({ error: 'order array required' }, { status: 400 })
+  // A STAY-WATERMARKED COPY NEVER GOES TO GUESTY (2026-11-09). Branded copies are downloads and are
+  // never stored at a URL, so this should not happen — but this route is the one door to the
+  // channels, so it checks every image address it is handed and refuses the whole push with the reason.
+  const incoming = [...Object.values(urls), ...Object.values(adds).map(a => (a && typeof a.url === 'string') ? a.url : '')].filter((u): u is string => typeof u === 'string' && !!u)
+  if (incoming.some(looksWatermarked)) return NextResponse.json({ error: WATERMARK_PUSH_BLOCK, watermarked: true }, { status: 422 })
 
   const sb = supabaseAdmin()
   const { data: row, error } = await sb.from('guesty_listings').select('raw, pictures').eq('id', listingId).single()

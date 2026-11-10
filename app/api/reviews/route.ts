@@ -7,6 +7,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
 import { buildingOf, marketOf } from '@/lib/segments'
 import { requireVrUser } from '@/lib/vr-gate'
+import { isCurrentChannelReview } from '@/lib/channel-current-review'
+import { subScoresOf } from '@/lib/review-playbook'
 
 export const dynamic = 'force-dynamic'
 const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
@@ -60,27 +62,40 @@ export async function GET(req: Request) {
     // already 995 reviews, one away from the cliff, and ?days=365 asks for 3,472. The feed and the
     // "awaiting reply" count above it would simply have stopped at an arbitrary cut. See
     // lib/db-page.ts.
-    const { rows, truncated: revTruncated } = await pageRows<any>((a, b) => sb
+    //
+    // WHAT ELSE EACH ROW CARRIES (2026-11-09), read as JSON paths so the whole raw payload never
+    // leaves the database: Airbnb's category ratings and private feedback, Booking.com's scoring
+    // block, and the channel's own listing id — the last is how a review left on a since-replaced
+    // Airbnb listing is told apart from one on the listing that is live now.
+    const BASE_COLS = 'id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply, excluded_from_score, exclude_reason'
+    const RAW_COLS = ', cats:raw->rawReview->category_ratings, scoring:raw->rawReview->scoring, priv:raw->rawReview->>private_feedback'
+      + ', ext:raw->>externalListingId, ext2:raw->>external_listing_id, rl:raw->rawReview->>listing_id, rl2:raw->rawReview->>listingId, rl3:raw->rawReview->>external_listing_id'
+    const readReviews = (cols: string) => pageRows<any>((a, b) => sb
       .from('guesty_reviews')
-      .select('id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply, excluded_from_score, exclude_reason')
+      .select(cols)
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: false })
       .order('id')
       .range(a, b), 20)
+    let read = await readReviews(BASE_COLS + RAW_COLS)
+    // The extra paths are a nicety. If the database refuses them, the feed still loads without them
+    // rather than dropping to the slow live-Guesty pull.
+    if (read.truncated && !read.rows.length) read = await readReviews(BASE_COLS)
+    const { rows, truncated: revTruncated } = read
     // The flag was read and dropped: a page that failed part-way served a shorter feed as if whole.
     if (revTruncated) console.error('reviews: review read stopped early — the feed and its counts may be short')
 
     if (rows && rows.length) {
       // Join guesty_listings for status/building filtering + listing_name.
       const ids = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
-      const meta: Record<string, { name: string; status: string; building: string | null; group: string; market: string; ownerId: string; ownerName: string }> = {}
+      const meta: Record<string, { name: string; status: string; building: string | null; group: string; market: string; ownerId: string; ownerName: string; ints: any }> = {}
       if (ids.length) {
         // SEGMENTS TRAVEL WITH THE REVIEW (Jon, 2026-09-09: "I should be able to select by owner,
         // building etc to see reviews"). The dashboard above this feed filters on market, building
         // and owner; without those on the row the feed could only ever show everything, and the two
         // halves of the page would disagree about what you were looking at.
         const [{ data: ls }, { data: own }] = await Promise.all([
-          sb.from('guesty_listings').select('id, nickname, title, status, building, address_city, listed:raw->>isListed').in('id', ids as string[]),
+          sb.from('guesty_listings').select('id, nickname, title, status, building, address_city, listed:raw->>isListed, ints:raw->integrations').in('id', ids as string[]),
           sb.from('guesty_owners').select('id, full_name, listing_ids').limit(1000), // deliberate cap: one row per owner, ~60
         ])
         const ownerOf: Record<string, { id: string; name: string }> = {}
@@ -104,8 +119,20 @@ export async function GET(req: Request) {
             group: buildingOf(String(l.building || ''), name) || 'Other',
             market: marketOf(l.building, l.address_city, name) || '',
             ownerId: o ? o.id : '', ownerName: o ? o.name : 'Unassigned',
+            ints: Array.isArray(l.ints) ? l.ints : null,
           }
         })
+      }
+
+      // ON THE LISTING THAT IS LIVE NOW? (Jon, 2026-11-09: "we recreated listings on Airbnb, so make
+      // sure the review score is the current score".) lib/channel-current-review decides, from the
+      // channel's own listing id on the review against the one on the live listing; when either is
+      // unknown the review is kept. A review on a replaced listing has no public page to answer on,
+      // so it is shown under the feed's "Not counted" tab with its reason — visible, labelled, never counted.
+      const onLiveListing = (r: any, m: any): boolean => {
+        if (!m || !m.ints) return true
+        const stub = { externalListingId: r.ext, external_listing_id: r.ext2, rawReview: { listing_id: r.rl, listingId: r.rl2, external_listing_id: r.rl3 } }
+        try { return isCurrentChannelReview(stub, { integrations: m.ints }, String(r.channel || '')) } catch { return true }
       }
 
       const shape = (r: any, m: any) => ({
@@ -123,6 +150,12 @@ export async function GET(req: Request) {
         market: m?.market || null,
         ownerId: m?.ownerId || '',
         ownerName: m?.ownerName || 'Unassigned',
+        // Sub-scores on the 5-point scale (Airbnb's six; Booking.com's when it sends them). Empty for
+        // channels that send none — the row then simply shows no chips.
+        categories: subScoresOf(r.cats, r.scoring).map(c => ({ key: c.key, label: c.label, rating: c.rating, comment: c.comment })),
+        // What the guest told only us. Internal: shown on the row, passed to the draft as context,
+        // never part of a public reply.
+        privateFeedback: typeof r.priv === 'string' && r.priv.trim() ? r.priv.trim().slice(0, 1200) : null,
       })
 
       // Active (mapped, synced) reviews are draftable + count toward scores. Unmapped reviews
@@ -161,6 +194,7 @@ export async function GET(req: Request) {
         if (!m) reason = 'Listing not synced'
         else if (DEAD_STATUSES.has(m.status)) reason = 'Listing inactive'
         else if (r.excluded_from_score) reason = r.exclude_reason || 'Not mapped on channel'
+        else if (!onLiveListing(r, m)) reason = 'Previous ' + (r.channel || 'channel') + ' listing (replaced)'
         const removed = removedRows.has(r.id)
         const removedReason = removed ? removedRows.get(r.id) || null : null
         if (reason && !removed) unmapped.push({ ...shape(r, m), reason })
@@ -168,7 +202,7 @@ export async function GET(req: Request) {
       }
 
       if (hub) {
-        const slim = (r: any) => (r.hasReply || r.dismissed || r.removed) ? { ...r, content: '', reply: null } : { ...r, reply: null }
+        const slim = (r: any) => (r.hasReply || r.dismissed || r.removed) ? { ...r, content: '', reply: null, categories: [], privateFeedback: null } : { ...r, reply: null }
         return NextResponse.json({ reviews: reviews.map(slim), unmapped: [], segments: true })
       }
       return NextResponse.json({ reviews, unmapped, segments: true })

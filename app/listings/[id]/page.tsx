@@ -36,6 +36,7 @@ import { GuidebookLauncher } from '@/components/GuidebookLauncher'
 import { ListingWorkspace, type WorkTab } from '@/components/ListingWorkspace'
 import { ListingRegenerate } from '@/components/ListingRegenerate'
 import { ContentTable } from '@/components/ContentTable'
+import { BrandLines } from '@/components/BrandLines'
 import {
   computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars,
   lastOptimizedOf, scoreGaps, type Factor, type Gap,
@@ -415,6 +416,8 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
             // actually happens.
             <div className="space-y-3">
               <ListingOptimizer listingId={listing.id} name={name} />
+              {/* Brand lines (2026-11-09): what builds the Stay name inside each channel's content rules. Folded. */}
+              <BrandLines building={buildingName === 'Unassigned' ? '' : buildingName} city={listing.address_city || ''} />
               <div className="rounded-2xl border border-line bg-white overflow-hidden">
                 <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2 flex-wrap">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Live on the OTAs now</span>

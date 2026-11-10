@@ -8,6 +8,8 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import sharp from 'sharp'
+import { WATERMARK_PUSH_BLOCK, looksWatermarked } from '@/lib/photo-watermark'
+import { hasWatermarkMarker } from '@/lib/photo-watermark-server'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -42,6 +44,11 @@ export async function POST(req: NextRequest) {
 
   const buf = Buffer.from(await file.arrayBuffer())
   if (buf.length < 1024) return NextResponse.json({ error: 'file too small or empty' }, { status: 400 })
+  // A STAY-WATERMARKED COPY NEVER GOES ON A LISTING (2026-11-09). The branded download carries a
+  // marker in its EXIF and a tag in its file name; either one stops the upload here, before anything
+  // is stored, with the reason. (A copy re-saved by another app can lose both — the photo analysis
+  // still flags a visible watermark as a fault.)
+  if (hasWatermarkMarker(buf) || looksWatermarked(file.name || '')) return NextResponse.json({ error: WATERMARK_PUSH_BLOCK, watermarked: true }, { status: 422 })
 
   const sb = supabaseAdmin()
   try { await ensureBucket(sb) } catch (e: any) {
@@ -61,6 +68,8 @@ export async function POST(req: NextRequest) {
       .modulate({ brightness: 1.04, saturation: 1.08 })
       .linear(1.06, -6)
       .sharpen({ sigma: 0.9 })
+      // sRGB out, profile embedded — same as /api/photo-enhance (an untagged Display-P3 phone shot reads dull on every channel).
+      .toColourspace('srgb').withIccProfile('srgb')
       .jpeg({ quality: 88, mozjpeg: true })
       .toBuffer()
   } catch {

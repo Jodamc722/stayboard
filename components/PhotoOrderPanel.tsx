@@ -70,7 +70,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
   const makeOptions = async (id: string) => {
     setBusy(id + ':opt'); setErr(''); setMsg('')
     try {
-      const j = await call({ photoIds: [id], variants: OPTION_PRESETS })
+      const j = await call({ photoIds: [id], variants: OPTION_PRESETS, strength })
       const v: Variant[] = j.photos?.[0]?.variants || []
       if (!v.length) throw new Error((j.errors && j.errors[0]?.error) || 'Could not make options for that photo.')
       setOptions(o => ({ ...o, [id]: v }))
@@ -83,42 +83,55 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
   // re-captioned. Results stage on the cards like a single edit; Save sends them all.
   const [bulk, setBulk] = useState({ mirror: false, enhance: true, captions: false })
   const [bulkNote, setBulkNote] = useState('')
-  const applyAll = async () => {
-    const ids = order.filter(id => !del.has(id) && !id.startsWith('idx-'))
-    if (!ids.length || !(bulk.mirror || bulk.enhance || bulk.captions)) return
+  // STRENGTH (2026-11-09): how far Enhance moves each photo from the original — Subtle, Standard or a
+  // little more. The server keeps every look inside the same honesty caps whatever is picked.
+  const [strength, setStrength] = useState(1)
+  // WHAT DID NOT WORK, BY PHOTO (2026-11-09): a failed photo used to be a number in a sentence. Now the
+  // ids are kept, the cards are marked, and "Retry" runs just those.
+  const [failed, setFailed] = useState<{ img: string[]; cap: string[] }>({ img: [], cap: [] })
+  const applyAll = async (retry?: { img: string[]; cap: string[] }) => {
+    const all = order.filter(id => !del.has(id) && !id.startsWith('idx-'))
+    const imgIds = retry ? retry.img.filter(id => all.indexOf(id) >= 0) : (bulk.mirror || bulk.enhance) ? all : []
+    const capIds = retry ? retry.cap.filter(id => all.indexOf(id) >= 0) : bulk.captions ? all : []
+    if (!imgIds.length && !capIds.length) return
     setBusy('bulk'); setErr(''); setMsg('')
-    let done = 0, failed = 0, capsDone = 0
+    const doMirror = bulk.mirror, doEnhance = bulk.enhance || !bulk.mirror
+    let done = 0, capsDone = 0
+    const badImg: string[] = [], badCap: string[] = []
     try {
-      if (bulk.mirror || bulk.enhance) {
-        const size = bulk.mirror ? 6 : 8
-        const label = bulk.mirror && bulk.enhance ? 'Flipped + enhanced' : bulk.mirror ? 'Flipped' : 'Enhanced'
-        for (let i = 0; i < ids.length; i += size) {
-          setBulkNote('Photos ' + Math.min(i + size, ids.length) + ' of ' + ids.length + '…')
-          const chunk = ids.slice(i, i + size)
-          const body: any = { photoIds: chunk, force: true }
-          if (bulk.mirror) { body.flip = true; if (bulk.enhance) body.flipEnhance = true }
-          const j = await call(body).catch(() => { failed += chunk.length; return null })
-          if (!j) continue
+      if (imgIds.length) {
+        const size = doMirror ? 6 : 8
+        const label = doMirror && doEnhance ? 'Flipped + enhanced' : doMirror ? 'Flipped' : 'Enhanced'
+        for (let i = 0; i < imgIds.length; i += size) {
+          setBulkNote('Photos ' + Math.min(i + size, imgIds.length) + ' of ' + imgIds.length + '…')
+          const chunk = imgIds.slice(i, i + size)
+          const body: any = { photoIds: chunk, force: true, strength }
+          if (doMirror) { body.flip = true; if (doEnhance) body.flipEnhance = true }
+          const j = await call(body).catch(() => null)
+          if (!j) { badImg.push(...chunk); continue }
           const add: Record<string, { url: string; label: string }> = {}
           for (const p of (j.photos || []) as any[]) { const u = p.flippedUrl || p.enhancedUrl; if (u) { add[String(p._id)] = { url: u, label }; done++ } }
-          failed += (j.errors || []).length
+          for (const id of chunk) if (!add[id]) badImg.push(id)
           setSwap(s => ({ ...s, ...add }))
         }
       }
-      if (bulk.captions) {
-        for (let i = 0; i < ids.length; i += 3) {
-          setBulkNote('Captions ' + Math.min(i + 3, ids.length) + ' of ' + ids.length + '…')
-          const got = await Promise.all(ids.slice(i, i + 3).map(id => fetch('/api/photo-caption', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, photoId: id }) })
-            .then(r => r.json()).then(d => (d && d.caption ? [id, String(d.caption)] as [string, string] : null)).catch(() => null)))
+      if (capIds.length) {
+        for (let i = 0; i < capIds.length; i += 3) {
+          setBulkNote('Captions ' + Math.min(i + 3, capIds.length) + ' of ' + capIds.length + '…')
+          const got = await Promise.all(capIds.slice(i, i + 3).map(id => fetch('/api/photo-caption', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId, photoId: id }) })
+            .then(r => r.json()).then(d => [id, d && d.caption ? String(d.caption) : ''] as [string, string]).catch(() => [id, ''] as [string, string])))
           const add: Record<string, string> = {}
-          for (const g of got) if (g) { add[g[0]] = g[1]; capsDone++ }
+          for (const g of got) { if (g[1]) { add[g[0]] = g[1]; capsDone++ } else badCap.push(g[0]) }
           setCaps(c => ({ ...c, ...add }))
         }
       }
-      setMsg([(bulk.mirror || bulk.enhance) ? done + ' photo' + (done === 1 ? '' : 's') + ' ' + (bulk.mirror && bulk.enhance ? 'flipped + enhanced' : bulk.mirror ? 'flipped' : 'enhanced') : '', bulk.captions ? capsDone + ' new captions' : ''].filter(Boolean).join(' · ') + (failed ? ' · ' + failed + ' could not be done' : '') + ' — check them below, then Save.')
+      const bad = badImg.length + badCap.length
+      setMsg([imgIds.length ? done + ' photo' + (done === 1 ? '' : 's') + ' ' + (doMirror && doEnhance ? 'flipped + enhanced' : doMirror ? 'flipped' : 'enhanced') : '', capIds.length ? capsDone + ' new caption' + (capsDone === 1 ? '' : 's') : ''].filter(Boolean).join(' · ') + (bad ? ' · ' + bad + ' could not be done — they are marked below; press Retry' : '') + ' — check them below, then Save.')
     } catch (e: any) { setErr(String(e?.message || e)) }
+    setFailed({ img: badImg, cap: badCap })
     setBulkNote(''); setBusy('')
   }
+  const failedCount = failed.img.length + failed.cap.length
   const save = async () => {
     if (del.size && !window.confirm(`Delete ${del.size} photo${del.size === 1 ? '' : 's'} from this listing on every channel? The originals are backed up to Stay storage first.`)) return
     setBusy('save'); setErr(''); setMsg('')
@@ -144,7 +157,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
         <a href="#ai-photo-tools" onClick={e => { e.preventDefault(); document.getElementById('ai-photo-tools')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }} className="inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:text-brand-800"><Wand2 size={12} /> AI: best first 5 &amp; captions</a>
         <span className="ml-auto flex items-center gap-2">
           {del.size > 0 && <span className="text-[12px] font-semibold text-rose-700">{del.size} to delete</span>}
-          {changed && <button onClick={() => { setOrder(start); setSwap({}); setDel(new Set()); setCaps({}) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset</button>}
+          {changed && <button onClick={() => { setOrder(start); setSwap({}); setDel(new Set()); setCaps({}); setFailed({ img: [], cap: [] }) }} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink"><RotateCcw size={12} /> Reset</button>}
           <button onClick={save} disabled={!changed || busy === 'save'} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40">
             {busy === 'save' ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />} {del.size ? 'Save & delete' : 'Save order'}
           </button>
@@ -159,9 +172,24 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
             {bulk[k] ? <Check size={12} /> : <I size={12} />} {l}
           </button>
         ))}
-        <button onClick={applyAll} disabled={!!busy || !(bulk.mirror || bulk.enhance || bulk.captions)} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 text-white px-2.5 py-1 text-[12px] font-bold disabled:opacity-40">
+        {(bulk.enhance || bulk.mirror) && (
+          <label className="inline-flex items-center gap-1 text-[11.5px] text-muted" title="How far Enhance moves each photo from the original. Every setting stays a correction — light, colour and sharpness only.">
+            Strength
+            <select value={strength} onChange={e => setStrength(Number(e.target.value))} disabled={busy === 'bulk'} className="rounded-md border border-line bg-white px-1 py-1 text-[12px] font-semibold text-ink">
+              <option value={0.6}>Subtle</option>
+              <option value={1}>Standard</option>
+              <option value={1.3}>Stronger</option>
+            </select>
+          </label>
+        )}
+        <button onClick={() => applyAll()} disabled={!!busy || !(bulk.mirror || bulk.enhance || bulk.captions)} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 text-white px-2.5 py-1 text-[12px] font-bold disabled:opacity-40">
           {busy === 'bulk' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} Apply to all {order.filter(id => !del.has(id)).length}
         </button>
+        {failedCount > 0 && busy !== 'bulk' && (
+          <button onClick={() => applyAll(failed)} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 text-amber-800 px-2.5 py-1 text-[12px] font-bold disabled:opacity-40" title="Run only the photos that did not come back">
+            <RotateCcw size={12} /> Retry {failedCount} that failed
+          </button>
+        )}
         <span className="text-[11.5px] text-muted">{bulkNote || 'Any mix in one pass. Staged on the cards — nothing goes live until Save.'}</span>
       </div>
       {(err || msg) && <div className={'mx-4 mb-2 rounded-lg px-3 py-1.5 text-[12.5px] ' + (err ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-emerald-50 text-emerald-800 border border-emerald-200')}>{err || msg}</div>}
@@ -195,6 +223,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
                   {del.has(id) && <span className="absolute inset-0 grid place-items-center text-[12px] font-bold text-rose-700 pointer-events-none">Will be deleted</span>}
                   <span className={'absolute top-1.5 left-1.5 text-[11px] font-bold px-1.5 py-0.5 rounded ' + (top ? 'bg-amber-500 text-white' : 'bg-black/60 text-white')}>{pos === 1 ? <span className="inline-flex items-center gap-0.5"><Crown size={10} /> 1 · cover</span> : pos}</span>
                   {sw && <span className="absolute top-1.5 right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-600 text-white">{sw.label}</span>}
+                  {!sw && (failed.img.indexOf(id) >= 0 || failed.cap.indexOf(id) >= 0) && <span className="absolute top-1.5 right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500 text-white" title="This photo did not come back from the last run — press Retry above">Not done</span>}
                 </div>
                 <div className="p-1.5 space-y-1">
                   <label className="flex items-center gap-1.5 text-[11.5px]">
@@ -235,6 +264,7 @@ export function PhotoOrderPanel({ listingId, pictures }: { listingId: string; pi
         return (
           <ListingPhotoEditor listingId={listingId} photo={{ id: p.id, url: p.url.replace(/h_\d+,c_fit\//, ''), caption: p.caption }} position={i + 1} total={order.length}
             current={swap[editing] || null} caption={caps[editing] ?? p.caption} deleted={del.has(editing)}
+            strength={strength} onStrength={setStrength}
             onClose={() => setEditing(null)} onPrev={() => step(-1)} onNext={() => step(1)}
             onUse={(url, label) => setSwap(s => ({ ...s, [editing]: { url, label } }))}
             onRevert={() => setSwap(s => { const n = { ...s }; delete n[editing]; return n })}

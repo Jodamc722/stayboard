@@ -11,12 +11,19 @@
 // unit or property, its caption, or what the photo analysis saw — so results are photos across units,
 // grouped by unit, each viewable and downloadable, the whole set as one ZIP (?search= on both APIs).
 // Clean rows and tags, buttons not menus, every icon says what it does on hover (lib/lean rules).
+//
+// THE STAY WATERMARK (Jon, 2026-11-09): one switch on every level, off by default. While it is on,
+// every download beside it is a watermarked COPY (components/WatermarkOptions, lib/photo-watermark) —
+// for the direct site, social, email and print. The library never writes to Guesty, so a watermarked
+// copy cannot reach a booking site from here.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft, ChevronRight, Download, Home, Images, Link2, Search, X, Check, CheckSquare, Square, RefreshCw, FolderDown } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { LeanHead, Pill, Tag, LeanEmpty, IconBtn, LeanPick, Tip } from '@/components/lean'
+import { WatermarkOptions, useWatermark, withWatermark } from '@/components/WatermarkOptions'
+import { type WatermarkOptions as Wm, WATERMARK_ZIP_MAX } from '@/lib/photo-watermark'
 
 type Photo = { id: string; url: string; thumb: string; view: string; caption: string; width: number | null; height: number | null }
 type Unit = { id: string; name: string; title: string | null; building: string; market: string; active: boolean; photos: number; cover: string | null }
@@ -49,6 +56,7 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
   useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 300); return () => clearTimeout(t) }, [q])
   const [market, setMarket] = useState('all')
   const [refreshing, setRefreshing] = useState(false)
+  const [wm, setWm] = useWatermark()
   const go = useCallback((next: { b?: string; u?: string }) => {
     const p = new URLSearchParams()
     if (next.b) p.set('b', next.b)
@@ -103,12 +111,12 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
                 options={hits.map(h => ({ v: h.id, label: <>{h.name} <span className="opacity-60">{h.building} · {h.photos}</span></>, title: 'Open ' + h.name }))} />
             )}
           </div>
-          <SearchResults q={dq} pending={q.trim() !== dq} market={market} onOpenUnit={(bb, id) => { setQ(''); go({ b: bb, u: id }) }} />
+          <SearchResults q={dq} pending={q.trim() !== dq} market={market} wm={wm} setWm={setWm} onOpenUnit={(bb, id) => { setQ(''); go({ b: bb, u: id }) }} />
         </div>
       ) : u ? (
-        <UnitView id={u} meta={unitMeta} />
+        <UnitView id={u} meta={unitMeta} wm={wm} setWm={setWm} />
       ) : b ? (
-        building ? <BuildingView b={building} onOpen={un => go({ b: building.name, u: un.id })} /> : (idx.data ? <LeanEmpty>No property called “{b}”.</LeanEmpty> : <LeanEmpty>Reading the library…</LeanEmpty>)
+        building ? <BuildingView b={building} wm={wm} setWm={setWm} onOpen={un => go({ b: building.name, u: un.id })} /> : (idx.data ? <LeanEmpty>No property called “{b}”.</LeanEmpty> : <LeanEmpty>Reading the library…</LeanEmpty>)
       ) : (
         idx.loading && !idx.data ? <LeanEmpty>Reading the library…</LeanEmpty> : buildings.length === 0 ? <LeanEmpty>No photos yet.</LeanEmpty> : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -133,7 +141,7 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
 }
 
 /** The smart search's photos: grouped by unit, each one viewable and downloadable, the set as one ZIP. */
-function SearchResults({ q, pending, market, onOpenUnit }: { q: string; pending: boolean; market: string; onOpenUnit: (building: string, id: string) => void }) {
+function SearchResults({ q, pending, market, wm, setWm, onOpenUnit }: { q: string; pending: boolean; market: string; wm: Wm; setWm: (next: Partial<Wm>) => void; onOpenUnit: (building: string, id: string) => void }) {
   const r = useCachedFetch<SearchRes>(q ? LIB + '?search=' + encodeURIComponent(q) : null, { ttl: 600_000, persist: false, live: false })
   const found = useMemo(() => (r.data?.hits || []).filter(h => market === 'all' || h.market === market), [r.data, market])
   const groups = useMemo(() => {
@@ -155,6 +163,7 @@ function SearchResults({ q, pending, market, onOpenUnit }: { q: string; pending:
   if (!found.length) return <LeanEmpty>No photo matches “{q}”. Try a property and what the photo shows — <i>elser pool</i>, <i>17west gym</i>, <i>bedroom king</i>.</LeanEmpty>
   const total = r.data?.total || found.length
   const index = (h: Hit) => found.indexOf(h)
+  const tooMany = wm.on && total > WATERMARK_ZIP_MAX
   return (
     <div className="space-y-3">
       <div className="rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
@@ -166,24 +175,27 @@ function SearchResults({ q, pending, market, onOpenUnit }: { q: string; pending:
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
-          {!confirm || total <= 150 ? (
-            <a href={zipHref('search=' + encodeURIComponent(q))} onClick={e => { if (total > 150 && !confirm) { e.preventDefault(); setConfirm(true) } }} className={btn} title={'One ZIP of all ' + total + ' matching photos, a folder per unit, full size'}><Download size={13} /> Download all {total} (ZIP)</a>
+          {tooMany ? (
+            <span className="text-[12px] text-muted">{total.toLocaleString()} photos is more than one watermarked ZIP can make ({WATERMARK_ZIP_MAX}) — add a word to narrow the search, or download unit by unit below.</span>
+          ) : !confirm || total <= 150 ? (
+            <a href={withWatermark(zipHref('search=' + encodeURIComponent(q)), wm)} onClick={e => { if (total > 150 && !confirm) { e.preventDefault(); setConfirm(true) } }} className={btn} title={'One ZIP of all ' + total + ' matching photos, a folder per unit' + (wm.on ? ', each with the Stay watermark' : ', full size')}><Download size={13} /> Download all {total}{wm.on ? ' watermarked' : ''} (ZIP)</a>
           ) : (
             <span className="inline-flex items-center gap-2 text-[12px] text-muted">
-              {total.toLocaleString()} full-size photos in one file — it can run large.
-              <a href={zipHref('search=' + encodeURIComponent(q))} onClick={() => setConfirm(false)} className={btn}><Download size={13} /> Download anyway</a>
+              {total.toLocaleString()} {wm.on ? 'watermarked' : 'full-size'} photos in one file — it can run large.
+              <a href={withWatermark(zipHref('search=' + encodeURIComponent(q)), wm)} onClick={() => setConfirm(false)} className={btn}><Download size={13} /> Download anyway</a>
               <button onClick={() => setConfirm(false)} className={ghost}>Cancel</button>
             </span>
           )}
         </div>
       </div>
+      <WatermarkOptions value={wm} onChange={setWm} previewHref={found[0] ? fileHref(found[0].listingId, found[0].id) : null} />
       {groups.map(g => (
         <div key={g.id}>
           <div className="flex items-center gap-1.5 mb-1.5 flex-wrap text-[12.5px]">
             <button onClick={() => onOpenUnit(g.building, g.id)} className="font-semibold text-ink hover:underline" title={'Open ' + g.unit + ' in the library'}>{g.unit}</button>
             <span className="text-muted">{g.building} · {g.hits.length} photo{g.hits.length === 1 ? '' : 's'}</span>
             {!g.active && <Tag title="This listing is not active in Guesty">offline</Tag>}
-            <IconBtn title={'Download these ' + g.hits.length + ' photos of ' + g.unit + ' as a ZIP'} href={zipHref('listing=' + encodeURIComponent(g.id) + '&pics=' + encodeURIComponent(g.hits.map(h => h.id).join(',')))}><Download size={13} /></IconBtn>
+            <IconBtn title={'Download these ' + g.hits.length + ' photos of ' + g.unit + ' as a ZIP'} href={withWatermark(zipHref('listing=' + encodeURIComponent(g.id) + '&pics=' + encodeURIComponent(g.hits.map(h => h.id).join(','))), wm)}><Download size={13} /></IconBtn>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
             {g.hits.map(h => (
@@ -191,7 +203,7 @@ function SearchResults({ q, pending, market, onOpenUnit }: { q: string; pending:
                 <button onClick={() => setOpen(index(h))} className="block w-full aspect-[4/3]" title={(h.caption || 'No caption') + ' · ' + h.unit + (h.width && h.height ? ' · ' + h.width + '×' + h.height : '') + ' · matched ' + h.why.join(', ')}>
                   <img src={h.thumb} alt={h.caption} loading="lazy" className="w-full h-full object-cover" />
                 </button>
-                <a href={fileHref(h.listingId, h.id)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink opacity-0 group-hover:opacity-100 transition" title="Download this photo, full size"><Download size={13} /></a>
+                <a href={withWatermark(fileHref(h.listingId, h.id), wm)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink opacity-0 group-hover:opacity-100 transition" title={wm.on ? 'Download this photo with the Stay watermark' : 'Download this photo, full size'}><Download size={13} /></a>
                 {(h.caption || h.width) && (
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-2 pt-4 pb-1.5 text-[10.5px] text-white flex items-center gap-1.5 pointer-events-none">
                     <span className="truncate flex-1">{h.caption}</span>
@@ -204,7 +216,7 @@ function SearchResults({ q, pending, market, onOpenUnit }: { q: string; pending:
         </div>
       ))}
       {open != null && found[open] && (
-        <Lightbox p={found[open]} i={open} n={found.length} listing={found[open].listingId} label={found[open].unit} onClose={() => setOpen(null)} onPrev={() => setOpen((open - 1 + found.length) % found.length)} onNext={() => setOpen((open + 1) % found.length)} />
+        <Lightbox p={found[open]} i={open} n={found.length} listing={found[open].listingId} label={found[open].unit} wm={wm} onClose={() => setOpen(null)} onPrev={() => setOpen((open - 1 + found.length) % found.length)} onNext={() => setOpen((open + 1) % found.length)} />
       )}
     </div>
   )
@@ -267,8 +279,9 @@ function CaptionAll() {
   )
 }
 
-function BuildingView({ b, onOpen }: { b: Building; onOpen: (u: Unit) => void }) {
+function BuildingView({ b, wm, setWm, onOpen }: { b: Building; wm: Wm; setWm: (next: Partial<Wm>) => void; onOpen: (u: Unit) => void }) {
   const [confirm, setConfirm] = useState(false)
+  const tooMany = wm.on && b.photos > WATERMARK_ZIP_MAX
   return (
     <div className="space-y-3">
       <div className="rounded-2xl border border-line bg-white px-4 py-3 flex items-center gap-3 flex-wrap">
@@ -277,24 +290,27 @@ function BuildingView({ b, onOpen }: { b: Building; onOpen: (u: Unit) => void })
           <div className="text-[12px] text-muted">{b.units.length} units · {b.photos.toLocaleString()} photos · {b.market}</div>
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
-          {!confirm ? (
-            <button onClick={() => setConfirm(true)} className={ghost} title="One ZIP with a folder per unit — large: every photo at full size"><FolderDown size={13} /> Download property (ZIP)</button>
+          {tooMany ? (
+            <span className="text-[12px] text-muted max-w-[26rem]">{b.photos.toLocaleString()} photos is more than one watermarked ZIP can make ({WATERMARK_ZIP_MAX}) — download unit by unit below.</span>
+          ) : !confirm ? (
+            <button onClick={() => setConfirm(true)} className={ghost} title={wm.on ? 'One ZIP with a folder per unit, every photo with the Stay watermark' : 'One ZIP with a folder per unit — large: every photo at full size'}><FolderDown size={13} /> Download property{wm.on ? ' watermarked' : ''} (ZIP)</button>
           ) : (
             <span className="inline-flex items-center gap-2 text-[12px] text-muted">
-              {b.photos.toLocaleString()} full-size photos in one file — it can run to gigabytes.
-              <a href={zipHref('building=' + encodeURIComponent(b.name))} onClick={() => setConfirm(false)} className={btn}><Download size={13} /> Download anyway</a>
+              {wm.on ? b.photos.toLocaleString() + ' watermarked photos in one file — it takes a few minutes.' : b.photos.toLocaleString() + ' full-size photos in one file — it can run to gigabytes.'}
+              <a href={withWatermark(zipHref('building=' + encodeURIComponent(b.name)), wm)} onClick={() => setConfirm(false)} className={btn}><Download size={13} /> Download anyway</a>
               <button onClick={() => setConfirm(false)} className={ghost}>Cancel</button>
             </span>
           )}
           <CopyLink title="Copy a link to this property in the library" />
         </div>
       </div>
-      <UnitGrid units={b.units} empty="No units in this property." onOpen={onOpen} />
+      <WatermarkOptions value={wm} onChange={setWm} />
+      <UnitGrid units={b.units} empty="No units in this property." onOpen={onOpen} wm={wm} />
     </div>
   )
 }
 
-function UnitGrid({ units, onOpen, empty, showBuilding }: { units: Unit[]; onOpen: (u: Unit) => void; empty: string; showBuilding?: boolean }) {
+function UnitGrid({ units, onOpen, empty, showBuilding, wm }: { units: Unit[]; onOpen: (u: Unit) => void; empty: string; showBuilding?: boolean; wm?: Wm }) {
   if (!units.length) return <LeanEmpty>{empty}</LeanEmpty>
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
@@ -307,14 +323,14 @@ function UnitGrid({ units, onOpen, empty, showBuilding }: { units: Unit[]; onOpe
               <div className="text-[11px] text-muted flex items-center gap-1.5 flex-wrap mt-0.5">{showBuilding && <span>{un.building} ·</span>}<span>{un.photos} photo{un.photos === 1 ? '' : 's'}</span>{!un.active && <Tag>offline</Tag>}</div>
             </div>
           </button>
-          {un.photos > 0 && <a href={zipHref('listing=' + encodeURIComponent(un.id))} className="absolute top-2 right-2 rounded-lg bg-white/90 border border-line p-1.5 text-ink opacity-0 group-hover:opacity-100 transition" title={'Download all ' + un.photos + ' photos of ' + un.name + ' as a ZIP'}><Download size={13} /></a>}
+          {un.photos > 0 && <a href={wm ? withWatermark(zipHref('listing=' + encodeURIComponent(un.id)), wm) : zipHref('listing=' + encodeURIComponent(un.id))} className="absolute top-2 right-2 rounded-lg bg-white/90 border border-line p-1.5 text-ink opacity-0 group-hover:opacity-100 transition" title={'Download all ' + un.photos + ' photos of ' + un.name + (wm && wm.on ? ' with the Stay watermark' : '') + ' as a ZIP'}><Download size={13} /></a>}
         </div>
       ))}
     </div>
   )
 }
 
-function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
+function UnitView({ id, meta, wm, setWm }: { id: string; meta: Unit | null; wm: Wm; setWm: (next: Partial<Wm>) => void }) {
   const r = useCachedFetch<UnitRes>(LIB + '?listing=' + encodeURIComponent(id), { ttl: 600_000 })
   const photos = r.data?.photos || []
   const unit = r.data?.unit || meta
@@ -355,16 +371,18 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
           </div>
         </div>
         <div className="ml-auto flex items-center gap-2 flex-wrap">
-          {photos.length > 0 && <a href={zipHref('listing=' + encodeURIComponent(id))} className={btn} title={'One ZIP, every photo at full size, named in order with its caption'}><Download size={13} /> Download all (ZIP)</a>}
+          {photos.length > 0 && <a href={withWatermark(zipHref('listing=' + encodeURIComponent(id)), wm)} className={btn} title={wm.on ? 'One ZIP, every photo as a Stay-watermarked copy, named in order with its caption' : 'One ZIP, every photo at full size, named in order with its caption'}><Download size={13} /> Download all{wm.on ? ' watermarked' : ''} (ZIP)</a>}
           {photos.length > 0 && (
             <button onClick={() => { setPicking(p => !p); setPicked(new Set()) }} aria-pressed={picking} className={ghost + (picking ? ' !bg-ink !text-white' : '')} title="Tick the photos you want, then download just those"><CheckSquare size={13} /> {picking ? 'Done picking' : 'Pick photos'}</button>
           )}
-          {picking && pickedList.length > 0 && <a href={zipHref('listing=' + encodeURIComponent(id) + '&pics=' + encodeURIComponent(pickedList.join(',')))} className={btn}><Download size={13} /> Download {pickedList.length} picked (ZIP)</a>}
+          {picking && pickedList.length > 0 && <a href={withWatermark(zipHref('listing=' + encodeURIComponent(id) + '&pics=' + encodeURIComponent(pickedList.join(','))), wm)} className={btn}><Download size={13} /> Download {pickedList.length} picked{wm.on ? ' watermarked' : ''} (ZIP)</a>}
           {picking && photos.length > 0 && <button onClick={() => setPicked(new Set(photos.map(p => p.id)))} className={ghost}>All</button>}
           <CopyLink title="Copy a link to this unit's photos" />
           {unit && <IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(unit.id)}><Home size={14} /></IconBtn>}
         </div>
       </div>
+
+      {photos.length > 0 && <WatermarkOptions value={wm} onChange={setWm} previewHref={fileHref(id, photos[0].id)} />}
 
       {r.loading && !r.data ? <LeanEmpty>Reading the photos…</LeanEmpty> : r.error && !r.data ? <LeanEmpty>Could not read the photos: {r.error}</LeanEmpty> : photos.length === 0 ? <LeanEmpty>This listing has no photos in Guesty.</LeanEmpty> : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
@@ -377,7 +395,7 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
                 </button>
                 <span className="absolute top-1.5 left-1.5 rounded-md bg-ink/70 text-white text-[10px] font-bold px-1.5 py-0.5 tabular-nums">{i + 1}</span>
                 {picking && <button onClick={() => toggle(p.id)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink" title={on ? 'Unpick' : 'Pick'}>{on ? <CheckSquare size={13} /> : <Square size={13} />}</button>}
-                {!picking && <a href={fileHref(id, p.id)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink opacity-0 group-hover:opacity-100 transition" title="Download this photo, full size"><Download size={13} /></a>}
+                {!picking && <a href={withWatermark(fileHref(id, p.id), wm)} className="absolute top-1.5 right-1.5 rounded-md bg-white/90 border border-line p-1 text-ink opacity-0 group-hover:opacity-100 transition" title={wm.on ? 'Download this photo with the Stay watermark' : 'Download this photo, full size'}><Download size={13} /></a>}
                 {(p.caption || p.width) && (
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/70 to-transparent px-2 pt-4 pb-1.5 text-[10.5px] text-white flex items-center gap-1.5 pointer-events-none">
                     <span className="truncate flex-1">{p.caption}</span>
@@ -391,13 +409,13 @@ function UnitView({ id, meta }: { id: string; meta: Unit | null }) {
       )}
 
       {open != null && photos[open] && (
-        <Lightbox p={photos[open]} i={open} n={photos.length} listing={id} onClose={() => setOpen(null)} onPrev={() => setOpen((open - 1 + photos.length) % photos.length)} onNext={() => setOpen((open + 1) % photos.length)} />
+        <Lightbox p={photos[open]} i={open} n={photos.length} listing={id} wm={wm} onClose={() => setOpen(null)} onPrev={() => setOpen((open - 1 + photos.length) % photos.length)} onNext={() => setOpen((open + 1) % photos.length)} />
       )}
     </div>
   )
 }
 
-function Lightbox({ p, i, n, listing, label, onClose, onPrev, onNext }: { p: Photo; i: number; n: number; listing: string; label?: string; onClose: () => void; onPrev: () => void; onNext: () => void }) {
+function Lightbox({ p, i, n, listing, label, wm, onClose, onPrev, onNext }: { p: Photo; i: number; n: number; listing: string; label?: string; wm: Wm; onClose: () => void; onPrev: () => void; onNext: () => void }) {
   return (
     <div className="fixed inset-0 z-[90] bg-ink/90 flex flex-col" onClick={onClose} role="dialog" aria-label="Photo">
       <div className="flex items-center gap-2 px-4 h-12 text-white/90 text-[12.5px]" onClick={e => e.stopPropagation()}>
@@ -407,7 +425,7 @@ function Lightbox({ p, i, n, listing, label, onClose, onPrev, onNext }: { p: Pho
         {p.width && p.height && <span className="text-white/60">{p.width}×{p.height}</span>}
         {grade(p.width, p.height) && <Tag tone={GRADE_TONE[grade(p.width, p.height)!]}>{GRADE_LABEL[grade(p.width, p.height)!]}</Tag>}
         <span className="flex-1" />
-        <a href={fileHref(listing, p.id)} className="inline-flex items-center gap-1.5 rounded-lg bg-white text-ink px-2.5 py-1.5 text-[12px] font-bold" title="Download this photo, full size"><Download size={13} /> Download</a>
+        <a href={withWatermark(fileHref(listing, p.id), wm)} className="inline-flex items-center gap-1.5 rounded-lg bg-white text-ink px-2.5 py-1.5 text-[12px] font-bold shrink-0" title={wm.on ? 'Download this photo with the Stay watermark' : 'Download this photo, full size'}><Download size={13} /> {wm.on ? 'Download watermarked' : 'Download'}</a>
         <a href={p.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg border border-white/30 px-2.5 py-1.5 text-[12px] font-semibold" title="Open the original in a new tab">Open original</a>
         <button onClick={onClose} className="rounded-lg border border-white/30 p-1.5" title="Close (Esc)"><X size={14} /></button>
       </div>

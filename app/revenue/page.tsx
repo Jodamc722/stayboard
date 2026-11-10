@@ -15,6 +15,7 @@ import { RevenueCenter } from '@/components/RevenueCenter'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf } from '@/lib/segments'
 import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
+import { bucketFor, familyFor, otaGroupFor } from '@/lib/marketing'
 
 export const dynamic = 'force-dynamic'
 // YTD pulls ~3 ranges of reservations incl. raw money JSON - needs more than the default fn timeout.
@@ -206,6 +207,11 @@ export type UnitRow = {
   nightsSold: number; occ: number; bookings: number
   grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number; total: number
   prevOcc: number; prevTotal: number
+  // Room revenue and nights for the prior period, and all three for the SAME WEEKDAYS LAST YEAR
+  // (range shifted back 364 days), so ADR / RevPAR deltas compare room revenue with room revenue
+  // and every headline can be read against last year, not only against the days just before.
+  prevGross: number; prevNights: number
+  lyTotal: number; lyGross: number; lyNights: number
   otb30: number // forward on-the-books occupancy next 30 days (0..1)
   flags: string[] // struggling reasons
 }
@@ -226,6 +232,9 @@ export type RevenueData = {
   totals: Comp & { total: number; moneyTotal: number }
   nightsSold: number; occupiedNights: number; availableNights: number; bookings: number
   prev: { from: string; to: string; total: number; nightsSold: number; occupiedNights: number; availableNights: number; grossAccom: number }
+  // The same weekdays a year earlier (52 weeks back). `ok` is false when that read failed — the
+  // page then shows no last-year comparison rather than a comparison against zero.
+  ly: { from: string; to: string; ok: boolean }
   otb: { d30: number; d60: number; d90: number; nights30: number; nights60: number; nights90: number; rev30: number }
   // cancelRate is null when the channel had fewer than CANCEL_MIN_SAMPLE real bookings in range —
   // render nothing rather than a percentage computed off a handful of rows.
@@ -248,15 +257,17 @@ export type RevenueData = {
   }
 }
 
+// ONE CHANNEL VOCABULARY (2026-11-09): the buckets and OTA groups of lib/marketing, which were
+// mapped from the real Guesty source values. This card had its own regexes, and they (a) folded
+// owner stays and office-keyed bookings into "Direct / Owner", so the direct share could not be
+// read off it, and (b) left Orbitz / Travelocity / Hotels.com as stray rows beside "Expedia" while
+// the Direct bookings and Sales pages group them as Expedia Group.
 function prettyChannel(s: string): string {
-  const c = s.toLowerCase()
-  if (/airbnb/.test(c)) return 'Airbnb'
-  if (/booking/.test(c)) return 'Booking.com'
-  if (/vrbo|homeaway/.test(c)) return 'Vrbo'
-  if (/expedia|hotels\.com/.test(c)) return 'Expedia'
-  if (/direct|website|manual|owner/.test(c)) return 'Direct / Owner'
-  if (/be-api|api/.test(c)) return 'Booking Engine'
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Other'
+  const fam = familyFor(bucketFor(s))
+  if (fam === 'direct') return 'Direct'
+  if (fam === 'manual') return 'Manual (office)'
+  if (fam === 'owner') return 'Owner stays'
+  return otaGroupFor(s)
 }
 
 export default async function RevenuePage({ searchParams }: { searchParams?: { from?: string; to?: string } }) {
@@ -274,6 +285,9 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
   const toExcl = addDays(to, 1)
   const days = daysBetween(from, to) + 1
   const prevFrom = addDays(from, -days)
+  // Same weekdays last year: 364 days back, so weekends line up with weekends.
+  const lyFrom = addDays(from, -364)
+  const lyToExcl = addDays(toExcl, -364)
 
   const getData = unstable_cache(async (_f: string, _t: string, _today: string): Promise<RevenueData> => {
     const sb = supabaseAdmin()
@@ -301,17 +315,22 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       .filter(l => !/\bfull\b/i.test(String(l.nickname || l.title || '')))
     const inactiveUnits = listings.length - active.length
 
-    const [cur, prevR, fwd, statusMix] = await Promise.all([
+    const [cur, prevR, fwd, statusMix, lyRead] = await Promise.all([
       pullRange(sb, from, toExcl),
       pullRange(sb, prevFrom, from),
       pullRange(sb, todayStr, addDays(todayStr, 90)),
       pullChannelStatusMix(sb, from, toExcl),
+      // Last year is a comparison, never a reason to sink the page: a failed read is reported as
+      // "no last-year figure", not thrown.
+      pullRange(sb, lyFrom, lyToExcl).then(rows => ({ rows, ok: true }), () => ({ rows: [] as RawResv[], ok: false })),
     ])
 
     const curX = cur.map(r => ({ r, c: componentsOf(r) }))
     const prevX = prevR.map(r => ({ r, c: componentsOf(r) }))
+    const lyX = lyRead.rows.map(r => ({ r, c: componentsOf(r) }))
     expediaCleaningFix(curX)
     expediaCleaningFix(prevX)
+    expediaCleaningFix(lyX)
 
     const activeIds = new Set(active.map(l => String(l.id)))
     const currency = 'USD'
@@ -354,7 +373,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     }
 
     // Prior period per listing (occupancy + total revenue only)
-    const prevPer: Record<string, { nights: number; total: number }> = {}
+    const prevPer: Record<string, { nights: number; total: number; gross: number }> = {}
     let prevTotalAll = 0, prevNights = 0, prevGross = 0
     for (const x of prevX) {
       if (!activeIds.has(x.r.listing_id)) continue
@@ -362,9 +381,22 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       if (n <= 0) continue
       const share = n / x.r.nights
       const tot = (x.c.grossAccom + x.c.cleaning + x.c.parking + x.c.other) * share
-      const p = prevPer[x.r.listing_id] = prevPer[x.r.listing_id] || { nights: 0, total: 0 }
-      p.nights += n; p.total += tot
+      const p = prevPer[x.r.listing_id] = prevPer[x.r.listing_id] || { nights: 0, total: 0, gross: 0 }
+      p.nights += n; p.total += tot; p.gross += x.c.grossAccom * share
       prevTotalAll += tot; prevNights += n; prevGross += x.c.grossAccom * share
+    }
+
+    // Same weekdays last year per listing — the same proration, over [lyFrom, lyToExcl).
+    const lyPer: Record<string, { nights: number; total: number; gross: number }> = {}
+    for (const x of lyX) {
+      if (!activeIds.has(x.r.listing_id)) continue
+      const n = overlapNights(x.r.check_in, x.r.check_out, lyFrom, lyToExcl)
+      if (n <= 0) continue
+      const share = n / x.r.nights
+      const p = lyPer[x.r.listing_id] = lyPer[x.r.listing_id] || { nights: 0, total: 0, gross: 0 }
+      p.nights += n
+      p.total += (x.c.grossAccom + x.c.cleaning + x.c.parking + x.c.other) * share
+      p.gross += x.c.grossAccom * share
     }
 
     // Forward on-the-books nights per listing (30/60/90) + per-day booked curve
@@ -394,7 +426,8 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const units: UnitRow[] = active.map(l => {
       const id = String(l.id)
       const a = per[id] || blank()
-      const p = prevPer[id] || { nights: 0, total: 0 }
+      const p = prevPer[id] || { nights: 0, total: 0, gross: 0 }
+      const ly = lyPer[id] || { nights: 0, total: 0, gross: 0 }
       const name = String(l.nickname || l.title || id)
       return {
         id, name,
@@ -409,6 +442,8 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
         total: a.grossAccom + a.cleaning + a.parking + a.other,
         prevOcc: days > 0 ? p.nights / days : 0,
         prevTotal: p.total,
+        prevGross: p.gross, prevNights: p.nights,
+        lyTotal: ly.total, lyGross: ly.gross, lyNights: ly.nights,
         otb30: (fwd30[id] || 0) / 30,
         flags: [],
       }
@@ -610,6 +645,10 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       leakage,
       totals, nightsSold, occupiedNights: nightsSold, availableNights, bookings,
       prev: { from: prevFrom, to: addDays(from, -1), total: prevTotalAll, nightsSold: prevNights, occupiedNights: prevNights, availableNights, grossAccom: prevGross },
+      // Only for a range that has already happened. For "Next month" this year's side is what is on
+      // the books so far and last year's would be the finished month — not a comparison (the Sales
+      // report has the like-for-like one: on the books now vs at this point last year).
+      ly: { from: lyFrom, to: addDays(lyToExcl, -1), ok: lyRead.ok && to <= todayStr },
       otb: {
         d30: active.length ? n30 / (active.length * 30) : 0,
         d60: active.length ? n60 / (active.length * 60) : 0,
@@ -618,7 +657,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       },
       channels, buildingAvg, units, recs, daily, fwdDaily,
     }
-  }, ['revenue-center-v8'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v9'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 

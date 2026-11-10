@@ -13,7 +13,11 @@ export function RangeFilter({ from, to }: { from: string; to: string }) {
   }
   const iso = (d: Date) => d.toISOString().slice(0, 10)
   function preset(kind: 'mtd' | 'thism' | 'd30' | 'd90' | 'ytd' | 'nextm') {
-    const now = new Date()
+    // "Today" is the EASTERN day (2026-11-09). This used the UTC clock, so from 7pm (8pm in summer)
+    // New York time every preset was a day ahead — and on the last evening of a month "MTD" and
+    // "This month" jumped to next month, a range with no stays in it yet.
+    const [ey, em, ed] = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).split('-').map(Number)
+    const now = new Date(Date.UTC(ey, em - 1, ed))
     if (kind === 'thism') {
       // Full CURRENT calendar month - actuals so far plus what is on the books through month end.
       const f = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))

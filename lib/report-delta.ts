@@ -68,19 +68,34 @@ export async function reportDelta(report: any): Promise<ReportDelta | null> {
     const month = monthOf(report?.period_start)
     if (!month) return null
     const db = supabaseAdmin()
+    // THE MONTH'S UPPER BOUND IS THE FIRST OF THE NEXT MONTH, EXCLUSIVE (2026-11-09 audit). This
+    // used to be `.lte('period_start', month + '-31')`. period_start is a DATE column, so in any
+    // month without a 31st (Feb, Apr, Jun, Sep, Nov) Postgres rejected '…-31' as out of range, the
+    // query errored, and the chips silently never appeared for those months.
+    const y = Number(month.slice(0, 4)), mo = Number(month.slice(5, 7))
+    const nextMonth = (mo >= 12 ? (y + 1) + '-01' : y + '-' + String(mo + 1).padStart(2, '0')) + '-01'
+    // Only the headline numbers come back — not the whole content JSON of every candidate — and
+    // several candidates are read so that a projection, onboarding deck or proposal generated for
+    // the same owner in between (their period_start is the day they were made) cannot stand in
+    // front of the earlier REVIEW and blank the comparison.
     let q = db.from('owner_reports')
-      .select('code, title, created_at, period_start, period_end, content, scope_label')
+      .select('code, title, created_at, period_start, period_end, scope_label, metrics:content->snapshot->metrics, basis:content->basis, kind:content->meta->>kind')
       .neq('id', report.id)
       .lt('created_at', report.created_at)
       .gte('period_start', month + '-01')
-      .lte('period_start', month + '-31')
+      .lt('period_start', nextMonth)
       .order('created_at', { ascending: false })
-      .limit(1)
+      .limit(10)
     // Same scope, or the chips would compare two different buildings.
     if (report.scope_label) q = q.eq('scope_label', report.scope_label)
-    const { data } = await q
-    const prev = (data || [])[0] as any
-    if (!prev) return null
+    const { data, error } = await q
+    if (error) { console.error('report-delta: previous-report lookup failed —', error.message); return null }
+    const prevRow = ((data || []) as any[]).find(r =>
+      String(r.kind || '') !== 'projection'
+      && !/onboarding|proposal|projection/i.test(String(r.title || ''))
+      && r.metrics && typeof r.metrics === 'object')
+    if (!prevRow) return null
+    const prev: any = { ...prevRow, content: { snapshot: { metrics: prevRow.metrics }, basis: prevRow.basis } }
     // The earlier report has to cover the same window, or "since last week" is really "a shorter
     // month vs a longer one" and every number moves for the wrong reason.
     if (monthOf(prev.period_start) !== month) return null

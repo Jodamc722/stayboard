@@ -16,6 +16,18 @@
 //   • the analyst in /api/optimize-photos picks the preset PER PHOTO and stores it on
 //     raw._photoIndex[id].enhance, so a dim bathroom gets Bright and a good shot gets None.
 // The preset "classic" is the exact pre-2026-08-21 recipe, so an untouched install behaves the same.
+//
+// 2026-11-09 (Jon: "improve the enhance photo mode"):
+//   • STRENGTH — { strength: 0.4–1.4 } scales how far a look moves the photo from the original
+//     (Subtle 0.6 · Standard 1 · Stronger 1.3 in the UI). Still clamped by the same hard caps.
+//   • AUTO now really corrects exposure. sharp runs its level stretch AFTER the brightness multiply
+//     whatever order they are called in, so the old "brighten toward mid-grey" was stretched straight
+//     back out. Auto now measures the photo's own histogram and applies a TONE CURVE after the
+//     stretch: a mid-tone lift toward a natural median, and a gentle shadow lift only when the
+//     shadows measure heavy. One curve on all three channels — no local contrast, no halo, no "HDR".
+//   • WHAT COMES OUT (unchanged, stated once): long edge 2048 px at most (never enlarged, aspect
+//     ratio kept), sRGB with the profile embedded, JPEG quality 88 — above the 1920 px / sRGB the
+//     booking sites ask for. The untouched original is mirrored to Stay storage first, every time.
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
@@ -62,33 +74,107 @@ function applyPreset(pipe: sharp.Sharp, p: EnhancePreset): sharp.Sharp {
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
+/** How far a look moves the photo: 1 = as designed, below = gentler, above = a little more. */
+const cleanStrength = (v: any): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? clamp(n, 0.4, 1.4) : 1 }
+function scalePreset(p: EnhancePreset, s: number): EnhancePreset {
+  if (s === 1 || p.key === 'none') return p
+  return clampPreset({
+    ...p,
+    brightness: 1 + (p.brightness - 1) * s,
+    saturation: 1 + (p.saturation - 1) * s,
+    contrast: 1 + (p.contrast - 1) * s,
+    sharpen: p.sharpen * (0.6 + 0.4 * s),
+    warmth: p.warmth * s,
+  })
+}
+
+/**
+ * The tone curve Auto applies after the level stretch, as a 256-entry table.
+ *   gamma  < 1 lifts the mid-tones (black and white stay put, so nothing clips)
+ *   lift   raises the shadows only: x + lift·4·x·(1−x)³ peaks at the quarter-tones and fades to
+ *          nothing by the highlights; monotonic for any lift below 1
+ */
+function toneLut(gamma: number, lift: number): Uint8Array {
+  const lut = new Uint8Array(256)
+  for (let i = 0; i < 256; i++) {
+    let x = Math.pow(i / 255, gamma)
+    x = x + lift * 4 * x * Math.pow(1 - x, 3)
+    lut[i] = Math.max(0, Math.min(255, Math.round(x * 255)))
+  }
+  return lut
+}
+
 /**
  * AUTO: measure, then correct by exactly that much (audit 2026-10-26). From a small preview:
  *   levels   a 0.5 / 99.5 percentile stretch (normalise) — lifts a flat, hazy phone shot without
  *            clipping the window, which a flat brightness multiplier does
- *   exposure brightness toward a mid luminance of ~120, capped 0.97–1.15
+ *   exposure a tone curve AFTER the stretch: mid-tones toward a median of ~0.48 (gamma 0.80–1.06),
+ *            and a shadow lift only when the darkest tenth still sits low (see toneLut)
  *   colour   grey-world white balance, each channel capped at ±5% — kills the blue overcast cast or
  *            the orange tungsten cast without repainting anything
  *   detail   sharpening scaled to how soft the shot measures (low edge energy → a little more)
  * Every number stays inside the same hard caps the named presets obey.
  */
-async function autoPipeline(buf: Buffer, base: sharp.Sharp): Promise<{ pipe: sharp.Sharp; why: string }> {
-  const prev = await sharp(buf, { failOn: 'none' }).rotate().resize(320, 320, { fit: 'inside' }).normalise({ lower: 0.5, upper: 99.5 }).removeAlpha().stats()
+async function autoPipeline(buf: Buffer, base: sharp.Sharp, strength = 1): Promise<{ pipe: sharp.Sharp; why: string }> {
+  const s = strength
+  // A gentler run keeps a little more of the original's range.
+  const lo = s < 0.8 ? 0.2 : 0.5, hi = 100 - lo
+  const small = sharp(buf, { failOn: 'none' }).rotate().resize(320, 320, { fit: 'inside' }).normalise({ lower: lo, upper: hi }).removeAlpha()
+  const prev = await small.clone().stats()
   const [r, g, b] = prev.channels.slice(0, 3).map(c => c.mean)
-  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
   const grey = (r + g + b) / 3
-  const kr = clamp(grey / Math.max(1, r), 0.95, 1.05), kg = clamp(grey / Math.max(1, g), 0.95, 1.05), kb = clamp(grey / Math.max(1, b), 0.95, 1.05)
-  const bright = clamp(120 / Math.max(1, lum), 0.97, 1.15)
-  const soft = prev.sharpness < 2 ? 1.1 : prev.sharpness < 4 ? 0.9 : 0.6
-  let out = base.normalise({ lower: 0.5, upper: 99.5 })
+  const wb = (k: number) => 1 + (clamp(k, 0.95, 1.05) - 1) * Math.min(1, s)
+  const kr = wb(grey / Math.max(1, r)), kg = wb(grey / Math.max(1, g)), kb = wb(grey / Math.max(1, b))
+  const soft = (prev.sharpness < 2 ? 1.1 : prev.sharpness < 4 ? 0.9 : 0.6) * (0.6 + 0.4 * Math.min(1.25, s))
+
+  // THE HISTOGRAM, after the stretch: where the middle of the photo sits and how heavy the shadows are.
+  let gamma = 1, lift = 0
+  try {
+    const px = await small.clone().toColourspace('srgb').raw().toBuffer({ resolveWithObject: true })
+    const ch = px.info.channels, n = px.info.width * px.info.height
+    const hist = new Uint32Array(256)
+    for (let i = 0; i < n; i++) {
+      const o = i * ch
+      const l = ch >= 3 ? 0.2126 * px.data[o] + 0.7152 * px.data[o + 1] + 0.0722 * px.data[o + 2] : px.data[o]
+      hist[Math.max(0, Math.min(255, Math.round(l)))]++
+    }
+    const at = (q: number) => { let acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= n * q) return v / 255 } return 1 }
+    const median = clamp(at(0.5), 0.04, 0.96), p10 = at(0.1)
+    // Mid-tones toward a bright, natural interior (median ≈ 0.48). Brightening is capped at a gamma
+    // of 0.80, darkening at 1.06 — a correction, never a relight.
+    const want = clamp(Math.log(0.48) / Math.log(median), 0.80, 1.06)
+    gamma = 1 + (want - 1) * s
+    // Shadows: only when the darkest tenth still sits low AFTER the mid-tone lift.
+    const p10After = Math.pow(Math.max(0.001, p10), gamma)
+    lift = clamp((0.11 - p10After) * 2, 0, 0.2) * Math.min(1.25, s)
+  } catch { gamma = 1; lift = 0 }
+
+  let out = base.normalise({ lower: lo, upper: hi })
   if (Math.abs(kr - 1) > 0.01 || Math.abs(kg - 1) > 0.01 || Math.abs(kb - 1) > 0.01) out = out.recomb([[kr, 0, 0], [0, kg, 0], [0, 0, kb]])
-  out = out.modulate({ brightness: bright, saturation: 1.05 }).sharpen({ sigma: soft })
-  const why = [bright > 1.02 ? 'brightened ' + Math.round((bright - 1) * 100) + '%' : '', (Math.abs(kb - 1) > 0.02 || Math.abs(kr - 1) > 0.02) ? (kb < 1 ? 'warmed a blue cast' : kr < 1 ? 'cooled a warm cast' : 'balanced colour') : '', 'levels stretched'].filter(Boolean).join(' · ')
+  out = out.modulate({ saturation: 1 + 0.05 * Math.min(1.25, s) }).sharpen({ sigma: soft })
+
+  let toned = false
+  if (Math.abs(gamma - 1) > 0.015 || lift > 0.01) {
+    try {
+      // withIccProfile here makes sharp convert a Display-P3 source INTO sRGB before the pixels are read.
+      const { data, info } = await out.clone().removeAlpha().toColourspace('srgb').withIccProfile('srgb').raw().toBuffer({ resolveWithObject: true })
+      const lut = toneLut(gamma, lift)
+      for (let i = 0; i < data.length; i++) data[i] = lut[data[i]]
+      out = sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } })
+      toned = true
+    } catch { /* the curve is a refinement — without it the levels, colour and sharpness still apply */ }
+  }
+  const why = [
+    toned && gamma < 0.985 ? 'brightened the mid-tones' : toned && gamma > 1.015 ? 'eased a bright exposure' : '',
+    toned && lift > 0.03 ? 'lifted the shadows' : '',
+    (Math.abs(kb - 1) > 0.02 || Math.abs(kr - 1) > 0.02) ? (kb < 1 ? 'warmed a blue cast' : kr < 1 ? 'cooled a warm cast' : 'balanced colour') : '',
+    'levels stretched',
+  ].filter(Boolean).join(' · ')
   return { pipe: out, why }
 }
 
 /** One finished version: the pipeline → sRGB-tagged JPEG → uploaded; returns its public URL. */
-async function renderVersion(sb: ReturnType<typeof supabaseAdmin>, listingId: string, id: string, buf: Buffer, preset: EnhancePreset, tag: string, flip = false, turn = 0): Promise<{ url: string; why: string; bytes: number } | { error: string }> {
+async function renderVersion(sb: ReturnType<typeof supabaseAdmin>, listingId: string, id: string, buf: Buffer, preset: EnhancePreset, tag: string, flip = false, turn = 0, strength = 1): Promise<{ url: string; why: string; bytes: number } | { error: string }> {
   let base = sharp(buf, { failOn: 'none' }).rotate()
   // Turn after the EXIF auto-orient, as its own step (sharp applies one rotate per pipeline).
   if (turn) base = sharp(await base.toBuffer(), { failOn: 'none' }).rotate(turn)
@@ -96,7 +182,7 @@ async function renderVersion(sb: ReturnType<typeof supabaseAdmin>, listingId: st
   base = base.resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
   let piped: sharp.Sharp, why = ''
   if (preset.key === 'none') piped = base
-  else if (preset.key === 'auto') { try { const a = await autoPipeline(buf, base); piped = a.pipe; why = a.why } catch { piped = applyPreset(base, preset) } }
+  else if (preset.key === 'auto') { try { const a = await autoPipeline(buf, base, strength); piped = a.pipe; why = a.why } catch { piped = applyPreset(base, preset) } }
   else piped = applyPreset(base, preset)
   const out = await piped.toColourspace('srgb').withIccProfile('srgb').jpeg({ quality: preset.key === 'none' ? 92 : 88, mozjpeg: true }).toBuffer()
   const path = `${listingId}/${id}/${tag}-${Date.now()}.jpg`
@@ -111,8 +197,9 @@ async function processOne(
   pic: any,
   preset: EnhancePreset,
   mirrorOnly = false,
-  extra: { flip?: boolean; flipPreset?: EnhancePreset; variants?: EnhancePreset[]; custom?: { preset: EnhancePreset; turn: number; flip: boolean } } = {},
+  extra: { flip?: boolean; flipPreset?: EnhancePreset; variants?: EnhancePreset[]; custom?: { preset: EnhancePreset; turn: number; flip: boolean }; strength?: number } = {},
 ) {
+  const strength = extra.strength ?? 1
   const id = String(pic?._id || '')
   const src = str(pic?.original) || str(pic?.large) || str(pic?.thumbnail)
   if (!id || !src) return { _id: id, error: 'no source url' }
@@ -146,7 +233,7 @@ async function processOne(
     // FLIP + ENHANCE in one pass (Jon, 2026-11-05: "mirror … and enhance … as a combo option"):
     // the chosen preset is applied to the flipped image, one version, one upload.
     const fp = extra.flipPreset || NONE_PRESET
-    const v = await renderVersion(sb, listingId, id, buf, fp, fp.key === 'none' ? 'flipped' : 'flipped-' + fp.key, true)
+    const v = await renderVersion(sb, listingId, id, buf, fp, fp.key === 'none' ? 'flipped' : 'flipped-' + fp.key, true, 0, strength)
     if ('error' in v) return { _id: id, error: v.error }
     return { _id: id, mirroredUrl, flippedUrl: v.url, preset: fp.key, presetName: fp.key === 'none' ? 'Flipped' : 'Flipped + ' + fp.name, bytesBefore: buf.length }
   }
@@ -156,7 +243,7 @@ async function processOne(
   if (extra.variants && extra.variants.length) {
     const variants: { preset: string; name: string; url: string; why: string }[] = []
     for (const vp of extra.variants) {
-      const v = await renderVersion(sb, listingId, id, buf, vp, 'opt-' + vp.key)
+      const v = await renderVersion(sb, listingId, id, buf, vp, 'opt-' + vp.key, false, 0, strength)
       if (!('error' in v)) variants.push({ preset: vp.key, name: vp.name, url: v.url, why: v.why || vp.when })
     }
     if (!variants.length) return { _id: id, error: 'no option could be made' }
@@ -174,7 +261,7 @@ async function processOne(
     .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
   let piped: sharp.Sharp, autoWhy = ''
   if (preset.key === 'auto') {
-    try { const a = await autoPipeline(buf, base); piped = a.pipe; autoWhy = a.why } catch { piped = applyPreset(base, preset) }
+    try { const a = await autoPipeline(buf, base, strength); piped = a.pipe; autoWhy = a.why } catch { piped = applyPreset(base, preset) }
   } else piped = applyPreset(base, preset)
   // sRGB out (audit 2026-10-26): iPhone shots are Display P3; an untagged P3 file reads dull and
   // flat on every OTA. Convert and tag, so the colour the photographer saw is the colour guests see.
@@ -216,6 +303,8 @@ export async function POST(req: NextRequest) {
   // 2026-11-05: "enhance actually enhances all images"). flipEnhance: the flip also gets enhanced.
   const force = body?.force === true
   const flipEnhance = body?.flipEnhance === true
+  // How far the looks move the photo (Subtle / Standard / Stronger). The custom dials are exact and not scaled.
+  const strength = cleanStrength(body?.strength)
   const c0 = body?.custom && typeof body.custom === 'object' ? body.custom : null
   const custom = c0 ? (() => {
     const p = clampPreset({ key: 'custom', name: 'Custom', brightness: c0.brightness, saturation: c0.saturation, contrast: c0.contrast, sharpen: c0.sharpen, warmth: Math.max(0, Number(c0.warmth) || 0) })
@@ -241,7 +330,7 @@ export async function POST(req: NextRequest) {
   const photoIndex: Record<string, any> = (raw._photoIndex && typeof raw._photoIndex === 'object') ? raw._photoIndex : {}
   const presetFor = (id: string): EnhancePreset => {
     const p0 = presetFor0(id)
-    return force && p0.key === 'none' ? presetByKey(cfg, 'auto') : p0
+    return scalePreset(force && p0.key === 'none' ? presetByKey(cfg, 'auto') : p0, strength)
   }
   const presetFor0 = (id: string): EnhancePreset => {
     if (perPhoto[id]) return presetByKey(cfg, perPhoto[id])
@@ -255,7 +344,7 @@ export async function POST(req: NextRequest) {
   const targets = all
     .filter(p => !wanted || wanted.has(String(p?._id || '')))
     .slice(0, custom ? 1 : wantVariants.length ? 3 : flip ? 12 : MAX_PER_CALL)
-  const variantPresets: EnhancePreset[] = wantVariants.map(k => presetByKey(cfg, k)).filter((p, i, a) => a.findIndex(x => x.key === p.key) === i)
+  const variantPresets: EnhancePreset[] = wantVariants.map(k => presetByKey(cfg, k)).filter((p, i, a) => a.findIndex(x => x.key === p.key) === i).map(p => scalePreset(p, strength))
   if (targets.length === 0) return NextResponse.json({ error: 'no matching photos' }, { status: 400 })
 
   try { await ensureBucket(sb) } catch (e: any) {
@@ -268,7 +357,7 @@ export async function POST(req: NextRequest) {
     const chunk = targets.slice(i, i + CONCURRENCY)
     const settled = await Promise.all(chunk.map(p => {
       const id = String(p?._id || '')
-      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly, { flip, ...(flip && flipEnhance ? { flipPreset: presetFor(id) } : {}), variants: variantPresets, ...(custom ? { custom } : {}) })
+      return processOne(sb, listingId, p, mirrorOnly ? NONE_PRESET : presetFor(id), mirrorOnly, { flip, ...(flip && flipEnhance ? { flipPreset: presetFor(id) } : {}), variants: variantPresets, strength, ...(custom ? { custom } : {}) })
         .catch((e: any) => ({ _id: id, error: e?.message || String(e) }))
     }))
     results.push(...settled)
@@ -308,6 +397,7 @@ export async function POST(req: NextRequest) {
       ...((r as any).lowRes ? { lowRes: true, longSide: (r as any).longSide } : {}),
     })),
     presets: cfg.enhance.presets,
+    strength,
     errors: failed.map(r => ({ _id: r._id, error: r.error })),
   })
 }

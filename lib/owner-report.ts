@@ -46,6 +46,26 @@ function monthShort(iso: string): string {
 }
 function num(v: any): number { const n = Number(v); return Number.isFinite(n) ? n : 0 }
 
+// ---------- ET clock helpers for TIMESTAMPS (2026-11-09 audit) ----------
+// Stay dates are ET-naive strings, but `created_at` is a UTC timestamp. Slicing it to ten
+// characters gives the UTC day, so a booking made at 9pm in Miami was dated tomorrow: it fell
+// outside "as of today", and landed in the next report's "bookings since" instead of this one.
+const ET_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' })
+const ET_HOUR = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false })
+/** The ET calendar day (YYYY-MM-DD) a timestamp falls on; null when it is not a date. */
+function etDayOf(ts: unknown): string | null {
+  if (!ts) return null
+  const d = new Date(String(ts))
+  return Number.isNaN(d.getTime()) ? null : ET_DAY.format(d)
+}
+/** The UTC instant at which an ET calendar day begins (DST-aware: 04:00Z or 05:00Z). */
+function etDayStartUtc(iso: string): string {
+  const noonUtc = new Date(iso + 'T12:00:00Z')
+  const hourEt = Number(ET_HOUR.format(noonUtc)) // 8 in summer, 7 in winter
+  const offset = Number.isFinite(hourEt) ? 12 - hourEt : 5
+  return new Date(Date.parse(iso + 'T00:00:00Z') + offset * 3_600_000).toISOString()
+}
+
 // ---------- types (content JSON shape) ----------
 export type MetricSet = {
   accomRevenue: number; grossRevenue: number; occupiedNights: number; availableNights: number
@@ -57,6 +77,10 @@ export type MetricSet = {
   // channelFees       = channel/OTA host fee (Guesty hostServiceFee); net = accomGross - channelFees
   // cleaningRevenue   = prorated cleaning; gross = accomGrossRevenue + cleaningRevenue
   accomGrossRevenue: number; cleaningRevenue: number; channelFees: number
+  /** Occupied nights that were OWNER stays with no rate (Guesty source starting "owner", fare 0). They are inside
+   *  occupiedNights — so occupancy counts them and a $0 owner night pulls ADR down — and are
+   *  carried separately so the report can say so instead of leaving a low ADR unexplained. */
+  ownerNights?: number
 }
 export type ReportListing = { id: string; name: string; unit: string; bedrooms: number | null; building: string }
 
@@ -195,7 +219,9 @@ export async function resolveScope(listingIds: string[], buildings: string[]): P
 // fee = hostServiceFee (the channel's host-side commission). Net = grossFare - fee.
 //   Do NOT use Guesty's own `netIncome` field: on Airbnb rows it subtracts hostServiceFee twice
 //   (netIncome = fareAccommodationAdjusted - 2 x hostServiceFee), which understates owner net.
-type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; grossFare: number; fee: number; cleaning: number; source: string; created_at: string | null }
+type Resv = { listing_id: string; check_in: string; check_out: string; nights: number; fare: number; grossFare: number; fee: number; cleaning: number; source: string; created_at: string | null; owner: boolean }
+// An owner's own stay — the day sheet's rule, used app-wide: the Guesty source starts with "owner".
+const OWNER_SRC = /^owner/
 // Expedia-family channels bundle the cleaning fee into accommodation, so ~1/3 arrive with cleaning=0.
 const EXPEDIA_RE = /expedia|hotels\.com|orbitz|egencia|travelocity/
 
@@ -226,7 +252,9 @@ export async function pullReservations(listingIds: string[], from: string, toExc
       nights: Math.max(1, num(r.nights) || daysBetween(String(r.check_in), String(r.check_out))),
       fare: num(r.fare), grossFare: num(r.grossFare), fee: Math.max(0, num(r.fee)), cleaning: num(r.cleaning),
       source: String(r.source || '').toLowerCase(),
-      created_at: r.created_at ? String(r.created_at).slice(0, 10) : null,
+      // The ET day the booking was made (not the UTC one — see etDayOf).
+      created_at: etDayOf(r.created_at),
+      owner: OWNER_SRC.test(String(r.source || '').trim().toLowerCase()),
     }))
 
   // Expedia cleaning back-fill: Expedia-family channels bundle the cleaning fee into the
@@ -261,12 +289,13 @@ export async function pullReservations(listingIds: string[], from: string, toExc
 // so month boundaries and partial ranges attribute revenue correctly. Cleaning fees are
 // whole-stay and attributed when the CHECKOUT falls inside the window.
 export function metricsFor(resv: Resv[], units: number, from: string, toExcl: string): MetricSet {
-  let accom = 0, grossAccom = 0, cleaning = 0, fees = 0, occNights = 0, resCount = 0
+  let accom = 0, grossAccom = 0, cleaning = 0, fees = 0, occNights = 0, resCount = 0, ownerNights = 0
   for (const r of resv) {
     const on = overlapNights(r.check_in, r.check_out, from, toExcl)
     if (on <= 0) continue
     resCount++
     occNights += on
+    if (r.owner && r.fare <= 0 && r.grossFare <= 0) ownerNights += on // owner nights that carry no rate
     accom += (r.fare / r.nights) * on
     // Gross accommodation = room revenue BEFORE the OTA host fee (guest-paid). Use the larger of the
     // net fare and the adjusted (gross) fare so Gross is always ≥ Net even on channels that pass the
@@ -282,6 +311,7 @@ export function metricsFor(resv: Resv[], units: number, from: string, toExcl: st
     accomRevenue: Math.round(accom), grossRevenue: Math.round(gross),
     accomGrossRevenue: Math.round(grossAccom), cleaningRevenue: Math.round(cleaning),
     channelFees: Math.round(fees),
+    ownerNights,
     occupiedNights: occNights, availableNights: avail,
     occupancyPct: avail > 0 ? Math.round((occNights / avail) * 100) : 0,
     adr: occNights > 0 ? Math.round(accom / occNights) : 0,
@@ -292,11 +322,19 @@ export function metricsFor(resv: Resv[], units: number, from: string, toExcl: st
   }
 }
 
+// HEADLINE MONEY, AT A PRECISION THAT SURVIVES A ONE-UNIT OWNER (2026-11-09 audit). This used to
+// round everything from $1,000 up to whole thousands, which was written for a 40-unit building
+// ("$109K") and is wrong for the owner-scoped reports that are now the default: a single unit's
+// $1,480 month printed as "$1K" and $4,449 as "$4K". Now: exact dollars under $10K, one decimal
+// to $100K, whole thousands above. 999,500+ rolls to "$1.00M" instead of printing "$1000K".
+// components/ReportView.tsx fmtMoney mirrors this exactly — change them together.
 export function fmtK(n: number): string {
   const abs = Math.abs(n)
-  if (abs >= 1_000_000) return '$' + (n / 1_000_000).toFixed(2) + 'M'
-  if (abs >= 1000) return '$' + Math.round(n / 1000) + 'K'
-  return '$' + Math.round(n).toLocaleString()
+  const sign = n < 0 ? '−' : ''
+  if (abs >= 999_500) return sign + '$' + (abs / 1_000_000).toFixed(2) + 'M'
+  if (abs >= 99_950) return sign + '$' + Math.round(abs / 1000) + 'K'
+  if (abs >= 10_000) return sign + '$' + (abs / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+  return sign + '$' + Math.round(abs).toLocaleString('en-US')
 }
 
 // ---------- YTD ----------
@@ -394,16 +432,20 @@ export async function bookingsSince(listingIds: string[], since: string, asOf: s
     const { data } = await db.from('guesty_reservations')
       .select('id, listing_id, check_in, check_out, nights, status, source, created_at, grossFare:raw->money->>fareAccommodationAdjusted, fare:raw->money->>fareAccommodation')
       .in('status', CONFIRMED).in('listing_id', listingIds)
-      .gte('created_at', since + 'T00:00:00').lte('created_at', asOf + 'T23:59:59')
+      // ET days, not UTC ones: `since` and `asOf` are Miami calendar dates (see etDayStartUtc).
+      .gte('created_at', etDayStartUtc(since)).lt('created_at', etDayStartUtc(addDays(asOf, 1)))
       .order('id').range(i * 1000, i * 1000 + 999)
     if (!data || !data.length) break
     all = all.concat(data)
     if (data.length < 1000) break
   }
-  const rows = all.filter(r => r.check_in && r.check_out).map(r => {
+  // AN OWNER'S OWN STAY IS NOT A BOOKING WE WON (2026-11-09 audit). Owner holds arrive as confirmed
+  // reservations with source "owner" and no fare; they were being counted here as new "Direct"
+  // bookings at $0, which inflated the count and nights and dragged the slide's ADR down.
+  const rows = all.filter(r => r.check_in && r.check_out && !OWNER_SRC.test(String(r.source || '').trim().toLowerCase())).map(r => {
     const nights = Math.max(1, num(r.nights) || daysBetween(String(r.check_in).slice(0, 10), String(r.check_out).slice(0, 10)))
     return { unit: names[String(r.listing_id)] || 'Unit', checkIn: String(r.check_in).slice(0, 10), checkOut: String(r.check_out).slice(0, 10), nights,
-      revenue: Math.round((num(r.grossFare) || num(r.fare)) * 100) / 100, channel: CHANNEL_NAME(String(r.source || '').toLowerCase()), booked: String(r.created_at).slice(0, 10) }
+      revenue: Math.round((num(r.grossFare) || num(r.fare)) * 100) / 100, channel: CHANNEL_NAME(String(r.source || '').toLowerCase()), booked: etDayOf(r.created_at) || String(r.created_at).slice(0, 10) }
   })
   const count = rows.length, nights = rows.reduce((a, r) => a + r.nights, 0), revenue = Math.round(rows.reduce((a, r) => a + r.revenue, 0))
   const leads = rows.map(r => daysBetween(r.booked, r.checkIn)).filter(d => d >= 0)
@@ -425,9 +467,14 @@ export async function bookingsSince(listingIds: string[], since: string, asOf: s
 export async function lastReportDate(listingIds: string[], scopeLabel: string, asOf: string): Promise<string | null> {
   try {
     const db = supabaseAdmin()
-    const { data } = await db.from('owner_reports').select('as_of, scope_label, listing_ids').lt('as_of', asOf).order('as_of', { ascending: false }).limit(200)
+    const { data } = await db.from('owner_reports').select('as_of, title, scope_label, listing_ids').lt('as_of', asOf).order('as_of', { ascending: false }).limit(200)
     const want = new Set(listingIds)
-    const hit = ((data || []) as any[]).find(r => String(r.scope_label || '') === scopeLabel || (Array.isArray(r.listing_ids) && r.listing_ids.some((x: any) => want.has(String(x)))))
+    // ONLY AN OWNER REVIEW IS "THE LAST OWNER REPORT" (2026-11-09 audit). Projections, onboarding
+    // decks and sales proposals live in the same table with their own as_of, so a proposal built
+    // last Tuesday for a building used to reset every owner's "bookings since" to last Tuesday.
+    // Same title test the Reports desk classifies rows with.
+    const isReview = (r: any) => !/onboarding|proposal|projection/i.test(String(r.title || ''))
+    const hit = ((data || []) as any[]).find(r => isReview(r) && (String(r.scope_label || '') === scopeLabel || (Array.isArray(r.listing_ids) && r.listing_ids.some((x: any) => want.has(String(x))))))
     return hit ? String(hit.as_of).slice(0, 10) : null
   } catch { return null }
 }
@@ -465,23 +512,39 @@ export type BudgetRow = { building_key: string; year: number; month: number; occ
 export async function pullBudgets(buildings: string[], monthIsos: string[]): Promise<Record<string, BudgetRow>> {
   const db = supabaseAdmin()
   if (!buildings.length || !monthIsos.length) return {}
-  const { data } = await db.from('owner_budgets').select('*').in('building_key', buildings)
+  const years = Array.from(new Set(monthIsos.map(m => Number(m.slice(0, 4))).filter(y => Number.isFinite(y))))
+  const { data } = await db.from('owner_budgets')
+    .select('building_key, year, month, occupancy_pct, adr, revpar, gross_revenue')
+    .in('building_key', buildings).in('year', years)
   const out: Record<string, BudgetRow> = {}
   for (const r of (data || []) as any[]) {
     const iso = String(r.year) + '-' + String(r.month).padStart(2, '0') + '-01'
-    if (monthIsos.indexOf(iso) >= 0) out[iso] = r as BudgetRow
+    if (monthIsos.indexOf(iso) < 0) continue
+    const prev = out[iso]
+    if (!prev) { out[iso] = r as BudgetRow; continue }
+    // TWO BUILDINGS, ONE MONTH (2026-11-09 audit). The last row read used to win, so a report
+    // spanning two budgeted buildings compared both buildings' actuals with ONE building's plan.
+    // Revenue budgets add; occupancy / ADR / RevPAR are ratios that cannot be combined without
+    // each building's nights, so those rows are left out rather than averaged into a made-up target.
+    out[iso] = {
+      building_key: prev.building_key + ' + ' + String(r.building_key), year: prev.year, month: prev.month,
+      occupancy_pct: null, adr: null, revpar: null,
+      gross_revenue: prev.gross_revenue != null && r.gross_revenue != null ? Number(prev.gross_revenue) + Number(r.gross_revenue) : null,
+    }
   }
   return out
 }
 
 // ---------- reviews ----------
-export type ReviewRow = { rating: number | null; content: string; guest_name: string | null; listing_id: string | null; created_at: string | null; channel: string | null }
+export type ReviewRow = { rating: number | null; content: string; guest_name: string | null; listing_id: string | null; created_at: string | null; channel: string | null
+  /** Marked "does not count toward the score" on the reviews desk. Still quotable; never averaged. */
+  excluded?: boolean }
 
 export async function pullReviews(listingIds: string[], from: string, asOf: string): Promise<ReviewRow[]> {
   const db = supabaseAdmin()
   const { data } = await db
     .from('guesty_reviews')
-    .select('rating, content, guest_name, listing_id, created_at, channel')
+    .select('rating, content, guest_name, listing_id, created_at, channel, excluded_from_score')
     .in('listing_id', listingIds)
     .is('removed_at', null)
     .gte('created_at', from + 'T00:00:00Z')
@@ -495,6 +558,7 @@ export async function pullReviews(listingIds: string[], from: string, asOf: stri
     listing_id: r.listing_id ? String(r.listing_id) : null,
     created_at: r.created_at ? String(r.created_at) : null,
     channel: r.channel ? String(r.channel) : null,
+    excluded: !!r.excluded_from_score,
   }))
 }
 
@@ -583,12 +647,31 @@ export async function planSectionFor(
   // Forward "PACING" card: next month's on-the-books pace against its budget.
   if (mAhead[2]) candidates.push({ iso: mAhead[2].iso, endExcl: mAhead[3] ? mAhead[3].iso : monthEndExcl(mAhead[2].iso), pacing: true })
 
+  // IS THIS THE WHOLE BUILDING, OR SOME OF ITS UNITS? (2026-11-09 audit.) Budgets are stored per
+  // BUILDING. Reports are now scoped by owner by default, and an owner with three of a building's
+  // forty units was shown their three units' revenue "vs" the whole building's revenue budget —
+  // permanently ~90% behind plan. Occupancy, ADR and RevPAR are per-night ratios and compare
+  // fairly at any size; the revenue TOTAL only compares when the scope is (nearly) the building.
+  // "Nearly" = 80%+ of its live units, so a building report with a blocked unit excluded keeps the row.
+  let partialScope = false
+  try {
+    const whole = await resolveScope([], buildings)
+    partialScope = whole.listings.length > 0 && listingIds.length < whole.listings.length * 0.8
+  } catch { partialScope = false }
+
+  // One reservation pull for the whole four-month span, sliced per month by metricsFor — this was
+  // four sequential round-trips, one per card.
+  const withBudget = candidates.filter(c => !!budgets[c.iso])
+  if (!withBudget.length) return null
+  const spanFrom = withBudget[0].iso
+  const spanToExcl = withBudget[withBudget.length - 1].endExcl
+  const spanResv = await pullReservations(listingIds, spanFrom, spanToExcl)
+
   const monthsOut: NonNullable<ReportContent['plan']>['months'] = []
-  for (const c of candidates) {
+  for (const c of withBudget) {
     const b = budgets[c.iso]
     if (!b) continue
-    const mresv = await pullReservations(listingIds, c.iso, c.endExcl)
-    const mm = metricsFor(mresv, units, c.iso, c.endExcl)
+    const mm = metricsFor(spanResv, units, c.iso, c.endExcl)
     const inMonth = asOf >= c.iso && asOf < c.endExcl
     const rows: NonNullable<ReportContent['plan']>['months'][number]['rows'] = []
     if (b.occupancy_pct != null) {
@@ -603,7 +686,7 @@ export async function planSectionFor(
       const d = mm.grossRevpar - Number(b.revpar)
       rows.push({ metric: 'RevPAR', actual: '$' + mm.grossRevpar, budget: 'vs $' + Math.round(Number(b.revpar)), delta: (d >= 0 ? '+$' : '−$') + Math.abs(Math.round(d)), good: d >= 0 })
     }
-    if (b.gross_revenue != null) {
+    if (b.gross_revenue != null && !partialScope) {
       const d = mm.grossRevenue - Number(b.gross_revenue)
       rows.push({ metric: 'Gross Rev', actual: fmtK(mm.grossRevenue), budget: 'vs ' + fmtK(Number(b.gross_revenue)), delta: (d >= 0 ? '+' : '−') + fmtK(Math.abs(Math.round(d))), good: d >= 0 })
     }
@@ -617,5 +700,9 @@ export async function planSectionFor(
     })
   }
   if (!monthsOut.length) return null
-  return { headline: 'Tracking against the ' + asOf.slice(0, 4) + ' budget.', subtitle: '', months: monthsOut }
+  return {
+    headline: 'Tracking against the ' + asOf.slice(0, 4) + ' budget.',
+    subtitle: partialScope ? 'Measured against the building’s per-night targets. The building-wide revenue budget is not shown for a partial set of units.' : '',
+    months: monthsOut,
+  }
 }

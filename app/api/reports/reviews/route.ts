@@ -32,7 +32,8 @@ export async function GET(req: NextRequest) {
   const byId: Record<string, any> = {}
   for (const l of scope.listings) byId[l.id] = l
   const rows = await pullReviews(ids, from, to)
-  const rated = rows.filter(r => r.rating != null)
+  // Reviews marked "does not count toward the score" stay in the list but out of the average.
+  const rated = rows.filter(r => r.rating != null && !r.excluded)
   const avg = rated.length ? Math.round((rated.reduce((s, r) => s + (r.rating as number), 0) / rated.length) * 100) / 100 : null
   const fiveCount = rated.filter(r => (r.rating as number) >= 5).length
   const reviews = rows.slice(0, 100).map(r => {

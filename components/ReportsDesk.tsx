@@ -1,8 +1,10 @@
 'use client'
 // Owner Reports desk: list of generated reports + the New-report flow
-// (pick buildings, period, as-of → generate → open the share page).
+// (pick an owner / units / a building, a period → see what the report will carry → generate →
+// open the share page). Each row answers three things at a glance: what it is, whether it has
+// gone to the owner, and whether they opened it — and shares the owner link in one tap.
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X } from 'lucide-react'
+import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X, Share2, Check, Send, Search, RefreshCw } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
 type StatementPick = {
@@ -15,7 +17,74 @@ type ReportRow = {
   id: string; code: string; title: string; scope_label: string | null
   period_start: string; period_end: string; as_of: string; theme: string; status: string
   created_at: string; updated_at: string
+  created_by?: string | null
+  /** Share-link sessions by people who are NOT signed in — i.e. the owner, not the team. */
+  views?: number; last_viewed?: string | null
 }
+
+type DocKind = 'review' | 'projection' | 'onboarding' | 'sales'
+
+// ---------- dates, said the way a person says them ----------
+// The list used to print raw ISO pairs ("2026-10-01 – 2026-10-31"); every date on this page now
+// goes through these so a period reads "Oct 1 – 31, 2026" everywhere.
+const pad2 = (n: number) => String(n).padStart(2, '0')
+/** A LOCAL calendar day as YYYY-MM-DD (toISOString would hand back the UTC day after 8pm ET). */
+const isoOf = (d: Date) => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+const isIso = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v)
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+function fmtDay(iso: string, withYear = true): string {
+  const v = String(iso || '').slice(0, 10)
+  if (!isIso(v)) return v || '—'
+  const m = MON[Number(v.slice(5, 7)) - 1] || ''
+  return m + ' ' + Number(v.slice(8, 10)) + (withYear ? ', ' + v.slice(0, 4) : '')
+}
+function fmtRange(a: string, b: string): string {
+  const x = String(a || '').slice(0, 10), y = String(b || '').slice(0, 10)
+  if (!isIso(x) || !isIso(y)) return fmtDay(x) + ' – ' + fmtDay(y)
+  if (x === y) return fmtDay(x)
+  if (x.slice(0, 7) === y.slice(0, 7)) return fmtDay(x, false) + ' – ' + Number(y.slice(8, 10)) + ', ' + y.slice(0, 4)
+  if (x.slice(0, 4) === y.slice(0, 4)) return fmtDay(x, false) + ' – ' + fmtDay(y)
+  return fmtDay(x) + ' – ' + fmtDay(y)
+}
+/** Whole days from one ISO day to another (b − a). */
+function dayDiff(a: string, b: string): number {
+  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86_400_000)
+}
+/** "today", "yesterday", "3 days ago", then the date — for when an owner last opened a link. */
+function ago(ts: string | null | undefined, today: string): string {
+  if (!ts) return ''
+  const d = new Date(String(ts))
+  if (Number.isNaN(d.getTime())) return ''
+  const day = isoOf(d)
+  const n = dayDiff(day, today)
+  if (n <= 0) return 'today'
+  if (n === 1) return 'yesterday'
+  if (n < 7) return n + ' days ago'
+  return fmtDay(day, day.slice(0, 4) !== today.slice(0, 4))
+}
+
+// One-tap periods. A review is nearly always one of these four windows; typing two dates by
+// hand was the slowest part of making one.
+type Preset = { id: string; label: string; hint: string; range: () => { start: string; end: string } }
+const PRESETS: Preset[] = [
+  { id: 'this', label: 'This month', hint: 'The month in progress — numbers are on-the-books and will keep moving.', range: () => {
+    const n = new Date(); return { start: isoOf(new Date(n.getFullYear(), n.getMonth(), 1)), end: isoOf(new Date(n.getFullYear(), n.getMonth() + 1, 0)) } } },
+  { id: 'last', label: 'Last month', hint: 'The last closed month — final numbers, and the one a statement exists for.', range: () => {
+    const n = new Date(); return { start: isoOf(new Date(n.getFullYear(), n.getMonth() - 1, 1)), end: isoOf(new Date(n.getFullYear(), n.getMonth(), 0)) } } },
+  { id: 'qtd', label: 'This quarter', hint: 'The calendar quarter in progress.', range: () => {
+    const n = new Date(); const q = Math.floor(n.getMonth() / 3) * 3
+    return { start: isoOf(new Date(n.getFullYear(), q, 1)), end: isoOf(new Date(n.getFullYear(), q + 3, 0)) } } },
+  { id: 'ytd', label: 'Year to date', hint: 'January 1 through today.', range: () => {
+    const n = new Date(); return { start: n.getFullYear() + '-01-01', end: isoOf(n) } } },
+]
+// Which kind a stored row is. The kind lives in the title at generation ("… — Owner Onboarding
+// — Sep 16, 2026"), so rows generated before onboarding existed still classify correctly.
+function kindOfRow(r: { title?: string | null }): DocKind {
+  const t = String(r.title || '')
+  return /onboarding/i.test(t) ? 'onboarding' : /proposal/i.test(t) ? 'sales' : /projection/i.test(t) ? 'projection' : 'review'
+}
+/** Scope labels compare as sets: "17WEST + 906" is the same scope as "906 + 17WEST". */
+const labelKey = (v: string | null | undefined) => String(v || '').split('+').map(x => x.trim().toLowerCase()).filter(Boolean).sort().join('+')
 
 // Figures on statement rows are exact dollars from the recognised ledger; round for display
 // only, never for anything that is sent to the generator.
@@ -52,11 +121,7 @@ function idsForMode(mode: StmtMode, list: StatementPick[], from: string, to: str
 }
 
 function monthDefaults(): { start: string; end: string } {
-  const now = new Date()
-  const y = now.getFullYear(); const m = now.getMonth()
-  const start = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10)
-  const end = new Date(Date.UTC(y, m + 1, 0)).toISOString().slice(0, 10)
-  return { start, end }
+  return PRESETS[0].range()
 }
 
 export function ReportsDesk() {
@@ -85,7 +150,7 @@ export function ReportsDesk() {
   // IS the period — and skips the AI pass, so it generates in a few seconds.
   // 'onboarding' = the welcome presentation for a NEW owner (Jon, 2026-09-16). Also periodless —
   // the unit has no history yet, which is why we are having the call.
-  const [kind, setKind] = useState<'review' | 'projection' | 'onboarding' | 'sales'>('review')
+  const [kind, setKind] = useState<DocKind>('review')
   const [ownerName, setOwnerName] = useState('')
   /** Who is presenting the sales deck. Seeds the contact card; the photo is added on the slide. */
   const [presenter, setPresenter] = useState('')
@@ -102,7 +167,15 @@ export function ReportsDesk() {
   const setIv = (k: string, v: string) => setIntake(p => ({ ...p, [k]: v }))
   const [goLive, setGoLive] = useState('')
   // The list below mixes three document types once you have a few of each; this filters it.
-  const [listKind, setListKind] = useState<'all' | 'review' | 'projection' | 'onboarding' | 'sales'>('all')
+  const [listKind, setListKind] = useState<'all' | DocKind>('all')
+  const [listQ, setListQ] = useState('')
+  /** Why the list is empty when it is not really empty — a failed load used to read "No reports yet". */
+  const [listErr, setListErr] = useState('')
+  const [copiedId, setCopiedId] = useState('')
+  const [busyId, setBusyId] = useState('')
+  /** A report that was created but needs a word said about it before it is opened. */
+  const [made, setMade] = useState<{ code: string; note: string } | null>(null)
+  const today = isoOf(new Date())
   const [periodStart, setPeriodStart] = useState(defaults.start)
   const [periodEnd, setPeriodEnd] = useState(defaults.end)
   const [showNew, setShowNew] = useState(false)
@@ -167,10 +240,12 @@ export function ReportsDesk() {
   }
 
   function loadReports() {
-    fetch('/api/reports').then(r => r.json()).then(d => {
-      if (Array.isArray(d?.reports)) setReports(d.reports)
+    fetch('/api/reports').then(async r => {
+      const d = await r.json().catch(() => null)
+      if (r.ok && Array.isArray(d?.reports)) { setReports(d.reports); setListErr('') }
+      else setListErr(r.status === 401 ? 'You are signed out — sign in again to see the reports.' : (d?.error || 'The report list did not load (' + r.status + ').'))
       setLoading(false)
-    }).catch(() => setLoading(false))
+    }).catch(() => { setListErr('The report list did not load — check the connection and retry.'); setLoading(false) })
   }
   useEffect(() => {
     loadReports()
@@ -222,50 +297,77 @@ export function ReportsDesk() {
   // A sales deck is the one document that does not need a property (see the generator).
   const scopeReady = kind === 'sales' ? true : (byIds ? scopeIds.length > 0 : picked.length > 0)
   const pickedKey = byIds ? scopeIds.join(',') : picked.join(',')
+  // FETCH ON SCOPE, RE-PICK ON PERIOD (2026-11-09). This was one effect keyed on scope AND both
+  // dates, so every keystroke in a date box re-aggregated the whole owner ledger. The list only
+  // depends on who the report is for; which rows are ticked depends on the period. Statements are
+  // also a review-only section, so the other three document types no longer fetch them at all.
+  const wantStatements = kind === 'review' && !!pickedKey
   useEffect(() => {
-    if (!pickedKey) { setStmtList([]); setStmtPicked([]); return }
+    if (!wantStatements) { setStmtList([]); setStmtPicked([]); setStmtLoading(false); return }
     let cancelled = false
     setStmtLoading(true)
+    // Drop the previous owner's statements the moment the scope changes, so a fast Generate can
+    // never carry another owner's statement ids while the new list is still loading.
+    setStmtList([])
     fetch('/api/reports/statements?' + (byIds ? 'listingIds=' : 'buildings=') + encodeURIComponent(pickedKey))
       .then(r => r.json())
-      .then(d => {
-        if (cancelled) return
-        const list: StatementPick[] = Array.isArray(d?.statements) ? d.statements : []
-        setStmtList(list)
-        const from = periodStart.slice(0, 7)
-        const to = periodEnd.slice(0, 7)
-        let mode = stmtModeRef.current
-        let ids = idsForMode(mode, list, from, to)
-        // The period defaults to the month we are IN, and a statement for the current month
-        // does not exist yet — so "in this period" would open on an empty selection and look
-        // broken. Drop to the most recent statement instead, and say so by moving the mode.
-        if (!ids.length && mode === 'period' && list.some(s => s.net != null)) {
-          mode = 'one'
-          ids = idsForMode(mode, list, from, to)
-          stmtModeRef.current = mode
-          setStmtMode(mode)
-        }
-        setStmtPicked(ids)
-      })
-      .catch(() => { if (!cancelled) { setStmtList([]); setStmtPicked([]) } })
+      .then(d => { if (!cancelled) setStmtList(Array.isArray(d?.statements) ? d.statements : []) })
+      .catch(() => { if (!cancelled) setStmtList([]) })
       .then(() => { if (!cancelled) setStmtLoading(false) })
     return () => { cancelled = true }
-  }, [pickedKey, periodStart, periodEnd])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedKey, wantStatements])
+  useEffect(() => {
+    const from = periodStart.slice(0, 7)
+    const to = periodEnd.slice(0, 7)
+    let mode = stmtModeRef.current
+    let ids = idsForMode(mode, stmtList, from, to)
+    // The period defaults to the month we are IN, and a statement for the current month
+    // does not exist yet — so "in this period" would open on an empty selection and look
+    // broken. Drop to the most recent statement instead, and say so by moving the mode.
+    if (!ids.length && mode === 'period' && stmtList.some(s => s.net != null)) {
+      mode = 'one'
+      ids = idsForMode(mode, stmtList, from, to)
+      stmtModeRef.current = mode
+      setStmtMode(mode)
+    }
+    setStmtPicked(ids)
+  }, [stmtList, periodStart, periodEnd])
 
   function toggleBuilding(b: string) {
     setPicked(prev => prev.indexOf(b) >= 0 ? prev.filter(x => x !== b) : [...prev, b])
   }
+
+  // ---------- ready or not ----------
+  // What this report will and will not contain, said BEFORE the thirty-second generate rather
+  // than discovered on the finished page. Everything here is read from data already on screen.
+  const periodOk = isIso(periodStart) && isIso(periodEnd) && periodStart <= periodEnd
+  const periodOpen = periodOk && periodEnd >= today
+  const daysLeft = periodOpen ? Math.max(0, dayDiff(today, periodEnd)) : 0
+  const periodFuture = periodOk && periodStart > today
+  const syncedStmts = stmtList.filter(s => s.net != null)
+  const unsyncedInWindow = stmtList.filter(s => s.net == null && s.month >= periodStart.slice(0, 7) && s.month <= periodEnd.slice(0, 7))
+  const targetLabel = byIds ? scopeLabel : picked.join(' + ')
+  // THE SAME REPORT, ALREADY MADE. Generating a second review for the same owner and window mints
+  // a second share link — and the owner may be holding the first. Offer the one that exists.
+  const existing = kind === 'review' && periodOk && targetLabel
+    ? reports.find(r => kindOfRow(r) === 'review' && String(r.period_start).slice(0, 10) === periodStart
+        && String(r.period_end).slice(0, 10) === periodEnd && labelKey(r.scope_label) === labelKey(targetLabel)) || null
+    : null
+  const canGenerate = scopeReady && (kind !== 'review' || periodOk)
 
   async function generate() {
     if (!scopeReady) {
       setMsg(scopeMode === 'owner' ? 'Pick an owner.' : scopeMode === 'unit' ? 'Pick at least one unit.' : 'Pick at least one property.')
       return
     }
+    if (kind === 'review' && !periodOk) { setMsg('The period needs a start date on or before its end date.'); return }
     setGenerating(true)
+    setMade(null)
     setMsg(kind === 'projection' ? 'Building the projection report… (~5s)'
       : kind === 'sales' ? 'Building the sales deck… (~10s)'
       : kind === 'onboarding' ? 'Building the onboarding presentation… (~10s)'
-      : 'Pulling data + writing the report… (~30s)')
+      : 'Pulling data + writing the report… (~20s)')
     try {
       const r = await fetch('/api/reports/generate', {
         method: 'POST',
@@ -282,42 +384,100 @@ export function ReportsDesk() {
           length: kind === 'sales' ? deckLength : undefined,
           intake: kind === 'sales' ? intake : undefined,
           market: kind === 'sales' ? (intake.market || undefined) : undefined,
-          pacingUrl: pacing ? pacing.url : undefined,
-          statementIds: stmtPicked.length ? stmtPicked : undefined,
+          // Review-only attachments. The statement picker is not on screen for the other three
+          // document types, so nothing it holds may ride along with them.
+          pacingUrl: kind === 'review' && pacing ? pacing.url : undefined,
+          statementIds: kind === 'review' && stmtPicked.length ? stmtPicked : undefined,
           heroImageUrl: heroImg ? heroImg.url : undefined,
         }),
       })
-      const d = await r.json()
+      // A timeout or a gateway error comes back as HTML, not JSON. That used to throw into the
+      // catch below and read "Generate failed" — while the report had often been created anyway.
+      const d = await r.json().catch(() => null)
       if (d?.ok && d?.code) {
+        // The writing pass can fail on its own (no key, model error) and the report still builds,
+        // on plain default headlines with no guest themes. Say so instead of opening it silently.
+        if (kind === 'review' && d.aiUsed === false) {
+          setMade({ code: String(d.code), note: 'Report created, but the AI writing pass did not run — headlines are plain defaults and the guest themes are empty. Open it and use Ask AI on those slides, or generate again.' })
+          setMsg('')
+          setGenerating(false)
+          loadReports()
+          return
+        }
         window.location.href = '/r/' + d.code
         return
       }
-      setMsg(d?.error || 'Generate failed')
-    } catch { setMsg('Generate failed') }
+      if (!d) {
+        setMsg(r.status === 504 || r.status === 502 || r.status === 408
+          ? 'That took too long to answer. The report may still have been created — the list below has been refreshed; check it before generating again.'
+          : 'Generate failed (' + r.status + '). Nothing was created.')
+        loadReports()
+      } else setMsg(d?.message || d?.error || 'Generate failed')
+    } catch { setMsg('Generate failed — no connection. Nothing was created.') }
     setGenerating(false)
   }
 
-  async function remove(id: string) {
-    if (!window.confirm('Delete this report? The share link will stop working.')) return
-    await fetch('/api/reports?id=' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => {})
+  async function remove(r: ReportRow) {
+    const opened = r.views ? ' An owner has opened this link ' + r.views + ' time' + (r.views === 1 ? '' : 's') + '.' : ''
+    if (!window.confirm('Delete "' + r.title + '"? The share link will stop working.' + opened)) return
+    setBusyId(r.id)
+    try {
+      const res = await fetch('/api/reports?id=' + encodeURIComponent(r.id), { method: 'DELETE' })
+      const d = await res.json().catch(() => null)
+      // A refused delete (view-only access, signed out) used to look exactly like a successful one
+      // until the row was still there after the reload.
+      if (!res.ok || !d?.ok) setListErr(d?.message || d?.error || 'Could not delete that report (' + res.status + ').')
+      else setListErr('')
+    } catch { setListErr('Could not delete that report — no connection.') }
+    setBusyId('')
     loadReports()
   }
 
-  // Which kind a stored row is. The kind lives in the title at generation ("… — Owner Onboarding
-  // — Sep 16, 2026"), so rows generated before onboarding existed still classify correctly.
-  const kindOfRow = (r: ReportRow): 'review' | 'projection' | 'onboarding' | 'sales' =>
-    /onboarding/i.test(String(r.title || '')) ? 'onboarding'
-      : /proposal/i.test(String(r.title || '')) ? 'sales'
-      : /projection/i.test(String(r.title || '')) ? 'projection' : 'review'
-  const shownReports = listKind === 'all' ? reports : reports.filter(r => kindOfRow(r) === listKind)
+  // SHARE IN ONE TAP. On a phone this opens the system share sheet (Messages, Mail, WhatsApp);
+  // on a desktop it copies the owner link. Either way the row confirms it for a moment.
+  async function share(r: ReportRow) {
+    const url = window.location.origin + '/r/' + r.code
+    const flash = () => { setCopiedId(r.id); window.setTimeout(() => setCopiedId(c => (c === r.id ? '' : c)), 1800) }
+    const nav: any = navigator
+    const phone = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+    if (phone && typeof nav.share === 'function') {
+      try { await nav.share({ title: r.title, url }); flash(); return } catch (e: any) {
+        if (e && e.name === 'AbortError') return // they closed the sheet; nothing to report
+      }
+    }
+    try { await nav.clipboard.writeText(url); flash() } catch {
+      // Clipboard blocked (http, permissions): hand them the link to copy by hand.
+      window.prompt('Copy the owner link:', url)
+    }
+  }
 
-  const nKind = (k: 'review' | 'projection' | 'onboarding' | 'sales') => reports.filter(r => kindOfRow(r) === k).length
-  const KIND_TAG: Record<'review' | 'projection' | 'onboarding' | 'sales', { l: string; t: 'brand' | 'violet' | 'emerald' | 'amber' }> = {
+  // Draft ↔ Sent. Every row has said "draft" since the table was created because nothing ever
+  // wrote the column; now it records whether the link has gone to the owner.
+  async function setStatus(r: ReportRow, status: 'draft' | 'sent') {
+    setBusyId(r.id)
+    try {
+      const res = await fetch('/api/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: r.id, status }) })
+      const d = await res.json().catch(() => null)
+      if (!res.ok || !d?.ok) setListErr(d?.message || d?.error || 'Could not update that report (' + res.status + ').')
+      else { setListErr(''); setReports(prev => prev.map(x => x.id === r.id ? { ...x, status } : x)) }
+    } catch { setListErr('Could not update that report — no connection.') }
+    setBusyId('')
+  }
+
+  const q = listQ.trim().toLowerCase()
+  const shownReports = reports
+    .filter(r => listKind === 'all' || kindOfRow(r) === listKind)
+    .filter(r => !q || (String(r.title || '') + ' ' + String(r.scope_label || '')).toLowerCase().indexOf(q) >= 0)
+
+  const nKind = (k: DocKind) => reports.filter(r => kindOfRow(r) === k).length
+  const nSent = reports.filter(r => String(r.status) === 'sent').length
+  const nUnopened = reports.filter(r => String(r.status) === 'sent' && !r.views).length
+  const KIND_TAG: Record<DocKind, { l: string; t: 'brand' | 'violet' | 'emerald' | 'amber' }> = {
     review: { l: 'Review', t: 'brand' }, projection: { l: 'Projection', t: 'violet' }, onboarding: { l: 'Onboarding', t: 'emerald' },
     sales: { l: 'Proposal', t: 'amber' },
   }
   // Hover text for the three document types — the explainer paragraphs that used to sit under the toggle.
-  const KIND_HELP: Record<'review' | 'projection' | 'onboarding' | 'sales', string> = {
+  const KIND_HELP: Record<DocKind, string> = {
     review: 'Performance review for a period: revenue, occupancy, reviews and completed work pulled automatically.',
     projection: 'Next season’s net owner revenue per unit, with property health and ADR-upside recommendations. Edit any wording in place after generating.',
     onboarding: 'The kickoff call as a document: listing reviewed on every channel, strategy, ramp, team, billables and a worked statement. Answers save live on the call; the boilerplate is the house template.',
@@ -328,19 +488,28 @@ export function ReportsDesk() {
     <div className="space-y-4">
       <LeanHead title="Owner Reports">
         <Pill title="Owner documents generated so far">{reports.length} report{reports.length === 1 ? '' : 's'}</Pill>
+        {nSent > 0 && <Pill tone="brand" title="Marked as sent to the owner">{nSent} sent</Pill>}
+        {nUnopened > 0 && <Pill tone="amber" title="Sent, but the owner link has not been opened yet">{nUnopened} not opened</Pill>}
         {!showNew && (
-          <button onClick={() => setShowNew(true)} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-3 py-1.5 hover:bg-brand-700">
+          <button onClick={() => { setShowNew(true); setMade(null) }} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-3 py-1.5 hover:bg-brand-700">
             <Plus size={14} /> New report
           </button>
         )}
       </LeanHead>
+      {made && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 flex-wrap">
+          <p className="text-[13px] text-amber-900 flex-1 min-w-[14rem]">{made.note}</p>
+          <a href={'/r/' + made.code} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white text-[12.5px] font-semibold px-3 py-1.5">Open the report</a>
+          <IconBtn title="Dismiss" onClick={() => setMade(null)}><X size={14} /></IconBtn>
+        </div>
+      )}
       {/* New report — only on screen while it is being built */}
       {showNew && (
       <section className="rounded-2xl border border-line bg-white p-4">
           <div className="space-y-4">
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-[13.5px] font-bold text-ink flex items-center gap-1.5 mr-1"><Sparkles size={14} className="text-brand-600" /> New report</h2>
-              <div className="flex items-center rounded-lg border border-line bg-neutral-50 overflow-hidden w-fit">
+              <div className="flex items-center rounded-lg border border-line bg-neutral-50 overflow-x-auto max-w-full w-fit whitespace-nowrap">
                 <button onClick={() => setKind('review')} title={KIND_HELP.review}
                   className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'review' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Owner review
@@ -496,12 +665,28 @@ export function ReportsDesk() {
             <div className="flex items-end gap-3 flex-wrap">
               {kind === 'review' ? (
                 <>
+                  <div className="w-full">
+                    <p className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">Period</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {PRESETS.map(pz => {
+                        const rg = pz.range()
+                        const on = rg.start === periodStart && rg.end === periodEnd
+                        return (
+                          <button key={pz.id} type="button" title={pz.hint} aria-pressed={on}
+                            onClick={() => { setPeriodStart(rg.start); setPeriodEnd(rg.end) }}
+                            className={'rounded-md border px-2 py-1 text-[11.5px] font-semibold ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink hover:border-ink/40')}>
+                            {pz.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
                   <label className="block">
-                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Period start</span>
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">From</span>
                     <input type="date" value={periodStart} onChange={e => setPeriodStart(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
                   </label>
                   <label className="block">
-                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Period end</span>
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">To</span>
                     <input type="date" value={periodEnd} onChange={e => setPeriodEnd(e.target.value)} className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
                   </label>
                 </>
@@ -610,12 +795,56 @@ export function ReportsDesk() {
               ) : (
                 <span className="pb-2"><Tag title="The season comes straight from the projection model">Next high season · Nov–Apr</Tag></span>
               )}
-              <button onClick={generate} disabled={generating || !scopeReady}
+              <button onClick={generate} disabled={generating || !canGenerate}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 text-white text-sm font-semibold px-5 py-2 hover:bg-brand-700 disabled:opacity-50">
-                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : kind === 'onboarding' ? 'Generate onboarding' : kind === 'sales' ? 'Generate sales deck' : 'Generate report'}
+                {generating ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />} {kind === 'projection' ? 'Generate projection report' : kind === 'onboarding' ? 'Generate onboarding' : kind === 'sales' ? 'Generate sales deck' : existing ? 'Generate a new one anyway' : 'Generate report'}
               </button>
             </div>
-            {picked.length > 0 && (
+            {/* READY OR NOT — what this review will carry, before the wait rather than after it. */}
+            {kind === 'review' && (
+              <div className="rounded-xl border border-line bg-app/40 px-3 py-2.5 space-y-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[11px] uppercase tracking-wider text-muted font-semibold mr-1">This report</span>
+                  {scopeReady
+                    ? <Tag tone="emerald" title="Who the report is for"><span className="inline-block max-w-[11rem] truncate align-bottom">{targetLabel || 'Scope picked'}</span>{byIds ? ' · ' + scopeIds.length + ' unit' + (scopeIds.length === 1 ? '' : 's') : ''}</Tag>
+                    : <Tag tone="amber" title="Pick who the report is for, above">{scopeMode === 'owner' ? 'Pick an owner' : scopeMode === 'unit' ? 'Pick units' : 'Pick a property'}</Tag>}
+                  {!periodOk
+                    ? <Tag tone="rose" title="The start date must be on or before the end date">Fix the dates</Tag>
+                    : periodFuture
+                      ? <Tag tone="amber" title="Nothing has been stayed yet — every number will be bookings on the books">{fmtRange(periodStart, periodEnd)} · not started</Tag>
+                      : periodOpen
+                        ? <Tag tone="amber" title="The period is still running. Revenue and occupancy are on-the-books as of today and will keep moving — the report says so on its face.">{fmtRange(periodStart, periodEnd)} · {daysLeft} day{daysLeft === 1 ? '' : 's'} left</Tag>
+                        : <Tag tone="emerald" title="A closed period — the numbers are final">{fmtRange(periodStart, periodEnd)} · closed</Tag>}
+                  {scopeReady && (stmtLoading
+                    ? <Tag title="Checking the owner-statement mirror">Checking statements…</Tag>
+                    : stmtPicked.length
+                      ? <Tag tone="emerald" title="An Owner Statement section is built from the recognised Guesty ledger — pick which below">{stmtPicked.length} statement{stmtPicked.length === 1 ? '' : 's'} attached</Tag>
+                      : unsyncedInWindow.length
+                        ? <Tag tone="amber" title="A statement exists for this period but its ledger has not been synced, so it cannot be included yet. Run the owner-statement sync, then come back.">Statement not synced</Tag>
+                        : syncedStmts.length
+                          ? <Tag title="No statement is ticked — the report is built without an Owner Statement section">No statement section</Tag>
+                          : <Tag title="Guesty has no owner statements for these units yet">No statements yet</Tag>)}
+                  {pacing && <Tag tone="emerald" title="A Pacing vs Market section is read from the PriceLabs PDF">Pacing PDF</Tag>}
+                </div>
+                {existing && (
+                  <div className="flex items-center gap-2 flex-wrap text-[12.5px] text-ink">
+                    <span>
+                      A review for <b>{existing.scope_label || targetLabel}</b> over this exact period already exists
+                      {existing.views ? <> — the owner has opened it {existing.views} time{existing.views === 1 ? '' : 's'}</> : null}.
+                    </span>
+                    <a href={'/r/' + existing.code} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold hover:border-ink/30">
+                      Open it <ExternalLink size={12} />
+                    </a>
+                    <span className="text-muted">Its numbers refresh inside the report, on the same link.</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* The picker follows the SCOPE, however it was chosen. It used to be gated on the
+                building list alone, so in owner and unit mode — the default — statements were
+                still auto-selected and sent to the generator with no picker on screen to see or
+                change them (2026-11-09 audit). */}
+            {kind === 'review' && scopeReady && (
               <div>
                 <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
                   <p className="text-[11px] uppercase tracking-wider text-muted font-semibold">
@@ -686,10 +915,12 @@ export function ReportsDesk() {
               <div className="flex flex-wrap items-center gap-2">
                 <input ref={pacingRef} type="file" accept="application/pdf" className="hidden" onChange={onPacingPick} />
                 <input ref={heroRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={onHeroPick} />
-                <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!uploading}
-                  title="Adds a Pacing vs Market section" className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
-                  {uploading === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} PriceLabs pacing PDF
-                </button>
+                {kind === 'review' && (
+                  <button onClick={() => pacingRef.current && pacingRef.current.click()} disabled={!!uploading}
+                    title="Adds a Pacing vs Market section" className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
+                    {uploading === 'pacing' ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />} PriceLabs pacing PDF
+                  </button>
+                )}
                 <button onClick={() => heroRef.current && heroRef.current.click()} disabled={!!uploading}
                   title="Used on the cover" className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:border-brand-300 disabled:opacity-50">
                   {uploading === 'hero' ? <Loader2 size={12} className="animate-spin" /> : <ImageIcon size={12} />} Hero photo
@@ -697,7 +928,7 @@ export function ReportsDesk() {
               </div>
               {(pacing || heroImg) && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {pacing && (
+                  {pacing && kind === 'review' && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 text-brand-700 px-2.5 py-1 text-[11.5px] font-semibold">
                       Pacing: {pacing.name}
                       <Tip label="Remove the pacing PDF"><button onClick={() => setPacing(null)} aria-label="Remove the pacing PDF" className="hover:text-red-600"><X size={11} /></button></Tip>
@@ -712,7 +943,7 @@ export function ReportsDesk() {
                 </div>
               )}
             </div>
-            {msg && <p className="text-[13px] text-amber-700">{msg}</p>}
+            {msg && <p role="status" className="text-[13px] text-amber-700">{generating && <Loader2 size={12} className="inline animate-spin mr-1.5" />}{msg}</p>}
           </div>
       </section>
       )}
@@ -726,30 +957,73 @@ export function ReportsDesk() {
           { key: 'onboarding' as const, label: 'Onboarding', n: nKind('onboarding') },
           { key: 'sales' as const, label: 'Proposals', n: nKind('sales') },
         ]}
-        value={listKind} onChange={setListKind} />
+        value={listKind} onChange={setListKind}
+        right={reports.length > 6 ? (
+          <label className="relative block">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+            <input value={listQ} onChange={e => setListQ(e.target.value)} placeholder="Find an owner or property" aria-label="Find a report"
+              className="w-56 max-w-full rounded-xl border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px] text-ink" />
+          </label>
+        ) : undefined} />
+      {listErr && (
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 flex items-center gap-3 flex-wrap">
+          <p className="text-[13px] text-rose-800 flex-1 min-w-[12rem]">{listErr}</p>
+          <button onClick={() => { setLoading(true); loadReports() }} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1 text-[12px] font-semibold text-rose-800 hover:bg-rose-100">
+            <RefreshCw size={12} /> Retry
+          </button>
+        </div>
+      )}
       {loading ? (
         <LeanEmpty><Loader2 size={13} className="inline animate-spin mr-1.5" />Loading reports…</LeanEmpty>
       ) : !shownReports.length ? (
-        <LeanEmpty>{reports.length ? 'None of this kind yet.' : 'No reports yet — press New report.'}</LeanEmpty>
+        listErr && !reports.length ? null
+          : <LeanEmpty>{q ? 'Nothing matches “' + listQ.trim() + '”.' : reports.length ? 'None of this kind yet.' : 'No reports yet — press New report.'}</LeanEmpty>
       ) : (
         <LeanList>
           {shownReports.map(r => {
-            const k = KIND_TAG[kindOfRow(r)]
+            const rk = kindOfRow(r)
+            const k = KIND_TAG[rk]
+            const sent = String(r.status) === 'sent'
+            const asOf = String(r.as_of || '').slice(0, 10)
+            const pEnd = String(r.period_end || '').slice(0, 10)
+            // A review cut while its period was still running is a snapshot of a moving number.
+            // A week on, the on-the-books figures an owner opens are a week stale.
+            const age = isIso(asOf) ? dayDiff(asOf, today) : 0
+            const stale = rk === 'review' && isIso(asOf) && isIso(pEnd) && pEnd >= asOf && age >= 7
+            const copied = copiedId === r.id
+            const busy = busyId === r.id
             return (
               <LeanRow key={r.id}
-                name={<a href={'/r/' + r.code} className="hover:text-brand-700">{r.title}</a>}
-                meta={r.period_start + ' – ' + r.period_end}
+                name={<a href={'/r/' + r.code} title={r.title} className="hover:text-brand-700">{r.scope_label ? r.scope_label + (/\(copy\)\s*$/i.test(String(r.title || '')) ? ' (copy)' : '') : r.title}</a>}
+                meta={rk === 'review' ? fmtRange(r.period_start, r.period_end) : 'made ' + fmtDay(asOf)}
                 tags={<>
                   <Tag tone={k.t}>{k.l}</Tag>
-                  <Tag title={'Data as of ' + r.as_of}>as of {r.as_of}</Tag>
-                  <Tag tone="brand" title="Report status">{r.status}</Tag>
+                  {rk === 'review' && (
+                    <Tag tone={stale ? 'amber' : 'slate'}
+                      title={stale
+                        ? 'The period was still running when this was built, ' + age + ' days ago. Open it and refresh the numbers before sending — the link stays the same.'
+                        : 'Numbers are on-the-books as of ' + fmtDay(asOf)}>
+                      as of {fmtDay(asOf, asOf.slice(0, 4) !== today.slice(0, 4))}
+                    </Tag>
+                  )}
+                  <Tag tone={sent ? 'brand' : 'slate'} title={sent ? 'Marked as sent to the owner' : 'Not marked as sent yet'}>{sent ? 'Sent' : 'Draft'}</Tag>
+                  {r.views
+                    ? <Tag tone="emerald" title={'Opened from the share link ' + r.views + ' time' + (r.views === 1 ? '' : 's') + ' by someone not signed in to Lighthouse. Slide-by-slide detail is in the report’s Views panel.'}>Opened {r.views}×{r.last_viewed ? ' · ' + ago(r.last_viewed, today) : ''}</Tag>
+                    : sent ? <Tag tone="amber" title="Sent, but nobody has opened the share link yet">Not opened</Tag> : null}
                 </>}
                 actions={<>
+                  <IconBtn title={copied ? 'Owner link ready' : 'Share the owner link'} tone={copied ? 'ok' : 'brand'} onClick={() => share(r)}>
+                    {copied ? <Check size={14} /> : <Share2 size={14} />}
+                  </IconBtn>
+                  <IconBtn title={sent ? 'Marked sent — tap to set back to draft' : 'Mark as sent to the owner'} tone={sent ? 'ok' : undefined} disabled={busy}
+                    onClick={() => setStatus(r, sent ? 'draft' : 'sent')}>
+                    <Send size={14} />
+                  </IconBtn>
                   <Tip label="Open in a new tab">
                     <a href={'/r/' + r.code} target="_blank" rel="noreferrer" aria-label="Open in a new tab"
                       className="shrink-0 inline-flex items-center justify-center rounded-lg border border-line bg-white w-8 h-8 text-muted hover:text-ink hover:bg-app"><ExternalLink size={14} /></a>
                   </Tip>
-                  <IconBtn title="Delete report (the link stops working)" tone="bad" onClick={() => remove(r.id)}><Trash2 size={14} /></IconBtn>
+                  <IconBtn title="Delete report (the link stops working)" tone="bad" disabled={busy} onClick={() => remove(r)}><Trash2 size={14} /></IconBtn>
                 </>} />
             )
           })}

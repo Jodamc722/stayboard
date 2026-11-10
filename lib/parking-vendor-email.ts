@@ -140,6 +140,12 @@ export async function runVendorEmail(opts: { force?: 'daily' } = {}): Promise<{ 
     // truncated read is not announced twice).
     seen: Array.from(new Set([...rows.map(x => x.reservationId), ...cfg.seen])).slice(0, 2000),
   }
-  await setSetting(VENDOR_EMAIL_KEY, next, 'parking-vendor-email')
-  return { sent: kind, count: kind === 'daily' ? need.length : fresh.length }
+  // THE SEND IS ONLY DONE WHEN IT IS WRITTEN DOWN. If this save fails, the next run (30 minutes
+  // later) does not know today's email went and sends it again, all day. One retry, then say so
+  // loudly: the cron reports the run as failed instead of looking fine while the garage is spammed.
+  let saved = await setSetting(VENDOR_EMAIL_KEY, next, 'parking-vendor-email')
+  if (!saved.ok) saved = await setSetting(VENDOR_EMAIL_KEY, next, 'parking-vendor-email')
+  const count = kind === 'daily' ? need.length : fresh.length
+  if (!saved.ok) return { sent: kind, count, error: 'The email was sent but could not be recorded (' + (saved.error || 'settings write failed') + ') — it may send again on the next run. Switch the daily email off until this is fixed.' }
+  return { sent: kind, count }
 }

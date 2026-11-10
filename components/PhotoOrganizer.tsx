@@ -3,6 +3,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { buildOrder as engineOrder, showcaseScore, spaceType, SPACE_LABEL, type PhotoFacts } from '@/lib/photo-order'
 import { Images, Wand2, Sparkles, AlertTriangle, Check, RotateCcw, UploadCloud, Star, ArrowUp, ArrowDown, Crown, Gauge, Trash2, MapPinned, Sun, ImagePlus, Archive, RefreshCw, Loader2, GripVertical, ChevronsUp, ChevronsDown, CornerLeftUp, X, LibraryBig } from 'lucide-react'
 import { LibraryPicker, type LibraryPick } from '@/components/LibraryPicker'
+import { WATERMARK_PUSH_BLOCK, looksWatermarked } from '@/lib/photo-watermark'
 
 type Photo = {
   _id: string; url: string; caption?: string; category?: string; reason?: string; kind?: string
@@ -347,6 +348,8 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     await seedOrderIfEmpty()
     for (const f of files) {
       try {
+        // A Stay-watermarked download is for the direct site and social — never a listing photo.
+        if (looksWatermarked(f.name || '')) throw new Error(WATERMARK_PUSH_BLOCK)
         const blob = await resizeToJpeg(f)
         const fd = new FormData()
         fd.append('listingId', listingId)
@@ -393,6 +396,7 @@ export function PhotoOrganizer({ listingId, name }: { listingId: string; name: s
     if (!f || !target) return
     setError(null); setPushedMsg(null); setUploadingCount(1)
     try {
+      if (looksWatermarked(f.name || '')) throw new Error(WATERMARK_PUSH_BLOCK)
       const blob = await resizeToJpeg(f)
       const fd = new FormData()
       fd.append('listingId', listingId)

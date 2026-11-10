@@ -24,7 +24,7 @@ import { tidyPlate, normalizePlate, carLabel, cents, nightsBetween, addDays, ran
 import type { Spot, Booking, Incident, Sweep, SweepCheck, FieldStay, BookingKind, Paid } from '@/lib/parking-lots'
 
 type LotInfo = { id: string; name: string; building: string; rules: string | null; rateCents: number; currency: string; noticeMinutes: number; hasTow: boolean; towCompany: string | null; towPhone: string | null }
-type SpotToday = Spot & { expected: Booking[] }
+type SpotToday = Spot & { expected: Booking[]; busy?: { startsOn: string; endsOn: string }[] }
 type Verdict = { plate: string; plateNorm: string; verdict: SweepCheck['verdict']; booking: Booking | null; belongsIn: Spot | null; near: { booking: Booking; spot: Spot | null }[]; note: string }
 type Read = { plate: string | null; state: string | null; make: string | null; model: string | null; color: string | null; confidence: number; note: string | null }
 type Photo = { base64: string; mime: string }
@@ -36,8 +36,12 @@ const serif: React.CSSProperties = { fontFamily: "'Iowan Old Style','Palatino Li
 const field = 'w-full rounded-2xl border border-neutral-300 px-4 py-3 text-[16px] bg-white focus:outline-none focus:ring-2 focus:ring-black/10'
 const big = (tone: 'ok' | 'muted' | 'bad' | 'ink' = 'ink') => `flex-1 rounded-2xl px-3 py-3 text-[15px] font-bold inline-flex items-center justify-center gap-1.5 disabled:opacity-40 ${tone === 'ok' ? 'bg-emerald-600 text-white' : tone === 'bad' ? 'bg-rose-600 text-white' : tone === 'muted' ? 'bg-neutral-200 text-neutral-800' : 'bg-neutral-900 text-white'}`
 const toneOf = (v: SweepCheck['verdict'] | null) => v === 'ok' || v === 'leaving_today' ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : v === 'empty' ? 'border-neutral-300 bg-neutral-50 text-neutral-700' : v === 'unregistered' ? 'border-rose-300 bg-rose-50 text-rose-900' : 'border-amber-300 bg-amber-50 text-amber-900'
-const VERDICT_LABEL: Record<string, string> = { ok: 'Registered — all good', leaving_today: 'Registered — leaving today', empty: 'Empty', wrong_spot: 'Wrong spot', unregistered: 'NOT registered', staff_in_sell: 'Staff car in a sold spot' }
+const VERDICT_LABEL: Record<string, string> = { ok: 'Registered — all good', leaving_today: 'Registered — leaving today', empty: 'Empty', wrong_spot: 'Wrong spot', unregistered: 'NOT registered', staff_in_sell: 'Our car in a guest spot' }
 const OPEN = ['open', 'notified', 'tow_drafted']
+// The second-choice buttons on a flag: same height as the main one, no colour.
+const quiet = 'flex-1 rounded-2xl border border-neutral-300 bg-white px-3 py-2.5 text-[14px] font-semibold text-neutral-800 inline-flex items-center justify-center gap-1.5 disabled:opacity-40'
+// A narrower field for the rows that hold three or four boxes — the big one clipped "Model" at 390px.
+const fieldSm = 'w-full min-w-0 rounded-xl border border-neutral-300 px-2.5 py-3 text-[16px] bg-white focus:outline-none focus:ring-2 focus:ring-black/10'
 
 export function LotSweep({ code }: { code: string }) {
   const [pass, setPass] = useState('')
@@ -57,6 +61,8 @@ export function LotSweep({ code }: { code: string }) {
   const [incidents, setIncidents] = useState<Incident[]>([])
   const [sweep, setSweep] = useState<Sweep | null>(null)
   const [name, setName] = useState('')
+  const [editName, setEditName] = useState(false)
+  const [flagBusy, setFlagBusy] = useState<string | null>(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
@@ -83,10 +89,18 @@ export function LotSweep({ code }: { code: string }) {
     setErr('')
     const want = pick ?? lotId
     try {
-      const j = await fetch('/api/public/lot/' + encodeURIComponent(code) + '?pass=' + encodeURIComponent(p) + (want ? '&lot=' + encodeURIComponent(want) : ''), { cache: 'no-store' }).then(r => r.json())
-      if (j?.needsPasscode) { setNeedsPass(true); setLabel(j.label || 'Parking'); setLoading(false); return }
+      // The passcode rides in a header, never in the address (addresses end up in server logs).
+      const j = await fetch('/api/public/lot/' + encodeURIComponent(code) + (want ? '?lot=' + encodeURIComponent(want) : ''), { cache: 'no-store', headers: p ? { 'x-lot-pass': p } : undefined }).then(r => r.json())
+      if (j?.needsPasscode) {
+        // A wrong passcode used to bring the box back with no word of why.
+        setNeedsPass(true); setLabel(j.label || 'Parking'); setErr(j.error || ''); setLoading(false)
+        if (j.error) { try { localStorage.removeItem('lot-pass-' + code) } catch {} }
+        return
+      }
       if (!j?.ok) { setErr(j?.error || 'Could not open this lot.'); setLoading(false); return }
       setNeedsPass(false); setAll(!!j.all); setLotsAvail(j.lots || [])
+      // Remembered on this phone, like the name — the team was typing it on every open.
+      if (p) { try { localStorage.setItem('lot-pass-' + code, p) } catch {} }
       if (!j.lot) {
         // The all-lots link with no property picked yet: one lot → take it; several → ask.
         const only = (j.lots || []).length === 1 ? j.lots[0].id : ''
@@ -99,11 +113,30 @@ export function LotSweep({ code }: { code: string }) {
   // Once, on open. A lot switch calls load itself with the passcode in hand — re-running this effect
   // would knock a passcoded link back to the passcode screen.
   const booted = useRef(false)
-  useEffect(() => { if (booted.current) return; booted.current = true; load('') }, [load])
+  useEffect(() => {
+    if (booted.current) return
+    booted.current = true
+    let saved = ''
+    try { saved = localStorage.getItem('lot-pass-' + code) || '' } catch {}
+    if (saved) setPass(saved)
+    load(saved)
+  }, [load, code])
   const pickLot = (id: string) => { setLotId(id); try { localStorage.setItem('lot-pick-' + code, id) } catch {}; setLot(null); load(pass, false, id) }
 
   const patchIncident = (inc: Incident) => setIncidents(list => list.some(x => x.id === inc.id) ? list.map(x => x.id === inc.id ? { ...x, ...inc, photoUrl: inc.photoUrl ?? x.photoUrl } : x) : [inc].concat(list))
   const saveName = (v: string) => { setName(v); try { localStorage.setItem('lot-staff-name', v) } catch {} }
+  // One booking changed (parked, left, paid, plate fixed): put it in place here instead of reading
+  // the whole lot again — that reload was most of the wait after every tap.
+  const applyBooking = (b: Booking) => setSpots(list => list.map(s => {
+    const rest = s.expected.filter(x => x.id !== b.id)
+    const here = b.spotId === s.id && (b.status === 'reserved' || b.status === 'parked') && b.startsOn <= date && date <= b.endsOn
+    if (!here) return rest.length === s.expected.length ? s : { ...s, expected: rest }
+    return { ...s, expected: rest.concat([b]).sort((x, y) => (x.endsOn === date ? 1 : 0) - (y.endsOn === date ? 1 : 0)) }
+  }))
+  const flagAct = async (i: Incident, body: Record<string, any>, done: string) => {
+    setFlagBusy(i.id)
+    try { const j = await post({ ...body, incidentId: i.id }); if (j.incident) patchIncident(j.incident); say(done) } catch (e: any) { say(e?.message || String(e)) } finally { setFlagBusy(null) }
+  }
 
   if (needsPass) return (
     <Frame title={label}>
@@ -125,9 +158,62 @@ export function LotSweep({ code }: { code: string }) {
   if (!lot) return <Frame title="Parking"><p className="text-[15px] text-rose-700">{err || 'This lot link is not valid.'}</p></Frame>
 
   const open = incidents.filter(i => OPEN.indexOf(i.status) >= 0)
+  // FLAGS LEAD THE PAGE WHEN THERE ARE ANY (2026-11-09 audit: they sat under the whole walk, so a car
+  // past its deadline was four screens down). Each flag has ONE main button — the next step for that
+  // car — and the other choices sit quietly under it. Red is only for "a person has to act now".
+  const flagCard = (i: Incident) => {
+    const left = i.towDueAt ? Math.round((new Date(i.towDueAt).getTime() - now) / 60000) : null
+    const hourUp = i.status === 'notified' && left != null && left <= 0
+    const waiting = i.status === 'notified' && !hourUp
+    const busy = flagBusy === i.id
+    const notice = () => setNotice(i)
+    const tow = () => flagAct(i, { action: 'incident.tow' }, 'Tow email drafted — the office sends it.')
+    const moved = () => flagAct(i, { action: 'incident.close', how: 'resolved', resolution: 'moved or registered' }, 'Closed — car moved or registered.')
+    const towed = () => flagAct(i, { action: 'incident.close', how: 'towed' }, 'Marked towed.')
+    const next: 'notice' | 'moved' | 'tow' | 'towed' = i.status === 'open' ? 'notice' : waiting ? 'moved' : i.status === 'tow_drafted' || !lot.hasTow ? 'towed' : 'tow'
+    return (
+      <div key={i.id} className={`rounded-2xl border p-3 ${i.status === 'open' || hourUp ? 'border-rose-300 bg-rose-50' : 'border-amber-200 bg-amber-50/60'}`}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-mono font-bold text-[17px]">{i.plate || 'no plate'}</span>
+          <span className="text-[14px] text-neutral-800">{carLabel(i)}</span>
+          {i.spotLabel && <span className="text-[13px] text-neutral-500">spot {i.spotLabel}</span>}
+        </div>
+        <div className="mt-1 text-[13px] text-neutral-700">
+          {i.status === 'open' && 'Notice not sent yet.'}
+          {waiting && `Notice sent ${i.noticeSentAt ? timeET(i.noticeSentAt) : ''} to ${i.noticeSentN} ${i.noticeSentN === 1 ? 'guest' : 'guests'} · ${left} min left (until ${timeET(i.towDueAt as string)}).`}
+          {i.status === 'notified' && left == null && 'Notice sent.'}
+          {hourUp && (lot.hasTow ? `Time is up (deadline ${timeET(i.towDueAt as string)}). Draft the tow email — the office sends it.` : `Time is up (deadline ${timeET(i.towDueAt as string)}). No tow company email is on file — tell the office.`)}
+          {i.status === 'tow_drafted' && `Tow email drafted ${i.towDraftedAt ? timeET(i.towDraftedAt) : ''} — waiting for the office to send it.`}
+        </div>
+        {i.photoUrl && <img src={i.photoUrl} alt="" className="mt-2 rounded-xl max-h-36 border border-neutral-200" />}
+        {needsId(i) && <button onClick={() => setIdQueue(q => q.some(x => x.id === i.id) ? q : [i].concat(q))} className="mt-2 w-full rounded-2xl border border-neutral-400 bg-white px-3 py-2.5 text-[14px] font-bold text-neutral-900">Add the colour, make and model</button>}
+        <div className="mt-2 flex">
+          {next === 'notice' && <button onClick={notice} disabled={busy} className={big('bad')}><Mail size={15} /> Send notice</button>}
+          {next === 'moved' && <button onClick={moved} disabled={busy} className={big('ok')}><Check size={15} /> Car moved or registered</button>}
+          {next === 'tow' && <button onClick={tow} disabled={busy} className={big('bad')}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Truck size={15} />} Draft tow email</button>}
+          {next === 'towed' && <button onClick={towed} disabled={busy} className={big('ink')}><Truck size={15} /> Car was towed</button>}
+        </div>
+        <div className="mt-2 flex gap-2 flex-wrap">
+          {next !== 'notice' && <button onClick={notice} disabled={busy} className={quiet}>Notice again</button>}
+          {next !== 'moved' && <button onClick={moved} disabled={busy} className={quiet}>Car moved</button>}
+          {next !== 'tow' && lot.hasTow && i.status !== 'open' && <button onClick={tow} disabled={busy} className={quiet}>{i.towDraftedAt ? 'Tow email again' : 'Tow email'}</button>}
+          {next !== 'towed' && i.status !== 'open' && <button onClick={towed} disabled={busy} className={quiet}>Towed</button>}
+        </div>
+      </div>
+    )
+  }
+  const flagsSection = (
+    <section className="mb-6">
+      <h2 style={serif} className="text-[22px] text-neutral-900 mb-1">Flags <span className="text-neutral-400">{open.length}</span></h2>
+      {open.length === 0
+        ? <p className="rounded-2xl border border-dashed border-neutral-300 px-4 py-4 text-[14px] text-neutral-500 text-center">Nothing flagged right now.</p>
+        : <p className="text-[13px] text-neutral-500 mb-3">Each car gets {lot.noticeMinutes === 60 ? 'one hour' : lot.noticeMinutes + ' minutes'} from the notice. Then the tow email is drafted{lot.towCompany ? ' for ' + lot.towCompany : ''} — the office sends it.</p>}
+      <div className="space-y-2">{open.map(flagCard)}</div>
+    </section>
+  )
   return (
     <Frame title={lot.name} sub={<>{new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} · {lot.rateCents > 0 ? `${cents(lot.rateCents, lot.currency)} a night` : 'parking included'} · {spots.filter(s => s.kind === 'sell').length} guest spots{spots.some(s => s.kind === 'hold') ? `, ${spots.filter(s => s.kind === 'hold').length} held` : ''}</>}>
-      {toast && <div className="fixed bottom-4 left-4 right-4 z-[60] rounded-2xl bg-neutral-900 text-white text-[14px] px-4 py-3 shadow-lg">{toast}</div>}
+      {toast && <div className="fixed bottom-4 left-4 right-4 z-[95] rounded-2xl bg-neutral-900 text-white text-[14px] px-4 py-3 shadow-lg">{toast}</div>}
       {err && <p className="mb-3 text-[13px] text-rose-700 inline-flex items-center gap-1"><AlertTriangle size={14} /> {err}</p>}
 
       {/* THE PROPERTY — one tap to switch lots on the all-lots link. */}
@@ -137,58 +223,31 @@ export function LotSweep({ code }: { code: string }) {
         </div>
       )}
 
-      {/* YOUR NAME — once. Every flag and every notice says who stood in the lot. */}
-      <label className="block mb-4">
-        <span className="text-[12px] font-semibold uppercase tracking-wider text-neutral-500">Your name</span>
-        <input value={name} onChange={e => saveName(e.target.value)} placeholder="So the record says who checked" className={field + ' mt-1'} />
-      </label>
+      {/* YOUR NAME — asked once, then one quiet line. Every flag and every notice says who stood in the lot. */}
+      {name.trim() && !editName ? (
+        <p className="mb-4 text-[13px] text-neutral-500">Checking as <b className="text-neutral-800">{name.trim()}</b><button type="button" onClick={() => setEditName(true)} className="ml-2 py-2 px-1 font-semibold underline">change</button></p>
+      ) : (
+        <label className="block mb-4">
+          <span className="text-[12px] font-semibold uppercase tracking-wider text-neutral-500">Your name</span>
+          <input value={name} autoFocus={editName} onFocus={() => setEditName(true)} onBlur={() => setEditName(false)} onChange={e => saveName(e.target.value)} placeholder="So the record says who checked" className={field + ' mt-1'} />
+        </label>
+      )}
 
-      <CheckPlate spots={spots} post={post} onFlagged={inc => { patchIncident(inc); setIdQueue(q => q.some(x => x.id === inc.id) ? q : q.concat(inc)); say('Flagged — now identify the car.') }}
+      {open.length > 0 && flagsSection}
+
+      <CheckPlate spots={spots} post={post} onFlagged={(inc, photoError) => { patchIncident(inc); setIdQueue(q => q.some(x => x.id === inc.id) ? q : q.concat(inc)); say(photoError ? `Flagged, but the photo was not saved (${photoError}).` : 'Flagged — now identify the car.') }}
         onRegister={(plate, read) => setRegister({ open: true, draft: { plate, make: read?.make || null, model: read?.model || null, color: read?.color || null, plateState: read?.state || null } })} />
 
       <Tonight lot={lot} spots={spots} arriving={arriving} date={date} post={post}
-        onChanged={() => load(pass, true)}
+        onBooking={applyBooking}
         onRegister={() => setRegister({ open: true, draft: {} })}
         say={say} />
 
-      <Walk spots={spots} date={date} sweep={sweep} setSweep={setSweep} post={post} onFinished={(sw, made) => { setSweep(sw); made.forEach(patchIncident); setIdQueue(q => q.concat(made.filter(m => !q.some(x => x.id === m.id)))); say(made.length ? `${made.length} ${made.length === 1 ? 'car' : 'cars'} flagged — send the notice below.` : 'Sweep done — every car is where it should be.') }} />
+      <Walk spots={spots} date={date} sweep={sweep} setSweep={setSweep} post={post} onFinished={(sw, made) => { setSweep(sw); made.forEach(patchIncident); setIdQueue(q => q.concat(made.filter(m => !q.some(x => x.id === m.id)))); say(made.length ? `${made.length} ${made.length === 1 ? 'car' : 'cars'} flagged — send the notice at the top of the page.` : 'Lot check done — every car is where it should be.'); if (made.length) { try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {} } }} />
 
-      <section className="mt-6">
-        <h2 style={serif} className="text-[22px] text-neutral-900 mb-1">Flags <span className="text-neutral-400">{open.length}</span></h2>
-        <p className="text-[13px] text-neutral-500 mb-3">Each car gets {lot.noticeMinutes === 60 ? 'one hour' : lot.noticeMinutes + ' minutes'} from the notice. Then the tow email is drafted{lot.towCompany ? ' for ' + lot.towCompany : ''} — the office sends it.</p>
-        {open.length === 0 && <p className="rounded-2xl border border-dashed border-neutral-300 px-4 py-4 text-[14px] text-neutral-500 text-center">Nothing flagged right now.</p>}
-        <div className="space-y-2">
-          {open.map(i => {
-            const left = i.towDueAt ? Math.round((new Date(i.towDueAt).getTime() - now) / 60000) : null
-            return (
-              <div key={i.id} className={`rounded-2xl border p-3 ${i.status === 'open' ? 'border-rose-300 bg-rose-50' : 'border-amber-300 bg-amber-50'}`}>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono font-bold text-[17px]">{i.plate || '—'}</span>
-                  <span className="text-[14px] text-neutral-800">{carLabel(i)}</span>
-                  {i.spotLabel && <span className="text-[13px] text-neutral-500">spot {i.spotLabel}</span>}
-                </div>
-                {needsId(i) && <button onClick={() => setIdQueue(q => q.some(x => x.id === i.id) ? q : [i].concat(q))} className="mt-2 w-full rounded-xl border-2 border-rose-400 bg-white px-3 py-2 text-[14px] font-bold text-rose-700">Identify the car — colour, make and model missing</button>}
-                <div className="mt-1 text-[13px] text-neutral-700">
-                  {i.status === 'open' && 'Flagged — notice not sent yet.'}
-                  {i.status === 'notified' && left != null && (left > 0 ? `Notice sent ${timeET(i.noticeSentAt as string)} to ${i.noticeSentN} guests · ${left} min left (until ${timeET(i.towDueAt as string)}).` : `The hour is up (deadline ${timeET(i.towDueAt as string)}) — the tow email drafts itself; the office sends it.`)}
-                  {i.status === 'tow_drafted' && `Tow email drafted ${i.towDraftedAt ? timeET(i.towDraftedAt) : ''} — waiting for the office to send it.`}
-                </div>
-                {i.photoUrl && <img src={i.photoUrl} alt="" className="mt-2 rounded-xl max-h-36 border border-neutral-200" />}
-                <div className="mt-2 flex gap-2">
-                  <button onClick={() => setNotice(i)} className={big(i.status === 'open' ? 'bad' : 'muted')}><Mail size={15} /> {i.noticeSentAt ? 'Notice again' : 'Send notice'}</button>
-                  {lot.hasTow && <button onClick={async () => { try { const j = await post({ action: 'incident.tow', incidentId: i.id }); patchIncident(j.incident); say('Tow email drafted — the office sends it.') } catch (e: any) { say(e?.message || String(e)) } }} className={big('muted')}><Truck size={15} /> Tow email</button>}
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <button onClick={async () => { try { const j = await post({ action: 'incident.close', incidentId: i.id, how: 'resolved', resolution: 'moved or registered' }); patchIncident(j.incident); say('Closed — car moved or registered.') } catch (e: any) { say(e?.message || String(e)) } }} className={big('ok')}><Check size={15} /> It moved</button>
-                  <button onClick={async () => { try { const j = await post({ action: 'incident.close', incidentId: i.id, how: 'towed' }); patchIncident(j.incident); say('Marked towed.') } catch (e: any) { say(e?.message || String(e)) } }} className={big('muted')}><Truck size={15} /> Towed</button>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </section>
+      {open.length === 0 && <div className="mt-6">{flagsSection}</div>}
 
-      {lot.rules && <details className="mt-6 text-[13px] text-neutral-600"><summary className="cursor-pointer font-semibold">Lot rules</summary><p className="mt-1">{lot.rules}</p></details>}
+      {lot.rules && <details className="mt-6 text-[13px] text-neutral-600"><summary className="cursor-pointer font-semibold py-2">Lot rules</summary><p className="mt-1">{lot.rules}</p></details>}
       <p className="mt-6 text-[12px] text-neutral-400">Lighthouse · the office sees everything you do here on the Parking tab.</p>
 
       {idQueue[0] && <IdentifyCar inc={idQueue[0]} left={idQueue.length} post={post}
@@ -196,7 +255,7 @@ export function LotSweep({ code }: { code: string }) {
         onLater={() => setIdQueue(q => q.slice(1))} />}
 
       <NoticeSheet open={!!notice} onClose={() => setNotice(null)} lot={lot} incident={notice} publicCode={code} publicPass={pass} staffName={name}
-        onSent={(inc, sent, failed) => { patchIncident(inc); say(`Notice sent to ${sent} ${sent === 1 ? 'guest' : 'guests'}${failed ? `, ${failed} failed` : ''}. The clock runs until ${inc.towDueAt ? timeET(inc.towDueAt) : 'the deadline'}.`) }} />
+        onSent={(inc, sent, failed, warning) => { patchIncident(inc); if (!warning) load(pass, true); say(warning || `Notice sent to ${sent} ${sent === 1 ? 'guest' : 'guests'}${failed ? `, ${failed} failed` : ''}. The clock runs until ${inc.towDueAt ? timeET(inc.towDueAt) : 'the deadline'}.`) }} />
       <RegisterSheet open={!!register?.open} onClose={() => setRegister(null)} lot={lot} spots={spots} stays={stays} date={date} post={post} draft={register?.draft || {}}
         onSaved={(b, note) => { load(pass, true); say(`Registered on spot ${spots.find(s => s.id === b.spotId)?.label || '?'}.${note === 'ok' ? ' Noted on the reservation in Guesty.' : ''}`) }} />
     </Frame>
@@ -204,9 +263,9 @@ export function LotSweep({ code }: { code: string }) {
 }
 
 // ── 2. TONIGHT — the active parking reservations, and Register a car ────────────────────────────
-function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say }: {
+function Tonight({ lot, spots, arriving, date, post, onBooking, onRegister, say }: {
   lot: LotInfo; spots: SpotToday[]; arriving: Booking[]; date: string; post: (b: Record<string, any>) => Promise<any>
-  onChanged: () => void; onRegister: () => void; say: (m: string) => void
+  onBooking: (b: Booking) => void; onRegister: () => void; say: (m: string) => void
 }) {
   const [openId, setOpenId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -215,7 +274,7 @@ function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say 
   const free = spots.filter(s => s.expected.length === 0)
   const patch = async (b: Booking, p: Record<string, any>, done: string) => {
     setBusy(b.id)
-    try { await post({ action: 'booking.update', bookingId: b.id, patch: p }); onChanged(); say(done); setEdit(null) } catch (e: any) { say(e?.message || String(e)) } finally { setBusy(null) }
+    try { const j = await post({ action: 'booking.update', bookingId: b.id, patch: p }); if (j.booking) onBooking(j.booking as Booking); say(done); setEdit(null) } catch (e: any) { say(e?.message || String(e)) } finally { setBusy(null) }
   }
   const row = (s: SpotToday, b: Booking, extra?: string) => {
     const isOpen = openId === b.id
@@ -229,7 +288,7 @@ function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say 
             <span className="block text-[13px] text-neutral-600 truncate">{b.guestName || b.kind}{b.unit ? ' · ' + b.unit : ''} · {dayShort(b.startsOn)} → {dayShort(b.endsOn)}{extra ? ' · ' + extra : ''}</span>
             <span className="block mt-1 text-[12px] font-semibold">
               <span className={`inline-block rounded-md px-1.5 py-0.5 mr-1 ${b.status === 'parked' ? 'bg-emerald-100 text-emerald-800' : 'bg-neutral-100 text-neutral-700'}`}>{b.status === 'parked' ? 'parked' : 'reserved'}</span>
-              <span className={`inline-block rounded-md px-1.5 py-0.5 mr-1 ${b.kind !== 'guest' ? 'bg-neutral-100 text-neutral-700' : b.paid === 'paid' ? 'bg-emerald-100 text-emerald-800' : b.paid === 'comped' || b.paid === 'na' ? 'bg-sky-100 text-sky-800' : 'bg-rose-100 text-rose-800'}`}>{paidTag}</span>
+              <span className={`inline-block rounded-md px-1.5 py-0.5 mr-1 ${b.kind !== 'guest' ? 'bg-neutral-100 text-neutral-700' : b.paid === 'paid' ? 'bg-emerald-100 text-emerald-800' : b.paid === 'comped' || b.paid === 'na' ? 'bg-sky-100 text-sky-800' : 'bg-amber-100 text-amber-800'}`}>{paidTag}</span>
               {b.endsOn === date && <span className="inline-block rounded-md px-1.5 py-0.5 bg-amber-100 text-amber-800">leaving today</span>}
             </span>
           </span>
@@ -252,9 +311,9 @@ function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say 
               <div className="rounded-xl bg-neutral-50 border border-neutral-200 p-2.5 space-y-2">
                 <input value={edit.plate} onChange={e => setEdit({ ...edit, plate: e.target.value.toUpperCase() })} placeholder="PLATE" autoCapitalize="characters" className={field + ' font-mono font-bold tracking-widest uppercase'} />
                 <div className="grid grid-cols-3 gap-2">
-                  <input value={edit.make} onChange={e => setEdit({ ...edit, make: e.target.value })} placeholder="Make" className={field} />
-                  <input value={edit.model} onChange={e => setEdit({ ...edit, model: e.target.value })} placeholder="Model" className={field} />
-                  <input value={edit.color} onChange={e => setEdit({ ...edit, color: e.target.value })} placeholder="Color" className={field} />
+                  <input value={edit.color} onChange={e => setEdit({ ...edit, color: e.target.value })} placeholder="Colour" className={fieldSm} />
+                  <input value={edit.make} onChange={e => setEdit({ ...edit, make: e.target.value })} placeholder="Make" className={fieldSm} />
+                  <input value={edit.model} onChange={e => setEdit({ ...edit, model: e.target.value })} placeholder="Model" className={fieldSm} />
                 </div>
                 <div className="flex gap-2">
                   <button disabled={busy === b.id || !normalizePlate(edit.plate)} onClick={() => patch(b, { plate: edit.plate, make: edit.make, model: edit.model, color: edit.color }, 'Car updated.')} className={big()}><Check size={15} /> Save</button>
@@ -262,7 +321,7 @@ function Tonight({ lot, spots, arriving, date, post, onChanged, onRegister, say 
                 </div>
               </div>
             ) : (
-              <button onClick={() => setEdit({ id: b.id, plate: b.plate || '', make: b.make || '', model: b.model || '', color: b.color || '' })} className="text-[13px] font-semibold text-neutral-600 inline-flex items-center gap-1"><Pencil size={13} /> Fix the plate or car</button>
+              <button onClick={() => setEdit({ id: b.id, plate: b.plate || '', make: b.make || '', model: b.model || '', color: b.color || '' })} className="text-[13px] font-semibold text-neutral-600 inline-flex items-center gap-1 py-2"><Pencil size={13} /> Fix the plate or car</button>
             )}
           </div>
         )}
@@ -320,7 +379,12 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
   // Which spots are free for the whole run (the server checks again on save).
   const taken = useMemo(() => {
     const out: Record<string, boolean> = {}
-    for (const s of spots) out[s.id] = s.expected.some(b => (b.status === 'reserved' || b.status === 'parked') && rangesOverlap(b.startsOn, b.endsOn, startsOn, endsOn))
+    // `busy` is every live booking on the spot for the week ahead; `expected` (today only) is the
+    // fallback, and it let a spot booked from tomorrow look free until the save was refused.
+    for (const s of spots) {
+      const nights: { startsOn: string; endsOn: string }[] = s.busy || s.expected.filter(b => b.status === 'reserved' || b.status === 'parked')
+      out[s.id] = nights.some(b => rangesOverlap(b.startsOn, b.endsOn, startsOn, endsOn))
+    }
     return out
   }, [spots, startsOn, endsOn])
   useEffect(() => {
@@ -402,11 +466,11 @@ function RegisterSheet({ open, onClose, lot, spots, stays, date, post, draft, on
             <Scanner open={scanning} onClose={() => setScanning(false)} mode="single" title="Scan the plate" scan={readFrame} onPick={rd => useRead(rd)} />
           </div>
           {read && <p className="text-[12.5px] text-neutral-500">Camera read <b className="font-mono">{read.plate || '?'}</b>{read.confidence < 0.7 ? ' — not sure, check it against the car' : ''}{read.note ? ` · ${read.note}` : ''}</p>}
-          <div className="grid grid-cols-4 gap-2">
-            <input value={car.plateState} onChange={e => setCar({ ...car, plateState: e.target.value.toUpperCase().slice(0, 3) })} placeholder="FL" className={field + ' uppercase'} />
-            <input value={car.make} onChange={e => setCar({ ...car, make: e.target.value })} placeholder="Make" className={field} />
-            <input value={car.model} onChange={e => setCar({ ...car, model: e.target.value })} placeholder="Model" className={field} />
-            <input value={car.color} onChange={e => setCar({ ...car, color: e.target.value })} placeholder="Color" className={field} />
+          <div className="grid grid-cols-2 gap-2">
+            <input value={car.color} onChange={e => setCar({ ...car, color: e.target.value })} placeholder="Colour" className={fieldSm} />
+            <input value={car.make} onChange={e => setCar({ ...car, make: e.target.value })} placeholder="Make" className={fieldSm} />
+            <input value={car.model} onChange={e => setCar({ ...car, model: e.target.value })} placeholder="Model" className={fieldSm} />
+            <input value={car.plateState} onChange={e => setCar({ ...car, plateState: e.target.value.toUpperCase().slice(0, 3) })} placeholder="State (FL)" className={fieldSm + ' uppercase placeholder:normal-case'} />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 items-end">
@@ -455,11 +519,11 @@ const verdictLine = (v: Verdict): NonNullable<ScanOutcome['verdict']> => {
   const who = v.booking ? `${v.booking.guestName || v.booking.kind}${v.booking.unit ? ' · ' + v.booking.unit : ''}` : ''
   if (v.verdict === 'ok' || v.verdict === 'leaving_today') return { tone: 'ok', title: `Confirmed — spot ${v.belongsIn?.label || '?'}${v.verdict === 'leaving_today' ? ', leaving today' : ''}`, note: who }
   if (v.verdict === 'wrong_spot') return { tone: 'warn', title: `Wrong spot — belongs in ${v.belongsIn?.label || '?'}`, note: who }
-  if (v.verdict === 'staff_in_sell') return { tone: 'warn', title: `Staff car in a sold spot — belongs in ${v.belongsIn?.label || '?'}`, note: who }
+  if (v.verdict === 'staff_in_sell') return { tone: 'warn', title: `Our car in a guest spot — belongs in ${v.belongsIn?.label || '?'}`, note: who }
   return { tone: 'bad', title: 'NOT registered', note: v.near.length ? `Close to ${v.near.map(n => n.booking.plate).join(', ')} — check the plate` : undefined }
 }
 
-function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]; post: (b: Record<string, any>) => Promise<any>; onFlagged: (i: Incident) => void; onRegister: (plate: string, read: Read | null) => void }) {
+function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]; post: (b: Record<string, any>) => Promise<any>; onFlagged: (i: Incident, photoError?: string | null) => void; onRegister: (plate: string, read: Read | null) => void }) {
   const [plate, setPlate] = useState('')
   const [v, setV] = useState<Verdict | null>(null)
   const [read, setRead] = useState<Read | null>(null)
@@ -476,7 +540,7 @@ function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]
   const flagVerdict = async (verdict: Verdict, rd: Read | null, ph: Photo | null) => {
     const sp = spots.find(s => s.id === spotId)
     const j = await post({ action: 'incident.open', plate: verdict.plate, kind: verdict.verdict === 'wrong_spot' ? 'wrong_spot' : verdict.verdict === 'staff_in_sell' ? 'staff_in_sell' : 'unregistered', bookingId: verdict.booking?.id || null, spotId, spotLabel: sp?.label || null, make: rd?.make || verdict.booking?.make || null, model: rd?.model || verdict.booking?.model || null, color: rd?.color || verdict.booking?.color || null, plateState: rd?.state || null, photo: ph?.base64, photoMime: ph?.mime })
-    onFlagged(j.incident)
+    onFlagged(j.incident, j.photoError || null)
     return j.incident as Incident
   }
   // THE SCANNER'S VERDICT STRIP: what one frame means here. Green = registered (where), amber = wrong
@@ -493,7 +557,7 @@ function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]
     return {
       read: rd, verdict: verdictLine(v2),
       actions: bad ? [
-        { label: 'Flag this car', tone: 'bad', run: async () => { await flagVerdict(v2, rd, ph); return 'Flagged — the notice is one tap under Flags.' } },
+        { label: 'Flag this car', tone: 'bad', run: async () => { await flagVerdict(v2, rd, ph); return 'Flagged — the notice is at the top of the page.' } },
         ...(v2.verdict === 'unregistered' ? [{ label: 'Register it', tone: 'muted' as const, run: async () => { onRegister(v2.plate, rd); setScanning(false); return 'Opening the form…' } }] : []),
       ] : undefined,
     }

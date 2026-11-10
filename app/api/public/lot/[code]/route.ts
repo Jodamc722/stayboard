@@ -4,17 +4,19 @@
 // open a reservation; guests appear as a first name and a unit, which is what the person standing
 // in the lot needs to knock on a door.
 //
-//   GET  ?pass=                         today's lot: spots with the car expected in each, open flags, today's sweep
+//   GET  (passcode in the x-lot-pass header; ?pass= still answers for a page loaded before the change)
+//                                       today's lot: spots with the car expected in each, open flags, today's sweep
 //   POST { pass, action, name, ... }    plate.judge · plate.read · sweep.start · sweep.check · sweep.finish ·
 //                                       incident.open · incident.noticeText · incident.notify · incident.tow · incident.close
 import { NextRequest, NextResponse } from 'next/server'
 import {
-  resolveStaffCode, lotToday, judgePlate, readPlateFromPhoto, storePhoto, startSweep, recordCheck, finishSweep, sweepById,
-  openIncident, incidentById, noticeTextFor, checkNoticeText, checkGroup, updateIncidentCar, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
+  resolveStaffCode, lotToday, expectedAt, judgePlate, readPlateFromPhoto, storePhoto, startSweep, recordCheck, finishSweep, sweepById,
+  openIncident, incidentById, checkNoticeText, checkGroup, updateIncidentCar, sendNotice, draftTowEmail, closeIncident, inHouseStays, signedPhotoUrl, ymdET,
   createBooking, updateBooking, bookingById,
   type SweepCheck,
 } from '@/lib/parking-lots'
 import { tidyPlate, normalizePlate } from '@/lib/plate'
+import { logParking, lockoutReason, LOCKOUT_MINUTES } from '@/lib/parking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -22,6 +24,30 @@ export const maxDuration = 60
 const bad = (error: string, status = 400) => NextResponse.json({ ok: false, error }, { status })
 // Case-insensitive on purpose: phones capitalise the first letter, and "Eden!" typed as "EDEN!" is the same person.
 const passOk = (lot: { passcode: string | null }, given: string) => !lot.passcode || String(given || '').trim().toLowerCase() === String(lot.passcode).trim().toLowerCase()
+// WRONG PASSCODES ARE COUNTED (2026-11-09 audit: this door had no limit at all, so the passcode could
+// be guessed at request speed). Same log and same window the garage link uses: eight misses from one
+// address in fifteen minutes and that address waits. Only the address's own misses lock it — a
+// stranger hammering the link cannot lock the team out. A counting failure never blocks anyone.
+const ipOf = (req: NextRequest) => String(req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '').split(',')[0].trim() || null
+const okLately = new Map<string, number>()
+async function passProblem(req: NextRequest, code: string, lot: { passcode: string | null }, given: string): Promise<{ status: number; error: string | null } | null> {
+  if (!lot.passcode) return null
+  const key = 'lot:' + String(code).slice(0, 40)
+  const ip = ipOf(req)
+  // A phone that gave the right passcode a moment ago is not counted again on every tap of the walk.
+  const seen = key + '|' + (ip || '')
+  const right = passOk(lot, given)
+  if (right && (okLately.get(seen) || 0) > Date.now()) return null
+  if ((await lockoutReason(key, ip)) === 'ip') return { status: 429, error: `Too many wrong passcodes. Try again in ${LOCKOUT_MINUTES} minutes.` }
+  if (right) {
+    if (okLately.size > 500) okLately.clear()
+    okLately.set(seen, Date.now() + 2 * 60 * 1000)
+    return null
+  }
+  // An empty passcode is somebody arriving at the page, not a wrong guess.
+  if (String(given || '').trim()) await logParking({ code: key, action: 'denied', detail: 'lot link · wrong passcode', ip })
+  return { status: 403, error: String(given || '').trim() ? 'That passcode is not right.' : null }
+}
 // The staff name travels with every write, so the record says who stood in the lot.
 const byOf = (name: any) => (String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'staff') + ' (lot link)'
 
@@ -36,7 +62,10 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
   const r = await resolveStaffCode(params.code, req.nextUrl.searchParams.get('lot'))
   if (!r) return bad('This lot link is not valid.', 404)
   const label = r.kind === 'lot' ? r.lot.name : 'Parking'
-  if (!passOk(r, String(req.nextUrl.searchParams.get('pass') || ''))) return NextResponse.json({ ok: false, needsPasscode: true, label })
+  const given = String(req.headers.get('x-lot-pass') || req.nextUrl.searchParams.get('pass') || '')
+  const denied = await passProblem(req, params.code, r, given)
+  // 200 on purpose: the phone reads this as "show the passcode box", with the reason when there is one.
+  if (denied) return NextResponse.json({ ok: false, needsPasscode: true, label, error: denied.error || undefined })
   const lots = r.kind === 'all' ? r.lots.map(lotInfo) : [lotInfo(r.lot)]
   if (!r.lot) return NextResponse.json({ ok: true, all: true, lots, lot: null })
   const t = await lotToday(r.lot, ymdET())
@@ -47,7 +76,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   const body = await req.json().catch(() => ({} as any))
   const r = await resolveStaffCode(params.code, body?.lotId)
   if (!r) return bad('This lot link is not valid.', 404)
-  if (!passOk(r, String(body?.pass || ''))) return bad('That passcode is not right.', 403)
+  const denied = await passProblem(req, params.code, r, String(body?.pass || ''))
+  if (denied) return bad(denied.error || 'This lot link needs its passcode — reload the page.', denied.status)
   if (!r.lot) return bad('Pick a property first.')
   const lot = r.lot
   const by = byOf(body?.name)
@@ -70,12 +100,12 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
         const open = body.sweepId ? await sweepById(String(body.sweepId)) : null
         if (open && !open.finishedAt && open.lotId === lot.id) return NextResponse.json({ ok: true, sweep: open })
         const sw = await startSweep(lot.id, String(body.name || ''))
-        return sw ? NextResponse.json({ ok: true, sweep: sw }) : bad('Could not start the sweep.')
+        return sw ? NextResponse.json({ ok: true, sweep: sw }) : bad('Could not start the lot check.')
       }
       case 'sweep.check': {
         const sw = await sweepById(String(body.sweepId || ''))
-        if (!sw || sw.lotId !== lot.id) return bad('That sweep is not on this lot.', 404)
-        if (sw.finishedAt) return bad('That sweep is already finished — start a new one.')
+        if (!sw || sw.lotId !== lot.id) return bad('That lot check is not on this lot.', 404)
+        if (sw.finishedAt) return bad('That lot check is already finished — start a new one.')
         const result = String(body.result || '') as SweepCheck['result']
         if (['match', 'empty', 'other', 'extra'].indexOf(result) < 0) return bad('result?')
         const spotId = body.spotId ? String(body.spotId) : null
@@ -87,8 +117,10 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
           check = { spotId, label, result, plate: null, plateNorm: null, make: null, model: null, color: null, verdict: 'empty', bookingId: null, belongsIn: null, photoPath }
         } else if (result === 'match') {
           // "The car here is the one we expected": the expected booking's plate is the plate.
-          const t = await lotToday(lot, today)
-          const exp = t.spots.find(s => s.id === spotId)?.expected[0] || null
+          // One small read. This used to rebuild the whole page's data (stays, flags, photos) on
+          // every "As expected" tap, which is the tap the walk is made of.
+          const exp = await expectedAt(lot.id, spotId, today)
+          if (!exp) return bad('No car is expected in that spot any more — reload, or use the camera button and give the plate.')
           check = { spotId, label, result, plate: exp?.plate || null, plateNorm: exp?.plateNorm || null, make: exp?.make || null, model: exp?.model || null, color: exp?.color || null, verdict: exp && exp.endsOn === today ? 'leaving_today' : 'ok', bookingId: exp?.id || null, belongsIn: label, photoPath }
         } else {
           const plate = tidyPlate(body.plate)
@@ -103,9 +135,9 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
       }
       case 'sweep.finish': {
         const sw = await sweepById(String(body.sweepId || ''))
-        if (!sw || sw.lotId !== lot.id) return bad('That sweep is not on this lot.', 404)
+        if (!sw || sw.lotId !== lot.id) return bad('That lot check is not on this lot.', 404)
         const r = await finishSweep(sw.id, String(body.name || ''))
-        if (!r) return bad('Could not finish the sweep.')
+        if (!r) return bad('Could not finish the lot check.')
         const incidents = await Promise.all(r.incidents.map(async i => (i.photoPath ? { ...i, photoUrl: await signedPhotoUrl(i.photoPath, 900) } : i)))
         return NextResponse.json({ ok: true, sweep: r.sweep, incidents })
       }
@@ -135,9 +167,10 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
       }
       case 'incident.open': {
         let photoPath: string | null = null
-        if (body.photo) { const p = await storePhoto(lot.id, String(body.photo), String(body.photoMime || 'image/jpeg')); if (p.ok) photoPath = p.path || null }
+        let photoError: string | null = null
+        if (body.photo) { const p = await storePhoto(lot.id, String(body.photo), String(body.photoMime || 'image/jpeg')); if (p.ok) photoPath = p.path || null; else photoError = p.error || 'The photo could not be saved.' }
         const inc = await openIncident({ lotId: lot.id, spotId: body.spotId || null, spotLabel: body.spotLabel || null, kind: ['unregistered', 'wrong_spot', 'staff_in_sell', 'blocking', 'other'].indexOf(body.kind) >= 0 ? body.kind : 'unregistered', bookingId: body.bookingId || null, plate: body.plate, plateState: body.plateState, make: body.make, model: body.model, color: body.color, photoPath, seenBy: by, notes: body.notes })
-        return inc ? NextResponse.json({ ok: true, incident: inc }) : bad('Could not save the flag.')
+        return inc ? NextResponse.json({ ok: true, incident: inc, photoError }) : bad('Could not save the flag.')
       }
       case 'incident.car': {
         const inc = await incidentById(String(body.incidentId || ''))

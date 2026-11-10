@@ -130,10 +130,13 @@ async function lifetimeReviews(ids: string[], asOf: string): Promise<{ avgRating
   const db = supabaseAdmin()
   const ratings: number[] = []
   for (let i = 0; i < 30; i++) {
-    const { data } = await db.from('guesty_reviews').select('rating').in('listing_id', ids).is('removed_at', null)
+    // excluded_from_score rides along so the lifetime score obeys the same rule as every other
+    // rating in the app (the reviews desk, projections, onboarding): a review marked "does not
+    // count" was still being averaged into the score an owner reads (2026-11-09 audit).
+    const { data } = await db.from('guesty_reviews').select('rating, excluded_from_score').in('listing_id', ids).is('removed_at', null)
       .lte('created_at', asOf + 'T23:59:59Z').order('id').range(i * 1000, i * 1000 + 999)
     if (!data || !data.length) break
-    for (const r of data as any[]) { const n = Number(r.rating); if (r.rating != null && Number.isFinite(n) && n > 0) ratings.push(n) }
+    for (const r of data as any[]) { if (r.excluded_from_score) continue; const n = Number(r.rating); if (r.rating != null && Number.isFinite(n) && n > 0) ratings.push(n) }
     if (data.length < 1000) break
   }
   return { avgRating: ratings.length ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length * 100) / 100 : null, reviews: ratings.length }
@@ -163,7 +166,7 @@ export async function reportRecommendations(report: any): Promise<Recommendation
   ])
   if (!reviews.length && !lifetime.reviews) return null
 
-  const rated = reviews.filter(r => Number.isFinite(Number(r.rating)))
+  const rated = reviews.filter(r => !r.excluded && r.rating != null && Number.isFinite(Number(r.rating)))
   const avgRating = rated.length
     ? Math.round((rated.reduce((a, r) => a + Number(r.rating), 0) / rated.length) * 100) / 100
     : null
@@ -182,16 +185,20 @@ export async function reportRecommendations(report: any): Promise<Recommendation
       const sentence = sentenceAbout(text, theme.re)
       // A theme is only a recommendation when the guest was unhappy about it. "The kitchen was
       // beautifully stocked" matches the kitchen regex and is not a thing to improve.
-      if (!looksNegative(sentence, Number(r.rating))) return
+      // AN UNRATED REVIEW IS NOT A ZERO-STAR REVIEW (2026-11-09 audit). Number(null) is 0, so a
+      // review with no score was read as "0 stars": any neutral mention of a theme in it counted
+      // as a complaint, and the 0 was averaged into the theme's rating. NaN means "no score".
+      const rt = r.rating == null ? NaN : Number(r.rating)
+      if (!looksNegative(sentence, rt)) return
       mentions++
       raisedAnything.add(i)
       if (r.listing_id) units.add(String(r.listing_id))
-      if (Number.isFinite(Number(r.rating))) ratings.push(Number(r.rating))
+      if (Number.isFinite(rt)) ratings.push(rt)
       // Keep the sentence from the lowest-rated review — the clearest statement of the problem —
       // but never one that cannot go in front of an owner. A theme with no printable sentence still
       // gets its count and its recommendation; it just makes its case without the quote.
       if (GRAPHIC.test(sentence)) return
-      if (!quote || (Number.isFinite(Number(r.rating)) && Number(r.rating) <= Math.min(...ratings))) quote = sentence
+      if (!quote || (Number.isFinite(rt) && rt <= Math.min(...ratings))) quote = sentence
     })
     if (!mentions) continue
     items.push({

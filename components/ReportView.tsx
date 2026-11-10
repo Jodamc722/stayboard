@@ -52,12 +52,16 @@ function stripChannelCount(sub: unknown): string {
     .replace(/^\s*(live on \d+ channels?|not yet live)\s*$/i, '')
     .trim()
 }
-// Money formatter matching the report engine's fmtK ($1.2M / $18K / $940).
+// Money formatter matching the report engine's fmtK exactly (lib/owner-report) — change them
+// together. $1.24M / $182K / $18.4K / $4,449: exact dollars under $10K so a one-unit owner's
+// month is never rounded to "$4K" (2026-11-09 audit).
 function fmtMoney(n: number): string {
   const a = Math.abs(n)
-  if (a >= 1_000_000) return '$' + (n / 1_000_000).toFixed(2) + 'M'
-  if (a >= 1000) return '$' + Math.round(n / 1000) + 'K'
-  return '$' + Math.round(n).toLocaleString()
+  const sign = n < 0 ? '−' : ''
+  if (a >= 999_500) return sign + '$' + (a / 1_000_000).toFixed(2) + 'M'
+  if (a >= 99_950) return sign + '$' + Math.round(a / 1000) + 'K'
+  if (a >= 10_000) return sign + '$' + (a / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+  return sign + '$' + Math.round(a).toLocaleString('en-US')
 }
 // The gross figure for a snapshot card: prefer the structured field, else parse it from the sub-line.
 function cardGross(card: Any): string {
@@ -8676,14 +8680,27 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               </div>
             ) : null
           ))
-          const num = (v: Any) => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? n : 0 }
+          // UNIT-AWARE (2026-11-09 audit). This used to strip everything but digits, so "$182K" read
+          // as 182 and "$940" as 940 — and the plan slide's own arithmetic (plan = actual − delta)
+          // subtracted one from the other as if they were the same unit. A $182K month that beat
+          // plan by $940 derived a plan of "−$758K". K and M now scale, so every figure here is in
+          // plain dollars and mixed magnitudes subtract correctly.
+          const num = (v: Any) => {
+            const s = String(v == null ? '' : v)
+            const n = Number(s.replace(/[^0-9.]/g, ''))
+            if (!Number.isFinite(n)) return 0
+            return n * (/\d\s*M\b/.test(s) ? 1_000_000 : /\d\s*K\b/i.test(s) ? 1000 : 1)
+          }
           /** Same, but keeping the sign — a delta of "−$102" has to come back negative. */
           const snum = (v: Any) => { const raw = String(v == null ? '' : v).trim(); const n = num(raw); return /^[-−]/.test(raw) ? -n : n }
           /** Format n the way `sample` is formatted, so a derived figure sits beside a real one. */
           const like = (sample: Any, n: number): string => {
             const x = String(sample || '')
-            const body = /M\b/.test(x) ? n.toFixed(2) + 'M' : /K\b/i.test(x) ? String(Math.round(n)) + 'K' : Math.round(n).toLocaleString()
-            return (x.indexOf('$') >= 0 ? '$' : '') + body + (x.indexOf('%') >= 0 ? '%' : '')
+            // Money goes through the one money formatter, so a derived figure is rounded exactly
+            // the way the engine rounds a stored one (n is plain dollars — see num above).
+            if (x.indexOf('$') >= 0) return fmtMoney(n)
+            const body = /\dM\b/.test(x) ? (n / 1_000_000).toFixed(2) + 'M' : /\dK\b/i.test(x) ? String(Math.round(n / 1000)) + 'K' : Math.round(n).toLocaleString('en-US')
+            return body + (x.indexOf('%') >= 0 ? '%' : '')
           }
           const pad2 = (n: number) => (n < 10 ? '0' : '') + n
 
