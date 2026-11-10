@@ -11,5 +11,5 @@ export const metadata = { robots: { index: false, follow: false }, title: 'What 
 
 export default function NeedListPage({ searchParams }: { searchParams?: Record<string, string | string[] | undefined> }) {
   const one = (k: string) => { const v = searchParams?.[k]; return Array.isArray(v) ? v[0] : v }
-  return <NeedListCalculator initial={{ bd: one('bd'), ba: one('ba'), g: one('g'), k: one('k'), no: one('no'), opt: one('opt') }} />
+  return <NeedListCalculator initial={{ bd: one('bd'), ba: one('ba'), g: one('g'), k: one('k'), no: one('no'), opt: one('opt'), u: one('u'), t: one('t') }} />
 }

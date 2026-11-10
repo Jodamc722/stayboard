@@ -11,8 +11,10 @@
 // the number of people your property can host"; WebstaurantStore: "twice the number of place settings,
 // dishes, and tableware as your rental's maximum guest capacity"), so a full house can eat twice before
 // anything is washed. Then:
-//   settings   place settings = guests × 2: plates, bowls, mugs, tall glasses, everyday flatware
-//   guest      per guest (× n): wine glasses at 1.5 (they break), short glasses and salad forks at 1
+//   settings   place settings = guests × 2, only for what is used at every meal: dinner plates, bowls,
+//              tall glasses, dinner forks, table knives, soup spoons
+//   guest      one per guest: side plates, mugs (Jon, 2026-11-10: "coffee mugs, 1 per guest"), wine and
+//              short glasses, teaspoons. "Be smart, don't overdo it": 2× only where a turn really needs it.
 //   bedroom    per bedroom (a studio counts as one), plus a fixed extra where it says so
 //   bathroom   per bathroom
 //   unit       a fixed number per home
@@ -39,7 +41,7 @@ export const NEED_ROOMS = ['Dining set', 'Glassware', 'Flatware set', 'Knife set
   'Small appliances', 'Kitchen extras', 'Bathroom', 'Bedroom', 'Cleaning & safety', 'Family & games'] as const
 export const GROUP_NOTE: Record<string, string> = {
   'Dining set': 'Plates, bowls and mugs for every place setting',
-  Glassware: 'Everyday and wine glasses, with extras for breakage',
+  Glassware: 'Everyday water glasses for every place setting, wine and short glasses per guest',
   'Flatware set': 'Forks, knives and spoons for every place setting',
   'Knife set': 'Kitchen knives, steak knives and shears, kept in a block',
   'Cookware set': 'Pots and pans with lids',
@@ -74,11 +76,11 @@ export const BIG_HOME = 10
 export const NEED_ITEMS: NeedItem[] = [
   // Dishes & glassware — place settings at twice the guest count
   K('Dishes & glassware', 'dinner-plates', 'Dinner plates', 'must', 'settings', 1),
-  K('Dishes & glassware', 'side-plates', 'Salad / side plates', 'must', 'settings', 1),
+  K('Dishes & glassware', 'side-plates', 'Salad / side plates', 'must', 'guest', 1),
   K('Dishes & glassware', 'bowls', 'Bowls', 'must', 'settings', 1),
-  H('Dishes & glassware', 'mugs', 'Coffee mugs', 'must', 'settings', 1),
+  H('Dishes & glassware', 'mugs', 'Coffee mugs', 'must', 'guest', 1),
   H('Dishes & glassware', 'tall-glasses', 'Tall glasses', 'must', 'settings', 1),
-  H('Dishes & glassware', 'wine-glasses', 'Wine glasses', 'must', 'guest', 1.5, { note: 'extra for breakage' }),
+  H('Dishes & glassware', 'wine-glasses', 'Wine glasses', 'must', 'guest', 1),
   H('Dishes & glassware', 'short-glasses', 'Short glasses', 'recommended', 'guest', 1),
   K('Dishes & glassware', 'serving-bowls', 'Serving bowls', 'recommended', 'guest', 0.25, { min: 2 }),
   K('Dishes & glassware', 'serving-platter', 'Serving platter', 'recommended', 'unit', 1, { big: 1 }),
@@ -88,8 +90,8 @@ export const NEED_ITEMS: NeedItem[] = [
   K('Flatware', 'forks', 'Dinner forks', 'must', 'settings', 1),
   K('Flatware', 'table-knives', 'Table knives', 'must', 'settings', 1),
   K('Flatware', 'spoons', 'Soup spoons', 'must', 'settings', 1),
-  K('Flatware', 'teaspoons', 'Teaspoons', 'must', 'settings', 1),
-  K('Flatware', 'salad-forks', 'Salad forks', 'recommended', 'guest', 1),
+  K('Flatware', 'teaspoons', 'Teaspoons', 'must', 'guest', 1),
+  K('Flatware', 'salad-forks', 'Salad forks', 'optional', 'guest', 1),
   K('Flatware', 'steak-knives', 'Steak knives', 'recommended', 'guest', 1),
   K('Flatware', 'serving-utensils', 'Serving spoons and forks', 'recommended', 'unit', 4, { big: 2 }),
   // Cookware
