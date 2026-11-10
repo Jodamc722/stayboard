@@ -8,7 +8,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
 import { SALES_CONTACT_KEY, type ContactCard } from '@/lib/sales-copy'
-import { type AdProject, type AdContact, type AdScene, type AdKind, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS, TEXT_ANIMS, CAMS, type AdTextAnim, type AdCam, PLATFORMS, FX } from '@/lib/ad-engine'
+import { type AdProject, type AdContact, type AdScene, type AdKind, cleanCustom, blankProject, spokenText, voiceSig, HOUSE_FACTS, GUEST_FACTS, KINDS, BUILTIN_VIDEOS, VOICE_DEFAULTS, TRANSITIONS, type AdTransition, STYLE_DEFAULT, STYLE_OPTIONS, TEXT_ANIMS, CAMS, type AdTextAnim, type AdCam, PLATFORMS, FX } from '@/lib/ad-engine'
 
 const BUCKET = 'ad-studio'
 const SIGN_TTL = 60 * 60 * 6
@@ -125,6 +125,7 @@ export function normalize(p: any): AdProject {
     badge: String(s?.badge || '').slice(0, 22),
     ...(s?.eyebrow ? { eyebrow: String(s.eyebrow).slice(0, 80) } : {}),
     ...([0, 1, 2].indexOf(Number(s?.dim)) >= 0 && s?.dim !== null && s?.dim !== undefined && s?.dim !== '' ? { dim: Number(s.dim) } : {}),
+    ...(cleanCustom(s?.cu) ? { cu: cleanCustom(s?.cu) } : {}),
     vo: String(s?.vo || '').slice(0, 600),
     head: String(s?.head || '').slice(0, 300),
     sub: String(s?.sub || '').slice(0, 300),

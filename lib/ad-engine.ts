@@ -90,6 +90,49 @@ export type AdScene = {
   eyebrow?: string
   /** How dark the photo behind the scene is: 1 light · 0 normal · 2 dark. Missing = the design's default. */
   dim?: number
+  /** This scene's own styling on top of the look (Jon, 2026-11-10: "more custom designs"). Missing = the look's. */
+  cu?: SceneCustom
+}
+/** Per-scene custom design: every field optional, each one overrides the ad's look for this scene only. */
+export type SceneCustom = {
+  /** Headline size against the design's own. */
+  size?: 'S' | 'L' | 'XL'
+  font?: 'sans' | 'serif' | 'condensed' | 'elegant'
+  /** Accent (the gold words, rules, buttons) and text colour, as #rrggbb. */
+  accent?: string
+  text?: string
+  /** What sits over the photo: nothing (true colour), a lighter wash, or a darker one. */
+  shade?: 'none' | 'light' | 'dark'
+  grade?: 'natural' | 'warm' | 'cool' | 'vivid' | 'faded' | 'mono'
+  /** Which part of the photo shows when it is cropped: -1 left/top … 1 right/bottom. */
+  fx?: number
+  fy?: number
+  /** Extra zoom into the photo: 1.15, 1.3, 1.5. */
+  zoom?: number
+}
+export const CU_SIZE: { key: '' | 'S' | 'L' | 'XL'; label: string; k: number }[] = [{ key: 'S', label: 'Smaller', k: 0.8 }, { key: '', label: 'Normal', k: 1 }, { key: 'L', label: 'Larger', k: 1.2 }, { key: 'XL', label: 'Largest', k: 1.4 }]
+export const CU_FONTS: { key: '' | NonNullable<SceneCustom['font']>; label: string }[] = [{ key: '', label: 'Look’s own' }, { key: 'sans', label: 'Bold sans' }, { key: 'serif', label: 'Serif' }, { key: 'condensed', label: 'Condensed' }, { key: 'elegant', label: 'Elegant' }]
+export const CU_SHADES: { key: '' | NonNullable<SceneCustom['shade']>; label: string; hint: string }[] = [{ key: '', label: 'Look’s own', hint: 'The wash the look was designed with' }, { key: 'none', label: 'No filter', hint: 'The photo exactly as shot' }, { key: 'light', label: 'Lighter', hint: 'Less wash — more of the photo' }, { key: 'dark', label: 'Darker', hint: 'More wash — the words stand out' }]
+export const CU_GRADES: { key: '' | NonNullable<SceneCustom['grade']>; label: string }[] = [{ key: '', label: 'Look’s own' }, { key: 'natural', label: 'Natural' }, { key: 'warm', label: 'Warm' }, { key: 'cool', label: 'Cool' }, { key: 'vivid', label: 'Vivid' }, { key: 'faded', label: 'Faded' }, { key: 'mono', label: 'Black & white' }]
+export const CU_ZOOMS = [1, 1.15, 1.3, 1.5]
+/** True when a scene carries any custom styling. */
+export const hasCustom = (sc: Pick<AdScene, 'cu'>) => !!sc.cu && Object.keys(sc.cu).some(k => { const v = (sc.cu as any)[k]; return v !== undefined && v !== '' && v !== null && !(k === 'zoom' && v === 1) && !((k === 'fx' || k === 'fy') && v === 0) })
+/** Clean a custom block coming from a saved file or the browser: unknown keys and bad values dropped. */
+export function cleanCustom(c: any): SceneCustom | undefined {
+  if (!c || typeof c !== 'object') return undefined
+  const o: SceneCustom = {}
+  const hex = (v: any) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)
+  if (['S', 'L', 'XL'].indexOf(c.size) >= 0) o.size = c.size
+  if (['sans', 'serif', 'condensed', 'elegant'].indexOf(c.font) >= 0) o.font = c.font
+  if (hex(c.accent)) o.accent = c.accent
+  if (hex(c.text)) o.text = c.text
+  if (['none', 'light', 'dark'].indexOf(c.shade) >= 0) o.shade = c.shade
+  if (['natural', 'warm', 'cool', 'vivid', 'faded', 'mono'].indexOf(c.grade) >= 0) o.grade = c.grade
+  const n = (v: any, a: number, b: number) => { const x = Number(v); return Number.isFinite(x) ? Math.max(a, Math.min(b, x)) : 0 }
+  if (n(c.fx, -1, 1)) o.fx = n(c.fx, -1, 1)
+  if (n(c.fy, -1, 1)) o.fy = n(c.fy, -1, 1)
+  if (n(c.zoom, 1, 2) > 1) o.zoom = n(c.zoom, 1, 2)
+  return Object.keys(o).length ? o : undefined
 }
 export type FxOpts = { pos?: string; size?: 'S' | 'M' | 'L'; amt?: 'low' | 'med' | 'high'; speed?: 'slow' | 'normal' | 'fast'; color?: string; variant?: string; blink?: 'on' | 'off' }
 export type AdContact = { name: string; role: string; phone: string; email: string; photo: string }
@@ -568,6 +611,10 @@ let FONTW = 0           // a single-weight display face (condensed) draws at its
 let DISPLAY = ''
 let FS = 1             // the elegant serif runs small; scale it up
 let ANIM: AdTextAnim = 'rise'
+// Per-scene custom design (SceneCustom): the wash multiplier, the photo's focus point and extra zoom, the plain sans face.
+let SHADE = 1
+let FOCX = 0, FOCY = 0, PZOOM = 1
+let BASE_SANS = ''
 let CAM: AdCam = 'auto'
 const hexRgb = (h: string): [number, number, number] => { const x = h.replace('#', ''); const n = parseInt(x.length === 3 ? x.split('').map(c => c + c).join('') : x, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255] }
 const lumOf = (h: string) => { const [r, g, b] = hexRgb(h); return 0.299 * r + 0.587 * g + 0.114 * b }
@@ -608,7 +655,7 @@ export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
 /** Overlay strength: light looks wash photos harder so dark type reads. */
 let WASH: 'look' | 'neutral' | 'none' = 'look'
 /** Overlay alpha over photos: the look's wash as designed, a lighter neutral scrim, or nothing. */
-const TA = (a: number) => WASH === 'none' ? 0 : WASH === 'neutral' ? (C.light ? Math.min(0.6, a * 0.7) : a * 0.55) : (C.light ? Math.min(0.92, a * 1.25 + 0.12) : a)
+const TA = (a: number) => Math.min(0.96, SHADE * (WASH === 'none' ? 0 : WASH === 'neutral' ? (C.light ? Math.min(0.6, a * 0.7) : a * 0.55) : (C.light ? Math.min(0.92, a * 1.25 + 0.12) : a)))
 const fnt = (w: number | string, size: number, fam: string) => `${fam === DISPLAY && FONTW ? FONTW : w} ${fam === DISPLAY ? size * FS : size}px ${fam}`
 /** Readable text on the accent colour (button labels, ticks). */
 const onAccent = () => { const h = C.gold.replace('#', ''); const n = parseInt(h.length === 3 ? h.split('').map(x => x + x).join('') : h, 16); const l = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)); return l > 150 ? '#14110B' : '#FFFFFF' }
@@ -680,8 +727,11 @@ function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: n
 function cover(ctx: CanvasRenderingContext2D, img: HTMLImageElement | HTMLVideoElement, x: number, y: number, w: number, h: number, zoom = 1, pan = 0, panY = 0) {
   const iw = (img as any).naturalWidth || (img as any).videoWidth || img.width, ih = (img as any).naturalHeight || (img as any).videoHeight || img.height
   if (!iw || !ih) return
-  const s = Math.max(w / iw, h / ih) * zoom
+  const s = Math.max(w / iw, h / ih) * zoom * PZOOM
   const dw = iw * s, dh = ih * s
+  // The scene's own focus point moves the crop; the camera's pan rides on top, never past the photo's edge.
+  if (FOCX) pan = Math.max(-1, Math.min(1, pan * (1 - Math.abs(FOCX)) + FOCX))
+  if (FOCY) panY = Math.max(-1, Math.min(1, panY * (1 - Math.abs(FOCY)) + FOCY))
   const dx = x + (w - dw) / 2 - pan * (dw - w) / 2, dy = y + (h - dh) / 2 - panY * (dh - h) / 2
   if (DUO) {
     // DUOTONE: grayscale photo, shadows pushed to one colour (lighten), highlights to another (multiply)
@@ -2754,8 +2804,29 @@ function drawFx(ctx0: CanvasRenderingContext2D, p: AdProject, i: number, local: 
   if (ctx !== ctx0) { ctx0.save(); ctx0.globalAlpha = env; ctx0.drawImage(fxOff as HTMLCanvasElement, 0, 0); ctx0.restore() }
 }
 function drawSceneFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local: number, dur: number, A: AdAssets) {
-  drawScene(ctx, p, i, local, dur, A)
-  drawFx(ctx, p, i, local, dur, A)
+  const cu = p.scenes[i]?.cu
+  if (!cu || !hasCustom(p.scenes[i])) { drawScene(ctx, p, i, local, dur, A); drawFx(ctx, p, i, local, dur, A); return }
+  // THIS SCENE'S OWN STYLING: the look's settings are swapped for the scene and put back after it.
+  const keep = { C, FS, FONTW, DISPLAY, GRADE, DUO, WASH }
+  try {
+    if (isHex(cu.accent)) C = { ...C, gold: cu.accent! }
+    if (isHex(cu.text)) C = { ...C, ink: cu.text!, mut: cu.text! }
+    if (cu.font) {
+      const fam = cu.font === 'serif' ? A.serif : cu.font === 'condensed' ? A.condensed : cu.font === 'elegant' ? A.elegant : (BASE_SANS || A.display)
+      if (fam) { A = { ...A, display: fam }; DISPLAY = fam; FONTW = cu.font === 'condensed' ? 400 : 0; FS = cu.font === 'elegant' ? 1.2 : 1 }
+    }
+    if (cu.size) FS *= (CU_SIZE.find(x => x.key === cu.size)?.k || 1)
+    if (cu.shade === 'none') { WASH = 'none'; C = { ...C, tint: C.light ? '255,255,255' : '0,0,0' } }
+    else if (cu.shade === 'light') SHADE = 0.5
+    else if (cu.shade === 'dark') SHADE = 1.5
+    if (cu.grade) { GRADE = GRADES[cu.grade] || ''; DUO = null }
+    FOCX = cu.fx || 0; FOCY = cu.fy || 0; PZOOM = cu.zoom && cu.zoom > 1 ? cu.zoom : 1
+    drawScene(ctx, p, i, local, dur, A)
+    drawFx(ctx, p, i, local, dur, A)
+  } finally {
+    C = keep.C; FS = keep.FS; FONTW = keep.FONTW; DISPLAY = keep.DISPLAY; GRADE = keep.GRADE; DUO = keep.DUO; WASH = keep.WASH
+    SHADE = 1; FOCX = 0; FOCY = 0; PZOOM = 1
+  }
 }
 
 /** The whole frame at time t: scene (with a crossfade from the previous one), the mark, captions. */
@@ -2765,6 +2836,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
   const R = resolveStyle(p)
   const fam = R.font === 'serif' ? A.serif : R.font === 'condensed' ? A.condensed : R.font === 'elegant' ? A.elegant : A.display
+  BASE_SANS = A.display
   // A gallery-mat poster is a light page whatever the look: the mark goes black on it (unless the logo is off).
   const sc0 = p.scenes[sceneAt(tl, t)]
   const galleryPage = !!sc0 && sc0.kind === 'poster' && !C.light && ((sc0.items[2] || '').trim() === 'gallery')

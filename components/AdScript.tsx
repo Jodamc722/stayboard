@@ -20,12 +20,13 @@ function Grow({ value, onChange, disabled, placeholder, style }: { value: string
     onFocus={e => (e.currentTarget.style.borderColor = 'rgba(210,176,119,0.5)')} onBlur={e => (e.currentTarget.style.borderColor = 'transparent')} />
 }
 
-export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stale, display, tall, picked = [], onTogglePick, onPick, onPlayFrom, setScene, move, del, addAfter, setScenes }: {
+export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stale, display, tall, fill, picked = [], onTogglePick, onPick, onPlayFrom, setScene, move, del, addAfter, setScenes }: {
   p: AdProject; tl: Timeline; t: number; playing: boolean; sel: number; canEdit: boolean
   /** a voice take exists and matches the script */ voiced: boolean
   /** a voice take exists but the script changed since */ stale: boolean
   display: string
   /** beside the player: fill the height of the screen */ tall?: boolean
+  /** take the whole height of the box it is in; the lines scroll inside */ fill?: boolean
   /** scene ids picked together — design changes go to all of them */ picked?: string[]
   onTogglePick?: (i: number) => void
   onPick: (i: number) => void
@@ -65,7 +66,7 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
   }
 
   return (
-    <div style={{ width: '100%', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ width: '100%', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, display: 'flex', flexDirection: 'column', minHeight: 0, ...(fill ? { height: '100%', boxSizing: 'border-box' } : {}) }}>
       {/* header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid ' + UI.line, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: display, fontWeight: 800, fontSize: 17 }}>Script</span>
@@ -80,7 +81,7 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
       </div>
 
       {asText ? (
-        <div style={{ padding: 14 }}>
+        <div style={{ padding: 14, overflowY: 'auto', ...(fill ? { flex: 1, minHeight: 0 } : {}) }}>
           <p style={{ fontSize: 12, color: UI.mut, margin: '0 0 8px', lineHeight: 1.5 }}>One paragraph per scene, in order — a blank line starts the next scene. Extra paragraphs become new scenes at the end; a scene with no paragraph keeps its pictures and goes quiet. On-screen words and designs are not touched.</p>
           <textarea value={text} onChange={e => setText(e.target.value)} rows={Math.min(22, Math.max(8, text.split('\n').length + 2))}
             style={{ width: '100%', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 9, color: UI.ink, padding: '12px 14px', fontSize: 15.5, lineHeight: 1.65, fontFamily: 'Georgia, "Times New Roman", serif', resize: 'vertical' }} />
@@ -91,7 +92,7 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
           </div>
         </div>
       ) : (
-        <div ref={box} style={{ overflowY: 'auto', maxHeight: tall ? 'calc(100vh - 210px)' : 520, padding: '6px 0' }}>
+        <div ref={box} style={{ overflowY: 'auto', padding: '6px 0', ...(fill ? { flex: 1, minHeight: 0 } : { maxHeight: tall ? 'calc(100vh - 210px)' : 520 }) }}>
           {p.scenes.map((x, i) => {
             const on = i === lit
             const w = words(x.vo), d = tl.durs[i] || 0, rate = d ? w / d : 0

@@ -22,7 +22,7 @@ import { type Moment, MOMENTS } from '@/lib/marketing-calendar'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, PRO_KINDS, PRO_DIM_OF, polishAd, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, PRO_KINDS, PRO_DIM_OF, type SceneCustom, CU_SIZE, CU_FONTS, CU_SHADES, CU_GRADES, CU_ZOOMS, hasCustom, polishAd, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -66,12 +66,12 @@ function Btn({ on, children, onClick, title, tone, disabled, small }: { on?: boo
   const fg = tone === 'gold' ? '#1B1408' : tone === 'blue' ? '#fff' : tone === 'red' ? UI.red : on ? UI.ink : UI.mut
   return (
     <button type="button" title={title} disabled={disabled} onClick={onClick}
-      style={{ background: bg, color: fg, border: '1px solid ' + (tone ? (tone === 'red' ? '#5a2a26' : 'transparent') : on ? '#3A4657' : UI.line), borderRadius: 8, padding: small ? '4px 8px' : '7px 12px', fontSize: small ? 11.5 : 12.5, fontWeight: 600, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1, whiteSpace: 'nowrap' }}>
+      style={{ background: bg, color: fg, border: '1px solid ' + (tone ? (tone === 'red' ? '#5a2a26' : 'transparent') : on ? '#3A4657' : UI.line), borderRadius: 8, padding: small ? '5px 9px' : '8px 13px', fontSize: small ? 12 : 13, fontWeight: 600, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1, whiteSpace: 'nowrap' }}>
       {children}
     </button>
   )
 }
-const Label = ({ children }: { children: React.ReactNode }) => <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut, margin: '14px 0 6px' }}>{children}</p>
+const Label = ({ children }: { children: React.ReactNode }) => <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut, margin: '14px 0 6px' }}>{children}</p>
 const field: React.CSSProperties = { boxSizing: 'border-box', width: '100%', background: UI.panel2, color: UI.ink, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 10px', fontSize: 13, lineHeight: 1.45, fontFamily: 'inherit', resize: 'vertical' }
 
 /** A live thumbnail of THIS ad in a given look/style — the real renderer, one frame. */
@@ -110,7 +110,7 @@ function Fold({ id, title, folded, onToggle, children }: { id: string; title: st
     <div style={{ borderTop: '1px solid ' + UI.line, marginTop: 12 }}>
       <button type="button" onClick={() => onToggle(id)} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 0, color: UI.ink, padding: '10px 0 2px', cursor: 'pointer', textAlign: 'left' }}>
         <span style={{ fontSize: 10, color: UI.mut, width: 10 }}>{folded ? '▸' : '▾'}</span>
-        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{title}</span>
+        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{title}</span>
       </button>
       {folded ? null : <div>{children}</div>}
     </div>
@@ -168,7 +168,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   // The rarely-used sections start closed; anything you have opened or closed yourself is remembered.
   useEffect(() => { let saved: Record<string, boolean> = {}; try { const v = localStorage.getItem('ads.folded'); if (v) saved = JSON.parse(v) || {} } catch { /* fine */ } setFolded({ motion: true, graphics: true, sound: true, style: true, brief: true, voice: true, ...saved }) }, [])
   const toggleFold = (id: string) => setFolded(f => { const n = { ...f, [id]: !f[id] }; try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } return n })
-  const setAllFolds = (v: boolean) => setFolded(f => { const n: Record<string, boolean> = { ...f }; (tab === 'scene' ? ['ai', 'design', 'motion', 'words', 'photos', 'graphics', 'sound'] : ['format', 'look', 'music', 'voice', 'style', 'brief']).forEach(k => (n[k] = v)); try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } return n })
+  const setAllFolds = (v: boolean) => setFolded(f => { const n: Record<string, boolean> = { ...f }; (tab === 'scene' ? ['ai', 'design', 'custom', 'motion', 'words', 'photos', 'graphics', 'sound'] : ['format', 'look', 'music', 'voice', 'style', 'brief']).forEach(k => (n[k] = v)); try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } return n })
   /** Script beside the player (Jon, 2026-11-04: "the script the most important part of walking through the video ads"). */
   const [beside, setBeside] = useState(true)
   useEffect(() => { try { const v = localStorage.getItem('ads.scriptBeside'); if (v != null) setBeside(v === '1') } catch { /* fine */ } }, [])
@@ -213,8 +213,21 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // FITS THE SCREEN (Jon, 2026-11-10: "the way it fits the screen"): the editor is one screen tall — the player takes
+  // whatever room is left and is measured, so the picture is always whole and as large as it can be.
+  const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null)
+  const [box, setBox] = useState<{ w: number; h: number }>({ w: 640, h: 360 })
+  useEffect(() => {
+    if (!stageEl || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(es => { const r = es[0].contentRect; if (r.width > 20 && r.height > 20) setBox({ w: Math.floor(r.width), h: Math.floor(r.height) }) })
+    ro.observe(stageEl)
+    return () => ro.disconnect()
+  }, [stageEl])
+  /** The big preview: the player alone, edge to edge, with the same controls (Esc closes). */
+  const [theater, setTheater] = useState(false)
   /** True only while the editor itself is on screen with nothing over it — the keyboard shortcuts act then, and only then. */
   const keysOn = useRef(false)
+  const theaterRef = useRef(false)
   const imgs = useRef<Record<string, HTMLImageElement>>({})
   const logo = useRef<HTMLImageElement | null>(null)
   const logos = useRef<{ gold: HTMLImageElement | null; black: HTMLImageElement | null; white: HTMLImageElement | null }>({ gold: null, black: null, white: null })
@@ -651,7 +664,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const cv = safeRef.current; if (!cv || !p) return
     const g = cv.getContext('2d'); if (!g) return
     g.clearRect(0, 0, cv.width, cv.height)
-    if (!safe) return
+    if (!safe || theater) return // the big preview is the ad as people will see it
     const PF = platformOf(p), W = cv.width, H = cv.height
     g.fillStyle = 'rgba(255,80,80,0.18)'
     if (PF.safe.top) g.fillRect(0, 0, W, H * PF.safe.top)
@@ -663,7 +676,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (PF.safe.right) { g.beginPath(); g.moveTo(W - W * PF.safe.right, 0); g.lineTo(W - W * PF.safe.right, H); g.stroke() }
     g.setLineDash([]); g.fillStyle = 'rgba(255,255,255,0.75)'; g.font = `600 ${Math.round(W * 0.022)}px ${body}`
     if (PF.safe.bottom) g.fillText(PF.label + ' UI covers this', 12, H - H * PF.safe.bottom + W * 0.03)
-  }, [safe, p?.platform, p?.format, p?.id, body]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [safe, p?.platform, p?.format, p?.id, body, box.w, box.h, home, starting, !!plan, !!draft, showAudit, theater, beside]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Rewrite just the selected scene the way it is asked ("punchier", "show the rooftop", "make it numbers"). */
   const askScene = async (what: string) => {
@@ -867,6 +880,9 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
       if (!pRef.current || !keysOn.current) return
+      if (e.key === 'Escape' && theaterRef.current) { e.preventDefault(); setTheater(false); return }
+      if ((e.key === 'f' || e.key === 'F') && !e.metaKey && !e.ctrlKey && pRef.current.kind !== 'flyer') { e.preventDefault(); setTheater(v => !v); return }
+      if (theaterRef.current && (e.key === 'Delete' || e.key === 'Backspace')) return
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); stepHist(!e.shiftKey); return }
       if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === ' ') { e.preventDefault(); if (play0.current) stop(); else { const T = timeline(pRef.current); start(tRef.current >= T.total - 0.05 ? 0 : tRef.current) } }
@@ -1254,11 +1270,22 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** The start / plan / script pages: full width, no editor chrome. */
   const flow = !home && (starting || !!plan || !!draft)
   const editing = !home && !flow && !!p
-  const pw = FW >= FH ? (scriptSide ? 760 : full ? 1180 : 960) : 540 * (FW / FH) * 1.6
+  theaterRef.current = theater
+  // The picture inside the measured stage, whole, as large as it fits; its pixels follow the size it is shown at.
+  const ratio = FW / FH
+  const picW = Math.max(120, Math.floor(Math.min(box.w, box.h * ratio))), picH = Math.max(80, Math.floor(picW / ratio))
+  const dpr = typeof window !== 'undefined' ? Math.min(2, window.devicePixelRatio || 1) : 1
+  const cvK = Math.min(1, 1920 / (Math.max(picW, picH) * dpr))
+  const cvW = Math.max(2, Math.round(picW * dpr * cvK)), cvH = Math.max(2, Math.round(picH * dpr * cvK))
+  const showScript = scriptSide && !theater
+  /** The player column beside the script is as wide as the picture can be at this height (never more than 60%). */
+  const playerBasis = Math.round(Math.max(330, box.h * ratio)) + 'px'
+  const setCu = (patch: Partial<SceneCustom>) => setMany(x => { const n: any = { ...(x.cu || {}), ...patch }; Object.keys(n).forEach(k => { if (n[k] === '' || n[k] === undefined || n[k] === null || (k === 'zoom' && n[k] === 1) || ((k === 'fx' || k === 'fy') && n[k] === 0)) delete n[k] }); return { cu: Object.keys(n).length ? (n as SceneCustom) : undefined } })
   const totalW = 100 // timeline is % based
   const pct = (x: number) => (tl ? (x / tl.total) * totalW : 0)
   const goHome = () => { stop(); setMenu(false); setHome(true); loadList() }
   keysOn.current = editing && !picker && !menu && !versions && !watch && !showAudit
+  const fit = editing && !showAudit
   const notice = /^(Fact check|The ad is ready|Copied the ad|Saved to your computer)/.test(err)
   const card: React.CSSProperties = { background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 9, padding: 9 }
   const choice = (on: boolean): React.CSSProperties => ({ textAlign: 'left', background: on ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (on ? UI.blue : UI.line), borderRadius: 9, padding: '9px 12px', cursor: 'pointer', color: UI.ink })
@@ -1281,7 +1308,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   )
 
   return (
-    <div style={{ background: UI.bg, color: UI.ink, borderRadius: full ? 0 : 14, border: full ? 0 : '1px solid ' + UI.line, overflow: 'hidden', fontFamily: body, minHeight: full ? '100vh' : undefined }}>
+    <div style={{ background: UI.bg, color: UI.ink, borderRadius: full ? 0 : 14, border: full ? 0 : '1px solid ' + UI.line, overflow: 'hidden', fontFamily: body, minHeight: full ? '100vh' : undefined, ...(editing ? { display: 'flex', flexDirection: 'column', height: full ? '100vh' : 'calc(100vh - 150px)', minHeight: 560 } : {}) }}>
       {/* ── top bar: one row. Everything rare is behind ⋯ ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, rowGap: 6, flexWrap: 'wrap', padding: '8px 14px', borderBottom: '1px solid ' + UI.line, background: UI.panel, position: 'relative', minHeight: 34 }}>
         {editing && p ? (<>
@@ -1356,9 +1383,9 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           onMake={makeKind} onMoment={makeMoment} onOpen={id => open(id)} onDelete={quickDelete} onDeleteMany={quickDeleteMany} onDuplicate={quickDuplicate}
           library={lib} onEditVideo={editLibraryVideo} onWatch={v => setWatch(v as LibVideo)} onDeleteVideo={v => delVideo(v as LibVideo)} onUploadVideo={uploadVideo} />
       ) : null}
-      <div style={{ display: home ? 'none' : flow ? 'block' : 'grid', gridTemplateColumns: full ? 'minmax(0,1fr) 372px' : 'minmax(0,1fr) 340px', minHeight: full ? 'calc(100vh - 210px)' : 560 }}>
+      <div style={{ display: home ? 'none' : flow ? 'block' : 'grid', gridTemplateColumns: 'minmax(0,1fr) clamp(330px, 27vw, 420px)', gridTemplateRows: 'minmax(0, 1fr)', ...(editing ? { flex: 1, minHeight: 0 } : { minHeight: full ? 'calc(100vh - 210px)' : 560 }) }}>
         {/* ── centre: the start page, the plan, the script, the audit — or the player ── */}
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0, background: '#0A0D11', minHeight: flow ? (full ? 'calc(100vh - 52px)' : 560) : undefined }}>
+        <div style={{ padding: fit ? 12 : 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0, minHeight: flow ? (full ? 'calc(100vh - 52px)' : 560) : 0, background: '#0A0D11', ...(editing ? { height: '100%', boxSizing: 'border-box', overflowY: fit ? 'hidden' : 'auto' } : {}) }}>
           {starting && !draft ? (() => {
             // THE START PAGE (Jon, 2026-11-10: "make it easier to use"). It was 8 to 12 screens — how, about, goal,
             // audience, music, look, shape, think, the plan's questions, review — before the plan asked the same
@@ -1677,35 +1704,60 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>★ = my recommendation. Nothing is built or saved until you press build.</p>
             </div>
           ) : p ? (
-            <div style={scriptSide ? { display: 'grid', gridTemplateColumns: FW >= FH ? 'minmax(0, 1.15fr) minmax(360px, 1fr)' : 'minmax(0, auto) minmax(380px, 1fr)', gap: 14, width: '100%', alignItems: 'start', justifyContent: 'center' } : { display: 'contents' }}>
-            <div style={scriptSide ? { position: 'sticky', top: 8, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 } : { display: 'contents' }}>
-              <div style={{ position: 'relative', ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? (isFlyer ? 'calc(100vh - 210px)' : 'calc(100vh - 300px)') : 520, minHeight: 340, maxHeight: 760, alignSelf: 'center', maxWidth: '100%' }), aspectRatio: `${FW}/${FH}` }}>
-                <canvas ref={canvasRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960}
-                  style={{ width: '100%', height: '100%', display: 'block', borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
-                <canvas ref={safeRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 8 }} />
-              </div>
-              {p.kind === 'flyer' ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: FW >= FH ? pw : 520, fontSize: 11.5, color: UI.mut }}>
-                  Static flyer · {FLYER_SIZES.find(x => x.key === p.format)?.label} · {FORMATS[p.format][0]}×{FORMATS[p.format][1]} · pick a design on the right, edit the words below, export PNG or PDF
+            <div style={{ display: 'flex', gap: 12, width: '100%', flex: 1, minHeight: 0 }}>
+              {/* the player column — or, in the big preview, the whole window */}
+              <div style={theater
+                ? { position: 'fixed', inset: 0, zIndex: 70, background: '#05070A', display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 18px 16px' }
+                : { flex: showScript ? '0 1 ' + playerBasis : '1 1 auto', maxWidth: showScript ? '60%' : undefined, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {theater ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontFamily: display, fontWeight: 800, fontSize: 15 }}>{p.name}</span>
+                    <span style={{ fontSize: 12, color: UI.mut }}>Preview · {platformOf(p).label} · {p.format}</span>
+                    <span style={{ marginLeft: 'auto' }}><Btn small onClick={() => setTheater(false)} title="Back to the editor (Esc)">✕ Close preview</Btn></span>
+                  </div>
+                ) : null}
+                <div ref={setStageEl} style={{ flex: 1, minHeight: 0, display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
+                  <div onClick={() => { if (!isFlyer) play() }} title={isFlyer ? undefined : 'Click to play or pause'} style={{ position: 'relative', width: picW, height: picH, cursor: isFlyer ? 'default' : 'pointer' }}>
+                    <canvas ref={canvasRef} width={cvW} height={cvH} style={{ width: '100%', height: '100%', display: 'block', borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
+                    <canvas ref={safeRef} width={cvW} height={cvH} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 8 }} />
+                    {!isFlyer && !playing && tl && t < 0.05 ? <span style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', width: 64, height: 64, borderRadius: 32, background: 'rgba(0,0,0,.55)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 26, pointerEvents: 'none' }}>▶</span> : null}
+                  </div>
                 </div>
-              ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: FW >= FH ? pw : 520, flexWrap: 'wrap' }}>
-                <Btn tone="gold" onClick={play} title="Play / pause (space)">{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
-                <Btn small onClick={() => seek(0)} title="Back to the start">⏮</Btn>
-                <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, color: UI.mut, whiteSpace: 'nowrap' }}>{fmtT(t)} / {tl ? fmtT(tl.total) : '0:00'}</span>
-                <span style={{ fontSize: 11.5, whiteSpace: 'nowrap', color: hasVoice ? UI.green : UI.gold }} title={hasVoice ? 'The scenes are cut to the recorded voice' : 'Scene lengths are estimated from the words until the voice is recorded'}>
-                  {p.kind === 'post' ? 'Loop' : hasVoice ? '● Timed to the voice' : p.voice ? '● Script changed — re-record' : '○ Estimated timing'}
-                </span>
-                <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                  {platformOf(p).safe.bottom || platformOf(p).safe.top ? <Btn small on={safe} onClick={() => setSafe(!safe)} title="Shows what the app's own buttons cover on this platform — keep words out of the red">Safe zones</Btn> : null}
-                  {isSpoken ? <Btn small on={beside} onClick={toggleBeside} title="Script beside the player, or below a big player">{beside ? 'Script beside' : 'Script below'}</Btn> : null}
-                </span>
+                {isFlyer ? (
+                  <div style={{ fontSize: 12, color: UI.mut, textAlign: 'center' }}>
+                    {FLYER_SIZES.find(x => x.key === p.format)?.label} · {FORMATS[p.format][0]}×{FORMATS[p.format][1]} · edit the words here, the photo and design on the right
+                  </div>
+                ) : (<>
+                  {/* the scrub bar: drag to any moment */}
+                  <input type="range" min={0} max={tl ? tl.total : 1} step={0.05} value={Math.min(t, tl ? tl.total : 1)} onChange={e => seek(Number(e.target.value))} title="Drag to any moment"
+                    style={{ width: '100%', accentColor: UI.gold, margin: 0, height: 14, cursor: 'pointer' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <Btn tone="gold" onClick={play} title="Play / pause (space)">{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
+                    <Btn small onClick={() => seek(0)} title="Back to the start">⏮</Btn>
+                    <Btn small disabled={sel === 0} onClick={() => pick(sel - 1)} title="Previous scene (←)">‹</Btn>
+                    <Btn small disabled={sel >= p.scenes.length - 1} onClick={() => pick(sel + 1)} title="Next scene (→)">›</Btn>
+                    <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12.5, color: UI.ink, whiteSpace: 'nowrap' }}>{fmtT(t)} <span style={{ color: UI.mut }}>/ {tl ? fmtT(tl.total) : '0:00'}</span></span>
+                    {!showScript ? <span style={{ fontSize: 12, whiteSpace: 'nowrap', color: hasVoice ? UI.green : UI.gold }} title={hasVoice ? 'The scenes are cut to the recorded voice' : 'Scene lengths are estimated from the words until the voice is recorded'}>{p.kind === 'post' ? 'Loop' : hasVoice ? '● Timed to the voice' : p.voice ? '● Script changed — re-record' : '○ Estimated timing'}</span> : null}
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                      {!theater && (platformOf(p).safe.bottom || platformOf(p).safe.top) ? <Btn small on={safe} onClick={() => setSafe(!safe)} title="Shows what the app's own buttons cover on this platform — keep words out of the red">Safe zones</Btn> : null}
+                      {isSpoken && !theater ? <Btn small on={beside} onClick={toggleBeside} title="Show or hide the script beside the player — hide it for a bigger picture">Script</Btn> : null}
+                      <Btn small on={theater} onClick={() => setTheater(!theater)} title="The player alone, as big as the window (F · Esc closes)">⤢ {theater ? 'Exit preview' : 'Preview'}</Btn>
+                    </span>
+                  </div>
+                </>)}
+                {/* the words on screen, right under the picture, when the script is not showing */}
+                {sc && canEdit && !showScript && !theater ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }} title="The words of the scene on screen">
+                    <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen — **gold** a word" style={{ ...field, padding: '8px 10px', fontSize: 13.5, fontWeight: 700 }} />
+                    {isSpoken
+                      ? <input value={sc.vo} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Spoken line" style={{ ...field, padding: '8px 10px', fontSize: 13.5 }} />
+                      : <input value={sc.sub} onChange={e => setScene(sel, { sub: e.target.value })} placeholder="Line under the headline" style={{ ...field, padding: '8px 10px', fontSize: 13.5 }} />}
+                  </div>
+                ) : null}
               </div>
-              )}
-            </div>
-              {tl && (p.kind || 'video') !== 'flyer' && p.kind !== 'post' ? (
-                <div style={{ width: '100%', maxWidth: scriptSide ? 'none' : Math.max(FW >= FH ? pw : 520, 760) }}>
-                  <AdScript p={p} tl={tl} t={t} playing={playing} sel={sel} canEdit={canEdit} voiced={hasVoice} stale={!!p.voice && !hasVoice} display={display} tall={scriptSide}
+              {tl && showScript ? (
+                <div style={{ flex: '1 1 0', minWidth: 340, minHeight: 0, display: 'flex' }}>
+                  <AdScript p={p} tl={tl} t={t} playing={playing} sel={sel} canEdit={canEdit} voiced={hasVoice} stale={!!p.voice && !hasVoice} display={display} fill
                     picked={picked} onTogglePick={togglePick}
                     onPick={i => pick(i)}
                     onPlayFrom={i => { stop(); setSel(i); start(tl.starts[i]) }}
@@ -1714,13 +1766,6 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                     del={delSceneAt}
                     addAfter={i => { change(d => { const a = d.scenes.slice(); a.splice(i + 1, 0, { id: newSceneId(d), kind: 'cinema', vo: '', head: '', sub: '', items: [], photos: (d.scenes[i]?.photos || []).slice(0, 1) }); return { ...d, scenes: a } }); setSel(i + 1) }}
                     setScenes={scenes => change(d => ({ ...d, scenes }))} />
-                </div>
-              ) : sc && canEdit ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 620 }} title="Quick edit of the scene on screen">
-                  <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen" style={{ ...field, padding: '6px 9px', fontSize: 12.5, fontWeight: 700 }} />
-                  {isFlyer || p.kind === 'post'
-                    ? <input value={sc.sub} onChange={e => setScene(sel, { sub: e.target.value })} placeholder="Line under the headline" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />
-                    : <input value={sc.vo} onChange={e => setScene(sel, { vo: e.target.value })} placeholder="Spoken line" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />}
                 </div>
               ) : null}
             </div>
@@ -1734,7 +1779,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
         </div>
 
         {/* ── right: one panel, two tabs — this scene, or the whole ad ── */}
-        <div ref={panelRef} style={{ display: flow ? 'none' : 'block', borderLeft: '1px solid ' + UI.line, padding: '0 14px 14px', background: UI.panel, minWidth: 0, maxHeight: full ? 'calc(100vh - 52px)' : 820, overflowY: 'auto' }}>
+        <div ref={panelRef} style={{ display: flow ? 'none' : 'block', borderLeft: '1px solid ' + UI.line, padding: '0 14px 14px', background: UI.panel, minWidth: 0, overflowY: 'auto', ...(editing ? { height: '100%', boxSizing: 'border-box' } : { maxHeight: full ? 'calc(100vh - 52px)' : 820 }) }}>
           {p && sc ? (
             <>
               <div style={{ position: 'sticky', top: 0, zIndex: 5, background: UI.panel, padding: '10px 0 8px', display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid ' + UI.line }}>
@@ -1933,6 +1978,58 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </span>
               </div>
               {canEdit ? <div style={{ marginTop: 8 }}><Btn tone="blue" small onClick={() => setPicker('change')} title="See this scene in every design and pick one">Change the design — see them all</Btn></div> : null}
+              </Fold>
+              </div>
+              <div style={{ order: 1 }}>
+              <Fold id="custom" title={'Customise' + (hasCustom(sc) ? ' · on' : '')} folded={!!folded['custom']} onToggle={toggleFold}>
+              {(() => {
+                const cu: SceneCustom = sc.cu || {}
+                const photo = sc.photos.find(u => !u.startsWith('video:')) || ''
+                const sw = (cur: string | undefined, onSet: (v: string) => void) => (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center' }}>
+                    <Btn small on={!cur} disabled={!canEdit} onClick={() => onSet('')}>Look’s own</Btn>
+                    {SWATCHES.map(c => <button key={c} type="button" disabled={!canEdit} title={c} onClick={() => onSet(c)} style={{ width: 22, height: 22, borderRadius: 11, background: c, border: '2px solid ' + ((cur || '').toLowerCase() === c.toLowerCase() ? UI.gold : 'rgba(255,255,255,0.25)'), cursor: 'pointer', padding: 0 }} />)}
+                    <label title="Any colour" style={{ position: 'relative', width: 24, height: 24, borderRadius: 12, background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)', cursor: 'pointer', border: '2px solid ' + (cur && !SWATCHES.some(x => x.toLowerCase() === cur.toLowerCase()) ? UI.gold : 'transparent') }}>
+                      <input type="color" disabled={!canEdit} value={cur || '#D2B077'} onChange={e => onSet(e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+                    </label>
+                  </div>
+                )
+                return (<>
+                  <p style={{ fontSize: 11.5, color: UI.mut, margin: '8px 0 0', lineHeight: 1.45 }}>This scene’s own styling, on top of the look. {targetIdx().length > 1 ? 'Changes go to the ' + targetIdx().length + ' selected scenes.' : 'Select several scenes to style them together.'}</p>
+                  <Label>Headline size</Label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{CU_SIZE.map(x => <Btn key={x.key || 'n'} small disabled={!canEdit} on={(cu.size || '') === x.key} onClick={() => setCu({ size: (x.key || undefined) as SceneCustom['size'] })}>{x.label}</Btn>)}</div>
+                  <Label>Headline font</Label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{CU_FONTS.map(x => <Btn key={x.key || 'n'} small disabled={!canEdit} on={(cu.font || '') === x.key} onClick={() => setCu({ font: (x.key || undefined) as SceneCustom['font'] })}>{x.label}</Btn>)}</div>
+                  <Label>Accent colour · the gold words, lines, buttons</Label>
+                  {sw(cu.accent, v => setCu({ accent: v || undefined }))}
+                  <Label>Text colour</Label>
+                  {sw(cu.text, v => setCu({ text: v || undefined }))}
+                  <Label>Over the photo</Label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{CU_SHADES.map(x => <Btn key={x.key || 'n'} small disabled={!canEdit} title={x.hint} on={(cu.shade || '') === x.key} onClick={() => setCu({ shade: (x.key || undefined) as SceneCustom['shade'] })}>{x.label}</Btn>)}</div>
+                  <Label>Photo colour</Label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{CU_GRADES.map(x => <Btn key={x.key || 'n'} small disabled={!canEdit} on={(cu.grade || '') === x.key} onClick={() => setCu({ grade: (x.key || undefined) as SceneCustom['grade'] })}>{x.label}</Btn>)}</div>
+                  <Label>Photo crop · click the part to keep in view</Label>
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{ position: 'relative', width: 132, height: 99, borderRadius: 8, overflow: 'hidden', flex: 'none', background: photo ? `url(${proxied(photo)}) center/cover` : UI.panel2, border: '1px solid ' + UI.line, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gridTemplateRows: 'repeat(3, 1fr)' }}>
+                      {[-1, 0, 1].map(fy => [-1, 0, 1].map(fx => { const on = (cu.fx || 0) === fx && (cu.fy || 0) === fy; return (
+                        <button key={fx + ',' + fy} type="button" disabled={!canEdit} title={(fy < 0 ? 'Top' : fy > 0 ? 'Bottom' : 'Middle') + ' ' + (fx < 0 ? 'left' : fx > 0 ? 'right' : 'centre')} onClick={() => setCu({ fx, fy })}
+                          style={{ border: '1px solid rgba(255,255,255,0.28)', background: on ? 'rgba(210,176,119,0.55)' : 'rgba(0,0,0,0.12)', cursor: 'pointer', padding: 0, display: 'grid', placeItems: 'center', color: '#fff', fontSize: 14 }}>{on ? '●' : ''}</button>
+                      ) }))}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontSize: 11, color: UI.mut, display: 'block', marginBottom: 4 }}>Zoom in</span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{CU_ZOOMS.map(z => <Btn key={z} small disabled={!canEdit} on={(cu.zoom || 1) === z} onClick={() => setCu({ zoom: z })}>{z === 1 ? 'None' : z + '×'}</Btn>)}</div>
+                      <p style={{ fontSize: 10.5, color: UI.mut, margin: '6px 0 0', lineHeight: 1.4 }}>Zoom in a little to give the crop room to move.</p>
+                    </div>
+                  </div>
+                  {canEdit ? (
+                    <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 12 }}>
+                      {p.scenes.length > 1 ? <Btn small disabled={!hasCustom(sc)} title="Puts this size, font, colours and photo treatment on every scene (the crop stays per photo)" onClick={() => change(d => ({ ...d, scenes: d.scenes.map(x => { const n: any = { ...(x.cu || {}) }; (['size', 'font', 'accent', 'text', 'shade', 'grade'] as const).forEach(k => { if ((cu as any)[k]) n[k] = (cu as any)[k]; else delete n[k] }); return { ...x, cu: Object.keys(n).length ? n : undefined } }) }))}>→ Style every scene like this</Btn> : null}
+                      <Btn small tone="red" disabled={!hasCustom(sc)} onClick={() => setMany(() => ({ cu: undefined }))} title="Back to the look’s own styling">Reset</Btn>
+                    </div>
+                  ) : null}
+                </>)
+              })()}
               </Fold>
               </div>
               <div style={{ order: 3 }}>
@@ -2185,7 +2282,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
 
       {/* ── timeline ── */}
       {p && tl && editing && p.kind !== 'flyer' ? (
-        <div style={{ borderTop: '1px solid ' + UI.line, padding: '10px 14px 14px', background: UI.panel }}>
+        <div style={{ borderTop: '1px solid ' + UI.line, padding: '8px 14px 10px', background: UI.panel, flex: 'none' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut }}>Timeline</span>
             {canEdit ? <Btn small tone="blue" onClick={() => setPicker('add')} title="Add a scene after the selected one — pick its design from pictures">＋ Add scene</Btn> : null}
@@ -2222,13 +2319,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               ))}
             </div>
             <span style={{ fontSize: 10.5, color: UI.mut, alignSelf: 'center' }}>Scenes</span>
-            <div style={{ position: 'relative', height: 58 }}>
+            <div style={{ position: 'relative', height: 50 }}>
               {p.scenes.map((s, i) => (
                 <div key={s.id} draggable={canEdit} onDragStart={() => setDragFrom(i)} onDragOver={e => e.preventDefault()} onDrop={() => { if (dragFrom != null) move(dragFrom, i); setDragFrom(null) }}
                   onClick={e => { if (e.shiftKey || e.metaKey || e.ctrlKey) { togglePick(i); return } pick(i) }} title={(s.head || s.vo || KINDS.find(k => k.kind === s.kind)?.label || '').replace(/\*\*/g, '') + ' · shift / ⌘-click to select several'}
                   style={{ position: 'absolute', left: pct(tl.starts[i]) + '%', width: `calc(${pct(tl.durs[i])}% - 3px)`, top: 0, bottom: 0, borderRadius: 7, cursor: 'pointer', overflow: 'hidden',
                     background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), border: '2px solid ' + (picked.indexOf(s.id) >= 0 ? UI.gold : i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
-                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{picked.indexOf(s.id) >= 0 ? '✓ ' : ''}{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}{(s.fx || []).length ? ' · ✦' : ''}</span>
+                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{picked.indexOf(s.id) >= 0 ? '✓ ' : ''}{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}{(s.fx || []).length ? ' · ✦' : ''}{hasCustom(s) ? ' · 🎨' : ''}</span>
                   <span style={{ display: 'block', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(s.head || s.vo).replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
                   {canEdit && p.scenes.length > 1 ? (
                     <button type="button" onClick={e => { e.stopPropagation(); delSceneAt(i) }} title="Delete this scene"
