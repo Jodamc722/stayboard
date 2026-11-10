@@ -83,6 +83,10 @@ export async function budgetBlock(task: string): Promise<string | null> {
     if (NEVER_CAPPED.has(task)) return null
     if (!b.on) return null
     if (s.month >= b.monthUsd) return `Lighthouse's monthly AI budget ($${b.monthUsd}) is used up — AI is paused until the 1st.`
+    // THE WEEKLY REVIEW RUNS EVEN ON A DAY THE DAILY CAP IS SPENT (audit 2026-11-09: the Monday operator
+    // review failed at 5:30am because Sunday night's jobs had used the day). One or two calls a week; the
+    // monthly cap above still applies to them.
+    if (task === 'eve-review' || task === 'quality-audit') return null
     if (s.day >= b.totalUsd) return `Lighthouse's daily AI budget ($${b.totalUsd}) is used up — AI is paused until midnight.`
     if (!INTERACTIVE.has(task) && s.day >= b.automaticUsd) return `Automatic AI jobs hit today's $${b.automaticUsd} cap — paused until midnight.`
     const lim = (task === 'eve' ? 3 : 1) * (Number(b.perTaskHour) || 40)

@@ -375,6 +375,9 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // THE SIDEBAR LISTS EVERY PAGE (Jon, 2026-09-30: "pages are buried… the most important things
   // [should be] readily available"). Today and Eve are rows of their own at the top; every other
   // desk is a heading with its pages always listed under it. No strip across the top of the page.
+  const [moreOpen, setMoreOpen] = useState<Record<string, boolean>>({})
+  useEffect(() => { try { const r = localStorage.getItem('shell:more'); if (r) setMoreOpen(JSON.parse(r)) } catch { /* default: tucked */ } }, [])
+  const toggleMore = (k: string) => setMoreOpen(m => { const n = { ...m, [k]: !m[k] }; try { localStorage.setItem('shell:more', JSON.stringify(n)) } catch { /* fine */ } return n })
   const deskRow = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => {
     const Icon = DESK_ICONS[x.desk.key] || Gauge
     const active = !!deskHere && deskHere.desk.key === x.desk.key
@@ -399,11 +402,26 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           <Icon size={13} className={here ? 'text-brand-600' : ''} />
           <span className="truncate">{x.desk.label}</span>
         </div>
-        {x.views.map(v => {
-          const on = !!viewHere && viewHere.to === v.to
-          return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint} aria-current={on ? 'page' : undefined}
-            className={'block pl-[31px] pr-2 py-[5px] rounded-md text-[13px] truncate ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-ink/75 hover:text-ink hover:bg-app')}>{v.label}</Link>
-        })}
+        {(() => {
+          // THE DAILY PAGES SHOW; THE RARE ONES SIT BEHIND "+N more" (usage audit 2026-11-09: 49 rows, about
+          // half of them opened by nobody in a month). Not a folded section — the desk's main pages are
+          // always listed; the line only tucks away the rarely-used ones, remembers being opened, and the
+          // page you are on always shows.
+          const openMore = !!moreOpen[x.desk.key]
+          const hidden = x.views.filter(v => v.more && !(viewHere && viewHere.to === v.to))
+          const shown = openMore ? x.views : x.views.filter(v => !v.more || (viewHere && viewHere.to === v.to))
+          return <>
+            {shown.map(v => {
+              const on = !!viewHere && viewHere.to === v.to
+              return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint} aria-current={on ? 'page' : undefined}
+                className={'block pl-[31px] pr-2 py-[5px] rounded-md text-[13px] truncate ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-ink/75 hover:text-ink hover:bg-app')}>{v.label}</Link>
+            })}
+            {hidden.length > 0 || openMore ? (
+              <button type="button" onClick={() => toggleMore(x.desk.key)} title={openMore ? 'Show only the daily pages' : hidden.map(v => v.label).join(' · ')}
+                className="block w-full text-left pl-[31px] pr-2 py-[4px] rounded-md text-[12px] text-muted hover:text-ink hover:bg-app">{openMore ? 'Less' : '+' + hidden.length + ' more'}</button>
+            ) : null}
+          </>
+        })()}
       </div>
     )
   }

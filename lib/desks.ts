@@ -28,7 +28,8 @@ export type DeskView = {
   label: string
   /** Hover text for the tab: what you do there, in a line. */
   hint: string
-  /** Secondary: listed under "More" on the strip instead of inline. */
+  /** Secondary: rarely opened (usage audit 2026-11-09) — behind the desk's "+N more" line in the sidebar.
+   *  Still in Jump (⌘K), and always shown while you are on it. */
   more?: boolean
   /** Other paths that light this tab up (sub-pages, old URLs, redirects). */
   match?: string[]
@@ -70,9 +71,9 @@ export const DESKS: Desk[] = [
       { to: '/upkeep', label: 'Upkeep', hint: 'PM audits, deep cleans, A/C filters & coils, batteries, inspections, FF&E — what is late, due soon and on track, per unit' },
       { to: '/schedule', label: 'Schedule', hint: 'Turnovers by day: stage, assign and push to Breezeway' },
       // Scheduling sits together (Jon, 2026-09-30: "Scheduler — all the scheduling features").
-      { to: '/team', label: 'Week plan', hint: 'Who works which day, by trade and market, with the 14-day forecast' },
+      { to: '/team', label: 'Week plan', hint: 'Who works which day, by trade and market, with the 14-day forecast', more: true },
       // Open & Close (Jon, 2026-10-19): the opening and closing roadmap — gates with their real rows, carry-over, handover, print sheet.
-      { to: '/checklist', label: 'Open & Close', hint: 'Opening and closing roadmap: who is in, every clean has a person, extensions, arrivals, glitches — sign off, carry to tomorrow, print' },
+      { to: '/checklist', label: 'Open & Close', hint: 'Opening and closing roadmap: who is in, every clean has a person, extensions, arrivals, glitches — sign off, carry to tomorrow, print', more: true },
       { to: '/maintenance', label: 'Maintenance', hint: 'Work orders, open Breezeway maintenance and glitches in one aged list', match: ['/requests'] },
       { to: '/leadership', label: 'Leadership', hint: 'Everyone’s work on one screen — projects, tasks, vendor follow-ups, misc; filter by owner, property, due; meeting notes become tasks you approve one by one', match: ['/projects'] },
       { to: '/blocked', label: 'Blocked units', hint: 'Units off the calendar right now, longest first, with the block note', more: true },
@@ -88,7 +89,7 @@ export const DESKS: Desk[] = [
       { to: '/claims', label: 'Claims', hint: 'Damage claims with the filing countdown per channel' },
       { to: '/lost-found', label: 'Lost & Found', hint: 'Items found in units, read from the lost-and-found Slack channel: attach the stay, contact the guest, ship or close' },
       { to: '/reservations', label: 'Reservations', hint: 'Arriving, departing, in-house and upcoming bookings' },
-      { to: '/guest-orders', label: 'Guest orders', hint: 'Pre-arrival orders, links, catalog, stock and coupons' },
+      { to: '/guest-orders', label: 'Guest orders', hint: 'Pre-arrival orders, links, catalog, stock and coupons', more: true },
       { to: '/guidebooks', label: 'Guidebooks', hint: 'Guest guidebooks by building: build, fix and push to Guesty' },
       // Parking (Jon, 2026-10-26): the lots we sell and enforce ourselves — Eden first.
       { to: '/lots', label: 'Parking', hint: 'Our lots: the calendar of spots, who is parked where, the staff link, and the cars that should not be there' },
@@ -114,7 +115,7 @@ export const DESKS: Desk[] = [
     views: [
       { to: '/buildings', label: 'Properties', hint: 'Buildings and units: health, fix next, copy and photos; unit pages open from here', match: ['/listings', '/optimize', '/health'] },
       { to: '/channels', label: 'Channels', hint: 'Which listing is live on which channel, and what broke' },
-      { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP' },
+      { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP', more: true },
     ],
   },
   {
@@ -123,13 +124,13 @@ export const DESKS: Desk[] = [
     views: [
       { to: '/onboarding', match: ['/onboarding/quick'], label: 'Onboarding', hint: 'New-unit inventory links: rooms, counts, photos and the buy list' },
       { to: '/onboarding/linens', label: 'Linens', hint: 'Your linen standard, and the linen order for any set of units' },
-      { to: '/audits', label: 'Quality', hint: 'Unit walks and what they found, dispatched to Breezeway' },
-      { to: '/orders', label: 'Purchasing', hint: 'Buying desk: approve, buy, receive and install' },
+      { to: '/audits', label: 'Quality', hint: 'Unit walks and what they found, dispatched to Breezeway', more: true },
+      { to: '/orders', label: 'Purchasing', hint: 'Buying desk: approve, buy, receive and install', more: true },
       // Catalog (Jon, 2026-10-27): the default onboarding catalog and one per property — approved replacement lists with links.
-      { to: '/catalogs', match: ['/catalog'], label: 'Catalog', hint: 'Approved furniture and amenity catalogs per property, with the links to buy from; build one from a listing’s photos' },
+      { to: '/catalogs', match: ['/catalog'], label: 'Catalog', hint: 'Approved furniture and amenity catalogs per property, with the links to buy from; build one from a listing’s photos', more: true },
       { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks' },
       // Ad Studio (Jon, 2026-11-02): AI-written video ads — brief, script, voice, timeline, export.
-      { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform' },
+      { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform', more: true },
       { to: '/projections', label: 'Projections', hint: 'Next season’s owner revenue model behind the projection decks', more: true },
     ],
     also: ['/ffe'],
@@ -139,9 +140,9 @@ export const DESKS: Desk[] = [
     blurb: 'Team management: hours and labor, each cleaner’s record, training and the inspection scoreboard.',
     views: [
       { to: '/labor', label: 'Labor', hint: 'Payroll against cleans: cost per clean, people, days and the dashboard' },
-      { to: '/cleaners', label: 'Cleaners', hint: 'Each cleaner’s last 90 days: pace, same-day rate and quality' },
+      { to: '/cleaners', label: 'Cleaners', hint: 'Each cleaner’s last 90 days: pace, same-day rate and quality', more: true },
       // Training (Jon, 2026-10-26): how-to videos and FAQs, English and Spanish, assigned to people.
-      { to: '/training', label: 'Training', hint: 'How-to videos and FAQs for the team, in English and Spanish — assign them, see who finished' },
+      { to: '/training', label: 'Training', hint: 'How-to videos and FAQs for the team, in English and Spanish — assign them, see who finished', more: true },
       // Team scoreboard (Jon, 2026-11-06: "a scoreboard for our team, a way to organize the feedback, read
       // the inspection and be able to share the inspection reports with the girls"). Gated by training.
       { to: '/training/scoreboard', label: 'Scoreboard', hint: 'Housekeepers ranked by inspection score, reports to send every 5 inspections, feedback to follow up, every inspection to read', match: ['/scoreboard'] },
@@ -156,9 +157,9 @@ export const DESKS: Desk[] = [
       { to: '/owner-audit', label: 'Statement review', hint: 'Owner statements checked against bookings — review, approve, sign off' },
       { to: '/billing', label: 'Billable hours', hint: 'Owner billables: ops review, then final review, then export' },
       { to: '/clean-invoices', label: 'Cleaning invoices', hint: 'Upload a vendor cleaning invoice — every line checked against the cleans on record, mismatches flagged before it is paid' },
-      { to: '/revenue', label: 'Revenue', hint: 'Revenue, occupancy, ADR and RevPAR by building and unit, with the checks behind them' },
-      { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made' },
-      { to: '/revenue-app', label: 'Revenue App', hint: 'The Revenue App, where budgets and forecasting live' },
+      { to: '/revenue', label: 'Revenue', hint: 'Revenue, occupancy, ADR and RevPAR by building and unit, with the checks behind them', more: true },
+      { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made', more: true },
+      { to: '/revenue-app', label: 'Revenue App', hint: 'The Revenue App, where budgets and forecasting live', more: true },
     ],
     // The KPI board stays parked (Jon, 2026-09-09: "hide that for now") until it is rebuilt on the
     // shared numbers; it still belongs here.
@@ -172,10 +173,10 @@ export const DESKS: Desk[] = [
       // that directs our administrator").
       { to: '/admin', label: 'Admin desk', hint: 'What needs an administrator today: listings not for sale or not connected, reply owed, optimization and photo work, blocked units — and the review report' },
       { to: '/users', label: 'Users & admin', hint: 'People, roles and every setting' },
-      { to: '/system-health', label: 'Health', hint: 'Is everything working: syncs, feeds and the daily self-audit' },
-      { to: '/links', label: 'Share links', hint: 'Every share link and passcode in one list' },
-      { to: '/vault', label: 'Vault', hint: 'Credentials and paperwork, revealed after unlock' },
-      { to: '/api-keys', label: 'API keys', hint: 'Your personal read-only keys for the API' },
+      { to: '/system-health', label: 'Health', hint: 'Is everything working: syncs, feeds and the daily self-audit', more: true },
+      { to: '/links', label: 'Share links', hint: 'Every share link and passcode in one list', more: true },
+      { to: '/vault', label: 'Vault', hint: 'Credentials and paperwork, revealed after unlock', more: true },
+      { to: '/api-keys', label: 'API keys', hint: 'Your personal read-only keys for the API', more: true },
     ],
     also: ['/integrations', '/settings/labor', '/stay-window'],
   },
