@@ -26,7 +26,10 @@ export const DEFAULT_BUDGET: AiBudget = { automaticUsd: 5, totalUsd: 9, monthUsd
 // REVIEW REPLIES ARE NEVER CAPPED (Jon, 2026-11-09: "never not let me respond to reviews"). A reply
 // costs a fraction of a cent; a review left unanswered costs bookings. Only the manual Pause stops
 // them — no daily, monthly or hourly cap does.
-export const NEVER_CAPPED: ReadonlySet<string> = new Set(['review-reply'])
+// SLACK TRANSLATION IS NEVER CAPPED EITHER (Jon, 2026-11-10: "fix the translation feature in slack —
+// super important"). A teammate who can't read the room can't work; a translation costs well under a
+// cent. Guidebook bulk builds were spending the whole daily cap and silently switching it off.
+export const NEVER_CAPPED: ReadonlySet<string> = new Set(['review-reply', 'translate'])
 
 // THE WEEKLY REVIEW RUNS EVEN ON A DAY THE DAILY CAP IS SPENT (audit 2026-11-09: the Monday operator
 // review failed at 5:30am because Sunday night's jobs had used the day). One or two calls a week; the
