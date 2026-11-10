@@ -71,7 +71,10 @@ function buildZip(entries: { name: string; data: Buffer }[]): Buffer {
 //   4 currency · 5 number 0.00 · 6 total currency (bold, top border) · 7 total label · 8 muted
 //   9 link · 10 blue header (bold white on #3F5BA9 — the Cloudbeds import template's header)
 export type XCell = { v: string | number; s?: number; num?: boolean; f?: string }   // f: a formula, written without the leading '='
-export type XSheet = { name: string; widths: number[]; rows: XCell[][]; links?: { ref: string; url: string }[] }
+export type XSheet = { name: string; widths: number[]; rows: XCell[][]; links?: { ref: string; url: string }[]
+  // Optional layout (2026-11-10, the branded need list): merged ranges ("A1:H1"), rows frozen above the
+  // scroll, gridlines off, and row heights in points keyed by 1-based row number.
+  merges?: string[]; freezeRows?: number; hideGrid?: boolean; heights?: Record<number, number> }
 
 export function colRef(i: number): string {
   let n = i + 1; let s = ''
@@ -81,20 +84,34 @@ export function colRef(i: number): string {
 const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
   '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
   '<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/></numFmts>' +
-  '<fonts count="6"><font><sz val="11"/><name val="Calibri"/></font>' +
+  '<fonts count="15"><font><sz val="11"/><name val="Calibri"/></font>' +
   '<font><b/><sz val="11"/><name val="Calibri"/></font>' +
   '<font><b/><sz val="14"/><name val="Calibri"/></font>' +
   '<font><sz val="11"/><color rgb="FF6B7280"/><name val="Calibri"/></font>' +
   '<font><u/><sz val="11"/><color rgb="FF2563EB"/><name val="Calibri"/></font>' +
-  '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font></fonts>' +
-  '<fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
+  '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>' +
+  // 6-14 · the branded set (Stay teal #1F5F5B, ink #15212B)
+  '<font><b/><sz val="20"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>' +
+  '<font><sz val="11"/><color rgb="FFE2EFED"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="12"/><color rgb="FF1F5F5B"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="9"/><color rgb="FF1C4A7E"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="9"/><color rgb="FF25633A"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="9"/><color rgb="FF56626B"/><name val="Calibri"/></font>' +
+  '<font><sz val="10"/><color rgb="FF6B7880"/><name val="Calibri"/></font>' +
+  '<font><b/><sz val="14"/><color rgb="FF15212B"/><name val="Calibri"/></font>' +
+  '<font><u/><b/><sz val="10"/><color rgb="FF1F5F5B"/><name val="Calibri"/></font></fonts>' +
+  '<fills count="11"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>' +
   '<fill><patternFill patternType="solid"><fgColor rgb="FFEEEFF3"/><bgColor indexed="64"/></patternFill></fill>' +
-  '<fill><patternFill patternType="solid"><fgColor rgb="FF3F5BA9"/><bgColor indexed="64"/></patternFill></fill></fills>' +
-  '<borders count="3"><border><left/><right/><top/><bottom/><diagonal/></border>' +
+  '<fill><patternFill patternType="solid"><fgColor rgb="FF3F5BA9"/><bgColor indexed="64"/></patternFill></fill>' +
+  // 4-10 · branded fills: teal, soft teal, must, recommended, optional, ink, input cell
+  ['FF1F5F5B', 'FFE2EFED', 'FFE1EAF5', 'FFE0EFE4', 'FFECEFF1', 'FF15212B', 'FFFFF8E6'].map(c => `<fill><patternFill patternType="solid"><fgColor rgb="${c}"/><bgColor indexed="64"/></patternFill></fill>`).join('') +
+  '</fills>' +
+  '<borders count="4"><border><left/><right/><top/><bottom/><diagonal/></border>' +
   '<border><left/><right/><top/><bottom style="thin"><color rgb="FFB8BCC6"/></bottom><diagonal/></border>' +
-  '<border><left/><right/><top style="medium"/><bottom/><diagonal/></border></borders>' +
+  '<border><left/><right/><top style="medium"/><bottom/><diagonal/></border>' +
+  '<border><left/><right/><top/><bottom style="thin"><color rgb="FFDCE2E0"/></bottom><diagonal/></border></borders>' +
   '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-  '<cellXfs count="11">' +
+  '<cellXfs count="26">' +
   '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
   '<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
   '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
@@ -107,6 +124,25 @@ const XLSX_STYLES = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
   '<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
   // 10 · blue header: bold white on the import-template blue (the Cloudbeds sheet's own look).
   '<xf numFmtId="0" fontId="5" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/>' +
+  // 11-25 · BRANDED (2026-11-10): 11 title band · 12 subtitle band · 13 table header (white on ink) ·
+  // 14 group row (teal on soft teal) · 15 body · 16 body muted · 17 big number · 18 must · 19 recommended ·
+  // 20 optional · 21 teal link · 22 call-to-action band (white on ink) · 23 input cell (pale yellow) ·
+  // 24 bold centred · 25 muted note, no border. Cells wrap and sit vertically centred.
+  '<xf numFmtId="0" fontId="6" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="7" fillId="4" borderId="0" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+  '<xf numFmtId="0" fontId="5" fillId="9" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+  '<xf numFmtId="0" fontId="8" fillId="5" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="0" fillId="0" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+  '<xf numFmtId="0" fontId="12" fillId="0" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+  '<xf numFmtId="0" fontId="13" fillId="0" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="9" fillId="6" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="10" fillId="7" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="11" fillId="8" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="14" fillId="0" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="5" fillId="9" borderId="0" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
+  '<xf numFmtId="0" fontId="13" fillId="10" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="1" fillId="0" borderId="3" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>' +
+  '<xf numFmtId="0" fontId="12" fillId="0" borderId="0" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center" wrapText="1"/></xf>' +
   '</cellXfs></styleSheet>'
 
 function sheetXml(sh: XSheet): string {
@@ -125,16 +161,23 @@ function sheetXml(sh: XSheet): string {
       else if (cellDef.v === '' || cellDef.v == null) cells.push(`<c r="${ref}"${s}/>`)
       else cells.push(`<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xesc(cellDef.v)}</t></is></c>`)
     }
-    rowsXml.push(`<row r="${r + 1}">` + cells.join('') + '</row>')
+    const ht = sh.heights?.[r + 1]
+    rowsXml.push(`<row r="${r + 1}"${ht ? ` ht="${ht}" customHeight="1"` : ''}>` + cells.join('') + '</row>')
   }
   const links = sh.links || []
   const hyperlinks = links.length
     ? '<hyperlinks>' + links.map((l, i) => `<hyperlink ref="${l.ref}" r:id="rhl${i + 1}"/>`).join('') + '</hyperlinks>'
     : ''
+  const fr = sh.freezeRows || 0
+  const views = (fr || sh.hideGrid)
+    ? `<sheetViews><sheetView workbookViewId="0"${sh.hideGrid ? ' showGridLines="0"' : ''}>${fr ? `<pane ySplit="${fr}" topLeftCell="A${fr + 1}" activePane="bottomLeft" state="frozen"/>` : ''}</sheetView></sheetViews>`
+    : ''
+  const merges = sh.merges?.length ? `<mergeCells count="${sh.merges.length}">` + sh.merges.map(m => `<mergeCell ref="${m}"/>`).join('') + '</mergeCells>' : ''
   return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    views +
     (cols ? '<cols>' + cols + '</cols>' : '') +
-    '<sheetData>' + rowsXml.join('') + '</sheetData>' + hyperlinks + '</worksheet>'
+    '<sheetData>' + rowsXml.join('') + '</sheetData>' + merges + hyperlinks + '</worksheet>'
 }
 
 export function makeXlsx(sheets: XSheet[]): Buffer {

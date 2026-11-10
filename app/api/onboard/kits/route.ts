@@ -1,20 +1,21 @@
 // STARTER KITS — the team side (Jon, 2026-11-10). Gated by the Onboarding key: view lists the links,
 // edit creates and changes them. The client side is /api/public/starter-kit/<code>.
 //
-//   GET                                   view → { ok, links }
+//   GET                                   view → { ok, links, leads }   (leads: emails from the website need list, /kit/plan)
 //   POST { action: 'create', client, property, message, size, sizeLocked, setupFee, preparedBy }  edit → { ok, link }
 //   POST { action: 'update', code, ...patch }    edit → { ok }   (patch.revoke true / false turns the link off / on)
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { listKits, createKit, updateKit } from '@/lib/starter-kit-server'
 import { KIT_CODE } from '@/lib/starter-kit'
+import { listLeads } from '@/lib/need-list-leads'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   const g = await requireLevel('onboarding', 'view')
   if (!g.ok) return g.res
-  return NextResponse.json({ ok: true, links: await listKits() }, { headers: { 'Cache-Control': 'no-store' } })
+  return NextResponse.json({ ok: true, links: await listKits(), leads: await listLeads(300).catch(() => []) }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 export async function POST(req: NextRequest) {
