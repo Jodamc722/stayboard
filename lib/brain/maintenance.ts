@@ -19,17 +19,19 @@
 // REPEATS. Per physical unit + system, ordered by when the event opened:
 //   repeat_n_90d   = how many earlier events of the same system on the same apartment opened in the
 //                    90 days before this one — THE LOOSE COUNT, kept as it was so nothing is lost
-//   is_repeat      = THE STRICT RULE (2026-11-10). An earlier event in those 90 days counts only if
-//                      • it names the SAME PART of the system (lib/task-categories subsystemOf:
-//                        thermostat ≠ condensate leak, dishwasher ≠ fridge), or
-//                      • it was CLOSED and this one opened within 30 days of that fix (the fix did
-//                        not hold, whatever part was named)
+//   is_repeat      = THE STRICT RULE (2026-11-10, tightened again in pass 3 — lib/brain/repeat-rule.ts
+//                    has it in full and is tested). An earlier event in those 90 days counts only if
+//                      • both name a part of the system and it is the SAME PART (lib/task-categories
+//                        subsystemOf: thermostat ≠ condensate leak, dishwasher ≠ fridge), or
+//                      • it was CLOSED, this one opened within 30 days of that fix, and the two do not
+//                        name two DIFFERENT parts (the fix did not hold)
 //                    and never when:
 //                      • the system is 'other' (two unrelated issues are not a pattern) or
 //                        'cleaning' (a dirty-unit complaint is a housekeeping miss, not a system
 //                        failing again — it belongs to the cleaning KPIs)
-//                      • the earlier one was still open and opened under 72 hours before — that is
-//                        the same incident reported twice (a glitch and a separate task), not a repeat
+//                      • it opened under 72 hours after the earlier one, and the earlier one was still
+//                        open OR came from another source (a glitch and a separate task) — that is the
+//                        same incident reported twice, not a repeat
 //   prior_event_id = the earlier event that made it a repeat; else the most recent loose one
 // The read reaches 90 days further back than the rows it writes, so the oldest rows written still
 // see their full look-back.
@@ -42,6 +44,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
 import { isTaskDone, isTaskGone, systemOfWith, subsystemOf, isSystemKey, RESOLUTION_KEYS } from '@/lib/task-categories'
 import { loadVendorMap } from './vendors'
+import { repeatVerdict, type RepeatEvent } from './repeat-rule'
 import type { DimUnit } from './spine'
 import { billedOf } from './unit-day'
 import { str, num, numOrNull, aliasKey, todayET, addDays, round2, readIn, pageRead, upsertBatches, type BuildResult } from './shared'
@@ -229,10 +232,11 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
   }
 
   // ── REPEATS ────────────────────────────────────────────────────────────────────────────────────
-  // The part each event names, read from its title (the glitch overview / task name / work order).
+  // The rule itself lives in ./repeat-rule (pure, tested). The part each event names: the part a
+  // person typed at the glitch close step first, else its title (glitch overview / task name / work
+  // order), else the root cause they wrote. null = no part named.
   const subOf: Record<string, string | null> = {}
-  for (const e of events) subOf[e.event_id] = subsystemOf(e.system, str(e.title))
-  const NO_REPEAT: Record<string, boolean> = { other: true, cleaning: true }
+  for (const e of events) subOf[e.event_id] = subsystemOf(e.system, str(e.part)) || subsystemOf(e.system, str(e.title)) || subsystemOf(e.system, str(e.root_cause))
   const groups: Record<string, Ev[]> = {}
   for (const e of events) {
     e.repeat_n_90d = 0; e.is_repeat = false; e.prior_event_id = null
@@ -240,38 +244,25 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
     const k = e.physical_unit_id + '|' + e.system
     ;(groups[k] = groups[k] || []).push(e)
   }
-  const DAY = 86400_000
-  const WINDOW_MS = 90 * DAY, FIX_MS = 30 * DAY, DUP_MS = 72 * 3600_000
-  let loose = 0, strict = 0
+  const asRule = (e: Ev): RepeatEvent => {
+    const c = e.closed_at ? Date.parse(str(e.closed_at)) : NaN
+    return { id: e.event_id, source: str(e.source), system: e.system, part: subOf[e.event_id] || null, openedAt: Date.parse(e.opened_at as string), closedAt: Number.isFinite(c) ? c : null }
+  }
+  let loose = 0, strict = 0, samePart = 0, fixFailed = 0
   for (const k of Object.keys(groups)) {
     const list = groups[k].sort((a, b) => (a.opened_at as string) < (b.opened_at as string) ? -1 : (a.opened_at as string) > (b.opened_at as string) ? 1 : (a.event_id < b.event_id ? -1 : 1))
+    const ruled = list.map(asRule)
     for (let i = 0; i < list.length; i++) {
       const e = list[i]
-      const at = Date.parse(e.opened_at as string)
-      const sub = subOf[e.event_id]
-      let n = 0
-      let hit: Ev | null = null
-      for (let j = i - 1; j >= 0; j--) {
-        const p = list[j]
-        const pAt = Date.parse(p.opened_at as string)
-        if (at - pAt > WINDOW_MS) break
-        n++
-        if (hit || NO_REPEAT[e.system]) continue
-        const pClosed = p.closed_at ? Date.parse(p.closed_at as string) : NaN
-        const closedBefore = Number.isFinite(pClosed) && pClosed <= at
-        if (!closedBefore && at - pAt < DUP_MS) continue          // the same incident, reported twice
-        const sameSub = !!sub && sub === subOf[p.event_id]
-        const fixFailed = closedBefore && at - pClosed <= FIX_MS
-        if (sameSub || fixFailed) hit = p
-      }
-      e.repeat_n_90d = n
-      e.is_repeat = !!hit
-      e.prior_event_id = hit ? hit.event_id : (n >= 1 ? list[i - 1].event_id : null)
-      if (n >= 1 && e.system !== 'other') loose++
-      if (hit) strict++
+      const v = repeatVerdict(ruled[i], ruled.slice(0, i))
+      e.repeat_n_90d = v.loose
+      e.is_repeat = !!v.hit
+      e.prior_event_id = v.hit ? v.hit : (v.loose >= 1 ? list[i - 1].event_id : null)
+      if (v.loose >= 1 && e.system !== 'other') loose++
+      if (v.hit) { strict++; if (v.why === 'same_part') samePart++; else fixFailed++ }
     }
   }
-  notes.push('repeats: ' + strict + ' strict (same part, or within 30 days of a closed fix) of ' + loose + ' loose (same system within 90 days)')
+  notes.push('repeats: ' + strict + ' strict (' + samePart + ' same part, ' + fixFailed + ' back within 30 days of a closed fix with no different part named) of ' + loose + ' loose (same system within 90 days)')
 
   // Only the rows inside the write window are written; the 90 days before it were read for context.
   const writeFromIso = writeFrom + 'T00:00:00Z'

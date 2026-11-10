@@ -133,6 +133,8 @@ export function canUseEve(access: Access): boolean {
 export type EveMessage = { role: string; content: any }
 
 export type RunEveInput = {
+  /** Bill every model call of this run to this ai_usage task (the answer check uses 'eval-run'); model choice is unchanged. */
+  billAs?: string
   access: Access
   messages: EveMessage[]
   /** Domains to pre-open so she does not spend a turn on it (the /eve page does this). */
@@ -465,6 +467,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // SHORT LOOKUPS ONLY (2026-11-10, when the quick path first actually ran): anything that ranks,
     // costs, compares units or decides upkeep is judgement and goes straight to the main model.
     const DEEP_RE = /\b(why|compare|comparison|trend|analy[sz]\w*|plan|strategy|forecast|projection|revenue|profit|money|budget|payout|statement|owner report|recommend\w*|should (?:we|i)|what do you think|audit|investigate|root cause|explain|summar\w*|report|draft|write|email|policy|decide|decision|worst|best|most|least|rank\w*|top \d+|cost\w*|adr|revpar|occupancy|pacing|margin|upkeep|replace|repair|retire|overdue|which (?:units|buildings|owners|vendors|cleaners)|how (?:are|is|did) (?:we|they|it) doing|everything about|360|refund|claim|c[oó]mo vamos|por qu\w*|cu[aá]nto)\b/i
+    const bill = input.billAs ? String(input.billAs) : null
     let task: 'eve' | 'eve-fast' = (!agentOn && !input.teach && lastUser.length <= 220 && messages.length <= 6 && !DEEP_RE.test(lastUser)) ? 'eve-fast' : 'eve'
     for (let turn = 0; turn < limit; turn++) {
       turns = turn + 1
@@ -522,7 +525,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       if (task === 'eve-fast' && turn >= 4) { task = 'eve'; toolsUsed.push('_escalated') }
       let pair = await modelPairFor(task)
       const call = async (model: string, body: Record<string, any>) => {
-        const rr = await aiFetch(task, { method: 'POST', headers: HEADERS, body: JSON.stringify({ model, ...body }) })
+        const rr = await aiFetch(bill || task, { method: 'POST', headers: HEADERS, body: JSON.stringify({ model, ...body }) })
         return { r: rr, d: (await rr.json().catch(() => ({}))) as any }
       }
       const baseBody = { max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }
@@ -553,14 +556,14 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       if (!r.ok && longCache && /ttl|cache_control|extended-cache/i.test(JSON.stringify(d?.error || ''))) {
         longCache = false
         system[0] = { ...system[0], cache_control: { type: 'ephemeral' } }
-        r = await aiFetch('eve', { method: 'POST', headers: HEADERS, body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }) })
+        r = await aiFetch(bill || 'eve', { method: 'POST', headers: HEADERS, body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(toolset.length ? { tools: toolset } : {}), messages }) })
         d = await r.json()
       }
 
       // If this model/account cannot use the server-side search tool, lose the search — not the answer.
       if (!r.ok && webOk && /web_search/i.test(JSON.stringify(d?.error || ''))) {
         webOk = false
-        r = await aiFetch('eve', {
+        r = await aiFetch(bill || 'eve', {
           method: 'POST',
           headers: HEADERS,
           body: JSON.stringify({ model: await modelFor('eve'), max_tokens: noTools ? 600 : 4096, system, ...(noTools ? {} : { tools: allowed(wireTools(open)) }), messages }),

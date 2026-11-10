@@ -43,8 +43,12 @@ export type BuildResult = { rows: number; partial: boolean; error?: string; note
  * built under the old rule is rebuilt once instead of sitting beside new rows that disagree with it.
  *   2 — 2026-11-10: month-aligned chunks + Revenue Center's Expedia cleaning split and
  *       fareAccommodation fallback; double-booked nights keep both stays' money; tighter repeats.
+ *   3 — 2026-11-10 (brain pass 3): repeats tightened again (lib/brain/repeat-rule.ts) — the 30-day
+ *       fix window no longer joins two DIFFERENT named parts, a second report from another source
+ *       inside 72 h is the same incident, and the part words match on word edges. Forces one deep
+ *       rebuild so every fact_maintenance_event row and today's unit_health_daily use the new rule.
  */
-export const DEFS_VERSION = 2
+export const DEFS_VERSION = 3
 
 export const TZ = 'America/New_York'
 export const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))

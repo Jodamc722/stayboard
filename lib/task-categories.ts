@@ -276,11 +276,14 @@ export function systemOf(text: any, category?: any): SystemKey { return systemOf
 // "The A/C failed twice" is only a pattern when it is the same failure: a thermostat in March and a
 // condensate leak in May are two different jobs on one system. The repeat rule (lib/brain/maintenance)
 // asks for the same system AND the same part named here — or a second call within 30 days of a
-// closed fix, whatever the part. null = no part named; two nulls are not "the same part".
+// closed fix when no DIFFERENT part is named (lib/brain/repeat-rule). null = no part named; two nulls
+// are not "the same part". Word edges matter here (pass 3, 2026-11-10): "bath" matched every
+// "bathroom sink", "range" every "strange"/"arrange", "table" every "unstable", "floor" every "2nd
+// floor", "handle" every "please handle" — each one a false "same part" between unrelated jobs.
 const SUBSYSTEMS: Partial<Record<SystemKey, { key: string; re: RegExp }[]>> = {
   hvac: [
     { key: 'thermostat', re: /thermostat/i },
-    { key: 'drain_leak', re: /\bleak|condensat|drain|\bdrip|water (on|from|coming)|overflow|pan\b/i },
+    { key: 'drain_leak', re: /\bleak|condensat|drain|\bdrip|water (on|from|coming)|overflow|\bpan\b/i },
     { key: 'not_cooling', re: /not cool|no cool|warm|\bhot\b|cooling|freon|refrigerant|blowing/i },
     { key: 'noise', re: /nois|loud|rattl|vibrat|buzz/i },
     { key: 'not_heating', re: /no heat|not heat|heating|cold air/i },
@@ -290,7 +293,7 @@ const SUBSYSTEMS: Partial<Record<SystemKey, { key: string; re: RegExp }[]>> = {
   plumbing: [
     { key: 'water_heater', re: /water heater|hot water|no hot/i },
     { key: 'toilet', re: /toilet|\bflush|bidet/i },
-    { key: 'shower_tub', re: /shower|\btub\b|bath/i },
+    { key: 'shower_tub', re: /shower|\btub\b|bathtub|\bbath\b/i },
     { key: 'sink_faucet', re: /\bsink\b|faucet|\btap\b/i },
     { key: 'drain_clog', re: /drain|clog|backed up|disposal/i },
     { key: 'leak', re: /\bleak|\bdrip|flood|\bpipe|overflow/i },
@@ -301,7 +304,7 @@ const SUBSYSTEMS: Partial<Record<SystemKey, { key: string; re: RegExp }[]>> = {
     { key: 'washer', re: /(?<!dish)washer|washing machine|w\/d|laundry/i },
     { key: 'dryer', re: /(?<!hair ?)dryer/i },
     { key: 'fridge', re: /fridge|refrigerator|freezer|ice ?maker|ice machine/i },
-    { key: 'oven_stove', re: /\boven\b|\bstove\b|cook ?top|range/i },
+    { key: 'oven_stove', re: /\boven\b|\bstove\b|cook ?top|\brange\b/i },
     { key: 'microwave', re: /microwave/i },
     { key: 'coffee', re: /coffee|keurig|nespresso/i },
     { key: 'small', re: /toaster|blender|vacuum|\biron\b|hair ?dryer/i },
@@ -310,7 +313,7 @@ const SUBSYSTEMS: Partial<Record<SystemKey, { key: string; re: RegExp }[]>> = {
     { key: 'keypad_code', re: /key ?pad|door code|\bcode\b|smart ?lock|keyless|schlage|yale|\bbatter/i },
     { key: 'fob_card', re: /\bfob\b|key ?card|access card/i },
     { key: 'key', re: /\bkeys?\b|lock ?box/i },
-    { key: 'door_hardware', re: /dead ?bolt|handle|knob|latch|door (won|does|will not|not clos)/i },
+    { key: 'door_hardware', re: /dead ?bolt|door ?handle|\bknobs?\b|\blatch|door (won|does|will not|not clos)/i },
     { key: 'gate_garage', re: /\bgate\b|garage|intercom|buzzer/i },
   ],
   wifi_tv: [
@@ -333,13 +336,13 @@ const SUBSYSTEMS: Partial<Record<SystemKey, { key: string; re: RegExp }[]>> = {
     { key: 'rodent', re: /\bmice\b|\bmouse\b|\brats?\b|rodent/i },
   ],
   furniture: [
-    { key: 'bed', re: /mattress|bed ?frame|\bbed\b|headboard/i },
     { key: 'sofa', re: /sofa|couch|sleeper/i },
+    { key: 'bed', re: /mattress|bed ?frame|\bbed\b|headboard/i },
     { key: 'blinds', re: /blind|curtain|shade/i },
     { key: 'door_window', re: /sliding door|window|screen|balcony|patio/i },
     { key: 'cabinet', re: /cabinet|drawer|closet|shelf|shelv/i },
-    { key: 'surface', re: /paint|drywall|caulk|grout|floor/i },
-    { key: 'seating', re: /chair|stool|table|dresser|night ?stand/i },
+    { key: 'surface', re: /\bpaint|drywall|caulk|grout|flooring|floor ?boards?|\btiles?\b/i },
+    { key: 'seating', re: /\bchairs?\b|\bstools?\b|\btables?\b|dresser|night ?stand/i },
   ],
 }
 

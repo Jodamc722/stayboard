@@ -142,6 +142,16 @@ export const AI_TASKS: AiTask[] = [
   { key: 'probe-judge', title: 'Eve — learning probe judge', group: 'Background', def: 'haiku', background: true,
     what: 'Reads her tool-less answer to a probe next to the expected answer and says pass or fail, with one line why.',
     matters: 'Decides the retention number on the Learning tab. Up to fifteen calls a night, each a few hundred tokens.' },
+  // THE ANSWER CHECK (2026-11-10, lib/eve/evals.ts). Retention asks "does she still know what she was
+  // told" with tools off; this asks "does she answer a real question correctly" with her read-only
+  // tools on. Approved questions only, at most twenty a run, weekly and on demand. Both keys are
+  // automatic (not on the interactive list), so the automatic daily cap stops them.
+  { key: 'eval-run', title: 'Eve — answer check (asking the questions)', group: 'Background', def: 'sonnet', background: true, inherit: 'eve',
+    what: 'Asks up to twenty approved questions through Eve’s real chat loop with only her read-only tools, once a week and when an admin presses Run now. Her model choice inside the loop is unchanged; this key is what the run is metered as.',
+    matters: 'Decides the answer-accuracy number on How Eve is doing. Each question is a full Eve answer, so a run costs about what twenty chat questions cost.' },
+  { key: 'eval-judge', title: 'Eve — answer check (the judge)', group: 'Background', def: 'haiku', background: true, inherit: 'probe-judge',
+    what: 'Reads her answer next to the approved expected answer — or, for a seeded question, the method it must follow (which tools, which caveats) — and says pass or fail with one line why.',
+    matters: 'Up to twenty small calls a run. A lenient judge flatters the accuracy number; nothing reaches a person or a guest.' },
   // THE LIVING MIND (2026-09-23, lib/eve/brain.ts). Jon: "operate like a neural network … constantly
   // updating, learning, improving." Two or three calls a night: the reflection on yesterday, today's
   // checkable predictions, and one read of every building for the dossiers.

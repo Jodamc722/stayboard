@@ -36,6 +36,9 @@ export type Desk = {
 // 'learning-judge', which no call has ever billed under — the learning audit bills 'probe-writer' and
 // 'probe-judge' (lib/eve/learning-audit.ts) — so its probes cost the desk nothing on paper. The
 // scheduled twins ('…-auto', lib/ai-budget-rules AUTO_TWIN) sit with the desk that runs them.
+// The quick path ('eve-fast') and the memory pick for a question ('memory-recall') are part of an
+// answer, so they are the Answer desk's; the answer check ('eval-run', 'eval-judge', lib/eve/evals.ts)
+// is the Reviewer's — it grades answers, it does not give them (2026-11-10).
 export const DESKS: Desk[] = [
   {
     key: 'interpreter', label: 'Interpreter', lane: 'translation',
@@ -46,7 +49,7 @@ export const DESKS: Desk[] = [
   {
     key: 'answer', label: 'Answer', lane: 'qa',
     blurb: 'A tag at the front, a thread under her answer, the web chat or Telegram: she reads the records and answers.',
-    receipts: ['slack-eve', 'eve-ask'], aiTasks: ['eve', 'eve-vision', 'eve-correction'], sources: ['chat', 'slack', 'telegram', 'cron:eve-ask'],
+    receipts: ['slack-eve', 'eve-ask'], aiTasks: ['eve', 'eve-fast', 'memory-recall', 'eve-vision', 'eve-correction'], sources: ['chat', 'slack', 'telegram', 'cron:eve-ask'],
     hands: 'Answers; any side effect goes through propose_action and its rung. A channel post from a conversation needs a task, glitch, booking or Slack message behind it.',
   },
   {
@@ -71,7 +74,7 @@ export const DESKS: Desk[] = [
   {
     key: 'reviewer', label: 'Reviewer', lane: 'review',
     blurb: 'The Monday review, the quality audit, the expectations desk, the nightly learning audit and the Team-Member Score itself.',
-    receipts: ['eve-review', 'quality-audit', 'expectations', 'eve-learn', 'eve-metrics', 'eve-audit', 'eve-scorecard', 'learn'], aiTasks: ['eve-review', 'quality-audit', 'expectations', 'expectations-auto', 'learn', 'eve-brain', 'probe-writer', 'probe-judge'],
+    receipts: ['eve-review', 'quality-audit', 'expectations', 'eve-learn', 'eve-metrics', 'eve-audit', 'eve-scorecard', 'learn'], aiTasks: ['eve-review', 'quality-audit', 'expectations', 'expectations-auto', 'learn', 'eve-brain', 'probe-writer', 'probe-judge', 'eval-run', 'eval-judge'],
     sources: ['cron:eve-review', 'nightly', 'eve-sleep', 'coverage', 'system'],
     hands: 'Files plans and questions to the ledger; posts a short version to #leadership via the slack_post rung. Grades nothing of its own as worked.',
   },

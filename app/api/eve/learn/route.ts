@@ -11,6 +11,7 @@ import { studyPending } from '@/lib/eve/study'
 import { learnLingo } from '@/lib/eve/voice'
 import { askCalibrationQuestions } from '@/lib/eve/operating-model'
 import { runLearningAudit } from '@/lib/eve/learning-audit'
+import { runEvalsIfDue } from '@/lib/eve/evals'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recordRun } from '@/lib/automation-runs'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
@@ -71,6 +72,7 @@ export async function POST(req: NextRequest) {
 }
 
 async function learn(req: NextRequest, receipt: LearnReceipt): Promise<NextResponse> {
+  const started = Date.now()
   const days = Math.min(120, Math.max(7, Number(new URL(req.url).searchParams.get('days')) || 60))
 
   // THE SWEEP RUNS FIRST, and deliberately does not need the model. It counts real records across
@@ -144,6 +146,13 @@ async function learn(req: NextRequest, receipt: LearnReceipt): Promise<NextRespo
   let audit: any = null
   try { const r = await runLearningAudit({ kind: 'nightly', limit: 10 }); audit = r.ok ? { ok: true, score: r.run?.score, probes: r.run?.probes, failed: r.run?.failed, usd: r.run?.usage?.usd } : { ok: false, error: r.error } }
   catch (e: any) { audit = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+
+  // DOES SHE ANSWER CORRECTLY? (2026-11-10, lib/eve/evals.ts). Every night the thumbs-up and corrected
+  // chats are pulled into the review queue (database only); once a week, up to twenty APPROVED questions
+  // are asked through her real loop with read-only tools and judged. It only starts with time in hand and
+  // stops by 230 s so the FAQ pass below keeps its minute; a night without time tries again the next.
+  try { const ev = await runEvalsIfDue({ deadline: started + 230_000 }); audit = { ...(audit || {}), evals: ev.run ? { ok: ev.ok, accuracy: ev.run.accuracy, asked: ev.run.asked, graded: ev.run.graded, stopped: ev.stopped || null, usd: ev.run.usd } : { ok: ev.ok, skipped: ev.skipped || null, error: ev.error || null, harvest: ev.harvest || null } } }
+  catch (e: any) { audit = { ...(audit || {}), evals: { ok: false, error: String(e?.message || e).slice(0, 200) } } }
 
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) {

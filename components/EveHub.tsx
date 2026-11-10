@@ -1,61 +1,97 @@
 'use client'
-// EVE — her own tab (Jon, 2026-09-28: "we need to have an Eve tab where open loops are, training
-// questions, Eve command center overview").
+import { EveLearningAdmin } from '@/components/EveLearningAdmin'
+// EVE — her page (Jon, 2026-09-28: "we need to have an Eve tab where open loops are, training
+// questions, Eve command center overview"). REBUILT 2026-11-10 around one idea: everything she needs
+// from a person is ONE inbox, and the page is five sections, not nine tabs.
 //
-// Three tabs, each already a real thing somewhere else, brought together where a person looks
-// for Eve:
-//   Overview   what needs a person from her today (proposals waiting, questions, unseen thinking,
-//              loops), what she did today, and whether each of her desks is on and actually ran
-//   Open loops the page behind "Keeping tabs" (components/OpenLoops), unchanged
-//   Questions  the things only a person can tell her — answer one and it becomes a memory with
-//              your name on it. "Training questions" in Jon's words.
-//   Expectations  the notes she prepares for CS and admin (Jon, 2026-09-28): what guests keep
-//              being surprised by — parking fees, check-in, what is in the unit — and the sentence
-//              for the listing, the rules or the pre-arrival message that would have spared them.
-//              lib/eve/expectations.ts. Nothing is published; a person marks a note updated.
-// Memory, voice, agent mode and the thinking feed stay in Settings → Eve; the overview links there.
-// Lean rules (components/lean.tsx): one-line header with pills, tabs with counts, rows, detail
-// behind a click.
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders, MessageSquareWarning, Copy, RotateCcw, Play, MessageCircle, Search } from 'lucide-react'
-import { LeanHead, LeanTabs, LeanList, LeanRow, LeanSection, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
+//   Ask Eve          the chat — and Teach mode (components/EveChat), unchanged
+//   Inbox            THE ONE QUEUE (components/EveInbox, lib/eve/inbox.ts): approvals, reply drafts,
+//                    hot Slack loops, questions, plans, notes — ranked, one row each, decided in place.
+//                    Two sub-views keep the full desks behind it: Questions (answered history, "ask
+//                    her what she is unsure of") and Expectations (the copy, the coverage check, publish).
+//   What Eve knows   her knowledge base (components/EveKnowledge — another file, mounted here)
+//   What Eve did     receipts with undo, her day, guest issues, what she is watching, reports
+//   How Eve is doing her health (components/EveHealth — another file) and her desks / night shift
+//
+// EVERY OLD DEEP LINK STILL LANDS (/eve?tab=…): chat → Ask Eve; overview → Inbox; questions and
+// expectations → Inbox's sub-views; loops, issues, day, reports → What Eve did's sub-views; desks →
+// How Eve is doing. ?q= still opens the chat with the question filled in; ?id= still opens a report.
+import { Component, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import dynamic from 'next/dynamic'
+import { Sparkles, Check, X, HelpCircle, RefreshCw, ExternalLink, Loader2, Radar, Brain, Sliders, Copy, RotateCcw, Play, Search, Undo2 } from 'lucide-react'
+import { LeanHead, LeanTabs, LeanList, LeanRow, LeanEmpty, Tag, Pill, IconBtn } from '@/components/lean'
 import { OpenLoops } from '@/components/OpenLoops'
-import { openEve } from '@/components/EveFloat'
-import { NeedsTab, IssuesTab, DayTab, DesksTab } from '@/components/EveBrain'
+import { IssuesTab, DayTab, DesksTab } from '@/components/EveBrain'
 import { EveReports } from '@/components/EveReports'
 import { EveChat } from '@/components/EveChat'
+import { EveInbox } from '@/components/EveInbox'
 
-// WHAT EACH TAB IS, IN ONE LINE (Jon, 2026-09-30: "We need to better understand what each of those
-// things means in the tabs"). Shown under the tabs so nobody has to guess.
-const TAB_BLURB: Record<string, string> = {
-  chat: 'Talk to her — and teach her. Switch on Teach Eve to give her a rule; what she keeps shows under her answer with Undo and Edit, and every teacher\'s lessons are listed on the left.',
-  overview: 'Decisions only a person can make. Open any row to see exactly what she will do, why, and links to the booking, guest thread, Breezeway task, glitch or Slack thread.',
-  issues: 'Every problem a guest raised, followed until it is fixed and the guest has heard back: reported → glitch → task → someone on it → started → fixed → guest told. Red is the missing step.',
-  loops: 'Things said in Slack she is keeping tabs on. She closes them herself when the matching task finishes or the guest is answered.',
-  questions: 'What she does not know yet. Your answer becomes her memory, with your name on it — this is how the team trains her.',
-  day: 'Everything she did, asked for, drafted or only noticed today — repeats folded together.',
-  expectations: 'What guests keep being surprised by (parking, fees, check-in…) and the listing or message copy that would fix it.',
-  desks: 'Her desks and night shift — whether each is on, and when it last actually ran.',
-  reports: 'The long reads — Ops Command, the shared-boards digest, the Monday quality audit, the Sunday scorecard, the plans. Filed here so Slack stays for the day-to-day.',
+type SectionProps = { canEdit?: boolean; isAdmin?: boolean }
+// Built by other hands at the same time: loaded on their own, so a problem in one fails that
+// section only (the boundary below catches a render error; a missing export shows NotReady).
+function NotReady() { return <LeanEmpty>This section is not ready yet.</LeanEmpty> }
+const EveKnowledge = dynamic<SectionProps>(() => import('@/components/EveKnowledge').then((m: any) => m.EveKnowledge || m.default || NotReady), {
+  ssr: false, loading: () => <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1" /> Opening what she knows…</LeanEmpty>,
+})
+const EveHealth = dynamic<SectionProps>(() => import('@/components/EveHealth').then((m: any) => m.EveHealth || m.default || NotReady), {
+  ssr: false, loading: () => <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1" /> Reading how she is doing…</LeanEmpty>,
+})
+
+class SectionBoundary extends Component<{ name: string; children: ReactNode }, { failed: string | null }> {
+  state: { failed: string | null } = { failed: null }
+  static getDerivedStateFromError(e: any) { return { failed: String(e?.message || e || 'error').slice(0, 200) } }
+  render() {
+    if (this.state.failed) return <LeanEmpty>{this.props.name} could not open: {this.state.failed}</LeanEmpty>
+    return this.props.children
+  }
 }
 
-type TabKey = 'chat' | 'overview' | 'issues' | 'loops' | 'questions' | 'day' | 'expectations' | 'desks' | 'reports'
-type HotLoop = { id: string; kind: string; summary: string; unit: string | null; building: string | null; owner: string | null; urgent: boolean; late: boolean; hours: number; link: string; channel: string | null }
+type Section = 'ask' | 'inbox' | 'knows' | 'did' | 'health'
+type InboxView = 'queue' | 'questions' | 'expectations'
+type DidView = 'receipts' | 'day' | 'issues' | 'loops' | 'reports'
+type TabKey = string
+
+// WHAT EACH SECTION IS, IN ONE LINE (Jon, 2026-09-30: "We need to better understand what each of
+// those things means in the tabs").
+const BLURB: Record<Section, string> = {
+  ask: 'Talk to her — and teach her. Switch on Teach Eve to give her a rule; what she keeps shows under her answer with Undo and Edit.',
+  inbox: 'Everything she needs from a person, in one queue, most urgent first. The button on a row is the decision; "more" shows exactly what happens, why, and the links.',
+  knows: 'What she knows — the knowledge base she answers from, and what the team has taught her.',
+  did: 'What she did — every action with its undo, her day, the guest issues she is following, what she is watching in Slack, and the long reports.',
+  health: 'How she is doing — her scores, what she gets wrong, and whether each desk and night shift is on and actually ran.',
+}
+const INBOX_VIEWS: { key: InboxView; label: string }[] = [
+  { key: 'queue', label: 'Queue' }, { key: 'questions', label: 'Questions' }, { key: 'expectations', label: 'Expectations' },
+]
+const DID_VIEWS: { key: DidView; label: string; blurb: string }[] = [
+  { key: 'receipts', label: 'Receipts', blurb: 'What she carried out in the last 24 hours — each with Undo while it can still be undone.' },
+  { key: 'day', label: 'Her day', blurb: 'Everything she did, asked for, drafted or only noticed today — repeats folded together.' },
+  { key: 'issues', label: 'Guest issues', blurb: 'Every problem a guest raised, followed until it is fixed and the guest has heard back. Red is the missing step.' },
+  { key: 'loops', label: 'Watching', blurb: 'Things said in Slack she is keeping tabs on. She closes them herself when the matching task finishes or the guest is answered.' },
+  { key: 'reports', label: 'Reports', blurb: 'The long reads — Ops Command, the shared-boards digest, the Monday quality audit, the Sunday scorecard, the plans.' },
+]
+
+/** Old ?tab= keys (and the new ones) → where they land now. */
+const TAB_MAP: Record<string, { s: Section; inbox?: InboxView; did?: DidView }> = {
+  chat: { s: 'ask' }, ask: { s: 'ask' },
+  overview: { s: 'inbox', inbox: 'queue' }, inbox: { s: 'inbox', inbox: 'queue' }, needs: { s: 'inbox', inbox: 'queue' },
+  questions: { s: 'inbox', inbox: 'questions' }, expectations: { s: 'inbox', inbox: 'expectations' },
+  knows: { s: 'knows' }, knowledge: { s: 'knows' },
+  did: { s: 'did', did: 'receipts' }, receipts: { s: 'did', did: 'receipts' }, day: { s: 'did', did: 'day' }, issues: { s: 'did', did: 'issues' },
+  loops: { s: 'did', did: 'loops' }, watching: { s: 'did', did: 'loops' }, reports: { s: 'did', did: 'reports' },
+  health: { s: 'health' }, desks: { s: 'health' },
+}
 
 type Overview = {
   ok: boolean; day: string
   today: { headline: string | null; counts: any; waiting: any[]; decisions: any[]; gaps: string[] | null; error: string | null }
-  loops: { open: number; byKind: Record<string, number>; urgent: number; oldestHours: number | null; top?: HotLoop[] }
+  loops: { open: number; byKind: Record<string, number>; urgent: number; oldestHours: number | null }
   questions: number
-  questionsTop?: { id: string; question: string; why: string | null; scope: string; kind: string }[]
   expectations: number
   thoughts: { unseen: number; allObserving: boolean }
   agent: { enabled: boolean; rungs: Record<string, number> | null }
-  desks: { key: string; label: string; what: string; runs: string; settings: string | null; on: boolean | null; last: { at: string; ok: boolean; did: number | null; error: string | null } | null }[]
+  desks: any[]
 }
-
-const KIND_LABEL: Record<string, string> = { guest_ask: 'guest asks', problem: 'problems', commitment: 'promised', question: 'unanswered', decision: 'decisions' }
-const MODE_TONE: Record<string, 'emerald' | 'amber' | 'sky' | 'slate' | 'violet'> = { act: 'emerald', propose: 'amber', draft: 'sky', deferred: 'violet', observe: 'slate' }
 
 const ago = (iso: string | null | undefined): string => {
   if (!iso) return 'never'
@@ -68,14 +104,17 @@ const ago = (iso: string | null | undefined): string => {
 }
 
 export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: boolean; loopsLevel: string; initialTab?: TabKey; isAdmin?: boolean }) {
-  /* CHAT IS THE FIRST TAB (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can teach Eve"). */
-  const [tab, setTab] = useState<TabKey>(initialTab || 'chat')
+  /* CHAT IS THE FIRST SECTION (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where we can teach Eve"). */
+  const start = TAB_MAP[initialTab || ''] || TAB_MAP.chat
+  const [section, setSection] = useState<Section>(start.s)
+  const [inboxView, setInboxView] = useState<InboxView>(start.inbox || 'queue')
+  const [didView, setDidView] = useState<DidView>(start.did || 'receipts')
   const [reportId, setReportId] = useState<string | null>(null)
   const [ov, setOv] = useState<Overview | null>(null)
   const [err, setErr] = useState('')
+  const [inboxN, setInboxN] = useState<number | null>(null)
   const [qCount, setQCount] = useState<number | null>(null)
   const [xCount, setXCount] = useState<number | null>(null)
-  const [nCount, setNCount] = useState<number | null>(null)
   const [iCount, setICount] = useState<number | null>(null)
 
   const load = useCallback(async () => {
@@ -86,214 +125,158 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
     } catch (e: any) { setErr(String(e?.message || e)) }
   }, [])
   useEffect(() => { load() }, [load])
-  // The Guest issues count shows on its tab before anyone opens it.
+  // The inbox number shows on its section before anyone opens it (the inbox itself keeps it current).
+  useEffect(() => { fetch('/api/eve/inbox?limit=1', { cache: 'no-store' }).then(x => x.json()).then(r => { if (r?.ok && r.summary) setInboxN(Number(r.summary.total) || 0) }).catch(() => {}) }, [])
+  // The Guest issues count shows on its sub-view before anyone opens it.
   useEffect(() => { fetch('/api/eve/issues', { cache: 'no-store' }).then(x => x.json()).then(r => { if (r?.ok) setICount((r.issues || []).filter((i: any) => i.urgency !== 'done').length) }).catch(() => {}) }, [])
 
-  // Deep links: /eve?tab=loops. Written back so a refresh lands on the same tab.
+  // Deep links: /eve?tab=loops etc. Written back so a refresh lands on the same place.
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search)
-      const t = sp.get('tab')
-      if (t === 'chat' || t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations' || t === 'issues' || t === 'day' || t === 'desks' || t === 'reports') setTab(t)
+      const t = TAB_MAP[String(sp.get('tab') || sp.get('section') || '')]
+      if (t) { setSection(t.s); if (t.inbox) setInboxView(t.inbox); if (t.did) setDidView(t.did) }
       setReportId(sp.get('id'))
-      if (sp.get('q')) setTab('chat')
+      if (sp.get('q')) setSection('ask')
     } catch { /* server */ }
   }, [])
-  const pick = (t: TabKey) => {
-    setTab(t)
-    try { const u = new URL(window.location.href); u.searchParams.set('tab', t); window.history.replaceState(null, '', u.toString()) } catch { /* fine */ }
+  const writeTab = (key: string) => {
+    try { const u = new URL(window.location.href); u.searchParams.set('tab', key); window.history.replaceState(null, '', u.toString()) } catch { /* fine */ }
   }
+  const pick = (s: Section) => { setSection(s); writeTab(s) }
+  const pickInbox = (v: InboxView) => { setInboxView(v); writeTab(v === 'queue' ? 'inbox' : v) }
+  const pickDid = (v: DidView) => { setDidView(v); writeTab(v) }
 
-  const waiting = ov?.today.waiting.length || 0
-  const hot = ov?.loops.top?.length || 0
-  const needsYou = nCount != null ? nCount : waiting + hot
   const tabs = useMemo(() => ([
-    { key: 'chat' as TabKey, label: 'Chat', n: null as number | null },
-    { key: 'overview' as TabKey, label: 'Needs you', n: needsYou || null },
-    { key: 'issues' as TabKey, label: 'Guest issues', n: iCount || null },
-    { key: 'loops' as TabKey, label: 'Watching', n: ov?.loops.open || null },
-    { key: 'questions' as TabKey, label: 'Questions', n: qCount || null },
-    { key: 'day' as TabKey, label: 'Her day', n: null as number | null },
-    { key: 'expectations' as TabKey, label: 'Expectations', n: xCount || null },
-    { key: 'reports' as TabKey, label: 'Reports', n: null as number | null },
-    { key: 'desks' as TabKey, label: 'How she runs', n: null as number | null },
-  ]), [needsYou, iCount, ov, qCount, xCount])
+    { key: 'ask' as Section, label: 'Ask Eve', n: null as number | null },
+    { key: 'inbox' as Section, label: 'Inbox', n: inboxN || null },
+    { key: 'knows' as Section, label: 'What she knows', n: null as number | null },
+    { key: 'did' as Section, label: 'What she did', n: null as number | null },
+    { key: 'health' as Section, label: 'How she is doing', n: null as number | null },
+  ]), [inboxN])
+  const subBtn = (on: boolean) => `rounded-lg px-2.5 min-h-[30px] text-[12px] font-semibold border ${on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white text-muted border-line hover:text-ink'}`
 
   return (
     <div>
       <LeanHead title="Eve" icon={<Sparkles size={20} className="text-brand-600" />}>
+        {inboxN != null ? <Pill tone={inboxN ? 'rose' : 'emerald'} title="Everything in her inbox that waits on a person" onClick={() => { pick('inbox'); pickInbox('queue') }}>{inboxN ? `${inboxN} for you` : 'nothing for you'}</Pill> : null}
         {ov ? (
-          <>
-            <Pill tone={needsYou ? 'rose' : 'emerald'} title="Proposals waiting for a yes, and Slack loops that are urgent or late" onClick={() => pick('overview')}>{needsYou ? `${needsYou} need you` : 'nothing needs you'}</Pill>
-            <Pill tone={ov.thoughts.unseen ? 'sky' : 'slate'} title="What she would have done, and did not — Settings → Eve → Thinking"
-              onClick={() => { window.location.href = '/users?tab=settings&panel=eve' }}>{ov.thoughts.unseen} unseen thoughts</Pill>
-            <Pill tone={ov.agent.enabled ? 'emerald' : 'slate'} title={ov.agent.enabled ? 'Agent mode is on — she acts inside the fence set in Settings → Eve' : 'Agent mode is off — she observes and answers only'}>{ov.agent.enabled ? 'Agent on' : 'Agent off'}</Pill>
-          </>
+          <Pill tone={ov.agent.enabled ? 'emerald' : 'slate'} title={ov.agent.enabled ? 'Agent mode is on — she acts inside the fence set in Settings → Eve' : 'Agent mode is off — she observes and answers only'}>{ov.agent.enabled ? 'Agent on' : 'Agent off'}</Pill>
         ) : err ? <Pill tone="rose">{err}</Pill> : <Pill><Loader2 size={12} className="animate-spin inline" /></Pill>}
-        <button onClick={() => openEve()} className="inline-flex items-center gap-1 rounded-lg bg-brand-600 text-white px-2.5 h-7 text-[12px] font-semibold hover:bg-brand-700"><MessageCircle size={13} /> Ask Eve</button>
         <IconBtn title="Refresh" onClick={load}><RefreshCw size={14} /></IconBtn>
-        <IconBtn title="Memory, voice, agent mode, thinking — Settings → Eve" href="/users?tab=settings&panel=eve"><Sliders size={14} /></IconBtn>
+        <IconBtn title="Memory, voice, agent mode — Settings → Eve" href="/users?tab=settings&panel=eve"><Sliders size={14} /></IconBtn>
       </LeanHead>
 
-      <LeanTabs tabs={tabs} value={tab} onChange={pick} />
-      <p className="text-[12.5px] text-muted -mt-1.5 mb-3 px-1">{TAB_BLURB[tab]}</p>
+      <LeanTabs tabs={tabs} value={section} onChange={pick} />
+      <p className="text-[12.5px] text-muted -mt-1.5 mb-3 px-1">{BLURB[section]}</p>
 
-      {tab === 'chat' && <EveChat />}
-      {tab === 'overview' && <NeedsTab isAdmin={!!isAdmin} canEdit={canEdit} onCount={setNCount} extras={
-        <div className="flex items-center gap-2 flex-wrap mt-1">
-          {qCount ? <button onClick={() => pick('questions')} className="inline-flex items-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 py-1.5 text-[12.5px] font-semibold text-violet-800 hover:bg-violet-100"><HelpCircle size={13} /> {qCount} question{qCount === 1 ? '' : 's'} she needs answered</button> : null}
-          {xCount ? <button onClick={() => pick('expectations')} className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[12.5px] font-semibold text-amber-800 hover:bg-amber-100"><MessageSquareWarning size={13} /> {xCount} expectation note{xCount === 1 ? '' : 's'}</button> : null}
-          {iCount ? <button onClick={() => pick('issues')} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[12.5px] font-semibold text-rose-800 hover:bg-rose-100">{iCount} open guest issue{iCount === 1 ? '' : 's'}</button> : null}
+      {section === 'ask' && <EveChat />}
+
+      {section === 'inbox' && (
+        <div>
+          <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            {INBOX_VIEWS.map(v => (
+              <button key={v.key} onClick={() => pickInbox(v.key)} className={subBtn(inboxView === v.key)}>
+                {v.label}{v.key === 'questions' && qCount ? <span className="ml-1 opacity-80 tabular-nums">{qCount}</span> : v.key === 'expectations' && xCount ? <span className="ml-1 opacity-80 tabular-nums">{xCount}</span> : null}
+              </button>
+            ))}
+          </div>
+          {inboxView === 'queue' && <EveInbox onCount={setInboxN} />}
+          {inboxView === 'questions' && <QuestionsTab canEdit={canEdit} onCount={setQCount} />}
+          {inboxView === 'expectations' && <ExpectationsTab canEdit={canEdit} onCount={setXCount} />}
         </div>
-      } />}
-      {tab === 'issues' && <IssuesTab onCount={setICount} />}
-      {tab === 'day' && <DayTab ov={ov} />}
-      {tab === 'desks' && <DesksTab ov={ov} />}
-      {tab === 'reports' && <EveReports initialId={reportId} />}
-      {tab === 'loops' && (loopsLevel === 'off'
-        ? <LeanEmpty>Open loops are switched off for your role. Ask Jon to turn them on in Users → Roles.</LeanEmpty>
-        : <OpenLoops canEdit={loopsLevel === 'edit' || loopsLevel === 'full'} embedded />)}
-      {tab === 'questions' && <QuestionsTab canEdit={canEdit} onCount={n => { setQCount(n) }} />}
-      {tab === 'expectations' && <ExpectationsTab canEdit={canEdit} onCount={n => { setXCount(n) }} />}
+      )}
+
+      {section === 'knows' && <SectionBoundary name="What she knows"><EveKnowledge canEdit={canEdit} isAdmin={!!isAdmin} /></SectionBoundary>}
+
+      {section === 'did' && (
+        <div>
+          <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+            {DID_VIEWS.map(v => (
+              <button key={v.key} onClick={() => pickDid(v.key)} className={subBtn(didView === v.key)}>
+                {v.label}{v.key === 'issues' && iCount ? <span className="ml-1 opacity-80 tabular-nums">{iCount}</span> : v.key === 'loops' && ov?.loops.open ? <span className="ml-1 opacity-80 tabular-nums">{ov.loops.open}</span> : null}
+              </button>
+            ))}
+          </div>
+          <p className="text-[12px] text-muted mb-2 px-1">{DID_VIEWS.find(v => v.key === didView)?.blurb}</p>
+          {didView === 'receipts' && <Receipts isAdmin={!!isAdmin} />}
+          {didView === 'day' && <DayTab ov={ov} />}
+          {didView === 'issues' && <IssuesTab onCount={setICount} />}
+          {didView === 'reports' && <EveReports initialId={reportId} />}
+          {didView === 'loops' && (loopsLevel === 'off'
+            ? <LeanEmpty>Open loops are switched off for your role. Ask Jon to turn them on in Users → Roles.</LeanEmpty>
+            : <OpenLoops canEdit={loopsLevel === 'edit' || loopsLevel === 'full'} embedded />)}
+        </div>
+      )}
+
+      {section === 'health' && (
+        <div>
+          <SectionBoundary name="How she is doing"><EveHealth canEdit={canEdit} isAdmin={!!isAdmin} /></SectionBoundary>
+          {isAdmin && (
+            <details className="mt-4 rounded-xl border border-line bg-white">
+              <summary className="cursor-pointer px-3 py-2 text-[12px] font-bold uppercase tracking-wider text-muted">Learning sources, teachers and Google read access</summary>
+              <div className="p-3"><EveLearningAdmin canEdit={canEdit} /></div>
+            </details>
+          )}
+          <div className="mt-4">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5 px-1">Her desks and night shift</p>
+            <DesksTab ov={ov} />
+          </div>
+          <p className="text-[12px] text-muted px-1 mt-2 inline-flex items-center gap-1.5">
+            <Brain size={13} /> Her memory, voice and agent mode are set in <a href="/users?tab=settings&panel=eve" className="text-brand-700 hover:underline">Settings → Eve</a>.
+          </p>
+        </div>
+      )}
     </div>
   )
 }
 
-// ── Overview ──────────────────────────────────────────────────────────────────────────────────
-function OverviewTab({ ov, err, pick, isAdmin, canEdit, reload }: { ov: Overview | null; err: string; pick: (t: TabKey) => void; isAdmin: boolean; canEdit: boolean; reload: () => void }) {
+// ── What she did: receipts with undo ──────────────────────────────────────────────────────────
+// The agent log's undoable acts of the last 24 hours (GET /api/eve/agent?undoable=1) and the same
+// undo the Settings panel uses (POST /api/eve/agent { op: 'undo', logId }). Admins — the route's gate.
+type Receipt = { id: string | number; at: string; action: string; summary: string | null; by: string | null; actor: string | null; ref: string | null; undone_at: string | null }
+
+function Receipts({ isAdmin }: { isAdmin: boolean }) {
+  const [rows, setRows] = useState<Receipt[] | null>(null)
+  const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
   const [note, setNote] = useState('')
-  const [draft, setDraft] = useState<Record<string, string>>({})
-  if (err && !ov) return <LeanEmpty>{err}</LeanEmpty>
-  if (!ov) return <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1" /> Reading her receipts…</LeanEmpty>
-  const c = ov.today.counts || {}
-  const byMode: Record<string, number> = c.by_mode || {}
-  const hot = ov.loops.top || []
-  const qs = ov.questionsTop || []
-  const total = ov.today.waiting.length + hot.length + (ov.questions || 0) + (ov.expectations || 0)
-
-  // Every action here is the same call the deeper tab makes — the inbox is a shortcut, not a fork.
-  const call = async (id: string, fn: () => Promise<Response>, okText: string) => {
-    setBusy(id); setNote('')
-    try { const r = await fn().then(x => x.json()); setNote(r?.ok ? okText : (r?.error || 'Could not do that.')) } catch (e: any) { setNote(String(e?.message || e)) }
-    setBusy(''); reload()
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/eve/agent?undoable=1', { cache: 'no-store' }).then(x => x.json())
+      if (r?.ok) { setRows(r.undoable || []); setErr('') } else { setRows([]); setErr(r?.message || r?.error || 'Could not load') }
+    } catch (e: any) { setRows([]); setErr(String(e?.message || e)) }
+  }, [])
+  useEffect(() => { if (isAdmin) load() }, [isAdmin, load])
+  const undo = async (r: Receipt) => {
+    if (!window.confirm('Undo this? ' + (r.summary || String(r.action || '')))) return
+    setBusy(String(r.id)); setNote('')
+    try {
+      const j = await fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'undo', logId: String(r.id) }) }).then(x => x.json())
+      setNote(j?.ok ? 'Undone.' : (j?.error || 'Could not undo that.'))
+      if (j?.ok) await load()
+    } catch (e: any) { setNote(String(e?.message || e)) }
+    setBusy('')
   }
-  const decide = (id: string, op: 'approve' | 'reject') => call(id, () => fetch('/api/eve/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id }) }), op === 'approve' ? 'Done.' : 'Declined.')
-  const closeLoop = (id: string, action: 'close' | 'dismiss') => call(id, () => fetch('/api/loops', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, action }) }), action === 'close' ? 'Closed.' : 'Dismissed.')
-  const answer = (id: string, op: 'answer' | 'dismiss') => call(id, () => fetch('/api/eve/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id, answer: draft[id] || '' }) }), op === 'answer' ? 'Remembered, with your name on it.' : 'Dismissed.')
-  const KIND: Record<string, string> = { guest_ask: 'guest ask', problem: 'problem', commitment: 'promised', question: 'unanswered', decision: 'decision' }
-
+  if (!isAdmin) return <LeanEmpty>Receipts with undo are for admins. Her day, guest issues and reports are in the other views.</LeanEmpty>
+  if (!rows) return <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1" /> Reading her receipts…</LeanEmpty>
   return (
     <div>
       {note ? <p className="text-[12px] text-muted mb-2 px-1">{note}</p> : null}
-      {/* NEEDS YOU — one list, every kind of thing a person has to touch, with the action on the
-          row. Proposals: approve or decline here (admins). Loops: close or open the thread.
-          Questions: answer inline. Nothing here links away to be acted on somewhere else. */}
-      <LeanSection title="Needs you" n={total} tone={ov.today.waiting.length || hot.some(h => h.urgent) ? 'rose' : undefined}>
-        {total ? (
-          <LeanList>
-            {ov.today.waiting.map((w: any) => (
-              <LeanRow key={w.id} name={w.summary || w.action || w.kind}
-                meta={`she wants to ${String(w.action || w.kind).replace(/_/g, ' ')} · filed ${w.filed}`}
-                tags={<><Tag tone="amber">wants a yes</Tag>{w.status !== 'waiting' ? <Tag tone={w.status === 'deferred' ? 'violet' : 'rose'}>{w.status}</Tag> : null}</>}
-                actions={isAdmin ? <>
-                  <IconBtn title="Approve — she does it now" tone="ok" onClick={() => decide(w.id, 'approve')} disabled={busy === w.id}><Check size={14} /></IconBtn>
-                  <IconBtn title="Decline" tone="bad" onClick={() => decide(w.id, 'reject')} disabled={busy === w.id}><X size={14} /></IconBtn>
-                </> : <IconBtn title="An admin approves this in Settings → Eve → Agent mode" href="/users?tab=settings&panel=eve"><ExternalLink size={14} /></IconBtn>}>
-                {w.summary && String(w.summary).length > 40 ? <p className="text-[12.5px] text-ink/85">{w.summary}</p> : null}
-              </LeanRow>
-            ))}
-            {hot.map(h => (
-              <LeanRow key={h.id} name={h.summary}
-                meta={`${h.unit || h.building || ''}${h.owner ? ` · ${h.owner}` : ' · nobody on it'}${h.channel ? ` · #${h.channel}` : ''} · ${h.hours < 48 ? `${h.hours}h` : `${Math.round(h.hours / 24)}d`} open`}
-                tags={<><Tag tone={h.kind === 'guest_ask' ? 'rose' : 'slate'}>{KIND[h.kind] || h.kind}</Tag>{h.urgent ? <Tag tone="roseSolid">urgent</Tag> : null}{h.late ? <Tag tone="amber">late</Tag> : null}</>}
-                actions={<>
-                  <IconBtn title="Open the Slack thread" href={h.link}><ExternalLink size={14} /></IconBtn>
-                  {canEdit ? <IconBtn title="It got done — close it" tone="ok" onClick={() => closeLoop(h.id, 'close')} disabled={busy === h.id}><Check size={14} /></IconBtn> : null}
-                  {canEdit ? <IconBtn title="Not a real loop" tone="bad" onClick={() => closeLoop(h.id, 'dismiss')} disabled={busy === h.id}><X size={14} /></IconBtn> : null}
-                </>} />
-            ))}
-            {qs.map(q => (
-              <LeanRow key={q.id} name={q.question} meta={`${q.scope} · only you can answer this`} tags={<Tag tone="violet">question</Tag>} defaultOpen={false}>
-                {q.why ? <p className="text-[12.5px] text-muted">Why she is asking: {q.why}</p> : null}
-                {canEdit ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input className="flex-1 min-w-[220px] rounded-lg border border-line bg-white px-3 py-2 text-[13px] text-ink" placeholder="Tell her…" value={draft[q.id] || ''} onChange={e => setDraft({ ...draft, [q.id]: e.target.value })}
-                      onKeyDown={e => { if (e.key === 'Enter' && (draft[q.id] || '').trim()) answer(q.id, 'answer') }} />
-                    <button onClick={() => answer(q.id, 'answer')} disabled={busy === q.id || !(draft[q.id] || '').trim()} className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-2 hover:bg-brand-700 disabled:opacity-50"><Check size={13} /> Save</button>
-                    <button onClick={() => answer(q.id, 'dismiss')} disabled={busy === q.id} className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink px-2 py-2"><X size={13} /> Not worth answering</button>
-                  </div>
-                ) : null}
-              </LeanRow>
-            ))}
-            {(ov.questions || 0) > qs.length ? (
-              <LeanRow name={`${(ov.questions || 0) - qs.length} more question${(ov.questions || 0) - qs.length === 1 ? '' : 's'}`} meta="on the Questions tab" tags={<Tag tone="violet">question</Tag>}
-                actions={<IconBtn title="Open Questions" onClick={() => pick('questions')}><HelpCircle size={14} /></IconBtn>} />
-            ) : null}
-            {ov.expectations ? (
-              <LeanRow name={`${ov.expectations} expectation note${ov.expectations === 1 ? '' : 's'} for CS and admin`} meta="what guests keep being surprised by, and the copy that would fix it"
-                tags={<Tag tone="amber">listing & comms</Tag>}
-                actions={<IconBtn title="Open Expectations" onClick={() => pick('expectations')}><MessageSquareWarning size={14} /></IconBtn>} />
-            ) : null}
-            {ov.loops.open > hot.length ? (
-              <LeanRow name={`${ov.loops.open - hot.length} more loop${ov.loops.open - hot.length === 1 ? '' : 's'} she is keeping tabs on`} meta={Object.entries(ov.loops.byKind).map(([k, n]) => `${n} ${KIND_LABEL[k] || k}`).join(' · ') + ' · none of them urgent or late'}
-                tags={<Tag>watching</Tag>}
-                actions={<IconBtn title="Open loops" onClick={() => pick('loops')}><Radar size={14} /></IconBtn>} />
-            ) : null}
-          </LeanList>
-        ) : <LeanEmpty>Nothing needs you. No proposals out, no loop urgent or late, no questions.</LeanEmpty>}
-      </LeanSection>
-
-      {/* WHAT SHE DID TODAY — her own receipts (my_actions_today), not a recollection. */}
-      <LeanSection title={`Today · ${ov.day}`} right={
-        <span className="flex items-center gap-1 flex-wrap">
-          {(['act', 'propose', 'draft', 'deferred', 'observe'] as const).map(m => byMode[m] ? <Tag key={m} tone={MODE_TONE[m]}>{byMode[m]} {m === 'act' ? 'done' : m === 'observe' ? 'observed' : m + 'd'}</Tag> : null)}
-          {c.on_watch_flags ? <Tag tone="sky">{c.on_watch_flags} on-watch</Tag> : null}
-          {c.slack_nudges ? <Tag tone="sky">{c.slack_nudges} nudges</Tag> : null}
-        </span>
-      }>
-        {ov.today.error ? <LeanEmpty>Her decision log could not be read: {ov.today.error}</LeanEmpty>
-          : ov.today.decisions.length ? (
-            <LeanList>
-              {ov.today.decisions.map((d: any, i: number) => (
-                <LeanRow key={i} name={d.summary || d.action} meta={`${d.time} · ${d.action}${d.by ? ' · ' + d.by : ''}`}
-                  tags={<>
-                    <Tag tone={MODE_TONE[d.mode] || 'slate'}>{d.mode}</Tag>
-                    {d.outcome ? <Tag tone={/done|replied|ok/i.test(d.outcome) ? 'emerald' : /overdue|silent|gone/i.test(d.outcome) ? 'rose' : 'slate'}>{d.outcome}</Tag> : null}
-                    {d.undone_at ? <Tag tone="rose">undone</Tag> : null}
-                  </>}>
-                  {d.why || d.outcome_note ? <p className="text-[12.5px] text-ink/85">{d.why}{d.outcome_note ? ` — ${d.outcome_note}` : ''}</p> : null}
-                </LeanRow>
-              ))}
-            </LeanList>
-          ) : <LeanEmpty>No decisions logged yet today.</LeanEmpty>}
-        {ov.today.gaps?.length ? <p className="text-[11.5px] text-muted mt-1.5 px-1">{ov.today.gaps.join(' ')}</p> : null}
-      </LeanSection>
-
-      {/* HER DESKS — on or off, and when each last actually ran. The switch is in Settings → Eve. */}
-      <LeanSection title="Desks and night shift" n={ov.desks.length} right={<a href="/users?tab=settings&panel=eve" className="text-brand-700 hover:underline text-[12px]">switch them in Settings → Eve</a>}>
-        {ov.desks.length ? (
-          <LeanList>
-            {ov.desks.map(d => {
-              const stale = d.last && (Date.now() - Date.parse(d.last.at)) > 36 * 3600000
-              return (
-                <LeanRow key={d.key} name={d.label} meta={d.runs}
-                  tags={<>
-                    <Tag tone={d.on === false ? 'slate' : 'emerald'}>{d.on === null ? 'always on' : d.on ? 'on' : 'off'}</Tag>
-                    {d.last ? <Tag tone={!d.last.ok ? 'rose' : stale ? 'amber' : 'slate'} title={d.last.at}>{d.last.ok ? 'ran' : 'failed'} {ago(d.last.at)}{d.last.did != null ? ` · ${d.last.did}` : ''}</Tag> : <Tag tone="slate">no run recorded</Tag>}
-                  </>}>
-                  <p className="text-[12.5px] text-ink/85">{d.what}</p>
-                  {d.last?.error ? <p className="text-[12px] text-rose-700">{d.last.error}</p> : null}
-                </LeanRow>
-              )
-            })}
-          </LeanList>
-        ) : <LeanEmpty>No Eve automations are registered.</LeanEmpty>}
-      </LeanSection>
-
-      <p className="text-[12px] text-muted px-1 inline-flex items-center gap-1.5">
-        <Brain size={13} /> Her memory, beliefs, voice, agent mode and the thinking feed live in <a href="/users?tab=settings&panel=eve" className="text-brand-700 hover:underline">Settings → Eve</a>.
-      </p>
+      {err ? <LeanEmpty>{err}</LeanEmpty> : !rows.length ? <LeanEmpty>Nothing she did in the last 24 hours can be undone — either she did nothing outward, or it is past its undo.</LeanEmpty> : (
+        <LeanList>
+          {rows.map(r => (
+            <LeanRow key={String(r.id)} name={r.summary || String(r.action || '').replace(/_/g, ' ')}
+              meta={[ago(r.at), String(r.action || '').replace(/_/g, ' '), r.actor ? 'yes from ' + r.actor.split('@')[0] : r.by ? String(r.by).replace(/^watch:/, 'watch ').replace(/^cron:/, '') : ''].filter(Boolean).join(' · ')}
+              tags={r.undone_at ? <Tag tone="rose">undone</Tag> : <Tag tone="emerald">done</Tag>}
+              actions={r.undone_at ? undefined : (
+                <button onClick={() => undo(r)} disabled={busy === String(r.id)} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 min-h-[32px] text-[12px] font-semibold text-ink hover:bg-app disabled:opacity-50">
+                  {busy === String(r.id) ? <Loader2 size={11} className="animate-spin" /> : <Undo2 size={12} />} Undo
+                </button>
+              )} />
+          ))}
+        </LeanList>
+      )}
     </div>
   )
 }

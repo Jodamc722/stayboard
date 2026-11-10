@@ -105,7 +105,9 @@ export async function computeScorecard(days = 7): Promise<Scorecard> {
   const nudgeReply = nudges ? nudgesClosed24h / nudges : 0
 
   // ── learning ──
-  const { data: lr } = await db.from('eve_learning_runs').select('at,score').order('at', { ascending: false }).limit(1)
+  // The answer check (lib/eve/evals.ts) files its runs here too, as kind 'eval' with no learning score;
+  // the learning dimension reads the newest LEARNING run, never one of those.
+  const { data: lr } = await db.from('eve_learning_runs').select('at,score').neq('kind', 'eval').order('at', { ascending: false }).limit(1)
   const learningScore = lr && lr[0] && Number.isFinite(Number((lr[0] as any).score)) ? Number((lr[0] as any).score) : null
   const learningAt = lr && lr[0] ? String((lr[0] as any).at) : null
   const { count: corrCount } = await db.from('eve_memory').select('id', { count: 'exact', head: true }).eq('kind', 'correction').gte('created_at', sinceIso)

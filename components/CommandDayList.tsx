@@ -9,7 +9,8 @@
 // on 2026-10-06 Jon swapped it for the Bulletin board (components/command/Bulletin) — the tiles'
 // API stays, the Hub and the board's "Did you know" read it.
 //
-//   DECIDE  things only Jon can do: Eve's questions (answer in place), spend approvals (approve /
+//   DECIDE  things only Jon can do: Eve's inbox head (one line + her top three, decided in place —
+//           /eve?tab=inbox has the rest; 2026-11-10), spend approvals (approve /
 //           reject), claims in his review or near a filing deadline (review), refunds over the cap
 //           waiting on a sign-off (open the card), a short-staffed day 1–3 days out (open /team),
 //           Slack messages waiting to send (send / skip).
@@ -37,7 +38,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import Link from 'next/link'
 import {
   RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, AlertTriangle, ChevronDown, ChevronRight,
-  Send, Copy, Circle, Plus, MapPin, CalendarDays, ClipboardCheck, Star, Sparkles, Settings2,
+  Send, Copy, Circle, Plus, MapPin, CalendarDays, ClipboardCheck, Star, Settings2,
 } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, Tip, type Tone as LeanTone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
@@ -52,16 +53,13 @@ import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { BulletinBoard } from '@/components/command/Bulletin'
 import { BULLETIN_URL } from '@/components/command/Bulletin'
 import { dueState, type Post as BoardPost } from '@/lib/bulletin'
-import { ThoughtCard, THOUGHTS_URL, type Thought } from '@/components/EveThoughts'
+import { EveInboxToday, useEveInboxToday } from '@/components/EveInboxToday'
 import { CommandHub, ApprovalRow } from '@/components/command/Hub'
 
 type Sev = NextItem['severity']
 type Ranked = { key: string; sev: Sev; rank: number; node: ReactNode }
-type EveQ = { id: string; question: string; why: string | null; scope: string; asked_count: number; source: string; kind?: string; evidence?: any }
 type VendorVisit = { id: string; tone: 'today' | 'soon' | 'later' | 'missed' | 'done' }
 
-const EVE_COUNT_URL = '/api/eve/questions?count=1'
-const EVE_ROWS_URL = '/api/eve/questions?slim=1'
 const HOW_KEY = 'cc5.how'
 const SEV_RANK: Record<Sev, number> = { now: 0, today: 1, soon: 2 }
 const bz = (id: string) => 'https://app.breezeway.io/task/' + id
@@ -193,11 +191,11 @@ export function CommandDayList() {
       {/* THE OPERATIONAL HUB (Jon, 2026-09-30): KPIs by area, the Now list, four lanes side by side —
           every row actionable in place, no drop-downs. components/command/Hub.tsx. */}
       <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
-      {/* Eve's questions, plans and drafts, and Slack posts waiting to send — the calls only a person makes. */}
+      {/* Eve's inbox (one line + her top three), and Slack posts waiting to send — the calls only a person makes. */}
       <div id="decide" className="scroll-mt-4"><DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} /></div>
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
-      {/* WHAT EVE IS THINKING (2026-09-21): a collapsed line, the same cards as Settings → Eve → Thinking. Admins only; hidden otherwise. */}
-      <EveThinking />
+      {/* "Eve is thinking about N things" lived here until 2026-11-10: her thoughts are a filter of
+          the one Eve inbox now (/eve?tab=inbox → Would have done), and the band above carries its head. */}
       <CompletedLine d={data} onChanged={reload} />
       <AvailabilityAlert />
     </div>
@@ -339,24 +337,17 @@ function ReminderRow({ p, today, done, busy, tick }: { p: BoardPost; today: stri
 }
 
 function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: CommandDay; claims: NextItem[]; links: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void }) {
-  const eve = useEveQuestions()
-  const plans = useEvePlans()
-  const drafts = useEveDrafts()
+  // EVE IS ONE INBOX NOW (2026-11-10). Her questions, plans and reply drafts used to be rows of their
+  // own here, each read from its own endpoint; they are all in /eve?tab=inbox, ranked, and this band
+  // shows its head: one line ("Eve: N for you — top: …") and the top three with their main button.
+  const eve = useEveInboxToday()
   const slack = useSlackQueue()
   const reminders = useReminders()
-  const [allEve, setAllEve] = useState(false)
   const slackLive = slack.live || []
-  // Questions cut from one template ("Who does what at Amrit?", "…at Lucerne?", …) are ONE row that
-  // expands; and the band never shows more than 3 Eve rows collapsed.
-  const eveGroups = useMemo(() => groupEve(eve.rows), [eve.rows])
-  const eveShown = allEve ? eveGroups : eveGroups.slice(0, EVE_COLLAPSED)
-  const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
-  // Counted the way they are drawn: thirty copies of one question are one thing to decide.
-  const eveCount = eve.loaded ? eveGroups.length : eve.count
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
-  // The band's count is what is WAITING on somebody — an already-answered draft is not.
-  const liveDrafts = drafts.rows.filter(x => !x.followedUp).length
-  const count = reminders.rows.length + slackLive.length + approvals.length + claims.length + links.length + eveCount + plans.rows.length + liveDrafts
+  // Counted the way it is drawn: the Eve line carries her number, the band counts the rows it shows.
+  const eveRows = eve.ok && eve.total > 0 ? Math.max(1, eve.items.length) : 0
+  const count = reminders.rows.length + slackLive.length + approvals.length + claims.length + links.length + eveRows
 
   const rows: Ranked[] = []
   // Reminders first: somebody wrote these down because they must happen today.
@@ -369,24 +360,7 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
   for (const l of links) rows.push({ key: l.key, sev: l.severity, rank: l.rank, node: <DecideLinkRow item={l} onCleared={onCleared} /> })
   for (const a of approvals) rows.push({ key: a.key, sev: 'today', rank: 3, node: <ApprovalRow row={a} onCleared={onCleared} onChanged={onChanged} /> })
   if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
-  // ONE DECISION, NOT TWENTY-FOUR (Jon, 2026-10-16: the drafts arrived as a wall of near-identical
-  // rows). Drafts cut from the same template collapse into one row with Send all; the ones that
-  // are genuinely their own case stay their own row, because those are the ones worth reading.
-  for (const g of groupDrafts(drafts.rows)) {
-    rows.push(g.drafts.length === 1
-      ? { key: 'draft:' + g.drafts[0].id, sev: 'today', rank: 2.5, node: <EveDraftRow d={g.drafts[0]} act={drafts.act} busy={drafts.busy === g.drafts[0].id} /> }
-      : { key: 'draftgroup:' + g.key, sev: 'today', rank: 2.5, node: <EveDraftGroupRow g={g} act={drafts.act} busy={drafts.busy} /> })
-  }
-  // Drafts somebody already answered keep their row, at the bottom and without a Send button. They
-  // are not work any more, but they are not nothing either: seeing "answered by Yoslenis" is how
-  // you learn the loop closed without you.
-  for (const dr of drafts.rows.filter(x => x.followedUp)) {
-    rows.push({ key: 'draftdone:' + dr.id, sev: 'today', rank: 9.8, node: <EveDraftRow d={dr} act={drafts.act} busy={drafts.busy === dr.id} /> })
-  }
-  for (const p of plans.rows) rows.push({ key: 'plan:' + p.id, sev: 'today', rank: 8, node: <EvePlanRow p={p} act={plans.decide} busy={plans.busy === p.id} /> })
-  for (const g of eveShown) rows.push({ key: 'eve:' + g.key, sev: 'today', rank: 9, node: g.qs.length > 1 ? <EveGroupRow g={g} act={eve.act} busy={eve.busy} /> : <EveRow q={g.qs[0]} act={eve.act} busy={eve.busy === g.qs[0].id} /> })
-  if (!eve.loaded && eve.count > 0) rows.push({ key: 'eve:loading', sev: 'today', rank: 9, node: <Row sev={null} title={'Eve is asking you ' + eve.count} meta={<span className="inline-flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> getting them</span>} /> })
-  if (eveMore > 0) rows.push({ key: 'eve:more', sev: 'today', rank: 9.5, node: <button onClick={() => setAllEve(true)} className="w-full text-left px-3 py-2 min-h-[40px] text-[12px] font-semibold text-muted hover:text-ink">{eveMore} more from Eve</button> })
+  if (eveRows) rows.push({ key: 'eve:inbox', sev: eve.items[0]?.urgency.level === 'now' ? 'now' : 'today', rank: 2.5, node: <EveInboxToday q={eve} /> })
   rows.sort((a, b) => SEV_RANK[a.sev] - SEV_RANK[b.sev] || a.rank - b.rank)
 
   return (
@@ -394,305 +368,6 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
       {slack.err && <p className="px-3 py-2 text-[12px] text-rose-700">{slack.err}</p>}
       {rows.map(r => <div key={r.key}>{r.node}</div>)}
     </Band>
-  )
-}
-
-// ── EVE'S PLANS from the latest operator's review (2026-09-18) ─────────────────────────────────
-// The review's plans are recommendations with kind 'plan'; the ones still `open` are decisions
-// only Jon can make, so they sit in Decide next to her questions. Accept / Reject goes through the
-// same /api/eve/recommendations decide op the Direction tab uses, so an accepted plan is graded.
-type EvePlan = { id: string; title: string; detail: string | null; area: string | null; metric: string; scope: string }
-const EVE_PLANS_URL = '/api/eve/review?n=1'
-
-function useEvePlans() {
-  const { data, error } = useCachedFetch<{ open?: { headline?: string | null; plans?: EvePlan[] } }>(EVE_PLANS_URL, { ttl: 300_000 })
-  const [gone, setGone] = useState<Record<string, true>>({})
-  const [busy, setBusy] = useState('')
-  const rows = error ? [] : ((data?.open?.plans || []) as EvePlan[]).filter(p => !gone[p.id])
-  const decide = async (id: string, status: 'accepted' | 'rejected') => {
-    setBusy(id)
-    try {
-      const r = await fetch('/api/eve/recommendations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'decide', id, status }) })
-      if (!r.ok) return false
-      setGone(g => ({ ...g, [id]: true }))
-      invalidateCache(EVE_PLANS_URL)
-      return true
-    } finally { setBusy('') }
-  }
-  return { rows, headline: data?.open?.headline || null, busy, decide }
-}
-
-function EvePlanRow({ p, act, busy }: { p: EvePlan; act: (id: string, s: 'accepted' | 'rejected') => Promise<boolean>; busy: boolean }) {
-  const [open, setOpen] = useState(false)
-  const [err, setErr] = useState('')
-  const go = async (s: 'accepted' | 'rejected') => { setErr(''); const ok = await act(p.id, s); if (!ok) setErr('Could not save that decision.') }
-  // The first step is what Jon needs at a glance; the rest opens on tap.
-  const first = (String(p.detail || '').match(/FIRST STEP:\s*([^\n]+)/) || [])[1] || ''
-  const meta = [p.area || '', first ? 'first step: ' + first : 'graded on ' + p.metric].filter(Boolean).join(' · ')
-  return (
-    <Row sev={null} title={p.title} tags={<Tag tone="violet">Eve plan</Tag>} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
-      primary={<button onClick={() => go('accepted')} disabled={busy} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Accept</button>}
-      secondary={<IconBtn title="Reject this plan" onClick={() => go('rejected')} disabled={busy}><X size={14} /></IconBtn>}>
-      {open && p.detail && <pre className="mt-2 ml-3.5 rounded-xl border border-line bg-app/40 p-3 text-[12px] text-ink whitespace-pre-wrap font-sans leading-relaxed">{p.detail}</pre>}
-    </Row>
-  )
-}
-
-// ── EVE'S GUEST REPLY DRAFTS (2026-09-21) ──────────────────────────────────────────────────────
-// A guest_reply_draft (from the guest_unanswered_1h watch, the bad-review watch or Eve in chat)
-// waits here with Send / Discard. Send runs guest_reply_send as a human yes — the guest hears
-// nothing until a person presses it. A review draft sends too (2026-09-28 audit, D17): Send posts it
-// as the public reply on the channel — the Reviews page's own path — after a confirm.
-type EveDraft = { id: string; conversationId: string | null; reviewId: string | null; draft: string; guest: string | null; unit: string | null; channel: string | null; why: string; by: string; createdAt: string
-  // Set by the API when somebody answered that thread after Eve wrote the draft — see
-  // /api/eve/guest-drafts. A draft with this is history, not work.
-  followedUp?: { at: string; by: string | null } | null }
-const EVE_DRAFTS_URL = '/api/eve/guest-drafts'
-
-function useEveDrafts() {
-  const { data, error } = useCachedFetch<{ drafts?: EveDraft[] }>(EVE_DRAFTS_URL, { ttl: 120_000 })
-  const [gone, setGone] = useState<Record<string, true>>({})
-  const [busy, setBusy] = useState('')
-  const rows = error ? [] : ((data?.drafts || []) as EveDraft[]).filter(d => !gone[d.id])
-  const drop = (id: string, later = false) => {
-    invalidateCache(EVE_DRAFTS_URL)
-    if (later) setTimeout(() => setGone(g => ({ ...g, [id]: true })), 1500)
-    else setGone(g => ({ ...g, [id]: true }))
-  }
-  const act = async (id: string, op: 'send' | 'discard', body?: string): Promise<DraftOutcome> => {
-    setBusy(id)
-    try {
-      const r = await fetch(EVE_DRAFTS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id, body }) })
-      const j = await r.json().catch(() => ({}))
-      // 409: somebody already acted on it — sent from the thread, or from another screen. Nothing
-      // more to do here: say what happened, then the row goes.
-      if (r.status === 409) { drop(id, true); return { note: 'Already ' + (DRAFT_STATE[String(j?.error || '').replace(/^already\s+/i, '')] || 'handled') + ' — nothing more to do here.' } }
-      // A review the channel will no longer take a reply on is closed with its draft.
-      if (j?.closed) { drop(id, true); return { note: String(j.error || 'That review is closed — no reply can go on it.') } }
-      if (!r.ok || !j?.ok) return { err: j?.error || 'That did not work.' }
-      drop(id)
-      return {}
-    } finally { setBusy('') }
-  }
-  return { rows, busy, act }
-}
-type DraftOutcome = { err?: string; note?: string }
-/** What a 409's "already <status>" means to the person who pressed. */
-const DRAFT_STATE: Record<string, string> = { executed: 'sent', approved: 'being sent', rejected: 'discarded', expired: 'replaced by a newer draft', failed: 'tried, and it failed — reply from the thread' }
-
-function EveDraftRow({ d, act, busy }: { d: EveDraft; act: (id: string, op: 'send' | 'discard', body?: string) => Promise<DraftOutcome>; busy: boolean }) {
-  const [open, setOpen] = useState(false)
-  const [text, setText] = useState(d.draft)
-  const [err, setErr] = useState('')
-  const [note, setNote] = useState('')
-  const isReview = !d.conversationId && !!d.reviewId
-  const go = async (op: 'send' | 'discard') => {
-    if (op === 'send' && !confirm(isReview ? `Post this public reply to ${d.guest || 'the guest'}'s review?` : 'Send this to ' + (d.guest || 'the guest') + ' now?')) return
-    setErr(''); setNote('')
-    const r = await act(d.id, op, text)
-    if (r.err) setErr(r.err)
-    if (r.note) setNote(r.note)
-  }
-  const who = (d.guest || 'Guest') + (d.unit ? ' · ' + d.unit : '')
-  const answered = d.followedUp
-  const meta = answered
-    ? 'Already answered' + (answered.by ? ' by ' + answered.by : '') + ' — Eve wrote this before that'
-    : [d.channel || '', d.why].filter(Boolean).join(' · ')
-  return (
-    <Row sev={answered ? null : 'today'} title={(isReview ? 'Reply to review from ' : 'Reply to ') + who} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err} note={note}
-      tags={answered
-        ? <Tag tone="slate" title="Somebody replied on this thread after Eve drafted it">answered</Tag>
-        : <Tag tone="violet" title={isReview ? 'Eve drafted a public review reply' : 'Eve drafted a reply'}>{isReview ? 'Eve · review' : 'Eve draft'}</Tag>}
-      primary={answered
-        ? <button onClick={() => go('discard')} disabled={busy} className={SECONDARY} title="Nothing more to say — close the draft">{busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Clear</button>
-        : <button onClick={() => go('send')} disabled={busy || !!note || !text.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>}
-      secondary={<IconBtn title="Discard — do not send" onClick={() => go('discard')} disabled={busy || !!note}><X size={14} /></IconBtn>}>
-      {open && (
-        <div className="mt-2 ml-3.5">
-          <textarea value={text} onChange={e => setText(e.target.value)} rows={4} aria-label="Eve's draft" className="w-full rounded-xl border border-line bg-white px-3 py-2 text-[13px] text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-brand-200" />
-          <div className="mt-1 text-[11px] text-muted">{isReview ? 'Edit it here, then Send — it posts publicly on the channel.' : d.conversationId ? <>Edit it here, then Send. <Link href={'/inbox/' + d.conversationId} className="text-brand-700 hover:underline">Open the thread</Link>.</> : null}</div>
-        </div>
-      )}
-    </Row>
-  )
-}
-
-// GROUPING THE DRAFTS. Eve writes one reply per guest, but she writes them from a handful of
-// reasons — "we fixed it and nobody told them", "the guest has been waiting". Twenty-four rows of
-// the first reason is one decision rendered twenty-four times, and a wall like that gets scrolled
-// past rather than cleared. So the reason is the key: same reason, one row, Send all.
-//
-// Dropping the time is the whole trick — "Fixed 6:59am" and "Fixed 1:16pm" are the same sentence.
-type DraftGroup = { key: string; title: string; why: string; drafts: EveDraft[] }
-
-function draftTemplate(why: string): string {
-  return String(why || '')
-    .replace(/\b\d{1,2}:\d{2}\s*(am|pm)?/gi, '')      // 6:59am
-    .replace(/\b\d+\s*(h|hr|hrs|hours|d|days|m|min|mins)\b/gi, '')  // 26h, 3 days
-    .replace(/^[a-z0-9_.-]+\s*·\s*/i, '')               // the channel prefix (airbnb2 · …)
-    .replace(/\s+/g, ' ').replace(/\s*;\s*/g, '; ').trim().toLowerCase().slice(0, 60)
-}
-
-export function groupDrafts(rows: EveDraft[]): DraftGroup[] {
-  const by: Record<string, DraftGroup> = {}
-  const order: string[] = []
-  for (const d of rows) {
-    // ALREADY ANSWERED NEVER JOINS A BATCH. Send all must not be able to tell a guest a second
-    // time because the list was built before somebody replied from their phone.
-    if (d.followedUp) continue
-    const key = draftTemplate(d.why) || d.id
-    if (!by[key]) { by[key] = { key, title: '', why: d.why || '', drafts: [] }; order.push(key) }
-    by[key].drafts.push(d)
-  }
-  return order.map(k => {
-    const g = by[k]
-    if (g.drafts.length === 1) return g
-    // Said as the job it is, not as the sentence the model wrote: "Tell 24 guests their issue is
-    // fixed" is a thing you decide; "fixed; the guest has not been told ×24" is a log line.
-    const n = g.drafts.length
-    const t = k
-    g.title = /not been told/.test(t) ? `Tell ${n} guests their issue is fixed`
-      : /waited|no answer/.test(t) ? `Reply to ${n} guests who are still waiting`
-      : `${plural(n, 'reply', 'replies')} — ${g.why.replace(/^[a-z0-9_.-]+\s*·\s*/i, '')}`
-    return g
-  })
-}
-
-function EveDraftGroupRow({ g, act, busy }: { g: DraftGroup; act: (id: string, op: 'send' | 'discard', body?: string) => Promise<DraftOutcome>; busy: string }) {
-  const [open, setOpen] = useState(false)
-  const [running, setRunning] = useState(0)
-  const [err, setErr] = useState('')
-  const [note, setNote] = useState('')
-
-  // SEQUENTIAL, AND IT SAYS WHERE IT GOT TO. Twenty-four sends fired at once is a rate limit and a
-  // half-sent batch nobody can account for; one at a time with a count means a failure halfway
-  // leaves a number you can read.
-  const sendAll = async () => {
-    if (running) return
-    if (!confirm(`Send all ${g.drafts.length} replies now? Each goes to its own guest.`)) return
-    setErr(''); setNote('')
-    let sent = 0, failed = 0
-    for (const d of g.drafts) {
-      setRunning(sent + failed + 1)
-      const r = await act(d.id, 'send', d.draft)
-      if (r.err) failed++; else sent++
-    }
-    setRunning(0)
-    setNote(failed ? `${sent} sent, ${failed} did not go — open the group to retry those.` : `${sent} sent.`)
-  }
-
-  const units = g.drafts.map(d => d.unit).filter(Boolean)
-  const meta = [plural(g.drafts.length, 'guest'), units.slice(0, 3).join(', ') + (units.length > 3 ? ' +' + (units.length - 3) : '')].filter(Boolean).join(' · ')
-  return (
-    <Row sev="today" title={g.title} meta={meta} onTap={() => setOpen(o => !o)} expanded={open} err={err} note={note}
-      tags={<Tag tone="violet" title="Eve drafted one reply per guest from the same reason">Eve · {g.drafts.length}</Tag>}
-      primary={<button onClick={sendAll} disabled={!!running || !!note} className={PRIMARY}>{running ? <><Loader2 size={11} className="animate-spin" /> {running}/{g.drafts.length}</> : <><Send size={11} /> Send all</>}</button>}
-      secondary={<IconBtn title={open ? 'Hide the replies' : 'Read each one first'} onClick={() => setOpen(o => !o)}>{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</IconBtn>}>
-      {open && (
-        <div className="mt-1.5 ml-3.5 border-l-2 border-line divide-y divide-line/70">
-          {g.drafts.map(d => <EveDraftRow key={d.id} d={d} act={act} busy={busy === d.id} />)}
-        </div>
-      )}
-    </Row>
-  )
-}
-
-/** Eve's open questions: a count first (cheap, 5 min), the rows only once the count says so. */
-function useEveQuestions() {
-  const { data, error } = useCachedFetch<{ count: number }>(EVE_COUNT_URL, { ttl: 300_000 })
-  const count = error ? 0 : Number(data?.count || 0)
-  // The rows are a remembered read like the rest of the page (2026-11-09 audit): a bare fetch re-read
-  // sixty full records on every visit. Slim rows, five minutes, and only when the count says so.
-  const rowsQ = useCachedFetch<{ questions?: EveQ[] }>(count > 0 ? EVE_ROWS_URL : null, { ttl: 300_000 })
-  const [gone, setGone] = useState<Record<string, true>>({})
-  const [busy, setBusy] = useState('')
-  const qs = useMemo<EveQ[] | null>(() => Array.isArray(rowsQ.data?.questions) ? rowsQ.data!.questions!.filter(q => !gone[q.id]) : (rowsQ.error ? [] : null), [rowsQ.data, rowsQ.error, gone])
-  const rows = useMemo(() => qs || [], [qs])
-  const act = async (id: string, op: 'answer' | 'dismiss', answer: string) => {
-    setBusy(id)
-    try {
-      const res = await fetch('/api/eve/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id, answer }) })
-      if (!res.ok) return false
-      setGone(g => ({ ...g, [id]: true }))
-      invalidateCache(EVE_COUNT_URL); invalidateCache(EVE_ROWS_URL)
-      return true
-    } finally { setBusy('') }
-  }
-  return { count, rows, loaded: qs !== null || count === 0, busy, act }
-}
-
-// ── EVE'S QUESTIONS: grouped by template, compact until tapped (Jon, 2026-09-18) ────────────────
-// Five "Who does what at <building>?" rows, each ~110px with an always-open input, ate the first
-// screen. Now: same-template questions are ONE row that expands; a question row is title + meta
-// (44px) and the answer box appears only when tapped; at most EVE_COLLAPSED Eve rows show
-// collapsed — "N more from Eve" opens the rest.
-const EVE_COLLAPSED = 3
-type EveGroup = { key: string; title: string; qs: EveQ[] }
-
-/** The template a question was cut from: first sentence, the name after "at " dropped, 40 chars. */
-function eveTemplate(question: string): string {
-  const first = String(question || '').split(/[?.!]/)[0] || String(question || '')
-  // "at Amrit", "about 3213", "for Lucerne" — the name after the preposition is the only thing
-  // that varies between copies of the same question.
-  return first.replace(/\b(at|about|for|in)\s+.*$/i, '$1').replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 40)
-}
-function groupEve(rows: EveQ[]): EveGroup[] {
-  const byKey: Record<string, EveGroup> = {}
-  const order: string[] = []
-  for (const q of rows) {
-    const tpl = eveTemplate(q.question)
-    const key = tpl || q.id
-    if (!byKey[key]) { byKey[key] = { key, title: '', qs: [] }; order.push(key) }
-    byKey[key].qs.push(q)
-  }
-  return order.map(k => {
-    const g = byKey[k]
-    if (g.qs.length === 1) return { ...g, key: g.qs[0].id, title: g.qs[0].question }
-    const stem = k.replace(/\s+(at|about|for|in)$/, '')
-    const places = plural(g.qs.length, /\bunit\b/i.test(stem) ? 'unit' : 'building')
-    const prep = (k.match(/\s(at|about|for|in)$/) || [])[1]
-    g.title = 'Eve: ' + (prep ? stem + ' ' + prep + ' ' + places : plural(g.qs.length, 'question') + ' — ' + stem + '…')
-    return g
-  })
-}
-
-function EveGroupRow({ g, act, busy }: { g: EveGroup; act: (id: string, op: 'answer' | 'dismiss', answer: string) => Promise<boolean>; busy: string }) {
-  const [open, setOpen] = useState(false)
-  const scopes = g.qs.map(q => q.scope).filter(Boolean)
-  const meta = scopes.length ? scopes.slice(0, 4).join(', ') + (scopes.length > 4 ? ' +' + (scopes.length - 4) : '') : plural(g.qs.length, 'question')
-  return (
-    <Row sev={null} title={g.title} meta={meta} onTap={() => setOpen(o => !o)} expanded={open}
-      secondary={<IconBtn title={open ? 'Hide the questions' : 'Show each question to answer'} onClick={() => setOpen(o => !o)}>{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</IconBtn>}>
-      {open && (
-        <div className="mt-1.5 ml-3.5 border-l-2 border-line divide-y divide-line/70">
-          {g.qs.map(q => <EveRow key={q.id} q={q} act={act} busy={busy === q.id} nested />)}
-        </div>
-      )}
-    </Row>
-  )
-}
-
-function EveRow({ q, act, busy, nested }: { q: EveQ; act: (id: string, op: 'answer' | 'dismiss', answer: string) => Promise<boolean>; busy: boolean; nested?: boolean }) {
-  const [draft, setDraft] = useState('')
-  const [open, setOpen] = useState(false)
-  const [err, setErr] = useState('')
-  const send = async () => { if (!draft.trim() || busy) return; setErr(''); const ok = await act(q.id, 'answer', draft.trim()); if (!ok) setErr('Could not save that answer.') }
-  const meta = [q.kind === 'plan' ? 'from the weekly review' : q.scope, /* A sweep re-raising its own question is not somebody asking: the count is shown for people's questions only, and capped. */ q.source !== 'system' && Number(q.asked_count) > 1 ? 'came up ' + (Number(q.asked_count) > 20 ? '20+' : q.asked_count) + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
-  return (
-    <Row sev={null} title={nested ? (q.scope || 'Question') : q.question} meta={nested && !open ? q.question : open && q.why ? 'Why: ' + q.why : meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
-      secondary={<IconBtn title="Later — not worth answering now" onClick={() => act(q.id, 'dismiss', '')} disabled={busy}><X size={14} /></IconBtn>}>
-      {open && (
-        <>
-          <p className="text-[12.5px] text-ink/80 mt-1 pl-3.5 leading-snug">{q.question}</p>
-          {q.kind === 'plan' && q.evidence?.what_i_will_assume ? <p className="text-[11.5px] text-muted mt-1 pl-3.5 leading-snug">If you say nothing, she assumes: {String(q.evidence.what_i_will_assume)}</p> : null}
-          <div className="mt-1.5 pl-3.5 flex items-center gap-1.5">
-            <input autoFocus value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') send() }} placeholder="Tell her…" aria-label={'Answer: ' + q.question}
-              className="flex-1 min-w-0 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] min-h-[34px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
-            <button onClick={send} disabled={busy || !draft.trim()} className={PRIMARY}>{busy ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Send</button>
-          </div>
-        </>
-      )}
-    </Row>
   )
 }
 
@@ -729,66 +404,6 @@ function DecideLinkRow({ item: i, onCleared }: { item: NextItem; onCleared: (k: 
     <Row sev={i.severity} title={i.title} tags={<Tag tone={m.tone} title={m.hover}>{m.tag}</Tag>} meta={i.why}
       primary={<Link href={i.href || '/'} className={PRIMARY}>{i.action && i.action.type === 'open' ? i.action.label : 'Open'}</Link>}
       secondary={<IconBtn title={m.clearTitle} tone={m.clear === 'done' ? 'ok' : undefined} onClick={clear} disabled={busy}>{m.clear === 'done' ? <Check size={15} /> : <X size={14} />}</IconBtn>} />
-  )
-}
-
-// ── WHAT EVE IS THINKING — one collapsed line under Decide ──────────────────────────────────────
-// The same cards as Settings → Eve → Thinking; admins only (the read 403s for everybody else, and
-// the line is not drawn). THE NUMBER IS THE API'S (2026-09-28 audit): the line printed rows.length
-// of a 40-row page, so sixty open thoughts read as "40". Open and "new" are both the API's own counts.
-const EVE_THOUGHTS_PAGE = 12
-function EveThinking() {
-  const [open, setOpen] = useState(false)
-  // TWO NUMBERS FIRST, THE CARDS ON TAP (2026-11-09 audit, pass 3). The line is closed nearly every
-  // time the page loads, and it fetched forty whole thoughts (300KB) to print a count. Now the count
-  // is its own tiny read, and opening the line reads the first few cards, cut to what they print.
-  const countQ = useCachedFetch<{ open?: number; unseen?: number }>(THOUGHTS_URL + '?count=1', { ttl: 300_000 })
-  const [rows, setRows] = useState<Thought[] | null>(null)
-  const [rowsErr, setRowsErr] = useState('')
-  const [seenAll, setSeenAll] = useState(false)
-  const [note, setNote] = useState('')
-  const [acted, setActed] = useState(0)
-  useEffect(() => {
-    if (!open || rows !== null) return
-    let live = true
-    fetch(THOUGHTS_URL + '?slim=1&limit=' + EVE_THOUGHTS_PAGE).then(r => r.json()).then(j => { if (live) { if (j?.ok) setRows(Array.isArray(j.thoughts) ? j.thoughts : []); else { setRows([]); setRowsErr(j?.error || 'Could not load.') } } })
-      .catch(() => { if (live) { setRows([]); setRowsErr('Could not load.') } })
-    return () => { live = false }
-  }, [open, rows])
-  // Not an admin (the read 403s), or nothing open: the line is not drawn.
-  const total = Math.max(0, Number(countQ.data?.open || 0) - acted)
-  if (!countQ.data || countQ.error || total <= 0) return null
-  const n = total
-  const th = {
-    rows: rows || [],
-    unseen: seenAll ? 0 : Number(countQ.data.unseen || 0),
-    markAllSeen: async () => {
-      try { await fetch(THOUGHTS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'seen' }) }) } catch { /* fine */ }
-      setSeenAll(true); invalidateCache(THOUGHTS_URL + '?count=1')
-    },
-  }
-  const onDone = (id: string, msg: string, ok: boolean) => { if (ok) { setRows(rs => (rs || []).filter(r => r.id !== id)); setActed(a => a + 1) } setNote(msg) }
-  return (
-    <section>
-      <button onClick={() => setOpen(o => !o)} aria-expanded={open}
-        title={n > EVE_THOUGHTS_PAGE ? 'The newest ' + EVE_THOUGHTS_PAGE + ' open thoughts are listed here — Settings → Eve → Thinking has every one' : undefined}
-        className="px-1 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ink/70 hover:text-ink min-h-[28px]">
-        <Sparkles size={12} className="text-brand-600" /> Eve is thinking about {n} thing{n === 1 ? '' : 's'}{th.unseen > 0 ? ` (${th.unseen} new)` : ''} {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-      </button>
-      {open && (
-        <div className="mt-1 rounded-2xl border border-line bg-white shadow-soft divide-y divide-line">
-          {note && <div className="px-3 py-2 text-[12px] text-ink bg-app/60">{note}</div>}
-          {rows === null && <div className="px-3 py-2 text-[12px] text-muted inline-flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> getting them</div>}
-          {rowsErr && <div className="px-3 py-2 text-[12px] text-rose-700">{rowsErr}</div>}
-          {th.rows.map(t => <ThoughtCard key={t.id} t={t} compact onDone={onDone} />)}
-          {rows !== null && n > th.rows.length && <div className="px-3 py-2 text-[12px] text-muted">{n - th.rows.length} more — the newest {EVE_THOUGHTS_PAGE} are listed here.</div>}
-          <div className="px-3 py-2 flex items-center justify-between">
-            <a href="/users?tab=settings&panel=eve" className="text-[11.5px] font-semibold text-brand-700 hover:underline">All of it, in Settings → Eve → Thinking</a>
-            {th.unseen > 0 && <button onClick={th.markAllSeen} className="text-[11.5px] text-muted hover:text-ink">Mark all seen</button>}
-          </div>
-        </div>
-      )}
-    </section>
   )
 }
 

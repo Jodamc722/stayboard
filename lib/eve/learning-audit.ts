@@ -198,7 +198,9 @@ export async function runProbes(opts: { limit?: number } = {}): Promise<{ result
   let due: any[] = []
   try {
     // Honesty probes ride along last so real retention probes are never crowded out by them.
-    const { data, error } = await db.from('eve_probes').select('*').eq('active', true).lte('due_at', nowISO()).order('due_at').limit(limit * 3)
+    // MEMORY PROBES ONLY (2026-11-10): an answer-check question (with_tools = true, lib/eve/evals.ts)
+    // lives in the same table and must never be asked here with her tools taken away.
+    const { data, error } = await db.from('eve_probes').select('*').eq('active', true).eq('with_tools', false).lte('due_at', nowISO()).order('due_at').limit(limit * 3)
     if (error) return { results, usage, error: error.message.slice(0, 200) }
     let rows = (data as any[]) || []
     // A PROBE DIES WITH ITS MEMORY (independent audit 2026-10-10). When a memory was superseded (an OTA
@@ -395,7 +397,7 @@ async function retentionWindow(days = 7): Promise<{ rate: number | null; asked: 
   try {
     const since = new Date(Date.now() - days * 864e5).toISOString()
     // Paged like the graded-plan read above (2026-09-29): a week of probes is small, but this is a rate, and a rate should not depend on a page size.
-    const { rows, truncated } = await pageRows((a, b) => db.from('eve_probes').select('id,kind,expected,last_pass').gte('last_asked_at', since).not('last_pass', 'is', null).order('id').range(a, b))
+    const { rows, truncated } = await pageRows((a, b) => db.from('eve_probes').select('id,kind,expected,last_pass').eq('with_tools', false).gte('last_asked_at', since).not('last_pass', 'is', null).order('id').range(a, b))
     if (truncated) console.error('retentionWindow: probe read incomplete — the retention rate may be off')
     let asked = 0, passed = 0, taughtFailed = 0, hAsked = 0, hPassed = 0
     for (const r of (rows as any[])) {
@@ -416,7 +418,7 @@ async function sparklines(): Promise<Record<string, Array<number | null>>> {
   for (const k of keys) buckets[k] = [0, 1, 2, 3].map(() => ({ sum: 0, n: 0 }))
   try {
     const since = new Date(Date.now() - 28 * 864e5).toISOString()
-    const { data } = await db.from('eve_learning_runs').select('at,score,memory_hit_rate,recurrence_rate,grading_hit_rate,detail').gte('at', since).order('at').limit(200)
+    const { data } = await db.from('eve_learning_runs').select('at,score,memory_hit_rate,recurrence_rate,grading_hit_rate,detail').neq('kind', 'eval').gte('at', since).order('at').limit(200)
     for (const r of ((data as any[]) || [])) {
       const age = (Date.now() - Date.parse(str(r.at))) / 864e5
       const b = Math.min(3, Math.max(0, 3 - Math.floor(age / 7)))
@@ -464,7 +466,8 @@ export async function runLearningAudit(opts: { kind: 'weekly' | 'nightly' | 'man
 
 export async function latestRun(): Promise<LearningRun | null> {
   try {
-    const { data } = await supabaseAdmin().from('eve_learning_runs').select('*').order('at', { ascending: false }).limit(1).maybeSingle()
+    // The answer check's runs (kind 'eval', lib/eve/evals.ts) share the table; this is the newest LEARNING run.
+    const { data } = await supabaseAdmin().from('eve_learning_runs').select('*').neq('kind', 'eval').order('at', { ascending: false }).limit(1).maybeSingle()
     return (data as any) || null
   } catch { return null }
 }
@@ -475,7 +478,7 @@ export async function learningSnapshot(): Promise<any> {
   let probes: any[] = []
   let memoryText: Record<string, string> = {}
   try {
-    const { data } = await db.from('eve_probes').select('id,kind,question,expected,source_memory_id,due_at,last_asked_at,last_answer,last_pass,last_why,pass_count,fail_count,active,created_at').order('due_at').limit(200)
+    const { data } = await db.from('eve_probes').select('id,kind,question,expected,source_memory_id,due_at,last_asked_at,last_answer,last_pass,last_why,pass_count,fail_count,active,created_at').eq('with_tools', false).order('due_at').limit(200)
     probes = (data as any[]) || []
     const ids = probes.map(p => p.source_memory_id).filter(Boolean)
     if (ids.length) {
@@ -553,8 +556,21 @@ export async function myLearning(): Promise<any> {
   if (!run) return { available: false, note: 'No learning audit has run yet. It runs nightly after the learning pass and on Mondays with the review; an admin can run it now from Users & admin → Eve → Learning.' }
   const d = run.detail || {}
   const failed = (d.failedProbes || []).slice(0, 5).map((p: any) => ({ kind: p.kind, question: p.question, expected: p.expected, her_answer: p.answer, why_it_failed: p.why }))
+  // The answer check (lib/eve/evals.ts): real questions asked WITH her read-only tools, judged against
+  // an approved answer or method. A different thing from retention, and said as such.
+  let answerCheck: any = null
+  try {
+    const { data } = await supabaseAdmin().from('eve_learning_runs').select('at,probes,passed,failed,eval_accuracy,detail').eq('kind', 'eval').order('at', { ascending: false }).limit(1).maybeSingle()
+    const e: any = data
+    if (e) answerCheck = {
+      at: e.at, accuracy_pct: e.eval_accuracy == null ? null : Number(e.eval_accuracy), graded: Number(e.passed || 0) + Number(e.failed || 0), passed: e.passed, failed: e.failed,
+      by_domain: e.detail?.byDomain || null,
+      what_it_is: 'Approved real questions asked with your read-only tools on, each judged against the answer a person approved or the method it must follow. This is answer correctness; retention above is memory with tools off.',
+    }
+  } catch { answerCheck = null }
   return {
     available: true, at: run.at, kind: run.kind,
+    answer_check: answerCheck,
     learning_score_0_to_100: run.score,
     how_it_is_scored: '40% retention (taught facts she still knows with no tools), 20% memory hit rate (injected memories that shaped answers), 20% corrections not repeated, 20% recommendation hit rate. A component with fewer than 10 observations is left out and listed under thin.',
     thin_components_left_out: d.thin || [],

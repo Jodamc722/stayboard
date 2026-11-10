@@ -1,20 +1,30 @@
 'use client'
-// EVE'S SETTINGS — memory, voice and direction, living where every other setting lives (Jon,
-// 2026-08-19: "she should be able to see memories in the settings; work on a robust settings and
-// memory feature"). The chat became a floating bubble on every page; THIS is where you open her
-// head: everything she believes (editable, deletable, reweighable), how she sounds, what she has
-// recommended and how those calls actually graded, and a button to make her learn RIGHT NOW.
+// EVE'S SETTINGS — configuration only (2026-11-10).
+//
+// History: memory, voice and direction moved here 2026-08-19 ("she should be able to see memories in
+// the settings"), and the panel grew to twelve tabs — Thinking, Agent mode, Learning, OTA playbook,
+// Review, Memory, Voice, Direction, Approvals, Audits, Telegram, Docs — half of them not settings at
+// all but things to read and act on. Now FOUR tabs, each a kind of setting:
+//   Autonomy           agent mode rungs, pilots, approvers, quiet hours, budgets; the approvals channel
+//   Channels           the Slack rooms she is in, Telegram, where each report goes
+//   Voice              her voice, the team's lingo, who may teach her
+//   Knowledge sources  documents, the OTA playbook, the operating model, memory clean-up and
+//                      "Confirm what she learned"
+// What is not configuration (Thinking, Review/plans, Learning scores, Audits, Direction) lives on
+// the Eve page now; a one-line link says where. The components are kept (EveDirectionAdmin and
+// EveAuditsAdmin are exported for that page). No setting's behaviour or storage changed.
+//
+// DEEP LINKS keep working: ?panel=eve&section=<old or new key>. Old keys map onto the new tabs
+// (memory → Knowledge sources, scrolled to the clean-up card; agent/approvals → Autonomy; …); a key
+// whose content moved off Settings opens the nearest tab with a note pointing at the Eve page.
 import { useState, useEffect, useCallback } from 'react'
-import { Brain, Mic, Compass, Lightbulb, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, KeyRound, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Sparkles, Power, GraduationCap, Globe } from 'lucide-react'
+import { Brain, Mic, Trash2, Plus, Save, X, Check, TrendingUp, Pencil, Zap, Hash, MapPin, RefreshCw, ShieldAlert, BellOff, Clock, HelpCircle, Layers, Merge, Send, BookOpen, Power, ArrowRight, Building2 } from 'lucide-react'
 import { TelegramAdmin } from '@/components/TelegramAdmin'
 import { EveDocsAdmin } from '@/components/EveDocsAdmin'
-import { EveReviewAdmin } from '@/components/EveReviewAdmin'
 import { EveAgentAdmin } from '@/components/EveAgentAdmin'
-import { EveLearningAdmin } from '@/components/EveLearningAdmin'
 import { EveTeachersAdmin } from '@/components/EveTeachersAdmin'
 import { EveMemoryConfirm } from '@/components/EveMemoryConfirm'
 import { OtaPlaybookAdmin } from '@/components/OtaPlaybookAdmin'
-import { EveThinkingFeed, THOUGHTS_URL } from '@/components/EveThoughts'
 
 type Memory = {
   id: string; kind: string; text: string; why: string | null; scope: string; weight: number
@@ -35,60 +45,347 @@ const KIND_HELP: Record<string, string> = {
 const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const input = 'w-full text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200'
 
-type EveTab = 'thinking' | 'agent' | 'learning' | 'ota' | 'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'
-const EVE_TABS: EveTab[] = ['thinking', 'agent', 'learning', 'ota', 'review', 'memory', 'voice', 'direction', 'approvals', 'audits', 'telegram', 'docs']
+type EveTab = 'autonomy' | 'channels' | 'voice' | 'knowledge'
+const EVE_TABS: EveTab[] = ['autonomy', 'channels', 'voice', 'knowledge']
+
+/* The Eve page sections (built alongside this change): Ask, Inbox, What Eve knows, What Eve did,
+   How Eve is doing. Links use /eve?section=<key>. */
+type EveSection = 'ask' | 'inbox' | 'knows' | 'did' | 'health'
+const EVE_SECTION_LABEL: Record<EveSection, string> = { ask: 'Ask', inbox: 'Inbox', knows: 'What Eve knows', did: 'What Eve did', health: 'How Eve is doing' }
+const eveHref = (s: EveSection) => `/eve?section=${s}`
+
+/* What used to be a tab here and is not configuration: where it lives now. */
+const MOVED: { key: string; label: string; to: EveSection }[] = [
+  { key: 'thinking', label: 'Thinking', to: 'inbox' },
+  { key: 'review', label: 'Review and plans', to: 'inbox' },
+  { key: 'audits', label: 'Audits', to: 'inbox' },
+  { key: 'learning', label: 'Learning scores', to: 'health' },
+  { key: 'direction', label: 'Direction (track record)', to: 'health' },
+]
+
+/* Old section keys → the new tab (and an anchor inside it). */
+const OLD_SECTION: Record<string, { tab: EveTab; anchor?: string }> = {
+  autonomy: { tab: 'autonomy' }, agent: { tab: 'autonomy' }, approvals: { tab: 'autonomy', anchor: 'eve-approvals' },
+  channels: { tab: 'channels' }, telegram: { tab: 'channels', anchor: 'eve-telegram' }, slack: { tab: 'channels' }, reports: { tab: 'channels', anchor: 'eve-report-routing' },
+  voice: { tab: 'voice' }, lingo: { tab: 'voice', anchor: 'eve-lingo' }, teachers: { tab: 'voice', anchor: 'eve-teachers' },
+  knowledge: { tab: 'knowledge' }, memory: { tab: 'knowledge', anchor: 'memory-cleanup' }, confirm: { tab: 'knowledge', anchor: 'eve-memory-confirm' },
+  docs: { tab: 'knowledge', anchor: 'eve-docs' }, library: { tab: 'knowledge', anchor: 'eve-docs' }, ota: { tab: 'knowledge', anchor: 'eve-ota' },
+  'operating-model': { tab: 'knowledge', anchor: 'eve-operating-model' },
+  // Moved off Settings: the nearest tab opens, with the note saying where the content went.
+  thinking: { tab: 'autonomy' }, review: { tab: 'autonomy' }, audits: { tab: 'autonomy' }, direction: { tab: 'autonomy' }, learning: { tab: 'voice', anchor: 'eve-teachers' },
+}
 
 export function EveAdmin({ canEdit }: { canEdit: boolean }) {
-  // THINKING FIRST while she only observes (Jon, 2026-09-21: "keep her observing but I want to see
-  // what she is thinking"); once any rung is above observe, Agent mode leads and Thinking is second.
-  const [tab, setTab] = useState<EveTab | null>(null)
-  const [thinking, setThinking] = useState<{ unseen: number; allObserving: boolean } | null>(null)
-  // DEEP LINK (2026-11-10): /users?tab=settings&panel=eve&section=memory opens straight on a tab —
-  // `section` is any tab key here (memory, agent, learning, …). The Memory tab scrolls to its clean-up card.
+  const [tab, setTab] = useState<EveTab>('autonomy')
+  const [movedFrom, setMovedFrom] = useState<string | null>(null)
+  // DEEP LINK: /users?tab=settings&panel=eve&section=memory (or any old or new key).
   useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null
     try {
       const sec = String(new URLSearchParams(window.location.search).get('section') || '').toLowerCase()
-      if ((EVE_TABS as string[]).includes(sec)) setTab(sec as EveTab)
+      const hit = OLD_SECTION[sec]
+      if (hit) {
+        setTab(hit.tab)
+        if (MOVED.some(m => m.key === sec)) setMovedFrom(sec)
+        // memory-cleanup scrolls itself (EveMemoryCleanup); the other anchors are scrolled here.
+        if (hit.anchor && hit.anchor !== 'memory-cleanup') {
+          const id = hit.anchor
+          t = setTimeout(() => { document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }, 300)
+        }
+      } else if ((EVE_TABS as string[]).includes(sec)) setTab(sec as EveTab)
     } catch { /* no deep link */ }
+    return () => { if (t) clearTimeout(t) }
   }, [])
-  useEffect(() => {
-    let alive = true
-    fetch(THOUGHTS_URL + '?count=1').then(r => r.json()).then(j => {
-      if (!alive) return
-      const st = { unseen: Number(j?.unseen) || 0, allObserving: j?.allObserving !== false }
-      setThinking(st)
-      setTab(t => t || (st.allObserving ? 'thinking' : 'agent'))
-    }).catch(() => { if (alive) { setThinking({ unseen: 0, allObserving: true }); setTab(t => t || 'thinking') } })
-    return () => { alive = false }
-  }, [])
-  const cur: EveTab = tab || (thinking ? (thinking.allObserving ? 'thinking' : 'agent') : 'thinking')
-  const first: [EveTab, string, any][] = thinking && !thinking.allObserving
-    ? [['agent', 'Agent mode', Power], ['thinking', 'Thinking', Lightbulb]]
-    : [['thinking', 'Thinking', Lightbulb], ['agent', 'Agent mode', Power]]
-  const tabs: [EveTab, string, any][] = [...first, ['learning', 'Learning', GraduationCap], ['ota', 'OTA playbook', Globe], ['review', 'Review', Sparkles], ['memory', 'Memory', Brain], ['voice', 'Voice', Mic], ['direction', 'Direction', Compass], ['approvals', 'Approvals', KeyRound], ['audits', 'Audits', ShieldAlert], ['telegram', 'Telegram', Send], ['docs', 'Library', BookOpen]]
+  const tabs: [EveTab, string, any][] = [['autonomy', 'Autonomy', Power], ['channels', 'Channels', Send], ['voice', 'Voice', Mic], ['knowledge', 'Knowledge sources', BookOpen]]
+  const moved = movedFrom ? MOVED.find(m => m.key === movedFrom) : null
   return (
     <div>
       <div className="flex items-center gap-1 mb-3 border-b border-line overflow-x-auto">
         {tabs.map(([k, label, Icon]) => (
-          <button key={k} onClick={() => setTab(k)} ref={el => { if (el && cur === k) { try { el.scrollIntoView({ block: 'nearest', inline: 'center' }) } catch { /* fine */ } } }}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0 ${cur === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
+          <button key={k} onClick={() => { setTab(k); setMovedFrom(null) }} ref={el => { if (el && tab === k) { try { el.scrollIntoView({ block: 'nearest', inline: 'center' }) } catch { /* fine */ } } }}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-[13px] font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0 ${tab === k ? 'border-brand-600 text-brand-700' : 'border-transparent text-muted hover:text-ink'}`}>
             <Icon size={13} /> {label}
-            {k === 'thinking' && thinking && thinking.unseen > 0 && <span className="text-[10px] font-bold text-white bg-brand-600 rounded-full px-1.5 py-0.5">{thinking.unseen}</span>}
           </button>
         ))}
       </div>
-      {cur === 'thinking' && <EveThinkingFeed />}
-      {cur === 'agent' && <EveAgentAdmin canEdit={canEdit} />}
-      {cur === 'learning' && <><EveTeachersAdmin /><EveLearningAdmin canEdit={canEdit} /></>}
-      {cur === 'ota' && <OtaPlaybookAdmin canEdit={canEdit} />}
-      {cur === 'review' && <EveReviewAdmin canEdit={canEdit} />}
-      {cur === 'memory' && <EveMemoryAdmin canEdit={canEdit} />}
-      {cur === 'voice' && <EveVoiceAdmin canEdit={canEdit} />}
-      {cur === 'direction' && <EveDirectionAdmin canEdit={canEdit} />}
-      {cur === 'approvals' && <EveApprovalsAdmin canEdit={canEdit} />}
-      {cur === 'audits' && <EveAuditsAdmin canEdit={canEdit} />}
-      {cur === 'telegram' && <TelegramAdmin canEdit={canEdit} />}
-      {cur === 'docs' && <EveDocsAdmin canEdit={canEdit} />}
+      {moved && (
+        <div className="mb-3 text-[13px] text-ink bg-app border border-line rounded-xl px-3.5 py-2.5 flex items-center gap-2 flex-wrap">
+          <span>{moved.label} is not a setting any more.</span>
+          <a href={eveHref(moved.to)} className="inline-flex items-center gap-1 font-semibold text-brand-700 hover:underline">Now on the Eve page <ArrowRight size={12} /> {EVE_SECTION_LABEL[moved.to]}</a>
+          <button onClick={() => setMovedFrom(null)} className="ml-auto text-muted hover:text-ink" aria-label="Dismiss"><X size={13} /></button>
+        </div>
+      )}
+      {tab === 'autonomy' && (
+        <div className="space-y-6">
+          <EveAgentAdmin canEdit={canEdit} />
+          <div id="eve-approvals" className="scroll-mt-20"><EveApprovalsAdmin canEdit={canEdit} /></div>
+        </div>
+      )}
+      {tab === 'channels' && (
+        <div className="space-y-6">
+          <EveSlackRooms />
+          <div id="eve-telegram" className="scroll-mt-20"><TelegramAdmin canEdit={canEdit} /></div>
+          <div id="eve-report-routing" className="scroll-mt-20"><EveReportRouting /></div>
+        </div>
+      )}
+      {tab === 'voice' && (
+        <div className="space-y-6">
+          <EveVoiceAdmin canEdit={canEdit} />
+          <div id="eve-lingo" className="scroll-mt-20"><EveLingoCard canEdit={canEdit} /></div>
+          <div id="eve-teachers" className="scroll-mt-20"><EveTeachersAdmin /></div>
+        </div>
+      )}
+      {tab === 'knowledge' && (
+        <div className="space-y-6">
+          <div className={`${card} p-3.5 flex items-center gap-2 flex-wrap`}>
+            <span className="text-[13px] text-ink">Where she learns from. To see and correct what she actually knows about a unit, building or person:</span>
+            <a href={eveHref('knows')} className="inline-flex items-center gap-1 text-[13px] font-semibold text-brand-700 hover:underline">Now on the Eve page <ArrowRight size={12} /> {EVE_SECTION_LABEL.knows}</a>
+            <div className="w-full flex flex-wrap gap-1.5 pt-1">
+              {([['eve-docs', 'Documents'], ['eve-ota', 'OTA playbook'], ['eve-operating-model', 'Operating model'], ['memory-cleanup', 'Memory clean-up'], ['eve-memory-confirm', 'Confirm what she learned']] as const).map(([id, label]) => (
+                <button key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' })}
+                  className="text-[11.5px] font-semibold rounded-full px-2.5 py-1 border border-line bg-white text-muted hover:text-ink">{label}</button>
+              ))}
+            </div>
+          </div>
+          <div id="eve-docs" className="scroll-mt-20"><EveDocsAdmin canEdit={canEdit} /></div>
+          <div id="eve-ota" className="scroll-mt-20"><OtaPlaybookAdmin canEdit={canEdit} /></div>
+          <div id="eve-operating-model" className="scroll-mt-20"><EveOperatingModelCard canEdit={canEdit} /></div>
+          <EveMemoryAdmin canEdit={canEdit} />
+        </div>
+      )}
+      {/* Where the old non-setting tabs went — one line each. */}
+      <div className="mt-6 border-t border-line pt-3">
+        <p className="text-[11px] uppercase tracking-[0.12em] text-muted font-semibold mb-1.5">Moved to the Eve page</p>
+        <div className="flex flex-col gap-1">
+          {MOVED.map(m => (
+            <a key={m.key} href={eveHref(m.to)} className="text-[12.5px] text-muted hover:text-ink inline-flex items-center gap-1 flex-wrap">
+              <span className="text-ink">{m.label}</span> — Now on the Eve page <ArrowRight size={11} /> <span className="font-semibold text-brand-700">{EVE_SECTION_LABEL[m.to]}</span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------
+// CHANNELS — the Slack rooms she is in, and where each long report goes. Both read existing routes
+// and change nothing about how they are stored: the room list is /api/eve/approvals-channel (GET),
+// the routing is /api/eve/reports (GET, PUT {routing}) — the same calls the Reports tab makes.
+// ---------------------------------------------------------------------------------------------
+
+function EveSlackRooms() {
+  const [rooms, setRooms] = useState<{ id: string; name: string; isPrivate: boolean }[]>([])
+  const [current, setCurrent] = useState<{ id: string; name: string } | null>(null)
+  const [lingoRooms, setLingoRooms] = useState<string[]>([])
+  const [handle, setHandle] = useState('Eve')
+  const [connected, setConnected] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [showAll, setShowAll] = useState(false)
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [a, b] = await Promise.all([
+        fetch('/api/eve/approvals-channel').then(r => r.json()).catch(() => ({})),
+        fetch('/api/eve/lingo').then(r => r.json()).catch(() => ({})),
+      ])
+      setRooms(Array.isArray(a?.channels) ? a.channels : [])
+      setCurrent(a?.current || null)
+      setConnected(a?.connected !== false)
+      if (a?.handle) setHandle(String(a.handle))
+      setLingoRooms(Array.isArray(b?.channels) ? b.channels.map(String) : [])
+    } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { load() }, [load])
+  const shown = showAll ? rooms : rooms.slice(0, 24)
+  return (
+    <div className={`${card} p-4`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-ink inline-flex items-center gap-1.5"><Hash size={14} /> Slack rooms</p>
+          <p className="text-[13px] text-muted mt-1 max-w-xl">She reads and answers in the rooms she has been invited to. Invite her with <code className="font-mono">/invite @{handle}</code>; remove her from a room in Slack to stop it. Door-code requests post to the approvals room (set under Autonomy).</p>
+        </div>
+        <button onClick={load} className="text-muted hover:text-ink shrink-0" title="Refresh"><RefreshCw size={14} /></button>
+      </div>
+      {loading ? <p className="text-[13px] text-muted mt-3">Loading…</p> : !connected ? (
+        <p className="text-[13px] text-[#A32020] mt-3">Slack is not connected yet. Connect it in Integrations first.</p>
+      ) : (
+        <div className="mt-3 space-y-2">
+          <p className="text-[12.5px] text-ink">In <b>{rooms.length}</b> room{rooms.length === 1 ? '' : 's'}{current ? <> · approvals post to <b>#{current.name}</b></> : ' · no approvals room set'}{lingoRooms.length ? <> · she last learned the team&apos;s lingo from {lingoRooms.length} of them</> : null}</p>
+          {rooms.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {shown.map(r => <span key={r.id} className="text-[11.5px] rounded-full border border-line bg-app px-2 py-0.5 text-ink">#{r.name}{r.isPrivate ? ' 🔒' : ''}</span>)}
+              {rooms.length > 24 && <button onClick={() => setShowAll(v => !v)} className="text-[11.5px] text-muted hover:text-ink font-semibold">{showAll ? 'Show fewer' : `+${rooms.length - 24} more`}</button>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type RouteKind = { key: string; label: string; cadence: string; defaultRoute: string; what: string }
+type ReportRoute = 'page' | 'pointer' | 'slack'
+function EveReportRouting() {
+  const [kinds, setKinds] = useState<RouteKind[]>([])
+  const [routing, setRouting] = useState<Record<string, ReportRoute>>({})
+  const [canRoute, setCanRoute] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    fetch('/api/eve/reports').then(r => r.json()).then(r => {
+      if (!r?.ok) { setErr(r?.error || 'Could not load the report list.'); return }
+      setKinds(Array.isArray(r.kinds) ? r.kinds : []); setRouting(r.routing || {}); setCanRoute(!!r.canRoute)
+    }).catch(e => setErr(e?.message || String(e))).finally(() => setLoading(false))
+  }, [])
+  async function setRoute(k: string, v: ReportRoute) {
+    setRouting(x => ({ ...x, [k]: v }))
+    try { const r = await fetch('/api/eve/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ routing: { [k]: v } }) }).then(x => x.json()); if (r?.routing) setRouting(r.routing) } catch { /* shown as set; a reload shows the truth */ }
+  }
+  return (
+    <div className={`${card} p-4`}>
+      <p className="text-sm font-semibold text-ink inline-flex items-center gap-1.5"><Send size={14} /> Where each report goes</p>
+      <p className="text-[12.5px] text-muted mt-1">Every report is filed on the Eve page regardless. <b>Page</b> — nothing in Slack. <b>Pointer</b> — one line with the headline and a link. <b>Slack</b> — the full text.</p>
+      {loading ? <p className="text-[13px] text-muted mt-3">Loading…</p> : err ? <p className="text-[13px] text-muted mt-3">{err}</p> : (
+        <div className="mt-2 divide-y divide-line">
+          {kinds.map(k => (
+            <div key={k.key} className="py-1.5 flex items-center gap-2 flex-wrap text-[12.5px]">
+              <div className="min-w-0 flex-1"><b className="text-ink">{k.label}</b> <span className="text-muted">· {k.cadence} · {k.what}</span></div>
+              <div className="inline-flex rounded-lg border border-line overflow-hidden text-[11px] font-semibold shrink-0">
+                {(['page', 'pointer', 'slack'] as ReportRoute[]).map(v => (
+                  <button key={v} disabled={!canRoute} onClick={() => setRoute(k.key, v)} className={`px-2 py-0.5 disabled:cursor-not-allowed ${(routing[k.key] || k.defaultRoute) === v ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink'}`}>{v === 'page' ? 'Page' : v === 'pointer' ? 'Pointer' : 'Slack'}</button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {!kinds.length && <p className="py-2 text-[13px] text-muted">No report kinds yet.</p>}
+          {!canRoute && kinds.length > 0 && <p className="pt-2 text-[12px] text-muted">Only admins change where reports go.</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------
+// VOICE — the team's lingo, as she learned it from the rooms (GET /api/eve/lingo; POST re-reads the
+// rooms now, the same pass the nightly job runs).
+// ---------------------------------------------------------------------------------------------
+
+function EveLingoCard({ canEdit }: { canEdit: boolean }) {
+  const [d, setD] = useState<{ text: string; terms: { term: string; means: string }[]; learnedAt: string | null; sampled: number; channels: string[]; note?: string } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const [all, setAll] = useState(false)
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/eve/lingo').then(x => x.json())
+      if (r?.ok) setD({ text: String(r.text || ''), terms: Array.isArray(r.terms) ? r.terms : [], learnedAt: r.learnedAt || null, sampled: Number(r.sampled) || 0, channels: Array.isArray(r.channels) ? r.channels : [], note: r.note })
+    } catch { /* shown empty */ }
+  }, [])
+  useEffect(() => { load() }, [load])
+  async function relearn() {
+    setBusy(true); setNote('')
+    try {
+      const r = await fetch('/api/eve/lingo', { method: 'POST' }).then(x => x.json()).catch(() => ({}))
+      setNote(r?.ok ? `Re-read ${Number(r.sampled) || 0} messages — ${Number(r.terms) || 0} terms.` : String(r?.error || 'That did not go through.'))
+      await load()
+    } finally { setBusy(false) }
+  }
+  const terms = d?.terms || []
+  return (
+    <div className={`${card} p-4`}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-sm font-semibold text-ink">The team&apos;s lingo</p>
+          <p className="text-[12.5px] text-muted mt-1 max-w-xl">Words and shorthand she picked up from the Slack rooms, so she reads and writes like the team.{d?.learnedAt ? ` Last learned ${new Date(d.learnedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} from ${d.sampled} messages.` : ''}</p>
+        </div>
+        {canEdit && <button onClick={relearn} disabled={busy} className="inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 hover:bg-brand-100 disabled:opacity-50"><RefreshCw size={12} /> {busy ? 'Reading the rooms…' : 'Re-read the rooms now'}</button>}
+      </div>
+      {note && <p className="text-[12.5px] text-ink mt-2">{note}</p>}
+      {!d ? <p className="text-[13px] text-muted mt-3">Loading…</p> : !terms.length && !d.text ? <p className="text-[13px] text-muted mt-3">{d.note || 'Nothing learned yet.'}</p> : (
+        <div className="mt-3 space-y-2">
+          {terms.length > 0 && (
+            <div className="rounded-xl border border-line divide-y divide-line">
+              {(all ? terms : terms.slice(0, 12)).map((t, i) => <p key={i} className="px-3 py-1.5 text-[12.5px]"><b className="text-ink">{t.term}</b> <span className="text-muted">— {t.means}</span></p>)}
+            </div>
+          )}
+          {terms.length > 12 && <button onClick={() => setAll(v => !v)} className="text-[12px] text-muted hover:text-ink font-semibold">{all ? 'Show fewer' : `Show all ${terms.length}`}</button>}
+          {d.text && <p className="text-[12.5px] text-muted whitespace-pre-wrap">{d.text}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------------------------
+// KNOWLEDGE SOURCES — the operating model: who does what in each building, as stated by Jon or
+// assumed by her (GET /api/eve/operating-model; POST {building, answer} records a correction the
+// same way a Telegram reply does).
+// ---------------------------------------------------------------------------------------------
+
+type OpBuilding = { building: string; market: string; operator: string; we: string[]; they: string[]; partner: string | null; notes: string; source: string; updatedAt: string | null; updatedBy: string | null }
+function EveOperatingModelCard({ canEdit }: { canEdit: boolean }) {
+  const [rows, setRows] = useState<OpBuilding[] | null>(null)
+  const [err, setErr] = useState('')
+  const [open, setOpen] = useState(false)
+  const [pick, setPick] = useState('')
+  const [answer, setAnswer] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch('/api/eve/operating-model').then(x => x.json())
+      if (r?.ok) { setRows(Array.isArray(r.buildings) ? r.buildings : []); setErr('') } else { setRows([]); setErr(String(r?.error || 'Could not load the operating model.')) }
+    } catch (e: any) { setRows([]); setErr(e?.message || String(e)) }
+  }, [])
+  useEffect(() => { load() }, [load])
+  async function save() {
+    if (!pick || !answer.trim()) return
+    setBusy(true); setNote('')
+    try {
+      const r = await fetch('/api/eve/operating-model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ building: pick, answer: answer.trim() }) }).then(x => x.json()).catch(() => ({}))
+      setNote(r?.ok ? `Saved for ${pick}.` : String(r?.error || 'That did not go through.'))
+      if (r?.ok) { setAnswer(''); await load() }
+    } finally { setBusy(false) }
+  }
+  const list = rows || []
+  const assumed = list.filter(b => b.source !== 'jon').length
+  return (
+    <div className={`${card} p-4`}>
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-2 text-left">
+        <p className="text-sm font-semibold text-ink inline-flex items-center gap-1.5"><Building2 size={14} /> Operating model — who does what, per building</p>
+        <span className="text-[12px] text-muted shrink-0">{rows == null ? '…' : `${list.length} buildings${assumed ? ` · ${assumed} assumed` : ''}`} · {open ? 'hide' : 'show'}</span>
+      </button>
+      {err && <p className="text-[12.5px] text-muted mt-2">{err}</p>}
+      {open && (
+        <div className="mt-3 space-y-3">
+          <div className="rounded-xl border border-line divide-y divide-line">
+            {list.map(b => (
+              <div key={b.building} className="px-3 py-2">
+                <p className="text-[13px] text-ink"><b>{b.building}</b> <span className="text-muted">· {b.operator === 'stay' ? 'we operate it' : b.operator === 'hotel' ? 'a hotel' : 'vendor-run'}{b.partner ? ` (${b.partner})` : ''}</span>
+                  <span className={`ml-2 text-[10.5px] font-semibold rounded-full px-1.5 py-0.5 border ${b.source === 'jon' ? 'bg-[#E8F6F0] text-[#0F7B52] border-[#B7E3D0]' : 'bg-[#FDF3E0] text-[#9A6200] border-[#F0DAA8]'}`}>{b.source === 'jon' ? 'stated' : 'assumed'}</span></p>
+                {b.operator !== 'stay' && <p className="text-[12px] text-muted">We do {b.we.join(', ') || 'nothing'}; {b.they.join(', ') || 'the rest'} is theirs.</p>}
+                {b.notes && <p className="text-[12px] text-muted">{b.notes}</p>}
+              </div>
+            ))}
+            {!list.length && <p className="px-3 py-2 text-[13px] text-muted">Nothing set yet.</p>}
+          </div>
+          {canEdit && list.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[12.5px] text-ink font-semibold">Correct a building</p>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select value={pick} onChange={e => setPick(e.target.value)} className={`${input} sm:max-w-[220px]`}>
+                  <option value="">Building…</option>
+                  {list.map(b => <option key={b.building} value={b.building}>{b.building}</option>)}
+                </select>
+                <input value={answer} onChange={e => setAnswer(e.target.value)} placeholder="e.g. Opal cleans; we do maintenance and guest service" className={input} />
+                <button onClick={save} disabled={busy || !pick || !answer.trim()} className="inline-flex items-center justify-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-2 hover:bg-brand-700 disabled:opacity-50 shrink-0"><Save size={13} /> {busy ? 'Saving…' : 'Save'}</button>
+              </div>
+              {note && <p className="text-[12.5px] text-muted">{note}</p>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -148,7 +445,7 @@ function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
           nothing at all until its audit had loaded — the owner could not find it. */}
       <EveMemoryCleanup canEdit={canEdit} onChanged={load} />
       {/* CONFIRM WHAT SHE LEARNED (2026-11-10): what she overheard or concluded and nobody has checked. */}
-      <EveMemoryConfirm canEdit={canEdit} onChanged={load} />
+      <div id="eve-memory-confirm" className="scroll-mt-20"><EveMemoryConfirm canEdit={canEdit} onChanged={load} /></div>
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search her memory…" className={`${input} max-w-xs`} />
         <span className="text-xs text-muted">{shown.length} of {rows.length}{live != null && live > rows.length ? ` shown · ${live} live in all` : ''}</span>
@@ -319,7 +616,7 @@ const OUTCOME_UI: Record<string, { label: string; cls: string }> = {
   inconclusive: { label: 'Inconclusive', cls: 'bg-app text-muted border-line' },
 }
 
-function EveDirectionAdmin({ canEdit }: { canEdit: boolean }) {
+export function EveDirectionAdmin({ canEdit }: { canEdit: boolean }) {
   const [recs, setRecs] = useState<Rec[]>([])
   const [score, setScore] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -644,7 +941,7 @@ const AREA_LABEL: Record<string, string> = {
   ops: 'Operations', listings: 'Listings', money: 'Money', eve: 'Eve',
 }
 
-function EveAuditsAdmin({ canEdit }: { canEdit: boolean }) {
+export function EveAuditsAdmin({ canEdit }: { canEdit: boolean }) {
   const [items, setItems] = useState<Audit[]>([])
   const [status, setStatus] = useState<'open' | 'all'>('open')
   const [loading, setLoading] = useState(true)

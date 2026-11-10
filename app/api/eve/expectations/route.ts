@@ -17,6 +17,7 @@ import { eveGate } from '../../agent/route'
 import { atLeast } from '@/lib/features'
 import { isSuperadmin } from '@/lib/access'
 import { recordRun } from '@/lib/automation-runs'
+import { canEditExpectations } from '@/lib/eve/inbox'
 import { listExpectations, countOpenExpectations, runExpectationsDesk, setExpectationStatus, editExpectationCopy, previewPublish, publishExpectation, rewriteExpectationCopy, checkExpectationPhotos, coverageForNote, fillBlanks } from '@/lib/eve/expectations'
 
 export const dynamic = 'force-dynamic'
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
   const a = gate.access
-  const canEdit = isSuperadmin(a.email) || a.role === 'admin' || atLeast(a.levels?.eve, 'edit')
+  const canEdit = canEditExpectations(a)   // lib/eve/inbox.ts — the same rule, shared with the Eve inbox
   if (!canEdit) return NextResponse.json({ ok: false, error: 'edit access to Eve is needed' }, { status: 403 })
   const body = await req.json().catch(() => ({} as any))
   const by = String(a.email || 'unknown')

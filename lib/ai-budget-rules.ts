@@ -67,9 +67,19 @@ export function nightlyAllowance(b: AiBudget): number {
   return auto * share
 }
 
-/** Most calls one task may make in an hour (Eve's chat gets 3x). */
+/**
+ * THE ANSWER CHECK IS AUTOMATIC (2026-11-10, lib/eve/evals.ts). 'eval-run' (Eve's own loop asking the
+ * approved questions) and 'eval-judge' are deliberately NOT on INTERACTIVE: nobody is waiting, so they
+ * stop at the automatic daily cap like any background job, and the runner asks before every question
+ * and stops politely. They are not NIGHTLY either — the check is weekly and on demand, not a learning
+ * job. 'eval-run' is a full Eve loop (several model calls per question, up to twenty questions), so it
+ * gets Eve's chat room in the hourly brake rather than tripping it as a "loop".
+ */
+export const EVAL_TASKS: ReadonlySet<string> = new Set(['eval-run', 'eval-judge'])
+
+/** Most calls one task may make in an hour (Eve's chat and the answer check's Eve loop get 3x). */
 export function hourLimit(task: string, b: AiBudget): number {
-  return (task === 'eve' ? 3 : 1) * (Number(b.perTaskHour) || 40)
+  return (task === 'eve' || task === 'eval-run' ? 3 : 1) * (Number(b.perTaskHour) || 40)
 }
 
 export type SpendState = {

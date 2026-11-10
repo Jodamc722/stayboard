@@ -17,6 +17,7 @@ import { nudgeText } from '@/lib/eve/slack-watch'
 import { askNudgeText, ageMinutes } from '@/lib/eve/ccs-desk'
 import { agentAllowed, stepDown } from '@/lib/eve/agent-mode'
 import { postThreadReply } from '@/lib/slack'
+import { closeLoopItem } from '@/lib/eve/inbox'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,14 +44,15 @@ export async function PATCH(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
   const db = supabaseAdmin()
   const by = gate.access.email || 'someone'
+  // Close / dismiss live in lib/eve/inbox.ts (moved unchanged, the same not-found check first) so
+  // the Eve inbox closes a loop with the same copy.
+  if (action === 'close' || action === 'dismiss') {
+    const r = await closeLoopItem(id, action, by, b?.reason)
+    return NextResponse.json(r.json, { status: r.status })
+  }
   const { data: it } = await db.from('eve_slack_items').select('*').eq('id', id).maybeSingle()
   if (!it) return NextResponse.json({ error: 'not found' }, { status: 404 })
   const now = new Date().toISOString()
-  if (action === 'close' || action === 'dismiss') {
-    const reason = action === 'dismiss' ? `dismissed by ${by}: ${String(b?.reason || 'not a real loop').slice(0, 120)}` : `${by}: ${String(b?.reason || 'done').slice(0, 120)}`
-    const { error } = await db.from('eve_slack_items').update({ status: 'closed', closed_reason: reason, closed_at: now }).eq('id', id)
-    return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ ok: true })
-  }
   if (action === 'reopen') {
     const { error } = await db.from('eve_slack_items').update({ status: 'open', closed_reason: null, closed_at: null }).eq('id', id)
     return error ? NextResponse.json({ error: error.message }, { status: 500 }) : NextResponse.json({ ok: true })

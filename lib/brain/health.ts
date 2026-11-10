@@ -13,8 +13,10 @@
 //     − issues    (max 25)  guest issues per 100 occupied nights (90 days) × 2.5;
 //                           under 10 occupied nights the rate means nothing, so 5 per issue instead
 //     − repeats   (max 20)  10 per system that failed again within 90 days on this apartment — the
-//                           STRICT repeat of lib/brain/maintenance (same part of the system, or back
-//                           within 30 days of a closed fix; cleaning and 'other' never count). The
+//                           STRICT repeat of lib/brain/repeat-rule (the same named part of the system,
+//                           or back within 30 days of a closed fix with no different part named; a
+//                           second report of one incident never counts; cleaning and 'other' never
+//                           count). Read from fact_maintenance_event.is_repeat only. The
 //                           old loose count (same system, any part, any 90 days) is kept, unscored,
 //                           as the `repeats_loose` entry in drivers.
 //     − upkeep    (max 15)  3 per overdue preventative job (up to 9) + 1 per 30 days the latest one
@@ -47,7 +49,8 @@ import { str, num, numOrNull, todayET, addDays, daysBetween, round2, pageRead, u
 
 export const HEALTH_FORMULA = 'score = 100 − reviews(≤30: (4.8−avg365)×40 capped 20 when n≥3, +5 per low review 90d capped 10) '
   + '− issues(≤25: glitches per 100 occupied nights 90d × 2.5; under 10 nights, 5 per glitch) '
-  + '− repeats(≤20: 10 per system that failed again within 90d — same part of the system, or within 30 days of a closed fix; '
+  + '− repeats(≤20: 10 per system that failed again within 90d — the same named part of the system, or back within 30 days of a closed fix with no different part named; '
+  + 'a second report of one incident within 72h never counts; '
   + 'cleaning and other never count; the looser same-system count is kept unscored in drivers as repeats_loose) '
   + '− upkeep(≤15: 3 per overdue PM capped 9, +1 per 30 days late capped 6) '
   + '− inspection(≤10: (1 − newest PM/arrival pass rate, 180d) × 40). '

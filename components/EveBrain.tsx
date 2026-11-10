@@ -329,7 +329,7 @@ export function DayTab({ ov }: { ov: any }) {
     <div>
       <div className="flex items-center gap-1.5 flex-wrap mb-2">
         {(['act', 'propose', 'draft', 'deferred', 'observe'] as const).map(m => byMode[m] ? <Tag key={m} tone={MODE_TONE[m]} title={MODE_WORD[m]}>{byMode[m]} {MODE_WORD[m]}</Tag> : null)}
-        {ov.thoughts?.unseen ? <a href="/users?tab=settings&panel=eve" className="ml-auto text-[12px] font-semibold text-brand-700 hover:underline">{ov.thoughts.unseen} unseen thoughts →</a> : null}
+        {ov.thoughts?.unseen ? <a href="/eve?tab=inbox" className="ml-auto text-[12px] font-semibold text-brand-700 hover:underline">{ov.thoughts.unseen} unseen thoughts →</a> : null}
       </div>
       {ov.today?.error ? <LeanEmpty>Her decision log could not be read: {ov.today.error}</LeanEmpty>
         : folded.length ? (
