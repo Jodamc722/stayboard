@@ -32,7 +32,8 @@ import 'server-only'
 import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from '../supabase-admin'
 import { pageRows } from '../db-page'
-import { getOpsPresets } from '../app-settings'
+import { getOpsPresets, getSetting } from '../app-settings'
+import { CLEAN_RATES_KEY, resolveCleanRates, priceClean } from '../clean-rates'
 import { vendorRegex } from '../ops-presets'
 import { marketOf } from '../segments'
 import { isDepartureCleanName } from '../breezeway'
@@ -81,6 +82,14 @@ export type StaffDay = {
   verdict: StaffVerdict
   /** "Thu Oct 2 · Broward · 11 checkouts · needs 3 · 2 rostered — short" */
   line: string
+  /**
+   * THE SCHEDULER RAIL'S KPI (2026-11-10, for the next-week plan, lib/forecast/plan.ts): the booked
+   * cleans priced at their expected labor cost ÷ pay per hour (lib/clean-rates priceClean), summed —
+   * the same hours the rail calls "KPI". `hoursPerClean` is the market's average over the window's
+   * booked cleans (the P&L market rate when nothing is booked), for pricing cleans not booked yet.
+   */
+  kpiHours?: number
+  hoursPerClean?: number
 }
 export type StripRate = { perCheckout: number; minutes: number; timed: number }
 export type StaffingForecast = {
@@ -248,12 +257,21 @@ async function compute(from: string, days: number): Promise<StaffingForecast> {
   const today = ymdET()
   const to = shift(from, days - 1)
   const notes: string[] = []
-  const [units, pk, meta, roster] = await Promise.all([
+  const [units, pk, meta, roster, rates] = await Promise.all([
     forwardCheckoutUnits(from, to),
     pickupFactors().catch(() => ({ factors: [1], samples: [0] })),
     listingMeta().catch(() => ({} as Record<string, { market: string; vendor: boolean }>)),
     rosterWindow(from, to, notes),
+    getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null).then(v => resolveCleanRates(v)),
   ])
+  // KPI hours per booked clean (the rail's basis), and each market's average for unbooked cleans.
+  const kpiOf = (u: CheckoutUnit) => priceClean(rates, { building: u.building, name: u.name, bedrooms: u.bedrooms, market: u.market }).hours
+  const hpc: Record<string, number> = {}
+  for (const mk of FORECAST_MARKETS) {
+    const mine = units.filter(u => u.market === mk)
+    const avg = mine.length ? mine.reduce((a, u) => a + kpiOf(u), 0) / mine.length : 0
+    hpc[mk] = Math.round((avg > 0 ? avg : (rates.marketRate[mk] || 0) / (rates.payPerHour || 20)) * 100) / 100
+  }
   const stripRead = await cleanTasks(shift(today, -28), shift(today, -1)).catch(() => ({ rows: [] as any[], truncated: true }))
   if (stripRead.truncated) notes.push('strip history read stopped early — strips may be under-priced')
   const strips = stripRates(stripRead.rows, meta)
@@ -286,7 +304,8 @@ async function compute(from: string, days: number): Promise<StaffingForecast> {
         minutesPerClean: perClean, minutes, needed, neededBooked, working: r.working, onCall: r.onCall, rostered,
         rosterKnown, callIn, verdict,
       }
-      out.push({ ...base, line: lineOf(base) })
+      const kpiHours = Math.round(mine.reduce((a, u) => a + kpiOf(u), 0) * 100) / 100
+      out.push({ ...base, line: lineOf(base), kpiHours, hoursPerClean: hpc[market] })
     }
   }
   if (!roster.publishedThrough) notes.push('Homebase has no shifts published in this window — every day reads "roster not out yet"')
@@ -304,7 +323,8 @@ async function compute(from: string, days: number): Promise<StaffingForecast> {
   }
 }
 
-const cached = unstable_cache(compute, ['forecast-staffing-v1'], { revalidate: 600, tags: ['forecast'] })
+// v2 (2026-11-10): days carry kpiHours / hoursPerClean — a cached v1 day would read without them.
+const cached = unstable_cache(compute, ['forecast-staffing-v2'], { revalidate: 600, tags: ['forecast'] })
 
 /**
  * The forecast from `from` (default today, ET) for `days` days (default 14, at most 21), cached ten
@@ -336,6 +356,21 @@ export async function snapshotForecasts(opts: { forecast?: StaffingForecast } = 
     rows.push({ kind: 'cleans', subject: d.market, madeOn: today, forDate: d.date, predicted: d.expected, low: d.booked, meta })
     rows.push({ kind: 'people_needed', subject: d.market, madeOn: today, forDate: d.date, predicted: d.needed, low: d.neededBooked, meta })
   }
+  // THE NEXT-WEEK PLAN'S NEED, ON THE KPI BASIS (2026-11-10, lib/forecast/plan.ts): the people the
+  // Scheduler rail's model says the day needs, kept as kind 'kpi_need' and graded below against the
+  // people who actually worked — so the "Next 7 days" panel can say how far to trust it.
+  try {
+    const { planDaysFromForecast } = await import('./plan')
+    const { days, settings } = await planDaysFromForecast(fc)
+    for (const p of days) {
+      if (p.date <= today || p.verdict === 'none') continue
+      rows.push({ kind: 'kpi_need', subject: p.market, madeOn: today, forDate: p.date, predicted: p.need, low: null, meta: {
+        booked: p.booked, likely: p.likely, kpiH: p.kpiH, projH: p.projH, targetH: p.targetH, schedH: p.schedH, working: p.working, onCall: p.onCall,
+        rosterKnown: p.rosterKnown, verdict: p.verdict, shiftHours: settings.shiftHours, growthPct: settings.growthPct,
+        minutesPerClean: fc.days.find(d => d.date === p.date && d.market === p.market)?.minutesPerClean ?? null, capacityMin: fc.capacityMin, model: 'plan-kpi-v1',
+      } })
+    }
+  } catch { /* the staffing forecast is recorded either way */ }
   return recordPredictions(rows)
 }
 
@@ -344,6 +379,7 @@ export async function snapshotForecasts(opts: { forecast?: StaffingForecast } = 
  * today (ET, last 30 days) against the departure cleans that day actually finished.
  *   cleans         actual = departure cleans finished for that market and day (one per unit)
  *   people_needed  actual = the people on those finished cleans (their assignees) — how many it
+ *                  (kpi_need, the next-week plan's need on the KPI basis, is graded the same way)
  *                  really took (2026-09-29 review, nb-6). A day with cleans but no names on them
  *                  cannot say, so that kind is left ungraded. The need the day implied on the
  *                  forecast's own yardstick (⌈cleans × minutes per clean ÷ 414⌉, the standard
@@ -354,7 +390,7 @@ export async function snapshotForecasts(opts: { forecast?: StaffingForecast } = 
  */
 export async function gradeForecasts(opts: { today?: string } = {}): Promise<{ ok: boolean; graded: number; held: number; skipped?: number; missing?: boolean; error?: string }> {
   const today = opts.today || ymdET()
-  const open = await ungradedBefore(today, ['cleans', 'people_needed'], { sinceDays: 30 })
+  const open = await ungradedBefore(today, ['cleans', 'people_needed', 'kpi_need'], { sinceDays: 30 })
   if (!open.ok) return { ok: false, graded: 0, held: 0, missing: open.missing, error: open.error }
   if (!open.rows.length) return { ok: true, graded: 0, held: 0 }
   const dates = Array.from(new Set(open.rows.map(r => str(r.for_date).slice(0, 10)))).sort()

@@ -18,6 +18,7 @@ import CommentThread from './CommentThread'
 import RowMenu, { type RowAction } from './RowMenu'
 import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
+import { ScheduleNextWeek } from './ScheduleNextWeek'
 import CleanerPicker, { sameRosterPerson } from './CleanerPicker'
 import GeLog from './GeLog'
 import { nameMatches } from '@/lib/person-name'
@@ -1121,6 +1122,9 @@ async function pushBlocks() {
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
       </div>}
+
+      {/* NEXT 7 DAYS (2026-11-10): the preemptive plan — same KPI model as the strip and the rail. */}
+      {!embedded && <ScheduleNextWeek market={market} />}
 
       {!embedded && view === 'day' && data && stripDays.length > 0 && (
 /* PHONE: seven cards in three columns were three rows of tiles above the first clean. Under sm

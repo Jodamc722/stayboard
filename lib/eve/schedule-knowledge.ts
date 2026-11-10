@@ -22,10 +22,22 @@ import 'server-only'
 // does Eden 2104 take?", written down as inferred memories (source 'eve', one per person and
 // building, superseding last week's), and used by the tomorrow-check (lib/eve/schedule-check) to say
 // when a day is short or a person is over their own usual load. Nothing here writes to Breezeway.
+//
+// HOW WE SCHEDULE (owner, 2026-11-10: "All we need to learn is how we schedule and start figuring that
+// out so that we can manage our KPIs and start building preemptive scheduling"). `practice` is the
+// plain profile on top of the per-person and per-building facts, from the same 90 days plus the
+// reservations (same-day turns), the Breezeway ghosts (what got moved) and the Scheduler's staged
+// table (what was staged and never pushed): per in-house market, how many people work a weekday
+// against how many departure cleans, cleans a person a day, the usual start, how same-day turns are
+// handled; which buildings a vendor cleans; what gets moved, from which weekday to which; and how far
+// ahead the next seven days are already assigned. It feeds the next-week plan (lib/forecast/plan.ts:
+// the weekday history is the floor under the pickup) and the knowledge browser's "How we schedule"
+// card. Still nothing written to Breezeway, and nothing asked of anyone.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
 import { isDepartureCleanName } from '@/lib/breezeway'
-import { buildingOf } from '@/lib/segments'
+import { buildingOf, marketOf as segMarketOf } from '@/lib/segments'
+import { isMovedClean, pairMoves, dayDiff } from '@/lib/clean-day'
 import { personKey } from '@/lib/person-name'
 import { standardMinutes } from '@/lib/schedule-suggest'
 import { getOpsPresets } from '@/lib/app-settings'
@@ -63,9 +75,46 @@ export type ScheduleKnowledge = {
     demand: Record<string, Record<number, number>>
     /** market → weekday → people rostered Working on that weekday (next 14 days of Homebase) */
     supply: Record<string, Record<number, number>>
+    /**
+     * IN-HOUSE ONLY, on the forecast's markets (lib/segments): market → weekday → average departure
+     * cleans per occurrence of that weekday in the window (a weekday with no cleans counts as 0).
+     * The next-week plan's history floor. Absent on a picture cached before 2026-11-10.
+     */
+    demandInHouse?: Record<string, Record<number, number>>
   }
+  /** How we schedule, in one place (see the header). Absent on a picture cached before 2026-11-10. */
+  practice?: SchedulePractice
   /** Sentences a person could read — the same ones filed as memories. */
   facts: string[]
+}
+
+export type MarketPractice = {
+  market: string
+  /** Median departure cleans one person finishes on a day they clean here. */
+  cleansPerPersonDay: number | null
+  /** weekday → average people who finished a clean here on that weekday. */
+  peopleByDow: Record<number, number>
+  /** weekday → average departure cleans (in-house) — the same as week.demandInHouse. */
+  cleansByDow: Record<number, number>
+  usualStart: string | null
+  /** Share of departure cleans that were same-day turns (a guest arriving that day). */
+  sameDayShare: number | null
+  sameDayN: number
+  /** Share of same-day turns finished by 4pm. */
+  sameDayBy4: number | null
+  /** Median start of a same-day turn vs the rest — are they done first? */
+  sameDayStart: string | null
+  otherStart: string | null
+}
+export type SchedulePractice = {
+  markets: Record<string, MarketPractice>
+  vendorBuildings: { building: string; vendor: string }[]
+  /** Departure cleans taken off one day and put on another (Breezeway ghosts paired with their replacement). */
+  moves: { n: number; of: number; topPatterns: { from: string; to: string; n: number }[]; medianDays: number | null; topBuildings: { building: string; n: number }[] }
+  /** Picks staged on the Scheduler for a past day in the last 14 days and never pushed (a push clears them). */
+  stagedNotPushed: number | null
+  /** The next seven days: how many departure cleans are already in Breezeway and how many have a person. */
+  assignedAhead: { date: string; dow: string; cleans: number; assigned: number }[]
 }
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -94,23 +143,33 @@ export async function learnSchedule(days = 90): Promise<ScheduleKnowledge> {
   const to = new Date(); const from = new Date(to.getTime() - days * 86400_000)
   const fromYmd = from.toISOString().slice(0, 10), toYmd = to.toISOString().slice(0, 10)
 
-  const [{ data: listings }, tasks] = await Promise.all([
+  const aheadYmd = new Date(to.getTime() + 8 * 86400_000).toISOString().slice(0, 10)
+  const [{ data: listings }, tasks, arrivals, staged, ahead] = await Promise.all([
     db.from('guesty_listings').select('id,nickname,title,building,bedrooms,address_city').limit(1000),
     pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
       .select('id,name,scheduled_date,started_at,finished_at,total_minutes,status,assignees,reference_property_id,type_department')
       .eq('type_department', 'housekeeping').gte('scheduled_date', fromYmd).lte('scheduled_date', toYmd)
       .order('scheduled_date').order('id').range(a, b), 40),
+    // Same-day turns: an arrival in the unit on the day of the clean.
+    pageRows<any>((a, b) => db.from('guesty_reservations').select('listing_id,check_in,status')
+      .gte('check_in', fromYmd).lte('check_in', toYmd).order('check_in').order('id').range(a, b), 20).catch(() => ({ rows: [] as any[], truncated: true })),
+    // Staged and never pushed: a push deletes the staged row, so a past-dated one was left behind.
+    Promise.resolve(db.from('schedule_staged').select('listing_id,date')
+      .gte('date', new Date(to.getTime() - 14 * 86400_000).toISOString().slice(0, 10)).lt('date', toYmd).limit(1000)).then(r => (r.error ? null : (r.data || []) as any[]), () => null),
+    // How far ahead the week is already assigned.
+    Promise.resolve(db.from('breezeway_tasks_sync').select('reference_property_id,name,status,scheduled_date,assignees')
+      .eq('type_department', 'housekeeping').gt('scheduled_date', toYmd).lte('scheduled_date', aheadYmd).order('scheduled_date').order('id').limit(1000)).then(r => (r.error ? [] : (r.data || []) as any[]), () => [] as any[]),
   ])
   // WHO CLEANS WHAT (Jon, 2026-10-01): "Opal does all cleans [at Capri, Lucerne, Amrit] … PT is always
   // done by Anthony's team, Probol … All other cleans are done in-house." The vendor registry in ops
   // presets is that rule; a vendor building's people are the vendor's crew and stay out of our team's
   // numbers, and the building itself is remembered as the vendor's.
   const vendorList = (await getOpsPresets().catch(() => null))?.vendorBuildings || []
-  const meta: Record<string, { unit: string; building: string; market: string; bedrooms: number | null; vendor: string | null }> = {}
+  const meta: Record<string, { unit: string; building: string; market: string; seg: string; bedrooms: number | null; vendor: string | null }> = {}
   for (const l of (listings || []) as any[]) {
     const unit = str(l.nickname) || str(l.title) || 'Unit'
     const building = buildingOf(l.building, unit) || str(l.building) || unit
-    meta[str(l.id)] = { unit, building, market: marketOf(building, str(l.address_city)), bedrooms: l.bedrooms == null ? null : Number(l.bedrooms), vendor: vendorCompanyOf(vendorList, building) || vendorCompanyOf(vendorList, unit) }
+    meta[str(l.id)] = { unit, building, market: marketOf(building, str(l.address_city)), seg: String(segMarketOf(str(l.building), str(l.address_city), unit) || 'Miami'), bedrooms: l.bedrooms == null ? null : Number(l.bedrooms), vendor: vendorCompanyOf(vendorList, building) || vendorCompanyOf(vendorList, unit) }
   }
 
   type Done = { listingId: string; day: string; who: string[]; minutes: number | null; startH: number | null; endH: number | null }
@@ -239,8 +298,113 @@ export async function learnSchedule(days = 90): Promise<ScheduleKnowledge> {
     const line = [1, 2, 3, 4, 5, 6, 0].map(dow => `${DOW[dow]} ${d[dow] ?? 0}${s[dow] != null ? `/${s[dow]}p` : ''}`).join(' · ')
     facts.push(`${m}, a typical week — departure cleans a day${Object.keys(s).length ? ' / people rostered' : ''}: ${line}.`)
   }
+  // ── how we schedule: the practice profile ──
+  const arrivalsOn = new Set<string>()
+  for (const r of arrivals.rows) if (/confirm|checked/i.test(str(r.status))) arrivalsOn.add(str(r.listing_id) + '__' + str(r.check_in).slice(0, 10))
+  const dowCount: Record<number, number> = {}
+  for (let t = Date.parse(fromYmd + 'T12:00:00Z'); t < Date.parse(toYmd + 'T12:00:00Z'); t += 86400_000) { const dw = new Date(t).getUTCDay(); dowCount[dw] = (dowCount[dw] || 0) + 1 }
+  const inHouse = done.filter(d => meta[d.listingId] && !meta[d.listingId].vendor)
+  const markets: Record<string, MarketPractice> = {}
+  const demandInHouse: Record<string, Record<number, number>> = {}
+  for (const mk of Array.from(new Set(inHouse.map(d => meta[d.listingId].seg)))) {
+    const rows = inHouse.filter(d => meta[d.listingId].seg === mk)
+    const cleansByDow: Record<number, number> = {}
+    const peopleDays: Record<string, Set<string>> = {}
+    const personDay: Record<string, number> = {}
+    for (const r of rows) {
+      const dw = new Date(r.day + 'T12:00:00Z').getUTCDay()
+      cleansByDow[dw] = (cleansByDow[dw] || 0) + 1
+      for (const w of r.who) {
+        const pk = personKey(w) || w.toLowerCase()
+        ;(peopleDays[r.day] ||= new Set()).add(pk)
+        personDay[pk + '|' + r.day] = (personDay[pk + '|' + r.day] || 0) + 1
+      }
+    }
+    const peopleSum: Record<number, number> = {}, peopleN: Record<number, number> = {}
+    for (const [day, set] of Object.entries(peopleDays)) { const dw = new Date(day + 'T12:00:00Z').getUTCDay(); peopleSum[dw] = (peopleSum[dw] || 0) + set.size; peopleN[dw] = (peopleN[dw] || 0) + 1 }
+    const per: Record<number, number> = {}, ppl: Record<number, number> = {}
+    for (let dw = 0; dw < 7; dw++) {
+      per[dw] = Math.round(((cleansByDow[dw] || 0) / Math.max(1, dowCount[dw] || 1)) * 10) / 10
+      if (peopleN[dw]) ppl[dw] = Math.round((peopleSum[dw] / peopleN[dw]) * 10) / 10
+    }
+    demandInHouse[mk] = per
+    const same = rows.filter(r => arrivalsOn.has(r.listingId + '__' + r.day))
+    const rest = rows.filter(r => !arrivalsOn.has(r.listingId + '__' + r.day))
+    const startsOf = (xs: Done[]) => xs.map(r => r.startH).filter((x): x is number => x != null && x >= 5 && x <= 16)
+    const sameEnds = same.map(r => r.endH).filter((x): x is number => x != null)
+    const allStarts = startsOf(rows), ss = startsOf(same), os = startsOf(rest)
+    const pd = Object.values(personDay)
+    markets[mk] = {
+      market: mk, cleansPerPersonDay: pd.length >= 5 ? median(pd) : null, peopleByDow: ppl, cleansByDow: per,
+      usualStart: allStarts.length >= 5 ? fmtHour(median(allStarts)) : null,
+      sameDayShare: rows.length >= 10 && !arrivals.truncated ? Math.round((same.length / rows.length) * 100) / 100 : null,
+      sameDayN: same.length,
+      sameDayBy4: sameEnds.length >= 5 ? Math.round((sameEnds.filter(e => e <= 16).length / sameEnds.length) * 100) / 100 : null,
+      sameDayStart: ss.length >= 5 ? fmtHour(median(ss)) : null, otherStart: os.length >= 5 ? fmtHour(median(os)) : null,
+    }
+  }
+  // What got moved: Breezeway deletes a moved clean and makes a new one; the pair is the move.
+  const deps = tasks.rows.filter(t => isDepartureCleanName(t.name))
+  const mv = pairMoves(deps.filter(t => isMovedClean(t)), deps.filter(t => !isMovedClean(t)), (id: any) => meta[str(id)]?.unit || str(id))
+  const pat: Record<string, number> = {}, mvB: Record<string, number> = {}
+  const gaps: number[] = []
+  for (const m of mv) {
+    if (m.to) { const k = DOW[new Date(m.from + 'T12:00:00Z').getUTCDay()] + '→' + DOW[new Date(m.to + 'T12:00:00Z').getUTCDay()]; pat[k] = (pat[k] || 0) + 1; gaps.push(Math.abs(dayDiff(m.from, m.to))) }
+    const b = meta[m.listingId]?.building; if (b) mvB[b] = (mvB[b] || 0) + 1
+  }
+  const assignedAhead: SchedulePractice['assignedAhead'] = []
+  {
+    const byDay: Record<string, { cleans: number; assigned: number }> = {}
+    for (const t of ahead) {
+      if (!isDepartureCleanName(t.name) || isMovedClean(t) || /cancel|delet/i.test(str(t.status))) continue
+      const m = meta[str(t.reference_property_id)]; if (m && m.vendor) continue
+      const d = str(t.scheduled_date).slice(0, 10)
+      const a = (byDay[d] ||= { cleans: 0, assigned: 0 })
+      a.cleans++
+      if (assigneeNames(t).length) a.assigned++
+    }
+    for (const d of Object.keys(byDay).sort()) assignedAhead.push({ date: d, dow: DOW[new Date(d + 'T12:00:00Z').getUTCDay()], ...byDay[d] })
+  }
+  const vendorBuildings = Object.values(buildings).filter(b => b.vendor).map(b => ({ building: b.building, vendor: String(b.vendor) }))
+  const practice: SchedulePractice = {
+    markets, vendorBuildings,
+    moves: { n: mv.length, of: done.length, topPatterns: Object.entries(pat).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => ({ from: k.split('→')[0], to: k.split('→')[1], n })), medianDays: gaps.length >= 3 ? median(gaps) : null, topBuildings: Object.entries(mvB).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([building, n]) => ({ building, n })) },
+    stagedNotPushed: staged ? staged.length : null,
+    assignedAhead,
+  }
+  facts.push(...practiceFacts(practice, days))
+
   const timed = done.filter(d => d.minutes != null).length
-  return { asOf: new Date().toISOString(), from: fromYmd, to: toYmd, days, cleansRead: done.length, timedCleans: timed, units, people, buildings, week: { demand, supply }, facts }
+  return { asOf: new Date().toISOString(), from: fromYmd, to: toYmd, days, cleansRead: done.length, timedCleans: timed, units, people, buildings, week: { demand, supply, demandInHouse }, practice, facts }
+}
+
+/** The practice profile as sentences — filed as memories with the rest, and read on the knowledge card. */
+export function practiceFacts(p: SchedulePractice, days: number): string[] {
+  const out: string[] = []
+  const busiest = (m: MarketPractice) => [0, 1, 2, 3, 4, 5, 6].sort((a, b) => (m.cleansByDow[b] || 0) - (m.cleansByDow[a] || 0))[0]
+  for (const m of Object.values(p.markets)) {
+    const b = busiest(m)
+    const bits = [
+      `How we schedule — ${m.market}: the busiest weekday is ${DOW[b]} with about ${m.cleansByDow[b] || 0} departure cleans${m.peopleByDow[b] != null ? ` and ${m.peopleByDow[b]} people cleaning` : ''}`,
+      m.cleansPerPersonDay != null ? `a person does ${m.cleansPerPersonDay} clean${m.cleansPerPersonDay === 1 ? '' : 's'} on a typical day` : '',
+      m.usualStart ? `cleans start around ${m.usualStart}` : '',
+      m.sameDayShare != null ? `${Math.round(m.sameDayShare * 100)}% are same-day turns (${m.sameDayN})${m.sameDayBy4 != null ? `, ${Math.round(m.sameDayBy4 * 100)}% of those done by 4pm` : ''}${m.sameDayStart && m.otherStart ? `, started around ${m.sameDayStart} vs ${m.otherStart} for the rest` : ''}` : '',
+    ].filter(Boolean)
+    out.push(bits.join('; ') + `. (${days} days, in-house only)`)
+  }
+  if (p.vendorBuildings.length) out.push(`How we schedule — vendor-cleaned buildings (not on our roster): ${p.vendorBuildings.map(v => `${v.building} (${v.vendor})`).join(', ')}.`)
+  if (p.moves.n) out.push(`How we schedule — moved cleans: ${p.moves.n} departure cleans were moved to another day in ${days} days${p.moves.topPatterns.length ? `, most often ${p.moves.topPatterns.map(x => `${x.from}→${x.to} (${x.n})`).join(', ')}` : ''}${p.moves.medianDays != null ? `, usually by ${p.moves.medianDays} day${p.moves.medianDays === 1 ? '' : 's'}` : ''}${p.moves.topBuildings.length ? `; most at ${p.moves.topBuildings.map(x => `${x.building} (${x.n})`).join(', ')}` : ''}. Breezeway does not record why.`)
+  return out
+}
+
+/** The plain "how we schedule" profile: the practice lines, then the busiest people and buildings. */
+export function scheduleProfile(k: ScheduleKnowledge): string[] {
+  const head = k.practice ? practiceFacts(k.practice, k.days) : k.facts.filter(f => /typical week/.test(f))
+  const ahead = k.practice && k.practice.assignedAhead.length
+    ? [`Assigned ahead right now: ${k.practice.assignedAhead.map(a => `${a.dow} ${a.assigned}/${a.cleans}`).join(' · ')}${k.practice.stagedNotPushed ? `; ${k.practice.stagedNotPushed} pick${k.practice.stagedNotPushed === 1 ? '' : 's'} staged in the last 14 days were never pushed` : ''}.`]
+    : []
+  const people = k.facts.filter(f => / usually cleans /.test(f)).slice(0, 6)
+  return head.concat(ahead, people)
 }
 
 /** File the facts as inferred memories — one per person and building, superseding the previous week's. */
@@ -249,9 +413,12 @@ export async function fileScheduleMemories(k: ScheduleKnowledge): Promise<{ save
   try {
     const { saveMemory } = await import('./memory')
     for (const f of k.facts.slice(0, 50)) {
-      const isPerson = /usually cleans/.test(f) && !/is usually cleaned by/.test(f)
-      const who = isPerson ? f.split(' usually cleans')[0] : f.split(' is usually cleaned by')[0]
-      const scope = isPerson ? `person:${personKey(who) || who.toLowerCase()}` : /typical week/.test(f) ? 'portfolio' : `building:${who}`
+      // Person line, building line, or a portfolio line (the week, the practice profile, the vendor
+      // crews). Before 2026-11-10 anything else fell through to "building:<the whole sentence>".
+      const isPerson = / usually cleans /.test(f) && !/ is usually cleaned by /.test(f)
+      const bm = / is usually cleaned by | is cleaned by /.exec(f)
+      const who = isPerson ? f.split(' usually cleans')[0] : bm ? f.slice(0, bm.index) : ''
+      const scope = isPerson ? `person:${personKey(who) || who.toLowerCase()}` : who && !/^How we schedule/.test(f) ? `building:${who}` : 'portfolio'
       const r = await saveMemory({ kind: 'insight', text: f, scope, weight: 6, source: 'eve', why: `learned from ${k.days} days of finished departure cleans in Breezeway (${k.from}→${k.to}); rebuilt daily`, evidence: { scheduleKnowledge: k.asOf, kind: 'schedule' }, expires_on: new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10) }).catch(() => ({ ok: false } as any))
       if (r && r.ok && !r.deduped) saved++; else skipped++
     }

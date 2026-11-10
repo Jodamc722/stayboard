@@ -15,6 +15,13 @@
 //
 // Built from lib/briefs/direction (the same engine as the Ops morning email and the Today board).
 //
+// ONE PAGE (owner, 2026-11-10: "break it down in a way that's useful and directional and manageable …
+// encourage, lead and help us create plans"). The contract is now: the header and the day in one
+// line; TODAY'S THREE PRIORITIES (the Today board's top decisions, each with its owner, its next step
+// and when it is due — "done by then" is the measure; an aging Slack loop fills a free slot); what
+// went well; ONE risk (the next-week plan's short day if there is one, else the oldest loop nobody
+// owns); the links. Everything else open is a count behind the Eve tab link. ~250 words at most.
+//
 // WHAT THE CODE DOES TODAY (2026-11-05 — this header used to say the post went to Slack; it has not
 // by default since 2026-10-09). Settings: app_settings `eve_morning` { enabled (default true),
 // slack (default FALSE), channel (default the approvals room) }.
@@ -85,7 +92,7 @@ export function pickLoops(loops: Loop[], seen: Record<string, { n: number; first
   return { say, quiet }
 }
 
-export function morningText(d: DayDirection, picked: { say: (Loop & { aging: boolean })[]; quiet: number }): string {
+export function morningText(d: DayDirection, picked: { say: (Loop & { aging: boolean })[]; quiet: number }, risk?: string | null): string {
   const parts: string[] = []
   const h = d.health
   const band = h ? (h.band === 'smooth' ? '🟢' : h.band === 'watch' ? '🟡' : '🔴') : ''
@@ -98,18 +105,17 @@ export function morningText(d: DayDirection, picked: { say: (Loop & { aging: boo
     parts.push([`${c.total} cleans`, sameDay ? `*${sameDay} by 4pm*` : '', unassigned ? `*${unassigned} unassigned*` : 'all assigned', `${day.pulse.arrivals} in / ${day.pulse.departures} out`, `${day.tiles.team.onShift} on shift`, day.tiles.glitches.open ? `${day.tiles.glitches.open} glitches open${day.tiles.glitches.overdue ? ` (*${day.tiles.glitches.overdue} overdue*)` : ''}` : ''].filter(Boolean).join(' · '))
     if (h && h.score < 100) parts.push(`_${h.headline}_`)
   }
-  if (d.decide.length) {
-    parts.push(`*Decide today*\n${d.decide.slice(0, 5).map((x, i) => `${i + 1}. *${short(x.unit || x.title, 34)}* — ${short(x.title, 70)} · *${x.owner}* → ${short(x.next, 80)}${x.due ? ` · ${x.due}` : ''}`).join('\n')}`)
-  } else if (day) parts.push('*Decide today* — nothing on the board needs a decision. 👏')
-  if (picked.say.length) {
-    const line = (l: Loop & { aging: boolean }) => {
-      const what = l.kind === 'guest_ask' ? 'Guest ask' : l.kind === 'problem' ? 'No owner' : 'Promised'
-      const tail = l.aging ? ` — *${age(l.ageH)} old: close it or name someone*` : ` · ${age(l.ageH)}`
-      return `• ${what}${l.unit ? ` · ${short(l.unit, 24)}` : ''} — ${short(l.summary, 90)}${l.owner ? ` — ${l.owner}` : ''}${tail}`
-    }
-    parts.push(`*Waiting on a person*\n${picked.say.map(line).join('\n')}`)
+  // TODAY'S THREE PRIORITIES: the board's top decisions, then loops in any free slot.
+  const pri: string[] = d.decide.slice(0, 3).map(x => `*${short(x.unit || x.title, 34)}* — ${short(x.title, 60)} · *${x.owner}* → ${short(x.next, 70)}${x.due ? ` · by ${x.due}` : ''}`)
+  for (const l of picked.say) {
+    if (pri.length >= 3) break
+    const what = l.kind === 'guest_ask' ? 'Guest ask' : l.kind === 'problem' ? 'No owner' : 'Promised'
+    pri.push(`${what}${l.unit ? ` · *${short(l.unit, 24)}*` : ''} — ${short(l.summary, 80)} · ${l.owner ? `*${l.owner}*` : '*name someone*'}${l.aging ? ` → ${age(l.ageH)} old: close it or hand it on` : ` · ${age(l.ageH)}`}`)
   }
-  if (d.wins.length) parts.push(`_Yesterday:_ ${d.wins.join(' · ')}`)
+  if (pri.length) parts.push(`*Today's priorities*\n${pri.map((x, i) => `${i + 1}. ${x}`).join('\n')}`)
+  else if (day) parts.push('*Today\'s priorities* — nothing on the board needs a decision. 👏')
+  if (d.wins.length) parts.push(`*Went well:* ${d.wins.slice(0, 2).join(' · ')}`)
+  if (risk) parts.push(`*One risk:* ${short(risk, 200)}`)
   const links = [`<${APP}/api/cron/ops-brief?preview=full|Full Ops morning>`, `<${APP}/command|Today board>`, `<${APP}/eve?tab=loops|Eve tab${picked.quiet ? ` (${picked.quiet} more open)` : ''}>`]
   parts.push(links.join(' · '))
   if (d.degraded.length) parts.push(`_Partial: ${d.degraded.join('; ')}._`)
@@ -132,8 +138,20 @@ export async function runMorning(opts: { force?: boolean; preview?: boolean } = 
   // Forget loops that are no longer open, so the map never grows past what is live.
   const live = new Set(all.map(l => l.id))
   for (const k of Object.keys(seen)) if (!live.has(k)) delete seen[k]
-  const picked = pickLoops(all, seen, 5)
-  const text = morningText(d, picked)
+  // Loops only fill the priorities the board leaves free; the rest are a count behind the Eve tab link.
+  const picked = pickLoops(all, seen, Math.max(0, 3 - Math.min(3, d.decide.length)))
+  // ONE RISK: the next-week plan's first short day; else the oldest loop nobody owns.
+  let risk: string | null = null
+  try {
+    const { buildNextWeekPlan } = await import('@/lib/forecast/plan')
+    const plan = await buildNextWeekPlan({ days: 7 })
+    if (plan.summary.shortDays) risk = `${plan.summary.headline}${plan.moves[0] ? ` — ${plan.moves[0].text}` : ''} (Schedule → Next 7 days)`
+  } catch { /* no plan: the loop below */ }
+  if (!risk) {
+    const unowned = d.loops.unowned.slice().sort((a, b) => b.ageH - a.ageH)[0]
+    if (unowned) risk = `${unowned.unit ? unowned.unit + ' — ' : ''}${unowned.summary} has had no owner for ${age(unowned.ageH)}.`
+  }
+  const text = morningText(d, picked, risk)
   if (opts.preview) return { posted: false, text }
   // Filed on the Eve tab → Reports every morning, whatever Slack does (Jon, 2026-10-12).
   const { routeReport } = await import('./reports')

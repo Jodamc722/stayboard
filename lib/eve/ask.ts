@@ -78,7 +78,9 @@ const DEFAULTS: AskSettings = {
   enabled: true,
   maxPerDay: 3,
   recipients: [],
-  includeFindings: true,
+  // OFF by default since 2026-11-10 (owner: the app already shows these on their own pages — "it
+  // doesn't need to know why, it just needs to indicate that it's not connected").
+  includeFindings: false,
   includeQuestions: false,
   giveUpAfter: 3,
   thinkingDigest: false,
@@ -165,7 +167,10 @@ export async function buildBatch(limit: number): Promise<AskItem[]> {
 
   if (s.includeFindings) {
     const audits = await listAudits({ status: 'open', limit: 60 }).catch(() => [])
-    const grouped = groupChannelFindings(audits.filter(a => a.severity !== 'info'), fresh)
+    // Even when switched on, only her own senses (dead or stale pipelines that make her numbers
+    // wrong) — never channel connections, door codes, arrival instructions, listing health or the
+    // review feed, which live on Health, Channels and the Admin desk.
+    const grouped = groupChannelFindings(audits.filter(a => a.severity !== 'info' && a.area === 'pipeline' && !/review/i.test(String(a.id))), fresh)
     items.push(...grouped.items)
     for (const a of grouped.rest) {
       if (a.severity === 'info') continue          // info is a log line, not a conversation

@@ -18,6 +18,13 @@
 //                the other is listed under `also`
 //   thoughts     ("she would have done …") are kind 'decide' and appear only when asked for
 //                (?kind=decide), never in the main list
+//   audits       (2026-11-10, owner: "it doesn't need to know why, it just needs to indicate that it's
+//                not connected") are NOT inbox items any more. Audit findings — channel connections,
+//                door codes, arrival instructions, listing health, feeds — live on their own pages
+//                (Health, the Admin desk, Channels), where they are fixed. The inbox is what a person
+//                must decide or answer.
+//   the count    summary.total counts only what waits on a person's decision or answer: no thoughts,
+//                no out-of-date rows, no notes (expectation notes stay listed, for CS to pick up).
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isSuperadmin, type Access } from '@/lib/access'
@@ -236,15 +243,20 @@ function fromDraft(d: GuestDraft, v: InboxViewer): InboxItem & { _keys?: string[
 function fromQuestion(q: any, v: InboxViewer): InboxItem & { _keys?: string[] } {
   const canAct = v.eve
   const assume = q?.evidence?.what_i_will_assume ? str(q.evidence.what_i_will_assume) : ''
+  // A question answered on a page (the channel playbook) carries that page's link.
+  const link = /^\/[a-z]/i.test(str(q?.evidence?.link)) ? str(q.evidence.link) : ''
+  const actions: InboxAction[] = !canAct ? [] : link
+    ? [{ key: 'open', label: 'Open the page', style: 'primary', href: link }, { key: 'dismiss', label: 'Not now', style: 'secondary' }]
+    : [{ key: 'answer', label: 'Answer', style: 'primary', input: 'answer' }, { key: 'dismiss', label: 'Not worth answering', style: 'secondary' }]
   return {
     id: 'answer:' + str(q.id), kind: 'answer', rowId: str(q.id), title: clip(q.question, 200), why: str(q.why), unit: null,
     building: /^building:/.test(str(q.scope)) ? str(q.scope).slice(9) : null,
     urgency: { level: q.kind === 'conflict' ? 'today' : 'week', reason: q.kind === 'conflict' ? 'two sources disagree' : q.kind === 'plan' ? 'from the weekly review' : '', guest: false, money: MONEY.test(str(q.question)), due: null, ageHours: ageH(str(q.created_at)) },
     created_at: str(q.created_at), source: 'question' + (q.source === 'eve' ? ' · came up in conversation' : q.kind ? ' · ' + str(q.kind) : ''),
-    actions: canAct ? [{ key: 'answer', label: 'Answer', style: 'primary', input: 'answer' }, { key: 'dismiss', label: 'Not worth answering', style: 'secondary' }] : [],
+    actions,
     canAct, dismissKey: 'dismiss', stale: false,
     detail: [q.question && str(q.question).length > 200 ? { label: 'Question', text: str(q.question) } : null, assume ? { label: 'If you say nothing, she assumes', text: assume } : null, { label: 'Scope', text: str(q.scope) || 'portfolio' }].filter(Boolean) as InboxItem['detail'],
-    links: [], group: null,
+    links: link ? [{ label: 'Open the page', href: link, kind: 'page' }] : [], group: null,
   }
 }
 
@@ -275,20 +287,6 @@ function fromExpectation(n: any, v: InboxViewer): InboxItem & { _keys?: string[]
     actions, canAct, dismissKey: 'dismiss', stale: false,
     detail: [{ label: 'What guests hit', text: str(n.what_guests_hit) }, { label: 'Proposed copy', text: str(n.proposed_copy) }],
     links: [{ label: 'Expectations', href: '/eve?tab=expectations', kind: 'page' }], group: null,
-  }
-}
-
-function fromAudit(a: any, v: InboxViewer): InboxItem & { _keys?: string[] } {
-  const canAct = v.eve
-  return {
-    id: 'note:audit-' + str(a.id), kind: 'note', rowId: 'audit-' + str(a.id), title: clip(a.title, 200), why: str(a.detail),
-    unit: null, building: null,
-    urgency: { level: a.severity === 'critical' ? 'today' : 'week', reason: a.severity === 'critical' ? 'critical finding' : '', guest: a.area === 'guests', money: a.area === 'money', due: null, ageHours: ageH(str(a.first_seen_at)) },
-    created_at: str(a.first_seen_at), source: 'audit · ' + str(a.area),
-    actions: canAct ? [{ key: 'ack', label: 'Got it', style: 'primary' }, { key: 'snooze', label: 'Snooze a week', style: 'secondary' }] : [],
-    canAct, dismissKey: 'snooze', stale: false,
-    detail: [a.fix ? { label: 'Fix', text: str(a.fix) } : null, Number(a.count) > 1 ? { label: 'Count', text: str(a.count) } : null].filter(Boolean) as InboxItem['detail'],
-    links: [], group: null,
   }
 }
 
@@ -438,7 +436,7 @@ export async function loadInbox(v: InboxViewer, opts: { kind?: InboxKind | null;
   let partial = false
   const soft = async <T>(p: () => Promise<T>, fallback: T): Promise<T> => { try { return await p() } catch { partial = true; return fallback } }
 
-  const [needs, drafts, questions, plans, exps, audits, thoughts, thoughtCount] = await Promise.all([
+  const [needs, drafts, questions, plans, exps, thoughts, thoughtCount] = await Promise.all([
     (v.eve || v.loopsView) && (want('approve') || want('loop')) ? soft(() => loadNeeds(), { needs: [] as Need[], partial: true }) : Promise.resolve({ needs: [] as Need[], partial: false }),
     (v.msgsView || v.reviewsView) && want('review_draft') ? soft(() => listGuestDrafts({ seesThreads: v.msgsView, seesReviews: v.reviewsView }), [] as GuestDraft[]) : Promise.resolve([] as GuestDraft[]),
     v.eve && want('answer') ? soft(async () => { const { listQuestions } = await import('./questions'); return listQuestions('open', 60, { slim: true }) as Promise<any[]> }, [] as any[]) : Promise.resolve([] as any[]),
@@ -448,7 +446,6 @@ export async function loadInbox(v: InboxViewer, opts: { kind?: InboxKind | null;
       return ((data as any[]) || []).filter(r => r.kind !== 'action')
     }, [] as any[]) : Promise.resolve([] as any[]),
     v.eveAny && want('note') ? soft(async () => { const { listExpectations } = await import('./expectations'); return listExpectations('open', 60) as Promise<any[]> }, [] as any[]) : Promise.resolve([] as any[]),
-    v.eve && want('note') ? soft(async () => { const { listAudits } = await import('./audit'); return (await listAudits({ status: 'open', limit: 60 })).filter(a => a.severity === 'critical' || a.severity === 'warn') as any[] }, [] as any[]) : Promise.resolve([] as any[]),
     v.vrAdmin && opts.kind === 'decide' ? soft(async () => { const { listThoughts } = await import('./thoughts'); return listThoughts({ status: 'open', limit: 100 }) as Promise<any[]> }, [] as any[]) : Promise.resolve([] as any[]),
     v.vrAdmin && !opts.kind ? soft(async () => { const { openCounts } = await import('./thoughts'); return (await openCounts(v.email)).open }, 0) : Promise.resolve(0),
   ])
@@ -463,7 +460,6 @@ export async function loadInbox(v: InboxViewer, opts: { kind?: InboxKind | null;
   for (const q of questions) raw.push(fromQuestion(q, v))
   for (const p of plans) raw.push(fromPlan(p, v))
   for (const n of exps) raw.push(fromExpectation(n, v))
-  for (const a of audits) raw.push(fromAudit(a, v))
   for (const t of thoughts) raw.push(fromThought(t, v))
   if (opts.kind) raw = raw.filter(i => i.kind === opts.kind)
 
@@ -472,8 +468,9 @@ export async function loadInbox(v: InboxViewer, opts: { kind?: InboxKind | null;
   let stale = 0
   for (const i of items) { counts[i.kind]++; if (i.stale) stale++ }
   if (!opts.kind) counts.decide = thoughtCount
-  // The headline number is what waits on a person: thoughts and out-of-date rows are not in it.
-  const total = items.filter(i => i.kind !== 'decide' && !i.stale).length
+  // The headline number is what waits on a person's decision or answer: thoughts, notes and
+  // out-of-date rows are not in it.
+  const total = items.filter(i => i.kind !== 'decide' && i.kind !== 'note' && !i.stale).length
   const shown = opts.includeStale === false ? items.filter(i => !i.stale) : items
   return { items: shown, summary: { total, counts, stale }, partial, total: shown.length }
 }

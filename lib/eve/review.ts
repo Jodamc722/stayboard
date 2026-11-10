@@ -21,6 +21,13 @@
 // from evidence to money and guest experience. She says "no signal" rather than inventing — an
 // empty block is a real answer, and a review that fills silence with plausible prose is worse than
 // a short one.
+//
+// ONE PAGE, NOT A REPORT (owner, 2026-11-10: "Identifying every single issue and putting it in a 400
+// page report isn't helpful. You need to encourage, lead and help us create plans"). The output
+// contract is now a one-page plan: this week's THREE priorities, each with the measure that tells us
+// it worked and an owner; what went well; ONE risk — about 250 words, rendered deterministically
+// (renderOnePager) and filed on the Eve tab → Reports as 'weekly_review' (filed only, nothing posted).
+// The evidence pack, the movements and the plans' detail stay on the Review tab behind the link.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { modelPairFor } from '@/lib/ai-models'
@@ -57,6 +64,12 @@ export type ReviewBody = {
   critiques: ReviewCritique[]
   questions: ReviewQuestion[]
   no_signal: string[]
+  /** One to three short lines: what went well this week, with names and numbers (2026-11-10). */
+  went_well?: string[]
+  /** The one risk to watch this week (2026-11-10). */
+  risk?: string
+  /** The one-page plan as text, ~250 words (2026-11-10). */
+  onepager?: string
 }
 export type ReviewRow = {
   id: string; at: string; trigger: string; focus: string | null; model: string | null; headline: string | null
@@ -167,6 +180,19 @@ export async function buildReviewPack(focus?: string): Promise<Pack> {
   if (board) blocks.push(kpiBlock(board.tiles, board.weekStart, board.today))
   else blocks.push(block('kpis', 'WEEK KPIs', [], 0, 'scoreboard could not be built'))
 
+  // 1b. Next week's staffing on the KPI basis (2026-11-10) — the preemptive half of scheduling.
+  {
+    const plan = await safe(async () => { const { buildNextWeekPlan } = await import('@/lib/forecast/plan'); return await buildNextWeekPlan({ days: 7 }) }, null as any)
+    const lines: string[] = plan ? [plan.summary.headline, ...plan.moves.map((m: any) => `- move: ${m.text} (${m.why})`), ...plan.days.filter((d: any) => d.verdict === 'short' || d.verdict === 'unknown').slice(0, 8).map((d: any) => `- ${d.market} ${d.label}: ${d.likely} cleans likely, needs ${d.need}, ${d.rosterKnown ? d.working + ' working' : 'roster not out'}`)] : []
+    blocks.push(block('staffing', 'NEXT 7 DAYS — staffing on the KPI basis (expected labor hours vs scheduled hours; lib/forecast/plan)', lines, 12, plan ? undefined : 'the plan could not be built'))
+  }
+
+  // 1c. Missing FAQ answers (2026-11-10): guest questions the FAQ bank could not answer, most asked first.
+  {
+    const gaps = await safe(async () => { const { listFaqGaps, faqGapLine } = await import('./faq-gaps'); return (await listFaqGaps(10)).map(g => '- ' + faqGapLine(g)) }, [] as string[])
+    blocks.push(block('faq_gaps', 'MISSING FAQ ANSWERS — guest questions the FAQ bank had no answer for, last 30 days (fill on Property FAQ)', gaps, 10))
+  }
+
   // 2. Anomalies
   blocks.push(block('anomalies', 'ANOMALIES — 14-day window vs each scope\'s own 90-day norm (2 sigma)',
     (anomalies.anomalies || []).map((a: any) => `- ${a.scope} · ${a.label}: now ${a.current} vs norm ${a.baselineMean} — ${a.verdict}`),
@@ -175,8 +201,10 @@ export async function buildReviewPack(focus?: string): Promise<Pack> {
   // 3. Sweep findings + audits
   blocks.push(block('sweep', 'SWEEP FINDINGS — last 7 days, by evidence count (eve_knowledge)',
     (knowledge as any[]).map(k => `- [${k.type} · ${k.scope}] ${clip(k.title, 120)}: ${clip(k.content, 200)} (n=${k.evidence_count})`), CAPS.sweep))
-  blocks.push(block('audits', 'OPEN AUDIT FINDINGS — severity warn or critical (eve_audits)',
-    (audits as any[]).filter(a => a.severity !== 'info').map(a => `- [${a.severity} · ${a.area}] ${clip(a.title, 120)} — open ${a.ageDays}d · ${clip(a.detail, 160)}${a.fix ? ' · fix: ' + clip(a.fix, 120) : ''}`), CAPS.audits))
+  // Only the pipeline (what makes the numbers above wrong) since 2026-11-10: channel connections, door
+  // codes, listing health and review feeds are tracked on their own pages and are not this week's plan.
+  blocks.push(block('audits', 'DATA HEALTH — pipeline findings that make the numbers less trustworthy (eve_audits; the rest of the audit list lives on Health and the Admin desk)',
+    (audits as any[]).filter(a => a.severity !== 'info' && a.area === 'pipeline').map(a => `- [${a.severity} · ${a.area}] ${clip(a.title, 120)} — open ${a.ageDays}d · ${clip(a.detail, 160)}${a.fix ? ' · fix: ' + clip(a.fix, 120) : ''}`), CAPS.audits))
 
   // 4. Slack watch
   blocks.push(block('slack_open', 'SLACK WATCH — open items (eve_slack_items)',
@@ -310,8 +338,10 @@ const REVIEW_SCHEMA = {
       question: { type: 'string' }, why_it_matters: { type: 'string' }, what_i_will_assume: { type: 'string' }, evidence: S_ARR },
       required: ['question', 'why_it_matters', 'what_i_will_assume'] } },
     no_signal: S_ARR,
+    went_well: S_ARR,
+    risk: { type: 'string' },
   },
-  required: ['headline', 'movements', 'plans', 'questions'],
+  required: ['headline', 'movements', 'plans', 'went_well', 'risk'],
 }
 
 const SYSTEM = `You are Eve, chief of staff to the operations director of Stay Hospitality — about 230 short-term-rental units across Miami, Broward and West Palm Beach, run from a web app called Lighthouse (Guesty for bookings and guest messages, Breezeway for tasks, Homebase for the crew's hours, Slack for the team). You are writing the operator's review: the thing Jon reads on Monday to decide what to change this week.
@@ -321,20 +351,22 @@ WHO YOU ARE WRITING FOR. Jon owns the company and runs operations. He has seen e
 RULES.
 1. NEVER RESTATE A NUMBER AS A FINDING. "Labor per clean in Broward was $41" is a tile. "Labor per clean in Broward rose because three vendor-building turns were closed by roster names and their wages landed in our bucket" is a finding. Every movement needs a why_hypothesis that names a mechanism, and the evidence lines that support it — copied or closely paraphrased from the pack, never invented.
 2. SAY "NO SIGNAL" RATHER THAN INVENT. If a block is empty or too thin, list it in no_signal and move on. An honest short review beats a plausible long one. Never fabricate a unit, a person, a number or a cause that is not in the pack.
-3. PLANS ARE CHANGES, NOT ADVICE. Each plan names the problem, the evidence, the specific change, the expected effect on a money or guest number, the cost (time, dollars or risk), the very first step somebody can take today, and who should own it. Three to six plans, ranked by dollar or guest impact, biggest first. A plan can be about operations, the daily checklist, the app itself (a page nobody opens, a KPI computed misleadingly, an automation that is off or noisy), guests, money or people. Prefer one plan that fixes a cause over three that treat symptoms.
-4. CRITIQUES ONLY WITH EVIDENCE. If the pack shows a checklist item skipped five of seven days, a sidebar page nobody opened, an automation whose findings nobody acts on, a rule you were told that the data contradicts, or a KPI whose formula misleads — say so, with the signal. If there is no such evidence, return an empty critiques array. Do not critique to fill space.
-5. QUESTIONS ARE RARE AND EARNED. At most four, and only for things the pack genuinely cannot answer — a policy, a reason behind a pattern, a decision only Jon can make. Never ask for a number you could have been given. Each question carries why it matters and what_i_will_assume: the default you will act on if nobody answers, so silence is not a blocker.
+3. ONE PAGE: THIS WEEK'S THREE PRIORITIES. Exactly three plans (fewer only if the pack is thin), ranked by dollar or guest impact, biggest first. Each is a change, not advice: the specific change, the very first step somebody can take today, who owns it (a role or a name), and expected_effect = THE MEASURE that tells us it worked (which number, which way, roughly how much, by when — staffing to the KPI, labor hours vs KPI hours, review average, response time…). Prefer the plan that fixes a cause. Lead and encourage: this is "here's the plan", not a list of everything wrong.
+4. WHAT WENT WELL AND ONE RISK. went_well: one to three short lines with names and numbers from the pack — real credit, never invented. risk: ONE sentence — the thing most likely to hurt next week if nobody acts (a short-staffed day, a building sliding, a feed that died).
+5. NOTHING ELSE COMPETES FOR ATTENTION. At most three movements, each one line. Critiques: at most one, only with hard evidence. Questions: at most one, and only about how we schedule, a guest answer nobody has written, or a contradiction — never why something tracked on its own page (channel connections, door codes, listing health, audit findings) is unresolved. Things the app already tracks are not priorities.
 6. WEIGH YOUR OWN RECORD. If Jon rejected plans of a certain shape, do not propose that shape again without saying why this one is different. If your hit rate is unknown, say the plans are unproven.
 7. RESPECT WHO DOES WHAT. Buildings the beliefs mark as vendor-run or hotel-operated are not our labor: a late clean there is the vendor's, and cost per clean does not exist for us. Do not attribute hands-on work to our crew in those buildings.
 8. Be concrete and plain. No headings inside strings, no markdown, no emoji. British-free American spelling. Short sentences.
 
-Deliver the review through the operator_review tool. Its fields:
-{"headline": "<one sentence: the week in one line — the biggest movement and its cause>",
+Deliver the review through the operator_review tool. The whole thing is read in two minutes: keep every string short. Its fields:
+{"headline": "<one sentence: the answer — the week in one line and what we do about it>",
  "movements": [{"metric": "<KPI or metric name>", "what": "<what changed, in plain words>", "why_hypothesis": "<the mechanism you believe explains it>", "evidence": ["<line from the pack>", "..."], "confidence": "high"|"med"|"low"}],
  "plans": [{"area": "operations"|"checklist"|"app"|"guest"|"money"|"people", "title": "<imperative, one line>", "problem": "<what is wrong and what it costs>", "evidence": ["..."], "change": "<the specific change>", "expected_effect": "<which number moves, which way, roughly how much, by when>", "cost": "<time, dollars or risk>", "first_step": "<something someone can do today>", "owner_suggestion": "<role or person>", "metric": "<one of: ${METRIC_KEYS.join(', ')}>", "expect_direction": "up"|"down", "scope": "portfolio"|"building:<Name>"}],
  "critiques": [{"target": "checklist"|"page"|"automation"|"rule"|"kpi", "name": "<what it is>", "signal": "<the evidence>", "verdict": "<what is wrong with it>", "change": "<what to do instead>"}],
  "questions": [{"question": "<the question>", "why_it_matters": "<what changes depending on the answer>", "what_i_will_assume": "<your default>", "evidence": ["..."]}],
- "no_signal": ["<block or topic with nothing to say>", "..."]}`
+ "no_signal": ["<block or topic with nothing to say>", "..."],
+ "went_well": ["<one line, with a name and a number>", "..."],
+ "risk": "<one sentence>"}`
 
 function parseJson(raw: string): any | null {
   const t = (s: string) => { try { return JSON.parse(s) } catch { return null } }
@@ -363,11 +395,11 @@ const strs = (v: any, n = 8): string[] => Array.isArray(v) ? v.map(x => clip(x, 
 
 /** Coerce whatever came back into the shape the page and the ledger expect. */
 function normalizeBody(o: any): ReviewBody {
-  const movements: ReviewMovement[] = (Array.isArray(o?.movements) ? o.movements : []).slice(0, 10).map((m: any) => ({
+  const movements: ReviewMovement[] = (Array.isArray(o?.movements) ? o.movements : []).slice(0, 3).map((m: any) => ({
     metric: clip(m?.metric, 80), what: clip(m?.what, 400), why_hypothesis: clip(m?.why_hypothesis, 600), evidence: strs(m?.evidence),
     confidence: (['high', 'med', 'low'] as const).includes(m?.confidence) ? m.confidence : 'low',
   })).filter((m: ReviewMovement) => m.what)
-  const plans: ReviewPlan[] = (Array.isArray(o?.plans) ? o.plans : []).slice(0, 6).map((p: any) => ({
+  const plans: ReviewPlan[] = (Array.isArray(o?.plans) ? o.plans : []).slice(0, 3).map((p: any) => ({
     area: AREAS.includes(p?.area) ? p.area : 'operations',
     title: clip(p?.title, 200), problem: clip(p?.problem, 600), evidence: strs(p?.evidence), change: clip(p?.change, 800),
     expected_effect: clip(p?.expected_effect, 400), cost: clip(p?.cost, 300), first_step: clip(p?.first_step, 300), owner_suggestion: clip(p?.owner_suggestion, 80),
@@ -375,14 +407,46 @@ function normalizeBody(o: any): ReviewBody {
     expect_direction: p?.expect_direction === 'down' ? 'down' : 'up',
     scope: /^(portfolio|building:.+)$/.test(String(p?.scope || '')) ? String(p.scope) : 'portfolio',
   })).filter((p: ReviewPlan) => p.title)
-  const critiques: ReviewCritique[] = (Array.isArray(o?.critiques) ? o.critiques : []).slice(0, 8).map((c: any) => ({
+  const critiques: ReviewCritique[] = (Array.isArray(o?.critiques) ? o.critiques : []).slice(0, 1).map((c: any) => ({
     target: (['checklist', 'page', 'automation', 'rule', 'kpi'] as const).includes(c?.target) ? c.target : 'rule',
     name: clip(c?.name, 120), signal: clip(c?.signal, 400), verdict: clip(c?.verdict, 400), change: clip(c?.change, 400),
   })).filter((c: ReviewCritique) => c.name && c.signal)
-  const questions: ReviewQuestion[] = (Array.isArray(o?.questions) ? o.questions : []).slice(0, 4).map((q: any) => ({
+  const questions: ReviewQuestion[] = (Array.isArray(o?.questions) ? o.questions : []).slice(0, 1).map((q: any) => ({
     question: clip(q?.question, 400), why_it_matters: clip(q?.why_it_matters, 400), what_i_will_assume: clip(q?.what_i_will_assume, 300), evidence: strs(q?.evidence, 4),
   })).filter((q: ReviewQuestion) => q.question)
-  return { headline: clip(o?.headline, 300) || 'No headline.', movements, plans, critiques, questions, no_signal: strs(o?.no_signal, 20) }
+  const body: ReviewBody = { headline: clip(o?.headline, 300) || 'No headline.', movements, plans, critiques, questions, no_signal: strs(o?.no_signal, 20), went_well: strs(o?.went_well, 3).map(x => clip(x, 160)), risk: clip(o?.risk, 240) }
+  body.onepager = renderOnePager(body)
+  return body
+}
+
+const words = (s: string) => s.split(/\s+/).filter(Boolean).length
+/**
+ * THE ONE-PAGE PLAN (2026-11-10): the headline, three priorities (the action, the measure, the owner),
+ * what went well, one risk — about 250 words, cut line by line from the bottom of each priority if the
+ * model ran long. Deterministic, so the page and the report never disagree.
+ */
+export function renderOnePager(b: ReviewBody, link?: string): string {
+  const lines: string[] = [b.headline]
+  const pri = b.plans.slice(0, 3).map((p, i) => {
+    const act = clip(p.first_step || p.change, 160)
+    const measure = clip(p.expected_effect, 140)
+    const owner = clip(p.owner_suggestion, 40) || 'unassigned'
+    return `${i + 1}. ${clip(p.title, 90)} — ${act}${measure ? ` · Measure: ${measure}` : ''} · Owner: ${owner}`
+  })
+  if (pri.length) lines.push('This week\'s priorities:\n' + pri.join('\n'))
+  if (b.went_well && b.went_well.length) lines.push('Went well: ' + b.went_well.join(' · '))
+  if (b.risk) lines.push('One risk: ' + b.risk)
+  if (link) lines.push('Full evidence: ' + link)
+  let text = lines.join('\n\n')
+  // Hold the page to ~250 words: trim the longest priority's measure, then its action, then went-well.
+  for (let guard = 0; words(text) > 260 && guard < 6; guard++) {
+    const parts = text.split('\n')
+    const i = parts.reduce((bi, l, j) => (/^\d\. /.test(l) && l.length > (parts[bi] || '').length ? j : bi), -1)
+    if (i < 0) break
+    parts[i] = parts[i].replace(/ · Measure: [^·]*/, '').slice(0, Math.max(80, parts[i].length - 80))
+    text = parts.join('\n')
+  }
+  return text
 }
 
 /** A plan without a gradable metric gets the closest one from its area, so the ledger can still measure it. */
@@ -510,6 +574,16 @@ export async function runReview(opts: { trigger: ReviewTrigger; focus?: string; 
 
   // Keep the persisted body in step with the ids we just minted.
   if (id) { try { await db.from('eve_reviews').update({ body }).eq('id', id) } catch { /* fine */ } }
+
+  // THE ONE PAGE, FILED (2026-11-10): on the Eve tab → Reports as 'weekly_review', with the link to
+  // the full evidence on the Review tab. Filed only — nothing is posted anywhere from here.
+  try {
+    const { fileReport } = await import('./reports')
+    const base = (process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '')
+    body.onepager = renderOnePager(body, `${base}/eve?section=review`)
+    await fileReport({ kind: 'weekly_review', title: `This week's plan · ${pack.today}`, text: body.onepager, meta: { review_id: id, trigger: opts.trigger, focus: focus || null } })
+    if (id) await db.from('eve_reviews').update({ body }).eq('id', id)
+  } catch { /* the review stands without its report */ }
 
   // WHAT SHE IS THINKING (2026-09-21): every plan, critique and question also lands on the
   // Thinking feed (source 'review'), whatever the recommendation rung — the review is her

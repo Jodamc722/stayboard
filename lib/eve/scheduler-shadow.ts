@@ -427,9 +427,18 @@ export async function runSchedulerShadow(opts: { force?: boolean; preview?: bool
     if ((dow === 0 || opts.force) && st.lastReadout !== today && !opts.preview) {
       const r = await shadowReadiness()
       const recent = Object.values(st.days).filter(d => d.score && d.score.common != null).sort((a, b) => (a.plan.date < b.plan.date ? 1 : -1)).slice(0, 7)
+      // THE WEEK AHEAD, FROM THE SAME PLAN AS THE SCHEDULER'S "NEXT 7 DAYS" (2026-11-10): the
+      // scorecard looks back, this looks forward — the KPI-basis gap per market and the moves.
+      let nextWeek = ''
+      try {
+        const { buildNextWeekPlan } = await import('@/lib/forecast/plan')
+        const p = await buildNextWeekPlan({ days: 7 })
+        nextWeek = `\n\n*Next 7 days — staffing on the KPI*\n${p.text}`
+      } catch { /* the scorecard stands on its own */ }
       const text = `*Shadow scheduler — week's scorecard*\nMy plan beat the real schedule on ${recent.filter(d => d.score!.win).length} of ${recent.length} days this week (${r.wins} of the last ${r.scored} overall; ${r.needed} of ${r.window} makes me ready to propose).\n` +
         recent.map(d => `• ${d.plan.date}: ${d.score!.win ? '✓' : '✗'} ${d.score!.why}`).join('\n') +
-        (r.ready ? `\n*Ready.* From tomorrow the 7am plan carries my suggested assignments for the unowned cleans; nothing is assigned without a ✅.` : `\nStill learning — no assignments proposed yet.`)
+        (r.ready ? `\n*Ready.* From tomorrow the 7am plan carries my suggested assignments for the unowned cleans; nothing is assigned without a ✅.` : `\nStill learning — no assignments proposed yet.`) +
+        nextWeek
       // The scorecard lives on the Eve tab → Reports (Jon, 2026-10-12); #vr-eve gets what the routing says.
       const { routeReport } = await import('./reports')
       const routed = await routeReport({ kind: 'shadow_scorecard', title: 'Shadow scheduler — week\'s scorecard', text, room: EVE_CHANNELS.approvals, pointer: `${r.wins} of ${r.scored} days won${r.ready ? ' — ready' : ''}` })

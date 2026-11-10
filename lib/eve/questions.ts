@@ -59,6 +59,143 @@ function sameQuestion(a: string, b: string): boolean {
 /** A question closed (dismissed or answered) this recently is not raised again. */
 const REASK_AFTER_MS = 30 * 864e5
 
+// ── WHAT SHE MAY ASK (owner, 2026-11-10) ────────────────────────────────────────────────────────
+// "All we need to learn is how we schedule … We need to learn FAQ and guest related questions …
+// Identifying every single issue and putting it in a 400 page report isn't helpful." So a question
+// reaches a person only when it is about one of three things:
+//   schedule       how we schedule — who cleans where, start times, same-day turns, staffing, moves
+//   guest          a guest / FAQ answer she could not find in the FAQ bank, house rules, guidebook or docs
+//   contradiction  two things she was taught disagree (a conflict, a disputed memory, data that
+//                  contradicts itself about who does the work)
+// Never "why is X still not fixed" about something the app tracks on its own page (channel
+// connections, door codes, arrival instructions, listing health, review feeds, audit findings).
+// At most MAX_OPEN wait at a time; one unanswered for STALE_DAYS is closed with a note. The OTA
+// playbook's per-cell gaps ("what is our process for refunds on Vrbo?") are ONE question that links
+// to the playbook, not one per cell.
+export const MAX_OPEN = 5
+export const STALE_DAYS = 14
+export const OTA_KEY = 'ota-playbook-blanks'
+export const OTA_LINK = '/users?tab=settings&panel=eve&section=ota'
+export type QuestionTopic = 'schedule' | 'guest' | 'contradiction' | 'ota' | 'tracked' | 'other'
+
+const TRACKED_RE = /\b(what is stopping|what'?s stopping|why (?:is|isn'?t|are|aren'?t|has|hasn'?t|have|haven'?t)\b.*\b(?:still|yet|not|open|unresolved|connected|fixed)|still (?:open|not|unresolved|missing)|not (?:connected|listed|live) on|open for \d+ days|has been open|door code|arrival instructions?|listing health|health score|review feed|not connected)\b/i
+const SCHEDULE_RE = /\b(schedul\w*|roster|shift|shifts|homebase|clean(?:s|er|ers|ing)?|turnover|turn|same[- ]day|housekeep\w*|start time|starts? at|staff\w*|crew|cover(?:s|ed)?|day off|days off|on call|deep clean|strip|who (?:cleans|does|covers)|per day|a day|weekday|weekend|saturday|sunday|monday|tuesday|wednesday|thursday|friday|vendor|our labou?r|moved?|reschedul\w*)\b/i
+const GUEST_RE = /\b(guests?|faq|check[- ]?in|check[- ]?out|early|late|parking|wi-?fi|pool|gym|pets?|amenit\w*|house rules?|guidebook|towels?|linens?|deposit|fee|fees|refund\w*|cancel\w*|extras?|key|keys|lock|elevator|beach|front desk|registration|bbq|grill|balcony|crib|smoking|noise|quiet hours|trash|laundry|ac\b|a\/c|thermostat|tv|remote)\b/i
+
+/** Which of the three things a question is about — or 'tracked' / 'other', which are not asked. */
+export function questionTopic(q: { question: string; why?: string | null; kind?: string | null; evidence?: any }): QuestionTopic {
+  const ev = q.evidence && typeof q.evidence === 'object' ? q.evidence : {}
+  if (ev.ota || ev.ota_playbook) return 'ota'
+  if (ev.audit_id || (Array.isArray(ev.audit_ids) && ev.audit_ids.length) || String(ev.dedupe_key || '').startsWith('audit:')) return 'tracked'
+  const text = String(q.question || '')
+  if (q.kind === 'conflict' || ev.calibration || (q.kind === 'verify' && Array.isArray(ev.memory_ids) && ev.memory_ids.length && !ev.autoCaptured)) return 'contradiction'
+  if (TRACKED_RE.test(text)) return 'tracked'
+  if (ev.expectation) return 'guest'
+  if (SCHEDULE_RE.test(text)) return 'schedule'
+  if (GUEST_RE.test(text)) return 'guest'
+  return 'other'
+}
+
+/** "Vrbo / Refunds" for one OTA cell. */
+function otaCell(ev: any, question: string): string {
+  const ch = String(ev?.ota?.channel || '').trim()
+  const topic = String(ev?.ota?.topic || '').trim()
+  if (ch && topic) return `${ch} / ${topic}`
+  return question.slice(0, 80)
+}
+
+/**
+ * THE CHANNEL PLAYBOOK, AS ONE QUESTION. Each night's OTA sync asks once per blank cell; every one of
+ * those lands here and is folded into a single open row, "Fill in the channel playbook — N blanks",
+ * whose list is rebuilt each night (a cell filled since drops out). It links to the playbook rather
+ * than taking a free-text answer for a cell, so its evidence carries no `ota` key and answering it
+ * never writes a cell by accident.
+ */
+async function foldOtaBlanks(cells: string[]): Promise<{ ok: boolean; id?: string; repeated?: boolean; error?: string }> {
+  const db = supabaseAdmin()
+  const today = new Date().toISOString().slice(0, 10)
+  try {
+    const { data } = await db.from('eve_questions').select('id,status,evidence,answered_at,updated_at').eq('evidence->>dedupe_key', OTA_KEY).order('updated_at', { ascending: false }).limit(5)
+    const rows = (data || []) as any[]
+    const live = rows.find(r => String(r.status) === 'open')
+    const prev: string[] = live && live.evidence && live.evidence.night === today && Array.isArray(live.evidence.blanks) ? live.evidence.blanks.map(String) : []
+    const blanks = Array.from(new Set(prev.concat(cells))).slice(0, 40)
+    const question = `Fill in the channel playbook — ${blanks.length} blank${blanks.length === 1 ? '' : 's'}`
+    const why = `The OTA playbook has each channel's own rule but not ours for: ${blanks.slice(0, 8).join(', ')}${blanks.length > 8 ? ` and ${blanks.length - 8} more` : ''}. Until they are filled I answer guests and the team from the platform's default. Fill them on the playbook page (Settings → Eve → OTA playbook).`
+    const evidence = { dedupe_key: OTA_KEY, ota_playbook: true, blanks, night: today, link: OTA_LINK }
+    if (live) {
+      await db.from('eve_questions').update({ question, why, evidence }).eq('id', live.id)
+      return { ok: true, id: String(live.id), repeated: true }
+    }
+    const closed = rows.find(r => Date.now() - Date.parse(String(r.answered_at || r.updated_at || '')) < REASK_AFTER_MS)
+    if (closed) return { ok: true, id: String(closed.id), repeated: true }
+    const { count } = await db.from('eve_questions').select('id', { count: 'exact', head: true }).eq('status', 'open')
+    if (Number(count || 0) >= MAX_OPEN) return { ok: false, error: `Not asked: ${MAX_OPEN} questions are already waiting on a person.` }
+    const { data: ins, error } = await db.from('eve_questions').insert({ question, why, scope: 'portfolio', kind: 'gap', evidence, source: 'system' }).select('id').maybeSingle()
+    if (error) return { ok: false, error: error.message.slice(0, 200) }
+    return { ok: true, id: (ins as any)?.id }
+  } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
+}
+
+/** Close a set of open questions with a note a person can read later. */
+async function closeWithNote(ids: string[], note: string): Promise<number> {
+  if (!ids.length) return 0
+  const now = new Date().toISOString()
+  let n = 0
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunkIds = ids.slice(i, i + 100)
+    const { error } = await supabaseAdmin().from('eve_questions').update({ status: 'dismissed', answered_by: 'system', answered_at: now, updated_at: now, answer: note }).in('id', chunkIds).eq('status', 'open')
+    if (!error) n += chunkIds.length
+  }
+  return n
+}
+
+const NOTE_STALE = `Closed after ${STALE_DAYS} days with no answer. Eve carries on with what she assumed; ask her in chat if it still matters.`
+const NOTE_OFF_TOPIC = 'Closed in the refocus (2026-11-10): Eve now asks only about how we schedule, guest/FAQ answers she cannot find, and contradictions in what she was taught. Anything the app tracks on its own page is shown there instead.'
+const NOTE_TRIM = `Closed to keep at most ${MAX_OPEN} questions open at a time — the newer ones and contradictions were kept.`
+const NOTE_OTA = 'Folded into one question: "Fill in the channel playbook", which links to the OTA playbook.'
+
+/**
+ * KEEP THE LIST SHORT. Idempotent; run nightly from generateQuestions. In order: fold every per-cell
+ * OTA question into the one playbook question; close anything off the three topics; close anything
+ * unanswered for STALE_DAYS; then, if more than MAX_OPEN remain, keep contradictions first and then
+ * the newest, and close the rest. Every closed row says why in its answer.
+ */
+export async function tidyQuestions(): Promise<{ folded: number; offTopic: number; stale: number; trimmed: number; open: number }> {
+  const db = supabaseAdmin()
+  const out = { folded: 0, offTopic: 0, stale: 0, trimmed: 0, open: 0 }
+  try {
+    const { data } = await db.from('eve_questions').select('id,question,why,kind,evidence,source,created_at').eq('status', 'open').order('created_at', { ascending: false }).limit(500)
+    let rows = (data || []) as any[]
+    // 1. The OTA cells become one question.
+    const otaCells = rows.filter(r => r.evidence && typeof r.evidence === 'object' && r.evidence.ota && !r.evidence.ota_playbook)
+    if (otaCells.length) {
+      const f = await foldOtaBlanks(otaCells.map(r => otaCell(r.evidence, String(r.question))))
+      if (f.ok) out.folded = await closeWithNote(otaCells.map(r => String(r.id)), NOTE_OTA)
+      rows = rows.filter(r => otaCells.indexOf(r) < 0)
+      if (f.ok && f.id && !rows.some(r => String(r.id) === String(f.id))) rows.unshift({ id: f.id, question: 'Fill in the channel playbook', kind: 'gap', evidence: { ota_playbook: true }, created_at: new Date().toISOString() })
+    }
+    // 2. Off the three topics.
+    const off = rows.filter(r => { const t = questionTopic(r); return t === 'tracked' || t === 'other' })
+    out.offTopic = await closeWithNote(off.map(r => String(r.id)), NOTE_OFF_TOPIC)
+    rows = rows.filter(r => off.indexOf(r) < 0)
+    // 3. Stale.
+    const cutoff = Date.now() - STALE_DAYS * 864e5
+    const stale = rows.filter(r => Date.parse(String(r.created_at || '')) < cutoff)
+    out.stale = await closeWithNote(stale.map(r => String(r.id)), NOTE_STALE)
+    rows = rows.filter(r => stale.indexOf(r) < 0)
+    // 4. The cap: contradictions first, then the newest.
+    if (rows.length > MAX_OPEN) {
+      const ranked = rows.slice().sort((a, b) => (questionTopic(b) === 'contradiction' ? 1 : 0) - (questionTopic(a) === 'contradiction' ? 1 : 0) || String(b.created_at).localeCompare(String(a.created_at)))
+      const drop = ranked.slice(MAX_OPEN)
+      out.trimmed = await closeWithNote(drop.map(r => String(r.id)), NOTE_TRIM)
+      rows = ranked.slice(0, MAX_OPEN)
+    }
+    out.open = rows.length
+  } catch { /* a tidy that fails costs nothing; the next night tries again */ }
+  return out
+}
+
 export async function askQuestion(input: {
   question: string; why?: string; scope?: string; kind?: string; evidence?: any; source?: string
   /**
@@ -76,6 +213,12 @@ export async function askQuestion(input: {
   // A question with no consequence is curiosity, and curiosity does not get to interrupt anyone.
   const why = String(input.why || '').trim().slice(0, 500)
   if (!why) return { ok: false, error: 'Say what you would do differently if you knew. A question that changes nothing does not get asked.' }
+
+  // ONLY THE THREE TOPICS, AND THE PLAYBOOK AS ONE QUESTION (owner, 2026-11-10 — see the note above).
+  const topic = questionTopic({ question, why, kind: input.kind, evidence: input.evidence })
+  if (topic === 'ota') return foldOtaBlanks([otaCell(input.evidence, question)])
+  if (topic === 'tracked') return { ok: false, error: 'Not asked: the app already tracks this on its own page (Admin desk, Channels, Health). Say it is open and point to that page instead.' }
+  if (topic === 'other') return { ok: false, error: 'Not asked: Eve asks only about how we schedule, a guest/FAQ answer she could not find, or a contradiction in what she was taught. Answer with your assumption stated instead.' }
 
   try {
     const scope = String(input.scope || 'portfolio')
@@ -123,6 +266,18 @@ export async function askQuestion(input: {
       const gone = ((shut || []) as any[]).find(q => String(q.scope || 'portfolio') === scope && sameQuestion(String(q.question), question))
       if (gone) return { ok: true, id: String(gone.id), repeated: true }
     }
+    // THE CAP: at most MAX_OPEN wait on a person. A contradiction makes room by closing the oldest
+    // open question that is not one; anything else waits for a slot (it is not lost — she asks again
+    // the next time it comes up, and the dedupe above keeps that from becoming a pile).
+    {
+      const { data: openRows } = await db.from('eve_questions').select('id,question,kind,evidence,created_at').eq('status', 'open').order('created_at', { ascending: true }).limit(50)
+      const live = (openRows || []) as any[]
+      if (live.length >= MAX_OPEN) {
+        const victim = topic === 'contradiction' ? live.find(r => questionTopic(r) !== 'contradiction') : null
+        if (!victim) return { ok: false, error: `Not asked: ${MAX_OPEN} questions are already waiting on a person. Carry on with your assumption stated.` }
+        await closeWithNote([String(victim.id)], NOTE_TRIM)
+      }
+    }
     const { data, error } = await db.from('eve_questions').insert({
       question, why, scope,
       // 'plan' is a question the weekly review could not answer from data — it carries a default
@@ -137,7 +292,7 @@ export async function askQuestion(input: {
 }
 
 /** What a list row needs and nothing else: no answer fields, and of the evidence only the one line the row prints. */
-const SLIM_COLS = 'id,question,why,scope,kind,status,asked_count,source,created_at,what_i_will_assume:evidence->>what_i_will_assume'
+const SLIM_COLS = 'id,question,why,scope,kind,status,asked_count,source,created_at,what_i_will_assume:evidence->>what_i_will_assume,link:evidence->>link'
 
 export async function listQuestions(status = 'open', limit = 60, opts: { slim?: boolean } = {}): Promise<EveQuestion[]> {
   const db = supabaseAdmin()
@@ -145,9 +300,9 @@ export async function listQuestions(status = 'open', limit = 60, opts: { slim?: 
     let s = db.from('eve_questions').select(SLIM_COLS)
     if (status !== 'all') s = s.eq('status', status)
     const { data } = await s.order('asked_count', { ascending: false }).order('updated_at', { ascending: false }).limit(Math.min(limit, 200))
-    return ((data || []) as any[]).map(({ what_i_will_assume, ...r }) => ({
+    return ((data || []) as any[]).map(({ what_i_will_assume, link, ...r }) => ({
       ...r, memory_id: null, answer: null, answered_by: null, answered_at: null,
-      evidence: what_i_will_assume ? { what_i_will_assume } : null,
+      evidence: what_i_will_assume || link ? { ...(what_i_will_assume ? { what_i_will_assume } : {}), ...(link ? { link } : {}) } : null,
     })) as any
   }
   let q = db.from('eve_questions').select('*')
@@ -303,13 +458,11 @@ export async function retireTemplateQuestions(): Promise<{ retired: number }> {
  */
 export async function generateQuestions(): Promise<{ asked: number; repeated: number; considered: number }> {
   const db = supabaseAdmin()
-  let asked = 0, repeated = 0, considered = 0
-
-  const send = async (q: { question: string; why: string; scope?: string; kind?: string; evidence?: any; dedupeKey?: string }) => {
-    considered++
-    const r = await askQuestion({ ...q, source: 'system' })
-    if (r.ok) { if (r.repeated) repeated++; else asked++ }
-  }
+  // Nothing is generated here any more (2026-11-10): the questions come from where the gap is found
+  // (a document, a contradiction, the OTA sync, a conversation) through askQuestion's gate. This pass
+  // only keeps the list honest. `asked` and `repeated` stay 0; `considered` counts what it closed.
+  const asked = 0, repeated = 0
+  let considered = 0
 
   try {
     // 1. NO QUESTIONS ABOUT THINGS THE APP ALREADY TRACKS (Jon, 2026-11-10: "a lot of these questions
@@ -332,17 +485,12 @@ export async function generateQuestions(): Promise<{ asked: number; repeated: nu
       }
     }
 
-    // 2. Recommendations that keep getting rejected. She is proposing something that does not fit,
-    //    and the reason is worth more than the next ten proposals.
-    const { data: recs } = await db.from('eve_recommendations').select('id,title,status,created_at')
-      .eq('status', 'rejected').order('created_at', { ascending: false }).limit(40)
-    if ((recs || []).length >= 3) {
-      await send({
-        question: `You have turned down ${(recs || []).length} of my recommendations recently — most recently "${String((recs as any[])[0]?.title || '').slice(0, 120)}". What am I getting wrong about how you want this run?`,
-        why: 'I keep proposing the same shape of thing. Knowing why it does not fit is worth more than my next ten suggestions.',
-        kind: 'verify', evidence: { rejected: (recs || []).length }, dedupeKey: 'rejected-recommendations',
-      })
-    }
+    // 2. KEEP THE LIST SHORT (owner, 2026-11-10): fold the OTA cells, close what is off the three
+    //    topics or unanswered for two weeks, and keep at most five open. The old "you turned down N of
+    //    my recommendations — what am I getting wrong?" generator is gone: it was not about how we
+    //    schedule, a guest answer or a contradiction, and the recommendation ledger already shows it.
+    const t = await tidyQuestions()
+    considered += t.folded + t.offTopic + t.stale + t.trimmed
   } catch { /* a failed generator must never break the sweep it rides on */ }
 
   return { asked, repeated, considered }

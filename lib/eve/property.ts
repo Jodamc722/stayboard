@@ -154,9 +154,11 @@ export const PROPERTY_TOOLS: EveTool[] = [
         status: r.status, source: r.source,
       }))
       const c = cap(shaped, lim)
+      // A real question with no written answer joins the short list of missing FAQ answers (lib/eve/faq-gaps).
+      if (!shaped.length && input?.query && !short) { try { const { noteFaqGap } = await import('./faq-gaps'); await noteFaqGap(String(input.query), unitName) } catch { /* best-effort */ } }
       return {
         count: shaped.length, truncated: c.truncated || short, answers: c.rows,
-        note: shaped.length ? 'These are our own words. Prefer them over anything you would write fresh.' : 'Nothing in the FAQ bank matches. Say that rather than composing an answer that nobody has approved.',
+        note: shaped.length ? 'These are our own words. Prefer them over anything you would write fresh.' : 'Nothing in the FAQ bank matches — noted on the list of missing FAQ answers. Say so in one line (and check house_rules, the guidebook and doc_search) rather than composing an answer nobody has approved.',
       }
     },
   },

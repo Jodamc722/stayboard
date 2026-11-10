@@ -704,14 +704,16 @@ export const OPS_TOOLS: EveTool[] = [
   },
   {
     name: 'schedule_knowledge',
-    description: 'What you have LEARNED about how we schedule, from 90 days of finished departure cleans and the Homebase roster (lib/eve/schedule-knowledge): per person — buildings they usually clean, cleans a day (median and max), minutes a clean, usual start, done-by-4pm rate, weekdays worked; per building — who usually cleans it (and by weekday), how long a clean there actually takes; per unit — actual minutes vs the standard; the week — departure cleans a day by weekday per market against people rostered. Use it for "who usually cleans X", "how long does Y take", "how many can Z do", "what does a Friday look like in Broward", and before suggesting who should take a clean. Param about: a person, building, unit or market name, or "week"; empty = the headline facts.',
+    description: 'What you have LEARNED about how we schedule, from 90 days of finished departure cleans and the Homebase roster (lib/eve/schedule-knowledge): per person — buildings they usually clean, cleans a day (median and max), minutes a clean, usual start, done-by-4pm rate, weekdays worked; per building — who usually cleans it (and by weekday), how long a clean there actually takes; per unit — actual minutes vs the standard; the week — departure cleans a day by weekday per market against people rostered. Use it for "who usually cleans X", "how long does Y take", "how many can Z do", "what does a Friday look like in Broward", and before suggesting who should take a clean. Param about: a person, building, unit or market name, "week", or "practice" (the how-we-schedule profile: people per weekday vs cleans per market, cleans a person a day, start times, same-day turns, vendor buildings, what gets moved, how far ahead the week is assigned); empty = the profile and the headline facts. For "are we staffed next week?" use schedule_plan instead.',
     input_schema: obj({ about: S.str }),
     run: async (input) => {
-      const { scheduleKnowledge, personIn } = await import('./schedule-knowledge')
+      const { scheduleKnowledge, personIn, scheduleProfile } = await import('./schedule-knowledge')
       const k = await scheduleKnowledge()
       const q = String(input?.about || '').trim()
       const head = { learnedFrom: `${k.cleansRead} finished departure cleans, ${k.timedCleans} with real minutes, ${k.from} → ${k.to}`, asOf: k.asOf }
-      if (!q) return { ...head, facts: k.facts.slice(0, 30) }
+      // The plain how-we-schedule profile first (2026-11-10); "practice" returns the numbers behind it.
+      if (!q) return { ...head, profile: scheduleProfile(k), facts: k.facts.slice(0, 20) }
+      if (/^(practice|profile|how)/i.test(q)) return { ...head, profile: scheduleProfile(k), practice: k.practice || null }
       if (/^week/i.test(q)) return { ...head, week: k.week, note: 'demand = average departure cleans on that weekday over the window; supply = people rostered Working on that weekday over the next two weeks' }
       const p = personIn(k, q); if (p) return { ...head, person: p }
       const b = Object.values(k.buildings).find(x => x.building.toLowerCase() === q.toLowerCase()) || Object.values(k.buildings).find(x => x.building.toLowerCase().includes(q.toLowerCase()))

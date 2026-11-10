@@ -617,7 +617,7 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'ask_jon',
-    description: 'ASK WHEN YOU DO NOT KNOW, instead of guessing. Records a question for a person to answer; their answer becomes a memory written by them, which outranks anything you worked out yourself. Use it when you hit something the data cannot tell you — why a building is run differently, what a term the team uses actually means, whether something is policy or just habit, why the same problem keeps coming back. TWO RULES. You must say what you would DO differently if you knew: a question that changes nothing is curiosity, and curiosity does not get to interrupt anyone. And never ask something you could look up — asking about a number you can query is how you get ignored. Asking the same thing twice is fine; it is deduped and counted, not re-asked.',
+    description: 'ASK WHEN YOU DO NOT KNOW, instead of guessing. Records a question for a person to answer; their answer becomes a memory written by them, which outranks anything you worked out yourself. Only three kinds are accepted (2026-11-10): how we schedule (a practice the records cannot show), a guest / FAQ answer you could not find in faq_search, house_rules, the guidebook or the documents, and a direct contradiction in what you were taught. Anything else — and anything the app already tracks on its own page — is refused; at most five wait at a time. TWO RULES. You must say what you would DO differently if you knew: a question that changes nothing is curiosity, and curiosity does not get to interrupt anyone. And never ask something you could look up — asking about a number you can query is how you get ignored. Asking the same thing twice is fine; it is deduped and counted, not re-asked.',
     input_schema: obj({ question: S.str, why: S.str, scope: S.str }),
     run: async (input: any, ctx: any) => {
       const r = await askQuestion({
@@ -695,7 +695,7 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'operator_review',
-    description: 'WRITE A PLAN. Runs the operator\'s review — the same weekly pass Jon reads on Monday — over one deterministic evidence pack (this week\'s KPI tiles vs the same weekdays last week, anomalies, sweep findings, open audits, Slack items, glitches, low reviews, dissatisfied threads, checklist ticks, app usage, your own track record and standing beliefs) and returns what moved and why, three to six ranked plans with cost and first step, critiques with evidence, and at most four questions the data cannot answer. Use it when somebody asks for a PLAN, a REVIEW of the week, how to cut a cost, how to fix a recurring problem, or what to change about a checklist, a page or an automation — "give me a plan to cut labor per clean in Broward" is exactly this. Pass their words as focus. It is one large model call and it persists: the plans land in the recommendation ledger for Jon to accept, and the questions on /command. Do not call it for a lookup; call it when the answer is a plan.',
+    description: 'WRITE A PLAN. Runs the operator\'s review — the same weekly pass Jon reads on Monday — over one deterministic evidence pack (this week\'s KPI tiles vs the same weekdays last week, anomalies, sweep findings, open audits, Slack items, glitches, low reviews, dissatisfied threads, checklist ticks, app usage, your own track record and standing beliefs) and returns a ONE-PAGE PLAN: the headline, this week\'s three priorities (each with the first step, the measure that tells us it worked and an owner), what went well and one risk — the evidence stays on the Review tab. Use it when somebody asks for a PLAN, a REVIEW of the week, how to cut a cost, how to fix a recurring problem, or what to change about a checklist, a page or an automation — "give me a plan to cut labor per clean in Broward" is exactly this. Pass their words as focus. It is one large model call and it persists: the plans land in the recommendation ledger for Jon to accept, and the questions on /command. Do not call it for a lookup; call it when the answer is a plan.',
     input_schema: obj({ focus: S.str }),
     money: true,
     run: async (input, ctx) => {
@@ -704,7 +704,7 @@ export const CORE_TOOLS: EveTool[] = [
       return {
         ok: true, review_id: r.id, model: r.model, pack: r.pack, persisted: r.persisted,
         review: r.review,
-        note: 'The plans are logged (Settings → Eve → Review, and the Decide band on /command) for Jon to accept or reject; only accepted plans get graded. Present the headline, then the plans in rank order with the first step for each; say which questions you have filed and what you will assume meanwhile. Do not restate the pack.',
+        note: 'Present review.onepager as it is (headline, three priorities with measure and owner, what went well, one risk) and stop — offer the detail only if asked. The priorities are logged for Jon to accept or reject (the Review tab and the Decide band on /command); only accepted ones get graded. Do not restate the pack.',
       }
     },
   },

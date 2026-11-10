@@ -33,6 +33,7 @@ import { SYSTEM_DOMAIN, SYSTEM_TOOLS } from './system'
 import { BRAIN_TOOLS } from './brain'
 import { CS_TOOLS } from './cs'
 import { DOC_TOOLS } from './docs'
+import { SCHEDULE_PLAN_TOOLS } from './schedule-plan-tool'
 
 // The five tools that were core before and now live alongside their siblings. Built as NEW objects
 // rather than by mutating the imported domain — a module-level `.tools = .tools.concat(...)` runs
@@ -66,7 +67,16 @@ const MONEY: EveDomain = {
 const GUESTS: EveDomain = { ...GUESTS_DOMAIN, blurb: GUESTS_DOMAIN.blurb + ' Also the phone: welcome and post-checkout calls logged, and the Talkroute call log (calls).', tools: GUESTS_DOMAIN.tools.concat(CS_TOOLS).concat(REACH_GUEST_TOOLS) }
 const SYSTEM: EveDomain = { ...SYSTEM_DOMAIN, blurb: SYSTEM_DOMAIN.blurb + ', and what the AI itself has cost by task and day (ai_spend)', tools: SYSTEM_DOMAIN.tools.concat(REACH_SYSTEM_TOOLS) }
 
-export const DOMAINS: EveDomain[] = [OPS, MONEY, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY_DOMAIN, SYSTEM]
+// GUEST ANSWERS COME FAST (owner, 2026-11-10: "We need to learn FAQ and guest related questions. If the
+// team asks you can answer it quickly"). The three guest-answer tools — the FAQ bank, the house rules
+// and the published guidebook — are core, beside the documents, so a "can they / does it have / what
+// is the wifi" question never spends a turn opening the property drawer. Same new-object pattern as
+// above; the rest of the drawer (property_look, look_at_unit, channel_health) stays behind it.
+const FAST_GUEST = ['faq_search', 'house_rules', 'guest_guidebook']
+const GUEST_ANSWER_TOOLS: EveTool[] = PROPERTY_DOMAIN.tools.filter(t => FAST_GUEST.indexOf(t.name) >= 0)
+const PROPERTY: EveDomain = { ...PROPERTY_DOMAIN, blurb: 'What each unit physically contains — she can LOOK AT the photos directly, plus amenities and the room-by-room FF&E inventory (property_look, look_at_unit) — and which channels each listing is actually connected to (channel_health). The FAQ bank, house rules and guidebook are already in your core tools: no need to open this for a policy or "what does the guest see" question.', tools: PROPERTY_DOMAIN.tools.filter(t => FAST_GUEST.indexOf(t.name) < 0) }
+
+export const DOMAINS: EveDomain[] = [OPS, MONEY, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY, SYSTEM]
 export const DOMAIN_KEYS = DOMAINS.map(d => d.key)
 
 const OPEN_DOMAIN: EveTool = {
@@ -85,7 +95,9 @@ export function coreTools(): EveTool[] {
   // The entity resolver and the 360s are core (2026-11-10): "which 1205?" and "tell me everything
   // about this unit" are the two questions every other answer starts from, and neither should cost
   // a domain-opening turn.
-  return CORE_TOOLS.concat(ENTITY_TOOLS).concat(UNIT360_TOOLS).concat(DOC_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat(BRAIN_TOOLS).concat([OPEN_DOMAIN])
+  // The guest answers and the next-week plan are core too (2026-11-10): the two kinds of question the
+  // team asks most — what do we tell the guest, and are we staffed — answered without opening a drawer.
+  return CORE_TOOLS.concat(ENTITY_TOOLS).concat(UNIT360_TOOLS).concat(DOC_TOOLS).concat(GUEST_ANSWER_TOOLS).concat(SCHEDULE_PLAN_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat(BRAIN_TOOLS).concat([OPEN_DOMAIN])
 }
 
 export function domainByKey(key: string): EveDomain | null {

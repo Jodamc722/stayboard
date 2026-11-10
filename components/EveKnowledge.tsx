@@ -211,6 +211,7 @@ export function EveKnowledge() {
       {view.kind === 'home' && (
         <HomeHints loading={loadingHome} notes={homeNotes} entities={entities} onOpen={open} />
       )}
+      {view.kind === 'home' && <HowWeSchedule />}
       {view.kind === 'entity' && <EntityCard key={view.ref} refKey={view.ref} me={me} onBack={home} onOpen={open} onChanged={loadHome} />}
       {view.kind === 'search' && <SearchResults key={view.q} q={view.q} me={me} onBack={home} onOpen={open} onChanged={loadHome} />}
       {view.kind === 'list' && <CoverageList key={view.which} which={view.which} me={me} onBack={home} onOpen={open} onChanged={loadHome} />}
@@ -218,6 +219,50 @@ export function EveKnowledge() {
   )
 }
 export default EveKnowledge
+
+// HOW WE SCHEDULE (owner, 2026-11-10: "All we need to learn is how we schedule"). The plain profile
+// she keeps (lib/eve/schedule-knowledge practice + the busiest people) and the short list of guest
+// questions the FAQ bank could not answer — read on open from /api/schedule/plan?profile=1.
+function HowWeSchedule() {
+  const [open, setOpen] = useState(false)
+  const [data, setData] = useState<{ learned: boolean; asOf?: string | null; cleansRead?: number; lines: string[]; faqGaps: string[]; note?: string } | null>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => {
+    if (!open || data) return
+    let dead = false
+    fetch('/api/schedule/plan?profile=1', { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (dead) return; if (j && j.ok) setData({ learned: !!j.learned, asOf: j.asOf || null, cleansRead: Number(j.cleansRead) || 0, lines: Array.isArray(j.lines) ? j.lines : [], faqGaps: Array.isArray(j.faqGaps) ? j.faqGaps : [], note: j.note }); else setErr((j && j.error) || 'Could not load.') })
+      .catch(e => { if (!dead) setErr(String(e?.message || e)) })
+    return () => { dead = true }
+  }, [open, data])
+  return (
+    <div className={`${card} px-4 py-3`}>
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="w-full flex items-center gap-2 text-left">
+        <Activity size={14} className="text-brand-600 shrink-0" />
+        <span className="text-[13px] font-bold text-ink flex-1">How we schedule · missing FAQ answers</span>
+        {open ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          {err && <p className="text-[12.5px] text-muted">{err}</p>}
+          {!data && !err && <p className="text-[12.5px] text-muted inline-flex items-center gap-1.5"><Loader2 size={13} className="animate-spin" /> Loading…</p>}
+          {data && (
+            <>
+              {data.lines.length
+                ? <ul className="space-y-1">{data.lines.map((l, i) => <li key={i} className="text-[12.5px] text-ink leading-snug">{l}</li>)}</ul>
+                : <p className="text-[12.5px] text-muted">{data.note || 'Nothing learned yet.'}</p>}
+              {data.learned && <p className="text-[11px] text-muted">From {data.cleansRead} finished departure cleans{data.asOf ? `, as of ${new Date(data.asOf).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}. The Scheduler's Next 7 days panel plans from it.</p>}
+              <p className="text-[12px] font-semibold text-ink pt-1">Guest questions with no FAQ answer (30 days)</p>
+              {data.faqGaps.length
+                ? <ul className="space-y-0.5">{data.faqGaps.map((g, i) => <li key={i} className="text-[12.5px] text-ink">{g}</li>)}</ul>
+                : <p className="text-[12.5px] text-muted">None noted — every question looked up had an answer.</p>}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Pieces ────────────────────────────────────────────────────────────────────────────────────
 
