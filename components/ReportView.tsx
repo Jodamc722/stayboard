@@ -7,7 +7,8 @@
 // scope (never inline in render) so inputs keep focus while typing.
 import { ComposedSlide } from '@/components/report/ComposedSlide'
 import { buildVerdict } from '@/lib/report-verdict'
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { type ReportCalendar, type BigEvent, eventsFor, eventStats, baselineStats, eventKey, rangeLabel, nightsIn, addDaysIso } from '@/lib/report-calendar'
+import { Fragment, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw, CalendarCheck, Wrench, TrendingUp, Camera, BookOpen, MessagesSquare } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, BASIS_NOTE, basisTriple, isBasis } from '@/lib/basis'
 import { paceTier, paceStatus, paceThresholds, PACE_TONE } from '@/lib/pacing'
@@ -2586,8 +2587,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const REFRESHABLE: Record<string, string> = {
     snapshot: 'the snapshot', listings: 'the per-listing table', plan: 'the budget slide',
     ahead: 'the looking-ahead slide', statement: 'the owner statement', newBookings: 'the new-bookings slide',
+    bigDates: 'the big dates and calendar',
   }
   const [rfKey, setRfKey] = useState('')
+  // The multi-calendar's month pill, and the big-dates "add a date" row (Jon, 2026-11-10).
+  const [calIx, setCalIx] = useState(0)
+  const [bdTab, setBdTab] = useState('dates')
+  const [bdNew, setBdNew] = useState<{ label: string; from: string; to: string }>({ label: '', from: '', to: '' })
   const [rfMsg, setRfMsg] = useState<{ key: string; text: string; bad: boolean } | null>(null)
   // THE NEW-BOOKINGS WINDOW, PICKED IN EDIT (Jon, 2026-11-03: "ability to select a date range in edit").
   async function rangeBookings(from: string, to: string) {
@@ -9755,6 +9761,263 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 )}
                 <ViewPick k="ahead" cur={aheadView} choices={[['bars', 'Bars'], ['numbers', 'Numbers only']]} />
                 <SlideNote k="ahead" />
+              </Frame>
+            ) })
+          }
+
+          const cal: ReportCalendar | null = ((c as Any).calendar && Array.isArray((c as Any).calendar.stays)) ? ((c as Any).calendar as ReportCalendar) : null
+          const bd: Any = (c as Any).bigDates || {}
+          // ── 7c · THE MULTI-CALENDAR (Jon, 2026-11-10: "maybe a multi cal view of the listing") ──
+          // Every unit a row, every night a column, one month at a time (the report month and the
+          // next two, picked with the pills). Bars are stays; the channel prints inside a bar wide
+          // enough to hold it and the hover carries the dates. Under the one-accent rule, paid stays
+          // are ink, owner stays are hatched, open nights are paper — channel is a word, not a
+          // colour. Big-date nights are flagged with an accent tick in the header row and today
+          // with an accent rule, so this slide and the one before it read as one story.
+          // ONE SLIDE, TWO TABS (Jon, 2026-11-10: "want option for multi to view, can be a tab on
+          // the one slide"). The calendar is built here as a view and shown on the Big Dates slide
+          // when its Calendar tab is picked — owners can flip between them on the link.
+          let calView: React.ReactNode = null
+          if (cal) {
+            const months: { iso: string; label: string; from: string; to: string }[] = []
+            if (cal) {
+              let m = cal.from
+              for (let i = 0; i < 3 && m <= cal.toIncl; i++) {
+                const y = Number(m.slice(0, 4)), mo = Number(m.slice(5, 7))
+                const nextM = (mo >= 12 ? (y + 1) + '-01' : y + '-' + String(mo + 1).padStart(2, '0')) + '-01'
+                const end = addDaysIso(nextM, -1)
+                months.push({ iso: m, label: new Date(m + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }), from: m, to: end < cal.toIncl ? end : cal.toIncl })
+                m = nextM
+              }
+            }
+            const mi = Math.min(Math.max(0, calIx), Math.max(0, months.length - 1))
+            const M = months[mi]
+            const days = M ? nightsIn(M.from, M.to) : []
+            const evNights = new Set<string>()
+            const evName: Record<string, string> = {}
+            if (cal && M) for (const e of eventsFor(M.from, M.to, Array.isArray(cal.shared) ? cal.shared : [], bd)) for (const d of nightsIn(e.from < M.from ? M.from : e.from, e.to > M.to ? M.to : e.to)) { evNights.add(d); evName[d] = evName[d] ? evName[d] + ', ' + e.label : e.label }
+            const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+            const unitStats = cal && M ? cal.units.map((u, ui) => {
+              let sold = 0, live = 0
+              for (const d of days) {
+                if (u.liveFrom && u.liveFrom > d) continue
+                const st = cal.stays.find(s => s.u === ui && s.ci <= d && s.co > d)
+                if (st && st.own) continue // owner nights leave both sides, as on the snapshot
+                live++
+                if (st) sold++
+              }
+              return { sold, live, pct: live ? Math.round((sold / live) * 100) : 0 }
+            }) : []
+            const tot = unitStats.reduce((a, s) => ({ sold: a.sold + s.sold, live: a.live + s.live }), { sold: 0, live: 0 })
+            const nd = days.length || 1
+            const fmtD = (iso: string) => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+            const LABEL_W = 116, PCT_W = 46, ROW_H = 22
+            calView = (
+                  <>
+                    <div className="flex flex-wrap items-center" style={{ gap: 6, marginTop: 12 }}>
+                      {months.map((m, i) => (
+                        <button key={m.iso} onClick={() => setCalIx(i)}
+                          style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 12px', borderRadius: 999, background: i === mi ? t.accent : tint(0.07), color: i === mi ? '#fff' : tint(0.62) }}>
+                          {m.label.replace(/\s+\d{4}$/, '')}
+                        </button>
+                      ))}
+                      <span className="flex items-center" style={{ gap: 14, marginLeft: 14, fontSize: 10.5, color: tint(0.5) }}>
+                        <span className="flex items-center" style={{ gap: 5 }}><span style={{ width: 14, height: 9, borderRadius: 2, background: inkA(t.ink, 0.72) }} />Booked</span>
+                        <span className="flex items-center" style={{ gap: 5 }}><span style={{ width: 14, height: 9, borderRadius: 2, background: 'repeating-linear-gradient(135deg,' + tint(0.38) + ' 0 2px, transparent 2px 5px)', border: '1px solid ' + tint(0.35) }} />Owner stay</span>
+                        <span className="flex items-center" style={{ gap: 5 }}><span style={{ width: 14, height: 9, borderRadius: 2, background: tint(0.05), border: '1px solid ' + tint(0.12) }} />Open</span>
+                        <span className="flex items-center" style={{ gap: 5 }}><span style={{ width: 5, height: 5, borderRadius: 5, background: t.accent }} />Big date</span>
+                      </span>
+                      <span className="flex items-baseline" style={{ gap: 8, marginLeft: 'auto' }}>
+                        <Lbl>{M ? M.label.replace(/\s+\d{4}$/, '') + ' booked' : 'Booked'}</Lbl>
+                        <span style={{ display: 'inline-block' }}><Fig size={26} ok={'cal_occ_' + mi}>{(tot.live ? Math.round((tot.sold / tot.live) * 100) : 0) + '%'}</Fig></span>
+                      </span>
+                    </div>
+                    <div className="sb-scrollpane" style={{ marginTop: 14, flex: '1 1 auto', minHeight: 0, overflow: 'auto', fontVariantNumeric: 'tabular-nums' }}>
+                      <div style={{ minWidth: LABEL_W + PCT_W + nd * 17 }}>
+                        {/* header: day numbers, weekends shaded, big dates ticked */}
+                        <div style={{ display: 'flex', position: 'sticky', top: 0, zIndex: 2, background: GROUND.light }}>
+                          <div style={{ width: LABEL_W, flex: '0 0 auto' }} />
+                          <div style={{ flex: '1 1 auto', display: 'grid', gridTemplateColumns: 'repeat(' + nd + ', minmax(0,1fr))' }}>
+                            {days.map(d => {
+                              const dow = new Date(d + 'T12:00:00Z').getUTCDay()
+                              const we = dow === 5 || dow === 6
+                              return (
+                                <div key={d} title={evName[d] ? fmtD(d) + ' · ' + evName[d] : fmtD(d)} style={{ textAlign: 'center', padding: '2px 0 5px', borderBottom: '1px solid ' + tint(0.14) }}>
+                                  <span style={{ display: 'block', fontSize: 8.5, color: tint(0.38), letterSpacing: '0.04em' }}>{'SMTWTFS'[dow]}</span>
+                                  <span style={{ display: 'block', fontSize: 10.5, fontWeight: d === today ? 700 : (we ? 600 : 400), color: d === today ? t.accent : tint(we ? 0.7 : 0.5) }}>{Number(d.slice(8))}</span>
+                                  <span style={{ display: 'block', width: 4, height: 4, borderRadius: 4, margin: '2px auto 0', background: evNights.has(d) ? t.accent : 'transparent' }} />
+                                </div>
+                              )
+                            })}
+                          </div>
+                          <div style={{ width: PCT_W, flex: '0 0 auto', textAlign: 'right', fontSize: 8.5, color: tint(0.38), alignSelf: 'end', paddingBottom: 6 }}>OCC</div>
+                        </div>
+                        {cal.units.map((u, ui) => {
+                          const stays = cal.stays.filter(s => s.u === ui && s.co > M.from && s.ci <= M.to)
+                          return (
+                            <div key={u.id} style={{ display: 'flex', alignItems: 'center', height: ROW_H + 6, borderBottom: '1px solid ' + tint(0.06) }}>
+                              <div title={u.building + (u.beds != null ? ' · ' + (u.beds <= 0 ? 'Studio' : u.beds + 'BR') : '')}
+                                style={{ width: LABEL_W, flex: '0 0 auto', fontSize: 11.5, color: t.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 8 }}>
+                                {u.label}
+                              </div>
+                              <div style={{ flex: '1 1 auto', position: 'relative', height: ROW_H, display: 'grid', gridTemplateColumns: 'repeat(' + nd + ', minmax(0,1fr))' }}>
+                                {days.map(d => {
+                                  const dow = new Date(d + 'T12:00:00Z').getUTCDay()
+                                  return <div key={d} style={{ background: dow === 5 || dow === 6 ? tint(0.045) : 'transparent', borderLeft: d === today ? '1.5px solid ' + t.accent : '1px solid ' + tint(0.04) }} />
+                                })}
+                                {stays.map((s, si) => {
+                                  const a = s.ci < M.from ? M.from : s.ci
+                                  const bEx = s.co > addDaysIso(M.to, 1) ? addDaysIso(M.to, 1) : s.co
+                                  const start = days.indexOf(a)
+                                  const span = Math.max(1, nightsIn(a, addDaysIso(bEx, -1)).length)
+                                  if (start < 0) return null
+                                  const nights = nightsIn(s.ci, addDaysIso(s.co, -1)).length
+                                  const tip = s.ch + ' · ' + fmtD(s.ci) + ' – ' + fmtD(s.co) + ' · ' + nights + (nights === 1 ? ' night' : ' nights')
+                                  return (
+                                    <div key={si} title={tip}
+                                      style={{ position: 'absolute', top: 3, bottom: 3, left: 'calc(' + (start / nd * 100) + '% + 2px)', width: 'calc(' + (span / nd * 100) + '% - 4px)',
+                                        borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', paddingLeft: 5,
+                                        ...(s.own
+                                          ? { background: 'repeating-linear-gradient(135deg,' + tint(0.32) + ' 0 2px, transparent 2px 6px)', border: '1px solid ' + tint(0.35) }
+                                          : { background: inkA(t.ink, 0.72) }) }}>
+                                      {span >= 3 ? <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.02em', color: s.own ? t.ink : '#fff', whiteSpace: 'nowrap' }}>{s.ch}</span> : null}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                              <div style={{ width: PCT_W, flex: '0 0 auto', textAlign: 'right', fontSize: 11, color: tint(0.6) }}>{(unitStats[ui] ? unitStats[ui].pct : 0) + '%'}</div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <p style={{ marginTop: 10, fontSize: 11, color: tint(0.45) }}>
+                      {O('cal_foot', 'Paid nights only count as booked; owner stays are shown but not counted. As of ' + fmtD(cal.asOf) + ' — future nights keep filling in.')}
+                    </p>
+                  </>
+            )
+          }
+
+          // ── 7b · BIG DATES (Jon, 2026-11-10: "big dates slide, occ adr etc. They keep asking about it") ──
+          // Owners ask the same question every season: "how are we doing for Art Basel, for New
+          // Year's?" This answers it per date. Every number comes from content.calendar — the same
+          // stays the multi-calendar draws — priced on the snapshot's own basis, so an event's ADR
+          // and the snapshot's ADR are the same kind of number. Holidays are computed; Miami event
+          // weekends ship in lib/report-calendar (MARKET_EVENTS, only confirmed dates); anything
+          // else the team types on the slide and it is priced instantly from the stored stays.
+          if (!hid('bigDates') && (cal || edit)) {
+            const n = next()
+            const evs = cal ? eventsFor(cal.from, cal.toIncl, Array.isArray(cal.shared) ? cal.shared : [], bd) : []
+            const base = cal ? baselineStats(cal, snapPrimary) : null
+            const asOfIso = cal ? cal.asOf : ''
+            const removeEv = (e: BigEvent) => mutate((d: Any) => {
+              d.bigDates = d.bigDates || {}
+              if (e.source === 'team') {
+                d.bigDates.events = (Array.isArray(d.bigDates.events) ? d.bigDates.events : []).filter((x: Any) => eventKey(x) !== eventKey(e))
+              } else {
+                const h: string[] = Array.isArray(d.bigDates.hidden) ? d.bigDates.hidden : []
+                if (h.indexOf(eventKey(e)) < 0) h.push(eventKey(e))
+                d.bigDates.hidden = h
+              }
+            })
+            const addEv = () => {
+              const label = bdNew.label.trim().slice(0, 40), from = bdNew.from, to = bdNew.to || bdNew.from
+              if (!label || !/^\d{4}-\d{2}-\d{2}$/.test(from) || to < from) return
+              mutate((d: Any) => {
+                d.bigDates = d.bigDates || {}
+                d.bigDates.events = (Array.isArray(d.bigDates.events) ? d.bigDates.events : []).concat([{ label, from, to }])
+              })
+              setBdNew({ label: '', from: '', to: '' })
+            }
+            const restoreAll = () => mutate((d: Any) => { if (d.bigDates) d.bigDates.hidden = [] })
+            const hiddenCount = Array.isArray(bd.hidden) ? bd.hidden.length : 0
+            const inp = { fontSize: 12.5, padding: '7px 10px', borderRadius: 8, border: '1px solid ' + tint(0.18), background: t.card, color: t.ink } as React.CSSProperties
+            slides.push({ key: 'bigDates', ai: false, node: (
+              <Frame note="bigDates" nav="Big dates" sec="Ahead" subj={bdTab === 'calendar' && cal ? 'Calendar' : 'Big dates · ' + BASIS_SHORT[snapPrimary]} tone="light" n={n}>
+                <RTitle k="bigDates" />
+                {cal ? (
+                  <div className="sb-noprint flex items-center" style={{ gap: 6, marginTop: 18 }}>
+                    {([['dates', 'Big dates'], ['calendar', 'Calendar']] as [string, string][]).map(([v, label]) => (
+                      <button key={v} onClick={() => setBdTab(v)}
+                        style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 13px', borderRadius: 999, background: bdTab === v ? t.ink : tint(0.07), color: bdTab === v ? '#fff' : tint(0.62) }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {cal && bdTab === 'calendar' ? calView : !cal ? (
+                  <p className="sb-noprint" style={{ marginTop: 26, fontSize: 14, color: tint(0.55), maxWidth: '60ch' }}>
+                    This report was made before the calendar existed. Press <b>Refresh</b> above to pull every stay for this month and the next two — then this slide and the calendar fill in. Owners don’t see this slide until it has data.
+                  </p>
+                ) : (
+                  <>
+                    <div style={{ marginTop: 26, display: 'grid', gridTemplateColumns: 'minmax(7.5rem,0.9fr) minmax(10rem,1.6fr) minmax(9rem,1.3fr) minmax(5.5rem,0.8fr) minmax(5.5rem,0.8fr) minmax(5rem,0.7fr)' + (edit ? ' 1.6rem' : ''), columnGap: 18, alignItems: 'center' }}>
+                      {['Dates', 'Event', 'Booked', 'ADR', 'vs a typical night', 'Still open'].map(h => (
+                        <div key={h} style={{ paddingBottom: 10, borderBottom: '1px solid ' + tint(0.16) }}><Lbl>{h}</Lbl></div>
+                      ))}
+                      {edit ? <div style={{ paddingBottom: 10, borderBottom: '1px solid ' + tint(0.16) }} /> : null}
+                      {evs.length === 0 ? (
+                        <p style={{ gridColumn: '1 / -1', fontSize: 14, color: tint(0.5), padding: '18px 0' }}>No holidays or event weekends in this window yet{edit ? ' — add one below.' : '.'}</p>
+                      ) : evs.map((e, i) => {
+                        const s = eventStats(cal, e, snapPrimary)
+                        const past = asOfIso && e.to < asOfIso
+                        const prem = base && base.adr > 0 && s.adr > 0 ? Math.round(((s.adr - base.adr) / base.adr) * 100) : null
+                        const k = 'bd_' + i
+                        const row = { padding: '13px 0', borderBottom: '1px solid ' + tint(0.08) } as React.CSSProperties
+                        return (
+                          <Fragment key={eventKey(e)}>
+                            <div style={row}>
+                              <span style={{ fontFamily: SERIF, fontSize: 17, color: t.ink }}>{rangeLabel(e.from, e.to)}</span>
+                              <span style={{ display: 'block', fontSize: 10.5, color: tint(0.42), marginTop: 3 }}>{s.nights + (s.nights === 1 ? ' night' : ' nights') + (past ? ' · final' : ' · on the books')}</span>
+                            </div>
+                            <div style={row}><span style={{ fontSize: 14.5, fontWeight: 500, color: t.ink }}>{e.label}</span></div>
+                            <div style={row}>
+                              <div className="flex items-baseline" style={{ gap: 10 }}>
+                                <Fig size={30} ok={k + '_occ'}>{s.occPct + '%'}</Fig>
+                                <span style={{ fontSize: 11, color: tint(0.45), fontVariantNumeric: 'tabular-nums' }}>{s.sold + ' of ' + s.unitNights}</span>
+                              </div>
+                              <span style={{ display: 'block', height: 3, borderRadius: 2, marginTop: 8, background: tint(0.1) }}>
+                                <span style={{ display: 'block', height: 3, borderRadius: 2, width: Math.min(100, s.occPct) + '%', background: t.accent }} />
+                              </span>
+                            </div>
+                            <div style={row}><Fig size={24} ok={k + '_adr'}>{s.adr ? '$' + s.adr.toLocaleString('en-US') : '—'}</Fig></div>
+                            <div style={row}>
+                              <span style={{ fontSize: 14, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: prem != null && prem > 0 ? t.accent : tint(0.55) }}>
+                                {O(k + '_prem', prem == null ? '—' : (prem > 0 ? '+' : prem < 0 ? '−' : '') + Math.abs(prem) + '%')}
+                              </span>
+                            </div>
+                            <div style={row}>
+                              <span style={{ fontSize: 14, fontVariantNumeric: 'tabular-nums', color: tint(0.62) }}>{O(k + '_open', past ? '—' : s.open + ' nts')}</span>
+                              {s.owner ? <span style={{ display: 'block', fontSize: 10.5, color: tint(0.42), marginTop: 3 }}>{s.owner + ' owner'}</span> : null}
+                            </div>
+                            {edit ? (
+                              <div style={row}>
+                                <button className="sb-noprint" title="Remove this date from this report" onClick={() => removeEv(e)} style={{ color: tint(0.45) }}><X size={13} /></button>
+                              </div>
+                            ) : null}
+                          </Fragment>
+                        )
+                      })}
+                    </div>
+                    {base ? (
+                      <p style={{ marginTop: 16, fontSize: 12.5, color: tint(0.48), fontVariantNumeric: 'tabular-nums' }}>
+                        {O('bd_base', 'A typical night across ' + rangeLabel(cal.from, cal.toIncl) + ': ' + base.occPct + '% booked at $' + base.adr.toLocaleString('en-US') + ' ' + BASIS_SHORT[snapPrimary].toLowerCase() + '. Future dates show what is on the books as of ' + new Date(asOfIso + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) + '; open nights are still selling.')}
+                      </p>
+                    ) : null}
+                    {edit ? (
+                      <div className="sb-noprint flex flex-wrap items-center" style={{ gap: 8, marginTop: 18 }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.14em', textTransform: 'uppercase', color: tint(0.45), marginRight: 4 }}>Add a date</span>
+                        <input value={bdNew.label} onChange={e => setBdNew({ ...bdNew, label: e.target.value })} placeholder="e.g. F1 Miami weekend" style={{ ...inp, width: 190 }} />
+                        <input type="date" value={bdNew.from} min={cal.from} max={cal.toIncl} onChange={e => setBdNew({ ...bdNew, from: e.target.value })} style={inp} />
+                        <span style={{ fontSize: 12, color: tint(0.45) }}>to last night</span>
+                        <input type="date" value={bdNew.to} min={bdNew.from || cal.from} max={cal.toIncl} onChange={e => setBdNew({ ...bdNew, to: e.target.value })} style={inp} />
+                        <button onClick={addEv} style={{ fontSize: 12, fontWeight: 600, padding: '7px 14px', borderRadius: 999, background: t.accent, color: '#fff' }}>Add</button>
+                        {hiddenCount ? <button onClick={restoreAll} style={{ fontSize: 12, color: tint(0.55), textDecoration: 'underline' }}>{'Bring back ' + hiddenCount + ' removed'}</button> : null}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+                <SlideNote k="bigDates" />
               </Frame>
             ) })
           }
