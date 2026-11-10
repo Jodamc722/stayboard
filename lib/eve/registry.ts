@@ -12,6 +12,10 @@ import 'server-only'
 import { redactMoney } from '@/lib/money'
 import { redactSensitive, codeFieldNameKind, redactGuestPII, maskMoneyStrings, scrubStoredStrings } from './redact'
 import { fitResult } from './fit'
+import { ambiguousUnitResult } from './ctx'
+import { ENTITY_TOOLS } from './entity'
+import { UNIT360_TOOLS } from './unit360'
+import { REACH_OPS_TOOLS, REACH_GUEST_TOOLS, REACH_SYSTEM_TOOLS } from './reach'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -38,14 +42,22 @@ const QUALITY: EveDomain = {
     RELOCATED.search_reviews, RELOCATED.search_listings, RELOCATED.listing_detail, RELOCATED.guesty_config,
   ]),
 }
-const OPS: EveDomain = { ...OPS_DOMAIN, tools: OPS_DOMAIN.tools.concat([RELOCATED.field_work]) }
+// REACH (Eve reorganisation, 2026-11-10): the upkeep ledger, the Breezeway inspection results, blocked
+// units and vendor work join the ops drawer; calls join guests; AI spend joins system. Same pattern as
+// the relocated tools — new objects, never a mutation of an imported domain.
+const OPS: EveDomain = {
+  ...OPS_DOMAIN,
+  blurb: OPS_DOMAIN.blurb + ' Also: what upkeep is due or late per unit (upkeep_due), the Breezeway inspection checklists and what failed on them (inspection_results), units blocked from sale and why (blocked_units), and what an outside vendor has done for us (vendor_work).',
+  tools: OPS_DOMAIN.tools.concat([RELOCATED.field_work]).concat(REACH_OPS_TOOLS),
+}
 
 // The customer-service half of the guests domain, added 2026-08-26. Built as a separate module and
 // concatenated here for the same reason as the relocated tools above: mutating an imported domain
 // at module scope re-runs on every hot reload and registers duplicate tool names.
-const GUESTS: EveDomain = { ...GUESTS_DOMAIN, tools: GUESTS_DOMAIN.tools.concat(CS_TOOLS) }
+const GUESTS: EveDomain = { ...GUESTS_DOMAIN, blurb: GUESTS_DOMAIN.blurb + ' Also the phone: welcome and post-checkout calls logged, and the Talkroute call log (calls).', tools: GUESTS_DOMAIN.tools.concat(CS_TOOLS).concat(REACH_GUEST_TOOLS) }
+const SYSTEM: EveDomain = { ...SYSTEM_DOMAIN, blurb: SYSTEM_DOMAIN.blurb + ', and what the AI itself has cost by task and day (ai_spend)', tools: SYSTEM_DOMAIN.tools.concat(REACH_SYSTEM_TOOLS) }
 
-export const DOMAINS: EveDomain[] = [OPS, MONEY_DOMAIN, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY_DOMAIN, SYSTEM_DOMAIN]
+export const DOMAINS: EveDomain[] = [OPS, MONEY_DOMAIN, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY_DOMAIN, SYSTEM]
 export const DOMAIN_KEYS = DOMAINS.map(d => d.key)
 
 const OPEN_DOMAIN: EveTool = {
@@ -61,7 +73,10 @@ export function coreTools(): EveTool[] {
   // to answer one is the wrong trade — two small schemas beat a wasted round trip.
   // What she did today is core too (2026-09-23 review): she was answering "what did you do?" with
   // "nothing" after ten posts, and a question about herself must never cost a domain-opening turn.
-  return CORE_TOOLS.concat(DOC_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat(BRAIN_TOOLS).concat([OPEN_DOMAIN])
+  // The entity resolver and the 360s are core (2026-11-10): "which 1205?" and "tell me everything
+  // about this unit" are the two questions every other answer starts from, and neither should cost
+  // a domain-opening turn.
+  return CORE_TOOLS.concat(ENTITY_TOOLS).concat(UNIT360_TOOLS).concat(DOC_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat(BRAIN_TOOLS).concat([OPEN_DOMAIN])
 }
 
 export function domainByKey(key: string): EveDomain | null {
@@ -145,6 +160,16 @@ function unitNamesRe(ctx: EveCtx): RegExp | null {
  * Run a tool with the money gate applied. Rule 4: redaction happens HERE, before the output is
  * serialized into the conversation — not in the UI, where the model has already seen the number.
  */
+// ONE BUDGET, AND IT IS THE ONE run.ts SENDS (2026-11-10). The result used to be fitted to 9,000
+// characters here and then cut at 7,000 with a string slice in run.ts — so anything between the two
+// reached the model as torn JSON. It is fitted to what is actually sent, once, as whole JSON.
+export const TOOL_SEND_CHARS = 7000
+// The 360s answer in one call what used to take six, each of which could send 7,000 characters; they
+// get room for all their sections rather than having the upkeep rows halved to fit.
+const WIDE_TOOLS: Record<string, number> = { unit_360: 10000, building_360: 10000 }
+/** How many characters of JSON a tool's result may send (lib/eve/fit.ts fits to it, whole). */
+export function toolBudget(name: string): number { return WIDE_TOOLS[String(name)] || TOOL_SEND_CHARS }
+
 export async function runTool(name: string, input: any, ctx: EveCtx, open: string[]): Promise<ToolRunResult> {
   if (name === 'open_domain') {
     const d = domainByKey(input?.domain)
@@ -188,12 +213,14 @@ export async function runTool(name: string, input: any, ctx: EveCtx, open: strin
       // redactMoney nulls amounts under money KEYS; a dollar figure written into a sentence ("refund
       // $300", a memory, a knowledge row) sits under `text` and passed. maskMoneyStrings takes those
       // out too (2026-09-28 audit, F9).
-      return { output: fitResult({ ...maskMoneyStrings(redactMoney(out)), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' }) }
+      return { output: fitResult({ ...maskMoneyStrings(redactMoney(out)), _money_redacted: 'Dollar amounts are hidden for this user. Occupancy, counts, minutes and percentages are still accurate; ADR and RevPAR are dollar figures and are hidden too. Do not guess at the hidden numbers.' }, toolBudget(tool.name)) }
     }
     // FITS THE BUDGET WITHOUT TEARING THE JSON (2026-09-28 audit, F3): the longest lists are halved
     // until it fits, and `_cut` names each one ("departures": "60→15") so she says it is partial.
-    return { output: fitResult(out) }
+    return { output: fitResult(out, toolBudget(tool.name)) }
   } catch (e: any) {
+    // A unit name that fits more than one unit is a question back, not a failure (lib/eve/ctx.ts).
+    if (e && e.name === 'AmbiguousUnit' && Array.isArray(e.candidates)) return { output: ambiguousUnitResult(e) }
     return { output: { error: String(e?.message || e).slice(0, 200) } }
   }
 }

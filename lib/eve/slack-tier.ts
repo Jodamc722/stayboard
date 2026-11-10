@@ -83,7 +83,7 @@ export type TierGrant = {
 // them privately, never into the room — lib/eve/core.ts door_code_check); in an admin's one-to-one DM
 // the admin has it, as before; in every other channel nobody does. See lib/eve/door-code-rooms.ts.
 const ENTRY_TOOLS = ['door_code', 'door_code_check']
-const ADMIN_ONLY = ['ask_ralph', 'slack_queue']
+const ADMIN_ONLY = ['ask_ralph', 'slack_queue', 'ai_spend', 'vendor_work']
 // A vendor room has an outside company reading it, so a guest's own words and contact details stay
 // out too — those are ours and the guest's, not the contractor's.
 // 2026-09-18 audit (P0-7): reservation_detail, awaiting_reply, unread_conversations, welcome_calls

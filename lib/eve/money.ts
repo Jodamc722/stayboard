@@ -17,7 +17,9 @@ import { paceStatus, paceThresholds } from '@/lib/pacing'
 import { bucketFor, familyFor, otaGroupFor, stateFor, isWon, accomOf, etDay } from '@/lib/marketing'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, shiftDay, lc, has, safe, round2, num, DEAD_LISTING } from './ctx'
+import { clampLimit, clampDays, shiftDay, lc, has, safe, round2, num, DEAD_LISTING, toolMeta } from './ctx'
+import { LIVE_STAY_STATUSES, channelFeeOf, NET_BASIS_NOTE } from '@/lib/basis'
+import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 
 function monthKey(v: any, fallback: string): string {
   const s = String(v || '').trim()
@@ -129,7 +131,7 @@ export const MONEY_TOOLS: EveTool[] = [
 
   {
     name: 'direct_bookings',
-    description: 'Direct vs OTA booking mix, keyed on when the booking was CREATED (not when the stay happens) in Eastern time. Returns counts and accommodation value by family (direct / manual / owner / OTA), the OTA breakdown by group, and the month-by-month timeline. Use for "how are direct bookings trending".',
+    description: 'Direct vs OTA booking mix, keyed on when the booking was CREATED (not when the stay happens) in Eastern time. Returns, by family (direct / manual / owner / OTA): bookings made, how many are real stays today (`won`: confirmed / checked in / checked out) and their NET accommodation value (after the channel fee — the one revenue basis); the OTA breakdown by group, and the month-by-month timeline. Owner and friends-and-family holds are filed under "owner", never as demand. Use for "how are direct bookings trending".',
     input_schema: obj({ from: S.str, to: S.str, months: S.num }),
     money: true,
     run: async (input, ctx) => {
@@ -138,7 +140,7 @@ export const MONEY_TOOLS: EveTool[] = [
       const to = String(input?.to || '').match(/^\d{4}-\d{2}-\d{2}$/) ? String(input.to) : ctx.today
       // Rule 1: the SIX money scalars, never raw->money (that object carries payments + invoiceItems
       // + bundledFees and is what made Postgres cancel this query on statement timeout).
-      const COLS = 'id,listing_id,status,source,created_at,check_in,nights,money_total,m_accom_adj:raw->money->>fareAccommodationAdjusted,m_accom:raw->money->>fareAccommodation'
+      const COLS = 'id,listing_id,status,source,guest_name,created_at,check_in,nights,money_total,m_accom_adj:raw->money->>fareAccommodationAdjusted,m_accom:raw->money->>fareAccommodation,m_fee:raw->money->>hostServiceFee,m_fee_inc:raw->money->>hostServiceFeeIncTax,tags:raw->tags'
       const rows: any[] = []
       let truncated = false
       for (let page = 0; page < 12; page++) {
@@ -155,12 +157,20 @@ export const MONEY_TOOLS: EveTool[] = [
       const byMonth: Record<string, { direct: number; ota: number; other: number }> = {}
       for (const r of rows) {
         const bucket = bucketFor(r.source)
-        const fam = familyFor(bucket)
+        // ONE BASIS (2026-11-10, lib/basis.ts). An owner or friends-and-family hold is inventory, so
+        // it is filed under "owner" whatever its source says; a booking is WON only when it is a real
+        // stay today (confirmed / checked_in / checked_out — `reserved` and `closed` are not); and its
+        // value is accommodation after the channel fee, not the guest's whole bill.
+        const tagBlob = Array.isArray(r.tags) ? r.tags.map((x: any) => String(x)).join(' ') : ''
+        const ownerish = isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))
+        const fam = ownerish ? 'owner' : familyFor(bucket)
         const st = stateFor(r.status)
-        const val = accomOf({ fareAccommodationAdjusted: r.m_accom_adj, fareAccommodation: r.m_accom }) || num(r.money_total)
+        const won = isWon(st) && LIVE_STAY_STATUSES.indexOf(lc(r.status).trim()) >= 0
+        const accom = accomOf({ fareAccommodationAdjusted: r.m_accom_adj, fareAccommodation: r.m_accom })
+        const val = Math.max(0, accom - channelFeeOf(num(r.m_fee_inc), num(r.m_fee)))
         if (!byFamily[fam]) byFamily[fam] = { bookings: 0, won: 0, value: 0 }
         byFamily[fam].bookings++
-        if (isWon(st)) { byFamily[fam].won++; byFamily[fam].value += val }
+        if (won) { byFamily[fam].won++; byFamily[fam].value += val }
         if (fam === 'ota') byOta[otaGroupFor(r.source)] = (byOta[otaGroupFor(r.source)] || 0) + 1
         const mk = etDay(r.created_at).slice(0, 7)
         if (!byMonth[mk]) byMonth[mk] = { direct: 0, ota: 0, other: 0 }
@@ -177,6 +187,8 @@ export const MONEY_TOOLS: EveTool[] = [
         bookings_scanned: rows.length, truncated,
         by_family: familyRows, ota_breakdown: byOta, timeline,
         note: truncated ? 'Hit the paging ceiling — narrow the window for exact figures.' : undefined,
+        basis: `accommodation_value = ${NET_BASIS_NOTE}, summed over bookings that are real stays today (${LIVE_STAY_STATUSES.join(' / ')}). Owner and friends-and-family holds are in the "owner" family and are not demand. Bookings are counted in the month they were CREATED, so recent months are still filling in.`,
+        _meta: toolMeta({ source: 'guesty_reservations', window: `${from} → ${to} (created date)`, n: rows.length, truncated, basis: 'net accommodation after channel fee · real stays' }),
       }
     },
   },

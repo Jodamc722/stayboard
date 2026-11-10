@@ -5,7 +5,9 @@
 import 'server-only'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, lc, safe, normStar } from './ctx'
+import { clampLimit, lc, safe, normStar, num, toolMeta } from './ctx'
+import { LIVE_STAY_STATUSES, channelFeeOf, NET_BASIS_NOTE } from '@/lib/basis'
+import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 import { RELOCATED } from './core'
 
 const ENTITY_TYPES = ['task', 'glitch', 'claim', 'unit']
@@ -97,11 +99,23 @@ export const GUEST_TOOLS: EveTool[] = [
       const name = String(input?.guest || '').trim()
       const email = String(input?.email || '').trim()
       if (!name && !email) return { error: 'Give me a guest name or email.' }
-      let q = ctx.db.from('guesty_reservations').select('id,confirmation_code,guest_name,guest_email,listing_id,listing_name,check_in,check_out,nights,status,source,money_total')
-      if (email) q = q.ilike('guest_email', `%${email}%`)
-      else q = q.ilike('guest_name', `%${name}%`)
-      const { data: resv } = await q.order('check_in', { ascending: false }).limit(clampLimit(input?.limit, 40, 80))
-      const stays = (resv || [])
+      // ONE BASIS (2026-11-10, lib/basis.ts): what a guest is WORTH to us is accommodation after the
+      // channel fee over their real stays — not the sum of every bill including cleaning and taxes,
+      // and not a booking that never became a stay. Both figures are returned, each labelled.
+      const SLIM = 'id,confirmation_code,guest_name,guest_email,listing_id,listing_name,check_in,check_out,nights,status,source,money_total'
+      const FULL = SLIM + ',fare:raw->money->>fareAccommodationAdjusted,fee:raw->money->>hostServiceFee,fee_inc:raw->money->>hostServiceFeeIncTax,tags:raw->tags'
+      const lim = clampLimit(input?.limit, 40, 80)
+      const read = (cols: string) => {
+        let q = ctx.db.from('guesty_reservations').select(cols, { count: 'exact' })
+        if (email) q = q.ilike('guest_email', `%${email}%`)
+        else q = q.ilike('guest_name', `%${name}%`)
+        return q.order('check_in', { ascending: false }).limit(lim)
+      }
+      let res: any = await read(FULL)
+      let hasBasis = true
+      if (res?.error) { res = await read(SLIM); hasBasis = false }
+      const stays: any[] = (res?.data as any[]) || []
+      const totalRows: number | null = typeof res?.count === 'number' ? res.count : null
       if (!stays.length) return { found: false, note: `No reservations match "${name || email}".` }
       const listingIds: string[] = []
       const seenL: Record<string, true> = {}
@@ -113,17 +127,37 @@ export const GUEST_TOOLS: EveTool[] = [
         safe(ctx.db.from('claims').select('id,stage,summary,amount_sought,amount_paid,check_out,property').ilike('guest_name', `%${nm}%`).is('deleted_at', null).order('created_at', { ascending: false }).limit(10), { data: [] } as any),
       ])
       const live = stays.filter((r: any) => !/cancel|declin|inquir|expire/i.test(lc(r.status)))
+      const real = stays.filter((r: any) => LIVE_STAY_STATUSES.indexOf(lc(r.status).trim()) >= 0)
+      const ownerish = (r: any): boolean => {
+        const tagBlob = Array.isArray(r.tags) ? r.tags.map((x: any) => String(x)).join(' ') : ''
+        return isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))
+      }
+      const netOf = (r: any): number | null => (hasBasis && r.fare != null && r.fare !== '' ? Math.max(0, num(r.fare) - channelFeeOf(num(r.fee_inc), num(r.fee))) : null)
+      const realGuest = real.filter((r: any) => !ownerish(r))
+      // A NAME IS NOT A PERSON. The match is "name contains", so two different guests can share it.
+      const distinct: Record<string, true> = {}
+      for (const r of stays) distinct[lc(r.guest_name).trim() + '|' + lc(r.guest_email).trim()] = true
+      const people = Object.keys(distinct).length
+      const cut = totalRows != null ? totalRows > stays.length : stays.length >= lim
       return {
         found: true, guest: nm, email: stays[0].guest_email || null,
+        total_rows: totalRows, truncated: cut,
+        more_than_one_person: people > 1 ? `These ${stays.length} bookings carry ${people} different name / email combinations — "${name || email}" may be more than one guest. Check the names and emails on the stays before treating this as one person's history; search by email to be sure.` : undefined,
+        basis: `net_accommodation_usd = ${NET_BASIS_NOTE}, over real stays only (${LIVE_STAY_STATUSES.join(' / ')}), owner and friends-and-family stays left out. lifetime_value is the older figure: every non-cancelled bill in full (cleaning and taxes in) — it is what the guest paid, not what we earned.`,
+        _meta: toolMeta({ source: 'guesty_reservations + guesty_reviews + glitches + claims (matched by guest name)', window: 'all time, newest first', n: stays.length, truncated: cut, basis: 'net accommodation after channel fee · real stays' }),
         summary: {
           stays: live.length, cancelled: stays.length - live.length,
           nights: live.reduce((s: number, r: any) => s + (Number(r.nights) || 0), 0),
           lifetime_value: Math.round(live.reduce((s: number, r: any) => s + (Number(r.money_total) || 0), 0)),
+          real_stays: realGuest.length,
+          real_stay_nights: realGuest.reduce((s: number, r: any) => s + (Number(r.nights) || 0), 0),
+          net_accommodation_usd: hasBasis ? Math.round(realGuest.reduce((s: number, r: any) => s + (netOf(r) || 0), 0)) : null,
+          owner_or_friends_family_stays: real.length - realGuest.length,
           units_stayed: listingIds.length,
           first_stay: live.length ? String(live[live.length - 1].check_in).slice(0, 10) : null,
           last_stay: live.length ? String(live[0].check_out).slice(0, 10) : null,
         },
-        stays: stays.map((r: any) => ({ confirmation: r.confirmation_code, unit: r.listing_name || ctx.nameOf(r.listing_id), check_in: String(r.check_in).slice(0, 10), check_out: String(r.check_out).slice(0, 10), nights: r.nights, status: r.status, channel: r.source, total: r.money_total })),
+        stays: stays.map((r: any) => ({ confirmation: r.confirmation_code, unit: r.listing_name || ctx.nameOf(r.listing_id), check_in: String(r.check_in).slice(0, 10), check_out: String(r.check_out).slice(0, 10), nights: r.nights, status: r.status, channel: r.source, total: r.money_total, net_accommodation: netOf(r) == null ? null : Math.round(netOf(r) as number), stay_kind: ownerish(r) ? 'owner_or_friends_family' : 'guest' })),
         reviews: (revRes.data || []).map((r: any) => ({ unit: ctx.nameOf(r.listing_id), rating: normStar(r.rating), rating_scale: '/5', channel: r.channel, date: String(r.created_at).slice(0, 10), answered: !!r.has_reply, text: String(r.content || '').slice(0, 300) })),
         glitches: (gliRes.data || []).map((g: any) => ({ issue: g.overview, status: g.status, unit: g.unit || ctx.nameOf(g.listing_id), opened: String(g.created_at).slice(0, 10), refund_approved: g.refund_approved  })),
         claims: (claimRes.data || []).map((c: any) => ({ stage: c.stage, property: c.property, summary: String(c.summary || '').slice(0, 200), sought: c.amount_sought, paid: c.amount_paid })),

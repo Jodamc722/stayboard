@@ -7,6 +7,7 @@
 // All writes go through /api/eve/memory, which enforces who may change what.
 import { useState } from 'react'
 import { Check, X, Pencil, Undo2, ChevronDown, ChevronRight, GraduationCap, AlertTriangle, Lightbulb } from 'lucide-react'
+import { evidenceFromTools, type EvidenceItem } from '@/lib/eve/evidence'
 
 export type Learned = { id: string; kind: string; text: string; scope: string; scopeLabel: string; weight: number; source: string; teacher: string | null; via: string; status: 'saved' | 'suggested'; _gone?: boolean; _note?: string }
 export type Used = { id: string; kind: string; text: string; source: string }
@@ -85,6 +86,13 @@ export function WhatIUsed({ used, tools, chatId, conversationId }: { used?: Used
   const [busy, setBusy] = useState(false)
   const u = used || []
   const t = Array.from(new Set((tools || []).filter(x => x && !x.startsWith('_'))))
+  // WHERE EACH LOOKUP'S NUMBERS CAME FROM (2026-11-10): source · window · as-of, per tool. It arrives
+  // as one `_evidence:` entry in the tools list (lib/eve/run.ts); an answer from before that, or a
+  // conversation loaded from history, has none and shows the tool names as it always did.
+  const ev: EvidenceItem[] = evidenceFromTools(tools)
+  const evTools = new Set(ev.map(e => e.tool))
+  const bare = t.filter(x => !evTools.has(x))
+  const evLine = (e: EvidenceItem) => [e.source, e.window, e.as_of ? 'as of ' + e.as_of : '', typeof e.n === 'number' ? 'n=' + e.n : '', e.basis].filter(Boolean).join(' · ')
   if (!u.length && !t.length) return null
   async function save(id: string) {
     setBusy(true)
@@ -121,7 +129,13 @@ export function WhatIUsed({ used, tools, chatId, conversationId }: { used?: Used
               )}
             </div>
           ))}
-          {t.length > 0 && <div className="text-[11px] text-muted">Tools: {t.map(TOOL_NICE).join(' · ')}</div>}
+          {ev.map((e, i) => (
+            <div key={e.tool + ':' + i} className="text-[11px] text-muted">
+              <span className="text-ink">{TOOL_NICE(e.tool)}</span>{evLine(e) ? ' — ' + evLine(e) : ''}
+              {e.truncated ? <span className="text-amber-700"> · partial</span> : null}
+            </div>
+          ))}
+          {bare.length > 0 && <div className="text-[11px] text-muted">{ev.length ? 'Also: ' : 'Tools: '}{bare.map(TOOL_NICE).join(' · ')}</div>}
         </div>
       )}
     </div>

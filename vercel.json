@@ -195,6 +195,10 @@
     {
       "path": "/api/cron/connecting-doors",
       "schedule": "38 0-2,11-23 * * *"
+    },
+    {
+      "path": "/api/cron/business-brain",
+      "schedule": "53 6 * * *"
     }
   ]
 }

@@ -14,20 +14,12 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting } from './app-settings'
 
-export type AiBudget = {
-  automaticUsd: number; totalUsd: number; monthUsd: number; on: boolean
-  /** THE PAUSE BUTTON (Jon, 2026-10-07): true = no AI call leaves Lighthouse, whatever the spend. */
-  paused: boolean
-  /** THE RUNAWAY BRAKE: most calls one feature may make in an hour (Eve's chat gets 3x). The 10-07
-   *  translate loop made ~284 calls in a day; nothing legitimate needs this many in an hour. */
-  perTaskHour: number
-}
-export const DEFAULT_BUDGET: AiBudget = { automaticUsd: 5, totalUsd: 9, monthUsd: 250, on: true, paused: false, perTaskHour: 40 }
-// Typed by a person, on the spot — the only calls that keep going after the automatic cap.
-// 'translate' is a person tagging Eve in a thread and waiting (Jon, 2026-10-01: "100% of the time") —
-// interactive, never paused by the automatic cap (independent audit 2026-10-10).
-const NEVER_CAPPED = new Set(['review-reply'])
-const INTERACTIVE = new Set(['eve', 'eve-fast', 'eve-vision', 'eve-investigate', 'listing-copy', 'review-reply', 'reports', 'guidebook', 'project-plan', 'expectations', 'guest-reply', 'translate'])
+// The caps, the lists and the decision live in lib/ai-budget-rules.ts — a file with no imports, so the
+// rules are tested with plain numbers (lib/__tests__/ai-budget-rules.test.mjs). This file reads the
+// ledger and the setting and asks it.
+import { DEFAULT_BUDGET, NIGHTLY, decideBudget, type AiBudget, type SpendState } from './ai-budget-rules'
+export { DEFAULT_BUDGET, INTERACTIVE, NEVER_CAPPED, WEEKLY_EXEMPT, NIGHTLY, AUTO_TWIN, decideBudget, nightlyAllowance } from './ai-budget-rules'
+export type { AiBudget, SpendState, BudgetVerdict } from './ai-budget-rules'
 
 const etMidnightIso = () => {
   const now = new Date()
@@ -41,60 +33,52 @@ const monthStartIso = () => {
   return new Date(d.getTime() - (et.getDate() - 1) * 86400000).toISOString()
 }
 
-let cache: { at: number; day: number; month: number; budget: AiBudget; hour: Record<string, number> } | null = null
+let cache: ({ at: number } & SpendState) | null = null
 async function hourCounts(): Promise<Record<string, number>> {
   const { data } = await supabaseAdmin().from('ai_usage').select('task').gte('at', new Date(Date.now() - 3600_000).toISOString()).limit(5000)
   const out: Record<string, number> = {}
   for (const r of (data || []) as any[]) out[r.task] = (out[r.task] || 0) + 1
   return out
 }
-async function sum(since: string): Promise<number> {
+/** Spend since `since`: the total, and the part of it the nightly learning jobs made (NIGHTLY). */
+async function sum(since: string): Promise<{ total: number; nightly: number }> {
   const db = supabaseAdmin()
-  let total = 0
+  let total = 0, nightly = 0
   for (let page = 0; page < 20; page++) {
-    const { data, error } = await db.from('ai_usage').select('cost_usd').gte('at', since).range(page * 1000, page * 1000 + 999)
+    const { data, error } = await db.from('ai_usage').select('task,cost_usd').gte('at', since).range(page * 1000, page * 1000 + 999)
     if (error || !data) break
-    for (const r of data as any[]) total += Number(r.cost_usd) || 0
+    for (const r of data as any[]) {
+      const usd = Number(r.cost_usd) || 0
+      total += usd
+      if (NIGHTLY.has(String(r.task || ''))) nightly += usd
+    }
     if (data.length < 1000) break
   }
-  return total
+  return { total, nightly }
 }
-export async function spendNow(force = false): Promise<{ day: number; month: number; budget: AiBudget; hour: Record<string, number> }> {
+export async function spendNow(force = false): Promise<SpendState> {
   if (!force && cache && Date.now() - cache.at < 60_000) return cache
+  const none = { total: 0, nightly: 0 }
   const [budget, day, month, hour] = await Promise.all([
     getSetting<Partial<AiBudget>>('ai_budget', {}).then(b => ({ ...DEFAULT_BUDGET, ...(b || {}) })).catch(() => DEFAULT_BUDGET),
-    sum(etMidnightIso()).catch(() => 0),
-    sum(monthStartIso()).catch(() => 0),
+    sum(etMidnightIso()).catch(() => none),
+    sum(monthStartIso()).catch(() => none),
     hourCounts().catch(() => ({} as Record<string, number>)),
   ])
-  cache = { at: Date.now(), day, month, budget, hour }
+  cache = { at: Date.now(), day: day.total, month: month.total, budget, hour, nightly: day.nightly }
   return cache
 }
 /** Null when the call may go; otherwise why it may not. Never throws (a broken check lets the call through). */
 export async function budgetBlock(task: string): Promise<string | null> {
   try {
     const s = await spendNow()
-    const b = s.budget
-    if (b.paused) return 'AI is paused in Lighthouse (Settings → AI models → Pause all AI).'
-    await warn(s).catch(() => {})
-    // REVIEW REPLIES ARE NEVER CAPPED (Jon, 2026-11-09: "never not let me respond to reviews"). A
-    // reply costs a fraction of a cent; a review left unanswered costs bookings. Only the manual
-    // Pause above stops them — no daily, monthly or hourly cap does.
-    if (NEVER_CAPPED.has(task)) return null
-    if (!b.on) return null
-    if (s.month >= b.monthUsd) return `Lighthouse's monthly AI budget ($${b.monthUsd}) is used up — AI is paused until the 1st.`
-    // THE WEEKLY REVIEW RUNS EVEN ON A DAY THE DAILY CAP IS SPENT (audit 2026-11-09: the Monday operator
-    // review failed at 5:30am because Sunday night's jobs had used the day). One or two calls a week; the
-    // monthly cap above still applies to them.
-    if (task === 'eve-review' || task === 'quality-audit') return null
-    if (s.day >= b.totalUsd) return `Lighthouse's daily AI budget ($${b.totalUsd}) is used up — AI is paused until midnight.`
-    if (!INTERACTIVE.has(task) && s.day >= b.automaticUsd) return `Automatic AI jobs hit today's $${b.automaticUsd} cap — paused until midnight.`
-    const lim = (task === 'eve' ? 3 : 1) * (Number(b.perTaskHour) || 40)
-    if ((s.hour[task] || 0) >= lim) {
-      await warnOnce('brake:' + task, `AI brake: "${task}" stopped`, `It made ${s.hour[task]} AI calls in the last hour (limit ${lim}) — that looks like a loop, so it is paused for the hour. Everything else keeps working.`).catch(() => {})
-      return `"${task}" made ${s.hour[task]} AI calls in the last hour — paused for the hour so a loop can't run up the bill.`
+    // The manual Pause stops everything and warns nobody; every other state warns first (once a day each).
+    if (!s.budget.paused) await warn(s).catch(() => {})
+    const v = decideBudget(task, s)
+    if (v.brake) {
+      await warnOnce('brake:' + task, `AI brake: "${task}" stopped`, `It made ${v.brake.count} AI calls in the last hour (limit ${v.brake.limit}) — that looks like a loop, so it is paused for the hour. Everything else keeps working.`).catch(() => {})
     }
-    return null
+    return v.blocked
   } catch { return null }
 }
 export function bustBudgetCache() { cache = null }

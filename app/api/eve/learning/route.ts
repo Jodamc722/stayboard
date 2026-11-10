@@ -131,9 +131,13 @@ export async function GET() {
   let memTotal = 0
   try {
     // Paged in id order — these are counts, and her live memory can pass 1,000.
-    const mem = await pageRows((a, b) => db.from('eve_memory').select('source,weight').is('superseded_by', null).order('id').range(a, b), 5)
+    // LIVE means it can still reach a prompt (2026-11-10): expired rows were counted here and not on the
+    // Memory tab, so the two headers disagreed. Same rule as lib/eve/memory-audit.ts auditMemory.
+    const mem = await pageRows((a, b) => db.from('eve_memory').select('source,weight,expires_on').is('superseded_by', null).order('id').range(a, b), 20)
     if (mem.truncated) console.error('[eve/learning] memory read incomplete — the memory counts are short')
+    const todayYmd = new Date().toISOString().slice(0, 10)
     for (const r of mem.rows) {
+      if (r.expires_on && String(r.expires_on) < todayYmd) continue
       memTotal++
       const src = String(r.source || 'eve'); memBySource[src] = (memBySource[src] || 0) + 1
       const w = String(Number(r.weight) || 0); memByWeight[w] = (memByWeight[w] || 0) + 1

@@ -53,8 +53,18 @@ async function canDecide(email: string | null, rows: any[]): Promise<{ ok: boole
   let desk = false
   try { desk = (await getAgentSettings()).deskApprovals } catch { desk = false }
   if (!desk) return { ok: false, why: 'Only an approver can decide this (Settings → Eve → Agent mode)' }
-  const allDesk = rows.length > 0 && rows.every(r => r.kind === 'guest_draft' || tierOf(String(r.payload?.action || ''), r.payload) === 'desk')
+  // A DRAFT TO A GUEST IS JUDGED LIKE ANY OTHER SEND (2026-11-10). A guest_draft row used to count as
+  // desk work whatever it carried. It now goes through the same tierOf rule executeProposal applies to
+  // a guest_reply_send — money attached, or a reason that reads as a refund, cancellation, discount or
+  // credit, is the approvers' — judged on the row's own summary / reason (deskTierOf below).
+  const allDesk = rows.length > 0 && rows.every(r => deskTierOf(r) === 'desk')
   return allDesk ? { ok: true, why: 'desk' } : { ok: false, why: 'Only an approver can decide this one — it is money, a cancellation or outside the desk' }
+}
+
+/** The tier of one row on a Slack list: a guest draft is a guest_reply_send; anything else is its own action. */
+function deskTierOf(r: any): 'desk' | 'owner' {
+  if (r && r.kind === 'guest_draft') return tierOf('guest_reply_send', { usd: r.payload?.usd, summary: String(r.payload?.summary || r.why || '') })
+  return tierOf(String(r?.payload?.action || ''), r?.payload)
 }
 
 // ── posting ─────────────────────────────────────────────────────────────────────────────────────
@@ -408,7 +418,10 @@ async function decideDraftDigest(channel: string, root: string, user: string, te
   const picks = parseDigestReply(text, n)
   if (!picks.length) { await reply(n === 1 ? 'Reply *send* to send it to the guest, or *no* to drop the draft.' : 'Reply with the numbers, like `1 send`, `2 no` or `all send`.'); return true }
   const email = await emailForSlackUser(user).catch(() => null)
-  const may = await canDecide(email, rows)
+  // Judged on the drafts this reply names (as the mixed list does), so one approver-only draft on the
+  // list does not stop the desk sending the others.
+  const chosen = picks.map(pk => rows.find(r => Number(r.payload?.slack_index) === pk.idx)).filter(Boolean)
+  const may = await canDecide(email, chosen.length ? chosen : rows)
   if (!may.ok) { await reply(may.why + '.'); return true }
   const by = String(email)
   const lines = await sendDraftPicks(rows, picks, by)
@@ -459,10 +472,19 @@ async function sendDraftPicks(rows: any[], picks: { idx: number; yes: boolean }[
   // By its number only; the position fallback is for rows posted before numbers were kept — a number
   // that names a line with no draft must never send a different guest's draft.
   const numbered = rows.some(r => Number(r.payload?.slack_index) > 0)
+  // THE MASTER SWITCH APPLIES HERE TOO (2026-11-10). A "send" in this thread ran the guest_reply_send
+  // executor directly: it was checked for WHO (canDecide, in the callers) but never for whether agent
+  // mode is on — executeProposal refuses when it is OFF, this path did not, so a list posted before the
+  // switch was turned off could still message guests from Slack. Read fresh (the kill switch is never
+  // cached); no row or no read is OFF. A drop ("2 no") needs no switch, as rejectProposal needs none.
+  // The draft itself is left 'proposed', so the Send button on /inbox — a person, in the app — still works.
+  let agentOn = false
+  try { agentOn = (await getAgentSettings()).enabled === true } catch { agentOn = false }
   for (const pk of picks.sort((a, b) => a.idx - b.idx)) {
     const row = rows.find(r => Number(r.payload?.slack_index) === pk.idx) || (numbered ? null : rows[pk.idx - 1])
     if (!row) { lines.push(`${pk.idx}. no draft on that line`); continue }
     const pl = row.payload || {}
+    if (pk.yes && !agentOn) { lines.push(`${pk.idx}. not sent — agent mode is OFF, so nothing goes to a guest from Slack. Send it from Lighthouse (/inbox) or switch agent mode on.`); continue }
     // Claim it first — the Lighthouse Send button and this reply must never both send.
     const { data: claim } = await db.from('eve_actions').update({ status: pk.yes ? 'approved' : 'rejected', decided_by: by, decided_at: nowISO }).eq('id', row.id).eq('status', 'proposed').select('id')
     if (!((claim as any[]) || []).length) { lines.push(`${pk.idx}. already handled in Lighthouse`); continue }

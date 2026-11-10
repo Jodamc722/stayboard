@@ -19,7 +19,7 @@ import type { Access } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from './ctx'
-import { wireTools, runTool, DOMAIN_KEYS } from './registry'
+import { wireTools, runTool, DOMAIN_KEYS, toolBudget } from './registry'
 import { guessDomains } from './domain-guess'
 import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory, memoryHitsFor, recordMemoryHits, STAFF_MAX_WEIGHT } from './memory'
 import { teacherFor, identityOfAccess, teacherSource, type Teacher } from './teachers'
@@ -31,6 +31,8 @@ import { modelFor, modelPairFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { getAgentSettings, normalizeAgentSettings, renderAgentModeForPrompt, agentAllowed } from './agent-mode'
 import { maskMoneyText, scrubStoredText, scrubReleasedInValue, isGuestOrPersonMemory } from './redact'
+import { fitResult } from './fit'
+import { evidenceOf, type EvidenceItem } from './evidence'
 
 // MODEL is resolved per request via modelFor('eve') — see lib/ai-models (editable on Users & admin).
 
@@ -86,8 +88,34 @@ function withCacheBreakpoint(convo: any[]): any[] {
   return out
 }
 
-// Tool results are fitted to 9,000 characters in registry.runTool (lib/eve/fit.ts) — whole JSON,
-// with a `_cut` note naming each list it shortened — never sliced mid-record here.
+// Tool results are fitted to a character budget (lib/eve/fit.ts) — whole JSON, with a `_cut` note
+// naming each list it shortened — and never sliced mid-record. (Until 2026-11-10 they were fitted to
+// 9,000 and then string-sliced at 7,000 below, which tore the JSON of anything in between.) The
+// budget is registry.toolBudget(name): 7,000, with more room for the 360s.
+
+// A TURN'S LOOKUPS RUN TOGETHER, EACH WITH ITS OWN CLOCK (2026-11-10). They used to run one after
+// another with no limit, so one slow read held up four fast ones and could eat the whole 150-second
+// wall. Reads now run in parallel and one that has not answered inside its limit comes back as a plain
+// { error: 'timed out' } the model can report. Three exceptions, on purpose:
+//   - anything that WRITES or acts (SERIAL_TOOLS) runs alone, in the order asked, with NO timeout — a
+//     write that is reported as timed out and then lands anyway is how a task gets created twice;
+//   - a turn containing one of those runs entirely in order, as before;
+//   - a few reads are known to be slow because they call Homebase, Guesty or a model (SLOW_TOOLS) and
+//     get a longer limit rather than a wrong "timed out".
+const TOOL_TIMEOUT_MS = 25_000
+const SLOW_TOOL_TIMEOUT_MS = 90_000
+const SERIAL_TOOLS = new Set(['remember', 'propose_action', 'recommend', 'ask_jon', 'set_reminder', 'cancel_reminder', 'close_item', 'door_code_check', 'ask_ralph', 'operator_review', 'audit_status'])
+const SLOW_TOOLS = new Set(['look_at_unit', 'labor_economics', 'kpi', 'crew_scorecard', 'crew_person', 'crew_coaching', 'maintenance_scorecard', 'owner_audit_flags', 'owner_month', 'billing_month', 'overtime_risk', 'staffing_today', 'schedule_knowledge', 'property_health', 'pacing', 'unit_360', 'building_360', 'upkeep_due', 'blocked_units', 'unit_status', 'guesty_live', 'channel_health', 'response_times', 'task_stats', 'moved_cleans', 'review_summary', 'ops_today'])
+function withToolTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
+  return new Promise<T>(resolve => {
+    let settled = false
+    const timer = setTimeout(() => { if (!settled) { settled = true; resolve(onTimeout()) } }, ms)
+    p.then(
+      v => { if (!settled) { settled = true; clearTimeout(timer); resolve(v) } },
+      () => { if (!settled) { settled = true; clearTimeout(timer); resolve(onTimeout()) } },
+    )
+  })
+}
 
 /**
  * May this person use Eve at all? Owner, anyone with role=admin, or a DB role explicitly granted
@@ -188,6 +216,8 @@ export type RunEveOk = {
   conversationId: string | null
   meta: {
     turns: number; ms: number; tools: string[]; domains: string[]; memories: number; moneyRedacted: boolean; webSearch: string
+    /** Where each lookup's numbers came from: source, window, as-of, n, truncated (lib/eve/evidence.ts) — 2026-11-10. */
+    evidence: EvidenceItem[]
     /** Every memory written this turn (remember, auto-capture, correction) — 2026-11-05. */
     learned: LearnedItem[]
     /** The memories the answer drew on, as text (memoryHits.used, capped at 10) — 2026-11-05. */
@@ -361,6 +391,10 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   // switched, and Eve should switch with them mid-conversation rather than at the next question.
   const lang = detectLanguage(lastUser)
   const agentMode = renderAgentModeForPrompt(agent)
+  // IS AGENT MODE ACTUALLY ON (2026-11-10). `agentMode` is the paragraph for the prompt and is never
+  // empty — it says "AGENT MODE IS OFF…" when it is off — so testing the string made every question
+  // an agent-mode question: sixteen turns, never the quick path. The switch itself is read here.
+  const agentOn = !!(agent && (agent as any).enabled === true)
 
   const userName = String((access.profile as any)?.name || '') || (access.email ? access.email.split('@')[0] : '')
 
@@ -408,7 +442,9 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
   // Codes door_code_check released to a Direct person this turn — scrubbed from everything stored.
   const released: string[] = []
   // Ten rounds of tools is plenty for a question; agent mode keeps the full sixteen (2026-11-09 cost pass).
-  const limit = Math.min(Math.max(Number(input.maxTurns) || (agentMode ? MAX_TURNS : 10), 4), MAX_TURNS)
+  const limit = Math.min(Math.max(Number(input.maxTurns) || (agentOn ? MAX_TURNS : 10), 4), MAX_TURNS)
+  // What each lookup rested on, for the chat's "What I used" (meta.evidence).
+  const evidence: EvidenceItem[] = []
 
   try {
     let finalText = ''
@@ -426,8 +462,10 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
     // THE CHEAP PATH (2026-11-09). Short, plain questions start on 'eve-fast' (the small model); a
     // question that asks for judgement, money, a plan or a report — or agent mode, or a long thread —
     // goes straight to 'eve'. The quick path moves up to 'eve' if it needs more than four rounds.
-    const DEEP_RE = /\b(why|compare|comparison|trend|analy[sz]|plan|strategy|forecast|projection|revenue|profit|money|budget|payout|statement|owner report|recommend|should we|what do you think|audit|investigate|root cause|explain|summar|report|draft|write|email|policy|decide|decision)\b/i
-    let task: 'eve' | 'eve-fast' = (!agentMode && !input.teach && lastUser.length <= 220 && messages.length <= 6 && !DEEP_RE.test(lastUser)) ? 'eve-fast' : 'eve'
+    // SHORT LOOKUPS ONLY (2026-11-10, when the quick path first actually ran): anything that ranks,
+    // costs, compares units or decides upkeep is judgement and goes straight to the main model.
+    const DEEP_RE = /\b(why|compare|comparison|trend|analy[sz]\w*|plan|strategy|forecast|projection|revenue|profit|money|budget|payout|statement|owner report|recommend\w*|should (?:we|i)|what do you think|audit|investigate|root cause|explain|summar\w*|report|draft|write|email|policy|decide|decision|worst|best|most|least|rank\w*|top \d+|cost\w*|adr|revpar|occupancy|pacing|margin|upkeep|replace|repair|retire|overdue|which (?:units|buildings|owners|vendors|cleaners)|how (?:are|is|did) (?:we|they|it) doing|everything about|360|refund|claim|c[oó]mo vamos|por qu\w*|cu[aá]nto)\b/i
+    let task: 'eve' | 'eve-fast' = (!agentOn && !input.teach && lastUser.length <= 220 && messages.length <= 6 && !DEEP_RE.test(lastUser)) ? 'eve-fast' : 'eve'
     for (let turn = 0; turn < limit; turn++) {
       turns = turn + 1
       // The atlas rides with the memories: what every page of the app is for, and a live census of
@@ -482,7 +520,7 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // and retries; a third failure goes to the task's fallback model (lib/ai-models) once, so a
       // busy minute costs a slower answer rather than no answer.
       if (task === 'eve-fast' && turn >= 4) { task = 'eve'; toolsUsed.push('_escalated') }
-      const pair = await modelPairFor(task)
+      let pair = await modelPairFor(task)
       const call = async (model: string, body: Record<string, any>) => {
         const rr = await aiFetch(task, { method: 'POST', headers: HEADERS, body: JSON.stringify({ model, ...body }) })
         return { r: rr, d: (await rr.json().catch(() => ({}))) as any }
@@ -493,6 +531,16 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       // with 429 { type: 'budget_exceeded' }; retrying it three times took 8.5 s and then called it
       // "the Anthropic rate limit". It is said for what it is, at once.
       const budgetStop = (dd: any) => dd?.error?.type === 'budget_exceeded'
+      // THE QUICK PATH'S OWN BRAKE IS NOT A REASON TO REFUSE (2026-11-10, when 'eve-fast' first ran for
+      // real). lib/ai-budget stops any one task at its hourly call count, and the quick path's allowance
+      // is a third of the main model's — a busy hour of short questions would have answered "AI budget"
+      // to a person standing in a hallway. A stop on the quick path moves the question to the main
+      // model once; if the daily or monthly cap is what is spent, that call stops too and says so below.
+      if (!r.ok && budgetStop(d) && task === 'eve-fast') {
+        task = 'eve'; toolsUsed.push('_escalated')
+        pair = await modelPairFor(task)
+        ;({ r, d } = await call(pair.model, baseBody))
+      }
       if (!r.ok && budgetStop(d)) return { ok: false, status: 503, error: `AI budget: ${String(d?.error?.message || 'the daily or monthly AI cap is spent').slice(0, 200)} (Settings → AI models → caps).` }
       for (let attempt = 0; !r.ok && !budgetStop(d) && (r.status === 429 || r.status === 529 || r.status >= 500) && attempt < 3; attempt++) {
         if (Date.now() - startedAt > WALL_MS - 20_000) break
@@ -546,20 +594,17 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
         continue
       }
       if (d.stop_reason === 'tool_use') {
-        const results: any[] = []
+        // 1. PREPARE, in the order asked. Everything here is synchronous: the denial, the scrub of a
+        //    code released in an EARLIER turn, and the stamps on a `remember`.
+        type Prepared = { block: any; args: any; denied: boolean }
+        const prepared: Prepared[] = []
         for (const block of (d.content || [])) {
           if (block?.type !== 'tool_use') continue
           toolsUsed.push(block.name)
           // Belt and braces: she cannot see a denied tool, but a name that arrives anyway is
           // refused here rather than executed.
-          if (deny.indexOf(String(block.name)) >= 0) {
-            results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify({ error: 'That is not something you can do from here. An admin can.' }) })
-            continue
-          }
+          if (deny.indexOf(String(block.name)) >= 0) { prepared.push({ block, args: {}, denied: true }); continue }
           let args = block.input || {}
-          // A CODE RELEASED IN THIS TURN STAYS IN THE REPLY (N6): a propose_action payload, a memory or
-          // any other tool call after the release gets the code replaced with the audit-trail pointer.
-          if (released.length && block.name !== 'door_code_check') args = scrubReleasedInValue(args, released)
           if (block.name === 'remember') {
             // Nothing the model sends may set the underscore fields — they are stamped here only.
             const clean: any = {}
@@ -578,17 +623,61 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
             }
             args = { ...args, _teacher: teacher.teacher ? teacher.label : undefined, _evidence: { capturedFrom: source, conversationId, ...(input.teach ? { teachMode: true } : {}) } }
           }
-          const { output, opened } = await runTool(block.name, args, ctx, open)
+          prepared.push({ block, args, denied: false })
+        }
+
+        // 2. RUN. open_domain first (instant, and a tool called beside it must find its drawer open);
+        //    then everything else — together when the turn is all reads, in order when anything acts.
+        type Ran = { output: any; opened?: string }
+        const ran: (Ran | null)[] = prepared.map(() => null)
+        const runOne = async (p: Prepared): Promise<Ran> => {
+          if (p.denied) return { output: { error: 'That is not something you can do from here. An admin can.' } }
+          const name = String(p.block.name)
+          // A CODE RELEASED IN THIS TURN STAYS IN THE REPLY (N6): a propose_action payload, a memory or
+          // any other tool call after the release gets the code replaced with the audit-trail pointer.
+          // Done here, at the moment of the call, so a release earlier in the same in-order turn counts.
+          const args = released.length && name !== 'door_code_check' ? scrubReleasedInValue(p.args, released) : p.args
+          if (SERIAL_TOOLS.has(name)) {
+            const r = await runTool(name, args, ctx, open)
+            if (name === 'door_code_check' && r.output && typeof r.output === 'object') {
+              for (const k of ['code', 'previous_code']) if (r.output[k] != null && String(r.output[k]).trim()) released.push(String(r.output[k]).trim())
+            }
+            return r
+          }
+          const call = runTool(name, args, ctx, open)
+          const ms = SLOW_TOOLS.has(name) ? SLOW_TOOL_TIMEOUT_MS : TOOL_TIMEOUT_MS
+          return withToolTimeout<Ran>(call, ms, () => ({ output: { error: 'timed out', tool: name, note: `This lookup did not answer within ${Math.round(ms / 1000)} seconds, so you do not have its result. Say plainly that you could not check it; try once more with a narrower ask (one unit, one building, fewer days) if it matters to the answer.` } }))
+        }
+        for (let i = 0; i < prepared.length; i++) {
+          if (prepared[i].denied || prepared[i].block.name !== 'open_domain') continue
+          const r = await runOne(prepared[i])
+          if (r.opened && open.indexOf(r.opened) < 0) open.push(r.opened)
+          ran[i] = r
+        }
+        const rest = prepared.map((_, i) => i).filter(i => ran[i] === null)
+        const inOrder = rest.some(i => !prepared[i].denied && SERIAL_TOOLS.has(String(prepared[i].block.name)))
+        if (inOrder) {
+          for (const i of rest) ran[i] = await runOne(prepared[i])
+        } else {
+          const outs = await Promise.all(rest.map(i => runOne(prepared[i])))
+          rest.forEach((i, k) => { ran[i] = outs[k] })
+        }
+
+        // 3. RECORD, in the order asked — the result list must line up with the tool_use blocks.
+        const results: any[] = []
+        for (let i = 0; i < prepared.length; i++) {
+          const { block, denied } = prepared[i]
+          const got: Ran = ran[i] || { output: { error: 'The lookup did not run.' } }
+          const output = got.output
+          const opened = got.opened
+          if (denied) { results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output) }); continue }
           if (block.name === 'remember' && output && (output as any).saved && (output as any).id) noteLearned((output as any).id, input.teach ? 'teach' : 'remember')
           if (opened && open.indexOf(opened) < 0) open.push(opened)
-          if (block.name === 'door_code_check' && output && typeof output === 'object') {
-            for (const k of ['code', 'previous_code']) if (output[k] != null && String(output[k]).trim()) released.push(String(output[k]).trim())
-          }
-          // Every turn after this re-sends every tool result, so a 30k-character list costs on every
-          // later round. Capped, with a note so she narrows the next call instead of guessing.
-          let outStr = JSON.stringify(output)
-          if (outStr.length > 7000) outStr = outStr.slice(0, 7000) + '…[TRUNCATED — ' + outStr.length + ' chars. Ask the tool for a narrower slice (one building, fewer days) if you need the rest.]'
-          results.push({ type: 'tool_result', tool_use_id: block.id, content: outStr })
+          // WHERE THE NUMBERS CAME FROM (2026-11-10): one line per lookup for meta.evidence.
+          try { const ev = evidenceOf(String(block.name), output); if (ev && evidence.length < 24) evidence.push(ev.as_of ? ev : { ...ev, as_of: runNow }) } catch { /* evidence never breaks an answer */ }
+          // Every turn after this re-sends every tool result, so a long list costs on every later
+          // round. Fitted as whole JSON (halved lists, a `_cut` note) — never cut mid-record.
+          results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(fitResult(output, toolBudget(String(block.name)))) })
         }
         convo.push({ role: 'user', content: results })
         continue
@@ -813,7 +902,10 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       logReply,
       chatId,
       conversationId,
-      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits, learned, used, teacher: teacher.teacher ? { tier: teacher.tier, maxWeight: teacher.maxWeight } : null, conversationId },
+      // The chat's "What I used" receives `tools` only (components/EveChat passes nothing else), so the
+      // evidence rides along as ONE underscore entry, which every reader of the list already skips —
+      // the same way `_escalated` and `_fallback_model` do. The stored row keeps the plain names.
+      meta: { turns, ms: Date.now() - startedAt, tools: evidence.length ? toolsUsed.concat(['_evidence:' + JSON.stringify(evidence)]) : toolsUsed, evidence, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits, learned, used, teacher: teacher.teacher ? { tier: teacher.tier, maxWeight: teacher.maxWeight } : null, conversationId },
     }
   } catch (e: any) {
     return { ok: false, status: 500, error: e?.message || String(e) }

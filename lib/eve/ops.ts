@@ -13,7 +13,7 @@ import { nextCheckInMap } from '@/lib/claim-turnover'
 import type { EveTool, EveDomain } from './types'
 import { winsFor } from './wins'
 import { obj, S } from './types'
-import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows, scopeIds } from './ctx'
+import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveListing, pageRows, scopeIds, toolMeta } from './ctx'
 import { nameMatches, personKey, bestSpelling } from '@/lib/person-name'
 import { assigneeNames as assigneeNamesOf } from './dossiers'
 import { TASK_DONE_RE } from '@/lib/task-categories'
@@ -38,6 +38,9 @@ function assigneeNames(t: any): string[] {
   return t.assignee_name ? [String(t.assignee_name)] : []
 }
 // SAFE column list. Rule 1: never `raw` over thousands of rows — description comes via JSON path.
+/** Text made safe to sit inside a PostgREST ilike / or(…) filter. */
+const likeSafe = (v: any): string => String(v || '').replace(/[%_,()*"\\]/g, ' ').replace(/\s+/g, ' ').trim()
+
 const TASK_COLS = 'id,reference_property_id,name,status,scheduled_date,assignees,assignee_name,started_at,finished_at,total_minutes,type_department,report_url,linked_reservation_id'
 
 export const OPS_TOOLS: EveTool[] = [
@@ -52,7 +55,7 @@ export const OPS_TOOLS: EveTool[] = [
       // A VENDOR ROOM SEES ITS OWN UNITS' WORK (2026-09-29 review, N14); an empty scope sees none.
       const scope = scopeIds(ctx)
       if (scope && !scope.length) return { window: { from, to }, count: 0, truncated: false, tasks: [], note: 'This room is scoped to buildings that match no units, so there is no work to show from here.' }
-      let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS)
+      let q = ctx.db.from('breezeway_tasks_sync').select(TASK_COLS, { count: 'exact' })
         .gte('scheduled_date', from).lte('scheduled_date', to)
       if (input?.dept) q = q.eq('type_department', lc(input.dept))
       const unit = resolveListing(ctx, input)
@@ -72,7 +75,10 @@ export const OPS_TOOLS: EveTool[] = [
       if (st0 === 'done') q = q.or('status.ilike.%complet%,status.ilike.%done%,status.ilike.%finish%')
       else if (st0 === 'open') q = q.not('status', 'ilike', '%complet%').not('status', 'ilike', '%done%').not('status', 'ilike', '%finish%')
       // Rule 2: order before limit, always.
-      const { data } = await q.order('scheduled_date', { ascending: false }).order('id').limit(lim)
+      const { data, count } = await q.order('scheduled_date', { ascending: false }).order('id').limit(lim)
+      // How many rows the QUERY matched in all (2026-11-10) — the honest size of what the cap cut.
+      const totalRows: number | null = typeof count === 'number' ? count : null
+      const cut = totalRows != null ? totalRows > (data || []).length : cap(data || [], lim).truncated
       let rows = (data || []).map((t: any) => ({
         id: t.id, unit: ctx.nameOf(t.reference_property_id), building: ctx.buildingOf(t.reference_property_id),
         name: t.name, dept: t.type_department, date: t.scheduled_date,
@@ -99,11 +105,12 @@ export const OPS_TOOLS: EveTool[] = [
       if (input?.departure_cleans_only) rows = rows.filter((t: any) => t.is_departure_clean)
       const movedRows = rows.filter((t: any) => t.moved)
       return {
-        window: { from, to }, count: rows.length, truncated: cap(data || [], lim).truncated,
+        window: { from, to }, count: rows.length, total_rows: totalRows, truncated: cut,
         scopedToUnit: unit ? unit.meta.name : null, tasks: rows,
         moved_cleans: movedRows.length ? `${movedRows.length} clean(s) in this window were MOVED off the day they were scheduled — call moved_cleans for where each one went.` : undefined,
         day_rule: 'date = the day it is scheduled for; landed_on = the day the work actually happened. Counts that must line up with payroll use landed_on.',
-        note: cap(data || [], lim).truncated ? 'HIT THE ROW CAP — this is a partial list, narrow the window or the unit before drawing conclusions.' : undefined,
+        note: cut ? `HIT THE ROW CAP — these are the newest ${(data || []).length} of ${totalRows ?? 'more'} tasks in the window. This is a partial list: for counts or totals use task_stats (it reads every row); narrow the window or the unit to see the rest.` : undefined,
+        _meta: toolMeta({ source: 'breezeway_tasks_sync', window: `${from} → ${to} (scheduled date)`, n: rows.length, truncated: cut }),
       }
     },
   },
@@ -290,9 +297,12 @@ export const OPS_TOOLS: EveTool[] = [
       if (!unit) return { error: 'Unit not found — give me the exact unit name or a listing id.' }
       const days = clampDays(input?.days, 180, 420)
       const from = shiftDay(ctx.today, -days)
-      const { data } = await ctx.db.from('breezeway_tasks_sync').select(TASK_COLS)
+      const HISTORY_CAP = 400
+      const { data, count } = await ctx.db.from('breezeway_tasks_sync').select(TASK_COLS, { count: 'exact' })
         .eq('reference_property_id', unit.id).gte('scheduled_date', from)
-        .order('scheduled_date', { ascending: false }).order('id').limit(400)
+        .order('scheduled_date', { ascending: false }).order('id').limit(HISTORY_CAP)
+      const totalRows: number | null = typeof count === 'number' ? count : null
+      const cut = totalRows != null ? totalRows > (data || []).length : (data || []).length >= HISTORY_CAP
       const all = (data || []).map((t: any) => ({ ...t, state: taskState(t) })).filter((t: any) => t.state !== 'gone')
       const open = all.filter((t: any) => t.state !== 'done')
       const lastOf = (re: RegExp) => {
@@ -305,9 +315,13 @@ export const OPS_TOOLS: EveTool[] = [
       ])
       return {
         unit: unit.meta.name, building: unit.meta.rollup, listing_id: unit.id, window_days: days,
+        total_rows: totalRows, truncated: cut,
+        note: cut ? `Only the newest ${(data || []).length} of ${totalRows ?? 'more'} tasks in the window were read — the older end of the window is missing, so say the history is partial.` : undefined,
         open_work: open.map((t: any) => ({ name: t.name, dept: t.type_department, date: t.scheduled_date, state: t.state, assignees: assigneeNames(t) })),
         completed_recently: all.filter((t: any) => t.state === 'done').slice(0, 25).map((t: any) => ({ name: t.name, date: String(t.finished_at || t.scheduled_date).slice(0, 10), minutes: t.total_minutes })),
         last: { audit: lastOf(/audit/), pm: lastOf(/\bpm\b|preventive|preventative/), battery: lastOf(/batter/), ac_filter: lastOf(/filter/), deep_clean: lastOf(/deep clean/) },
+        last_note: `"last" is read off task NAMES among the tasks above (${days} days${cut ? ', and the read was cut short' : ''}). A null means "not found in what was read", NOT "never done" — for what is due and what is late use upkeep_due or unit_360, which read the upkeep ledger.`,
+        _meta: toolMeta({ source: 'breezeway_tasks_sync + glitches + audit_items', window: `last ${days} days`, n: all.length, truncated: cut }),
         open_glitches: (glitchRes.data || []).filter((g: any) => !['done', 'resolved', 'closed'].includes(lc(g.status))).map((g: any) => ({ issue: g.overview, status: g.status, due: g.due_date })),
         open_audit_findings: (auditRes.data || []).map((a: any) => ({ room: a.room, kind: a.kind, title: a.title, severity: a.severity })),
       }
@@ -325,14 +339,25 @@ export const OPS_TOOLS: EveTool[] = [
       const scope = scopeIds(ctx)   // a vendor room: its own units' issues only (N14)
       if (scope && !scope.length) return { count: 0, truncated: false, by_lane: {}, overdue: 0, glitches: [], note: 'This room is scoped to buildings that match no units, so there are no issues to show from here.' }
       // Slim select — the full row carries photos[], history jsonb and AI text (multi-MB over a board).
-      let q = ctx.db.from('glitches').select('id,status,glitch_type,category,listing_id,unit,market,guest_name,channel,incident_date,overview,due_date,assignee,progress,refund_approved,created_at')
+      let q = ctx.db.from('glitches').select('id,status,glitch_type,category,listing_id,unit,market,guest_name,channel,incident_date,overview,due_date,assignee,progress,refund_approved,created_at', { count: 'exact' })
         .gte('created_at', new Date(Date.now() - days * 86400000).toISOString())
       if (scope) q = q.in('listing_id', scope)
+      // THE BUILDING GOES INTO THE QUERY (2026-11-10): it used to be applied to the newest `lim`
+      // issues of every building, so one building's board was whatever of it made the first 40.
+      // A glitch belongs to the building by its listing, or — when it has none — by its unit text.
+      const bq = likeSafe(input?.building)
+      if (bq) {
+        const bIds = ctx.idsForBuilding(bq).filter(id => /^[A-Za-z0-9_-]+$/.test(id)).slice(0, 150)
+        const parts = [`unit.ilike.%${bq}%`]
+        if (bIds.length) parts.unshift(`listing_id.in.(${bIds.join(',')})`)
+        q = q.or(parts.join(','))
+      }
       if (input?.status) q = q.eq('status', lc(input.status))
       else if (input?.open_only !== false) q = q.not('status', 'in', '("done","resolved","closed")')
-      const { data, error } = await q.order('created_at', { ascending: false }).limit(lim)
+      const { data, error, count } = await q.order('created_at', { ascending: false }).limit(lim)
       if (error) return { error: 'Glitch board unavailable: ' + error.message.slice(0, 120) }
-      let rows = (data || []).map((g: any) => ({
+      const totalRows: number | null = typeof count === 'number' ? count : null
+      const rows = (data || []).map((g: any) => ({
         id: g.id, issue: g.overview, lane: g.status, type: g.glitch_type, category: g.category,
         unit: g.unit || ctx.nameOf(g.listing_id), building: ctx.buildingOf(g.listing_id) || g.market,
         guest: g.guest_name, channel: g.channel, opened: String(g.created_at).slice(0, 10),
@@ -340,10 +365,14 @@ export const OPS_TOOLS: EveTool[] = [
         assignee: g.assignee, progress: g.progress,
         refund_approved: g.refund_approved,
       }))
-      if (input?.building) rows = rows.filter((r: any) => has(r.building, input.building) || has(r.unit, input.building))
       const byLane: Record<string, number> = {}
       for (const r of rows) byLane[r.lane] = (byLane[r.lane] || 0) + 1
-      return { count: rows.length, truncated: cap(data || [], lim).truncated, by_lane: byLane, overdue: rows.filter((r: any) => r.overdue).length, glitches: rows }
+      const cut = totalRows != null ? totalRows > rows.length : cap(data || [], lim).truncated
+      return {
+        count: rows.length, total_rows: totalRows, truncated: cut, by_lane: byLane, overdue: rows.filter((r: any) => r.overdue).length, glitches: rows,
+        note: cut ? `Showing the newest ${rows.length} of ${totalRows ?? 'more'} matching issues — by_lane and overdue count ONLY these rows. Say the list is partial; narrow by building, status or days.` : undefined,
+        _meta: toolMeta({ source: 'glitches', window: `opened in the last ${days} days`, n: rows.length, truncated: cut }),
+      }
     },
   },
 
@@ -366,11 +395,21 @@ export const OPS_TOOLS: EveTool[] = [
       const lim = clampLimit(input?.limit, 50, 100)
       const scope = scopeIds(ctx)   // a vendor room: its own units' claims only (N14)
       if (scope && !scope.length) return { count: 0, by_stage: {}, claims: [], note: 'This room is scoped to buildings that match no units, so there are no claims to show from here.' }
-      let cq = ctx.db.from('claims').select('*').is('deleted_at', null)
+      // FILTER, THEN LIMIT (2026-11-10). The stage / open filter used to run on the newest `lim`
+      // claims of every stage, so once enough claims had closed, an old claim still open — the one
+      // with a deadline — fell off the list without a word. The stage goes into the query now.
+      // Urgency is worked out from the next arrival, so it cannot be a query filter: when it is
+      // asked for, every matching claim (up to 500) is read and the urgency filter runs on all of them.
+      const stageQ = lc(input?.stage).replace(/[^a-z_]/g, '')
+      let cq = ctx.db.from('claims').select('*', { count: 'exact' }).is('deleted_at', null)
       if (scope) cq = cq.in('listing_id', scope)
-      const { data, error } = await cq.order('created_at', { ascending: false }).limit(lim)
+      if (stageQ) cq = cq.ilike('stage', stageQ)
+      else if (input?.open_only !== false) cq = cq.or('stage.is.null,stage.not.ilike.closed')
+      const readCap = input?.urgency ? 500 : lim
+      const { data, error, count } = await cq.order('created_at', { ascending: false }).limit(readCap)
       if (error) return { error: 'Claims unavailable: ' + error.message.slice(0, 120) }
       const claims: any[] = data || []
+      const totalRows: number | null = typeof count === 'number' ? count : null
       const ids = claims.map(c => c.id)
       const itemsByClaim: Record<string, any[]> = {}
       if (ids.length) {
@@ -399,10 +438,16 @@ export const OPS_TOOLS: EveTool[] = [
       if (input?.stage) rows = rows.filter((r: any) => lc(r.stage) === lc(input.stage))
       else if (input?.open_only !== false) rows = rows.filter((r: any) => !['closed'].includes(lc(r.stage)))
       if (input?.urgency) rows = rows.filter((r: any) => lc(r.urgency) === lc(input.urgency))
+      const readShort = totalRows != null ? totalRows > claims.length : claims.length >= readCap
+      const cut = readShort || rows.length > lim
+      rows = rows.slice(0, lim)
       const byStage: Record<string, number> = {}
       for (const r of rows) byStage[r.stage] = (byStage[r.stage] || 0) + 1
       return {
-        count: rows.length, by_stage: byStage,
+        count: rows.length, total_rows: input?.urgency ? null : totalRows, truncated: cut,
+        note: cut ? `Showing ${rows.length} of ${input?.urgency ? 'more' : (totalRows ?? 'more')} matching claims, newest first — by_stage and the expiring counts cover ONLY these. Say the list is partial; filter by stage or urgency.` : undefined,
+        _meta: toolMeta({ source: 'claims + claim_items', window: input?.stage ? `stage ${input.stage}` : input?.open_only === false ? 'every stage' : 'open (not closed)', n: rows.length, truncated: cut }),
+        by_stage: byStage,
         stages: STAGES.map((s: any) => s.key),
         expiring_soon: rows.filter((r: any) => ['critical', 'soon'].includes(r.urgency)).length,
         expired: rows.filter((r: any) => r.urgency === 'expired').length,
@@ -419,9 +464,20 @@ export const OPS_TOOLS: EveTool[] = [
       const days = clampDays(input?.days, 30, 365)
       const lim = clampLimit(input?.limit, 60, 200)
       const from = shiftDay(ctx.today, -days)
-      const { data, error } = await ctx.db.from('unit_inspections').select('id,unit,listing_id,inspected_on,inspector,cleaner,rating,notes,follow_up')
-        .gte('inspected_on', from).order('inspected_on', { ascending: false }).order('id').limit(lim)
+      // FILTER, THEN LIMIT (2026-11-10): cleaner, unit and follow-up used to be applied to the
+      // newest `lim` inspections of everyone, so one cleaner's average was her share of the last 60
+      // inspections in the company. They go into the query, and total_rows is the real size.
+      let iq = ctx.db.from('unit_inspections').select('id,unit,listing_id,inspected_on,inspector,cleaner,rating,notes,follow_up', { count: 'exact' })
+        .gte('inspected_on', from)
+      const cleanerQ = likeSafe(input?.cleaner)
+      const unitQ = likeSafe(input?.unit)
+      if (cleanerQ) iq = iq.ilike('cleaner', `%${cleanerQ}%`)
+      if (unitQ) iq = iq.ilike('unit', `%${unitQ}%`)
+      if (input?.follow_up_only) iq = iq.eq('follow_up', true)
+      const { data, error, count } = await iq.order('inspected_on', { ascending: false }).order('id').limit(lim)
       if (error) return { error: 'Inspections table not available (migration may not have run).' }
+      const totalRows: number | null = typeof count === 'number' ? count : null
+      const cut = totalRows != null ? totalRows > (data || []).length : cap(data || [], lim).truncated
       let rows = (data || []).map((r: any) => ({ unit: r.unit, inspected_on: r.inspected_on, inspector: r.inspector, cleaner: r.cleaner, rating: r.rating, follow_up: !!r.follow_up, notes: String(r.notes || '').slice(0, 200) }))
       if (input?.cleaner) rows = rows.filter((r: any) => has(r.cleaner, input.cleaner))
       if (input?.unit) rows = rows.filter((r: any) => has(r.unit, input.unit))
@@ -435,7 +491,11 @@ export const OPS_TOOLS: EveTool[] = [
         if (r.follow_up) byCleaner[k].followUps++
       }
       const cleaners = Object.keys(byCleaner).map(k => ({ cleaner: k, inspections: byCleaner[k].n, avg_rating: byCleaner[k].rated ? Math.round((byCleaner[k].sum / byCleaner[k].rated) * 100) / 100 : null, follow_ups: byCleaner[k].followUps })).sort((a, b) => (a.avg_rating ?? 9) - (b.avg_rating ?? 9))
-      return { window_days: days, count: rows.length, truncated: cap(data || [], lim).truncated, cleaners, inspections: rows.slice(0, 80) }
+      return {
+        window_days: days, count: rows.length, total_rows: totalRows, truncated: cut, cleaners, inspections: rows.slice(0, 80),
+        note: (cut ? `Only the newest ${rows.length} of ${totalRows ?? 'more'} matching inspections were read, so the per-cleaner averages are partial — say so. ` : '') + 'This is the coordinator\'s manual walk-through log. The Breezeway inspection checklists (post-clean audits, PM and arrival inspections, with what failed on each) are in inspection_results.',
+        _meta: toolMeta({ source: 'unit_inspections (manual log)', window: `last ${days} days`, n: rows.length, truncated: cut }),
+      }
     },
   },
 

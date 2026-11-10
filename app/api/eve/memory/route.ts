@@ -10,6 +10,7 @@ import { isSuperadmin } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { eveGate } from '../../agent/route'
 import { teacherFor, identityOfAccess, teacherSource, type Teacher } from '@/lib/eve/teachers'
+import { listPending, approvePending, rejectPending, mayApprove } from '@/lib/eve/memory-confirm'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -40,6 +41,17 @@ export async function GET(req: NextRequest) {
       .map(r => ({ ...r, teacher: r.source === 'jon' ? 'Jon' : (r.evidence?.teacher || r.created_by || r.source), canEdit: mayTouch(r, actor, me) }))
     return NextResponse.json({ ok: true, days, me: { email: actor, teacher: me?.teacher ? me.tier : null, maxWeight: me?.teacher ? me.maxWeight : STAFF_MAX_WEIGHT, isJon: isSuperadmin(actor) }, memories: rows })
   }
+  /* CONFIRM WHAT SHE LEARNED (2026-11-10). ?pending=1 → what she overheard or concluded and nobody has
+     confirmed, grouped by building, each with the words it came from (lib/eve/memory-confirm.ts). */
+  if (sp.get('pending')) {
+    try {
+      const me = await teacherFor(identityOfAccess(gate.access as any)).catch(() => null)
+      const list = await listPending(300)
+      return NextResponse.json({ ok: true, canApprove: mayApprove(me), ...list })
+    } catch (e: any) {
+      return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200), total: 0, shown: 0, groups: [] })
+    }
+  }
   let q = db.from('eve_memory').select('*').order('weight', { ascending: false }).order('updated_at', { ascending: false }).limit(400)
   if (sp.get('kind')) q = q.eq('kind', normKind(sp.get('kind')))
   if (sp.get('scope')) q = q.eq('scope', normScope(sp.get('scope')))
@@ -49,7 +61,19 @@ export async function GET(req: NextRequest) {
   const rows = data || []
   const byKind: Record<string, number> = {}
   for (const r of rows) byKind[(r as any).kind] = (byKind[(r as any).kind] || 0) + 1
-  return NextResponse.json({ ok: true, kinds: MEMORY_KINDS, counts: byKind, total: rows.length, memories: rows })
+  // THE HEADER COUNTS EVERYTHING, NOT THE PAGE (2026-11-10). `total` was the length of this list,
+  // which stops at 400; `live` is count(*) of what can actually reach a prompt (not superseded, not
+  // expired) with the same filters. null when the count could not be read — the page falls back.
+  let live: number | null = null
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    let cq: any = db.from('eve_memory').select('id', { count: 'exact', head: true }).is('superseded_by', null).or(`expires_on.is.null,expires_on.gte.${today}`)
+    if (sp.get('kind')) cq = cq.eq('kind', normKind(sp.get('kind')))
+    if (sp.get('scope')) cq = cq.eq('scope', normScope(sp.get('scope')))
+    const { count, error: cErr } = await cq
+    if (!cErr && typeof count === 'number') live = count
+  } catch { live = null }
+  return NextResponse.json({ ok: true, kinds: MEMORY_KINDS, counts: byKind, total: rows.length, live, memories: rows })
 }
 
 /* WHO MAY CHANGE A TAUGHT ROW (Jon, 2026-11-05: "She can learn from any CCS agent, she can also learn
@@ -97,6 +121,24 @@ export async function POST(req: NextRequest) {
       await db.from('eve_questions').update({ status, answer: answer ? answer.slice(0, 2000) : null, answered_by: actor, answered_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq('status', 'open').contains('evidence', { memory_ids: [memoryId] })
     } catch { /* the question expires on its own */ }
+  }
+
+  /* CONFIRM WHAT SHE LEARNED (2026-11-10): approve / edit-and-approve / reject what she overheard in
+     Slack or concluded in her nightly reflection. Owner and named teachers only. Approve makes the row
+     theirs at their tier's weight; reject expires it (never deleted). lib/eve/memory-confirm.ts. */
+  if (body?.op === 'pending_approve' || body?.op === 'pending_reject' || body?.op === 'pending_edit') {
+    if (!me || !mayApprove(me)) return NextResponse.json({ error: 'Only Jon or a named teacher (Roberto, Karla, Bernadette) can confirm what she learned.' }, { status: 403 })
+    const ids: string[] = Array.isArray(body?.ids) ? body.ids.map((x: any) => String(x)).filter(Boolean) : (body?.id ? [String(body.id)] : [])
+    if (!ids.length) return NextResponse.json({ error: 'ids required' }, { status: 400 })
+    const who = { email: actor, teacher: me }
+    if (body.op === 'pending_reject') {
+      const r = await rejectPending(ids, who)
+      return NextResponse.json(r.ok ? { ok: true, rejected: r.rejected } : { error: r.error || 'could not reject' }, { status: r.ok ? 200 : 400 })
+    }
+    const r = body.op === 'pending_edit'
+      ? await approvePending(ids.slice(0, 1), who, { text: String(body?.text || '') })
+      : await approvePending(ids, who)
+    return NextResponse.json(r.ok ? { ok: true, approved: r.approved, skipped: r.skipped } : { error: r.error || 'could not approve' }, { status: r.ok ? 200 : 400 })
   }
 
   /* CONFIRM A SUGGESTION (2026-11-05). A non-teacher's "always / never" is kept as a suggestion; a

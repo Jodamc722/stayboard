@@ -23,23 +23,62 @@ import { isDepartureCleanName } from '@/lib/breezeway'
 import { isTaskDone } from '@/lib/task-categories'
 import { bucketFor, familyFor } from '@/lib/marketing'
 import { todayET, shiftDay, lc, num, round2, normStar, DEAD_LISTING, pageRows } from './ctx'
+import { LIVE_STAY_STATUSES, channelFeeOf, NET_BASIS_NOTE } from '@/lib/basis'
+import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 
 export type MetricRow = { day: string; scope: string; metric: string; value: number | null; n: number }
 
-export type MetricDef = { key: string; label: string; unit: 'pct' | 'usd' | 'count' | 'rating' | 'minutes'; backfillable: boolean; higherIsBetter: boolean | null }
+export type MetricDef = {
+  key: string; label: string; unit: 'pct' | 'usd' | 'count' | 'rating' | 'minutes'; backfillable: boolean; higherIsBetter: boolean | null
+  /** What exactly is counted — returned with every trend so a number is never quoted without its definition. */
+  basis?: string
+  /** A daily value that must be averaged across days (weighted by n), never summed. */
+  rate?: boolean
+  /** Kept so history and already-logged recommendations stay comparable; `useInstead` is the measure on the one basis. */
+  legacy?: boolean
+  useInstead?: string
+}
+
+// THE ONE BASIS, AS NEW MEASURES — NOT A SILENT REDEFINITION (Eve reorganisation, 2026-11-10).
+//
+// The original money measures below (revenue / adr / revpar / occupancy / nights_sold / bookings_made /
+// cancel_rate) were written before lib/basis.ts: accommodation PLUS cleaning, before the channel fee,
+// with `closed` and `reserved` requests counted as stays and owner stays counted as demand. They no
+// longer match the KPI board or Revenue Center.
+//
+// Changing what those keys mean would have put a step in every stored series: a 90-day baseline on
+// the old definition against a new day on the new one reads as a three-sigma collapse that never
+// happened, and every recommendation already logged against `revenue` or `adr` (its baseline is
+// frozen on the row — lib/eve/recommendations.ts) would be graded against a different number.
+// So the old keys keep computing exactly what they always did, are labelled `legacy` with their real
+// definition, and the measures on the one basis are NEW keys:
+//   net_revenue · net_adr · net_revpar · guest_nights · occupancy_dated · guest_bookings_made · guest_cancel_rate
+// The new keys have history only from the first night this code runs (three days back); the metrics
+// job with ?backfill=90 fills the rest, and until then `trend` says "no data yet", which is true.
+const LEGACY_MONEY = 'LEGACY basis: accommodation (fareAccommodationAdjusted) + cleaning, BEFORE the channel fee; counts closed/reserved requests and owner stays. Does not match the KPI board.'
+const ONE_BASIS = `${NET_BASIS_NOTE}. Real stays only (${LIVE_STAY_STATUSES.join(' / ')}); owner and friends-and-family stays are left out.`
 
 /** The catalogue. Anything Eve can trend has to be declared here so she cannot invent a metric name. */
 export const METRICS: MetricDef[] = [
   // --- revenue (backfillable from reservations) ---
-  { key: 'occupancy', label: 'Occupancy %', unit: 'pct', backfillable: true, higherIsBetter: true },
-  { key: 'adr', label: 'ADR', unit: 'usd', backfillable: true, higherIsBetter: true },
-  { key: 'revpar', label: 'RevPAR', unit: 'usd', backfillable: true, higherIsBetter: true },
-  { key: 'revenue', label: 'Revenue', unit: 'usd', backfillable: true, higherIsBetter: true },
-  { key: 'nights_sold', label: 'Nights sold', unit: 'count', backfillable: true, higherIsBetter: true },
-  { key: 'arrivals', label: 'Arrivals', unit: 'count', backfillable: true, higherIsBetter: null },
-  { key: 'bookings_made', label: 'Bookings made', unit: 'count', backfillable: true, higherIsBetter: true },
-  { key: 'direct_share', label: 'Direct booking share %', unit: 'pct', backfillable: true, higherIsBetter: true },
-  { key: 'cancel_rate', label: 'Cancellation rate %', unit: 'pct', backfillable: true, higherIsBetter: false },
+  // --- revenue on THE ONE BASIS (lib/basis.ts) — use these ---
+  { key: 'net_revenue', label: 'Net revenue (accommodation after channel fee)', unit: 'usd', backfillable: true, higherIsBetter: true, basis: ONE_BASIS },
+  { key: 'net_adr', label: 'ADR (net, guest nights)', unit: 'usd', backfillable: true, higherIsBetter: true, rate: true, basis: ONE_BASIS + ' Net revenue ÷ guest nights.' },
+  { key: 'net_revpar', label: 'RevPAR (net, sellable nights)', unit: 'usd', backfillable: true, higherIsBetter: true, rate: true, basis: ONE_BASIS + ' Net revenue ÷ sellable nights (units live that day, less owner-held nights).' },
+  { key: 'guest_nights', label: 'Guest nights sold', unit: 'count', backfillable: true, higherIsBetter: true, basis: `Nights of real stays (${LIVE_STAY_STATUSES.join(' / ')}) by guests; owner and friends-and-family nights left out.` },
+  { key: 'occupancy_dated', label: 'Occupancy % (units live that day)', unit: 'pct', backfillable: true, higherIsBetter: true, basis: `Held nights (guest + owner, as the KPI board counts occupancy) of real stays ÷ the units that were live THAT day — a currently-active listing counts from the day it was created in Guesty. Units since retired are not in the denominator (their history is not kept).` },
+  { key: 'guest_bookings_made', label: 'Guest bookings made', unit: 'count', backfillable: true, higherIsBetter: true, basis: 'Bookings created that day, owner and friends-and-family holds left out.' },
+  { key: 'guest_cancel_rate', label: 'Guest cancellation rate %', unit: 'pct', backfillable: true, higherIsBetter: false, basis: 'Share of guest bookings created that day that are now cancelled / declined / expired; owner and friends-and-family holds left out.' },
+  // --- the original measures, kept as they were (see the note above) ---
+  { key: 'occupancy', label: 'Occupancy % (legacy: today\'s unit count)', unit: 'pct', backfillable: true, higherIsBetter: true, legacy: true, useInstead: 'occupancy_dated', basis: 'LEGACY: nights of live-looking reservations (closed/reserved included) ÷ the number of units active TODAY, for every past day — understated for days before newer units existed.' },
+  { key: 'adr', label: 'ADR (legacy: gross incl. cleaning)', unit: 'usd', backfillable: true, higherIsBetter: true, legacy: true, useInstead: 'net_adr', basis: LEGACY_MONEY },
+  { key: 'revpar', label: 'RevPAR (legacy: gross incl. cleaning)', unit: 'usd', backfillable: true, higherIsBetter: true, legacy: true, useInstead: 'net_revpar', basis: LEGACY_MONEY + ' Divided by the number of units active TODAY.' },
+  { key: 'revenue', label: 'Revenue (legacy: gross incl. cleaning)', unit: 'usd', backfillable: true, higherIsBetter: true, legacy: true, useInstead: 'net_revenue', basis: LEGACY_MONEY },
+  { key: 'nights_sold', label: 'Nights sold (legacy: incl. owner stays)', unit: 'count', backfillable: true, higherIsBetter: true, legacy: true, useInstead: 'guest_nights', basis: 'LEGACY: every night of a live-looking reservation, closed/reserved requests and owner stays included.' },
+  { key: 'arrivals', label: 'Arrivals', unit: 'count', backfillable: true, higherIsBetter: null, basis: 'Check-ins that day, owner stays included (a unit to prepare either way).' },
+  { key: 'bookings_made', label: 'Bookings made (legacy: incl. owner holds)', unit: 'count', backfillable: true, higherIsBetter: true, legacy: true, useInstead: 'guest_bookings_made', basis: 'LEGACY: every reservation row created that day, owner holds and inquiries included.' },
+  { key: 'direct_share', label: 'Direct booking share %', unit: 'pct', backfillable: true, higherIsBetter: true, basis: 'Share of reservation rows created that day whose source is direct (lib/marketing).' },
+  { key: 'cancel_rate', label: 'Cancellation rate % (legacy: incl. owner holds)', unit: 'pct', backfillable: true, higherIsBetter: false, legacy: true, useInstead: 'guest_cancel_rate', basis: 'LEGACY: share of ALL reservation rows created that day that are now dead — owner holds and inquiries included.' },
   // --- ops (backfillable from the Breezeway mirror) ---
   { key: 'cleans_done', label: 'Departure cleans completed', unit: 'count', backfillable: true, higherIsBetter: null },
   { key: 'cleans_unassigned', label: 'Cleans with nobody assigned', unit: 'count', backfillable: true, higherIsBetter: false },
@@ -82,9 +121,21 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
   const db = supabaseAdmin()
 
   // ---- listing registry: unit counts per scope drive occupancy and RevPAR denominators ----
-  const { data: listings } = await db.from('guesty_listings').select('id,nickname,title,status,building').order('id')
+  // The created date rides along as one JSON-path scalar (rule 1), for the dated denominator below.
+  // If that read fails the plain columns are read as before and every unit counts from day one.
+  let listings: any[] | null = null
+  try {
+    const withCreated: any = await db.from('guesty_listings').select('id,nickname,title,status,building,created:raw->>createdAt').order('id')
+    if (!withCreated?.error && Array.isArray(withCreated?.data)) listings = withCreated.data
+  } catch { listings = null }
+  if (!listings) {
+    const plain: any = await db.from('guesty_listings').select('id,nickname,title,status,building').order('id')
+    listings = (plain?.data as any[]) || []
+  }
   const meta: Record<string, { building: string; active: boolean }> = {}
   const unitsByScope: Record<string, number> = { portfolio: 0 }
+  // scope -> the day each active unit went live (''= unknown, counts from the start)
+  const liveFromByScope: Record<string, string[]> = { portfolio: [] }
   for (const l of (listings || [])) {
     const row: any = l
     const b = rollupBuilding(row.building, row.nickname || row.title)
@@ -94,6 +145,17 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
     unitsByScope.portfolio++
     const s = 'building:' + b
     unitsByScope[s] = (unitsByScope[s] || 0) + 1
+    const created = /^\d{4}-\d{2}-\d{2}/.test(String(row.created || '')) ? String(row.created).slice(0, 10) : ''
+    liveFromByScope.portfolio.push(created)
+    if (!liveFromByScope[s]) liveFromByScope[s] = []
+    liveFromByScope[s].push(created)
+  }
+  /** Active units that already existed on `day` — the denominator for that day, not for today. */
+  const unitsLiveOn = (scope: string, day: string): number => {
+    const list = liveFromByScope[scope] || []
+    let n = 0
+    for (const c of list) if (!c || c <= day) n++
+    return n
   }
   const scopesOf = (listingId: any): string[] => {
     const m = meta[String(listingId)]
@@ -113,8 +175,15 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
 
   // ---- 1. Reservations. Pull anything OVERLAPPING the window, plus anything CREATED in it. ----
   // Rule 1: money via the JSON-path scalars, never raw->money.
-  const RES_COLS = 'id,listing_id,check_in,check_out,nights,status,source,money_total,created_at,'
-    + 'accom:raw->money->>fareAccommodationAdjusted,accom2:raw->money->>fareAccommodation,clean:raw->money->>fareCleaning'
+  const RES_COLS = 'id,listing_id,check_in,check_out,nights,status,source,guest_name,money_total,created_at,'
+    + 'accom:raw->money->>fareAccommodationAdjusted,accom2:raw->money->>fareAccommodation,clean:raw->money->>fareCleaning,'
+    + 'fee:raw->money->>hostServiceFee,fee_inc:raw->money->>hostServiceFeeIncTax,tags:raw->tags'
+  // Owner / friends-and-family: the one shared test (lib/owner-audit), on source, tags and guest name.
+  const ownerish = (r: any): boolean => {
+    const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
+    try { return isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || '')) } catch { return false }
+  }
+  const realStay = (st: any): boolean => LIVE_STAY_STATUSES.indexOf(lc(st)) >= 0
   const resv: any[] = []
   for (let page = 0; page < 25; page++) {
     const { data, error } = await db.from('guesty_reservations').select(RES_COLS)
@@ -126,7 +195,7 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
   }
   const created: any[] = []
   for (let page = 0; page < 25; page++) {
-    const { data, error } = await db.from('guesty_reservations').select('id,listing_id,status,source,created_at')
+    const { data, error } = await db.from('guesty_reservations').select('id,listing_id,status,source,guest_name,created_at,tags:raw->tags')
       .gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59Z')
       .order('id').range(page * 1000, page * 1000 + 999)
     if (error) break
@@ -156,16 +225,40 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
     if (dayIndex[co]) for (const s of scopes) bump(byDay[co], s, 'revenue', num(r.clean))
   }
 
+  // ---- 1b. The same reservations on THE ONE BASIS (lib/basis.ts): real stays only, net of the
+  //      channel fee, no cleaning, owner / friends-and-family nights held apart. ----
+  for (const r of resv) {
+    if (!realStay(r.status)) continue
+    const ci = String(r.check_in || '').slice(0, 10)
+    const co = String(r.check_out || '').slice(0, 10)
+    if (!ci || !co) continue
+    const totalNights = Math.max(1, num(r.nights) || 1)
+    const owner = ownerish(r)
+    const netPerNight = owner ? 0 : Math.max(0, num(r.accom) - channelFeeOf(num(r.fee_inc), num(r.fee))) / totalNights
+    const scopes = scopesOf(r.listing_id)
+    for (let d = ci > from ? ci : from; d < co && d <= to; d = shiftDay(d, 1)) {
+      if (!dayIndex[d]) continue
+      for (const s of scopes) {
+        bump(byDay[d], s, 'held_nights', 1)
+        if (owner) bump(byDay[d], s, 'owner_nights', 1)
+        else { bump(byDay[d], s, 'guest_nights', 1); bump(byDay[d], s, 'net_revenue', netPerNight) }
+      }
+    }
+  }
+
   for (const r of created) {
     const d = String(r.created_at || '').slice(0, 10)
     if (!dayIndex[d]) continue
     const scopes = scopesOf(r.listing_id)
     const dead = DEAD_RES.test(lc(r.status))
     const direct = familyFor(bucketFor(r.source)) === 'direct'
+    // An owner hold is an inventory decision, not a guest booking and not a guest walking away.
+    const guest = !ownerish(r) && !/inquir/i.test(lc(r.status))
     for (const s of scopes) {
       bump(byDay[d], s, 'bookings_made', 1)
       bump(byDay[d], s, 'direct_share', direct ? 1 : 0)
       bump(byDay[d], s, 'cancel_rate', dead ? 1 : 0)
+      if (guest) { bump(byDay[d], s, 'guest_bookings_made', 1); bump(byDay[d], s, 'guest_cancel_rate', dead ? 1 : 0) }
     }
   }
 
@@ -263,6 +356,23 @@ export async function computeRange(from: string, to: string): Promise<MetricRow[
       if (units > 0) push('occupancy', (nights / units) * 100, units)
       push('adr', nights > 0 ? revenue / nights : null, nights)
       if (units > 0) push('revpar', revenue / units, units)
+
+      // The one basis. A scope with no real stay that day writes nothing (value null is dropped below),
+      // except occupancy_dated, where an empty day is a real 0%.
+      const guestNights = g('guest_nights')?.n || 0
+      const ownerNights = g('owner_nights')?.n || 0
+      const held = g('held_nights')?.n || 0
+      const netRev = g('net_revenue')?.sum || 0
+      const unitsThen = unitsLiveOn(scope, day)
+      const sellable = unitsThen - ownerNights
+      push('guest_nights', guestNights, guestNights)
+      push('net_revenue', netRev, guestNights)
+      push('net_adr', guestNights > 0 ? netRev / guestNights : null, guestNights)
+      if (sellable > 0) push('net_revpar', netRev / sellable, sellable)
+      if (unitsThen > 0) push('occupancy_dated', Math.min(100, (held / unitsThen) * 100), unitsThen)
+      const gMade = g('guest_bookings_made')?.n || 0
+      push('guest_bookings_made', gMade, gMade)
+      push('guest_cancel_rate', gMade > 0 ? ((g('guest_cancel_rate')?.sum || 0) / gMade) * 100 : null, gMade)
 
       const made = g('bookings_made')?.n || 0
       push('bookings_made', made, made)

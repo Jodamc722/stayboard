@@ -235,11 +235,15 @@ async function beliefsFor(scopes: string[], limit: number): Promise<any[]> {
       .is('superseded_by', null).in('scope', Array.from(new Set(['portfolio'].concat(scopes))).slice(0, 150))
       .order('weight', { ascending: false }).limit(400)
     const today = todayET()
-    return ((data as any[]) || [])
+    const picked = ((data as any[]) || [])
       .filter(m => !(m.expires_on && str(m.expires_on) < today))
       .filter(m => isHuman(m.source) || currentConfidence(m) >= RETIRE_BELOW)
       .sort((a, b) => beliefStrength(b) - beliefStrength(a))
       .slice(0, limit)
+    // A CRON'S READ IS A READ (2026-11-10): these go into the reflection and prediction prompts, and
+    // use_count only ever counted chat turns. Telemetry; never worth failing the night over.
+    try { const { touchMemories } = await import('./memory'); touchMemories(picked.map(m => str(m.id))).catch(() => {}) } catch { /* fine */ }
+    return picked
   } catch { return [] }
 }
 const beliefList = (rows: any[]) => rows.map((m, i) => `[${i + 1}] (${m.source}, ${Math.round(currentConfidence(m) * 100)}%${m.scope !== 'portfolio' ? ', ' + m.scope : ''}) ${str(m.text).slice(0, 220)}`).join('\n')
@@ -494,7 +498,7 @@ Return STRICT minified JSON: {"journal":"","learned":[{"text":"","scope":"","kin
       const um = scope.match(/^unit:\s*(.+)$/i)
       if (um) { const id = byName[lc(um[1])] || (idx[um[1]] ? um[1] : ''); scope = id ? 'unit:' + id : 'portfolio' }
       else if (!/^building:\s*\S/i.test(scope)) scope = 'portfolio'
-      const saved = await saveMemory({ kind: str(l?.kind) === 'issue' ? 'issue' : 'insight', text, why: `Noticed on ${day}: ${str(l?.because).slice(0, 200)}`, scope, weight: 4, source: 'eve', confidence: 0.55, created_by: 'eve-sleep', evidence: { from: 'sleep', day } }).catch(() => null)
+      const saved = await saveMemory({ kind: str(l?.kind) === 'issue' ? 'issue' : 'insight', text, why: `Noticed on ${day}: ${str(l?.because).slice(0, 200)}`, scope, weight: 4, source: 'eve', confidence: 0.55, created_by: 'eve-sleep', evidence: { from: 'sleep', day, status: 'pending', because: str(l?.because).slice(0, 300) } }).catch(() => null)
       if (saved?.ok) out.learned.push(text.slice(0, 160))
     }
   }
@@ -576,7 +580,7 @@ export async function mindForPrompt(input: { text: string; scopes: string[]; sha
     if (!input.sharedRoom) for (const k of await peopleIn(input.text)) ids.push(dossierId('person', k))
     const ds = (await readDossiers(ids.slice(0, 6))).slice(0, 4)
     const parts: string[] = []
-    if (ds.length) parts.push(`WHAT YOU ALREADY KNOW ABOUT WHAT IS IN PLAY (your dossiers, rebuilt nightly from the records; use tools for anything since):\n${ds.map(d => '- ' + renderDossier(d, 800)).join('\n')}`)
+    if (ds.length) parts.push(`WHAT YOU ALREADY KNOW ABOUT WHAT IS IN PLAY (your dossiers, rebuilt nightly from the records; use tools for anything since):\n${ds.map(d => '- ' + renderDossier(d, 1150)).join('\n')}`)
     const today = todayET()
     for (const d of [shiftDay(today, -1), shiftDay(today, -2)]) {
       const j = await getKnowledge(journalId(d))
@@ -584,7 +588,8 @@ export async function mindForPrompt(input: { text: string; scopes: string[]; sha
     }
     const cal = await calibrationLine()
     if (cal) parts.push(cal)
-    return parts.join('\n\n').slice(0, 4200)
+    // 5,600, was 4,200 (2026-11-10): each file now carries its twelve-month section (lib/eve/dossiers.ts).
+    return parts.join('\n\n').slice(0, 5600)
   } catch { return '' }
 }
 
@@ -651,18 +656,36 @@ export async function captureCorrection(input: {
   return { saved: !!saved?.ok, weakened, id: saved?.id }
 }
 
+/**
+ * IS THERE A LASTING FACT IN THIS REPLY? (2026-11-10). The same judgement captureCorrection makes of
+ * a chat reply, for a person's reply to something Eve flagged (lib/eve/ask.ts): durable means it
+ * would still matter in a different situation; "ok, will look tomorrow" does not. One small call on
+ * the corrections model. null when the model is unavailable — the caller then keeps nothing as a rule.
+ */
+export async function durableFromReply(input: { about: string; reply: string }): Promise<{ durable: boolean; rule: string } | null> {
+  const res = await brainCall(
+    `You read one exchange: something an operations assistant ("Eve") flagged to her manager, and the manager's reply. Decide whether the reply contains a DURABLE fact or rule: something that would still matter in a future, different situation (how something works here, a standing rule, why this kind of finding is expected, a fact about a building, unit, person, vendor or process). It is NOT durable when it is only about this one item or is conversation ("ok thanks", "I'll look at it later", "fixed it this morning", "ask Karla", a question back). Return STRICT JSON: {"durable":true,"rule":"<the durable fact as ONE standalone sentence someone could follow without seeing what was flagged, <= 40 words; empty when not durable>"}`,
+    `EVE FLAGGED: ${str(input.about).slice(0, 800)}\n\nMANAGER'S REPLY: ${str(input.reply).slice(0, 1200)}`,
+    800, 'eve-correction')
+  if (!res || typeof res.durable !== 'boolean') return null
+  const rule = str(res.rule).trim().slice(0, 600)
+  return { durable: !!res.durable && rule.length >= 12, rule }
+}
+
 // ── Tools ───────────────────────────────────────────────────────────────────────────────────────
 
 export const BRAIN_TOOLS: EveTool[] = [
   {
     name: 'dossier',
-    description: 'Your file on ONE building, unit or cleaner, rebuilt every night from the records: size and who operates it, the last 30 days (departure cleans and how many were done before 4pm, guest issues by trade and what is open now, reviews and the latest low one, arrivals in the next 7 days), what CHANGED since the previous file, your two-sentence read (buildings), and the beliefs you hold about it. Use it first when someone asks "how is X doing", "what\'s going on at X", "tell me about X" — then pull live tools for anything since last night. A person\'s file is facts, not a verdict, and is not available in shared rooms. Param: name (a building, a unit name, or a person).',
+    description: 'Your file on ONE building, unit, cleaner, vendor or owner, rebuilt every night from the records: size and who operates it, the last 30 days (departure cleans and how many were done before 4pm, guest issues by trade and what is open now, reviews and the latest low one, arrivals in the next 7 days), THE LAST 12 MONTHS (`year`: guest issues by category with the median days to close and how many came back within 90 days, maintenance tasks by system with repeat fixes, preventive maintenance that is overdue, what inspections keep missing, refunds approved, and the top recurring failures), what CHANGED since the previous file, your two-sentence read (buildings), and the beliefs you hold about it. Use it first when someone asks "how is X doing", "what keeps breaking at X", "what fails where", "is this vendor slow", "tell me about X" — then pull live tools for anything since last night. A vendor\'s file is the jobs they were named on from the glitch board; an owner\'s is their units taken together. A person\'s or an owner\'s file is facts, not a verdict, and is not available in shared rooms. Param: name (a building, a unit name, a person, a vendor or an owner).',
     input_schema: obj({ name: S.str }),
+    // The twelve-month section carries refund totals; masked for anyone not cleared for money.
+    money: true,
     run: async (input, ctx) => {
       const d = await findDossier(str(input?.name))
-      if (!d) return { error: `No file on "${str(input?.name)}". Files cover every building, units with something going on in the last 30 days, and anyone who did departure cleans in that time.` }
+      if (!d) return { error: `No file on "${str(input?.name)}". Files cover every building, units with something going on in the last 30 days or that keep breaking over the year, anyone who did departure cleans in that time, vendors named on three or more guest issues, and owners.` }
       if ('candidates' in d) return { ambiguous: true, candidates: d.candidates, note: 'Say which one.' }
-      if (d.kind === 'person' && (ctx as any).sharedRoom) return { error: 'People\'s files are not read out in a shared room. Ask me in the app.' }
+      if ((d.kind === 'person' || d.kind === 'owner') && (ctx as any).sharedRoom) return { error: 'People\'s and owners\' files are not read out in a shared room. Ask me in the app.' }
       return d
     },
   },

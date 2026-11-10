@@ -151,7 +151,7 @@ export async function studyDoc(docId: string, opts: { force?: boolean; by?: stri
 
   let doc: any = null
   try {
-    const { data } = await db().from('eve_docs').select('id,title,category,body,active').eq('id', docId).maybeSingle()
+    const { data } = await db().from('eve_docs').select('id,title,category,body,active,updated_at').eq('id', docId).maybeSingle()
     doc = data
   } catch { /* handled below */ }
   if (!doc) return empty({ ok: false, error: 'document not found' })
@@ -168,7 +168,7 @@ export async function studyDoc(docId: string, opts: { force?: boolean; by?: stri
 
   // What she currently believes, ranked by the same scoring the live prompt uses, so the comparison
   // is against the beliefs that would ACTUALLY have shaped an answer — not a random slice.
-  const beliefs = await loadMemories(['portfolio'], '', 60, str(doc.title)).catch(() => [])
+  const beliefs = await loadMemories(['portfolio'], '', 60, str(doc.title), { references: false }).catch(() => [])
   const beliefList = beliefs.length
     ? beliefs.map(m => `- [${m.kind}] ${m.text}${m.source === 'jon' ? ' (Jon told me this)' : ''}`).join('\n')
     : '(she has no standing beliefs recorded yet)'
@@ -213,6 +213,20 @@ export async function studyDoc(docId: string, opts: { force?: boolean; by?: stri
   // Jon is 8, and anything she worked out for herself is lower. So written policy beats inference
   // and loses to a person — which is the order a new manager would use too. saveMemory dedupes, so
   // re-reading a document that repeats last month's standard reinforces rather than duplicates.
+  // THE RULES THIS DOCUMENT GAVE HER LAST TIME (2026-11-10). A re-uploaded SOP used to add its new
+  // rules beside the old version's, which stayed live for good: nothing tied a rule to its document
+  // once it was saved. Every rule carries evidence.doc_id, so the earlier ones are read here, and
+  // after the new ones are saved any earlier rule the new reading did not produce again is
+  // superseded (linked to a rule from the new reading; never deleted). Saved first, retired second,
+  // on purpose: a rule that reads the same is recognised by saveMemory and simply kept.
+  let earlier: { id: string }[] = []
+  try {
+    const { data: prev } = await db().from('eve_memory').select('id')
+      .eq('source', 'doc').is('superseded_by', null).eq('evidence->>doc_id', docId).limit(200)
+    earlier = ((prev || []) as any[]).map(m => ({ id: str(m.id) }))
+  } catch { earlier = [] }
+  const keptIds = new Set<string>()
+  const freshIds: string[] = []
   for (const r of (parsed.rules || []).slice(0, 20)) {
     const text = str(r?.text).trim()
     if (text.length < 12) continue
@@ -225,9 +239,35 @@ export async function studyDoc(docId: string, opts: { force?: boolean; by?: stri
       source: 'doc',
       confidence: 0.9,
       created_by: opts.by || 'eve-study',
-      evidence: { doc_id: docId, section: str(r?.section).slice(0, 120) },
+      // The citation the prompt prints: "<title> › <section>, updated <date>" (memory.ts memoryCitation).
+      evidence: { doc_id: docId, title: str(doc.title).slice(0, 160), section: str(r?.section).slice(0, 120), doc_updated_at: doc.updated_at || null },
     }).catch(() => ({ ok: false } as any))
-    if (saved?.ok) learned.push(text.slice(0, 120))
+    if (saved?.ok) {
+      learned.push(text.slice(0, 120))
+      if (saved.id) { keptIds.add(str(saved.id)); if (!saved.deduped) freshIds.push(str(saved.id)) }
+    }
+  }
+  // Retire what the earlier reading said and this one does not. Only when this reading produced
+  // rules at all: an empty answer from the model is not evidence that the document says nothing.
+  if (keptIds.size) {
+    const stale = earlier.map(m => m.id).filter(id => !keptIds.has(id))
+    const heir = freshIds[0] || Array.from(keptIds)[0]
+    if (stale.length && heir) {
+      try {
+        await db().from('eve_memory').update({ superseded_by: heir, updated_at: new Date().toISOString() })
+          .in('id', stale).eq('source', 'doc').is('superseded_by', null)
+      } catch { /* they stay until the next study; the memory audit still lists them */ }
+    }
+  }
+  // A DOCUMENT RULE IS TESTED LIKE ANYTHING ELSE SHE IS TAUGHT (2026-11-10). No probe was ever written
+  // for what she read, so the learning audit could not say whether a playbook stuck. One probe per
+  // NEW rule, at most eight per document (each is a small model call, and an upload is waiting on
+  // this); the rest are picked up as rules without a probe.
+  if (freshIds.length) {
+    try {
+      const { probeForMemory } = await import('./learning-audit')
+      for (const id of freshIds.slice(0, 8)) { try { await probeForMemory(id, 'rule') } catch { /* the rule stands without its probe */ } }
+    } catch { /* the audit is optional; the rules are saved */ }
   }
 
   // CONFLICTS never write. They ask — and they carry both sides, because a question that says only

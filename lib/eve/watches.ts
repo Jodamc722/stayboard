@@ -194,7 +194,9 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
         const facts = res ? `Guest: ${guest}. Unit: ${unit}. Stay: ${str(res.check_in).slice(0, 10)} to ${str(res.check_out).slice(0, 10)} (${res.nights || '?'} nights). Channel: ${str(r.channel)}.` : `Channel: ${str(r.channel)}.`
         const { hostVoiceFor, hostVoicePrompt, applyHostVoice } = await import('@/lib/host-voice')
         const hv = hostVoiceFor(unit)
-        const raw = await askModel('guest-reply', GUEST_REPLY_SYSTEM + (hv ? hostVoicePrompt(hv) : ''), `${facts}\n\nTHREAD (oldest first):\n${thread}\n\nWrite our reply to the guest's last message.`)
+        // 'guest-reply-auto' (2026-11-10): a watch writes this draft on its own, so it bills as an automatic
+        // job and stops at the automatic daily cap; a person's "Draft with Eve" stays on 'guest-reply'.
+        const raw = await askModel('guest-reply-auto', GUEST_REPLY_SYSTEM + (hv ? hostVoicePrompt(hv) : ''), `${facts}\n\nTHREAD (oldest first):\n${thread}\n\nWrite our reply to the guest's last message.`)
         if (!raw) return null
         const draft = hv ? applyHostVoice(raw, hv) : raw
         return { conversationId: convId, draft, guest, unit, channel: str(r.channel), why: `Guest waited ${waited} with no answer.` }

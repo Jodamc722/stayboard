@@ -14,6 +14,7 @@ import { bustDay } from '@/lib/bust'
 import { pageRows } from '@/lib/db-page'
 import { tagAndNotify } from '@/lib/mentions'
 import { buildingOf } from '@/lib/segments'
+import { isSystemKey, RESOLUTION_KEYS } from '@/lib/task-categories'
 
 export const dynamic = 'force-dynamic'
 
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
     const action = str(b.action)
     const db = supabaseAdmin()
     if (!id || !action) return NextResponse.json({ ok: false, error: 'id and action required.' }, { status: 400 })
-    if (!__canEdit && !(action === 'move' && str(b.status) === 'closed')) return NextResponse.json({ ok: false, error: 'You can close glitches; other changes need edit access on Glitches.' }, { status: 403 })
+    if (!__canEdit && !(action === 'move' && str(b.status) === 'closed') && action !== 'closeDetail') return NextResponse.json({ ok: false, error: 'You can close glitches; other changes need edit access on Glitches.' }, { status: 403 })
     const { data: g, error: ge } = await db.from('glitches').select('*').eq('id', id).maybeSingle()
     if (ge || !g) return NextResponse.json({ ok: false, error: 'Glitch not found.' }, { status: 404 })
     const hist = Array.isArray(g.history) ? g.history : []
@@ -117,6 +118,28 @@ export async function POST(req: NextRequest) {
       if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
       bustDay()
       return NextResponse.json({ ok: true, status })
+    }
+
+    // WHAT WAS IT, AND HOW WAS IT FIXED (2026-11-10, migration 178). Two optional taps after a card
+    // closes: the system that failed and the resolution, plus the part in a few words. This is what
+    // lets a repeat failure be counted ("third A/C repair in this unit — replace it"). It NEVER blocks
+    // or delays the close — the card is already closed when this arrives — and until the columns
+    // exist it answers ok and saves nothing. Whoever may close a card may answer for a closed one.
+    if (action === 'closeDetail') {
+      if (!__canEdit && ['closed', 'done', 'resolved'].indexOf(String(g.status)) < 0) return NextResponse.json({ ok: false, error: 'Close the card first.' }, { status: 403 })
+      const detail: Record<string, any> = {}
+      if (isSystemKey(b.system)) detail.system = str(b.system)
+      if (RESOLUTION_KEYS.indexOf(str(b.resolution)) >= 0) detail.resolution = str(b.resolution)
+      const part = str(b.part).replace(/\s+/g, ' ').trim().slice(0, 160)
+      if (part) detail.part = part
+      if (!Object.keys(detail).length) return NextResponse.json({ ok: true, saved: false })
+      const upd = await db.from('glitches').update(detail).eq('id', id)
+      if (upd.error) {
+        // The columns arrive with migration 178. Until then: nothing saved, nothing broken.
+        if (/column|schema/i.test(upd.error.message)) return NextResponse.json({ ok: true, saved: false, skipped: 'columns missing — run migration 178' })
+        return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
+      }
+      return NextResponse.json({ ok: true, saved: true })
     }
 
     if (action === 'approveClose' || action === 'rejectClose') {

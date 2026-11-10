@@ -197,3 +197,63 @@ export function stateOfTask(t: { status?: any; started_at?: any; finished_at?: a
   if (isTaskRunning(t.status, t.started_at)) return 'running'
   return 'open'
 }
+
+// ── ONE ANSWER TO "WHICH SYSTEM BROKE" (2026-11-10, the business brain) ─────────────────────────
+// A glitch category ("Maintenance - HVAC/Temperature"), a Breezeway task name ("A/C not cooling —
+// 1704/1") and a work-order title were three vocabularies for one question, so nothing could count
+// "how many times has the A/C failed in this unit". This is the one list and the one classifier:
+// the glitch close step offers these chips, and lib/brain/maintenance files every event under one.
+// Pure and client-safe, like the rest of this file. ADDITIVE — nothing above reads it.
+//
+// ORDER MATTERS: first match wins, most specific first. "Water heater" is plumbing, not appliance;
+// "door lock battery" is lock_access, not electrical; "smart TV remote" is wifi_tv.
+export type SystemKey = 'hvac' | 'plumbing' | 'appliance' | 'lock_access' | 'electrical' | 'pest' | 'wifi_tv' | 'furniture' | 'cleaning' | 'other'
+export const SYSTEMS: { key: SystemKey; label: string; re: RegExp | null }[] = [
+  { key: 'hvac', label: 'A/C & heating', re: /\ba\/?c\b|air[\s-]?con|\bhvac\b|thermostat|mini[\s-]?split|not cooling|no cool|\bcooling\b|\bheating\b|no heat|temperature|air filter|filter change|\bcoils?\b|condensat|air handler/i },
+  { key: 'plumbing', label: 'Plumbing & water', re: /plumb|\bleak|toilet|\bdrain|clog|\bsink\b|faucet|shower|\btub\b|water heater|hot water|no water|water pressure|flood|sewage|garbage disposal|\bdisposal\b|\bpipe/i },
+  { key: 'lock_access', label: 'Locks & access', re: /\block(s|ed|out)?\b|door code|key ?pad|key ?fob|\bfob\b|\bkeys?\b|lock[\s-]?out|dead ?bolt|\bgate\b|garage (door|remote|opener)|door (handle|knob|won|does|will not|not clos)|access (code|issue)|intercom|buzzer/i },
+  { key: 'pest', label: 'Pests', re: /\bpests?\b|roach|bed ?bugs?|\bants?\b|\bmice\b|\bmouse\b|\brats?\b|rodent|termite|exterminat|\bbugs?\b|mosquito|\bfleas?\b/i },
+  { key: 'wifi_tv', label: 'Wi-Fi & TV', re: /wi-?fi|internet|router|modem|\btvs?\b|television|remote control|\bremotes?\b|streaming|\broku\b|netflix|cable box|\bhdmi\b/i },
+  { key: 'appliance', label: 'Appliances', re: /applian|washer|dryer|laundry machine|dishwasher|fridge|refrigerator|freezer|ice ?maker|\boven\b|\bstove\b|cook ?top|microwave|coffee (maker|machine)|toaster|blender|vacuum|\biron\b|hair ?dryer/i },
+  { key: 'electrical', label: 'Electrical & lights', re: /electric|\bpower\b|outlet|breaker|light ?bulb|\bbulbs?\b|\blights?\b|lighting|\blamp|ceiling fan|\bfan\b|smoke (detector|alarm)|\bbatter(y|ies)\b|\bswitch\b|\bgfci\b/i },
+  { key: 'furniture', label: 'Furniture & fixtures', re: /furnitur|\bsofa\b|\bcouch\b|\bbed ?frame|mattress|\bchairs?\b|\btable\b|dresser|night ?stand|\bblinds?\b|curtain|\bshades?\b|\bmirror\b|cabinet|drawer|closet|shelf|shelv|\bpaint|drywall|\bcaulk|\bgrout|flooring|\bscreen\b|patio|balcony|sliding door|window(?! unit)/i },
+  { key: 'cleaning', label: 'Cleanliness', re: /cleanl|\bdirty\b|not clean|unclean|\bstain|\bhair\b|\bdust|\bmold|mildew|\bodor|\bsmell|\blinen|\btowels?\b|\bsheets?\b|\btrash\b|garbage|re-?clean|inadequate cleaning/i },
+  { key: 'other', label: 'Something else', re: null },
+]
+export const SYSTEM_KEYS: SystemKey[] = SYSTEMS.map(s => s.key)
+export const SYSTEM_LABEL: Record<string, string> = SYSTEMS.reduce((m, s) => { m[s.key] = s.label; return m }, {} as Record<string, string>)
+export const isSystemKey = (v: any): v is SystemKey => SYSTEM_KEYS.indexOf(String(v) as SystemKey) >= 0
+
+/** How a closed issue was fixed — the second tap at close. */
+export const RESOLUTIONS: { key: string; label: string }[] = [
+  { key: 'repaired', label: 'Repaired' },
+  { key: 'replaced', label: 'Replaced' },
+  { key: 'no_fault', label: 'No fault found' },
+  { key: 'guest_error', label: 'Guest error' },
+]
+export const RESOLUTION_KEYS: string[] = RESOLUTIONS.map(r => r.key)
+
+/** The glitch board's own categories, mapped straight across (no regex guess needed for these). */
+const SYSTEM_BY_CATEGORY: { re: RegExp; key: SystemKey }[] = [
+  { re: /hvac|temperature/i, key: 'hvac' },
+  { re: /water heater|plumbing/i, key: 'plumbing' },
+  { re: /electrical/i, key: 'electrical' },
+  { re: /appliance/i, key: 'appliance' },
+  { re: /cleanliness|cleaning/i, key: 'cleaning' },
+  { re: /pest|bed ?bug/i, key: 'pest' },
+]
+
+/**
+ * Which system an issue belongs to. A specific glitch category the reporter picked decides first;
+ * otherwise the words of the issue are read (first match in SYSTEMS order — a card filed as "Other"
+ * that says "the dishwasher leaks" is plumbing). `source` says which one answered; 'none' = other.
+ */
+export function systemOfWith(text: any, category?: any): { system: SystemKey; source: 'name' | 'category' | 'none' } {
+  const cat = String(category ?? '')
+  // A specific category the reporter picked beats a guess from free text.
+  for (const c of SYSTEM_BY_CATEGORY) if (cat && c.re.test(cat)) return { system: c.key, source: 'category' }
+  const t = String(text ?? '')
+  if (t.trim()) for (const s of SYSTEMS) if (s.re && s.re.test(t)) return { system: s.key, source: 'name' }
+  return { system: 'other', source: 'none' }
+}
+export function systemOf(text: any, category?: any): SystemKey { return systemOfWith(text, category).system }

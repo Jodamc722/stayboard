@@ -41,8 +41,17 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isSuperadmin } from '@/lib/access'
 import { setSetting } from '@/lib/app-settings'
 import { todayET, pageRows } from './ctx'
-// Static on purpose and safe: room-gate reaches back into this file only through dynamic imports.
-import { inPostWindow, POST_WINDOW_ET } from './room-gate'
+// THE RULES THEMSELVES live in ./agent-rules — a file with no imports, so each one is tested with
+// plain values (lib/eve/__tests__/agent-rules.test.mjs). This file reads the switch, the counters and
+// the ledger, asks those rules, and does the talking. Everything this file used to export from here
+// is still exported from here.
+import {
+  ACTION_LIMITS, clampRung, modeOf, tierOf, mayApprove, etOffsetMinutes, inQuietHours, inPostWindow, nextPostWindowOpen, POST_WINDOW_ET,
+  quietHoursEnd, countersFor, bumpCounters, effectiveAiCap, gateStart, gateMoney, gateNeedsCounters, gateNeedsSpend, gateBudgets, gateQuiet,
+  type ActionType, type Rung, type Mode, type AgentCounters,
+} from './agent-rules'
+export { DESK_ACTIONS, tierOf, mayApprove, modeOf, inQuietHours, quietHoursEnd, nextPostWindowOpen, effectiveAiCap, NEEDS_HUMAN, ACTION_LIMITS } from './agent-rules'
+export type { ActionType, Rung, Mode, Tier, AgentCounters } from './agent-rules'
 
 export const AGENT_KEY = 'eve_agent'
 export const AGENT_COUNTERS_KEY = 'eve_agent_counters'
@@ -50,15 +59,7 @@ export const OWNER = 'jon@stay-hospitality.com'
 
 // ---- The action inventory ------------------------------------------------------------------------
 
-export type ActionType =
-  | 'slack_post' | 'telegram_ask' | 'email_draft' | 'email_send'
-  | 'guest_reply_draft' | 'guest_reply_send' | 'guest_notice_send'
-  | 'task_create' | 'task_assign' | 'task_note' | 'task_cancel'
-  | 'door_code_release' | 'guesty_write' | 'calendar_block'
-  | 'recommendation' | 'memory_rule'
-
-export type Rung = 0 | 1 | 2 | 3 | 4
-export type Mode = 'observe' | 'draft' | 'propose' | 'act' | 'deferred'
+// ActionType, Rung and Mode are defined in ./agent-rules (re-exported above).
 
 /** The wiring for a recommended, safe day-one setup — the "Recommended setup" button. */
 export const RECOMMENDED_RUNGS: Partial<Record<ActionType, Rung>> = {
@@ -74,61 +75,55 @@ export type ActionDef = {
   key: ActionType
   label: string
   what: string
-  /** Default rung when agent mode is switched on. */
+  /** Default rung when agent mode is switched on. From ./agent-rules ACTION_LIMITS. */
   def: Rung
-  /** Hard ceiling. The UI shows a lock above it and this file clamps to it. */
+  /** Hard ceiling. The UI shows a lock above it and this file clamps to it. From ./agent-rules ACTION_LIMITS. */
   cap: Rung
   /** Where in the code this gate is enforced — shown in the UI so nobody has to guess. */
   wiredAt: string[]
 }
 
 export const ACTIONS: ActionDef[] = [
-  { key: 'slack_post', label: 'Post in Slack', what: 'Nudges in a thread, the urgent-today post, the morning roll-up in #vr-eve, door-code approval posts.', def: 3, cap: 4,
+  { key: 'slack_post', label: 'Post in Slack', what: 'Nudges in a thread, the urgent-today post, the morning roll-up in #vr-eve, door-code approval posts.', ...ACTION_LIMITS.slack_post,
     wiredAt: ['lib/eve/slack-watch.ts (nudge)', 'lib/eve/on-watch.ts', 'lib/eve/ccs-desk.ts (handoff, escalation)', 'lib/eve/morning.ts', 'lib/eve/approvals.ts postDoorCodeApproval'] },
-  { key: 'telegram_ask', label: 'Ask on Telegram', what: 'The morning ask (findings, questions), proposals waiting on a yes, approved questions to Ralphbot.', def: 2, cap: 4,
+  { key: 'telegram_ask', label: 'Ask on Telegram', what: 'The morning ask (findings, questions), proposals waiting on a yes, approved questions to Ralphbot.', ...ACTION_LIMITS.telegram_ask,
     wiredAt: ['lib/eve/ask.ts deliverOne', 'lib/eve/ralph.ts sendApproved', 'lib/eve/agent-mode.ts proposeAction'] },
-  { key: 'email_draft', label: 'Draft an email', what: 'A Gmail draft in a connected mailbox. Nobody receives it until a person sends it.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts email_draft', 'lib/eve/watches.ts channel_broken, stock_low'] },
-  { key: 'email_send', label: 'Send an email', what: 'An email leaving the company. Permanently propose-only, and the executor is not enabled.', def: 2, cap: 2, wiredAt: [] },
-  { key: 'guest_reply_draft', label: 'Draft a guest reply', what: 'A reply saved on the thread (/inbox) and in Command Center → Decide with Send / Discard. Not sent.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts guest_reply_draft', 'lib/eve/watches.ts guest_unanswered_1h, bad_review_in'] },
-  { key: 'guest_reply_send', label: 'Message a guest', what: 'A message the guest actually receives (Guesty send-message). Permanently propose-only: only a Send button or a Telegram yes runs it.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts guest_reply_send', 'app/api/eve/guest-drafts send'] },
+  { key: 'email_draft', label: 'Draft an email', what: 'A Gmail draft in a connected mailbox. Nobody receives it until a person sends it.', ...ACTION_LIMITS.email_draft, wiredAt: ['lib/eve/executors.ts email_draft', 'lib/eve/watches.ts channel_broken, stock_low'] },
+  { key: 'email_send', label: 'Send an email', what: 'An email leaving the company. Permanently propose-only, and the executor is not enabled.', ...ACTION_LIMITS.email_send, wiredAt: [] },
+  { key: 'guest_reply_draft', label: 'Draft a guest reply', what: 'A reply saved on the thread (/inbox) and in Command Center → Decide with Send / Discard. Not sent.', ...ACTION_LIMITS.guest_reply_draft, wiredAt: ['lib/eve/executors.ts guest_reply_draft', 'lib/eve/watches.ts guest_unanswered_1h, bad_review_in'] },
+  { key: 'guest_reply_send', label: 'Message a guest', what: 'A message the guest actually receives (Guesty send-message). Permanently propose-only: only a Send button or a Telegram yes runs it.', ...ACTION_LIMITS.guest_reply_send, wiredAt: ['lib/eve/executors.ts guest_reply_send', 'app/api/eve/guest-drafts send'] },
   // PILOT ONE (Jon, 2026-10-10): "ok to send simple guest messages like work completed, requests
   // permission to enter … never sends code without approval". A NOTICE is a fixed template rendered
   // from the glitch/task — "the AC issue has been taken care of", "our maintenance team would like to
   // stop by today" — never model text, never a number that could be a code (lib/eve/guest-notices.ts
   // refuses the send otherwise). Free-form replies stay guest_reply_send, welded at propose.
-  { key: 'guest_notice_send', label: 'Send a simple guest notice', what: 'A templated note the guest receives — work completed, permission to enter. No free text, no codes. Pilot buildings act; elsewhere it is proposed.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts guest_notice_send', 'lib/eve/on-watch.ts D/F fixed, G entry request'] },
-  { key: 'task_create', label: 'Create a task', what: 'A new Breezeway task.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_create', 'lib/eve/core.ts propose_action', 'lib/eve/watches.ts big_arrival_uninspected, bad_review_in, glitch_overdue'] },
-  { key: 'task_assign', label: 'Assign a task', what: 'Put a task on somebody\'s board.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_assign', 'lib/eve/watches.ts clean_late'] },
-  { key: 'task_note', label: 'Note on a task', what: 'A comment on an existing Breezeway task.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts task_note', 'lib/eve/watches.ts no_show_risk'] },
-  { key: 'task_cancel', label: 'Cancel a task', what: 'Cancel a Breezeway task (never a departure clean — those belong to the scheduler).', def: 2, cap: 3, wiredAt: ['lib/eve/executors.ts task_cancel'] },
-  { key: 'door_code_release', label: 'Release a door code', what: 'Hand a code to a person. Permanently propose-only; a person set to Direct is their own approver.', def: 2, cap: 2,
+  { key: 'guest_notice_send', label: 'Send a simple guest notice', what: 'A templated note the guest receives — work completed, permission to enter. No free text, no codes. Pilot buildings act; elsewhere it is proposed.', ...ACTION_LIMITS.guest_notice_send, wiredAt: ['lib/eve/executors.ts guest_notice_send', 'lib/eve/on-watch.ts D/F fixed, G entry request'] },
+  // THE ONE STANDING EXEMPTION — PREVENTATIVE MAINTENANCE ON "AUTO" (documented 2026-11-10). A cadence
+  // set to auto on Users & admin → Settings → Cadences creates its Breezeway task by calling the
+  // task_create executor directly (lib/pm-recurrence.ts), without asking this fence: it runs whatever
+  // the rung below says and whether agent mode is on or off. That is deliberate. Those tasks are
+  // governed by their own switch (the cadence's mode — "suggest" cadences DO come through
+  // agentAllowed) and their own daily cap (pm-recurrence capLeftToday), and each one is still written
+  // to eve_agent_log and counted in today's actions. To stop them, set the cadence to suggest or off;
+  // the agent switch does not.
+  { key: 'task_create', label: 'Create a task', what: 'A new Breezeway task.', ...ACTION_LIMITS.task_create, wiredAt: ['lib/eve/executors.ts task_create', 'lib/eve/core.ts propose_action', 'lib/eve/watches.ts big_arrival_uninspected, bad_review_in, glitch_overdue'] },
+  { key: 'task_assign', label: 'Assign a task', what: 'Put a task on somebody\'s board.', ...ACTION_LIMITS.task_assign, wiredAt: ['lib/eve/executors.ts task_assign', 'lib/eve/watches.ts clean_late'] },
+  { key: 'task_note', label: 'Note on a task', what: 'A comment on an existing Breezeway task.', ...ACTION_LIMITS.task_note, wiredAt: ['lib/eve/executors.ts task_note', 'lib/eve/watches.ts no_show_risk'] },
+  { key: 'task_cancel', label: 'Cancel a task', what: 'Cancel a Breezeway task (never a departure clean — those belong to the scheduler). Permanently propose-only: a person says yes to every cancellation.', ...ACTION_LIMITS.task_cancel, wiredAt: ['lib/eve/executors.ts task_cancel'] },
+  { key: 'door_code_release', label: 'Release a door code', what: 'Hand a code to a person. Permanently propose-only; a person set to Direct is their own approver.', ...ACTION_LIMITS.door_code_release,
     wiredAt: ['lib/eve/core.ts door_code_check'] },
-  { key: 'guesty_write', label: 'Write to Guesty', what: 'Reservation notes, custom fields. Permanently propose-only.', def: 2, cap: 2, wiredAt: ['lib/eve/executors.ts guesty_write'] },
+  { key: 'guesty_write', label: 'Write to Guesty', what: 'Reservation notes, custom fields. Permanently propose-only.', ...ACTION_LIMITS.guesty_write, wiredAt: ['lib/eve/executors.ts guesty_write'] },
   // SWITCHED OFF FOR GOOD (Jon, 2026-09-23: "make sure calendar blocks are not possible"). Cap 0: no
   // setting can raise it, propose_action refuses it, and the executor refuses it even with a yes.
-  { key: 'calendar_block', label: 'Block a calendar', what: 'Switched off: Eve never blocks or unblocks a calendar. A person does it on the Schedule page.', def: 0, cap: 0, wiredAt: ['lib/eve/executors.ts calendar_block (refuses)'] },
-  { key: 'recommendation', label: 'Log a recommendation', what: 'Her ledger — graded later, changes nothing until accepted.', def: 1, cap: 1,
+  { key: 'calendar_block', label: 'Block a calendar', what: 'Switched off: Eve never blocks or unblocks a calendar. A person does it on the Schedule page.', ...ACTION_LIMITS.calendar_block, wiredAt: ['lib/eve/executors.ts calendar_block (refuses)'] },
+  { key: 'recommendation', label: 'Log a recommendation', what: 'Her ledger — graded later, changes nothing until accepted.', ...ACTION_LIMITS.recommendation,
     wiredAt: ['lib/eve/core.ts recommend', 'lib/eve/review.ts plans'] },
-  { key: 'memory_rule', label: 'Write a memory', what: 'Her own notebook. At 0 she stops learning on her own; Jon can still teach her.', def: 1, cap: 1,
+  { key: 'memory_rule', label: 'Write a memory', what: 'Her own notebook. At 0 she stops learning on her own; Jon can still teach her.', ...ACTION_LIMITS.memory_rule,
     wiredAt: ['lib/eve/core.ts remember', 'lib/eve/slack-watch.ts facts', 'lib/eve/run.ts auto-capture'] },
 ]
 export const ACTION_KEYS = ACTIONS.map(a => a.key)
 
-// TWO TIERS OF YES (Eve audit 2026-10-10). Sixty asks a week went to ONE approver and 65% of them
-// expired — "draft a reply to a guest who has waited 9h", "make the Breezeway task for this glitch".
-// None of those is money, a door code, a cancellation or a write to Guesty; they are the desk's own
-// work, which the desk can say yes to. DESK actions can be approved by anyone on the team with a
-// Lighthouse login (the people in #vr-customercareteam); OWNER actions stay with the approver list.
-// Jon's rule (2026-09-10): "anyone can ask if they need something, only approvals are PTE and door
-// codes… Money is not something Eve should ever share." Settings → Eve → Agent mode → deskApprovals.
-export const DESK_ACTIONS = new Set<ActionType>(['task_note', 'task_create', 'task_assign', 'guest_reply_draft', 'guest_reply_send', 'guest_notice_send'])
-export type Tier = 'desk' | 'owner'
-export function tierOf(action: ActionType | string, payload?: any): Tier {
-  if (!DESK_ACTIONS.has(action as ActionType)) return 'owner'
-  // Money attached, or anything that reads as a cancellation/refund, is the owner's whatever the verb.
-  if (payload && (Number(payload.usd) > 0 || /refund|cancel|discount|comp\b|credit/i.test(String(payload.summary || '')))) return 'owner'
-  return 'desk'
-}
+// TWO TIERS OF YES — DESK_ACTIONS, tierOf and mayApprove are in ./agent-rules (re-exported above).
 
 export const RUNG_MEANING: Record<Rung, string> = {
   0: 'Observe — she notes it and does nothing.',
@@ -183,6 +178,11 @@ export const PILOT_DEFAULT: AgentSettings['pilot'] = { name: 'Pilot One', enable
 export const PILOT_ALLOWED: ActionType[] = ['task_note', 'task_create', 'guest_notice_send', 'slack_post', 'email_draft', 'guest_reply_draft']
 export const PILOT_TWO_DEFAULT: AgentSettings['pilotTwo'] = { name: 'Pilot Two', mode: 'off', buildings: ['Rustic'], assignTasks: true, assignCleans: false }
 
+// aiUsdPerDay IS A CEILING ON HER OWN TASKS, NOT A SEPARATE ALLOWANCE (2026-11-10). Every AI call in the
+// app stops at the app-wide daily cap first (Settings → AI models, lib/ai-budget — $9 by default), so a
+// 15 here could never be reached. The number that is enforced is the smaller of the two (aiCapToday →
+// ./agent-rules effectiveAiCap): past it she stops acting on her own and proposes instead. To make this
+// field bite on its own, set it BELOW the app-wide daily total; 0 switches it off.
 const DEFAULT_BUDGETS = { asksPerDay: 6, actionsPerDay: 40, aiUsdPerDay: 15, moneyCeilingUsd: 0 }
 const DEFAULT_QUIET = { start: '22:00', end: '07:00', tz: 'America/New_York' }
 
@@ -190,12 +190,6 @@ export function defaultRungs(): Record<ActionType, Rung> {
   const out: any = {}
   for (const a of ACTIONS) out[a.key] = a.def
   return out
-}
-
-function clampRung(v: any, cap: Rung): Rung {
-  const n = Math.round(Number(v))
-  if (!Number.isFinite(n)) return 0
-  return Math.max(0, Math.min(cap, n)) as Rung
 }
 
 /** Normalise whatever is stored into a complete, clamped settings object. */
@@ -282,17 +276,64 @@ export async function saveAgentSettings(patch: any, by: string): Promise<{ ok: b
 
 // ---- Counters (per ET day) -----------------------------------------------------------------------
 
-export type AgentCounters = { date: string; actions: number; asks: number; byAction: Record<string, number> }
+// AgentCounters is defined in ./agent-rules (re-exported above).
 
-async function readCounters(): Promise<AgentCounters> {
+/** Today's counters with the row's own stamp — what a compare-and-swap write is conditional on. */
+async function readCountersRow(): Promise<{ c: AgentCounters; stamp: string | null; exists: boolean; failed: boolean }> {
   const today = todayET()
   try {
-    const { data } = await supabaseAdmin().from('app_settings').select('value').eq('key', AGENT_COUNTERS_KEY).limit(1)
-    const raw = Array.isArray(data) && data[0] ? (data[0] as any).value : null
-    const c = typeof raw === 'string' ? JSON.parse(raw) : raw
-    if (c && c.date === today) return { date: today, actions: Number(c.actions) || 0, asks: Number(c.asks) || 0, byAction: c.byAction && typeof c.byAction === 'object' ? c.byAction : {} }
-  } catch { /* fresh day */ }
-  return { date: today, actions: 0, asks: 0, byAction: {} }
+    const { data, error } = await supabaseAdmin().from('app_settings').select('value,updated_at').eq('key', AGENT_COUNTERS_KEY).limit(1)
+    if (error) return { c: countersFor(null, today), stamp: null, exists: false, failed: true }
+    const row = Array.isArray(data) && data[0] ? (data[0] as any) : null
+    return { c: countersFor(row ? row.value : null, today), stamp: row && row.updated_at ? String(row.updated_at) : null, exists: !!row, failed: false }
+  } catch { return { c: countersFor(null, today), stamp: null, exists: false, failed: true } }
+}
+async function readCounters(): Promise<AgentCounters> {
+  return (await readCountersRow()).c   // unreadable → a fresh day, as before
+}
+
+/**
+ * ONE MORE ACTION OR ASK, WITHOUT LOSING SOMEBODY ELSE'S (2026-11-10). The counters are one JSON row in
+ * app_settings, and the old write was read → add one → upsert: two crons finishing in the same second
+ * both read 39, both wrote 40, and one action was never counted — so the daily caps under-counted
+ * exactly when things were busiest, and a read that failed wrote the day back to zero.
+ *
+ * Now the write is a compare-and-swap on the row's own updated_at: it lands only if the row is still
+ * the one that was read, and otherwise re-reads and tries again (six attempts, a short random pause
+ * between). The stamp written is always later than the one read, so a write can never be mistaken
+ * for the row it replaced. No migration: app_settings already carries updated_at. A read that fails
+ * skips the attempt rather than writing zeros, and if every attempt loses, the count is skipped —
+ * never overwritten.
+ *
+ * WHAT THIS DOES NOT DO: the cap is still CHECKED (agentAllowed) before the action and COUNTED after
+ * it, so two crons that both read 39-of-40 at the same moment can both act. The overshoot is now at
+ * most one per concurrent runner; it used to grow with every lost write.
+ */
+async function countAtomically(action: ActionType, countAs: 'action' | 'ask', by: string): Promise<boolean> {
+  const db = supabaseAdmin()
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const cur = await readCountersRow()
+      if (!cur.failed) {
+        const next = bumpCounters(cur.c, action, countAs)
+        const prevMs = cur.stamp ? Date.parse(cur.stamp) : NaN
+        const nowMs = Date.now()
+        const stamp = new Date(Number.isFinite(prevMs) && nowMs <= prevMs ? prevMs + 1 : nowMs).toISOString()
+        const row = { value: JSON.stringify(next), updated_by: by || null, updated_at: stamp }
+        if (!cur.exists) {
+          // No row yet today-or-ever: the primary key makes the insert the swap — a second inserter fails and retries as an update.
+          const { error } = await db.from('app_settings').insert({ key: AGENT_COUNTERS_KEY, ...row })
+          if (!error) return true
+        } else {
+          const base = db.from('app_settings').update(row).eq('key', AGENT_COUNTERS_KEY)
+          const { data, error } = await (cur.stamp ? base.eq('updated_at', cur.stamp) : base.is('updated_at', null)).select('key')
+          if (!error && Array.isArray(data) && data.length > 0) return true
+        }
+      }
+    } catch { /* try again */ }
+    await new Promise(res => setTimeout(res, 20 + Math.floor(Math.random() * 60) * (attempt + 1)))
+  }
+  return false
 }
 
 /**
@@ -302,8 +343,22 @@ async function readCounters(): Promise<AgentCounters> {
  * expectations desk and the Slack reader, so "over today's AI budget → no draft" never tripped on the
  * watches' own spend. The sentiment scan is its own job, Jon's call, and is not metered here.
  */
+// 2026-11-10: the watch's drafts and the Monday expectations run bill under their scheduled twins now
+// ('guest-reply-auto', 'expectations-auto' — lib/ai-budget-rules AUTO_TWIN), so both keys are listed and
+// the meter reads what it read before. (Not metered here, as before: 'eve-fast' and the investigator.)
 export const EVE_AI_TASKS = ['eve', 'eve-review', 'quality-audit', 'eve-vision', 'eve-brain', 'eve-correction', 'learn', 'slack-watch',
-  'memory-recall', 'probe-writer', 'probe-judge', 'guest-reply', 'review-reply', 'translate', 'expectations', 'ops-focus']
+  'memory-recall', 'probe-writer', 'probe-judge', 'guest-reply', 'guest-reply-auto', 'review-reply', 'translate', 'expectations', 'expectations-auto', 'ops-focus']
+
+/**
+ * The AI-spend cap that applies to her today: the agent's own "AI spend, $" or the app-wide daily
+ * total (Settings → AI models), whichever is smaller — see ./agent-rules effectiveAiCap. 0 = none.
+ * If the app-wide budget cannot be read, her own number stands.
+ */
+export async function aiCapToday(s: AgentSettings): Promise<number> {
+  let app: { on: boolean; totalUsd: number } | null = null
+  try { const { spendNow } = await import('@/lib/ai-budget'); const b = (await spendNow()).budget; app = { on: !!b.on, totalUsd: Number(b.totalUsd) } } catch { app = null }
+  return effectiveAiCap(s.budgets.aiUsdPerDay, app)
+}
 
 /** Dollars Eve's own tasks have spent today (ET), from the ai_usage ledger. */
 export async function aiSpendToday(): Promise<number> {
@@ -323,58 +378,9 @@ export async function aiSpendToday(): Promise<number> {
   } catch { return 0 }
 }
 
-/** Minutes east of UTC for a zone (default America/New_York) at a given instant (negative = west). */
-function etOffsetMinutes(d: Date, zone = 'America/New_York'): number {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(d)
-    const tz = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT-5'
-    const m = tz.match(/GMT([+-]\d{1,2})(?::(\d{2}))?/)
-    if (!m) return -300
-    const h = Number(m[1]); const mm = Number(m[2] || 0)
-    return h * 60 + (h < 0 ? -mm : mm)
-  } catch { return -300 }
-}
-
-// ---- Quiet hours ---------------------------------------------------------------------------------
-
-export function inQuietHours(s: AgentSettings, now = new Date()): boolean {
-  try {
-    const hm = new Intl.DateTimeFormat('en-GB', { timeZone: s.quietHours.tz || 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(now)
-    const cur = toMin(hm), a = toMin(s.quietHours.start), b = toMin(s.quietHours.end)
-    if (a === b) return false
-    return a < b ? (cur >= a && cur < b) : (cur >= a || cur < b)   // wraps midnight
-  } catch { return false }
-}
-function toMin(hhmm: string): number { const [h, m] = String(hhmm).split(':').map(Number); return ((h || 0) % 24) * 60 + (m || 0) }
-
-/**
- * The next instant quiet hours end, as an ISO string. Inside quiet hours this is the coming `end`
- * (today or tomorrow in the zone, whichever is next); outside them it is `now`, so a deferral made
- * by mistake flushes on the next pass rather than waiting a day.
- */
-export function quietHoursEnd(s: AgentSettings, now = new Date()): string {
-  try {
-    if (!inQuietHours(s, now)) return now.toISOString()
-    const tz = s.quietHours.tz || 'America/New_York'
-    const f = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
-    const parts: Record<string, string> = {}
-    for (const p of f.formatToParts(now)) parts[p.type] = p.value
-    const cur = toMin(`${parts.hour}:${parts.minute}`), end = toMin(s.quietHours.end)
-    // Local wall-clock of the end, today; if that has already passed today, tomorrow.
-    let local = new Date(`${parts.year}-${parts.month}-${parts.day}T${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}:00`)
-    if (cur >= end) local = new Date(local.getTime() + 86400_000)
-    const instant = new Date(local.getTime() - etOffsetMinutes(local, tz) * 60_000)
-    return instant.toISOString()
-  } catch { return new Date(now.getTime() + 60 * 60_000).toISOString() }
-}
+// etOffsetMinutes, inQuietHours and quietHoursEnd are in ./agent-rules (re-exported above).
 
 // ---- The decision --------------------------------------------------------------------------------
-
-export function modeOf(rung: Rung): Mode {
-  return rung >= 3 ? 'act' : rung === 2 ? 'propose' : rung === 1 ? 'draft' : 'observe'
-}
-const RANK: Record<Mode, number> = { observe: 0, draft: 1, propose: 2, deferred: 3, act: 3 }
-function lower(a: Mode, b: Mode): Mode { return RANK[a] <= RANK[b] ? a : b }
 
 export type AgentVerdict = {
   /** true only when the caller may DO the thing right now. */
@@ -434,51 +440,34 @@ export function unitOfProposal(p: { exec?: any; subject?: string | null; summary
  */
 export async function agentAllowed(action: ActionType, opts: { usd?: number; now?: Date; ask?: boolean; urgent?: boolean; unit?: string | null } = {}): Promise<AgentVerdict> {
   const s = await getAgentSettings()
-  const def = ACTIONS.find(a => a.key === action)
-  let rung = clampRung(s.rungs[action] ?? (def ? def.def : 0), def ? def.cap : 2)
+  const cap = ACTION_LIMITS[action] ? ACTION_LIMITS[action].cap : 2
   const why: string[] = []
   // PILOT ONE: inside a pilot building, a listed action acts. The cap still holds (a welded action
   // cannot be piloted past propose) and everything below — budgets, quiet hours — still applies.
   const pcfg = pilotFor(s, action)
   const pilotB = opts.unit !== undefined ? pilotBuildingOf(s, opts.unit, action) : null
-  const eligible = !!(pcfg && pilotB && pcfg.acts.includes(action) && (def ? def.cap : 2) >= 4)
+  const eligible = !!(pcfg && pilotB && pcfg.acts.includes(action) && cap >= 4)
   const pilot = eligible && pcfg!.mode === 'live' ? pcfg!.name : null
   const sandbox = eligible && pcfg!.mode === 'sandbox' ? `${pcfg!.name} sandbox (${pilotB})` : null
-  if (pilot) { rung = 4; why.push(`${pilot} (${pilotB}): act`) }
-  let mode = modeOf(rung)
-  const internal = rung <= 1 && def && def.cap <= 1   // recommendation / memory: never leave the app
 
-  if (!s.enabled && !internal) {
-    // OFF: nothing leaves the app. Drafts still get written, so the work is not lost — just parked.
-    mode = lower(mode, 'draft'); why.push('agent mode is OFF')
-  }
-  const usd = Number(opts.usd)
-  if (Number.isFinite(usd) && usd > 0 && mode === 'act' && usd > s.budgets.moneyCeilingUsd) {
-    mode = 'propose'; why.push(`$${usd.toFixed(2)} is over the $${s.budgets.moneyCeilingUsd} ceiling`)
-  }
-
-  if (mode === 'act' || mode === 'propose') {
-    const c = await readCounters()
-    if (mode === 'act' && c.actions >= s.budgets.actionsPerDay) { mode = 'propose'; why.push(`today's ${s.budgets.actionsPerDay} actions are spent`) }
-    if (mode === 'act' && s.budgets.aiUsdPerDay > 0) {
-      const spend = await aiSpendToday()
-      if (spend >= s.budgets.aiUsdPerDay) { mode = 'propose'; why.push(`AI spend $${spend} is over today's $${s.budgets.aiUsdPerDay}`) }
+  // THE DECISION IS FOUR PURE STEPS (./agent-rules, tested there): the rung and the OFF switch, the
+  // money ceiling, the day's budgets, quiet hours. This function only fetches what each step needs —
+  // the counters when the answer could still be act or propose, the AI ledger when it is still act.
+  const start = gateStart({ action, storedRung: s.rungs[action], enabled: s.enabled, pilot, pilotBuilding: pilotB }, why)
+  const rung = start.rung
+  let mode = gateMoney(start.mode, { usd: opts.usd, budgets: s.budgets }, why)
+  if (gateNeedsCounters(mode)) {
+    const counters = await readCounters()
+    let aiCapUsd = 0, aiSpendUsd = 0
+    if (gateNeedsSpend(mode, { budgets: s.budgets, counters, aiCapUsd: s.budgets.aiUsdPerDay })) {
+      // HER AI CAP IS THE ONE SHE CAN REACH (2026-11-10): the smaller of her own number and the
+      // app-wide daily total — a 15 here against an app-wide 9 could never trip (aiCapToday).
+      aiCapUsd = await aiCapToday(s)
+      aiSpendUsd = aiCapUsd > 0 ? await aiSpendToday() : 0
     }
-    // THE ASKS BUDGET IS FOR ASKS (2026-09-28 audit, F22). Every cron-originated proposal now passes
-    // ask:true, so a proposal that would ping an approver (or a Telegram message itself) counts
-    // against the daily asks. An act that pings nobody is not charged, so ask:true can never turn the
-    // morning roll-up into a draft just because six questions went out earlier. Decided after the two
-    // downgrades above, so an act they turned into a proposal is counted as the ask it now is.
-    const isAsk = action === 'telegram_ask' || opts.ask === true
-    if (isAsk && (mode === 'propose' || action === 'telegram_ask') && c.asks >= s.budgets.asksPerDay) { mode = lower(mode, 'draft'); why.push(`today's ${s.budgets.asksPerDay} asks are spent`) }
+    mode = gateBudgets(mode, { action, ask: opts.ask, budgets: s.budgets, counters, aiCapUsd, aiSpendUsd }, why)
   }
-
-  // QUIET HOURS: an act is held, not turned into a proposal nobody is told about. A Telegram ask
-  // is a message to a person, so at rung 2 (where it sends) it is held as well — hold until
-  // morning, never propose-to-nobody at 3am. Decided last so the budgets above still apply.
-  if (!opts.urgent && inQuietHours(s, opts.now) && (mode === 'act' || (action === 'telegram_ask' && mode === 'propose'))) {
-    mode = 'deferred'; why.push(`quiet hours ${s.quietHours.start}–${s.quietHours.end} ${s.quietHours.tz}: held until ${s.quietHours.end}`)
-  }
+  mode = gateQuiet(mode, { action, urgent: opts.urgent, quiet: !opts.urgent && inQuietHours(s, opts.now), quietHours: s.quietHours }, why)
 
   const reason = why.length ? why.join('; ') : (mode === 'act' ? `rung ${rung}: act` : `rung ${rung}: ${mode}`)
   return { ok: mode === 'act', rung, mode, reason, needsApproval: mode === 'propose', enabled: s.enabled, settings: s, urgent: !!opts.urgent, pilot, sandbox, asked: !!opts.ask, unitChecked: opts.unit !== undefined }
@@ -535,13 +524,7 @@ export async function logAgent(e: AgentLogEntry): Promise<string | null> {
 export async function recordAgentAction(action: ActionType, meta: Omit<AgentLogEntry, 'action'> & { countAs?: 'action' | 'ask' | 'none' }): Promise<string | null> {
   const countAs = meta.countAs || (meta.mode === 'act' ? 'action' : (action === 'telegram_ask' || meta.mode === 'propose') ? 'ask' : 'none')
   if (countAs !== 'none') {
-    try {
-      const c = await readCounters()
-      if (countAs === 'action') c.actions++
-      else c.asks++
-      c.byAction[action] = (c.byAction[action] || 0) + 1
-      await setSetting(AGENT_COUNTERS_KEY, c, meta.by)
-    } catch { /* counters are advisory */ }
+    try { await countAtomically(action, countAs, meta.by) } catch { /* the action already happened; the log row below still records it */ }
   }
   return logAgent({ action, ...meta })
 }
@@ -931,12 +914,7 @@ export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; f
  * when it succeeds, logged with its undo, and turned into a graded recommendation row.
  * `deferred` stores the exec to run later, so `p.exec` must be complete enough for runExec.
  */
-/** The next instant the 7am–8pm ET posting window is open (now, when it already is). */
-export function nextPostWindowOpen(now = new Date()): string {
-  const t0 = Math.ceil(now.getTime() / 300_000) * 300_000
-  for (let i = 0; i <= 14 * 12; i++) { const t = new Date(t0 + i * 300_000); if (inPostWindow(t)) return t.toISOString() }
-  return new Date(now.getTime() + 11 * 3600_000).toISOString()
-}
+// nextPostWindowOpen (the next instant the 7am–8pm ET posting window is open) is in ./agent-rules (re-exported above).
 
 export type StepResult = { mode: Mode; ok: boolean; ref?: string | null; error?: string; done?: string; logId?: string | null; undo?: any }
 
@@ -1117,12 +1095,14 @@ export async function executeProposal(id: string, by: string): Promise<{ ok: boo
   // THE APPROVER LIST APPROVES (audit 2026-10-05). Settings → Eve → Agent mode names the approvers, and
   // until now that list only chose who was notified — any admin could execute from the panel. With
   // a list set, only those people (and the owner) may; an empty list keeps the old rule.
-  const byEmail = String(by || '').toLowerCase().trim()
-  const approvers = (s.approvers || []).map((x: any) => String(x).toLowerCase().trim()).filter(Boolean)
   // A desk-tier ask (a task, a guest draft or send, no money) takes a yes from any team member with a
   // Lighthouse login — `by` is always a resolved login here (a session, or a Slack account matched to one).
-  const deskYes = s.deskApprovals && tierOf(action, row.payload) === 'desk' && /@/.test(byEmail)
-  if (approvers.length && !isSuperadmin(byEmail) && approvers.indexOf(byEmail) < 0 && !deskYes) return { ok: false, error: `only an approver can carry this out (${approvers.map(a => a.split('@')[0]).join(', ')})` }
+  // The rule itself is ./agent-rules mayApprove — the one the Slack drafts list applies too.
+  const byEmail = String(by || '').toLowerCase().trim()
+  if (!mayApprove(s, action, row.payload, byEmail, isSuperadmin(byEmail))) {
+    const approvers = (s.approvers || []).map((x: any) => String(x).toLowerCase().trim()).filter(Boolean)
+    return { ok: false, error: `only an approver can carry this out (${approvers.map(a => a.split('@')[0]).join(', ')})` }
+  }
 
   const nowISO = new Date().toISOString()
   // CLAIM FIRST (2026-09-28 audit, F20). A Telegram "yes" and a panel Approve a second apart both

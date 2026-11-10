@@ -33,7 +33,7 @@ import 'server-only'
 import { rollupBuilding } from '@/lib/optimize-score'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, lc, DEAD_LISTING, pageRows } from './ctx'
+import { clampLimit, lc, DEAD_LISTING, pageRows, resolveListing } from './ctx'
 import { lookAtUnit, visionCoverage } from './vision'
 
 const cap = (rows: any[], lim: number) => ({ rows: rows.slice(0, lim), truncated: rows.length > lim })
@@ -42,8 +42,14 @@ const has = (v: any, q: any) => lc(v).includes(lc(q))
 /** One listing by name or id, with the raw blob. Every tool here starts the same way. */
 async function oneListing(ctx: any, input: any) {
   let q = ctx.db.from('guesty_listings').select('id,nickname,title,status,building,address_full,address_city,amenities,pictures,raw')
-  if (input?.id) q = q.eq('id', input.id)
-  else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
+  // THE SCORED RESOLVER FIRST (2026-11-10). This took the first listing, in id order, whose name
+  // CONTAINED the text — a retired unit, or 1205 in the wrong building — and read out its house
+  // rules as the answer. A tie between live units now throws AmbiguousUnit (registry.runTool turns
+  // it into "which one?"); a name only a listing TITLE carries still falls through to the old match.
+  const hit = input?.id || input?.name ? resolveListing(ctx, { id: input?.id, name: input?.name, building: input?.building }) : null
+  if (hit) q = q.eq('id', hit.id)
+  else if (input?.id) q = q.eq('id', input.id)
+  else if (input?.name) { const nm = String(input.name).replace(/[%,()*"\\]/g, ' ').trim(); q = q.or(`nickname.ilike.%${nm}%,title.ilike.%${nm}%`) }
   else return null
   const { data } = await q.order('id').limit(1)
   return (data || [])[0] || null

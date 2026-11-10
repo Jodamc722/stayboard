@@ -12,6 +12,7 @@ import { EveReviewAdmin } from '@/components/EveReviewAdmin'
 import { EveAgentAdmin } from '@/components/EveAgentAdmin'
 import { EveLearningAdmin } from '@/components/EveLearningAdmin'
 import { EveTeachersAdmin } from '@/components/EveTeachersAdmin'
+import { EveMemoryConfirm } from '@/components/EveMemoryConfirm'
 import { OtaPlaybookAdmin } from '@/components/OtaPlaybookAdmin'
 import { EveThinkingFeed, THOUGHTS_URL } from '@/components/EveThoughts'
 
@@ -95,6 +96,8 @@ export function EveAdmin({ canEdit }: { canEdit: boolean }) {
 function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
   const [rows, setRows] = useState<Memory[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
+  // count(*) of what can reach a prompt; the list below is a page of it (the API stops at 400 rows).
+  const [live, setLive] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [filter, setFilter] = useState('')
@@ -115,6 +118,7 @@ function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
       else setErr('')
       setRows(d.memories || [])
       setCounts(d.counts || {})
+      setLive(typeof d.live === 'number' ? d.live : null)
     } catch (e: any) { setErr(e?.message || String(e)) } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -143,9 +147,11 @@ function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
       {/* MEMORY CLEAN-UP FIRST (2026-11-10): it sat below the questions, folded shut, and rendered
           nothing at all until its audit had loaded — the owner could not find it. */}
       <EveMemoryCleanup canEdit={canEdit} onChanged={load} />
+      {/* CONFIRM WHAT SHE LEARNED (2026-11-10): what she overheard or concluded and nobody has checked. */}
+      <EveMemoryConfirm canEdit={canEdit} onChanged={load} />
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search her memory…" className={`${input} max-w-xs`} />
-        <span className="text-xs text-muted">{shown.length} of {rows.length}</span>
+        <span className="text-xs text-muted">{shown.length} of {rows.length}{live != null && live > rows.length ? ` shown · ${live} live in all` : ''}</span>
         {canEdit && (
           // "Learn now" + "Teach her something" would not fit beside the filter box on a phone.
           <div className="ml-auto flex items-center gap-2 flex-wrap gap-y-2">

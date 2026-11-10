@@ -524,16 +524,36 @@ export async function resolveAsk(binding: AskBinding, reply: string, by: string)
   const members = binding.refs && binding.refs.length ? binding.refs : [binding.ref]
   const several = members.length > 1
   let learned = false
+  // ONLY WHAT IS DURABLE BECOMES A RULE (2026-11-10). Any reply over 60 characters used to be filed
+  // word for word as a portfolio rule at weight 8 in Jon's name — "ok I'll have Karla look at it
+  // tomorrow, thanks for flagging" included — and sat at the top of every prompt from then on. The
+  // reply now goes through the same durable-or-not reading a chat correction gets (lib/eve/brain.ts
+  // durableFromReply, one small call): a lasting fact is kept as a rule, in one standalone sentence;
+  // anything else is conversation, and is written on the finding as its note instead. If the reader
+  // is unavailable, nothing is filed as a rule — the reply is still on the finding and on the ask.
   if (ITS_FINE.test(text) || text.length > 60) {
-    const saved = await saveMemory({
-      kind: 'rule',
-      text: `${binding.ref ? '' : ''}${text}`.slice(0, 900),
-      why: `Told to me by ${by} on ${new Date().toISOString().slice(0, 10)} when I flagged: ${binding.ref}.`,
-      scope: 'portfolio', weight: 8, source: 'jon', confidence: 1,
-      created_by: by, evidence: several ? { audit_id: binding.ref, audit_ids: members } : { audit_id: binding.ref },
-    }).catch(() => ({ ok: false } as any))
-    learned = !!saved?.ok
+    let about = String(binding.ref || '')
+    try {
+      const { data } = await db().from('eve_audits').select('title,detail').eq('id', members[0]).maybeSingle()
+      if (data) about = `${String((data as any).title || '')} — ${String((data as any).detail || '')}`.slice(0, 600)
+    } catch { /* the id alone still says what was flagged */ }
+    let verdict: { durable: boolean; rule: string } | null = null
+    try { const { durableFromReply } = await import('./brain'); verdict = await durableFromReply({ about, reply: text }) } catch { verdict = null }
+    if (verdict && verdict.durable) {
+      const saved = await saveMemory({
+        kind: 'rule',
+        text: verdict.rule.slice(0, 900),
+        why: `Told to me by ${by} on ${new Date().toISOString().slice(0, 10)} when I flagged: ${about.slice(0, 200)}. Their words: "${text.slice(0, 200)}"`,
+        scope: 'portfolio', weight: 8, source: 'jon', confidence: 1,
+        created_by: by, evidence: several ? { audit_id: binding.ref, audit_ids: members, reply: text.slice(0, 600) } : { audit_id: binding.ref, reply: text.slice(0, 600) },
+      }).catch(() => ({ ok: false } as any))
+      learned = !!saved?.ok
+    }
   }
+  // The reply itself always stays on the finding, whatever became of it above.
+  try {
+    await db().from('eve_audits').update({ note: `${by.split('@')[0]}, ${new Date().toISOString().slice(0, 10)}: ${text.slice(0, 500)}` }).in('id', members.map(String))
+  } catch { /* the ask row carries the reply too */ }
 
   if (ITS_FINE.test(text)) {
     for (const id of members) await decideAudit(id, 'snooze', by, 30).catch(() => {})

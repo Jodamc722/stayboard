@@ -11,8 +11,12 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import type { EveTool } from './types'
 import { obj, S } from './types'
 import {
-  clampLimit, daysAgoISO, normStar, lc, has, safe, cap, pageRows,
+  clampLimit, clampDays, daysAgoISO, normStar, lc, has, safe, cap, pageRows, num, round2,
+  resolveListing, listingCandidates, toolMeta,
 } from './ctx'
+import { reviewStats } from './reviews'
+import { LIVE_STAY_STATUSES, channelFeeOf, NET_BASIS_NOTE } from '@/lib/basis'
+import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 import { loadMemories, saveMemory, normKind, MEMORY_KINDS } from './memory'
 import { METRICS } from './metrics'
 import { computeTrend, anomalyScan } from './trends'
@@ -94,6 +98,14 @@ function askedFor(action: string, said: string | undefined): boolean {
   return new RegExp(String.raw`\b(?:${verbs}|${GO_AHEAD})\b`, 'i').test(text)
 }
 
+/** The one listing a name or id means, by the scored resolver (throws AmbiguousUnit on a tie); null when the registry has no match. */
+function pickListingId(ctx: any, input: any): string | null {
+  const hit = resolveListing(ctx, { id: input?.id, name: input?.name })
+  return hit ? hit.id : null
+}
+/** A name made safe to sit inside a PostgREST or(…ilike…) filter. */
+const likeSafe = (v: any): string => String(v || '').replace(/[%,()*"\\]/g, ' ').trim()
+
 export const CORE_TOOLS: EveTool[] = [
   // REMINDERS AT A TIME (Jon, 2026-10-01). Core, every domain, every surface. The time is given the
   // way she read it off the clock in her prompt — South Florida wall time — and lib/eve/reminders
@@ -156,9 +168,14 @@ export const CORE_TOOLS: EveTool[] = [
       // has saturated twice. The unit is resolved from ctx.listingMeta, already loaded; only a name
       // that is not in any nickname looks at titles, and then without raw. The cleaning status is one
       // JSON path on one row, below.
-      let ls: any[] = Object.keys(ctx.listingMeta)
-        .filter(id => qId ? id === qId : lc(ctx.listingMeta[id].name).includes(qName))
-        .map(id => ({ id, nickname: ctx.listingMeta[id].name, title: '', status: ctx.listingMeta[id].status, building: ctx.listingMeta[id].building }))
+      // ONE UNIT, OR A QUESTION (2026-11-10). The registry match used to be "the first active unit
+      // whose name contains the text" — and 1205 exists in more than one building. Matches are now
+      // scored (lib/eve/ctx.ts: exact name, whole words, then substring); a tie between live units
+      // throws AmbiguousUnit and comes back as { ambiguous, candidates } instead of an answer about
+      // whichever sorted first.
+      const hit = resolveListing(ctx, { id: qId, name: qId ? '' : qName })
+      let ls: any[] = hit ? [{ id: hit.id, nickname: hit.meta.name, title: '', status: hit.meta.status, building: hit.meta.building }] : []
+      const near = hit && qName ? listingCandidates(ctx, qName).filter(c => c.id !== hit.id).slice(0, 8) : []
       if (!ls.length && !ctx.scopedBuildings) {
         const safeQ = qName.replace(/[%,()]/g, '')
         const q0 = db.from('guesty_listings').select('id,nickname,title,status,building')
@@ -168,8 +185,18 @@ export const CORE_TOOLS: EveTool[] = [
       const matches = ls
       if (!matches.length) return { resolved: false, note: `No listing matches "${input?.id || input?.name}". This is INCONCLUSIVE - ask for the exact unit name, a guest name, or a confirmation code.` }
       const isActive = (l: any) => !/inactive|disabled|archived|deleted|pending/i.test(lc(l.status))
-      const primary: any = matches.filter(isActive)[0] || matches[0]
+      const activeMatches = matches.filter(isActive)
+      if (activeMatches.length > 1) {
+        return {
+          resolved: false, ambiguous: true,
+          question: `Which one? "${input?.name || input?.id}" fits ${activeMatches.length} units.`,
+          candidates: activeMatches.slice(0, 12).map((l: any) => ({ id: l.id, unit: l.nickname || l.title, building: rollupBuilding(l.building, l.nickname || l.title), status: l.status })),
+          note: 'Do NOT pick one yourself. Ask which unit they mean (building AND number), or call again with the id.',
+        }
+      }
+      const primary: any = activeMatches[0] || matches[0]
       const others = matches.filter((l: any) => String(l.id) !== String(primary.id)).map((l: any) => ({ id: l.id, name: l.nickname || l.title, status: l.status }))
+        .concat(near.map(c => ({ id: c.id, name: c.name, status: c.status })))
       const { data: rv } = await db.from('guesty_reservations').select('guest_name,listing_id,check_in,check_out,status,nights,source').eq('listing_id', primary.id).order('check_out', { ascending: false }).limit(60)
       const live = (rv || []).filter((r: any) => !/cancel|declin|inquir/i.test(lc(r.status)))
       const today = ctx.today
@@ -196,7 +223,7 @@ export const CORE_TOOLS: EveTool[] = [
       if (inHouse) { occupancy = 'OCCUPIED — guest in-house'; note = `${inHouse.guest_name || 'Guest'}: ${String(inHouse.check_in).slice(0, 10)} -> ${String(inHouse.check_out).slice(0, 10)}.` }
       else if (dirty || recentCheckout) { occupancy = 'NOT clearly vacant — recently occupied'; note = `No in-house reservation, but ${[dirty ? 'cleaningStatus is DIRTY' : '', recentCheckout ? `last checkout ${String(lastOut.check_out).slice(0, 10)}` : ''].filter(Boolean).join(' and ')}. Do NOT call this vacant — confirm first.` }
       else if (live.length === 0) { occupancy = 'no reservation on file for this listing'; note = `No reservation scoped to listing ${primary.id}. This is INCONCLUSIVE, not a confirmed vacancy. Verify with guesty_live or ask for a guest name / confirmation code before saying vacant.` }
-      else { occupancy = 'likely vacant'; note = `No in-house reservation, clean status ${cleaningStatus || 'unknown'}, no recent checkout, ${openWork || 0} open field tasks.` }
+      else { occupancy = 'likely vacant'; note = `No in-house reservation, clean status ${cleaningStatus || 'unknown'}, no recent checkout, ${openWork || 0} open field requests across the building (${bld}).` }
       return {
         resolved: true,
         listing: { id: primary.id, name: primary.nickname || primary.title, status: primary.status, building: bld, active: isActive(primary) },
@@ -204,25 +231,28 @@ export const CORE_TOOLS: EveTool[] = [
         inHouse: inHouse ? { guest: inHouse.guest_name, check_in: String(inHouse.check_in).slice(0, 10), check_out: String(inHouse.check_out).slice(0, 10) } : null,
         nextArrival: upcoming ? { guest: upcoming.guest_name, check_in: String(upcoming.check_in).slice(0, 10) } : null,
         lastCheckout: lastOut ? String(lastOut.check_out).slice(0, 10) : null,
-        cleaningStatus, openFieldWork: openWork || 0, note,
+        cleaningStatus, openFieldWork: openWork || 0,
+        openFieldWork_scope: `the whole building (${bld}), not this unit alone — use unit_work_history or unit_360 for the unit's own open work`,
+        note,
+        _meta: toolMeta({ source: 'guesty_reservations + live Guesty cleaning status', window: 'now', n: live.length }),
       }
     },
   },
 
   {
     name: 'search_reservations',
-    description: 'Search reservations. type: "checkin"|"checkout"|"inhouse"|"range". For range use from/to (YYYY-MM-DD on check_in). Filter by building, status, or scope to ONE unit with id (listing id) or name. Returns guest, listing, nights, money_total, dates.',
+    description: 'Search reservations. type: "checkin"|"checkout"|"inhouse"|"range". For range use from/to (YYYY-MM-DD on check_in). Filter by building, status, or scope to ONE unit with id (listing id) or name. Returns guest, listing, nights, dates, money_total (what the guest was charged in all, cleaning and taxes included) AND net_accommodation (the one revenue basis: accommodation after the channel fee), whether the row counts as a real stay (confirmed / checked in / checked out) and whether it is an owner or friends-and-family stay. `total_rows` is how many match in all; `totals` adds up ONLY the rows returned — for revenue over a period use kpi or unit_360, never a sum of these rows when truncated is true.',
     input_schema: obj({ type: S.str, date: S.str, from: S.str, to: S.str, building: S.str, status: S.str, id: S.str, name: S.str, limit: S.num }),
     money: true,
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 30, 100)
-      let q = ctx.db.from('guesty_reservations').select('guest_name,listing_id,listing_name,nights,money_total,status,source,check_in,check_out')
       // FILTER, THEN LIMIT (Jon, 2026-09-23 review). The building / unit filter used to run in JS
       // on the first `lim` rows of the WHOLE portfolio, ordered by listing name — so "check-ins at
       // Botanica today" returned whatever Botanica rows happened to sort into the first 30, and
       // said truncated:false. The scope now goes into the query as listing ids, the limit applies
       // to what is left, and truncation is measured with one extra row.
-      if (input?.id) q = q.eq('listing_id', String(input.id))
+      let scopeIdsList: string[] | null = null
+      if (input?.id) scopeIdsList = [String(input.id)]
       else if (input?.name || input?.building) {
         let ids: Set<string> | null = null
         if (input?.building) {
@@ -237,67 +267,124 @@ export const CORE_TOOLS: EveTool[] = [
           ids = new Set(ids ? byName.filter(x => ids!.has(x)) : byName)
         }
         if (!ids || !ids.size) return { count: 0, truncated: false, scopedToListing: input?.name || null, reservations: [], note: `No listing matches "${input?.name || input?.building}". That is not the same as no reservations — check the unit or building name.` }
-        q = q.in('listing_id', Array.from(ids))
+        scopeIdsList = Array.from(ids)
+        // A NAME THAT IS EXACTLY ONE UNIT MEANS THAT UNIT (2026-11-10): "Eden 120" also sits inside
+        // "Eden 1205" and "Eden 1201"; when one live unit matches the whole name, the search is that unit.
+        if (input?.name) {
+          const exact = listingCandidates(ctx, String(input.name), input?.building).filter(c => c.live && c.score >= 95)
+          if (exact.length === 1) scopeIdsList = [exact[0].id]
+        }
       }
+      // Which units the search actually covers, so a name that spread across several is visible.
+      const matchedUnits = scopeIdsList && !input?.id ? scopeIdsList.map(x => ctx.nameOf(x)) : null
+      const matchedBuildings = scopeIdsList && !input?.id ? Array.from(new Set(scopeIdsList.map(x => ctx.buildingOf(x)))) : []
       const t = lc(input?.type)
-      if (t === 'checkin') q = q.eq('check_in', input?.date || ctx.today).order('listing_name')
-      else if (t === 'checkout') q = q.eq('check_out', input?.date || ctx.today).order('listing_name')
-      else if (t === 'inhouse') q = q.lte('check_in', ctx.today).gt('check_out', ctx.today).order('listing_name')
-      else {
-        if (input?.from) q = q.gte('check_in', input.from)
-        if (input?.to) q = q.lte('check_in', input.to)
-        q = q.order('check_in')
+      // ONE REVENUE BASIS (2026-11-10). money_total is the guest's whole bill; the number the revenue
+      // pages quote is accommodation after the channel fee (lib/basis.ts). Both are returned, labelled,
+      // read as JSON-path scalars (rule 1) — and if those paths cannot be read the plain row still is.
+      const SLIM = 'guest_name,listing_id,listing_name,nights,money_total,status,source,check_in,check_out'
+      const FULL = SLIM + ',fare:raw->money->>fareAccommodationAdjusted,fee:raw->money->>hostServiceFee,fee_inc:raw->money->>hostServiceFeeIncTax,tags:raw->tags'
+      const build = (cols: string) => {
+        let q = ctx.db.from('guesty_reservations').select(cols, { count: 'exact' })
+        if (scopeIdsList) q = scopeIdsList.length === 1 ? q.eq('listing_id', scopeIdsList[0]) : q.in('listing_id', scopeIdsList)
+        if (t === 'checkin') q = q.eq('check_in', input?.date || ctx.today).order('listing_name')
+        else if (t === 'checkout') q = q.eq('check_out', input?.date || ctx.today).order('listing_name')
+        else if (t === 'inhouse') q = q.lte('check_in', ctx.today).gt('check_out', ctx.today).order('listing_name')
+        else {
+          if (input?.from) q = q.gte('check_in', input.from)
+          if (input?.to) q = q.lte('check_in', input.to)
+          q = q.order('check_in')
+        }
+        if (input?.status) q = q.ilike('status', `%${input.status}%`)
+        // A cancelled, declined or inquiry-only booking is not an arrival and not a guest in the unit
+        // (Jon, 2026-09-23 review) — same exclusion unit_status uses. Only when no status was asked for.
+        else if (t === 'checkin' || t === 'inhouse') q = q.or('status.is.null,and(status.not.ilike.*cancel*,status.not.ilike.*declin*,status.not.ilike.*inquir*)')
+        return q.limit(lim + 1)
       }
-      if (input?.status) q = q.ilike('status', `%${input.status}%`)
-      // A cancelled, declined or inquiry-only booking is not an arrival and not a guest in the unit
-      // (Jon, 2026-09-23 review) — same exclusion unit_status uses. Only when no status was asked for.
-      else if (t === 'checkin' || t === 'inhouse') q = q.or('status.is.null,and(status.not.ilike.*cancel*,status.not.ilike.*declin*,status.not.ilike.*inquir*)')
-      const { data } = await q.limit(lim + 1)
-      let rows = (data || [])
-      const truncated = rows.length > lim
-      rows = rows.slice(0, lim)
-      return { count: rows.length, truncated, scopedToListing: input?.id || input?.name || null, reservations: rows }
+      let res: any = await build(FULL)
+      let hasBasis = true
+      if (res?.error) { res = await build(SLIM); hasBasis = false }
+      const all: any[] = (res?.data as any[]) || []
+      const truncated = all.length > lim
+      const totalRows: number | null = typeof res?.count === 'number' ? res.count : null
+      const isLive = (st: any) => LIVE_STAY_STATUSES.indexOf(lc(st)) >= 0
+      let guestStays = 0, guestNights = 0, netSum = 0, ownerStays = 0
+      const rows = all.slice(0, lim).map((r: any) => {
+        const tagBlob = Array.isArray(r.tags) ? r.tags.map((x: any) => String(x)).join(' ') : ''
+        const ownerish = isOwnerOrFriendsFamily(String(r.source || ''), tagBlob, String(r.guest_name || ''))
+        const live = isLive(r.status)
+        const net = hasBasis && r.fare != null && r.fare !== '' ? round2(Math.max(0, num(r.fare) - channelFeeOf(num(r.fee_inc), num(r.fee)))) : null
+        if (live && ownerish) ownerStays++
+        if (live && !ownerish) { guestStays++; guestNights += num(r.nights); netSum += net || 0 }
+        return {
+          guest_name: r.guest_name, listing_id: r.listing_id, listing_name: r.listing_name, nights: r.nights,
+          money_total: r.money_total, net_accommodation: net, status: r.status, source: r.source,
+          check_in: r.check_in, check_out: r.check_out,
+          counts_as_stay: live, stay_kind: ownerish ? 'owner_or_friends_family' : 'guest',
+        }
+      })
+      return {
+        count: rows.length, total_rows: totalRows, truncated, scopedToListing: input?.id || input?.name || null,
+        matched_units: matchedUnits && matchedUnits.length > 1 && matchedUnits.length <= 12 ? matchedUnits : (matchedUnits && matchedUnits.length > 12 ? `${matchedUnits.length} units` : undefined),
+        note: input?.name && !input?.building && matchedBuildings.length > 1 ? `"${input.name}" matched units in ${matchedBuildings.length} buildings (${matchedBuildings.slice(0, 6).join(', ')}) and these rows mix them. If one unit was meant, ask which building, or call again with its id.` : undefined,
+        reservations: rows,
+        totals: {
+          covers: truncated ? `ONLY the ${rows.length} rows returned of ${totalRows ?? 'more'} — not the period` : 'every matching row',
+          guest_stays: guestStays, guest_nights: guestNights, net_accommodation_usd: hasBasis ? Math.round(netSum) : null,
+          owner_or_friends_family_stays: ownerStays,
+        },
+        basis: `${NET_BASIS_NOTE}. Real stays = ${LIVE_STAY_STATUSES.join(' / ')}; owner and friends-and-family stays are inventory, not guest demand, and are left out of the guest totals. money_total is the guest's whole bill (cleaning and taxes in), not revenue.`,
+        _meta: toolMeta({ source: 'guesty_reservations', window: t === 'range' || !t ? `${input?.from || 'any'} → ${input?.to || 'any'} (check-in)` : `${t} ${input?.date || ctx.today}`, n: rows.length, truncated, basis: 'net accommodation after channel fee' }),
+      }
     },
   },
 
   {
     name: 'review_summary',
-    description: 'Aggregate review score for a BUILDING, a unit (name/id), or the whole portfolio (no args = portfolio). Returns avg_rating on a 5-STAR scale (Airbnb and Vrbo /5; Booking normalized from /10), review_count, star distribution, unanswered count, and the lowest-rated units. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.',
-    input_schema: obj({ building: S.str, name: S.str, id: S.str }),
+    description: 'THE review score, the way a guest sees it: for a BUILDING, one unit (name/id), or the whole portfolio (no args). Counts ACTIVE units only and, per channel, only reviews left on the channel listing that is live NOW (recreated Airbnb listings start over) — `older_listing_reviews_left_out` says how many were set aside. Returns avg_rating on a 5-STAR scale (Booking normalized from /10), by_channel (Airbnb / Vrbo / Booking.com… each with its own average and count — quote these when asked how a channel is doing), sub_scores when the channel sent them (cleanliness, check-in, accuracy, communication, location, value), star distribution, unanswered count and the lowest-rated units. Pass days (e.g. 30, 90) for a recent window — it then also returns the window before it for comparison; no days = all time. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.',
+    input_schema: obj({ building: S.str, name: S.str, id: S.str, days: S.num }),
     run: async (input, ctx) => {
-      // PAGED. This is the tool whose own description says "ALWAYS use this for any average review
-      // score question" — and `.limit(10000)` was returning 1,000 of 3,762 reviews, so every
-      // portfolio and building rating she has ever quoted came from the first 27% by id. See
-      // lib/db-page.ts.
-      const { rows: revRows, truncated: revTruncated } = await pageRows((a, b) =>
-        ctx.db.from('guesty_reviews').select('id,listing_id,rating,has_reply,excluded_from_score').order('id').range(a, b), 20)
-      let rows = revRows.filter((r: any) => ctx.reviewable(r.listing_id))
-      if (input?.building) rows = rows.filter((r: any) => has(ctx.buildingOf(r.listing_id), input.building))
-      if (input?.id) rows = rows.filter((r: any) => String(r.listing_id) === String(input.id))
-      else if (input?.name) rows = rows.filter((r: any) => has(ctx.nameOf(r.listing_id), input.name))
-      const scored = rows.filter((r: any) => r.excluded_from_score !== true)
-      const vals = scored.map((r: any) => normStar(r.rating)).filter((v: any): v is number => v != null)
-      const dist: Record<string, number> = { '5': 0, '4': 0, '3': 0, '2': 0, '1': 0 }
-      vals.forEach(v => { const bk = Math.max(1, Math.min(5, Math.round(v))); dist[String(bk)]++ })
-      const byUnit: Record<string, { name: string; count: number; sum: number; rated: number }> = {}
-      rows.forEach((r: any) => {
-        const k = String(r.listing_id)
-        if (!byUnit[k]) byUnit[k] = { name: ctx.nameOf(r.listing_id), count: 0, sum: 0, rated: 0 }
-        byUnit[k].count++
-        if (r.excluded_from_score !== true) { const v = normStar(r.rating); if (v != null) { byUnit[k].rated++; byUnit[k].sum += v } }
-      })
-      const units = Object.keys(byUnit).map(k => byUnit[k])
-        .map(u => ({ name: u.name, reviews: u.count, avg: u.rated ? Math.round((u.sum / u.rated) * 100) / 100 : null }))
-        .sort((a, b) => (a.avg ?? 9) - (b.avg ?? 9))
+      let ids: string[] | null = null
+      let scope = 'whole portfolio (active units)'
+      if (input?.id || input?.name) {
+        let unit: { id: string; meta: any } | null = null
+        try { unit = resolveListing(ctx, { id: input?.id, name: input?.name, building: input?.building }) }
+        catch (e: any) {
+          // A name that fits many units AND names a building ("Eden") is a building question, as before.
+          const asBuilding = input?.name ? ctx.idsForBuilding(String(input.name)) : []
+          if (!asBuilding.length) throw e
+          ids = asBuilding; scope = `building: ${input.name}`
+        }
+        if (!ids) {
+          if (!unit) return { error: `No unit matches "${input?.name || input?.id}".`, note: 'That is not the same as "no reviews" — check the unit name, or use resolve.' }
+          ids = [unit.id]; scope = `unit: ${unit.meta.name}`
+        }
+      } else if (input?.building) {
+        ids = ctx.idsForBuilding(String(input.building))
+        if (!ids.length) return { error: `No building matches "${input.building}".`, note: 'That is not the same as "no reviews" — check the building name, or use resolve.' }
+        scope = `building: ${input.building}`
+      }
+      const days = input?.days ? clampDays(input.days, 90, 1500) : null
+      const st = await reviewStats(ctx, { ids, days, withPrior: !!days })
       return {
-        scope: input?.building ? `building: ${input.building}` : (input?.name ? `unit: ${input.name}` : (input?.id ? `unit id: ${input.id}` : 'whole portfolio')),
+        scope,
+        window: st.window,
         rating_scale: '/5 (Airbnb and Vrbo /5; Booking normalized from /10)',
-        truncated: revTruncated || undefined,
-        review_count: rows.length, rated_count: vals.length,
-        avg_rating: vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 100) / 100 : null,
-        distribution_by_star: dist,
-        unanswered: rows.filter((r: any) => !r.has_reply).length,
-        units_covered: units.length, lowest_units: units.slice(0, 8),
+        truncated: st.truncated || undefined,
+        review_count: st.review_count, rated_count: st.rated_count,
+        avg_rating: st.avg_rating,
+        prior_window: st.prior || undefined,
+        by_channel: st.by_channel,
+        sub_scores: st.sub_scores.length ? st.sub_scores : undefined,
+        distribution_by_star: st.distribution_by_star,
+        unanswered: st.unanswered,
+        older_listing_reviews_left_out: st.older_listing_left_out,
+        avg_if_older_listings_were_counted: st.avg_including_older_listings ?? undefined,
+        current_listing_check: st.current_listing_check === 'checked' ? undefined : 'UNAVAILABLE — the channel listing ids could not be read, so reviews from replaced listings may be included. Say so.',
+        units_covered: st.units.length,
+        lowest_units: st.units.slice(0, 8).map(u => ({ name: u.name, reviews: u.reviews, avg: u.avg })),
+        basis: 'Active units only (live, not Waves). Reviews marked excluded-from-score are left out. Each channel counts only reviews on the channel listing that is live now; a review whose listing cannot be identified is kept.',
+        _meta: toolMeta({ source: 'guesty_reviews', window: st.window, n: st.rated_count, truncated: st.truncated, basis: 'active units · current channel listing' }),
       }
     },
   },
@@ -364,14 +451,47 @@ export const CORE_TOOLS: EveTool[] = [
     money: true,
     run: async (input, ctx) => {
       const lim = clampLimit(input?.limit, 30, 80)
-      let q = ctx.db.from('eve_memory').select('id,kind,text,why,scope,weight,source,use_count,created_at').is('superseded_by', null).order('weight', { ascending: false }).order('updated_at', { ascending: false }).limit(lim)
-      if (input?.kind) q = q.eq('kind', normKind(input.kind))
-      if (input?.scope) q = q.eq('scope', String(input.scope))
-      const { data, error } = await q
-      if (error) return { error: 'Memory not set up yet — migration 045 has not been run.' }
-      let rows = (data || [])
-      if (input?.query) rows = rows.filter((r: any) => has(String(r.text) + ' ' + String(r.why || '') + ' ' + String(r.scope), input.query))
-      return { count: rows.length, memories: rows }
+      // SEARCH, THEN LIMIT (2026-11-10). The query text used to be applied in JS to the top `lim`
+      // rows by weight, so a memory that was not among the heaviest thirty could not be found by
+      // searching for it. The text now goes into the query two ways and the results are merged:
+      // full-text on the memory itself (word forms: "cleans" finds "cleaning") and a plain
+      // contains-match on text / why / scope (fragments: "Botan", "1205") — the old reach, kept.
+      const cols = 'id,kind,text,why,scope,weight,source,use_count,created_at'
+      const base = () => {
+        let q = ctx.db.from('eve_memory').select(cols).is('superseded_by', null)
+        if (input?.kind) q = q.eq('kind', normKind(input.kind))
+        if (input?.scope) q = q.eq('scope', String(input.scope))
+        return q
+      }
+      const ordered = (q: any) => q.order('weight', { ascending: false }).order('updated_at', { ascending: false }).limit(lim + 1)
+      const query = String(input?.query || '').trim()
+      if (!query) {
+        const { data, error } = await ordered(base())
+        if (error) return { error: 'Memory not set up yet — migration 045 has not been run.' }
+        const rows = ((data as any[]) || [])
+        return { count: Math.min(rows.length, lim), truncated: rows.length > lim, memories: rows.slice(0, lim) }
+      }
+      const like = query.replace(/[%_,()*"\\]/g, ' ').replace(/\s+/g, ' ').trim()
+      const [fts, sub] = await Promise.all([
+        safe(ordered(base().textSearch('text', query, { type: 'websearch', config: 'english' })) as any, { data: null, error: { message: 'full-text search failed' } } as any),
+        like
+          ? safe(ordered(base().or(`text.ilike.%${like}%,why.ilike.%${like}%,scope.ilike.%${like}%`)) as any, { data: null, error: { message: 'contains search failed' } } as any)
+          : Promise.resolve({ data: [], error: null } as any),
+      ])
+      if (fts?.error && sub?.error) return { error: 'Memory search is not available right now (or migration 045 has not been run).' }
+      const seen: Record<string, true> = {}
+      const merged: any[] = []
+      for (const r of ((sub?.data as any[]) || []).concat((fts?.data as any[]) || [])) {
+        const k = String(r?.id || '')
+        if (!k || seen[k]) continue
+        seen[k] = true
+        merged.push(r)
+      }
+      merged.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0))
+      return {
+        count: Math.min(merged.length, lim), truncated: merged.length > lim, memories: merged.slice(0, lim),
+        searched: fts?.error ? 'contains-match only (full-text was unavailable)' : sub?.error ? 'full-text only' : 'full-text + contains-match, before the limit',
+      }
     },
   },
 
@@ -485,13 +605,13 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'trend',
-    description: 'IS THIS NUMBER ACTUALLY UNUSUAL? Compares a metric over a recent window against the SAME scope\'s own history and returns a z-score, so you can say "2.1 sigma below its own 90-day norm" instead of "looks lower". Params: metric (required), scope ("portfolio" or "building:<Name>"), days (window, default 7), baselineDays (default 90). ALWAYS use this before calling something a problem or a win — a number without a baseline is not evidence. If it reports a caveat about thin history, SAY SO rather than quoting the z-score as fact.',
+    description: 'IS THIS NUMBER ACTUALLY UNUSUAL? Compares a metric over a recent window against the SAME scope\'s own history and returns a z-score, so you can say "2.1 sigma below its own 90-day norm" instead of "looks lower". Params: metric (required), scope ("portfolio" or "building:<Name>"), days (window, default 7), baselineDays (default 90). ALWAYS use this before calling something a problem or a win — a number without a baseline is not evidence. If it reports a caveat about thin history, SAY SO rather than quoting the z-score as fact. FOR MONEY use the measures on the one revenue basis — net_revenue, net_adr, net_revpar, guest_nights, occupancy_dated, guest_bookings_made, guest_cancel_rate; the older revenue / adr / revpar / occupancy keys are LEGACY (gross with cleaning, today\'s unit count) and exist only so history stays comparable. Every result carries `basis` (what is counted) and `windows` (the dates) — say both.',
     input_schema: obj({ metric: S.str, scope: S.str, days: S.num, baselineDays: S.num }, ['metric']),
     money: true,
     run: async (input) => {
       const t: any = await computeTrend({ metric: String(input?.metric || ''), scope: input?.scope ? String(input.scope) : 'portfolio', days: input?.days, baselineDays: input?.baselineDays })
-      if (t?.error) return { error: t.error, available_metrics: METRICS.map((m: any) => ({ key: m.key, label: m.label, backfillable: m.backfillable })) }
-      return t
+      if (t?.error) return { error: t.error, available_metrics: METRICS.map((m: any) => ({ key: m.key, label: m.label, backfillable: m.backfillable, legacy: m.legacy ? `use ${m.useInstead}` : undefined })) }
+      return { ...t, _meta: toolMeta({ source: 'eve_metrics (nightly snapshots)', window: t?.windows?.current || null, n: t?.currentDays ?? null, truncated: false, basis: t?.basis || null }) }
     },
   },
 
@@ -544,7 +664,10 @@ export const CORE_TOOLS: EveTool[] = [
     description: 'Sweep EVERY metric across every building and return only what is genuinely off its own normal range. Use this for "what should I be worried about", "anything unusual", or to open a morning brief. Params: days (window, default 7), sigma (threshold, default 2), scope (optional, to scan one building). Returning nothing is a real answer — say "nothing is out of range" rather than hunting for something to report.',
     input_schema: obj({ days: S.num, sigma: S.num, scope: S.str }),
     money: true,
-    run: async (input) => anomalyScan({ days: input?.days, sigma: input?.sigma, scope: input?.scope ? String(input.scope) : undefined }),
+    run: async (input) => {
+      const r = await anomalyScan({ days: input?.days, sigma: input?.sigma, scope: input?.scope ? String(input.scope) : undefined })
+      return { ...r, _meta: toolMeta({ source: 'eve_metrics (nightly snapshots)', window: r.window ? `${r.window.current} vs baseline ${r.window.baseline}` : null, n: r.scanned, truncated: /partial/.test(String(r.note || '')) }) }
+    },
   },
 
   {
@@ -863,20 +986,38 @@ export const RELOCATED = {
     input_schema: obj({ answered: S.str, days: S.num, min_rating: S.num, max_rating: S.num, building: S.str, limit: S.num }),
     run: async (input: any, ctx: any) => {
       const lim = clampLimit(input?.limit, 25, 60)
-      let q = ctx.db.from('guesty_reviews').select('listing_id,rating,content,channel,guest_name,created_at,has_reply').eq('excluded_from_score', false).order('created_at', { ascending: false }).limit(lim)
+      // FILTER, THEN LIMIT (2026-11-10). The building used to be filtered in JS on the newest `lim`
+      // reviews of the whole portfolio — "low reviews at Eden" returned whichever Eden reviews
+      // happened to be among the last 25 anywhere. The building now goes into the query as listing
+      // ids, and `total_rows` is how many match in all.
+      let ids: string[] | null = null
+      if (input?.building) {
+        ids = (ctx.idsForBuilding(String(input.building)) as string[]).filter((id: string) => ctx.reviewable(id))
+        if (!ids.length) return { count: 0, total_rows: 0, truncated: false, reviews: [], note: `No active units match the building "${input.building}". That is not the same as no reviews — check the name.` }
+      }
+      let q = ctx.db.from('guesty_reviews').select('listing_id,rating,content,channel,guest_name,created_at,has_reply', { count: 'exact' }).eq('excluded_from_score', false)
+      if (ids) q = q.in('listing_id', ids)
       if (input?.answered === 'unanswered') q = q.eq('has_reply', false)
       if (input?.answered === 'answered') q = q.eq('has_reply', true)
       if (input?.days) q = q.gte('created_at', daysAgoISO(Number(input.days)))
       if (input?.min_rating != null) q = q.gte('rating', Number(input.min_rating))
       if (input?.max_rating != null) q = q.lte('rating', Number(input.max_rating))
-      const { data } = await q
-      let rows = (data || []).filter((r: any) => ctx.reviewable(r.listing_id)).map((r: any) => ({
+      // Without a building, rows from retired or Waves units are dropped after the read, so a few
+      // spare rows are fetched to keep the page full.
+      const { data, count } = await q.order('created_at', { ascending: false }).limit(ids ? lim : lim + 15)
+      const fetched = ((data as any[]) || [])
+      const rows = fetched.filter((r: any) => ctx.reviewable(r.listing_id)).slice(0, lim).map((r: any) => ({
         property: ctx.nameOf(r.listing_id), building: ctx.buildingOf(r.listing_id),
         rating: normStar(r.rating), rating_scale: '/5', channel: r.channel, guest: r.guest_name,
         answered: !!r.has_reply, date: String(r.created_at).slice(0, 10), text: String(r.content || '').slice(0, 280),
       }))
-      if (input?.building) rows = rows.filter((x: any) => has(x.building, input.building))
-      return { count: rows.length, truncated: cap(rows, lim).truncated, reviews: rows }
+      const total = typeof count === 'number' ? count : null
+      const truncated = total != null ? total > rows.length : fetched.length >= lim
+      return {
+        count: rows.length, total_rows: total, truncated, reviews: rows,
+        note: truncated ? `Showing the newest ${rows.length} of ${total ?? 'more'} matching reviews — say the list is partial. min_rating / max_rating are on the stored rating (Booking is stored halved, so /5 everywhere).` : undefined,
+        _meta: toolMeta({ source: 'guesty_reviews', window: input?.days ? `last ${Number(input.days)} days` : 'all time, newest first', n: rows.length, truncated }),
+      }
     },
   } as EveTool,
 
@@ -901,8 +1042,12 @@ export const RELOCATED = {
     input_schema: obj({ name: S.str, id: S.str }),
     run: async (input: any, ctx: any) => {
       let q = ctx.db.from('guesty_listings').select('id,nickname,title,status,building,bedrooms,bathrooms,max_occupancy,address_full,address_city,address_state,amenities,pictures,raw,last_optimized')
-      if (input?.id) q = q.eq('id', input.id)
-      else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
+      // The scored resolver first (a tie comes back as "which one?"); a name only a TITLE carries
+      // still falls through to the old contains-match.
+      const picked = pickListingId(ctx, input)
+      if (picked) q = q.eq('id', picked)
+      else if (input?.id) q = q.eq('id', input.id)
+      else if (input?.name) q = q.or(`nickname.ilike.%${likeSafe(input.name)}%,title.ilike.%${likeSafe(input.name)}%`)
       const { data } = await q.order('id').limit(1)
       const l: any = (data || [])[0]
       if (!l) return { error: 'listing not found' }
@@ -928,8 +1073,10 @@ export const RELOCATED = {
     input_schema: obj({ name: S.str, id: S.str }),
     run: async (input: any, ctx: any) => {
       let q = ctx.db.from('guesty_listings').select('id,nickname,title,building,address_full,address_city,raw')
-      if (input?.id) q = q.eq('id', input.id)
-      else if (input?.name) q = q.or(`nickname.ilike.%${input.name}%,title.ilike.%${input.name}%`)
+      const picked = pickListingId(ctx, input)
+      if (picked) q = q.eq('id', picked)
+      else if (input?.id) q = q.eq('id', input.id)
+      else if (input?.name) q = q.or(`nickname.ilike.%${likeSafe(input.name)}%,title.ilike.%${likeSafe(input.name)}%`)
       const { data } = await q.order('id').limit(1)
       const l: any = (data || [])[0]
       if (!l) return { error: 'listing not found' }
@@ -1023,13 +1170,21 @@ export const RELOCATED = {
     money: true,
     run: async (input: any, ctx: any) => {
       const lim = clampLimit(input?.limit, 50, 100)
-      let q = ctx.db.from('field_requests').select('title,type,priority,building,unit,status,due_at,vendor,amount_usd,assignee_email,approval_required,approval_status,created_at')
+      let q = ctx.db.from('field_requests').select('title,type,priority,building,unit,status,due_at,vendor,amount_usd,assignee_email,approval_required,approval_status,created_at', { count: 'exact' })
       if (input?.status) q = q.eq('status', input.status); else q = q.in('status', ['open', 'in_progress'])
       if (input?.approval_only) q = q.eq('approval_required', true)
-      const { data } = await q.order('due_at', { ascending: true, nullsFirst: false }).limit(lim)
-      let rows = (data || [])
-      if (input?.building) rows = rows.filter((r: any) => has(r.building, input.building))
-      return { count: rows.length, truncated: cap(rows, lim).truncated, field_work: rows }
+      // The building goes into the query (2026-11-10) — it used to be applied to the first `lim`
+      // rows of every building, which hid a building's requests behind everyone else's.
+      if (input?.building) q = q.ilike('building', `%${likeSafe(input.building)}%`)
+      const { data, count } = await q.order('due_at', { ascending: true, nullsFirst: false }).limit(lim)
+      const rows = ((data as any[]) || [])
+      const total = typeof count === 'number' ? count : null
+      const truncated = total != null ? total > rows.length : rows.length >= lim
+      return {
+        count: rows.length, total_rows: total, truncated, field_work: rows,
+        note: 'These are Lighthouse field requests (the approval queue), NOT Breezeway tasks — for cleans, inspections and maintenance jobs use search_tasks / task_stats.',
+        _meta: toolMeta({ source: 'field_requests', window: input?.status ? `status ${input.status}` : 'open + in progress, soonest due first', n: rows.length, truncated }),
+      }
     },
   } as EveTool,
 }

@@ -198,15 +198,101 @@ export function scopeIds(ctx: EveCtx): string[] | null {
   return ctx.scopedBuildings ? Object.keys(ctx.listingMeta) : null
 }
 
-/** Resolve a unit from a name or id to exactly one listing, the way unit_status does. */
+// ONE UNIT, OR A QUESTION — NEVER THE FIRST SUBSTRING HIT (Eve reorganisation, 2026-11-10).
+//
+// resolveListing used to take the first listing whose name CONTAINED the text. "1205" exists in more
+// than one building (lib/eve/investigate.ts records the day that sent a report to the wrong unit), so
+// a tool could answer, confidently, about a different unit from the one asked about. Now every match
+// is scored — exact name, then whole-word match, then substring — and the best LIVE match wins only
+// when it is alone at the top. A tie throws AmbiguousUnit, which registry.runTool turns into
+// { ambiguous: true, candidates, question: "Which one?" } for whichever tool was running.
+export type ListingCandidate = { id: string; name: string; building: string; status: string; live: boolean; score: number }
+
+export class AmbiguousUnit extends Error {
+  query: string
+  candidates: ListingCandidate[]
+  constructor(query: string, candidates: ListingCandidate[]) {
+    super(`"${query}" matches ${candidates.length} units`)
+    this.name = 'AmbiguousUnit'
+    this.query = query
+    this.candidates = candidates
+  }
+}
+
+const unitTokens = (s: string): string[] => lc(s).split(/[^a-z0-9]+/).filter(Boolean)
+const unitSquash = (s: string): string => lc(s).replace(/[^a-z0-9]+/g, '')
+
+/** Every listing a piece of text could mean, best first. 100 exact · 95 same letters and digits · 80 every word present · 60 substring · 40 every word as a fragment. */
+export function listingCandidates(ctx: EveCtx, text: any, building?: any): ListingCandidate[] {
+  const q = lc(text).trim()
+  if (!q) return []
+  const qTok = unitTokens(q)
+  const qSq = unitSquash(q)
+  const b = lc(building).trim()
+  const out: ListingCandidate[] = []
+  for (const id of Object.keys(ctx.listingMeta)) {
+    const m = ctx.listingMeta[id]
+    const n = lc(m.name).trim()
+    if (!n) continue
+    if (b && !lc(m.rollup).includes(b) && !lc(m.building).includes(b) && !n.includes(b)) continue
+    const nTok = unitTokens(n)
+    let score = 0
+    if (n === q) score = 100
+    else if (qSq && unitSquash(n) === qSq) score = 95
+    else if (qTok.length && qTok.every(t => nTok.indexOf(t) >= 0)) score = 80
+    else if (n.includes(q)) score = 60
+    else if (qTok.length && qTok.every(t => n.includes(t))) score = 40
+    if (!score) continue
+    out.push({ id, name: m.name, building: m.rollup, status: m.status, live: !DEAD_LISTING.test(m.status), score })
+  }
+  return out.sort((x, y) => (y.score - x.score) || (Number(y.live) - Number(x.live)) || x.name.localeCompare(y.name))
+}
+
+/**
+ * Resolve a unit from a name or id to exactly one listing. Returns null when nothing matches (or no
+ * unit was asked for) and THROWS AmbiguousUnit when more than one live unit matches equally well.
+ * An optional `building` in the input narrows the candidates when it leaves any.
+ */
 export function resolveListing(ctx: EveCtx, input: any): { id: string; meta: ListingMeta } | null {
   const id = String(input?.id || '').trim()
   if (id && ctx.listingMeta[id]) return { id, meta: ctx.listingMeta[id] }
-  const ids = ctx.idsForName(String(input?.name || ''))
-  if (!ids.length) return null
-  const live = ids.filter(x => !DEAD_LISTING.test(ctx.listingMeta[x].status))
-  const pick = live[0] || ids[0]
-  return { id: pick, meta: ctx.listingMeta[pick] }
+  const name = String(input?.name || '').trim()
+  if (!name) return null
+  let cands = listingCandidates(ctx, name, input?.building)
+  if (!cands.length && input?.building) cands = listingCandidates(ctx, name)
+  if (!cands.length) return null
+  const live = cands.filter(c => c.live)
+  const pool = live.length ? live : cands
+  const top = pool[0].score
+  const best = pool.filter(c => c.score === top)
+  if (best.length > 1) throw new AmbiguousUnit(name, best.slice(0, 12))
+  return { id: best[0].id, meta: ctx.listingMeta[best[0].id] }
+}
+
+/** What a tool returns when a unit name fits more than one unit: the candidates, and the question. */
+export function ambiguousUnitResult(e: AmbiguousUnit): any {
+  const blds = Array.from(new Set(e.candidates.map(c => c.building)))
+  const wholeBuilding = blds.length === 1 && lc(blds[0]).includes(lc(e.query).trim())
+    ? ` "${e.query}" also names the building ${blds[0]} — if the whole building was meant, pass it as building (or use building_360), not as a unit.`
+    : ''
+  return {
+    ambiguous: true,
+    question: `Which one? "${e.query}" fits ${e.candidates.length} units.`,
+    candidates: e.candidates.map(c => ({ id: c.id, unit: c.name, building: c.building, status: c.status })),
+    note: 'Do NOT pick one yourself. If the conversation or the channel already says which building, call again with the full unit name (building AND number) or the id; otherwise ask the person which one they mean, listing these.' + wholeBuilding,
+  }
+}
+
+/**
+ * The standard evidence block every newer tool returns as `_meta`, so an answer can say where a number
+ * came from, over what window, and as of when (lib/eve/evidence.ts collects them for the chat).
+ */
+export function toolMeta(m: { source: string; window?: string | null; n?: number | null; truncated?: boolean; basis?: string | null; note?: string | null }): any {
+  const as_of = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET'
+  const out: any = { source: m.source, window: m.window || null, as_of, n: m.n == null ? null : m.n, truncated: !!m.truncated }
+  if (m.basis) out.basis = m.basis
+  if (m.note) out.note = m.note
+  return out
 }
 
 /** Chunked .in() — PostgREST chokes on very long id lists, and 232 listings is already long. */

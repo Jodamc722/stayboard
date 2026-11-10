@@ -38,7 +38,18 @@ import { getOperatingModel, weDo, describeBuilding } from './operating-model'
 import { todayET, shiftDay, normStar, lc, DEAD_LISTING } from './ctx'
 import { beliefStrength, beliefTag } from './beliefs'
 
-export type DossierKind = 'building' | 'unit' | 'person'
+// KNOWLEDGE CARDS v1 (2026-11-10). The 30-day file says how a place is running; it cannot say what
+// keeps breaking there. Every building and unit file now also carries a TWELVE-MONTH section
+// (`year`): guest issues by category with the median days to close and how many came back within 90
+// days, maintenance tasks by system with the repeat fixes, preventive maintenance that is overdue,
+// what inspections keep missing, refunds, and the top recurring failures. Two new kinds are built
+// from the same reads: `vendor` (the jobs a vendor was put on from the glitch board and how fast
+// they closed) and `owner` (an owner's units taken together). Same table, same ids, no migration.
+// CAPS, so the nightly job stays inside its time: 12 months of glitches and of maintenance tasks are
+// read newest first, at most 8,000 rows each; inspections 4,000; units get a file when they are
+// active this month (60) or among the 40 with the most repeat failures this year; 30 vendors with
+// 3+ jobs; 80 owners. A read that hits its cap says so in the run receipt (yearTruncated).
+export type DossierKind = 'building' | 'unit' | 'person' | 'owner' | 'vendor'
 export type Dossier = {
   v: 1
   kind: DossierKind
@@ -50,6 +61,8 @@ export type Dossier = {
   changes: string[]
   summary: string | null
   beliefs: string[]
+  /** The twelve-month section, one sentence per line. Absent on files written before 2026-11-10. */
+  year?: string[]
 }
 
 export const dossierId = (kind: DossierKind, key: string) => `dossier:${kind}:${key}`
@@ -119,6 +132,67 @@ type Pulled = {
   truncated: boolean
 }
 
+// ── The twelve-month reads ────────────────────────────────────────────────────────────────────────
+
+const YEAR_DAYS = 365
+const REPEAT_DAYS = 90
+/** Which system a maintenance task is about, from its name. 'other' is never counted as a repeat. */
+export function systemOf(name: any): string {
+  const s = String(name || '')
+  if (/\b(a\/?c|hvac|air\s*cond\w*|thermostat|mini\s*-?\s*split|filters?|coils?|condensate|compressor)\b/i.test(s)) return 'AC'
+  if (/water\s*heater|hot\s*water/i.test(s)) return 'hot water'
+  if (/plumb|leak|toilet|faucet|drain|clog|shower|sink|pipe|disposal/i.test(s)) return 'plumbing'
+  if (/electric|outlet|breaker|\blights?\b|bulb|\bswitch|\bpower\b/i.test(s)) return 'electrical'
+  if (/washer|dryer|dishwasher|fridge|refrigerator|\boven\b|stove|microwave|applian|ice\s*maker/i.test(s)) return 'appliance'
+  if (/\block|\bdoor|\bkeys?\b|access|keypad|garage|\bgate\b/i.test(s)) return 'access'
+  if (/pest|roach|\bants?\b|bed\s*bug|rodent|exterminat/i.test(s)) return 'pests'
+  if (/wi-?fi|internet|router|\btv\b|television|\bremote\b|cable/i.test(s)) return 'wifi/TV'
+  if (/paint|drywall|patch|caulk|blind|curtain|furniture|bed\s*frame|mattress|sofa|couch/i.test(s)) return 'furnishings'
+  return 'other'
+}
+type YearUnit = { glitches: any[]; maint: any[]; pm: any[]; insp: any[] }
+type YearPulled = { byUnit: Record<string, YearUnit>; glitches: any[]; owners: any[]; truncated: boolean }
+
+/** Twelve months of guest issues, maintenance tasks and inspections, plus the PM calendar and the owners. Any table that is missing reads as empty. */
+async function pullYear(today: string): Promise<YearPulled> {
+  const db = supabaseAdmin()
+  const from = shiftDay(today, -YEAR_DAYS)
+  const gq = (cols: string) => pageRows<any>((x, y) => db.from('glitches').select(cols)
+    .gte('created_at', from + 'T04:00:00Z').order('created_at', { ascending: false }).order('id').range(x, y), 8)
+  const [g0, m, pm, insp, own] = await Promise.all([
+    gq('id,listing_id,category,overview,status,created_at,closed_at,refund_recommended,refund_approved_at,vendor_key,vendor_name'),
+    pageRows<any>((x, y) => db.from('breezeway_tasks_sync').select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department')
+      .ilike('type_department', 'maint%').gte('scheduled_date', from).lte('scheduled_date', today)
+      .order('scheduled_date', { ascending: false }).order('id').range(x, y), 8),
+    pageRows<any>((x, y) => db.from('pm_schedule').select('listing_id,cadence_key,last_done,next_due,status,moved')
+      .order('listing_id').order('cadence_key').range(x, y), 4),
+    pageRows<any>((x, y) => db.from('inspection_results').select('task_id,kind,listing_id,scheduled_date,pass_rate,misses')
+      .gte('scheduled_date', from).order('scheduled_date', { ascending: false }).order('task_id').range(x, y), 4),
+    pageRows<any>((x, y) => db.from('guesty_owners').select('id,full_name,listing_ids').order('id').range(x, y), 2),
+  ])
+  // The refund and vendor columns arrived with migrations 085 and 109; without them the first read
+  // fails whole, so ask again for the columns the table has always had.
+  let g = g0
+  if (!g.rows.length && g.truncated) g = await gq('id,listing_id,category,overview,status,created_at,closed_at')
+  const byUnit: Record<string, YearUnit> = {}
+  const U = (id: any): YearUnit => (byUnit[String(id)] = byUnit[String(id)] || { glitches: [], maint: [], pm: [], insp: [] })
+  for (const r of g.rows) if (r.listing_id) U(r.listing_id).glitches.push(r)
+  for (const r of m.rows) if (r.reference_property_id && !/delete|cancel/i.test(String(r.status || ''))) U(r.reference_property_id).maint.push(r)
+  for (const r of pm.rows) if (r.listing_id) U(r.listing_id).pm.push(r)
+  for (const r of insp.rows) if (r.listing_id) U(r.listing_id).insp.push(r)
+  return { byUnit, glitches: g.rows, owners: own.rows, truncated: (g.truncated && g.rows.length > 0) || (m.truncated && m.rows.length > 0) || (insp.truncated && insp.rows.length > 0) }
+}
+
+/** Events that came back: how many follow an earlier event on the same unit and system within REPEAT_DAYS. */
+function repeatCount(events: { unit: string; sys: string; t: number }[]): number {
+  const by: Record<string, number[]> = {}
+  for (const e of events) { if (e.sys === 'other' || !Number.isFinite(e.t)) continue; (by[e.unit + '|' + e.sys] = by[e.unit + '|' + e.sys] || []).push(e.t) }
+  let n = 0
+  for (const ts of Object.values(by)) { ts.sort((a, b) => a - b); for (let i = 1; i < ts.length; i++) if (ts[i] - ts[i - 1] <= REPEAT_DAYS * 864e5) n++ }
+  return n
+}
+const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
+
 async function pull(today: string): Promise<Pulled> {
   const db = supabaseAdmin()
   const from = shiftDay(today, -WINDOW_DAYS), to = shiftDay(today, -1)
@@ -175,7 +249,7 @@ function change(label: string, before: any, now: any, minDelta: number, unit = '
   return `${label} ${a}${unit} → ${b}${unit}`
 }
 
-export type BuildResult = { ok: boolean; buildings: number; units: number; people: number; written: number; summarised: number; truncated: boolean; error?: string }
+export type BuildResult = { ok: boolean; buildings: number; units: number; people: number; written: number; summarised: number; truncated: boolean; error?: string; owners?: number; vendors?: number; yearTruncated?: boolean }
 
 /**
  * The nightly rebuild. `summarise` (default on) asks one model call for a two-sentence read of each
@@ -184,9 +258,84 @@ export type BuildResult = { ok: boolean; buildings: number; units: number; peopl
 export async function buildDossiers(opts: { summarise?: boolean } = {}): Promise<BuildResult> {
   const today = todayET()
   const res: BuildResult = { ok: true, buildings: 0, units: 0, people: 0, written: 0, summarised: 0, truncated: false }
-  const [idx, data, prev, beliefs, model] = await Promise.all([listingIndex(), pull(today), previousDossiers(), beliefsByScope(), getOperatingModel()])
+  const [idx, data, prev, beliefs, model, year] = await Promise.all([
+    listingIndex(), pull(today), previousDossiers(), beliefsByScope(), getOperatingModel(),
+    // The twelve-month section is an addition: if its reads fail, tonight's files are the 30-day ones.
+    pullYear(today).catch((): YearPulled => ({ byUnit: {}, glitches: [], owners: [], truncated: false })),
+  ])
   res.truncated = data.truncated
+  res.yearTruncated = year.truncated
+  res.owners = 0; res.vendors = 0
   const rows: Dossier[] = []
+
+  // ── The twelve-month section for a set of units (a unit, a building, an owner's units). ──
+  const yearOf = (ids: string[]): { lines: string[]; facts: Record<string, any>; repeats: number } | null => {
+    const gl = ids.flatMap(id => year.byUnit[id]?.glitches || [])
+    const mt = ids.flatMap(id => year.byUnit[id]?.maint || [])
+    const pm = ids.flatMap(id => year.byUnit[id]?.pm || [])
+    const ins = ids.flatMap(id => year.byUnit[id]?.insp || [])
+    if (!gl.length && !mt.length && !pm.length && !ins.length) return null
+    const many = ids.length > 1
+    const lines: string[] = []
+    // Guest issues: by category, how long they take to close, how many came back.
+    const gCat: Record<string, number> = {}
+    const closeDays: number[] = []
+    for (const g of gl) {
+      const k = trade(g.category, g.overview); gCat[k] = (gCat[k] || 0) + 1
+      if (g.closed_at) { const d = (Date.parse(String(g.closed_at)) - Date.parse(String(g.created_at))) / 864e5; if (Number.isFinite(d) && d >= 0 && d < 400) closeDays.push(d) }
+    }
+    const gMed = median(closeDays)
+    const gRepeats = repeatCount(gl.map(g => ({ unit: String(g.listing_id), sys: trade(g.category, g.overview), t: Date.parse(String(g.created_at)) })))
+    if (gl.length) lines.push(`12 months: ${gl.length} guest issues (${topN(gCat, 4)})${gMed != null ? `, median ${gMed === 0 ? 'same day' : gMed + (gMed === 1 ? ' day' : ' days')} to close` : ''}${gRepeats ? `; ${gRepeats} came back on the same unit and kind within ${REPEAT_DAYS} days` : ''}.`)
+    // Maintenance tasks: by system, and the fixes that had to be done again.
+    const mSys: Record<string, number> = {}
+    for (const t of mt) { const k = systemOf(t.name); mSys[k] = (mSys[k] || 0) + 1 }
+    const mRepeats = repeatCount(mt.map(t => ({ unit: String(t.reference_property_id), sys: systemOf(t.name), t: Date.parse(String(t.scheduled_date).slice(0, 10) + 'T12:00:00Z') })))
+    if (mt.length) lines.push(`Maintenance tasks, 12 months: ${mt.length} (${topN(mSys, 4)})${mRepeats ? `; ${mRepeats} repeat ${mRepeats === 1 ? 'fix' : 'fixes'} of the same system on the same unit within ${REPEAT_DAYS} days` : ''}.`)
+    // Top recurring failures: a unit and a system that keep meeting, guest issues and tasks together.
+    const pair: Record<string, { unit: string; sys: string; g: number; m: number }> = {}
+    const bump = (unit: string, sys: string, k: 'g' | 'm') => { if (sys === 'other') return; const key = unit + '|' + sys; const p = (pair[key] = pair[key] || { unit, sys, g: 0, m: 0 }); p[k]++ }
+    for (const g of gl) bump(String(g.listing_id), trade(g.category, g.overview), 'g')
+    for (const t of mt) bump(String(t.reference_property_id), systemOf(t.name), 'm')
+    const recurring = Object.values(pair).filter(p => p.g + p.m >= 3).sort((a, b) => (b.g + b.m) - (a.g + a.m)).slice(0, many ? 5 : 3)
+    if (recurring.length) lines.push(`Top recurring failures: ${recurring.map(p => `${many ? (idx[p.unit]?.name || p.unit) + ' ' : ''}${p.sys} ×${p.g + p.m} (${p.g} guest ${p.g === 1 ? 'issue' : 'issues'}, ${p.m} ${p.m === 1 ? 'task' : 'tasks'})`).join('; ')}.`)
+    // Preventive maintenance: what is past due on the PM calendar today.
+    const livePm = pm.filter(r => !/done|cancel/i.test(String(r.status || '')))
+    const overdue = livePm.filter(r => r.next_due && String(r.next_due) < today)
+      .map(r => ({ r, late: Math.round((Date.parse(today + 'T12:00:00Z') - Date.parse(String(r.next_due).slice(0, 10) + 'T12:00:00Z')) / 864e5) }))
+      .sort((a, b) => b.late - a.late)
+    const moved = livePm.reduce((s, r) => s + (Number(r.moved) || 0), 0)
+    if (livePm.length) {
+      lines.push(overdue.length
+        ? `Preventive maintenance: ${overdue.length} of ${livePm.length} cadences overdue — ${overdue.slice(0, 3).map(o => `${many ? (idx[String(o.r.listing_id)]?.name || '') + ' ' : ''}${String(o.r.cadence_key).replace(/[_-]+/g, ' ')} ${o.late}d late`).join('; ')}${moved ? `; pushed forward ${moved} ${moved === 1 ? 'time' : 'times'} in all` : ''}.`
+        : `Preventive maintenance: all ${livePm.length} cadences on time${moved ? ` (pushed forward ${moved} ${moved === 1 ? 'time' : 'times'})` : ''}.`)
+    }
+    // Inspections: what keeps being missed.
+    const missed: Record<string, number> = {}
+    const rates: number[] = []
+    for (const r of ins) {
+      const pr = Number(r.pass_rate); if (r.pass_rate != null && Number.isFinite(pr)) rates.push(pr)
+      for (const x of (Array.isArray(r.misses) ? r.misses : [])) { const k = String(x?.item_en || x?.section || '').replace(/\s+/g, ' ').trim().slice(0, 60); if (k) missed[k] = (missed[k] || 0) + 1 }
+    }
+    const topMiss = Object.entries(missed).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 3)
+    const avgPass = rates.length ? Math.round((rates.reduce((a, b) => a + b, 0) / rates.length) * 100) : null
+    if (ins.length) lines.push(`Inspections, 12 months: ${ins.length}${avgPass != null ? `, average pass rate ${avgPass}%` : ''}${topMiss.length ? `; missed most: ${topMiss.map(([k, n]) => `"${k}" ×${n}`).join(', ')}` : ''}.`)
+    // Refunds decided on the glitch board.
+    const approved = gl.filter(g => g.refund_approved_at)
+    const refundSum = approved.reduce((s, g) => s + (Number(g.refund_recommended) || 0), 0)
+    if (approved.length) lines.push(`Refunds approved, 12 months: ${approved.length}${refundSum > 0 ? ` (${money(refundSum)})` : ''}.`)
+    return {
+      lines: lines.map(l => l.slice(0, 420)),
+      repeats: gRepeats + mRepeats,
+      facts: {
+        glitches12m: gl.length, glitchMedianCloseDays: gMed, glitchRepeats90d: gRepeats,
+        maintenance12m: mt.length, maintenanceRepeats90d: mRepeats, maintenanceBySystem: mSys,
+        recurring: recurring.map(p => ({ unit: idx[p.unit]?.name || p.unit, system: p.sys, guestIssues: p.g, tasks: p.m })),
+        pmCadences: livePm.length, pmOverdue: overdue.length, pmWorstLateDays: overdue[0]?.late ?? 0,
+        inspections12m: ins.length, inspectionPassPct: avgPass, refundsApproved12m: approved.length, refundsApprovedTotal: Math.round(refundSum),
+      },
+    }
+  }
 
   // ── Group everything by listing. ──
   type U = { cleans: any[]; glitches: any[]; open: any[]; reviews: any[]; arrivals: number }
@@ -247,7 +396,8 @@ export async function buildDossiers(opts: { summarise?: boolean } = {}): Promise
       change('average stars', p.avgStars, f.avgStars, 0.2),
     ].filter((x): x is string => !!x)
     const { _lows, ...facts } = f
-    rows.push({ v: 1, kind: 'building', key: b, name: b, at: today, facts: { ...facts, units: ids.length, oursToClean: ours }, lines, changes, summary: prev[id]?.summary || null, beliefs: beliefLines(beliefs['building:' + b], 6) })
+    const y = yearOf(ids)
+    rows.push({ v: 1, kind: 'building', key: b, name: b, at: today, facts: { ...facts, units: ids.length, oursToClean: ours, ...(y ? { year: y.facts } : {}) }, lines, changes, summary: prev[id]?.summary || null, beliefs: beliefLines(beliefs['building:' + b], 6), ...(y ? { year: y.lines } : {}) })
     res.buildings++
   }
 
@@ -257,10 +407,20 @@ export async function buildDossiers(opts: { summarise?: boolean } = {}): Promise
     const lows = u.reviews.filter(r => (normStar(r.rating) ?? 5) < 4).length
     return { id, score: u.glitches.length * 2 + u.open.length * 3 + lows * 3 + late }
   }).filter(x => x.score >= 3).sort((a, b) => b.score - a.score).slice(0, 60)
+  // …and the units that keep breaking, even in a quiet month: the 40 with the most repeat failures
+  // over twelve months get a file too, so "what fails where" does not depend on this month's noise.
+  {
+    const have: Record<string, true> = {}
+    for (const a of active) have[a.id] = true
+    const chronic = Object.keys(year.byUnit).filter(id => idx[id] && !idx[id].dead && !have[id])
+      .map(id => ({ id, score: yearOf([id])?.repeats || 0 })).filter(x => x.score >= 2)
+      .sort((a, b) => b.score - a.score).slice(0, 40)
+    for (const c of chronic) active.push(c)
+  }
   for (const { id } of active) {
     const l = idx[id]
     const f = unitFacts([id])
-    const u = byUnit[id]
+    const u = byUnit[id] || { cleans: [], glitches: [], open: [], reviews: [], arrivals: 0 }
     const ours = weDo(model, l.rollup, 'cleaning')
     const lines = [
       `${l.name}, in ${l.rollup} (${l.market}).`,
@@ -277,8 +437,70 @@ export async function buildDossiers(opts: { summarise?: boolean } = {}): Promise
       ours ? change('before-4pm cleans', p.beforeCheckinPct, f.beforeCheckinPct, 15, '%') : null,
     ].filter((x): x is string => !!x)
     const { _lows, ...facts } = f
-    rows.push({ v: 1, kind: 'unit', key: id, name: l.name, at: today, facts: { ...facts, building: l.rollup, market: l.market }, lines, changes, summary: null, beliefs: beliefLines(beliefs['unit:' + id], 5) })
+    const y = yearOf([id])
+    rows.push({ v: 1, kind: 'unit', key: id, name: l.name, at: today, facts: { ...facts, building: l.rollup, market: l.market, ...(y ? { year: y.facts } : {}) }, lines, changes, summary: null, beliefs: beliefLines(beliefs['unit:' + id], 5), ...(y ? { year: y.lines } : {}) })
     res.units++
+  }
+
+  // ── Vendors: the jobs each was put on from the glitch board in twelve months. Facts, not a ranking:
+  // a slow close can be parts, access or an owner's approval. At most 30, three jobs or more. ──
+  {
+    const byVendor: Record<string, { name: string; jobs: any[] }> = {}
+    for (const g of year.glitches) {
+      const name = String(g.vendor_name || '').replace(/\s+/g, ' ').trim()
+      const key = lc(String(g.vendor_key || name)).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+      if (!key) continue
+      const v = (byVendor[key] = byVendor[key] || { name: name || String(g.vendor_key), jobs: [] })
+      v.jobs.push(g)
+      if (name.length > v.name.length) v.name = name
+    }
+    const list = Object.entries(byVendor).filter(([, v]) => v.jobs.length >= 3).sort((a, b) => b[1].jobs.length - a[1].jobs.length).slice(0, 30)
+    for (const [key, v] of list) {
+      const cats: Record<string, number> = {}, where: Record<string, number> = {}
+      const days: number[] = []
+      for (const g of v.jobs) {
+        const k = trade(g.category, g.overview); cats[k] = (cats[k] || 0) + 1
+        const b = idx[String(g.listing_id)]?.rollup || 'other'; where[b] = (where[b] || 0) + 1
+        if (g.closed_at) { const d = (Date.parse(String(g.closed_at)) - Date.parse(String(g.created_at))) / 864e5; if (Number.isFinite(d) && d >= 0 && d < 400) days.push(d) }
+      }
+      const open = v.jobs.filter(g => !g.closed_at && !/closed|resolved|done|complete/i.test(String(g.status || ''))).length
+      const repeats = repeatCount(v.jobs.map(g => ({ unit: String(g.listing_id), sys: trade(g.category, g.overview), t: Date.parse(String(g.created_at)) })))
+      const med = median(days)
+      const f = { jobs12m: v.jobs.length, closed: days.length, openNow: open, medianCloseDays: med, repeats90d: repeats, kinds: topN(cats, 4), buildings: topN(where, 4) }
+      const lines = [
+        `${v.name}: named on ${f.jobs12m} guest issues in the last 12 months (${f.kinds}).`,
+        `Where: ${f.buildings}.`,
+        `${f.closed} closed${med != null ? `, median ${med === 0 ? 'same day' : med + (med === 1 ? ' day' : ' days')} from report to close` : ''}; ${f.openNow} open now${repeats ? `; ${repeats} came back on the same unit and kind within ${REPEAT_DAYS} days` : ''}. These are the board's records, not a verdict: a slow close can be parts, access or an approval.`,
+      ]
+      const did = dossierId('vendor', key)
+      const pf = prev[did]?.facts || {}
+      const changes = [change('open jobs', pf.openNow, f.openNow, 2), change('median days to close', pf.medianCloseDays, f.medianCloseDays, 2)].filter((x): x is string => !!x)
+      rows.push({ v: 1, kind: 'vendor', key, name: v.name, at: today, facts: f, lines, changes, summary: null, beliefs: [] })
+      res.vendors = (res.vendors || 0) + 1
+    }
+  }
+
+  // ── Owners: an owner's live units taken together (Guesty's owner list). At most 80, most units first. ──
+  {
+    const owners = year.owners.map(o => ({ id: String(o.id), name: String(o.full_name || '').replace(/\s+/g, ' ').trim(), ids: (Array.isArray(o.listing_ids) ? o.listing_ids : []).map((x: any) => String(x)).filter((id: string) => idx[id] && !idx[id].dead) }))
+      .filter(o => o.name && o.ids.length).sort((a, b) => b.ids.length - a.ids.length).slice(0, 80)
+    for (const o of owners) {
+      const f = unitFacts(o.ids)
+      const y = yearOf(o.ids)
+      const where: Record<string, number> = {}
+      for (const id of o.ids as string[]) { const b = idx[id].rollup || 'other'; where[b] = (where[b] || 0) + 1 }
+      const names = (o.ids as string[]).map((id: string) => idx[id].name).filter(Boolean)
+      const lines = [
+        `${o.name}: ${o.ids.length} live ${o.ids.length === 1 ? 'unit' : 'units'} (${topN(where, 4)})${names.length <= 6 ? ': ' + names.join(', ') : ''}.`,
+        `Last ${WINDOW_DAYS} days across them: ${f.glitches} guest issues${f.glitchTrades ? ` (${f.glitchTrades})` : ''}, ${f.openGlitches} open now; ${f.reviews} reviews${f.avgStars != null ? `, average ${f.avgStars}` : ''}${f.lowReviews ? `, ${f.lowReviews} under 4 stars` : ''}; ${f.arrivalsNext7} arrivals in the next 7 days.`,
+      ]
+      const did = dossierId('owner', o.id)
+      const pf = prev[did]?.facts || {}
+      const changes = [change('guest issues (30d)', pf.glitches, f.glitches, 3), change('open issues', pf.openGlitches, f.openGlitches, 2), change('average stars', pf.avgStars, f.avgStars, 0.2)].filter((x): x is string => !!x)
+      const { _lows, ...facts } = f
+      rows.push({ v: 1, kind: 'owner', key: o.id, name: o.name, at: today, facts: { ...facts, units: o.ids.length, unitNames: names.slice(0, 40), ...(y ? { year: y.facts } : {}) }, lines, changes, summary: null, beliefs: [], ...(y ? { year: y.lines } : {}) })
+      res.owners = (res.owners || 0) + 1
+    }
   }
 
   // ── People: whoever did departure cleans in the window. Vendor accounts are not people. ──
@@ -324,7 +546,7 @@ export async function buildDossiers(opts: { summarise?: boolean } = {}): Promise
   if (opts.summarise !== false) {
     try {
       const { brainCall } = await import('./brain')
-      const pack = rows.filter(r => r.kind === 'building').map(r => `## ${r.name}\n${r.lines.join('\n')}${r.changes.length ? `\nChanged since last time: ${r.changes.join('; ')}` : ''}${r.beliefs.length ? `\nWhat I hold about it: ${r.beliefs.join(' | ')}` : ''}`).join('\n\n')
+      const pack = rows.filter(r => r.kind === 'building').map(r => `## ${r.name}\n${r.lines.join('\n')}${r.year && r.year.length ? '\n' + r.year.join('\n') : ''}${r.changes.length ? `\nChanged since last time: ${r.changes.join('; ')}` : ''}${r.beliefs.length ? `\nWhat I hold about it: ${r.beliefs.join(' | ')}` : ''}`).join('\n\n')
       const out = await brainCall(
         `You are Eve, operations lead for a South Florida short-term-rental manager. For each building below, write your read in at most two plain sentences: how it is running and the one thing worth watching, grounded ONLY in the facts given. Say plainly when cleaning or maintenance is the operator's, not ours. No praise words, no filler. Return STRICT JSON: {"reads":{"<building name exactly as given>":"<two sentences>"}}`,
         pack.slice(0, 40_000), 6000)
@@ -342,7 +564,7 @@ export async function buildDossiers(opts: { summarise?: boolean } = {}): Promise
   const now = new Date().toISOString()
   const payload = rows.map(r => ({
     id: dossierId(r.kind, r.key), type: 'dossier',
-    scope: r.kind === 'building' ? 'building:' + r.key : r.kind === 'unit' ? 'unit:' + r.key : 'person:' + r.key,
+    scope: r.kind + ':' + r.key,
     title: `${r.kind}: ${r.name}`.slice(0, 200), content: JSON.stringify(r), evidence_count: 0, updated_at: now,
   }))
   for (let i = 0; i < payload.length; i += 100) {
@@ -395,8 +617,10 @@ export async function readDossiers(ids: string[]): Promise<Dossier[]> {
 
 /** Compact form for the prompt. */
 export function renderDossier(d: Dossier, maxChars = 900): string {
-  const head = `${d.kind === 'person' ? 'PERSON' : d.kind === 'unit' ? 'UNIT' : 'BUILDING'} ${d.name} (as of ${d.at}):`
-  const parts = [head, ...d.lines]
+  const head = `${d.kind === 'person' ? 'PERSON' : d.kind === 'unit' ? 'UNIT' : d.kind === 'owner' ? 'OWNER' : d.kind === 'vendor' ? 'VENDOR' : 'BUILDING'} ${d.name} (as of ${d.at}):`
+  // The twelve-month section rides straight after the 30-day lines, ahead of the read and the
+  // beliefs, so a tight character budget cuts those before it cuts what keeps breaking.
+  const parts = [head, ...d.lines, ...(Array.isArray(d.year) ? d.year : [])]
   if (d.changes.length) parts.push('Changed lately: ' + d.changes.join('; ') + '.')
   if (d.summary) parts.push('Your read: ' + d.summary)
   if (d.beliefs.length) parts.push('You hold: ' + d.beliefs.slice(0, 4).join(' | '))
@@ -411,7 +635,7 @@ export async function findDossier(name: string): Promise<Dossier | { candidates:
   const db = supabaseAdmin()
   try {
     const { rows } = await pageRows<any>((x, y) => db.from('eve_knowledge').select('id,title').eq('type', 'dossier').order('id').range(x, y), 2)
-    const titled = rows.map(r => ({ id: String(r.id), label: lc(String(r.title || '').replace(/^(building|unit|person):\s*/, '')) }))
+    const titled = rows.map(r => ({ id: String(r.id), label: lc(String(r.title || '').replace(/^(building|unit|person|owner|vendor):\s*/, '')) }))
     const exact = titled.filter(t => t.label === q)
     const pick = exact.length ? exact : titled.filter(t => t.label.includes(q) || (q.length >= 4 && q.includes(t.label) && t.label.length >= 4))
     if (pick.length === 1 || exact.length >= 1) return (await readDossiers([pick[0].id]))[0] || null

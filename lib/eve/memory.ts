@@ -91,6 +91,52 @@ export function canonScope(v: any): string {
 }
 
 /**
+ * Buildings named in free text, by the alias patterns in lib/segments (canonBuilding). One- and
+ * two-word runs are tried. Guards against the patterns that are right for a listing name and wrong
+ * for a sentence: a bare number ("906") or a two-letter code ("pt") never names a building here, and
+ * a two-word run counts only when neither word names a building by itself ("park towers", "17 west",
+ * "district 225" — not "elser 906", which the single word already found, and not "906 is").
+ */
+export function buildingsNamedIn(text: string): string[] {
+  const toks = lc(text).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).slice(-3000)
+  const out: Record<string, true> = {}
+  const one: Record<string, string | null> = {}
+  const alone = (t: string): string | null => {
+    if (!(t in one)) one[t] = canonBuilding(t)
+    return one[t]
+  }
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i]
+    if (t.length >= 4 && !/^\d+$/.test(t)) { const b = alone(t); if (b) out[b] = true }
+    const u = toks[i + 1]
+    if (!u || (/^\d+$/.test(t) && /^\d+$/.test(u))) continue
+    if (alone(t) || alone(u)) continue
+    const b2 = canonBuilding(t + ' ' + u)
+    if (b2) out[b2] = true
+  }
+  return Object.keys(out)
+}
+
+/** A row id that can be handed to a uuid column without the query failing. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * UNCONFIRMED (2026-11-10). What she overheard in a Slack room or concluded in her nightly reflection
+ * is a claim nobody has checked. It is marked evidence.status = 'pending' when written; rows learned
+ * that way before the mark existed count as pending too. Pending rows may still be recalled as
+ * RELEVANT (tagged unconfirmed), never as a standing rule, and they wait in Settings → Eve → Memory →
+ * "Confirm what she learned" until a person approves, edits or rejects them.
+ */
+export function isPendingMemory(m: { source?: any; evidence?: any } | null | undefined): boolean {
+  const ev = m?.evidence && typeof m.evidence === 'object' && !Array.isArray(m.evidence) ? m.evidence : null
+  const status = ev ? String(ev.status || '') : ''
+  if (status === 'pending') return true
+  if (status) return false
+  const src = String(m?.source || '')
+  return src === 'slack' || (src === 'eve' && !!ev && ev.from === 'sleep')
+}
+
+/**
  * Which scopes are relevant to this question? Deterministic: we look for known building names and
  * known unit names in the text. No model call, no guessing — a building either appears or it does not.
  */
@@ -100,13 +146,39 @@ export function scopesForText(text: string, listingMeta: Record<string, { name: 
   const buildings: Record<string, true> = {}
   const ids: string[] = []
   const keys = Object.keys(listingMeta)
+  // Rollup labels as they are spelled in the registry, keyed without spaces or punctuation, so an
+  // alias hit ("17 west") lands on the registry's own spelling of that building.
+  const rollupByKey: Record<string, string> = {}
   for (const id of keys) {
     const m = listingMeta[id]
     const b = m.rollup
+    if (b && b !== 'Unassigned') rollupByKey[lc(b).replace(/[^a-z0-9]/g, '')] = b
     if (b && b !== 'Unassigned' && hay.includes(lc(b))) buildings[b] = true
     const n = m.name
     // Unit names are short and collide with ordinary words, so require a reasonably specific match.
     if (n && n.length >= 4 && hay.includes(lc(n))) ids.push(id)
+  }
+  // ALIASES (2026-11-10). The loop above only finds a building whose label appears letter for letter,
+  // so "17 west", "park tower" or "lucenre" brought no building memories in. The same patterns that
+  // file a listing under its building (lib/segments) are run over the words of the question.
+  // ONE scope per building: the registry's spelling when it has that building, else the canonical
+  // label — two spellings of one building would read as two buildings to whoever asks "which one?".
+  for (const label of buildingsNamedIn(hay)) {
+    const spelled = rollupByKey[lc(label).replace(/[^a-z0-9]/g, '')]
+    buildings[spelled || label] = true
+  }
+  // A UNIT BY ITS NUMBER (2026-11-10). People write "Eden 2202" or just "2202" once the building is
+  // in play; the full listing name ("Eden 2202 - 2BR Ocean") almost never appears. A 3-4 digit number
+  // names a unit only when exactly ONE listing carries it — inside the buildings in play, or, with no
+  // building named, anywhere in the portfolio and only when written as a unit ("unit 2202", "#2202").
+  const nums = Array.from(new Set(hay.match(/\b\d{3,4}\b/g) || [])).slice(0, 12)
+  const anyBuilding = Object.keys(buildings).length > 0
+  for (const num of nums) {
+    const inName = new RegExp('(^|[^0-9])' + num + '([^0-9]|$)')
+    let hits: string[] = []
+    if (anyBuilding) hits = keys.filter(id => buildings[listingMeta[id].rollup] && inName.test(String(listingMeta[id].name || '')))
+    else if (new RegExp('(?:unit|apt|apartment|room|#)\\s*#?\\s*' + num + '\\b').test(hay)) hits = keys.filter(id => inName.test(String(listingMeta[id].name || '')))
+    if (hits.length === 1 && ids.indexOf(hits[0]) < 0) ids.push(hits[0])
   }
   const bKeys = Object.keys(buildings)
   for (const b of bKeys) scopes.push('building:' + b)
@@ -224,7 +296,7 @@ export async function neverUsedMemories(limit = 10, minInjected = 5): Promise<Ar
 export type RecallLane = 'standing' | 'relevant' | 'recent'
 const LANE_BUDGET: Record<RecallLane, number> = { standing: 16, relevant: 18, recent: 6 }
 
-export async function loadMemories(scopes: string[], email: string, limit = 60, question = '', opts: { nearScopes?: string[] } = {}): Promise<(EveMemory & { lane?: RecallLane })[]> {
+export async function loadMemories(scopes: string[], email: string, limit = 60, question = '', opts: { nearScopes?: string[]; references?: boolean } = {}): Promise<(EveMemory & { lane?: RecallLane })[]> {
   const db = supabaseAdmin()
   const wanted = scopes.slice()
   if (email) wanted.push('person:' + lc(email))
@@ -248,16 +320,55 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
     // The words that carry the question, longest first: short common words recall everything.
     const terms = Array.from(qSet).filter(w => w.length >= 4 && !/^\d+$/.test(w)).sort((a, b) => b.length - a.length).slice(0, 8)
     let recalled: any[] = []
+    // THE IN-SCOPE POOL IS FOUND BY THE QUESTION, NOT BY WEIGHT (2026-11-10). `direct` is the 240
+    // heaviest rows in scope; with 800 live memories, most of them at the same weight, everything
+    // below that line could only arrive through the portfolio-wide recall (80 rows, heaviest first)
+    // and 191 memories had never once been loaded. The same full-text match is now also run INSIDE
+    // the scopes in play, newest first, and those rows join the pool as in-scope rows.
+    let scoped: any[] = []
+    let refs: any[] = []
     if (terms.length) {
-      recalled = await read(cols => db.from('eve_memory').select(cols)
-        .is('superseded_by', null)
-        .textSearch('text', terms.join(' or '), { type: 'websearch', config: 'english' })
-        .order('weight', { ascending: false })
-        .limit(80)).catch(() => [])
+      const fts = terms.join(' or ')
+      const got = await Promise.all([
+        read(cols => db.from('eve_memory').select(cols)
+          .is('superseded_by', null)
+          .textSearch('text', fts, { type: 'websearch', config: 'english' })
+          .order('weight', { ascending: false })
+          .limit(80)).catch(() => [] as any[]),
+        read(cols => db.from('eve_memory').select(cols)
+          .is('superseded_by', null)
+          .in('scope', wanted.concat(Array.from(near)))
+          .textSearch('text', fts, { type: 'websearch', config: 'english' })
+          .order('updated_at', { ascending: false })
+          .limit(200)).catch(() => [] as any[]),
+        opts.references === false ? Promise.resolve([] as any[]) : referenceCandidates(terms).catch(() => [] as any[]),
+        // What is filed under a person (person:<name>, lib/eve/schedule-knowledge): never in `wanted`,
+        // and easily crowded out of the 80 above. See "A PERSON'S FILE" below for when it counts.
+        read(cols => db.from('eve_memory').select(cols)
+          .is('superseded_by', null)
+          .like('scope', 'person:%').not('scope', 'like', '%@%')
+          .textSearch('text', fts, { type: 'websearch', config: 'english' })
+          .order('updated_at', { ascending: false })
+          .limit(40)).catch(() => [] as any[]),
+      ])
+      recalled = got[0].concat(got[3]); scoped = got[1]; refs = got[2]
     }
     const byId = new Map<string, any>()
     for (const r of direct) byId.set(String(r.id), r)
+    for (const r of scoped) if (!byId.has(String(r.id))) byId.set(String(r.id), r)
     for (const r of recalled) if (!byId.has(String(r.id))) byId.set(String(r.id), { ...r, _recalled: true })
+    // A PERSON'S FILE IS IN SCOPE WHEN THE PERSON IS NAMED (2026-11-10). lib/eve/schedule-knowledge
+    // files what it learns about a cleaner under person:<name>, and nothing ever asked for that scope
+    // (only person:<the asker's email> is). When the question carries the first name in the scope,
+    // the row is treated as in scope — a named person, like a named building.
+    const personScopes = new Set<string>()
+    byId.forEach(r => {
+      const sc = String(r.scope || '')
+      // person:<email> is a note for that one asker and stays theirs; only a name-keyed file opens up.
+      if (!r._recalled || !sc.startsWith('person:') || sc.includes('@')) return
+      const first = words(sc.slice(7))[0]
+      if (first && qSet.has(first)) { delete r._recalled; personScopes.add(sc) }
+    })
 
     const today = new Date().toISOString().slice(0, 10)
     const now = Date.now()
@@ -276,7 +387,7 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
     const N = live.length
     const idf = (w: string) => Math.log((N + 1) / ((df.get(w) || 0) + 1)) + 1
     const avgLen = live.reduce((a, r) => a + (r._words as string[]).length, 0) / N || 1
-    const namedScopes = new Set(scopes.filter(s => s.startsWith('unit:') || s.startsWith('building:') || s.startsWith('channel:')))
+    const namedScopes = new Set(scopes.filter(s => s.startsWith('unit:') || s.startsWith('building:') || s.startsWith('channel:')).concat(Array.from(personScopes)))
     // BM25-shaped overlap: how much of the question this memory covers, damped for long memories.
     const relevance = (r: any): number => {
       if (!qSet.size) return 0
@@ -295,18 +406,22 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
     // An auto-captured "always / never" sentence is not a rule until Jon confirms it (F15): it can be
     // picked as RELEVANT on its merits, never read out as a standing rule.
     const standing = live
-      .filter(r => !r._recalled && standingKind(r) && (isHuman(r.source) || Number(r.weight || 0) >= 8) && !(r.evidence && r.evidence.autoCaptured))
+      .filter(r => !r._recalled && standingKind(r) && (isHuman(r.source) || Number(r.weight || 0) >= 8) && !(r.evidence && r.evidence.autoCaptured) && !isPendingMemory(r))
       .sort((a, b) => (Number(b.weight) - Number(a.weight)) || (beliefStrength(b, now) - beliefStrength(a, now)) || (Number(b.use_count || 0) - Number(a.use_count || 0)))
       .slice(0, LANE_BUDGET.standing)
     const taken = new Set(standing.map(r => String(r.id)))
 
-    // ── RELEVANT: ranked by coverage of the question, with a touch of weight and belief so a tie
-    // goes to the line she has more reason to trust.
+    // ── RELEVANT: coverage of the question × weight × belief (2026-11-10). It was a sum, in which
+    // weight 10 was worth as much as a rare word matched, so a heavy line that barely touched the
+    // question outranked a light one that answered it. As a product, relevance decides and weight
+    // and belief scale it: a line that covers none of the question scores nothing whatever it weighs.
+    // An unconfirmed line counts for a little less; a neighbour's (a unit of the building in play)
+    // a little less again.
     let relevantPool = live
       .filter(r => !taken.has(String(r.id)))
       .map(r => ({ r, rel: relevance(r) }))
       .filter(x => x.rel > 0)
-      .map(x => ({ r: x.r, score: x.rel * 4 + Number(x.r.weight || 0) * 0.6 + beliefStrength(x.r, now) * 3 + (near.has(String(x.r.scope)) ? -1 : 0) }))
+      .map(x => ({ r: x.r, score: x.rel * (0.5 + Number(x.r.weight || 0) / 10) * (0.5 + beliefStrength(x.r, now)) * (isPendingMemory(x.r) ? 0.85 : 1) * (near.has(String(x.r.scope)) ? 0.85 : 1) }))
       .sort((a, b) => b.score - a.score)
     let reranked = false
     let rerank = relevantPool.length > 6 ? (qWords.length >= 5 ? 'pending' : 'short question') : 'pool ' + relevantPool.length
@@ -347,11 +462,84 @@ export async function loadMemories(scopes: string[], email: string, limit = 60, 
       .concat(recent.map(r => strip(r, 'recent')))
       .concat(fill.map(r => strip(r, 'relevant')))
     // Trim FIRST: slice() returns a new array, and a tag set on the old one would be lost.
-    const trimmed = out.slice(0, limit)
+    // The written passages recalled for this question (at most REFERENCE_CAP) ride after the
+    // memories, outside `limit`, so a document never pushes out something a person taught her.
+    const trimmed = out.slice(0, limit).concat(refs.slice(0, REFERENCE_CAP))
     ;(trimmed as any).reranked = reranked
     ;(trimmed as any).rerank = rerank
     return trimmed
   } catch { return [] }
+}
+
+/**
+ * THE WRITTEN HOUSE KNOWLEDGE, RECALLED WITHOUT BEING ASKED FOR (2026-11-10). Documents were only
+ * ever read when she thought to call doc_search, and the guest FAQ the nightly pass mines only
+ * through knowledge_search, so the paragraph of the SOP that answered the question sat unread. The
+ * passages (eve_doc_chunks) and FAQ rows (eve_knowledge, type 'faq') that share at least two of the
+ * question's words now join the relevant lane as kind 'reference', each with its citation in
+ * `evidence` (document title, section, date) for renderMemories to print.
+ *
+ * NOT A MEMORY, SO: the id is the passage's own uuid (or a uuid-shaped hash for an FAQ row) — every
+ * place that hands memory ids to eve_memory simply matches nothing for it. The scope is
+ * REFERENCE_SCOPE, a channel-style scope on purpose: run.ts drops channel-scoped rows in a room an
+ * outside company reads (lib/eve/redact.ts isGuestOrPersonMemory), and an internal playbook must
+ * not be read out there either. Any failure — a missing table, a search error — is no references.
+ */
+const REFERENCE_CAP = 6
+export const REFERENCE_SCOPE = 'channel:reference'
+function hashHex(s: string): string {
+  let a = 5381, b = 52711
+  for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); a = ((a * 33) ^ c) >>> 0; b = ((b * 31) + c) >>> 0 }
+  return (a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0')).slice(0, 12).padStart(12, '0')
+}
+async function referenceCandidates(terms: string[]): Promise<any[]> {
+  if (!terms.length) return []
+  const db = supabaseAdmin()
+  const fts = terms.join(' or ')
+  const need = Math.min(2, terms.length)
+  const matched = (hay: string) => { let n = 0; for (const t of terms) if (hay.includes(t)) n++; return n }
+  const clip = (v: any, n: number) => { const t = String(v || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t }
+  const out: { score: number; row: any }[] = []
+  const [chunksRes, faqRes] = await Promise.all([
+    Promise.resolve(db.from('eve_doc_chunks').select('id,doc_id,idx,heading,text')
+      .textSearch('text', fts, { type: 'websearch', config: 'english' }).limit(40)).then((r: any) => r, () => ({ data: [] })),
+    Promise.resolve(db.from('eve_knowledge').select('id,title,content,evidence_count,updated_at')
+      .eq('type', 'faq').order('evidence_count', { ascending: false }).limit(300)).then((r: any) => r, () => ({ data: [] })),
+  ])
+  const chunks: any[] = (chunksRes && !chunksRes.error && Array.isArray(chunksRes.data)) ? chunksRes.data : []
+  if (chunks.length) {
+    const docIds = Array.from(new Set(chunks.map(c => String(c.doc_id))))
+    const docsRes: any = await Promise.resolve(db.from('eve_docs').select('id,title,category,updated_at,active').in('id', docIds)).then((r: any) => r, () => ({ data: [] }))
+    const docs: Record<string, any> = {}
+    for (const d of ((docsRes && !docsRes.error && Array.isArray(docsRes.data)) ? docsRes.data : []) as any[]) if (d.active !== false) docs[String(d.id)] = d
+    for (const c of chunks) {
+      const d = docs[String(c.doc_id)]
+      if (!d || !UUID_RE.test(String(c.id))) continue
+      const head = lc(c.heading || '')
+      const n = matched(head + ' \n ' + lc(c.text || ''))
+      if (n < need) continue
+      out.push({ score: n + matched(head) * 0.5, row: {
+        id: String(c.id), kind: 'reference', text: clip(c.text, 520), why: null, scope: REFERENCE_SCOPE, weight: 5, source: 'doc',
+        confidence: null, evidence: { ref: 'doc', doc_id: String(c.doc_id), title: String(d.title || ''), section: c.heading ? String(c.heading).slice(0, 120) : null, doc_updated_at: d.updated_at || null },
+        created_by: null, use_count: 0, last_used_at: null, expires_on: null, superseded_by: null,
+        created_at: d.updated_at || new Date().toISOString(), updated_at: d.updated_at || new Date().toISOString(), lane: 'relevant',
+      } })
+    }
+  }
+  const faqs: any[] = (faqRes && !faqRes.error && Array.isArray(faqRes.data)) ? faqRes.data : []
+  for (const f of faqs) {
+    const n = matched(lc(f.title || '') + ' \n ' + lc(f.content || ''))
+    if (n < need) continue
+    const h = hashHex(String(f.id))
+    out.push({ score: n - 0.25, row: {
+      id: `00000000-0000-4000-8000-${h}`, kind: 'reference', text: clip(`Guests often ask: ${String(f.title || '')}${f.content ? ' — ' + String(f.content) : ''}`, 420), why: null,
+      scope: REFERENCE_SCOPE, weight: 4, source: 'system', confidence: null,
+      evidence: { ref: 'faq', knowledge_id: String(f.id), seen: Number(f.evidence_count) || 1, doc_updated_at: f.updated_at || null },
+      created_by: null, use_count: 0, last_used_at: null, expires_on: null, superseded_by: null,
+      created_at: f.updated_at || new Date().toISOString(), updated_at: f.updated_at || new Date().toISOString(), lane: 'relevant',
+    } })
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, REFERENCE_CAP).map(x => x.row)
 }
 
 /**
@@ -391,10 +579,60 @@ async function rerankByQuestion(question: string, candidates: any[], max: number
   } catch (e: any) { return { ids: null, why: 'threw: ' + String(e?.name === 'AbortError' ? 'timeout' : e?.message || e).slice(0, 80) } } finally { clearTimeout(timer) }
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** "Nov 3" this year, "Nov 3, 2025" otherwise, '' for no date. Eastern time: that is the team's day. */
+export function shortDate(iso: any): string {
+  const t = Date.parse(String(iso || ''))
+  if (!Number.isFinite(t)) return ''
+  // A bare YYYY-MM-DD is a calendar day, not an instant: do not let a time zone move it.
+  const bare = /^\d{4}-\d{2}-\d{2}$/.exec(String(iso))
+  const ymd = bare ? String(iso) : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(t))
+  const y = Number(ymd.slice(0, 4)), m = Number(ymd.slice(5, 7)), d = Number(ymd.slice(8, 10))
+  if (!y || !m || !d) return ''
+  const thisYear = Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric' }).format(new Date()))
+  return `${MONTHS[m - 1]} ${d}${y === thisYear ? '' : ', ' + y}`
+}
+
+/**
+ * WHERE A LINE CAME FROM AND WHEN, in a few words (2026-11-10): " — Jon, Sep 2", " — overheard in
+ * #vr-ops, Nov 3 — unconfirmed", " — Housekeeping SOP › Linens, updated Oct 12". The prompt printed
+ * the class of source and no date, so she could not tell a rule from last week from one a year old,
+ * and could not say where a fact came from when asked. The date is the day it was learned (or
+ * confirmed, when a person has confirmed it) — never the day it was last re-read.
+ */
+export function memoryCitation(r: Pick<EveMemory, 'source' | 'created_by' | 'created_at' | 'updated_at' | 'evidence'>): string {
+  const ev: any = r.evidence && typeof r.evidence === 'object' && !Array.isArray(r.evidence) ? r.evidence : {}
+  const who = (v: any) => { const s = String(v || '').trim(); return s.includes('@') ? s.split('@')[0] : s }
+  const learned = shortDate(ev.learned_at || r.created_at)
+  const on = (d: string) => (d ? ', ' + d : '')
+  // A passage or FAQ row recalled as reference: the document is the citation.
+  if (ev.ref === 'doc') return ` [${String(ev.title || 'a company document').slice(0, 80)}${ev.section ? ' › ' + String(ev.section).slice(0, 80) : ''}${ev.doc_updated_at ? ', updated ' + shortDate(ev.doc_updated_at) : ''}]`
+  if (ev.ref === 'faq') return ` [guest FAQ, mined from guest messages${ev.seen ? ', seen about ' + ev.seen + '×' : ''}${ev.doc_updated_at ? ', ' + shortDate(ev.doc_updated_at) : ''} — not policy]`
+  const pending = isPendingMemory(r)
+  const room = ev.channel_name ? '#' + String(ev.channel_name).replace(/^#/, '').slice(0, 40) : ''
+  // Something she overheard that a person has since confirmed keeps where it was heard and says who confirmed it.
+  const confirmed = ev.verified_by ? ` — confirmed by ${who(ev.verified_by) || 'a person'}${on(shortDate(ev.verified_at))}` : ''
+  if (ev.learned_from === 'slack' || r.source === 'slack') {
+    // The room and the day, not the speaker: this line can be read out in a shared room. Who said it
+    // is on the row (evidence.speaker) and shown in Settings → Eve → Memory.
+    const heard = ` — overheard in ${room || 'Slack'}${on(shortDate(ev.said_at || ev.learned_at || r.created_at))}`
+    return heard + (confirmed || (pending ? ' — unconfirmed, not from Jon' : ', not from Jon'))
+  }
+  if (r.source === 'jon') return ` — Jon${on(shortDate(ev.verified_at || ev.learned_at || r.created_at))}${ev.learned_from === 'reflection' ? ' (confirmed; first noticed by Eve)' : ''}`
+  if (r.source === 'staff') return ` — taught by ${ev.teacher ? String(ev.teacher).slice(0, 40) : (who(r.created_by) || 'a colleague')}${on(learned)}, not Jon`
+  if (r.source === 'doc') {
+    if (ev.title) return ` — ${String(ev.title).slice(0, 80)}${ev.section ? ' › ' + String(ev.section).slice(0, 80) : ''}${ev.doc_updated_at ? ', updated ' + shortDate(ev.doc_updated_at) : on(learned)}`
+    return ` — from a company document${on(learned)}`
+  }
+  if (r.source === 'telegram') return ` — said on Telegram${on(learned)}`
+  if (r.source === 'system') return ` — found by the nightly sweep${on(shortDate(ev.sweptOn || r.updated_at || r.created_at))}`
+  return ` — learned by Eve${on(learned)}${confirmed || (pending ? ' — unconfirmed, not from Jon' : ', not from Jon')}`
+}
+
 /** Render for the system prompt. Grouped by kind so rules read as rules, not as trivia. */
 export function renderMemories(rows: EveMemory[]): string {
   if (!rows.length) return ''
-  const order = ['rule', 'preference', 'correction', 'decision', 'issue', 'person', 'insight']
+  const order = ['rule', 'preference', 'correction', 'decision', 'issue', 'person', 'insight', 'reference']
   const byKind: Record<string, EveMemory[]> = {}
   for (const r of rows) { (byKind[r.kind] = byKind[r.kind] || []).push(r) }
   const out: string[] = []
@@ -407,19 +645,19 @@ export function renderMemories(rows: EveMemory[]): string {
       : k === 'decision' ? 'DECISIONS ALREADY MADE'
       : k === 'issue' ? 'KNOWN RECURRING ISSUES'
       : k === 'person' ? 'PEOPLE / NAME MAPPINGS'
+      : k === 'reference' ? 'FROM THE WRITTEN DOCUMENTS AND THE GUEST FAQ (recalled for this question; when you use one, name the document and section; doc_read gives the whole document)'
       : 'THINGS YOU HAVE LEARNED'
     const lines = list.map(r => {
+      if (k === 'reference') return `- ${r.text}${memoryCitation(r)}`
       const sc = r.scope === 'portfolio' ? '' : ` [${r.scope}]`
-      const why = r.why ? ` (why: ${r.why})` : ''
-      // Provenance, said plainly. A Slack or document memory is not Jon's word and must not read as it.
-      // A colleague's lesson is a person's word, but not Jon's — it says whose (Jon, 2026-09-23 review).
-      const src = r.source === 'jon' ? '' : r.source === 'slack' ? ' — overheard in Slack, not from Jon'
-        : r.source === 'staff' ? ` — taught by ${r.created_by ? String(r.created_by).split('@')[0] : 'a colleague'}, not Jon`
-        : r.source === 'doc' ? ' — from a company document' : r.source === 'telegram' ? ' — said on Telegram'
-        : r.source === 'system' ? ' — found by the nightly sweep' : ' — learned by Eve, not from Jon'
+      const ev: any = r.evidence && typeof r.evidence === 'object' && !Array.isArray(r.evidence) ? r.evidence : {}
+      // A document rule's `why` only repeats the title and section the citation already carries.
+      const why = r.why && !(r.source === 'doc' && ev.title) ? ` (why: ${r.why})` : ''
+      // Provenance, said plainly, with its date (memoryCitation). A Slack or document memory is not
+      // Jon's word and must not read as it; a colleague's lesson says whose it is.
       // How sure she is, said out loud when it matters (lib/eve/beliefs.ts): a faded hunch or a
       // disputed rule carries a tag so it is never stated as settled fact.
-      return `- ${r.text}${why}${sc}${src}${beliefTag(r)}`
+      return `- ${r.text}${why}${sc}${memoryCitation(r)}${beliefTag(r)}`
     })
     out.push(label + ':\n' + lines.join('\n'))
   }
@@ -497,7 +735,72 @@ export function sameThought(a: string, b: string, threshold = 0.85): boolean {
   return jaccard >= threshold || (containment >= 0.95 && Math.min(A.size, B.size) >= 4)
 }
 
-export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean; id?: string; error?: string; deduped?: boolean }> {
+/**
+ * SAME SUBJECT, DIFFERENT CLAIM (2026-11-10). sameThought() above rightly refuses to call "$25
+ * deposit" and "$50 deposit" — or "pets allowed" and "pets not allowed" — the same thought. But that
+ * was the end of it: both were stored, both loaded, and she followed whichever ranked higher that
+ * turn. This is the other half of the test: two texts about the same thing (60% of their words,
+ * numbers aside, at least three words each) that differ in a negation, or in a VALUE — an amount, a
+ * percentage, a count or an hour (valueNumbers). A number that names something is not a value:
+ * "402's AC leaks" and "502's AC leaks", or a 1BR and a 2BR, are two facts, not a disagreement.
+ */
+function subjectWords(s: string): string[] { return Array.from(new Set(words(s).filter(w => !/\d/.test(w)))) }
+// A VALUE is a number that says how much, how many or when: money, a percentage, a clock time, or a
+// count of minutes / hours / days / nights / guests and the like. Digits glued to a label ("2BR",
+// "unit 402") and bare numbers are not values — they name things.
+function valueNumbers(s: string): string[] {
+  const t = lc(s).replace(/,/g, '')
+  const re = /[$€£]\s?\d+(?:\.\d+)?|\d+(?:\.\d+)?\s?%|\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b|\b\d+(?:\.\d+)?\s?(?:minutes?|mins?|hours?|hrs?|days?|nights?|weeks?|months?|years?|times|guests?|people|keys?|sets?)\b/g
+  const out: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(t)) !== null) out.push(m[0].replace(/\s+/g, ''))
+  return Array.from(new Set(out)).sort()
+}
+export function contradictsThought(a: string, b: string): boolean {
+  const A = new Set(subjectWords(a)), B = new Set(subjectWords(b))
+  if (A.size < 3 || B.size < 3) return false
+  let inter = 0
+  A.forEach(w => { if (B.has(w)) inter++ })
+  if (inter / (A.size + B.size - inter) < 0.6) return false
+  // Different unit or building numbers: two places, not two claims about one.
+  const named = (s: string) => Array.from(new Set(lc(s).match(/\b\d{3,4}\b/g) || [])).sort()
+  if (!sameList(named(a), named(b))) return false
+  if (!sameList(negationTokens(a), negationTokens(b))) return true
+  const va = valueNumbers(a), vb = valueNumbers(b)
+  return va.length > 0 && vb.length > 0 && !sameList(va, vb)
+}
+
+/** The five live memories in one scope closest to a text, by full-text match then shared words. [] on any failure. */
+async function nearestNeighbours(db: any, scope: string, text: string): Promise<any[]> {
+  const subj = subjectWords(text)
+  const terms = subj.filter(w => w.length >= 4).sort((x, y) => y.length - x.length).slice(0, 8)
+  if (terms.length < 2) return []
+  try {
+    const { data, error } = await db.from('eve_memory')
+      .select('id,text,weight,why,source,evidence,confidence,scope,expires_on,created_by')
+      .is('superseded_by', null).eq('scope', scope)
+      .textSearch('text', terms.join(' or '), { type: 'websearch', config: 'english' })
+      .limit(60)
+    if (error) return []
+    const today = new Date().toISOString().slice(0, 10)
+    const A = new Set(subj)
+    return ((data || []) as any[])
+      .filter(p => !(p.expires_on && String(p.expires_on) < today))
+      .map(p => { const B = new Set(subjectWords(String(p.text || ''))); let inter = 0; A.forEach(w => { if (B.has(w)) inter++ }); return { p, j: inter / Math.max(1, A.size + B.size - inter) } })
+      .filter(x => x.j > 0).sort((x, y) => y.j - x.j).slice(0, 5).map(x => x.p)
+  } catch { return [] }
+}
+const evObj = (v: any): Record<string, any> => (v && typeof v === 'object' && !Array.isArray(v) ? v : (v == null ? {} : { prior: v }))
+/** Two writes that fill the same slot: one document, one OTA playbook cell, or one person's own words. */
+function sameOrigin(old: any, input: SaveMemoryInput): boolean {
+  const a = evObj(old?.evidence), b = evObj(input.evidence)
+  if (a.doc_id && b.doc_id && String(a.doc_id) === String(b.doc_id)) return true
+  if (a.ota && b.ota && String(a.ota.channel) === String(b.ota.channel) && String(a.ota.topic) === String(b.ota.topic)) return true
+  const by = lc(input.created_by || '')
+  return !!by && by.includes('@') && by === lc(old?.created_by || '')
+}
+
+export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean; id?: string; error?: string; deduped?: boolean; conflict?: 'asked' | 'superseded' }> {
   const db = supabaseAdmin()
   const text = String(input.text || '').trim().slice(0, 1000)
   if (!text) return { ok: false, error: 'empty memory' }
@@ -544,6 +847,9 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
   // row is widened to portfolio — it was true in two places. A person's memory (jon, staff, doc,
   // telegram) is never searched this way: a person scoping a rule to one building meant it.
   const MACHINE = ['slack', 'eve']
+  // A live memory in the same scope that says the opposite, or a different figure (see
+  // contradictsThought). Found below, dealt with after the new row exists.
+  let contradicts: any = null
   if (!input.supersedes) try {
     const scope = canonScope(input.scope)
     const src = normSource(input.source)
@@ -569,6 +875,16 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
       // Already known from a person or a document, in another scope: nothing to write and nothing of
       // theirs to touch — their row keeps its weight, its scope and its confidence.
       if (twin && !MACHINE.includes(String(twin.source))) return { ok: true, id: twin.id, deduped: true }
+    }
+    // THE FIVE NEAREST, BY WHAT THEY SAY (2026-11-10). The twin check above reads the 120 newest rows
+    // of the scope; an older twin, or a row that contradicts this one, was never looked at. The five
+    // closest live rows in the same scope are found by full text: the same thought reinforces it (as
+    // above); a contradiction is remembered and settled once the new row is written. The sweep's own
+    // rows are left out on both sides — their figures move every night by design.
+    if (!twin && src !== 'system') {
+      const close = await nearestNeighbours(db, scope, text)
+      twin = close.find(p => sameThought(String(p.text || ''), text))
+      if (!twin) contradicts = close.find(p => String(p.source) !== 'system' && contradictsThought(String(p.text || ''), text)) || null
     }
     if (twin) {
       const patch: any = {
@@ -596,15 +912,26 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
       return { ok: true, id: twin.id, deduped: true }
     }
   } catch { /* dedupe is an optimisation — a failed check must never block learning */ }
+  // NEVER BOTH, SILENTLY (2026-11-10). When the row this contradicts is a PERSON'S (Jon, a colleague,
+  // a document) the new one does not overrule it: it is written beside it, marked as disputing it
+  // (and unconfirmed when she learned it herself), and one `conflict` question carries both texts —
+  // the answer retires both (lib/eve/questions.ts answerQuestion). When Jon himself is the one
+  // saying the new thing, or it fills the same slot (the same document, the same playbook cell, the
+  // same person's own earlier words), or the old row is something she learned herself, the newer one
+  // simply supersedes the older and the old row is linked to it.
+  const newSource = normSource(input.source)
+  const askConflict = !!contradicts && isHuman(contradicts.source) && newSource !== 'jon' && !sameOrigin(contradicts, input)
+  let evidenceIn: any = input.evidence ?? null
+  if (askConflict) evidenceIn = { ...evObj(evidenceIn), conflicts_with: String(contradicts.id), ...(isHuman(newSource) ? {} : { status: 'pending' }) }
   const row: any = {
     kind: normKind(input.kind),
     text,
     why: input.why ? String(input.why).slice(0, 500) : null,
     scope: canonScope(input.scope),
     weight: cappedWeight(input),
-    source: normSource(input.source),
+    source: newSource,
     confidence: Number.isFinite(Number(input.confidence)) ? Math.min(1, Math.max(0, Number(input.confidence))) : null,
-    evidence: input.evidence ?? null,
+    evidence: evidenceIn,
     created_by: input.created_by || null,
     expires_on: input.expires_on || null,
     updated_at: new Date().toISOString(),
@@ -618,7 +945,29 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
     if (input.supersedes && id && String(input.supersedes) !== String(id)) {
       await db.from('eve_memory').update({ superseded_by: id, updated_at: new Date().toISOString() }).eq('id', input.supersedes)
     }
-    return { ok: true, id }
+    let conflict: 'asked' | 'superseded' | undefined
+    if (contradicts && id && String(contradicts.id) !== String(id)) {
+      try {
+        if (askConflict) {
+          // Dynamic import: questions.ts imports saveMemory from this file.
+          const { askQuestion } = await import('./questions')
+          const oldBy = contradicts.source === 'jon' ? 'You told me' : contradicts.source === 'doc' ? 'A document says' : `${String(contradicts.created_by || 'A colleague').split('@')[0]} told me`
+          const newBy = newSource === 'slack' ? 'I overheard in Slack' : newSource === 'doc' ? 'a document says' : newSource === 'staff' ? `${String(input.created_by || 'a colleague').split('@')[0]} says` : 'I have since picked up'
+          const r = await askQuestion({
+            question: `${oldBy}: "${String(contradicts.text || '').slice(0, 170)}". Now ${newBy}: "${text.slice(0, 170)}". Which one is right?`.slice(0, 500),
+            why: 'These cannot both be true. Until you say, I keep following the first and treat the second as unconfirmed; your answer replaces both.',
+            scope: row.scope, kind: 'conflict', source: 'eve',
+            evidence: { memory_ids: [String(contradicts.id), String(id)], from: 'write-check' },
+            dedupeKey: 'memory-conflict:' + String(contradicts.id),
+          })
+          if (r.ok) conflict = 'asked'
+        } else {
+          await db.from('eve_memory').update({ superseded_by: id, updated_at: new Date().toISOString() }).eq('id', contradicts.id).is('superseded_by', null)
+          conflict = 'superseded'
+        }
+      } catch { /* the new row is saved either way; the memory audit still lists the pair */ }
+    }
+    return { ok: true, id, ...(conflict ? { conflict } : {}) }
   } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
 }
 
@@ -643,8 +992,12 @@ export async function standingRulesForPrompt(scope?: string | string[], cap = 25
     const rows = ((data as any[]) || [])
       .filter(r => !r.expires_on || String(r.expires_on) >= today)
       .filter(r => !(r.evidence && r.evidence.autoCaptured && !r.evidence.teacher))
+      .filter(r => !isPendingMemory(r))
       .slice(0, cap)
     if (!rows.length) return ''
+    // A CRON'S READ IS A READ (2026-11-10). use_count only ever counted chat turns, so a rule the
+    // hourly Slack reader and the briefs leaned on every day still showed "never used".
+    touchMemories(rows.map(r => String(r.id))).catch(() => {})
     const lines = rows.map(r => {
       const where = r.scope && r.scope !== 'portfolio' ? ` [${String(r.scope).replace(/^building:/, '').replace(/^channel:/, '')}]` : ''
       const who = r.source === 'jon' ? 'Jon' : (r.evidence?.teacher || (r.created_by ? String(r.created_by).split('@')[0] : r.source))
@@ -656,10 +1009,13 @@ export async function standingRulesForPrompt(scope?: string | string[], cap = 25
 
 /** Bump usage so the /eve page can show which memories are actually earning their place. */
 export async function touchMemories(ids: string[]): Promise<void> {
+  // Only real memory ids: a recalled document passage rides in the same list with its own id.
+  ids = Array.from(new Set(ids.map(String).filter(id => UUID_RE.test(id))))
   if (!ids.length) return
   const db = supabaseAdmin()
   try {
-    await db.rpc('eve_touch_memories', { ids })
+    const { error } = await db.rpc('eve_touch_memories', { ids })
+    if (error) throw error
   } catch {
     // No RPC (migration not run, or PostgREST hasn't reloaded) — degrade to a plain stamp.
     try { await db.from('eve_memory').update({ last_used_at: new Date().toISOString() }).in('id', ids) } catch { /* never break a turn over telemetry */ }
@@ -686,7 +1042,28 @@ export async function pruneStaleMemories(): Promise<number> {
       .is('superseded_by', null).is('expires_on', null)
       .lt('updated_at', cutoff)
       .select('id')
-    return (data || []).length
+    // AND THE REST OF WHAT NOBODY EVER NEEDED (2026-11-10). A fact overheard in a staff room is
+    // filed at weight 6, so the weight-4 line above never reached it: it sat unread until its
+    // confidence faded months later. Anything she learned herself (never a person's, a document's
+    // or the sweep's) at weight 6 or under, written 90+ days ago and never once loaded, is expired
+    // on the same terms. A fact a person has confirmed is theirs now and is not touched.
+    let more = 0
+    try {
+      const cutoff90 = new Date(Date.now() - 90 * 864e5).toISOString()
+      const { data: old } = await db.from('eve_memory')
+        .select('id,evidence')
+        .in('source', ['eve', 'slack']).eq('use_count', 0).lte('weight', 6)
+        .is('superseded_by', null).is('expires_on', null)
+        .lt('created_at', cutoff90).limit(500)
+      const ids = ((old || []) as any[]).filter(r => !(r.evidence && typeof r.evidence === 'object' && r.evidence.verified_by)).map(r => String(r.id))
+      for (let i = 0; i < ids.length; i += 100) {
+        const { data: done } = await db.from('eve_memory')
+          .update({ expires_on: today, updated_at: new Date().toISOString() })
+          .in('id', ids.slice(i, i + 100)).eq('use_count', 0).is('expires_on', null).select('id')
+        more += (done || []).length
+      }
+    } catch { /* the first pass stands */ }
+    return (data || []).length + more
   } catch { return 0 }
 }
 

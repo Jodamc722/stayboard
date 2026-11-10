@@ -320,13 +320,22 @@ export async function doThought(id: string, by: string): Promise<{ ok: boolean; 
   // THE SAME TIERS AS EVERY OTHER YES (Eve audit 2026-10-10). "Do it" used to run anything for any
   // admin; an owner-tier action (money, a Guesty write, a door code, a cancellation) takes the
   // approver list here too. Desk actions take any admin's tap, as before.
+  //
+  // AND THE SAME SWITCH, FAILING CLOSED (2026-11-10). Two holes: this never looked at the master
+  // switch, so with agent mode OFF a tap here still created the task or sent the message — the one
+  // path where OFF did not mean off (executeProposal has always refused). And the whole check sat in
+  // a try whose catch carried on, so if the settings or the access module could not be read, an
+  // owner-tier action ran for any admin. Now: OFF refuses, and a check that cannot be made refuses.
   try {
     const { getAgentSettings, tierOf } = await import('./agent-mode')
     const { isSuperadmin } = await import('@/lib/access')
-    const s = await getAgentSettings()
+    const s = await getAgentSettings()   // never throws; no row or no read → OFF
+    if (!s.enabled) return { ok: false, error: 'Agent mode is OFF — switch it on (Settings → Eve → Agent mode) to let her carry this out, or do it by hand.' }
     const e = String(by || '').toLowerCase()
     if (tierOf(action, t.payload) === 'owner' && s.approvers.length && !isSuperadmin(e) && !s.approvers.map(x => String(x).toLowerCase()).includes(e)) return { ok: false, error: `only an approver can run this one (${s.approvers.map(a => a.split('@')[0]).join(', ')})` }
-  } catch { /* fail open to the admin gate the route already applied */ }
+  } catch (err: any) {
+    return { ok: false, error: `could not check who may run this (${String(err?.message || err).slice(0, 120)}) — nothing was done; try again` }
+  }
   const db = supabaseAdmin()
   // Claim it first, so two taps do not create two tasks.
   let claimed = false

@@ -29,7 +29,7 @@
 // pruning her own instructions on her own judgement is precisely the loop nobody should build.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { lc } from './ctx'
+import { lc, pageRows } from './ctx'
 import { sameThought, type EveMemory } from './memory'
 import { getSettingFresh, setSetting } from '@/lib/app-settings'
 
@@ -150,14 +150,40 @@ export async function auditMemory(opts?: { limit?: number }): Promise<MemoryAudi
     .order('weight', { ascending: false }).limit(Math.min(opts?.limit || 800, 1500))
   const rows = (data || []) as any[]
 
-  const bySource: Record<string, number> = {}
-  const byKind: Record<string, number> = {}
+  let bySource: Record<string, number> = {}
+  let byKind: Record<string, number> = {}
   let chars = 0
   for (const m of rows) {
     bySource[String(m.source)] = (bySource[String(m.source)] || 0) + 1
     byKind[String(m.kind)] = (byKind[String(m.kind)] || 0) + 1
     chars += String(m.text || '').length + String(m.why || '').length
   }
+
+  // THE COUNTS ARE COUNTS, NOT THE PAGE (2026-11-10). `rows` above is the 800 heaviest memories with
+  // no expiry date — the set the duplicate and contradiction checks can afford to compare pairwise —
+  // and every headline number used to be taken from it, so the card could never say more than "800
+  // live" however many there were, and a memory with an expiry date was not counted at all. The
+  // headline numbers now come from a read of every live row (four small columns, paged): live means
+  // not superseded and not past its expiry. If that read stops short the old figures stand.
+  let exact: { live: number; neverUsed: number; human: number; staleSlack: number } | null = null
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    const { rows: slim, truncated } = await pageRows<any>((a, b) => db.from('eve_memory')
+      .select('id,source,kind,use_count,expires_on,created_at')
+      .is('superseded_by', null).order('id').range(a, b), 20)
+    if (!truncated) {
+      const liveRows = slim.filter(m => !(m.expires_on && String(m.expires_on) < today))
+      const src: Record<string, number> = {}, knd: Record<string, number> = {}
+      for (const m of liveRows) { src[String(m.source)] = (src[String(m.source)] || 0) + 1; knd[String(m.kind)] = (knd[String(m.kind)] || 0) + 1 }
+      bySource = src; byKind = knd
+      exact = {
+        live: liveRows.length,
+        neverUsed: liveRows.filter(m => Number(m.use_count || 0) === 0).length,
+        human: liveRows.filter(m => String(m.source) === 'jon').length,
+        staleSlack: liveRows.filter(m => !m.expires_on && isStaleSlack(m)).length,
+      }
+    }
+  } catch { exact = null }
 
   const findings: MemoryFinding[] = []
   const human = rows.filter(m => String(m.source) === 'jon')
@@ -228,19 +254,22 @@ export async function auditMemory(opts?: { limit?: number }): Promise<MemoryAudi
   const order: Record<string, number> = { high: 0, medium: 1, low: 2 }
   findings.sort((a, b) => order[a.severity] - order[b.severity])
 
+  const liveN = exact ? exact.live : rows.length
+  const humanN = exact ? exact.human : human.length
+  const neverN = exact ? exact.neverUsed : neverUsed
   return {
-    live: rows.length, bySource, byKind,
+    live: liveN, bySource, byKind,
     promptCost: {
       chars, approxTokens,
       note: `Roughly ${approxTokens} tokens of memory exist. Not all of it loads on every turn — memories are selected by scope and question — but this is the pool, and it is paid for out of the same budget as the actual conversation.`,
     },
-    neverUsed, humanWritten: human.length,
+    neverUsed: neverN, humanWritten: humanN,
     duplicateGroups: dupGroups.length,
     duplicateRows: dupGroups.reduce((n, g) => n + g.length, 0),
-    staleSlack: rows.filter(isStaleSlack).length,
+    staleSlack: exact ? exact.staleSlack : rows.filter(isStaleSlack).length,
     // Duplicates first and never cut off by the cap: they are what the Memory clean-up card lists.
     findings: [...findings.filter(f => f.kind === 'duplicate'), ...findings.filter(f => f.kind !== 'duplicate').slice(0, 60)],
-    summary: `${rows.length} live memories (${human.length} written by a person, the rest learned). ${neverUsed} have never been used. ${findings.length} thing(s) worth cleaning up.`,
+    summary: `${liveN} live memories (${humanN} written by Jon, the rest taught by the team or learned). ${neverN} have never been loaded into a prompt. ${findings.length} thing(s) worth cleaning up${liveN > rows.length ? ` (duplicates and contradictions were checked across the ${rows.length} heaviest)` : ''}.`,
   }
 }
 
@@ -377,7 +406,14 @@ export async function mergeAllDuplicates(by: string): Promise<{ ok: boolean; gro
 /** Retire (expire, not delete) what she overheard in Slack, never used, older than STALE_SLACK_DAYS. */
 export async function retireStaleSlack(by: string): Promise<{ ok: boolean; retired: number; error?: string }> {
   try {
-    const ids = (await liveRows()).filter(isStaleSlack).map(r => String(r.id))
+    // Asked for directly (2026-11-10): liveRows() is the 800 heaviest, and what was overheard and never
+    // used sits at the light end, so most of it was never reached by this button.
+    const cutoff = new Date(Date.now() - STALE_SLACK_DAYS * 864e5).toISOString()
+    const { data: stale, error: readErr } = await supabaseAdmin().from('eve_memory').select('id,source,use_count,created_at')
+      .eq('source', 'slack').eq('use_count', 0).is('superseded_by', null).is('expires_on', null)
+      .lt('created_at', cutoff).order('created_at').limit(2000)
+    if (readErr) throw new Error(readErr.message)
+    const ids = ((stale || []) as any[]).filter(isStaleSlack).map(r => String(r.id))
     if (!ids.length) return { ok: true, retired: 0 }
     const now = new Date().toISOString()
     let retired = 0

@@ -10,7 +10,7 @@ import { THEMES } from '@/lib/review-themes'
 import { listProjects } from '@/lib/projects'
 import type { EveTool, EveDomain } from './types'
 import { obj, S } from './types'
-import { clampLimit, clampDays, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING, scopeIds, pageRows } from './ctx'
+import { clampLimit, clampDays, lc, has, safe, cap, chunk, resolveListing, normStar, DEAD_LISTING, scopeIds, pageRows, toolMeta } from './ctx'
 
 export const QUALITY_TOOLS: EveTool[] = [
   {
@@ -24,40 +24,58 @@ export const QUALITY_TOOLS: EveTool[] = [
         : []
       if (!ids.length) return { error: 'Give me a unit (name/id) or a building.' }
       const live = ids.filter(id => !DEAD_LISTING.test(ctx.listingMeta[id].status))
-      const use = (live.length ? live : ids).slice(0, 60)
-      const [listRes, openWork] = await Promise.all([
-        safe(ctx.db.from('guesty_listings').select('id,nickname,title,status,building,address_city,amenities,pictures,raw,last_optimized').in('id', use).order('id'), { data: [] } as any),
-        safe(openWorkByListing(ctx.db) as any, {} as any),
-      ])
+      // EVERY UNIT OF THE BUILDING, OR SAY HOW MANY WERE LEFT OUT (2026-11-10). This used to score
+      // the first 60 units and present the roll-up as the building's — with nothing to say a larger
+      // building had been cut. The listing-setup pillar reads the listing's raw description and
+      // photos (lib/optimize-score), so raw is still needed; it is read twenty units at a time and
+      // dropped once each unit is scored, rather than sixty blobs in one response.
+      const UNIT_CAP = 200
+      const pool = live.length ? live : ids
+      const use = pool.slice(0, UNIT_CAP)
+      const skipped = pool.length - use.length
+      const openWork: any = await safe(openWorkByListing(ctx.db) as any, {} as any)
       const revByListing: Record<string, any[]> = {}
-      const parts = chunk(use, 40)
-      // Every review of each unit, paged newest first with id as tiebreaker (2026-09-29): forty
-      // long-running units can hold more than one 1,000-row page, and a cut left their oldest reviews
-      // out of the score. A read that stops short marks the result truncated.
       let short = false
-      for (const part of parts) {
+      for (const part of chunk(use, 40)) {
         const { rows, truncated } = await pageRows<any>((a, b) => ctx.db.from('guesty_reviews').select('listing_id,rating,content,created_at,has_reply,channel,excluded_from_score').in('listing_id', part).eq('excluded_from_score', false).order('created_at', { ascending: false }).order('id').range(a, b))
         if (truncated) { short = true; console.error('property_health: review read incomplete — some scores use part of their reviews') }
         for (const r of rows) { const k = String((r as any).listing_id); (revByListing[k] = revByListing[k] || []).push(r) }
       }
-      const results = (listRes.data || []).map((l: any) => {
-        const reviews = (revByListing[String(l.id)] || []).map((r: any) => ({ rating: r.rating, channel: r.channel, content: r.content, created_at: r.created_at, hasReply: !!r.has_reply }))
-        const h: any = computeListingHealth(l, reviews, { openWork: (openWork as any)[String(l.id)] || 0 })
-        return {
-          unit: l.nickname || l.title, listing_id: l.id, building: ctx.buildingOf(l.id),
-          score: h.score, band: h.band, unrated: h.unrated, pillars: h.pillars,
-          reviews: h.review, channels: (h.channels || []).map((c: any) => ({ channel: c.label, score: c.score, stars: c.avgStars, reviews: c.reviewCount, badge: c.badge })),
-          issues: (h.issues || []).slice(0, 8).map((i: any) => ({ severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain })),
+      const results: any[] = []
+      let unread = 0
+      for (const part of chunk(use, 20)) {
+        const listRes: any = await safe(ctx.db.from('guesty_listings').select('id,nickname,title,status,building,address_city,amenities,pictures,raw,last_optimized').in('id', part).order('id') as any, { data: null } as any)
+        if (!listRes || !Array.isArray(listRes.data)) { unread += part.length; continue }
+        for (const l of (listRes.data as any[])) {
+          const reviews = (revByListing[String(l.id)] || []).map((r: any) => ({ rating: r.rating, channel: r.channel, content: r.content, created_at: r.created_at, hasReply: !!r.has_reply }))
+          const h: any = computeListingHealth(l, reviews, { openWork: (openWork as any)[String(l.id)] || 0 })
+          results.push({
+            unit: l.nickname || l.title, listing_id: l.id, building: ctx.buildingOf(l.id),
+            score: h.score, band: h.band, unrated: h.unrated, pillars: h.pillars,
+            reviews: h.review, channels: (h.channels || []).map((c: any) => ({ channel: c.label, score: c.score, stars: c.avgStars, reviews: c.reviewCount, badge: c.badge })),
+            issues: (h.issues || []).slice(0, 8).map((i: any) => ({ severity: i.severity, title: i.title, action: i.action, owner: i.owner, gain: i.gain })),
+          })
         }
-      }).sort((a: any, b: any) => (a.score ?? 999) - (b.score ?? 999))
+      }
+      results.sort((a: any, b: any) => (a.score ?? 999) - (b.score ?? 999))
       const scores = results.map((r: any) => r.score).filter((s: any) => Number.isFinite(s))
       const roll: any = scores.length ? rollupBuildingHealth(scores) : null
       return {
         scope: unit ? unit.meta.name : String(input?.building || ''),
+        units_in_scope: pool.length,
         units_scored: results.length,
+        units_not_scored: (skipped + unread) || undefined,
         building_rollup: roll ? { score: roll.score, band: roll.band, mean: roll.mean, weak_units: roll.weak, worst: roll.min } : null,
         units: results.slice(0, clampLimit(input?.limit, 25, 60)),
-        truncated: short || undefined,
+        units_listed: Math.min(results.length, clampLimit(input?.limit, 25, 60)),
+        truncated: (short || skipped > 0 || unread > 0) || undefined,
+        note: [
+          skipped > 0 ? `${skipped} unit(s) beyond the first ${UNIT_CAP} were not scored` : '',
+          unread > 0 ? `${unread} unit(s) could not be read and were not scored` : '',
+          short ? 'some scores use only part of their reviews' : '',
+          results.length > clampLimit(input?.limit, 25, 60) ? `the roll-up covers all ${results.length} scored units; only the ${clampLimit(input?.limit, 25, 60)} weakest are listed` : '',
+        ].filter(Boolean).join('; ') || undefined,
+        _meta: toolMeta({ source: 'guesty_listings + guesty_reviews (health score)', window: 'all reviews, recency-weighted', n: results.length, truncated: short || skipped > 0 || unread > 0 }),
       }
     },
   },
@@ -70,14 +88,26 @@ export const QUALITY_TOOLS: EveTool[] = [
       const lim = clampLimit(input?.limit, 50, 150)
       const days = clampDays(input?.days, 180, 730)
       const unit = resolveListing(ctx, input)
-      let q = ctx.db.from('audit_items').select('id,listing_id,room,kind,item_type,title,note,severity,status,created_at')
+      // FILTER, THEN LIMIT (2026-11-10): the building, the OK checkmarks and the template tag rows
+      // used to be removed AFTER the newest `lim` rows were read — a walk that ticked forty rooms OK
+      // could fill the page and leave no findings on it. All three go into the query.
+      let q = ctx.db.from('audit_items').select('id,listing_id,room,kind,item_type,title,note,severity,status,created_at', { count: 'exact' })
         .gte('created_at', new Date(Date.now() - days * 86400000).toISOString())
+        .or('item_type.is.null,item_type.neq.pm-ok')
+      if (!input?.kind) q = q.or('kind.is.null,kind.neq.tag')
       if (unit) q = q.eq('listing_id', unit.id)
+      else if (input?.building) {
+        const bIds = ctx.idsForBuilding(String(input.building))
+        if (!bIds.length) return { window_days: days, count: 0, total_rows: 0, truncated: false, by_kind: {}, by_room: {}, high_severity: 0, findings: [], note: `No units match the building "${input.building}". That is not the same as no findings — check the name.` }
+        if (bIds.length <= 150) q = q.in('listing_id', bIds)
+      }
       if (input?.kind) q = q.eq('kind', lc(input.kind))
       if (input?.severity) q = q.eq('severity', lc(input.severity))
       if (input?.open_only !== false) q = q.in('status', ['open', 'task_created', 'approved', 'ordered', 'arriving'])
-      const { data, error } = await q.order('created_at', { ascending: false }).order('id').limit(lim)
+      const { data, error, count } = await q.order('created_at', { ascending: false }).order('id').limit(lim)
       if (error) return { error: 'Audit items unavailable: ' + error.message.slice(0, 120) }
+      const totalRows: number | null = typeof count === 'number' ? count : null
+      const cut = totalRows != null ? totalRows > (data || []).length : cap(data || [], lim).truncated
       // pm-ok rows are the per-room OK/FLAG checkmarks; kind 'tag' rows record which walk template ran.
       let rows = (data || []).filter((a: any) => a.item_type !== 'pm-ok' && a.kind !== 'tag').map((a: any) => ({
         unit: ctx.nameOf(a.listing_id), building: ctx.buildingOf(a.listing_id), listing_id: a.listing_id,
@@ -88,7 +118,11 @@ export const QUALITY_TOOLS: EveTool[] = [
       const byKind: Record<string, number> = {}
       const byRoom: Record<string, number> = {}
       for (const r of rows) { byKind[r.kind] = (byKind[r.kind] || 0) + 1; byRoom[String(r.room || 'unknown')] = (byRoom[String(r.room || 'unknown')] || 0) + 1 }
-      return { window_days: days, count: rows.length, truncated: cap(data || [], lim).truncated, by_kind: byKind, by_room: byRoom, high_severity: rows.filter((r: any) => r.severity === 'high').length, findings: rows.slice(0, 80) }
+      return {
+        window_days: days, count: rows.length, total_rows: totalRows, truncated: cut, by_kind: byKind, by_room: byRoom, high_severity: rows.filter((r: any) => r.severity === 'high').length, findings: rows.slice(0, 80),
+        note: cut ? `Only the newest ${rows.length} of ${totalRows ?? 'more'} matching findings were read — by_kind, by_room and high_severity count ONLY these. Say the list is partial; narrow by unit, kind or days.` : undefined,
+        _meta: toolMeta({ source: 'audit_items (walks and audits)', window: `last ${days} days`, n: rows.length, truncated: cut }),
+      }
     },
   },
 
@@ -173,10 +207,21 @@ export const QUALITY_TOOLS: EveTool[] = [
       const lim = clampLimit(input?.limit, 40, 100)
       const unit = resolveListing(ctx, input)
       const ids = unit ? [unit.id] : input?.building ? ctx.idsForBuilding(String(input.building)) : []
+      // THE UNIT OR BUILDING GOES INTO THE QUERY (2026-11-10): the newest `lim` fixes and order lines
+      // of the whole portfolio used to be read first and THEN narrowed, so one unit's FF&E was only
+      // whatever of it sat among the last forty rows anywhere. (A building too large for a URL keeps
+      // the old read.) The open / doing filter goes in too.
+      const idsQ = ids.length && ids.length <= 150 ? ids : null
+      const openOnly = input?.open_fixes_only !== false
+      let fq = ctx.db.from('ffe_fixes').select('listing_id,unit_name,building,room,title,note,est_cost,status,assigned_to,created_at')
+      if (idsQ) fq = fq.in('listing_id', idsQ)
+      if (openOnly) fq = fq.in('status', ['open', 'doing'])
+      let lq = ctx.db.from('ffe_order_lines').select('listing_id,unit_name,building,room,title,product,qty,unit_cost,stage,vendor')
+      if (idsQ) lq = lq.in('listing_id', idsQ)
       const [fixRes, statusRes, lineRes] = await Promise.all([
-        safe(ctx.db.from('ffe_fixes').select('listing_id,unit_name,building,room,title,note,est_cost,status,assigned_to,created_at').order('created_at', { ascending: false }).limit(lim), { data: [] } as any),
-        safe(ctx.db.from('ffe_unit_status').select('listing_id,completed_at,completed_by,notes').limit(400), { data: [] } as any),
-        safe(ctx.db.from('ffe_order_lines').select('listing_id,unit_name,building,room,title,product,qty,unit_cost,stage,vendor').order('created_at', { ascending: false }).limit(lim), { data: [] } as any),
+        safe(fq.order('created_at', { ascending: false }).limit(lim) as any, { data: [] } as any),
+        safe(ctx.db.from('ffe_unit_status').select('listing_id,completed_at,completed_by,notes').limit(400) as any, { data: [] } as any),
+        safe(lq.order('created_at', { ascending: false }).limit(lim) as any, { data: [] } as any),
       ])
       const inScope = (lid: any) => !ids.length || ids.indexOf(String(lid)) >= 0
       let fixes = (fixRes.data || []).filter((f: any) => inScope(f.listing_id))
@@ -192,6 +237,9 @@ export const QUALITY_TOOLS: EveTool[] = [
         open_fixes: fixes.map((f: any) => ({ unit: f.unit_name || ctx.nameOf(f.listing_id), building: f.building, room: f.room, item: f.title, note: String(f.note || '').slice(0, 140), est_cost: f.est_cost, status: f.status, assigned_to: f.assigned_to })),
         order_lines_by_stage: byStage,
         order_lines: lines.slice(0, 40).map((l: any) => ({ unit: l.unit_name || ctx.nameOf(l.listing_id), room: l.room, item: l.title, product: l.product, qty: l.qty, unit_cost: l.unit_cost, stage: l.stage, vendor: l.vendor })),
+        truncated: ((fixRes.data || []).length >= lim || (lineRes.data || []).length >= lim) || undefined,
+        note: ((fixRes.data || []).length >= lim || (lineRes.data || []).length >= lim) ? `Only the newest ${lim} fixes and ${lim} order lines${idsQ ? ' for this scope' : ' in the portfolio'} were read — say the list is partial; narrow to a unit.` : undefined,
+        _meta: toolMeta({ source: 'ffe_fixes + ffe_order_lines + ffe_unit_status', window: openOnly ? 'open + doing fixes, newest first' : 'all fixes, newest first', n: fixes.length, truncated: (fixRes.data || []).length >= lim || (lineRes.data || []).length >= lim }),
       }
     },
   },

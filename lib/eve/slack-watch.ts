@@ -241,7 +241,7 @@ Return JSON only:
     {"kind": "commitment|problem|question|decision|guest_ask", "ts": "<message ts>", "summary": "one line, plain, names the unit if there is one", "owner": "person's name or null", "unit": "unit as written or null", "due": "ISO datetime or null", "urgent": false, "resolved_ts": "<ts of a later message that closes it, or null>", "guest": "the guest's name if one is given, else null", "ask": "inquiry|discount|extension|callback|refund|change|other (guest_ask only)", "amount": <dollar amount mentioned, as a number, or null>, "weight": "big|small", "expires": "<ISO date after which this no longer matters, or null if it stands until done>"}
   ],
   "facts": [
-    {"kind": "rule|insight|person|issue|decision", "text": "one durable sentence", "scope": "portfolio|building:<Name>", "why": "why a manager would want to know this"}
+    {"kind": "rule|insight|person|issue|decision", "text": "one durable sentence", "scope": "portfolio|building:<Name>", "why": "why a manager would want to know this", "ts": "<ts of the one message it rests on most>"}
   ],
   "questions": [
     {"question": "something only a person can answer", "why": "what would be done differently if known"}
@@ -708,11 +708,27 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     for (const f of (memGate.mode === 'observe' ? [] : (Array.isArray(res.facts) ? res.facts : [])).slice(0, 6)) {
       const text = clean(f?.text).slice(0, 400)
       if (!text || /\$\s?\d|\b\d{4,6}\b/.test(text)) continue   // no money, nothing code-shaped
+      // WHERE IT WAS HEARD, KEPT (2026-11-10). 521 memories said "overheard in Slack" and nothing else:
+      // no room id, no message, no speaker, no date — so she could not cite one and nobody could check
+      // one. The message the model says the fact rests on (its ts) is looked up in what was read this
+      // pass; the room, the speaker, the time, a link and the words (codes masked, as for items) ride in
+      // `evidence`. With no usable ts the room and the hour of the pass are still kept.
+      // UNCONFIRMED UNTIL A PERSON SAYS SO: evidence.status 'pending' keeps it out of the standing
+      // rules and puts it in Settings → Eve → Memory → "Confirm what she learned" (lib/eve/memory-confirm.ts).
+      const fts = String(f?.ts || '').trim()
+      const fsrc = fts ? (withThreads.find(m => m.ts === fts) || msgs.find(m => m.ts === fts) || null) : null
       const r = await saveMemory({ text, kind: ['rule', 'insight', 'person', 'issue', 'decision'].includes(String(f?.kind)) ? f.kind : 'insight', why: clean(f?.why).slice(0, 300) || `Overheard in #${ch.label}`, scope: factScope(f?.scope, ch.buildings),
         // WEIGHT BY WHO SAID IT (audit 2026-10-05). A fact overheard in a vendor's room is the vendor's
         // account, not ours: weight 4, so a colleague's explicit teaching (6) and Jon's rules (8+) outrank
         // it rather than the other way round.
-        weight: ch.vendor ? 4 : 6, source: 'slack', created_by: 'slack-watch' })
+        weight: ch.vendor ? 4 : 6, source: 'slack', created_by: 'slack-watch',
+        evidence: {
+          status: 'pending', channel: ch.id, channel_name: ch.label, vendor_room: !!ch.vendor,
+          ts: fsrc ? fsrc.ts : null, thread_ts: fsrc ? (fsrc.threadTs || fsrc.ts) : null,
+          speaker: fsrc ? (fsrc.who || null) : null, said_at: fsrc ? fsrc.at : new Date().toISOString(),
+          permalink: fsrc ? `https://slack.com/archives/${ch.id}/p${fsrc.ts.replace('.', '')}${fsrc.threadTs && fsrc.threadTs !== fsrc.ts ? `?thread_ts=${fsrc.threadTs}&cid=${ch.id}` : ''}` : null,
+          quote: fsrc && fsrc.text ? scrubStoredText(fsrc.text.slice(0, 300), [], undefined, { keep: UNIT_KEEP_RE }) : null,
+        } })
       if (r.ok && !r.deduped) { out.learned++; learnedTexts.push(text) }
     }
     for (const q of (Array.isArray(res.questions) ? res.questions : []).slice(0, 2)) {

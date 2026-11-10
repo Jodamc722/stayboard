@@ -32,6 +32,10 @@ export type Desk = {
   lane: 'translation' | 'qa' | 'monitoring' | 'execution' | 'planning' | 'review'
 }
 
+// aiTasks ARE THE KEYS THE LEDGER HOLDS (2026-11-10). The Reviewer listed 'learning-probe' and
+// 'learning-judge', which no call has ever billed under — the learning audit bills 'probe-writer' and
+// 'probe-judge' (lib/eve/learning-audit.ts) — so its probes cost the desk nothing on paper. The
+// scheduled twins ('…-auto', lib/ai-budget-rules AUTO_TWIN) sit with the desk that runs them.
 export const DESKS: Desk[] = [
   {
     key: 'interpreter', label: 'Interpreter', lane: 'translation',
@@ -48,14 +52,14 @@ export const DESKS: Desk[] = [
   {
     key: 'watch', label: 'Watch', lane: 'monitoring',
     blurb: 'The one monitor: open loops in Slack, on-watch gaps, the day board digests, guest asks, no-show risk, the CCS handoff.',
-    receipts: ['slack-watch', 'on-watch', 'ops-desk', 'ccs-desk', 'scheduler-shadow', 'eve-deferred', 'schedule-check', 'eve-reminders'], aiTasks: ['slack-watch', 'ops-focus'],
+    receipts: ['slack-watch', 'on-watch', 'ops-desk', 'ccs-desk', 'scheduler-shadow', 'eve-deferred', 'schedule-check', 'eve-reminders'], aiTasks: ['slack-watch', 'ops-focus', 'guest-reply-auto'],
     sources: ['cron:slack-watch', 'cron:on-watch', 'cron:ops-desk', 'cron:pm-recurrence', 'watch:', 'cron:scheduler-shadow', 'cron:schedule-check', 'desk', 'slack-watch'],
     hands: 'Posts nudges and digests via the slack_post rung, once per subject per day across every watcher (lib/eve/said.ts). Never a fact it cannot link.',
   },
   {
     key: 'investigator', label: 'Investigator', lane: 'execution',
     blurb: 'Ties a Slack report to its Breezeway task or glitch, and — within its rung — creates, assigns and notes tasks.',
-    receipts: ['eve-outcomes'], aiTasks: ['eve-investigate'], sources: ['investigate'],
+    receipts: ['eve-outcomes'], aiTasks: ['eve-investigate', 'eve-investigate-auto'], sources: ['investigate'],
     hands: 'task_create, task_assign, task_note at their rungs; the never-assign list and the daily action cap are the guards. Confidence under 0.7 is a suggestion, never a pin.',
   },
   {
@@ -67,7 +71,7 @@ export const DESKS: Desk[] = [
   {
     key: 'reviewer', label: 'Reviewer', lane: 'review',
     blurb: 'The Monday review, the quality audit, the expectations desk, the nightly learning audit and the Team-Member Score itself.',
-    receipts: ['eve-review', 'quality-audit', 'expectations', 'eve-learn', 'eve-metrics', 'eve-audit', 'eve-scorecard', 'learn'], aiTasks: ['eve-review', 'quality-audit', 'expectations', 'learn', 'eve-brain', 'learning-probe', 'learning-judge'],
+    receipts: ['eve-review', 'quality-audit', 'expectations', 'eve-learn', 'eve-metrics', 'eve-audit', 'eve-scorecard', 'learn'], aiTasks: ['eve-review', 'quality-audit', 'expectations', 'expectations-auto', 'learn', 'eve-brain', 'probe-writer', 'probe-judge'],
     sources: ['cron:eve-review', 'nightly', 'eve-sleep', 'coverage', 'system'],
     hands: 'Files plans and questions to the ledger; posts a short version to #leadership via the slack_post rung. Grades nothing of its own as worked.',
   },

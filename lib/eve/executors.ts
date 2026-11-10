@@ -13,8 +13,9 @@
 // { ok:false, error } — and when it can, it returns an `undo` so the action can be reversed within
 // 24 hours from the panel or with "undo" on Telegram.
 //
-// WELDED SHUT. guest_reply_send, guesty_write, calendar_block and email_send are capped at rung 2
-// in lib/eve/agent-mode.ts, so agentAllowed can never produce `act` for them. As a second lock
+// WELDED SHUT. guest_reply_send, guesty_write, calendar_block, email_send, door_code_release and (since
+// 2026-11-10) task_cancel are capped at rung 2 or below (lib/eve/agent-rules.ts ACTION_LIMITS), so
+// agentAllowed can never produce `act` for them. As a second lock
 // this file refuses to run them unless the context says a human approved (`human: true`, set by
 // executeProposal and the Send button). A code path that forgets the first fence hits the second.
 //
@@ -37,6 +38,7 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bustBoards } from '@/lib/bust'
 import type { ActionType } from './agent-mode'
+import { needsHumanRefusal } from './agent-rules'
 
 export type Undo = { kind: string; [k: string]: any }
 export type ExecOut = { ok: boolean; ref?: string | null; summary: string; undo?: Undo | null; error?: string; done?: string }
@@ -58,7 +60,8 @@ const DEPTS = ['housekeeping', 'inspection', 'maintenance', 'safety']
 const PRIOS = ['urgent', 'high', 'normal', 'low']
 // Same rule as /api/ops-today/task-action: departure cleans are the scheduler's, never Eve's to cancel.
 const DEPARTURE_CLEAN = /departure clean|strip & walkthrough/i
-const NEEDS_HUMAN: ActionType[] = ['guest_reply_send', 'guesty_write', 'calendar_block', 'email_send', 'door_code_release']
+// NEEDS_HUMAN — the welded actions and the refusal for one with no person behind it — is in
+// ./agent-rules (needsHumanRefusal), where it is tested. task_cancel joined the list on 2026-11-10.
 
 // ---- Listing resolution (the same shape auto-inspections and add-task use) ------------------------
 
@@ -544,9 +547,8 @@ export const EXECUTORS: Record<ActionType, Executor> = {
 export async function runExecutor(action: ActionType, payload: any, ctx: ExecCtx): Promise<ExecOut> {
   const fn = EXECUTORS[action]
   if (!fn) return { ok: false, summary: `no executor for ${action}`, error: `no executor for ${action}` }
-  if (NEEDS_HUMAN.indexOf(action) >= 0 && !ctx.human) {
-    return { ok: false, summary: `${action} only runs after a person says yes`, error: 'This action is welded to propose: a person has to approve it.' }
-  }
+  const refused = needsHumanRefusal(action, ctx.human)
+  if (refused) return { ok: false, summary: refused.summary, error: refused.error }
   try { return await fn(payload || {}, ctx) }
   catch (e: any) { return { ok: false, summary: `${action} failed`, error: str(e?.message || e).slice(0, 300) } }
 }

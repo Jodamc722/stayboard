@@ -161,6 +161,13 @@ export const AI_TASKS: AiTask[] = [
   { key: 'expectations', title: 'Eve — expectation notes for CS and admin', group: 'Eve', def: 'sonnet', background: true,
     what: 'One call a week over the evidence pack (reviews of every rating, inbound guest messages that ask or complain about things upfront copy should cover, unhappy threads). Returns up to twelve notes: building, theme, what guests hit, their words, the gap, where the fix belongs and the proposed copy.',
     matters: 'The copy it proposes is what a person pastes into the listing or the pre-arrival message. A weak model writes vague notes nobody acts on; nothing reaches a guest without a person.' },
+  // THE SCHEDULED TWINS (2026-11-10, lib/ai-budget-rules AUTO_TWIN). The same work as the key each one
+  // inherits from, when a schedule does it and nobody is waiting: it bills under its own key so it
+  // stops at the automatic daily cap, while the person's button keeps going to the total cap. Each
+  // runs on its parent's tier until one is set for it here.
+  { key: 'expectations-auto', title: 'Eve — expectation notes (the Monday run)', group: 'Background', def: 'sonnet', background: true, inherit: 'expectations',
+    what: 'The same weekly evidence-pack call as the expectations desk, when the Monday schedule runs it rather than a person pressing Run.',
+    matters: 'Counts against the automatic daily cap. A run stopped by the cap can be started by hand from the Eve tab → Expectations.' },
   { key: 'leadership_notes', title: 'Leadership board — meeting notes into proposed tasks', group: 'Operations', def: 'sonnet', background: false,
     what: 'Reads pasted meeting notes and proposes action items for the Leadership board; each is approved by a person before it exists.',
     matters: 'Leadership reads the list once and approves or skips each line. A weak model invents tasks or misses the commitment that mattered.' },
@@ -185,6 +192,9 @@ export const AI_TASKS: AiTask[] = [
   { key: 'eve-investigate', title: 'Eve — tying a Slack report to its task and glitch', group: 'Eve', def: 'sonnet', background: true,
     what: 'For an open Slack report with no link in it: reads the thread, the tasks and glitches on every unit the report could mean, and the lessons the team has taught her about matching, and returns the matching task / glitch / unit with a confidence and the reasoning. At most six a sweep, and never twice on the same candidate set.',
     matters: 'This is how a report closes itself when the fix is done, and what her nudges say about where things stand. A weak model links the wrong task; below 0.7 confidence it is only a suggestion.' },
+  { key: 'eve-investigate-auto', title: 'Eve — tying a Slack report to its task (the hourly pass)', group: 'Background', def: 'sonnet', background: true, inherit: 'eve-investigate',
+    what: 'The same judgement as above, made by the hourly Slack pass: at most six a sweep. Every investigation runs here today — nothing calls it from a button.',
+    matters: 'Counts against the automatic daily cap, so the hourly pass cannot spend what is kept for people asking Eve questions.' },
   // PLAN WITH EVE (2026-09-30, app/api/projects/plan). Jon: "help us just communicate what we want,
   // and then you organize it, structure it, and then plan it." One call per brief, a person watching.
   { key: 'project-plan', title: 'Eve — turning a brief into a project plan', group: 'Eve', def: 'sonnet',
@@ -215,6 +225,9 @@ export const AI_TASKS: AiTask[] = [
   { key: 'guest-reply', title: 'Eve — guest reply drafts', group: 'Guests', def: 'sonnet',
     what: 'Drafts a reply to a guest who is past the reply-by time (the guest_unanswered_1h watch) from the thread and the booking. Saved as a draft; a person presses Send.',
     matters: 'Nothing reaches the guest without a person. A weak draft costs a rewrite, not a guest.' },
+  { key: 'guest-reply-auto', title: 'Eve — guest reply drafts (written by a watch)', group: 'Background', def: 'sonnet', background: true, inherit: 'guest-reply',
+    what: 'The draft the guest_unanswered_1h watch writes on its own every half hour. "Draft with Eve" on a thread is a person asking and stays on the key above.',
+    matters: 'Counts against the automatic daily cap. Past the cap the watch still flags the waiting guest; it just does not write the draft.' },
   { key: 'review-reply', title: 'Review replies', group: 'Guests', def: 'opus',
     what: 'Drafts the public reply to a guest review in the house voice.',
     matters: 'Published under our name; the next prospect reads it before booking.' },
@@ -246,7 +259,10 @@ export const AI_TASKS: AiTask[] = [
     what: 'Rewords a sentence or a description wherever the Polish button appears.',
     matters: 'Internal and quick; the person is still editing.' },
   // ── Operations ──
-  { key: 'ops-focus', title: 'Today in Ops — Focus', group: 'Operations', def: 'fable',
+  // DOWN FROM THE TOP TIER (2026-11-10, Eve reorganisation step 1). This ranks a list of candidate jobs
+  // against today's crew several times a day per market — routine work that was paying the judgement
+  // tier's price out of the automatic allowance. Sonnet by default now; one click here puts it back.
+  { key: 'ops-focus', title: 'Today in Ops — Focus', group: 'Operations', def: 'sonnet',
     what: 'Reads today\'s crew, cleans and every candidate job (cadence suggestions, waiting backlog, duplicates) and picks the few worth doing today, each with a reason; parks the rest under Review.',
     matters: 'This is the plan the coordinator works from. A weak pick sends a person across the county for nothing. Cached for two hours per market; a handful of calls a day.' },
   { key: 'audit', title: 'Audits & walkthroughs', group: 'Operations', def: 'opus',

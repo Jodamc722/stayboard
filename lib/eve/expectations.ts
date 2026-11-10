@@ -194,7 +194,11 @@ export async function runExpectationsDesk(opts: { by?: string; days?: number } =
   if (!key) return { ok: false, error: 'ANTHROPIC_API_KEY is not set' }
   const pack = await buildExpectationsPack(opts.days || 45)
   if (!pack.text.trim()) return { ok: true, notes: await listExpectations('open'), written: 0, reopened: 0, model: '', pack: pack.stats, buildings: 0 }
-  const { model, fallback } = await modelPairFor('expectations')
+  // THE MONDAY RUN BILLS AS AN AUTOMATIC JOB (2026-11-10): the schedule passes by 'cron:…' and nobody is
+  // waiting, so it uses 'expectations-auto' and stops at the automatic daily cap; a person pressing Run
+  // on the Eve tab stays on 'expectations'. Same tier either way until one is set for the twin.
+  const task = /^cron\b/i.test(String(opts.by || '')) ? 'expectations-auto' : 'expectations'
+  const { model, fallback } = await modelPairFor(task)
   let parsed: any = null, answeredBy = model
   try {
     // A CUT-OFF ANSWER IS NO ANSWER (the 2026-10-05 Monday run died on "stop: max_tokens; blocks:
@@ -206,7 +210,7 @@ export async function runExpectationsDesk(opts: { by?: string; days?: number } =
       tools: [{ name: 'expectation_notes', description: 'Deliver the notes as structured data.', input_schema: SCHEMA }],
       tool_choice: { type: 'tool', name: 'expectation_notes' },
       messages: [{ role: 'user', content: `DATE: ${pack.today}. WINDOW: ${pack.from} → ${pack.today}.${extra}\n\nEVIDENCE, BY BUILDING:\n\n${pack.text}` }],
-    }, fallback, 'expectations')
+    }, fallback, task)
     let r = await ask('', 16000)
     if (r.ok && str(r.data?.stop_reason) === 'max_tokens') {
       void usageOf(r.data)

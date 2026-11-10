@@ -35,6 +35,12 @@ export type Trend = {
   higherIsBetter: boolean | null
   series: TrendPoint[]
   caveat?: string
+  /** What exactly this measure counts (lib/eve/metrics.ts) — quote it with the number. */
+  basis?: string
+  /** Set on a legacy measure: the key of the same measure on the one revenue basis. */
+  use_instead?: string
+  /** The dates the three windows cover, so the answer can say them. */
+  windows?: { current: string; prior: string; baseline: string }
 }
 
 function mean(xs: number[]): number { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0 }
@@ -50,7 +56,7 @@ function sd(xs: number[]): number {
  * window and calling it "revenue" would be flatly wrong, so the catalogue decides.
  */
 function isRate(def: MetricDef | undefined): boolean {
-  return !!def && (def.unit === 'pct' || def.unit === 'rating' || def.key === 'adr' || def.key === 'revpar' || def.key === 'clean_minutes' || def.unit === 'minutes')
+  return !!def && (def.rate === true || def.unit === 'pct' || def.unit === 'rating' || def.key === 'adr' || def.key === 'revpar' || def.key === 'clean_minutes' || def.unit === 'minutes')
 }
 function aggregate(def: MetricDef | undefined, points: TrendPoint[]): number | null {
   if (!points.length) return null
@@ -95,7 +101,9 @@ export async function computeTrend(opts: { metric: string; scope?: string; days?
       changePct: null, changeAbs: null, baselineMean: null, baselineSd: null, baselineDays: 0,
       z: null, direction: null, higherIsBetter: def.higherIsBetter, series: [],
       verdict: 'NO DATA — nothing has been snapshotted for this metric and scope yet.',
-      caveat: def.backfillable ? 'This metric can be backfilled — run the metrics job with ?backfill=90.' : 'This metric is point-in-time only and starts accumulating from the day the nightly job first ran.',
+      caveat: def.backfillable ? 'This metric can be backfilled — run the metrics job with ?backfill=90. Until then, the kpi tool has the same measure for any window, on the same basis.' : 'This metric is point-in-time only and starts accumulating from the day the nightly job first ran.',
+      basis: def.basis,
+      use_instead: def.legacy ? def.useInstead : undefined,
     }
   }
   const inRange = (p: TrendPoint, a: string, b: string) => p.day >= a && p.day <= b
@@ -142,12 +150,18 @@ export async function computeTrend(opts: { metric: string; scope?: string; days?
     current, currentDays: cur.length, prior: priorVal, priorDays: prior.length,
     changePct, changeAbs,
     baselineMean: bMean == null ? null : round2(bMean), baselineSd: bSd == null ? null : round2(bSd), baselineDays: baseVals.length,
-    z, direction, higherIsBetter: def.higherIsBetter, verdict, caveat,
+    z, direction, higherIsBetter: def.higherIsBetter, verdict,
+    caveat: def.legacy && def.useInstead
+      ? [caveat, `This is a LEGACY measure (${def.basis || 'older definition'}). Do not quote it as today's revenue figure — "${def.useInstead}" is the same measure on the basis the KPI board uses; say which one you are quoting.`].filter(Boolean).join(' ')
+      : caveat,
+    basis: def.basis,
+    use_instead: def.legacy ? def.useInstead : undefined,
+    windows: { current: `${curFrom} → ${end}`, prior: `${priorFrom} → ${priorEnd}`, baseline: `${baseFrom} → ${shiftDay(curFrom, -1)}` },
     series: all.slice(-Math.min(60, all.length)),
   }
 }
 
-export type Anomaly = { scope: string; metric: string; label: string; z: number; current: number | null; baselineMean: number | null; verdict: string; good: boolean | null }
+export type Anomaly = { scope: string; metric: string; label: string; z: number; current: number | null; baselineMean: number | null; verdict: string; good: boolean | null; basis?: string }
 
 /**
  * Sweep every metric across every scope and return whatever is genuinely off its own norm.
@@ -156,7 +170,7 @@ export type Anomaly = { scope: string; metric: string; label: string; z: number;
  * which is ~24 scopes x 23 metrics = 550+ sequential round trips and takes minutes. This version
  * pulls the WHOLE window in one paged query and does the arithmetic in memory. Same maths, ~2s.
  */
-export async function anomalyScan(opts?: { days?: number; sigma?: number; scope?: string }): Promise<{ scanned: number; anomalies: Anomaly[]; note?: string }> {
+export async function anomalyScan(opts?: { days?: number; sigma?: number; scope?: string }): Promise<{ scanned: number; anomalies: Anomaly[]; note?: string; window?: { current: string; baseline: string } }> {
   const db = supabaseAdmin()
   const sigma = Math.max(1.5, Number(opts?.sigma) || ANOMALY_SIGMA)
   const days = Math.min(Math.max(Number(opts?.days) || 7, 1), 30)
@@ -167,13 +181,19 @@ export async function anomalyScan(opts?: { days?: number; sigma?: number; scope?
 
   // One paged pull of everything in the window.
   const rows: any[] = []
-  for (let page = 0; page < 40; page++) {
+  // NEWEST FIRST, AND MORE ROOM (2026-11-10). 90 days x ~25 scopes x ~30 measures is past the old
+  // 40,000-row ceiling, and the read ran oldest-first — so a short read would have dropped the CURRENT
+  // window and reported "nothing unusual". Newest first means a short read can only shorten the
+  // baseline, and the result says so.
+  let readShort = false
+  for (let page = 0; page < 90; page++) {
     let q = db.from('eve_metrics').select('day,scope,metric,value,n').gte('day', baseFrom).lte('day', end)
     if (opts?.scope) q = q.eq('scope', String(opts.scope))
-    const { data, error } = await q.order('day').range(page * 1000, page * 1000 + 999)
-    if (error) break
+    const { data, error } = await q.order('day', { ascending: false }).order('scope').order('metric').range(page * 1000, page * 1000 + 999)
+    if (error) { readShort = true; break }
     rows.push(...(data || []))
     if ((data || []).length < 1000) break
+    if (page === 89) readShort = true
   }
   if (!rows.length) return { scanned: 0, anomalies: [], note: 'No baselines stored yet — run the metrics job with ?backfill=90 first.' }
 
@@ -198,6 +218,12 @@ export async function anomalyScan(opts?: { days?: number; sigma?: number; scope?
     const cur = pts.filter(p => p.day >= curFrom)
     const base = pts.filter(p => p.day < curFrom)
     if (base.length < MIN_BASELINE || !cur.length) continue
+    // ONE EVENT, ONE LINE: once the measure on the one basis has a baseline of its own in this scope,
+    // its legacy twin is not reported beside it (lib/eve/metrics.ts explains why both exist).
+    if (def.legacy && def.useInstead) {
+      const twin = groups[scope + '||' + def.useInstead]
+      if (twin && twin.filter(p => p.day < curFrom).length >= MIN_BASELINE && twin.some(p => p.day >= curFrom)) continue
+    }
     const baseVals = base.map(p => p.value)
     const bMean = mean(baseVals)
     const bSd = sd(baseVals)
@@ -214,12 +240,14 @@ export async function anomalyScan(opts?: { days?: number; sigma?: number; scope?
       verdict: `${Math.abs(z)} sigma ${z > 0 ? 'above' : 'below'} its own ${base.length}-day norm.`
         + (good == null ? '' : good ? ' Good move.' : ' Bad move.'),
       good,
+      basis: def.legacy ? `LEGACY measure — ${def.basis || 'older definition'}` : def.basis,
     })
   }
   out.sort((a, b) => Math.abs(b.z) - Math.abs(a.z))
   return {
     scanned: keys.length,
     anomalies: out.slice(0, 40),
-    note: out.length ? undefined : 'Nothing outside normal range. That is a real answer, not a failure.',
+    note: [out.length ? '' : 'Nothing outside normal range. That is a real answer, not a failure.', readShort ? 'The history read stopped early, so some baselines are shorter than 90 days (or missing) — say the scan is partial.' : ''].filter(Boolean).join(' ') || undefined,
+    window: { current: `${curFrom} → ${end}`, baseline: `${baseFrom} → ${shiftDay(curFrom, -1)}` },
   }
 }

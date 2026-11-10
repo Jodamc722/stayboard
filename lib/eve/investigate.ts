@@ -202,12 +202,15 @@ Write reasoning a coordinator can check in one read: which facts decided it. sti
     confidence: { type: 'number' }, reasoning: { type: 'string' }, stillOpen: { type: ['string', 'null'] }, nextStep: { type: ['string', 'null'] },
   }, required: ['listingId', 'taskId', 'glitchId', 'confidence', 'reasoning'] }
   try {
-    const { model, fallback } = await modelPairFor('eve-investigate')
+    // 'eve-investigate-auto' (2026-11-10): every investigation is made by the hourly Slack pass with
+    // nobody waiting, so it bills as an automatic job (lib/ai-budget-rules AUTO_TWIN). Same tier as
+    // 'eve-investigate' until one is set for it in Users & admin → AI models.
+    const { model, fallback } = await modelPairFor('eve-investigate-auto')
     const r = await anthropicMessages(keyApi, {
       model, max_tokens: 900, system: SYSTEM,
       tools: [{ name: 'match', description: 'Your judgement.', input_schema: SCHEMA }], tool_choice: { type: 'tool', name: 'match' },
       messages: [{ role: 'user', content: pack }],
-    }, fallback, 'eve-investigate')
+    }, fallback, 'eve-investigate-auto')
     const out = (r.data?.content || []).find((c: any) => c.type === 'tool_use')?.input
     if (!r.ok || !out) return null
     const taskId = out.taskId && tasks.some(t => str(t.id) === str(out.taskId)) ? str(out.taskId) : null

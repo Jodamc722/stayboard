@@ -17,6 +17,7 @@ import { StepDots, StepBar, Field, Chips, type Step } from './Steps'
 import { ImageDrop } from './ImageDrop'
 import { RefundTraining, TeachFromGlitch } from './RefundTraining'
 import { useAccess } from '@/lib/useAccess'
+import { SYSTEMS, RESOLUTIONS, systemOf } from '@/lib/task-categories'
 
 type Glitch = {
   id: string; status: string; glitch_type: string | null; category: string | null
@@ -189,6 +190,8 @@ export function GlitchBoard() {
   // WHAT WE HEARD (Jon, 2026-10-07). Open by default when something is waiting: a guest issue the
   // app picked up and nobody has filed is exactly the thing that must not sit quietly.
   const [undo, setUndo] = useState<{ trashId: string; label: string } | null>(null)
+  // WHAT WAS IT / HOW WAS IT FIXED (2026-11-10) — two optional taps offered AFTER a card closes.
+  const [closeAsk, setCloseAsk] = useState<{ id: string; unit: string; category: string; overview: string } | null>(null)
   // TRAIN THE ADVISOR (Jon, 2026-09-22) — admins and glitch-board leads only. Read once here and
   // handed to each card's refund section, which used to fetch it again on every open.
   const [canTrain, setCanTrain] = useState(false)
@@ -286,6 +289,11 @@ export function GlitchBoard() {
         if (j.suggestFollowup && window.confirm('Breezeway task is ' + j.taskStatus + '. Move this glitch to Guest followup?')) { await act(id, { action: 'move', status: 'guest_followup' }); return }
         window.alert('Breezeway task status: ' + j.taskStatus)
         return
+      }
+      // The card is closed; now, and only now, offer the two taps. Skipping them changes nothing.
+      if (body.action === 'move' && j.status === 'closed') {
+        const g = glitches.find(x => x.id === id)
+        if (g && laneOf(g.status).key !== 'closed') setCloseAsk({ id, unit: String(g.unit || ''), category: String(g.category || ''), overview: String(g.overview || '') })
       }
       load()
     } catch (e: any) { setErr(String(e?.message || e)) }
@@ -562,6 +570,59 @@ export function GlitchBoard() {
       )}
 
       {undo && <UndoBar item={undo} onUndone={() => { setUndo(null); load() }} onDismiss={() => setUndo(null)} />}
+      {closeAsk && <CloseDetail key={closeAsk.id} item={closeAsk} onDone={() => setCloseAsk(null)} />}
+    </div>
+  )
+}
+
+// ── AFTER THE CLOSE: WHAT WAS IT, HOW WAS IT FIXED (2026-11-10, migration 178) ───────────────────
+// Two taps, both optional, shown once the card is ALREADY closed — so this can never be the reason
+// a card stays open. The system is pre-picked from the category and the words of the report (the
+// same classifier the nightly build uses, lib/task-categories systemOf); a tap corrects it. What is
+// saved is what lets the app say "third A/C failure in this unit in 90 days". Skip, the X, or a
+// failed save all end the same way: the card stays closed and nothing else changes.
+function CloseDetail({ item, onDone }: { item: { id: string; unit: string; category: string; overview: string }; onDone: () => void }) {
+  const [system, setSystem] = useState<string>(() => systemOf(item.overview, item.category))
+  const [resolution, setResolution] = useState('')
+  const [part, setPart] = useState('')
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    setBusy(true)
+    try {
+      await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, action: 'closeDetail', system, resolution, part }) })
+    } catch { /* optional by design — the card is closed either way */ }
+    onDone()
+  }
+  const chip = (on: boolean) => 'text-[12px] font-semibold px-2.5 min-h-[36px] sm:min-h-[28px] rounded-lg border ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:bg-app')
+  return (
+    <div className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] sm:bottom-5 left-1/2 -translate-x-1/2 z-50 w-[min(94vw,560px)] rounded-2xl border border-line bg-white shadow-lg p-3">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-bold text-ink truncate">Closed{item.unit ? ' · ' + item.unit : ''}</div>
+          <div className="text-[12px] text-muted">Two quick taps so repeat problems can be spotted. Optional.</div>
+        </div>
+        <button onClick={onDone} title="Skip" aria-label="Skip" className="text-muted hover:text-ink p-1"><X size={16} /></button>
+      </div>
+      <div className="mt-2 text-[12px] font-semibold text-ink">What was it?</div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {SYSTEMS.map(s => (
+          <button key={s.key} type="button" onClick={() => setSystem(s.key)} className={chip(system === s.key)}>{s.label}</button>
+        ))}
+      </div>
+      <div className="mt-2 text-[12px] font-semibold text-ink">How was it fixed?</div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {RESOLUTIONS.map(r => (
+          <button key={r.key} type="button" onClick={() => setResolution(resolution === r.key ? '' : r.key)} className={chip(resolution === r.key)}>{r.label}</button>
+        ))}
+      </div>
+      <input value={part} onChange={e => setPart(e.target.value)} maxLength={160} placeholder="Part or item, if any (optional) — e.g. capacitor, fill valve"
+        className="mt-2 w-full text-[13px] px-2.5 py-1.5 rounded-lg border border-line bg-white" />
+      <div className="mt-2 flex items-center justify-end gap-2">
+        <button type="button" onClick={onDone} className="text-[12px] font-semibold text-muted hover:text-ink px-2 py-1">Skip</button>
+        <button type="button" onClick={save} disabled={busy} className="text-[12.5px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white inline-flex items-center gap-1.5 disabled:opacity-50">
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save
+        </button>
+      </div>
     </div>
   )
 }
