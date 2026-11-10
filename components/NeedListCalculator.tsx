@@ -1,47 +1,91 @@
 'use client'
 // THE NEED LIST CALCULATOR (Jon, 2026-11-10) — /kit/list, open to anyone. The home's details in, the
-// list out: every item, must-have or recommended (optional on request), and how many. Like the linen
-// calculator. The details stay in the address so the filled-in list can be shared as a link.
-// It counts PIECES (plates, bowls, forks, wine glasses), from lib/need-list.ts — its own standard, not
-// the starter kit's products or the client order form.
+// list out: every item, must-have or recommended (optional on request), and how many, grouped into the
+// sets things are bought in. Like the linen calculator. Everything stays in the address, so a
+// filled-in list (one home or a whole building) can be shared as a link.
+//   • PIECES come from lib/need-list.ts (its own standard, not the starter kit or the order form).
+//   • WHAT TO BUY comes from lib/need-buy.ts: sets where things are sold as sets, packs, singles, each
+//     with a Standard / Mid / Luxury Amazon link (Stay's own picks are marked).
+//   • SEVERAL UNITS (Jon: "if onboarding multiple units, create a full order — add unit"): one tab per
+//     unit, and a Full order tab that adds them up, with a column per unit.
 import { useEffect, useMemo, useState } from 'react'
-import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, FileSpreadsheet, Link2, Minus, Plus, Users } from 'lucide-react'
+import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, Copy, ExternalLink, FileSpreadsheet, Link2, Minus, Package, Plus, Star, Trash2, Users } from 'lucide-react'
 import { APPLIANCES, SIZE_LIMITS, describeSize, type KitCount, type KitSize } from '@/lib/starter-kit'
-import { GROUP_NOTE, NEED_ROOMS, needList } from '@/lib/need-list'
+import { GROUP_NOTE, NEED_ROOMS, needList, type NeedLine } from '@/lib/need-list'
+import { GRADES, buyList, howBought, type BuyLine, type Grade } from '@/lib/need-buy'
 import { NeedPicture } from '@/components/NeedIcons'
-import { paramsFromSize, sizeFromParams, type NeedParams } from '@/lib/starter-kit-params'
+import { needQuery, sizeFromParams, unitsFromParam, type NeedParams, type NeedUnit } from '@/lib/starter-kit-params'
 
 const TYPE = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
 const COUNTS: { k: KitCount; label: string; Icon: any }[] = [
   { k: 'bedrooms', label: 'Bedrooms', Icon: BedDouble }, { k: 'bathrooms', label: 'Bathrooms', Icon: Bath }, { k: 'guests', label: 'Guests', Icon: Users },
 ]
+const SINGLE = 'This home'
 
 export function NeedListCalculator({ initial }: { initial: NeedParams }) {
-  const [size, setSize] = useState<KitSize>(() => sizeFromParams(initial))
+  const [units, setUnits] = useState<NeedUnit[]>(() => unitsFromParam(initial.u) || [{ name: SINGLE, size: sizeFromParams(initial) }])
+  const [view, setView] = useState<number | 'order'>(0)
   const [showOpt, setShowOpt] = useState(initial.opt === '1')
+  const [grade, setGrade] = useState<Grade>(initial.t === 'std' || initial.t === 'lux' ? initial.t : 'mid')
   const [copied, setCopied] = useState('')
-  const query = paramsFromSize(size, showOpt)
+  const query = needQuery(units, showOpt, grade)
   useEffect(() => { try { window.history.replaceState(null, '', '/kit/list?' + query) } catch { /* the list still works */ } }, [query])
 
-  // Recommended items are always on this list; optional ones only when asked for.
-  const lines = useMemo(() => needList(size).filter(l => l.tier !== 'optional' || showOpt), [size, showOpt])
-  const n = (tier: 'must' | 'recommended' | 'optional') => lines.filter(l => l.tier === tier).length
+  const multi = units.length > 1
+  const idx = view === 'order' ? -1 : Math.min(view, units.length - 1)
+  const unit = idx >= 0 ? units[idx] : null
+  const size = unit?.size
+  const setSize = (fn: (z: KitSize) => KitSize) => setUnits(us => us.map((x, i) => (i === idx ? { ...x, size: fn(x.size) } : x)))
+  const setName = (name: string) => setUnits(us => us.map((x, i) => (i === idx ? { ...x, name } : x)))
+  const addUnit = (copyOf?: NeedUnit) => {
+    setUnits(us => {
+      const base = us.map((x, i) => (us.length === 1 && x.name === SINGLE ? { ...x, name: 'Unit 1' } : x))
+      const next = [...base, { name: copyOf ? `${copyOf.name === SINGLE ? 'Unit 1' : copyOf.name} (copy)` : `Unit ${base.length + 1}`, size: JSON.parse(JSON.stringify((copyOf || base[base.length - 1]).size)) }]
+      setView(next.length - 1)
+      return next
+    })
+  }
+  const removeUnit = () => { setUnits(us => { const next = us.filter((_, i) => i !== idx); return next.length === 1 ? [{ ...next[0], name: next[0].name }] : next }); setView(0) }
+
+  // Per unit: the pieces, and what to buy for them. Recommended always; optional only when asked for.
+  const per = useMemo(() => units.map(u => { const lines = needList(u.size).filter(l => l.tier !== 'optional' || showOpt); return { lines, buy: buyList(lines) } }), [units, showOpt])
+  const cur = idx >= 0 ? per[idx] : null
+  // The full order: every buy line, a quantity per unit, and the total.
+  const order = useMemo(() => {
+    const rows = new Map<string, { line: BuyLine; qty: number[] }>()
+    per.forEach((p, i) => p.buy.forEach(b => {
+      const r = rows.get(b.key) || { line: b, qty: units.map(() => 0) }
+      r.qty[i] += b.qty
+      rows.set(b.key, r)
+    }))
+    return Array.from(rows.values()).sort((a, b) => NEED_ROOMS.indexOf(a.line.group as any) - NEED_ROOMS.indexOf(b.line.group as any))
+  }, [per, units])
 
   const setCount = (k: KitCount, v: number) => { const [lo, hi] = SIZE_LIMITS[k]; setSize(z => ({ ...z, [k]: Math.max(lo, Math.min(hi, Math.round(v) || lo)) })) }
   const flash = (what: string) => { setCopied(what); setTimeout(() => setCopied(''), 1800) }
   const copyText = async (text: string, what: string) => { try { await navigator.clipboard.writeText(text); flash(what) } catch { window.prompt('Copy this', text) } }
+  const gradeLabel = GRADES.find(g => g.k === grade)!.label
   const asText = () => {
-    const out = [`What the home needs — ${describeSize(size)}`, '']
-    for (const room of NEED_ROOMS) {
-      const rows = lines.filter(l => l.item.room === room)
-      if (!rows.length) continue
-      out.push(`${room.toUpperCase()} (${rows.reduce((a, l) => a + l.count, 0)} pieces)`)
-      for (const l of rows) out.push(`- ${l.count} ${l.item.name} (${TYPE[l.tier]})`)
-      out.push('')
+    const out: string[] = []
+    if (multi || view === 'order') {
+      out.push(`Full order — ${units.length} unit${units.length === 1 ? '' : 's'} (${gradeLabel})`, '')
+      for (const r of order) out.push(`- ${r.qty.reduce((a, b) => a + b, 0)} × ${r.line.name}  [${units.map((u, i) => `${u.name}: ${r.qty[i]}`).join(', ')}]  ${r.line.shop[grade].url}`)
+    } else if (cur && size) {
+      out.push(`What the home needs — ${describeSize(size)}`, '')
+      for (const room of NEED_ROOMS) {
+        const rows = cur.lines.filter(l => l.item.room === room)
+        if (!rows.length) continue
+        out.push(`${room.toUpperCase()} (${rows.reduce((a, l) => a + l.count, 0)} pieces)`)
+        for (const l of rows) out.push(`- ${l.count} ${l.item.name} (${TYPE[l.tier]})`)
+        out.push('')
+      }
     }
-    out.push('Coffee maker: Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.')
+    out.push('', 'Coffee maker: Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.')
     return out.join('\n')
   }
+  const shopA = (b: BuyLine, label = 'Shop') => (
+    <a className="nlc-shop" href={b.shop[grade].url} target="_blank" rel="noopener noreferrer">{b.shop[grade].pinned ? <><Star size={12} /> Stay’s pick</> : <><ExternalLink size={12} /> {label}</>}</a>
+  )
 
   return (
     <div className="nlc">
@@ -51,72 +95,127 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
           <img src="/stay-logo.png" alt="Stay Hospitality" className="nlc-logo" />
         </header>
         <div className="nlc-eyebrow">Need list</div>
-        <h1>What your home needs</h1>
-        <p className="nlc-lede">Tell us about the home and the list sizes itself: every item a short-term rental needs, must-haves and recommended, and how many.</p>
+        <h1>{multi ? 'What your units need' : 'What your home needs'}</h1>
+        <p className="nlc-lede">Tell us about the home and the list sizes itself: every item a short-term rental needs, how many, and how to buy it. Onboarding several units? Add each one and get the full order.</p>
 
-        <section className="nlc-panel" aria-label="The home">
-          <div className="nlc-counts">
-            {COUNTS.map(({ k, label, Icon }) => (
-              <div key={k} className="nlc-count">
-                <span className="nlc-l"><Icon size={15} /> {label}</span>
-                <div className="nlc-step">
-                  <button type="button" aria-label={'Fewer ' + label} onClick={() => setCount(k, size[k] - 1)}><Minus size={16} /></button>
-                  <input aria-label={label} type="number" value={size[k]} onChange={e => setCount(k, +e.target.value)} />
-                  <button type="button" aria-label={'More ' + label} onClick={() => setCount(k, size[k] + 1)}><Plus size={16} /></button>
-                </div>
+        <div className="nlc-tabs" role="tablist" aria-label="Units">
+          {multi && units.map((u, i) => (
+            <button key={i} type="button" role="tab" aria-selected={view === i} className={view === i ? 'on' : ''} onClick={() => setView(i)}>{u.name || `Unit ${i + 1}`}<small>{u.size.bedrooms === 0 ? 'Studio' : u.size.bedrooms + ' bd'} · {u.size.guests} gst</small></button>
+          ))}
+          <button type="button" className="nlc-add" onClick={() => addUnit()}><Plus size={14} /> Add unit</button>
+          {multi && <button type="button" role="tab" aria-selected={view === 'order'} className={'nlc-ordertab' + (view === 'order' ? ' on' : '')} onClick={() => setView('order')}><Package size={14} /> Full order</button>}
+        </div>
+
+        {unit && size && (
+          <section className="nlc-panel" aria-label="The home">
+            {multi && (
+              <div className="nlc-uhead">
+                <input aria-label="Unit name" value={unit.name} onChange={e => setName(e.target.value)} placeholder="Unit name, e.g. 302" />
+                <button type="button" onClick={() => addUnit(unit)} title="Add another unit with the same layout"><Copy size={13} /> Same layout</button>
+                <button type="button" onClick={removeUnit} title="Remove this unit" className="nlc-del"><Trash2 size={13} /> Remove</button>
               </div>
-            ))}
-          </div>
-          <div className="nlc-kit">
-            <span className="nlc-l"><ChefHat size={15} /> Kitchen</span>
-            <div className="nlc-yn" role="radiogroup" aria-label="Kitchen">
-              {[true, false].map(v => <button key={String(v)} type="button" role="radio" aria-checked={size.kitchen === v} className={size.kitchen === v ? 'on' : ''} onClick={() => setSize(z => ({ ...z, kitchen: v }))}>{v ? 'Yes' : 'No'}</button>)}
-            </div>
-          </div>
-          {size.kitchen && (
-            <div className="nlc-apps">
-              {APPLIANCES.map(a => (
-                <label key={a.k} className={'nlc-app' + (size.appliances[a.k] ? ' on' : '')}>
-                  <input type="checkbox" checked={size.appliances[a.k]} onChange={e => setSize(z => ({ ...z, appliances: { ...z.appliances, [a.k]: e.target.checked } }))} />
-                  <span className="nlc-box">{size.appliances[a.k] && <Check size={12} />}</span>{a.label}
-                </label>
+            )}
+            <div className="nlc-counts">
+              {COUNTS.map(({ k, label, Icon }) => (
+                <div key={k} className="nlc-count">
+                  <span className="nlc-l"><Icon size={15} /> {label}</span>
+                  <div className="nlc-step">
+                    <button type="button" aria-label={'Fewer ' + label} onClick={() => setCount(k, size[k] - 1)}><Minus size={16} /></button>
+                    <input aria-label={label} type="number" value={size[k]} onChange={e => setCount(k, +e.target.value)} />
+                    <button type="button" aria-label={'More ' + label} onClick={() => setCount(k, size[k] + 1)}><Plus size={16} /></button>
+                  </div>
+                </div>
               ))}
             </div>
-          )}
-          <label className="nlc-opt"><input type="checkbox" checked={showOpt} onChange={e => setShowOpt(e.target.checked)} /> Show optional extras too</label>
-        </section>
+            <div className="nlc-kit">
+              <span className="nlc-l"><ChefHat size={15} /> Kitchen</span>
+              <div className="nlc-yn" role="radiogroup" aria-label="Kitchen">
+                {[true, false].map(v => <button key={String(v)} type="button" role="radio" aria-checked={size.kitchen === v} className={size.kitchen === v ? 'on' : ''} onClick={() => setSize(z => ({ ...z, kitchen: v }))}>{v ? 'Yes' : 'No'}</button>)}
+              </div>
+            </div>
+            {size.kitchen && (
+              <div className="nlc-apps">
+                {APPLIANCES.map(a => (
+                  <label key={a.k} className={'nlc-app' + (size.appliances[a.k] ? ' on' : '')}>
+                    <input type="checkbox" checked={size.appliances[a.k]} onChange={e => setSize(z => ({ ...z, appliances: { ...z.appliances, [a.k]: e.target.checked } }))} />
+                    <span className="nlc-box">{size.appliances[a.k] && <Check size={12} />}</span>{a.label}
+                  </label>
+                ))}
+              </div>
+            )}
+            <label className="nlc-opt"><input type="checkbox" checked={showOpt} onChange={e => setShowOpt(e.target.checked)} /> Show optional extras too</label>
+          </section>
+        )}
 
         <div className="nlc-bar">
-          <div className="nlc-sum"><b>{n('must')}</b> must-have · <b>{n('recommended')}</b> recommended{showOpt ? <> · <b>{n('optional')}</b> optional</> : null}</div>
+          <div className="nlc-grade" role="radiogroup" aria-label="Shopping grade">
+            {GRADES.map(g => <button key={g.k} type="button" role="radio" aria-checked={grade === g.k} title={g.hint} className={grade === g.k ? 'on' : ''} onClick={() => setGrade(g.k)}>{g.label}</button>)}
+          </div>
           <div className="nlc-acts">
             <button type="button" onClick={() => copyText(window.location.origin + '/kit/list?' + query, 'link')}><Link2 size={14} /> {copied === 'link' ? 'Link copied' : 'Copy link'}</button>
-            <button type="button" onClick={() => copyText(asText(), 'list')}><ClipboardCopy size={14} /> {copied === 'list' ? 'List copied' : 'Copy list'}</button>
+            <button type="button" onClick={() => copyText(asText(), 'list')}><ClipboardCopy size={14} /> {copied === 'list' ? 'Copied' : 'Copy list'}</button>
             <a href={'/api/public/starter-kit/list/xlsx?' + query}><FileSpreadsheet size={14} /> Excel</a>
           </div>
         </div>
 
-        <table className="nlc-t">
-          <thead><tr><th>Item</th><th>Type</th><th className="n">Needed</th></tr></thead>
-          {NEED_ROOMS.map(room => {
-            const rows = lines.filter(l => l.item.room === room)
-            if (!rows.length) return null
-            return (
-              <tbody key={room}>
-                <tr className="cat"><td colSpan={3}><div className="nlc-grp"><span>{room}</span><span className="nlc-grp-n">{rows.length} item{rows.length === 1 ? '' : 's'} · {rows.reduce((a, l) => a + l.count, 0)} pieces</span></div>{GROUP_NOTE[room] && <small className="nlc-grp-d">{GROUP_NOTE[room]}</small>}</td></tr>
-                {rows.map(l => (
-                  <tr key={l.item.key}>
-                    <td><div className="nlc-it"><span className="nlc-pic"><NeedPicture k={l.item.key} name={l.item.name} /></span><span><b>{l.item.name}</b><small>{l.rule}</small></span></div></td>
-                    <td><i className={'nlc-tier ' + l.tier}>{TYPE[l.tier]}</i></td>
-                    <td className="n"><span className="nlc-q">{l.count}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            )
-          })}
-        </table>
-        <p className="nlc-fine">Counts are pieces, sized to the home. Plates, bowls, mugs, tall glasses and everyday flatware follow the vacation-rental standard of two place settings per guest, so a full house can eat twice before anything is washed. Wine glasses are 1.5 per guest to allow for breakage. Bath items are per bathroom; hangers (20) and luggage racks per bedroom; smoke alarms one per bedroom plus one outside the bedrooms (check local code). Homes for 10 or more guests get a second coffee maker and extra pans, boards and serving pieces. Must-haves are what every home needs, whoever supplies them. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
+        {view === 'order' ? (
+          <div className="nlc-scroll">
+            <table className="nlc-t nlc-order">
+              <thead><tr><th>Buy</th>{units.map((u, i) => <th key={i} className="n">{u.name}</th>)}<th className="n">Total</th><th /></tr></thead>
+              {NEED_ROOMS.map(room => {
+                const rows = order.filter(r => r.line.group === room)
+                if (!rows.length) return null
+                return (
+                  <tbody key={room}>
+                    <tr className="cat"><td colSpan={units.length + 3}>{room}</td></tr>
+                    {rows.map(r => (
+                      <tr key={r.line.key}>
+                        <td><b>{r.line.name}</b>{r.line.kind === 'set' && r.line.contents ? <small>{r.line.contents.map(c => `${c.per} ${c.name.toLowerCase()}`).join(', ')} per set</small> : null}</td>
+                        {r.qty.map((q, i) => <td key={i} className="n">{q || '—'}</td>)}
+                        <td className="n"><span className="nlc-q">{r.qty.reduce((a, b) => a + b, 0)}</span></td>
+                        <td className="n">{shopA(r.line)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                )
+              })}
+            </table>
+          </div>
+        ) : cur && size ? (
+          <table className="nlc-t">
+            <thead><tr><th>Item</th><th>Type</th><th className="n">Needed</th></tr></thead>
+            {NEED_ROOMS.map(room => {
+              const rows = cur.lines.filter(l => l.item.room === room)
+              if (!rows.length) return null
+              const sets = cur.buy.filter(b => b.kind === 'set' && b.group === room)
+              return (
+                <tbody key={room}>
+                  <tr className="cat"><td colSpan={3}><div className="nlc-grp"><span>{room}</span><span className="nlc-grp-n">{rows.length} item{rows.length === 1 ? '' : 's'} · {rows.reduce((a, l) => a + l.count, 0)} pieces</span></div>{GROUP_NOTE[room] && <small className="nlc-grp-d">{GROUP_NOTE[room]}</small>}</td></tr>
+                  {sets.map(b => (
+                    <tr key={b.key} className="nlc-setrow"><td colSpan={3}>
+                      <div className="nlc-set"><span><b>Buy {b.qty} × {b.name}</b><small>Each set: {b.contents!.map(c => `${c.per} ${c.name.toLowerCase()}`).join(', ')}</small></span>{shopA(b)}</div>
+                    </td></tr>
+                  ))}
+                  {rows.map(l => <ItemRow key={l.item.key} l={l} buy={cur.buy} shopA={shopA} />)}
+                </tbody>
+              )
+            })}
+          </table>
+        ) : null}
+        <p className="nlc-fine">Counts are pieces, sized to the home. Dinner plates, bowls, tall glasses, dinner forks, table knives and soup spoons follow the vacation-rental standard of two place settings per guest, so a full house can eat twice before anything is washed; side plates, mugs, wine and short glasses and teaspoons are one per guest. Where things are sold as a set we list the set, and anything the sets leave short is bought separately. Bath items are per bathroom; hangers (20) and luggage racks per bedroom; smoke alarms one per bedroom plus one outside the bedrooms (check local code). Homes for 10 or more guests get a second coffee maker and extra pans, boards and serving pieces. Links marked Stay’s pick are products from Stay’s own list; the others open an Amazon search for that grade of the item. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
       </main>
     </div>
+  )
+}
+
+function ItemRow({ l, buy, shopA }: { l: NeedLine; buy: BuyLine[]; shopA: (b: BuyLine, label?: string) => JSX.Element }) {
+  const own = buy.find(b => b.key === l.item.key)
+  return (
+    <tr>
+      <td><div className="nlc-it"><span className="nlc-pic"><NeedPicture k={l.item.key} name={l.item.name} /></span><span><b>{l.item.name}</b><small>{l.rule}</small><small className="nlc-how">{howBought(buy, l.item.key)}{own ? <> · {shopA(own)}</> : null}</small></span></div></td>
+      <td><i className={'nlc-tier ' + l.tier}>{TYPE[l.tier]}</i></td>
+      <td className="n"><span className="nlc-q">{l.count}</span></td>
+    </tr>
   )
 }
 
@@ -164,6 +263,25 @@ const CSS = `
 .nlc-it{display:flex;align-items:center;gap:12px}.nlc-pic{flex:none;width:52px;height:52px;border-radius:12px;background:var(--soft);color:var(--accent);display:grid;place-items:center}
 .nlc-grp{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.nlc-grp-n{font-family:var(--ui);font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .nlc-grp-d{display:block;font-family:var(--ui);font-size:12.5px;color:var(--muted);margin-top:2px}
+.nlc-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.nlc-tabs button{display:inline-flex;flex-direction:column;align-items:flex-start;gap:1px;border:1px solid var(--line);background:var(--paper);border-radius:12px;padding:7px 12px;font:600 13.5px var(--ui);color:var(--ink);cursor:pointer}
+.nlc-tabs button small{font-weight:400;font-size:11.5px;color:var(--muted)}
+.nlc-tabs button.on{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent);background:var(--soft)}
+.nlc-tabs .nlc-add,.nlc-tabs .nlc-ordertab{flex-direction:row;align-items:center;gap:6px}
+.nlc-tabs .nlc-add{border-style:dashed;color:var(--accent)}
+.nlc-tabs .nlc-ordertab{background:var(--ink);color:#fff;border-color:var(--ink)}.nlc-tabs .nlc-ordertab.on{background:var(--accent);border-color:var(--accent);box-shadow:none}
+.nlc-uhead{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.nlc-uhead input{flex:1 1 180px;min-width:0;border:1px solid var(--line);border-radius:10px;padding:8px 12px;font:600 15px var(--ui);color:var(--ink)}
+.nlc-uhead button{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:7px 12px;font:600 12.5px var(--ui);color:var(--ink);cursor:pointer}
+.nlc-uhead .nlc-del{color:#A3302A}
+.nlc-grade{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px}
+.nlc-grade button{border:0;background:none;border-radius:999px;padding:6px 14px;font:600 13px var(--ui);color:var(--muted);cursor:pointer}.nlc-grade button.on{background:var(--accent);color:#fff}
+.nlc-shop{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font:600 12.5px var(--ui);text-decoration:none;white-space:nowrap}.nlc-shop:hover{text-decoration:underline}
+.nlc-how{color:var(--ink)!important;margin-top:2px}
+.nlc-setrow td{background:var(--soft);border-bottom:1px solid var(--line)}
+.nlc-set{display:flex;justify-content:space-between;align-items:center;gap:12px}.nlc-set small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.nlc-scroll{overflow-x:auto}
+.nlc-order{min-width:520px}.nlc-order td small{display:block;color:var(--muted);font-size:12px}
 .nlc-q{font-family:var(--display);font-size:24px}
 .nlc-fine{margin-top:22px;font-size:12.5px;color:var(--muted)}
 @media (max-width:560px){.nlc-counts{grid-template-columns:1fr}.nlc-t th:nth-child(2),.nlc-t td:nth-child(2){padding-inline:4px}}
