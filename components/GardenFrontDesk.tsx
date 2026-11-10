@@ -157,8 +157,12 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
 }
 const Td = ({ children, className = '', title }: { children?: ReactNode; className?: string; title?: string }) => <td title={title} className={`px-3 py-1.5 whitespace-nowrap align-middle ${className}`}>{children}</td>
 
-const verTone = (v: string): Tone => v === 'passed' || v === 'waived' ? 'emerald' : v === 'failed' ? 'rose' : 'slate'
-const Ver = ({ k, v }: { k: string; v: string }) => <Tag tone={verTone(v)} title={`${k} ${v}`}>{k} {v === 'passed' ? '✓' : v === 'waived' ? 'waived' : v === 'failed' ? '✗' : '…'}</Tag>
+const verTone = (v: string): Tone => v === 'passed' || v === 'waived' || v === 'on_file' ? 'emerald' : v === 'failed' ? 'rose' : 'slate'
+const Ver = ({ k, v, title }: { k: string; v: string; title?: string }) => <Tag tone={verTone(v)} title={title || `${k} ${v.replace('_', ' ')}`}>{k} {v === 'passed' ? '✓' : v === 'on_file' ? 'on file' : v === 'waived' ? 'waived' : v === 'failed' ? '✗' : '…'}</Tag>
+// The desk's notes read into tags (lib/garden/notes-read); the full notes on hover.
+const NoteTags = ({ g }: { g: any }) => !g.noteTags?.length ? (g.notes?.length ? <span className="text-muted" title={g.notes.join('\n\n')}>note</span> : <span className="text-muted">—</span>) : <span className="inline-flex items-center gap-1" title={g.notes.join('\n\n')}>{g.noteTags.slice(0, 4).map((t: any) => <Tag key={t.key} tone={t.tone} title={t.detail || undefined}>{t.label}</Tag>)}{g.noteTags.length > 4 ? <span className="text-muted text-[11px]">+{g.noteTags.length - 4}</span> : null}</span>
+// Operto: the door code and whether self check-in is done.
+const Code = ({ g }: { g: any }) => !g.operto ? <span className="text-muted">—</span> : <span className="inline-flex items-center gap-1">{g.operto.code ? <span className="font-mono text-[12px] text-ink" title={g.operto.codeUsedAt ? `First used ${g.operto.codeUsedAt}` : 'Not used yet'}>{g.operto.code}</span> : null}{g.operto.checkin ? <Tag tone={g.operto.checkin === 'done' ? 'emerald' : g.operto.checkin === 'started' ? 'amber' : 'slate'}>{g.operto.checkin === 'done' ? 'self check-in ✓' : g.operto.checkin === 'started' ? 'check-in started' : 'not started'}</Tag> : null}{g.operto.codeUsedAt ? <Tag tone="brand">used</Tag> : null}</span>
 const CallTag = ({ g }: { g: any }) => <Tag tone={g.call === 'reached' ? 'emerald' : g.call === 'tried' ? 'amber' : 'slate'} title={g.lastCallAt ? `Last call ${clock(g.lastCallAt)}` : 'No welcome / pre-arrival call logged'}>{g.call === 'reached' ? 'reached' : g.call === 'tried' ? `${g.callAttempts} tried` : 'not called'}</Tag>
 
 const matchGuest = (g: any, q: string) => !q || [g.guest, g.rooms.join(' '), g.source, g.phone, g.email, g.id].join(' ').toLowerCase().includes(q.toLowerCase())
@@ -169,11 +173,11 @@ function Guests({ rows, q, mode, empty }: { rows: any[]; q: string; mode: 'arriv
   if (!list.length) return <LeanEmpty>No guest matches “{q}”.</LeanEmpty>
   const ordered = mode === 'unpaid' ? list : [...list].sort((a, b) => Number(a.done) - Number(b.done) || (a.rooms[0] || '').localeCompare(b.rooms[0] || '', undefined, { numeric: true }))
   return (
-    <Table head={['Guest', 'Room', mode === 'departure' ? 'Stay' : 'Dates', 'Nts', 'Source', 'Balance', 'ID', 'Card', 'Call', mode === 'unpaid' ? 'When' : 'Status']}>
+    <Table head={['Guest', 'Room', mode === 'departure' ? 'Stay' : 'Dates', 'Nts', 'Source', 'Balance', 'ID', 'Card', 'Code', 'Call', 'Notes', mode === 'unpaid' ? 'When' : 'Status']}>
       {ordered.map(g => (
         <tr key={g.id} className={g.done ? 'opacity-60' : ''}>
           <Td className="font-semibold text-ink max-w-[14rem] truncate" title={[g.guest, g.phone, g.email].filter(Boolean).join(' · ')}>
-            <span className="inline-flex items-center gap-1.5">{g.phone ? <a href={`tel:${g.phone}`} aria-label={`Call ${g.guest}`} className="text-muted hover:text-brand-700"><Phone size={12} /></a> : null}{g.guest}</span>
+            <span className="inline-flex items-center gap-1.5">{g.phone ? <a href={`tel:${g.phone}`} aria-label={`Call ${g.guest}`} className="text-muted hover:text-brand-700"><Phone size={12} /></a> : null}<a href={`/garden/guests?res=${encodeURIComponent(g.id)}`} className="hover:underline">{g.guest}</a></span>
             {(g.adults || g.children) ? <span className="ml-1 text-muted font-normal">· {g.adults || 0}{g.children ? `+${g.children}` : ''}</span> : null}
           </Td>
           <Td className="tabular-nums">{g.rooms.join(', ') || <span className="text-rose-700">unassigned</span>}</Td>
@@ -181,9 +185,11 @@ function Guests({ rows, q, mode, empty }: { rows: any[]; q: string; mode: 'arriv
           <Td className="tabular-nums text-muted">{g.nights ?? '—'}</Td>
           <Td className="text-muted max-w-[9rem] truncate" title={g.source || ''}>{g.source || 'Direct'}</Td>
           <Td className={`tabular-nums font-semibold ${g.balance > 0 ? 'text-amber-700' : 'text-muted font-normal'}`}>{g.balance > 0 ? usd(g.balance) : '—'}</Td>
-          <Td><Ver k="ID" v={g.id_status} /></Td>
+          <Td><Ver k="ID" v={g.id_status} title={g.id_status === 'on_file' ? `ID on file${g.idType ? ' · ' + g.idType : ''}` : undefined} /></Td>
           <Td><Ver k="card" v={g.card_status} /></Td>
+          <Td><Code g={g} /></Td>
           <Td><CallTag g={g} /></Td>
+          <Td className="max-w-[18rem]"><NoteTags g={g} /></Td>
           <Td>{mode === 'unpaid' ? <Tag tone={g.when === 'departing' ? 'rose' : g.when === 'arriving' ? 'amber' : 'brand'}>{g.when}</Tag> : <Tag tone={STATUS_TONE[g.status] || 'slate'}>{label(g.status)}</Tag>}</Td>
         </tr>
       ))}
@@ -195,7 +201,7 @@ function Verifications({ rows, q, canVerify, reload, today }: { rows: any[]; q: 
   const [busy, setBusy] = useState<string>('')
   const [msg, setMsg] = useState('')
   const list = rows.filter(g => matchGuest(g, q))
-  const mark = async (g: any, kind: 'id' | 'card', status: 'passed' | 'waived') => {
+  const mark = async (g: any, kind: 'id' | 'card', status: 'passed' | 'waived' | 'failed') => {
     setBusy(`${g.id}:${kind}`); setMsg('')
     const r = await post('/api/garden/calls', { type: 'verification', reservationId: g.id, kind, status })
     if (!r?.ok) setMsg(r?.message || r?.error || 'Could not save.')
@@ -205,13 +211,14 @@ function Verifications({ rows, q, canVerify, reload, today }: { rows: any[]; q: 
   if (!list.length) return <LeanEmpty>No guest matches “{q}”.</LeanEmpty>
   const Btns = ({ g, kind }: { g: any; kind: 'id' | 'card' }) => {
     const v = kind === 'id' ? g.id_status : g.card_status
-    if (!canVerify || v === 'passed' || v === 'waived') return <Ver k={kind === 'id' ? 'ID' : 'card'} v={v} />
+    if (!canVerify || v === 'passed' || v === 'waived' || v === 'on_file') return <Ver k={kind === 'id' ? 'ID' : 'card'} v={v} title={v === 'on_file' && kind === 'id' && g.idType ? `ID on file · ${g.idType}` : undefined} />
     const b = busy === `${g.id}:${kind}`
     return (
       <span className="inline-flex items-center gap-1">
         <Ver k={kind === 'id' ? 'ID' : 'card'} v={v} />
         <button disabled={b} onClick={() => mark(g, kind, 'passed')} className="rounded-md border border-emerald-200 text-emerald-700 px-1.5 py-0.5 text-[11px] font-semibold disabled:opacity-50">pass</button>
         <button disabled={b} onClick={() => mark(g, kind, 'waived')} className="rounded-md border border-line text-muted px-1.5 py-0.5 text-[11px] font-semibold disabled:opacity-50">waive</button>
+        <button disabled={b} onClick={() => { if (window.confirm(`Mark ${kind === 'id' ? 'the ID' : 'the card'} FAILED for ${g.guest}?`)) mark(g, kind, 'failed') }} className="rounded-md border border-rose-200 text-rose-700 px-1.5 py-0.5 text-[11px] font-semibold disabled:opacity-50">fail</button>
       </span>
     )
   }
@@ -219,17 +226,19 @@ function Verifications({ rows, q, canVerify, reload, today }: { rows: any[]; q: 
     <>
       {msg ? <p className="text-[12px] text-rose-700 mb-1 px-1">{msg}</p> : null}
       {!canVerify ? <p className="text-[12px] text-muted mb-1.5 px-1">Read-only — marking a check needs edit access on Calls.</p> : null}
-      <Table head={['Arrives', 'Guest', 'Room', 'Source', 'Balance', 'ID', 'Card', 'Call', 'Status']}>
+      <Table head={['Arrives', 'Guest', 'Room', 'Source', 'Balance', 'ID', 'Card', 'Code', 'Call', 'Notes', 'Status']}>
         {list.map(g => (
           <tr key={g.id}>
             <Td className={`tabular-nums font-semibold ${g.checkIn === today ? 'text-rose-700' : 'text-muted'}`}>{g.checkIn === today ? 'Today' : dayShort(g.checkIn)}</Td>
-            <Td className="font-semibold text-ink max-w-[14rem] truncate" title={[g.phone, g.email].filter(Boolean).join(' · ')}>{g.guest}</Td>
+            <Td className="font-semibold text-ink max-w-[14rem] truncate" title={[g.phone, g.email].filter(Boolean).join(' · ')}><a href={`/garden/guests?res=${encodeURIComponent(g.id)}`} className="hover:underline">{g.guest}</a></Td>
             <Td className="tabular-nums">{g.rooms.join(', ') || '—'}</Td>
             <Td className="text-muted max-w-[9rem] truncate">{g.source || 'Direct'}</Td>
             <Td className={`tabular-nums ${g.balance > 0 ? 'text-amber-700 font-semibold' : 'text-muted'}`}>{g.balance > 0 ? usd(g.balance) : '—'}</Td>
             <Td><Btns g={g} kind="id" /></Td>
             <Td><Btns g={g} kind="card" /></Td>
+            <Td><Code g={g} /></Td>
             <Td><CallTag g={g} /></Td>
+            <Td className="max-w-[16rem]"><NoteTags g={g} /></Td>
             <Td><Tag tone={STATUS_TONE[g.status] || 'slate'}>{label(g.status)}</Tag></Td>
           </tr>
         ))}

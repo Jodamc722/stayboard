@@ -13,10 +13,12 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { todayET } from './sync'
+import { readNotes, type NoteTag } from './notes-read'
 
 const ET = 'America/New_York'
 const LIVE = ['confirmed', 'not_confirmed', 'checked_in']
-const OK_VER = ['passed', 'waived']
+// on_file: Cloudbeds holds an ID document / a card, or Operto verified it — the desk need not chase it.
+const OK_VER = ['passed', 'waived', 'on_file']
 const addDays = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10)
 const money = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
 const nowHHMM = () => new Intl.DateTimeFormat('en-GB', { timeZone: ET, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date())
@@ -35,13 +37,16 @@ async function inChunks<T>(ids: string[], run: (chunk: string[]) => PromiseLike<
   return out
 }
 
-export type VerState = 'passed' | 'waived' | 'failed' | 'pending'
+export type VerState = 'passed' | 'waived' | 'failed' | 'pending' | 'on_file'
 export type FdGuest = {
   id: string; guest: string; phone: string | null; email: string | null; status: string
   checkIn: string; checkOut: string; nights: number | null; adults: number | null; children: number | null
   rooms: string[]; roomIds: string[]; source: string | null; total: number; balance: number
   id_status: VerState; card_status: VerState; call: 'reached' | 'tried' | 'none'; callAttempts: number; lastCallAt: string | null
   done: boolean                                   // arrival: checked in · departure: checked out
+  notes: string[]; noteTags: NoteTag[]; vehicle: string | null
+  idType: string | null
+  operto: { code: string | null; codeUsedAt: string | null; checkin: 'done' | 'started' | 'not_started' | null; idVerified: boolean | null } | null
 }
 export type FdRoom = {
   id: string; name: string; type: string | null; floor: string | null; status: string
@@ -85,6 +90,15 @@ export async function gardenFrontDesk() {
   const R = (resQ.data || []) as any[]
   const ids = R.map(r => String(r.id))
   const since = new Date(Date.now() - 21 * 86400000).toISOString()
+  const { resDetails } = await import('./res-detail')
+  const { opertoStore } = await import('./operto')
+  const [det, ops, noteRows] = await Promise.all([
+    resDetails().catch(() => ({} as Record<string, any>)),
+    opertoStore().catch(() => null),
+    inChunks<any>(ids.map(i => 'note:' + i), c => db.from('garden_messages').select('thread_id,body,sent_at').in('thread_id', c).order('sent_at')),
+  ])
+  const notesBy: Record<string, string[]> = {}
+  for (const m of noteRows) { const k = String(m.thread_id).slice(5); (notesBy[k] = notesBy[k] || []).push(String(m.body || '')) }
   const [vers, calls, queue] = await Promise.all([
     inChunks<any>(ids, c => db.from('garden_verifications').select('reservation_id,kind,status').in('reservation_id', c)),
     inChunks<any>(ids, c => db.from('garden_calls').select('reservation_id,kind,outcome,called_at').in('reservation_id', c).gte('called_at', since)),
@@ -105,11 +119,18 @@ export async function gardenFrontDesk() {
 
   const guest = (r: any, done: boolean): FdGuest => {
     const v = ver[r.id] || {}, c = callBy[r.id]
+    const d = (det as any)[r.id] || null, op = ops?.byRes?.[r.id] || null
+    const nts = notesBy[r.id] || [], rd = readNotes(nts)
+    // A person's decision (passed / failed / waived) wins; otherwise what Cloudbeds or Operto hold.
+    const idSt: VerState = v.id && v.id !== 'pending' ? v.id : (d?.idOnFile || op?.idVerified) ? 'on_file' : 'pending'
+    const cardSt: VerState = v.card && v.card !== 'pending' ? v.card : d?.cardOnFile || rd.tags.some(t => t.key === 'prepaid' || t.key === 'preauth') ? 'on_file' : 'pending'
     return {
       id: String(r.id), guest: r.guest_name || 'Guest', phone: r.guest_phone || null, email: r.guest_email || null, status: r.status || '',
       checkIn: r.check_in, checkOut: r.check_out, nights: r.nights ?? null, adults: r.adults ?? null, children: r.children ?? null,
       rooms: r.room_names || [], roomIds: r.room_ids || [], source: r.source || null, total: money(r.total), balance: money(r.balance),
-      id_status: v.id || 'pending', card_status: v.card || 'pending',
+      id_status: idSt, card_status: cardSt,
+      notes: nts, noteTags: rd.tags, vehicle: rd.vehicle, idType: d?.idType || null,
+      operto: op ? { code: op.code, codeUsedAt: op.codeUsedAt, checkin: op.checkin, idVerified: op.idVerified } : null,
       call: c?.reached ? 'reached' : c?.n ? 'tried' : 'none', callAttempts: c?.n || 0, lastCallAt: c?.last || null, done,
     }
   }
@@ -225,7 +246,8 @@ export async function gardenFrontDesk() {
     },
     arrivals, departures, inHouse, unpaid, verifications,
     rooms, tasks: T, housekeepers, team,
-    available: { roomDetail: detail, roomBlocks: blocksOk, shifts: shiftsOk, timecards: cardsOk },
+    available: { roomDetail: detail, roomBlocks: blocksOk, shifts: shiftsOk, timecards: cardsOk, operto: !!ops?.ok, details: Object.keys(det || {}).length > 0 },
+    operto: ops ? { ok: ops.ok, error: ops.error, at: ops.at, matched: ops.matched, reservations: ops.reservations, fields: ops.fields } : null,
     syncs,
   }
 }

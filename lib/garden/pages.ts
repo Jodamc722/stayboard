@@ -6,7 +6,7 @@
  * off/view/edit/full by the person's GARDEN role (garden_roles, migration 118) — never by their VR
  * role. The sidebar is drawn from this list and hides what the role has 'off'.
  */
-export type GardenPageKey = 'today' | 'rooms' | 'schedule' | 'staff' | 'calls' | 'messages' | 'reviews' | 'calendar' | 'payments' | 'reports' | 'owner-reports' | 'handbook' | 'adam' | 'settings' | 'setup' | 'users'
+export type GardenPageKey = 'today' | 'rooms' | 'schedule' | 'staff' | 'calls' | 'guests' | 'messages' | 'reviews' | 'calendar' | 'payments' | 'reports' | 'owner-reports' | 'handbook' | 'adam' | 'settings' | 'setup' | 'users'
 export type GardenPageDef = { key: GardenPageKey; to: string; label: string; section: string; what: string }
 // Laid out like the VR sidebar (Jon, 2026-09-29: "same web app, same design"): the agent's tab up
 // top, the work in the middle, and Settings ending in Users & admin — where the hotel's people,
@@ -19,6 +19,7 @@ export const GARDEN_PAGE_DEFS: GardenPageDef[] = [
   { key: 'schedule',      to: '/garden/schedule',      label: 'Scheduler',             section: 'Operations', what: 'Shifts by day against the day\'s load.' },
   { key: 'handbook',      to: '/garden/handbook',      label: 'Handbook',              section: 'Operations', what: 'The hotel\'s own SOPs. Adam reads it.' },
   { key: 'calls',         to: '/garden/calls',         label: 'Calls & verifications', section: 'Guests',     what: 'Welcome calls, ID and card checks, the phone log.' },
+  { key: 'guests',        to: '/garden/guests',        label: 'Guests',                section: 'Guests',     what: 'Every guest: stays, spend, channels, the desk\'s notes read, ID and card, Operto code and self check-in.' },
   { key: 'messages',      to: '/garden/messages',      label: 'Inbox',                 section: 'Guests',     what: 'Every guest conversation — email, phone, reviews, notes — sorted by channel and source.' },
   { key: 'reviews',       to: '/garden/reviews',       label: 'Reviews',               section: 'Guests',     what: 'Reviews, replies, themes.' },
   { key: 'calendar',      to: '/garden/calendar',      label: 'Multi-calendar',        section: 'Money',      what: 'Every room by date with its bookings, plus rates, availability and restrictions.' },
@@ -49,6 +50,8 @@ export const gAtLeast = (have: string | null | undefined, need: GLevel) => (RANK
 export function gardenLevels(perms: Record<string, any> | null | undefined): Record<GardenPageKey, GLevel> {
   const out = {} as Record<GardenPageKey, GLevel>
   for (const k of GARDEN_PAGE_KEYS) { const v = String(perms?.[k] || 'off'); out[k] = (v in RANK ? v : 'off') as GLevel }
+  // Guests (2026-11-10) is new: a role saved before it follows its Calls & verifications level.
+  if (perms && perms.guests == null) out.guests = out.calls
   return out
 }
 export const GARDEN_ALL_FULL = (): Record<GardenPageKey, GLevel> => gardenLevels(Object.fromEntries(GARDEN_PAGE_KEYS.map(k => [k, 'full'])))

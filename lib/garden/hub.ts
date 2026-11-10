@@ -127,7 +127,8 @@ export type HubResult = Record<string, number | string | null>
 export async function syncHub(): Promise<HubResult> {
   const out: HubResult = {}
   if (!cloudbedsConfigured()) return { skipped: 'Cloudbeds not connected' }
-  const feeds: [string, () => Promise<number | null>][] = [['calendar', () => pullCalendar()], ['channels', pullChannels], ['payments', () => pullPayments()], ['blocks', pullRoomBlocks], ['notes', pullReservationNotes], ['messages', pullMessages]]
+  const { pullTotals, pullDetails } = await import('./res-detail')
+  const feeds: [string, () => Promise<number | null>][] = [['calendar', () => pullCalendar()], ['channels', pullChannels], ['payments', () => pullPayments()], ['blocks', pullRoomBlocks], ['notes', pullReservationNotes], ['totals', () => pullTotals()], ['details', pullDetails], ['operto', async () => { const o = await import('./operto'); if (!o.opertoConfigured()) return null; const st = await o.pullOperto(); if (!st.ok) throw new Error(st.error || 'Operto failed'); return st.matched }], ['staff', async () => (await import('./schedule')).seedHousekeepers()], ['messages', pullMessages]]
   for (const [k, fn] of feeds) {
     try { const n = await fn(); out[k] = n; if (n != null) await mark(k, { count: n }) }
     catch (e: any) { out[k] = `error: ${String(e?.message || e).slice(0, 160)}`; await mark(k, { error: String(e?.message || e) }) }

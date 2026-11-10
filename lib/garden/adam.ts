@@ -12,6 +12,7 @@
 //   - his own voice/direction (app_settings garden_agent: direction, name)
 // Nothing here imports from lib/eve. The two businesses learn separately by design.
 import 'server-only'
+import { NOTE_GLOSSARY } from './notes-read'
 import { supabaseAdmin } from '../supabase-admin'
 import { anthropicMessages, textOf } from '../anthropic-call'
 import { modelPairFor } from '../ai-models'
@@ -66,6 +67,8 @@ const TOOLS = [
   { name: 'call_desk', description: 'What the front desk owes each guest right now: welcome calls due, verifications pending, post-stay calls — with attempts so far.', input_schema: { type: 'object', properties: {} } },
   { name: 'reviews', description: 'Recent reviews (90 days) with the average, the negative ones, the themes, and which still have no reply.', input_schema: { type: 'object', properties: { only: { type: 'string', description: 'optional: negative | unanswered' } } } },
   { name: 'schedule', description: 'This week: who is on shift each day and what the day holds (cleans, stayovers, arrivals), with where the roster is short.', input_schema: { type: 'object', properties: {} } },
+  { name: 'guest', description: "One guest's profile: every stay with dates, room, channel, total and balance, the front desk's Cloudbeds notes (read into tags: prepaid, vouchers, VIP, vehicle, upgrade, late checkout…), whether an ID and a card are on file, the Operto door code and whether they completed self check-in, and the calls logged. Look up by name, room number or reservation id.", input_schema: { type: 'object', properties: { query: { type: 'string', description: 'guest name, room number, or Cloudbeds reservation id' } }, required: ['query'] } },
+  { name: 'notes', description: "Every front-desk note on reservations arriving, in house or departing over the next week — the note text, the tags read from it, the guest, room and dates. Use it to answer 'who is VIP', 'whose car is …', 'who needs an early check-in', 'what did the desk note about room 412'.", input_schema: { type: 'object', properties: { tag: { type: 'string', description: 'optional tag key to filter: prepaid, preauth, vouchers, vip, fb, topfloor, poolview, nomove, upg_pending, upg, lco, eci, access, connecting, pet, nohk, ccd, hotelcollect, delivery, noshow, issue, vehicle' } } } },
   { name: 'doc_search', description: "Search the hotel's uploaded documents (handbook files, SOPs, policies, training, reference) for the passages that answer a question. Use for anything about how the hotel DOES something or what its policy IS.", input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
   { name: 'doc_read', description: "Read one uploaded hotel document in full (title, partial match fine), or pass nothing to list them.", input_schema: { type: 'object', properties: { title: { type: 'string' } } } },
   { name: 'ask', description: "When you do not know something about the hotel that a person should tell you (a policy, a rule, who handles what), file the question so the GM answers it on Adam's page. The answer becomes a memory.", input_schema: { type: 'object', properties: { question: { type: 'string' }, context: { type: 'string', description: 'why it came up' }, subject: { type: 'string' } }, required: ['question'] } },
@@ -90,6 +93,27 @@ async function runTool(name: string, args: any, by: string | null): Promise<any>
     if (name === 'call_desk') { const { callQueue } = await import('./call-desk'); const q = await callQueue({ days: 3 }); return { count: q.length, calls: q.map((x: any) => ({ kind: x.kind, guest: x.reservation?.guest_name, room: (x.reservation?.room_names || []).join(', '), check_in: x.reservation?.check_in, due: x.due_at, dueNow: x.dueNow, attempts: x.attempts, lastOutcome: x.last_outcome })) } }
     if (name === 'reviews') { const { reviewStats } = await import('./reviews'); const db = supabaseAdmin(); let q = db.from('garden_reviews').select('source,guest_name,rating,max_rating,title,body,received_at,sentiment,themes,reply_status').gte('received_at', new Date(Date.now() - 90 * 86400000).toISOString()).order('received_at', { ascending: false }).limit(40); if (args?.only === 'negative') q = q.eq('sentiment', 'negative'); if (args?.only === 'unanswered') q = q.in('reply_status', ['none', 'drafted']); const { data } = await q; return { stats: await reviewStats(90), reviews: data || [] } }
     if (name === 'schedule') { const { weekSchedule, weekStart } = await import('./schedule'); const w = await weekSchedule(weekStart(), 7); return { from: w.from, days: w.days.map((d: any) => ({ date: d.date, load: d.load, on: d.shifts.map((s: any) => `${s.staff?.name} (${s.role} ${s.start_time}–${s.end_time})`), short: d.suggest.gaps.filter((g: any) => g.short).map((g: any) => `${g.role} short ${g.short}`) })) } }
+    if (name === 'guest') {
+      const q = String(args?.query || '').trim().toLowerCase(); if (!q) return { error: 'query required' }
+      const { guestList, guestProfile } = await import('./guests')
+      const { guests } = await guestList()
+      const hit = guests.find(g => g.name.toLowerCase() === q) || guests.find(g => g.current?.rooms.some(r => r.toLowerCase() === q) || g.next?.rooms.some(r => r.toLowerCase() === q)) || guests.find(g => g.name.toLowerCase().includes(q))
+      const p = hit ? await guestProfile({ key: hit.key }) : await guestProfile({ res: String(args.query) })
+      if (!p) return { error: 'No guest matches that.' }
+      return { ...p, stays: p.stays.slice(0, 8).map((st: any) => ({ ...st, notes: st.notes, tags: st.tags.map((t: any) => t.label + (t.detail ? ': ' + t.detail : '')) })), email: undefined, phone: p.phone ? 'on file' : null }
+    }
+    if (name === 'notes') {
+      const db = supabaseAdmin(); const { readNote } = await import('./notes-read')
+      const t0 = todayET(-1), t7 = todayET(7)
+      const { data: res } = await db.from('garden_reservations').select('id,guest_name,check_in,check_out,room_names,status').lte('check_in', t7).gte('check_out', t0).neq('status', 'canceled').limit(300)
+      const R = (res || []) as any[]; const byId: Record<string, any> = {}; for (const r of R) byId[r.id] = r
+      const out: any[] = []
+      for (let i = 0; i < R.length; i += 200) {
+        const { data } = await db.from('garden_messages').select('thread_id,body,author,sent_at').in('thread_id', R.slice(i, i + 200).map(r => 'note:' + r.id)).order('sent_at')
+        for (const m of ((data || []) as any[])) { const r = byId[String(m.thread_id).slice(5)]; const rd = readNote(m.body); if (args?.tag && !rd.tags.some(t => t.key === args.tag)) continue; out.push({ guest: r?.guest_name, room: (r?.room_names || []).join(', '), check_in: r?.check_in, check_out: r?.check_out, status: r?.status, note: m.body, tags: rd.tags.map(t => t.label + (t.detail ? ': ' + t.detail : '')), by: rd.initials.join(',') || m.author }) }
+      }
+      return { count: out.length, notes: out.slice(0, 120) }
+    }
     if (name === 'doc_search') { const { searchAdamDocs } = await import('./adam-docs'); return await searchAdamDocs(String(args?.query || '')) }
     if (name === 'doc_read') { const { readAdamDoc } = await import('./adam-docs'); return await readAdamDoc(args?.title ? String(args.title) : undefined) }
     if (name === 'ask') { const q = String(args?.question || '').trim().slice(0, 500); if (!q) return { error: 'question required' }; const db = supabaseAdmin(); const { data: dup } = await db.from('garden_agent_questions').select('id').eq('status', 'open').eq('question', q).limit(1); if (dup?.length) return { ok: true, already: true }; const { data } = await db.from('garden_agent_questions').insert({ question: q, context: args?.context ? String(args.context).slice(0, 500) : null, subject: args?.subject ? String(args.subject).slice(0, 80) : null }).select('id').single(); return { ok: true, id: data?.id } }
@@ -139,6 +163,7 @@ export async function runAdam(input: { access: Access; messages: { role: 'user' 
     handbook ? `The hotel's handbook (its own SOPs — ground truth; follow it over anything else):\n${handbook}` : `The hotel's handbook is still empty — when a question needs a policy you have not been told, call ask.`,
     library.length ? `The hotel's uploaded documents (search them with doc_search, read one with doc_read; quote by name): ${library.map(d => `"${d.title}" (${d.category})`).join(', ')}` : '',
     shared ? `Shared knowledge (the ONLY things from Stay Hospitality's vacation-rental side you know; everything else about that business is outside your world):\n${shared}` : '',
+    `The front desk writes reservation notes in Cloudbeds in shorthand — read them this way (tools: notes, guest): ${Object.entries(NOTE_GLOSSARY).map(([k, v]) => `${k} = ${v}`).join('; ')}. Two capital letters at the end of a note are the initials of the person who wrote it. "Self check-in" and the door code come from Operto when it is connected; "ID on file" means Cloudbeds holds an ID document for the stay.`,
     `What you have been taught about the hotel:\n${memoryBlock}`,
   ].filter(Boolean).join('\n\n')
 

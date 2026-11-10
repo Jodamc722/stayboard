@@ -22,11 +22,13 @@ export async function staffList(includeInactive = false) {
 export async function weekSchedule(from: string, days = 7) {
   const db = supabaseAdmin()
   const to = addDays(from, days - 1)
-  const [{ data: shifts }, staff, { data: tasks }, { data: res }] = await Promise.all([
+  const [{ data: shifts }, staff, { data: tasks }, { data: res }, { data: cards }] = await Promise.all([
     db.from('garden_shifts').select('*').gte('date', from).lte('date', to).order('date').order('start_time'),
     staffList(),
     db.from('garden_tasks').select('date,kind,status').gte('date', from).lte('date', to).neq('status', 'cancelled'),
     db.from('garden_reservations').select('check_in,check_out,status,room_ids').in('status', ['confirmed', 'not_confirmed', 'checked_in', 'checked_out']).lte('check_in', to).gte('check_out', from),
+    // Clock-ins from Homebase (lib/garden/homebase → garden_timecards), for "who actually came in".
+    db.from('garden_timecards').select('staff_id,name,date,clock_in,clock_out,hours,open').gte('date', from).lte('date', to).then(r => r, () => ({ data: [] as any[] })),
   ])
   const byName: Record<string, any> = {}
   for (const s of staff) byName[s.id] = s
@@ -44,7 +46,8 @@ export async function weekSchedule(from: string, days = 7) {
     const soRooms = live.filter(r => r.check_in < d && r.check_out > d).reduce((a, r) => a + rooms(r), 0)
     const load = { cleans: Math.max(T.filter(t => t.kind === 'clean').length, coRooms), stayovers: Math.max(T.filter(t => t.kind === 'stayover').length, soRooms), maintenance: T.filter(t => t.kind === 'maintenance').length, other: T.filter(t => !['clean', 'stayover', 'maintenance'].includes(t.kind)).length, arrivals: R.filter(r => r.check_in === d).length, departures: R.filter(r => r.check_out === d).length, inHouse: R.filter(r => r.check_in < d && r.check_out > d).length }
     const S = ((shifts || []) as any[]).filter(x => x.date === d).map(x => ({ ...x, staff: byName[x.staff_id] || null }))
-    daysOut.push({ date: d, load, shifts: S, suggest: suggestFor(load, S, staff) })
+    const punches = ((cards || []) as any[]).filter(c => c.date === d).map(c => ({ staff_id: c.staff_id || null, name: c.name || byName[c.staff_id]?.name || null, in: c.clock_in, out: c.clock_out, hours: c.hours, open: !!c.open }))
+    daysOut.push({ date: d, load, shifts: S, punches, suggest: suggestFor(load, S, staff) })
   }
   return { from, to, staff, days: daysOut }
 }
@@ -83,3 +86,21 @@ export async function splitRooms(date: string): Promise<{ assigned: number; perP
 }
 
 export const weekStart = (ymd?: string) => { const d = ymd || todayET(0); const dow = new Date(d + 'T12:00:00Z').getUTCDay(); return addDays(d, -((dow + 6) % 7)) }
+
+/**
+ * The hotel's housekeepers as Cloudbeds knows them (the room assignments) join the staff roster, so the
+ * scheduler has people to put on shifts before anyone types them in. Name match, case-insensitive;
+ * an existing person (active or not) is never duplicated or re-activated.
+ */
+export async function seedHousekeepers(): Promise<number> {
+  const db = supabaseAdmin()
+  const [{ data: rooms }, { data: staff }] = await Promise.all([
+    db.from('garden_rooms').select('housekeeper').not('housekeeper', 'is', null),
+    db.from('garden_staff').select('name'),
+  ])
+  const have = new Set(((staff || []) as any[]).map(s => String(s.name || '').trim().toLowerCase()))
+  const names = Array.from(new Set(((rooms || []) as any[]).map(r => String(r.housekeeper || '').trim()).filter(n => n && !/^n\/?a$/i.test(n))))
+  const add = names.filter(n => !have.has(n.toLowerCase())).map(n => ({ name: n, role: 'housekeeping', active: true, note: 'Added from Cloudbeds room assignments' }))
+  if (add.length) { const { error } = await db.from('garden_staff').insert(add); if (error) throw new Error(error.message) }
+  return add.length
+}

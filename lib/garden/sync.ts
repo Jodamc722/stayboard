@@ -86,7 +86,9 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
       check_in: r.checkIn, check_out: r.checkOut,
       nights: r.checkIn && r.checkOut ? Math.max(0, Math.round((Date.parse(r.checkOut) - Date.parse(r.checkIn)) / 86400000)) : null,
       adults: r.adults, children: r.children, room_ids: r.roomIds, room_names: r.roomNames, source: r.source,
-      total: r.total, balance: r.balance, booked_at: r.bookedAt || null, modified_at: r.modifiedAt || null, raw: r.raw, synced_at: new Date().toISOString(),
+      // The list call carries no total (2026-11-10: revenue read $0); never write a blank over the one
+      // lib/garden/res-detail fills in from getReservationsWithRateDetails.
+      ...(r.total != null ? { total: r.total } : {}), balance: r.balance, booked_at: r.bookedAt || null, modified_at: r.modifiedAt || null, raw: r.raw, synced_at: new Date().toISOString(),
     }))
     for (let i = 0; i < rows.length; i += 200) {
       const { error } = await db.from('garden_reservations').upsert(rows.slice(i, i + 200), { onConflict: 'id' })

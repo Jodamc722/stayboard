@@ -44,6 +44,21 @@ export async function POST(req: NextRequest) {
   }
   if (op === 'delete_shift') { await db.from('garden_shifts').delete().eq('id', String(b?.id || '')); return NextResponse.json({ ok: true }) }
   if (op === 'delete_staff') { await db.from('garden_staff').update({ active: false }).eq('id', String(b?.id || '')); return NextResponse.json({ ok: true }) }
+  // Copy last week's shifts into this week (Jon, 2026-11-10: "create a scheduler that works") — only
+  // for people and days that have nothing yet, so it never doubles a shift.
+  if (op === 'copy_week') {
+    const from = String(b?.from || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return NextResponse.json({ error: 'from required' }, { status: 400 })
+    const add = (d: string, n: number) => new Date(Date.parse(d + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10)
+    const [{ data: prev }, { data: cur }] = await Promise.all([
+      db.from('garden_shifts').select('staff_id,role,date,start_time,end_time,note').gte('date', add(from, -7)).lte('date', add(from, -1)),
+      db.from('garden_shifts').select('staff_id,date').gte('date', from).lte('date', add(from, 6)),
+    ])
+    const have = new Set(((cur || []) as any[]).map(x => x.staff_id + '|' + x.date))
+    const rows = ((prev || []) as any[]).map(x => ({ staff_id: x.staff_id, role: x.role, date: add(x.date, 7), start_time: x.start_time, end_time: x.end_time, note: x.note, rooms: [], source: 'manual', created_by: gate.access.email || null })).filter(x => !have.has(x.staff_id + '|' + x.date))
+    if (rows.length) { const { error } = await db.from('garden_shifts').insert(rows); if (error) return NextResponse.json({ error: error.message }, { status: 500 }) }
+    return NextResponse.json({ ok: true, copied: rows.length })
+  }
   if (op === 'split') { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b?.date))) return NextResponse.json({ error: 'date required' }, { status: 400 }); return NextResponse.json({ ok: true, ...(await splitRooms(String(b.date))) }) }
   return NextResponse.json({ error: 'unknown op' }, { status: 400 })
 }
