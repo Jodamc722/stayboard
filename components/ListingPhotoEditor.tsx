@@ -25,6 +25,7 @@ import { useEffect, useState } from 'react'
 import { X, ChevronLeft, ChevronRight, Loader2, Sparkles, RotateCcw, RotateCw, FlipHorizontal2, Crown, Trash2, LibraryBig, Wand2, Check, Undo2, SlidersHorizontal, Columns2, Download, Stamp } from 'lucide-react'
 import { LibraryPicker, type LibraryPick } from '@/components/LibraryPicker'
 import { WatermarkOptions, useWatermark, withWatermark } from '@/components/WatermarkOptions'
+import { WATERMARK_ENABLED } from '@/lib/photo-watermark'
 
 export type EditorPhoto = { id: string; url: string; caption: string }
 type Variant = { preset: string; name: string; url: string; why?: string }
@@ -255,8 +256,8 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
             </div>
           </section>
 
-          {/* BRANDED COPY — a download, never staged for Guesty */}
-          <section className="space-y-1.5">
+          {/* BRANDED COPY — a download, never staged for Guesty. Off with WATERMARK_ENABLED. */}
+          {WATERMARK_ENABLED && (          <section className="space-y-1.5">
             <div className="flex items-center gap-2"><Stamp size={13} className="text-brand-600" /><span className="text-[12px] font-bold uppercase tracking-wide text-muted">Branded copy</span></div>
             <WatermarkOptions value={wm} onChange={setWm} previewHref={brandHref} compact />
             {wm.on && (brandHref ? (
@@ -266,6 +267,7 @@ export function ListingPhotoEditor({ listingId, photo, position, total, current,
               </>
             ) : <p className="text-[11px] text-muted">Save this photo to the listing first — the watermarked copy is made from the saved photo.</p>)}
           </section>
+          )}
 
           {/* REPLACE / DELETE */}
           <section className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-line">

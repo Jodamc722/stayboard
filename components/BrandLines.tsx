@@ -9,7 +9,7 @@
 import { useMemo, useState } from 'react'
 import { BadgeCheck, Check, ChevronRight, Copy, ShieldCheck } from 'lucide-react'
 import { otaBrandLines, directBrandLines, brandLint, BRAND_CHANNEL_RULES } from '@/lib/brand-lines'
-import { WATERMARK_CHANNEL_NOTE } from '@/lib/photo-watermark'
+import { WATERMARK_CHANNEL_NOTE, WATERMARK_ENABLED } from '@/lib/photo-watermark'
 
 export function BrandLines({ building, city }: { building: string; city: string }) {
   const ota = useMemo(() => otaBrandLines({ building, city }), [building, city])
@@ -53,7 +53,7 @@ export function BrandLines({ building, city }: { building: string; city: string 
           <div className="text-[11px] font-bold uppercase tracking-wider text-muted mb-1.5">Direct site, guidebook and flyer only</div>
           <ul className="space-y-1">
             {direct.map(l => <li key={l.id} className="text-[12.5px] text-ink">{l.text}</li>)}
-            <li className="text-[12.5px] text-ink">The Stay watermark on photos — Photo library and the photo editor. <span className="text-muted">{WATERMARK_CHANNEL_NOTE}</span></li>
+            {WATERMARK_ENABLED && <li className="text-[12.5px] text-ink">The Stay watermark on photos — Photo library and the photo editor. <span className="text-muted">{WATERMARK_CHANNEL_NOTE}</span></li>}
           </ul>
         </div>
 

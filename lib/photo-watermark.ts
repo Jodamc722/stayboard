@@ -34,6 +34,11 @@ export const WATERMARK_CHANNEL_WHY = 'Vrbo and Booking.com reject watermarks by 
 /** What the Guesty write paths answer when someone tries to put a branded copy on a listing. */
 export const WATERMARK_PUSH_BLOCK = 'This is a Stay-watermarked copy. ' + WATERMARK_CHANNEL_WHY + ' Use the original photo for the listing.'
 
+// SWITCHED OFF (Jon, 2026-11-10: "no watermark option then" — the booking sites do not allow it, so
+// the option is not offered anywhere). Flip to true to bring the switch, the editor section and the
+// watermarked downloads back; the upload/Guesty guards stay on either way.
+export const WATERMARK_ENABLED: boolean = false
+
 export const WATERMARK_DEFAULTS: WatermarkOptions = { on: false, position: 'br', size: 'm', opacity: 30, tone: 'auto' }
 export const WATERMARK_OPACITY = { min: 10, max: 70, step: 1 }
 /** Logo width as a share of the image width. */
@@ -61,7 +66,7 @@ export function cleanWatermark(o: any): WatermarkOptions {
   const v = (o && typeof o === 'object') ? o : {}
   const op = Number(v.opacity)
   return {
-    on: v.on === true,
+    on: WATERMARK_ENABLED && v.on === true,
     position: POS.indexOf(v.position) >= 0 ? v.position : WATERMARK_DEFAULTS.position,
     size: SIZE.indexOf(v.size) >= 0 ? v.size : WATERMARK_DEFAULTS.size,
     opacity: Number.isFinite(op) ? Math.max(WATERMARK_OPACITY.min, Math.min(WATERMARK_OPACITY.max, Math.round(op))) : WATERMARK_DEFAULTS.opacity,

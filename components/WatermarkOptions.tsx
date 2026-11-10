@@ -15,6 +15,7 @@ import {
   type WatermarkOptions as Options, type WatermarkPosition, type WatermarkSize, type WatermarkTone,
   WATERMARK_DEFAULTS, WATERMARK_OPACITY, WATERMARK_SIZE_LABEL, WATERMARK_SIZE_PCT, WATERMARK_POSITION_LABEL,
   WATERMARK_CHANNEL_NOTE, WATERMARK_CHANNEL_WHY, cleanWatermark, watermarkQuery,
+  WATERMARK_ENABLED,
 } from '@/lib/photo-watermark'
 
 const KEY = 'lh.photo.watermark.v1'
@@ -47,7 +48,12 @@ export function withWatermark(href: string, wm: Options): string {
 
 const seg = (on: boolean) => 'rounded-md border px-2 py-1 text-[12px] font-semibold min-h-[30px] ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')
 
-export function WatermarkOptions({ value, onChange, previewHref, compact }: {
+export function WatermarkOptions(props: Parameters<typeof WatermarkOptionsInner>[0]) {
+  if (!WATERMARK_ENABLED) return null
+  return <WatermarkOptionsInner {...props} />
+}
+
+function WatermarkOptionsInner({ value, onChange, previewHref, compact }: {
   value: Options
   onChange: (next: Partial<Options>) => void
   /** A single-photo download link (/api/photos/file?listing=…&pic=…) to preview on. Optional. */

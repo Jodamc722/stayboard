@@ -26,7 +26,7 @@ export const BRAND_CHANNEL_RULES: BrandRule[] = [
   { channel: 'Airbnb', allowed: 'The brand lives in the host profile (name, photo, about). In the listing: a consistent voice, sign-off, photo order and captions.', notAllowed: 'Company names used as advertising, logos or text on photos, links, contact details, “book direct”.' },
   { channel: 'Vrbo', allowed: 'The property-manager name on the profile. In the listing: the same consistent copy and photos.', notAllowed: 'Links, phone numbers or emails in the description; logos, text or watermarks on photos; promotions outside the structured fields.' },
   { channel: 'Booking.com', allowed: 'The property name and the photo set — Booking.com writes its own description from the facilities.', notAllowed: 'Logos, watermarks, text or contact details on photos.' },
-  { channel: 'Direct site, guidebook, flyer, social, email', allowed: 'Everything: the Stay name and logo, the watermark, “book direct”, links and contact details.', notAllowed: 'Nothing brand-related — these are yours.' },
+  { channel: 'Direct site, guidebook, flyer, social, email', allowed: 'Everything: the Stay name and logo, “book direct”, links and contact details.', notAllowed: 'Nothing brand-related — these are yours.' },
 ]
 
 export type BrandLine = {
