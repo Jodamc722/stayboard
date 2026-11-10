@@ -9,6 +9,7 @@ import { getSetting } from './app-settings'
 import { rollupBuilding } from './optimize-score'
 import type { Basis } from './basis'
 import { isOwnerOrFriendsFamily } from './owner-audit'
+import { channelLabel, type ReportCalendar, type BigDatesSection, type BigEvent } from './report-calendar'
 
 // ---------- ENGINE VERSION (2026-11-09, pass 3) ----------
 // A report's numbers are computed under the engine it was GENERATED with, forever. The engine is
@@ -166,6 +167,10 @@ export type ReportContent = {
   }
   /** Bookings made since the last owner report on these units (any stay month). */
   newBookings?: NewBookings | null
+  /** Every stay across the report month + the next two, for the multi-calendar and big-dates slides. */
+  calendar?: ReportCalendar | null
+  /** Big-dates slide copy + the events the team added or removed on this report. */
+  bigDates?: BigDatesSection | null
   voices: {
     headline: string; subtitle: string
     quotes: { text: string; guest: string; unit: string; br: string }[]
@@ -570,6 +575,49 @@ export async function monthsAhead(listingIds: string[], asOf: string, units: num
     cur = end
   }
   return months // [prev month, current, +1, ...]
+}
+
+// ---------- the multi-calendar + big dates (Jon, 2026-11-10) ----------
+// Window = the report's own month and the next two. One reservation pull; per-night money is stored
+// on every stay so the deck prices any event (including one typed in edit mode) without a refetch.
+// See lib/report-calendar.ts for the shape and the client-side maths.
+export async function calendarFor(listings: ReportListing[], periodStart: string, asOf: string): Promise<ReportCalendar> {
+  const from = monthStart(periodStart)
+  let endExcl = from
+  for (let i = 0; i < 3; i++) endExcl = monthEndExcl(endExcl)
+  const ids = listings.map(l => l.id)
+  const resv = ids.length ? await pullReservations(ids, from, endExcl) : []
+  const ix: Record<string, number> = {}
+  const units = listings
+    .map(l => ({ id: l.id, label: l.unit ? 'Unit ' + l.unit : l.name, building: l.building || '', beds: l.bedrooms, liveFrom: l.liveFrom || null }))
+    .sort((a, b) => a.building.localeCompare(b.building) || a.label.localeCompare(b.label, 'en', { numeric: true }))
+  units.forEach((u, i) => { ix[u.id] = i })
+  const r2 = (n: number) => Math.round(n * 100) / 100
+  const stays = resv
+    .filter(r => ix[r.listing_id] != null)
+    .map(r => {
+      const own = r.noRate || (r.owner && r.fare <= 0 && r.grossFare <= 0)
+      const n = Math.max(1, r.nights)
+      return {
+        u: ix[r.listing_id], ci: r.check_in, co: r.check_out,
+        ch: channelLabel(r.source, own), own,
+        g: own ? 0 : r2(r.grossFare / n), f: own ? 0 : r2(r.fee / n), c: own ? 0 : r2(r.cleaning / n),
+      }
+    })
+    .sort((a, b) => a.u - b.u || a.ci.localeCompare(b.ci))
+  return { from, toIncl: addDays(endExcl, -1), asOf, units, stays, shared: await sharedBigDates() }
+}
+
+/** The shared list of big dates the team keeps in app_settings ('owner_report_dates'), as ranges. */
+export async function sharedBigDates(): Promise<BigEvent[]> {
+  try {
+    const v = await getSetting<any>('owner_report_dates', null)
+    const list: any[] = Array.isArray(v?.dates) ? v.dates : []
+    return list.map((x: any) => {
+      const from = String(x?.from || x?.date || ''), to = String(x?.to || x?.date || '')
+      return { label: String(x?.label || '').slice(0, 40), from, to }
+    }).filter(e => e.label && /^\d{4}-\d{2}-\d{2}$/.test(e.from) && /^\d{4}-\d{2}-\d{2}$/.test(e.to))
+  } catch { return [] }
 }
 
 // ---------- budgets ----------
