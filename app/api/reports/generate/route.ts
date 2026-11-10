@@ -14,7 +14,7 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   resolveScope, pullReservations, metricsFor, fmtK, ytdStats, monthsAhead,
-  pullReviews, pullTasks, weekBuckets, makeCode, etToday, planSectionFor, bookingsSince, lastReportDate, REPORT_ENGINE,
+  pullReviews, pullTasks, weekBuckets, makeCode, etToday, planSectionFor, bookingsSince, lastReportDate, calendarFor, REPORT_ENGINE,
 } from '@/lib/owner-report'
 import type { ReportContent, ReportListing, MetricSet, CalcOpts } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
@@ -700,7 +700,11 @@ export async function POST(req: NextRequest) {
       return await bookingsSince(ids, since, asOf, nm)
     } catch { return null }
   }
-  const [ytd, mAhead, reviews, tasks, pacingSection, statementSection, newBookings] = await Promise.all([
+  // THE MULTI-CALENDAR + BIG DATES (Jon, 2026-11-10) — the report month and the next two.
+  const calendarSafe = async (): Promise<ReportContent['calendar']> => {
+    try { return await calendarFor(listings, periodStart, asOf) } catch { return null }
+  }
+  const [ytd, mAhead, reviews, tasks, pacingSection, statementSection, newBookings, calendar] = await Promise.all([
     ytdStats(ids, asOf, units, calc),
     monthsAhead(ids, asOf, units, 6, calc), // [prev, current, +1..+5]
     pullReviews(ids, reviewFrom, asOf),
@@ -709,6 +713,7 @@ export async function POST(req: NextRequest) {
     pacingUrl ? parsePacing(pacingUrl, scopeLabel, periodLabel, { listingIds: ids, periodStart, periodEnd }) : Promise.resolve(null),
     statementIds.length ? buildStatementSection(statementIds, scopeLabel) : Promise.resolve(null),
     newBookingsFor(),
+    calendarSafe(),
   ])
 
   // ---- budgets (Performance vs Plan only if rows exist) ----
@@ -969,6 +974,11 @@ export async function POST(req: NextRequest) {
       })),
     },
     newBookings,
+    calendar,
+    bigDates: {
+      headline: 'The dates that matter, and how they are selling.',
+      subtitle: 'Holidays and Miami event weekends in this report month and the next two — booked occupancy and rate on each.',
+    },
     voices: {
       headline: "What guests said — and what we're addressing.",
       subtitle: 'Highlights from recent reviews  ·  Plus the themes we’re acting on',
