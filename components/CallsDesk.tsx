@@ -781,7 +781,7 @@ function CompletedList({ rows, today, copied, copyPhone, noteFor, toggleNote, no
           <li key={key} className="px-3 sm:px-4 py-2">
             <div className="flex items-center gap-2.5 min-w-0">
               <DateBlock d={r.kind === 'welcome' ? r.checkIn : r.checkOut} today={today} label={r.kind === 'welcome' ? 'Arrives' : 'Checked out'} />
-              <button onClick={() => setOpenId(open ? null : key)} className="flex-1 min-w-0 text-left">
+              <button onClick={() => setOpenId(open ? null : key)} className="flex-1 min-w-[50%] sm:min-w-0 text-left">
                 <div className="min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {vm ? <Voicemail size={13} className="text-amber-600 shrink-0" /> : <Check size={13} className="text-emerald-600 shrink-0" />}
@@ -923,10 +923,10 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
         const noteOpen = noteOpenFor(noteFor, 'welcome', r.id)
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
-            <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+            <div className="flex items-center gap-x-2.5 gap-y-1.5 px-3 sm:px-4 py-2 flex-wrap sm:flex-nowrap">
               <DateBlock d={r.check_in} today={today} label="Arrives" />
               <CallBtn phone={r.phone} />
-              <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
+              <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-[50%] sm:min-w-0 text-left">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
                   {(r as any).repeat >= 2 && <Tag tone="violet" title={`${(r as any).repeat} stays with us — open the booking for what we know about them`}>Returning</Tag>}
@@ -1014,10 +1014,10 @@ function PostCheckoutList({ rows, openId, setOpenId, draft, setDraft, busy, onAc
         const noteOpen = noteOpenFor(noteFor, 'post', r.id)
         return (
           <li key={r.id} className={r.done ? 'bg-emerald-50/30' : ''}>
-            <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+            <div className="flex items-center gap-x-2.5 gap-y-1.5 px-3 sm:px-4 py-2 flex-wrap sm:flex-nowrap">
               <DateBlock d={r.check_out} today={today} label="Checked out" />
               <CallBtn phone={r.phone} />
-              <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-0 text-left">
+              <button onClick={() => setOpenId(open ? null : r.id)} className="flex-1 min-w-[50%] sm:min-w-0 text-left">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[13.5px] font-semibold text-ink truncate max-w-[14rem]">{r.guest || 'Guest'}</span>
                   {(r as any).repeat >= 2 && <Tag tone="violet" title={`${(r as any).repeat} stays with us — open the booking for what we know about them`}>Returning</Tag>}
