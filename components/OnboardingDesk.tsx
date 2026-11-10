@@ -1,7 +1,7 @@
 'use client'
 // ONBOARDING DESK — mint links, watch progress, assign to the live listing (Jon, 2026-09-02).
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X, BedDouble } from 'lucide-react'
+import { Plus, Copy, Check, Link2, ExternalLink, Loader2, Archive, Unlink, Search, Camera, Settings2, ShoppingCart, Trash2, RotateCcw, X, BedDouble, Package } from 'lucide-react'
 import { LeanHead, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, Clamp, type Tone } from '@/components/lean'
 import { describeUnit, CATEGORIES, ROOM_KIND_LABEL, ONLY_LABEL, TIERS, TIER_LABEL, qtyFor, type UnitDetails, type InventoryStandard, type StandardItem, type RoomKind, type Category, type Tier } from '@/lib/onboarding'
 import { LINEN_TIERS, fmtUsd, type LinenSummary } from '@/lib/linens'
@@ -46,6 +46,8 @@ export function OnboardingDesk() {
         <Pill title="Assigned to a live listing">{stats.linked} assigned</Pill>
         <a href="/onboarding/linens" title="Linens — the linen standard (par, per bed / bath / guest) and the order calculator for any set of units"
           className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><BedDouble size={13} /> Linens</a>
+        <a href="/onboarding/kits" title="Starter kits — a report for a prospective owner or client: every item we put in the home, sized to it, with their choices and a PDF download"
+          className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><Package size={13} /> Starter kits</a>
         <a href="/onboarding/quick" title="Quick onboarding — one simple card per unit: beds, baths, what the kitchen has, photos (Jon, 2026-10-02)"
           className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2 py-1 text-[12px] font-semibold hover:bg-ink/90">Quick form</a>
       </LeanHead>
