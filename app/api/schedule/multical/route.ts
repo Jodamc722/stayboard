@@ -21,7 +21,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
-import { blockListingNights, getMultiCalendar, isOpsBlock } from '@/lib/guesty'
+import { blockListingNights, getMultiCalendar, isOpsBlock, getToken } from '@/lib/guesty'
+import { guestyFetch } from '@/lib/guesty-retry'
+import { appendReservationNote } from '@/lib/claim-note'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { isLiveStay } from '@/lib/stay-status'
 import { getSetting } from '@/lib/app-settings'
@@ -72,14 +74,24 @@ async function liveListings(): Promise<McUnit[]> {
 }
 
 /** Guesty notes come as a string or as { guest, other, … }; one readable line either way. */
-function noteText(col: any, raw: any): string | null {
+// The team's notes live in Guesty's "Reservation Notes" custom field (lib/claim-note) — that is
+// where call notes, claim lines and anything typed here land — so it is read first.
+const RES_NOTES_FIELD = '695f16830cb54c001400b3ff'
+function cfNotes(cf: any): string {
+  const arr = Array.isArray(cf) ? cf : []
+  const f = arr.find((c: any) => String(c?.fieldId?._id || (typeof c?.fieldId === 'string' ? c.fieldId : '') || c?._id || '') === RES_NOTES_FIELD || /reservation[_ ]?notes/i.test(String(c?.fieldName || '')))
+  return f && typeof f.value === 'string' ? f.value.trim() : ''
+}
+function noteText(col: any, raw: any, cf?: any): string | null {
   const parts: string[] = []
+  const team = cfNotes(cf)
+  if (team) parts.push(team)
   if (typeof col === 'string' && col.trim()) parts.push(col.trim())
   if (raw && typeof raw === 'object') {
     for (const v of Object.values(raw)) { if (typeof v === 'string' && v.trim() && parts.indexOf(v.trim()) < 0) parts.push(v.trim()) }
   } else if (typeof raw === 'string' && raw.trim() && parts.indexOf(raw.trim()) < 0) parts.push(raw.trim())
-  const t = parts.join(' · ').replace(/\s+/g, ' ').trim()
-  return t ? t.slice(0, 500) : null
+  const t = parts.join('\n').trim()
+  return t ? t.slice(0, 1500) : null
 }
 
 export async function GET(req: NextRequest) {
@@ -99,7 +111,7 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin()
     const [res, cal] = await Promise.all([
       pageRows<any>((a, b) => db.from('guesty_reservations')
-        .select('id,listing_id,check_in,check_out,status,guest_name,source,nights,created_at,notes,raw_notes:raw->notes')
+        .select('id,listing_id,check_in,check_out,status,guest_name,source,nights,created_at,notes,raw_notes:raw->notes,custom_fields')
         .in('listing_id', ids).gte('check_out', start).lte('check_in', last).order('id').range(a, b), 10),
       getMultiCalendar(ids, start, last).catch(() => null),
     ])
@@ -116,7 +128,7 @@ export async function GET(req: NextRequest) {
         id: str(r.id), listingId: str(r.listing_id), guest: str(r.guest_name) || 'Guest', ci, co,
         nights: Number(r.nights) || Math.max(1, Math.round((Date.parse(co) - Date.parse(ci)) / 86400000)),
         source: r.source ? str(r.source) : null, owner: /^owner/i.test(str(r.source)),
-        note: noteText(r.notes, r.raw_notes),
+        note: noteText(r.notes, r.raw_notes, r.custom_fields),
         isNew: Number.isFinite(t) && now - t <= NEW_MS,
       })
     }
@@ -152,9 +164,48 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const gate = await requireLevel('schedule', 'edit')
   if (!gate.ok) return gate.res
-  if (!(await mayBlock(gate.access))) return NextResponse.json({ error: 'Blocking is limited to approved team members — ask Jon to add you.' }, { status: 403 })
   const body = await req.json().catch(() => ({} as any))
+  const who = String(gate.access?.email || '').split('@')[0] || 'team'
+
+  // ADD A NOTE (Jon, 2026-11-10 "ok do it"): appended — never replacing — to the reservation's
+  // Guesty Reservation Notes, read from Guesty first (lib/claim-note's safe write). Anyone with
+  // edit on the schedule can note; only blocking is limited.
+  if (body?.op === 'note') {
+    const reservationId = str(body?.reservationId)
+    const text = str(body?.note).replace(/\s+/g, ' ').slice(0, 400)
+    if (!reservationId || !text) return NextResponse.json({ error: 'write a note first' }, { status: 400 })
+    const today = ymd(new Date())
+    const r = await appendReservationNote(supabaseAdmin(), reservationId, `[${today}] ${who}: ${text}`)
+    if (!r.ok) return NextResponse.json({ error: r.error || 'Guesty refused the note' }, { status: 502 })
+    return NextResponse.json({ ok: true })
+  }
+
+  // LIFT A BLOCK: sets the block's nights back to available in Guesty. Only the nights of a block
+  // the page showed, only from today on, and only by someone allowed to block.
+  if (body?.op === 'unblock') {
+    if (!(await mayBlock(gate.access))) return NextResponse.json({ error: 'Only approved team members can lift blocks.' }, { status: 403 })
+    const listingId = str(body?.listingId)
+    const today = ymd(new Date())
+    let from = str(body?.from).slice(0, 10)
+    const to = str(body?.to).slice(0, 10)
+    if (!listingId || !isYmd(from) || !isYmd(to) || to < from) return NextResponse.json({ error: 'which block?' }, { status: 400 })
+    if (to < today) return NextResponse.json({ error: 'that block is already in the past' }, { status: 400 })
+    if (from < today) from = today
+    let token = ''
+    try { token = await getToken() } catch { token = '' }
+    if (!token) return NextResponse.json({ error: 'no Guesty token' }, { status: 502 })
+    const base = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
+    const res = await guestyFetch(`${base}/availability-pricing/api/calendar/listings/${encodeURIComponent(listingId)}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ startDate: from, endDate: to, status: 'available', note: `Unblocked from Lighthouse Schedule calendar by ${who}` }),
+    })
+    if (!res.ok) return NextResponse.json({ error: 'Guesty refused: ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 140) }, { status: 502 })
+    return NextResponse.json({ ok: true, from, to })
+  }
+
   if (body?.op !== 'block') return NextResponse.json({ error: 'unknown op' }, { status: 400 })
+  if (!(await mayBlock(gate.access))) return NextResponse.json({ error: 'Blocking is limited to approved team members — ask Jon to add you.' }, { status: 403 })
   const listingId = str(body?.listingId)
   const from = str(body?.from).slice(0, 10)
   const to = str(body?.to || body?.from).slice(0, 10)
@@ -168,7 +219,6 @@ export async function POST(req: NextRequest) {
     .eq('listing_id', listingId).lte('check_in', to).gt('check_out', from).limit(20)
   const clash = ((rs || []) as any[]).filter(x => isLiveStay(x.status))
   if (clash.length) return NextResponse.json({ error: `${clash[0].guest_name || 'A guest'} is booked ${str(clash[0].check_in).slice(0, 10)} → ${str(clash[0].check_out).slice(0, 10)} — nothing was blocked` }, { status: 409 })
-  const who = String(gate.access?.email || '').split('@')[0] || 'team'
   const note = `${str(body?.note).slice(0, 200) || reason} — blocked from Lighthouse Schedule calendar by ${who}`
   try { await blockListingNights(listingId, from, to, note, reason) } catch (e: any) {
     return NextResponse.json({ error: 'Guesty refused: ' + String(e?.message || e).slice(0, 160) }, { status: 502 })
