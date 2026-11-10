@@ -29,7 +29,7 @@ export const maxDuration = 120
 // leaves every other book, and any hand edits in it, exactly as it is.
 const names = (em: any) => (Array.isArray(em?.hospitals) ? em.hospitals : []).filter((h: any) => h && !h.custom).map((h: any) => String(h.name || '')).join(' | ')
 
-async function run(write: boolean, onlyChanged = false) {
+async function run(write: boolean, onlyChanged = false, onlyBooks: string[] | null = null) {
   const db = supabaseAdmin()
   // EVERY book, paged in id order — "every single guidebook" cannot be the first 1,000 returned. A
   // read that fails or runs out of pages stops the run before anything is written, as an error did.
@@ -59,6 +59,7 @@ async function run(write: boolean, onlyChanged = false) {
     const before = names(b.sections && b.sections.emergency), after = names(em)
     const changed = before !== after ? { from: before, to: after } : undefined
     if (onlyChanged && !changed) continue
+    if (onlyBooks && !onlyBooks.includes(String(b.id))) continue
     if (write) {
       const sections = (b.sections && typeof b.sections === 'object') ? { ...b.sections } : {}
       sections.emergency = mergeEmergency(b.sections && b.sections.emergency, em)
@@ -88,5 +89,6 @@ export async function POST(req: Request) {
   const gate = await requireLevel('guidebooks', 'edit')
   if (!gate.ok) return gate.res
   const b = await req.json().catch(() => ({} as any))
-  return run(true, b?.onlyChanged === true || new URL(req.url).searchParams.get('onlyChanged') === '1')
+  const only = Array.isArray(b?.bookIds) ? b.bookIds.map(String) : null
+  return run(true, b?.onlyChanged === true || new URL(req.url).searchParams.get('onlyChanged') === '1', only)
 }
