@@ -3,7 +3,8 @@
 // Running is the same pass the morning cron makes — it never files a second open task for a place.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { loadPrograms, planPrograms, placeOptions, upsertProgram, deleteProgram, runPrograms, savePrograms, retireProgramTasks, titlePrefix } from '@/lib/site-programs'
+import { loadPrograms, planPrograms, placeOptions, upsertProgram, deleteProgram, runPrograms, savePrograms, retireProgramTasks, titlePrefix, programTiles, reportOf, ymdET, type PlacePlan, type LastDone } from '@/lib/site-programs'
+import { listReports } from '@/lib/walk-reports'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -12,10 +13,21 @@ export async function GET(req: NextRequest) {
   const gate = await requireLevel('upkeep', 'view')
   if (!gate.ok) return gate.res
   const withOptions = req.nextUrl.searchParams.get('options') === '1'
+  // A plan that could not be read is SAID (planError), not shown as "nothing due anywhere".
+  let planError: string | null = null
   const [programs, plan, options] = await Promise.all([
-    loadPrograms(), planPrograms().catch(() => ({ day: '', plans: [] })), withOptions ? placeOptions() : Promise.resolve(null),
+    loadPrograms(),
+    planPrograms().catch((e: any) => { planError = String(e?.message || e).slice(0, 160) || 'today’s plan could not be read'; return { day: ymdET(new Date()), plans: [] as PlacePlan[], last: {} as Record<string, LastDone> } }),
+    withOptions ? placeOptions() : Promise.resolve(null),
   ])
-  return NextResponse.json({ ok: true, programs, ...plan, options })
+  // THE MAIN BOARD'S TILES (Jon, 2026-11-09): one per program — places, today's count, next run, last
+  // done — plus the last walk report of the programs that write one.
+  const tiles = programTiles(programs, plan.plans, plan.last, plan.day)
+  const lastReport: Record<string, { code: string; date: string; passed: number; issues: number; open: number }> = {}
+  await Promise.all(programs.filter(p => { const r = reportOf(p); return r.mode !== 'off' || r.weekly }).slice(0, 12).map(async p => {
+    try { const r = (await listReports({ programId: p.id, limit: 1 }))[0]; if (r) lastReport[p.id] = { code: r.code, date: r.date, passed: r.passed, issues: r.issues, open: r.open } } catch { /* the tile shows the last task instead */ }
+  }))
+  return NextResponse.json({ ok: true, programs, day: plan.day, plans: plan.plans, options, tiles, lastReport, planError })
 }
 
 export async function POST(req: NextRequest) {

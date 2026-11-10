@@ -17,6 +17,7 @@
 // in runName.
 import 'server-only'
 import { getSetting, getSettingFresh, setSetting } from './app-settings'
+import { supabaseAdmin } from './supabase-admin'
 import { lastRuns, type LastRun } from './automation-runs'
 import { TASK_AUTOMATION_KEY, TASK_AUTOMATION_DEFAULTS, getTaskAutomation, type TaskAutomationCfg } from './auto-inspections'
 import { CADENCE_KEY, resolveCadences, type CadenceCfg } from './cadences'
@@ -82,7 +83,7 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
     cap: () => 'One open task per place per program',
     who: () => 'Each program’s people, plus whoever is cleaning there that day when the program says so',
     settingsHref: '#property', settingsLabel: 'Property programs tab',
-    guard: 'One open task per place: today’s is kept, an older one is moved, extras are cancelled. Plus the create guard.',
+    guard: 'One open task per place: today’s is kept, an older one is moved, extras are cancelled (deleted only when the creation log proves Lighthouse made it and nobody has touched it). Plus the create guard.',
     noService: 'Skips inspection-department programs at no-inspection buildings.',
     note: 'Each program has its own pause button on the Property programs tab. The receipt counts creates + moves + updates together.',
   },
@@ -117,7 +118,7 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
     schedule: 'Every morning, with the list above', runName: 'suggestions', countIsMade: false,
     cap: () => '120 tasks a run',
     who: () => 'Whoever is already on the task',
-    guard: 'Moves only. Does not move a job that needs the unit empty or rides a departure (those wait for the next empty day / checkout). Cancels only tasks on the PM ledger or the accepted-suggestions log.',
+    guard: 'Moves only. Does not move a job that needs the unit empty or rides a departure (those wait for the next empty day / checkout). Removes only tasks on the PM ledger or the accepted-suggestions log — deleted when the creation log proves Lighthouse made it and nobody has touched it, otherwise cancelled.',
     noService: 'Moves existing tasks only.',
     note: 'Always on — it runs even when the preventative switch is off, because the tasks exist either way. No separate switch yet.',
   },
@@ -126,7 +127,7 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
     makes: 'When a preventative job is completed, the next one goes on the ledger and is created (or proposed to an approver) about two weeks before it is due — on an empty day when the job needs one, or on the next departure for jobs that ride the clean.',
     schedule: 'Up to four times a day, at most once every six hours', runName: 'pm-recurrence',
     follows: 'cadence-suggest',
-    cap: c => c.cad.dailyCap + ' created or proposed a day (its own count, separate from the morning list) · 25 a run',
+    cap: c => c.cad.dailyCap + ' created or proposed a day (its own count, separate from the morning list) · 25 a run · its late tasks move to the next workable day daily, at most 25 a run',
     who: c => 'Housekeeping jobs: unassigned. Others: ' + inspWho(c),
     settingsHref: SET_CADENCES, settingsLabel: 'Preventative cadences',
     guard: 'One ledger row per unit + program; no successor while a matching task is open; plus the create guard.',
@@ -191,8 +192,8 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
     cap: () => 'One per review',
     who: inspWho,
     settingsHref: SET_AUTOMATION, settingsLabel: 'Task automation',
-    guard: 'One per review; a walk finished since the review covers it. Does NOT yet check for another open inspection on the unit.',
-    noService: 'Skips no-inspection buildings on create (the roll-forward moves an existing task without checking).',
+    guard: 'One per review; a walk finished since the review covers it; skipped while any inspection is open on the unit; one per unit a run.',
+    noService: 'Skips no-inspection buildings, on create and on the roll-forward.',
   },
   {
     key: 'insp-deep-clean', group: 'Inspections', label: 'Deep clean inspection', kind: 'auto',
@@ -365,6 +366,8 @@ export type TaskCreatorState = {
   canToggle: boolean
   cap: string | null; who: string | null; facts: string | null
   lastRun: LastRun | null
+  /** Tasks this creator CREATED today (ET), from the creation log. null = the log cannot be read (no table yet) or this creator does not write to it. */
+  madeToday: number | null
   /** Show lastRun.itemCount as "made". */
   countIsMade: boolean
   hasReceipt: boolean
@@ -376,7 +379,34 @@ export type SharedRules = {
   noInspections: string[]
   noWelcomeCalls: string[]
 }
-export type TaskAutomationsPayload = { ok: boolean; creators: TaskCreatorState[]; rules: SharedRules; isOwner: boolean; asOf: string; error?: string }
+/** Today's creation log, summed. null = the log could not be read (the table is not there yet). */
+export type MadeToday = { total: number; moved: number; removed: number } | null
+export type TaskAutomationsPayload = { ok: boolean; creators: TaskCreatorState[]; rules: SharedRules; madeToday: MadeToday; isOwner: boolean; asOf: string; error?: string }
+
+/** Registry keys whose creator passes `source` to createBreezewayTask — the only rows a per-day count is honest for. */
+const LOGGED_SOURCES = new Set(['site-programs', 'cadence-suggest', 'suggestion-add', 'pm-recurrence', 'upkeep-approve', 'insp-prearrival', 'insp-arrival-feedback', 'insp-low-review', 'insp-deep-clean', 'guest-orders', 'eve-task-create'])
+
+/**
+ * READ-ONLY: what the creation log (task_creations, written by lib/breezeway) says about today (ET).
+ * Fails closed to null — a missing table, a refused read or a truncated page all mean "unknown", and
+ * the tab then keeps showing "made last run" instead of a wrong zero. Nothing is enforced from this.
+ */
+async function readMadeToday(): Promise<{ bySource: Record<string, number>; sum: NonNullable<MadeToday> } | null> {
+  try {
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+    const { data, error } = await supabaseAdmin().from('task_creations').select('source,action').eq('day', day).limit(5000)
+    if (error || !Array.isArray(data) || data.length >= 5000) return null
+    const bySource: Record<string, number> = {}
+    const sum = { total: 0, moved: 0, removed: 0 }
+    for (const r of data as any[]) {
+      const a = String(r?.action || '')
+      if (a === 'created') { sum.total++; const k = String(r?.source || 'unknown'); bySource[k] = (bySource[k] || 0) + 1 }
+      else if (a === 'moved') sum.moved++
+      else if (a === 'cancelled') sum.removed++
+    }
+    return { bySource, sum }
+  } catch { return null }
+}
 
 const readPath = (obj: any, path: string): any => path.split('.').reduce((o: any, k) => (o && typeof o === 'object' ? o[k] : undefined), obj)
 
@@ -405,13 +435,14 @@ function switchOf(def: TaskCreatorDef, c: Ctx): boolean | null {
   return null
 }
 
-export async function taskAutomationStates(): Promise<{ creators: TaskCreatorState[]; rules: SharedRules }> {
+export async function taskAutomationStates(): Promise<{ creators: TaskCreatorState[]; rules: SharedRules; madeToday: MadeToday }> {
   const names = Array.from(new Set(TASK_CREATORS.map(d => d.runName).filter((n): n is string => !!n)))
-  const [c, runs, never, noSvc] = await Promise.all([
+  const [c, runs, never, noSvc, made] = await Promise.all([
     loadCtx(),
     lastRuns(names).catch(() => ({} as Record<string, LastRun>)),
     getNeverAssign().catch(() => []),
     getNoService().catch(() => ({ inspections: [] as string[], welcomeCalls: [] as string[] })),
+    readMadeToday(),
   ])
   const own: Record<string, boolean | null> = {}
   for (const d of TASK_CREATORS) own[d.key] = switchOf(d, c)
@@ -441,12 +472,14 @@ export async function taskAutomationStates(): Promise<{ creators: TaskCreatorSta
       canToggle: d.kind === 'auto' && d.toggle === true && !!d.configKey && !!d.enabledPath,
       cap: safe(d.cap), who: safe(d.who), facts: safe(d.facts),
       lastRun: run, countIsMade: d.countIsMade !== false, hasReceipt: !!d.runName,
+      madeToday: made && LOGGED_SOURCES.has(d.key) ? (made.bySource[d.key] || 0) : null,
       settingsHref: d.settingsHref || null, settingsLabel: d.settingsLabel || null,
       guard: d.guard, noService: d.noService, note: d.note || null,
     }
   })
   return {
     creators,
+    madeToday: made ? made.sum : null,
     rules: {
       neverAssign: never.map(p => String(p.name || '')).filter(Boolean),
       noInspections: noSvc.inspections || [],

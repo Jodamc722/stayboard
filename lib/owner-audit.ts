@@ -553,13 +553,32 @@ export async function auditMonths(limit = 24): Promise<AuditMonthPick[]> {
   // Paged, newest first, on an id tiebreaker: one row per owner statement, every month, so the old
   // single read stopped after the newest 1,000 statements — older months fell off the picker and the
   // oldest month shown carried a short count. A read that stops early fails loudly, as an error did.
-  const read = await pageRows<any>((a, b) => sb.from('guesty_owner_statements')
+  const page = (a: number, b: number) => sb.from('guesty_owner_statements')
     .select('period_month')
     .not('period_month', 'is', null)
     .order('period_month', { ascending: false }).order('id')
-    .range(a, b), 20)
-  if (read.truncated) throw new Error('statement months read: stopped before the last page')
-  const data = read.rows
+    .range(a, b)
+  // PERF (2026-11-09): with an exact row count the pages are read side by side instead of one
+  // after another. The rows are only counted per month, so the same rows give the same picker.
+  // Any page that fails, or a count that cannot be read, falls back to the read as it was.
+  let data: any[] | null = null
+  try {
+    const { count, error: cErr } = await sb.from('guesty_owner_statements').select('id', { count: 'exact', head: true }).not('period_month', 'is', null)
+    if (!cErr && typeof count === 'number' && count <= 20_000) {
+      const n = Math.ceil(count / 1000)
+      const pages = await Promise.all(Array.from({ length: n }, (_, i) => page(i * 1000, i * 1000 + 999)))
+      // Complete only if every page answered and together they hold exactly the counted rows.
+      if (pages.every(pg => !pg.error)) {
+        const all = pages.flatMap(pg => (pg.data || []) as any[])
+        if (all.length === count) data = all
+      }
+    }
+  } catch { data = null }
+  if (!data) {
+    const read = await pageRows<any>(page, 20)
+    if (read.truncated) throw new Error('statement months read: stopped before the last page')
+    data = read.rows
+  }
   const counts: Record<string, number> = {}
   for (const r of data as any[]) {
     const m = String(r.period_month || '')
@@ -623,8 +642,41 @@ export async function buildAudit(month: string): Promise<AuditData> {
   const reviewsP = Promise.resolve(sb.from('owner_audit_reviews')
     .select('owner_id, item_key, status, note, comments, updated_by, updated_at')
     .eq('month', month))
+  // PERF, pass 3 (2026-11-09: 9s cold). Three more reads depend on nothing but the month, and were
+  // waiting behind the whole ledger read: the month's reservation scan (page after page), last
+  // month's nightly lines (page after page) and the claims. They are only FETCHED here; each is
+  // applied at exactly the place and in exactly the order it always was (steps 5a, 5b and the
+  // resolutions), so the audit built from them is the same audit.
+  type Fetched = { batches: any[][]; error: string | null }
+  const fetchPages = async (cap: number, q: (from: number, to: number) => PromiseLike<any>): Promise<Fetched> => {
+    const batches: any[][] = []
+    for (let off = 0; off < cap; off += 1000) {
+      const { data, error } = await q(off, off + 999)
+      if (error) return { batches, error: String(error.message || 'read failed') }
+      const batch = (data || []) as any[]
+      batches.push(batch)
+      if (batch.length < 1000) break
+    }
+    return { batches, error: null }
+  }
+  const prevMonthEarly = (() => { const [y, m] = month.split('-').map(Number); return new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7) })()
+  const scanP = fetchPages(20_000, (a, b) => sb.from('guesty_reservations')
+    .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, money_total, tags:raw->tags')
+    .gt('check_out', win.start).lt('check_in', win.endExcl)
+    .order('id')
+    .range(a, b))
+  const prevAfP = fetchPages(100_000, (a, b) => sb.from('guesty_owner_ledger')
+    .select('listing_id, entry_date, amount')
+    .eq('recognized', true).eq('entry_month', prevMonthEarly).eq('charge_code', 'AF')
+    .order('id')
+    .range(a, b))
+  const claimsP = Promise.resolve(sb.from('claims')
+    .select('id, guest_name, property, unit_no, channel, confirmation_code, reservation_id, stage, outcome, owner_adjusted, payment_verified, amount_sought, amount_paid, decided_on, paid_on, summary')
+    .is('deleted_at', null)
+    .limit(500))
   // Never an unhandled rejection if the build stops before these are awaited.
   covP.catch(() => {}); reviewsP.catch(() => {}); rulesP.catch(() => {})
+  scanP.catch(() => {}); prevAfP.catch(() => {}); claimsP.catch(() => {})
 
   // 1. The generated statements for this month — the documents being audited.
   //    stmtStatus matters more than it looks: a PENDING statement is a DRAFT that Guesty is still
@@ -872,14 +924,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // Paged + ordered: a plain .limit() is a silent cap on a scan that must be complete.
   const scanMonth = async () => {
     const seenExp = new Set<string>()
-    for (let off = 0; off < 20_000; off += PAGE) {
-      const { data, error } = await sb.from('guesty_reservations')
-        .select('id, confirmation_code, guest_name, check_in, check_out, nights, status, source, listing_id, money_total, tags:raw->tags')
-        .gt('check_out', win.start).lt('check_in', win.endExcl)
-        .order('id')
-        .range(off, off + PAGE - 1)
-      if (error) { warnings.push('The month scan stopped early (' + error.message.slice(0, 80) + ') — owner stays and the Expedia prep list may be incomplete.'); break }
-      const batch = (data || []) as any[]
+    const got = await scanP   // fetched from the top of the build; applied here, page by page, as before
+    for (const batch of got.batches) {
       ownerScanCount += batch.length
       for (const r of batch) {
         const src = String(r.source || ''), st = String(r.status || '').toLowerCase()
@@ -894,21 +940,15 @@ export async function buildAudit(month: string): Promise<AuditData> {
           if (!seenOwnerStay.has(k)) { seenOwnerStay.add(k); ownerStayRes.push(r); if (r.listing_id) listingIds.add(String(r.listing_id)) }
         }
       }
-      if (batch.length < PAGE) break
     }
+    if (got.error) warnings.push('The month scan stopped early (' + got.error.slice(0, 80) + ') — owner stays and the Expedia prep list may be incomplete.')
   }
 
   // 5b. Last month's AF rows — rate context for the relative low-rate rule. AF lines are per-night,
   // so distinct (listing, date) counts nights without the reservation join.
   const readPrevMonth = async () => {
-    for (let off = 0; off < 100_000; off += PAGE) {
-      const { data, error } = await sb.from('guesty_owner_ledger')
-        .select('listing_id, entry_date, amount')
-        .eq('recognized', true).eq('entry_month', prevMonth).eq('charge_code', 'AF')
-        .order('id')
-        .range(off, off + PAGE - 1)
-      if (error) { warnings.push('Last month\'s rates could not be read — the low-rate check has less context this load.'); break }
-      const batch = (data || []) as any[]
+    const got = await prevAfP   // fetched from the top of the build; applied here, page by page, as before
+    for (const batch of got.batches) {
       for (const r of batch) {
         const lid = String(r.listing_id || '')
         const d = String(r.entry_date || '')
@@ -916,8 +956,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
         prevPerNight[lid + '|' + d] = money((prevPerNight[lid + '|' + d] || 0) - (Number(r.amount) || 0))
         listingIds.add(lid)
       }
-      if (batch.length < PAGE) break
     }
+    if (got.error) warnings.push('Last month\'s rates could not be read — the low-rate check has less context this load.')
   }
   await Promise.all([joinBookings(), scanMonth(), readPrevMonth()])
 
@@ -1940,10 +1980,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
     const nowD = new Date()
     const prevCal = new Date(Date.UTC(nowD.getUTCFullYear(), nowD.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
     const isPrepMonth = month >= prevCal
-    const { data: clRows, error: clErr } = await sb.from('claims')
-      .select('id, guest_name, property, unit_no, channel, confirmation_code, reservation_id, stage, outcome, owner_adjusted, payment_verified, amount_sought, amount_paid, decided_on, paid_on, summary')
-      .is('deleted_at', null)
-      .limit(500)
+    const { data: clRows, error: clErr } = await claimsP
     if (!clErr) {
       const inMonth = (d: any) => String(d || '').slice(0, 7) === month
       resolutionClaims = ((clRows || []) as any[])

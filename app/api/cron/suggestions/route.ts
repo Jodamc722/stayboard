@@ -18,7 +18,8 @@ import { closeStrayInspections } from '@/lib/task-audit'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
 import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg, getSuggestionLog } from '@/lib/suggestions'
 import { isTaskDone } from '@/lib/task-categories'
-import { updateBreezewayTask, cancelBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
+import { updateBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
+import { removeOwnDuplicate } from '@/lib/own-tasks'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -111,15 +112,16 @@ export async function GET(req: NextRequest) {
               if (r?.ok) { carried++; try { await supabaseAdmin().from('breezeway_tasks_sync').update({ scheduled_date: date }).eq('id', o.id) } catch { /* sync */ } }
             } else {
               if (!ours.has(String(o.id))) { dupesLeftNotOurs++; continue }
-              const c = await cancelBreezewayTask(o.id).catch(() => null)
-              if (c?.ok) { dupesCancelled++; try { await supabaseAdmin().from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', o.id) } catch { /* sync */ } }
+              // Ours (on the PM ledger / accepted log) and untouched → deleted; else the cancel it always was.
+              const c = await removeOwnDuplicate(o.id, { ours: true, source: 'cadence-carry' })
+              if (c.ok) dupesCancelled++
             }
           }
         }
       }
     } catch { /* carrying must never fail the run */ }
     // EVERY DUPLICATE, NOT ONLY PREVENTATIVE ONES (Jon, 2026-11-03): one open copy per job per unit.
-    try { const { cancelDuplicates } = await import('@/lib/task-dedupe'); const d = await cancelDuplicates({ max: 150 }); dupesCancelled += d.cancelled } catch { /* next morning */ }
+    try { const { cancelDuplicates } = await import('@/lib/task-dedupe'); const d = await cancelDuplicates({ max: 150 }); dupesCancelled += d.cancelled; dupesLeftNotOurs += d.leftNotOurs } catch { /* next morning */ }
     ;(safe as any).carried = carried; (safe as any).duplicatesCancelled = dupesCancelled
     ;(safe as any).carrySkippedVacancy = carrySkippedVacancy; (safe as any).duplicatesLeftNotOurs = dupesLeftNotOurs
 

@@ -81,9 +81,9 @@ type CleanerLoad = { people: { name: string; hours: number; cleans: number }[]; 
 // Working by hand for the day, is counted whatever their department says.
 const NOT_CLEANER_DEPT = /^(maintenance|ccs|inspection|supervision)$/
 const NEW_BOOKING_MS = 36 * 3600_000
-// "Seen" for new bookings is PER BROWSER (localStorage), keyed by reservation id — there is no
-// per-user seen table for reservations and this change adds no migration. A second device, or a
-// cleared browser, shows them as new again until the 36 hours run out.
+// "Seen" for new bookings is PER LOGIN, kept server-side in app_settings (/api/schedule/seen,
+// key schedule_seen_bookings:<email>) with this localStorage entry as the instant cache, keyed by
+// reservation id. If the server copy cannot be read or written the browser's own list still works.
 const SEEN_KEY = 'lh:schedule:seen-bookings:v1'
 /** "16:00" → "4 PM". */
 function fmtClock(t: string | null | undefined): string { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '')); if (!m) return ''; const h = Number(m[1]); return (h % 12 || 12) + (m[2] === '00' ? '' : ':' + m[2]) + ' ' + (h >= 12 ? 'PM' : 'AM') }
@@ -196,10 +196,24 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
         setSeen(out)
       }
     } catch { /* private mode / blocked storage: everything simply reads as unseen */ }
+    // The per-login copy (app_settings via /api/schedule/seen) is the one that follows a person
+    // across devices; localStorage above is only the instant cache. Merged, newest stamp wins.
+    let dead = false
+    fetch('/api/schedule/seen', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => {
+      if (dead || !j || !j.seen || typeof j.seen !== 'object') return
+      setSeen(prev => {
+        const n: Record<string, number> = { ...prev }
+        for (const k of Object.keys(j.seen)) { const t = Number(j.seen[k]); if (Number.isFinite(t) && t > (n[k] || 0)) n[k] = t }
+        try { window.localStorage.setItem(SEEN_KEY, JSON.stringify(n)) } catch { /* cache only */ }
+        return n
+      })
+    }).catch(() => { /* offline or refused: this device's own list still works */ })
+    return () => { dead = true }
   }, [])
   function markSeen(ids: string[]) {
     const list = ids.filter(Boolean)
     if (!list.length) return
+    fetch('/api/schedule/seen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: list }) }).catch(() => { /* kept locally either way */ })
     setSeen(prev => {
       const n: Record<string, number> = { ...prev }
       const t = Date.now()
@@ -318,6 +332,24 @@ const [taskAct, setTaskAct] = useState<Record<string, boolean>>({})
 const [cmtFor, setCmtFor] = useState('')
 const [cmtCounts, setCmtCounts] = useState<Record<string, number>>({})
 const [adding, setAdding] = useState(false)
+// The Add clean picker's list of units — loaded the first time the picker opens (it used to ride
+// on every schedule response).
+const [unitList, setUnitList] = useState<{ id: string; name: string }[] | null>(null)
+useEffect(() => {
+  if (!adding || unitList) return
+  let dead = false
+  fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => {
+    if (dead) return
+    const list: { id: string; name: string }[] = []
+    for (const l of ((j && Array.isArray(j.results) ? j.results : []) as any[])) {
+      if (!l || l.id == null || /inactive|disabled|archived|deleted/i.test(String(l.status || ''))) continue
+      list.push({ id: String(l.id), name: String(l.nickname || l.title || 'Unit') })
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name))
+    if (list.length) setUnitList(list); else setError('Could not load the list of units — close Add clean and try again.')
+  }).catch(() => { if (!dead) setError('Could not load the list of units — close Add clean and try again.') })
+  return () => { dead = true }
+}, [adding, unitList])
 const [addUnit, setAddUnit] = useState('')
 const [sug, setSug] = useState<any[] | null>(null)
 const [sugBusy, setSugBusy] = useState<Record<string, boolean>>({})
@@ -525,6 +557,23 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   const boardStaff = staffingFor(boardDate, boardFcDay)
   const boardCrew = crewFor(boardDate)
   const boardIsPast = !!data && !!boardDate && boardDate < data.today
+  // WHERE CLEANS COULD GO when the day is short: the first later day of this week whose schedule
+  // has room for the whole shortfall, else the one with the most room. Same staffingFor() numbers
+  // as the strip; null when the day is not short or no later day has spare hours.
+  const moveTo: { label: string; spare: number } | null = (() => {
+    if (boardIsPast || !(boardStaff.need > boardStaff.working)) return null
+    const shortH = boardStaff.targetH - boardStaff.schedH
+    let best: { label: string; spare: number } | null = null
+    for (const d of stripDays) {
+      if (d.date <= boardDate || d.isPast) continue
+      const st = staffingFor(d.date, d)
+      const spare = st.schedH - st.targetH
+      if (spare <= 0) continue
+      if (spare >= shortH) return { label: d.day, spare }
+      if (!best || spare > best.spare) best = { label: d.day, spare }
+    }
+    return best
+  })()
   // Stable identity for the pickers ("Scheduled today" at the top of the list).
   const scheduledSet = useMemo(() => new Set(crewFor(boardDate).map(p => p.name)), [crewCache, boardDate])
   const schedHit: Record<string, boolean> = {}
@@ -559,6 +608,21 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   const onlyNewOn = onlyNew && newCount > 0
   const dayWord = (d: string) => { const t = (data && data.today) || ''; return d === t ? 'today' : (t && d === nextIso(t)) ? 'tomorrow' : fmtDate(d) }
 
+  // TWELVE AT ONCE IS NOISE. What leads is a new ARRIVAL today or tomorrow — the booking that puts a
+  // deadline on a unit. Everything else that is new (a fresh checkout, an arrival two days out) keeps
+  // its chip on its row and is listed under one "N more new bookings" line.
+  const todayIso = (data && data.today) || ''
+  const soon = (d: string | null | undefined): boolean => !!d && !!todayIso && (d === todayIso || d === nextIso(todayIso))
+  const isLeadBooking = (c: Clean): boolean => isNewUnseen(c) && !!c.newBooking && c.newBooking.kind === 'arrival' && soon(c.newBooking.arrival)
+  const leadArrivals = newArrivalsUnseen.filter(a => soon(a.date))
+  const moreNew: { id: string; listingId: string; unit: string; date: string; what: string; bookedAt: string }[] = []
+  for (const a of newArrivalsUnseen) { if (!soon(a.date)) moreNew.push({ id: a.id, listingId: a.listingId, unit: a.unit, date: a.date, what: 'arrives ' + dayWord(a.date), bookedAt: a.bookedAt }) }
+  for (const c of dayCleans) {
+    const nb = c.newBooking
+    if (!nb || !isNewUnseen(c) || isLeadBooking(c) || moreNew.some(x => x.id === nb.id)) continue
+    moreNew.push({ id: nb.id, listingId: c.listingId, unit: c.unit, date: c.date, what: nb.kind === 'arrival' ? 'new guest arrives ' + dayWord(nb.arrival || c.date) : 'checks out ' + dayWord(c.date), bookedAt: nb.bookedAt })
+  }
+
   const rows = useMemo(() => {
     // The embedded board shows only what the gate is about. 'needs-person' = nobody on it, Guesty-only,
     // staged-not-pushed, or a guest still in the unit; 'nobody' and 'active' split that in two.
@@ -576,8 +640,8 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       return nobody || staged || flagged
     }
     const a = dayCleans.filter(c => keep(c) && (!onlyNewOn || isNewUnseen(c)))
-    // New bookings nobody has looked at lead the day; cleans that moved off it trail.
-    const lead = (list: Clean[]): Clean[] => { const rk = (c: Clean) => c.movedTo ? 2 : isNewUnseen(c) ? 0 : 1; return list.map((c, i) => ({ c, i })).sort((x, y) => rk(x.c) - rk(y.c) || x.i - y.i).map(x => x.c) }
+    // New arrivals today/tomorrow nobody has looked at lead the day; cleans that moved off it trail.
+    const lead = (list: Clean[]): Clean[] => { const rk = (c: Clean) => c.movedTo ? 2 : isLeadBooking(c) ? 0 : 1; return list.map((c, i) => ({ c, i })).sort((x, y) => rk(x.c) - rk(y.c) || x.i - y.i).map(x => x.c) }
     const byUnit = (x: Clean, y: Clean) => x.unit.localeCompare(y.unit)
     const byBuilding = (x: Clean, y: Clean) => (x.vendor ? 1 : 0) - (y.vendor ? 1 : 0) || x.hub.localeCompare(y.hub) || byUnit(x, y)
     switch (sortBy) {
@@ -589,7 +653,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       default: return lead(a.sort(byBuilding))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dayCleans, sortBy, overrides, cleared, embedded?.only, seen, onlyNewOn])
+  }, [dayCleans, sortBy, overrides, cleared, embedded?.only, seen, onlyNewOn, todayIso])
 
   function statusRing(c: Clean) {
     const st = String(c.taskStatus || '')
@@ -794,7 +858,7 @@ await load(view, date)
 }
 // Manually ADD a clean/task for any unit on the shown day (explicit, shows on the calendar).
 async function addClean() {
-const u = (data?.units || []).find(x => x.name === addUnit.trim())
+const u = (unitList || []).find(x => x.name === addUnit.trim())
 if (!u) { setError('Pick a unit from the list.'); return }
 const d = data?.weekStart || date
 if (!window.confirm('Add a clean for ' + u.name + ' on ' + d + ' in Breezeway?')) return
@@ -1016,9 +1080,19 @@ async function pushBlocks() {
             positioned dropdown and a horizontal scroller would clip it. */}
         <div className="ml-auto inline-flex items-center gap-1.5 flex-wrap gap-y-1.5">
           {data?.syncedAt && <span className="text-[11px] text-muted" title="When this copy of the schedule was built from the reservations and the Breezeway task mirror. Sync pulls both again.">Data as of {agoLabel(data.syncedAt)}</span>}
-          {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder="Unit name..." className="text-[12px] border border-line rounded-lg px-2.5 py-1.5 outline-none w-44" /><datalist id="sched-units">{(data.units || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
+          {data && view === 'day' && data.breezeway && (adding ? (<span className="inline-flex items-center gap-1.5"><input list="sched-units" value={addUnit} onChange={e => setAddUnit(e.target.value)} placeholder={unitList ? 'Unit name...' : 'Loading units…'} className="text-[12px] border border-line rounded-lg px-2.5 py-1.5 outline-none w-44" /><datalist id="sched-units">{(unitList || []).map(u => <option key={u.id} value={u.name} />)}</datalist><button onClick={addClean} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg bg-brand-600 text-white hover:bg-brand-700">Add</button><button onClick={() => { setAdding(false); setAddUnit('') }} className="text-[12px] text-muted hover:text-ink">Cancel</button></span>) : (<button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="Add a clean/task for any unit on this day">+ Add clean</button>))}
 
-{data && view === 'day' && (<div className="relative"><button onClick={() => setMoreOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="More actions">More ▾</button>{moreOpen && (<><div className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} /><div className="absolute right-0 mt-1 z-30 min-w-[180px] rounded-xl border border-line bg-white shadow-lg p-1 flex flex-col">{data.breezeway && <button onClick={() => { setMoreOpen(false); loadSuggestions() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-violet-50 text-violet-700">Audit ideas</button>}<button onClick={() => { setMoreOpen(false); exportCsv() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-app text-ink inline-flex items-center gap-1.5"><Download size={13} />Export CSV{sheetMkt === 'all' ? '' : ' · ' + sheetMkt}</button></div></>)}</div>)}
+{data && view === 'day' && (<div className="relative"><button onClick={() => setMoreOpen(o => !o)} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app" title="More actions">More ▾</button>{moreOpen && (<><div className="fixed inset-0 z-20" onClick={() => setMoreOpen(false)} /><div className="absolute right-0 mt-1 z-30 min-w-[180px] rounded-xl border border-line bg-white shadow-lg p-1 flex flex-col">{data.breezeway && <button onClick={() => { setMoreOpen(false); loadSuggestions() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-violet-50 text-violet-700">Audit ideas</button>}<button onClick={() => { setMoreOpen(false); exportCsv() }} className="text-left text-[12px] font-medium px-2.5 py-2 rounded-lg hover:bg-app text-ink inline-flex items-center gap-1.5"><Download size={13} />Export CSV{sheetMkt === 'all' ? '' : ' · ' + sheetMkt}</button>
+{/* THE DAY SHEET lives here now (2026-11-09): one picture of the day per cleaner, to download or
+    post to the housekeeping channel. The area picker also scopes Export CSV above. */}
+<div className="border-t border-line mt-1 pt-1.5 px-2.5 pb-1.5 space-y-1.5 min-w-[220px]">
+<div className="flex items-center gap-2"><span className="text-[11px] font-bold text-ink">Day sheet</span><select value={sheetMkt} onChange={e => setSheetMkt(e.target.value)} aria-label="Area for the day sheet and the CSV" className="ml-auto rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink"><option value="all">All areas</option>{MARKETS.map(m => <option key={m} value={m.toLowerCase()}>{m}</option>)}</select></div>
+<div className="flex gap-1.5">
+<button onClick={() => { setMoreOpen(false); downloadSheet() }} disabled={!!sheetBusy} title="One picture: each cleaner, their units, the guest checkout, the size, and what is different about it" className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink/30 disabled:opacity-50">{sheetBusy === 'download' ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />} Download</button>
+<button onClick={() => { setMoreOpen(false); postSheetToSlack() }} disabled={!!sheetBusy} title="Post the day sheet to the housekeeping Slack channel" className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-semibold hover:opacity-90 disabled:opacity-50">{sheetBusy === 'slack' ? <RefreshCw size={12} className="animate-spin" /> : <MessageSquare size={12} />} Post to Slack</button>
+</div>
+</div>
+</div></>)}</div>)}
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
       </div>}
@@ -1096,10 +1170,10 @@ async function pushBlocks() {
         )}
       </div>}
 
-      {!embedded && view === 'day' && newArrivalsUnseen.length > 0 && (
+      {!embedded && view === 'day' && (leadArrivals.length > 0 || moreNew.length > 0) && (
         <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 px-3.5 py-2.5 space-y-1">
-          <div className="text-[12px] font-bold text-fuchsia-900">New arrivals with no checkout that day <span className="font-normal text-fuchsia-900/70">· no clean on this list is tied to them — check each unit is guest-ready</span></div>
-          {newArrivalsUnseen.map(a => (
+          {leadArrivals.length > 0 && <div className="text-[12px] font-bold text-fuchsia-900">New arrivals with no checkout that day <span className="font-normal text-fuchsia-900/70">· no clean on this list is tied to them — check each unit is guest-ready</span></div>}
+          {leadArrivals.map(a => (
             <div key={a.id} className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[12px] bg-white rounded-lg border border-line px-2.5 py-1.5">
               <button type="button" onClick={() => { markSeen([a.id]); setOpsFor({ listingId: a.listingId, unit: a.unit, date: a.date }) }} className="font-semibold text-ink hover:underline decoration-dotted underline-offset-2">{a.unit}</button>
               {a.vendor && <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-700">vendor</span>}
@@ -1109,6 +1183,21 @@ async function pushBlocks() {
               <button type="button" onClick={() => markSeen([a.id])} className="ml-auto text-[11px] font-semibold text-fuchsia-800 hover:underline">Seen</button>
             </div>
           ))}
+          {moreNew.length > 0 && (
+            <details>
+              <summary className="text-[12px] font-semibold text-fuchsia-900 cursor-pointer">{moreNew.length} more new booking{moreNew.length === 1 ? '' : 's'} <span className="font-normal text-fuchsia-900/70">· not arriving today or tomorrow, or only a new checkout</span></summary>
+              <div className="mt-1 space-y-1">
+                {moreNew.map(x => (
+                  <div key={x.id} className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[12px] bg-white rounded-lg border border-line px-2.5 py-1">
+                    <button type="button" onClick={() => { markSeen([x.id]); setOpsFor({ listingId: x.listingId, unit: x.unit, date: x.date }) }} className="font-semibold text-ink hover:underline decoration-dotted underline-offset-2">{x.unit}</button>
+                    <span className="text-fuchsia-800">{x.what}</span>
+                    <span className="text-muted">booked {agoLabel(x.bookedAt)}</span>
+                    <button type="button" onClick={() => markSeen([x.id])} className="ml-auto text-[11px] font-semibold text-fuchsia-800 hover:underline">Seen</button>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
         </div>
       )}
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} className="shrink-0" /> <span className="min-w-0">{error}</span></div>}
@@ -1118,43 +1207,15 @@ async function pushBlocks() {
         <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Loading the schedule&hellip;</div>
       ) : data && view === 'day' ? (
         <div className={embedded ? 'pb-2' : 'grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16'}>
-          {/* THE ROSTER, THEN THE SHEET (Jon, 2026-09-15: "can we add this right below the second
-              photo"). The day sheet belonged under the Working card, not at the foot of the page:
-              you send the crew the picture straight after you have settled who is on today, and at
-              the bottom it sat below a hundred rows of cleans where nobody scrolled to it. */}
+          {/* THE TEAM RAIL. On a phone it is one collapsed line above the cleans ("Team · 12 working ·
+              16 needed · short 24h") that opens on a tap; from lg up it is the left column. The day
+              sheet that sat under it is in the More menu. */}
           {!embedded && (
-          <div className="space-y-3 order-2 lg:order-1">
-            <WorkingRail rosters={rosters} date={boardDate} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(boardDate)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} staff={boardStaff} crew={boardCrew} shiftHours={SHIFT_H} growth={Number(GROWTH) || 0} load={cleanerLoad} dollars={rateDollars} payPerHour={PAY} isPast={boardIsPast} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
-
-            {/* A 280px column, so the controls stack rather than fighting for one line. Download
-                first: the safe one is the one your hand lands on, and Post goes to the whole crew. */}
-            {/* Lean pass: label + area picker on one line, the two buttons side by side; the
-                explainer is the Download button's hover. */}
-            <div className="rounded-2xl border border-line bg-white p-3 space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="text-[12.5px] font-bold text-ink">Day sheet</span>
-                <select value={sheetMkt} onChange={e => setSheetMkt(e.target.value)} aria-label="Area for the day sheet"
-                  className="ml-auto rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink">
-                  <option value="all">All areas</option>
-                  {MARKETS.map(m => <option key={m} value={m.toLowerCase()}>{m}</option>)}
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={downloadSheet} disabled={!!sheetBusy} title="One picture: each cleaner, their units, the guest checkout, the size, and what is different about it"
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink hover:border-ink/30 disabled:opacity-50">
-                  {sheetBusy === 'download' ? <RefreshCw size={12} className="animate-spin" /> : <Download size={12} />} Download
-                </button>
-                <button onClick={postSheetToSlack} disabled={!!sheetBusy} title="Post the day sheet to the housekeeping Slack channel"
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-ink text-white px-2.5 py-1.5 text-[12px] font-semibold hover:opacity-90 disabled:opacity-50">
-                  {sheetBusy === 'slack' ? <RefreshCw size={12} className="animate-spin" /> : <MessageSquare size={12} />} Post to Slack
-                </button>
-              </div>
-            </div>
+          <div className="space-y-3">
+            <WorkingRail rosters={rosters} date={boardDate} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(boardDate)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} staff={boardStaff} crew={boardCrew} shiftHours={SHIFT_H} growth={Number(GROWTH) || 0} load={cleanerLoad} dollars={rateDollars} payPerHour={PAY} isPast={boardIsPast} moveTo={moveTo} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
           </div>
           )}
-          {/* On a phone the roster rail is a 480px-tall scroller sitting between you and the cleans.
-              The cleans are why you opened the page, so they come first; desktop keeps the rail left. */}
-          <div className="space-y-2 min-w-0 order-1 lg:order-2">
+          <div className="space-y-2 min-w-0">
           {rows.length > 0 && (
             <label className="inline-flex items-center gap-2 text-[12px] text-muted cursor-pointer">
               <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({pickable.length})
@@ -1164,7 +1225,7 @@ async function pushBlocks() {
           {guestyOnlyCount > 0 && (
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {guestyOnlyCount} clean{guestyOnlyCount === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
           )}
-          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">{embedded && embedded.only !== 'all' ? 'Every clean this day has a person on it.' : onlyNewOn ? 'The new bookings are the arrivals listed above — no clean on this day is affected.' : 'No checkouts for this day.'}</div> : (
+          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">{embedded && embedded.only !== 'all' ? 'Every clean this day has a person on it.' : onlyNewOn ? 'The new bookings are the ones listed above — no clean on this day is affected.' : 'No checkouts for this day.'}</div> : (
             <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-sm">
               {/* PHONE: one clean row is a checkbox, a cleaner picker, the unit with its badge
                   stack, the guest and a menu — five columns that cannot survive 375px, and this
@@ -1179,7 +1240,7 @@ async function pushBlocks() {
                     <th className="px-2 py-2 font-semibold">Listing</th>
                     <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="Estimated cleaning time: the P&L's expected labor cost for this unit ÷ $20/hour. After the clean, the Breezeway time sits underneath.">Est. time</th>
                     <th className="px-2 py-2 font-semibold">Reservation</th>
-                    <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="The value of each clean: the guest's cleaning fee on the checkout, or the listing's cleaning fee (est.) when the channel bundled it into the fare">Value{(() => { const t = rows.filter(c => !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0); return t > 0 ? <span className="ml-1 normal-case tracking-normal text-emerald-700">${Math.round(t).toLocaleString()}</span> : null })()}</th>
+                    <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="The value of each clean: the guest's cleaning fee on the checkout, or the listing's cleaning fee (est.) when the channel bundled it into the fare">Value{(() => { const t = rows.filter(c => !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0); return t > 0 ? <span className="block normal-case tracking-normal text-emerald-700 tabular-nums">${Math.round(t).toLocaleString()}</span> : null })()}</th>
                     <th className="px-2 py-2 font-semibold"></th>
                   </tr>
                 </thead>
@@ -1189,7 +1250,7 @@ async function pushBlocks() {
                     const newBuilding = (sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))) || (sortBy === 'area' && (i === 0 || (rows[i - 1].city || '') !== (c.city || '')))
                     return (
                       <Fragment key={keyOf(c)}>
-                      <tr className={`group flex flex-wrap items-center sm:table-row hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${c.movedTo ? 'opacity-60' : blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : isNewUnseen(c) ? 'bg-fuchsia-50/60' : c.taskStatus === 'completed' ? 'bg-emerald-50/40' : (!e.label && !overrides[keyOf(c)] && !c.vendor) ? 'bg-amber-50/40' : ''}`}>
+                      <tr className={`group flex flex-wrap items-center sm:table-row hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${c.movedTo ? 'opacity-60' : blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : isLeadBooking(c) ? 'bg-fuchsia-50/60' : c.taskStatus === 'completed' ? 'bg-emerald-50/40' : (!e.label && !overrides[keyOf(c)] && !c.vendor) ? 'bg-amber-50/40' : ''}`}>
                         <td className="order-1 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle">{!c.movedTo && <input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />}{c.syncStatus === 'guesty-only' && !c.guestyOnly && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}</td>
                         <td className="order-4 grow basis-44 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle">{c.vendor ? (
                           /* ALWAYS ASSIGNED (Jon, 2026-09-23: "we don't touch Botanica in any way. Our
@@ -1220,7 +1281,7 @@ async function pushBlocks() {
                           return <div className="mt-1 text-[10px] font-semibold text-amber-700" title="Not working or on call today, by the team list on the left (a status set by hand, otherwise the Homebase schedule).">{names.length > 1 ? off.map(shortTeamName).join(', ') + ' — ' : ''}not scheduled today</div>
                         })()}{pushErrors[keyOf(c)] ? <div className="mt-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 whitespace-normal" title="The last push for this clean did not go through. Fix and push again.">Not pushed — {pushErrors[keyOf(c)]}</div> : null}</>}</td>
                         
-                        <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink">{c.vendor && <span className="mr-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-700 align-middle">vendor</span>}{statusRing(c)}{c.listingId ? <button type="button" onClick={() => { if (c.newBooking) markSeen([c.newBooking.id]); setOpsFor({ listingId: String(c.listingId), unit: String(c.unit), date }) }} className="text-left font-semibold whitespace-nowrap hover:underline decoration-dotted underline-offset-2">{c.unit}</button> : c.unit}{c.taskStatus === 'in_progress' && <span title={'Started in Breezeway' + (c.assignedNames?.length ? ' · ' + c.assignedNames.join(', ') : '')} className="ml-1 inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-800 border border-sky-200 align-middle whitespace-nowrap">In progress</span>}{c.rebook
+                        <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink">{c.vendor && <span className="mr-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-700 align-middle">vendor</span>}{statusRing(c)}{c.listingId ? <button type="button" onClick={() => { if (c.newBooking) markSeen([c.newBooking.id]); setOpsFor({ listingId: String(c.listingId), unit: String(c.unit), date }) }} className="text-left font-semibold whitespace-nowrap lg:whitespace-normal hover:underline decoration-dotted underline-offset-2">{c.unit}</button> : c.unit}{c.taskStatus === 'in_progress' && <span title={'Started in Breezeway' + (c.assignedNames?.length ? ' · ' + c.assignedNames.join(', ') : '')} className="ml-1 inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-800 border border-sky-200 align-middle whitespace-nowrap">In progress</span>}{c.rebook
   ? <span title={'Re-book, not a turnover: ' + (c.guestOut || 'the same guest') + ' checks out and books straight back into this unit today instead of extending. Nobody leaves — do not strip the unit, and check whether it should have been an extension.'} className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded px-1 py-0.5"><Repeat size={9} /> Re-book · same guest</span>
   : c.sameDayTurn ? <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> Same-day turn</span> : null}
                         {(() => {
@@ -1247,7 +1308,7 @@ async function pushBlocks() {
                         {(c as any).calNote === 'booked' && <span title="Guesty calendar shows a reservation covering the gap - the guest is still in the unit (extension confirmed by calendar)" className="inline-block ml-0.5 text-[9px] font-bold text-violet-700 bg-violet-50 border border-violet-300 rounded px-1 align-middle">Cal: occupied</span>}
                         {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}{(c.bedrooms != null || c.nights != null || c.checkOutTime) && <div className="text-[11px] text-muted mt-0.5 font-normal">{[c.bedrooms != null ? (c.bedrooms === 0 ? 'Studio' : c.bedrooms + 'BR') : '', c.nights != null ? c.nights + ' nt' : '', c.checkOutTime ? 'out ' + c.checkOutTime : '', c.doorCode ? 'code ' + c.doorCode : ''].filter(Boolean).join(' \u00b7 ')}</div>}{c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed' && <span title={'Time on this clean (Breezeway timer). Benchmark for ' + (c.bedrooms == null ? 'this unit' : c.bedrooms === 0 ? 'a studio' : c.bedrooms + 'BR') + '. Duration only \u2014 not labor cost.'} className={'ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.5 rounded border align-middle font-normal ' + cleanTimeCls(c.bedrooms, c.cleanMinutes, presets.timing, c.unit, cleanRates)}>{'\u23f1'} {fmtMins(c.cleanMinutes)}</span>}</td>
                         <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap tabular-nums">{(() => { const h = c.movedTo ? null : estHours(c); if (h == null) return <span className="text-muted">—</span>; const done = c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed'; return <span className="inline-flex flex-col items-end leading-tight"><span className="font-semibold text-ink"><span className="sm:hidden text-[9px] font-normal text-muted mr-1">est</span>{fmtH(h)}</span>{done && <span className="text-[10px] text-muted">{fmtMins(c.cleanMinutes as number)} actual</span>}</span> })()}</td>
-                        <td className="order-3 basis-full min-w-0 whitespace-normal sm:table-cell sm:whitespace-nowrap px-2.5 py-1.5 align-middle text-ink/90">{(() => {
+                        <td className="order-3 basis-full min-w-0 whitespace-normal sm:table-cell sm:max-w-[220px] px-2.5 py-1.5 align-middle text-ink/90">{(() => {
                           // NEW BOOKING — loud until somebody has looked (click it, open the unit, or
                           // assign the clean), then a quiet note for as long as the booking is fresh.
                           const nbk = c.newBooking
@@ -1259,7 +1320,7 @@ async function pushBlocks() {
                             className={'flex w-fit max-w-full items-center gap-1 text-[10px] rounded px-1.5 py-0.5 mb-0.5 border whitespace-normal text-left ' + (unseen ? 'font-bold text-fuchsia-900 bg-fuchsia-100 border-fuchsia-400' : 'font-medium text-muted bg-white border-line')}>{unseen && <span className="inline-block w-1.5 h-1.5 rounded-full bg-fuchsia-600 shrink-0" />}{unseen ? 'New booking' : 'Recent booking'} · booked {agoLabel(nbk.bookedAt)} · {what}</button>
                         })()}{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
                         
-                        <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap">{c.cleaningFee != null && c.cleaningFee > 0
+                        <td className="hidden sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap">{c.cleaningFee != null && c.cleaningFee > 0
                           ? <span title={c.feeSource === 'listing' ? 'Estimated — the listing’s cleaning fee; this booking carried no separate cleaning fee (bundled into the fare)' : 'The guest’s cleaning fee on this checkout'} className={'inline-flex items-center gap-1 text-[12px] font-bold tabular-nums ' + (c.feeSource === 'listing' ? 'text-emerald-700/70' : 'text-emerald-700')}>{'$' + Math.round(c.cleaningFee).toLocaleString()}{c.feeSource === 'listing' && <span className="text-[9px] font-semibold uppercase tracking-wider text-muted">est</span>}</span>
                           : <span className="text-[11px] text-muted/50" title="No cleaning fee on file for this unit">—</span>}</td>
                         <td className="order-6 ml-auto shrink-0 sm:table-cell sm:ml-0 px-2.5 py-1.5 align-middle text-right"><span className="inline-flex items-center justify-end gap-1.5 opacity-80 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-150">{c.guestyOnly && <span title="This building is not in Breezeway - the checkout comes from Guesty and the vendor cleans it. No task to push or track." className="align-middle text-[10px] font-semibold uppercase px-1.5 py-1 rounded-md border border-slate-300 bg-slate-100 text-slate-600">Guesty only</span>}{blockStaged[keyOf(c)] && <span title="Staged to move to tomorrow - push or save to apply" className="align-middle text-[10px] font-semibold uppercase px-1.5 py-1 rounded-md border border-red-200 bg-red-50 text-red-600">Moving</span>}{data.breezeway && c.breezewayTaskId && <button onClick={() => setCmtFor(cmtFor === c.breezewayTaskId ? '' : String(c.breezewayTaskId))} aria-label="Comment on this clean" title={(cmtFor === c.breezewayTaskId ? 'Close comments' : 'Comment on this clean') + ' — tagged teammates get notified'} className={'align-middle text-[11px] font-semibold px-1.5 py-1 rounded-md border inline-flex items-center gap-1 ' + (cmtFor === c.breezewayTaskId ? 'bg-ink text-white border-ink' : cmtCounts[String(c.breezewayTaskId)] ? 'border-sky-300 bg-sky-50 text-sky-700' : 'border-line bg-white text-muted hover:text-ink hover:bg-app')}><MessageSquare size={11} />{cmtCounts[String(c.breezewayTaskId)] || ''}</button>}{/* native title, not <Tip>: the table scrolls sideways and would clip a floating label on the top row */}<RowMenu title={'Actions for ' + c.unit} actions={rowActions(c)} /></span></td>
@@ -1319,11 +1380,16 @@ async function pushBlocks() {
       )}
       {selectedKeys.length > 0 && view === 'day' && (
         <div className="sticky bottom-[calc(env(safe-area-inset-bottom,0px)+4.25rem)] sm:bottom-3 z-20 flex justify-center">
-          <div className="inline-flex items-center gap-3 rounded-full border border-brand-200 bg-white shadow-lg px-4 py-2 flex-wrap justify-center">
-            <span className="text-[13px] font-semibold text-ink inline-flex items-center gap-1.5"><Users size={14} className="text-brand-600" /> {selectedKeys.length} selected</span>
-            {data?.breezeway && <div className="inline-flex items-center gap-1.5"><span className="text-[12px] text-muted">Assign all:</span><div className="w-44"><CleanerPicker people={people} scheduled={scheduledSet} value={null} existing="" onChange={p => bulkAssign(p)} placeholder="Pick cleaner…" /></div></div>}
-            <button onClick={() => setSelected({})} className="text-[12px] text-muted hover:text-ink">Clear</button>
-            <button onClick={push} disabled={pushing} className="inline-flex items-center gap-1.5 rounded-full bg-brand-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{pushing ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />} Push {selectedKeys.filter(k => { const c = cleanByKey[k]; return !!c && !c.vendor && !c.movedTo }).length} to Breezeway</button>
+          {/* TWO TIDY ROWS on a phone (count + Clear, then picker + Push); one line from sm up. */}
+          <div className="flex flex-col gap-1.5 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-brand-200 bg-white shadow-lg px-3 py-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:rounded-full sm:px-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[13px] font-semibold text-ink inline-flex items-center gap-1.5"><Users size={14} className="text-brand-600" /> {selectedKeys.length} selected</span>
+              <button onClick={() => setSelected({})} className="ml-auto sm:ml-0 text-[12px] text-muted hover:text-ink">Clear</button>
+            </div>
+            <div className="flex items-center gap-2">
+              {data?.breezeway && <div className="flex-1 min-w-0 sm:flex-none sm:w-44"><CleanerPicker people={people} scheduled={scheduledSet} value={null} existing="" onChange={p => bulkAssign(p)} placeholder="Pick cleaner…" /></div>}
+              <span className="shrink-0 ml-auto"><button onClick={push} disabled={pushing} className="inline-flex items-center gap-1.5 rounded-full bg-brand-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{pushing ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />} Push {selectedKeys.filter(k => { const c = cleanByKey[k]; return !!c && !c.vendor && !c.movedTo }).length} to Breezeway</button></span>
+            </div>
           </div>
         </div>
       )}
@@ -1354,11 +1420,13 @@ async function pushBlocks() {
 //              because "needed" is the Total's KPI hours ÷ a shift, rounded up.
 //   The team:  each person with the hours of cleans on them against their shift (red when over),
 //              then anyone holding cleans who is not scheduled today, then what nobody holds yet.
-function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 8, growth = 0, load, dollars = false, payPerHour = 20, isPast = false, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; staff: Staffing; crew: CrewPerson[]; shiftHours?: number; growth?: number; load?: CleanerLoad; dollars?: boolean; payPerHour?: number; isPast?: boolean; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
+function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 8, growth = 0, load, dollars = false, payPerHour = 20, isPast = false, moveTo = null, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; staff: Staffing; crew: CrewPerson[]; shiftHours?: number; growth?: number; load?: CleanerLoad; dollars?: boolean; payPerHour?: number; isPast?: boolean; moveTo?: { label: string; spare: number } | null; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
   const NON_CLEANERS = useOpsPresets().roster.nonCleaners
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
   const [ratesOpen, setRatesOpen] = useState(false)
+  // Phone: the rail is one line above the cleans until it is tapped open. From lg up it is always open.
+  const [openSm, setOpenSm] = useState(false)
   const ACTIVE = /work|on.?call/i
   const setD = (mk: string, val: string) => setDraft(p => { const n: Record<string, string> = { ...p }; n[mk] = val; return n })
   const add = (mk: string) => { onAdd(mk, draft[mk] || ''); setD(mk, '') }
@@ -1373,17 +1441,30 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 
   const shownLines = staff.lines.filter(l => l.cleans > 0 || l.working > 0 || l.projCleans > 0)
   const loadOf = (name: string) => load ? load.people.find(p => sameRosterPerson(p.name, name)) : undefined
   const unscheduled = load ? load.people.filter(lp => !crew.some(p => sameRosterPerson(p.name, lp.name))) : []
+  // THE VERDICT, WITH THE ONE THING TO DO. Every number is one the table above already shows:
+  // the shortfall is the Total row's +/−, "add N" is needed − working, and "move N cleans" is the
+  // shortfall ÷ the day's average KPI hours per clean, offered only when a later day has room.
+  const addN = Math.max(0, staff.need - staff.working)
+  const avgCleanH = staff.cleans > 0 ? staff.kpiH / staff.cleans : 0
+  const moveN = avgCleanH > 0 ? Math.min(staff.cleans, Math.ceil(-gap / avgCleanH - 1e-9)) : 0
+  const overShifts = Math.floor(gap / shiftHours)
   const verdict: { text: string; cls: string } = staff.targetH <= 0
     ? { text: 'No cleans of ours to staff on this day.', cls: 'text-muted' }
     : isPast
       ? { text: fmtH(staff.schedH) + ' were scheduled against ' + fmtH(staff.targetH) + ' on the KPI.', cls: 'text-muted' }
       : short
-        ? { text: 'Short ' + (staff.need - staff.working) + ' cleaner' + (staff.need - staff.working === 1 ? '' : 's') + ' — ' + fmtH(-gap) + ' of cleaning has nobody scheduled for it.', cls: 'text-rose-700 font-semibold' }
+        ? { text: 'Short ' + fmtH(-gap) + ' \u2014 add ' + addN + ' cleaner' + (addN === 1 ? '' : 's') + (moveTo && moveN > 0 ? ' or move ' + moveN + ' clean' + (moveN === 1 ? '' : 's') + ' to ' + moveTo.label : '') + '.', cls: 'text-rose-700 font-semibold' }
         : gap > shiftHours
-          ? { text: fmtH(gap) + ' more scheduled than the KPI calls for — about ' + Math.floor(gap / shiftHours) + ' shift' + (Math.floor(gap / shiftHours) === 1 ? '' : 's') + ' over.', cls: 'text-amber-700 font-semibold' }
-          : { text: 'Staffed to the KPI.', cls: 'text-emerald-700 font-semibold' }
+          ? { text: 'Over by ' + fmtH(gap) + ' \u2014 ' + overShifts + ' cleaner' + (overShifts === 1 ? '' : 's') + ' more than the KPI needs. Release ' + (overShifts === 1 ? 'one' : 'them') + ' or pull cleans forward.', cls: 'text-amber-700 font-semibold' }
+          : { text: 'Staffed to the KPI \u2014 nothing to change.', cls: 'text-emerald-700 font-semibold' }
+  const barTail = staff.targetH <= 0 ? 'no cleans' : isPast ? fmtH(staff.schedH) + ' scheduled' : short ? 'short ' + fmtH(-gap) : gap > shiftHours ? 'over ' + fmtH(gap) : 'staffed'
   return (
-    <div className="order-2 lg:order-1 rounded-xl border border-line bg-white p-3.5 lg:sticky lg:top-3">
+    <div className="rounded-xl border border-line bg-white p-3.5 lg:sticky lg:top-3">
+      <button type="button" onClick={() => setOpenSm(o => !o)} aria-expanded={openSm} className="lg:hidden w-full flex items-center justify-between gap-2 text-left">
+        <span className="text-[12.5px] font-bold text-ink min-w-0 truncate">Team <span className="font-semibold text-muted">· {isPast ? staff.working + ' scheduled' : staff.working + ' working · ' + staff.need + ' needed'} · </span><span className={short ? 'text-rose-700' : (!isPast && gap > shiftHours) ? 'text-amber-700' : 'text-emerald-700'}>{barTail}</span></span>
+        <span className="text-[11px] font-semibold text-brand-700 shrink-0">{openSm ? 'Hide' : 'Open'}</span>
+      </button>
+      <div className={(openSm ? 'mt-2.5 ' : 'hidden ') + 'lg:block lg:mt-0'}>
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="text-[13px] font-bold text-ink">Team — {dayLabel}</div>
         <span className={'text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ' + (isPast ? 'bg-neutral-100 text-neutral-600' : short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{isPast ? staff.working + ' scheduled' : staff.working + ' working · ' + staff.need + ' needed'}</span>
@@ -1530,6 +1611,7 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 
           Homebase is not answering — showing only what was set by hand.
         </div>
       ) : null}
+      </div>
     </div>
   )
 }

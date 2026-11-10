@@ -206,9 +206,49 @@ async function reuseTwin(twin: any, body: Record<string, any>) {
   return { ok: true, status: 200, data, text: '', reused: { id, from: cur, to: patch.scheduled_date || cur } }
 }
 
+// ── WHO MADE WHAT (2026-11-09, Upkeep → Automations) ────────────────────────────────────────────
+// One row per create / reuse / removal in `task_creations`, so the Automations tab can count "made
+// today" per creator and a duplicate sweep can prove a task is Lighthouse's own. THE TABLE MAY NOT
+// EXIST YET: every write is best-effort and silent — a missing table, a bad column or a slow
+// database must never cost a task. `day` and `at` default in SQL.
+export type TaskCreationAction = 'created' | 'moved' | 'reused' | 'cancelled'
+export async function recordTaskCreation(row: { source?: string | null; action: TaskCreationAction; taskId: string | number; homeId?: number | null; listingId?: string | null; name?: string | null; by?: string | null }): Promise<void> {
+  try {
+    const taskId = String(row.taskId ?? '').trim()
+    if (!taskId) return
+    const home = Number(row.homeId)
+    const { error } = await supabaseAdmin().from('task_creations').insert({
+      source: String(row.source || 'unknown').slice(0, 60), action: row.action, task_id: taskId,
+      home_id: row.homeId != null && Number.isFinite(home) ? home : null,
+      listing_id: row.listingId ? String(row.listingId).slice(0, 80) : null,
+      name: row.name ? String(row.name).slice(0, 200) : null,
+      by: row.by ? String(row.by).slice(0, 120) : null,
+    })
+    void error   // table not there yet / write refused: nothing to do, and nothing to say on every create
+  } catch { /* fail open */ }
+}
+
+/**
+ * DELETE /task/{id} — the task is gone from Breezeway, not merely marked cancelled (a cancel is
+ * accepted there and can leave the task open; see cancelBreezewayTask). Irreversible, so callers go
+ * through lib/own-tasks removeOwnDuplicate, which proves the task is Lighthouse's own and untouched
+ * first. This function only makes the call and busts the boards.
+ */
+export async function deleteBreezewayTask(taskId: string | number): Promise<{ ok: boolean; status: number; data: any; text: string }> {
+  const r = await bzApi(`/task/${encodeURIComponent(String(taskId))}`, { method: 'DELETE' })
+  if (landed(r)) bustBoards()
+  return r
+}
+
 export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string; reused?: { id: string; from: string; to: string } }> {
   const allowDuplicate = body?.allowDuplicate === true
   if (body && 'allowDuplicate' in body) { body = { ...body }; delete body.allowDuplicate }
+  // `source` (which creator this is — a lib/task-automations key) and `by` are OURS, never Breezeway's:
+  // taken off the body before anything is sent, and written to task_creations after.
+  const source = body && typeof body.source === 'string' && body.source.trim() ? body.source.trim() : null
+  const madeBy = body && typeof body.by === 'string' && body.by.trim() ? body.by.trim() : null
+  if (body && ('source' in body || 'by' in body)) { body = { ...body }; delete body.source; delete body.by }
+  const listingRef = body && body.reference_property_id != null && String(body.reference_property_id).trim() ? String(body.reference_property_id).trim() : null
   // A LISTING ID WITH A MAPPED HOME BECOMES THE HOME (2026-11-09 audit): the one-open-task guard
   // below and the mirror write at the end both key on home_id, so a caller that sent only
   // reference_property_id skipped both. No mapping, or the lookup fails: the body goes as it came.
@@ -221,7 +261,11 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
   }
   if (!allowDuplicate) {
     const twin = await openTwin(body)
-    if (twin) return reuseTwin(twin, body)
+    if (twin) {
+      const back = await reuseTwin(twin, body)
+      await recordTaskCreation({ source, action: back.reused.to && back.reused.from && back.reused.to !== back.reused.from ? 'moved' : 'reused', taskId: back.reused.id, homeId: Number(body?.home_id), listingId: listingRef, name: String(body?.name || ''), by: madeBy })
+      return back
+    }
   }
   // THE LAST LINE OF THE NEVER-ASSIGN LIST (lib/never-assign): whatever path built this body, a
   // person on the list is taken out of `assignments`. Nobody left = the task is created unassigned.
@@ -278,6 +322,7 @@ export async function createBreezewayTask(body: Record<string, any>): Promise<{ 
       await supabaseAdmin().from('breezeway_tasks_sync').upsert({ id, home_id: home, name: String(body?.name || ''), status: 'created', scheduled_date: body?.scheduled_date || null }, { onConflict: 'id', ignoreDuplicates: false })
     }
   } catch { /* the sync catches up */ }
+  if (r.ok && r.data?.id != null) await recordTaskCreation({ source, action: 'created', taskId: String(r.data.id), homeId: Number(body?.home_id), listingId: listingRef, name: String(body?.name || ''), by: madeBy })
   return r
 }
 

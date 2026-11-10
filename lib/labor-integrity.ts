@@ -14,6 +14,7 @@
 // ledger at 7:58 (app/api/cron/labor-trueup), which emails them only when the GM morning did not.
 import 'server-only'
 import { sendGmail } from './gmail-send'
+import { briefAlertTo } from './briefs/delivery'
 import { nameMatches } from './person-name'
 import { getSetting, setSetting } from './app-settings'
 
@@ -153,7 +154,8 @@ export async function emailIntegrityFailures(failed: IntegrityCheck[], totalChec
     `<li style="margin:0 0 10px"><b style="color:${c.level === 'red' ? '#dc2626' : '#d97706'}">${esc(c.what)}</b><br>` +
     `<span style="font-size:12px;color:#6b7280">${esc(c.fix)}</span></li>`
   const r = await sendGmail({
-    fromEmail: OWNER, to: [OWNER],
+    // To ops_brief.alertTo (lib/briefs/delivery; default the owner). The sending mailbox is unchanged.
+    fromEmail: OWNER, to: await briefAlertTo().catch(() => [OWNER]), source: 'labor-trueup',
     subject: `⚠️ Labor integrity: ${failed.length} check${failed.length === 1 ? '' : 's'} failing`,
     html: '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#0b1220;max-width:640px">' +
       `<p style="font-size:14px;line-height:1.6">The morning labor audit re-ran the engine over ${from} – ${to} and these claims did not hold:</p>` +

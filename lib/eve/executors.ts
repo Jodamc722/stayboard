@@ -154,6 +154,10 @@ const task_create: Executor = async (p, ctx) => {
   // with its checklist; left out, createBreezewayTask infers it from the title and department.
   const templateId = Number(p?.templateId ?? p?.template_id)
   if (Number.isFinite(templateId) && templateId > 0) body.template_id = templateId
+  // Which creator this is, for the creation log (lib/breezeway strips both before the POST).
+  const by0 = str(ctx?.by)
+  body.source = by0 === 'cron:pm-recurrence' ? 'pm-recurrence' : by0 === 'upkeep' ? 'upkeep-approve' : 'eve-task-create'
+  if (ctx?.actor || by0) body.by = str(ctx?.actor) || by0
   const r = await createBreezewayTask(body)
   if (!r.ok || !r.data?.id) return { ok: false, summary: `Breezeway refused the task (${r.status})`, error: `Breezeway ${r.status}: ${str(r.text).slice(0, 160)}` }
   const taskId = str(r.data.id)

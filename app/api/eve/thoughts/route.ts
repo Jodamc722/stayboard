@@ -11,7 +11,7 @@
 //        ask_next_time raises that watch's rung override to 2
 import { NextRequest, NextResponse } from 'next/server'
 import { requireVrAdmin } from '@/lib/vr-gate'
-import { listThoughts, readSeen, isUnseen, markSeen, doThought, dismissThought, askNextTime, allObserving, unseenCount } from '@/lib/eve/thoughts'
+import { listThoughts, readSeen, isUnseen, markSeen, doThought, dismissThought, askNextTime, allObserving, unseenCount, openCounts, slimThought } from '@/lib/eve/thoughts'
 import { getAgentSettings } from '@/lib/eve/agent-mode'
 
 export const dynamic = 'force-dynamic'
@@ -27,29 +27,27 @@ export async function GET(req: NextRequest) {
   // Started now, awaited with the reads below: the settings used to be read alone, first.
   const settingsP = getAgentSettings()
   if (sp.get('count')) {
-    const [settings, unseen] = await Promise.all([settingsP, unseenCount(email)])
-    return NextResponse.json({ ok: true, unseen, allObserving: allObserving(settings), enabled: settings.enabled })
+    const [settings, counts] = await Promise.all([settingsP, openCounts(email)])
+    return NextResponse.json({ ok: true, unseen: counts.unseen, open: counts.open, allObserving: allObserving(settings), enabled: settings.enabled })
   }
   const since = str(sp.get('since')).trim()
   const source = str(sp.get('source')).trim()
   const status = sp.get('status') === 'all' ? 'all' : 'open'
   const limit = Math.min(500, Number(sp.get('limit')) || 200)
   const sinceIso = since && Number.isFinite(Date.parse(since)) ? new Date(since).toISOString() : undefined
-  // ONE PASS (2026-11-09 audit): the page was read, then unseenCount read the open thoughts and the
-  // seen marks a second time. The unseen number is counted over the same open list unseenCount uses
-  // (the newest 300) — and when the page asked for IS that list, it is cut from it, not read again.
-  const plainOpen = status === 'open' && !sinceIso && !source
-  const [settings, openAll, seen, filtered] = await Promise.all([
+  // ONLY THE ROWS ASKED FOR ARE READ WHOLE (2026-11-09 audit, pass 3). The numbers come from
+  // openCounts (ids and dates), so a page of 12 no longer drags 300 full thoughts behind it.
+  // ?slim=1 (the Today line) also cuts each row to what a compact card prints.
+  const slim = !!sp.get('slim')
+  const [settings, rows, seen, counts] = await Promise.all([
     settingsP,
-    listThoughts({ status: 'open', limit: Math.max(300, plainOpen ? limit : 0) }),
+    listThoughts({ since: sinceIso, source: source || undefined, status, limit }),
     readSeen(email),
-    plainOpen ? Promise.resolve(null) : listThoughts({ since: sinceIso, source: source || undefined, status, limit }),
+    openCounts(email),
   ])
-  const rows = filtered || openAll.slice(0, limit)
-  const unseen = openAll.slice(0, 300).filter(t => isUnseen(t, seen)).length
-  let thoughts = rows.map(t => ({ ...t, unseen: t.status === 'open' && isUnseen(t, seen) }))
+  let thoughts = rows.map(t => ({ ...(slim ? slimThought(t) : t), unseen: t.status === 'open' && isUnseen(t, seen) }))
   if (sp.get('unseen')) thoughts = thoughts.filter(t => t.unseen)
-  return NextResponse.json({ ok: true, thoughts, unseen, allObserving: allObserving(settings), enabled: settings.enabled, rungs: settings.rungs })
+  return NextResponse.json({ ok: true, thoughts, unseen: counts.unseen, open: counts.open, allObserving: allObserving(settings), enabled: settings.enabled, rungs: settings.rungs })
 }
 
 export async function POST(req: NextRequest) {

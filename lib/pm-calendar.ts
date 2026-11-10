@@ -62,6 +62,8 @@ export type DueItem = {
       round is spread over one interval so 76 filter changes do not all land on the same day; after
       that, a real completion takes over and the normal interval applies. lastDone stays null. */
   clock?: { started: string; firstDue: string } | null
+  /** lastDone is the date a PERSON recorded on the Upkeep page (not a finished task). */
+  recorded?: boolean
   /** The day it comes due (last done + interval). For a never-recorded job, today. */
   dueOn: string
   /** Negative = not due yet; 0 = today; positive = days past due. */
@@ -202,14 +204,32 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
     if (/inspect/.test(x)) return 'inspection'
     return ''
   }
+  // A PROGRAM MADE ON THE UPKEEP PAGE IS MATCHED FIRST (2026-11-09 audit). Its pattern is its own
+  // name, anchored ("^\\s*Quarterly inspection"), and its tasks are named exactly that — but the
+  // shipped patterns are loose ("inspect", "filter", "deep clean") and came first in the list, so a
+  // finished "Quarterly inspection — 906/6" reset the generic unit-inspection clock and the new
+  // program never saw its own task: always late, never booked, proposed again every run.
+  const matchOrder = usable.filter(c => str(c.match).startsWith('^\\s*')).concat(usable.filter(c => !str(c.match).startsWith('^\\s*')))
   const matchOf = (name: string, deptRaw: string): string[] => {
     const dept = deptOf(deptRaw)
-    for (const c of usable) {
+    for (const c of matchOrder) {
       const re = res[c.key]
       if (!re || !re.test(name)) continue
       // An unrecognised department tells us nothing, so it does not veto the name match.
       if (dept && c.dept !== dept) continue
       return [c.key]
+    }
+    // WORK THAT RIDES THE DEPARTURE CLEAN IS OFTEN FILED UNDER HOUSEKEEPING (the A/C filter change:
+    // a maintenance program done by the cleaner). The department veto above threw those away, so a
+    // finished "Filter change" under Housekeeping never reset the clock and never counted as booked
+    // — the unit stayed late and another task was proposed. Only for programs that ride the
+    // departure, and only when nothing matched with its department.
+    if (dept) {
+      for (const c of matchOrder) {
+        if (!c.ridesDeparture) continue
+        const re = res[c.key]
+        if (re && re.test(name)) return [c.key]
+      }
     }
     return []
   }
@@ -243,15 +263,45 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
   // jobs that were done before the task names were sensible, or done by a vendor). A supervisor can
   // record "last done on <day>" on the Upkeep page; it lands on the ledger with a "recorded …" note
   // and counts here exactly like a completed task. The newer of the two wins.
-  try {
-    const { data: rec } = await db.from('pm_schedule').select('listing_id,cadence_key,last_done,note').ilike('note', 'recorded %').not('last_done', 'is', null).limit(2000)
-    for (const r of ((rec || []) as any[])) {
-      const lid = String(r.listing_id), day = dOf(r.last_done), key = String(r.cadence_key)
-      if (!day || !key) continue
+  //
+  // TWO THINGS WERE LOSING THOSE DATES (2026-11-09 audit):
+  //  • the read asked for 2,000 rows in one request and PostgREST hands back 1,000 — past that, a
+  //    recorded date silently read as "no record". It is paged now.
+  //  • the date only counted while the ledger note still began "recorded …", and the recurrence pass,
+  //    a decline and an approval all rewrite that note ("proposed …", "waiting for an empty day",
+  //    "declined …"). The moment the next job was proposed, the date a person typed in was gone and
+  //    the unit fell back to a started clock. So the dates are ALSO kept in their own app_settings
+  //    row (RECORDED_KEY), written by the record action and backfilled here from any ledger row that
+  //    still carries its note. Where both exist the settings row wins — it is what the person last typed.
+  const recordedDay: Record<string, string> = {}
+  {
+    const kept = await readRecorded()
+    for (const k of Object.keys(kept || {})) { const d = dOf((kept as any)[k]); if (d) recordedDay[k] = d }
+    const backfill: Record<string, string> = {}
+    try {
+      const recPaged = await pageRows<any>((a, b) => db.from('pm_schedule').select('listing_id,cadence_key,last_done,note')
+        .ilike('note', 'recorded %').not('last_done', 'is', null).order('listing_id').order('cadence_key').range(a, b), 8)
+      if (recPaged.truncated) degraded.push('dates recorded by hand')
+      for (const r of recPaged.rows as any[]) {
+        const lid = String(r.listing_id), day = dOf(r.last_done), key = String(r.cadence_key)
+        if (!day || !key) continue
+        const k = `${lid}|${key}`
+        if (!recordedDay[k]) { recordedDay[k] = day; backfill[k] = day }
+      }
+    } catch { /* no ledger yet */ }
+    for (const k of Object.keys(recordedDay)) {
+      const i = k.indexOf('|'); if (i <= 0) continue
+      const lid = k.slice(0, i), key = k.slice(i + 1), day = recordedDay[k]
+      if (day > today) continue
       const cur = (lastDone[lid] = lastDone[lid] || {})
       if (!cur[key] || day > cur[key]) cur[key] = day
     }
-  } catch { /* no ledger yet */ }
+    // Only when the settings row was READ (a failed read must never be written back as the truth).
+    if (kept && Object.keys(backfill).length) {
+      const cur = await readRecorded()
+      if (cur) await setSetting(RECORDED_KEY, { ...backfill, ...cur }, 'upkeep-recorded').catch(() => null)
+    }
+  }
   // ── NEW UNITS (Jon, 2026-10-13: "Salato and some with no record could be a new unit") ─────────
   // A unit listed in September cannot owe a deep clean from "never". When a unit went live more
   // recently than a cadence's interval and nothing has been recorded, the clock starts the day it
@@ -365,6 +415,7 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
         cadenceKey: c.key, label: c.label, dept: c.dept, minutes: c.minutes,
         listingId: lid, unit: m.name, building: m.building, market: m.market, vendor: m.vendor,
         market2: m.market2, lastDone: ld, newUnit, clock, dueOn, daysOver, scheduled: sched, band,
+        recorded: !!ld && !newUnit && recordedDay[`${lid}|${c.key}`] === ld,
       })
     }
   }
@@ -428,6 +479,31 @@ async function readClocks(): Promise<Record<string, { s: string; d: string }> | 
     const v = typeof raw === 'string' ? JSON.parse(raw) : raw
     return v && typeof v === 'object' ? v : {}
   } catch { return null }
+}
+/** Dates recorded by hand on the Upkeep page: { "<listingId>|<cadenceKey>": "YYYY-MM-DD" }. */
+export const RECORDED_KEY = 'upkeep_recorded'
+/** Straight from the table (no cache). null = the read failed. */
+async function readRecorded(): Promise<Record<string, string> | null> {
+  try {
+    const { data, error } = await supabaseAdmin().from('app_settings').select('value').eq('key', RECORDED_KEY).limit(1)
+    if (error) return null
+    const raw = (data as any[])?.[0]?.value
+    if (!raw) return {}
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+  } catch { return null }
+}
+/**
+ * Keep a hand-recorded date where no later note can lose it (see the read in buildDueCalendar).
+ * Overwrites the unit × program's entry — a "Fix date" to an earlier day must stick. Best-effort:
+ * the ledger row written beside it still carries the date if this fails.
+ */
+export async function setRecordedDay(listingId: string, cadenceKey: string, day: string, by?: string | null): Promise<boolean> {
+  if (!listingId || !cadenceKey || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false
+  const cur = await readRecorded()
+  if (!cur) return false
+  const r = await setSetting(RECORDED_KEY, { ...cur, [`${listingId}|${cadenceKey}`]: day }, by || 'upkeep-recorded').catch(() => null)
+  return !!(r && r.ok)
 }
 /** A unit live this recently is brand new: every program counts from its go-live, not from a ticker. */
 const BRAND_NEW_DAYS = 120

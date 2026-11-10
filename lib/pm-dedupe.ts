@@ -21,7 +21,8 @@ import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
 import { getSetting } from './app-settings'
 import { CADENCE_KEY, resolveCadences, cadenceRe, type CadenceDef } from './cadences'
-import { cancelBreezewayTask, updateBreezewayTask, breezewayConfigured } from './breezeway'
+import { updateBreezewayTask, breezewayConfigured } from './breezeway'
+import { lighthouseCreatedIds, removeOwnDuplicate } from './own-tasks'
 import { isTaskDone, isTaskGone, isTaskRunning } from './task-categories'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -106,6 +107,9 @@ export async function dedupeCadenceTasks(opts: { cadenceKey?: string; dryRun?: b
   for (const r of (res || []) as any[]) { const lid = str(r.listing_id), co = str(r.check_out).slice(0, 10); if (!nextOut[lid] || co < nextOut[lid]) nextOut[lid] = co }
 
   const max = Math.max(1, Math.min(opts.max ?? 400, 1000))
+  // Which of the extras Lighthouse itself created (lib/own-tasks): those, when untouched, are DELETED;
+  // every other extra is cancelled as before. Ledgers unreadable → cancel only, never delete.
+  const ownIds = dryRun ? null : await lighthouseCreatedIds(dupes.flatMap(lid => byUnit[lid].map(t => t.id))).catch(() => null)
   let cancelBudget = max
   for (const lid of dupes) {
     const list = byUnit[lid].slice()
@@ -129,11 +133,10 @@ export async function dedupeCadenceTasks(opts: { cadenceKey?: string; dryRun?: b
     for (const t of extra) {
       if (cancelBudget <= 0) break
       cancelBudget--
-      const r = await cancelBreezewayTask(t.id).catch((e: any) => ({ ok: false, text: String(e?.message || e) } as any))
-      if (r.ok) {
-        out.cancelled++
-        try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled', synced_at: new Date().toISOString() }).eq('id', t.id) } catch { /* the sync catches up */ }
-      } else { out.failed++; out.lines.push(`${unit}: could not cancel #${t.id} — ${str(r.text).slice(0, 80)}`) }
+      // A copy somebody started is never deleted (removeOwnDuplicate re-checks it live as well).
+      const r = await removeOwnDuplicate(t.id, { ours: !!ownIds && ownIds.has(t.id) && !t.started, source: 'pm-dedupe' })
+      if (r.ok) out.cancelled++
+      else { out.failed++; out.lines.push(`${unit}: could not cancel #${t.id} — ${str(r.why).slice(0, 80)}`) }
     }
     if (moveTo) {
       const u = await updateBreezewayTask(keep.id, { name: keep.name, scheduled_date: moveTo }).catch(() => ({ ok: false } as any))

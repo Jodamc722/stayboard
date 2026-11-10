@@ -231,20 +231,20 @@ function UnitRow({ u, onReply, base }: { u: any; onReply: (u: any) => void; base
       name={u.unit}
       meta={u.building + (u.ownerName && u.ownerName !== 'Unassigned' ? ' · ' + u.ownerName : '')}
       tags={<>
-        {u.recoveryDays != null && <Tag tone="rose" title={'No good review since ' + u.recoverySince}>{u.recoveryDays}d waiting</Tag>}
+        {u.recoveryDays != null && <Tag tone="rose" title={'No good review since ' + u.recoverySince + ' — how-stays-went basis: every review counts, replaced listings included'}>{u.recoveryDays}d waiting</Tag>}
         <RiskTag risk={u.risk} />
-        {u.topTheme && <Tag title={u.topTheme.n + ' guests mentioned this'}>{String(u.topTheme.tag).toLowerCase()}</Tag>}
+        {u.topTheme && <Tag title={u.topTheme.n + ' guests mentioned this — complaint counts include every review, replaced listings too'}>{String(u.topTheme.tag).toLowerCase()}</Tag>}
         {!!u.awaiting && <Tag tone="amber" title="Reviews on this unit still waiting on a reply">{u.awaiting} to answer</Tag>}
         {windowless && <Tag title="Here because of an earlier low review — nothing scored inside this window">no reviews in window</Tag>}
       </>}
       actions={windowless ? null : (<>
-        <span className="hidden sm:inline text-[11px] text-muted tabular-nums w-6 text-right" title="Reviews in this window">{u.n}</span>
-        <span className={'text-[13.5px] font-bold tabular-nums ' + (bad ? 'text-rose-700' : 'text-ink')} title="Average in this window">
+        <span className="hidden sm:inline text-[11px] text-muted tabular-nums w-6 text-right" title="Reviews in this window on the listing that is live now">{u.n}</span>
+        <span className={'text-[13.5px] font-bold tabular-nums ' + (bad ? 'text-rose-700' : 'text-ink')} title="Average in this window — public-score basis: only reviews on the listing that is live now">
           {single ? ratingDisplay(u.avg, single) : u.avg}
         </span>
         <ParBar v={u.vsPar} />
         <span className={'w-[40px] text-right text-[11.5px] font-semibold tabular-nums ' + (bad ? 'text-rose-700' : u.vsPar >= 0.15 ? 'text-emerald-600' : 'text-muted')}
-          title="vs par — how far off our own normal for the channel (pulled toward par on small samples)">
+          title="vs par — how far off our own normal for the channel (pulled toward par on small samples). Public-score basis: live listings only.">
           {u.vsPar > 0 ? '+' : ''}{u.vsPar}
         </span>
       </>)}>
@@ -297,7 +297,7 @@ function RiskRow({ u, onReply }: { u: any; onReply: (u: any) => void }) {
       tint={u.kind === 'hold' ? 'rose' : undefined}
       tags={<>
         <RiskTag risk={u} />
-        {u.recoveryDays != null && <Tag tone="rose" title="Waiting for a good review since its last low one">{u.recoveryDays}d waiting</Tag>}
+        {u.recoveryDays != null && <Tag tone="rose" title="Waiting for a good review since its last low one — every review counts, replaced listings included">{u.recoveryDays}d waiting</Tag>}
         {!!u.awaiting && <Tag tone="amber" title="Reviews on this unit still waiting on a reply">{u.awaiting} to answer</Tag>}
         {u.change != null && u.change <= -0.1 && <Tag tone="amber" title="This window against the one before it">{u.change} vs prior</Tag>}
       </>}
@@ -350,7 +350,7 @@ function ChannelCard({ c, on, onPick }: { c: any; on: boolean; onPick: () => voi
     + (c.retired ? '\n' + c.retired + ' review' + (c.retired === 1 ? '' : 's') + ' on replaced listings are not counted.' : '')
   return (
     <button onClick={onPick} title={title} aria-pressed={on}
-      className={'text-left rounded-xl border px-2.5 py-2 min-w-0 ' + (on ? 'border-ink bg-white ring-1 ring-ink' : 'border-line bg-white hover:bg-app')}>
+      className={'text-left rounded-xl border px-2.5 py-2 min-w-0 overflow-hidden ' + (on ? 'border-ink bg-white ring-1 ring-ink' : 'border-line bg-white hover:bg-app')}>
       <div className="flex items-center gap-1.5">
         <span className="text-[11px] font-semibold text-muted truncate">{c.channel}</span>
         {ch != null && Math.abs(ch) >= 0.02 && (
@@ -366,13 +366,21 @@ function ChannelCard({ c, on, onPick }: { c: any; on: boolean; onPick: () => voi
         )}
       </div>
       <div className="text-[10.5px] text-muted mt-0.5 truncate">{c.units} unit{c.units === 1 ? '' : 's'} · {c.n} reviews</div>
+      {/* Chips are sized to the card: each truncates inside it instead of pushing the card wider
+          than half a phone screen (two cards per row at 390px). The full rule is in the hover. */}
       {badge.length > 0 && (
-        <div className="flex items-center gap-1 flex-wrap mt-1">
-          {badge.map((l: any) => l.scope === 'listing'
-            ? <Tag key={l.key} tone={c.scored && l.unitsAt / c.scored >= 0.5 ? 'emerald' : 'slate'} title={l.note}>{l.unitsAt}/{c.scored} at {l.label}</Tag>
-            : <Tag key={l.key} tone={l.held == null ? 'slate' : l.held ? 'emerald' : 'rose'} title={l.note + (c.year && c.year.avg != null ? ' Our last-365-day average on ' + c.channel + ' is ' + c.year.avg + ' across the portfolio; each host account is judged on its own listings.' : '')}>
-              {l.held == null ? l.label : l.held ? l.label + ' ✓' : 'under ' + l.label}
-            </Tag>)}
+        <div className="flex items-center gap-1 flex-wrap mt-1 min-w-0">
+          {badge.map((l: any) => {
+            const listing = l.scope === 'listing'
+            const tone = listing
+              ? (c.scored && l.unitsAt / c.scored >= 0.5 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600')
+              : (l.held == null ? 'bg-slate-100 text-slate-600' : l.held ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')
+            const text = listing ? l.unitsAt + '/' + c.scored + ' ' + l.label : (l.held == null ? l.label : l.held ? l.label + ' ✓' : 'under ' + l.label)
+            const tip = listing
+              ? l.unitsAt + ' of ' + c.scored + ' scored units are at or above this line. ' + l.note
+              : l.note + (c.year && c.year.avg != null ? ' Our last-365-day average on ' + c.channel + ' is ' + c.year.avg + ' across the portfolio; each host account is judged on its own listings.' : '')
+            return <span key={l.key} title={tip} className={'block max-w-full truncate text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ' + tone}>{text}</span>
+          })}
         </div>
       )}
     </button>
@@ -394,10 +402,10 @@ function League({ rows, nameOf, subOf, href, extraOf }: { rows: any[]; nameOf: (
               <span className="text-[13px] font-semibold text-ink truncate">{nameOf(r)}</span>
               <span className="hidden sm:inline text-[11.5px] text-muted truncate">{sub}</span>
             </span>
-            {!!r.inRecovery && <Tag tone="rose" title="Units waiting for a good review">{r.inRecovery} waiting</Tag>}
+            {!!r.inRecovery && <Tag tone="rose" title="Units waiting for a good review — every review counts, replaced listings included">{r.inRecovery} waiting</Tag>}
             {!!r.awaiting && <Tag tone="amber" title="Reviews waiting for a reply">{r.awaiting} to answer</Tag>}
-            <span className="text-[11px] text-muted tabular-nums w-8 text-right" title="Reviews in this window">{r.n}</span>
-            <span className={'text-[13px] font-bold tabular-nums w-10 text-right ' + (bad ? 'text-rose-700' : 'text-ink')}>{r.avg ?? '—'}</span>
+            <span className="text-[11px] text-muted tabular-nums w-8 text-right" title="Reviews in this window on live listings">{r.n}</span>
+            <span className={'text-[13px] font-bold tabular-nums w-10 text-right ' + (bad ? 'text-rose-700' : 'text-ink')} title="Average in this window — live listings only">{r.avg ?? '—'}</span>
             <ParBar v={r.vsPar} />
             <span className={'w-[40px] text-right text-[11.5px] font-semibold tabular-nums ' + (bad ? 'text-rose-700' : r.vsPar >= 0.15 ? 'text-emerald-600' : 'text-muted')}>
               {r.vsPar > 0 ? '+' : ''}{r.vsPar}
@@ -501,6 +509,8 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
   // par, or waiting for a good review), the ones the NEXT review would cost a line, and everything.
   const [unitView, setUnitView] = useState<'work' | 'risk' | 'all'>('work')
   const showAll = unitView === 'all'
+  // On a phone the four pickers fold behind one "Filters" button; from sm up they are always inline.
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [d, setD] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -560,13 +570,16 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
     h.prevAvg != null ? 'was ' + (bookingOnly ? x2(h.prevAvg) : h.prevAvg) : '',
     d?.days ? 'last ' + d.days + ' days' : '',
   ].filter(Boolean).join(' · ')
+    + '\nPublic-score basis: only reviews on the listing that is live now'
+    + (h.retiredInWindow ? ' — ' + h.retiredInWindow + ' in this window sit on replaced listings and are left out.' : '.')
     + ((d?.par || []).length
       ? '\nPar: ' + (d.par as any[]).map(p => p.channel + ' ' + p.display + '/' + p.scale).join(' · ')
         + ' — what a review normally scores for us on that channel. Every vs-par is measured from here.'
       : '')
     + (h.unmappedReviews ? '\n' + h.unmappedReviews + ' review' + (h.unmappedReviews === 1 ? '' : 's') + ' on listings not in the sync are counted nowhere here.' : '')
 
-  const sel = 'text-[12px] border border-line rounded-lg px-1.5 py-1 bg-white max-w-[8.5rem] sm:max-w-[11rem]'
+  const sel = 'text-[12px] border border-line rounded-lg px-1.5 py-1.5 sm:py-1 bg-white w-full min-w-0 sm:w-auto sm:max-w-[11rem]'
+  const filterN = [market, building, owner, channel].filter(v => v !== 'all').length
   const unranked: any[] = d?.unranked || []
   const atRisk: any[] = d?.atRisk || []
   const holdN = atRisk.filter(u => u.kind === 'hold').length
@@ -587,7 +600,7 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
           {headAvg ?? '—'}{bookingOnly ? '/10' : '★'}{change != null ? ' ' + (change > 0 ? '+' : '') + change : ''}
         </Pill>
         <span className="hidden sm:contents">
-          <Pill title={'Share of reviews that are top-rated' + (h.prevFiveShare != null ? ' · was ' + h.prevFiveShare + '%' : '')}>
+          <Pill title={'Share of reviews that are top-rated' + (h.prevFiveShare != null ? ' · was ' + h.prevFiveShare + '%' : '') + ' · live listings only'}>
             Top-rated {h.fiveShare != null ? h.fiveShare + '%' : '—'}
           </Pill>
         </span>
@@ -596,14 +609,14 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
           To reply {replyN ?? '—'}{h.replyCoverage != null ? ' · ' + Math.round(h.replyCoverage) + '% answered' : ''}
         </Pill>
         <Pill tone={holdN ? 'amber' : 'slate'} onClick={() => { setUnitView('risk'); setPage('units') }}
-          title={'Units whose next disappointed review takes the public score under a line it holds today (' + holdN + '), or that are a few five-star stays from the next line up'}>
+          title={'Units whose next disappointed review takes the public score under a line it holds today (' + holdN + '), or that are a few five-star stays from the next line up. Basis: the all-time published score on the live listing.'}>
           At risk {d ? atRisk.length : '—'}
         </Pill>
-        <Pill onClick={() => { setUnitView('work'); setPage('units') }} title={'Units more than ' + (d?.belowPar ?? 0.15) + ' below our normal for their channel'}>
+        <Pill onClick={() => { setUnitView('work'); setPage('units') }} title={'Units more than ' + (d?.belowPar ?? 0.15) + ' below our normal for their channel — window average on live listings only'}>
           Below par {h.unitsBelowPar ?? '—'}
         </Pill>
         <span className="hidden sm:contents">
-          <Pill onClick={() => { setUnitView('work'); setPage('units') }} title="Units waiting for a good review since their last low one">
+          <Pill onClick={() => { setUnitView('work'); setPage('units') }} title="Units waiting for a good review since their last low one — how stays went: every review counts, replaced listings included">
             Waiting {h.unitsInRecovery ?? '—'}
           </Pill>
         </span>
@@ -626,6 +639,16 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
               className={'lh-tab text-[12px] font-semibold px-2 py-1 border-l border-line first:border-l-0 ' + (days === p.d ? 'lh-tab-on bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{p.l}</button>
           ))}
         </div>
+        <button type="button" onClick={() => setFiltersOpen(o => !o)} aria-expanded={filtersOpen}
+          className={'sm:hidden inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg border ' + (filterN ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted')}>
+          Filters{filterN ? ' ' + filterN : ''} <ChevronRight size={12} className={filtersOpen ? 'rotate-90 transition-transform' : 'transition-transform'} />
+        </button>
+        {filtered && <span className="sm:hidden"><IconBtn title="Clear the filters" onClick={clear}><X size={13} /></IconBtn></span>}
+        <span className="ml-auto sm:hidden" />
+        <span className="sm:hidden"><IconBtn title="Recalculate the numbers" onClick={() => load(true)} disabled={loading}>
+          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+        </IconBtn></span>
+        <div className={(filtersOpen ? 'grid grid-cols-2 gap-1.5 w-full order-last' : 'hidden') + ' sm:contents'}>
         <select value={market} onChange={e => setMarket(e.target.value)} className={sel} title="Market">
           <option value="all">All markets</option>
           {(d?.markets || []).map((m: string) => <option key={m} value={m}>{m}</option>)}
@@ -642,11 +665,14 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
           <option value="all">All channels</option>
           {(d?.channelList || []).map((c: string) => <option key={c} value={c}>{c}</option>)}
         </select>
-        {filtered && <IconBtn title="Clear the filters" onClick={clear}><X size={13} /></IconBtn>}
-        <span className="ml-auto" />
-        <IconBtn title="Recalculate the numbers" onClick={() => load(true)} disabled={loading}>
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-        </IconBtn>
+        </div>
+        <span className="hidden sm:contents">
+          {filtered && <IconBtn title="Clear the filters" onClick={clear}><X size={13} /></IconBtn>}
+          <span className="ml-auto" />
+          <IconBtn title="Recalculate the numbers" onClick={() => load(true)} disabled={loading}>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          </IconBtn>
+        </span>
       </div>
 
       {err && (
@@ -673,8 +699,8 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         <div className="flex items-center gap-1.5 flex-wrap mb-1.5 px-1">
           <div className="inline-flex rounded-lg border border-line overflow-hidden">
             {([
-              { k: 'work', l: 'Needs work', n: failing.length, t: 'Below par in this window, or waiting for a good review since a low one — worst first' },
-              { k: 'risk', l: 'At risk', n: atRisk.length, t: 'Ranked by what the next review does to the public score: about to lose a line it holds, or close to the next one' },
+              { k: 'work', l: 'Needs work', n: failing.length, t: 'Below par in this window (live listings only), or waiting for a good review since a low one (every review) — worst first' },
+              { k: 'risk', l: 'At risk', n: atRisk.length, t: 'Ranked by what the next review does to the public score (all-time, live listing only): about to lose a line it holds, or close to the next one' },
               { k: 'all', l: 'All', n: units.length, t: 'Every unit with ' + (d?.minReviews ?? 5) + '+ reviews in this window, worst first' },
             ] as { k: 'work' | 'risk' | 'all'; l: string; n: number; t: string }[]).map(v => (
               <button key={v.k} onClick={() => setUnitView(v.k)} title={v.t} aria-pressed={unitView === v.k}
@@ -734,6 +760,7 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
               nameOf={r => r.ownerName}
               subOf={r => [r.unitsReviewed + ' of ' + r.unitsTotal + ' units reviewed', (r.buildings || []).slice(0, 3).join(', ')].filter(Boolean).join(' · ')} />
           )}
+          {(tab === 'complaints' || tab === 'praise') && <p className="text-[11px] text-muted mb-1" title="A stay in the unit is a stay in the unit, whichever listing it was booked through">Counts every review in the window, replaced listings included — this is how stays went, not the public score.</p>}
           {tab === 'complaints' && <TagList rows={d?.themes || []} tone="bad" />}
           {tab === 'praise' && <TagList rows={d?.praise || []} tone="good" />}
           {tab === 'categories' && (

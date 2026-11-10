@@ -29,10 +29,16 @@ import { isTaskDone, isTaskGone } from '@/lib/task-categories'
 import { isLowReview } from '@/lib/review-scale'
 import { welcomeRate, welcomeCallsDue } from '@/lib/call-desk'
 import { wholeMonth } from '@/lib/money-source'
+import { LIVE_STAY_STATUSES } from '@/lib/basis'
+import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 
 
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
-const LIVE_RES = ['confirmed', 'checked_in', 'checked_out', 'closed']
+// ONE LIVE SET (2026-11-09, owner-approved): lib/basis LIVE_STAY_STATUSES — confirmed, checked in,
+// checked out. `closed` came out: Guesty's closed is a request that never became a booking, Revenue
+// Center never counted it, and this board did, so its occupancy and revenue could sit above Revenue
+// Center's for the same window. kpiQuery's `v` was bumped so no cached board still carries it.
+const LIVE_RES = LIVE_STAY_STATUSES
 
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 function num(v: any): number { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0 }
@@ -178,8 +184,11 @@ function kpiWindow(sp: URLSearchParams, today: string): { from: string; to: stri
 export function kpiQuery(sp: URLSearchParams): string {
   const today = todayET()
   const { from, to } = kpiWindow(sp, today)
+  // `v` is the rules version: it rides in the cache key (/api/kpi caches on this string) and nothing
+  // reads it back. Bump it when a number on the board changes meaning, so yesterday's cached board
+  // is not served under today's rules. v2 (2026-11-09): `closed` out, ADR / RevPAR on guest nights.
   return new URLSearchParams({
-    from, to, market: str(sp.get('market') || 'all'), building: str(sp.get('building') || 'all'), today,
+    from, to, market: str(sp.get('market') || 'all'), building: str(sp.get('building') || 'all'), today, v: '2',
   }).toString()
 }
 
@@ -253,8 +262,8 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
     // P0-4 interim). Both sides of every ratio come from it: active listings that are real units
     // (no `full` combos), in scope. The numerator used to take stays at inactive and unknown listings
     // too while the denominator counted active units only, and the combos sat in the denominator —
-    // so Home's occupancy and ADR could not match Revenue Center's for the same window. The `closed`
-    // status rule and Botanica's cleaning-as-ADR are deliberately unchanged here.
+    // so Home's occupancy and ADR could not match Revenue Center's for the same window. Botanica's
+    // cleaning-as-ADR is deliberately unchanged here (`closed` came out 2026-11-09 — see LIVE_RES).
     const inStock = (lid: any): boolean => {
       const li = lmap[String(lid)]
       return !!li && li.active && !li.full && inScope(lid)
@@ -277,7 +286,7 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
       // after the window but began inside it.
       readSlices(resFrom, resTo, 50, (a, b, newest) => {
         let x = db.from('guesty_reservations')
-          .select('id,listing_id,check_in,check_out,nights,status,source,money_total,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee')
+          .select('id,listing_id,check_in,check_out,nights,status,source,guest_name,money_total,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee,tags:raw->tags')
           .in('status', LIVE_RES)
           .gte('check_out', a).lte('check_in', resTo)
         if (!newest) x = x.lte('check_out', b)
@@ -449,8 +458,21 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
     // stay's fare on every in-window night of a row with no `nights`).
     const stayNights = (r: any): number => Math.max(1, Number(r.nights) || Math.round((new Date(dOf(r.check_out) + 'T12:00:00Z').getTime() - new Date(dOf(r.check_in) + 'T12:00:00Z').getTime()) / 86400000) || 1)
 
+    // OWNER NIGHTS (2026-11-09, owner-approved; the same rule as Revenue Center). An owner or
+    // friends-and-family stay (lib/owner-audit, the one shared test) HOLDS the unit, so its nights
+    // stay in occupancy and are reported beside it as `ownerNights`. It is not a sale, so ADR is
+    // guest room revenue ÷ GUEST nights, and RevPAR is guest room revenue ÷ SELLABLE nights
+    // (available − owner nights) — which keeps RevPAR = guest occupancy of sellable × ADR. Before,
+    // owner nights at $0 sat in the ADR denominator and pulled it down in every owner-heavy month.
+    // `adrGross` / `revparGross` (cleaning-inclusive) are left on all nights, as the statements read.
+    const isOwnerStay = (r: any): boolean => {
+      const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
+      return isOwnerOrFriendsFamily(str(r.source), tagBlob, str(r.guest_name))
+    }
+
     const stayBlock = (a: string, b: string) => {
       const days = daysBetween(a, b)
+      let ownerNights = 0, ownerRoom = 0
       let nights = 0, room = 0, cleaning = 0, turns = 0, arrivals = 0, turnsFromListingFee = 0, turnsUnpriced = 0
       let cleaningNet = 0, cleaningGrossIn = 0, cleaningNetIn = 0, turnsIn = 0, turnsVen = 0, turnsBackfilled = 0
       const byChannel: Record<string, { nights: number; revenue: number }> = {}
@@ -467,6 +489,7 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
           const fare = num(r.fare) || num(r.fareBase) || num(r.money_total)
           const share = (fare / totalNights) * n
           nights += n; room += share
+          if (isOwnerStay(r)) { ownerNights += n; ownerRoom += share }
           const ch = str(r.source) || 'Direct'
           if (!byChannel[ch]) byChannel[ch] = { nights: 0, revenue: 0 }
           byChannel[ch].nights += n; byChannel[ch].revenue += share
@@ -482,6 +505,7 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
           // Botanica's fee is ADR by contract — count it as room revenue and move on. No
           // cleaning turn, no cleaning revenue, no fallback pricing.
           if (li && botLi[li.id]) {
+            if (c > 0 && isOwnerStay(r)) ownerRoom += c
             if (c > 0) { room += c; if (!byBuilding[bld]) byBuilding[bld] = { nights: 0, revenue: 0, cleaning: 0, units: {} }; byBuilding[bld].revenue += c }
             if (inWin(dOf(r.check_in), a, b)) arrivals += 1
             continue
@@ -506,8 +530,11 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
         if (inWin(dOf(r.check_in), a, b)) arrivals += 1
       }
       const available = unitCount * days
+      const guestNights = Math.max(0, nights - ownerNights)
+      const guestRoom = Math.max(0, room - ownerRoom)
+      const sellable = Math.max(0, available - ownerNights)
       return {
-        days, nights, available, arrivals, turns, turnsFromListingFee, turnsUnpriced,
+        days, nights, available, arrivals, ownerNights, guestNights, sellable, turns, turnsFromListingFee, turnsUnpriced,
         turnsInHouse: turnsIn, turnsVendor: turnsVen, turnsBackfilled,
         cleaningNet: Math.round(cleaningNet),
         cleaningNetInHouse: Math.round(cleaningNetIn),
@@ -520,13 +547,14 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
         // lib/basis default, what Revenue Center and PriceLabs report. It used to include cleaning
         // here and nowhere else, so the briefs and Eve quoted an ADR the Revenue page could not
         // reproduce. The cleaning-inclusive figure is still available as `adrGross`.
-        adr: nights ? Math.round(room / nights) : 0,
+        adr: guestNights ? Math.round(guestRoom / guestNights) : 0,
         adrGross: nights ? Math.round((room + cleaning) / nights) : 0,
-        adrRoomOnly: nights ? Math.round(room / nights) : 0,
+        adrRoomOnly: guestNights ? Math.round(guestRoom / guestNights) : 0,
         // RevPAR IS OCCUPANCY × ADR (lib/pacing-check, 2026-09-28 audit P0-2): room revenue ÷
         // available unit-nights — the same numerator as `adr`. It carried cleaning while ADR did not,
         // so RevPAR ÷ occupancy gave an ADR the board did not show. Cleaning-inclusive: `revparGross`.
-        revpar: available ? round(room / available, 2) : 0,
+        // Per SELLABLE night since 2026-11-09 (see OWNER NIGHTS above).
+        revpar: sellable ? round(guestRoom / sellable, 2) : 0,
         revparGross: available ? round((room + cleaning) / available, 2) : 0,
         byChannel, byBuilding,
       }
@@ -822,6 +850,9 @@ export async function buildKpiFor(sp: URLSearchParams, showMoney: boolean): Prom
         occupancy: stays.occupancy, occupancyPrev: staysPrev.occupancy,
         occupancyChange: round(stays.occupancy - staysPrev.occupancy, 1),
         nights: stays.nights, available: stays.available,
+        // Owner / friends-and-family nights inside `nights` — in occupancy, out of ADR and RevPAR.
+        ownerNights: stays.ownerNights, guestNights: stays.guestNights, sellableNights: stays.sellable,
+        basis: 'Occupancy = all occupied nights (owner nights included, counted beside it) ÷ available. ADR = guest accommodation before channel fees ÷ guest nights. RevPAR = the same revenue ÷ sellable nights (available − owner nights). Confirmed, checked-in and checked-out stays only.',
         adr: money(stays.adr), adrPrev: money(staysPrev.adr), adrChange: money(pctChange(stays.adr, staysPrev.adr)),
         adrGross: money(stays.adrGross), adrRoomOnly: money(stays.adrRoomOnly),
         revpar: money(stays.revpar), revparPrev: money(staysPrev.revpar), revparChange: money(pctChange(stays.revpar, staysPrev.revpar)),

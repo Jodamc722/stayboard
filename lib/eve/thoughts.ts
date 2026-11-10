@@ -244,10 +244,55 @@ export function isUnseen(t: ThoughtRow, seen: SeenState): boolean {
 }
 
 export async function unseenCount(email: string): Promise<number> {
-  const [rows, seen] = await Promise.all([listThoughts({ status: 'open', limit: 300 }), readSeen(email)])
-  let n = 0
-  for (const r of rows) if (isUnseen(r, seen)) n++
-  return n
+  return (await openCounts(email)).unseen
+}
+
+/**
+ * THE TWO NUMBERS, WITHOUT THE THOUGHTS (2026-11-09 audit). Counting what is open and what is unseen
+ * needs an id and a date per row; it used to read 300 whole thoughts — prepared payloads, evidence,
+ * drafts — to print two digits. `open` is the table's own count; `unseen` is counted over the
+ * newest 300, the same window as before.
+ */
+export async function openCounts(email: string): Promise<{ open: number; unseen: number }> {
+  try {
+    const db = supabaseAdmin()
+    const [head, ids, seen] = await Promise.all([
+      db.from('eve_actions').select('id', { count: 'exact', head: true }).eq('kind', 'thought').eq('status', 'open'),
+      db.from('eve_actions').select('id,created_at').eq('kind', 'thought').eq('status', 'open').order('created_at', { ascending: false }).limit(300),
+      readSeen(email),
+    ])
+    const rows = ((ids.data as any[]) || [])
+    let unseen = 0
+    for (const r of rows) {
+      const id = str(r.id)
+      if (seen.seenIds.indexOf(id) >= 0) continue
+      if (seen.seenAt && Date.parse(str(r.created_at)) <= Date.parse(seen.seenAt)) continue
+      unseen++
+    }
+    return { open: head.error ? rows.length : Number(head.count || 0), unseen }
+  } catch { return { open: 0, unseen: 0 } }
+}
+
+/**
+ * A thought cut down to what a compact card prints (?slim=1, the Today line). Long text is cut at
+ * 600 characters, long lists at 8, and the executor's result is left out. Only the copy sent to the
+ * browser: Do / Dismiss work by id on the stored thought, and Settings → Eve → Thinking reads it whole.
+ */
+export function slimThought(t: ThoughtRow): ThoughtRow {
+  const cut = (v: any, depth: number): any => {
+    if (typeof v === 'string') return v.length > 600 ? v.slice(0, 600) + '…' : v
+    if (v == null || typeof v !== 'object') return v
+    if (depth >= 4) return Array.isArray(v) ? [] : {}
+    if (Array.isArray(v)) return v.slice(0, 8).map(x => cut(x, depth + 1))
+    const o: Record<string, any> = {}
+    for (const k of Object.keys(v).slice(0, 24)) o[k] = cut(v[k], depth + 1)
+    return o
+  }
+  return {
+    ...t, payload: cut(t.payload, 0), why: cut(t.why, 0), ask: cut(t.ask, 0),
+    evidence: (t.evidence || []).slice(0, 5).map(e => (e.length > 300 ? e.slice(0, 300) + '…' : e)),
+    snippet: t.snippet ? cut(t.snippet, 0) : null, draft: t.draft ? cut(t.draft, 0) : null, result: null,
+  }
 }
 
 /** True when nothing she does would leave the app: agent mode OFF, or every outward rung at 0. */

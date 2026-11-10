@@ -1365,7 +1365,7 @@ export async function pushOrder(order: OrderRow, cfg: GuestOrdersCfg, opts?: { d
   if (!taskId) {
     const { data: props } = order.listing_id ? await db.from('breezeway_properties').select('home_id').eq('reference_property_id', order.listing_id).limit(1) : { data: [] as any[] }
     const homeId = Number((((props || [])[0]) || {}).home_id)
-    const payload: Record<string, any> = { name: title, type_department: 'housekeeping', type_priority: 'high', scheduled_date: date, description }
+    const payload: Record<string, any> = { name: title, type_department: 'housekeeping', type_priority: 'high', scheduled_date: date, description, source: 'guest-orders' }
     if (Number.isFinite(homeId)) payload.home_id = homeId
     else if (order.listing_id) payload.reference_property_id = order.listing_id
     else { await patch(order.id, { push_error: 'no listing on the order' }); return { ok: false, error: 'no listing on the order' } }

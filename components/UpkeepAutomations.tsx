@@ -114,6 +114,7 @@ export function UpkeepAutomations({ onOpenPrograms }: { onOpenPrograms?: () => v
       <div className="flex items-start gap-2 flex-wrap">
         <p className="text-[12.5px] text-muted flex-1 min-w-[220px]">
           Everything that creates, moves or closes a Breezeway task. <b className="text-ink">{onCount} of {autos.length}</b> automatic ones are running.
+          {data.madeToday ? <> <b className="text-ink">{data.madeToday.total} task{data.madeToday.total === 1 ? '' : 's'} created today</b> across every creator{data.madeToday.moved ? ', ' + data.madeToday.moved + ' moved instead of duplicated' : ''}{data.madeToday.removed ? ', ' + data.madeToday.removed + ' duplicate' + (data.madeToday.removed === 1 ? '' : 's') + ' removed' : ''}.</> : null}
           {data.isOwner ? ' Flip a switch to turn one on or off; the detailed knobs open from its settings link.' : ' Only the owner can flip a switch.'}
         </p>
         <button type="button" onClick={reload} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh</button>
@@ -178,10 +179,11 @@ export function UpkeepAutomations({ onOpenPrograms }: { onOpenPrograms?: () => v
                         : <span title={exact(run.at)}>
                             <span className={run.ok ? 'text-emerald-700 font-semibold' : 'text-rose-700 font-semibold'}>{run.ok ? 'OK' : 'Failed'}</span>
                             {' · '}{ago(run.at)}
-                            {c.countIsMade && run.itemCount != null ? <> · <b>made {run.itemCount}</b></> : null}
+                            {c.madeToday == null && c.countIsMade && run.itemCount != null ? <> · <b>made {run.itemCount}</b></> : null}
                             {!run.ok && run.error ? <span className="block text-[11.5px] text-rose-700 break-words">{run.error}</span> : null}
                           </span>}
                     </Fact>
+                    {c.madeToday != null ? <Fact label="Made today"><b>{c.madeToday}</b>{c.countIsMade && run && run.itemCount != null ? <span className="text-muted"> · last run {run.itemCount}</span> : null}</Fact> : null}
                     <Fact label="Cap">{c.cap || <span className="text-muted">none</span>}</Fact>
                     <Fact label="Who gets it">{c.who || <span className="text-muted">whoever is picked</span>}</Fact>
                     {c.facts ? <div className="sm:col-span-2 lg:col-span-4"><Fact label="Set to">{c.facts}</Fact></div> : null}
@@ -200,7 +202,11 @@ export function UpkeepAutomations({ onOpenPrograms }: { onOpenPrograms?: () => v
           </ul>
         </section>
       ))}
-      <p className="text-[11.5px] text-muted">“Made” is what the last run created, from its receipt. A count per day across every creator, and one shared daily cap, need a small log table that is not there yet.</p>
+      <p className="text-[11.5px] text-muted">
+        {data.madeToday
+          ? '“Made today” counts tasks each creator created today (Eastern time), from the creation log. Creators that do not write to the log yet show what their last run made. The total at the top is read-only — no shared daily cap is enforced.'
+          : '“Made” is what the last run created, from its receipt. A count per day across every creator appears here once the creation log table (task_creations) exists.'}
+      </p>
     </div>
   )
 }

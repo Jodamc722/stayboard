@@ -23,7 +23,7 @@ type Tab = 'overview' | 'performance' | 'actions'
 // Lean pass: the Performance tab's reading guide is the hover on its label, not a box above it.
 const PERF_HOW_TO_READ = 'How to read this: every unit is indexed against its building comp set (the other units in the same building). '
   + '100 = at pace · above 100 = winning share · below 90 = losing share. RGI is the RevPAR index — the single "how are we doing" number. '
-  + 'ADR & RevPAR use room revenue. Buildings & Owners views index against the whole portfolio.'
+  + 'Occupancy counts every occupied night; owner and friends-and-family nights are shown beside it and are left out of ADR, RevPAR and the indices (guest room revenue over guest nights / sellable nights). Buildings & Owners views index against the whole portfolio.'
 
 function fmtMoney(n: number): string {
   const abs = Math.abs(n)
@@ -41,6 +41,17 @@ function mdLabel(iso: string): string {
   const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
   return `${MO[m - 1]} ${dd}`
 }
+
+// OWNER NIGHTS (2026-11-09; rule stated in app/revenue/page.tsx). Occupancy counts every occupied
+// night; ADR, RevPAR and the comp-set indices are GUEST figures: guest room revenue over guest
+// nights, and over sellable nights (available − owner nights). `units` is 1 for a unit row and the
+// unit count for a building / owner row.
+type GuestBasis = { nightsSold: number; ownerNights: number; guestGross: number }
+const guestNights = (u: GuestBasis): number => Math.max(0, u.nightsSold - u.ownerNights)
+const sellable = (u: GuestBasis, units: number, days: number): number => Math.max(0, units * days - u.ownerNights)
+const adrOf = (u: GuestBasis): number => (guestNights(u) > 0 ? u.guestGross / guestNights(u) : 0)
+const revparOf = (u: GuestBasis, units: number, days: number): number => (sellable(u, units, days) > 0 ? u.guestGross / sellable(u, units, days) : 0)
+const guestOcc = (u: GuestBasis, units: number, days: number): number => (sellable(u, units, days) > 0 ? guestNights(u) / sellable(u, units, days) : 0)
 
 function Delta({ cur, prev, money, vs = 'vs prior' }: { cur: number; prev: number; money?: boolean; vs?: string }) {
   if (!Number.isFinite(prev) || prev === 0) return <span className="text-[11px] text-muted">— {vs}</span>
@@ -178,15 +189,16 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
 
   // ---- building comp sets from ALL units (a filter must not shrink the comp set) ----
   const comps = useMemo(() => {
-    const agg: Record<string, { count: number; nights: number; gross: number }> = {}
-    let pNights = 0, pGross = 0, pCount = 0
+    // nights = GUEST nights, gross = GUEST room revenue, sell = sellable nights.
+    const agg: Record<string, { count: number; nights: number; gross: number; sell: number }> = {}
+    let pNights = 0, pGross = 0, pCount = 0, pSell = 0
     for (const u of d.units) {
-      const a = agg[u.building] = agg[u.building] || { count: 0, nights: 0, gross: 0 }
-      a.count += 1; a.nights += u.nightsSold; a.gross += u.grossAccom
-      pCount += 1; pNights += u.nightsSold; pGross += u.grossAccom
+      const a = agg[u.building] = agg[u.building] || { count: 0, nights: 0, gross: 0, sell: 0 }
+      a.count += 1; a.nights += guestNights(u); a.gross += u.guestGross; a.sell += sellable(u, 1, d.days)
+      pCount += 1; pNights += guestNights(u); pGross += u.guestGross; pSell += sellable(u, 1, d.days)
     }
-    return { agg, portfolio: { count: pCount, nights: pNights, gross: pGross } }
-  }, [d.units])
+    return { agg, portfolio: { count: pCount, nights: pNights, gross: pGross, sell: pSell } }
+  }, [d.units, d.days])
 
   // Leave-one-out indices vs the unit's building peers (needs 3+ units in the building).
   const idxOf = useMemo(() => {
@@ -194,17 +206,19 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     for (const u of d.units) {
       const b = comps.agg[u.building]
       if (!b || b.count < 3 || d.days <= 0) { cache[u.id] = { occ: null, adr: null, rgi: null }; continue }
-      const peerNights = b.nights - u.nightsSold
-      const peerGross = b.gross - u.grossAccom
-      const peerAvail = (b.count - 1) * d.days
+      const peerNights = b.nights - guestNights(u)
+      const peerGross = b.gross - u.guestGross
+      const peerAvail = b.sell - sellable(u, 1, d.days)
       const peerOcc = peerAvail > 0 ? peerNights / peerAvail : 0
       const peerAdr = peerNights > 0 ? peerGross / peerNights : 0
       const peerRevpar = peerAvail > 0 ? peerGross / peerAvail : 0
-      const uAdr = u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0
+      const uAdr = adrOf(u)
+      // A unit the owner holds for the whole range has nothing to sell — no index, not a zero.
+      const canSell = sellable(u, 1, d.days) > 0
       cache[u.id] = {
-        occ: peerOcc > 0.02 ? (u.occ / peerOcc) * 100 : null,
+        occ: canSell && peerOcc > 0.02 ? (guestOcc(u, 1, d.days) / peerOcc) * 100 : null,
         adr: peerAdr > 0 && uAdr > 0 ? (uAdr / peerAdr) * 100 : null,
-        rgi: peerRevpar > 0 ? (u.grossAccom / d.days / peerRevpar) * 100 : null,
+        rgi: canSell && peerRevpar > 0 ? (revparOf(u, 1, d.days) / peerRevpar) * 100 : null,
       }
     }
     return cache
@@ -233,34 +247,38 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
   const k = useMemo(() => {
     let nights = 0, gross = 0, net = 0, cleaning = 0, parking = 0, other = 0, commission = 0, total = 0, prevTotal = 0, prevNights = 0, otbN = 0
     let prevGross = 0, lyTotal = 0, lyGross = 0, lyNights = 0
+    let owner = 0, guestGross = 0, prevOwner = 0, lyOwner = 0
     for (const u of filtered) {
       nights += u.nightsSold; gross += u.grossAccom; net += u.netAccom; cleaning += u.cleaning; commission += u.commission
       parking += u.parking; other += u.other; total += u.total
       prevTotal += u.prevTotal; prevNights += u.prevOcc * d.days; otbN += u.otb30 * 30
       prevGross += u.prevGross; lyTotal += u.lyTotal; lyGross += u.lyGross; lyNights += u.lyNights
+      owner += u.ownerNights; guestGross += u.guestGross; prevOwner += u.prevOwnerNights; lyOwner += u.lyOwnerNights
     }
+    // Guest nights and sellable nights for this range, the prior one and last year's.
+    const gN = Math.max(0, nights - owner), pGN = Math.max(0, prevNights - prevOwner), lGN = Math.max(0, lyNights - lyOwner)
     // Last year only when that read came back (d.ly.ok) — NaN makes <Delta> print a dash, not a
     // change measured against zero.
     const ly = d.ly.ok
     const avail = filtered.length * d.days
     return {
       nights, gross, net, cleaning, parking, other, commission, total, avail,
+      ownerNights: owner, guestNights: gN, sellableNights: Math.max(0, avail - owner),
       occ: avail > 0 ? nights / avail : 0,
       prevOcc: avail > 0 ? prevNights / avail : 0,
-      adr: nights > 0 ? gross / nights : 0,           // room-revenue basis (STR convention)
-      revpar: avail > 0 ? gross / avail : 0,
+      adr: gN > 0 ? guestGross / gN : 0,              // guest room revenue ÷ guest nights
+      revpar: avail - owner > 0 ? guestGross / (avail - owner) : 0,   // ÷ sellable nights
       adrT: nights > 0 ? total / nights : 0,
-      revparT: avail > 0 ? total / avail : 0,
       // ADR and RevPAR deltas are ROOM revenue against ROOM revenue (2026-11-09). They compared the
       // all-in figure (room + cleaning + fees) with the prior all-in figure while the tile itself
       // showed room-only ADR, so a cleaning-fee change moved "ADR vs prior" with no rate change.
-      prevAdr: prevNights > 0 ? prevGross / prevNights : NaN,
-      prevRevpar: avail > 0 ? prevGross / avail : NaN,
+      prevAdr: pGN > 0 ? prevGross / pGN : NaN,
+      prevRevpar: avail - prevOwner > 0 ? prevGross / (avail - prevOwner) : NaN,
       prevTotal,
       lyTotal: ly ? lyTotal : NaN,
       lyOcc: ly && avail > 0 ? lyNights / avail : NaN,
-      lyAdr: ly && lyNights > 0 ? lyGross / lyNights : NaN,
-      lyRevpar: ly && avail > 0 ? lyGross / avail : NaN,
+      lyAdr: ly && lGN > 0 ? lyGross / lGN : NaN,
+      lyRevpar: ly && avail - lyOwner > 0 ? lyGross / (avail - lyOwner) : NaN,
       otb30: filtered.length > 0 ? otbN / (filtered.length * 30) : 0,
     }
   }, [filtered, d.days, d.ly.ok])
@@ -273,9 +291,10 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     const m: Record<string, GRow> = {}
     for (const u of filtered) {
       const key = keyOf(u)
-      const g = m[key] = m[key] || { ...u, id: key, name: key, unitCount: 0, nightsSold: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, total: 0, prevTotal: 0, occ: 0, prevOcc: 0, otb30: 0, flags: [] as string[] }
+      const g = m[key] = m[key] || { ...u, id: key, name: key, unitCount: 0, nightsSold: 0, ownerNights: 0, guestGross: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, total: 0, prevTotal: 0, occ: 0, prevOcc: 0, otb30: 0, flags: [] as string[] }
       g.unitCount += 1
       g.nightsSold += u.nightsSold; g.bookings += u.bookings
+      g.ownerNights += u.ownerNights; g.guestGross += u.guestGross
       g.grossAccom += u.grossAccom; g.netAccom += u.netAccom; g.cleaning += u.cleaning; g.parking += u.parking; g.other += u.other; g.commission += u.commission
       g.total += u.total; g.prevTotal += u.prevTotal
       g.occ += u.occ; g.prevOcc += u.prevOcc; g.otb30 += u.otb30
@@ -291,13 +310,13 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
     if (view === 'units') return idxOf[u.id] || { occ: null, adr: null, rgi: null }
     const p = comps.portfolio
     if (p.count === 0 || d.days <= 0) return { occ: null, adr: null, rgi: null }
-    const pOcc = p.nights / (p.count * d.days)
+    const pOcc = p.sell > 0 ? p.nights / p.sell : 0
     const pAdr = p.nights > 0 ? p.gross / p.nights : 0
-    const pRevpar = p.gross / (p.count * d.days)
-    const uAdr = u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0
-    const uRevpar = u.grossAccom / (u.unitCount * d.days)
+    const pRevpar = p.sell > 0 ? p.gross / p.sell : 0
+    const uAdr = adrOf(u)
+    const uRevpar = revparOf(u, u.unitCount, d.days)
     return {
-      occ: pOcc > 0.02 ? (u.occ / pOcc) * 100 : null,
+      occ: pOcc > 0.02 ? (guestOcc(u, u.unitCount, d.days) / pOcc) * 100 : null,
       adr: pAdr > 0 && uAdr > 0 ? (uAdr / pAdr) * 100 : null,
       rgi: pRevpar > 0 ? (uRevpar / pRevpar) * 100 : null,
     }
@@ -312,8 +331,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
       if (sortKey === 'owner') return u.owner.toLowerCase()
       if (sortKey === 'occ') return u.occ
       if (sortKey === 'nights') return u.nightsSold
-      if (sortKey === 'adr') return u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0
-      if (sortKey === 'revpar') return u.grossAccom / ((view === 'units' ? 1 : u.unitCount) * d.days)
+      if (sortKey === 'adr') return adrOf(u)
+      if (sortKey === 'revpar') return revparOf(u, view === 'units' ? 1 : u.unitCount, d.days)
       if (sortKey === 'occIdx') return ix.occ ?? (sortDir === 'asc' ? 9999 : -1)
       if (sortKey === 'adrIdx') return ix.adr ?? (sortDir === 'asc' ? 9999 : -1)
       if (sortKey === 'rgi') return ix.rgi ?? (sortDir === 'asc' ? 9999 : -1)
@@ -440,13 +459,13 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
               sub={`${k.nights.toLocaleString()} nights · ${fmtExact(k.adrT)} / night all-in`}
               extra={<><Delta cur={k.total} prev={k.lyTotal} money vs="vs last year" /><br /><Delta cur={k.total} prev={k.prevTotal} money /></>} />
             <Kpi label="Occupancy" value={pct(k.occ)} Icon={Percent}
-              sub={`${k.nights.toLocaleString()} of ${k.avail.toLocaleString()} available nights`}
+              sub={`${k.nights.toLocaleString()} of ${k.avail.toLocaleString()} nights · ${k.ownerNights.toLocaleString()} owner night${k.ownerNights === 1 ? '' : 's'}`}
               extra={<><Delta cur={k.occ} prev={k.lyOcc} vs="vs last year" /><br /><Delta cur={k.occ} prev={k.prevOcc} /></>} />
             <Kpi label="ADR" value={fmtExact(k.adr)} Icon={TrendingUp}
-              sub="room revenue per night sold"
+              sub={`guest room revenue ÷ ${k.guestNights.toLocaleString()} guest nights`}
               extra={<><Delta cur={k.adr} prev={k.lyAdr} money vs="vs last year" /><br /><Delta cur={k.adr} prev={k.prevAdr} money /></>} />
             <Kpi label="RevPAR" value={fmtExact(k.revpar)} Icon={BedDouble}
-              sub="room revenue per available night"
+              sub={`per sellable night (${k.sellableNights.toLocaleString()}, owner nights out)`}
               extra={<><Delta cur={k.revpar} prev={k.lyRevpar} money vs="vs last year" /><br /><Delta cur={k.revpar} prev={k.prevRevpar} money /></>} />
           </div>
 
@@ -462,7 +481,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
             {/* Money flow — statement-validated waterfall */}
             <section className="lg:col-span-3 rounded-2xl border border-line bg-white p-5">
               <h2 className="text-sm font-bold text-ink mb-0.5 inline-flex items-center gap-1.5"><Wallet size={14} className="text-brand-600" /> Where the money goes <span className="text-[10px] font-semibold text-muted uppercase tracking-wider ml-1">{scoped ? 'scoped' : 'portfolio'}</span></h2>
-              <p className="text-[12px] text-muted mb-3">Statement-validated: matches Guesty owner statements to the penny. Taxes excluded.</p>
+              <p className="text-[12px] text-muted mb-3">Statement-validated: matches Guesty owner statements to the penny. Net = gross accommodation − the channel fee incl. its tax (hostServiceFeeIncTax, else hostServiceFee). Taxes excluded. Owner stays included at what they were charged.</p>
               <FlowRow label="Gross accommodation" value={k.gross} base={k.gross} kind="base" note="guest-paid room rate" />
               <FlowRow label="OTA channel fees" value={-(k.gross - k.net)} base={k.gross} kind="minus" note={k.gross > 0 ? `${Math.round(((k.gross - k.net) / k.gross) * 100)}% of gross` : undefined} />
               <FlowRow label="Net accommodation" value={k.net} base={k.gross} kind="sub" note="owner-statement rental income" />
@@ -621,9 +640,9 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                     {th('name', view === 'units' ? 'Unit' : view === 'buildings' ? 'Building' : 'Owner')}
                     {view === 'units' && th('building', 'Building')}
                     {view === 'units' && th('owner', 'Owner')}
-                    {th('occ', 'Occ', true)}
-                    {th('adr', 'ADR', true, 'Room revenue per night sold')}
-                    {th('revpar', 'RevPAR', true, 'Room revenue per available night')}
+                    {th('occ', 'Occ', true, 'Every occupied night, owner nights included (shown beside it as “N own”)')}
+                    {th('adr', 'ADR', true, 'Guest room revenue per guest night (owner nights out)')}
+                    {th('revpar', 'RevPAR', true, 'Guest room revenue per sellable night (available minus owner nights)')}
                     {th('occIdx', 'Occ idx', true, 'Occupancy vs comp set · 100 = at pace')}
                     {th('adrIdx', 'ADR idx', true, 'Rate vs comp set · 100 = at pace')}
                     {th('rgi', 'RGI', true, 'RevPAR index vs comp set — the headline score')}
@@ -643,8 +662,8 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                 <tbody>
                   {sorted.map(u => {
                     const ix = rowIdx(u)
-                    const uAdr = u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0
-                    const uRevpar = u.grossAccom / ((view === 'units' ? 1 : u.unitCount) * d.days)
+                    const uAdr = adrOf(u)
+                    const uRevpar = revparOf(u, view === 'units' ? 1 : u.unitCount, d.days)
                     const dRev = u.prevTotal > 0 ? (u.total - u.prevTotal) / u.prevTotal : null
                     const struggling = view === 'units' && u.flags.length >= 2
                     return (
@@ -652,7 +671,10 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
                         <td className="px-2.5 py-2 font-medium text-ink whitespace-nowrap max-w-[220px] truncate">{u.name}{view !== 'units' && <span className="text-muted font-normal"> · {(u as any).unitCount} units</span>}</td>
                         {view === 'units' && <td className="px-2.5 py-2 text-muted whitespace-nowrap">{u.building}</td>}
                         {view === 'units' && <td className="px-2.5 py-2 text-muted whitespace-nowrap max-w-[160px] truncate">{u.owner}</td>}
-                        <td className={`px-2.5 py-2 text-right tabular-nums font-semibold ${u.occ < 0.5 ? 'text-amber-700' : 'text-ink'}`}>{pct(u.occ)}</td>
+                        <td className={`px-2.5 py-2 text-right tabular-nums font-semibold whitespace-nowrap ${u.occ < 0.5 ? 'text-amber-700' : 'text-ink'}`}
+                          title={u.ownerNights > 0 ? `${u.nightsSold} occupied nights, ${u.ownerNights} of them owner / friends-and-family — out of ADR and RevPAR` : undefined}>
+                          {pct(u.occ)}{u.ownerNights > 0 && <span className="ml-1 text-[10.5px] font-medium text-muted">{u.ownerNights} own</span>}
+                        </td>
                         <td className="px-2.5 py-2 text-right tabular-nums text-ink">{uAdr > 0 ? fmtExact(uAdr) : '—'}</td>
                         <td className="px-2.5 py-2 text-right tabular-nums text-ink">{fmtExact(uRevpar)}</td>
                         <td className="px-2.5 py-2 text-right"><IdxChip v={ix.occ} /></td>
@@ -689,7 +711,7 @@ export function RevenueCenter({ data }: { data: RevenueData }) {
               </table>
             </div>
             <div className="px-4 py-2.5 border-t border-line text-[11px] text-muted">
-              Indices need 3+ units in the building; smaller buildings show —. Default sort surfaces the biggest opportunities first (lowest RGI). Δ compares total revenue to {d.prev.from} – {d.prev.to}. Hover a flag badge for reasons.
+              Confirmed, checked-in and checked-out stays only. Occ = all occupied nights; ADR, RevPAR and the indices use guest nights only (owner and friends-and-family nights out). Net = accommodation after the channel fee incl. its tax. Indices need 3+ units in the building; smaller buildings show —. Default sort surfaces the biggest opportunities first (lowest RGI). Δ compares total revenue to {d.prev.from} – {d.prev.to}. Hover a flag badge for reasons.
             </div>
           </section>
         </>

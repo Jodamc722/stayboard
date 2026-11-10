@@ -13,10 +13,12 @@
 //   GET /api/upkeep?market=all|Miami|Broward
 //   → programs[]: per program — late, due soon (14 days), on track, booked, no record — and rows.
 import { NextRequest, NextResponse } from 'next/server'
-import { buildDueCalendar, type DueItem } from '@/lib/pm-calendar'
+import { buildDueCalendar, setRecordedDay, type DueItem } from '@/lib/pm-calendar'
+import { pageRows } from '@/lib/db-page'
+import { getNoService, skipsInspectionsIn } from '@/lib/no-service'
 import { CADENCE_KEY, resolveCadences, teamFor, type CadenceDef } from '@/lib/cadences'
 import { getSetting } from '@/lib/app-settings'
-import { requireLevel } from '@/lib/access'
+import { requireLevel, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { buildingOf, marketOf } from '@/lib/segments'
 import { getOperatingModel, weDo } from '@/lib/eve/operating-model'
@@ -40,6 +42,8 @@ export type UpkeepRow = {
   lastDone: string | null; dueOn: string; daysOver: number
   state: UpkeepState
   task: { id: string; date: string } | null
+  /** The booked task's day has passed and it is still open. */
+  taskLate?: boolean
   dept: DueItem['dept']; minutes: number; label: string
   /** Where last-done came from: a completed task, or a person's record on the ledger. */
   source?: 'task' | 'recorded' | 'new' | 'clock' | null
@@ -71,14 +75,29 @@ export type UpkeepProgram = {
   awaiting: number
   /** The job needs the unit empty, and for how many nights (smart scheduling + Guesty block). */
   needsVacant: boolean; needsDays: number
+  /** The cadence's own switch: off · suggest · auto. */
+  mode: 'off' | 'suggest' | 'auto'
+  /**
+   * Why the tile has no numbers yet, when it does not (2026-11-09 — these used to be greyed dead cards):
+   *   off    switched off                          → the tile turns it on
+   *   scope  no buildings picked yet               → the tile picks them
+   *   empty  on, but no unit matches where it applies (scope, equipment, area) → the tile fixes "where"
+   */
+  setup: 'off' | 'scope' | 'empty' | null
+  /** Every unit is still on a started clock (nothing done or recorded yet): the day counting began. */
+  countingSince: string | null
+  /** Booked, but the task's day has passed and it is still open — on the board, not done. */
+  bookedLate: number
   rows: UpkeepRow[]
 }
 export type Upkeep = {
   ok: true; today: string; market: string; soonDays: number
   markets: string[]; buildings: string[]
   programs: UpkeepProgram[]
-  totals: { late: number; soon: number; ok: number; booked: number; none: number; lateUnits: number; late90plus: number; awaiting: number }
+  totals: { late: number; soon: number; ok: number; booked: number; none: number; lateUnits: number; late90plus: number; awaiting: number; bookedLate: number; onClock: number; units: number; live: number }
   degraded: string[]; enabled: boolean; canEdit: boolean; canApprove: string[]; me: string
+  /** May this person create / edit a program? (Saving cadences is owner-only — /api/settings/cadences.) */
+  canProgram: boolean
   /** Per unit: filter size, quantity, location, notes — what the person sent needs to know. */
   info: Record<string, UnitInfo>
 }
@@ -110,6 +129,12 @@ const GROUP_OF: Record<string, UpkeepProgram['group']> = {
   pm_audit: 'maintenance', batteries: 'maintenance', dryer_vent: 'maintenance', water_heater: 'maintenance', pest_inhouse: 'maintenance', pest_vendor: 'maintenance', pressure_wash: 'maintenance',
   unit_inspection: 'quality', ffe_audit: 'quality',
 }
+/** The group a program's tile sits in. Shipped programs by key; one made on the page by its trade and name. */
+function groupOf(c: CadenceDef): UpkeepProgram['group'] {
+  if (GROUP_OF[c.key]) return GROUP_OF[c.key]
+  if (/\b(a\/?c|air ?con|hvac|mini ?split|coil|filter)\b/i.test(c.label)) return 'ac'
+  return c.dept === 'housekeeping' ? 'housekeeping' : c.dept === 'inspection' ? 'quality' : 'maintenance'
+}
 // The order Jon named them, roughly: the A/C programs, the deep clean, the maintenance walks, the quality walks.
 const ORDER = ['pm_audit', 'deep_clean', 'ac_filter', 'ac_deep', 'ac_split_clean', 'batteries', 'unit_inspection', 'ffe_audit']
 
@@ -121,17 +146,20 @@ export async function GET(req: NextRequest) {
   const today = ymd(new Date())
   try {
     const db = supabaseAdmin()
-    const [cal, raw, om, ledgerRes, feeRes] = await Promise.all([
+    // The ledger is PAGED (2026-11-09 audit): `.limit(3000)` still came back as PostgREST's 1,000,
+    // so past the first thousand rows a "declined" note was not seen and the row asked for approval again.
+    const [cal, raw, om, ledgerPaged, feeRes, noSvc] = await Promise.all([
       buildDueCalendar(today, { market, horizonDays: 400 }),
       getSetting<any>(CADENCE_KEY, null).catch(() => null),
       getOperatingModel().catch(() => null),
-      db.from('pm_schedule').select('listing_id,cadence_key,status,note,updated_at').limit(3000),
+      pageRows<any>((a, b) => db.from('pm_schedule').select('listing_id,cadence_key,status,note,updated_at').order('listing_id').order('cadence_key').range(a, b), 10),
       db.from('guesty_listings').select('id,fee:raw->prices->>cleaningFee').limit(1000),
+      getNoService().catch(() => null),
     ])
     const cfg = resolveCadences(raw)
     const cadBy = new Map(cfg.cadences.map(c => [c.key, c]))
     const ledger = new Map<string, any>()
-    for (const r of ((ledgerRes.data as any[]) || [])) ledger.set(`${r.listing_id}|${r.cadence_key}`, r)
+    for (const r of ledgerPaged.rows) ledger.set(`${r.listing_id}|${r.cadence_key}`, r)
     const fee = new Map<string, number | null>()
     for (const r of ((feeRes.data as any[]) || [])) { const n = Number(r.fee); fee.set(String(r.id), Number.isFinite(n) && n > 0 ? n : null) }
     const me = String(gate.access.email || '').toLowerCase()
@@ -156,7 +184,8 @@ export async function GET(req: NextRequest) {
     for (const c of cfg.cadences) {
       byKey.set(c.key, {
         key: c.key, label: c.label, everyDays: c.everyDays, dept: c.dept, equipment: c.equipment || 'any',
-        group: GROUP_OF[c.key] || 'other', inert: inertWhy.get(c.key) || null,
+        group: groupOf(c), inert: inertWhy.get(c.key) || null,
+        mode: c.mode, setup: null, countingSince: null, bookedLate: 0,
         units: 0, late: 0, soon: 0, ok: 0, booked: 0, none: 0, late30: 0, late90: 0, late90plus: 0, healthPct: 0, rows: [],
         how: howOf(c), needsApproval: !!(c.approvers && c.approvers.length), awaiting: 0,
         needsVacant: !!c.needsVacant, needsDays: Math.max(1, c.needsDays || 1),
@@ -173,19 +202,27 @@ export async function GET(req: NextRequest) {
         // NOT OURS, NOT HERE: the operating model says who does what in each building (Botanica's own
         // staff do its maintenance; North's vendor does its housekeeping). Those rows are nobody's to chase.
         if (om && !weDo(om, building, DUTY_OF[c.dept] || 'maintenance')) continue
+        // NO-INSPECTION BUILDINGS (lib/no-service; Jon, 2026-11-06): the automations already skip
+        // them, so an inspection program must not show them as late here either.
+        if (c.dept === 'inspection' && noSvc && skipsInspectionsIn(noSvc, building, it.building, it.unit)) continue
         const state: UpkeepState = it.scheduled ? 'booked' : it.band === 'unknown' ? 'none' : it.daysOver > 0 ? 'late' : it.daysOver >= -SOON_DAYS ? 'soon' : 'ok'
         p[state]++
+        const taskLate = !!it.scheduled && !!it.scheduled.date && it.scheduled.date < today
+        if (taskLate) p.bookedLate++
         if (state === 'late') { if (it.daysOver <= 30) p.late30++; else if (it.daysOver <= 90) p.late90++; else p.late90plus++ }
         const lr = ledger.get(`${it.listingId}|${it.cadenceKey}`)
         const note = String(lr?.note || '')
-        const declined = /^declined /.test(note) && lr?.updated_at && Date.parse(lr.updated_at) > Date.now() - 30 * 86400_000 ? note : null
+        // "Back in 30 days" counts from the day in the note itself ("declined 2026-11-01 by …"); the
+        // row's updated_at is restamped by the recurrence pass, which stretched the 30 days.
+        const declinedOn = (/^declined (\d{4}-\d{2}-\d{2})/.exec(note) || [])[1] || ''
+        const declined = declinedOn && Date.parse(declinedOn + 'T12:00:00Z') > Date.now() - 30 * 86400_000 ? note : null
         const waiting = p.needsApproval && !it.scheduled && (state === 'late' || state === 'soon' || state === 'none') && !declined
         if (waiting) p.awaiting++
         if (p.needsApproval && (isAdmin || isApprover(c, me, myName))) canApprove.add(c.key)
         p.rows.push({
           id: it.id, listingId: it.listingId, unit: it.unit, building, market: it.market,
-          lastDone: it.lastDone, dueOn: it.dueOn, daysOver: it.daysOver, state, task: it.scheduled ? { id: it.scheduled.taskId, date: it.scheduled.date } : null, dept: it.dept, minutes: it.minutes, label: it.label,
-          source: it.newUnit ? 'new' : it.clock ? 'clock' : it.lastDone ? (/^recorded /.test(note) && String(lr?.last_done || '') === it.lastDone ? 'recorded' : 'task') : null,
+          lastDone: it.lastDone, dueOn: it.dueOn, daysOver: it.daysOver, state, task: it.scheduled ? { id: it.scheduled.taskId, date: it.scheduled.date } : null, taskLate: taskLate || undefined, dept: it.dept, minutes: it.minutes, label: it.label,
+          source: it.newUnit ? 'new' : it.clock ? 'clock' : it.lastDone ? (it.recorded ? 'recorded' : 'task') : null,
           goLive: it.newUnit?.goLive || null,
           clockStarted: it.clock?.started || null,
           approval: p.needsApproval ? { waiting, declined: declined ? declined.slice(0, 80) : null } : null,
@@ -209,11 +246,17 @@ export async function GET(req: NextRequest) {
     for (const p of Array.from(byKey.values())) {
       p.units = new Set(p.rows.map(r => r.listingId)).size
       const known = p.late + p.soon + p.ok + p.booked
-      p.healthPct = known ? Math.round(((p.ok + p.booked + p.soon) / known) * 100) : 0
+      // A booked task whose day has passed and is still open is not "current" — it is on the board and not done.
+      p.healthPct = known ? Math.round(((p.ok + (p.booked - p.bookedLate) + p.soon) / known) * 100) : 0
+      const cdef = cadBy.get(p.key)
+      p.setup = cdef?.mode === 'off' ? 'off' : p.inert ? 'scope' : !p.rows.length ? 'empty' : null
+      if (p.rows.length && p.rows.every(r => r.source === 'clock')) p.countingSince = p.rows.reduce((m, r) => (r.clockStarted && (!m || r.clockStarted < m) ? r.clockStarted : m), '') || null
       p.rows.sort((a, b) => rank[a.state] - rank[b.state] || b.daysOver - a.daysOver || a.unit.localeCompare(b.unit))
     }
+    // EVERY PROGRAM IS ON THE BOARD (Jon, 2026-11-09: "programs should show on the board as well
+    // when new one is created"). One with no rows yet used to be dropped here unless it was a shipped
+    // one — a program just made on the page, scoped to a building with no matching unit, vanished.
     const programs = Array.from(byKey.values())
-      .filter(p => p.rows.length || ORDER.includes(p.key) || p.inert)
       .sort((a, b) => (ORDER.indexOf(a.key) < 0 ? 99 : ORDER.indexOf(a.key)) - (ORDER.indexOf(b.key) < 0 ? 99 : ORDER.indexOf(b.key)) || a.label.localeCompare(b.label))
     const sum = (k: UpkeepState) => programs.reduce((n, p) => n + p[k], 0)
     const lateUnits = new Set(programs.flatMap(p => p.rows.filter(r => r.state === 'late').map(r => r.listingId))).size
@@ -221,8 +264,11 @@ export async function GET(req: NextRequest) {
       ok: true, today, market, soonDays: SOON_DAYS,
       markets: Array.from(markets).sort(), buildings: Array.from(buildings).sort(),
       programs,
-      totals: { late: sum('late'), soon: sum('soon'), ok: sum('ok'), booked: sum('booked'), none: sum('none'), lateUnits, late90plus: programs.reduce((n, p) => n + p.late90plus, 0), awaiting: programs.reduce((n, p) => n + p.awaiting, 0) },
-      degraded: [...cal.degraded, ...degradedPlan], enabled: cal.enabled, canEdit, canApprove: Array.from(canApprove), me,
+      totals: { late: sum('late'), soon: sum('soon'), ok: sum('ok'), booked: sum('booked'), none: sum('none'), lateUnits, late90plus: programs.reduce((n, p) => n + p.late90plus, 0), awaiting: programs.reduce((n, p) => n + p.awaiting, 0),
+        bookedLate: programs.reduce((n, p) => n + p.bookedLate, 0), onClock: programs.reduce((n, p) => n + p.rows.filter(r => r.source === 'clock').length, 0),
+        units: new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size, live: programs.filter(p => !p.setup).length },
+      degraded: [...cal.degraded, ...(ledgerPaged.truncated ? ['the approvals ledger (a declined job may ask again)'] : []), ...degradedPlan], enabled: cal.enabled, canEdit, canApprove: Array.from(canApprove), me,
+      canProgram: isSuperadmin(gate.access.email),
       info,
     }
     return NextResponse.json(out)
@@ -267,6 +313,10 @@ export async function POST(req: NextRequest) {
     const note = `recorded ${today} by ${me}${body?.note ? ' — ' + String(body.note).slice(0, 120) : ''}`
     const { error } = await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, last_done: lastDone, last_task_id: null, next_due: shiftDay(lastDone, c.everyDays), task_id: null, task_date: null, status: 'scheduled', moved: 0, note, updated_at: now }, { onConflict: 'listing_id,cadence_key' })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    // KEPT WHERE NO LATER NOTE CAN LOSE IT (lib/pm-calendar RECORDED_KEY): the ledger note above is
+    // rewritten by the next proposal, decline or approval, and the date used to go with it.
+    const kept = await setRecordedDay(listingId, cadenceKey, lastDone, me).catch(() => false)
+    if (!kept) return NextResponse.json({ error: 'The date was written to the ledger but could not be saved to the recorded-dates list — press Save again.' }, { status: 500 })
     return NextResponse.json({ ok: true, lastDone, nextDue: shiftDay(lastDone, c.everyDays) })
   }
 

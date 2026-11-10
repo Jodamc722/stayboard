@@ -28,21 +28,36 @@ export type ScoreLine = {
   note: string
 }
 
+// Checked against the channels' published rules, 2026-11: Superhost 4.8 with a 90% response rate
+// and under 1% cancellations; Guest Favorite has no published number (4.9 is "about"); Vrbo Premier
+// Host 4.6 per listing; Booking.com Genius needs 7.5 with three or more reviews, Preferred 7.0.
+// EACH LIST IS HIGHEST FIRST — standingOf() takes the first line the score is at or above.
 const AIRBNB: ScoreLine[] = [
-  { key: 'guest_favorite', at: 4.9, label: 'Guest Favorite 4.9', kind: 'badge', scope: 'listing', note: 'Airbnb awards Guest Favorite per listing: about 4.9+ with at least five reviews, strong category scores and a clean reliability record. Airbnb does not publish the exact formula.' },
-  { key: 'superhost', at: 4.8, label: 'Superhost 4.8', kind: 'badge', scope: 'account', note: 'Superhost is judged on the host account over the last 365 days: 4.8+ overall, with stay-count, response-rate and cancellation tests. One listing under 4.8 pulls the account average down; it does not lose the badge on its own.' },
+  { key: 'guest_favorite', at: 4.9, label: 'Guest Favorite ~4.9', kind: 'badge', scope: 'listing', note: 'Airbnb awards Guest Favorite per listing and publishes no number for it. About 4.9+ with at least five reviews, strong category scores and a clean reliability record is where listings hold it.' },
+  { key: 'superhost', at: 4.8, label: 'Superhost 4.8', kind: 'badge', scope: 'account', note: 'Superhost is judged on the host account over the last 365 days: 4.8+ overall rating, 90%+ response rate, under 1% cancellations, and the stay-count test. One listing under 4.8 pulls the account average down; it does not lose the badge on its own.' },
   { key: 'placement', at: 4.7, label: '4.7', kind: 'floor', scope: 'listing', note: 'The house line: under 4.7 a listing starts losing search placement.' },
   { key: 'filter', at: 4.5, label: '4.5', kind: 'floor', scope: 'listing', note: 'The score guests filter against.' },
 ]
 const VRBO: ScoreLine[] = [
+  { key: 'premier_host', at: 4.6, label: 'Premier Host 4.6', kind: 'badge', scope: 'listing', note: 'Vrbo Premier Host (rules from 1 Jan 2026, judged per listing): 4.6+ average with 5+ reviews, 99%+ acceptance, no owner-initiated cancellations, 5+ bookings or 60 nights. Reviewed 1 Feb / 1 May / 1 Aug / 1 Nov.' },
   { key: 'vrbo_wonderful', at: 4.5, label: '4.5', kind: 'floor', scope: 'listing', note: 'Vrbo shows the score out of 10; 4.5 stars is the 9/10 band guests filter for.' },
-  { key: 'premier_host', at: 4.6, label: 'Premier Host 4.6', kind: 'badge', scope: 'account', note: 'Vrbo Premier Host (rules from 1 Jan 2026, judged per listing): 4.6+ average with 5+ reviews, 99%+ acceptance, no owner-initiated cancellations, 5+ bookings or 60 nights. Reviewed 1 Feb / 1 May / 1 Aug / 1 Nov.' },
 ]
 const BOOKING: ScoreLine[] = [
   { key: 'booking_superb', at: 4.5, label: '9.0 Superb', kind: 'badge', scope: 'listing', note: 'Booking.com labels 9.0+ "Superb" on the property page.' },
-  { key: 'booking_8', at: 4.0, label: '8.0', kind: 'floor', scope: 'listing', note: 'Under 8.0 a Booking.com listing reads as ordinary, and 8.0 is the bar its awards and partner programmes commonly use.' },
-  { key: 'booking_7', at: 3.5, label: '7.0', kind: 'floor', scope: 'listing', note: 'Under 7.0 is a complaint score on Booking.com.' },
+  { key: 'booking_8', at: 4.0, label: '8.0', kind: 'floor', scope: 'listing', note: 'Under 8.0 a Booking.com listing reads as ordinary.' },
+  { key: 'booking_genius', at: 3.75, label: 'Genius 7.5', kind: 'badge', scope: 'listing', note: 'Booking.com Genius needs a review score of 7.5 or higher with at least three reviews. Under it the property drops out of the Genius programme and its visibility.' },
+  { key: 'booking_7', at: 3.5, label: 'Preferred 7.0', kind: 'floor', scope: 'listing', note: 'Booking.com Preferred Partner needs 7.0 or higher; under 7.0 is also a complaint score on Booking.com.' },
 ]
+
+// HOW LONG A REVIEW CAN STILL BE ACTED ON, counted from CHECKOUT (2026-11): Airbnb closes reviews
+// for both sides 14 days after checkout; Vrbo's window is 180 days. Booking.com publishes no such
+// clock here, so it has none. Used for the "closes in Nd" tag on the reply queue.
+export function reviewWindowDays(channel?: any): number | null {
+  const c = String(channel || '').toLowerCase()
+  if (/airbnb/.test(c)) return 14
+  if (/vrbo|homeaway/.test(c)) return 180
+  return null
+}
 
 /** Highest first. Channels with no known lines return an empty list — nothing is invented for them. */
 export function linesFor(channel?: any): ScoreLine[] {

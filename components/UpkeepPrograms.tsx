@@ -8,7 +8,7 @@
 // done", "Creates at 7am"). New / Edit opens the editor in place: pick a template, name it, add
 // buildings or single units from one search box, tap the days, pick the people. Buttons, not
 // drop-downs.
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Loader2, Plus, Play, Pause, Pencil, Trash2, X, Search, Building2, Home, Users, ExternalLink, Check, RefreshCw, FileText, Mail } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { Tag, LeanEmpty } from '@/components/lean'
@@ -27,7 +27,7 @@ const ordinal = (n: number) => n + (n % 10 === 1 && n !== 11 ? 'st' : n % 10 ===
 type Data = {
   ok: boolean; programs: Program[]; day: string; plans: PlacePlan[]
   options: { buildings: { key: string; units: number; sample: string; inBreezeway: boolean }[]; units: { id: string; name: string; building: string; inBreezeway: boolean }[] } | null
-  error?: string
+  error?: string; planError?: string | null
 }
 type Tpl = { id: number; name: string; department: string }
 type ReportRow = { code: string; programId: string; taskId: string; date: string; finishedAt: string | null; finishedBy: string; passed: number; issues: number; open: number; place: string; mail?: 'sent' | 'draft' | 'none' }
@@ -82,6 +82,9 @@ function Reports({ program }: { program: Program }) {
 
 function todayLine(pl: PlacePlan | undefined): { text: string; tone: 'emerald' | 'amber' | 'sky' | 'slate' | 'rose'; task?: string } {
   if (!pl) return { text: 'Saved — shows on the next refresh', tone: 'slate' }
+  // "Done today" and "scheduled for <day>" both arrive as action 'none' — they used to read "Not today".
+  if (pl.action === 'none' && pl.note === 'done today') return { text: 'Done today', tone: 'emerald' }
+  if (pl.action === 'none' && /^scheduled for \d{4}-\d{2}-\d{2}$/.test(pl.note)) return { text: 'Scheduled for ' + nice(pl.note.slice(-10)), tone: 'sky' }
   if (pl.action === 'skip') return { text: pl.note, tone: 'rose' }
   if (pl.action === 'add' && pl.today) return { text: 'On the board today', tone: 'emerald', task: pl.today.id }
   if (pl.action === 'move' && pl.carry) return { text: 'Not done ' + nice(pl.carry.date) + ' — moves to today', tone: 'amber', task: pl.carry.id }
@@ -89,13 +92,15 @@ function todayLine(pl: PlacePlan | undefined): { text: string; tone: 'emerald' |
   return { text: 'Not today', tone: 'slate' }
 }
 
-export function UpkeepPrograms() {
+export function UpkeepPrograms({ focusId, onChanged }: { focusId?: string; onChanged?: () => void } = {}) {
   const { data, loading, error, refresh } = useCachedFetch<Data>(URL_MAIN, { ttl: 5 * 60_000 })
   const [editing, setEditing] = useState<Program | null>(null)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
-  const reload = () => { invalidateCache(URL_MAIN); refresh() }
+  // onChanged: the main board reads the same programs for its tiles — tell it, so a program made or
+  // paused here shows there without a reload.
+  const reload = () => { invalidateCache(URL_MAIN); refresh().then(() => { if (onChanged) onChanged() }) }
 
   const post = async (body: any, key: string) => {
     setBusy(key); setErr(''); setMsg('')
@@ -108,12 +113,14 @@ export function UpkeepPrograms() {
   }
   const run = async (p: Program) => {
     const j = await post({ op: 'run', id: p.id }, 'run:' + p.id)
-    if (j) { setMsg(p.name + ': ' + [j.created && j.created + ' created', j.moved && j.moved + ' moved to today', j.updated && j.updated + ' updated', j.cancelled && j.cancelled + ' duplicates cancelled'].filter(Boolean).join(' · ') || p.name + ': everything was already on the board'); reload() }
+    // (The "nothing to do" sentence never showed: `name + ': ' + '' || …` is always truthy.)
+    if (j) { const did = [j.created && j.created + ' created', j.moved && j.moved + ' moved to today', j.updated && j.updated + ' updated', j.cancelled && j.cancelled + ' duplicates cancelled'].filter(Boolean).join(' · '); setMsg(p.name + ': ' + (did || 'everything was already on the board')); reload() }
   }
   const toggle = async (p: Program) => { if (await post({ op: 'toggle', id: p.id }, 'toggle:' + p.id)) reload() }
   const remove = async (p: Program) => { if (await post({ op: 'delete', id: p.id }, 'del:' + p.id)) { setEditing(null); reload() } }
   // Two taps, inline (no browser dialog — the page's own Delete works the same way).
   const [retiring, setRetiring] = useState('')
+  const scrolled = useRef('')
   const retire = async (p: Program, taskId: string) => {
     if (retiring !== taskId) { setRetiring(taskId); return }
     setRetiring('')
@@ -133,8 +140,8 @@ export function UpkeepPrograms() {
   }
 
   if (loading && !data) return <div className="py-10 text-center text-muted"><Loader2 className="inline animate-spin" size={18} /></div>
-  if (error || data?.error) return <p className="text-[13px] text-rose-700">{String(error || data?.error)}</p>
-  if (!data) return null
+  // An error with nothing to show is the whole message; an error on a refresh keeps the programs on screen.
+  if (!data) return <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{String(error || 'The programs could not be read.')} <button onClick={reload} className="ml-2 underline font-semibold">Try again</button></div>
   const plans = data.plans || []
 
   if (editing) return <Editor initial={editing} options={data.options} busy={busy === 'save'} err={err} onCancel={() => { setEditing(null); setErr('') }} onSave={save} onDelete={data.programs.some(p => p.id === editing.id) ? () => remove(editing) : undefined} />
@@ -149,11 +156,14 @@ export function UpkeepPrograms() {
       </div>
       {msg ? <p className="text-[12.5px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">{msg}</p> : null}
       {err ? <p className="text-[12.5px] text-rose-700">{err}</p> : null}
+      {error ? <p className="text-[12.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">Could not refresh just now ({String(error)}) — showing the last read.</p> : null}
+      {data.planError ? <p className="text-[12.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">Today’s plan could not be read ({data.planError}) — the “today” column below is not reliable until it can.</p> : null}
       {!data.programs.length ? <LeanEmpty>No programs yet. Start one with New program.</LeanEmpty> : null}
       {data.programs.map(p => {
         const mine = plans.filter(x => x.programId === p.id)
         return (
-          <section key={p.id} className={'rounded-2xl border border-line bg-white overflow-hidden ' + (p.active ? '' : 'opacity-60')}>
+          <section key={p.id} id={'prog-card-' + p.id} ref={focusId === p.id ? (el => { if (el && scrolled.current !== p.id) { scrolled.current = p.id; try { el.scrollIntoView({ block: 'start', behavior: 'smooth' }) } catch { /* fine */ } } }) : undefined}
+            className={'rounded-2xl border bg-white overflow-hidden scroll-mt-4 ' + (focusId === p.id ? 'border-brand-400 ring-2 ring-brand-100 ' : 'border-line ') + (p.active ? '' : 'opacity-60')}>
             <header className="px-3 py-2.5 border-b border-line flex items-center gap-2 flex-wrap">
               <div className="flex-1 min-w-[200px]">
                 <div className="text-[14px] font-bold text-ink flex items-center gap-2 flex-wrap">{p.name}

@@ -52,7 +52,7 @@ import { AvailabilityAlert } from '@/components/AvailabilityAlert'
 import { BulletinBoard } from '@/components/command/Bulletin'
 import { BULLETIN_URL } from '@/components/command/Bulletin'
 import { dueState, type Post as BoardPost } from '@/lib/bulletin'
-import { ThoughtCard, useThoughts } from '@/components/EveThoughts'
+import { ThoughtCard, THOUGHTS_URL, type Thought } from '@/components/EveThoughts'
 import { CommandHub, ApprovalRow } from '@/components/command/Hub'
 
 type Sev = NextItem['severity']
@@ -735,30 +735,53 @@ function DecideLinkRow({ item: i, onCleared }: { item: NextItem; onCleared: (k: 
 // ── WHAT EVE IS THINKING — one collapsed line under Decide ──────────────────────────────────────
 // The same cards as Settings → Eve → Thinking; admins only (the read 403s for everybody else, and
 // the line is not drawn). THE NUMBER IS THE API'S (2026-09-28 audit): the line printed rows.length
-// of a 40-row page, so sixty open thoughts read as "40". "New" is the API's own unseen count, and
-// the open count says "40+" whenever the page came back full.
-const EVE_THOUGHTS_PAGE = 40
+// of a 40-row page, so sixty open thoughts read as "40". Open and "new" are both the API's own counts.
+const EVE_THOUGHTS_PAGE = 12
 function EveThinking() {
   const [open, setOpen] = useState(false)
-  const th = useThoughts({ limit: EVE_THOUGHTS_PAGE })
+  // TWO NUMBERS FIRST, THE CARDS ON TAP (2026-11-09 audit, pass 3). The line is closed nearly every
+  // time the page loads, and it fetched forty whole thoughts (300KB) to print a count. Now the count
+  // is its own tiny read, and opening the line reads the first few cards, cut to what they print.
+  const countQ = useCachedFetch<{ open?: number; unseen?: number }>(THOUGHTS_URL + '?count=1', { ttl: 300_000 })
+  const [rows, setRows] = useState<Thought[] | null>(null)
+  const [rowsErr, setRowsErr] = useState('')
+  const [seenAll, setSeenAll] = useState(false)
   const [note, setNote] = useState('')
   const [acted, setActed] = useState(0)
-  if (th.forbidden || (!th.loading && !th.rows.length && !th.err)) return null
-  const n = th.rows.length
-  // A full page may hold only the first 40, so the number is a floor, never a count.
-  const floor = n + acted >= EVE_THOUGHTS_PAGE
-  const onDone = (id: string, msg: string, ok: boolean) => { if (ok) { th.remove(id); setActed(a => a + 1) } setNote(msg) }
+  useEffect(() => {
+    if (!open || rows !== null) return
+    let live = true
+    fetch(THOUGHTS_URL + '?slim=1&limit=' + EVE_THOUGHTS_PAGE).then(r => r.json()).then(j => { if (live) { if (j?.ok) setRows(Array.isArray(j.thoughts) ? j.thoughts : []); else { setRows([]); setRowsErr(j?.error || 'Could not load.') } } })
+      .catch(() => { if (live) { setRows([]); setRowsErr('Could not load.') } })
+    return () => { live = false }
+  }, [open, rows])
+  // Not an admin (the read 403s), or nothing open: the line is not drawn.
+  const total = Math.max(0, Number(countQ.data?.open || 0) - acted)
+  if (!countQ.data || countQ.error || total <= 0) return null
+  const n = total
+  const th = {
+    rows: rows || [],
+    unseen: seenAll ? 0 : Number(countQ.data.unseen || 0),
+    markAllSeen: async () => {
+      try { await fetch(THOUGHTS_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'seen' }) }) } catch { /* fine */ }
+      setSeenAll(true); invalidateCache(THOUGHTS_URL + '?count=1')
+    },
+  }
+  const onDone = (id: string, msg: string, ok: boolean) => { if (ok) { setRows(rs => (rs || []).filter(r => r.id !== id)); setActed(a => a + 1) } setNote(msg) }
   return (
     <section>
       <button onClick={() => setOpen(o => !o)} aria-expanded={open}
-        title={floor ? 'The first ' + EVE_THOUGHTS_PAGE + ' open thoughts are listed here — Settings → Eve → Thinking has every one' : undefined}
+        title={n > EVE_THOUGHTS_PAGE ? 'The newest ' + EVE_THOUGHTS_PAGE + ' open thoughts are listed here — Settings → Eve → Thinking has every one' : undefined}
         className="px-1 inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-ink/70 hover:text-ink min-h-[28px]">
-        <Sparkles size={12} className="text-brand-600" /> Eve is thinking about {n}{floor ? '+' : ''} thing{n === 1 && !floor ? '' : 's'}{th.unseen > 0 ? ` (${th.unseen} new)` : ''} {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <Sparkles size={12} className="text-brand-600" /> Eve is thinking about {n} thing{n === 1 ? '' : 's'}{th.unseen > 0 ? ` (${th.unseen} new)` : ''} {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </button>
       {open && (
         <div className="mt-1 rounded-2xl border border-line bg-white shadow-soft divide-y divide-line">
           {note && <div className="px-3 py-2 text-[12px] text-ink bg-app/60">{note}</div>}
+          {rows === null && <div className="px-3 py-2 text-[12px] text-muted inline-flex items-center gap-1.5"><Loader2 size={11} className="animate-spin" /> getting them</div>}
+          {rowsErr && <div className="px-3 py-2 text-[12px] text-rose-700">{rowsErr}</div>}
           {th.rows.map(t => <ThoughtCard key={t.id} t={t} compact onDone={onDone} />)}
+          {rows !== null && n > th.rows.length && <div className="px-3 py-2 text-[12px] text-muted">{n - th.rows.length} more — the newest {EVE_THOUGHTS_PAGE} are listed here.</div>}
           <div className="px-3 py-2 flex items-center justify-between">
             <a href="/users?tab=settings&panel=eve" className="text-[11.5px] font-semibold text-brand-700 hover:underline">All of it, in Settings → Eve → Thinking</a>
             {th.unseen > 0 && <button onClick={th.markAllSeen} className="text-[11.5px] text-muted hover:text-ink">Mark all seen</button>}

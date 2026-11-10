@@ -5,7 +5,7 @@
 // The client appends it to content.snaps and saves. No writes here.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { resolveScope, pullReservations, metricsFor, fmtK } from '@/lib/owner-report'
+import { resolveScope, pullReservations, metricsFor, fmtK, engineOf } from '@/lib/owner-report'
 import { hasEditCookie } from '@/lib/edit-access'
 import { requireUser } from '@/lib/access'
 
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
   }
 
   const db = supabaseAdmin()
-  const { data } = await db.from('owner_reports').select('listing_ids').eq('id', id).limit(1)
+  const { data } = await db.from('owner_reports').select('listing_ids, engine:content->meta->engine').eq('id', id).limit(1)
   const rep = (data || [])[0] as any
   if (!rep) return NextResponse.json({ error: 'report not found' }, { status: 404 })
   // Optionally drop blocked/off-market listings so occupancy & availability aren't inflated by them.
@@ -51,7 +51,9 @@ export async function GET(req: NextRequest) {
   const units = scope.listings.length
   const toExcl = nextDay(to)
   const resv = await pullReservations(ids, from, toExcl)
-  const m = metricsFor(resv, units, from, toExcl)
+  // The report keeps the engine it was generated under; one without the flag computes as before.
+  const eng = engineOf({ meta: { engine: rep.engine } })
+  const m = metricsFor(resv, units, from, toExcl, eng >= 2 ? { engine: eng, listings: scope.listings } : undefined)
 
   const snap = {
     key: 'sr_' + from + '_' + to + '_' + Math.round(m.accomRevenue),

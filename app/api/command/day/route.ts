@@ -12,7 +12,8 @@ export async function GET() {
   if (!gate.ok) return gate.res
   try {
     // The gate already read who this is: whether they may see money comes from it, not a second auth lookup.
-    const day = await buildCommandDay({ money: canSeeMoney(gate.access) })
+    // slim: the browser's copy — team rows carry the tasks each person holds, once (lib/command-day teamView).
+    const day = await buildCommandDay({ money: canSeeMoney(gate.access), slim: true })
     return NextResponse.json(day)
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })

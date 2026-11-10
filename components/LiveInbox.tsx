@@ -25,21 +25,37 @@ const ago = (iso: string | null, now: number) => {
   return m < 60 ? m + 'm ago' : Math.round(m / 60) + 'h ago'
 }
 
-export function LiveInbox({ initial }: { initial: InboxData }) {
+/**
+ * "12s ago", ticking by itself. The clock used to be state on the whole page, so every five
+ * seconds the list, the open thread and the reply box all re-rendered to move one label.
+ */
+function Ago({ iso }: { iso: string | null }) {
+  const [now, setNow] = useState(0)
+  useEffect(() => { setNow(Date.now()); const c = setInterval(() => setNow(Date.now()), 5000); return () => clearInterval(c) }, [])
+  // Nothing until mounted: the server cannot know the reader's "now".
+  return <span suppressHydrationWarning>{now ? ago(iso, now) : ''}</span>
+}
+
+export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: string; name: string } }) {
   const [data, setData] = useState<InboxData>(initial)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [moved, setMoved] = useState<Set<string>>(new Set())
-  const [tick, setTick] = useState(initial.now)
   const seen = useRef<Record<string, string>>(Object.fromEntries(initial.items.map(it => [itemKey(it), it.at])))
+  // Answers can come back out of order (a slow Guesty pull, then a quick local re-read): only the
+  // newest ask may write.
+  const asked = useRef(0)
 
-  const refresh = useCallback(async () => {
+  /** `pull: false` re-reads our own copy only — after a reply or a mark, where Guesty has nothing new to say. */
+  const refresh = useCallback(async (pull: boolean = true) => {
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+    const mine = ++asked.current
     setBusy(true)
     try {
-      const r = await fetch('/api/messages/live', { cache: 'no-store' })
+      const r = await fetch('/api/messages/live' + (pull ? '' : '?pull=0'), { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not reach the inbox.')
+      if (mine !== asked.current) return
       // What moved since the last look: a new thread, or a newer last message on one we had.
       const fresh = new Set<string>()
       for (const it of j.items as InboxData['items']) {
@@ -49,20 +65,20 @@ export function LiveInbox({ initial }: { initial: InboxData }) {
         seen.current[k] = it.at
       }
       if (fresh.size) { setMoved(fresh); setTimeout(() => setMoved(new Set()), 8000) }
-      setData({ items: j.items, unitById: j.unitById, waiting: j.waiting, lastResponderById: j.lastResponderById, now: j.now, header: j.header })
-      setErr(j.pull?.error ? 'Guesty: ' + j.pull.error : '')
-    } catch (e: any) { setErr(String(e?.message || e)) }
-    setBusy(false)
+      setData({ items: j.items, unitById: j.unitById, waiting: j.waiting, lastResponderById: j.lastResponderById, now: j.now, header: j.header, state: j.state || {} })
+      if (pull) setErr(j.pull?.error ? 'Guesty: ' + j.pull.error : '')
+    } catch (e: any) { if (mine === asked.current) setErr(String(e?.message || e)) }
+    finally { if (mine === asked.current) setBusy(false) }
   }, [])
+  const changed = useCallback(() => { refresh(false) }, [refresh])
 
   useEffect(() => {
     // First live pull straight away: the server render read our copy; this asks Guesty.
     refresh()
-    const t = setInterval(refresh, POLL_MS)
+    const t = setInterval(() => { refresh() }, POLL_MS)
     const onVis = () => { if (document.visibilityState === 'visible') refresh() }
     document.addEventListener('visibilitychange', onVis)
-    const c = setInterval(() => setTick(Date.now()), 5000)
-    return () => { clearInterval(t); clearInterval(c); document.removeEventListener('visibilitychange', onVis) }
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
   }, [refresh])
 
   const h = data.header
@@ -73,19 +89,20 @@ export function LiveInbox({ initial }: { initial: InboxData }) {
         <Pill tone={h.within1h.tone} title={h.within1h.title}>{h.within1h.label}</Pill>
         <Pill tone={h.waiting.tone} title={h.waiting.title}>{h.waiting.label}</Pill>
         <Pill tone={h.unread.tone} title={h.unread.title}>{h.unread.label}</Pill>
-        <button onClick={refresh} title={(err ? err + ' · ' : '') + h.threadsTitle + ' · pulled from Guesty every 30 seconds while this page is open — click to pull now'}
+        <button onClick={() => { refresh() }} title={(err ? err + ' · ' : '') + h.threadsTitle + ' · pulled from Guesty every 30 seconds while this page is open — click to pull now'}
           className={'inline-flex items-center gap-1.5 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border ' + (err ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800')}>
           <span className="relative inline-flex w-2 h-2">
             {!err && <span className={'absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 ' + (busy ? 'animate-ping' : '')} />}
             <span className={'relative inline-flex rounded-full w-2 h-2 ' + (err ? 'bg-amber-500' : 'bg-emerald-500')} />
           </span>
-          {err ? 'Live paused' : 'Live'} · {busy ? 'pulling…' : ago(h.syncedAt, tick)}
+          {err ? 'Live paused' : 'Live'} · {busy ? 'pulling…' : <Ago iso={h.syncedAt} />}
         </button>
         <SyncNowButton />
       </LeanHead>
       {/* useSearchParams in UnifiedInbox needs a Suspense boundary. */}
       <Suspense fallback={null}>
-        <UnifiedInbox items={data.items} unitById={data.unitById} waiting={data.waiting} lastResponderById={data.lastResponderById} now={data.now} moved={moved} />
+        <UnifiedInbox items={data.items} unitById={data.unitById} waiting={data.waiting} lastResponderById={data.lastResponderById} now={data.now} moved={moved}
+          state={data.state} me={me} onChanged={changed} />
       </Suspense>
     </>
   )

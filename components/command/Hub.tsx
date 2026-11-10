@@ -58,8 +58,9 @@ const NOW_MIN = 65     // a row needs this score to make the Now list
 const NOW_MAX = 6
 const LANE_ROWS = 5
 export const LIST = 'rounded-2xl border border-line bg-white divide-y divide-line/70 shadow-soft'
-export const GHOST = BTN + ' border border-line bg-white text-ink hover:border-ink/40'
-export const DARK = BTN + ' bg-ink text-white'
+// 36px on a phone (BTN is 34px, shared with other pages): one tap height down every row at 390px.
+export const GHOST = BTN + ' max-sm:min-h-[36px] border border-line bg-white text-ink hover:border-ink/40'
+export const DARK = BTN + ' max-sm:min-h-[36px] bg-ink text-white'
 export const bz = (id: string) => 'https://app.breezeway.io/task/' + id
 export const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 export const hm = (min: number) => { const a = Math.abs(min), h = Math.floor(a / 60), m = a % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
@@ -343,7 +344,7 @@ function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean
   const run = async (what: 'draft' | 'post' | 'skip') => {
     setBusy(what); setErr('')
     try {
-      if (what === 'draft') { const j = await post('/api/reviews/draft', { content: r.content, rating: r.rating, guest: r.guest, channel: r.channel, listing_name: r.listing_name, listingId: r.listingId }); setText(String(j.draft || '')) }
+      if (what === 'draft') { const j = await post('/api/reviews/draft', { content: r.content, rating: r.rating, guest: r.guest, channel: r.channel, listing_name: r.listing_name, listingId: r.listingId, ...(r.id ? { reviewId: r.id } : {}) }); setText(String(j.draft || '')) }
       else if (what === 'post') { await post('/api/reviews/reply', { reviewId: r.id, reviewReply: text.trim() }); onGone() }
       else { await post('/api/reviews/dismiss', { reviewId: r.id }); onGone() }
     } catch (e: any) { setErr(String(e?.message || e)) }
@@ -431,6 +432,9 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const tasks = p.tasks || []
   const jobs = p.cleans + p.otherTasks
   const idle = tasks.length === 0 && jobs === 0
+  // Room NOW (lib/command-day teamView): never more than the minutes left in the shift. Older reads carry no such field.
+  const room = p.roomNowMinutes != null ? p.roomNowMinutes : Math.max(0, p.capacityMinutes - p.loadMinutes)
+  const alsoNamed = p.namedOnly ? 'also named on ' + p.namedOnly + ' group ' + (p.namedOnly === 1 ? 'task' : 'tasks') : ''
   // WHERE THEY PROBABLY ARE (Jon, 2026-10-05) — lib/team-where, the same read the strip above uses.
   const where = whereNow(tasks, new Date(), p.clock)
   const ck = shiftStatus(p.clock, p.shiftStartMin, p.shiftEndMin)
@@ -451,9 +455,9 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
         <Tag tone={ck.tone} title={ck.title}>{ck.label}</Tag>
         {kind === 'credited' ? <Tag tone="slate" title={(p.triggers || [])[0] || 'Named on more work than a day holds — almost certainly tasks closed out for the team, not work held'}>named on {jobs} tasks</Tag>
           : kind === 'noshift' && !idle ? <Tag tone="slate" title="No Homebase shift today, so there is no day to measure this work against">{jobs} {jobs === 1 ? 'task' : 'tasks'}</Tag>
-          : over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{Math.min(p.utilisationPct, 199)}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
+          : over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{Math.min(p.utilisationPct, 199)}% loaded</Tag> : <Tag tone="sky" title={hm(room) + ' free now — the hours not yet spoken for, and never more than is left of the shift'}>{idle ? 'nothing assigned' : hm(room) + ' free'}</Tag>}
       </>}
-      meta={[where.line, p.role, doing ? doing + ' in progress' : '', summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}
+      meta={[where.line, p.role, doing ? doing + ' in progress' : '', summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine, alsoNamed].filter(Boolean).join(' · ')}
       actions={<button type="button" onClick={() => setOpen(o => !o)} className={GHOST} aria-expanded={open} title={open ? 'Close this person’s tasks' : 'Open this person’s tasks, grouped by kind'}>{open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>}>
       {open && (
         <div className="mt-2 pl-3.5 space-y-2.5">
@@ -972,7 +976,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
   // ── the KPIs ──
   // Only people with a real day count: an assumed 8h (no shift) or a credited row is not free time.
-  const free = t.team.rows.filter(r => { const k = loadKind(r); return k === 'over' || k === 'ok' }).reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
+  const free = t.team.rows.filter(r => { const k = loadKind(r); return k === 'over' || k === 'ok' }).reduce((a, r) => a + (r.roomNowMinutes != null ? r.roomNowMinutes : Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0))), 0)
   const over = t.team.rows.filter(r => loadKind(r) === 'over').length
   // Cleans, inspections and welcome calls read needed-vs-completed in the DayKpis strip above (2026-09-30).
   const wkGl = week('glitches')
@@ -1015,7 +1019,11 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
             <button onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={nowOpen ? 'Back to the top six' : 'Open the whole list'}>Now {nowAll.length ? <span className="tabular-nums text-muted whitespace-nowrap">{nowOpen ? nowAll.length : now.length + (nowAll.length > now.length ? ' of ' + nowAll.length : '')}</span> : null} {nowAll.length > NOW_MAX ? (nowOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</button>
             <span className="normal-case tracking-normal font-medium text-muted">— {now.length ? 'what matters most in the next two hours, high-ticket first' : 'nothing urgent — the lanes below have the rest'}</span>
           </h2>
-          {now.length > 0 && <div className={LIST}>{now.map(i => <div key={'now:' + i.key}>{withLane(i)}</div>)}</div>}
+          {now.length > 0 && <div className={LIST}>
+            {now.map(i => <div key={'now:' + i.key}>{withLane(i)}</div>)}
+            {/* Six at most, then one line that says how many more — the count in the title was easy to miss. */}
+            {nowAll.length > NOW_MAX && <button type="button" onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="w-full text-left px-3.5 min-h-[36px] text-[12px] font-semibold text-muted hover:text-ink">{nowOpen ? 'Show the top ' + NOW_MAX : (nowAll.length - NOW_MAX) + ' more'}</button>}
+          </div>}
         </section>
       )}
 

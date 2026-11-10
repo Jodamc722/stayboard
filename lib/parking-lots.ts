@@ -87,11 +87,16 @@ const bookingOf = (r: any): Booking => ({
   rateCents: num(r.rate_cents), amountCents: num(r.amount_cents), paid: (r.paid || 'unpaid') as Paid, paidVia: r.paid_via ?? null, paidAt: r.paid_at ?? null, paidBy: r.paid_by ?? null,
   status: (r.status || 'reserved') as BookingStatus, notes: r.notes ?? null, createdBy: r.created_by ?? null, createdAt: str(r.created_at), updatedAt: str(r.updated_at),
 })
+// notice_log also carries two kinds of bookkeeping entry that are not "who got the notice" and never
+// reach a screen: { claim } — a send in progress (the 90-second re-send guard) — and { alert } — the
+// deadline alert was raised for this flag (so it is raised once, ever).
+const isLogMeta = (e: any) => !!e && (e.claim === true || typeof e.alert === 'string')
+const rawLog = (r: any): any[] => (Array.isArray(r?.notice_log) ? r.notice_log : [])
 const incidentOf = (r: any): Incident => ({
   id: str(r.id), lotId: str(r.lot_id), spotId: r.spot_id ?? null, spotLabel: r.spot_label ?? null, sweepId: r.sweep_id ?? null, kind: (r.kind || 'unregistered') as IncidentKind, bookingId: r.booking_id ?? null,
   plate: r.plate ?? null, plateNorm: r.plate_norm ?? null, plateState: r.plate_state ?? null, make: r.make ?? null, model: r.model ?? null, color: r.color ?? null,
   photoPath: r.photo_path ?? null, seenAt: str(r.seen_at), seenBy: r.seen_by ?? null, status: (r.status || 'open') as IncidentStatus,
-  noticeText: r.notice_text ?? null, noticeSentAt: r.notice_sent_at ?? null, noticeSentN: num(r.notice_sent_n), noticeSentBy: r.notice_sent_by ?? null, noticeLog: Array.isArray(r.notice_log) ? r.notice_log : [],
+  noticeText: r.notice_text ?? null, noticeSentAt: r.notice_sent_at ?? null, noticeSentN: num(r.notice_sent_n), noticeSentBy: r.notice_sent_by ?? null, noticeLog: Array.isArray(r.notice_log) ? r.notice_log.filter((e: any) => !isLogMeta(e)) : [],
   towDueAt: r.tow_due_at ?? null, towDraftId: r.tow_draft_id ?? null, towDraftedAt: r.tow_drafted_at ?? null, towDraftError: r.tow_draft_error ?? null, towTo: r.tow_to ?? null,
   towedAt: r.towed_at ?? null, towedBy: r.towed_by ?? null, resolvedAt: r.resolved_at ?? null, resolvedBy: r.resolved_by ?? null, resolution: r.resolution ?? null,
   notes: r.notes ?? null, createdAt: str(r.created_at),
@@ -680,16 +685,6 @@ export async function incidentsFor(lotId: string, opts: { openOnly?: boolean; li
   return (data || []).map(incidentOf)
 }
 
-/** The 1-hour notice as it goes to every in-house guest. Editable before sending. */
-export function noticeTextFor(lot: Lot, inc: Pick<Incident, 'plate' | 'make' | 'model' | 'color' | 'spotLabel' | 'kind'>, dueAt: Date): string {
-  const car = carLabel(inc)
-  const where = inc.spotLabel ? `in spot ${inc.spotLabel}` : 'in our parking lot'
-  const mins = lot.noticeMinutes
-  const by = timeET(dueAt)
-  const why = inc.kind === 'wrong_spot' ? 'in a spot that is not the one it was registered for' : 'without a parking registration'
-  return `Parking notice — ${lot.building}\n\nA ${car}${inc.plate ? `, plate ${inc.plate},` : ''} is parked ${where} ${why}. If this is your vehicle, please move it or register it with us within ${mins === 60 ? '1 hour' : mins + ' minutes'} (by ${by}). Vehicles still unregistered after that are towed at the owner's expense.\n\n${lot.rateCents > 0 ? `Parking is ${cents(lot.rateCents, lot.currency)} per night` : 'Parking is included with your stay'}, one space per reservation, in the spot you are given. Reply to this message with your make, model and plate to register.`
-}
-
 /** ONE notice for every car flagged in the check (Jon, 2026-11-06): when the lot was checked, each
  *  car, the 1-hour deadline, and the offer to buy parking if a spot is free. */
 export function checkNoticeText(lot: Lot, incs: Pick<Incident, 'plate' | 'make' | 'model' | 'color' | 'spotLabel' | 'kind' | 'seenAt'>[], dueAt: Date): string {
@@ -703,6 +698,19 @@ export function checkNoticeText(lot: Lot, incs: Pick<Incident, 'plate' | 'make' 
 }
 
 /** Send the notice to every stay in house at the lot's building right now. */
+/** How long after a send the same notice cannot be sent again (Jon, 2026-11-09). */
+export const NOTICE_RESEND_SECONDS = 90
+/** The newest send (finished or in progress) recorded on a flag, from its raw notice_log. */
+function lastSend(row: any): { at: number; by: string } | null {
+  let best: { at: number; by: string } | null = null
+  for (const e of rawLog(row)) {
+    if (!e || !(e.claim === true || e.ok === true)) continue
+    const t = Date.parse(str(e.at))
+    if (Number.isFinite(t) && (!best || t > best.at)) best = { at: t, by: str(e.by) }
+  }
+  return best
+}
+
 export async function sendNotice(incidentId: string, text: string, by: string, alsoIds: string[] = []): Promise<{ ok: boolean; error?: string; warning?: string; sent: number; failed: number; recipients: number; incident?: Incident }> {
   const inc = await incidentById(incidentId)
   if (!inc) return { ok: false, error: 'That flag is gone.', sent: 0, failed: 0, recipients: 0 }
@@ -710,9 +718,76 @@ export async function sendNotice(incidentId: string, text: string, by: string, a
   if (!lot) return { ok: false, error: 'That lot does not exist.', sent: 0, failed: 0, recipients: 0 }
   const body = str(text).trim()
   if (!body) return { ok: false, error: 'The notice is empty.', sent: 0, failed: 0, recipients: 0 }
+  const db = supabaseAdmin()
+  const rest = Array.from(new Set(alsoIds.map(x => str(x)).filter(x => x && x !== inc.id))).slice(0, 40)
+
+  // ── NOT TWICE IN 90 SECONDS (Jon, 2026-11-09) ───────────────────────────────────────────────────
+  // Two people pressing Send on the same notice sent it to every guest in the building twice. The
+  // send is CLAIMED before anything goes out: one row of the notice's cars (the lowest id, so two
+  // people who opened the notice from different cars reach for the same row) gets a { claim } entry,
+  // written only if the row has not changed since it was read. The loser of that race, and anyone
+  // arriving within 90 seconds of a send, is told who sent it and nothing goes out.
+  const refuse = (last: { at: number; by: string }) => {
+    const ago = Math.max(1, Math.round((Date.now() - last.at) / 1000))
+    return { ok: false, error: `This notice was sent ${ago} second${ago === 1 ? '' : 's'} ago${last.by ? ' by ' + last.by : ''} — it was not sent again. Refresh to see it. (The same notice can go out again after ${NOTICE_RESEND_SECONDS} seconds.)`, sent: 0, failed: 0, recipients: 0, incident: inc }
+  }
+  const readGroup = async (): Promise<any[]> => {
+    const { data } = await db.from('parking_incidents').select('id, notice_log, updated_at').in('id', [inc.id].concat(rest)).eq('lot_id', inc.lotId)
+    return (data || []) as any[]
+  }
+  const recent = (rows: any[]) => {
+    let best: { at: number; by: string } | null = null
+    for (const r of rows) { const l = lastSend(r); if (l && (!best || l.at > best.at)) best = l }
+    return best && Date.now() - best.at < NOTICE_RESEND_SECONDS * 1000 ? best : null
+  }
+  let group = await readGroup()
+  const hot = recent(group)
+  if (hot) return refuse(hot)
+  const anchorOf = (rows: any[]) => rows.slice().sort((a, b) => (str(a.id) < str(b.id) ? -1 : 1))[0] || null
+  const claimAt = new Date().toISOString()
+  const claim = { claim: true, at: claimAt, by }
+  let anchor = anchorOf(group)
+  let claimedId: string | null = null
+  if (anchor) {
+    const tryClaim = async (row: any, guarded: boolean): Promise<boolean> => {
+      let q = db.from('parking_incidents').update({ notice_log: rawLog(row).concat([claim]), updated_at: claimAt }).eq('id', str(row.id))
+      if (guarded) q = row.updated_at ? q.eq('updated_at', row.updated_at) : q.is('updated_at', null)
+      const { data, error } = await q.select('id')
+      return !error && Array.isArray(data) && data.length > 0
+    }
+    let got = await tryClaim(anchor, true)
+    if (!got) {
+      // The row changed under us. If that was another send, stop; if it was something else (a note,
+      // the car being identified), claim again against the row as it is now.
+      const before = str(anchor.updated_at)
+      group = await readGroup()
+      const hot2 = recent(group)
+      if (hot2) return refuse(hot2)
+      anchor = anchorOf(group)
+      if (anchor) {
+        got = await tryClaim(anchor, true)
+        // Still nothing and the row has not moved: the guard itself is not matching (never block a
+        // real notice on that) — claim without it.
+        if (!got && str(anchor.updated_at) === before) got = await tryClaim(anchor, false)
+        if (!got) {
+          const hot3 = recent(await readGroup())
+          if (hot3) return refuse(hot3)
+        }
+      }
+    }
+    if (got && anchor) claimedId = str(anchor.id)
+  }
+  // Put the claimed row's log back as it was (minus the claim). Used when nothing goes out, and for
+  // a claimed row that the writes below do not otherwise touch.
+  const release = async () => {
+    if (!claimedId) return
+    const row = (await readGroup()).find(r => str(r.id) === claimedId)
+    if (row) await db.from('parking_incidents').update({ notice_log: rawLog(row).filter((e: any) => !(e && e.claim === true)) }).eq('id', claimedId)
+  }
+
   const stays = await inHouseStays(lot.building, ymdET())
   const withThread = stays.filter(s => s.conversationId)
-  if (!withThread.length) return { ok: false, error: `Nobody in house at ${lot.building} has a message thread to send to.`, sent: 0, failed: 0, recipients: stays.length }
+  if (!withThread.length) { await release(); return { ok: false, error: `Nobody in house at ${lot.building} has a message thread to send to.`, sent: 0, failed: 0, recipients: stays.length } }
   const { sendGuestMessage } = await import('./guesty')
   const log: any[] = []
   let sent = 0, failed = 0
@@ -722,25 +797,29 @@ export async function sendNotice(incidentId: string, text: string, by: string, a
     const results = await Promise.all(batch.map(async s => {
       try {
         const r = await sendGuestMessage(s.conversationId as string, body)
-        return { reservationId: s.id, guest: s.guest, unit: s.unit, ok: !!r.ok, error: r.ok ? null : str((r as any).error || 'failed') }
-      } catch (e: any) { return { reservationId: s.id, guest: s.guest, unit: s.unit, ok: false, error: str(e?.message || e) } }
+        return { reservationId: s.id, guest: s.guest, unit: s.unit, ok: !!r.ok, error: r.ok ? null : str((r as any).error || 'failed'), at: claimAt, by }
+      } catch (e: any) { return { reservationId: s.id, guest: s.guest, unit: s.unit, ok: false, error: str(e?.message || e), at: claimAt, by } }
     }))
     for (const r of results) { log.push(r); if (r.ok) sent++; else failed++ }
   }
   const now = new Date()
   const due = new Date(now.getTime() + lot.noticeMinutes * 60000)
+  // The flag's own log as it stands now: its history and any "deadline alert raised" mark, without the claim.
+  const mineNow = rawLog((await readGroup()).find(r => str(r.id) === inc.id)).filter((e: any) => !(e && e.claim === true))
   const up: Record<string, any> = {
-    notice_text: body, notice_sent_n: inc.noticeSentN + sent, notice_sent_by: by, notice_log: inc.noticeLog.concat(log), updated_at: now.toISOString(),
+    notice_text: body, notice_sent_n: inc.noticeSentN + sent, notice_sent_by: by, notice_log: (mineNow.length ? mineNow : inc.noticeLog).concat(log), updated_at: now.toISOString(),
   }
   if (sent > 0) { up.notice_sent_at = inc.noticeSentAt || now.toISOString(); up.tow_due_at = inc.towDueAt || due.toISOString(); if (inc.status === 'open') up.status = 'notified' }
-  const { data, error: saveErr } = await supabaseAdmin().from('parking_incidents').update(up).eq('id', inc.id).select('*').single()
+  // The claim sat on another car of the same notice: clear it there first (the write below then
+  // gives that car the real record, when it is one of the cars being notified).
+  if (claimedId && claimedId !== inc.id) await release()
+  const { data, error: saveErr } = await db.from('parking_incidents').update(up).eq('id', inc.id).select('*').single()
   // The guests have the message even if our own record of it failed — say so, or the next person
   // sees "notice not sent" and sends it to the whole building a second time.
   let warning: string | undefined = sent > 0 && (saveErr || !data) ? 'The notice went out, but the flag could not be updated — do not send it again. Refresh, and mark the deadline by hand.' : undefined
   // The other cars in the same notice share its send time and deadline.
-  const rest = alsoIds.filter(x => x && x !== inc.id)
   if (sent > 0 && rest.length) {
-    const { error: restErr } = await supabaseAdmin().from('parking_incidents').update({ notice_text: body, notice_sent_n: sent, notice_sent_by: by, notice_log: log, notice_sent_at: up.notice_sent_at, tow_due_at: up.tow_due_at, status: 'notified', updated_at: now.toISOString() })
+    const { error: restErr } = await db.from('parking_incidents').update({ notice_text: body, notice_sent_n: sent, notice_sent_by: by, notice_log: log, notice_sent_at: up.notice_sent_at, tow_due_at: up.tow_due_at, status: 'notified', updated_at: now.toISOString() })
       .in('id', rest).eq('lot_id', inc.lotId).eq('status', 'open')
     if (restErr && !warning) warning = 'The notice went out, but the other cars in it still show as not notified — refresh before sending anything again.'
   }
@@ -768,12 +847,12 @@ export async function draftTowEmail(incidentId: string, by: string): Promise<{ o
     `Location: ${inc.spotLabel ? 'spot ' + inc.spotLabel : 'in the lot'}`,
     `First seen: ${stampET(inc.seenAt)}${inc.seenBy ? ' by ' + inc.seenBy : ''}`,
     inc.noticeSentAt ? `Notice to guests: ${stampET(inc.noticeSentAt)} (${inc.noticeSentN} guests), deadline ${inc.towDueAt ? stampET(inc.towDueAt) : '—'}` : `Notice to guests: not sent`,
-    photo ? `Photo: ${photo}` : '',
+    ...(photo ? [`Photo: ${photo}`] : []),
     ``,
     `Tow at the owner's expense per the posted lot rules${lot.rules ? ': "' + lot.rules + '"' : '.'}`,
     ``,
     `Authorized by ${by}, ${lot.building} — please confirm the pickup time by reply.`,
-  ].filter(l => l !== undefined)
+  ]
   const text = lines.join('\n')
   const preview = { to: lot.towEmail || '', subject, text }
   if (!lot.towEmail) return { ok: false, reason: 'no_tow_email', error: `Add the tow company's email on the lot's Settings first.`, preview, incident: inc }
@@ -809,21 +888,72 @@ export async function noteIncident(id: string, notes: string): Promise<Incident 
   return data ? incidentOf(data) : null
 }
 
-/** THE HOUR IS UP (cron + lazy on every lot load): draft the tow email for every notified car past its deadline. */
-export async function processDueTows(lotId?: string): Promise<{ checked: number; drafted: number; noTowEmail: number; errors: string[] }> {
+/** THE HOUR IS UP (cron + lazy on every lot load): draft the tow email for every notified car past
+ *  its deadline, then tell the team once per flag that the deadline has passed. */
+export async function processDueTows(lotId?: string): Promise<{ checked: number; drafted: number; noTowEmail: number; alerted: number; errors: string[] }> {
   let q = supabaseAdmin().from('parking_incidents').select('id').eq('status', 'notified').is('tow_draft_id', null).lte('tow_due_at', new Date().toISOString()).limit(20)
   if (lotId) q = q.eq('lot_id', lotId)
   const { data } = await q
   // `noTowEmail` is a lot waiting on its Settings, not a failure of this run; `errors` are drafts
   // that should have been written and were not (the cron reports those as a failed run).
-  const out = { checked: (data || []).length, drafted: 0, noTowEmail: 0, errors: [] as string[] }
+  const out = { checked: (data || []).length, drafted: 0, noTowEmail: 0, alerted: 0, errors: [] as string[] }
   for (const row of data || []) {
     const r = await draftTowEmail(str((row as any).id), 'Lighthouse (the notice period ended)')
     if (r.ok) out.drafted++
     else if (r.reason === 'no_tow_email') out.noTowEmail++
     else out.errors.push(str(r.error))
   }
+  try { out.alerted = await alertPassedDeadlines(lotId) } catch { /* the Flags tab still shows it; the next run tries again */ }
   return out
+}
+
+/**
+ * THE DEADLINE PASSED — TELL THE TEAM, ONCE PER FLAG (Jon, 2026-11-09). Until now a car past its hour
+ * showed only on the Flags tab. Same door as the "unregistered car" alert (raiseEveAlert: the bell +
+ * the customer care room, on that system's own schedule), and the link opens the lot on Flags.
+ * "Once" is remembered ON THE FLAG — an { alert: 'deadline' } entry in notice_log — because the alert
+ * store only refuses a repeat while its alert is open or closed in the last 12 hours. Only deadlines
+ * from the last two days are looked at, so switching this on does not announce old flags.
+ */
+const DEADLINE_ALERT = 'deadline'
+async function alertPassedDeadlines(lotId?: string): Promise<number> {
+  const db = supabaseAdmin()
+  const nowMs = Date.now()
+  let q = db.from('parking_incidents').select('*').in('status', ['notified', 'tow_drafted'])
+    .lte('tow_due_at', new Date(nowMs).toISOString()).gte('tow_due_at', new Date(nowMs - 48 * 3600_000).toISOString()).order('tow_due_at', { ascending: true }).limit(60)
+  if (lotId) q = q.eq('lot_id', lotId)
+  const { data } = await q
+  const due = ((data || []) as any[]).filter(r => !rawLog(r).some((e: any) => e && e.alert === DEADLINE_ALERT))
+  if (!due.length) return 0
+  const { raiseEveAlert } = await import('./handoff-store')
+  const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
+  const lots: Record<string, Lot | null> = {}
+  let raised = 0
+  for (const row of due) {
+    const inc = incidentOf(row)
+    if (!(inc.lotId in lots)) lots[inc.lotId] = await lotById(inc.lotId)
+    const lot = lots[inc.lotId]
+    if (!lot) continue
+    const car = `${carLabel(inc)}${inc.plate ? ' · ' + inc.plate : ''}${inc.spotLabel ? ' · spot ' + inc.spotLabel : ''}`
+    const next = inc.towDraftId
+      ? `The tow email${inc.towTo ? ' to ' + inc.towTo : ''} is drafted in Gmail Drafts — read it and press send, then mark the car towed.`
+      : lot.towEmail
+        ? `The tow email is not drafted yet${inc.towDraftError ? ' (' + inc.towDraftError.slice(0, 120) + ')' : ''} — draft it from the flag.`
+        : `No tow company email is on file for this lot — arrange the tow by phone${lot.towPhone ? ' (' + (lot.towCompany ? lot.towCompany + ', ' : '') + lot.towPhone + ')' : ''}.`
+    try {
+      await raiseEveAlert({
+        title: `Parking: tow deadline passed in the ${lot.building} lot — ${inc.plate || carLabel(inc)}`,
+        body: `${car} was given until ${inc.towDueAt ? timeET(inc.towDueAt) : 'the deadline'} and is still flagged.\n${next}\nIf the car has moved or registered, close the flag: ${base}/lots?lot=${lot.id}&tab=flags`,
+        unit: lot.building, dedupe: 'parking-due:' + inc.id, severity: 'urgent',
+      })
+    } catch { continue } // not raised and not marked — the next run tries again
+    // Raised now, or already there (the store refused a repeat): either way this flag is done.
+    // The freshest log is re-read so a notice sent in the last moments is not written over.
+    const { data: cur } = await db.from('parking_incidents').select('notice_log').eq('id', inc.id).maybeSingle()
+    const { error } = await db.from('parking_incidents').update({ notice_log: rawLog(cur || row).concat([{ alert: DEADLINE_ALERT, at: new Date().toISOString() }]) }).eq('id', inc.id)
+    if (!error) raised++
+  }
+  return raised
 }
 
 // ── Photos ──────────────────────────────────────────────────────────────────────────────────────

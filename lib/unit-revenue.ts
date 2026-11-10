@@ -1,12 +1,13 @@
 // Per-unit occupancy / ADR / RevPAR over a window, for the Properties table.
 //
 // Conventions, stated once:
-//   • live reservations only: confirmed / checked_in / checked_out / closed, cancellations excluded
-//     (the same status rule as lib/kpi — settle Guesty `closed` there before changing it here)
+//   • live reservations only: lib/basis LIVE_STAY_STATUSES (confirmed / checked_in / checked_out).
+//     `closed` came out 2026-11-09 — a request that never booked; cancellations excluded
 //   • the window is [from, to] INCLUSIVE: every night from `from` through the night of `to`, and
 //     a stay that straddles an edge contributes only its nights inside, money prorated to them
 //   • room revenue = raw.money.fareAccommodationAdjusted, cleaning = fareCleaning, channel fee =
-//     hostServiceFee, and the basis (lib/basis.ts) decides which of them count:
+//     hostServiceFeeIncTax (else hostServiceFee — lib/basis channelFeeOf, THE ONE NET), and the basis
+//     (lib/basis.ts) decides which of them count:
 //       netota (DEFAULT) — accommodation before the channel fee: the ADR Home, Revenue Center and
 //                          PriceLabs report (lib/kpi `adr`, room only since 2026-09-03)
 //       net              — after the channel fee: the owner statement's Net
@@ -23,14 +24,14 @@
 // whole-object select statement-timeouts. Only the four `->>` scalars below are pulled.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
-import { basisTriple, type Basis, type BasisRaw } from '@/lib/basis'
+import { basisTriple, channelFeeOf, LIVE_STAY_STATUSES, type Basis, type BasisRaw } from '@/lib/basis'
 
-const LIVE_RES = ['confirmed', 'checked_in', 'checked_out', 'closed']
+const LIVE_RES = LIVE_STAY_STATUSES
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v: any): number => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0 }
 const isCancelled = (s: any) => /cancel|declin|expir|denied|inquiry/i.test(str(s))
 
-export const RES_SELECT = 'id,listing_id,check_in,check_out,nights,status,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee'
+export const RES_SELECT = 'id,listing_id,check_in,check_out,nights,status,cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee,channelFeeInc:raw->money->>hostServiceFeeIncTax'
 
 /** The basis the Properties table opens on — the same ADR as Home and Revenue Center. */
 export const DEFAULT_BASIS: Basis = 'netota'
@@ -87,7 +88,7 @@ export async function unitRevenue(from: string, to: string, basis: Basis = DEFAU
     a.accomNum += num(r.fareBase) * share
     a.accomGrossNum += num(r.fare) * share
     a.cleaningNum += num(r.cleaning) * share
-    a.feeNum = (a.feeNum || 0) + num(r.channelFee) * share
+    a.feeNum = (a.feeNum || 0) + channelFeeOf(num(r.channelFeeInc), num(r.channelFee)) * share
     a.occNights += inWindow
   }
 

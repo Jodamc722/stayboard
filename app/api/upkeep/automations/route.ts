@@ -22,10 +22,10 @@ export async function GET() {
   const isOwner = isSuperadmin(gate.access.email)
   try {
     const s = await taskAutomationStates()
-    const body: TaskAutomationsPayload = { ok: true, creators: s.creators, rules: s.rules, isOwner, asOf: new Date().toISOString() }
+    const body: TaskAutomationsPayload = { ok: true, creators: s.creators, rules: s.rules, madeToday: s.madeToday, isOwner, asOf: new Date().toISOString() }
     return NextResponse.json(body)
   } catch (e: any) {
-    return NextResponse.json({ ok: false, creators: [], rules: { neverAssign: [], noInspections: [], noWelcomeCalls: [] }, isOwner, asOf: new Date().toISOString(), error: String(e?.message || e).slice(0, 200) }, { status: 500 })
+    return NextResponse.json({ ok: false, creators: [], rules: { neverAssign: [], noInspections: [], noWelcomeCalls: [] }, madeToday: null, isOwner, asOf: new Date().toISOString(), error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
 }
 

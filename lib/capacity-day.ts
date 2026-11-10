@@ -61,13 +61,39 @@ export type DayPicture = {
   /** When this picture was priced — a cached copy is never served as if it were now (lib/bust). */
   builtAt?: string
   /** Every person on shift, whether or not they have work. `shiftStartMin` is ET minutes past midnight. */
-  people: (DayLoad & { shiftStartMin?: number | null; shiftEndMin?: number | null; tasks?: PersonTask[]; clock?: PersonClock | null; crewDept?: string | null })[]
+  people: (DayLoad & { shiftStartMin?: number | null; shiftEndMin?: number | null; tasks?: PersonTask[]; clock?: PersonClock | null; crewDept?: string | null; held?: HeldLoad | null })[]
   /** Work with nobody on it — the pool a supervisor is choosing from. */
   unassigned: Array<{ stop: Stop; minutes: number; market: string | null; bestFor: Suggestion[] }>
   /** Moves worth making, strongest first. */
   suggestions: Suggestion[]
   kpi: DayKpi
   notes: string[]
+}
+
+/**
+ * WHAT A PERSON ACTUALLY HOLDS (2026-11-09 audit: a supervisor "named on 60 tasks", 864% loaded).
+ *
+ * Breezeway lets a task carry a whole group — every supervisor on every inspection, a vendor and a
+ * "Work Cell" beside the one tech doing the job. The model above charges each name the task, which
+ * is right for a two-person clean and wrong for a group. So a GROUP task — a non-clean task with
+ * more than two names, or an inspection with several names that include a supervisor — is charged
+ * once: to whoever finished it, else to the first name that is a known person (on the Homebase
+ * roster or in Crew & roles, not a vendor or a group label), else split between everyone named,
+ * exactly as before.
+ *
+ * ADDED BESIDE the existing figures, never instead of them: every other reader of this picture
+ * (Today in Ops, the Scheduler's shadow, Focus, Eve's watches, /api/capacity) sees the same numbers
+ * it always has. Null when the person's held work is simply everything they are named on.
+ */
+export type HeldLoad = {
+  cleans: number; otherTasks: number; loadMinutes: number; utilisationPct: number
+  verdict: DayLoad['verdict']; headroomCleans: number
+  /** The model's own sentence about the held day, when it has one. */
+  trigger: string | null
+  /** The tasks they hold, by id (a subset of `tasks`). */
+  taskIds: string[]
+  /** Group tasks they are named on and somebody else holds. */
+  namedOnly: number
 }
 
 export type Suggestion = {
@@ -173,7 +199,7 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
 
   // The day's board. One date, so this is small and needs no paging.
   const { data: tRows, error: tErr } = await db.from('breezeway_tasks_sync')
-    .select('id,reference_property_id,name,status,scheduled_date,assignees,assignee_name,started_at,finished_at,total_minutes,type_department')
+    .select('id,reference_property_id,name,status,scheduled_date,assignees,assignee_name,started_at,finished_at,total_minutes,type_department,finished_by_name')
     .eq('scheduled_date', date).order('id').limit(1000) // deliberate cap: one day's tasks, ~100 across the portfolio
   if (tErr) throw new Error('could not read the day\'s tasks — ' + String(tErr.message || tErr).slice(0, 120))
 
@@ -181,6 +207,10 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
   const tasksByPerson: Record<string, PersonTask[]> = {}
   const unassignedStops: Stop[] = []
   let closedOutToday = 0
+  // For the held view (HeldLoad): every assigned task once, with who was named and who finished it.
+  const assigned: { stop: Stop; people: string[]; finishedBy: string; isClean: boolean; inspection: boolean }[] = []
+  // Where each Breezeway spelling ended up after the name folds below.
+  const alias: Record<string, string> = {}
 
   for (const t of ((tRows as any[]) || [])) {
     const status = str(t.status).toLowerCase()
@@ -216,7 +246,10 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
     }
 
     if (!people.length) unassignedStops.push(stop)
-    else for (const p of people) (stopsByPerson[p] = stopsByPerson[p] || []).push(stop)
+    else {
+      for (const p of people) (stopsByPerson[p] = stopsByPerson[p] || []).push(stop)
+      assigned.push({ stop, people, finishedBy: personName(t.finished_by_name), isClean, inspection: taskGroupOf(t.name, t.type_department) === 'inspection' })
+    }
     const task: PersonTask = {
       id: str(t.id), unit: li.name, building: li.building || null, name: str(t.name),
       group: taskGroupOf(t.name, t.type_department),
@@ -268,6 +301,7 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
         const to = nameMatchesRoster(k, shiftNames)
         if (!to || to === k) continue
         m[to] = (m[to] || []).concat(m[k]); delete m[k]
+        alias[k] = to
       }
     }
     fold(stopsByPerson); fold(tasksByPerson)
@@ -279,11 +313,52 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
         if (!m[a] || !m[b] || !nameMatches(a, b)) continue
         const keep = bestSpelling(a, b) === a ? a : b, drop = keep === a ? b : a
         m[keep] = m[keep].concat(m[drop]); delete m[drop]
+        alias[drop] = keep
       }
     }
     fold2(stopsByPerson); fold2(tasksByPerson)
   }
   const names = Array.from(new Set([...Object.keys(shiftMin), ...Object.keys(stopsByPerson)]))
+
+  // ── THE HELD VIEW (see HeldLoad). Nothing below changes a figure above. ──
+  const canon = (n: string): string => { let k = n; for (let i = 0; i < 4 && alias[k] && alias[k] !== k; i++) k = alias[k]; return k }
+  const GROUP_NAME = /\b(services?|cleaning|llc|inc|corp|company|vendors?|team|crew|cell|group|dept|department|maintenance|housekeeping|office)\b/i
+  const personMemo: Record<string, boolean> = {}
+  const isPerson = (n: string): boolean => {
+    if (n in personMemo) return personMemo[n]
+    const k = canon(n)
+    let yes = shiftMin[k] != null
+    if (!yes && !GROUP_NAME.test(n) && crew) { const src = crew.deptOfDetailed(n).source; yes = src !== 'unrostered' && src !== 'inferred' }
+    return (personMemo[n] = yes)
+  }
+  const heldStops: Record<string, Stop[]> = {}
+  const namedOnly: Record<string, number> = {}
+  let groupTasks = 0
+  for (const a of assigned) {
+    const isGroup = (!a.isClean && a.people.length > 2)
+      || (a.inspection && a.people.length > 1 && !!crew && a.people.some(p => crew.deptOf(canon(p), roleOf[canon(p)] || null) === 'supervision'))
+    let holder: string | null = null
+    if (isGroup) {
+      // Whoever finished it — when that is somebody with a row here. (The mirror keeps who finished
+      // a task, not who started it, so a task still in progress falls to the first named person.)
+      if (a.finishedBy) {
+        const named = a.people.find(p => nameMatches(p, a.finishedBy))
+        const row = named ? canon(named) : (names.indexOf(a.finishedBy) >= 0 ? a.finishedBy : nameMatchesRoster(a.finishedBy, names))
+        if (row && names.indexOf(row) >= 0) holder = row
+      }
+      if (!holder) { const first = a.people.find(isPerson); if (first) holder = canon(first) }
+    }
+    if (holder) {
+      groupTasks++
+      ;(heldStops[holder] = heldStops[holder] || []).push({ ...a.stop, crewSize: 1 })
+      for (const p of a.people) { const k = canon(p); if (k !== holder) namedOnly[k] = (namedOnly[k] || 0) + 1 }
+    } else {
+      // Not a group task, or nobody to pin it on: everyone named carries it, split as the model always has.
+      const seen: Record<string, true> = {}
+      for (const p of a.people) { const k = canon(p); if (seen[k]) continue; seen[k] = true; (heldStops[k] = heldStops[k] || []).push(a.stop) }
+    }
+  }
+
   const people: DayLoad[] = names.map(name => {
     const dept = crew ? crew.deptOf(name, roleOf[name] || null) : 'other'
     const person: Person = {
@@ -305,7 +380,18 @@ async function buildDayPictureFresh(date: string, market?: string): Promise<DayP
     }
     // crewDept: the Crew & roles department (lib/crew) — null when the roster could not be read, so
     // a missing roster never hides anyone from Who's working.
-    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, shiftEndMin: shiftEndMin[name] ?? null, tasks: tasksByPerson[name] || [], clock, crewDept: crew ? str(dept) : null }
+    // Priced by the same model, on the stops they hold. Only when that differs from what they are named on.
+    let held: HeldLoad | null = null
+    if (groupTasks && (namedOnly[name] || (heldStops[name] || []).length !== (stopsByPerson[name] || []).length)) {
+      const mine = heldStops[name] || []
+      const h = assessDay({ date, person, stops: mine })
+      held = {
+        cleans: h.cleans, otherTasks: h.otherTasks, loadMinutes: h.loadMinutes, utilisationPct: h.utilisationPct,
+        verdict: h.verdict, headroomCleans: h.headroomCleans, trigger: (h.triggers || [])[0] || null,
+        taskIds: mine.map(s => str(s.id)), namedOnly: namedOnly[name] || 0,
+      }
+    }
+    return { ...load, shiftStartMin: shiftStartMin[name] ?? null, shiftEndMin: shiftEndMin[name] ?? null, tasks: tasksByPerson[name] || [], clock, crewDept: crew ? str(dept) : null, held }
   }).sort((a, b) => a.utilisationPct - b.utilisationPct)
 
   if (!Object.keys(shiftMin).length) {

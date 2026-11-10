@@ -226,6 +226,11 @@ export async function scanLostFound(opts: { days?: number; by?: string | null } 
   for (const l of listings) byName[l.name.trim().toLowerCase()] = { id: l.id, market: l.market }
   const reads = await readPosts(fresh, listings.map(l => l.name))
   let added = 0
+  // A find the database refused (anything but "already logged") used to vanish: the bookmark moved
+  // past the post and it was never read again. Those are now retried on the next read, and the
+  // Slack pill on /lost-found says so (2026-11-09 audit).
+  const unsaved: string[] = []
+  let saveError = ''
   for (let i = 0; i < fresh.length; i++) {
     const g = fresh[i]
     const rd = reads.find(x => x.i === i)
@@ -252,11 +257,12 @@ export async function scanLostFound(opts: { days?: number; by?: string | null } 
     if (stay) row.history.push({ at: now, who: 'Lighthouse', what: 'attached', note: 'Attached to ' + (stay.guest_name || 'the last stay') + ' (' + stay.check_in + ' → ' + stay.check_out + ') — the only checkout in that unit in the 3 days before' })
     const { error: e1 } = await db.from('lost_found_items').insert(row)
     if (!e1) added++
+    else if (!/duplicate|unique/i.test(str(e1.message))) { unsaved.push(g.id); saveError = str(e1.message).slice(0, 140) }
   }
   const newest = msgs.length ? msgs[msgs.length - 1].ts : s.lastTs
-  const missed = fresh.filter((g, i) => !reads.find(x => x.i === i)).map(g => g.id).sort()
+  const missed = [...fresh.filter((g, i) => !reads.find(x => x.i === i)).map(g => g.id), ...unsaved].sort((a, b) => Number(a) - Number(b))
   s.lastTs = missed.length ? String(Number(missed[0]) - 1) : newest
-  s.lastScanAt = now; s.lastError = error; s.lastAdded = added
+  s.lastScanAt = now; s.lastError = error || (unsaved.length ? unsaved.length + ' find' + (unsaved.length === 1 ? '' : 's') + ' could not be saved (' + saveError + ') — will try again' : null); s.lastAdded = added
   await writeState(s, opts.by || null)
   return { ok: true, added, error, channel: ch.name }
 }

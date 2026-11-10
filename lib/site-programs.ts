@@ -29,6 +29,7 @@ import { getNoService, skipsInspectionsIn } from './no-service'
 import { supabaseAdmin } from './supabase-admin'
 import { getSetting, setSetting } from './app-settings'
 import { buildingOf } from './segments'
+import { lighthouseCreatedIds, removeOwnDuplicate } from './own-tasks'
 import { isTaskDone, isTaskGone } from './task-categories'
 import {
   createBreezewayTask, updateBreezewayTask, cancelBreezewayTask, breezewayConfigured, breezewayPeopleLite, mapBreezewayTask,
@@ -475,9 +476,9 @@ function resolvePlace(place: Place, ctx: Ctx): { homeId: number | null; where: s
 
 const ids = (as: any): number[] => (Array.isArray(as) ? as : []).map((a: any) => Number(a?.id)).filter((n: number) => Number.isFinite(n))
 
-export async function planPrograms(day = ymdET(new Date()), only?: string): Promise<{ day: string; plans: PlacePlan[] }> {
+export async function planPrograms(day = ymdET(new Date()), only?: string): Promise<{ day: string; plans: PlacePlan[]; last: Record<string, LastDone> }> {
   const programs = (await loadPrograms()).filter(p => (only ? p.id === only : p.active))
-  if (!programs.length) return { day, plans: [] }
+  if (!programs.length) return { day, plans: [], last: {} }
   const ctx = await context()
   const db = supabaseAdmin()
   const resolved = programs.flatMap(p => p.places.map(place => ({ p, place, r: resolvePlace(place, ctx) })))
@@ -539,7 +540,72 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     else note = 'not today'
     plans.push({ ...base, due, why, people, cleaners, today: todayT, carry, extras, action, note })
   }
-  return { day, plans }
+  // The newest FINISHED task of each program in the look-back window (the Upkeep board's "last done").
+  const last: Record<string, LastDone> = {}
+  for (const p of programs) {
+    const pre = titlePrefix(p)
+    for (const t of tasks) {
+      if (str(t.name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').indexOf(pre) !== 0) continue
+      if (isTaskGone(t.status) || !isTaskDone(t.status, t.finished_at)) continue
+      const date = str(t.finished_at || t.scheduled_date).slice(0, 10)
+      if (date && (!last[p.id] || date > last[p.id].date)) last[p.id] = { date, taskId: str(t.id), place: str(t.name).slice(str(t.name).indexOf(pre) + pre.length).trim() }
+    }
+  }
+  return { day, plans, last }
+}
+
+export type LastDone = { date: string; taskId: string; place: string }
+
+/**
+ * ONE TILE PER PROPERTY PROGRAM, FOR THE MAIN UPKEEP BOARD (Jon, 2026-11-09: "programs should show
+ * on the board as well when new one is created"). Pure: built from the saved programs, today's plan
+ * and the last finished task — the same facts the Property programs tab shows, counted.
+ *   done      today's task at the place is finished
+ *   open      today's task is on the board (or due today and created on the next run)
+ *   late      an open task from an earlier day — it moves to today
+ *   notToday  nothing due there today
+ *   blocked   the place has no Breezeway property, so no task can be created
+ */
+export type ProgramTile = {
+  id: string; name: string; active: boolean; department: Program['department']
+  places: number; placeLabels: string[]
+  done: number; open: number; late: number; notToday: number; blocked: number
+  /** The next day one of its places is on its schedule (today when something is still open). null = no days set. */
+  nextRun: string | null
+  schedule: string
+  last: LastDone | null
+  /** off | noPlaces | noDays | blocked | null — why it is not producing tasks, when it is not. */
+  setup: 'off' | 'noPlaces' | 'noDays' | 'blocked' | null
+  people: number
+}
+export function programTiles(programs: Program[], plans: PlacePlan[], last: Record<string, LastDone>, day: string): ProgramTile[] {
+  return programs.map(p => {
+    const mine = plans.filter(x => x.programId === p.id)
+    let done = 0, open = 0, late = 0, notToday = 0, blocked = 0
+    for (const pl of mine) {
+      if (pl.action === 'skip') blocked++
+      else if (pl.action === 'move') late++
+      else if (pl.action === 'add' || pl.action === 'create') open++
+      else if (pl.note === 'done today') done++
+      else notToday++
+    }
+    const hasDays = (x: Place) => x.days.length > 0 || x.alternate || !!x.monthDay || x.onCleanDays
+    // The next scheduled day: today while something is open or late, else the first day on any place's schedule.
+    let nextRun: string | null = null
+    if (p.active && p.places.length) {
+      if (open + late > 0) nextRun = day
+      else for (let i = 1; i <= 62 && !nextRun; i++) { const d = shift(day, i); if (p.places.some(x => onDays(x, d))) nextRun = d }
+    }
+    const lines = Array.from(new Set(p.places.map(scheduleLine)))
+    const setup: ProgramTile['setup'] = !p.active ? 'off' : !p.places.length ? 'noPlaces' : !p.places.some(hasDays) ? 'noDays' : (mine.length > 0 && blocked === mine.length) ? 'blocked' : null
+    return {
+      id: p.id, name: p.name, active: p.active, department: p.department,
+      places: p.places.length, placeLabels: p.places.map(x => x.label).slice(0, 12),
+      done, open, late, notToday, blocked, nextRun,
+      schedule: lines.length === 1 ? lines[0] : lines.length ? 'Mixed days' : '',
+      last: last[p.id] || null, setup, people: p.people.length,
+    }
+  })
 }
 
 const place0 = (p: Program, pl: PlacePlan) => { const x = p.places.find(q => q.id === pl.placeId); return { ref: x ? x.ref : pl.label, label: pl.label } }
@@ -562,6 +628,8 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
       await db.from('breezeway_tasks_sync').upsert(m, { onConflict: 'id' })
     } catch { /* the next sync mirrors it */ }
   }
+  const extraIds = opts.dryRun ? [] : plans.flatMap(pl => pl.extras.map(x => str(x.id)))
+  const ownExtras = extraIds.length ? await lighthouseCreatedIds(extraIds).catch(() => null) : null
   for (const pl of plans) {
     const p = programs.find(x => x.id === pl.programId)
     if (!p) continue
@@ -571,10 +639,12 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
     if (p.department === 'inspection' && skipsInspectionsIn(noSvc, pl.label, pl.where)) { lines.push(tag + ': no-inspection building — skipped'); continue }
     const want = pl.people.concat(pl.cleaners).map(x => x.id)
     // Duplicates first: one open task per place.
+    // An extra this run can PROVE Lighthouse created (its id is in the creation log) and nobody has
+    // touched is deleted; every other extra gets the cancel it always got (2026-11-09, lib/own-tasks).
     for (const x of pl.extras) {
       if (opts.dryRun) { lines.push(tag + ': would cancel duplicate ' + x.id + ' (' + x.date + ')'); continue }
-      const c = await cancelBreezewayTask(x.id).catch(() => ({ ok: false } as any))
-      if (c.ok) { cancelled++; lines.push(tag + ': cancelled duplicate ' + x.id); try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', x.id) } catch { /* sync */ } }
+      const c = await removeOwnDuplicate(x.id, { ours: !!ownExtras && ownExtras.has(str(x.id)), source: 'site-programs' })
+      if (c.ok) { cancelled++; lines.push(tag + ': ' + (c.how === 'deleted' ? 'deleted' : 'cancelled') + ' duplicate ' + x.id) }
     }
     if (pl.action === 'skip' || pl.action === 'none') { lines.push(tag + ': ' + pl.note); continue }
     const t = pl.today || pl.carry
@@ -597,7 +667,7 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
     const templateId = await resolveTemplateId(p).catch(() => p.templateId || null)
     if (!templateId && p.templateName) lines.push(tag + ': checklist "' + p.templateName + '" is not in Breezeway yet — the task goes out with the note only')
     const res = await createBreezewayTask({
-      home_id: pl.homeId, name: taskTitle(p, { label: pl.label } as Place), type_department: p.department, scheduled_date: day,
+      home_id: pl.homeId, name: taskTitle(p, { label: pl.label } as Place), type_department: p.department, scheduled_date: day, source: 'site-programs',
       template_id: templateId || null, ...(p.description ? { description: await expandDescription(p.description, place0(p, pl)) } : {}), ...(want.length ? { assignments: want } : {}),
     })
     const id = res.ok && res.data ? str(res.data.id) : ''

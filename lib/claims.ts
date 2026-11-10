@@ -393,3 +393,40 @@ export function reviewerOf(claim: { stage?: string; history?: any[] | null }): {
   }
   return null
 }
+
+// ── ONE SET OF SUMS (2026-11-09 audit) ────────────────────────────────
+// The board header, the Closed section, the payables report and the API each added money up their
+// own way: "recovered" summed amount_paid on every claim (a claim marked paid and later changed to
+// withdrawn or duplicate kept its amount and was still counted), and the win rate divided by every
+// claim with any outcome, so each merged duplicate or withdrawal counted as a loss.
+//   asked     what we asked for — the typed amount, else the items' total
+//   received  money actually paid: only on a claim the channel PAID (in full or in part)
+//   win rate  paid ÷ (paid + denied). Withdrawn and duplicate are not answers from the channel.
+export const isPaidOutcome = (c: { outcome?: string | null }) => c.outcome === 'won' || c.outcome === 'partial'
+export function askedOf(c: Claim): number { return num(c.amount_sought) || itemsTotal(c.items || []) }
+export function receivedOf(c: Claim): number { return isPaidOutcome(c) ? (num(c.amount_paid) || 0) : 0 }
+export function claimTotals(list: Claim[]): { open: number; sought: number; recovered: number; paid: number; denied: number; winRate: number | null } {
+  let open = 0, sought = 0, recovered = 0, paid = 0, denied = 0
+  for (const c of list) {
+    if (c.stage !== 'closed') open++
+    // Asked: everything still live, plus what was paid. A dropped claim (withdrawn / duplicate) and
+    // a closed denial are no longer money we are seeking.
+    if (c.outcome !== 'withdrawn' && c.outcome !== 'duplicate' && (c.stage !== 'closed' || isPaidOutcome(c))) sought += askedOf(c)
+    recovered += receivedOf(c)
+    if (isPaidOutcome(c)) paid++
+    else if (c.outcome === 'denied') denied++
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100
+  return { open, sought: r2(sought), recovered: r2(recovered), paid, denied, winRate: paid + denied ? Math.round((paid / (paid + denied)) * 100) : null }
+}
+
+/** The first thing still missing before this claim can be filed — the one fact a board row leads with. */
+const GATE_SHORT: Record<string, string> = {
+  reservation: 'a reservation', items: 'an item', photos: 'damage photos', cost: 'item costs', link: 'replacement links',
+  condition: 'condition & age', summary: 'the summary', called: 'the guest call', deadline: 'window closed',
+}
+export function firstMissing(claim: Claim, items: ClaimItem[]): { key: string; short: string; label: string; more: number } | null {
+  const open = gatesFor(claim, items).filter(g => !g.ok)
+  if (!open.length) return null
+  return { key: open[0].key, short: GATE_SHORT[open[0].key] || open[0].label, label: open[0].label, more: open.length - 1 }
+}

@@ -97,7 +97,9 @@ export async function lostFoundHome(): Promise<{ id: number | null; name: string
 }
 
 /** Create the "Lost & Found Delivery" task for a paid item, assigned to Roberto + the county supervisor. */
-export async function pushShipTask(item: any): Promise<{ ok: boolean; taskId?: string; error?: string }> {
+export async function pushShipTask(item: any): Promise<{ ok: boolean; taskId?: string; error?: string; assignedTo?: string[]; date?: string }> {
+  // Belt and braces: the route checks too. No payment, no ship task.
+  if (!item.shipping_paid) return { ok: false, error: 'Not paid yet — the delivery task goes out once the guest has paid.' }
   if (item.breezeway_task_id) return { ok: true, taskId: String(item.breezeway_task_id) }
   const db = supabaseAdmin()
   const home = await lostFoundHome()
@@ -132,22 +134,29 @@ export async function pushShipTask(item: any): Promise<{ ok: boolean; taskId?: s
   if (!r.ok || !r.data || !r.data.id) return { ok: false, error: 'Breezeway ' + r.status + ': ' + str(r.text).slice(0, 160) }
   const taskId = String(r.data.id)
   const who = await deliveryPeople(item.market || null).catch(() => ({ ids: [] as number[], names: [] as string[] }))
-  if (who.ids.length) { try { await updateBreezewayTask(taskId, { assignments: who.ids }) } catch { /* shows unassigned; the item says who it was meant for */ } }
+  // An assignment Breezeway refused used to be reported as made ("assigned to Roberto") while the
+  // task sat unassigned. Only say assigned when Breezeway took it.
+  let assigned = false
+  if (who.ids.length) { try { const a = await updateBreezewayTask(taskId, { assignments: who.ids }); assigned = !!(a && a.ok) } catch { assigned = false } }
+  const assignedTo = assigned ? who.names : []
   try {
     await db.from('breezeway_tasks_sync').upsert({
       id: taskId, reference_property_id: null, home_id: homeId, name: title, status: 'created',
-      scheduled_date: date, type_department: 'inspection', assignees: who.names, report_url: r.data.report_url || null,
+      scheduled_date: date, type_department: 'inspection', assignees: assignedTo, report_url: r.data.report_url || null,
       raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),
     }, { onConflict: 'id' })
   } catch { /* the next Breezeway sync mirrors it */ }
-  return { ok: true, taskId, assignedTo: who.names, date } as any
+  return { ok: true, taskId, assignedTo, date }
 }
 
 /** Completed Breezeway delivery tasks → the item shows Sent. Cheap: one read of the mirror. */
 export async function syncSent(): Promise<number> {
   const db = supabaseAdmin()
   const { data: open } = await db.from('lost_found_items').select('id,breezeway_task_id,status,history')
-    .not('breezeway_task_id', 'is', null).in('status', ['held', 'contacted', 'claimed'])
+    .not('breezeway_task_id', 'is', null).is('sent_at', null).in('status', ['held', 'contacted', 'claimed', 'shipping'])
+  // 'shipping' with no sent_at is included (2026-11-09 audit): typing the tracking number marks the
+  // item Sent by hand, and its Breezeway task then fell out of this pass — never moved to the next
+  // Tuesday, never recorded as completed.
   const rows = (open || []) as any[]
   if (!rows.length) return 0
   const { data: tasks } = await db.from('breezeway_tasks_sync').select('id,status,assignees,scheduled_date,finished_at:raw->>finished_at').in('id', rows.map(r => String(r.breezeway_task_id)))

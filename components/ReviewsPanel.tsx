@@ -2,10 +2,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, XCircle, RefreshCw, Trash2, ChevronDown, Undo2, Play, Pencil, SkipForward, Check, Circle, Lock, ShieldAlert, ExternalLink } from 'lucide-react'
 import { Tag, Clamp, IconBtn, LeanList, LeanEmpty, type Tone } from '@/components/lean'
+import { reviewWindowDays } from '@/lib/review-thresholds'
+import { REMOVAL_STATUSES, emptyCase, type ReviewCase, type RemovalStatus } from '@/lib/review-case'
 import { rootCausesOf, removalGrounds, removalDraft, removalPath, recoverySteps, guestNoteDraft, lintReply, openerOf, type OpsState, type PlaybookReview } from '@/lib/review-playbook'
 
 type Cat = { key: string; label: string; rating: number; comment?: string }
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string; categories?: Cat[]; privateFeedback?: string | null }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string; categories?: Cat[]; privateFeedback?: string | null; checkOut?: string | null }
 
 // A LOW SCORE, on the review's own scale: 3 and under out of 5, 7 and under out of 10. Ratings are
 // stored out of 5 for every channel, so a Booking.com 7/10 arrives as 3.5 and is read as low here
@@ -474,14 +476,20 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
     if (!low.length) return null
     return <>{low.map(c => <Tag key={c.key} tone="rose" title={c.label + ' scored ' + c.rating + ' out of 5' + (c.comment ? ' — “' + c.comment + '”' : '')}>{c.label} {c.rating}</Tag>)}</>
   }
-  // Airbnb takes a public response for about 30 days after a review; after that the box is gone.
+  // THE CHANNEL'S REVIEW WINDOW, COUNTED FROM CHECKOUT (lib/review-thresholds reviewWindowDays):
+  // Airbnb closes reviews for both sides 14 days after checkout, Vrbo after 180. The tag appears in
+  // the last stretch (Airbnb: always, the window is short; Vrbo: the final 14 days). No checkout
+  // date on the row means no tag — the clock is never guessed from the review's own date.
   const windowTag = (r: Review) => {
-    if (!/airbnb/i.test(r.channel || '') || !r.created_at) return null
-    const age = Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86400000)
-    if (!Number.isFinite(age) || age < 21) return null
-    return age >= 30
-      ? <Tag title="Airbnb accepts a public response for about 30 days after the review. This one is older, so the post may be refused — mark it no-reply-needed if it is.">window likely closed</Tag>
-      : <Tag tone="amber" title="Airbnb accepts a public response for about 30 days after the review">closes in {30 - age}d</Tag>
+    const win = reviewWindowDays(r.channel)
+    if (win == null || !r.checkOut) return null
+    const out = new Date(r.checkOut + 'T12:00:00').getTime()
+    if (!Number.isFinite(out)) return null
+    const left = win - Math.floor((Date.now() - out) / 86400000)
+    const ch = r.channel || 'The channel'
+    if (left <= 0) return <Tag title={ch + ' closes its review window ' + win + ' days after checkout (' + r.checkOut + '). This one is past it, so the post may be refused — mark it no-reply-needed if it is.'}>window likely closed</Tag>
+    if (left > 14) return null
+    return <Tag tone={left <= 3 ? 'rose' : 'amber'} title={ch + ' closes its review window ' + win + ' days after checkout (' + r.checkOut + ')'}>closes in {left}d</Tag>
   }
   const head = (r: Review, extra?: ReactNode) => (
     <div className="flex items-center gap-1.5 flex-wrap">
@@ -978,6 +986,121 @@ function LowPlaybook({ r, replied }: { r: Review; replied?: boolean }) {
               <span className="text-[11px] text-muted flex-1 min-w-[12rem]">Not sent from here — paste it into the guest’s thread if you want it to go. Never ask for the review to be changed and never offer anything for it.</span>
             </div>
           </div>
+        )}
+      </div>
+
+      <CaseFile reviewId={r.id} causes={causes.map(c => c.label)} owners={Array.from(new Set(causes.map(c => String(c.owner))))} grounds={grounds.map(g => g.label)} />
+    </div>
+  )
+}
+
+// ── THE CASE FILE: what a person decided, saved (table review_cases) ──────────────────────────────
+// Everything above is worked out fresh from the review each time. This is the part only a person
+// knows: which causes they confirm, who owns the fix, whether a removal request was FILED BY THEM on
+// the channel, whether THEY sent the guest a note. Each tap saves; nothing here sends anything.
+//
+// The table may not exist yet. Then the playbook is exactly what it was, and ONE case file on the
+// page says so in a quiet line — not every open row, and never an error.
+let caseNoticeOwner: string | null = null
+const OWNER_CHOICES = ['clean', 'maintenance', 'inspection', 'guest care', 'listing']
+const REMOVAL_LABEL: Record<RemovalStatus, string> = { none: 'Not pursuing', drafted: 'Drafted', filed: 'Filed', removed: 'Removed', declined: 'Declined' }
+
+function CaseFile({ reviewId, causes, owners, grounds }: { reviewId: string; causes: string[]; owners: string[]; grounds: string[] }) {
+  const [c, setC] = useState<ReviewCase>(emptyCase())
+  const [state, setState] = useState<'loading' | 'ready' | 'missing' | 'off'>('loading')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [notes, setNotes] = useState('')
+
+  useEffect(() => {
+    let live = true
+    setState('loading')
+    fetch('/api/reviews/case?reviewId=' + encodeURIComponent(reviewId), { cache: 'no-store' })
+      .then(x => x.json())
+      .then(j => {
+        if (!live) return
+        if (j && j.missing) { setState('missing'); return }
+        if (!j || !j.ok || j.unreadable) { setState('off'); return }
+        const got = (j.case || emptyCase()) as ReviewCase
+        setC(got); setNotes(got.notes || ''); setState('ready')
+      })
+      .catch(() => { if (live) setState('off') })
+    return () => { live = false; if (caseNoticeOwner === reviewId) caseNoticeOwner = null }
+  }, [reviewId])
+
+  const save = async (patch: Record<string, any>, optimistic: Partial<ReviewCase>) => {
+    const before = c
+    setC({ ...c, ...optimistic }); setSaving(true); setMsg('')
+    try {
+      const res = await fetch('/api/reviews/case', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reviewId, ...patch }) })
+      const j = await res.json().catch(() => ({} as any))
+      if (j && j.missing) { setC(before); setState('missing'); return }
+      if (!res.ok || !j.ok) { setC(before); setMsg(String(j.error || j.message || 'Could not save').slice(0, 140)); return }
+      const got = j.case as ReviewCase
+      setC(got); setNotes(got.notes || '')
+    } catch { setC(before); setMsg('Could not save — try again') }
+    finally { setSaving(false) }
+  }
+
+  if (state === 'loading' || state === 'off') return null
+  if (state === 'missing') {
+    if (caseNoticeOwner == null) caseNoticeOwner = reviewId
+    if (caseNoticeOwner !== reviewId) return null
+    return <p className="text-[11px] text-muted">Saving needs the review_cases table.</p>
+  }
+
+  const lbl = 'text-[10px] uppercase tracking-wider font-semibold text-muted'
+  const chip = (on: boolean) => 'text-[11.5px] font-semibold px-2 py-1 rounded-md border disabled:opacity-60 ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')
+  // The causes worked out from the review, plus any saved earlier that the wording no longer yields.
+  const causeChoices = Array.from(new Set(causes.concat(c.rootCauses)))
+  const ownerChoices = Array.from(new Set(owners.concat(OWNER_CHOICES)))
+  const groundChoices = Array.from(new Set(grounds.concat(c.removalGround ? [c.removalGround] : [])))
+  const toggleCause = (k: string) => {
+    const next = c.rootCauses.indexOf(k) >= 0 ? c.rootCauses.filter(x => x !== k) : c.rootCauses.concat(k)
+    save({ rootCauses: next }, { rootCauses: next })
+  }
+  const day = (iso: string | null) => (iso ? String(iso).slice(0, 10) : '')
+
+  return (
+    <div className="border-t border-rose-200/70 pt-2 space-y-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className={lbl}>Case file</span>
+        <span className="text-[11px] text-muted">{saving ? 'Saving…' : c.updatedAt ? 'Saved ' + day(c.updatedAt) + (c.updatedBy ? ' · ' + c.updatedBy : '') : 'Each tap saves. Nothing here is sent anywhere.'}</span>
+        {msg && <span className="text-[11px] text-rose-700">{msg}</span>}
+      </div>
+      {causeChoices.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap" title="Confirm what actually went wrong — the causes above are read from the wording; these are the ones a person agrees with">
+          <span className="text-[11px] text-muted w-[4.5rem] shrink-0">Root cause</span>
+          {causeChoices.map(k => <button key={k} type="button" disabled={saving} aria-pressed={c.rootCauses.indexOf(k) >= 0} onClick={() => toggleCause(k)} className={chip(c.rootCauses.indexOf(k) >= 0) + ' capitalize'}>{k}</button>)}
+        </div>
+      )}
+      <div className="flex items-center gap-1 flex-wrap" title="Who owns the fix">
+        <span className="text-[11px] text-muted w-[4.5rem] shrink-0">Owner</span>
+        {ownerChoices.map(o => <button key={o} type="button" disabled={saving} aria-pressed={c.owner === o} onClick={() => { const v = c.owner === o ? '' : o; save({ owner: v }, { owner: v }) }} className={chip(c.owner === o) + ' capitalize'}>{o}</button>)}
+      </div>
+      <div className="flex items-center gap-1 flex-wrap" title="Where the removal request stands. Filed means a person submitted it on the channel — Lighthouse never does.">
+        <span className="text-[11px] text-muted w-[4.5rem] shrink-0">Removal</span>
+        {REMOVAL_STATUSES.map(st => <button key={st} type="button" disabled={saving} aria-pressed={c.removalStatus === st} onClick={() => { if (c.removalStatus !== st) save({ removalStatus: st }, { removalStatus: st }) }} className={chip(c.removalStatus === st)}>{REMOVAL_LABEL[st]}</button>)}
+        {c.removalFiledAt && <span className="text-[11px] text-muted">filed {day(c.removalFiledAt)}{c.removalFiledBy ? ' · ' + c.removalFiledBy : ''}</span>}
+      </div>
+      {c.removalStatus !== 'none' && groundChoices.length > 0 && (
+        <div className="flex items-center gap-1 flex-wrap" title="The kind of policy breach the request rests on">
+          <span className="text-[11px] text-muted w-[4.5rem] shrink-0">Ground</span>
+          {groundChoices.map(g => <button key={g} type="button" disabled={saving} aria-pressed={c.removalGround === g} onClick={() => { const v = c.removalGround === g ? '' : g; save({ removalGround: v }, { removalGround: v }) }} className={chip(c.removalGround === g) + ' text-left max-w-full'}>{g}</button>)}
+        </div>
+      )}
+      <div className="flex items-center gap-1 flex-wrap">
+        <span className="text-[11px] text-muted w-[4.5rem] shrink-0">Guest note</span>
+        <button type="button" disabled={saving} aria-pressed={!!c.guestNoteSentAt} title="Tick once a person has sent the private note from the inbox"
+          onClick={() => save({ guestNoteSent: !c.guestNoteSentAt }, { guestNoteSentAt: c.guestNoteSentAt ? null : new Date().toISOString() })} className={chip(!!c.guestNoteSentAt)}>
+          {c.guestNoteSentAt ? 'Sent ' + day(c.guestNoteSentAt) : 'Mark as sent'}
+        </button>
+      </div>
+      <div className="flex items-start gap-1.5">
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Notes — what was found, what was done, the channel’s case number"
+          className="flex-1 min-w-0 text-[12px] text-ink bg-white border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200" />
+        {notes.trim() !== (c.notes || '').trim() && (
+          <button type="button" disabled={saving} onClick={() => save({ notes }, { notes })} className="text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-ink text-white disabled:opacity-50">Save</button>
         )}
       </div>
     </div>

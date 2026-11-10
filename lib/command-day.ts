@@ -56,7 +56,7 @@ import { supabaseAdmin } from './supabase-admin'
 import { DAY_TAG, tooOld } from './bust'
 import { pageRows } from './db-page'
 import { buildOpsDay } from './ops-day'
-import { buildDayPicture, type DayPicture, type PersonTask, type PersonClock } from './capacity-day'
+import { buildDayPicture, type DayPicture, type PersonTask, type PersonClock, type HeldLoad } from './capacity-day'
 import { getTaskAutomation, complaintGist } from './auto-inspections'
 import { dutyIsOurs } from './eve/operating-model'
 import { getNoService, skipsWelcomeCallsIn } from './no-service'
@@ -186,7 +186,13 @@ export function isFieldDept(dept: string | null | undefined): boolean {
 }
 export type TeamRow = { person: string; role: string | null; cleans: number; otherTasks: number; loadMinutes: number; capacityMinutes: number; utilisationPct: number; verdict: string; headroomCleans: number; triggers: string[]; tasks: PersonTask[]; shiftStartMin?: number | null; shiftEndMin?: number | null; clock?: PersonClock | null
   /** Crew & roles department; field = housekeeping · supervision · maintenance · inspection. */
-  dept?: string | null; field?: boolean }
+  dept?: string | null; field?: boolean
+  /** What they actually hold once group assignments are charged to one person (lib/capacity-day HeldLoad). Null = the same as above. */
+  held?: HeldLoad | null
+  /** Group tasks they are named on that somebody else holds. */
+  namedOnly?: number
+  /** ROOM RIGHT NOW: the smaller of (capacity − load) and the minutes left in their shift. Null with no shift on record. Worked out per request, never cached. */
+  roomNowMinutes?: number | null }
 export type GlitchRow = { id: string; unit: string; issue: string; status: string; due: string | null; overdue: boolean; ageDays: number; assignee: string; hasTask: boolean; taskStatus: string | null; href: string }
 export type ClaimRow = { id: string; unit: string; property: string; guest: string; stage: string; stageLabel: string; deadline: string | null; daysLeft: number | null; amount: number | null; waitingOn: string | null }
 export type OverdueRow = { key: string; kind: 'breezeway' | 'field' | 'glitch' | 'urgent'; text: string; href: string | null; count?: number }
@@ -263,7 +269,50 @@ type CommandCore = {
  * `money`: may the caller see dollar amounts (lib/access canSeeMoney)? Left out, it is the signed-in
  * viewer's own switch — looked up only on a day that has an amount to hold back.
  */
-export async function buildCommandDay(opts: { money?: boolean } = {}): Promise<CommandDay> {
+export async function buildCommandDay(opts: { money?: boolean; slim?: boolean } = {}): Promise<CommandDay> {
+  const day = await commandDayFor(opts)
+  return { ...day, tiles: { ...day.tiles, team: { ...day.tiles.team, rows: teamView(day.tiles.team.rows, !!opts.slim) } } }
+}
+
+/** ET minutes past midnight, now. */
+function etNowMin(): number {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date())
+  return (Number(p.find(x => x.type === 'hour')?.value || 0) % 24) * 60 + Number(p.find(x => x.type === 'minute')?.value || 0)
+}
+
+/**
+ * The team rows as one request sees them. Done after the cache, because both things here move with
+ * the clock or the caller, and the shared core must not.
+ *
+ *   roomNowMinutes — for everyone: "3h free" at 3:30pm on a shift ending at 4 is thirty minutes.
+ *   slim (the browser, from app/api/command/day only) — a person's figures are what they HOLD
+ *     (group assignments charged once, lib/capacity-day HeldLoad), their task list is the tasks they
+ *     hold, and office rows carry none: every task used to ride once per name on it, which was most
+ *     of a 195KB response. Server readers (lib/open-close, Eve's watches) do not pass it and get the
+ *     rows exactly as the core built them.
+ */
+function teamView(rows: TeamRow[], slim: boolean): TeamRow[] {
+  const nowMin = etNowMin()
+  return rows.map(r => {
+    let row = r
+    if (slim) {
+      const h = r.held || null
+      const ids: Record<string, true> = {}
+      if (h) for (const id of h.taskIds) ids[id] = true
+      const tasks = r.field === false ? [] : (h ? r.tasks.filter(t => ids[t.id]) : r.tasks)
+        .map(t => ({ ...t, name: t.group === 'clean' ? '' : t.name.slice(0, 80) }))
+      row = {
+        ...r, tasks, triggers: (h ? (h.trigger ? [h.trigger] : []) : r.triggers.slice(0, 1)), held: null, namedOnly: h ? h.namedOnly : 0,
+        ...(h ? { cleans: h.cleans, otherTasks: h.otherTasks, loadMinutes: h.loadMinutes, utilisationPct: h.utilisationPct, verdict: h.verdict, headroomCleans: h.headroomCleans } : {}),
+      }
+    }
+    const hasShift = row.shiftEndMin != null && row.capacityMinutes > 0
+    const left = !hasShift ? null : row.clock && row.clock.out && !row.clock.open ? 0 : Math.max(0, (row.shiftEndMin as number) - Math.max(nowMin, row.shiftStartMin ?? 0))
+    return { ...row, roomNowMinutes: left == null ? null : Math.max(0, Math.min(row.capacityMinutes - row.loadMinutes, left)) }
+  })
+}
+
+async function commandDayFor(opts: { money?: boolean }): Promise<CommandDay> {
   const today = ymd(new Date())
   const [core, dismissRow] = await Promise.all([
     commandCore(today),
@@ -280,26 +329,45 @@ export async function buildCommandDay(opts: { money?: boolean } = {}): Promise<C
   return seesMoney ? day : withoutRefundAmounts(day)
 }
 
-/** A cached core older than this is rebuilt in place rather than served as now (lib/bust). */
+/** A core younger than this is simply the day. */
 const CORE_MAX_AGE_MS = 90_000
+/** Older than that and up to this, it is still shown — while a newer one is built behind it. Past this, the reader waits for the build. */
+const CORE_STALE_OK_MS = 5 * 60_000
 
-/** The in-place rebuild under way on this instance, if any — so readers share it instead of each starting one. */
+/** The rebuild under way on this instance, if any — so readers share it instead of each starting one. */
 let coreRebuild: { today: string; p: Promise<CommandCore> } | null = null
+/** The last core this instance built itself. The shared cache may still hold an older one. */
+let coreBuilt: CommandCore | null = null
 
-async function commandCore(today: string): Promise<CommandCore> {
-  let core: CommandCore
-  try { core = await cachedCore(today) }
-  catch (e: any) { if (e && e.uncachedCore) return e.uncachedCore as CommandCore; throw e }
-  if (!tooOld(core.generatedAt, CORE_MAX_AGE_MS)) return core
-  // ONE REBUILD AT A TIME (2026-11-09 audit). After a quiet spell every reader that arrived found
-  // the cached day too old and built its own — ~30 reads each, for the same answer. The first one
-  // builds; the rest wait on it. Dropped the moment it settles, so nothing here is ever served late.
+function rebuildCore(today: string): Promise<CommandCore> {
   if (coreRebuild && coreRebuild.today === today) return coreRebuild.p
   const entry = { today, p: buildCommandCore(today) }
   coreRebuild = entry
   const clear = () => { if (coreRebuild === entry) coreRebuild = null }
-  entry.p.then(clear, clear)
+  // A build whose board read failed is used by the request that made it and never remembered.
+  entry.p.then(c => { if (!c.dayFailed) coreBuilt = c; clear() }, clear)
   return entry.p
+}
+
+/**
+ * NOBODY WAITS FOR A DAY THAT IS ALREADY ON HAND (2026-11-09 audit, pass 3: the read still took ~3s).
+ *
+ * The cache (30s) hands back an expired entry and refreshes it behind the response. The old rule
+ * then refused anything over 90s and built the whole day again, in the request — so after any quiet
+ * minute the reader paid for two builds and waited for one. Now: up to five minutes old, the day on
+ * hand is returned at once and the cache's own refresh is the ONE build behind it; the page re-reads
+ * every minute and gets it. Only with nothing usable — a cold start, a new day, or nobody looking
+ * for five minutes — does a reader wait, and then every reader on this instance shares that build.
+ * A write still shows at once: bustDay() drops the cache entry, and the read after it builds fresh.
+ */
+async function commandCore(today: string): Promise<CommandCore> {
+  let core: CommandCore
+  try { core = await cachedCore(today) }
+  catch (e: any) { if (e && e.uncachedCore) return e.uncachedCore as CommandCore; throw e }
+  // This instance may have built a newer day than the shared cache holds.
+  if (coreBuilt && coreBuilt.today === today && Date.parse(coreBuilt.generatedAt) > Date.parse(core.generatedAt)) core = coreBuilt
+  if (!tooOld(core.generatedAt, CORE_MAX_AGE_MS)) return core
+  return tooOld(core.generatedAt, CORE_STALE_OK_MS) ? rebuildCore(today) : core
 }
 
 const cachedCore = unstable_cache(async (today: string): Promise<CommandCore> => {
@@ -956,7 +1024,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const overdueTotal = bzOverdue + fieldOverdue.length + glOverdue
 
   // ── TEAM: the capacity model, priced per person ─────────────────────────────────────────────
-  const teamRows: TeamRow[] = (cap?.people || []).map(p => ({ person: p.person, role: null, cleans: p.cleans, otherTasks: p.otherTasks, loadMinutes: p.loadMinutes, capacityMinutes: p.capacityMinutes, utilisationPct: p.utilisationPct, verdict: p.verdict, headroomCleans: p.headroomCleans, triggers: p.triggers || [], tasks: p.tasks || [], shiftStartMin: (p as any).shiftStartMin ?? null, shiftEndMin: (p as any).shiftEndMin ?? null, clock: (p as any).clock ?? null, dept: (p as any).crewDept ?? null, field: isFieldDept((p as any).crewDept) }))
+  const teamRows: TeamRow[] = (cap?.people || []).map(p => ({ person: p.person, role: null, cleans: p.cleans, otherTasks: p.otherTasks, loadMinutes: p.loadMinutes, capacityMinutes: p.capacityMinutes, utilisationPct: p.utilisationPct, verdict: p.verdict, headroomCleans: p.headroomCleans, triggers: p.triggers || [], tasks: p.tasks || [], shiftStartMin: (p as any).shiftStartMin ?? null, shiftEndMin: (p as any).shiftEndMin ?? null, clock: (p as any).clock ?? null, dept: (p as any).crewDept ?? null, field: isFieldDept((p as any).crewDept), held: p.held ?? null }))
     .sort((a, b) => (a.verdict === 'implausible' ? 1 : 0) - (b.verdict === 'implausible' ? 1 : 0) || b.utilisationPct - a.utilisationPct)
   const idle = teamRows.filter(p => p.verdict !== 'implausible' && p.capacityMinutes > 0 && p.cleans + p.otherTasks === 0).map(p => p.person)
   const k = cap?.kpi

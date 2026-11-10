@@ -374,7 +374,7 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
     try {
       const r = await createBreezewayTask({
         name, type_department: 'inspection', type_priority: c.reason === 'big arrival' ? 'high' : 'urgent',
-        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id],
+        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id], source: 'insp-prearrival',
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
@@ -630,7 +630,20 @@ async function moveReviewInspectionsForward(db: any, existing: any[], today: str
   })
   const moveLids = Array.from(new Set(needMove.map((e: any) => str(e.listing_id)).filter(Boolean)))
   const moveNext = await nextCheckouts(db, moveLids, today)
+  // NO-INSPECTION BUILDINGS (Jon, 2026-11-06): an inspection filed before the rule (or by hand) at
+  // such a building is not rolled forward to a new day — Lighthouse does not chase it. It is left
+  // exactly as it is for a person to close.
+  const ns = await getNoService()
+  const metaOf: Record<string, any> = {}
+  if (moveLids.length) {
+    try {
+      const { data: ls } = await db.from('guesty_listings').select('id, nickname, title, building').in('id', moveLids.slice(0, 300))
+      for (const l of (ls || []) as any[]) metaOf[str(l.id)] = l
+    } catch { /* names unknown: the task's own name is still checked below */ }
+  }
   for (const e of needMove) {
+    const m0 = metaOf[str(e.listing_id)] || {}
+    if (skipsInspectionsIn(ns, m0.building, m0.nickname, m0.title, e.unit_name, tmap[str(e.task_id)]?.name)) continue
     const nxt = moveNext[str(e.listing_id)]
     if (!nxt) continue  // nothing on the calendar yet — it moves when a booking lands
     const t = tmap[str(e.task_id)]
@@ -648,6 +661,8 @@ async function moveReviewInspectionsForward(db: any, existing: any[], today: str
 export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; enabled?: boolean; scanned: number; candidates: any[]
   created: number; failed: number; movedForward: number; alreadyCovered: number; waitingForCheckout: number
+  /** Reviews not filed this run because an inspection is already open on the unit. */
+  coveredByOpen?: number
   skippedNoService?: number; skipped?: { reviewId: string; unit_name: string; reason: string }[]
 }> {
   const cfg = await getTaskAutomation()
@@ -755,9 +770,38 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
     ctx = await unitContext(db, Array.from(new Set(candidates.map(c => str(c.listing_id)).filter(Boolean))), candidates.map(c => c.reviewId))
   } catch { ctx = {} }
 
-  let created = 0, failed = 0, waitingForCheckout = 0
+  // ANY OPEN INSPECTION ON THE UNIT COVERS IT (2026-11-09, the same rule the arrival-feedback pass
+  // uses): a pre-arrival walk, another review's quality inspection or one a person filed is already
+  // going through that door — a second inspection is the duplicate. The review is left without a
+  // receipt, so it is looked at again next run; once that walk finishes it reads as covered. One per
+  // unit per run for the same reason: two low reviews on one unit are one inspection. If the mirror
+  // cannot be read, nothing is created this run.
+  const openOn = new Set<string>()
+  let openReadFailed = false
+  {
+    const cl = Array.from(new Set(candidates.map(c => str(c.listing_id)).filter(Boolean)))
+    if (cl.length) {
+      try {
+        const { data: openRows, error: openErr } = await db.from('breezeway_tasks_sync').select('id, reference_property_id, name, status, scheduled_date')
+          .in('reference_property_id', cl.slice(0, 300)).is('finished_at', null)
+          .gte('scheduled_date', ymdET(new Date(Date.now() - 45 * 86400000))).lte('scheduled_date', ymdET(new Date(Date.now() + 90 * 86400000)))
+          .or('name.ilike.%inspect%,name.ilike.%unit%check%,name.ilike.%quality%')
+          .order('scheduled_date').limit(1000)
+        if (openErr) openReadFailed = true
+        for (const t of (openRows || []) as any[]) {
+          if (/complet|finish|close|approv|cancel|delet|void/i.test(str(t.status))) continue
+          openOn.add(str(t.reference_property_id))
+        }
+      } catch { openReadFailed = true }
+    }
+  }
+  if (openReadFailed) console.error('low-review inspections: the open-inspection read failed — nothing created this run')
+
+  let created = 0, failed = 0, waitingForCheckout = 0, coveredByOpen = 0
   for (const c of candidates) {
     if (!c.hasBreezeway) continue
+    if (openReadFailed) continue
+    if (openOn.has(str(c.listing_id))) { coveredByOpen++; continue }
     // No upcoming checkout = nowhere sensible to stand the inspector. The review stays
     // unrecorded so the next run re-checks — it fires the moment a checkout appears.
     if (!c.nextCheckout) { waitingForCheckout++; continue }
@@ -807,7 +851,7 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
     try {
       const r = await createBreezewayTask({
         name, type_department: 'inspection', type_priority: 'high',
-        scheduled_date: c.nextCheckout, description, home_id: homeOf[str(c.listing_id)],
+        scheduled_date: c.nextCheckout, description, home_id: homeOf[str(c.listing_id)], source: 'insp-low-review',
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
@@ -827,12 +871,13 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
         market: c.market, task_id: taskId, assignees: reused ? [] : assignedNames,
       }, { onConflict: 'reservation_id' })
       if (!reused) created++
+      openOn.add(str(c.listing_id))
     } catch (e) {
       failed++
       console.error('low-review inspections: create failed for review', c.reviewId, e)
     }
   }
-  return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, alreadyCovered, waitingForCheckout, skippedNoService: skipped.length, skipped }
+  return { ok: true, scanned: (revRows || []).length, candidates, created, failed, movedForward, alreadyCovered, waitingForCheckout, coveredByOpen, skippedNoService: skipped.length, skipped }
 }
 
 // ── ARRIVAL INTO A UNIT WITH A BAD REVIEW (Jon, 2026-09-30) ─────────────────────────────────────
@@ -1002,7 +1047,7 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
     try {
       const r = await createBreezewayTask({
         name, type_department: 'inspection', type_priority: 'high',
-        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id],
+        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id], source: 'insp-arrival-feedback',
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
@@ -1236,7 +1281,7 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
     try {
       const r = await createBreezewayTask({
         name, type_department: 'inspection', type_priority: 'high',
-        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id],
+        scheduled_date: scheduled, description, home_id: homeOf[c.listing_id], source: 'insp-deep-clean',
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)

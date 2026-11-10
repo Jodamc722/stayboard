@@ -22,9 +22,12 @@ export default async function GuestInboxPage({ searchParams }: { searchParams?: 
   if (!access.allowed) redirect('/no-access')
   if (!atLeast(access.levels['messages'], 'view')) redirect(access.landing || '/no-access')
   const data = await loadInbox()
+  // Who is looking — so "Mine" and "Take it" in the queue mean this person.
+  const email = String(access.email || '').toLowerCase()
+  const me = { email, name: String((access.profile as any)?.name || (access.profile as any)?.full_name || '').trim() || email.split('@')[0] }
   return (
     <Shell>
-      <LiveInbox initial={data} />
+      <LiveInbox initial={data} me={me} />
     </Shell>
   )
 }

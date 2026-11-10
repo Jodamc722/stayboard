@@ -12,6 +12,8 @@ import { canSeeMoney, type Access } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { loadPhoneThread } from '@/lib/phone-threads'
 import { talkrouteConfigured } from '@/lib/talkroute'
+import { cleanGuestName } from '@/lib/guest-name'
+import { hostVoiceFor } from '@/lib/host-voice'
 
 export const CHANNEL_LABELS: Record<string, string> = {
   airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', homeaway: 'VRBO', homeaway2: 'VRBO', booking: 'Booking', 'booking.com': 'Booking',
@@ -34,6 +36,22 @@ export type GuestyThread = {
   conversationId: string; channel: string; guest: string; unit: string; listingName: string
   messages: any[]; reservation: ThreadReservation; reservationId: string | null; guestyUrl: string; canReply: boolean
   guestEmail: string | null; guestPhone: string | null
+  /** The Guesty listing behind the thread — what "Create task" files against. */
+  listingId: string | null
+  /** The sign-off this home's replies carry when it is hosted under its owners' names (lib/host-voice), else null. */
+  signOff: string | null
+  /** What we believe about the unit's door code (door_code_state) — never the code itself. */
+  door: DoorStatus | null
+  /** Changes only when the thread's messages do: the pane sends it back and skips an identical reload. */
+  sig: string
+}
+/** Door-code health for the thread header: when it was last confirmed working, last reported failing, last changed. */
+export type DoorStatus = { verifiedAt: string | null; failedAt: string | null; fails: number; changedAt: string | null }
+
+/** A fingerprint of a thread's messages: how many, and the newest one's id and time. */
+export function threadSig(msgs: { id?: any; sent_at?: any }[]): string {
+  const last = msgs.length ? msgs[msgs.length - 1] : null
+  return msgs.length + ':' + String(last?.id ?? '') + ':' + String(last?.sent_at ?? '')
 }
 export type PhoneThreadData = {
   kind: 'phone'
@@ -44,24 +62,31 @@ export type PhoneThreadData = {
 export async function loadGuestyThread(id: string, access: Access): Promise<GuestyThread | null> {
   const sb = supabaseAdmin()
   const money = canSeeMoney(access)
-  const [{ data: convo }, { data: msgs }] = await Promise.all([
+  // THE NEWEST 500, NOT THE OLDEST (inbox audit, 2026-11-09). This read was oldest-first with a
+  // limit, so a thread past 500 messages showed its first 500 and silently dropped everything
+  // recent — including the message being answered. Newest-first, then turned back into reading order.
+  const [{ data: convo }, { data: newest }] = await Promise.all([
     sb.from('guesty_conversations').select('id, reservation_id, listing_id, guest_name, channel, raw').eq('id', id).maybeSingle(),
-    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at, module, is_automated').eq('conversation_id', id).order('sent_at', { ascending: true }).limit(500),
+    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at, module, is_automated').eq('conversation_id', id).order('sent_at', { ascending: false }).limit(500),
   ])
   if (!convo) return null
+  const msgs: any[] = ((newest ?? []) as any[]).slice().reverse()
   const meta: any = (convo.raw && typeof convo.raw === 'object') ? (convo.raw as any).meta || {} : {}
   const metaRes: any = Array.isArray(meta.reservations) && meta.reservations.length ? meta.reservations[0] : null
   const metaListing: any = metaRes?.listing || null
   let listingName = metaListing?.nickname || metaListing?.title || ''
-  if (!listingName && convo.listing_id) {
-    const { data: l } = await sb.from('guesty_listings').select('nickname, title').eq('id', convo.listing_id).maybeSingle()
-    listingName = l?.nickname || l?.title || ''
-  }
-  let reservation: any = null
-  if (convo.reservation_id) {
-    const { data: r } = await sb.from('guesty_reservations').select(RES_COLS).eq('id', convo.reservation_id).maybeSingle()
-    if (r) reservation = r
-  }
+  const listingId: string | null = convo.listing_id ? String(convo.listing_id) : (metaListing?._id ? String(metaListing._id) : null)
+  // ONE ROUND for the three reads that hang off the conversation row: the listing (its building says
+  // whose voice the home speaks in), the booking, and the door-code health for the header.
+  const [lRes, rRes, dRes] = await Promise.all([
+    listingId ? sb.from('guesty_listings').select('nickname, title, building').eq('id', listingId).maybeSingle() : Promise.resolve({ data: null }),
+    convo.reservation_id ? sb.from('guesty_reservations').select(RES_COLS).eq('id', convo.reservation_id).maybeSingle() : Promise.resolve({ data: null }),
+    listingId ? sb.from('door_code_state').select('changed_at,last_verified_at,last_failed_at,fail_count').eq('listing_id', listingId).maybeSingle() : Promise.resolve({ data: null }),
+  ].map((q: any) => Promise.resolve(q).catch(() => ({ data: null }))))
+  const l: any = (lRes as any)?.data || null
+  const d: any = (dRes as any)?.data || null
+  if (!listingName) listingName = l?.nickname || l?.title || ''
+  let reservation: any = (rRes as any)?.data || null
   if (!reservation && metaRes) {
     const stay: any = metaRes.stay || {}
     reservation = {
@@ -73,12 +98,17 @@ export async function loadGuestyThread(id: string, access: Access): Promise<Gues
   if (reservation && !money) reservation = { ...reservation, money_total: null, money_balance: null, money_currency: null }
   const channel = CHANNEL_LABELS[String(convo.channel || '').toLowerCase()] || convo.channel || ''
   const unit = unitOf(listingName || reservation?.listing_name || '')
-  const guest = convo.guest_name || meta.guest?.fullName || reservation?.guest_name || 'Guest'
+  // The name as a person writes it (lib/guest-name): Expedia's "MAR??A GABRIELA" reads "María Gabriela".
+  const guest = cleanGuestName(convo.guest_name || meta.guest?.fullName || reservation?.guest_name, meta.guest?.fullName, reservation?.guest_name, [meta.guest?.firstName, meta.guest?.lastName].filter(Boolean).join(' ')) || 'Guest'
+  if (reservation && reservation.guest_name) reservation = { ...reservation, guest_name: cleanGuestName(reservation.guest_name, meta.guest?.fullName, convo.guest_name) || reservation.guest_name }
+  const hv = hostVoiceFor(listingName, reservation?.listing_name, l?.building, l?.nickname)
+  const door: DoorStatus | null = d ? { verifiedAt: d.last_verified_at || null, failedAt: d.last_failed_at || null, fails: Number(d.fail_count) || 0, changedAt: d.changed_at || null } : null
   return {
     kind: 'guesty', conversationId: String(convo.id), channel, guest, unit, listingName: listingName || reservation?.listing_name || '',
-    messages: (msgs ?? []) as any[], reservation: reservation && reservation.id ? reservation : null, reservationId: convo.reservation_id ? String(convo.reservation_id) : null,
+    messages: msgs, reservation: reservation && reservation.id ? reservation : null, reservationId: convo.reservation_id ? String(convo.reservation_id) : null,
     guestyUrl: `https://app.guesty.com/inbox/${convo.id}`, canReply: atLeast(access.levels['messages'], 'edit'),
     guestEmail: meta.guest?.email || null, guestPhone: reservation?.guest_phone || meta.guest?.phone || null,
+    listingId, signOff: hv ? hv.signOff : null, door, sig: threadSig(msgs),
   }
 }
 
@@ -91,7 +121,7 @@ export async function loadPhoneThreadData(number: string, access: Access): Promi
     if (r) reservation = canSeeMoney(access) ? r : { ...r, money_total: null, money_balance: null, money_currency: null }
   }
   return {
-    kind: 'phone', number: t.number, display: t.display, guest: t.guestName || reservation?.guest_name || t.display, unit: unitOf(reservation?.listing_name || ''),
+    kind: 'phone', number: t.number, display: t.display, guest: cleanGuestName(t.guestName || reservation?.guest_name, reservation?.guest_name) || t.display, unit: unitOf(reservation?.listing_name || ''),
     events: t.events, reservation, reservationId: t.reservationId || null, conversationId: t.conversationId, fromNumber: t.fromNumber, connected,
     canReply: atLeast(access.levels['messages'], 'edit'),
   }

@@ -22,7 +22,8 @@
 // furniture"). Handing that to an owner as our plan reads like a leaked work order, so each theme
 // carries a second line here written in the voice the rest of the report uses.
 import 'server-only'
-import { pullReviews } from '@/lib/owner-report'
+import { pullReviews, engineOf } from '@/lib/owner-report'
+import { isCurrentChannelReview } from '@/lib/channel-current-review'
 import { THEMES, looksNegative, sentenceAbout } from '@/lib/review-themes'
 
 // THE SAFETY RULE THIS SLIDE HAS TO OBEY TOO.
@@ -122,24 +123,70 @@ export type Recommendations = {
   to: string
   /** LIFETIME (Jon, 2026-11-03: "the reviews should be lifetime reviews"): every review these units
    *  have ever had, up to the as-of date — what the guest-score slide shows. */
-  lifetime?: { avgRating: number | null; reviews: number }
+  lifetime?: { avgRating: number | null; reviews: number
+    /** Engine 2 only: reviews left on a channel listing that has since been replaced — not counted. */
+    replaced?: number }
 }
 
-async function lifetimeReviews(ids: string[], asOf: string): Promise<{ avgRating: number | null; reviews: number }> {
+type Lifetime = { avgRating: number | null; reviews: number; replaced?: number }
+
+/**
+ * `currentOnly` (engine-2 reports): a review counts only if it was left on the channel listing
+ * that is live NOW (Jon, 2026-11-09: "we recreated listings on Airbnb, so make sure the review
+ * score is the current score"). lib/channel-current-review decides, from the channel's own listing
+ * id on the review against the one on the live listing; when either is unknown the review is kept.
+ * The ones left out are counted, so the slide can say how many.
+ */
+async function lifetimeReviews(ids: string[], asOf: string, currentOnly: boolean): Promise<Lifetime> {
   const { supabaseAdmin } = await import('./supabase-admin')
   const db = supabaseAdmin()
   const ratings: number[] = []
+  let replaced = 0
+  // Each live listing's channel integrations — what a review's own listing id is checked against.
+  const ints: Record<string, any[]> = {}
+  let canCheck = false
+  if (currentOnly) {
+    try {
+      const { data: ls, error } = await db.from('guesty_listings').select('id, ints:raw->integrations').in('id', ids).limit(1000)
+      if (!error) {
+        for (const l of (ls || []) as any[]) if (Array.isArray(l.ints)) ints[String(l.id)] = l.ints
+        canCheck = Object.keys(ints).length > 0
+      }
+    } catch { canCheck = false }
+  }
+  const baseCols = 'rating, excluded_from_score'
+  const extCols = baseCols + ', listing_id, channel, ext:raw->>externalListingId, ext2:raw->>external_listing_id, rl:raw->rawReview->>listing_id, rl2:raw->rawReview->>listingId, rl3:raw->rawReview->>external_listing_id'
   for (let i = 0; i < 30; i++) {
     // excluded_from_score rides along so the lifetime score obeys the same rule as every other
     // rating in the app (the reviews desk, projections, onboarding): a review marked "does not
     // count" was still being averaged into the score an owner reads (2026-11-09 audit).
-    const { data } = await db.from('guesty_reviews').select('rating, excluded_from_score').in('listing_id', ids).is('removed_at', null)
+    const page = (cols: string) => db.from('guesty_reviews').select(cols).in('listing_id', ids).is('removed_at', null)
       .lte('created_at', asOf + 'T23:59:59Z').order('id').range(i * 1000, i * 1000 + 999)
+    let res: any = await page(canCheck ? extCols : baseCols)
+    // If the channel-id columns cannot be read, fall back to counting everything rather than nothing.
+    if (res.error && canCheck) { canCheck = false; replaced = 0; ratings.length = 0; i = -1; continue }
+    const data: any[] | null = res.data
     if (!data || !data.length) break
-    for (const r of data as any[]) { if (r.excluded_from_score) continue; const n = Number(r.rating); if (r.rating != null && Number.isFinite(n) && n > 0) ratings.push(n) }
+    for (const r of data) {
+      if (r.excluded_from_score) continue
+      const n = Number(r.rating)
+      if (r.rating == null || !Number.isFinite(n) || n <= 0) continue
+      if (canCheck) {
+        const li = ints[String(r.listing_id || '')]
+        if (li) {
+          const stub = { externalListingId: r.ext, external_listing_id: r.ext2, rawReview: { listing_id: r.rl, listingId: r.rl2, external_listing_id: r.rl3 } }
+          let current = true
+          try { current = isCurrentChannelReview(stub, { integrations: li }, String(r.channel || '')) } catch { current = true }
+          if (!current) { replaced++; continue }
+        }
+      }
+      ratings.push(n)
+    }
     if (data.length < 1000) break
   }
-  return { avgRating: ratings.length ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length * 100) / 100 : null, reviews: ratings.length }
+  const out: Lifetime = { avgRating: ratings.length ? Math.round(ratings.reduce((a, b) => a + b, 0) / ratings.length * 100) / 100 : null, reviews: ratings.length }
+  if (currentOnly && canCheck) out.replaced = replaced
+  return out
 }
 
 function addDaysIso(iso: string, n: number): string {
@@ -162,7 +209,9 @@ export async function reportRecommendations(report: any): Promise<Recommendation
 
   const [reviews, lifetime] = await Promise.all([
     pullReviews(ids, lookback, asOf).catch(() => []),
-    lifetimeReviews(ids, asOf).catch(() => ({ avgRating: null, reviews: 0 })),
+    // Reports generated under engine 2 count the live channel listing only; earlier reports keep
+    // the count they have always shown.
+    lifetimeReviews(ids, asOf, engineOf(report?.content) >= 2).catch((): Lifetime => ({ avgRating: null, reviews: 0 })),
   ])
   if (!reviews.length && !lifetime.reviews) return null
 

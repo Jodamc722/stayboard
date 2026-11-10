@@ -66,7 +66,7 @@ export async function readBoard(opts: { countImportable?: boolean } = {}) {
   const [{ data: comments }, { data: photos }, proposals, people, importable] = await Promise.all([
     ids.length ? sb.from('app_comments').select('id,entity_id,author_email,body,created_at').eq('entity_type', 'board').in('entity_id', ids).order('created_at').limit(5000) : Promise.resolve({ data: [] as any[] }),
     ids.length ? sb.from('board_photos').select('id,item_id,url,caption,created_at').in('item_id', ids).order('created_at').limit(5000) : Promise.resolve({ data: [] as any[] }),
-    getSettingFresh<Proposal[]>('leadership_proposals', []),
+    openProposals(),
     rosterForPicker(),
     opts.countImportable ? importableCount() : Promise.resolve(0),
   ])
@@ -77,13 +77,72 @@ export async function readBoard(opts: { countImportable?: boolean } = {}) {
   const items = (rows || []).map((r: any) => rowToItem(r, cBy[String(r.id)] || [], pBy[String(r.id)] || []))
   // The property picker: every building we know, plus anything someone typed that is not one.
   const properties = Array.from(new Set(KNOWN_BUILDINGS.map(b => b.label).concat(items.map(i => i.property || '').filter(Boolean))))
-  return { lanes: [...LANES], items, proposals: proposals.filter(x => x.status === 'open').slice(-60), people: people.map(p => ({ email: p.email, name: p.name })), properties, importable }
+  return { lanes: [...LANES], items, proposals: proposals.slice(-60), people: people.map(p => ({ email: p.email, name: p.name })), properties, importable }
+}
+
+// ── WHERE PROPOSALS LIVE ────────────────────────────────────────────────────────────────────────
+// Two homes, chosen at run time (2026-11-09):
+//   · the table `board_proposals`, when it exists — one row a proposal, so two leaders deciding two
+//     different lines in the same second each change their own row;
+//   · otherwise the one settings row 'leadership_proposals' (the original store), where the whole
+//     list is read, changed and written back.
+// Nothing here needs the table: every table call that fails falls back to the settings row, and the
+// "is it there" answer is re-checked every five minutes so creating the table later just works.
+// Lines still open in the settings row when the table arrives keep showing and can still be decided.
+const PROP_COLS = 'id,lane,title,details,assignee,due_on,priority,property,status,source,created_by,created_at,item_id'
+let _propTable: { at: number; ok: boolean } | null = null
+async function hasProposalTable(): Promise<boolean> {
+  if (_propTable && Date.now() - _propTable.at < 300_000) return _propTable.ok
+  let ok = false
+  try { const { error } = await supabaseAdmin().from('board_proposals').select('id').limit(1); ok = !error } catch { ok = false }
+  _propTable = { at: Date.now(), ok }
+  return ok
+}
+const rowToProposal = (r: any): Proposal => ({
+  id: str(r.id), lane: laneOf(r.lane), title: str(r.title), details: str(r.details), assignee: str(r.assignee).toLowerCase(),
+  due: r.due_on ? str(r.due_on).slice(0, 10) : null, priority: priOf(r.priority), property: str(r.property),
+  status: str(r.status) === 'approved' ? 'approved' : str(r.status) === 'skipped' ? 'skipped' : 'open',
+  from: str(r.source) || 'notes', at: str(r.created_at), by: str(r.created_by), ...(r.item_id ? { itemId: String(r.item_id) } : {}),
+})
+const settingProposals = async (): Promise<Proposal[]> => {
+  const cur = await getSettingFresh<Proposal[]>('leadership_proposals', [])
+  return Array.isArray(cur) ? cur : []
+}
+
+/** Every proposal still waiting for a yes or a no, oldest first. Always read fresh. */
+export async function openProposals(): Promise<Proposal[]> {
+  const fromSetting = (await settingProposals()).filter(x => x.status === 'open')
+  if (!(await hasProposalTable())) return fromSetting
+  const { data, error } = await supabaseAdmin().from('board_proposals').select(PROP_COLS).eq('status', 'open').order('created_at').limit(200)
+  if (error) { _propTable = null; return fromSetting }
+  const rows = ((data || []) as any[]).map(rowToProposal)
+  const have = new Set(rows.map(r => r.id))
+  return fromSetting.filter(x => !have.has(x.id)).concat(rows)
 }
 
 /** One open proposal, read fresh (never the 60s in-process copy). */
 export async function openProposal(id: string): Promise<Proposal | null> {
-  const cur = await getSettingFresh<Proposal[]>('leadership_proposals', [])
-  return cur.find(x => x.id === id && x.status === 'open') || null
+  if (!id) return null
+  if (await hasProposalTable()) {
+    const { data, error } = await supabaseAdmin().from('board_proposals').select(PROP_COLS).eq('id', id).maybeSingle()
+    if (error) _propTable = null
+    else if (data) return str((data as any).status) === 'open' ? rowToProposal(data) : null
+  }
+  return (await settingProposals()).find(x => x.id === id && x.status === 'open') || null
+}
+
+/** Save freshly proposed lines. The table when it is there; the settings row when it is not (or refuses). */
+async function saveProposals(made: Proposal[], by: string): Promise<{ ok: boolean; error?: string }> {
+  if (await hasProposalTable()) {
+    const { error } = await supabaseAdmin().from('board_proposals').insert(made.map(x => ({
+      id: x.id, lane: x.lane, title: x.title, details: x.details || null, assignee: x.assignee || null, due_on: x.due, priority: x.priority,
+      property: x.property || null, status: 'open', source: x.from, created_by: by, created_at: x.at,
+    })))
+    if (!error) return { ok: true }
+    _propTable = null   // look again next time; this batch goes to the settings row below
+  }
+  const cur = await settingProposals()
+  return setSetting('leadership_proposals', [...cur.filter(x => x.status === 'open'), ...made].slice(-80), by)
 }
 
 type ItemInput = { lane?: any; title?: any; details?: any; assignees?: any; due?: any; priority?: any; property?: any; vendor?: any; source?: string; source_ref?: string }
@@ -294,21 +353,37 @@ Roster:\n${roster}`
   const known = new Map(KNOWN_BUILDINGS.map(b => [b.label.toLowerCase(), b.label]))
   const now = new Date().toISOString()
   const made: Proposal[] = arr.slice(0, 20).map((x: any, i: number) => ({
-    id: 'p' + Date.now().toString(36) + i, lane: laneOf(x?.lane), title: str(x?.title).trim().slice(0, 200), details: str(x?.details).trim().slice(0, 1000),
+    id: 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) + i, lane: laneOf(x?.lane), title: str(x?.title).trim().slice(0, 200), details: str(x?.details).trim().slice(0, 1000),
     assignee: emails.has(str(x?.assignee).toLowerCase()) ? str(x?.assignee).toLowerCase() : '',
     due: dateOf(x?.due), priority: priOf(x?.priority), property: known.get(str(x?.property).trim().toLowerCase()) || '',
     status: 'open' as const, from: source, at: now, by,
   })).filter(x => x.title)
   if (!made.length) return { ok: true, proposals: [] }
-  const cur = await getSettingFresh<Proposal[]>('leadership_proposals', [])
-  const saved = await setSetting('leadership_proposals', [...cur.filter(x => x.status === 'open'), ...made].slice(-80), by)
+  const saved = await saveProposals(made, by)
   // The list on screen comes from what was saved; saying "done" over a failed save showed nothing.
   if (!saved.ok) return { ok: false, error: 'The tasks were read but could not be saved — try again. ' + str(saved.error).slice(0, 120) }
   return { ok: true, proposals: made }
 }
 
 export async function settleProposal(id: string, status: 'approved' | 'skipped', by: string, itemId?: string): Promise<void> {
-  const cur = await getSettingFresh<Proposal[]>('leadership_proposals', [])
+  if (!id) return
+  if (await hasProposalTable()) {
+    // Only an open row is settled, so the first decision stands.
+    const { data, error } = await supabaseAdmin().from('board_proposals')
+      .update({ status, settled_by: by, settled_at: new Date().toISOString(), item_id: itemId || null }).eq('id', id).eq('status', 'open').select('id')
+    if (error) _propTable = null
+    else if (((data || []) as any[]).length) return
+    // Not in the table (or the table refused): it may be one of the older lines in the settings row.
+  }
+  const cur = await settingProposals()
+  if (!cur.some(x => x.id === id && x.status === 'open')) return
   const next = cur.map(x => x.id === id ? { ...x, status, itemId } : x).filter(x => x.status === 'open' || Date.parse(x.at) > Date.now() - 7 * 86400_000)
   await setSetting('leadership_proposals', next, by)
+}
+
+/** Is this person one of the row's owners? (View-only people may tick off their own work.) */
+export async function isAssignee(id: string, email: string): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(id) || !email) return false
+  const { data } = await supabaseAdmin().from('board_items').select('assignees').eq('id', id).maybeSingle()
+  return emailsOf((data as any)?.assignees).includes(email.toLowerCase())
 }

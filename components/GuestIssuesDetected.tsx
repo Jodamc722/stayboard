@@ -18,10 +18,12 @@ type Row = {
   severity: 'security' | 'issue' | 'watch' | 'none'; category: string | null; headline: string | null
   issues: string[]; evidence: string | null; link: string | null
   verdict: string; glitch_id: string | null; alerted: boolean; note: string | null
+  /** The stay ended over a week ago and nobody filed it (worked out by the API). */
+  stale?: boolean
 }
 const fmt = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
-const GHOST = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-50'
-const DARK = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg bg-ink text-white disabled:opacity-50'
+const GHOST = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 min-h-[36px] rounded-lg border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-50'
+const DARK = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 min-h-[36px] rounded-lg bg-ink text-white disabled:opacity-50'
 
 export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => void; initialOnly?: 'all' | 'open' | 'security' }) {
   const [rows, setRows] = useState<Row[] | null>(null)
@@ -59,18 +61,41 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
       const j = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sourceKey, decision }) }).then(r => r.json())
       if (!j.ok) throw new Error(j.error || 'Could not save.')
       setMsg(decision === 'file' ? 'Filed as a glitch.' : 'Dismissed — the watch will leave it alone.')
+      // ONE TAP, NO WAIT (2026-11-09): the row is updated where it stands instead of re-reading all
+      // 300 detections after every decision — working down the list was a reload per row.
+      setRows(prev => (prev || []).map(x => x.source_key !== sourceKey ? x
+        : decision === 'file' ? { ...x, verdict: 'manual', glitch_id: j.glitchId || x.glitch_id } : { ...x, verdict: 'dismissed' }))
+      // No glitch id came back: read the list again rather than guess what the row became.
+      if (decision === 'file' && !j.glitchId) await load()
+      onFiled?.()
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  const dismissStale = async (n: number) => {
+    if (!window.confirm('Dismiss ' + n + ' stale detection' + (n === 1 ? '' : 's') + '?\n\nThese are guest issues from stays that ended more than a week ago and were never filed. Safety and security items are not included. Nothing is sent to anyone.')) return
+    setBusy('stale'); setErr(''); setMsg('')
+    try {
+      const j = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dismissStale: true }) }).then(r => r.json())
+      if (!j.ok) throw new Error(j.error || 'Could not dismiss them.')
+      setMsg(j.dismissed + ' stale detection' + (j.dismissed === 1 ? '' : 's') + ' dismissed.')
       await load(); onFiled?.()
     } catch (e: any) { setErr(String(e?.message || e)) }
     setBusy('')
   }
   const toggle = async () => {
     setBusy('toggle')
-    try { const j = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !settings.on }) }).then(r => r.json()); if (j.ok) setSettings(j.settings) } catch { /* nothing */ }
+    setErr('')
+    try {
+      const j = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !settings.on }) }).then(r => r.json())
+      if (j.ok) setSettings(j.settings); else setErr(j.error || 'Could not switch the watch.')
+    } catch (e: any) { setErr('Could not switch the watch — ' + String(e?.message || e)) }
     setBusy('')
   }
 
   const all = rows || []
-  const open_ = (r: Row) => !r.glitch_id && r.verdict !== 'dismissed'
+  // The same test the board's one-line banner counts with, so "Eve caught N" and this list agree.
+  const open_ = (r: Row) => !r.glitch_id && r.verdict !== 'dismissed' && r.severity !== 'none'
+  const nStale = all.filter(r => open_(r) && r.stale).length
   const shown = all.filter(r => only === 'all' ? true : only === 'security' ? r.severity === 'security' : open_(r))
   const nSec = all.filter(r => r.severity === 'security').length
   const nOpen = all.filter(open_).length
@@ -88,6 +113,7 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
             <button key={k} onClick={() => setOnly(k)} className={'px-2.5 py-1 font-semibold border-l border-line first:border-l-0 ' + (only === k ? 'bg-ink text-white' : 'bg-white text-muted')}>{l}</button>
           ))}
         </div>
+        {canEdit && nStale > 0 && <button onClick={() => dismissStale(nStale)} disabled={!!busy} className={GHOST} title="Clear every unfiled detection whose stay ended more than a week ago (never safety or security)">{busy === 'stale' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Dismiss {nStale} stale</button>}
         {canEdit && <button onClick={run} disabled={!!busy} className={DARK} title="Read the last 48 hours of calls and threads now">{busy === 'run' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Check now</button>}
         {canEdit && <button onClick={toggle} disabled={!!busy} className={GHOST} title={settings.on ? 'The watch runs every half hour' : 'The watch is off — nothing is filed or flagged automatically'}>{settings.on ? 'Watch on' : 'Watch off'}</button>}
         <IconBtn title="Reload" onClick={load}><RefreshCw size={13} /></IconBtn>
@@ -122,6 +148,7 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
                     {r.category ? <Tag>{r.category.replace(/^Maintenance - /, '')}</Tag> : null}
                     <Tag tone="slate" title={fmt(r.occurred_at)}>{fmt(r.occurred_at) || fmt(r.detected_at)}</Tag>
                     {r.glitch_id ? <Tag tone="emerald">glitch filed</Tag> : r.verdict === 'dismissed' ? <Tag>dismissed</Tag> : r.verdict === 'pending' ? <Tag tone="amber">waiting on you</Tag> : <Tag tone="amber">no glitch yet</Tag>}
+                    {r.stale && open_(r) ? <Tag title="The stay ended more than a week ago">stale</Tag> : null}
                     {r.alerted ? <Tag tone="violet" title="Customer care got the pop-up and the Slack post">customer care flagged</Tag> : null}
                   </div>
                 </div>
@@ -129,7 +156,7 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
                   {r.link ? <a href={r.link} target={r.link.startsWith('http') ? '_blank' : undefined} rel="noreferrer" className={GHOST} title={r.kind === 'call' ? 'Read the whole transcript' : 'Open the message thread'}><ExternalLink size={12} /> {r.kind === 'call' ? 'Transcript' : 'Thread'}</a> : null}
                   {r.glitch_id ? <a href={'/glitches?id=' + r.glitch_id} className={GHOST}><AlertTriangle size={12} /> Glitch</a> : null}
                   {canEdit && !r.glitch_id && r.verdict !== 'dismissed' && <button onClick={() => decide(r.source_key, 'file')} disabled={b} className={DARK}>{b ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} File it</button>}
-                  {canEdit && !r.glitch_id && r.verdict !== 'dismissed' && <button onClick={() => decide(r.source_key, 'dismiss')} disabled={b} className={GHOST} title="Not a guest issue"><X size={12} /></button>}
+                  {canEdit && !r.glitch_id && r.verdict !== 'dismissed' && <button onClick={() => decide(r.source_key, 'dismiss')} disabled={b} className={GHOST} title="Not a guest issue — the watch will leave it alone"><X size={12} /> Dismiss</button>}
                 </div>
               </div>
             </div>

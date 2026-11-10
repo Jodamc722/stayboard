@@ -22,7 +22,7 @@ export function EveSuggestions({ onFiled }: { onFiled?: () => void }) {
   const [open, setOpen] = useState(false)
   const load = useCallback(async () => {
     try {
-      const j = await fetch('/api/guest-issues?days=7&summary=1', { cache: 'no-store' }).then(r => r.json())
+      const j = await fetch('/api/guest-issues?days=14&summary=1', { cache: 'no-store' }).then(r => r.json())
       if (j.ok) setSum({ open: Number(j.open) || 0, security: Number(j.security) || 0, top: Array.isArray(j.top) ? j.top : [] })
     } catch { /* the line just stays away */ }
   }, [])

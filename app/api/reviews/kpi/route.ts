@@ -205,7 +205,7 @@ function replyMinutes(raw: any): number | null {
 // fresh review shows within a minute of landing, not five.
 const cachedBuild = unstable_cache(
   async (qs: string, canSeeCleaners: boolean) => build(new URLSearchParams(qs), canSeeCleaners),
-  ['reviews-kpi-v2'], { tags: ['reviews'], revalidate: 300 },
+  ['reviews-kpi-v3'], { tags: ['reviews'], revalidate: 300 },
 )
 
 export async function GET(req: NextRequest) {
@@ -404,9 +404,11 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   // building in the portfolio — the single most natural thing a manager does would hide the problem
   // they were looking for. So par is built from every mapped, non-Waves review in the window,
   // whatever the market/building/owner/channel controls say.
+  // LIVE LISTINGS ONLY (2026-11-09, pass 3): par is the yardstick for a public-score number, so a
+  // review left on a channel listing that has since been replaced is not part of it.
   const parBase = windowed.filter(r => {
     const li = lmap[String(r.listing_id)]
-    return !!li && !li.waves && inWindow(r)
+    return !!li && !li.waves && inWindow(r) && isLive(String(r.listing_id), str(r.channel) || 'Other', r.raw)
   })
   const parAgg: Record<string, { n: number; sum: number }> = {}
   for (const r of parBase) {
@@ -598,19 +600,27 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     const li = lmap[lid] || { name: 'Unknown unit', building: 'Other', ownerId: '', ownerName: 'Unassigned' }
     const chKey = str(r.channel) || 'Other'
     const p = parOf(chKey)
-    push(overall, rating, chKey, p)
-    push(byUnit[lid] = byUnit[lid] || emptyAgg(), rating, chKey, p)
-    push(byBuilding[li.building] = byBuilding[li.building] || emptyAgg(), rating, chKey, p)
-    push(byOwner[li.ownerId] = byOwner[li.ownerId] || emptyAgg(), rating, chKey, p)
-    push(byChannel[chKey] = byChannel[chKey] || emptyAgg(), rating, chKey, p)
-    const mon = etDay(r.created_at).slice(0, 7)
-    push(byMonth[mon] = byMonth[mon] || emptyAgg(), rating, chKey, p)
-    // per-unit channel mix — a unit can be fine on Airbnb and bleeding on Booking.com
-    const cu2 = chByUnit[lid] = chByUnit[lid] || {}
-    push(cu2[chKey] = cu2[chKey] || emptyAgg(), rating, chKey, p)
-    // A review on a replaced channel listing has nowhere public to be answered.
+    // TWO BASES IN ONE LOOP (pass 3, owner's decision):
+    //   public score  — averages, top-rated share, vs par, below par, by channel/month: only reviews
+    //                   on the listing that is live now, because that is what a guest sees.
+    //   how stays went — the worst review, complaint and praise tags, category scores, cleaner and
+    //                   inspector coaching, recovery: every review, because the stay happened in
+    //                   this unit whichever listing it was booked through.
+    // A review on a replaced channel listing also has nowhere public to be answered.
     const live = isLive(lid, chKey, r.raw)
     if (!live) retiredWin[lid] = (retiredWin[lid] || 0) + 1
+    if (live) {
+      push(overall, rating, chKey, p)
+      push(byUnit[lid] = byUnit[lid] || emptyAgg(), rating, chKey, p)
+      push(byBuilding[li.building] = byBuilding[li.building] || emptyAgg(), rating, chKey, p)
+      push(byOwner[li.ownerId] = byOwner[li.ownerId] || emptyAgg(), rating, chKey, p)
+      push(byChannel[chKey] = byChannel[chKey] || emptyAgg(), rating, chKey, p)
+      const mon = etDay(r.created_at).slice(0, 7)
+      push(byMonth[mon] = byMonth[mon] || emptyAgg(), rating, chKey, p)
+      // per-unit channel mix — a unit can be fine on Airbnb and bleeding on Booking.com
+      const cu2 = chByUnit[lid] = chByUnit[lid] || {}
+      push(cu2[chKey] = cu2[chKey] || emptyAgg(), rating, chKey, p)
+    }
     const canReply = replyable(lid, r) && live
     if (canReply) replyableN++
     const lowOne = isLowReview(rating, chKey)
@@ -677,6 +687,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     const lid = String(r.listing_id)
     const li = lmap[lid] || { building: 'Other' }
     const chKey = str(r.channel) || 'Other'
+    if (!isLive(lid, chKey, r.raw)) continue   // same public-score basis as the window it is compared with
     const p = parOf(chKey)
     push(overallPrev, rating, chKey, p)
     push(byUnitPrev[lid] = byUnitPrev[lid] || emptyAgg(), rating, chKey, p)
@@ -1248,9 +1259,12 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       lowAwaiting,
       oldestAwaitingDays: oldestAwaitDays || null,
       unitsAtRisk: atRisk.length,
+      // Window reviews left out of the averages because their channel listing has been replaced.
+      retiredInWindow: Object.keys(retiredWin).reduce((t, k) => t + retiredWin[k], 0),
       retiredReviews: Object.keys(retiredCh).reduce((t, ch) => t + retiredCh[ch], 0),
       staysEnded: stays.length,
-      reviewRate: stays.length && channel === 'all' ? round((overall.n / stays.length) * 100, 1) : null,
+      // Every review received, replaced listings included: this measures whether guests review at all.
+      reviewRate: stays.length && channel === 'all' ? round((cur.length / stays.length) * 100, 1) : null,
       reviewRateNote: 'reviews received in this window against stays that ended in time to be reviewed',
       unitsBelowPar: belowPar.length,
       unitsInRecovery: inRecovery.length,

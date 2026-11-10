@@ -351,6 +351,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [months, setMonths] = useState<MonthPick[]>([])
   const [month, setMonth] = useState('')
   const [data, setData] = useState<Data | null>(null)
+  // SUMMARY FIRST (2026-11-09). On a first open or a month switch the header, the month picker and
+  // the statement list are painted from a small answer while the rows are still on their way.
+  // itemsPending = "the rows shown are not the month's rows yet" — nothing may read an empty list
+  // as "no line items" while it is true.
+  const [itemsPending, setItemsPending] = useState(false)
+  const dataRef = useRef<Data | null>(null)
+  dataRef.current = data
   const [internal, setInternal] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -422,15 +429,37 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const load = useCallback(async (m?: string) => {
     const seq = ++loadSeq.current
     setLoading(true); setError('')
+    let fullDone = false
     try {
-      const r = await fetch('/api/owner-audit' + (m ? '?month=' + m : ''), { cache: 'no-store' })
+      const url = '/api/owner-audit' + (m ? '?month=' + m : '')
+      // Both are asked for at once: on the server they share one build, so the summary costs no
+      // extra work and simply arrives sooner (it is a few KB; the rows are well over a megabyte).
+      // Skipped on a plain reload of the month already on screen — that keeps its rows in place.
+      const have = dataRef.current
+      if (!have || (!!m && have.month !== m)) {
+        fetch(url + (m ? '&' : '?') + 'summary=1', { cache: 'no-store' }).then(async sr => {
+          const sj = await sr.json().catch(() => null)
+          if (seq !== loadSeq.current || fullDone || !sr.ok || !sj || !sj.ok || !sj.data) return
+          setNeedsPw(false)
+          setInternal(!!sj.internal)
+          setMonths(sj.months || [])
+          setItemsPending(true)
+          setData(sj.data)
+          setMonth(sj.data.month)
+          setOpenItems({})
+          setStamped({})
+        }).catch(() => { /* the full answer is on its way regardless */ })
+      }
+      const r = await fetch(url, { cache: 'no-store' })
       const j = await r.json()
       if (seq !== loadSeq.current) return
+      fullDone = true
       if (r.status === 401 || j.needsPassword) { setNeedsPw(true); setLoading(false); return }
       if (!j.ok) { setError(j.error || 'Could not load the audit'); setLoading(false); return }
       setNeedsPw(false)
       setInternal(!!j.internal)
       setMonths(j.months || [])
+      setItemsPending(false)
       setData(j.data || null)
       setMonth(j.data ? j.data.month : (m || ''))
       setOpenItems({})
@@ -445,6 +474,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       } catch { /* fine */ }
     } catch (e: any) {
       if (seq !== loadSeq.current) return
+      fullDone = true
       setError(String(e?.message || e))
     }
     if (seq === loadSeq.current) setLoading(false)
@@ -462,7 +492,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   // the month is reloaded so the row clears without anyone pressing Re-check.
   const autoChecked = useRef(false)
   useEffect(() => {
-    if (!data || !internal || share || autoChecked.current) return
+    if (!data || itemsPending || !internal || share || autoChecked.current) return
     if (!data.prep.some(p => !prepResolved(p))) return
     autoChecked.current = true
     ;(async () => {
@@ -477,7 +507,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         }
       } catch { /* the hourly feed catches it */ }
     })()
-  }, [data, internal, share, load])
+  }, [data, itemsPending, internal, share, load])
 
   // A FILTER CHANGE STARTS FRESH (Jon, 2026-10-21: "the filters when I click don't always populate").
   // Owner cards and status sections remember being clicked shut, and that memory used to beat the
@@ -1735,7 +1765,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 const mine = data.items.filter(i => i.ownerId === curOwner.ownerId)
                 if (mine.length === 0) {
                   return (
-                    <LeanEmpty>No statement line items for {data.label}.</LeanEmpty>
+                    <LeanEmpty>{itemsPending ? 'Loading the rows for ' + data.label + '…' : 'No statement line items for ' + data.label + '.'}</LeanEmpty>
                   )
                 }
                 const byUnit: Record<string, Item[]> = {}
@@ -2233,7 +2263,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
               })}
 
               {filtered.length === 0 && (
-                <LeanEmpty>Nothing matches these filters{data.items.length === 0 ? ' — no statement line items found for ' + data.label : ''}.</LeanEmpty>
+                itemsPending
+                  ? <div className="rounded-2xl border border-line bg-white p-4"><div className="text-[13px] text-muted">Loading the rows for {data.label}…</div><div className="mt-3 h-16 rounded-xl bg-app animate-pulse" /></div>
+                  : <LeanEmpty>Nothing matches these filters{data.items.length === 0 ? ' — no statement line items found for ' + data.label : ''}.</LeanEmpty>
               )}
             </>
           )}

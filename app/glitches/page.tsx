@@ -17,6 +17,14 @@ type Data = { ok: boolean; today: string; count: number; unassigned: number; gli
 function adminUrl(id: string) { return 'https://app.breezeway.io/task/' + id }
 function fmtShort(iso: string | null) { if (!iso) return ''; const d = new Date(iso + 'T12:00:00'); if (isNaN(d.getTime())) return iso; return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }) }
 
+const TAB_QUESTION: Record<'board' | 'report' | 'history' | 'patterns' | 'trends', string> = {
+  board: 'What needs someone today? Every guest issue still in play, by who has to act next.',
+  report: 'What was reported, and when? Every glitch in a date range — search it, total it, export it.',
+  history: 'What has the crew already done at this unit? Every guest-reported Breezeway task on record.',
+  patterns: 'Which buildings keep having the same problem? Issues grouped by building and type.',
+  trends: 'Is it getting better or worse? Month by month, by theme, and the units that repeat.',
+}
+
 export default function GlitchesPage() {
   const [tab, setTab] = useState<'board' | 'report' | 'history' | 'patterns' | 'trends'>('board')
   const [data, setData] = useState<Data | null>(null)
@@ -49,14 +57,26 @@ export default function GlitchesPage() {
   }, [tab, people.length])
   // board glitches (with category + $) power the insights strip on History
   const [board, setBoard] = useState<any>(null)
+  // The header pills read the server's own roll-up of the newest 500 cards (2026-11-09: the board
+  // list now carries only the cards it shows, so the pills cannot be counted from it any more).
+  const [sum, setSum] = useState<{ total: number; inPlay: number; refunds: number; topCats: { k: string; n: number }[] } | null>(null)
   // The Board tab's own component loads /api/glitches and announces it; this page only asks itself on
   // the other tabs (2026-11-09 audit: the same 142 KB answer was fetched twice on every open).
   useEffect(() => {
-    const on = (e: any) => { if (e && e.detail) setBoard(e.detail) }
+    const on = (e: any) => {
+      if (!e || !e.detail) return
+      if (e.detail.summary) setSum(e.detail.summary)
+      // Only a complete list may stand in for Trends' own read.
+      if (e.detail.all) setBoard(e.detail)
+    }
     window.addEventListener('glitches:loaded', on)
     return () => window.removeEventListener('glitches:loaded', on)
   }, [])
-  useEffect(() => { if (tab !== 'board' && !board) fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(setBoard).catch(() => {}) }, [tab, board])
+  useEffect(() => {
+    if (tab === 'board' || board) return
+    // ?slim=1: all 500 cards, card columns only — Trends sums refunds and categories over them.
+    fetch('/api/glitches?slim=1', { cache: 'no-store' }).then(r => r.json()).then(j => { setBoard(j); if (j && j.summary) setSum(j.summary) }).catch(() => {})
+  }, [tab, board])
 
   const assign = async (taskId: string, personId: number) => {
     try {
@@ -83,21 +103,16 @@ export default function GlitchesPage() {
 
   const markets = ['all', 'Miami', 'Broward', 'North', 'Vendor']
   const openCount = all.filter(g => !g.done).length
-  const bg: any[] = board && Array.isArray(board.glitches) ? board.glitches : []
-  const inPlay = bg.filter(g => g.status !== 'closed').length
-  const boardRefunds = bg.reduce((s, g) => s + (Number(g.refund_approved) || 0), 0)
-  const topCats = (() => {
-    const byCat: Record<string, number> = {}
-    for (const g of bg) if (g.category) byCat[g.category] = (byCat[g.category] || 0) + 1
-    return Object.keys(byCat).map(k => ({ k, n: byCat[k] })).sort((a, b) => b.n - a.n).slice(0, 3)
-  })()
+  const inPlay = sum ? sum.inPlay : 0
+  const boardRefunds = sum ? sum.refunds : 0
+  const topCats = sum ? sum.topCats : []
 
   return (
     <Shell>
       {/* The Today-in-Ops tab shows what needs eyes now; this page manages the pattern.
           The title is the sidebar's word (2026-09-28 audit, 08 UX): one name per page. */}
       <LeanHead title="Glitches">
-        {bg.length > 0 && <Pill tone={inPlay ? 'rose' : 'emerald'} title="Cards on the escalation board that are not closed">{inPlay} in play</Pill>}
+        {!!sum && sum.total > 0 && <Pill tone={inPlay ? 'rose' : 'emerald'} title="Cards on the escalation board that are not closed">{inPlay} in play</Pill>}
         {data && <Pill title={all.length + ' Breezeway guest-reported tasks on record'}>{openCount} open in Breezeway</Pill>}
         {boardRefunds > 0 && <Pill tone="emerald" title="Refunds approved across board cards">${Math.round(boardRefunds).toLocaleString()} refunded</Pill>}
       </LeanHead>
@@ -120,6 +135,9 @@ export default function GlitchesPage() {
           </span>
           <IconBtn title="Reload the history from Breezeway" onClick={() => { setLoading(true); load() }}><RefreshCw size={13} /></IconBtn>
         </>) : null} />
+
+      {/* EACH TAB ANSWERS ONE QUESTION, AND SAYS WHICH (2026-11-09). */}
+      <p className="text-[12px] text-muted px-1 -mt-1.5 mb-2.5">{TAB_QUESTION[tab]}</p>
 
       {tab === 'board' && <GlitchBoard />}
       {tab === 'report' && <GlitchReport initialQ={q} />}

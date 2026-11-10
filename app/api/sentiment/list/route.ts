@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { requireLevel } from '@/lib/access'
+import { cleanGuestName } from '@/lib/guest-name'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -46,7 +47,8 @@ export async function GET(req: NextRequest) {
 
   const out = list.map((r: any) => ({
     id: r.conversation_id,
-    guest: r.guest_name || 'Guest',
+    // The name as a person writes it — Expedia's "MAR??A" reads "María" (lib/guest-name).
+    guest: cleanGuestName(r.guest_name) || r.guest_name || 'Guest',
     channel: r.channel || '',
     listingName: (() => { const lid = r.listing_id || convLid[r.conversation_id]; return lid ? (nameOf[lid]?.name || null) : null })(),
     building: (() => { const lid = r.listing_id || convLid[r.conversation_id]; return lid ? (nameOf[lid]?.building || null) : null })(),

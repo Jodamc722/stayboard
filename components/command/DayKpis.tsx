@@ -255,7 +255,8 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big
       <div className="w-full h-1 rounded-full bg-line overflow-hidden flex mt-auto" aria-hidden>
         {needed > 0 && segs.filter(s => s.n > 0).map(s => <span key={s.filter} className={'block h-full ' + s.cls} style={{ width: (s.n / needed) * 100 + '%' }} title={s.n + ' ' + s.label} />)}
       </div>
-      <div className="text-[11px] text-muted truncate w-full" title={sub}>{sub || ' '}</div>
+      {/* Two lines from tablet up, cut at a word, never mid-word (2026-11-09); one line on a phone, where the tiles are narrow. */}
+      <div className="text-[11px] leading-[1.3] text-muted w-full truncate sm:whitespace-normal sm:line-clamp-2 sm:min-h-[2.6em]" title={sub}>{sub || ' '}</div>
     </button>
   )
 }

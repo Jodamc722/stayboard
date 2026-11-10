@@ -89,7 +89,9 @@ let partial = false
 
 type Meta = { name: string; market: Market; hub: string; bedrooms: number | null; doorCode: string | null; cleaningTime: string | null; checkIn: string | null; checkOut: string | null; is17: boolean; vendor: string | null; guestyOnly: boolean; city: string | null; lat: number | null; lng: number | null ; listFee: number | null }
 const meta: Record<string, Meta> = {}
-const units: { id: string; name: string }[] = []
+// `units` (every active listing, for the Add clean picker) left the payload on 2026-11-09: it rode
+// on every day step and no other reader of this builder used it. The board loads the list when
+// Add clean is opened.
 for (const l of (listings || [])) {
 const id = String((l as any).id)
 const raw = { customFields: (l as any).cfRaw, defaultCheckInTime: (l as any).ciRaw, defaultCheckOutTime: (l as any).coRaw }
@@ -112,9 +114,7 @@ lat: Number.isFinite(Number((l as any).lat)) ? Number((l as any).lat) : null,
 lng: Number.isFinite(Number((l as any).lng)) ? Number((l as any).lng) : null,
 listFee: Number((l as any).listFee) > 0 ? Number((l as any).listFee) : null,
 }
-if (!/inactive|disabled|archived|deleted/i.test(str((l as any).status))) units.push({ id, name })
 }
-units.sort((a, b) => a.name.localeCompare(b.name))
 
 const arrivalsByListing: Record<string, string[]> = {}
 // How long the INCOMING stay is, keyed listing+date: a 14-night booking needs the unit properly
@@ -509,7 +509,7 @@ ok: true, view, today, weekStart: start, weekEnd: end, longStayNights: LONG_STAY
 prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
 next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
 totals: { cleans: cleans.filter((c) => !c.movedTo).length, feeTotal: cleans.filter(c => !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0), byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).length, fee: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0) })) },
-days, housekeepers, units, newArrivals, breezeway: breezewayConfigured(),
+days, housekeepers, newArrivals, breezeway: breezewayConfigured(),
 syncedAt: new Date().toISOString(),
 }
 // A PARTIAL SNAPSHOT IS SHOWN, NEVER SHARED. Throwing is how a value is kept out of unstable_cache;

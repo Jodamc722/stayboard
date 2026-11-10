@@ -526,10 +526,8 @@ const verdictLine = (v: Verdict): NonNullable<ScanOutcome['verdict']> => {
 function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]; post: (b: Record<string, any>) => Promise<any>; onFlagged: (i: Incident, photoError?: string | null) => void; onRegister: (plate: string, read: Read | null) => void }) {
   const [plate, setPlate] = useState('')
   const [v, setV] = useState<Verdict | null>(null)
-  const [read, setRead] = useState<Read | null>(null)
-  const [photo, setPhoto] = useState<Photo | null>(null)
   const [spotId, setSpotId] = useState<string | null>(null)
-  const [busy, setBusy] = useState<'check' | 'scan' | 'flag' | null>(null)
+  const [busy, setBusy] = useState<'check' | 'flag' | null>(null)
   const [err, setErr] = useState('')
   const check = async (p = plate) => {
     if (!normalizePlate(p)) return
@@ -565,7 +563,7 @@ function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]
   const flag = async () => {
     if (!v) return
     setBusy('flag'); setErr('')
-    try { await flagVerdict(v, read, photo); setV(null); setPlate(''); setRead(null); setPhoto(null) } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
+    try { await flagVerdict(v, null, null); setV(null); setPlate('') } catch (e: any) { setErr(e?.message || String(e)) } finally { setBusy(null) }
   }
   const bad = v && v.verdict !== 'ok' && v.verdict !== 'leaving_today' && v.verdict !== 'empty'
   return (
@@ -583,7 +581,6 @@ function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]
         <SpotPick spots={spots} value={spotId} onChange={setSpotId} />
       </div>
       <Scanner open={scanning} onClose={() => setScanning(false)} mode="multi" title={`Scan plates${spots.find(s => s.id === spotId) ? ' · spot ' + spots.find(s => s.id === spotId)!.label : ''}`} scan={scanFrame} />
-      {read && <p className="mt-1.5 text-[12.5px] text-neutral-500">Camera read <b className="font-mono">{read.plate || '?'}</b>{read.make || read.model ? ` · ${[read.color, read.make, read.model].filter(Boolean).join(' ')}` : ''}{read.confidence < 0.7 ? ' — not sure, check the plate against the car' : ''}{read.note ? ` · ${read.note}` : ''}</p>}
       {err && <p className="mt-2 text-[13px] text-rose-700">{err}</p>}
       {v && (
         <div className={`mt-3 rounded-2xl border-2 p-3 ${toneOf(v.verdict)}`}>
@@ -594,7 +591,7 @@ function CheckPlate({ spots, post, onFlagged, onRegister }: { spots: SpotToday[]
           {bad && (
             <div className="flex gap-2 mt-3">
               <button onClick={flag} disabled={busy != null} className={big('bad')}>{busy === 'flag' ? <Loader2 size={16} className="animate-spin" /> : <Flag size={16} />} Flag this car</button>
-              {v.verdict === 'unregistered' && <button onClick={() => { onRegister(v.plate, read); setV(null); setPlate(''); setRead(null); setPhoto(null) }} disabled={busy != null} className={big('muted')}><Plus size={16} /> Register it</button>}
+              {v.verdict === 'unregistered' && <button onClick={() => { onRegister(v.plate, null); setV(null); setPlate('') }} disabled={busy != null} className={big('muted')}><Plus size={16} /> Register it</button>}
             </div>
           )}
         </div>

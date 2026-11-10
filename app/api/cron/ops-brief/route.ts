@@ -4,12 +4,13 @@
 //   miami / broward → Field Run per market · techs / maint → Maintenance Run · vendors → vendor briefs
 //
 //   GET  (cron)                          → send every brief to its list
-//   GET ?send=1 | ?only=gm,full,…        → signed-in re-send, all or some
+//   GET ?send=1 | ?only=gm,full,…        → signed-in send, all or some — skips what already went out
+//                                          today unless &force=1 (lib/briefs/delivery)
 //   GET ?preview=gm|full|Miami|Broward|maint|maint:<name>|botanica|pt|north → the HTML, no send
 //   GET ?test=1[&only=…]                 → signed-in: send to YOU alone
 //
 // Recipients and the sender live in app_settings key 'ops_brief' (owner-editable on /users):
-//   { enabled, fromEmail, miami, broward, full, gm, techs, maint, vendors, lang, eod, cc }
+//   { enabled, fromEmail, miami, broward, full, gm, techs, maint, vendors, lang, eod, cc, alertTo }
 // `cc` is copied on every brief (default empty) — it replaced the hardcoded standing CC.
 // SAFE BY DEFAULT: until recipients are configured, nothing sends to anyone but the tester.
 // Auth mirrors the other crons: the scheduler's CRON_SECRET bearer only (constant-time; the
@@ -28,6 +29,7 @@ import { buildMaintenanceRun, maintenanceTechs } from '@/lib/briefs/maintenance-
 import { asLang, type BriefLang } from '@/lib/brief-lang'
 import { sendGmail } from '@/lib/gmail-send'
 import { sendResendEmail } from '@/lib/resend-send'
+import { briefAlertTo, briefsSentToday, stampBriefSent } from '@/lib/briefs/delivery'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { hashLegacyPasscodes } from '@/lib/share-links-server'
 import { atEasternHour } from '@/lib/et-clock'
@@ -73,7 +75,7 @@ const ccFor = (cfg: BriefCfg, to: string[]): string[] => {
 // meant no brief AND no alert. The note now tries Gmail and, if that fails, Resend (lib/resend-send,
 // its own key and sender). Never throws.
 async function alertOwner(fromEmail: string, to: string[], cc: string[], subject: string, html: string): Promise<boolean> {
-  try { const g = await sendGmail({ fromEmail, to, cc, subject, html }); if (g.ok) return true } catch { /* try the other sender */ }
+  try { const g = await sendGmail({ fromEmail, to, cc, subject, html, source: 'ops-brief' }); if (g.ok) return true } catch { /* try the other sender */ }
   try { const r = await sendResendEmail({ to, cc, subject, html }); return !!r.ok } catch { return false }
 }
 const etToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
@@ -114,6 +116,8 @@ async function send(req: NextRequest) {
 
   const cfg = await getSetting<BriefCfg>(OPS_BRIEF_KEY, {})
   const fromEmail = String(cfg.fromEmail || DEFAULT_FROM)
+  // Who hears that a brief did not go out: ops_brief.alertTo (default: the address this file used to carry).
+  const alertTo = await briefAlertTo(cfg)
 
   // ---- preview: just the HTML, no send. Signed-in only (it contains guest names). ----
   const preview = sp.get('preview')
@@ -151,7 +155,7 @@ async function send(req: NextRequest) {
     const pick = only ? ALL_VARIANTS.filter(v => v.toLowerCase() === only) : ALL_VARIANTS
     for (const v of pick) {
       const b = await build(v, langFor(cfg, v))
-      const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + b.subject, html: b.html })
+      const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + b.subject, html: b.html, source: 'ops-brief' })
       out.push({ variant: v, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
     }
     return NextResponse.json({ ok: out.every(o => o.sent), test: true, to: me, from: fromEmail, results: out })
@@ -163,7 +167,7 @@ async function send(req: NextRequest) {
   // a browser sent every morning brief to every list again. A person re-sends on purpose: ?send=1
   // for everything, or ?only=Miami,GM for some. Previews and tests are unchanged.
   if (!isCron && !sp.get('send') && !sp.get('only')) {
-    return NextResponse.json({ ok: false, error: 'Nothing sent. Add ?send=1 to re-send every brief to its list, or ?only=Miami,Broward,full,GM,maint for some. ?preview=gm (GM morning) or ?preview=full (Ops morning) shows one on screen; ?test=1 sends them all to you only.' }, { status: 400 })
+    return NextResponse.json({ ok: false, error: 'Nothing sent. Add ?send=1 to send every brief not yet sent today to its list, or ?only=Miami,Broward,full,GM,maint for some; add &force=1 to send one again that already went out today. ?preview=gm (GM morning) or ?preview=full (Ops morning) shows one on screen; ?test=1 sends them all to you only.' }, { status: 400 })
   }
   // NO PLAINTEXT PASSCODE AT REST PAST THE FIRST MORNING (2026-09-18). Migration 101 carries a few
   // legacy cleartext passcodes into share_links; the hub hashes them on its first load, but nobody
@@ -175,7 +179,7 @@ async function send(req: NextRequest) {
   // It is still allowed to be off; it is no longer allowed to be off silently.
   if (cfg.enabled !== true) {
     if (!sp.get('preview') && !sp.get('test')) {
-      await alertOwner(fromEmail, [DEFAULT_FROM], [],
+      await alertOwner(fromEmail, alertTo, [],
         '⚠️ Morning briefs did not run — the system is switched off',
         '<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.7;color:#0b1220">No Field Runs, no Ops morning, no GM morning and no vendor briefs went out this morning: <b>Morning briefs</b> is switched off in /users → App settings.</p><p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;color:#6b7280">Turn it on there and they resume tomorrow at 7:01am. This note is sent once a day while it is off.</p>')
     }
@@ -192,6 +196,16 @@ async function send(req: NextRequest) {
   // alone — outside companies should not get a duplicate because ours changed shape.
   const onlyList = String(sp.get('only') || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean)
   const wanted = (v: string) => !onlyList.length || onlyList.includes(v.toLowerCase())
+  // ONCE A DAY PER VARIANT (2026-11-09). Each brief is stamped as it goes out (lib/briefs/delivery). A
+  // variant already stamped today is skipped — so a scheduler retry, or a function that died half way
+  // and was run again, never sends a crew or a vendor the same brief twice. A person who really means
+  // to send it again adds force=1 (?send=1&force=1, or ?only=Miami&force=1). The hourly watchdog reads
+  // the same stamps: a variant with recipients and none by 7:30am ET rings one in-app bell.
+  const force = !isCron && sp.get('force') === '1'
+  const today = etToday()
+  const sentToday = force ? {} : await briefsSentToday(today)
+  const done = (key: string) => !!sentToday[key.toLowerCase()]
+  const ALREADY = 'already sent today — add force=1 to send it again'
   // EACH VARIANT ON ITS OWN (robustness pass, 2026-08-24): build(v) used to run bare, so one
   // variant throwing — a daysheet hiccup, one bad row — 500'd the whole route and NO brief went
   // out that morning, silently. Now each build/send is isolated, and any failure is reported to
@@ -199,10 +213,12 @@ async function send(req: NextRequest) {
   for (const { v, to } of lists) {
     if (!wanted(v)) { out.push({ variant: v, skipped: 'not in ?only' }); continue }
     if (!to.length) { out.push({ variant: v, skipped: 'no recipients' }); continue }
+    if (done(v)) { out.push({ variant: v, skipped: ALREADY }); continue }
     try {
       const b = await build(v, langFor(cfg, v))
-      const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html })
+      const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html, source: 'ops-brief' })
       out.push({ variant: v, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+      if (r.ok) await stampBriefSent(v, today)
     } catch (e: any) {
       out.push({ variant: v, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) })
     }
@@ -214,19 +230,23 @@ async function send(req: NextRequest) {
     const key = 'maint:' + name
     if (onlyList.length && !wanted(key) && !wanted('maint')) { out.push({ variant: key, skipped: 'not in ?only' }); continue }
     if (!to.length) { out.push({ variant: key, skipped: 'no recipients' }); continue }
+    if (done(key)) { out.push({ variant: key, skipped: ALREADY }); continue }
     try {
       const b = await buildMaintenanceRun(name, asLang(techCfg[name]?.lang))
-      const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html })
+      const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html, source: 'ops-brief' })
       out.push({ variant: key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+      if (r.ok) await stampBriefSent(key, today)
     } catch (e: any) { out.push({ variant: key, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) }) }
   }
   if (!onlyList.length || wanted('maint')) {
     const to = (cfg.maint || []).filter(Boolean)
-    if (to.length) {
+    if (to.length && done('maint')) out.push({ variant: 'maint', skipped: ALREADY })
+    else if (to.length) {
       try {
         const b = await buildMaintenanceRun('all', 'en')
-        const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html })
+        const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html, source: 'ops-brief' })
         out.push({ variant: 'maint', to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+        if (r.ok) await stampBriefSent('maint', today)
       } catch (e: any) { out.push({ variant: 'maint', to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) }) }
     }
   }
@@ -235,10 +255,12 @@ async function send(req: NextRequest) {
     if (onlyList.length && !wanted('vendor:' + g.key) && !wanted(g.key)) { out.push({ variant: 'vendor:' + g.key, skipped: 'not in ?only' }); continue }
     const to = ((cfg.vendors || {})[g.key] || []).filter(Boolean)
     if (!to.length) { out.push({ variant: 'vendor:' + g.key, skipped: 'no recipients' }); continue }
+    if (done('vendor:' + g.key)) { out.push({ variant: 'vendor:' + g.key, skipped: ALREADY }); continue }
     try {
       const b = await buildVendorBrief(g.key)
-      const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html })
+      const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html, source: 'ops-brief' })
       out.push({ variant: 'vendor:' + g.key, to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+      if (r.ok) await stampBriefSent('vendor:' + g.key, today)
     } catch (e: any) {
       out.push({ variant: 'vendor:' + g.key, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) })
     }
@@ -250,12 +272,14 @@ async function send(req: NextRequest) {
   if (wanted('GM')) {
     const to = (cfg.gm || []).filter(Boolean)
     if (!to.length) out.push({ variant: 'GM', skipped: 'no recipients' })
+    else if (done('GM')) out.push({ variant: 'GM', skipped: ALREADY })
     else {
       try {
         const b = await buildGmMorning()
-        const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html })
+        const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html, source: 'ops-brief' })
         out.push({ variant: 'GM', to: to.length, subject: b.subject, counts: b.counts, labor: b.labor, sent: r.ok, error: r.error })
-        if (r.ok && b.labor !== 'timeout') await markLaborDelivered(etToday(), b.labor)
+        if (r.ok) await stampBriefSent('GM', today)
+        if (r.ok && b.labor !== 'timeout') await markLaborDelivered(today, b.labor)
       } catch (e: any) { out.push({ variant: 'GM', to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) }) }
     }
   } else out.push({ variant: 'GM', skipped: 'not in ?only' })
@@ -272,8 +296,8 @@ async function send(req: NextRequest) {
   if (failed.length || allEmpty) {
     const esc2 = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     const P = 'font-family:-apple-system,Segoe UI,Roboto,sans-serif'
-    await alertOwner(fromEmail, [DEFAULT_FROM], ccFor(cfg, [DEFAULT_FROM]),
-      allEmpty ? '⚠️ Morning briefs: switched on, but nobody is on any list' : `⚠️ Morning briefs: ${failed.length} of ${considered.filter(o => o.skipped !== 'no recipients').length} did not send`,
+    await alertOwner(fromEmail, alertTo, ccFor(cfg, alertTo),
+      allEmpty ? '⚠️ Morning briefs: switched on, but nobody is on any list' : `⚠️ Morning briefs: ${failed.length} of ${considered.filter(o => !o.skipped).length} did not send`,
       allEmpty
         ? `<p style="${P};font-size:14px;line-height:1.7;color:#0b1220">Morning briefs is switched on, but every list is empty, so nothing went out this morning. Add recipients in /users → App settings → Morning briefs, or switch it off.</p>`
         : `<p style="${P};font-size:14px;line-height:1.7;color:#0b1220">These briefs did not go out this morning:</p><ul style="${P};font-size:13px;line-height:1.7;color:#374151">` +

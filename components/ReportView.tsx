@@ -9533,6 +9533,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     ) : null}
                   </div>
                 )}
+                {/* HOW THE BUDGET WAS MEASURED (engine-2 reports only — see lib/owner-report
+                    REPORT_ENGINE). When the report covers part of a building, the revenue budget
+                    is the building's pro-rated by unit share, and the owner is told so here.
+                    Reports generated before the flag never draw this line. */}
+                {Number((c.meta || {}).engine) >= 2 && (String(plan.subtitle || '').trim() || edit) ? (
+                  <p style={{ fontSize: 12.5, lineHeight: 1.5, color: D.muted, margin: '18px 0 0' }}>
+                    <Ed v={String(plan.subtitle || '')} set={v => patch('plan.subtitle', v)} edit={edit} multiline placeholder="How the budget was measured (optional)" />
+                  </p>
+                ) : null}
                 <SlideNote k="plan" dark />
               </Frame>
             ) })
@@ -9757,6 +9766,9 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const life = recs && recs.lifetime && recs.lifetime.reviews ? recs.lifetime : null
             const avg = life && life.avgRating != null ? Number(life.avgRating) : recs && recs.avgRating != null ? Number(recs.avgRating) : null
             const count = life ? Number(life.reviews || 0) : recs ? Number(recs.reviews || 0) : 0
+            // Engine-2 reports count only reviews left on the channel listing that is live now
+            // (lib/report-recommendations); the ones on a replaced listing are named, not hidden.
+            const replacedN = recs && recs.lifetime && Number(recs.lifetime.replaced) > 0 ? Number(recs.lifetime.replaced) : 0
             const quotes = (voices.quotes as Any[] || [])
             const hero1 = quotes[0]
             const rest = quotes.slice(1, 3)
@@ -9776,6 +9788,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: SERIF, fontSize: 44, letterSpacing: '-0.03em', color: t.ink, fontVariantNumeric: 'tabular-nums' }}>{O('voices_avg', avg.toFixed(1))}</span>
                       </div>
                       <div style={{ marginTop: 16 }}><Lbl ok="voices_avg_l">{(life ? 'Lifetime average · ' : 'Average of ') + count + ' review' + (count === 1 ? '' : 's')}</Lbl></div>
+                      {replacedN ? (
+                        <p style={{ fontSize: 11.5, lineHeight: 1.45, color: tint(0.5), margin: '8px 0 0' }}>
+                          {replacedN + ' earlier review' + (replacedN === 1 ? '' : 's') + ' on a replaced listing not counted'}
+                        </p>
+                      ) : null}
                     </div>
                   ) : null}
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -10606,6 +10623,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               <h2 className="mt-1.5 text-3xl font-extrabold tracking-tight">
                 <Ed v={plan.headline || ''} set={v => patch('plan.headline', v)} edit={edit} multiline />
               </h2>
+              {Number((c.meta || {}).engine) >= 2 && (String(plan.subtitle || '').trim() || edit) ? (
+                <p className="mt-2 text-[13px] leading-relaxed" style={{ color: t.muted }}>
+                  <Ed v={String(plan.subtitle || '')} set={v => patch('plan.subtitle', v)} edit={edit} multiline placeholder="How the budget was measured (optional)" />
+                </p>
+              ) : null}
               <div className="mt-6 space-y-4">
                 {(plan.months || []).map((m: Any, mi: number) => (
                   <div key={mi} className="relative rounded-2xl p-5 shadow-sm border" style={{ background: t.card, borderColor: t.cardBorder }}>

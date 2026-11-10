@@ -41,6 +41,9 @@ export async function POST(req: NextRequest) {
     const itemId = str(b.itemId).replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40) || 'unfiled'
     const filename = str(b.filename || 'photo.jpg').replace(/[^a-zA-Z0-9._-]/g, '_').slice(-60)
     const contentType = str(b.contentType) || 'image/jpeg'
+    // Photos and receipts only. Any type used to be stored as sent — an HTML file would then be
+    // served from the signed link as a page (2026-11-09 audit).
+    if (!/^image\/(jpeg|jpg|png|webp|heic|heif|gif)$|^application\/pdf$/i.test(contentType)) return NextResponse.json({ ok: false, error: 'Photos (JPG, PNG, HEIC) or a PDF receipt only.' }, { status: 400 })
     if (!b64) return NextResponse.json({ ok: false, error: 'No image data.' }, { status: 400 })
     if (b64.length > 8_000_000) return NextResponse.json({ ok: false, error: 'Image too large (max ~6MB).' }, { status: 400 })
     const db = supabaseAdmin()
@@ -67,7 +70,11 @@ export async function GET(req: NextRequest) {
     const db = supabaseAdmin()
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(path, SIGNED_SECONDS)
     if (error || !data?.signedUrl) return NextResponse.json({ ok: false, error: (error && error.message) || 'Not found.' }, { status: 404 })
-    return NextResponse.redirect(data.signedUrl)
+    // The signed link lives 5 minutes; let the browser reuse it for 4 so a list of thumbnails is not
+    // re-signed on every render. Private: never a shared cache.
+    const res = NextResponse.redirect(data.signedUrl)
+    res.headers.set('Cache-Control', 'private, max-age=240')
+    return res
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }

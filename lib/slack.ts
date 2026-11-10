@@ -1,7 +1,7 @@
 // Slack BOT client — the thing that can actually talk to people.
 //
-// WHY THIS EXISTS. `postSlack()` in lib/integrations.ts posts a plain string to ONE incoming
-// webhook. That was enough when Slack meant "shout into a channel when a sync dies". It cannot do
+// WHY THIS EXISTS. `postSlack()` in lib/integrations.ts (removed 2026-11-09) posted a plain string to
+// ONE incoming webhook. That was enough when Slack meant "shout into a channel when a sync dies". It cannot do
 // any of what Jon asked for on 2026-08-19: post to the right building's channel, @-mention the
 // cleaner who is on the job, DM a supervisor, or carry an approve button. All of those need a BOT
 // TOKEN (xoxb-), which arrives from the OAuth install once the app requests bot scopes.
@@ -12,7 +12,7 @@
 // PRIVATE channels still need the bot /invite'd — chat:write.public does not cover them.
 //
 // NEVER THROWS. Every function returns a status instead. An alert that fails must never take down
-// the sync, the cron, or the page that was trying to alert. Same law as postSlack().
+// the sync, the cron, or the page that was trying to alert. Same law the old webhook post followed.
 import 'server-only'
 import { getSetting, setSetting } from './app-settings'
 import { getConnections } from './integrations'

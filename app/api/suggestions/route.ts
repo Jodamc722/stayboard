@@ -138,7 +138,9 @@ export async function POST(req: NextRequest) {
 
   const made = await createFromSuggestion(s, access.email || null, { assignee, scheduleDate })
   if (!made.ok) return NextResponse.json({ error: made.error || 'Could not create it.' }, { status: 502 })
-  await logAccepted(s, access.email || null, made.taskId || null)
+  // A REUSE made nothing (the job was already open on the unit): not logged as accepted — that log is
+  // what marks a task as Lighthouse's own for the duplicate sweeps (2026-11-09).
+  if (!made.reused) await logAccepted(s, access.email || null, made.taskId || null)
 
   // ── THE TRIP IS THE EXPENSIVE PART ────────────────────────────────────────────────────────────
   // Jon, 2026-08-27, asked for this to happen automatically: "if maintenance is going into a unit,

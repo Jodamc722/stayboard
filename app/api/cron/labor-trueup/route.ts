@@ -24,7 +24,7 @@ import { requireCron, cronAllowed } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { integrityChecks, engineFailedCheck, emailIntegrityFailures, integrityIgnoreNames, shouldEmailIntegrity, markIntegrityEmailed } from '@/lib/labor-integrity'
 import { atEasternHour } from '@/lib/et-clock'
-import { laborDeliveredToday } from '@/lib/briefs/labor-scorecard'
+import { laborDeliveredToday, freshLabor30 } from '@/lib/briefs/labor-scorecard'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -80,11 +80,16 @@ async function send(req: NextRequest) {
 
     // The engine not running at all is itself an integrity failure: the owner hears about it,
     // then it fails the run exactly as before.
-    const ec30 = await laborEconomics({ from: d30, to: yd, market: 'all' }).catch(async (e: any) => {
+    // REUSE THE GM MORNING'S 30 DAYS (2026-11-09). The GM morning ran this same window through the
+    // engine at 7:01 and left what this job reads (lib/briefs/labor-scorecard freshLabor30). On the
+    // scheduled run it is used when under 90 minutes old; a person's run (?force, ?preview, ?checks)
+    // always recomputes, and so does any morning the GM morning did not build its Labor block.
+    const handoff = !force && !preview && !checksOnly ? await freshLabor30(d30, yd) : null
+    const ec30: any = handoff ? handoff.ec30 : await laborEconomics({ from: d30, to: yd, market: 'all' }).catch(async (e: any) => {
       if (!preview && !checksOnly) await emailIntegrityFailures([engineFailedCheck(e)], 1, d30, yd)
       throw e
     })
-    const checks = integrityChecks(ec30, { ignoreNames: await integrityIgnoreNames() })
+    const checks = handoff ? handoff.checks : integrityChecks(ec30, { ignoreNames: await integrityIgnoreNames() })
     if (checksOnly) return NextResponse.json({ ok: checks.every(c => c.ok), window: `${d30}..${yd}`, checks })
 
     const badAudit = ec30.payrollAudit && !ec30.payrollAudit.complete ? ec30.payrollAudit : null
@@ -141,7 +146,7 @@ async function send(req: NextRequest) {
     // Staffing planner learning: record today's forward bookings so the planner can learn
     // last-minute pickup per lead time. Cheap, once a day.
     const forward = await storeForwardSnapshot().catch(() => null)
-    return NextResponse.json({ ok: true, snapshotStored: true, forward, integrity })
+    return NextResponse.json({ ok: true, snapshotStored: true, forward, integrity, engine: handoff ? `reused the GM morning's 30 days (built ${handoff.at})` : 'ran' })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
   }

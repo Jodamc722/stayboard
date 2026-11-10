@@ -14,9 +14,9 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   resolveScope, pullReservations, metricsFor, fmtK, ytdStats, monthsAhead,
-  pullReviews, pullTasks, weekBuckets, makeCode, etToday, planSectionFor, bookingsSince, lastReportDate,
+  pullReviews, pullTasks, weekBuckets, makeCode, etToday, planSectionFor, bookingsSince, lastReportDate, REPORT_ENGINE,
 } from '@/lib/owner-report'
-import type { ReportContent, ReportListing, MetricSet } from '@/lib/owner-report'
+import type { ReportContent, ReportListing, MetricSet, CalcOpts } from '@/lib/owner-report'
 import { basisTriple, BASIS_LABEL, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { paceStatus, paceGuidance } from '@/lib/pacing'
 import { reconcilePacing, seriesRows, crossCheckAdr, seriesAvg } from '@/lib/pacing-check'
@@ -595,7 +595,7 @@ export async function POST(req: NextRequest) {
     const seasonLabel = proj.monthLabels[0] + ' – ' + proj.monthLabels[proj.monthLabels.length - 1]
     const pStart = etToday()
     const content: ReportContent = {
-      meta: { scopeLabel, periodStart: pStart, periodEnd: pStart, asOf, activeListings: ids2.length, daysRemaining: 0, generatedAt: new Date().toISOString(), kind: 'projection' },
+      meta: { scopeLabel, periodStart: pStart, periodEnd: pStart, asOf, activeListings: ids2.length, daysRemaining: 0, generatedAt: new Date().toISOString(), kind: 'projection', engine: REPORT_ENGINE },
       hero: {
         eyebrow: prettyDate(asOf).toUpperCase(),
         title: scopeLabel,
@@ -661,8 +661,11 @@ export async function POST(req: NextRequest) {
 
   // ---- period metrics ----
   const toExcl = addDaysIso(periodEnd, 1)
+  // Every review generated from here on is computed under the current engine, and says so on
+  // itself (meta.engine) so later recomputes on this report keep using it — see lib/owner-report.
+  const calc: CalcOpts = { engine: REPORT_ENGINE, listings }
   const resv = await pullReservations(ids, periodStart, toExcl)
-  const period = metricsFor(resv, units, periodStart, toExcl)
+  const period = metricsFor(resv, units, periodStart, toExcl, calc)
   const daysRemaining = asOf >= periodStart && asOf <= periodEnd ? Math.max(0, Math.round((Date.parse(periodEnd + 'T00:00:00Z') - Date.parse(asOf + 'T00:00:00Z')) / 86_400_000)) : 0
 
   // ---- ONE source of truth for the four headline numbers ----
@@ -698,8 +701,8 @@ export async function POST(req: NextRequest) {
     } catch { return null }
   }
   const [ytd, mAhead, reviews, tasks, pacingSection, statementSection, newBookings] = await Promise.all([
-    ytdStats(ids, asOf, units),
-    monthsAhead(ids, asOf, units, 6), // [prev, current, +1..+5]
+    ytdStats(ids, asOf, units, calc),
+    monthsAhead(ids, asOf, units, 6, calc), // [prev, current, +1..+5]
     pullReviews(ids, reviewFrom, asOf),
     pullTasks(ids, byId, periodStart, periodEnd),
     // PriceLabs pacing PDF (optional upload) + selected owner statements (from the mirror)
@@ -713,15 +716,14 @@ export async function POST(req: NextRequest) {
   // Refresh on a live report — see that function for why.
   const scopeBuildings: string[] = []
   for (const l of listings) if (scopeBuildings.indexOf(l.building) < 0) scopeBuildings.push(l.building)
-  const plan = await planSectionFor(ids, scopeBuildings, asOf, units, mAhead)
+  const plan = await planSectionFor(ids, scopeBuildings, asOf, units, mAhead, calc)
 
-  // OWNER STAYS, SAID OUT LOUD (2026-11-09 audit). An owner's own nights are confirmed reservations
-  // with no fare: they count as occupied, and they sit in ADR's denominator at $0. The method is
-  // unchanged here (see the audit notes — changing it is Jon's call), but the report now states how
-  // many of the occupied nights were the owner's, so a soft ADR is explained instead of mysterious.
-  const ownerNights = period.ownerNights || 0
+  // OWNER STAYS, SAID OUT LOUD (engine 2, Jon approved 2026-11-09). No-rate owner and
+  // friends-and-family nights are out of both occupied and available nights, so ADR is the paid
+  // rate and occupancy is the share of sellable nights. The report states how many were removed.
+  const ownerNights = period.excludedNights || 0
   const ownerNightsNote = ownerNights > 0
-    ? 'includes ' + ownerNights + ' owner-stay night' + (ownerNights === 1 ? '' : 's') + ' (no rate)'
+    ? ownerNights + ' owner-stay night' + (ownerNights === 1 ? '' : 's') + ' excluded'
     : ''
 
   // ---- AI narrative pass (single call; template fallback) ----
@@ -745,7 +747,7 @@ export async function POST(req: NextRequest) {
       + ' | RevPAR: $' + shown.revpar + ' (gross $' + shownGross.revpar + ')',
     'USE ONLY THESE FIGURES. Any dollar or percent you write must match one of them exactly.',
     'Months ahead (OTB occupancy): ' + mAhead.map(m => m.short + ' ' + m.m.occupancyPct + '%').join(', '),
-    ownerNightsNote ? 'Note: occupancy ' + ownerNightsNote + ' — the owner\'s own use, counted as occupied and carrying no revenue, so ADR reads lower than the paid rate. Do not describe these as discounted or unsold nights.' : '',
+    ownerNightsNote ? 'Note: ' + ownerNightsNote + ' from both occupied and available nights — the owner\'s own use is neither sold nor for sale. Do not describe these as discounted or unsold nights.' : '',
   ].filter(Boolean).join('\n')
 
   const sys = 'You write owner-report copy for Stay Hospitality, a Florida short-term-rental operator. Voice: data-forward, confident, zero fluff, short declarative sentences. Never admit fault or liability, never mention pests/bed bugs/security incidents, never disparage a guest. Output STRICT JSON only, no markdown.'
@@ -874,7 +876,7 @@ export async function POST(req: NextRequest) {
       const mNext = nextMonthIso(mIso)
       const mFrom = mIso < periodStart ? periodStart : mIso
       const mToExcl = mNext > toExcl ? toExcl : mNext
-      const mm = metricsFor(resv, units, mFrom, mToExcl)
+      const mm = metricsFor(resv, units, mFrom, mToExcl, calc)
       const label = new Date(mIso.slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' }).toUpperCase()
       byMonth.push({
         label, monthIso: mIso,
@@ -907,6 +909,7 @@ export async function POST(req: NextRequest) {
     meta: {
       scopeLabel, periodStart, periodEnd, asOf,
       activeListings: units, daysRemaining, generatedAt: new Date().toISOString(),
+      engine: REPORT_ENGINE,
     },
     hero: {
       eyebrow: prettyDate(asOf).toUpperCase(),
@@ -921,7 +924,7 @@ export async function POST(req: NextRequest) {
       subtitle: 'On-the-books as of ' + prettyDate(asOf) + '  ·  ' + units + ' active listing' + (units === 1 ? '' : 's') + (daysRemaining ? '  ·  ' + daysRemaining + ' day' + (daysRemaining === 1 ? '' : 's') + ' remaining' : '') + (ownerNightsNote ? '  ·  ' + ownerNightsNote : ''),
       cards: [
         { key: 'revenue', label: 'REVENUE', value: fmtK(shown.revenue), sub: BASIS_NOTE[SNAP_PRIMARY] + ' · Gross (incl. cleaning + channel fees): ' + fmtK(shownGross.revenue), gross: fmtK(shownGross.revenue) },
-        { key: 'occupancy', label: 'OCCUPANCY', value: period.occupancyPct + '%', sub: 'Occupied ÷ available nights' },
+        { key: 'occupancy', label: 'OCCUPANCY', value: period.occupancyPct + '%', sub: 'Occupied ÷ sellable nights' },
         { key: 'adr', label: 'ADR', value: '$' + shown.adr, sub: 'Accommodation ÷ occupied nights · Gross ADR: $' + shownGross.adr, gross: '$' + shownGross.adr },
         { key: 'revpar', label: 'REVPAR', value: '$' + shown.revpar, sub: 'Accommodation ÷ available nights · Gross RevPAR: $' + shownGross.revpar, gross: '$' + shownGross.revpar },
       ],

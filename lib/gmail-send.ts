@@ -268,6 +268,8 @@ export async function sendGmail(opts: {
   subject: string
   html: string
   attachments?: GmailAttachment[]
+  /** Which automation sent it, for email_log.source. Optional: without it the subject is read for a guess, as before. */
+  source?: string
 }): Promise<{ ok: boolean; error?: string }> {
   const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
   const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
@@ -287,7 +289,7 @@ export async function sendGmail(opts: {
       // "did the 7am brief go out, and to whom" answerable — without threading a logging call
       // through six cron routes and every future one, which is the kind of wiring that gets
       // forgotten and then quietly lies.
-      recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: true, attachments: (opts.attachments || []).length })
+      recordEmail({ source: opts.source || sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: true, attachments: (opts.attachments || []).length })
       return { ok: true }
     }
     const body = await r.text().catch(() => '')
@@ -295,7 +297,7 @@ export async function sendGmail(opts: {
     // Never collapse them — the fix for each is different and misdiagnosis costs a day.
     if (/insufficient.*scope|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(body)) {
       const err = 'The Google connection has no Gmail permission — reconnect Google (it will ask for "Send email on your behalf").'
-      recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
+      recordEmail({ source: opts.source || sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
       return { ok: false, error: err }
     }
     if (/has not been used in project|is disabled|SERVICE_DISABLED/i.test(body)) {
@@ -303,11 +305,11 @@ export async function sendGmail(opts: {
       return { ok: false, error: 'The Gmail API is not enabled on the Google Cloud project — enable it' + (m ? ' at ' + m[0] : ' (APIs & Services → Library → Gmail API → Enable)') + ', wait a minute, then retry.' }
     }
     const err = `Gmail send failed (${r.status}): ${body.slice(0, 300)}`
-    recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
+    recordEmail({ source: opts.source || sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
     return { ok: false, error: err }
   } catch (e: any) {
     const err = String(e?.message || e)
-    recordEmail({ source: sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
+    recordEmail({ source: opts.source || sourceFromSubject(opts.subject), fromEmail: opts.fromEmail, to, cc, subject: opts.subject, ok: false, error: err })
     return { ok: false, error: err }
   }
 }

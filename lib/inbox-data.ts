@@ -11,6 +11,9 @@ import { listPhoneThreads, type PhoneThreadSummary } from '@/lib/phone-threads'
 import { talkrouteConfigured } from '@/lib/talkroute'
 import { awaitingSet, median, SLA_RULE_TEXT, AWAITING_HORIZON_H } from '@/lib/response-times'
 import type { InboxItem, WaitInfo, LastInfo, StayInfo } from '@/components/MessagesInbox'
+import { cleanGuestName } from '@/lib/guest-name'
+import { readInboxState } from '@/lib/inbox-state'
+import { effectiveState, markTime, type InboxStateMap } from '@/lib/inbox-queue'
 
 const HOUR_MS = 60 * 60 * 1000
 const CONVO_COLS = 'id, reservation_id, listing_id, guest_name, channel, last_message_at, last_message_preview, unread_count'
@@ -29,6 +32,23 @@ export type InboxHeader = {
 export type InboxData = {
   items: InboxItem[]; unitById: Record<string, string>; waiting: Record<string, WaitInfo>; lastResponderById: Record<string, string>
   now: number; header: InboxHeader
+  /** What people did to threads — handled, snoozed, whose it is (lib/inbox-queue). Shared by everyone with the inbox open. */
+  state: InboxStateMap
+}
+
+// THE 30-DAY SPEED SAMPLE IS READ ONCE EVERY FIVE MINUTES, NOT EVERY POLL (inbox audit, 2026-11-09).
+// Every open inbox asks for the whole list every 30 seconds, and each ask re-read up to 6,000
+// conversation_response rows to redraw two header pills whose value moves by the hour. The list and
+// the waiting set stay live; only this sample is held, per server instance.
+const SPEED_TTL_MS = 5 * 60_000
+let speedCache: { at: number; rows: any[]; truncated: boolean } | null = null
+async function speedSample(sb: any, since30: string, now: number): Promise<{ rows: any[]; truncated: boolean }> {
+  if (speedCache && now - speedCache.at < SPEED_TTL_MS) return speedCache
+  const page = await pageRows<any>((a, b) => sb.from('conversation_response').select('conversation_id,first_ms,human_first_ms')
+    .gte('last_guest_at', since30).order('conversation_id', { ascending: true }).range(a, b), 6)
+  // A read that came back short is not worth holding on to.
+  if (!page.truncated) speedCache = { at: now, rows: page.rows, truncated: false }
+  return page
 }
 
 export async function loadInbox(): Promise<InboxData> {
@@ -44,15 +64,15 @@ export async function loadInbox(): Promise<InboxData> {
   // the mean of every guest→host gap — Guesty's automated templates and log/note rows included, so
   // a template firing in 40 seconds counted as us answering in 40 seconds. lib/response-times has
   // measured every thread properly since 2026-08-26 and nothing here read it.
-  const [{ data: convos }, { data: sync }, waiting, speed, phone] = await Promise.all([
+  const [{ data: convos }, { data: sync }, waiting, speed, phone, state] = await Promise.all([
     supabase.from('guesty_conversations').select(CONVO_COLS).order('last_message_at', { ascending: false }).limit(100),
     supabase.from('guesty_sync_status').select('entity,last_sync_at,last_error').in('entity', ['conversations', 'conversations_live']),
     // THE ONE "WAITING ON US" SET (D3/D5): the pill and the Needs-reply tab both come from this.
     awaitingSet({ db: sb, now }),
-    // Every thread the guest wrote in during the last 30 days, as already measured.
-    pageRows<any>((a, b) => sb.from('conversation_response').select('conversation_id,first_ms,human_first_ms')
-      .gte('last_guest_at', since30).order('conversation_id', { ascending: true }).range(a, b), 6),
+    // Every thread the guest wrote in during the last 30 days, as already measured (held 5 minutes).
+    speedSample(sb, since30, now),
     phoneThreads(sb),
+    readInboxState(),
   ])
 
   const list: any[] = (convos ?? []).slice()
@@ -78,9 +98,13 @@ export async function loadInbox(): Promise<InboxData> {
   const oldest = list.reduce((m, c) => { const t = String(c.last_message_at || ''); return t && (!m || t < m) ? t : m }, '')
   const resIds = Array.from(new Set(list.map(c => String(c.reservation_id || '')).filter(Boolean)))
   const [lastMsgs, stays] = await Promise.all([
+    // 40 THREADS A READ, ALL AT ONCE. This was 200 threads a read with `.limit(4000)` — PostgREST
+    // stops at 1,000 rows, so on a busy day the quieter threads of each chunk came back with no
+    // newest message at all and their row fell back to "Last: (no text)". Smaller chunks keep every
+    // thread's newest message inside the 1,000, and running them together costs no extra time.
     inChunks(convIds, ids => sb.from('guesty_messages').select('id,conversation_id,sender,sender_name,is_automated,module,sent_at')
-      .in('conversation_id', ids).gte('sent_at', oldest ? new Date(Date.parse(oldest) - 60_000).toISOString() : '2000-01-01').order('sent_at', { ascending: false }).limit(4000)),
-    inChunks(resIds, ids => sb.from('guesty_reservations').select('id,check_in,check_out,status').in('id', ids)),
+      .in('conversation_id', ids).gte('sent_at', oldest ? new Date(Date.parse(oldest) - 60_000).toISOString() : '2000-01-01').order('sent_at', { ascending: false }).limit(1000), 40, true),
+    inChunks(resIds, ids => sb.from('guesty_reservations').select('id,guest_name,check_in,check_out,status').in('id', ids)),
   ])
   const lastById: Record<string, LastInfo> = {}
   const newestId: Record<string, string> = {}
@@ -96,6 +120,9 @@ export async function loadInbox(): Promise<InboxData> {
   const bodies = await inChunks(Object.keys(newestId), ids => sb.from('guesty_messages').select('id,body').in('id', ids))
   for (const b of bodies) { const k = newestId[String(b.id)]; if (k && lastById[k] && b.body) lastById[k].text = plainText(String(b.body)).replace(/\s+/g, ' ').slice(0, 300) }
   const stayById: Record<string, StayInfo> = {}
+  // The booking's copy of the guest's name: a second spelling to repair a damaged one from (lib/guest-name).
+  const resNameById: Record<string, string> = {}
+  for (const r of stays) if (r.guest_name) resNameById[String(r.id)] = String(r.guest_name)
   for (const r of stays) stayById[String(r.id)] = { checkIn: r.check_in ? String(r.check_in).slice(0, 10) : null, checkOut: r.check_out ? String(r.check_out).slice(0, 10) : null, status: r.status ? String(r.status) : null }
 
   const unitById: Record<string, string> = {}
@@ -104,21 +131,29 @@ export async function loadInbox(): Promise<InboxData> {
   const lastResponderById: Record<string, string> = {}
   for (const r of cr) if (r.last_responder) lastResponderById[String(r.conversation_id)] = String(r.last_responder)
   const waitById: Record<string, WaitInfo> = {}
-  for (const r of waiting.rows) waitById[r.conversation_id] = { since: r.awaiting_since || r.last_guest_at, due: r.sla_due_at }
+  for (const r of waiting.rows) waitById[r.conversation_id] = { since: r.awaiting_since || r.last_guest_at, due: r.sla_due_at, lastGuest: r.last_guest_at }
 
   // One list, two sources, newest first. Only the fields the inbox shows cross to the client.
   const items: InboxItem[] = (list.map((c: any) => ({
     kind: 'guesty' as const, at: String(c.last_message_at || ''),
-    c: { id: c.id, guest_name: c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at, last_message_preview: c.last_message_preview ? plainText(c.last_message_preview).replace(/\s+/g, ' ').slice(0, 300) : c.last_message_preview, unread_count: c.unread_count,
+    // THE NAME AS A PERSON WRITES IT: Expedia's "MAR??A GABRIELA" reads "María Gabriela" (lib/guest-name).
+    // Guesty's preview is sent only when we have no newest-message text of our own — the row shows one of them.
+    c: { id: c.id, guest_name: cleanGuestName(c.guest_name, c.reservation_id ? resNameById[String(c.reservation_id)] : null, lastById[String(c.id)]?.who === 'guest' ? lastById[String(c.id)].name : null) || c.guest_name, channel: c.channel, listing_id: c.listing_id, last_message_at: c.last_message_at,
+      last_message_preview: lastById[String(c.id)]?.text ? null : (c.last_message_preview ? plainText(c.last_message_preview).replace(/\s+/g, ' ').slice(0, 300) : c.last_message_preview), unread_count: c.unread_count,
       last: lastById[String(c.id)] || null, stay: c.reservation_id ? stayById[String(c.reservation_id)] || null : null },
   })) as InboxItem[])
-    .concat(phone.list.map(t => ({ kind: 'phone' as const, at: t.lastAt, t })))
+    .concat(phone.list.map(t => ({ kind: 'phone' as const, at: t.lastAt, t: { ...t, guestName: cleanGuestName(t.guestName) || t.guestName } })))
     .sort((a, b) => b.at.localeCompare(a.at))
 
   // The pill counts exactly what the Needs-reply tab lists: the waiting threads that are on the page.
-  const gWaiting = list.filter(c => waitById[String(c.id)]).length
-  const late = list.filter(c => { const w = waitById[String(c.id)]; return !!(w && w.due && Date.parse(w.due) <= now) }).length
-  const phoneAwaiting = phone.list.filter(t => t.awaiting).length
+  // A THREAD SOMEONE MARKED "NO REPLY NEEDED" OR SNOOZED IS NOT WAITING (2026-11-09) — until the guest
+  // writes again, which lifts the mark by itself (lib/inbox-queue effectiveState).
+  const parked = (key: string, at: any) => { const e = effectiveState(state[key], String(at || ''), now); return e.done || e.snoozed }
+  const inQueue = list.filter(c => waitById[String(c.id)] && !parked('g:' + c.id, markTime(c.last_message_at, waitById[String(c.id)].lastGuest)))
+  const parkedN = list.filter(c => waitById[String(c.id)]).length - inQueue.length
+  const gWaiting = inQueue.length
+  const late = inQueue.filter(c => { const w = waitById[String(c.id)]; return !!(w && w.due && Date.parse(w.due) <= now) }).length
+  const phoneAwaiting = phone.list.filter(t => t.awaiting && !parked('p:' + t.number, t.lastAt)).length
   const waitingN = gWaiting + phoneAwaiting
   const unread = list.reduce((s, c) => s + (Number(c.unread_count) || 0), 0)
 
@@ -159,10 +194,11 @@ export async function loadInbox(): Promise<InboxData> {
       + (waiting.slaKnown ? ` · ${late} past their reply-by time — ${SLA_RULE_TEXT}` : ' · reply-by times appear once migration 134 has run')
       + (phone.on ? ` · ${gWaiting} Guesty · ${phoneAwaiting} phone` : '')
       + (waiting.truncated ? ' · first 1,000 only' : '')
+      + (parkedN ? ` · ${parkedN} more marked handled or snoozed by the desk` : '')
 
 
   return {
-    items, unitById, waiting: waitById, lastResponderById, now,
+    items, unitById, waiting: waitById, lastResponderById, now, state,
     header: {
       reply: { label: 'Reply ' + fmtDur(humanMed), tone: humanMed == null ? 'slate' : humanMed <= HOUR_MS ? 'emerald' : humanMed <= 4 * HOUR_MS ? 'amber' : 'rose', title: replyTitle },
       within1h: { label: (within1h == null ? '—' : within1h + '%') + ' in 1h', tone: within1h == null ? 'slate' : within1h >= 80 ? 'emerald' : within1h >= 60 ? 'amber' : 'rose', title: within1hTitle },
@@ -184,11 +220,18 @@ async function phoneThreads(sb: any): Promise<{ on: boolean; list: PhoneThreadSu
   return { on: true, list: await listPhoneThreads(sb, 100).catch(() => [] as PhoneThreadSummary[]) }
 }
 
-/** `.in()` over a long id list, 200 at a time; the rows of every chunk that answered. */
-async function inChunks(ids: string[], q: (ids: string[]) => PromiseLike<any>): Promise<any[]> {
+/** `.in()` over a long id list, `size` at a time (one after another, or together); the rows of every chunk that answered. */
+async function inChunks(ids: string[], q: (ids: string[]) => PromiseLike<any>, size = 200, together = false): Promise<any[]> {
   const out: any[] = []
-  for (let i = 0; i < ids.length; i += 200) {
-    const res: any = await q(ids.slice(i, i + 200))
+  const chunks: string[][] = []
+  for (let i = 0; i < ids.length; i += size) chunks.push(ids.slice(i, i + size))
+  if (together) {
+    const all = await Promise.all(chunks.map(c => Promise.resolve(q(c)).catch(() => null)))
+    for (const res of all) for (const r of (((res as any)?.data as any[]) || [])) out.push(r)
+    return out
+  }
+  for (const c of chunks) {
+    const res: any = await q(c)
     for (const r of ((res?.data as any[]) || [])) out.push(r)
   }
   return out

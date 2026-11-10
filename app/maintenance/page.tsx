@@ -16,6 +16,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { blockedUnits } from '@/lib/blocked-units'
 import { pageRows } from '@/lib/db-page'
+import { unstable_cache } from 'next/cache'
 import { MaintenanceView, type TriageRow } from './MaintenanceView'
 
 export const dynamic = 'force-dynamic'
@@ -65,6 +66,55 @@ async function openWorkOrders(db: ReturnType<typeof supabaseAdmin>) {
   return { data: r.rows }
 }
 
+const chunks = (ids: string[]) => { const out: string[][] = []; for (let i = 0; i < ids.length; i += 400) out.push(ids.slice(i, i + 400)); return out }
+
+// KEPT FOR TWO MINUTES (2026-11-09). Two parts of this page change slowly and cost the most to
+// work out on every open: which units are blocked on the calendar right now, and which finished
+// maintenance tasks of the last 30 days carry no billing. Both are computed exactly as before and
+// simply reused for 120 seconds. A read that stopped early is shown but never kept.
+type UnbilledTask = { id: any; reference_property_id: any; name: any; status: any; assignee_name: any; finished_at: any; total_minutes: any }
+async function readUnbilled(): Promise<{ rows: UnbilledTask[]; whole: boolean }> {
+  const db = supabaseAdmin()
+  const d30 = shift(ymd(new Date()), -30)
+  const done = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
+    .select('id, reference_property_id, name, status, assignee_name, finished_at, total_minutes')
+    .eq('type_department', 'maintenance')
+    .gte('finished_at', d30 + 'T00:00:00').order('id').range(a, b))
+  if (done.truncated) console.error('[maintenance] finished tasks read stopped early — the page may be missing rows')
+  const doneTasks = done.rows
+  // Billing details for closed work — a finished task with no dollars entered is the leak.
+  const billed: Record<string, boolean> = {}
+  let whole = !done.truncated
+  const pages = await Promise.all(chunks(doneTasks.map(t => str(t.id))).map(c => db.from('breezeway_billing_details').select('task_id, costs, supplies, rate_type').in('task_id', c)))
+  for (const { data, error } of pages) {
+    if (error) whole = false
+    for (const d of ((data || []) as any[])) {
+      const dollars = (Array.isArray(d.costs) ? d.costs : []).reduce((a: number, x: any) => a + (Number(x?.cost) || 0), 0)
+        + (Array.isArray(d.supplies) ? d.supplies : []).reduce((a: number, x: any) => a + (Number(x?.total_price ?? x?.unit_cost) || 0), 0)
+      billed[str(d.task_id)] = dollars > 0 || str(d.rate_type).length > 0
+    }
+  }
+  // Same rule on the money side: a deleted task with a finish time on it is not revenue we failed
+  // to bill, and chasing one wastes the exact attention this section exists to direct.
+  const rows = doneTasks
+    .filter(t => !/delet/i.test(str(t.status)))
+    .filter(t => !billed[str(t.id)])
+    .sort((a, b) => str(a.finished_at).localeCompare(str(b.finished_at))) as UnbilledTask[]
+  return { rows, whole }
+}
+const keptUnbilled = unstable_cache(async (): Promise<UnbilledTask[]> => {
+  const r = await readUnbilled()
+  if (!r.whole) throw new Error('unbilled: incomplete read')
+  return r.rows
+}, ['maintenance-unbilled-v1'], { revalidate: 120 })
+async function unbilledWork(): Promise<UnbilledTask[]> {
+  try { return await keptUnbilled() } catch { return (await readUnbilled()).rows }
+}
+const liveBlockedUnits = unstable_cache(async (): Promise<{ building: string; unit: string }[]> => {
+  const b = await blockedUnits(30)
+  return b.runs.filter(r => r.live).map(r => ({ building: str(r.building), unit: str(r.unit) }))
+}, ['maintenance-live-blocked-v1'], { revalidate: 120 })
+
 const GLITCH_OPEN = ['pool', 'ops', 'guest_followup', 'refund', 'manager_review', 'incident']
 const WO_CLOSED = ['done', 'cancelled']
 // ── A DELETED TASK IS NOT OPEN WORK (2026-09-14, the tab-by-tab walk) ──────────────────────────
@@ -88,7 +138,7 @@ export default async function MaintenancePage() {
   const today = ymd(new Date())
   const d30 = shift(today, -30)
 
-  const [woRes, taskRes, doneRes, glitchRes, blocked] = await Promise.all([
+  const [woRes, taskRes, unbilled, glitchRes, blocked] = await Promise.all([
     openWorkOrders(db),
     // Open maintenance execution: unfinished Breezeway maintenance tasks scheduled in the last
     // 60 days or undated. Older than that is archaeology, not operations.
@@ -96,50 +146,24 @@ export default async function MaintenancePage() {
       .select('id, reference_property_id, type_department, name, status, assignee_name, finished_at, scheduled_date, report_url, created:raw->>created_at')
       .eq('type_department', 'maintenance').is('finished_at', null)
       .gte('scheduled_date', shift(today, -60)).order('id').range(a, b)),
-    // Closed maintenance work in the last 30 days, to find what never got billed.
-    whole('finished tasks', (a, b) => db.from('breezeway_tasks_sync')
-      .select('id, reference_property_id, name, status, assignee_name, finished_at, total_minutes')
-      .eq('type_department', 'maintenance')
-      .gte('finished_at', d30 + 'T00:00:00').order('id').range(a, b)),
+    // Closed maintenance work in the last 30 days that never got billed (kept 2 minutes).
+    unbilledWork(),
     // Only the statuses the queue counts as open (the same GLITCH_OPEN filter below), so this read
     // does not page through every closed glitch ever logged.
     whole('glitches', (a, b) => db.from('glitches').select('id,status,unit,market,glitch_type,category,overview,assignee,due_date,created_at,breezeway_task_id').in('status', GLITCH_OPEN).order('id').range(a, b)),
-    blockedUnits(30).catch(() => null),
+    liveBlockedUnits().catch(() => null),
   ])
 
   // Listing names for Breezeway tasks, which only know their listing id.
   const listingIds = Array.from(new Set(
-    [...((taskRes.data || []) as any[]), ...((doneRes.data || []) as any[])]
+    [...((taskRes.data || []) as any[]), ...unbilled]
       .map(t => str(t.reference_property_id)).filter(Boolean)
   ))
   const lname: Record<string, string> = {}
-  // Billing details for closed work — a finished task with no dollars entered is the leak.
-  const doneTasks = ((doneRes.data || []) as any[])
-  const billed: Record<string, boolean> = {}
-  const doneIds = doneTasks.map(t => str(t.id))
-  // PERF (2026-11-09): the listing names and the billing details were read chunk after chunk, one
-  // list after the other. Same chunks, same reads — asked for together.
-  const chunks = (ids: string[]) => { const out: string[][] = []; for (let i = 0; i < ids.length; i += 400) out.push(ids.slice(i, i + 400)); return out }
-  const [listingPages, billingPages] = await Promise.all([
-    Promise.all(chunks(listingIds).map(c => db.from('guesty_listings').select('id,nickname,title,building').in('id', c))),
-    Promise.all(chunks(doneIds).map(c => db.from('breezeway_billing_details').select('task_id, costs, supplies, rate_type').in('task_id', c))),
-  ])
+  const listingPages = await Promise.all(chunks(listingIds).map(c => db.from('guesty_listings').select('id,nickname,title,building').in('id', c)))
   for (const { data } of listingPages) {
     for (const l of ((data || []) as any[])) lname[str(l.id)] = str(l.nickname || l.title || l.building || l.id)
   }
-  for (const { data } of billingPages) {
-    for (const d of ((data || []) as any[])) {
-      const dollars = (Array.isArray(d.costs) ? d.costs : []).reduce((a: number, x: any) => a + (Number(x?.cost) || 0), 0)
-        + (Array.isArray(d.supplies) ? d.supplies : []).reduce((a: number, x: any) => a + (Number(x?.total_price ?? x?.unit_cost) || 0), 0)
-      billed[str(d.task_id)] = dollars > 0 || str(d.rate_type).length > 0
-    }
-  }
-  // Same rule on the money side: a deleted task with a finish time on it is not revenue we failed
-  // to bill, and chasing one wastes the exact attention this section exists to direct.
-  const unbilled = doneTasks
-    .filter(t => !/delet/i.test(str(t.status)))
-    .filter(t => !billed[str(t.id)])
-    .sort((a, b) => str(a.finished_at).localeCompare(str(b.finished_at)))
 
   // ---- the triage queue: every open item across all three systems, ranked ----
   const wos = ((woRes.data || []) as any[]).filter(r => !WO_CLOSED.includes(str(r.status)))
@@ -203,7 +227,7 @@ export default async function MaintenancePage() {
   for (const t of tasks) cell(rollup(lname[str(t.reference_property_id)])).task++
   for (const g of glitches) cell(rollup(str(g.unit) ? str(g.unit) : str(g.market))).glitch++
   for (const t of unbilled) cell(rollup(lname[str(t.reference_property_id)])).unbilled++
-  if (blocked) for (const run of blocked.runs.filter(r => r.live)) cell(rollup(run.building || run.unit)).blocked++
+  if (blocked) for (const run of blocked) cell(rollup(run.building || run.unit)).blocked++
   const gridRows = Object.entries(grid)
     .map(([b, v]) => ({ b, ...v, total: v.wo + v.task + v.glitch + v.blocked + v.unbilled }))
     .filter(r => r.total > 0)
@@ -212,7 +236,7 @@ export default async function MaintenancePage() {
   const unassignedCount = triage.filter(t => t.flags.includes('unassigned')).length
   const staleCount = triage.filter(t => t.flags.includes('stale')).length
   const overdueCount = triage.filter(t => t.flags.includes('overdue')).length
-  const liveBlocked = blocked ? blocked.runs.filter(r => r.live).length : 0
+  const liveBlocked = blocked ? blocked.length : 0
 
   const verdict = triage.length === 0
     ? 'Nothing is stuck. Every open item is assigned, current, and inside its dates.'

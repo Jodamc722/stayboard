@@ -44,6 +44,8 @@ export function LeanHead({ title, icon, sub, children }: { title: ReactNode; ico
   // THE ONE PAGE HEADER (2026-10-02): title (display face in Lighthouse, via globals.css), an
   // optional line of facts under it, and the pills / one primary action on the right. 45 pages
   // share it, so a change here is a change everywhere.
+  // PHONE: the right side wraps (globals.css .lh-head-right). Give the page's one primary button the
+  // class `lh-primary` and it is placed first there, so it is never the thing pushed to a second row.
   return (
     <header className="lh-head flex items-end justify-between gap-3 flex-wrap mb-4">
       <div className="min-w-0">

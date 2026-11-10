@@ -65,7 +65,7 @@ function PlaceSearch({ options, taken, onPick, placeholder }: { options: Opts | 
   )
 }
 
-export function UpkeepProgramEdit({ cadenceKey, onClose, onSaved }: { cadenceKey?: string; onClose: () => void; onSaved: (label: string) => void }) {
+export function UpkeepProgramEdit({ cadenceKey, onClose, onSaved }: { cadenceKey?: string; onClose: () => void; onSaved: (label: string, saved?: CadenceDef, isNew?: boolean) => void }) {
   const [cfg, setCfg] = useState<any>(null)
   const [c, setC] = useState<CadenceDef | null>(null)
   const [err, setErr] = useState('')
@@ -83,7 +83,7 @@ export function UpkeepProgramEdit({ cadenceKey, onClose, onSaved }: { cadenceKey
     let dead = false
     fetch('/api/settings/cadences').then(r => r.json()).then(j => {
       if (dead) return
-      if (!j?.ok) { setErr(j?.error || 'Could not load programs'); return }
+      if (!j?.ok) { setErr(j?.error === 'admins only' ? 'Programs are set up by an admin — ask the owner to add or change this one.' : (j?.error || 'Could not load programs')); return }
       setCfg(j.config)
       const found = cadenceKey ? (j.config.cadences as CadenceDef[]).find(x => x.key === cadenceKey) : null
       setC(found ? JSON.parse(JSON.stringify(found)) : {
@@ -123,7 +123,9 @@ export function UpkeepProgramEdit({ cadenceKey, onClose, onSaved }: { cadenceKey
       const r = await fetch('/api/settings/cadences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: { ...cfg, cadences } }) })
       const j = await r.json().catch(() => ({}))
       if (!r.ok || j?.ok === false) throw new Error(j?.error || 'Could not save')
-      onSaved(label)
+      // What the server stored (it round-trips through the resolver), so the board can show the tile at once.
+      const stored: CadenceDef | undefined = Array.isArray(j?.config?.cadences) ? (j.config.cadences as CadenceDef[]).find(x => x.key === next.key) : undefined
+      onSaved(label, stored || next, isNew)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy(false) }
   }
 
@@ -167,6 +169,14 @@ export function UpkeepProgramEdit({ cadenceKey, onClose, onSaved }: { cadenceKey
             <button onClick={() => set({ scopeBuildings: [], scopeUnits: [] })} className={chip(everywhere)}>Every unit</button>
             <span className={chip(!everywhere) + ' inline-flex items-center'}>Only these buildings / units</span>
           </div>
+          {/* A program that ships "pick the buildings first" (pest control, pressure washing) stays inert on
+              "Every unit" — say so here, where it is decided, and offer the one tap that makes it run everywhere. */}
+          {c.needsScope && everywhere ? (
+            <p className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+              This program does nothing until its buildings or units are picked below.
+              <button onClick={() => set({ needsScope: false })} className="ml-2 underline font-semibold">Run it on every unit instead</button>
+            </p>
+          ) : null}
           <PlaceSearch options={options} placeholder="Add a building or unit — type Eden, Capri 109…"
             taken={new Set(scopeB.map(b => 'building:' + b.toLowerCase()).concat(scopeU.map(u => 'unit:' + u.toLowerCase())))}
             onPick={h => h.kind === 'building' ? set({ scopeBuildings: scopeB.concat([h.ref]) }) : set({ scopeUnits: scopeU.concat([h.ref]) })} />
@@ -204,7 +214,7 @@ export function UpkeepProgramEdit({ cadenceKey, onClose, onSaved }: { cadenceKey
 
         {err ? <p className="text-[12.5px] text-rose-700">{err}</p> : null}
         <div className="flex items-center gap-2 flex-wrap pt-1">
-          <button onClick={save} disabled={!canSave || busy} className="h-9 px-4 rounded-lg bg-ink text-white text-[13px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5">{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save program</button>
+          <button onClick={save} disabled={!canSave || busy} className="h-10 sm:h-9 px-4 rounded-lg bg-ink text-white text-[13px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5">{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} Save program</button>
           <button onClick={onClose} className="h-9 px-3 rounded-lg border border-line bg-white text-[13px] font-semibold text-ink">Cancel</button>
           <span className="text-[11.5px] text-muted ml-auto">Fine settings (equipment, billing, approvers) stay in Settings → Cadences.</span>
         </div>

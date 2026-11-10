@@ -11,6 +11,7 @@ import { PhoneThread } from '@/components/PhoneThread'
 import { loadPhoneThread } from '@/lib/phone-threads'
 import { talkrouteConfigured } from '@/lib/talkroute'
 import { ArrowLeft } from 'lucide-react'
+import { cleanGuestName } from '@/lib/guest-name'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,12 +37,13 @@ export default async function PhoneThreadPage({ params }: { params: { number: st
       .eq('id', t.reservationId).maybeSingle()
     if (r) reservation = canSeeMoney(access) ? r : { ...r, money_total: null, money_balance: null, money_currency: null }
   }
-  const guest = t.guestName || reservation?.guest_name || t.display
+  // The name as a person writes it (lib/guest-name) — never "MAR??A".
+  const guest = cleanGuestName(t.guestName || reservation?.guest_name, reservation?.guest_name) || t.display
   const unit = unitOf(reservation?.listing_name || '')
 
   return (
     <Shell>
-      <Link href="/inbox" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-3"><ArrowLeft size={15} /> All conversations</Link>
+      <Link href="/inbox" className="inline-flex items-center gap-1.5 min-h-[36px] text-sm text-muted hover:text-ink mb-3"><ArrowLeft size={15} /> All conversations</Link>
       <PhoneThread number={t.number} display={t.display} guest={guest} unit={unit} events={t.events} reservation={reservation}
         conversationId={t.conversationId} fromNumber={t.fromNumber} connected={connected} />
     </Shell>

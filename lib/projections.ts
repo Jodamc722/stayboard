@@ -43,7 +43,8 @@ const num = (v: any): number => { const n = parseFloat(str(v).replace(/[^0-9.\-]
 const r1 = (n: number) => Math.round(n * 10) / 10
 const r2 = (n: number) => Math.round(n * 100) / 100
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
-const LIVE_RES = ['confirmed', 'checked_in', 'checked_out', 'closed']
+// `closed` out 2026-11-09 (owner-approved): a request that never booked — lib/basis LIVE_STAY_STATUSES.
+const LIVE_RES = ['confirmed', 'checked_in', 'checked_out']
 const isCancelled = (s: any) => /cancel|declin|expir|denied|inquiry/i.test(str(s))
 
 function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()) }

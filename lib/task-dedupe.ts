@@ -12,7 +12,7 @@
 // is a duplicate.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { cancelBreezewayTask } from './breezeway'
+import { lighthouseCreatedIds, removeOwnDuplicate } from './own-tasks'
 import { isTaskDone, isTaskGone } from './task-categories'
 
 const SKIP = /\b(departure|turnover|check-?out|mid-?stay|arrival)\s+clean|\binspection\b/i
@@ -78,18 +78,25 @@ export async function findDuplicates(opts: { only?: RegExp } = {}): Promise<DupG
   return out.sort((a, b) => b.cancel.length - a.cancel.length)
 }
 
-export async function cancelDuplicates(opts: { only?: RegExp; max?: number } = {}): Promise<{ groups: number; cancelled: number; failed: string[] }> {
+// ONLY WHAT LIGHTHOUSE ITSELF CREATED (2026-11-09): a name that starts like one of our jobs is not
+// proof — a person can type "A/C filter change — 906/6" into Breezeway. A copy is removed only when
+// its id is on one of Lighthouse's own ledgers (lib/own-tasks); the rest are left and counted. If the
+// ledgers cannot be read, NOTHING is removed. A removal is a delete when the task is untouched,
+// otherwise the cancel it always was.
+export async function cancelDuplicates(opts: { only?: RegExp; max?: number } = {}): Promise<{ groups: number; cancelled: number; deleted: number; leftNotOurs: number; failed: string[]; note?: string }> {
   const groups = await findDuplicates({ only: opts.only })
-  const db = supabaseAdmin()
-  let cancelled = 0, budget = opts.max ?? 200
+  let cancelled = 0, deleted = 0, leftNotOurs = 0, budget = opts.max ?? 200
   const failed: string[] = []
+  const ours = await lighthouseCreatedIds(groups.flatMap(g => g.cancel.map(x => x.id)))
+  if (!ours) return { groups: groups.length, cancelled: 0, deleted: 0, leftNotOurs: 0, failed, note: 'the ledgers of Lighthouse-created tasks could not be read — nothing was removed' }
   for (const g of groups) {
     for (const x of g.cancel) {
+      if (!ours.has(String(x.id))) { leftNotOurs++; continue }
       if (budget-- <= 0) break
-      const r = await cancelBreezewayTask(x.id).catch(() => ({ ok: false } as any))
-      if (r.ok) { cancelled++; try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', x.id) } catch { /* sync */ } }
+      const r = await removeOwnDuplicate(x.id, { ours: true, source: 'task-dedupe' })
+      if (r.ok) { cancelled++; if (r.how === 'deleted') deleted++ }
       else failed.push(x.id)
     }
   }
-  return { groups: groups.length, cancelled, failed }
+  return { groups: groups.length, cancelled, deleted, leftNotOurs, failed }
 }

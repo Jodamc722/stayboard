@@ -24,6 +24,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { sendGmail } from '@/lib/gmail-send'
+import { briefAlertTo } from '@/lib/briefs/delivery'
 import { isLiveStay } from '@/lib/stay-status'
 import { salatoListings } from '@/lib/salato-units'
 import { requireCron, cronAllowed } from '@/lib/cron-auth'
@@ -189,7 +190,7 @@ async function run(req: NextRequest): Promise<Response> {
     if (test) {
       const me = user?.email
       if (!me || !fromEmail) return NextResponse.json({ ok: false, error: 'set salato_daily.fromEmail first' })
-      const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + subject, html })
+      const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + subject, html, source: 'salato-daily' })
       return NextResponse.json({ ok: r.ok, sentTo: me, subject, error: r.error })
     }
     const to = (cfg?.to || []).filter(Boolean)
@@ -206,7 +207,7 @@ async function run(req: NextRequest): Promise<Response> {
     // COPIED ON EVERY BRIEF (Jon, 2026-11-05): `ops_brief.cc`, empty by default.
     const ob = await getSetting<{ cc?: string[] }>('ops_brief', {}).catch(() => ({} as any))
     const cc = (Array.isArray(ob?.cc) ? ob.cc : []).map((x: any) => String(x || '').trim().toLowerCase()).filter((x: string) => /@/.test(x) && !to.map((t: string) => t.toLowerCase()).includes(x))
-    const r = await sendGmail({ fromEmail, to, cc, subject, html })
+    const r = await sendGmail({ fromEmail, to, cc, subject, html, source: 'salato-daily' })
     return NextResponse.json({ ok: r.ok, sent: r.ok, to: to.length, subject, error: r.error })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })
@@ -233,7 +234,8 @@ async function alertOwnerOnce(why: string): Promise<boolean> {
   const today = ymd(new Date())
   const last = await getSetting<{ on?: string }>(ALERT_KEY, {})
   if (last && last.on === today) return false
-  await notify([OWNER], {
+  // Who is told: ops_brief.alertTo (lib/briefs/delivery) — the address that used to be written here by default.
+  await notify(await briefAlertTo().catch(() => [OWNER]), {
     kind: 'system',
     title: 'The Salato daily email is on but ' + why,
     body: 'It did not go out this morning. Fill it in under Users & admin → Settings → Morning brief (Salato daily), or switch it off.',

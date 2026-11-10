@@ -12,7 +12,7 @@
 // reads the sentence first. Everything else — voices, projects, statement, themes — is untouched.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { resolveScope, pullReservations, metricsFor, fmtK } from '@/lib/owner-report'
+import { resolveScope, pullReservations, metricsFor, fmtK, engineOf, type CalcOpts } from '@/lib/owner-report'
 import { basisTriple, isBasis, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { hasEditCookie } from '@/lib/edit-access'
 import { requireLevel } from '@/lib/access'
@@ -83,7 +83,10 @@ export async function POST(req: NextRequest) {
   const units = scope.listings.length
   const toExcl = nextDay(to)
   const resv = await pullReservations(scope.listings.map(l => l.id), from, toExcl)
-  const period = metricsFor(resv, units, from, toExcl)
+  // The report keeps the engine it was generated under; one without the flag recomputes as before.
+  const eng = engineOf(content)
+  const calc: CalcOpts | undefined = eng >= 2 ? { engine: eng, listings: scope.listings } : undefined
+  const period = metricsFor(resv, units, from, toExcl, calc)
 
   // ---- snapshot: raw metrics drive every basis; card strings stay in sync as the fallback ----
   content.meta = Object.assign({}, content.meta, { periodStart: from, periodEnd: to, activeListings: units })
@@ -118,7 +121,7 @@ export async function POST(req: NextRequest) {
   }
   const cardSub: Record<string, string> = {
     revenue: BASIS_NOTE[primary] + ' · Gross (incl. cleaning + channel fees): ' + cardGross.revenue,
-    occupancy: 'Occupied ÷ available nights',
+    occupancy: eng >= 2 ? 'Occupied ÷ sellable nights' : 'Occupied ÷ available nights',
     adr: 'Accommodation ÷ occupied nights · Gross ADR: ' + cardGross.adr,
     revpar: 'Accommodation ÷ available nights · Gross RevPAR: ' + cardGross.revpar,
   }
@@ -153,7 +156,7 @@ export async function POST(req: NextRequest) {
     const mNext = nextMonthIso(mIso)
     const mFrom = mIso < from ? from : mIso
     const mToExcl = mNext > toExcl ? toExcl : mNext
-    const mm = metricsFor(resv, units, mFrom, mToExcl)
+    const mm = metricsFor(resv, units, mFrom, mToExcl, calc)
     byMonth.push({
       label: monthLabel(mIso), monthIso: mIso,
       revenue: fmtK(mm.accomRevenue), grossRevenue: fmtK(mm.grossRevenue),
@@ -173,7 +176,7 @@ export async function POST(req: NextRequest) {
     const byId: Record<string, any[]> = {}
     for (const r of resv) { (byId[r.listing_id] = byId[r.listing_id] || []).push(r) }
     content.byListing = scope.listings.map(l => {
-      const m = metricsFor(byId[l.id] || [], 1, from, toExcl)
+      const m = metricsFor(byId[l.id] || [], 1, from, toExcl, eng >= 2 ? { engine: eng, listings: [l] } : undefined)
       return {
         id: l.id, name: l.unit ? ('Unit ' + l.unit) : l.name, unit: l.unit || '',
         bedrooms: l.bedrooms, building: l.building || '',

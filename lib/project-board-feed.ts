@@ -28,7 +28,7 @@ const trim = (v: any, n = 150) => { const t = str(v).replace(/\s+/g, ' '); retur
 /** Today where the work is, not where the server is. */
 const todayET = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
-type Board = { id: string; ref: string | null; title: string }
+type Board = { id: string; ref: string | null; title: string; token: string }
 
 /** Every project with a live share link. Those are the boards other people can touch. */
 async function sharedBoards(): Promise<Board[]> {
@@ -38,10 +38,13 @@ async function sharedBoards(): Promise<Board[]> {
   const now = Date.now()
   return ((data || []) as any[])
     .filter(p => !p.archived && (!p.share_expires || new Date(p.share_expires).getTime() > now))
-    .map(p => ({ id: String(p.id), ref: p.ref || null, title: String(p.title || 'Project') }))
+    .map(p => ({ id: String(p.id), ref: p.ref || null, title: String(p.title || 'Project'), token: String(p.share_token || '') }))
 }
 
-const link = (b: Board) => `<${APP}/projects?open=${b.id}|${trim([b.ref, b.title].filter(Boolean).join(' · '), 70)}>`
+// The link goes to the shared board itself (/project/<token>). It used to be /projects?open=<id>,
+// a page that no longer exists (it lands on Leadership and opens nothing). A project is not a row
+// on the Leadership board, so /leadership?item=<id> would open nothing either.
+const link = (b: Board) => `<${APP}/project/${encodeURIComponent(b.token)}|${trim([b.ref, b.title].filter(Boolean).join(' · '), 70)}>`
 
 /**
  * THE EVENING RECAP — what moved today on the boards people outside can see.

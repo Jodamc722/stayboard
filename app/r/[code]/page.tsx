@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase-server'
 import { hasEditCookie } from '@/lib/edit-access'
 import { ReportView } from '@/components/ReportView'
 import { reportGallery } from '@/lib/report-gallery'
-import { reportByListing } from '@/lib/report-listings'
+import { reportByListingForEngine } from '@/lib/report-listings-v2'
 import { reportRecommendations } from '@/lib/report-recommendations'
 import { reportDelta } from '@/lib/report-delta'
 import { picsAsUrls } from '@/lib/pic-url'
@@ -56,7 +56,7 @@ export default async function PublicReportPage({ params }: { params: { code: str
   const isReview = !isDeckDoc && docKind !== 'projection'
   const [gallery, listingTable, recs, delta] = await Promise.all([
     reportGallery(rep).catch(() => [] as string[]),
-    isReview ? reportByListing(rep).catch(() => null) : Promise.resolve(null),
+    isReview ? reportByListingForEngine(rep).catch(() => null) : Promise.resolve(null),
     !isDeckDoc ? reportRecommendations(rep).catch(() => null) : Promise.resolve(null),
     isReview ? reportDelta(rep).catch(() => null) : Promise.resolve(null),
   ])

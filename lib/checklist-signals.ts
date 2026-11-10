@@ -64,10 +64,19 @@ const COUNTERS: Record<string, () => Promise<number | null>> = {
   },
   welcome_calls_owed: async () => {
     try {
-      const { loadCallsDesk } = await import('./call-desk')
       const today = dayET(0)
+      // THE DAY ALREADY KNOWS (2026-11-09 audit, pass 3). Today's page shows "calls owed" from the
+      // shared day core — arriving today, no completed call, not a no-service building — and that
+      // core is nearly always on hand, so the checklist reads the same number from it instead of
+      // loading a calls desk of its own (and the two can no longer disagree). Given 350ms: when the
+      // core is cold and still building, the one-day calls desk answers, as before.
+      const fromDay = import('./command-day').then(m => m.buildCommandDay({ money: false }))
+        .then(d => (d && d.today === today ? d.tiles.arrivals.rows.filter(a => a.today && !a.welcomeDone && !a.welcomeSkip).length : null), () => null)
+      const quick = await Promise.race([fromDay, new Promise<undefined>(r => setTimeout(() => r(undefined), 350))])
+      if (typeof quick === 'number') return quick
+      const { loadCallsDesk } = await import('./call-desk')
       // dayOnly: one integer about today's arrivals does not need the desk's 17-day window, its
-      // checkouts or their glitches (2026-11-09 audit) — same rows, same rules, one day of them.
+      // checkouts or their glitches — same rows, same rules, one day of them.
       const d = await loadCallsDesk(db(), today, today, { dayOnly: true })
       return d.rows.filter(r => r.due && !r.closed && !r.done && r.check_in === today).length
     } catch { return null }
@@ -132,20 +141,30 @@ async function headCount(build: (q: any) => any): Promise<number | null> {
  */
 // The same counts for 30 seconds: the Today page asks every minute for every viewer, and a count
 // that is half a minute old is still the count. Kept per set of signals, like tasksMemo above.
-const signalsMemo: Record<string, { at: number; p: Promise<Record<string, number | null>> }> = {}
-export async function countSignals(keys: string[]): Promise<Record<string, number | null>> {
+//
+// AND NOBODY WAITS FOR A RECOUNT (pass 3). Past 30 seconds and up to three minutes, the counts on
+// hand are returned at once and a recount runs behind them for the next read — the list was taking
+// over a second because every poll that missed the 30 seconds counted everything again, in line.
+// Only a set of signals never counted on this instance (or not for three minutes) is waited for.
+type SignalCounts = Record<string, number | null>
+const signalsMemo: Record<string, { at: number; p: Promise<SignalCounts>; value?: SignalCounts; valueAt?: number }> = {}
+export async function countSignals(keys: string[]): Promise<SignalCounts> {
   const wanted = keys.filter((k, i) => k && COUNTERS[k] && SIGNAL_META[k] && keys.indexOf(k) === i)
   if (!wanted.length) return {}
   const memoKey = wanted.slice().sort().join('|')
   const hit = signalsMemo[memoKey]
-  if (hit && Date.now() - hit.at < 30_000) return hit.p
+  const now = Date.now()
+  if (hit && now - hit.at < 30_000) return hit.value || hit.p
   const p = (async () => {
     const counts = await Promise.all(wanted.map(k => COUNTERS[k]().catch(() => null)))
-    const out: Record<string, number | null> = {}
+    const out: SignalCounts = {}
     wanted.forEach((k, i) => { out[k] = counts[i] })
     return out
   })()
-  signalsMemo[memoKey] = { at: Date.now(), p }
+  const entry: (typeof signalsMemo)[string] = { at: now, p, value: hit?.value, valueAt: hit?.valueAt }
+  signalsMemo[memoKey] = entry
+  p.then(v => { entry.value = v; entry.valueAt = Date.now() }, () => { /* the next read counts again */ })
+  if (hit && hit.value && hit.valueAt && now - hit.valueAt < 180_000) return hit.value
   return p
 }
 

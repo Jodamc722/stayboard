@@ -174,7 +174,7 @@ export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<Dr
       const id = String((data[0] as any).id)
       await db.from(TABLE).update({
         ...row,
-        expires_at: new Date(Date.now() + rules.approvalExpiryMin * 60_000).toISOString(),
+        expires_at: await approvalExpiry(input.eventKey, rules),
       }).eq('id', id)
       return { ok: true, action: 'updated', id }
     }
@@ -185,7 +185,7 @@ export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<Dr
     ...row,
     status: 'pending',
     token,
-    expires_at: new Date(Date.now() + rules.approvalExpiryMin * 60_000).toISOString(),
+    expires_at: await approvalExpiry(input.eventKey, rules),
   }).select('id').single()
   if (ins.error || !ins.data) return { ok: false, reason: ins.error ? ins.error.message : 'insert failed' }
   const id = String((ins.data as any).id)
@@ -193,12 +193,48 @@ export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<Dr
   return { ok: true, action: 'queued', id }
 }
 
+/**
+ * THE APPROVER'S DM KEEPS THE SAME HOURS (2026-11-09). "Ready to send" went to the approver's phone
+ * whenever a draft was written — the handover's window runs to 11pm. Between 8pm and 7am ET the DM is
+ * now HELD, not dropped: the draft's id is kept in app_settings `slack_outbox_dm_held`, its approval
+ * clock starts when the window opens (approvalExpiry) so it cannot expire unseen overnight, and the
+ * half-hourly dispatch sends the DM on the first pass after 7am if the draft is still waiting. The
+ * draft is in the Command Center the whole time. Not held: walk_in_risk and blocked_arrival
+ * (NIGHT_EXEMPT) — a guest is at the door tonight.
+ */
+const DM_HELD_KEY = 'slack_outbox_dm_held'
+async function postWindowOpen(): Promise<boolean> {
+  try { const { inPostWindow } = await import('./eve/room-gate'); return inPostWindow() } catch { return true }
+}
+async function approvalExpiry(eventKey: string, rules: SlackRules): Promise<string> {
+  const ms = rules.approvalExpiryMin * 60_000
+  if (NIGHT_EXEMPT.indexOf(String(eventKey)) >= 0) return new Date(Date.now() + ms).toISOString()
+  try {
+    const { inPostWindow } = await import('./eve/room-gate')
+    const t0 = Date.now()
+    // The next 5-minute step inside the window (now, when it is open); at most 14 hours ahead.
+    for (let i = 0; i <= 14 * 12; i++) { const t = t0 + i * 300_000; if (inPostWindow(new Date(t))) return new Date(t + ms).toISOString() }
+  } catch { /* fall through */ }
+  return new Date(Date.now() + ms).toISOString()
+}
+
 /** The DM Jon gets: what it would say, and one tap to let it go or drop it. */
-async function notifyApprovers(id: string, rules: SlackRules): Promise<void> {
+async function notifyApprovers(id: string, rules: SlackRules, opts: { flush?: boolean } = {}): Promise<void> {
   const db = supabaseAdmin()
   const { data } = await db.from(TABLE).select('*').eq('id', id).single()
   const row = data as OutboxRow | null
   if (!row || !rules.approvers.length) return
+  if (opts.flush && row.status !== 'pending') return   // decided or expired while it waited
+  if (!opts.flush && NIGHT_EXEMPT.indexOf(String(row.event_key)) < 0 && !(await postWindowOpen())) {
+    try {
+      const { getSettingFresh, setSetting } = await import('./app-settings')
+      const cur = await getSettingFresh<string[]>(DM_HELD_KEY, [])
+      const ids = (Array.isArray(cur) ? cur : []).map(String).filter(x => x && x !== id).slice(-50)
+      ids.push(id)
+      await setSetting(DM_HELD_KEY, ids, 'slack-queue')
+      return
+    } catch { /* could not record the hold: send it now rather than lose it */ }
+  }
   const base = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
   const yes = base + '/approve/slack/' + row.token + '?go=1'
   const no = base + '/approve/slack/' + row.token + '?go=0'
@@ -343,6 +379,19 @@ export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: b
 /** Send everything approved but not yet delivered — the retry path when Slack was down. */
 export async function dispatchApproved(limit = 25): Promise<{ sent: number; failed: number }> {
   const rules = await getSlackRules()
+  // Approver DMs held overnight go out on the first pass the window is open (see notifyApprovers).
+  try {
+    if (await postWindowOpen()) {
+      const { getSettingFresh, setSetting } = await import('./app-settings')
+      const cur = await getSettingFresh<string[]>(DM_HELD_KEY, [])
+      const ids = (Array.isArray(cur) ? cur : []).map(String).filter(Boolean)
+      if (ids.length) {
+        // Cleared first: a DM sent twice is worse than one that waits in the Command Center.
+        await setSetting(DM_HELD_KEY, [], 'slack-queue')
+        for (const id of ids) await notifyApprovers(id, rules, { flush: true }).catch(() => {})
+      }
+    }
+  } catch { /* the drafts still wait in the Command Center */ }
   const db = supabaseAdmin()
   const { data } = await db.from(TABLE).select('id').eq('status', 'approved').order('created_at').limit(limit)
   let sent = 0

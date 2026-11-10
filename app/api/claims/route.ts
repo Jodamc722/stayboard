@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { deadlineFor, dueDateFor, policyFor, todayET, daysUntil, itemsTotal, num, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
+import { deadlineFor, dueDateFor, policyFor, todayET, daysUntil, claimTotals, type ChannelPolicy, type ClaimItem } from '@/lib/claims'
 import { getSetting } from '@/lib/app-settings'
 import { nextCheckInMap } from '@/lib/claim-turnover'
 import { requireLevel } from '@/lib/access'
@@ -132,15 +132,10 @@ export async function GET(req: NextRequest) {
       next_check_in: arrivals[String(c.id)] || null,
     }))
     // Roll-ups the board header reads. Computed here so every surface agrees on the numbers.
-    let sought = 0, recovered = 0, openCount = 0
-    for (const c of out) {
-      if (c.stage !== 'closed') openCount++
-      if (c.stage !== 'closed' || c.outcome === 'won' || c.outcome === 'partial') sought += num(c.amount_sought) || itemsTotal(c.items)
-      recovered += num(c.amount_paid) || 0
-    }
+    const t = claimTotals(out as any[])
     return NextResponse.json({
       ok: true, today: todayET(), claims: out, canClose,
-      totals: { open: openCount, sought: Math.round(sought * 100) / 100, recovered: Math.round(recovered * 100) / 100 },
+      totals: { open: t.open, sought: t.sought, recovered: t.recovered },
     })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })

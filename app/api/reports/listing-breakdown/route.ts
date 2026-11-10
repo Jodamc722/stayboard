@@ -5,7 +5,7 @@
 // content.byListing and saves. No writes here.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { resolveScope, pullReservations, metricsFor, fmtK } from '@/lib/owner-report'
+import { resolveScope, pullReservations, metricsFor, fmtK, engineOf } from '@/lib/owner-report'
 import { hasEditCookie } from '@/lib/edit-access'
 import { requireUser } from '@/lib/access'
 
@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 })
 
   const db = supabaseAdmin()
-  const { data } = await db.from('owner_reports').select('listing_ids, period_start, period_end').eq('id', id).limit(1)
+  const { data } = await db.from('owner_reports').select('listing_ids, period_start, period_end, engine:content->meta->engine').eq('id', id).limit(1)
   const rep = (data || [])[0] as any
   if (!rep) return NextResponse.json({ error: 'report not found' }, { status: 404 })
   // Optionally drop blocked/off-market listings so occupancy & availability aren't inflated by them.
@@ -43,13 +43,15 @@ export async function GET(req: NextRequest) {
   }
 
   const scope = await resolveScope(ids, [])
+  // The report keeps the engine it was generated under; one without the flag computes as before.
+  const eng = engineOf({ meta: { engine: rep.engine } })
   const toExcl = nextDay(to)
   const resv = await pullReservations(scope.listings.map(l => l.id), from, toExcl)
   const byId: Record<string, any[]> = {}
   for (const r of resv) { (byId[r.listing_id] = byId[r.listing_id] || []).push(r) }
 
   const rows = scope.listings.map(l => {
-    const m = metricsFor(byId[l.id] || [], 1, from, toExcl)
+    const m = metricsFor(byId[l.id] || [], 1, from, toExcl, eng >= 2 ? { engine: eng, listings: [l] } : undefined)
     const name = l.unit ? ('Unit ' + l.unit) : l.name
     return {
       id: l.id,

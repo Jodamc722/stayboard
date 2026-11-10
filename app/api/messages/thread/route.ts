@@ -13,7 +13,18 @@ export async function GET(req: NextRequest) {
     // open conversation is Guesty's words, not our last half-hourly copy (Jon, 2026-10-06).
     let live: { pulled: boolean; error?: string } | null = null
     if (id && req.nextUrl.searchParams.get('live') === '1') { const { pullThreadLive } = await import('@/lib/inbox-live'); live = await pullThreadLive(id) }
-    if (id) { const { loadGuestyThread } = await import('@/lib/message-thread'); const t = await loadGuestyThread(id, g.access); return t ? NextResponse.json({ ok: true, thread: t, live, at: new Date().toISOString() }) : NextResponse.json({ ok: false, error: 'That conversation is not cached here.' }, { status: 404 }) }
+    if (id) {
+      const { loadGuestyThread } = await import('@/lib/message-thread')
+      const t = await loadGuestyThread(id, g.access)
+      if (!t) return NextResponse.json({ ok: false, error: 'That conversation is not cached here.' }, { status: 404 })
+      const at = new Date().toISOString()
+      // NOTHING NEW, NOTHING SENT (inbox audit, 2026-11-09). The open thread asks again every 20
+      // seconds; it used to get all 500 messages back each time and redraw every bubble. The pane
+      // now sends the fingerprint it already holds (?sig=) and an unchanged thread answers in a line.
+      const sig = req.nextUrl.searchParams.get('sig') || ''
+      if (sig && sig === t.sig) return NextResponse.json({ ok: true, unchanged: true, sig: t.sig, live, at })
+      return NextResponse.json({ ok: true, thread: t, live, at })
+    }
     if (phone) { const { loadPhoneThreadData } = await import('@/lib/message-thread'); const t = await loadPhoneThreadData(phone, g.access); return NextResponse.json({ ok: true, thread: t }) }
     return NextResponse.json({ ok: false, error: 'pass ?id= or ?phone=' }, { status: 400 })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }

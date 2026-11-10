@@ -34,7 +34,7 @@ export function ListingReviews({ reviews, listingName }: { reviews: R[]; listing
     try {
       const res = await fetch('/api/reviews/draft', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: r.content, rating: r.rating, listing_name: listingName, guest: r.guest_name, channel: r.channel, instruction, currentDraft: drafts[r.id] || '' }),
+        body: JSON.stringify({ reviewId: r.id, content: r.content, rating: r.rating, listing_name: listingName, guest: r.guest_name, channel: r.channel, instruction, currentDraft: drafts[r.id] || '' }),
       })
       const d = await res.json()
       if (!res.ok || d.error) throw new Error(d.error || `HTTP ${res.status}`)

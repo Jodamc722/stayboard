@@ -10,6 +10,8 @@
 // Anything new that Guesty starts emitting falls through to OTA and is flagged as unmapped so it
 // can never silently vanish from the totals.
 
+import { LIVE_STAY_STATUSES } from './basis'
+
 export type Bucket = 'be' | 'website' | 'direct' | 'manual' | 'owner' | 'ota'
 export type Family = 'direct' | 'manual' | 'owner' | 'ota'
 
@@ -95,6 +97,20 @@ export function stateFor(status: string | null | undefined): State {
 // Counts toward "bookings won": everything that is or became a real stay.
 export function isWon(st: State): boolean {
   return st === 'booked' || st === 'inhouse' || st === 'stayed'
+}
+
+// ── "Made" — the Sales report's count (lib/sales-report), for year-on-year comparisons ─────────
+// A booking MADE in a window = one that is a real stay today (lib/basis LIVE_STAY_STATUSES:
+// confirmed / checked_in / checked_out) OR was one and has been cancelled since. Inquiries,
+// declined, expired and Guesty's `closed` (a request that never booked) were never bookings.
+// Last year's bookings have had a year to cancel and this month's have had days, so a
+// year-on-year comparison of only what is still standing flatters this year; counting what was
+// MADE on both sides does not. Returns null for a row that never was a booking.
+export function madeKind(status: string | null | undefined): 'standing' | 'cancelled' | null {
+  const s = (status || '').trim().toLowerCase()
+  if (LIVE_STAY_STATUSES.indexOf(s) >= 0) return 'standing'
+  if (s === 'canceled' || s === 'cancelled') return 'cancelled'
+  return null
 }
 
 export const STATE_LABEL: Record<State, string> = {

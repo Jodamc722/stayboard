@@ -109,14 +109,19 @@ export async function GET(req: NextRequest) {
       // The month is known, so the picker feed and the audit are read side by side.
       ;[months, data] = await Promise.all([getAuditMonths(), getAudit(wanted)])
     } else {
-      months = await getAuditMonths()
       const et = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
       const [y, m] = et.slice(0, 7).split('-').map(Number)
       const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7)
-      const month = defaultAuditMonth(months, { prevUnsigned: Number(et.slice(8, 10)) <= 10 ? await prevMonthUnsigned(prev) : false })
+      // The picker feed and the "is last month still unsigned" check do not depend on each other.
+      let prevUnsigned: boolean
+      ;[months, prevUnsigned] = await Promise.all([getAuditMonths(), Number(et.slice(8, 10)) <= 10 ? prevMonthUnsigned(prev) : Promise.resolve(false)])
+      const month = defaultAuditMonth(months, { prevUnsigned })
       if (!month) return NextResponse.json({ ok: true, internal: who.internal, months, data: null })
       data = await getAudit(month)
     }
+    // ?summary=1 — everything but the rows: the header totals, the month picker, the statement
+    // list, prep and resolutions. The page paints from this while the rows (the megabyte) arrive.
+    if (sp.get('summary') === '1') return NextResponse.json({ ok: true, internal: who.internal, months, summary: true, data: { ...data, items: [] } })
     return NextResponse.json({ ok: true, internal: who.internal, months, data: full ? data : slimAudit(data) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
@@ -151,7 +156,10 @@ async function handlePost(req: NextRequest, willRebuild: () => void) {
 
   const body = await req.json().catch(() => ({}))
   const action = String(body.action || '')
-  if (REBUILDING_ACTIONS.includes(action)) willRebuild()
+  // The automatic re-check the desk fires on every open is throttled server-side and usually does
+  // nothing; it only drops the kept audit when it actually pulled folios (below). Dropping it up
+  // front threw away the build the page had just paid for, on every open.
+  if (REBUILDING_ACTIONS.includes(action) && !(action === 'prep-recheck' && body.auto === true)) willRebuild()
 
   // ── RULES — the flag thresholds. Signed-in users only: the share link can work the
   // audit, but it doesn't get to decide what the audit checks.
@@ -201,6 +209,7 @@ async function handlePost(req: NextRequest, willRebuild: () => void) {
       try {
         const { refreshOpenFolios } = await import('@/lib/folio-refresh')
         const r = await refreshOpenFolios({ minMinutes: 10, source: 'desk' })
+        if (r.ran) bustAudit()
         return NextResponse.json({ ok: true, auto: true, ran: r.ran, pulled: r.pulled, fixed: r.fixed, reason: r.reason || null })
       } catch (e: any) {
         return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 502 })

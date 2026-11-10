@@ -42,7 +42,6 @@ import { openCadenceTaskMap, pickOpen } from './pm-dedupe'
 const STATE_KEY = 'pm_recurrence_state'
 const MAX_CREATE_PER_RUN = 25
 const MAX_MOVE_PER_RUN = 25
-const RIDE_FORWARD_EVERY_DAYS = 7
 const REPROPOSE_AFTER_DAYS = 7
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -273,10 +272,16 @@ export async function runPmRecurrence(opts: { dryRun?: boolean; force?: boolean 
   if (out.capped) out.lines.push(`daily cap of ${cfg.dailyCap} reached — ${out.capped} more ${out.capped === 1 ? 'waits' : 'wait'} for tomorrow`)
 
   // ── 3. missed rides forward ────────────────────────────────────────────────────────────────────
-  // Only successors Lighthouse created (task_id on the row), scheduled before today, still open,
-  // and not moved in the last week.
-  const stale = Object.values(rows).filter((r: any) => r.status === 'created' && r.task_id && r.task_date && r.task_date < today
-    && (!r.updated_at || Date.parse(r.updated_at) < Date.now() - RIDE_FORWARD_EVERY_DAYS * 86400000 || r.moved === 0)).slice(0, MAX_MOVE_PER_RUN)
+  // The ledger's own task (task_id on the row), scheduled before today and still open.
+  // DAILY, NOT WEEKLY (Jon, 2026-11-09; the standing rule is "if incomplete move to next day"). The old
+  // test asked for a row not updated in a week, but step 1 stamps updated_at on every row every run, so
+  // in practice a task moved ONCE (moved === 0) and then sat late for good. A late date is the whole
+  // test now: a task moved this run is dated today or later, so it cannot move twice in a day.
+  // BOUNDS: at most MAX_MOVE_PER_RUN a run, the longest-late first, and the pass runs at most every
+  // six hours. A move creates nothing, so the daily cap on creations and proposals is untouched (it
+  // counts `created <day>` / `proposed <day>` notes, and a row created today is never dated before today).
+  const stale = Object.values(rows).filter((r: any) => r.status === 'created' && r.task_id && r.task_date && str(r.task_date).slice(0, 10) < today)
+    .sort((a: any, b: any) => str(a.task_date).localeCompare(str(b.task_date))).slice(0, MAX_MOVE_PER_RUN)
   if (stale.length && breezewayConfigured() && !opts.dryRun) {
     const { data: ts } = await db.from('breezeway_tasks_sync').select('id,name,status,finished_at').in('id', stale.map((r: any) => str(r.task_id)))
     const tmap: Record<string, any> = {}

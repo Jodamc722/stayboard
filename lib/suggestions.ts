@@ -922,6 +922,8 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
     const r = await createBreezewayTask({
       name, type_department: s.dept, type_priority: 'normal',
       scheduled_date: scheduled, description, home_id: homeId,
+      // Which creator this is, for the creation log (stripped before the POST — lib/breezeway).
+      source: by === 'lighthouse-cron' ? 'cadence-suggest' : 'suggestion-add', by: by || undefined,
     })
     if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
     const taskId = String(r.data.id)

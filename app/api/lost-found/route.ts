@@ -28,6 +28,20 @@ function todayET(): string { return new Intl.DateTimeFormat('en-CA', { timeZone:
 function isDate(s: string): boolean { return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(new Date(s + 'T12:00:00').getTime()) }
 function shiftDate(iso: string, days: number): string { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10) }
 
+// The two housekeeping passes (delivery tasks completed in Breezeway → Sent, and the 30-day toss)
+// used to run one after the other on EVERY list load — the Today strip reads this list too. They now
+// run side by side and at most once every two minutes per server instance; the cron runs both every
+// 15 minutes regardless (2026-11-09 audit).
+let _lastUpkeep = 0
+async function upkeep(): Promise<void> {
+  if (Date.now() - _lastUpkeep < 120_000) return
+  _lastUpkeep = Date.now()
+  await Promise.allSettled([syncSent(), autoToss()])
+}
+// The line autoToss writes. An item whose LAST history line is this one was closed by the clock, and
+// nobody has yet said the thing itself left the shelf — the page lists those as "Hold ended".
+const AUTO_TOSS = /not collected or requested within/i
+
 async function listingMap(db: any): Promise<Record<string, { name: string; market: string }>> {
   const { data } = await db.from('guesty_listings').select('id,nickname,title,building,address_city')
   const m: Record<string, { name: string; market: string }> = {}
@@ -86,22 +100,49 @@ export async function GET(req: NextRequest) {
 
     // ---- The list ----
     // A delivery task completed in Breezeway shows as Sent the next time anyone looks.
-    try { await syncSent() } catch { /* the cron catches up */ }
-    try { await autoToss() } catch { /* the cron catches it next */ }
+    try { await upkeep() } catch { /* the cron catches up */ }
     const status = str(p.get('status')) || 'open'
     let qy = db.from('lost_found_items').select('*')
     if (status === 'open') qy = qy.not('status', 'in', '(' + RESOLVED.join(',') + ')')
     else if (status === 'resolved') qy = qy.in('status', RESOLVED)
     else if (status !== 'all' && (STATUSES as readonly string[]).includes(status)) qy = qy.eq('status', status)
-    const { data, error } = await qy.order('found_date', { ascending: false }).order('created_at', { ascending: false }).limit(500)
+    // Alongside the open list: items the 30-day clock closed in the last 30 days that nobody has
+    // confirmed were actually tossed or donated. A separate field, so the open list's meaning (and the
+    // Today strip that reads it) is unchanged.
+    const tossQ = status === 'open'
+      ? db.from('lost_found_items').select('*').eq('status', 'discarded').gte('resolved_at', new Date(Date.now() - 30 * 86400000).toISOString()).order('resolved_at', { ascending: false }).limit(100)
+      : null
+    const [{ data, error }, tossRes] = await Promise.all([
+      qy.order('found_date', { ascending: false }).order('created_at', { ascending: false }).limit(500),
+      tossQ ? tossQ : Promise.resolve({ data: [] as any[] }),
+    ])
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     const needle = str(p.get('q')).trim().toLowerCase()
     let items = (data || []) as any[]
+    const tossQueue = (((tossRes as any)?.data || []) as any[]).filter(r => {
+      const h = Array.isArray(r.history) ? r.history : []
+      const last = h[h.length - 1]
+      return !!last && str(last.who) === 'Lighthouse' && AUTO_TOSS.test(str(last.note))
+    })
+    // Where each delivery task stands in Breezeway (one read of the mirror): the day it is set for,
+    // who has it, and whether it was cancelled there — a cancelled task would otherwise sit unseen.
+    const taskIds = Array.from(new Set(items.map(i => str(i.breezeway_task_id)).filter(Boolean)))
+    if (taskIds.length) {
+      try {
+        const { data: ts } = await db.from('breezeway_tasks_sync').select('id,status,scheduled_date,assignees').in('id', taskIds)
+        const byId: Record<string, any> = {}
+        for (const t of (ts || []) as any[]) byId[str(t.id)] = t
+        items = items.map(i => {
+          const t = i.breezeway_task_id ? byId[str(i.breezeway_task_id)] : null
+          return t ? { ...i, delivery: { status: str(t.status), date: str(t.scheduled_date).slice(0, 10) || null, assignees: Array.isArray(t.assignees) ? t.assignees.map(str) : [] } } : i
+        })
+      } catch { /* the page still shows the task number */ }
+    }
     if (needle) items = items.filter(i => [i.unit, i.item, i.description, i.guest_name, i.found_by, i.storage_location].some(v => str(v).toLowerCase().includes(needle)))
     const today = todayET()
     const counts: Record<string, number> = {}
     for (const i of items) counts[i.status] = (counts[i.status] || 0) + 1
-    return NextResponse.json({ ok: true, today, holdDays: HOLD_DAYS, count: items.length, counts, items })
+    return NextResponse.json({ ok: true, today, holdDays: HOLD_DAYS, count: items.length, counts, items, tossQueue })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
@@ -190,7 +231,25 @@ export async function PATCH(req: NextRequest) {
       if (b[k] !== undefined) upd[col] = str(b[k]).trim().slice(0, max) || null
     }
     if (b.category !== undefined && (CATEGORIES as readonly string[]).includes(str(b.category))) upd.category = str(b.category)
-    if (b.shippingCost !== undefined) upd.shipping_cost = num(b.shippingCost)
+    // The unit can be corrected (a Slack post read against the wrong unit, or none): the name and
+    // market follow the listing, so the stay picker can then offer that unit's checkouts.
+    if (b.listingId !== undefined) {
+      const lid = str(b.listingId).trim()
+      if (lid && lid !== str(cur.listing_id)) {
+        const li = (await listingMap(db))[lid]
+        if (!li) return NextResponse.json({ ok: false, error: 'That unit is not in the listing list.' }, { status: 400 })
+        upd.listing_id = lid; upd.unit = li.name; upd.market = li.market
+        history.push(entry(who, 'unit', str(cur.unit) + ' → ' + li.name))
+      }
+    }
+    if (b.shippingCost !== undefined) {
+      const raw = str(b.shippingCost).trim()
+      // "18,50" used to be read as 1850: a comma before one or two closing digits is a decimal point.
+      const c = raw ? num(raw.replace(/,(\d{1,2})$/, '.$1')) : null
+      if (raw && (c == null || c < 0 || c > 2000)) return NextResponse.json({ ok: false, error: 'That shipping cost does not look right — type it like 18.50.' }, { status: 400 })
+      if (cur.shipping_paid && c !== (cur.shipping_cost == null ? null : Number(cur.shipping_cost))) return NextResponse.json({ ok: false, error: 'The guest already paid — the shipping cost is locked. Add a note if the postage came out different.' }, { status: 400 })
+      upd.shipping_cost = c
+    }
     if (b.shipTo !== undefined) upd.ship_to = str(b.shipTo).trim().slice(0, 500) || null
 
     // ── PAID SHIPPING (lib/lost-found-pay). Ask → paid → Breezeway task. ──
@@ -199,9 +258,16 @@ export async function PATCH(req: NextRequest) {
       const amount = num(b.amount ?? cur.shipping_cost)
       if (!amount || amount <= 0) return NextResponse.json({ ok: false, error: 'Type the shipping cost first.' }, { status: 400 })
       if (!cur.reservation_id) return NextResponse.json({ ok: false, error: 'Attach the stay first — the guest is asked on their booking.' }, { status: 400 })
+      if (cur.shipping_paid) return NextResponse.json({ ok: false, error: 'This one is already paid — nothing more to ask the guest for.' }, { status: 400 })
       upd.shipping_cost = amount
       const via = str(b.via) || 'guesty message'
-      if (b.folio === true) {
+      // NEVER BILL THE SAME SHIPPING TWICE (2026-11-09 audit): "ask again" used to add a second
+      // "Lost & found shipping" line to the folio every time. One line per item; a reminder only
+      // re-sends the message.
+      const onFolio = Array.isArray(cur.folio_item_ids) && cur.folio_item_ids.length > 0
+      if (b.folio === true && onFolio) {
+        history.push(entry(who, 'note', 'Asked again — the shipping line is already on the Guesty folio, not added a second time'))
+      } else if (b.folio === true) {
         const f = await billOnFolio(cur, amount)
         if (!f.ok) return NextResponse.json({ ok: false, error: 'Could not add it to the Guesty folio: ' + (f.error || 'unknown') }, { status: 502 })
         upd.folio_item_ids = [...(Array.isArray(cur.folio_item_ids) ? cur.folio_item_ids : []), ...f.ids]
@@ -214,13 +280,20 @@ export async function PATCH(req: NextRequest) {
     }
     if (b.action === 'paid') {
       if (cur.shipping_paid) return NextResponse.json({ ok: true, item: cur })
+      if (cur.shipping_cost == null || Number(cur.shipping_cost) <= 0) return NextResponse.json({ ok: false, error: 'Type the shipping cost first — the delivery task tells the team what the guest was charged.' }, { status: 400 })
       upd.shipping_paid = true; upd.paid_at = new Date().toISOString(); upd.paid_by = who; upd.paid_via = str(b.via).slice(0, 60) || 'not recorded'
       if (cur.status === 'held' || cur.status === 'contacted') upd.status = 'claimed'
       history.push(entry(who, 'paid', (cur.shipping_cost != null ? '$' + Number(cur.shipping_cost).toFixed(2) + ' ' : '') + 'via ' + upd.paid_via))
       after = 'push'
     }
-    if (b.action === 'push_task') after = 'push'
-    if (b.shippingPaid !== undefined && b.action === undefined) upd.shipping_paid = !!b.shippingPaid
+    // THE SHIP TASK GOES OUT ONLY AFTER THE GUEST PAYS. "push_task" (the Retry button) used to create
+    // the Breezeway task for any item, paid or not; and a bare shippingPaid:true marked an item paid
+    // with no date, no payer and no task. Both closed (2026-11-09 audit): paid is only ever the
+    // "paid" action above, and the task is only pushed for a paid item.
+    if (b.action === 'push_task') {
+      if (!cur.shipping_paid) return NextResponse.json({ ok: false, error: 'The delivery task goes out once the guest has paid — mark it paid first.' }, { status: 400 })
+      after = 'push'
+    }
     if (Array.isArray(b.addReceipts)) {
       const add = b.addReceipts.filter((x: any) => typeof x === 'string')
       upd.receipts = [...(Array.isArray(cur.receipts) ? cur.receipts : []), ...add].slice(0, 12)
@@ -229,8 +302,17 @@ export async function PATCH(req: NextRequest) {
     if (Array.isArray(b.addPhotos)) upd.photos = [...(Array.isArray(cur.photos) ? cur.photos : []), ...b.addPhotos.filter((x: any) => typeof x === 'string')].slice(0, 12)
     if (Object.keys(upd).length === 0 && history.length === (Array.isArray(cur.history) ? cur.history.length : 0) && !after) return NextResponse.json({ ok: true, item: cur })
     upd.history = history.slice(-60); upd.updated_at = new Date().toISOString()
-    const { data, error } = await db.from('lost_found_items').update(upd).eq('id', id).select('*').single()
+    // Two presses of "Paid" at once (a double tap, two people) used to make two Breezeway tasks: the
+    // paid update now only lands on a row that is still unpaid, and the loser just gets the item back.
+    let uq = db.from('lost_found_items').update(upd).eq('id', id)
+    if (b.action === 'paid') uq = uq.eq('shipping_paid', false)
+    const { data, error } = await uq.select('*').maybeSingle()
     if (error) return NextResponse.json({ ok: false, error: /column|schema cache/i.test(error.message) ? 'Lost & Found needs migration 173_lost_found_payment.sql run in Supabase first.' : error.message }, { status: 500 })
+    if (!data) {
+      const { data: now } = await db.from('lost_found_items').select('*').eq('id', id).maybeSingle()
+      if (!now) return NextResponse.json({ ok: false, error: 'Not found' }, { status: 404 })
+      return NextResponse.json({ ok: true, item: now })
+    }
     // Paid → the Breezeway task that ships it. The payment is saved either way; a failed push is
     // written on the item and the page offers a retry.
     if (after === 'push') {
@@ -256,10 +338,15 @@ export async function DELETE(req: NextRequest) {
     const ids: string[] = (Array.isArray(b.ids) ? b.ids : [b.id]).map(str).filter(Boolean).slice(0, 200)
     if (!ids.length) return NextResponse.json({ ok: false, error: 'Nothing picked' }, { status: 400 })
     const db = supabaseAdmin()
-    const { data: rows } = await db.from('lost_found_items').select('id,slack_ts,photos').in('id', ids)
+    const { data: rows } = await db.from('lost_found_items').select('id,item,slack_ts,photos,receipts,shipping_paid,breezeway_task_id,folio_item_ids').in('id', ids)
+    // MONEY AND TASKS ARE NEVER DELETED AWAY (2026-11-09 audit): an item the guest paid for, one with
+    // a line on the Guesty folio, or one with a Breezeway delivery task is the only record tying those
+    // together. Close it (Returned / Not lost & found) instead.
+    const locked = ((rows || []) as any[]).filter(r => r.shipping_paid || r.breezeway_task_id || (Array.isArray(r.folio_item_ids) && r.folio_item_ids.length > 0))
+    if (locked.length) return NextResponse.json({ ok: false, error: (locked.length === 1 ? '"' + str(locked[0].item).slice(0, 60) + '" has' : locked.length + ' of these have') + ' a payment, a folio line or a delivery task — it cannot be deleted. Close it instead; nothing was deleted.' }, { status: 409 })
     const ts = (rows || []).map((r: any) => str(r.slack_ts)).filter(Boolean)
     await ignoreSlackTs(ts, who)
-    const paths = (rows || []).flatMap((r: any) => Array.isArray(r.photos) ? r.photos : []).filter((x: any) => typeof x === 'string' && !/^https?:/.test(x))
+    const paths = (rows || []).flatMap((r: any) => [...(Array.isArray(r.photos) ? r.photos : []), ...(Array.isArray(r.receipts) ? r.receipts : [])]).filter((x: any) => typeof x === 'string' && !/^https?:/.test(x))
     if (paths.length) { try { await db.storage.from('lost-found-files').remove(paths) } catch { /* storage is best effort */ } }
     const { error } = await db.from('lost_found_items').delete().in('id', ids)
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })

@@ -33,12 +33,13 @@ function Delta({ p, suffix = 'vs LY', title }: { p: number | null; suffix?: stri
   return <span title={title} className={`text-[11.5px] font-semibold tabular-nums ${cls}`}>{flat ? 'level' : signed(p)} <span className="font-medium text-muted">{suffix}</span></span>
 }
 
-function Tile({ label, value, delta, lines, accent }: { label: string; value: string; delta: ReactNode; lines: string[]; accent?: boolean }) {
+function Tile({ label, value, delta, same, lines, accent }: { label: string; value: string; delta: ReactNode; same?: ReactNode; lines: string[]; accent?: boolean }) {
   return (
     <div className={`rounded-2xl border px-3.5 py-3 min-w-0 ${accent ? 'border-brand-200 bg-brand-50/60' : 'border-line bg-white'}`}>
       <div className="text-[10.5px] uppercase tracking-wider font-semibold text-muted">{label}</div>
       <div className="text-[22px] sm:text-2xl font-bold text-ink tabular-nums leading-tight mt-0.5 truncate">{value}</div>
       <div className="mt-0.5">{delta}</div>
+      {same ? <div>{same}</div> : null}
       {lines.map((l, i) => <div key={i} className="text-[11.5px] text-muted mt-0.5 truncate" title={l}>{l}</div>)}
     </div>
   )
@@ -117,8 +118,10 @@ function MonthRow({ m, showMoney }: { m: SalesMonth; showMoney: boolean }) {
         {showMoney && m.budget != null && m.pctOfBudget != null && <Tag tone={m.pctOfBudget >= 100 ? 'emerald' : 'brand'} title={`${money(m.revenue)} on the books of a ${money(m.budget)} budget (net accommodation)`}>{m.pctOfBudget}% of budget</Tag>}
         {showMoney && m.budget == null && <Tag title="No budget for this month has come through from the Revenue App (or the budget feed is switched off in Money source)">No budget</Tag>}
         {m.pctVsLy != null
-          ? <Tag tone={m.pctVsLy >= 2 ? 'emerald' : m.pctVsLy <= -2 ? 'rose' : 'slate'} title="Against what was on the books for this month at the same point last year">{signed(m.pctVsLy)} vs LY at this point</Tag>
+          ? <Tag tone={m.pctVsLy >= 2 ? 'emerald' : m.pctVsLy <= -2 ? 'rose' : 'slate'} title="All units: against everything that was on the books for this month at the same point last year">{signed(m.pctVsLy)} vs LY at this point · all units</Tag>
           : <Tag>no last year</Tag>}
+        {m.ssPctVsLy != null && <Tag tone={m.ssPctVsLy >= 2 ? 'emerald' : m.ssPctVsLy <= -2 ? 'rose' : 'slate'}
+          title={`Same-store: only units active now that were already live a year ago — ${showMoney && m.ssRevenue != null && m.ssLySameTime != null ? `${money(m.ssRevenue)} vs ${money(m.ssLySameTime)}` : `${int(m.ssNights)} vs ${int(m.ssLyNightsSameTime || 0)} nights`}`}>{signed(m.ssPctVsLy)} same-store</Tag>}
         {showMoney && m.lyFinal != null && <span className="text-[11.5px] text-muted">Last year finished at {money(m.lyFinal)}{m.lySameTime != null ? ` · had ${money(m.lySameTime)} by now` : ''}</span>}
       </div>
     </li>
@@ -156,6 +159,12 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
   const pToday = P('today'), pYest = P('yesterday'), pWeek = P('week'), pMonth = P('month')
   const head = (p: SalesPeriod): string => (sm ? money(p.now.revenue) : plural(p.now.bookings, 'booking'))
   const change = (p: SalesPeriod): number | null => (sm ? p.revenuePct : p.bookingsPct)
+  // SAME-STORE: only the units active now that were already live a year ago, on both sides.
+  const ssChange = (p: SalesPeriod): number | null => (sm ? p.sameStore.revenuePct : p.sameStore.bookingsPct)
+  const ssTitle = (p: SalesPeriod): string =>
+    `Same-store = the ${int(d.sameStoreUnits)} of ${int(d.activeUnits)} active units that were already live on ${md(d.asOfLastYear)} last year. `
+    + `Now ${sm ? money(p.sameStore.now.revenue) + ' · ' : ''}${plural(p.sameStore.now.bookings, 'booking')}; last year ${sm ? money(p.sameStore.ly.revenue) + ' · ' : ''}${plural(p.sameStore.ly.bookings, 'booking')}.`
+  const same = (p: SalesPeriod) => <Delta p={ssChange(p)} suffix="same-store" title={ssTitle(p)} />
   const lyTitle = (p: SalesPeriod): string =>
     `Last year (${md(p.lyFrom)}${p.lyTo !== p.lyFrom ? '–' + md(p.lyTo) : ''}${p.partial ? ', up to the same time of day' : ''}): `
     + (sm ? money(p.ly.revenue) + ' · ' : '') + plural(p.ly.bookings, 'booking') + (p.ly.cancelled ? `, ${int(p.ly.cancelled)} later cancelled` : '')
@@ -171,9 +180,11 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
 
   // ---- the one sentence ----
   const mChange = change(pMonth)
+  const mSame = ssChange(pMonth)
   const soWhat = [
     `Month to date we booked ${head(pMonth)}`
-      + (mChange == null ? '' : Math.abs(mChange) < 2 ? ', level with the same dates last year' : `, ${Math.abs(Math.round(mChange))}% ${mChange > 0 ? 'up' : 'down'} on the same dates last year`),
+      + (mChange == null ? '' : Math.abs(mChange) < 2 ? ', level with the same dates last year' : `, ${Math.abs(Math.round(mChange))}% ${mChange > 0 ? 'up' : 'down'} on the same dates last year`)
+      + (mSame == null ? '' : ` (${Math.abs(mSame) < 2 ? 'level' : signed(mSame)} same-store, ${int(d.sameStoreUnits)} of ${int(d.activeUnits)} units)`),
     d.directShare != null ? `direct is ${pct0(d.directShare)} of it` + (dirPts != null && dirPts !== 0 ? ` (${dirPts > 0 ? '+' : '−'}${Math.abs(dirPts)} pts)` : '') : '',
     needs > 0 ? `${plural(needs, 'unit')} ${needs === 1 ? 'needs' : 'need'} a price or listing action${first ? ` — start with ${first.name}` : ''}` : 'no unit is behind pace',
     d.cancels.count > 0 ? `${plural(d.cancels.count, 'booking')} cancelled in the last ${d.cancels.days} days${sm ? ` (${money(d.cancels.revenue)})` : ''}` : '',
@@ -201,17 +212,18 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
       {/* 1. The four numbers */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 mb-3">
         <Tile label="Booked today" value={head(pToday)} accent
-          delta={<Delta p={change(pToday)} suffix="vs LY by now" title={lyTitle(pToday)} />}
+          delta={<Delta p={change(pToday)} suffix="vs LY by now · all units" title={lyTitle(pToday)} />} same={same(pToday)}
           lines={[...lines(pToday), `Yesterday ${head(pYest)}${change(pYest) != null ? ' (' + signed(change(pYest) as number) + ')' : ''}`]} />
         <Tile label="This week" value={head(pWeek)}
-          delta={<Delta p={change(pWeek)} title={lyTitle(pWeek)} />}
+          delta={<Delta p={change(pWeek)} suffix="vs LY · all units" title={lyTitle(pWeek)} />} same={same(pWeek)}
           lines={[`Mon ${md(pWeek.from)} – today`, ...lines(pWeek)]} />
         <Tile label="This month" value={head(pMonth)}
-          delta={<Delta p={change(pMonth)} title={lyTitle(pMonth)} />}
+          delta={<Delta p={change(pMonth)} suffix="vs LY · all units" title={lyTitle(pMonth)} />} same={same(pMonth)}
           lines={[`${md(pMonth.from)} – today`, ...lines(pMonth)]} />
         <Tile label="On the books · next 30 days" value={pct0(d.pace.occ30)}
-          delta={<Delta p={d.pace.pct30} suffix="nights vs LY" title={`${int(d.pace.sameNights30)} nights on the books vs ${int(d.pace.sameLy30)} at this point last year, over the ${int(d.pace.sameUnits)} units that were listed then`} />}
-          lines={[`${plural(d.pace.nights30, 'night')} · ${int(d.pace.activeUnits)} units`, d.pace.pct60 != null ? `Next 60 days ${signed(d.pace.pct60)} vs LY` : `Next 60 days ${plural(d.pace.nights60, 'night')}`]} />
+          delta={<Delta p={d.pace.allPct30} suffix="nights vs LY · all units" title={`${int(d.pace.nights30)} nights on the books now vs ${int(d.pace.allLy30)} at this point last year, every unit we had then`} />}
+          same={<Delta p={d.pace.pct30} suffix="same-store" title={`${int(d.pace.sameNights30)} nights on the books vs ${int(d.pace.sameLy30)} at this point last year, over the ${int(d.pace.sameUnits)} units that were live then`} />}
+          lines={[`${plural(d.pace.nights30, 'night')} · ${int(d.pace.activeUnits)} units`, d.pace.pct60 != null ? `Next 60 days ${signed(d.pace.pct60)} same-store` : `Next 60 days ${plural(d.pace.nights60, 'night')}`]} />
       </div>
 
       {/* 2. So what */}
@@ -280,7 +292,7 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
             <button onClick={() => setShowAll(true)} className="mt-2 text-[12.5px] font-semibold text-brand-700 hover:underline">Show all {int(paceRows.length)}</button>
           )}
           <p className="text-[11.5px] text-muted mt-2 px-1">
-            Pace = guest nights on the books for {md(d.pace.from)} – {md(d.pace.to30)} against the same weekdays last year, counting only what had been booked by {md(d.asOfLastYear)}. Owner and friends-&amp;-family stays are not sales; their nights come off what is left to sell. Last year leaves out stays cancelled after that date, so a small gap is not a signal.
+            Pace = guest nights on the books for {md(d.pace.from)} – {md(d.pace.to30)} against the same weekdays last year, counting only what had been booked by {md(d.asOfLastYear)}. Confirmed, checked-in and checked-out stays only. A unit is compared with last year only if it is same-store (live on that date). Owner and friends-&amp;-family stays are not sales; their nights come off what is left to sell. Last year leaves out stays cancelled after that date, so a small gap is not a signal.
           </p>
         </>
       )}
@@ -323,7 +335,7 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
             {d.months.map(m => <MonthRow key={m.month} m={m} showMoney={sm} />)}
           </ul>
           <p className="text-[11.5px] text-muted mt-2 px-1">
-            {sm ? 'Net accommodation (after channel fees) for stays in each month — the basis the budget is written in. ' : ''}The bar fills toward the budget, or toward where last year finished when there is no budget; the dark mark is where last year stood at this point.
+            {sm ? 'Net accommodation for stays in each month — accommodation after the channel fee incl. its tax (hostServiceFeeIncTax, else hostServiceFee), the basis the budget is written in. ' : ''}Same-store = units active now that were already live a year ago. The bar fills toward the budget, or toward where last year finished when there is no budget; the dark mark is where last year stood at this point.
           </p>
         </>
       )}

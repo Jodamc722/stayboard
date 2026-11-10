@@ -40,6 +40,10 @@ export async function autoToss(): Promise<number> {
   for (const r of (data || []) as any[]) {
     if (r.pay_requested_at || r.shipping_paid) continue
     const history = Array.isArray(r.history) ? r.history.slice() : []
+    // REOPENED BY A PERSON = their call (2026-11-09 audit): an item reopened after the hold ended was
+    // discarded again on the very next page load. A reopen in the last HOLD_DAYS days keeps it open.
+    const since = Date.now() - HOLD_DAYS * 86400000
+    if (history.some((h: any) => h && h.what === 'status' && h.who !== 'Lighthouse' && /^(returned|donated|discarded|not_lost_found) → /.test(String(h.note || '')) && Date.parse(String(h.at)) > since)) continue
     history.push({ at: new Date().toISOString(), who: 'Lighthouse', what: 'status', note: r.status + ' → discarded: not collected or requested within ' + HOLD_DAYS + ' days of the find — toss it' })
     const { error } = await db.from('lost_found_items').update({ status: 'discarded', resolved_at: new Date().toISOString(), history, updated_at: new Date().toISOString() }).eq('id', r.id).in('status', ['held', 'contacted'])
     if (!error) n++

@@ -49,8 +49,8 @@ export async function GET(req: NextRequest) {
 
     const hook = j.incoming_webhook || {}
     // The BOT TOKEN is the prize now — it is what makes per-building posting, @-mentions and DMs
-    // possible. The webhook is still stored when Slack hands one back, so the legacy postSlack()
-    // path keeps working, but its absence is no longer fatal: a bot token alone is a real install.
+    // possible. The webhook is still stored when Slack hands one back, so the connection keeps
+    // it (the legacy postSlack() that used it was removed 2026-11-09), but its absence is no longer fatal: a bot token alone is a real install.
     const botToken = String(j.access_token || '')
     if (!hook.url && !botToken) return back(req, 'no_webhook')
 

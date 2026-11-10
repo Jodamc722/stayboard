@@ -79,7 +79,7 @@ export async function reportDelta(report: any): Promise<ReportDelta | null> {
     // the same owner in between (their period_start is the day they were made) cannot stand in
     // front of the earlier REVIEW and blank the comparison.
     let q = db.from('owner_reports')
-      .select('code, title, created_at, period_start, period_end, scope_label, metrics:content->snapshot->metrics, basis:content->basis, kind:content->meta->>kind')
+      .select('code, title, created_at, period_start, period_end, scope_label, metrics:content->snapshot->metrics, basis:content->basis, kind:content->meta->>kind, engine:content->meta->engine')
       .neq('id', report.id)
       .lt('created_at', report.created_at)
       .gte('period_start', month + '-01')
@@ -90,8 +90,15 @@ export async function reportDelta(report: any): Promise<ReportDelta | null> {
     if (report.scope_label) q = q.eq('scope_label', report.scope_label)
     const { data, error } = await q
     if (error) { console.error('report-delta: previous-report lookup failed —', error.message); return null }
+    // LIKE WITH LIKE. A report generated under a newer calculation engine (content.meta.engine,
+    // lib/owner-report) measures occupancy and ADR differently from one generated before it, so a
+    // chip between the two would report the change of method as a week of progress. Only an
+    // earlier report on the SAME engine is a fair reference; with none, the chips stay off.
+    const engOf = (v: any) => { const n = Number(v); return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1 }
+    const myEngine = engOf(report?.content?.meta?.engine)
     const prevRow = ((data || []) as any[]).find(r =>
-      String(r.kind || '') !== 'projection'
+      engOf(r.engine) === myEngine
+      && String(r.kind || '') !== 'projection'
       && !/onboarding|proposal|projection/i.test(String(r.title || ''))
       && r.metrics && typeof r.metrics === 'object')
     if (!prevRow) return null

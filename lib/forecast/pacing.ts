@@ -8,12 +8,13 @@
 // Saturdays (2026-09-29 review, nb-10).
 //
 // RULES, NOT A MODEL:
-//   - A stay counts when its status is live (confirmed, checked in / out, closed — the KPI board's
-//     set) and it is not an owner or friends-and-family stay (lib/owner-audit, the one shared test —
-//     those are inventory decisions, not demand).
+//   - A stay counts when its status is live (lib/basis LIVE_STAY_STATUSES: confirmed, checked in /
+//     out — `closed` is a request that never booked and came out 2026-11-09) and it is not an owner
+//     or friends-and-family stay (lib/owner-audit, the one shared test — those are inventory
+//     decisions, not demand).
 //   - Nights and revenue are the part of each stay that falls inside the window, pro-rated by night.
-//   - Net revenue = accommodation after channel fees (fareAccommodationAdjusted − hostServiceFee),
-//     cleaning excluded — the 'net' basis of lib/basis.
+//   - Net revenue = accommodation after the channel fee, cleaning excluded — THE ONE NET of
+//     lib/basis (channelFeeOf: hostServiceFeeIncTax, else hostServiceFee).
 //   - DIRECTIONAL. We do not hold the date a booking was cancelled, so last year's picture leaves out
 //     stays that were on the books then and cancelled later, and this year's still carries stays
 //     that may yet cancel. The comparison leans in this year's favour; the label says so.
@@ -26,6 +27,7 @@ import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from '../supabase-admin'
 import { pageRows } from '../db-page'
 import { isOwnerOrFriendsFamily } from '../owner-audit'
+import { LIVE_STAY_STATUSES, channelFeeOf } from '../basis'
 
 export type PaceSide = { nights: number; revenue: number; stays: number }
 export type PaceWindow = {
@@ -56,10 +58,10 @@ const ymdET = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: T
 const shift = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10)
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const num = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
-const LIVE = ['confirmed', 'checked_in', 'checked_out', 'closed']
+const LIVE = LIVE_STAY_STATUSES
 const pct = (a: number, b: number) => (b > 0 ? Math.round(((a - b) / b) * 1000) / 10 : null)
 
-export const PACING_BASIS = 'On the books = live stays (owner and friends & family out), nights and net room revenue (accommodation after channel fees, no cleaning) falling inside each window. Last year = the same weekdays 52 weeks earlier, counting only stays booked by this day last year. Directional — we do not hold cancellation dates, so this year\'s count still includes stays that may cancel.'
+export const PACING_BASIS = 'On the books = live stays (owner and friends & family out), nights and net room revenue (accommodation after the channel fee incl. its tax, no cleaning) falling inside each window. Last year = the same weekdays 52 weeks earlier, counting only stays booked by this day last year. Directional — we do not hold cancellation dates, so this year\'s count still includes stays that may cancel.'
 
 /** The UTC instant of 00:00 in New York on `ymd` — "booked by the end of that ET day" is before it. */
 function etMidnightUtc(ymd: string): string {
@@ -69,7 +71,7 @@ function etMidnightUtc(ymd: string): string {
 }
 
 const COLS = 'id,listing_id,check_in,check_out,nights,status,source,guest_name,money_total,created_at,' +
-  'fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,fee:raw->money->>hostServiceFee,tags:raw->tags'
+  'fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,feeInc:raw->money->>hostServiceFeeIncTax,fee:raw->money->>hostServiceFee,tags:raw->tags'
 
 async function staysOverlapping(from: string, to: string, bookedBefore?: string): Promise<{ rows: any[]; truncated: boolean }> {
   return pageRows<any>((a, b) => {
@@ -93,7 +95,7 @@ function sideOf(rows: any[], from: string, to: string, keep: (r: any) => boolean
     if (n <= 0) continue
     const total = Math.max(1, num(r.nights) || Math.round((Date.parse(co + 'T12:00:00Z') - Date.parse(ci + 'T12:00:00Z')) / 86400000) || 1)
     const fare = num(r.fare) || num(r.fareBase) || num(r.money_total)
-    const net = Math.max(0, fare - num(r.fee))
+    const net = Math.max(0, fare - channelFeeOf(r.feeInc, r.fee))
     nights += n; revenue += (net / total) * n; stays++
   }
   return { nights, revenue: Math.round(revenue), stays }
@@ -146,7 +148,7 @@ async function compute(today: string, windows: number[]): Promise<Pacing> {
   return { ok: true, generatedAt: new Date().toISOString(), today, asOfLastYear: asOf, windows: out, basis: PACING_BASIS, notes }
 }
 
-const cached = unstable_cache(compute, ['forecast-pacing-v1'], { revalidate: 3600, tags: ['forecast'] })
+const cached = unstable_cache(compute, ['forecast-pacing-v2'], { revalidate: 3600, tags: ['forecast'] })
 
 /** Pacing for the next 30 / 60 / 90 days (or `windows`), cached an hour — bookings move slowly. */
 export async function buildPacing(opts: { windows?: number[]; fresh?: boolean } = {}): Promise<Pacing> {

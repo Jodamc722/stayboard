@@ -28,6 +28,8 @@ import type { DayPicture } from '@/lib/capacity-day'
 import { shapeOf, recordThought } from './thoughts'
 import { awaitingSet, slaDueAt } from '@/lib/response-times'
 import { GUEST_REPLY_SYSTEM } from '@/lib/guest-reply-draft'
+import { REVIEW_REPLY_SYSTEM, ratingBand, strategyLine, ratingLineFor } from '@/lib/review-reply-prompt'
+import { firstNameOf } from '@/lib/review-playbook'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const ymdET = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
@@ -130,7 +132,7 @@ async function askModel(task: string, system: string, user: string, maxTokens = 
 // GUEST_REPLY_SYSTEM is lib/guest-reply-draft's — the one voice, whether this watch or a person's
 // "Draft with Eve" on the thread asked for the draft.
 
-const REVIEW_REPLY_SYSTEM = `You write short PUBLIC replies to guest reviews for "Stay Hospitality". We are the team ("we", "our team"), never "the host". Always English. 2-3 sentences, 45 words or fewer, warm and plain. Respond to the feeling, not the specific defect: do not admit fault, restate or concede the problem, and do not promise refunds. No filler phrases, no idioms, no emojis, no unit or building names. Output only the reply.`
+// The review-reply rules are lib/review-reply-prompt's — one copy, shared with /api/reviews/draft.
 
 // ---- The eight ------------------------------------------------------------------------------------
 
@@ -359,7 +361,8 @@ async function badReviewIn(env: WatchEnv): Promise<Prepared[]> {
         exec: async () => {
           const { hostVoiceFor, hostVoicePrompt, applyHostVoice } = await import('@/lib/host-voice')
           const hv = hostVoiceFor(unit)
-          const raw = await askModel('review-reply', REVIEW_REPLY_SYSTEM + (hv ? hostVoicePrompt(hv, 'review') : ''), `Channel: ${str(r.channel)}\nGuest: ${str(r.guest_name) || 'the guest'}\nRating: ${rating} out of 5\nGuest review:\n"""${quote}"""\n\nWrite the single best reply.`, 300)
+          const first = firstNameOf(str(r.guest_name))
+          const raw = await askModel('review-reply', REVIEW_REPLY_SYSTEM + (hv ? hostVoicePrompt(hv, 'review') : ''), `Channel: ${str(r.channel)}\nGuest: ${str(r.guest_name) || 'the guest'}\n${first ? `First name: ${first}\n` : ''}Rating: ${ratingLineFor(Number(rating), r.channel)}\nStrategy: ${strategyLine(ratingBand(Number(rating), r.channel), !!quote)}\nGuest review:\n"""${quote}"""\n\nWrite the single best reply.`, 900)
           if (!raw) return null
           const draft = hv ? applyHostVoice(raw, hv, 'review') : raw
           return { reviewId: str(r.id), draft, guest: str(r.guest_name) || 'Guest', unit, channel: str(r.channel), why: `${rating}★ review, unanswered.` }

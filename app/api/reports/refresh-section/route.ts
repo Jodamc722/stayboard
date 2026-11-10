@@ -24,7 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
-  resolveScope, pullReservations, metricsFor, fmtK, monthsAhead, planSectionFor, etToday, bookingsSince, lastReportDate,
+  resolveScope, pullReservations, metricsFor, fmtK, monthsAhead, planSectionFor, etToday, bookingsSince, lastReportDate, engineOf, type CalcOpts,
 } from '@/lib/owner-report'
 import { buildStatementSection } from '@/lib/statement-section'
 import { basisTriple, isBasis, BASIS_NOTE, type Basis } from '@/lib/basis'
@@ -101,6 +101,11 @@ export async function POST(req: NextRequest) {
   const scope = await resolveScope(ids, [])
   const listings = scope.listings
   const units = listings.length
+  // THE REPORT KEEPS THE ENGINE IT WAS GENERATED UNDER (lib/owner-report REPORT_ENGINE). A report
+  // with no engine on it predates the flag and recomputes exactly as it always has.
+  const eng = engineOf(content)
+  const calc: CalcOpts | undefined = eng >= 2 ? { engine: eng, listings } : undefined
+  const calcFor = (l: { id: string; liveFrom?: string | null }): CalcOpts | undefined => eng >= 2 ? { engine: eng, listings: [l] } : undefined
   let summary = ''
 
   // ── THE BUDGET SLIDE ────────────────────────────────────────────────────────
@@ -109,7 +114,7 @@ export async function POST(req: NextRequest) {
   if (section === 'plan') {
     const buildings: string[] = []
     for (const l of listings) if (l.building && buildings.indexOf(l.building) < 0) buildings.push(l.building)
-    const next = await planSectionFor(ids, buildings, asOf, units)
+    const next = await planSectionFor(ids, buildings, asOf, units, undefined, calc)
     if (!next || !next.months.length) {
       return NextResponse.json({ error: 'No budget rows for this scope — set the budget on Money → Budgets, then refresh.' }, { status: 400 })
     }
@@ -149,7 +154,7 @@ export async function POST(req: NextRequest) {
   if (section === 'snapshot') {
     const toExcl = nextDay(to)
     const resv = await pullReservations(ids, from, toExcl)
-    const period = metricsFor(resv, units, from, toExcl)
+    const period = metricsFor(resv, units, from, toExcl, calc)
     const snap = content.snapshot || (content.snapshot = {})
     snap.metrics = {
       accomNum: period.accomRevenue, accomGrossNum: period.accomGrossRevenue,
@@ -169,7 +174,7 @@ export async function POST(req: NextRequest) {
     const grossVal: Record<string, string> = { revenue: fmtK(gross.revenue), adr: '$' + gross.adr, revpar: '$' + gross.revpar }
     const sub: Record<string, string> = {
       revenue: BASIS_NOTE[primary] + ' · Gross (incl. cleaning + channel fees): ' + grossVal.revenue,
-      occupancy: 'Occupied ÷ available nights',
+      occupancy: eng >= 2 ? 'Occupied ÷ sellable nights' : 'Occupied ÷ available nights',
       adr: 'Accommodation ÷ occupied nights · Gross ADR: ' + grossVal.adr,
       revpar: 'Accommodation ÷ available nights · Gross RevPAR: ' + grossVal.revpar,
     }
@@ -189,7 +194,7 @@ export async function POST(req: NextRequest) {
     let mIso = from.slice(0, 7) + '-01'
     for (let guard = 0; mIso <= to && guard < 36; guard++) {
       const mNext = nextMonthIso(mIso)
-      const mm = metricsFor(resv, units, mIso < from ? from : mIso, mNext > toExcl ? toExcl : mNext)
+      const mm = metricsFor(resv, units, mIso < from ? from : mIso, mNext > toExcl ? toExcl : mNext, calc)
       byMonth.push({
         label: monthLabel(mIso), monthIso: mIso,
         revenue: fmtK(mm.accomRevenue), grossRevenue: fmtK(mm.grossRevenue),
@@ -211,7 +216,7 @@ export async function POST(req: NextRequest) {
     const byId: Record<string, any[]> = {}
     for (const r of resv) { (byId[r.listing_id] = byId[r.listing_id] || []).push(r) }
     content.byListing = listings.map(l => {
-      const m = metricsFor(byId[l.id] || [], 1, from, toExcl)
+      const m = metricsFor(byId[l.id] || [], 1, from, toExcl, calcFor(l))
       return {
         id: l.id, name: l.unit ? ('Unit ' + l.unit) : l.name, unit: l.unit || '',
         bedrooms: l.bedrooms, building: l.building || '',
@@ -230,7 +235,7 @@ export async function POST(req: NextRequest) {
   // On-the-books by stay month, as of today's mirror. The per-month notes are written copy and
   // follow their month across the refresh.
   if (section === 'ahead') {
-    const mAhead = await monthsAhead(ids, asOf, units, 6)
+    const mAhead = await monthsAhead(ids, asOf, units, 6, calc)
     if (!mAhead.length) return NextResponse.json({ error: 'nothing on the books to recompute' }, { status: 400 })
     const aheadRaw = (m: any) => ({
       accomNum: m.accomRevenue, accomGrossNum: m.accomGrossRevenue, cleaningNum: m.cleaningRevenue,

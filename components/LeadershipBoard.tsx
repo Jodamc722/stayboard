@@ -395,7 +395,7 @@ export function LeadershipBoard({ initialItem }: { initialItem?: string | null }
     return (
       <div key={it.id} id={'row-' + it.id} className={'border-b border-line/70 last:border-b-0 ' + (it.done ? 'opacity-70' : '')}>
         <div className="flex items-start gap-0.5 pl-1 pr-3 py-0.5">
-          <button onClick={() => complete(it)} disabled={!canEdit} aria-label={it.done ? 'Reopen' : 'Mark done'} title={it.done ? 'Reopen' : 'Mark done'}
+          <button onClick={() => complete(it)} disabled={!canEdit && !it.assignees.includes(data.me)} aria-label={it.done ? 'Reopen' : 'Mark done'} title={it.done ? 'Reopen' : 'Mark done'}
             className="group w-9 h-9 shrink-0 inline-flex items-center justify-center disabled:opacity-50">
             <span className={'w-5 h-5 rounded-full border-2 inline-flex items-center justify-center ' + (it.done ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300 group-hover:border-emerald-500')}>{it.done && <Check size={12} />}</span>
           </button>
@@ -457,6 +457,7 @@ export function LeadershipBoard({ initialItem }: { initialItem?: string | null }
                 </div>
               )}
             </div>
+            {!canEdit && it.done && it.assignees.includes(data.me) && <button onClick={() => complete(it)} className={BTN}>Reopen</button>}
             {canEdit && (
               <div className="flex items-center gap-1.5 flex-wrap">
                 <button onClick={() => pickPhoto(it)} disabled={busy === it.id} className={BTN}><Paperclip size={12} /> Photo</button>

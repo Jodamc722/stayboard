@@ -11,7 +11,7 @@
 // /api/leadership/photo.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { readBoard, addItem, setItem, deleteItem, proposeFromNotes, settleProposal, openProposal, importFromProjects, BoardNotReady, LANES, type Lane } from '@/lib/board'
+import { readBoard, addItem, setItem, deleteItem, proposeFromNotes, settleProposal, openProposal, isAssignee, importFromProjects, BoardNotReady, LANES, type Lane } from '@/lib/board'
 import { rosterForPicker } from '@/lib/mentions'
 
 export const dynamic = 'force-dynamic'
@@ -34,14 +34,25 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireLevel('leadership', 'edit')
+  // Anyone who can SEE the board gets this far; what they may do is decided just below.
+  const gate = await requireLevel('leadership', 'view')
   if (!gate.ok) return gate.res
   const me = gate.access.user.email.toLowerCase()
   const myName = str(gate.access.profile?.name) || null
+  const canEdit = gate.access.role === 'admin' || ['edit', 'full'].includes(String(gate.access.levels['leadership'] || ''))
   const b = await req.json().catch(() => ({} as any))
   const action = str(b.action)
   const bad = (error: string, status = 400) => NextResponse.json({ ok: false, error }, { status })
   try {
+    // VIEW-ONLY (approved 2026-11-09): a person may mark THEIR OWN row done, or reopen it — nothing
+    // else. Only the status is taken from the request; every other field sent along is ignored.
+    if (!canEdit) {
+      const status = str(b.status)
+      if (action !== 'set' || (status !== 'done' && status !== 'open')) return bad('You can view this board, and mark your own tasks done. Ask an admin for edit access to change anything else.', 403)
+      if (!(await isAssignee(str(b.id), me))) return bad('Only the people a task is assigned to can mark it done.', 403)
+      const r = await setItem(me, myName, str(b.id), { status })
+      return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true })
+    }
     if (action === 'add') {
       const r = await addItem(me, myName, b)
       return 'error' in r ? bad(r.error) : NextResponse.json({ ok: true, id: r.id })

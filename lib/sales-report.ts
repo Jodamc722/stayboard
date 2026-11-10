@@ -17,8 +17,14 @@
 //     test). They still HOLD nights, so they come off the "open nights" a unit has left to sell.
 //   - MONEY = accommodation the guest paid before channel fees (fareAccommodationAdjusted, falling
 //     back to fareAccommodation) — Revenue Center's "gross accommodation" and /marketing's headline.
-//     No cleaning, no taxes. The month-vs-budget block alone is NET (after the channel's host fee),
-//     because the budget it is compared with is net accommodation.
+//     No cleaning, no taxes. The month-vs-budget block alone is NET — THE ONE NET of lib/basis
+//     (accommodation − hostServiceFeeIncTax, else hostServiceFee) — because the budget it is compared
+//     with is net accommodation.
+//   - SAME-STORE (2026-11-09). The portfolio grew, so "up on last year" is partly just more units.
+//     Every vs-last-year figure therefore comes twice: ALL UNITS (everything we sold then against
+//     everything we sell now) and SAME-STORE — only the units that are active now AND were already
+//     live on this date last year, on both sides. A unit was live then when its Guesty listing was
+//     created on or before that day, or when a reservation for it had been made by then.
 //   - LAST YEAR = the same weekdays 52 weeks earlier (364 days) for days, weeks and pace windows;
 //     the same calendar dates for a month. A period still in progress is compared with last year's
 //     UP TO THE SAME TIME OF DAY, so 10am today is never judged against a whole day.
@@ -37,6 +43,7 @@ import { isOwnerOrFriendsFamily } from './owner-audit'
 import { bucketFor, familyFor, otaGroupFor } from './marketing'
 import { rollupBuilding } from './optimize-score'
 import { monthBudget } from './money-source'
+import { LIVE_STAY_STATUSES, channelFeeOf } from './basis'
 
 export type SalesSide = { bookings: number; nights: number; revenue: number; cancelled: number; cancelledRevenue: number }
 export type SalesPeriod = {
@@ -47,9 +54,11 @@ export type SalesPeriod = {
   partial: boolean
   now: SalesSide
   ly: SalesSide
-  /** % change vs last year; null when last year had nothing to compare with. */
+  /** % change vs last year over ALL UNITS; null when last year had nothing to compare with. */
   revenuePct: number | null
   bookingsPct: number | null
+  /** The same comparison over the same-store units only (active now and live a year ago). */
+  sameStore: { now: SalesSide; ly: SalesSide; revenuePct: number | null; bookingsPct: number | null }
 }
 export type SalesChannel = {
   name: string
@@ -101,7 +110,14 @@ export type SalesMonth = {
   lyNightsSameTime: number | null
   budget: number | null
   pctOfBudget: number | null
+  /** On the books vs last year at the same point — all units. */
   pctVsLy: number | null
+  /** The same, same-store units only. Revenue is null when dollars are hidden. */
+  ssNights: number
+  ssLyNightsSameTime: number | null
+  ssRevenue: number | null
+  ssLySameTime: number | null
+  ssPctVsLy: number | null
 }
 export type SalesCancel = {
   id: string; unit: string; building: string; channel: string
@@ -118,6 +134,9 @@ export type SalesReport = {
   asOfLastYear: string
   lastSync: string | null
   showMoney: boolean
+  /** Units active now that were already live on `asOfLastYear`, and all active units. */
+  sameStoreUnits: number
+  activeUnits: number
   periods: SalesPeriod[]
   channels: SalesChannel[]
   directShare: number | null
@@ -129,6 +148,8 @@ export type SalesReport = {
     nights30: number; nights60: number
     /** Portfolio comparison over the units that were already listed a year ago. */
     sameUnits: number; sameNights30: number; sameLy30: number; pct30: number | null
+    /** All units: every night on the books now vs every night on the books then (units since left included). */
+    allLy30: number; allPct30: number | null
     sameNights60: number; sameLy60: number; pct60: number | null
     occ30: number
     behind: number; cold: number; ahead: number
@@ -149,7 +170,7 @@ export type SalesReport = {
 
 const TZ = 'America/New_York'
 const DAY = 86_400_000
-const LIVE = ['confirmed', 'checked_in', 'checked_out']
+const LIVE = LIVE_STAY_STATUSES
 const CANCELLED = ['canceled', 'cancelled']
 const DEAD_LISTING = ['inactive', 'disabled', 'archived', 'deleted']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -205,8 +226,8 @@ const ownerish = (r: any): boolean => {
 }
 /** Accommodation the guest paid, before channel fees. */
 const accom = (r: any): number => num(r.fare) || num(r.fareBase)
-/** Accommodation after the channel's host fee (Revenue Center's net: hostServiceFeeIncTax). */
-const netAccom = (r: any): number => Math.max(0, accom(r) - (num(r.feeInc) || num(r.fee)))
+/** Accommodation after the channel fee — THE ONE NET (lib/basis channelFeeOf). */
+const netAccom = (r: any): number => Math.max(0, accom(r) - channelFeeOf(r.feeInc, r.fee))
 const stayNights = (r: any): number => Math.max(1, num(r.nights) || diffDays(dOf(r.check_in), dOf(r.check_out)) || 1)
 
 function channelOf(source: string): { name: string; family: 'direct' | 'manual' | 'ota' } {
@@ -308,6 +329,19 @@ async function compute(today: string): Promise<SalesReport> {
   }
   const active = Object.keys(lmap).map(k => lmap[k]).filter(l => l.active)
 
+  // ---- same-store: active now AND live on this date last year ----
+  const asOfCut = Date.parse(etMidnightUtc(shift(asOf, 1)))   // by the end of that Eastern day
+  const soldByThen: Record<string, boolean> = {}
+  for (const r of bookedLy.rows.concat(staysLy.rows)) {
+    const ts = Date.parse(str(r.created_at))
+    if (Number.isFinite(ts) && ts < asOfCut && r.listing_id) soldByThen[str(r.listing_id)] = true
+  }
+  const sameStore: Record<string, boolean> = {}
+  for (const l of active) if ((l.created && l.created <= asOf) || soldByThen[l.id]) sameStore[l.id] = true
+  const sameStoreUnits = Object.keys(sameStore).length
+  const inSame = (r: any): boolean => sameStore[str(r.listing_id)] === true
+  if (active.length > 0 && sameStoreUnits === 0) notes.push('no unit could be shown to have been live a year ago — same-store comparisons are blank')
+
   // ---- booked: periods ----
   const curBooked = bookedNow.rows.filter(r => !ownerish(r)).map(r => ({ r, day: etDay(str(r.created_at)), ts: Date.parse(str(r.created_at)) }))
   const lyBooked = bookedLy.rows.filter(r => !ownerish(r)).map(r => ({ r, day: etDay(str(r.created_at)), ts: Date.parse(str(r.created_at)) }))
@@ -319,18 +353,23 @@ async function compute(today: string): Promise<SalesReport> {
     { key: 'month', label: 'This month', from: mStart, to: today, lyFrom: lyMStart, lyTo: lyToday, cutDays: diffDays(lyToday, today) },
   ]
   const periods: SalesPeriod[] = defs.map(p => {
-    const now = emptySide(), ly = emptySide()
-    for (const x of curBooked) if (x.day >= p.from && x.day <= p.to) addBooking(now, x.r)
+    const now = emptySide(), ly = emptySide(), ssNow = emptySide(), ssLy = emptySide()
+    for (const x of curBooked) if (x.day >= p.from && x.day <= p.to) { addBooking(now, x.r); if (inSame(x.r)) addBooking(ssNow, x.r) }
     const cut = p.cutDays == null ? null : nowMs - p.cutDays * DAY
     for (const x of lyBooked) {
       if (x.day < p.lyFrom || x.day > p.lyTo) continue
       if (cut != null && Number.isFinite(x.ts) && x.ts >= cut) continue
       addBooking(ly, x.r)
+      if (inSame(x.r)) addBooking(ssLy, x.r)
     }
     return {
       key: p.key, label: p.label, from: p.from, to: p.to, lyFrom: p.lyFrom, lyTo: p.lyTo, partial: p.cutDays != null,
       now: roundSide(now), ly: roundSide(ly),
       revenuePct: pctChange(now.revenue, ly.revenue), bookingsPct: pctChange(now.bookings, ly.bookings),
+      sameStore: {
+        now: roundSide(ssNow), ly: roundSide(ssLy),
+        revenuePct: pctChange(ssNow.revenue, ssLy.revenue), bookingsPct: pctChange(ssNow.bookings, ssLy.bookings),
+      },
     }
   })
 
@@ -384,7 +423,6 @@ async function compute(today: string): Promise<SalesReport> {
   // ---- pace: next 30 / 60 days by unit ----
   const t30 = shift(today, 30), t60 = shift(today, 60)
   const ly30End = shift(asOf, 30), ly60End = shift(asOf, 60)
-  const asOfCut = Date.parse(etMidnightUtc(shift(asOf, 1)))   // booked by the end of that Eastern day
   type U = { n30: number; n60: number; held30: number; rev30: number; ly30: number; ly60: number; pick: number; pickN: number }
   const acc: Record<string, U> = {}
   const uOf = (id: string): U => acc[id] = acc[id] || { n30: 0, n60: 0, held30: 0, rev30: 0, ly30: 0, ly60: 0, pick: 0, pickN: 0 }
@@ -422,13 +460,9 @@ async function compute(today: string): Promise<SalesReport> {
     const b = bAgg[l.building] = bAgg[l.building] || { sold: 0, sellable: 0 }
     b.sold += u ? u.n30 : 0; b.sellable += 30 - (u ? Math.min(30, u.held30) : 0)
   }
-  let dated = 0
-  for (const l of active) if (l.created) dated++
-  const knowUnits = active.length > 0 && dated / active.length >= 0.8
-  if (!knowUnits) notes.push('listing dates are missing for too many units — pace is compared with the building instead of last year')
 
   // THE PACE RULES — rules, not a model, and deliberately few:
-  //   behind  listed a year ago, last year had 5+ nights on the books by now, and we are 4+ nights short
+  //   behind  same-store (live a year ago), last year had 5+ nights on the books by now, and we are 4+ nights short
   //   cold    20+ of the next 30 nights open and not one booking made in 14 days
   //   watch   10+ points under the building's booked share (no last-year read, or not short enough to be "behind")
   //   ahead   85%+ booked and 4+ nights up on last year — the rate is probably too low
@@ -440,7 +474,7 @@ async function compute(today: string): Promise<SalesReport> {
     const occ30 = sellable > 0 ? Math.min(1, u.n30 / sellable) : 0
     const ba = bAgg[l.building]
     const bldOcc30 = ba && ba.sellable > 0 ? ba.sold / ba.sellable : 0
-    const hasLy = knowUnits && !!l.created && l.created <= asOf
+    const hasLy = sameStore[l.id] === true                     // the same same-store test as the headline
     const ly30 = hasLy ? u.ly30 : null, ly60 = hasLy ? u.ly60 : null
     const gapLy = ly30 == null ? 0 : ly30 - u.n30
     const gapBld = Math.round((bldOcc30 - occ30) * sellable)
@@ -484,17 +518,22 @@ async function compute(today: string): Promise<SalesReport> {
     nights30 += u.nights30; nights60 += u.nights60; sellableAll += 30 - u.held30
     if (u.ly30 != null && u.ly60 != null) { sameUnits++; sameN30 += u.nights30; sameL30 += u.ly30; sameN60 += u.nights60; sameL60 += u.ly60 }
   }
+  let allLy30 = 0
+  for (const id of Object.keys(acc)) allLy30 += acc[id].ly30
 
   // ---- months: on the books vs last year at the same time, last year's final, and the budget ----
   const months: SalesMonth[] = monthKeys.map((ym, i) => {
     const from = ym + '-01', toExcl = addMonths(ym, 1) + '-01'
     const lyYm = addMonths(ym, -12), lyFrom = lyYm + '-01', lyToExcl = addMonths(lyYm, 1) + '-01'
     let nights = 0, revenue = 0, lyNightsST = 0, lyST = 0, lyFinal = 0
+    let ssNights = 0, ssRev = 0, ssLyNights = 0, ssLy = 0
     for (const r of staysNow.rows) {
       if (ownerish(r)) continue
       const n = overlap(dOf(r.check_in), dOf(r.check_out), from, toExcl)
       if (n <= 0) continue
-      nights += n; revenue += (netAccom(r) / stayNights(r)) * n
+      const v = (netAccom(r) / stayNights(r)) * n
+      nights += n; revenue += v
+      if (inSame(r)) { ssNights += n; ssRev += v }
     }
     for (const r of staysLy.rows) {
       if (ownerish(r)) continue
@@ -503,7 +542,10 @@ async function compute(today: string): Promise<SalesReport> {
       const v = (netAccom(r) / stayNights(r)) * n
       lyFinal += v
       const ts = Date.parse(str(r.created_at))
-      if (!Number.isFinite(ts) || ts < asOfCut) { lyST += v; lyNightsST += n }
+      if (!Number.isFinite(ts) || ts < asOfCut) {
+        lyST += v; lyNightsST += n
+        if (inSame(r)) { ssLy += v; ssLyNights += n }
+      }
     }
     const dim = daysInMonth(ym)
     const bud = budgets[i]
@@ -520,6 +562,9 @@ async function compute(today: string): Promise<SalesReport> {
       budget,
       pctOfBudget: budget ? Math.round((revenue / budget) * 100) : null,
       pctVsLy: haveLy ? pctChange(revenue, lyST) : null,
+      ssNights, ssLyNightsSameTime: haveLy ? ssLyNights : null,
+      ssRevenue: Math.round(ssRev), ssLySameTime: haveLy ? Math.round(ssLy) : null,
+      ssPctVsLy: haveLy ? pctChange(ssRev, ssLy) : null,
     }
   })
 
@@ -567,11 +612,13 @@ async function compute(today: string): Promise<SalesReport> {
     ok: true,
     generatedAt: new Date(nowMs).toISOString(),
     today, asOfLastYear: asOf, lastSync, showMoney: true,
+    sameStoreUnits, activeUnits: active.length,
     periods, channels, directShare, lyDirectShare, days,
     pace: {
       activeUnits: active.length, from: today, to30: shift(today, 29), lyFrom: asOf,
       nights30, nights60,
       sameUnits, sameNights30: sameN30, sameLy30: sameL30, pct30: pctChange(sameN30, sameL30),
+      allLy30, allPct30: staysLy.truncated ? null : pctChange(nights30, allLy30),
       sameNights60: sameN60, sameLy60: sameL60, pct60: pctChange(sameN60, sameL60),
       occ30: sellableAll > 0 ? nights30 / sellableAll : 0,
       behind: units.filter(u => u.status === 'behind').length,
@@ -590,7 +637,7 @@ async function compute(today: string): Promise<SalesReport> {
   return report
 }
 
-const cached = unstable_cache(compute, ['sales-report-v1'], { revalidate: 600, tags: ['revenue', 'sales'] })
+const cached = unstable_cache(compute, ['sales-report-v2'], { revalidate: 600, tags: ['revenue', 'sales'] })
 
 /** The sales report for today (Eastern), cached ten minutes. */
 export async function buildSalesReport(opts: { fresh?: boolean } = {}): Promise<SalesReport> {
@@ -611,7 +658,10 @@ export function withoutMoney(r: SalesReport): SalesReport {
   return {
     ...r,
     showMoney: false,
-    periods: r.periods.map(p => ({ ...p, now: side(p.now), ly: side(p.ly), revenuePct: null })),
+    periods: r.periods.map(p => ({
+      ...p, now: side(p.now), ly: side(p.ly), revenuePct: null,
+      sameStore: { ...p.sameStore, now: side(p.sameStore.now), ly: side(p.sameStore.ly), revenuePct: null },
+    })),
     channels: r.channels
       .map(c => ({ ...c, revenue: 0, lyRevenue: 0, share: c.bookingShare, lyShare: c.lyBookingShare }))
       .sort((a, b) => b.bookings - a.bookings),
@@ -622,6 +672,8 @@ export function withoutMoney(r: SalesReport): SalesReport {
     months: r.months.map(m => ({
       ...m, revenue: 0, lySameTime: null, lyFinal: null, budget: null, pctOfBudget: null,
       pctVsLy: m.lyNightsSameTime != null ? pctChange(m.nights, m.lyNightsSameTime) : null,
+      ssRevenue: null, ssLySameTime: null,
+      ssPctVsLy: m.ssLyNightsSameTime != null ? pctChange(m.ssNights, m.ssLyNightsSameTime) : null,
     })),
     cancels: {
       ...r.cancels, revenue: 0,

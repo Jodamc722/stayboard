@@ -157,6 +157,8 @@ export async function buildLaborSection(opts: { unmatched?: string[] | null } = 
       html: block(title, `<p style="margin:6px 0 0;font-size:13px"><span style="${T.red}">The labor engine did not run this morning</span> <span style="${T.muted}">— ${esc(why)}. The 7:58 labor check emails the details; the ${link} has the live picture.</span></p>`, A) }
   }
   const checks = integrityChecks(ec30, { ignoreNames: await integrityIgnoreNames().catch(() => []) })
+  // Kept for the 7:58 labor ledger, so it does not run the same 30 days through Homebase again.
+  await storeLabor30(d30, yd, ec30, checks)
   const badAudit = [ecY?.payrollAudit, ec7?.payrollAudit, ec30?.payrollAudit].find(a => a && !a.complete)
   if (badAudit) {
     const why = 'Homebase did not return timecards for ' + (badAudit.failedWeeks || []).join(', ')
@@ -196,6 +198,47 @@ export async function buildLaborSection(opts: { unmatched?: string[] | null } = 
       ? sub(`Checks failing · ${L.checksPassed} of ${checks.length} pass`) + lineRows(L.failing, { cap: 6, more: `on the ${link}` })
       : `<p style="margin:8px 0 0;font-size:12px"><span style="${T.green}">✓ All ${checks.length} labor checks pass</span> <span style="${T.muted}">— every Homebase week answered, every clean has a wage behind it, fees match cleans.</span></p>`)
   return { status: 'ok', ec7, ec30, checks, html: block(title, inner, A) }
+}
+
+// ---- the settled 30 days, handed to the 7:58 labor ledger ----------------------------------------
+// (2026-11-09) The GM morning (7:01) and the labor ledger (7:58) each ran laborEconomics over the same
+// 30 days — the slowest read of the morning, three Homebase windows — within the hour. The GM morning
+// now leaves the part of its result the ledger reads (app_settings `labor_ec30_handoff`): the payroll
+// audit, the KPI figures and market buckets the snapshot is built from, and the integrity checks. The
+// ledger uses it when it is under 90 minutes old AND for the same window; otherwise it runs the engine
+// itself, exactly as before. Only what the ledger reads is kept — never the per-person detail.
+const HANDOFF_KEY = 'labor_ec30_handoff'
+export const LABOR30_FRESH_MS = 90 * 60_000
+export type Labor30 = { at: string; from: string; to: string; ec30: any; checks: IntegrityCheck[] }
+async function storeLabor30(from: string, to: string, ec30: any, checks: IntegrityCheck[]): Promise<void> {
+  try {
+    const K: any = ec30?.kpi || {}
+    const slim = {
+      payrollAudit: ec30?.payrollAudit ? { complete: !!ec30.payrollAudit.complete, failedWeeks: ec30.payrollAudit.failedWeeks || [] } : null,
+      kpi: {
+        housekeeping: { cleans: K.housekeeping?.cleans, revenue: K.housekeeping?.revenue, costPerClean: K.housekeeping?.costPerClean, payroll: K.housekeeping?.payroll },
+        maintenance: { billable: K.maintenance?.billable },
+        allIn: { payroll: K.allIn?.payroll, margin: K.allIn?.margin },
+      },
+      cleaningRevenue: ec30?.cleaningRevenue,
+      feeAudit: ec30?.feeAudit ? { credited: ec30.feeAudit.credited } : null,
+      buckets: ((ec30?.buckets || []) as any[]).map(b => ({ key: b.key, label: b.label, inHouse: b.inHouse, cleans: b.cleans, cleaningRevenue: b.cleaningRevenue, payroll: b.payroll, laborCostPerClean: b.laborCostPerClean, hoursPerClean: b.hoursPerClean, margin: b.margin, marginPct: b.marginPct })),
+    }
+    // Without the figures the snapshot needs, leave nothing: the ledger then runs the engine itself.
+    if (!K.housekeeping || !K.maintenance || !K.allIn) return
+    const v: Labor30 = { at: new Date().toISOString(), from, to, ec30: slim, checks }
+    await setSetting(HANDOFF_KEY, v, 'gm-morning')
+  } catch { /* the ledger recomputes */ }
+}
+/** This morning's 30-day result for exactly this window, if the GM morning left one under 90 minutes ago. */
+export async function freshLabor30(from: string, to: string): Promise<Labor30 | null> {
+  try {
+    const { getSettingFresh } = await import('@/lib/app-settings')
+    const v = await getSettingFresh<Labor30 | null>(HANDOFF_KEY, null)
+    if (!v || v.from !== from || v.to !== to || !v.ec30 || !Array.isArray(v.checks)) return null
+    const age = Date.now() - Date.parse(String(v.at || ''))
+    return Number.isFinite(age) && age >= 0 && age < LABOR30_FRESH_MS ? v : null
+  } catch { return null }
 }
 
 // ---- did this morning's GM morning carry the section? -------------------------------------------

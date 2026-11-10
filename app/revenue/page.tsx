@@ -4,7 +4,13 @@
 // Revenue is PRORATED PER NIGHT into the selected range (owner-report convention, reconciles to
 // the cent), so a 10-night stay straddling the range only counts its in-range nights. Includes
 // prior-period deltas and forward on-the-books pacing (next 30/60/90 days). Confirmed
-// reservations only. Data: guesty_reservations (raw->money incl. invoiceItems) + guesty_listings.
+// reservations only (lib/basis LIVE_STAY_STATUSES — never `closed`).
+//
+// OWNER NIGHTS (2026-11-09, owner-approved; the same rule as lib/kpi). An owner or friends-and-family
+// stay holds the unit, so its nights count in OCCUPANCY and are shown beside it. It is not a sale,
+// so ADR = guest room revenue ÷ guest nights and RevPAR = guest room revenue ÷ sellable nights
+// (available − owner nights). Money totals still include whatever an owner stay was charged, so
+// the waterfall keeps reconciling to the statements. Data: guesty_reservations (raw->money incl. invoiceItems) + guesty_listings.
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -16,12 +22,13 @@ import { rollupBuilding } from '@/lib/optimize-score'
 import { marketOf } from '@/lib/segments'
 import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 import { bucketFor, familyFor, otaGroupFor } from '@/lib/marketing'
+import { LIVE_STAY_STATUSES, channelFeeOf } from '@/lib/basis'
 
 export const dynamic = 'force-dynamic'
 // YTD pulls ~3 ranges of reservations incl. raw money JSON - needs more than the default fn timeout.
 export const maxDuration = 60
 
-const CONFIRMED = ['confirmed', 'checked_in', 'checked_out']
+const CONFIRMED = LIVE_STAY_STATUSES
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const EXPEDIA_RE = /expedia|hotels\.com|orbitz|egencia|travelocity/
 // Standard invoice lines that are NOT guest add-on fees (accommodation/cleaning/taxes/commissions).
@@ -46,6 +53,15 @@ function addDays(iso: string, d: number): string {
 type RawResv = {
   listing_id: string; check_in: string; check_out: string; nights: number
   source: string; money_total: number; fare: number; grossFare: number; cleaningFee: number; hostFee: number; commission: number; items: any[]
+  /** Owner or friends-and-family stay (lib/owner-audit) — in occupancy, out of ADR and RevPAR. */
+  ownerish: boolean
+}
+
+/** The UTC instant of 00:00 in New York on `ymd` — range edges for timestamp columns. */
+function etMidnightUtc(ymd: string): string {
+  const guess = Date.parse(ymd + 'T05:00:00Z')            // midnight EST
+  const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }).format(new Date(guess))) % 24
+  return new Date(guess - h * 3_600_000).toISOString()    // 1am EDT → back an hour
 }
 
 const sleep = (ms: number) => new Promise(res => setTimeout(res, ms))
@@ -62,7 +78,7 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
     for (let attempt = 0; attempt < 3; attempt++) {
       const res = await sb
         .from('guesty_reservations')
-        .select('listing_id, check_in, check_out, nights, status, source, money_total, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted, cleaningFee:raw->money->>fareCleaning, hostFee:raw->money->>hostServiceFeeIncTax, commission:raw->money->>commission, items:raw->money->invoiceItems')
+        .select('listing_id, check_in, check_out, nights, status, source, guest_name, money_total, fare:raw->money->>fareAccommodation, grossFare:raw->money->>fareAccommodationAdjusted, cleaningFee:raw->money->>fareCleaning, hostFee:raw->money->>hostServiceFeeIncTax, hostFeeEx:raw->money->>hostServiceFee, commission:raw->money->>commission, items:raw->money->invoiceItems, tags:raw->tags')
         .in('status', CONFIRMED)
         .gt('check_out', from)
         .lt('check_in', toExcl)
@@ -88,8 +104,10 @@ async function pullRange(sb: any, from: string, toExcl: string): Promise<RawResv
       source: String(r.source || 'other'),
       money_total: num(r.money_total),
       fare: num(r.fare), grossFare: num(r.grossFare), cleaningFee: num(r.cleaningFee),
-      hostFee: num(r.hostFee), commission: num(r.commission),
+      // THE ONE NET (lib/basis): the tax-inclusive channel fee, else the plain one.
+      hostFee: channelFeeOf(r.hostFee, r.hostFeeEx), commission: num(r.commission),
       items: Array.isArray(r.items) ? r.items : [],
+      ownerish: isOwnerOrFriendsFamily(String(r.source || ''), Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : '', String(r.guest_name || '')),
     }))
 }
 
@@ -205,13 +223,17 @@ function expediaCleaningFix(list: { r: RawResv; c: Comp }[]) {
 export type UnitRow = {
   id: string; name: string; building: string; market: string; owner: string; bedrooms: number | null
   nightsSold: number; occ: number; bookings: number
+  // Owner / F&F nights inside nightsSold, and the room revenue of GUEST stays only — what ADR and
+  // RevPAR are built from (guestGross ÷ guest nights, guestGross ÷ sellable nights).
+  ownerNights: number; guestGross: number
   grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number; total: number
   prevOcc: number; prevTotal: number
   // Room revenue and nights for the prior period, and all three for the SAME WEEKDAYS LAST YEAR
   // (range shifted back 364 days), so ADR / RevPAR deltas compare room revenue with room revenue
   // and every headline can be read against last year, not only against the days just before.
-  prevGross: number; prevNights: number
-  lyTotal: number; lyGross: number; lyNights: number
+  // prevGross / lyGross are GUEST room revenue; the owner nights of each period ride beside them.
+  prevGross: number; prevNights: number; prevOwnerNights: number
+  lyTotal: number; lyGross: number; lyNights: number; lyOwnerNights: number
   otb30: number // forward on-the-books occupancy next 30 days (0..1)
   flags: string[] // struggling reasons
 }
@@ -231,6 +253,7 @@ export type RevenueData = {
   activeUnits: number; inactiveUnits: number
   totals: Comp & { total: number; moneyTotal: number }
   nightsSold: number; occupiedNights: number; availableNights: number; bookings: number
+  ownerNights: number
   prev: { from: string; to: string; total: number; nightsSold: number; occupiedNights: number; availableNights: number; grossAccom: number }
   // The same weekdays a year earlier (52 weeks back). `ok` is false when that read failed — the
   // page then shows no last-year comparison rather than a comparison against zero.
@@ -242,6 +265,7 @@ export type RevenueData = {
     name: string; revenue: number; count: number
     cancelled: number; cancelSample: number; ownerHolds: number; cancelRate: number | null
   }[]
+  // occ = guest nights ÷ sellable nights and adr = guest room revenue ÷ guest nights, per building.
   buildingAvg: Record<string, { occ: number; adr: number }>
   units: UnitRow[]
   recs: Rec[]
@@ -336,8 +360,8 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const currency = 'USD'
 
     // ---- per-listing accumulation (prorated per night into the range) ----
-    type Acc = { nightsSold: number; bookings: number; grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number; moneyTotal: number }
-    const blank = (): Acc => ({ nightsSold: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, moneyTotal: 0 })
+    type Acc = { nightsSold: number; ownerNights: number; guestGross: number; bookings: number; grossAccom: number; netAccom: number; cleaning: number; parking: number; other: number; commission: number; moneyTotal: number }
+    const blank = (): Acc => ({ nightsSold: 0, ownerNights: 0, guestGross: 0, bookings: 0, grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, moneyTotal: 0 })
     const per: Record<string, Acc> = {}
     const byChannel: Record<string, { count: number; revenue: number }> = {}
     const dayRev: Record<string, number> = {}
@@ -359,6 +383,8 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       const a = per[x.r.listing_id] = per[x.r.listing_id] || blank()
       a.nightsSold += n
       a.bookings += 1
+      if (x.r.ownerish) a.ownerNights += n
+      else a.guestGross += x.c.grossAccom * share
       a.grossAccom += x.c.grossAccom * share
       a.netAccom += x.c.netAccom * share
       a.cleaning += x.c.cleaning * share
@@ -373,7 +399,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     }
 
     // Prior period per listing (occupancy + total revenue only)
-    const prevPer: Record<string, { nights: number; total: number; gross: number }> = {}
+    const prevPer: Record<string, { nights: number; total: number; gross: number; owner: number }> = {}
     let prevTotalAll = 0, prevNights = 0, prevGross = 0
     for (const x of prevX) {
       if (!activeIds.has(x.r.listing_id)) continue
@@ -381,22 +407,25 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       if (n <= 0) continue
       const share = n / x.r.nights
       const tot = (x.c.grossAccom + x.c.cleaning + x.c.parking + x.c.other) * share
-      const p = prevPer[x.r.listing_id] = prevPer[x.r.listing_id] || { nights: 0, total: 0, gross: 0 }
-      p.nights += n; p.total += tot; p.gross += x.c.grossAccom * share
+      const p = prevPer[x.r.listing_id] = prevPer[x.r.listing_id] || { nights: 0, total: 0, gross: 0, owner: 0 }
+      p.nights += n; p.total += tot
+      if (x.r.ownerish) p.owner += n
+      else p.gross += x.c.grossAccom * share
       prevTotalAll += tot; prevNights += n; prevGross += x.c.grossAccom * share
     }
 
     // Same weekdays last year per listing — the same proration, over [lyFrom, lyToExcl).
-    const lyPer: Record<string, { nights: number; total: number; gross: number }> = {}
+    const lyPer: Record<string, { nights: number; total: number; gross: number; owner: number }> = {}
     for (const x of lyX) {
       if (!activeIds.has(x.r.listing_id)) continue
       const n = overlapNights(x.r.check_in, x.r.check_out, lyFrom, lyToExcl)
       if (n <= 0) continue
       const share = n / x.r.nights
-      const p = lyPer[x.r.listing_id] = lyPer[x.r.listing_id] || { nights: 0, total: 0, gross: 0 }
+      const p = lyPer[x.r.listing_id] = lyPer[x.r.listing_id] || { nights: 0, total: 0, gross: 0, owner: 0 }
       p.nights += n
       p.total += (x.c.grossAccom + x.c.cleaning + x.c.parking + x.c.other) * share
-      p.gross += x.c.grossAccom * share
+      if (x.r.ownerish) p.owner += n
+      else p.gross += x.c.grossAccom * share
     }
 
     // Forward on-the-books nights per listing (30/60/90) + per-day booked curve
@@ -426,8 +455,8 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const units: UnitRow[] = active.map(l => {
       const id = String(l.id)
       const a = per[id] || blank()
-      const p = prevPer[id] || { nights: 0, total: 0, gross: 0 }
-      const ly = lyPer[id] || { nights: 0, total: 0, gross: 0 }
+      const p = prevPer[id] || { nights: 0, total: 0, gross: 0, owner: 0 }
+      const ly = lyPer[id] || { nights: 0, total: 0, gross: 0, owner: 0 }
       const name = String(l.nickname || l.title || id)
       return {
         id, name,
@@ -436,24 +465,30 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
         owner: ownerOf[id] || 'Unassigned',
         bedrooms: l.bedrooms ?? null,
         nightsSold: a.nightsSold,
+        ownerNights: a.ownerNights, guestGross: a.guestGross,
         occ: days > 0 ? a.nightsSold / days : 0,
         bookings: a.bookings,
         grossAccom: a.grossAccom, netAccom: a.netAccom, cleaning: a.cleaning, parking: a.parking, other: a.other, commission: a.commission,
         total: a.grossAccom + a.cleaning + a.parking + a.other,
         prevOcc: days > 0 ? p.nights / days : 0,
         prevTotal: p.total,
-        prevGross: p.gross, prevNights: p.nights,
-        lyTotal: ly.total, lyGross: ly.gross, lyNights: ly.nights,
+        prevGross: p.gross, prevNights: p.nights, prevOwnerNights: p.owner,
+        lyTotal: ly.total, lyGross: ly.gross, lyNights: ly.nights, lyOwnerNights: ly.owner,
         otb30: (fwd30[id] || 0) / 30,
         flags: [],
       }
     })
 
     // ---- building averages (peer benchmark) ----
+    // GUEST basis: guest nights over sellable nights, guest room revenue over guest nights — a
+    // building with an owner in residence is not "outselling" its neighbours.
+    const guestNightsOf = (u: UnitRow) => Math.max(0, u.nightsSold - u.ownerNights)
+    const sellableOf = (u: UnitRow) => Math.max(0, days - u.ownerNights)
+    const guestOccOf = (u: UnitRow) => (sellableOf(u) > 0 ? guestNightsOf(u) / sellableOf(u) : 0)
     const bAgg: Record<string, { nights: number; rev: number; avail: number }> = {}
     for (const u of units) {
       const b = bAgg[u.building] = bAgg[u.building] || { nights: 0, rev: 0, avail: 0 }
-      b.nights += u.nightsSold; b.rev += u.grossAccom; b.avail += days
+      b.nights += guestNightsOf(u); b.rev += u.guestGross; b.avail += sellableOf(u)
     }
     const buildingAvg: Record<string, { occ: number; adr: number }> = {}
     for (const k of Object.keys(bAgg)) {
@@ -468,9 +503,10 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     const decileCut = revparSorted[Math.floor(revparSorted.length * 0.1)] ?? 0
     for (const u of units) {
       const bl = buildingAvg[u.building]
-      const adr = u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0
+      const gN = guestNightsOf(u), gOcc = guestOccOf(u)
+      const adr = gN > 0 ? u.guestGross / gN : 0
       if (u.nightsSold === 0) u.flags.push('Vacant — no nights sold in range')
-      if (bl && bl.occ > 0.05 && u.occ < bl.occ - 0.10) u.flags.push(`Occupancy ${Math.round(u.occ * 100)}% vs building ${Math.round(bl.occ * 100)}%`)
+      if (bl && bl.occ > 0.05 && gOcc < bl.occ - 0.10) u.flags.push(`Guest occupancy ${Math.round(gOcc * 100)}% vs building ${Math.round(bl.occ * 100)}%`)
       if (bl && bl.adr > 0 && adr > 0 && adr < bl.adr * 0.85) u.flags.push(`ADR $${Math.round(adr)} vs building $${Math.round(bl.adr)}`)
       if (u.total / days <= decileCut && units.length >= 20) u.flags.push('Bottom 10% RevPAR in portfolio')
       if (u.prevOcc - u.occ >= 0.10) u.flags.push(`Occupancy down ${Math.round((u.prevOcc - u.occ) * 100)}pts vs prior period`)
@@ -480,9 +516,10 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
 
     // ---- portfolio totals ----
     const totals = { grossAccom: 0, netAccom: 0, cleaning: 0, parking: 0, other: 0, commission: 0, total: 0, moneyTotal: 0 }
-    let nightsSold = 0, bookings = 0
+    let nightsSold = 0, bookings = 0, ownerNightsAll = 0
     for (const id of Object.keys(per)) {
       const a = per[id]
+      ownerNightsAll += a.ownerNights
       totals.grossAccom += a.grossAccom; totals.netAccom += a.netAccom; totals.cleaning += a.cleaning
       totals.parking += a.parking; totals.other += a.other; totals.commission += a.commission; totals.moneyTotal += a.moneyTotal
       nightsSold += a.nightsSold; bookings += a.bookings
@@ -524,7 +561,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     // Impact estimates are deliberately simple and conservative: peer-pace gaps priced at the
     // building's ADR, normalized to a 30-day month. They rank the work; they are not forecasts.
     const recs: Rec[] = []
-    const adrOf = (u: UnitRow) => (u.nightsSold > 0 ? u.grossAccom / u.nightsSold : 0)
+    const adrOf = (u: UnitRow) => (guestNightsOf(u) > 0 ? u.guestGross / guestNightsOf(u) : 0)
     const monthize = (v: number) => (days > 0 ? (v * 30) / days : 0)
     const rnd = (v: number) => Math.round(v)
     const chips = (list: { u: UnitRow; imp: number }[]) =>
@@ -547,16 +584,16 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       action: 'These sold recently but the forward calendar is empty. Check for new blocks and stale pricing; refresh near-term rates today before they go dark. Impact = next month’s revenue at peer pace, all at risk.',
       impact: sum(noOtb), units: chips(noOtb),
     })
-    const tooHigh = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && bl.occ > 0.05 && u.occ < bl.occ - 0.10 && a > bl.adr * 1.05 })
-      .map(u => { const bl = buildingAvg[u.building]; return { u, imp: (bl.occ - u.occ) * 30 * bl.adr } })
+    const tooHigh = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && bl.occ > 0.05 && guestOccOf(u) < bl.occ - 0.10 && a > bl.adr * 1.05 })
+      .map(u => { const bl = buildingAvg[u.building]; return { u, imp: (bl.occ - guestOccOf(u)) * 30 * bl.adr } })
     if (tooHigh.length > 0) recs.push({
       severity: 'amber',
       title: tooHigh.length + ' unit' + (tooHigh.length > 1 ? 's are' : ' is') + ' priced above building peers but filling less',
       action: 'Same building is outselling them at lower rates. Trim about 10% or add value (parking credit, flexible check-in) and re-check next week. Impact = closing the occupancy gap at the building’s ADR.',
       impact: sum(tooHigh), units: chips(tooHigh),
     })
-    const raise = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && u.occ >= 0.90 && a > 0 && a < bl.adr * 0.95 })
-      .map(u => { const bl = buildingAvg[u.building]; return { u, imp: (bl.adr - adrOf(u)) * u.occ * 30 } })
+    const raise = units.filter(u => { const bl = buildingAvg[u.building]; const a = adrOf(u); return !!bl && guestOccOf(u) >= 0.90 && a > 0 && a < bl.adr * 0.95 })
+      .map(u => { const bl = buildingAvg[u.building]; return { u, imp: (bl.adr - adrOf(u)) * guestOccOf(u) * 30 } })
     if (raise.length > 0) recs.push({
       severity: 'amber',
       title: raise.length + ' unit' + (raise.length > 1 ? 's' : '') + ' at 90%+ occupancy priced below building peers',
@@ -613,7 +650,9 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
     // random subset of its refunds. A short read is logged; leakage stays annotation, never a throw.
     const glitchPage = await pageRows<any>((a, b) => sb.from('glitches')
       .select('id, listing_id, unit, category, created_at, refund_approved, status')
-      .gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59Z')
+      // EASTERN days (2026-11-09): the edges were UTC midnights, so a refund logged at 9pm in Miami
+      // on the last day of the range fell into the next range, and the first evening was the day before's.
+      .gte('created_at', etMidnightUtc(from)).lt('created_at', etMidnightUtc(toExcl))
       .neq('status', 'deleted')
       .order('id')
       .range(a, b))
@@ -643,7 +682,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       from, to, days, currency,
       activeUnits: active.length, inactiveUnits,
       leakage,
-      totals, nightsSold, occupiedNights: nightsSold, availableNights, bookings,
+      totals, nightsSold, occupiedNights: nightsSold, availableNights, bookings, ownerNights: ownerNightsAll,
       prev: { from: prevFrom, to: addDays(from, -1), total: prevTotalAll, nightsSold: prevNights, occupiedNights: prevNights, availableNights, grossAccom: prevGross },
       // Only for a range that has already happened. For "Next month" this year's side is what is on
       // the books so far and last year's would be the finished month — not a comparison (the Sales
@@ -657,7 +696,7 @@ export default async function RevenuePage({ searchParams }: { searchParams?: { f
       },
       channels, buildingAvg, units, recs, daily, fwdDaily,
     }
-  }, ['revenue-center-v9'], { tags: ['revenue'], revalidate: 300 })
+  }, ['revenue-center-v10'], { tags: ['revenue'], revalidate: 300 })
 
   const data = await getData(from, to, todayStr)
 

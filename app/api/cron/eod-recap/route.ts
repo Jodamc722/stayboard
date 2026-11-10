@@ -48,6 +48,7 @@ import { buildDaySheet } from '@/lib/daysheet'
 import { getShifts } from '@/lib/homebase'
 import { etDay } from '@/lib/clean-day'
 import { sendGmail } from '@/lib/gmail-send'
+import { briefAlertTo } from '@/lib/briefs/delivery'
 import { withRouteReceipt, recordRun } from '@/lib/automation-runs'
 import { cronAllowed } from '@/lib/cron-auth'
 import { atEasternHour } from '@/lib/et-clock'
@@ -451,17 +452,17 @@ async function send(req: NextRequest) {
     const cc: string[] = test ? [] : (Array.isArray(cfg.cc) ? cfg.cc : []).map((x: any) => String(x || '').trim().toLowerCase()).filter((x: string) => /@/.test(x) && !to.includes(x))
     // Nobody on either list is not a quiet night — the owner is told, once, and nothing is sent.
     if (!to.length) {
-      await sendGmail({ fromEmail, to: [OWNER], subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} has nobody to go to: the EOD list and the GM morning list are both empty in /users → App settings → Morning briefs.</p>` }).catch(() => null)
+      await sendGmail({ fromEmail, to: await briefAlertTo(cfg), source: 'eod-recap', subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} has nobody to go to: the EOD list and the GM morning list are both empty in /users → App settings → Morning briefs.</p>` }).catch(() => null)
       const ledger = await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
       return NextResponse.json({ ok: false, error: 'no recipients (ops_brief.eod.to and ops_brief.gm are empty)', ledger })
     }
-    const r = await sendGmail({ fromEmail, to, cc, subject: (test ? '[TEST] ' : '') + subject, html })
+    const r = await sendGmail({ fromEmail, to, cc, subject: (test ? '[TEST] ' : '') + subject, html, source: 'eod-recap' })
     // After the email, never before it: tonight's forecast into the ledger, and the grades.
     const ledger = test ? null : await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
     return NextResponse.json({ ok: r.ok, to: to.length, subject, error: r.error, counts: { revCleans, revenue, hkHours, hkPayroll, hkProfit, supPayroll, mtRev, mtPayroll, done: doneToday.length }, ledger })
   } catch (e: any) {
     // A recap that did not send looks like a quiet night — say so, to the owner.
-    await sendGmail({ fromEmail: OWNER, to: [OWNER], subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} failed to build: ${esc(String(e?.message || e)).slice(0, 300)}</p>` }).catch(() => null)
+    await sendGmail({ fromEmail: OWNER, to: await briefAlertTo().catch(() => [OWNER]), source: 'eod-recap', subject: '⚠️ End-of-day recap did not send', html: `<p style="${FONT};font-size:14px">The EOD recap for ${today} failed to build: ${esc(String(e?.message || e)).slice(0, 300)}</p>` }).catch(() => null)
     // The forecast ledger does not depend on the email — a failed recap still records and grades.
     const ledger = (preview || test) ? null : await within(90_000, nightlyLedger(fc), { timedOut: true } as Record<string, any>)
     return NextResponse.json({ ok: false, error: String(e?.message || e), ledger }, { status: 500 })

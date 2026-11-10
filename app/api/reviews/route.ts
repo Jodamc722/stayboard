@@ -70,6 +70,7 @@ export async function GET(req: Request) {
     const BASE_COLS = 'id, listing_id, rating, content, channel, guest_name, created_at, has_reply, reply, excluded_from_score, exclude_reason'
     const RAW_COLS = ', cats:raw->rawReview->category_ratings, scoring:raw->rawReview->scoring, priv:raw->rawReview->>private_feedback'
       + ', ext:raw->>externalListingId, ext2:raw->>external_listing_id, rl:raw->rawReview->>listing_id, rl2:raw->rawReview->>listingId, rl3:raw->rawReview->>external_listing_id'
+      + ', res:raw->>reservationId, res2:raw->>reservation_id'
     const readReviews = (cols: string) => pageRows<any>((a, b) => sb
       .from('guesty_reviews')
       .select(cols)
@@ -135,6 +136,19 @@ export async function GET(req: Request) {
         try { return isCurrentChannelReview(stub, { integrations: m.ints }, String(r.channel || '')) } catch { return true }
       }
 
+      // CHECKOUT DATE of the stay behind each review still waiting on a reply — the channels count
+      // their review window from checkout (Airbnb 14 days, Vrbo 180), so the queue's "closes in Nd"
+      // tag needs it. Only unanswered reviews are looked up; a failed read just means no tag.
+      const checkOutOf: Record<string, string> = {}
+      try {
+        const resIds = Array.from(new Set((rows as any[]).filter(r => !r.has_reply).map(r => String(r.res || r.res2 || '')).filter(Boolean)))
+        for (let i = 0; i < resIds.length && i < 2000; i += 200) {
+          const { data: rs, error } = await sb.from('guesty_reservations').select('id, check_out').in('id', resIds.slice(i, i + 200))
+          if (error) break
+          for (const x of ((rs || []) as any[])) { const d = String(x.check_out || '').slice(0, 10); if (d) checkOutOf[String(x.id)] = d }
+        }
+      } catch { /* no tag */ }
+
       const shape = (r: any, m: any) => ({
         id: r.id,
         rating: r.rating != null ? Number(r.rating) : null,
@@ -150,6 +164,7 @@ export async function GET(req: Request) {
         market: m?.market || null,
         ownerId: m?.ownerId || '',
         ownerName: m?.ownerName || 'Unassigned',
+        checkOut: checkOutOf[String(r.res || r.res2 || '')] || null,
         // Sub-scores on the 5-point scale (Airbnb's six; Booking.com's when it sends them). Empty for
         // channels that send none — the row then simply shows no chips.
         categories: subScoresOf(r.cats, r.scoring).map(c => ({ key: c.key, label: c.label, rating: c.rating, comment: c.comment })),

@@ -356,9 +356,15 @@ async function run(req: NextRequest) {
   }
   try { await setSetting(ALERT_KEY, next, 'watchdog') } catch {}
 
+  // A MORNING BRIEF THAT NEVER WENT OUT (2026-11-09). The 7:01 job emails its own failures — unless the
+  // function died before it got there. After 7:30am ET, any brief with people on its list and no "sent
+  // today" stamp rings ONE in-app bell for the day (lib/briefs/delivery). Not Slack, not email.
+  let briefs: any = null
+  try { const { checkMissingBriefs } = await import('@/lib/briefs/delivery'); briefs = await checkMissingBriefs() } catch { briefs = null }
+
   return NextResponse.json({
     ranAt: nowIso, healthy: !alerts.length && !Object.keys(next).length,
-    feeds: report, alerts, recovered, slack,
+    feeds: report, alerts, recovered, slack, briefs,
     hint: slack && slack.reason ? String(slack.reason) : undefined,
   })
 }
