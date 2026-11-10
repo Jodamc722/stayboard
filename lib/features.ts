@@ -259,6 +259,10 @@ export const OPEN_PREFIXES = [
   // APPROVED CATALOG LINK (Jon, 2026-10-27). /catalog/<code> is the read-only approved furniture list for
   // one property; the code is the capability and /api/public/catalog checks it on every call.
   '/catalog/',
+  // STARTER KIT REPORT (Jon, 2026-11-10). /kit/<code> is the starter kit report a prospective owner or
+  // client opens: every item Stay puts in the home, sized to it, with their choices and Send to Stay.
+  // The 20-hex code is the capability, checked by /api/public/starter-kit on every call.
+  '/kit/',
   // CATALOG PRODUCT PHOTOS (2026-10-28): the static images the catalog links show. Without this an
   // owner who is not signed in got a redirect to the login page instead of every product photo.
   '/ffe/17west/img/',
