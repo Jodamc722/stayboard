@@ -21,7 +21,7 @@ export type WatermarkOptions = {
   on: boolean
   position: WatermarkPosition
   size: WatermarkSize
-  /** Percent, 10–40. */
+  /** Percent, 10–70 (the logo is thin line art, so it needs more than a solid mark would). */
   opacity: number
   /** 'auto' = white on a dark area, dark on a light one, measured under the logo. */
   tone: WatermarkTone
@@ -34,10 +34,10 @@ export const WATERMARK_CHANNEL_WHY = 'Vrbo and Booking.com reject watermarks by 
 /** What the Guesty write paths answer when someone tries to put a branded copy on a listing. */
 export const WATERMARK_PUSH_BLOCK = 'This is a Stay-watermarked copy. ' + WATERMARK_CHANNEL_WHY + ' Use the original photo for the listing.'
 
-export const WATERMARK_DEFAULTS: WatermarkOptions = { on: false, position: 'br', size: 'm', opacity: 18, tone: 'auto' }
-export const WATERMARK_OPACITY = { min: 10, max: 40, step: 1 }
+export const WATERMARK_DEFAULTS: WatermarkOptions = { on: false, position: 'br', size: 'm', opacity: 30, tone: 'auto' }
+export const WATERMARK_OPACITY = { min: 10, max: 70, step: 1 }
 /** Logo width as a share of the image width. */
-export const WATERMARK_SIZE_PCT: Record<WatermarkSize, number> = { s: 12, m: 18, l: 26 }
+export const WATERMARK_SIZE_PCT: Record<WatermarkSize, number> = { s: 14, m: 22, l: 34 }
 export const WATERMARK_SIZE_LABEL: Record<WatermarkSize, string> = { s: 'Small', m: 'Medium', l: 'Large' }
 export const WATERMARK_POSITION_LABEL: Record<WatermarkPosition, string> = { br: 'Bottom right', bl: 'Bottom left', c: 'Centre' }
 /** Distance from the edges, as a share of the image width. */
