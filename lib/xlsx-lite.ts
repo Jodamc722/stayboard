@@ -70,7 +70,7 @@ function buildZip(entries: { name: string; data: Buffer }[]): Buffer {
 //   0 default · 1 bold · 2 title (bold 14) · 3 header (bold, grey fill, bottom border)
 //   4 currency · 5 number 0.00 · 6 total currency (bold, top border) · 7 total label · 8 muted
 //   9 link · 10 blue header (bold white on #3F5BA9 — the Cloudbeds import template's header)
-export type XCell = { v: string | number; s?: number; num?: boolean }
+export type XCell = { v: string | number; s?: number; num?: boolean; f?: string }   // f: a formula, written without the leading '='
 export type XSheet = { name: string; widths: number[]; rows: XCell[][]; links?: { ref: string; url: string }[] }
 
 export function colRef(i: number): string {
@@ -120,7 +120,8 @@ function sheetXml(sh: XSheet): string {
       if (cellDef == null) continue
       const ref = colRef(c) + String(r + 1)
       const s = cellDef.s ? ` s="${cellDef.s}"` : ''
-      if (cellDef.num) cells.push(`<c r="${ref}"${s}><v>${cellDef.v}</v></c>`)
+      if (cellDef.f) cells.push(`<c r="${ref}"${s}><f>${xesc(cellDef.f)}</f></c>`)
+      else if (cellDef.num) cells.push(`<c r="${ref}"${s}><v>${cellDef.v}</v></c>`)
       else if (cellDef.v === '' || cellDef.v == null) cells.push(`<c r="${ref}"${s}/>`)
       else cells.push(`<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${xesc(cellDef.v)}</t></is></c>`)
     }
