@@ -96,6 +96,7 @@ export function EveHub({ canEdit, loopsLevel, initialTab, isAdmin }: { canEdit: 
       const t = sp.get('tab')
       if (t === 'chat' || t === 'loops' || t === 'questions' || t === 'overview' || t === 'expectations' || t === 'issues' || t === 'day' || t === 'desks' || t === 'reports') setTab(t)
       setReportId(sp.get('id'))
+      if (sp.get('q')) setTab('chat')
     } catch { /* server */ }
   }, [])
   const pick = (t: TabKey) => {

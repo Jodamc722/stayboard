@@ -17,6 +17,20 @@
 //
 // NOT IN v1: 'blocked' nights (the Guesty calendar is not stored, so a blocked night reads vacant)
 // and days a listing was not active (before active_from / after active_to — not written at all).
+//
+// RECONCILED WITH REVENUE CENTER (2026-11-10, /api/brain/reconcile). Four things made a month here
+// differ from the same month on Revenue Center, and all four now follow the page (lib/brain/rc-rules):
+//   • accommodation falls back to fareAccommodation when fareAccommodationAdjusted is missing / 0
+//   • the Expedia cleaning split — computed per WINDOW, so the builder runs in calendar months
+//     (lib/brain/run) and a month here uses the same modal fee as that month on the page
+//   • two live stays on one night: both stays' money is kept on the night (the first stay read
+//     keeps the reservation id). Revenue Center counts the night twice; one row cannot, so the
+//     nights differ by exactly the double-booked nights, which the reconcile lists by name
+//   • per-night money is kept to 4 decimal places, so a month adds back to the stays to the cent
+// What still differs, by design: Revenue Center leaves out stays on dead listings and on "Full"
+// whole-unit listings; the brain keeps every listing (the money is real) and the reconcile reports
+// that part separately. A stay cancelled after it was built is cleared on the next rebuild of its
+// month — including on days the listing is no longer active, where the stale row is deleted.
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
@@ -25,10 +39,11 @@ import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { isTaskDone, isTaskGone } from '@/lib/task-categories'
 import type { DimUnit } from './spine'
-import { str, num, dOf, etDay, etHour, addDays, daysBetween, round2, readIn, upsertBatches, type BuildResult } from './shared'
+import { rcExpediaSplit, rcGrossAccom, type RcStay } from './rc-rules'
+import { str, num, dOf, etDay, etHour, addDays, daysBetween, round2, round4, readIn, pageRead, upsertBatches, type BuildResult } from './shared'
 
 const RES_COLS = 'id,listing_id,check_in,check_out,nights,status,source,guest_name,'
-  + 'cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,'
+  + 'cleaning:raw->money->>fareCleaning,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,'
   + 'channelFee:raw->money->>hostServiceFee,channelFeeInc:raw->money->>hostServiceFeeIncTax,tags:raw->tags'
 const TASK_COLS = 'id,reference_property_id,name,type_department,status,scheduled_date,finished_at,total_minutes,assignee_name,finished_by_name'
 
@@ -48,7 +63,8 @@ export function billedOf(costs: any, supplies: any): number {
   return round2(total)
 }
 
-type Night = { resId: string; channel: string; owner: boolean; gross: number; fee: number }
+type Night = { resId: string; channel: string; owner: boolean; gross: number; net: number; stays: number }
+type BStay = RcStay & { id: string; ci: string; co: string; total: number; owner: boolean; channel: string }
 
 /** Build (upsert) every listing-night in [from, to], inclusive Eastern dates. */
 export async function buildUnitDays(from: string, to: string, units: DimUnit[], deadline: number): Promise<BuildResult> {
@@ -58,6 +74,7 @@ export async function buildUnitDays(from: string, to: string, units: DimUnit[], 
   const now = new Date().toISOString()
   const span = daysBetween(from, to) + 1
   let partial = false
+  const notes: string[] = []
 
   // 1. Stays touching the window (a stay checking out on `from` still carries its cleaning into it).
   const resRead = await pageRows<any>((a, b) => db.from('guesty_reservations').select(RES_COLS)
@@ -65,30 +82,54 @@ export async function buildUnitDays(from: string, to: string, units: DimUnit[], 
     .order('check_out').order('id').range(a, b), Math.ceil(((span + 30) * 60) / 1000) + 2)
   if (resRead.truncated) partial = true
 
-  const nights: Record<string, Night> = {}                 // listing|day -> the stay holding that night
-  const arrivals: Record<string, boolean> = {}
-  const departures: Record<string, number> = {}            // listing|day -> cleaning fee earned (0 is a departure too)
+  const stays: BStay[] = []
   for (const r of resRead.rows) {
     const lid = str(r.listing_id), ci = dOf(r.check_in), co = dOf(r.check_out)
     if (!lid || !ci || !co || co < ci) continue
     if (LIVE_STAY_STATUSES.indexOf(str(r.status).toLowerCase()) < 0) continue
     const total = Number(r.nights) > 0 ? Number(r.nights) : daysBetween(ci, co)
     const tagBlob = Array.isArray(r.tags) ? r.tags.map((t: any) => String(t)).join(' ') : ''
-    const owner = isOwnerOrFriendsFamily(str(r.source), tagBlob, str(r.guest_name))
-    if (ci >= from && ci <= to) arrivals[lid + '|' + ci] = true
-    if (co >= from && co <= to) departures[lid + '|' + co] = (departures[lid + '|' + co] || 0) + num(r.cleaning)
-    if (total <= 0) continue
-    const gross = num(r.fare) / total
-    const fee = channelFeeOf(num(r.channelFeeInc), num(r.channelFee)) / total
-    const s = ci > from ? ci : from
-    const lastNight = addDays(co, -1)
+    const grossAccom = rcGrossAccom(r.fare, r.fareBase)
+    const cleaning = Number(r.cleaning)
+    stays.push({
+      id: str(r.id), listingId: lid, ci, co, total,
+      owner: isOwnerOrFriendsFamily(str(r.source), tagBlob, str(r.guest_name)),
+      channel: str(r.source) || 'unknown', source: str(r.source) || 'other',
+      grossAccom, netAccom: grossAccom - channelFeeOf(r.channelFeeInc, r.channelFee),
+      cleaning: Number.isFinite(cleaning) ? cleaning : 0,
+    })
+  }
+  // Revenue Center's Expedia cleaning split, over the stays Revenue Center would read for this same
+  // window (check-out after `from`): a stay that only checks out on `from` is not in its pull.
+  rcExpediaSplit(stays.filter(x => x.co > from))
+
+  const nights: Record<string, Night> = {}                 // listing|day -> the stay(s) holding that night
+  const arrivals: Record<string, boolean> = {}
+  const departures: Record<string, number> = {}            // listing|day -> cleaning fee earned (0 is a departure too)
+  let doubled = 0
+  for (const x of stays) {
+    const lid = x.listingId
+    if (x.ci >= from && x.ci <= to) arrivals[lid + '|' + x.ci] = true
+    if (x.co >= from && x.co <= to) departures[lid + '|' + x.co] = (departures[lid + '|' + x.co] || 0) + x.cleaning
+    if (x.total <= 0) continue
+    const gross = x.grossAccom / x.total
+    const net = x.netAccom / x.total
+    const s = x.ci > from ? x.ci : from
+    const lastNight = addDays(x.co, -1)
     const e = lastNight < to ? lastNight : to
     for (let d = s; d <= e; d = addDays(d, 1)) {
       const k = lid + '|' + d
-      // Two live stays on one night is a data problem; the first one read keeps the night.
-      if (!nights[k]) nights[k] = { resId: str(r.id), channel: str(r.source) || 'unknown', owner, gross, fee }
+      const n = nights[k]
+      if (!n) { nights[k] = { resId: x.id, channel: x.channel, owner: x.owner, gross, net, stays: 1 }; continue }
+      // Two live stays on one night is a data problem (a double booking, or a stay that should
+      // have been cancelled). The first stay read keeps the night; the money of both stays is
+      // kept so the month still adds up to the stays Revenue Center counts.
+      n.gross += gross; n.net += net; n.stays += 1
+      if (!x.owner) n.owner = false
+      doubled++
     }
   }
+  if (doubled) notes.push(doubled + ' double-booked night(s): money of both stays kept, night counted once')
 
   // 2. Field work. Tasks are read by scheduled date with a two-week lead so work finished inside the
   //    window but scheduled a little before it is still counted.
@@ -170,9 +211,9 @@ export async function buildUnitDays(from: string, to: string, units: DimUnit[], 
         state: n ? (n.owner ? 'owner_stay' : 'occupied') : 'vacant',
         reservation_id: n ? n.resId : null,
         channel: n ? n.channel : null,
-        gross_accom: n ? round2(n.gross) : null,
-        channel_fee: n ? round2(n.fee) : null,
-        net_accom: n ? round2(n.gross - n.fee) : null,
+        gross_accom: n ? round4(n.gross) : null,
+        channel_fee: n ? round4(n.gross - n.net) : null,
+        net_accom: n ? round4(n.net) : null,
         cleaning_rev: departures[k] != null ? round2(departures[k]) : null,
         is_arrival: arrivals[k] === true,
         is_departure: departures[k] != null,
@@ -189,5 +230,34 @@ export async function buildUnitDays(from: string, to: string, units: DimUnit[], 
     }
   }
   const w = await upsertBatches('fact_unit_day', rows, 'day,listing_id', { deadline, batch: 500 })
-  return { rows: w.written, partial: partial || w.stoppedEarly, incomplete: w.stoppedEarly, ...(w.error ? { error: w.error } : {}) }
+
+  // Rows this window holds that this build did not write: a stay cancelled since, on a day the
+  // listing is no longer active (so no vacant row replaced it), or a listing gone from the mirror.
+  // Only after a whole write and a whole read — never on a guess.
+  if (!w.stoppedEarly && !w.error && !resRead.truncated && Date.now() < deadline) {
+    const wrote: Record<string, boolean> = {}
+    for (const r of rows) wrote[r.listing_id + '|' + r.day] = true
+    const have = await pageRead<any>((a, b) => db.from('fact_unit_day').select('day,listing_id')
+      .gte('day', from).lte('day', to).order('listing_id').order('day').range(a, b), Math.ceil((span * 330) / 1000) + 2)
+    if (!have.truncated && !have.missing) {
+      const stale: Record<string, string[]> = {}
+      for (const r of have.rows) {
+        const lid = str(r.listing_id), d = dOf(r.day)
+        if (lid && d && !wrote[lid + '|' + d]) (stale[lid] = stale[lid] || []).push(d)
+      }
+      let removed = 0
+      for (const lid of Object.keys(stale)) {
+        if (Date.now() > deadline) break
+        try {
+          const { error } = await db.from('fact_unit_day').delete().eq('listing_id', lid).in('day', stale[lid])
+          if (!error) removed += stale[lid].length
+        } catch { /* left for the next rebuild */ }
+      }
+      if (removed) notes.push(removed + ' stale row(s) removed')
+    }
+  }
+  return {
+    rows: w.written, partial: partial || w.stoppedEarly, incomplete: w.stoppedEarly,
+    ...(w.error ? { error: w.error } : {}), ...(notes.length ? { note: notes.join('; ') } : {}),
+  }
 }

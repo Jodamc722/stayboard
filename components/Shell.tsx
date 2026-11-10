@@ -17,7 +17,7 @@ import { AdamFloat } from '@/components/AdamFloat'
 import { forgetAllCached } from '@/lib/swr'
 import {
   Building2, MessageSquare, ListChecks, LogOut, RefreshCw, Gauge, Star, TrendingUp, Users, FileText, Bell,
-  Search, Menu, X, Plus, ChevronDown, Check, Sparkles, CalendarDays, Settings as SettingsIcon } from 'lucide-react'
+  Search, Menu, X, Plus, ChevronDown, Check, Sparkles, CalendarDays, Settings as SettingsIcon, Megaphone } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-09-29 (Jon): "get rid of useless or noisy tabs… break it down into simple tabs", then
@@ -40,7 +40,7 @@ type NavSection = { title: string; items: NavItem[] }
 
 // One icon per desk (lib/desks.ts stays free of JSX). Admin is the gear.
 const DESK_ICONS: Record<string, any> = {
-  today: Gauge, eve: Sparkles, operations: ListChecks, guests: MessageSquare, reviews: Star, listings: Building2,
+  today: Gauge, eve: Sparkles, operations: ListChecks, guests: MessageSquare, reviews: Star, listings: Building2, marketing: Megaphone,
   owners: FileText, team: Users, kpis: TrendingUp, admin: SettingsIcon,
 }
 // The phone's bottom bar: the four pages used most, then More (Jon, 2026-09-30: Today, the

@@ -83,7 +83,9 @@ export type TierGrant = {
 // them privately, never into the room — lib/eve/core.ts door_code_check); in an admin's one-to-one DM
 // the admin has it, as before; in every other channel nobody does. See lib/eve/door-code-rooms.ts.
 const ENTRY_TOOLS = ['door_code', 'door_code_check']
-const ADMIN_ONLY = ['ask_ralph', 'slack_queue', 'ai_spend', 'vendor_work']
+// owner_360 (2026-11-10): one owner's months, units and fees — the GM's, never a colleague's in a room.
+// vendor_360 goes with vendor_work, which was already admin-only here.
+const ADMIN_ONLY = ['ask_ralph', 'slack_queue', 'ai_spend', 'vendor_work', 'owner_360', 'vendor_360']
 // A vendor room has an outside company reading it, so a guest's own words and contact details stay
 // out too — those are ours and the guest's, not the contractor's.
 // 2026-09-18 audit (P0-7): reservation_detail, awaiting_reply, unread_conversations, welcome_calls
@@ -115,7 +117,12 @@ const REMINDER_TOOLS = ['set_reminder', 'my_reminders', 'cancel_reminder']
 // guest's own words. So in a vendor room, whoever asks, the guest tools go, and so do the ways into
 // her mind and notebook (dossiers quote reviews; memories name people and guests; the knowledge base
 // is mined from guest messages). run.ts leaves the mind block and those memories out of the prompt too.
-const VENDOR_ROOM_TOOLS = GUEST_TOOLS.concat(['my_mind', 'dossier', 'search_reviews', 'memory_search', 'knowledge_search'])
+// The business brain (2026-11-10): measure and query read portfolio-wide tables, and vendor_360 is
+// another vendor's record — none of it in a room an outside company reads. The money-bearing brain
+// tools (measure, query, upkeep_rank, upkeep_advise, unit_health, repeat_failures, owner_360,
+// vendor_360) are money:true, so canMoney decides their amounts everywhere else.
+const BRAIN_ROOM_DENY = ['measure', 'query', 'vendor_360', 'owner_360']
+const VENDOR_ROOM_TOOLS = GUEST_TOOLS.concat(['my_mind', 'dossier', 'search_reviews', 'memory_search', 'knowledge_search'], BRAIN_ROOM_DENY)
 
 // DIRECTING HER IS A TOOL, SO IT IS TAKEN AWAY AS A TOOL (Jon, 2026-09-23 review). `canDirect` was
 // declared on every grant and read by nothing, and propose_action — her hands: tasks, Slack posts,

@@ -18,10 +18,19 @@
 //
 // REPEATS. Per physical unit + system, ordered by when the event opened:
 //   repeat_n_90d   = how many earlier events of the same system on the same apartment opened in the
-//                    90 days before this one
-//   is_repeat      = repeat_n_90d ≥ 1, and the system is not 'other' (two unrelated "other" issues
-//                    are not a pattern)
-//   prior_event_id = the most recent of those
+//                    90 days before this one — THE LOOSE COUNT, kept as it was so nothing is lost
+//   is_repeat      = THE STRICT RULE (2026-11-10). An earlier event in those 90 days counts only if
+//                      • it names the SAME PART of the system (lib/task-categories subsystemOf:
+//                        thermostat ≠ condensate leak, dishwasher ≠ fridge), or
+//                      • it was CLOSED and this one opened within 30 days of that fix (the fix did
+//                        not hold, whatever part was named)
+//                    and never when:
+//                      • the system is 'other' (two unrelated issues are not a pattern) or
+//                        'cleaning' (a dirty-unit complaint is a housekeeping miss, not a system
+//                        failing again — it belongs to the cleaning KPIs)
+//                      • the earlier one was still open and opened under 72 hours before — that is
+//                        the same incident reported twice (a glitch and a separate task), not a repeat
+//   prior_event_id = the earlier event that made it a repeat; else the most recent loose one
 // The read reaches 90 days further back than the rows it writes, so the oldest rows written still
 // see their full look-back.
 //
@@ -31,10 +40,11 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
-import { isTaskDone, isTaskGone, systemOfWith, isSystemKey, RESOLUTION_KEYS } from '@/lib/task-categories'
+import { isTaskDone, isTaskGone, systemOfWith, subsystemOf, isSystemKey, RESOLUTION_KEYS } from '@/lib/task-categories'
+import { loadVendorMap } from './vendors'
 import type { DimUnit } from './spine'
 import { billedOf } from './unit-day'
-import { str, num, numOrNull, aliasKey, todayET, addDays, round2, readIn, upsertBatches, type BuildResult } from './shared'
+import { str, num, numOrNull, aliasKey, todayET, addDays, round2, readIn, pageRead, upsertBatches, type BuildResult } from './shared'
 
 const ROUTINE = /preventat|preventive|filter (change|clean|replac)|deep clean|coil clean|batter(y|ies) (change|replac|swap)|inspection|unit check|walk-?through|quality (check|audit)|\baudit\b|exterior clean|parking (check|sweep)|lost (&|and) found|supply (run|drop)|restock/i
 const GUEST_RE = /guest[\s-]*reported|glitch|guest complaint|guest issue/i
@@ -95,7 +105,7 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
   for (const g of gRead.rows) { const t = str(g.breezeway_task_id); if (t) glitchTaskIds[t] = str(g.id) }
 
   // ── 2. BREEZEWAY MAINTENANCE TASKS ─────────────────────────────────────────────────────────────
-  const T_COLS = 'id,reference_property_id,name,status,type_department,scheduled_date,started_at,finished_at,total_minutes,finished_by_name,assignee_name,linked_reservation_id,created:raw->>created_at'
+  const T_COLS = 'id,reference_property_id,name,status,type_department,scheduled_date,started_at,finished_at,total_minutes,finished_by_name,assignee_id,assignee_name,linked_reservation_id,created:raw->>created_at'
   const tRead = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync').select(T_COLS)
     .ilike('type_department', '%maint%').gte('scheduled_date', readFrom)
     .order('scheduled_date').order('id').range(a, b), Math.ceil((span * 60) / 1000) + 3)
@@ -111,10 +121,19 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
   }
 
   // ── 3. WORK ORDERS ─────────────────────────────────────────────────────────────────────────────
-  const wRead = await pageRows<any>((a, b) => db.from('field_requests')
-    .select('id,type,title,description,listing_id,unit,reservation_id,status,amount_usd,created_at,updated_at')
+  const W_BASE = 'id,type,title,description,listing_id,unit,reservation_id,status,amount_usd,created_at,updated_at'
+  const readOrders = (cols: string) => pageRead<any>((a, b) => db.from('field_requests').select(cols)
     .gte('created_at', readFromIso).order('created_at').order('id').range(a, b), 6)
+  let wRead = await readOrders(W_BASE + ',vendor_key')                // vendor_key arrives with migration 109
+  if (wRead.missing) wRead = await readOrders(W_BASE)
   if (wRead.truncated) partial = true
+
+  // Vendors: the registry, the cleaning presets and last night's vendor_xref (lib/brain/vendors).
+  const vmap = await loadVendorMap()
+  const vendorOfTask = (t: any): string | null => {
+    if (!t) return null
+    return vmap.keyForBzId(t.assignee_id) || vmap.keyForName(t.finished_by_name) || vmap.keyForName(t.assignee_name)
+  }
 
   // Billed lines for every task that will appear (standalone or folded into a glitch).
   const billed: Record<string, number> = {}
@@ -150,7 +169,7 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
       is_open: !isClosed, guest_impacting: true,
       reservation_id: str(g.reservation_id) || null,
       person_name: t ? (str(t.finished_by_name) || str(t.assignee_name) || null) : null,
-      vendor_key: str(g.vendor_key) || null,
+      vendor_key: str(g.vendor_key) || vendorOfTask(t),
       bz_task_id: str(g.breezeway_task_id) || null,
       labor_minutes: Number.isFinite(mins) && mins > 0 ? Math.round(mins) : null,
       billed_owner: t && billed[str(t.id)] != null ? billed[str(t.id)] : null,
@@ -180,7 +199,7 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
       is_open: !done, guest_impacting: GUEST_RE.test(name),
       reservation_id: str(t.linked_reservation_id) || null,
       person_name: str(t.finished_by_name) || str(t.assignee_name) || null,
-      vendor_key: null, bz_task_id: id,
+      vendor_key: vendorOfTask(t), bz_task_id: id,
       labor_minutes: Number.isFinite(mins) && mins > 0 ? Math.round(mins) : null,
       billed_owner: billed[id] != null ? billed[id] : null,
       labor_cost: null, parts_cost: null, vendor_cost: null, refund: null,
@@ -203,13 +222,17 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
       opened_at: opened, closed_at: done ? iso(w.updated_at) : null, hours_to_close: null,
       is_open: !done, guest_impacting: !!str(w.reservation_id),
       reservation_id: str(w.reservation_id) || null,
-      person_name: null, vendor_key: null, bz_task_id: null, labor_minutes: null,
+      person_name: null, vendor_key: str(w.vendor_key) || null, bz_task_id: null, labor_minutes: null,
       billed_owner: numOrNull(w.amount_usd) == null ? null : round2(num(w.amount_usd)),
       labor_cost: null, parts_cost: null, vendor_cost: null, refund: null,
     })
   }
 
   // ── REPEATS ────────────────────────────────────────────────────────────────────────────────────
+  // The part each event names, read from its title (the glitch overview / task name / work order).
+  const subOf: Record<string, string | null> = {}
+  for (const e of events) subOf[e.event_id] = subsystemOf(e.system, str(e.title))
+  const NO_REPEAT: Record<string, boolean> = { other: true, cleaning: true }
   const groups: Record<string, Ev[]> = {}
   for (const e of events) {
     e.repeat_n_90d = 0; e.is_repeat = false; e.prior_event_id = null
@@ -217,21 +240,38 @@ export async function buildMaintenanceEvents(days: number, units: DimUnit[], byI
     const k = e.physical_unit_id + '|' + e.system
     ;(groups[k] = groups[k] || []).push(e)
   }
-  const WINDOW_MS = 90 * 86400_000
+  const DAY = 86400_000
+  const WINDOW_MS = 90 * DAY, FIX_MS = 30 * DAY, DUP_MS = 72 * 3600_000
+  let loose = 0, strict = 0
   for (const k of Object.keys(groups)) {
     const list = groups[k].sort((a, b) => (a.opened_at as string) < (b.opened_at as string) ? -1 : (a.opened_at as string) > (b.opened_at as string) ? 1 : (a.event_id < b.event_id ? -1 : 1))
     for (let i = 0; i < list.length; i++) {
-      const at = Date.parse(list[i].opened_at as string)
+      const e = list[i]
+      const at = Date.parse(e.opened_at as string)
+      const sub = subOf[e.event_id]
       let n = 0
+      let hit: Ev | null = null
       for (let j = i - 1; j >= 0; j--) {
-        if (at - Date.parse(list[j].opened_at as string) > WINDOW_MS) break
+        const p = list[j]
+        const pAt = Date.parse(p.opened_at as string)
+        if (at - pAt > WINDOW_MS) break
         n++
+        if (hit || NO_REPEAT[e.system]) continue
+        const pClosed = p.closed_at ? Date.parse(p.closed_at as string) : NaN
+        const closedBefore = Number.isFinite(pClosed) && pClosed <= at
+        if (!closedBefore && at - pAt < DUP_MS) continue          // the same incident, reported twice
+        const sameSub = !!sub && sub === subOf[p.event_id]
+        const fixFailed = closedBefore && at - pClosed <= FIX_MS
+        if (sameSub || fixFailed) hit = p
       }
-      list[i].repeat_n_90d = n
-      list[i].is_repeat = n >= 1 && list[i].system !== 'other'
-      list[i].prior_event_id = n >= 1 ? list[i - 1].event_id : null
+      e.repeat_n_90d = n
+      e.is_repeat = !!hit
+      e.prior_event_id = hit ? hit.event_id : (n >= 1 ? list[i - 1].event_id : null)
+      if (n >= 1 && e.system !== 'other') loose++
+      if (hit) strict++
     }
   }
+  notes.push('repeats: ' + strict + ' strict (same part, or within 30 days of a closed fix) of ' + loose + ' loose (same system within 90 days)')
 
   // Only the rows inside the write window are written; the 90 days before it were read for context.
   const writeFromIso = writeFrom + 'T00:00:00Z'

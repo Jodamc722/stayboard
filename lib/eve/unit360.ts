@@ -32,6 +32,8 @@ import { obj, S } from './types'
 import type { EveCtx } from './ctx'
 import { clampDays, shiftDay, lc, num, round2, chunk, pageRows, resolveListing, DEAD_LISTING, toolMeta } from './ctx'
 import { reviewStats } from './reviews'
+import { brainDims, brainFresh, freshAll, brainMeta, readUnitDays, readEvents, readHealthLatest, newAcc, addDayRow, perfOf, physName, BRAIN_NIGHTS_BASIS, BILLED_NOTE, type Acc, type BrainTable } from './brain-data'
+import { etDay } from '@/lib/brain/shared'
 import { dueCalendarCached, blockedReportCached } from './reach'
 
 type Sect<T> = { ok: true; v: T } | { ok: false; why: string }
@@ -123,6 +125,99 @@ const perf = (r: UnitRevenue | undefined, windowNights: number) => ({
 
 const REV_BASIS = `${NET_BASIS_NOTE}; real stays only (${LIVE_STAY_STATUSES.join(' / ')}), prorated to the window. Owner stays hold the unit: their nights count as booked at zero revenue, which lowers ADR in an owner-heavy window. The Properties page shows ADR before the channel fee, so it reads a little higher.`
 
+// ───────────────────────────────────────────────────────────── the business brain, when fresh
+// (2026-11-10) Performance and maintenance come from the nightly brain (lib/eve/brain-data.ts) when
+// fact_unit_day, fact_maintenance_event and dim_unit were all built in the last 36 hours, so the 360s
+// quote the same numbers as measure / upkeep_rank. A unit is its whole apartment (physical_unit_id).
+// Otherwise — or if the brain read fails — the live readers above answer, exactly as before.
+const SYS_WORD: Record<string, string> = { hvac: 'A/C (HVAC)', lock_access: 'locks / access', wifi_tv: 'Wi-Fi / TV' }
+const sysWord = (s: any): string => SYS_WORD[String(s || '')] || String(s || 'other')
+const BRAIN_TABLES: BrainTable[] = ['fact_unit_day', 'fact_maintenance_event', 'dim_unit']
+
+type EventsRoll = { events: number; open: number; repeats: number; billed: number; hours: number[]; bySystem: Record<string, { n: number; repeats: number; last: string }>; latest: any[] }
+function rollEvents(rows: any[]): EventsRoll {
+  const out: EventsRoll = { events: 0, open: 0, repeats: 0, billed: 0, hours: [], bySystem: {}, latest: [] }
+  for (const e of rows) {
+    out.events++
+    if (e.is_open === true) out.open++
+    if (e.is_repeat === true) out.repeats++
+    out.billed += num(e.billed_owner)
+    if (e.hours_to_close != null && Number.isFinite(Number(e.hours_to_close))) out.hours.push(Number(e.hours_to_close))
+    const s = String(e.system || 'other')
+    const b = (out.bySystem[s] = out.bySystem[s] || { n: 0, repeats: 0, last: '' })
+    b.n++
+    if (e.is_repeat === true) b.repeats++
+    const day = etDay(e.opened_at)
+    if (day > b.last) b.last = day
+  }
+  out.latest = rows.slice().sort((a, b) => String(b.opened_at).localeCompare(String(a.opened_at))).slice(0, 4)
+  return out
+}
+const eventsBlock = (r: EventsRoll, win: string, asOf: string, truncated: boolean) => {
+  const med = median(r.hours)
+  return {
+    what_this_is: 'Everything that broke or was fixed: guest issues, non-routine Breezeway maintenance tasks and work orders (a guest issue and the task pushed from it are one event; routine PM is not counted).',
+    events: r.events, still_open: r.open, repeat_failures: r.repeats, median_hours_to_close: med == null ? null : round2(med),
+    by_system: Object.keys(r.bySystem).sort((a, b) => r.bySystem[b].n - r.bySystem[a].n).slice(0, 8).map(s => ({ system: sysWord(s), events: r.bySystem[s].n, repeats: r.bySystem[s].repeats || undefined, most_recent: r.bySystem[s].last })),
+    latest: r.latest.map(e => ({ opened: etDay(e.opened_at), system: sysWord(e.system), what: String(e.title || '').replace(/\s+/g, ' ').slice(0, 90), resolution: e.resolution || undefined, open: e.is_open === true || undefined })),
+    truncated,
+    _meta: brainMeta({ source: 'fact_maintenance_event (business brain)', window: win, n: r.events, truncated, as_of: asOf }),
+  }
+}
+
+type BrainUnit = { pid: string; label: string; rolled: string[] | undefined; mine: Acc; prior: Acc; peers: { pid: string; acc: Acc }[]; ev: EventsRoll; evTruncated: boolean; truncated: boolean; health: any | null; asOf: string }
+async function brainUnit(ctx: EveCtx, id: string, from: string, to: string, priorFrom: string, priorTo: string, asOf: string): Promise<BrainUnit> {
+  const d = await brainDims(ctx)
+  const du = d.byListing[id]
+  const pid = du ? du.physical_unit_id : id
+  const sibs = (d.byPhys[pid] || []).map(x => x.listing_id)
+  const mineIds = sibs.length ? sibs : [id]
+  const bld = du ? du.building_id : null
+  const peerIds = bld ? d.units.filter(u => u.building_id === bld && (u.status !== 'inactive' || u.physical_unit_id === pid)).map(u => u.listing_id) : mineIds
+  const hFresh = await brainFresh(ctx, 'unit_health_daily')
+  const [cur, prior, ev, h] = await Promise.all([
+    readUnitDays(ctx, from, to, peerIds),
+    readUnitDays(ctx, priorFrom, priorTo, mineIds),
+    readEvents(ctx, { sinceDay: from, untilDay: to, physId: pid }),
+    hFresh.ok ? readHealthLatest(ctx, [pid]).catch(() => null) : Promise.resolve(null),
+  ])
+  const accs: Record<string, Acc> = {}
+  for (const r of cur.rows) {
+    const p = String(r.physical_unit_id || r.listing_id)
+    addDayRow((accs[p] = accs[p] || newAcc()), r, p)
+  }
+  const priorAcc = newAcc()
+  for (const r of prior.rows) addDayRow(priorAcc, r, pid)
+  return {
+    pid, label: du ? physName(ctx, d, pid) : ctx.nameOf(id), rolled: mineIds.length > 1 ? mineIds.map(x => ctx.nameOf(x)) : undefined,
+    mine: accs[pid] || newAcc(), prior: priorAcc,
+    peers: Object.keys(accs).filter(p => (d.byPhys[p] || []).some(u => u.status !== 'inactive')).map(p => ({ pid: p, acc: accs[p] })),
+    ev: rollEvents(ev.rows), evTruncated: ev.truncated, truncated: cur.truncated || prior.truncated,
+    health: h && h.rows.length ? h.rows[0] : null, asOf,
+  }
+}
+
+type BrainBuilding = { byListing: Record<string, Acc>; total: Acc; prior: Acc; events: any[]; evTruncated: boolean; truncated: boolean; asOf: string }
+async function brainBuilding(ctx: EveCtx, ids: string[], from: string, to: string, priorFrom: string, priorTo: string, asOf: string): Promise<BrainBuilding> {
+  const d = await brainDims(ctx)
+  const [cur, prior, ev] = await Promise.all([
+    readUnitDays(ctx, from, to, ids),
+    readUnitDays(ctx, priorFrom, priorTo, ids),
+    readEvents(ctx, { sinceDay: from, untilDay: to, listingIds: ids }),
+  ])
+  const byListing: Record<string, Acc> = {}
+  const total = newAcc(), priorAcc = newAcc()
+  const apt = (r: any) => String(r.physical_unit_id || (d.byListing[String(r.listing_id)] ? d.byListing[String(r.listing_id)].physical_unit_id : r.listing_id))
+  for (const r of cur.rows) {
+    const lid = String(r.listing_id)
+    addDayRow((byListing[lid] = byListing[lid] || newAcc()), r, lid)
+    addDayRow(total, r, apt(r))
+  }
+  for (const r of prior.rows) addDayRow(priorAcc, r, apt(r))
+  return { byListing, total, prior: priorAcc, events: ev.rows, evTruncated: ev.truncated, truncated: cur.truncated || prior.truncated, asOf }
+}
+const brainPerf = (a: Acc) => { const p = perfOf(a); return { net_revenue: p.net_revenue, adr: p.adr, revpar: p.revpar, occupancy_pct: p.occupancy_pct, nights_booked: p.nights_booked, nights_available: p.nights_available, owner_nights: p.owner_nights } }
+
 // ───────────────────────────────────────────────────────────── unit_360
 const UNIT_360: EveTool = {
   name: 'unit_360',
@@ -140,9 +235,26 @@ const UNIT_360: EveTool = {
     const win = `${from} → ${to} (${days} days)`
     const peers = Object.keys(ctx.listingMeta).filter(x => ctx.listingMeta[x].rollup === unit.meta.rollup && !DEAD_LISTING.test(ctx.listingMeta[x].status))
 
-    const [revS, revPriorS, reviewsS, lifetimeS, glitchS, taskS, billS, dueS, inspS, claimS, blockS, ffeS] = await Promise.all([
-      sect('revenue', 30_000, () => unitRevenue(from, to, 'net')),
-      sect('revenue (prior window)', 30_000, () => unitRevenue(priorFrom, priorTo, 'net')),
+    // The business brain answers performance and maintenance when it is fresh; the live readers are
+    // then not run (and run after all if the brain read fails).
+    const brainOn = await freshAll(ctx, BRAIN_TABLES)
+    const useBrain = brainOn.ok
+    const brainAsOf = brainOn.ok ? brainOn.as_of : ''
+    const brainP = useBrain ? sect('business brain', 30_000, () => brainUnit(ctx, id, from, to, priorFrom, priorTo, brainAsOf)) : Promise.resolve(null)
+    const SKIP = 'not read — the business brain answered'
+    const readRev = async () => { if (useBrain) throw new Error(SKIP); return unitRevenue(from, to, 'net') }
+    const readRevPrior = async () => { if (useBrain) throw new Error(SKIP); return unitRevenue(priorFrom, priorTo, 'net') }
+    const tasksQuery = async () => {
+      const { data, error, count } = await ctx.db.from('breezeway_tasks_sync').select(TASK_COLS, { count: 'exact' }).eq('reference_property_id', id).eq('type_department', 'maintenance').gte('scheduled_date', from).order('scheduled_date', { ascending: false }).order('id').limit(400)
+      if (error) throw error
+      return { rows: (data as any[]) || [], total: typeof count === 'number' ? count : null }
+    }
+    const readTasks = async () => { if (useBrain) throw new Error(SKIP); return tasksQuery() }
+    const readBill = async () => { if (useBrain) throw new Error(SKIP); return billingRange(from, to) }
+
+    const [revS0, revPriorS0, reviewsS, lifetimeS, glitchS, taskS0, billS0, dueS, inspS, claimS, blockS, ffeS] = await Promise.all([
+      sect('revenue', 30_000, readRev),
+      sect('revenue (prior window)', 30_000, readRevPrior),
       sect('reviews', 25_000, () => reviewStats(ctx, { ids: [id], days, withPrior: true })),
       sect('reviews (lifetime)', 25_000, () => reviewStats(ctx, { ids: [id] })),
       sect('guest issues', 20_000, async () => {
@@ -150,12 +262,8 @@ const UNIT_360: EveTool = {
         if (error) throw error
         return { rows: (data as any[]) || [], total: typeof count === 'number' ? count : null }
       }),
-      sect('maintenance tasks', 20_000, async () => {
-        const { data, error, count } = await ctx.db.from('breezeway_tasks_sync').select(TASK_COLS, { count: 'exact' }).eq('reference_property_id', id).eq('type_department', 'maintenance').gte('scheduled_date', from).order('scheduled_date', { ascending: false }).order('id').limit(400)
-        if (error) throw error
-        return { rows: (data as any[]) || [], total: typeof count === 'number' ? count : null }
-      }),
-      sect('owner billing', 40_000, () => billingRange(from, to)),
+      sect('maintenance tasks', 20_000, readTasks),
+      sect('owner billing', 40_000, readBill),
       sect('the upkeep ledger', 40_000, () => dueCalendarCached(ctx.today)),
       sect('inspection results', 20_000, async () => {
         const { data, error } = await ctx.db.from('inspection_results').select('task_id,kind,finished_at,inspector,subject_name,yes_count,no_count,pass_rate,score,misses').eq('listing_id', id).order('finished_at', { ascending: false }).limit(12)
@@ -175,13 +283,45 @@ const UNIT_360: EveTool = {
       }),
     ])
 
+    const brainS = await brainP
+    const bu: BrainUnit | null = brainS && brainS.ok ? brainS.v : null
+    // The brain was fresh but its read failed: the live readers answer after all.
+    const fb = useBrain && !bu ? await Promise.all([
+      sect('revenue', 30_000, () => unitRevenue(from, to, 'net')),
+      sect('revenue (prior window)', 30_000, () => unitRevenue(priorFrom, priorTo, 'net')),
+      sect('maintenance tasks', 20_000, tasksQuery),
+      sect('owner billing', 40_000, () => billingRange(from, to)),
+    ]) : null
+    const revS = fb ? fb[0] : revS0
+    const revPriorS = fb ? fb[1] : revPriorS0
+    const taskS = fb ? fb[2] : taskS0
+    const billS = fb ? fb[3] : billS0
+
     const stands: string[] = []
     const windowNights = days
 
     // ── performance
     let performance: any
     let nightsBooked: number | null = null
-    if (!revS.ok) performance = gap(revS.why)
+    if (bu) {
+      const mine = brainPerf(bu.mine)
+      nightsBooked = mine.nights_booked
+      const peerRows = bu.peers.map(p => ({ pid: p.pid, ...brainPerf(p.acc) }))
+      const n = peerRows.length
+      const avg = (k: 'adr' | 'revpar' | 'occupancy_pct') => { const xs = peerRows.map(r => r[k]).filter((x): x is number => x != null); return xs.length ? round2(xs.reduce((s, x) => s + x, 0) / xs.length) : null }
+      const ranked = peerRows.slice().sort((a, b) => (b.revpar ?? -1) - (a.revpar ?? -1))
+      const pos = ranked.findIndex(r => r.pid === bu.pid) + 1
+      performance = {
+        apartment: bu.label, listings_rolled_together: bu.rolled,
+        ...mine,
+        prior_window: { window: `${priorFrom} → ${priorTo}`, ...brainPerf(bu.prior) },
+        building_peers: n > 1 ? { building: unit.meta.rollup, apartments: n, avg_adr: avg('adr'), avg_revpar: avg('revpar'), avg_occupancy_pct: avg('occupancy_pct'), position_in_building: pos ? `${pos} of ${n} by net revenue per available night (1 = best)` : null } : undefined,
+        basis: BRAIN_NIGHTS_BASIS,
+        _meta: brainMeta({ source: 'fact_unit_day (business brain)', window: win, n: mine.nights_booked, truncated: bu.truncated, basis: 'net accommodation after channel fee · real stays', as_of: bu.asOf }),
+      }
+      if (n >= 4 && pos && pos > Math.ceil(n * 0.75)) stands.push(`Earning in the bottom quarter of ${unit.meta.rollup}: ${pos} of ${n} by net revenue per available night.`)
+      if (mine.nights_booked === 0) stands.push(`No booked nights in the last ${days} days.`)
+    } else if (!revS.ok) performance = gap(revS.why)
     else {
       const mine = perf(revS.v[id], windowNights)
       nightsBooked = mine.nights_booked
@@ -244,7 +384,30 @@ const UNIT_360: EveTool = {
 
     // ── maintenance + what was billed
     let maintenance: any
-    {
+    let health: any = undefined
+    if (bu) {
+      const billed = bu.mine.billed
+      maintenance = {
+        events: eventsBlock(bu.ev, win, bu.asOf, bu.evTruncated),
+        billed_to_owner: {
+          what_this_is: `Billed to the owner for Breezeway maintenance tasks finished on this apartment in the window — ${BILLED_NOTE}.`,
+          owner_billed_amount: Math.round(billed),
+          owner_billed_amount_per_booked_night: nightsBooked && nightsBooked > 0 ? round2(billed / nightsBooked) : null,
+          billed_on_the_events_amount: Math.round(bu.ev.billed),
+          _meta: brainMeta({ source: 'fact_unit_day.maint_cost_billed (business brain)', window: win, n: bu.mine.rows, truncated: bu.truncated, basis: BILLED_NOTE, as_of: bu.asOf }),
+        },
+      }
+      for (const s of Object.keys(bu.ev.bySystem)) if (bu.ev.bySystem[s].repeats > 0) stands.push(`${sysWord(s)} failed again within 90 days (${bu.ev.bySystem[s].n} events in the window) — upkeep_advise has the repair-or-replace evidence.`)
+      if (bu.health) {
+        const h = bu.health
+        health = {
+          score: h.score, band: h.band, day: String(h.day || '').slice(0, 10),
+          what_took_points_off: (Array.isArray(h.drivers) ? h.drivers : []).map((x: any) => `−${Math.abs(round2(num(x?.points)))} ${String(x?.key || '')}: ${String(x?.why || '')}`),
+          _meta: brainMeta({ source: 'unit_health_daily (business brain)', window: 'today, 90-day inputs', n: 1, as_of: bu.asOf }),
+        }
+        if (h.score != null && num(h.score) < 70) stands.push(`Health ${h.score} (${h.band}).`)
+      }
+    } else {
       const tasks = taskS.ok ? taskRollup(taskS.v.rows) : null
       const taskCut = taskS.ok ? (taskS.v.total != null ? taskS.v.total > taskS.v.rows.length : taskS.v.rows.length >= 400) : false
       let billed: any
@@ -382,8 +545,9 @@ const UNIT_360: EveTool = {
       unit: unit.meta.name, building: unit.meta.rollup, listing_id: id, status: unit.meta.status || 'unknown',
       window: win,
       what_stands_out: stands.length ? stands : ['Nothing in these records stands out for this window.'],
-      performance, reviews, guest_issues, maintenance, upkeep, inspections, claims, blocked, ffe,
+      performance, reviews, guest_issues, maintenance, health, upkeep, inspections, claims, blocked, ffe,
       sections_unavailable: gaps || undefined,
+      numbers_from: bu ? `the business brain (built ${bu.asOf}) for performance, maintenance and health; live readers for the rest` : (brainOn.ok ? 'live readers (the business brain read failed)' : 'live readers (the business brain is not fresh: ' + brainOn.note.slice(0, 160) + ')'),
       how_to_use: 'Say the window with every number. what_stands_out lists facts from these records, not a recommendation. Billed-to-owner is not our cost.',
       _meta: toolMeta({ source: 'unit 360 (10 sections, each with its own source)', window: win, n: 10 - gaps, truncated: gaps > 0, basis: 'net accommodation after channel fee · current-listing reviews' }),
     }
@@ -411,18 +575,43 @@ const BUILDING_360: EveTool = {
     const win = `${from} → ${to} (${days} days)`
     const mine = inSet(ids)
 
-    const [revS, revPriorS, reviewsS, glitchS, taskS, billS, dueS, inspS, claimS, blockS] = await Promise.all([
-      sect('revenue', 30_000, () => unitRevenue(from, to, 'net')),
-      sect('revenue (prior window)', 30_000, () => unitRevenue(priorFrom, priorTo, 'net')),
+    // The business brain answers performance and maintenance when it is fresh (see brainBuilding).
+    const brainOn = await freshAll(ctx, BRAIN_TABLES)
+    const useBrain = brainOn.ok
+    const brainAsOf = brainOn.ok ? brainOn.as_of : ''
+    const brainP = useBrain ? sect('business brain', 40_000, () => brainBuilding(ctx, ids, from, to, priorFrom, priorTo, brainAsOf)) : Promise.resolve(null)
+    const SKIP = 'not read — the business brain answered'
+    const tasksQuery = () => readForListings(ctx, ids, (part, a, z) => ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).in('reference_property_id', part).eq('type_department', 'maintenance').gte('scheduled_date', from).order('scheduled_date').order('id').range(a, z))
+    const readRev = async () => { if (useBrain) throw new Error(SKIP); return unitRevenue(from, to, 'net') }
+    const readRevPrior = async () => { if (useBrain) throw new Error(SKIP); return unitRevenue(priorFrom, priorTo, 'net') }
+    const readTasks = async () => { if (useBrain) throw new Error(SKIP); return tasksQuery() }
+    const readBill = async () => { if (useBrain) throw new Error(SKIP); return billingRange(from, to) }
+
+    const [revS0, revPriorS0, reviewsS, glitchS, taskS0, billS0, dueS, inspS, claimS, blockS] = await Promise.all([
+      sect('revenue', 30_000, readRev),
+      sect('revenue (prior window)', 30_000, readRevPrior),
       sect('reviews', 30_000, () => reviewStats(ctx, { ids, days, withPrior: true })),
       sect('guest issues', 30_000, () => readForListings(ctx, ids, (part, a, z) => ctx.db.from('glitches').select(GLITCH_COLS).in('listing_id', part).gte('created_at', from + 'T00:00:00Z').order('id').range(a, z))),
-      sect('maintenance tasks', 30_000, () => readForListings(ctx, ids, (part, a, z) => ctx.db.from('breezeway_tasks_sync').select(TASK_COLS).in('reference_property_id', part).eq('type_department', 'maintenance').gte('scheduled_date', from).order('scheduled_date').order('id').range(a, z))),
-      sect('owner billing', 40_000, () => billingRange(from, to)),
+      sect('maintenance tasks', 30_000, readTasks),
+      sect('owner billing', 40_000, readBill),
       sect('the upkeep ledger', 40_000, () => dueCalendarCached(ctx.today)),
       sect('inspection results', 30_000, () => readForListings(ctx, ids, (part, a, z) => ctx.db.from('inspection_results').select('task_id,listing_id,kind,finished_at,yes_count,no_count,misses').in('listing_id', part).gte('finished_at', from + 'T00:00:00Z').order('task_id').range(a, z), 3)),
       sect('claims', 20_000, () => readForListings(ctx, ids, (part, a, z) => ctx.db.from('claims').select('id,listing_id,stage,amount_sought').in('listing_id', part).is('deleted_at', null).order('id').range(a, z), 2)),
       sect('blocked units', 40_000, () => blockedReportCached(30)),
     ])
+    const brainS = await brainP
+    const bb: BrainBuilding | null = brainS && brainS.ok ? brainS.v : null
+    // The brain was fresh but its read failed: the live readers answer after all.
+    const fb = useBrain && !bb ? await Promise.all([
+      sect('revenue', 30_000, () => unitRevenue(from, to, 'net')),
+      sect('revenue (prior window)', 30_000, () => unitRevenue(priorFrom, priorTo, 'net')),
+      sect('maintenance tasks', 30_000, tasksQuery),
+      sect('owner billing', 40_000, () => billingRange(from, to)),
+    ]) : null
+    const revS = fb ? fb[0] : revS0
+    const revPriorS = fb ? fb[1] : revPriorS0
+    const taskS = fb ? fb[2] : taskS0
+    const billS = fb ? fb[3] : billS0
 
     // per-unit accumulators
     type Row = { id: string; unit: string; net_revenue: number | null; revpar: number | null; adr: number | null; occupancy_pct: number | null; nights: number | null; review_avg: number | null; reviews: number; glitches: number; glitches_open: number; maint_tasks: number; billed: number | null; late: number; blocked: boolean; reasons: string[] }
@@ -432,7 +621,16 @@ const BUILDING_360: EveTool = {
 
     // ── performance
     let performance: any
-    if (!revS.ok) performance = gap(revS.why)
+    if (bb) {
+      for (const id of ids) { const a = bb.byListing[id]; const p = a ? brainPerf(a) : null; rows[id].net_revenue = p ? p.net_revenue : 0; rows[id].revpar = p ? p.revpar : null; rows[id].adr = p ? p.adr : null; rows[id].occupancy_pct = p ? p.occupancy_pct : null; rows[id].nights = p ? p.nights_booked : 0 }
+      performance = {
+        ...brainPerf(bb.total),
+        prior_window: { window: `${priorFrom} → ${priorTo}`, ...brainPerf(bb.prior) },
+        note: 'Nights are counted once per apartment (a whole-and-parts set is one) and only on nights each listing was active; the per-unit table is per listing.',
+        basis: BRAIN_NIGHTS_BASIS,
+        _meta: brainMeta({ source: 'fact_unit_day (business brain)', window: win, n: ids.length, truncated: bb.truncated, basis: 'net accommodation after channel fee · real stays', as_of: bb.asOf }),
+      }
+    } else if (!revS.ok) performance = gap(revS.why)
     else {
       const total = (m: Record<string, UnitRevenue>) => {
         let rev = 0, nights = 0
@@ -482,7 +680,20 @@ const BUILDING_360: EveTool = {
 
     // ── maintenance + billed
     let maintenance: any
-    {
+    if (bb) {
+      const evs = bb.events.filter(e => mine[String(e.listing_id)])
+      for (const e of evs) { const r = rows[String(e.listing_id)]; if (r) r.maint_tasks++ }
+      let total = 0
+      for (const id of ids) { const a = bb.byListing[id]; rows[id].billed = a ? a.billed : 0; total += a ? a.billed : 0 }
+      maintenance = {
+        events: eventsBlock(rollEvents(evs), win, bb.asOf, bb.evTruncated),
+        billed_to_owner: {
+          what_this_is: `Billed to owners for Breezeway maintenance tasks finished on these units in the window — ${BILLED_NOTE}.`,
+          owner_billed_amount: Math.round(total),
+          _meta: brainMeta({ source: 'fact_unit_day.maint_cost_billed (business brain)', window: win, n: ids.length, truncated: bb.truncated, basis: BILLED_NOTE, as_of: bb.asOf }),
+        },
+      }
+    } else {
       let tasksOut: any
       if (!taskS.ok) tasksOut = gap(taskS.why)
       else {
@@ -595,11 +806,12 @@ const BUILDING_360: EveTool = {
       active_units: ids.length, retired_units_left_out: all.length - ids.length || undefined,
       window: win,
       performance, reviews, guest_issues, maintenance, upkeep, inspections, claims, blocked,
+      numbers_from: bb ? `the business brain (built ${bb.asOf}) for performance and maintenance; live readers for the rest` : (brainOn.ok ? 'live readers (the business brain read failed)' : 'live readers (the business brain is not fresh: ' + brainOn.note.slice(0, 160) + ')'),
       units: ranked.slice(0, lim).map(r => ({
         unit: r.unit, flags: r.reasons.length ? r.reasons : undefined,
         net_revenue: r.net_revenue, revpar: r.revpar, occupancy_pct: r.occupancy_pct, nights_booked: r.nights,
         review_avg: r.review_avg, reviews: r.reviews,
-        guest_issues: r.glitches, maintenance_tasks: r.maint_tasks,
+        guest_issues: r.glitches, ...(bb ? { maintenance_events: r.maint_tasks } : { maintenance_tasks: r.maint_tasks }),
         owner_billed_amount: r.billed == null ? null : Math.round(r.billed), owner_billed_amount_per_booked_night: perNight(r),
         upkeep_late: r.late,
       })),

@@ -247,7 +247,7 @@ export function EveFloat() {
                 {m.role === 'assistant' && (
                   <>
                     <LearnedChips items={m.learned || []} onChange={next => setMsgs(list => list.map((x, j) => (j === i ? { ...x, learned: next } : x)))} />
-                    <WhatIUsed used={m.meta?.used} tools={m.meta?.tools} chatId={m.chatId} conversationId={convId} />
+                    <WhatIUsed used={m.meta?.used} tools={m.meta?.tools} evidence={m.meta?.evidence} chatId={m.chatId} conversationId={convId} />
                   </>
                 )}
                 {m.role === 'assistant' && m.chatId && (

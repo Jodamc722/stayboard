@@ -14,7 +14,7 @@ export type Feature = { key: string; label: string; path: string; group: string 
 // feature's group is the label of the desk that owns its path (lib/__tests__/desks.test.mjs checks
 // it), and every feature MUST name one of these groups — anything else lands in an auto-generated "New tabs" bucket in the grid, so a tab
 // can never silently miss the permission editor again.
-export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Owners', 'Team', 'Financials', 'Admin', 'Garden Hotel']
+export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Marketing', 'Owners', 'Team', 'Financials', 'Admin', 'Garden Hotel']
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Today (everyone)',  path: '/command', group: 'Today' },
@@ -50,11 +50,11 @@ export const FEATURES: Feature[] = [
   { key: 'faq',           label: 'Property FAQ',       path: '/faq', group: 'Guest Experience' },
   // Guests directory + profiles (2026-08-18, Jon): "a tab where we have all guest info, create a
   // guest profile as well." Aggregated from reservations; VIP on a profile feeds auto-inspections.
-  { key: 'guests',        label: 'Guests',            path: '/guests', group: 'Guest Experience' },
+  { key: 'guests',        label: 'Guests',            path: '/guests', group: 'Marketing' },
   // Contacts (2026-09-14, Jon): the guest list as a MAILING list — and the door to Mailchimp.
   // Separate key from `guests` on purpose: looking a guest up at the front desk and exporting six
   // thousand email addresses are not the same privilege, and should not be granted by one switch.
-  { key: 'contacts',      label: 'Contacts',          path: '/contacts', group: 'Guest Experience' },
+  { key: 'contacts',      label: 'Contacts',          path: '/contacts', group: 'Marketing' },
   // Gated 2026-08-06 (Jon, second pass): guest PII on an auth-only page deserves a role setting.
   // Since 2026-09-28 the bare /salato page is a redirect and this key gates what outlived it: the
   // Salato unit list (/api/salato/units, edited in Users & admin → Settings) and the booking-watch
@@ -133,16 +133,18 @@ export const FEATURES: Feature[] = [
   { key: 'channels',      label: 'Channels',          path: '/channels', group: 'Listings' },
   // The photo library (Jon, 2026-10-27): every property and unit photo as Guesty holds it — browse,
   // view, download one or a ZIP. View reads and downloads; edit may rebuild the index.
-  { key: 'photo-library', label: 'Photo library',     path: '/photos', group: 'Listings' },
+  { key: 'photo-library', label: 'Photo library',     path: '/photos', group: 'Marketing' },
   // Lighthouse checking itself. Under Settings rather than Portfolio: it is about the app, not the
   // buildings, and the whole point of moving it off Slack and out of email was to stop app-health
   // noise landing where operational information lives.
+  // Business brain (2026-11-10): the nightly unit / maintenance / health tables, read on one page.
+  { key: 'brain',         label: 'Business brain',    path: '/brain', group: 'Admin' },
   { key: 'system-health', label: 'System health',      path: '/system-health', group: 'Admin' },
   // Personal read-only API keys (Jon, 2026-09-25). Every role can make their own; a key reads
   // exactly what its owner can see, through /api/v1 only.
   { key: 'api-keys',      label: 'API keys',           path: '/api-keys', group: 'Admin' },
   { key: 'revenue',       label: 'Revenue Center',    path: '/revenue', group: 'Financials' },
-  { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'Financials' },
+  { key: 'marketing',     label: 'Direct bookings',   path: '/marketing', group: 'Marketing' },
   // Billable hours (2026-08-06, Jon): Breezeway task billing by owner + labor vs actual.
   // Money page -> owner/admin-only by default (migration 027 records manager off, like Owner Audit).
   { key: 'billing',       label: 'Billable Hours',    path: '/billing', group: 'Financials' },
@@ -160,7 +162,7 @@ export const FEATURES: Feature[] = [
   // previews … think Final Cut Pro but AI, built for custom ads"). View = watch and export; edit =
   // write, voice and change ads; full = delete. Deliberately in no ops/cs/data bundle: admin and GM
   // until Jon hands it to someone.
-  { key: 'ads',           label: 'Ad Studio',         path: '/ads', group: 'Owners' },
+  { key: 'ads',           label: 'Ad Studio',         path: '/ads', group: 'Marketing' },
   // Owner-money page: owner/admin-only by Jon's rule (migration 025 sets manager to off, same as
   // Revenue). Reviewers without a login use /report/owner-audit instead.
   { key: 'owner-audit',   label: 'Statement review', path: '/owner-audit', group: 'Financials' },

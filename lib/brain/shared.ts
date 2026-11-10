@@ -3,7 +3,9 @@
 // Three rules every builder here keeps, because each one is a mistake this app has already made:
 //   1. READS ARE PAGED AND ORDERED (lib/db-page). A read that came back short is reported as
 //      `partial`, written onto the rows it fed, and never printed as a whole number.
-//   2. WRITES ARE UPSERTS IN BATCHES. A re-run rewrites the same keys; nothing is deleted.
+//   2. WRITES ARE UPSERTS IN BATCHES. A re-run rewrites the same keys. The one delete: a
+//      fact_unit_day row the builder would no longer write (a stay cancelled on a day the listing
+//      was not active) is removed, so a cancelled booking cannot linger as revenue.
 //   3. EVERYTHING FAILS OPEN. Until migration 178 has run, `brainTables()` says which tables are
 //      missing and the cron answers "skipped" — nothing else in the app reads these tables.
 import 'server-only'
@@ -25,20 +27,32 @@ export type BrainState = {
   backfillDone: boolean
   /** true once owner_month / vendor_month have been rebuilt over the whole backfilled range. */
   rollupsBackfilled?: boolean
+  /** The DEFS_VERSION the history was built under. A different one re-runs the backfill once. */
+  defsVersion?: number
   lastRunAt: string | null
   lastOk: boolean | null
-  tables: Record<string, { rows: number; partial: boolean; error?: string }>
+  tables: Record<string, { rows: number; partial: boolean; error?: string; note?: string }>
 }
 export const EMPTY_STATE: BrainState = { backfilledTo: null, backfillDone: false, lastRunAt: null, lastOk: null, tables: {} }
 
 /** `incomplete` = the write stopped before every row was sent (time limit or an upsert error). */
 export type BuildResult = { rows: number; partial: boolean; error?: string; note?: string; incomplete?: boolean }
 
+/**
+ * Bumped whenever a DEFINITION changes (what a night is worth, which events repeat), so history
+ * built under the old rule is rebuilt once instead of sitting beside new rows that disagree with it.
+ *   2 — 2026-11-10: month-aligned chunks + Revenue Center's Expedia cleaning split and
+ *       fareAccommodation fallback; double-booked nights keep both stays' money; tighter repeats.
+ */
+export const DEFS_VERSION = 2
+
 export const TZ = 'America/New_York'
 export const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 export const num = (v: any): number => { const n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : 0 }
 export const numOrNull = (v: any): number | null => { if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null }
 export const round2 = (n: number): number => Math.round(n * 100) / 100
+/** Per-night money is kept to 4 places so a month of nights adds back to the stay to the cent. */
+export const round4 = (n: number): number => Math.round(n * 10000) / 10000
 export const dOf = (v: any): string => str(v).slice(0, 10)
 const ET_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: TZ })
 const ET_HOUR = new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour: 'numeric', hourCycle: 'h23' })
@@ -66,6 +80,15 @@ export function daysBetween(a: string, b: string): number {
   const x = Date.parse(a + 'T12:00:00Z'), y = Date.parse(b + 'T12:00:00Z')
   return Number.isFinite(x) && Number.isFinite(y) ? Math.round((y - x) / 86400_000) : 0
 }
+/** The first day of the month `iso` falls in. */
+export function monthStartOf(iso: string): string { return iso.slice(0, 8) + '01' }
+/** The last day of the month `iso` falls in. */
+export function monthEndOf(iso: string): string {
+  const y = Number(iso.slice(0, 4)), m = Number(iso.slice(5, 7))
+  const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1
+  return addDays(ny + '-' + (nm < 10 ? '0' + nm : String(nm)) + '-01', -1)
+}
+
 export function slug(v: any): string {
   return str(v).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
@@ -148,6 +171,33 @@ export async function readIn<T = any>(
     } catch { truncated = true }
   }
   return { rows: out, truncated }
+}
+
+/**
+ * lib/db-page pageRows, but it also says WHY a read stopped. `missing` = the table or a column is
+ * not there (an input that does not exist yet — not a short read); `truncated` = a page errored or
+ * the page ceiling was hit (the read really is incomplete). Builders set `partial` only on the second.
+ */
+export async function pageRead<T = any>(
+  q: (from: number, to: number) => PromiseLike<any>, maxPages = 12,
+): Promise<{ rows: T[]; truncated: boolean; missing: boolean; error?: string }> {
+  const out: T[] = []
+  for (let p = 0; p < maxPages; p++) {
+    let data: any[] = []
+    try {
+      const res: any = await q(p * 1000, p * 1000 + 999)
+      if (res && res.error) {
+        if (isMissing(res.error)) return { rows: out, truncated: false, missing: true, error: str(res.error.message).slice(0, 160) }
+        return { rows: out, truncated: true, missing: false, error: str(res.error.message).slice(0, 160) }
+      }
+      data = res?.data || []
+    } catch (e: any) {
+      return { rows: out, truncated: true, missing: false, error: str(e?.message || e).slice(0, 160) }
+    }
+    for (const row of data) out.push(row as T)
+    if (data.length < 1000) return { rows: out, truncated: false, missing: false }
+  }
+  return { rows: out, truncated: true, missing: false, error: 'page ceiling reached' }
 }
 
 export function median(xs: number[]): number | null {

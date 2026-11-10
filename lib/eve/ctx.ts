@@ -287,8 +287,8 @@ export function ambiguousUnitResult(e: AmbiguousUnit): any {
  * The standard evidence block every newer tool returns as `_meta`, so an answer can say where a number
  * came from, over what window, and as of when (lib/eve/evidence.ts collects them for the chat).
  */
-export function toolMeta(m: { source: string; window?: string | null; n?: number | null; truncated?: boolean; basis?: string | null; note?: string | null }): any {
-  const as_of = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET'
+export function toolMeta(m: { source: string; window?: string | null; n?: number | null; truncated?: boolean; basis?: string | null; note?: string | null; /** when the data was BUILT (a nightly table), not when it was read; defaults to now */ as_of?: string | null }): any {
+  const as_of = m.as_of || (new Date().toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' ET')
   const out: any = { source: m.source, window: m.window || null, as_of, n: m.n == null ? null : m.n, truncated: !!m.truncated }
   if (m.basis) out.basis = m.basis
   if (m.note) out.note = m.note

@@ -95,8 +95,6 @@ export const DESKS: Desk[] = [
       { to: '/lots', label: 'Parking', hint: 'Our lots: the calendar of spots, who is parked where, the staff link, and the cars that should not be there' },
       { to: '/reservation-emails', label: 'Front-desk notices', hint: 'Arrival notices for buildings with a front desk', more: true },
       { to: '/faq', label: 'Property FAQ', hint: 'Per-unit knowledge: facts, FAQs, how-tos and key details', more: true },
-      { to: '/guests', label: 'Guests', hint: 'Guest directory and profiles (VIP, tags, notes)', more: true },
-      { to: '/contacts', label: 'Contacts', hint: 'The guest list as a mailing list: filters, export, Mailchimp', more: true },
     ],
     // /front-desk lost its tab (Jon, 2026-10-02: "it feels like a double") — its arrival cards live on
     // Today now; the page still answers for the link from that lane.
@@ -111,16 +109,29 @@ export const DESKS: Desk[] = [
   },
   {
     key: 'listings', label: 'Listings',
-    blurb: 'Listing optimization: properties and units, health and fix-next, photos and copy, and channels.',
+    blurb: 'Listing optimization: properties and units, health and fix-next, copy, and channels.',
     views: [
       { to: '/buildings', label: 'Properties', hint: 'Buildings and units: health, fix next, copy and photos; unit pages open from here', match: ['/listings', '/optimize', '/health'] },
       { to: '/channels', label: 'Channels', hint: 'Which listing is live on which channel, and what broke' },
-      { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP', more: true },
+    ],
+  },
+  {
+    // MARKETING (Jon, 2026-11-10: "ad studio should be under marketing section, we should also add
+    // emails, direct booking stats etc"). Bringing guests back and filling the direct site: the
+    // direct-booking numbers, ads, the email list, guest profiles and the photo library.
+    key: 'marketing', label: 'Marketing',
+    blurb: 'Direct bookings and their numbers, Ad Studio, the guest email list, guest profiles and the photo library.',
+    views: [
+      { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made, vs the period before and last year; the partner share link' },
+      { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform' },
+      { to: '/contacts', label: 'Email list', hint: 'Past guests as a mailing list: filters, export, Mailchimp' },
+      { to: '/guests', label: 'Guests', hint: 'Guest directory and profiles (VIP, tags, notes)' },
+      { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP' },
     ],
   },
   {
     key: 'owners', label: 'Owners',
-    blurb: 'Owner onboarding and inventory, linens, quality walks, purchasing and owner reports.',
+    blurb: 'Owner onboarding and inventory, linens, quality walks, purchasing, owner reports and projections.',
     views: [
       { to: '/onboarding', match: ['/onboarding/quick'], label: 'Onboarding', hint: 'New-unit inventory links: rooms, counts, photos and the buy list' },
       { to: '/onboarding/linens', label: 'Linens', hint: 'Your linen standard, and the linen order for any set of units' },
@@ -130,7 +141,6 @@ export const DESKS: Desk[] = [
       { to: '/catalogs', match: ['/catalog'], label: 'Catalog', hint: 'Approved furniture and amenity catalogs per property, with the links to buy from; build one from a listing’s photos', more: true },
       { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks' },
       // Ad Studio (Jon, 2026-11-02): AI-written video ads — brief, script, voice, timeline, export.
-      { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform', more: true },
       { to: '/projections', label: 'Projections', hint: 'Next season’s owner revenue model behind the projection decks', more: true },
     ],
     also: ['/ffe'],
@@ -159,7 +169,6 @@ export const DESKS: Desk[] = [
       { to: '/clean-invoices', label: 'Cleaning invoices', hint: 'Upload a vendor cleaning invoice — every line checked against the cleans on record, mismatches flagged before it is paid' },
       { to: '/revenue/sales', label: 'Sales', hint: 'Booked today, this week and this month vs last year; channel mix; units behind pace; cancellations' },
       { to: '/revenue', label: 'Revenue', hint: 'Revenue, occupancy, ADR and RevPAR by building and unit, with the checks behind them', more: true },
-      { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made', more: true },
       { to: '/revenue-app', label: 'Revenue App', hint: 'The Revenue App, where budgets and forecasting live', more: true },
     ],
     // The KPI board stays parked (Jon, 2026-09-09: "hide that for now") until it is rebuilt on the
@@ -173,6 +182,7 @@ export const DESKS: Desk[] = [
       // The administrator's working page comes first (Jon, 2026-10-26: "a full admin dashboard page
       // that directs our administrator").
       { to: '/admin', label: 'Admin desk', hint: 'What needs an administrator today: listings not for sale or not connected, reply owed, optimization and photo work, blocked units — and the review report' },
+      { to: '/brain', label: 'Business brain', hint: 'Which apartments need a decision, what keeps failing, owners, and data gaps', more: true },
       { to: '/users', label: 'Users & admin', hint: 'People, roles and every setting' },
       { to: '/system-health', label: 'Health', hint: 'Is everything working: syncs, feeds and the daily self-audit', more: true },
       { to: '/links', label: 'Share links', hint: 'Every share link and passcode in one list', more: true },

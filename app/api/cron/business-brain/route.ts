@@ -1,8 +1,9 @@
 // THE BUSINESS BRAIN, NIGHTLY (06:53 UTC — about 2am Eastern, an hour no other daily job uses).
 //
 // Rebuilds the nightly layer of migration 178 (lib/brain/run): the entity spine, fact_unit_day for
-// the last 45 days, fact_maintenance_event, today's unit_health_daily, owner_month / vendor_month —
-// then spends what time is left walking fact_unit_day backwards to 400 days (a cursor in
+// every calendar month touching the last 45 days, vendor_xref, fact_maintenance_event, today's
+// unit_health_daily, owner_month / vendor_month — then spends what time is left walking
+// fact_unit_day backwards a month at a time to 400 days (a cursor in
 // app_settings, so a long backfill resumes on the next run; an admin may also press it again).
 //
 // UNTIL MIGRATION 178 HAS RUN this answers { ok: true, skipped: 'tables missing — run migration 178' }
@@ -31,7 +32,7 @@ async function run(req: NextRequest) {
     // The receipt carries what the Learning tab and /api/brain/status need: rows and the partial
     // flag per table, and where the backfill stands.
     const detail: Record<string, any> = {
-      tables: Object.fromEntries(Object.keys(r.tables).map(k => [k, { rows: r.tables[k].rows, partial: r.tables[k].partial, ...(r.tables[k].error ? { error: r.tables[k].error } : {}) }])),
+      tables: Object.fromEntries(Object.keys(r.tables).map(k => [k, { rows: r.tables[k].rows, partial: r.tables[k].partial, ...(r.tables[k].error ? { error: r.tables[k].error } : {}), ...(r.tables[k].note ? { note: String(r.tables[k].note).slice(0, 600) } : {}) }])),
       backfill: r.backfill,
     }
     await recordRun({ name: 'business-brain', ok: r.ok, itemCount: r.count, detail, error: r.error || null, ms: Date.now() - t0 })

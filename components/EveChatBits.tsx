@@ -7,7 +7,7 @@
 // All writes go through /api/eve/memory, which enforces who may change what.
 import { useState } from 'react'
 import { Check, X, Pencil, Undo2, ChevronDown, ChevronRight, GraduationCap, AlertTriangle, Lightbulb } from 'lucide-react'
-import { evidenceFromTools, type EvidenceItem } from '@/lib/eve/evidence'
+import { evidenceList, type EvidenceItem } from '@/lib/eve/evidence'
 
 export type Learned = { id: string; kind: string; text: string; scope: string; scopeLabel: string; weight: number; source: string; teacher: string | null; via: string; status: 'saved' | 'suggested'; _gone?: boolean; _note?: string }
 export type Used = { id: string; kind: string; text: string; source: string }
@@ -78,7 +78,7 @@ export function LearnedChips({ items, onChange }: { items: Learned[]; onChange: 
 
 const TOOL_NICE = (t: string) => String(t || '').replace(/^_/, '').replace(/_/g, ' ')
 
-export function WhatIUsed({ used, tools, chatId, conversationId }: { used?: Used[]; tools?: string[]; chatId?: string | null; conversationId?: string | null }) {
+export function WhatIUsed({ used, tools, evidence, chatId, conversationId }: { used?: Used[]; tools?: string[]; evidence?: EvidenceItem[]; chatId?: string | null; conversationId?: string | null }) {
   const [open, setOpen] = useState(false)
   const [fixFor, setFixFor] = useState<string | null>(null)
   const [fix, setFix] = useState('')
@@ -86,14 +86,14 @@ export function WhatIUsed({ used, tools, chatId, conversationId }: { used?: Used
   const [busy, setBusy] = useState(false)
   const u = used || []
   const t = Array.from(new Set((tools || []).filter(x => x && !x.startsWith('_'))))
-  // WHERE EACH LOOKUP'S NUMBERS CAME FROM (2026-11-10): source · window · as-of, per tool. It arrives
-  // as one `_evidence:` entry in the tools list (lib/eve/run.ts); an answer from before that, or a
-  // conversation loaded from history, has none and shows the tool names as it always did.
-  const ev: EvidenceItem[] = evidenceFromTools(tools)
+  // WHERE EACH LOOKUP'S NUMBERS CAME FROM (2026-11-10): source · window · as-of, per tool, from the
+  // chat response's meta.evidence (lib/eve/run.ts). A conversation loaded from history has none and
+  // shows the tool names as it always did.
+  const ev: EvidenceItem[] = evidenceList(evidence)
   const evTools = new Set(ev.map(e => e.tool))
   const bare = t.filter(x => !evTools.has(x))
   const evLine = (e: EvidenceItem) => [e.source, e.window, e.as_of ? 'as of ' + e.as_of : '', typeof e.n === 'number' ? 'n=' + e.n : '', e.basis].filter(Boolean).join(' · ')
-  if (!u.length && !t.length) return null
+  if (!u.length && !t.length && !ev.length) return null
   async function save(id: string) {
     setBusy(true)
     try {

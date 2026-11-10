@@ -37,6 +37,11 @@ export function EveChat() {
   const [teach, setTeach] = useState(false)
   const [me, setMe] = useState<{ teacher: boolean; tier: string | null; maxWeight: number } | null>(null)
   const [side, setSide] = useState(false)          // the sidebar, on a phone
+  // "Ask Eve about this unit" links (/eve?q=…, from the Business brain page) arrive with the question
+  // already written. It is put in the box, not sent: the person reads it and presses send.
+  useEffect(() => {
+    try { const q = new URL(window.location.href).searchParams.get('q'); if (q && q.trim()) setText(q.trim().slice(0, 600)) } catch { /* fine */ }
+  }, [])
   const [noteFor, setNoteFor] = useState<number | null>(null)
   const [note, setNote] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
@@ -168,7 +173,7 @@ export function EveChat() {
               {m.role === 'assistant' && (
                 <>
                   <LearnedChips items={m.learned || []} onChange={next => { setMsgs(list => list.map((x, j) => (j === i ? { ...x, learned: next } : x))); setLearnedTick(n => n + 1) }} />
-                  <WhatIUsed used={m.meta?.used} tools={m.meta?.tools} chatId={m.chatId} conversationId={convId} />
+                  <WhatIUsed used={m.meta?.used} tools={m.meta?.tools} evidence={m.meta?.evidence} chatId={m.chatId} conversationId={convId} />
                   {m.chatId && (
                     <div className="flex items-center gap-1.5 mt-0.5 pl-0.5">
                       <button onClick={() => rate(i, 1)} title="Good answer" className={`p-1.5 rounded-lg ${m.rated === 1 ? 'text-brand-600 bg-brand-50' : 'text-muted hover:text-ink'}`}><ThumbsUp size={13} /></button>

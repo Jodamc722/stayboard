@@ -228,10 +228,18 @@ export async function buildSpine(deadline: number): Promise<{ dim_building: Buil
   }
 }
 
-// ── PEOPLE AND VENDORS ──────────────────────────────────────────────────────────────────────────
-type Person = { name: string; email: string | null; homebase_id: string | null; breezeway_id: string | null; dept: string | null; sources: string[] }
+// ── PEOPLE ──────────────────────────────────────────────────────────────────────────────────────
+// (Vendors moved to lib/brain/vendors, 2026-11-10: they are built before the events now.)
+//
+// "NOT THE SAME PERSON" (/brain → Data quality). A seeded row joins several sources by name; when a
+// person says the join is wrong, its person_id is kept in app_settings (PERSON_REJECTS_KEY) and from
+// then on that person is written as one row PER SOURCE ('<key> #staff', '<key> #breezeway', …),
+// each holding only that source's ids. The merged row itself is removed by the API at that moment.
+export const PERSON_REJECTS_KEY = 'brain_person_rejects'
+type Part = { source: string; name: string; email: string | null; homebase_id: string | null; breezeway_id: string | null; dept: string | null }
+type Person = { name: string; email: string | null; homebase_id: string | null; breezeway_id: string | null; dept: string | null; sources: string[]; parts: Part[] }
 
-export async function buildPeople(deadline: number): Promise<{ person_xref: BuildResult; vendor_xref: BuildResult }> {
+export async function buildPeople(deadline: number): Promise<{ person_xref: BuildResult }> {
   const db = supabaseAdmin()
   const now = new Date().toISOString()
   let partial = false
@@ -241,8 +249,9 @@ export async function buildPeople(deadline: number): Promise<{ person_xref: Buil
     const n = str(name).replace(/\s+/g, ' ').trim()
     if (!n || !personKey(n)) return
     let p = find(n)
-    if (!p) { p = { name: n, email: null, homebase_id: null, breezeway_id: null, dept: null, sources: [] }; people.push(p) }
+    if (!p) { p = { name: n, email: null, homebase_id: null, breezeway_id: null, dept: null, sources: [], parts: [] }; people.push(p) }
     else p.name = bestSpelling(p.name, n)
+    p.parts.push({ source, name: n, email: patch.email || null, homebase_id: patch.homebase_id || null, breezeway_id: patch.breezeway_id || null, dept: patch.dept || null })
     if (patch.email && !p.email) p.email = patch.email
     if (patch.homebase_id && !p.homebase_id) p.homebase_id = patch.homebase_id
     if (patch.breezeway_id && !p.breezeway_id) p.breezeway_id = patch.breezeway_id
@@ -296,12 +305,37 @@ export async function buildPeople(deadline: number): Promise<{ person_xref: Buil
     for (const r of ((data || []) as any[])) { confirmedIds[str(r.person_id)] = true; confirmedNames.push(str(r.name)) }
   } catch { partial = true }
 
+  let rejects: Record<string, any> = {}
+  try { const v = await getSetting<any>(PERSON_REJECTS_KEY, null); rejects = v && typeof v === 'object' && !Array.isArray(v) ? v : {} } catch { rejects = {} }
+
   const rows: Record<string, any>[] = []
   const usedIds: Record<string, boolean> = {}
+  let split = 0
   for (const p of people) {
     if (confirmedNames.some(n => nameMatches(n, p.name))) continue
     let id = personKey(p.name)
     if (!id || confirmedIds[id]) continue
+    if (rejects[id]) {
+      // A person said these sources are NOT one human: one row per source, never merged again.
+      const bySource: Record<string, Part> = {}
+      for (const part of p.parts) {
+        const have = bySource[part.source]
+        if (!have) { bySource[part.source] = { ...part }; continue }
+        if (!have.email && part.email) have.email = part.email
+        if (!have.homebase_id && part.homebase_id) have.homebase_id = part.homebase_id
+        if (!have.breezeway_id && part.breezeway_id) have.breezeway_id = part.breezeway_id
+        if (!have.dept && part.dept) have.dept = part.dept
+      }
+      for (const src of Object.keys(bySource).sort()) {
+        const part = bySource[src]
+        const pid = id + ' #' + src
+        if (confirmedIds[pid] || usedIds[pid]) continue
+        usedIds[pid] = true
+        rows.push({ person_id: pid, name: part.name, email: part.email, homebase_id: part.homebase_id, breezeway_id: part.breezeway_id, dept: part.dept, sources: [src], built_at: now, updated_at: now })
+      }
+      split++
+      continue
+    }
     // Two different humans whose names normalise the same would share a key; keep them apart.
     if (usedIds[id]) id = id + ' #' + (p.breezeway_id || p.homebase_id || String(rows.length))
     usedIds[id] = true
@@ -311,29 +345,7 @@ export async function buildPeople(deadline: number): Promise<{ person_xref: Buil
   }
   const px = await upsertBatches('person_xref', rows, 'person_id', { deadline })
 
-  // Vendors: every company on the registry under its label, and the Breezeway person whose name
-  // carries the company's name when there is exactly one.
-  const vRows: Record<string, any>[] = []
-  const vRowsWithId: Record<string, any>[] = []
-  let vPartial = false
-  try {
-    const { data, error } = await db.from('vendors').select('key,label').limit(1000) // deliberate cap: one row per vendor company
-    if (error) vPartial = true
-    for (const v of ((data || []) as any[])) {
-      const key = str(v.key), label = aliasKey(v.label)
-      if (!key || !label) continue
-      const hits = label.length >= 4 ? bzPeople.filter(p => aliasKey(p.name).indexOf(label) >= 0) : []
-      // Two shapes, two upserts: a row with no match must not send a null over an id a person set.
-      if (hits.length === 1) vRowsWithId.push({ vendor_key: key, alias: label, breezeway_assignee_id: hits[0].id, built_at: now })
-      else vRows.push({ vendor_key: key, alias: label, built_at: now })
-    }
-  } catch { vPartial = true }
-  const vx1 = await upsertBatches('vendor_xref', vRows, 'vendor_key,alias', { deadline })
-  const vx2 = await upsertBatches('vendor_xref', vRowsWithId, 'vendor_key,alias', { deadline })
-  const vx = { written: vx1.written + vx2.written, stoppedEarly: vx1.stoppedEarly || vx2.stoppedEarly, error: vx1.error || vx2.error }
-
   return {
-    person_xref: { rows: px.written, partial: partial || px.stoppedEarly, ...(px.error ? { error: px.error } : {}), note: 'name-matched; every seeded row is confirmed = false' },
-    vendor_xref: { rows: vx.written, partial: vPartial || vx.stoppedEarly, ...(vx.error ? { error: vx.error } : {}) },
+    person_xref: { rows: px.written, partial: partial || px.stoppedEarly, ...(px.error ? { error: px.error } : {}), note: 'name-matched; every seeded row is confirmed = false' + (split ? '; ' + split + ' person(s) kept apart by source (marked not the same person)' : '') },
   }
 }

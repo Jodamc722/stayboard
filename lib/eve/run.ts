@@ -105,7 +105,7 @@ function withCacheBreakpoint(convo: any[]): any[] {
 const TOOL_TIMEOUT_MS = 25_000
 const SLOW_TOOL_TIMEOUT_MS = 90_000
 const SERIAL_TOOLS = new Set(['remember', 'propose_action', 'recommend', 'ask_jon', 'set_reminder', 'cancel_reminder', 'close_item', 'door_code_check', 'ask_ralph', 'operator_review', 'audit_status'])
-const SLOW_TOOLS = new Set(['look_at_unit', 'labor_economics', 'kpi', 'crew_scorecard', 'crew_person', 'crew_coaching', 'maintenance_scorecard', 'owner_audit_flags', 'owner_month', 'billing_month', 'overtime_risk', 'staffing_today', 'schedule_knowledge', 'property_health', 'pacing', 'unit_360', 'building_360', 'upkeep_due', 'blocked_units', 'unit_status', 'guesty_live', 'channel_health', 'response_times', 'task_stats', 'moved_cleans', 'review_summary', 'ops_today'])
+const SLOW_TOOLS = new Set(['look_at_unit', 'labor_economics', 'kpi', 'crew_scorecard', 'crew_person', 'crew_coaching', 'maintenance_scorecard', 'owner_audit_flags', 'owner_month', 'billing_month', 'overtime_risk', 'staffing_today', 'schedule_knowledge', 'property_health', 'pacing', 'unit_360', 'building_360', 'upkeep_due', 'blocked_units', 'unit_status', 'guesty_live', 'channel_health', 'response_times', 'task_stats', 'moved_cleans', 'review_summary', 'ops_today', 'measure', 'query', 'upkeep_rank', 'upkeep_advise', 'repeat_failures', 'owner_360'])
 function withToolTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
   return new Promise<T>(resolve => {
     let settled = false
@@ -902,10 +902,9 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
       logReply,
       chatId,
       conversationId,
-      // The chat's "What I used" receives `tools` only (components/EveChat passes nothing else), so the
-      // evidence rides along as ONE underscore entry, which every reader of the list already skips —
-      // the same way `_escalated` and `_fallback_model` do. The stored row keeps the plain names.
-      meta: { turns, ms: Date.now() - startedAt, tools: evidence.length ? toolsUsed.concat(['_evidence:' + JSON.stringify(evidence)]) : toolsUsed, evidence, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits, learned, used, teacher: teacher.teacher ? { tier: teacher.tier, maxWeight: teacher.maxWeight } : null, conversationId },
+      // Where each lookup's numbers came from travels as meta.evidence, which the chat passes to
+      // "What I used" as its own prop (components/EveChat, EveFloat). meta.tools is the plain names.
+      meta: { turns, ms: Date.now() - startedAt, tools: toolsUsed, evidence, domains: open, memories: memories.length, moneyRedacted: !canMoney, webSearch: webOk ? 'available' : 'unavailable-on-this-model', usage, memoryHits, learned, used, teacher: teacher.teacher ? { tier: teacher.tier, maxWeight: teacher.maxWeight } : null, conversationId },
     }
   } catch (e: any) {
     return { ok: false, status: 500, error: e?.message || String(e) }

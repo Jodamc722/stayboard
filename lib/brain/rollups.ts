@@ -7,11 +7,24 @@
 //                 management fee when the Revenue App mirror carries the unit-month.
 //                 NOT YET: labour cost on their units, claims recovered, statement lines, owner
 //                 terms — so there is no margin and no churn-risk figure here, and none is implied.
-//   vendor_month  jobs carrying a vendor (today that is glitches with a vendor picked), how many
-//                 closed, median hours to close, repeat visits, billed lines, and that vendor's
-//                 project invoices issued in the month.
-//                 NOT YET: vendor on Breezeway tasks, cleaning-vendor invoices (they live in
-//                 app_settings), reviews in vendor-cleaned buildings.
+//   vendor_month  a vendor's JOBS in the month (2026-11-10, lib/brain/vendors):
+//                   • maintenance events carrying the vendor — picked on the glitch / work order, or
+//                     a Breezeway task whose assignee is the vendor's crew (vendor_xref, unconfirmed
+//                     matches included)
+//                   • project vendor jobs (project_steps.vendor_key), by visit day; a step pushed to
+//                     Breezeway that is already an event is not counted twice
+//                   • DEPARTURE CLEANS in vendor-cleaned buildings (lib/ops-presets vendorBuildings:
+//                     Park Towers → Probol, Capri / Lucerne / Amrit → Opal Works, Botanica → Garden),
+//                     one job per check-out day in fact_unit_day; closed = the clean was finished
+//                 how many closed, median hours to close (maintenance and project jobs — a clean has
+//                 no open time), repeat visits, billed lines, and INVOICES: project_invoices (not void
+//                 / quoted) plus cleaning-vendor invoices from app_settings (lib/clean-invoices; not
+//                 disputed), by invoice date.
+//                 NOT YET: reviews in vendor-cleaned buildings.
+//
+// owner_month counts AVAILABLE NIGHTS per sellable part: a whole-unit "Full" listing adds no
+// available nights of its own (its halves already do), and a night it is sold counts as occupied
+// once per half it takes offline — so a 4BR sold whole reads 100%, not 33%.
 //
 // A unit's owner is the CURRENT statement owner (guesty_owners.listing_ids has no dates), so a unit
 // that changed hands carries its whole history under today's owner.
@@ -19,7 +32,8 @@ import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { pageRows } from '@/lib/db-page'
 import type { DimUnit } from './spine'
-import { str, num, numOrNull, todayET, addDays, round2, median, upsertBatches, type BuildResult } from './shared'
+import { loadVendorMap } from './vendors'
+import { str, num, numOrNull, todayET, addDays, round2, median, pageRead, upsertBatches, type BuildResult } from './shared'
 
 /** The last `n` months as yyyy-MM, newest first, ending with the current Eastern month. */
 export function recentMonths(n: number): string[] {
@@ -59,6 +73,10 @@ export async function buildOwnerMonths(months: string[], byId: Record<string, Di
     for (const o of rows) ownerName[str(o.id)] = str(o.full_name)
   } catch { /* names stay blank */ }
 
+  // Halves per whole-unit listing: a parent's sold night stands for each half it takes offline.
+  const kids: Record<string, number> = {}
+  for (const id of Object.keys(byId)) { const p = byId[id].parent_listing_id; if (p) kids[p] = (kids[p] || 0) + 1 }
+
   for (const month of months) {
     if (Date.now() > deadline) { stopped = true; break }
     const { from, next } = monthEdges(month)
@@ -76,10 +94,13 @@ export async function buildOwnerMonths(months: string[], byId: Record<string, Di
     if (ud.truncated) shortRead = true
     for (const r of ud.rows) {
       const a = slot(str(r.owner_id))
-      a.listings[str(r.listing_id)] = true
-      a.avail += 1
-      if (str(r.state) === 'occupied') a.occ += 1
-      else if (str(r.state) === 'owner_stay') a.own += 1
+      const lid = str(r.listing_id)
+      const u = byId[lid]
+      const parent = !!u && u.is_parent
+      const weight = parent ? Math.max(1, kids[lid] || 0) : 1
+      if (!parent) { a.listings[lid] = true; a.avail += 1 }
+      if (str(r.state) === 'occupied') a.occ += weight
+      else if (str(r.state) === 'owner_stay') a.own += weight
       a.net += num(r.net_accom); a.gross += num(r.gross_accom); a.clean += num(r.cleaning_rev)
       a.refunds += num(r.refunds); a.glitches += num(r.glitches_opened); a.billed += num(r.maint_cost_billed)
     }
@@ -154,28 +175,30 @@ export async function buildOwnerMonths(months: string[], byId: Record<string, Di
   }
 }
 
-export async function buildVendorMonths(months: string[], deadline: number): Promise<BuildResult> {
+export async function buildVendorMonths(months: string[], byId: Record<string, DimUnit>, deadline: number): Promise<BuildResult> {
   const db = supabaseAdmin()
   const now = new Date().toISOString()
   if (!months.length) return { rows: 0, partial: true }
-  const oldest = months.slice().sort()[0]
+  const sorted = months.slice().sort()
+  const oldest = sorted[0]
   const fromIso = oldest + '-01T00:00:00Z'
+  const lastNext = monthEdges(sorted[sorted.length - 1]).next
   const want: Record<string, boolean> = {}
   for (const m of months) want[m] = true
   let shortRead = false
+  const counts = { events: 0, steps: 0, cleans: 0, projInv: 0, cleanInv: 0, cleanInvUnmatched: 0 }
 
-  const label: Record<string, string> = {}
-  try {
-    const { data } = await db.from('vendors').select('key,label').limit(1000) // deliberate cap: one row per vendor company
-    for (const v of ((data || []) as any[])) label[str(v.key)] = str(v.label)
-  } catch { /* labels stay blank */ }
+  const vmap = await loadVendorMap()
+  if (vmap.partial) shortRead = true
 
   type V = { jobs: number; closed: number; hours: number[]; repeats: number; billed: number; inv: number; invN: number }
   const acc: Record<string, V> = {}
   const slot = (month: string, key: string): V => (acc[month + '|' + key] = acc[month + '|' + key] || { jobs: 0, closed: 0, hours: [], repeats: 0, billed: 0, inv: 0, invN: 0 })
 
-  const ev = await pageRows<any>((a, b) => db.from('fact_maintenance_event')
-    .select('event_id,vendor_key,opened_at,closed_at,hours_to_close,is_repeat,billed_owner')
+  // 1. Maintenance events carrying a vendor.
+  const evTasks: Record<string, boolean> = {}               // vendor|bz task id already counted
+  const ev = await pageRead<any>((a, b) => db.from('fact_maintenance_event')
+    .select('event_id,vendor_key,bz_task_id,opened_at,closed_at,hours_to_close,is_repeat,billed_owner')
     .not('vendor_key', 'is', null).gte('opened_at', fromIso)
     .order('opened_at').order('event_id').range(a, b), 8)
   if (ev.truncated) shortRead = true
@@ -183,16 +206,67 @@ export async function buildVendorMonths(months: string[], deadline: number): Pro
     const month = str(e.opened_at).slice(0, 7), key = str(e.vendor_key)
     if (!key || !want[month]) continue
     const v = slot(month, key)
-    v.jobs += 1
+    v.jobs += 1; counts.events++
     if (e.closed_at) v.closed += 1
     const h = numOrNull(e.hours_to_close)
     if (h != null) v.hours.push(h)
     if (e.is_repeat === true) v.repeats += 1
     v.billed += num(e.billed_owner)
+    if (e.bz_task_id) evTasks[key + '|' + str(e.bz_task_id)] = true
   }
 
-  try {
-    const inv = await pageRows<any>((a, b) => db.from('project_invoices').select('id,vendor_key,amount_cents,status,issued_on,created_at')
+  // 2. Project vendor jobs (migration 088), by the day the vendor comes out.
+  {
+    const st = await pageRead<any>((a, b) => db.from('project_steps')
+      .select('id,vendor_key,visit_on,due_on,status,done,done_at,created_at,breezeway_task_id')
+      .not('vendor_key', 'is', null).gte('created_at', addDays(oldest + '-01', -120) + 'T00:00:00Z')
+      .order('created_at').order('id').range(a, b), 5)
+    if (st.truncated) shortRead = true
+    for (const r of st.rows) {
+      const key = str(r.vendor_key)
+      if (!key || (r.breezeway_task_id && evTasks[key + '|' + str(r.breezeway_task_id)])) continue
+      const month = (str(r.visit_on) || str(r.due_on) || str(r.created_at)).slice(0, 7)
+      if (!want[month]) continue
+      const v = slot(month, key)
+      v.jobs += 1; counts.steps++
+      const done = r.done === true || /done/i.test(str(r.status))
+      if (done) {
+        v.closed += 1
+        const a = Date.parse(str(r.created_at)), b = Date.parse(str(r.done_at))
+        if (Number.isFinite(a) && Number.isFinite(b) && b >= a) v.hours.push(Math.round((b - a) / 360_000) / 10)
+      }
+    }
+  }
+
+  // 3. Departure cleans in vendor-cleaned buildings — one job per check-out day.
+  {
+    const cleanerOf: Record<string, string> = {}
+    for (const id of Object.keys(byId)) {
+      const u = byId[id]
+      if (!u.vendor_cleaned) continue
+      const key = vmap.cleanerOf(str(u.nickname) + ' ' + str(u.building_id).replace(/-/g, ' '))
+      if (key) cleanerOf[id] = key
+    }
+    const ids = Object.keys(cleanerOf)
+    for (let i = 0; i < ids.length && Date.now() < deadline; i += 100) {
+      const chunk = ids.slice(i, i + 100)
+      const cd = await pageRead<any>((a, b) => db.from('fact_unit_day').select('day,listing_id,clean_late')
+        .eq('is_departure', true).in('listing_id', chunk).gte('day', oldest + '-01').lt('day', lastNext)
+        .order('day').order('listing_id').range(a, b), 20)
+      if (cd.truncated) shortRead = true
+      for (const r of cd.rows) {
+        const month = str(r.day).slice(0, 7), key = cleanerOf[str(r.listing_id)]
+        if (!key || !want[month]) continue
+        const v = slot(month, key)
+        v.jobs += 1; counts.cleans++
+        if (r.clean_late != null) v.closed += 1
+      }
+    }
+  }
+
+  // 4. Invoices: project invoices, then cleaning-vendor invoices.
+  {
+    const inv = await pageRead<any>((a, b) => db.from('project_invoices').select('id,vendor_key,amount_cents,status,issued_on,created_at')
       .not('vendor_key', 'is', null).gte('created_at', addDays(oldest + '-01', -62) + 'T00:00:00Z')
       .order('created_at').order('id').range(a, b), 5)
     if (inv.truncated) shortRead = true
@@ -201,7 +275,19 @@ export async function buildVendorMonths(months: string[], deadline: number): Pro
       const month = (str(i.issued_on) || str(i.created_at)).slice(0, 7), key = str(i.vendor_key)
       if (!key || !want[month]) continue
       const v = slot(month, key)
-      v.inv += num(i.amount_cents) / 100; v.invN += 1
+      v.inv += num(i.amount_cents) / 100; v.invN += 1; counts.projInv++
+    }
+  }
+  try {
+    const { listInvoices } = await import('@/lib/clean-invoices')
+    for (const r of await listInvoices()) {
+      if (r.status === 'disputed' || r.total == null) continue
+      const month = (str(r.invoiceDate) || str(r.periodTo) || str(r.uploadedAt)).slice(0, 7)
+      if (!want[month]) continue
+      const key = vmap.keyForName(r.vendor)
+      if (!key) { counts.cleanInvUnmatched++; continue }
+      const v = slot(month, key)
+      v.inv += num(r.total); v.invN += 1; counts.cleanInv++
     }
   } catch { shortRead = true }
 
@@ -211,7 +297,7 @@ export async function buildVendorMonths(months: string[], deadline: number): Pro
     const v = acc[k]
     const med = median(v.hours)
     return {
-      month, vendor_key: key, vendor_label: label[key] || null,
+      month, vendor_key: key, vendor_label: vmap.label[key] || null,
       jobs: v.jobs, jobs_closed: v.closed,
       median_hours_to_close: med == null ? null : round2(med),
       repeat_visits: v.repeats, billed_owner: round2(v.billed),
@@ -222,6 +308,9 @@ export async function buildVendorMonths(months: string[], deadline: number): Pro
   const w = await upsertBatches('vendor_month', rows, 'month,vendor_key', { deadline })
   return {
     rows: w.written, partial: true, ...(w.error ? { error: w.error } : {}),
-    note: 'thin by design in v1 (only work that carries a vendor)' + (shortRead ? '; a read came back short' : ''),
+    note: counts.events + ' maintenance job(s), ' + counts.steps + ' project job(s), ' + counts.cleans + ' departure clean(s); '
+      + counts.projInv + ' project + ' + counts.cleanInv + ' cleaning invoice(s)'
+      + (counts.cleanInvUnmatched ? ' (' + counts.cleanInvUnmatched + ' cleaning invoice(s) name no known vendor)' : '')
+      + '; vendor matches by name are unconfirmed' + (shortRead ? '; a read came back short' : ''),
   }
 }

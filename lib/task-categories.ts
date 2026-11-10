@@ -209,17 +209,28 @@ export function stateOfTask(t: { status?: any; started_at?: any; finished_at?: a
 // "door lock battery" is lock_access, not electrical; "smart TV remote" is wifi_tv.
 export type SystemKey = 'hvac' | 'plumbing' | 'appliance' | 'lock_access' | 'electrical' | 'pest' | 'wifi_tv' | 'furniture' | 'cleaning' | 'other'
 export const SYSTEMS: { key: SystemKey; label: string; re: RegExp | null }[] = [
-  { key: 'hvac', label: 'A/C & heating', re: /\ba\/?c\b|air[\s-]?con|\bhvac\b|thermostat|mini[\s-]?split|not cooling|no cool|\bcooling\b|\bheating\b|no heat|temperature|air filter|filter change|\bcoils?\b|condensat|air handler/i },
-  { key: 'plumbing', label: 'Plumbing & water', re: /plumb|\bleak|toilet|\bdrain|clog|\bsink\b|faucet|shower|\btub\b|water heater|hot water|no water|water pressure|flood|sewage|garbage disposal|\bdisposal\b|\bpipe/i },
-  { key: 'lock_access', label: 'Locks & access', re: /\block(s|ed|out)?\b|door code|key ?pad|key ?fob|\bfob\b|\bkeys?\b|lock[\s-]?out|dead ?bolt|\bgate\b|garage (door|remote|opener)|door (handle|knob|won|does|will not|not clos)|access (code|issue)|intercom|buzzer/i },
-  { key: 'pest', label: 'Pests', re: /\bpests?\b|roach|bed ?bugs?|\bants?\b|\bmice\b|\bmouse\b|\brats?\b|rodent|termite|exterminat|\bbugs?\b|mosquito|\bfleas?\b/i },
-  { key: 'wifi_tv', label: 'Wi-Fi & TV', re: /wi-?fi|internet|router|modem|\btvs?\b|television|remote control|\bremotes?\b|streaming|\broku\b|netflix|cable box|\bhdmi\b/i },
-  { key: 'appliance', label: 'Appliances', re: /applian|washer|dryer|laundry machine|dishwasher|fridge|refrigerator|freezer|ice ?maker|\boven\b|\bstove\b|cook ?top|microwave|coffee (maker|machine)|toaster|blender|vacuum|\biron\b|hair ?dryer/i },
-  { key: 'electrical', label: 'Electrical & lights', re: /electric|\bpower\b|outlet|breaker|light ?bulb|\bbulbs?\b|\blights?\b|lighting|\blamp|ceiling fan|\bfan\b|smoke (detector|alarm)|\bbatter(y|ies)\b|\bswitch\b|\bgfci\b/i },
+  { key: 'hvac', label: 'A/C & heating', re: /\ba\/?c\b|\ba\.c\.|air[\s-]?con|\bhvac\b|thermostat|mini[\s-]?splits?|split unit|not cooling|no cool|\bcooling\b|\bheating\b|no heat|heat pump|temperature|air filter|filter change|\bcoils?\b|condensat|air handler|\bahu\b|freon|refrigerant|blowing (hot|warm)|\bducts?\b/i },
+  { key: 'plumbing', label: 'Plumbing & water', re: /plumb|\bleak|toilet|\bdrain|clog|\bsink\b|faucet|shower|\btub\b|water heater|hot water|no water|water pressure|flood|sewage|garbage disposal|\bdisposal\b|\bpipe|overflow|backed up|\bdrip|\bvalve|running water|\bbidet/i },
+  { key: 'lock_access', label: 'Locks & access', re: /\block(s|ed|out)?\b|door code|key ?pad|key ?fob|\bfob\b|\bkeys?\b|lock[\s-]?out|dead ?bolt|\bgate\b|garage (door|remote|opener)|door (handle|knob|won|does|will not|not clos)|access (code|issue|card)|intercom|buzzer|smart ?lock|keyless|key ?card|lock ?box|\bcode (not|isn|doesn|won|did)/i },
+  { key: 'pest', label: 'Pests', re: /\bpests?\b|roach|bed ?bugs?|\bants?\b|\bmice\b|\bmouse\b|\brats?\b|rodent|termite|exterminat|\bbugs?\b|mosquito|\bfleas?\b|\bgnats?\b|\bwasps?\b|\bspiders?\b|lizard/i },
+  { key: 'wifi_tv', label: 'Wi-Fi & TV', re: /wi-?fi|internet|router|modem|\btvs?\b|television|remote control|\bremotes?\b|streaming|\broku\b|netflix|cable box|\bhdmi\b|fire ?stick|apple tv|chromecast|smart ?tv|no signal|ethernet/i },
+  { key: 'appliance', label: 'Appliances', re: /applian|washer|dryer|\bw\/d\b|laundry machine|dishwasher|fridge|refrigerator|freezer|ice ?maker|ice machine|\boven\b|\bstove\b|cook ?top|\brange hood|microwave|coffee (maker|machine)|keurig|nespresso|toaster|blender|vacuum|\biron\b|hair ?dryer/i },
+  { key: 'electrical', label: 'Electrical & lights', re: /electric|\bpower\b|outlet|breaker|light ?bulb|\bbulbs?\b|\blights?\b|lighting|\blamp|ceiling fan|\bfan\b|smoke (detector|alarm)|\bbatter(y|ies)\b|\bswitch\b|\bgfci\b|\bfuses?\b|tripped|\bsockets?\b|\bplugs?\b|wiring|sparks?\b/i },
   { key: 'furniture', label: 'Furniture & fixtures', re: /furnitur|\bsofa\b|\bcouch\b|\bbed ?frame|mattress|\bchairs?\b|\btable\b|dresser|night ?stand|\bblinds?\b|curtain|\bshades?\b|\bmirror\b|cabinet|drawer|closet|shelf|shelv|\bpaint|drywall|\bcaulk|\bgrout|flooring|\bscreen\b|patio|balcony|sliding door|window(?! unit)/i },
   { key: 'cleaning', label: 'Cleanliness', re: /cleanl|\bdirty\b|not clean|unclean|\bstain|\bhair\b|\bdust|\bmold|mildew|\bodor|\bsmell|\blinen|\btowels?\b|\bsheets?\b|\btrash\b|garbage|re-?clean|inadequate cleaning/i },
   { key: 'other', label: 'Something else', re: null },
 ]
+// TWO WORDS THAT DECIDE BEFORE THE LIST IS READ (2026-11-10, brain pass 2). The list above is
+// first-match-wins, which mis-filed two common shapes:
+//   • "dishwasher leaks", "washer leaking", "fridge not cooling", "oven not heating" — the leak /
+//     cooling / heating word matched plumbing or A/C before the appliance was ever looked at. When
+//     an APPLIANCE NOUN is present and no A/C noun is, the appliance is what broke.
+//   • "no hot water", "water heater" — the water heater is plumbing, never A/C ("heating") and never
+//     an appliance.
+// Additive: SYSTEMS keeps its order and shape for the close-step chips.
+const WATER_HEATER_RE = /water heater|hot water|no hot\b|water (is )?(cold|not hot)/i
+const APPLIANCE_NOUN_RE = /dishwasher|\bwasher\b|washing machine|\bdryer\b|\bw\/d\b|laundry machine|fridge|refrigerator|freezer|ice ?maker|ice machine|\boven\b|\bstove\b|cook ?top|\brange hood|microwave|coffee (maker|machine)|keurig|nespresso|toaster/i
+const HVAC_NOUN_RE = /\ba\/?c\b|\ba\.c\.|air[\s-]?con|\bhvac\b|thermostat|mini[\s-]?splits?|split unit|air handler|\bahu\b|heat pump/i
 export const SYSTEM_KEYS: SystemKey[] = SYSTEMS.map(s => s.key)
 export const SYSTEM_LABEL: Record<string, string> = SYSTEMS.reduce((m, s) => { m[s.key] = s.label; return m }, {} as Record<string, string>)
 export const isSystemKey = (v: any): v is SystemKey => SYSTEM_KEYS.indexOf(String(v) as SystemKey) >= 0
@@ -253,7 +264,90 @@ export function systemOfWith(text: any, category?: any): { system: SystemKey; so
   // A specific category the reporter picked beats a guess from free text.
   for (const c of SYSTEM_BY_CATEGORY) if (cat && c.re.test(cat)) return { system: c.key, source: 'category' }
   const t = String(text ?? '')
-  if (t.trim()) for (const s of SYSTEMS) if (s.re && s.re.test(t)) return { system: s.key, source: 'name' }
+  if (!t.trim()) return { system: 'other', source: 'none' }
+  if (WATER_HEATER_RE.test(t) && !HVAC_NOUN_RE.test(t)) return { system: 'plumbing', source: 'name' }
+  if (APPLIANCE_NOUN_RE.test(t) && !HVAC_NOUN_RE.test(t)) return { system: 'appliance', source: 'name' }
+  for (const s of SYSTEMS) if (s.re && s.re.test(t)) return { system: s.key, source: 'name' }
   return { system: 'other', source: 'none' }
 }
 export function systemOf(text: any, category?: any): SystemKey { return systemOfWith(text, category).system }
+
+// ── WHICH PART OF THE SYSTEM (2026-11-10, the brain's repeat rule) ──────────────────────────────
+// "The A/C failed twice" is only a pattern when it is the same failure: a thermostat in March and a
+// condensate leak in May are two different jobs on one system. The repeat rule (lib/brain/maintenance)
+// asks for the same system AND the same part named here — or a second call within 30 days of a
+// closed fix, whatever the part. null = no part named; two nulls are not "the same part".
+const SUBSYSTEMS: Partial<Record<SystemKey, { key: string; re: RegExp }[]>> = {
+  hvac: [
+    { key: 'thermostat', re: /thermostat/i },
+    { key: 'drain_leak', re: /\bleak|condensat|drain|\bdrip|water (on|from|coming)|overflow|pan\b/i },
+    { key: 'not_cooling', re: /not cool|no cool|warm|\bhot\b|cooling|freon|refrigerant|blowing/i },
+    { key: 'noise', re: /nois|loud|rattl|vibrat|buzz/i },
+    { key: 'not_heating', re: /no heat|not heat|heating|cold air/i },
+    { key: 'airflow', re: /airflow|air flow|\bvents?\b|\bducts?\b|blower|\bfan\b/i },
+    { key: 'power', re: /won.?t (turn|start)|not (turn|start)|no power|\boff\b|breaker/i },
+  ],
+  plumbing: [
+    { key: 'water_heater', re: /water heater|hot water|no hot/i },
+    { key: 'toilet', re: /toilet|\bflush|bidet/i },
+    { key: 'shower_tub', re: /shower|\btub\b|bath/i },
+    { key: 'sink_faucet', re: /\bsink\b|faucet|\btap\b/i },
+    { key: 'drain_clog', re: /drain|clog|backed up|disposal/i },
+    { key: 'leak', re: /\bleak|\bdrip|flood|\bpipe|overflow/i },
+    { key: 'pressure', re: /pressure|no water/i },
+  ],
+  appliance: [
+    { key: 'dishwasher', re: /dishwasher/i },
+    { key: 'washer', re: /(?<!dish)washer|washing machine|w\/d|laundry/i },
+    { key: 'dryer', re: /(?<!hair ?)dryer/i },
+    { key: 'fridge', re: /fridge|refrigerator|freezer|ice ?maker|ice machine/i },
+    { key: 'oven_stove', re: /\boven\b|\bstove\b|cook ?top|range/i },
+    { key: 'microwave', re: /microwave/i },
+    { key: 'coffee', re: /coffee|keurig|nespresso/i },
+    { key: 'small', re: /toaster|blender|vacuum|\biron\b|hair ?dryer/i },
+  ],
+  lock_access: [
+    { key: 'keypad_code', re: /key ?pad|door code|\bcode\b|smart ?lock|keyless|schlage|yale|\bbatter/i },
+    { key: 'fob_card', re: /\bfob\b|key ?card|access card/i },
+    { key: 'key', re: /\bkeys?\b|lock ?box/i },
+    { key: 'door_hardware', re: /dead ?bolt|handle|knob|latch|door (won|does|will not|not clos)/i },
+    { key: 'gate_garage', re: /\bgate\b|garage|intercom|buzzer/i },
+  ],
+  wifi_tv: [
+    { key: 'wifi', re: /wi-?fi|internet|router|modem|ethernet/i },
+    { key: 'remote', re: /remote/i },
+    { key: 'tv', re: /\btvs?\b|television|no signal|cable|hdmi|smart ?tv/i },
+    { key: 'streaming', re: /roku|netflix|streaming|fire ?stick|apple tv|chromecast/i },
+  ],
+  electrical: [
+    { key: 'outlet', re: /outlet|\bsockets?\b|\bplugs?\b|gfci/i },
+    { key: 'breaker', re: /breaker|tripped|\bfuses?\b|no power|power out/i },
+    { key: 'light', re: /\blights?\b|bulb|lamp|lighting/i },
+    { key: 'fan', re: /\bfan\b/i },
+    { key: 'smoke_detector', re: /smoke|detector|\bbatter/i },
+  ],
+  pest: [
+    { key: 'roach', re: /roach/i },
+    { key: 'bed_bug', re: /bed ?bug/i },
+    { key: 'ant', re: /\bants?\b/i },
+    { key: 'rodent', re: /\bmice\b|\bmouse\b|\brats?\b|rodent/i },
+  ],
+  furniture: [
+    { key: 'bed', re: /mattress|bed ?frame|\bbed\b|headboard/i },
+    { key: 'sofa', re: /sofa|couch|sleeper/i },
+    { key: 'blinds', re: /blind|curtain|shade/i },
+    { key: 'door_window', re: /sliding door|window|screen|balcony|patio/i },
+    { key: 'cabinet', re: /cabinet|drawer|closet|shelf|shelv/i },
+    { key: 'surface', re: /paint|drywall|caulk|grout|floor/i },
+    { key: 'seating', re: /chair|stool|table|dresser|night ?stand/i },
+  ],
+}
+
+/** The part of a system an issue names (first match), or null when none is named. */
+export function subsystemOf(system: any, text: any): string | null {
+  const list = SUBSYSTEMS[String(system) as SystemKey]
+  const t = String(text ?? '')
+  if (!list || !t.trim()) return null
+  for (const s of list) if (s.re.test(t)) return s.key
+  return null
+}

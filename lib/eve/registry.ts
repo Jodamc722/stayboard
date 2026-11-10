@@ -16,6 +16,8 @@ import { ambiguousUnitResult } from './ctx'
 import { ENTITY_TOOLS } from './entity'
 import { UNIT360_TOOLS } from './unit360'
 import { REACH_OPS_TOOLS, REACH_GUEST_TOOLS, REACH_SYSTEM_TOOLS } from './reach'
+import { BRAIN_MONEY_TOOLS } from './brain-tools'
+import { BRAIN_OPS_TOOLS, BRAIN_OWNER_TOOLS } from './upkeep'
 import type { EveTool, EveDomain } from './types'
 import { wireShape, obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -47,8 +49,15 @@ const QUALITY: EveDomain = {
 // the relocated tools — new objects, never a mutation of an imported domain.
 const OPS: EveDomain = {
   ...OPS_DOMAIN,
-  blurb: OPS_DOMAIN.blurb + ' Also: what upkeep is due or late per unit (upkeep_due), the Breezeway inspection checklists and what failed on them (inspection_results), units blocked from sale and why (blocked_units), and what an outside vendor has done for us (vendor_work).',
-  tools: OPS_DOMAIN.tools.concat([RELOCATED.field_work]).concat(REACH_OPS_TOOLS),
+  blurb: OPS_DOMAIN.blurb + ' Also: what upkeep is due or late per unit (upkeep_due), the Breezeway inspection checklists and what failed on them (inspection_results), units blocked from sale and why (blocked_units), and what an outside vendor has done for us (vendor_work). From the nightly business brain: today\'s apartment health ranking (unit_health), what broke again (repeat_failures), upkeep cost against earnings (upkeep_rank), repair vs replace on one unit (upkeep_advise), a vendor by month (vendor_360).',
+  tools: OPS_DOMAIN.tools.concat([RELOCATED.field_work]).concat(REACH_OPS_TOOLS).concat(BRAIN_OPS_TOOLS),
+}
+// THE BUSINESS BRAIN (2026-11-10): one definition of revenue / occupancy / upkeep numbers (measure),
+// a guarded look into its tables (query) and the owner 360 join the money drawer.
+const MONEY: EveDomain = {
+  ...MONEY_DOMAIN,
+  blurb: MONEY_DOMAIN.blurb + ' From the nightly business brain: any revenue / occupancy / ADR / RevPAR / upkeep measure at any grain and window (measure), a guarded table query (query), and one owner\'s months and units (owner_360).',
+  tools: MONEY_DOMAIN.tools.concat(BRAIN_MONEY_TOOLS).concat(BRAIN_OWNER_TOOLS),
 }
 
 // The customer-service half of the guests domain, added 2026-08-26. Built as a separate module and
@@ -57,7 +66,7 @@ const OPS: EveDomain = {
 const GUESTS: EveDomain = { ...GUESTS_DOMAIN, blurb: GUESTS_DOMAIN.blurb + ' Also the phone: welcome and post-checkout calls logged, and the Talkroute call log (calls).', tools: GUESTS_DOMAIN.tools.concat(CS_TOOLS).concat(REACH_GUEST_TOOLS) }
 const SYSTEM: EveDomain = { ...SYSTEM_DOMAIN, blurb: SYSTEM_DOMAIN.blurb + ', and what the AI itself has cost by task and day (ai_spend)', tools: SYSTEM_DOMAIN.tools.concat(REACH_SYSTEM_TOOLS) }
 
-export const DOMAINS: EveDomain[] = [OPS, MONEY_DOMAIN, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY_DOMAIN, SYSTEM]
+export const DOMAINS: EveDomain[] = [OPS, MONEY, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY_DOMAIN, SYSTEM]
 export const DOMAIN_KEYS = DOMAINS.map(d => d.key)
 
 const OPEN_DOMAIN: EveTool = {
@@ -166,7 +175,7 @@ function unitNamesRe(ctx: EveCtx): RegExp | null {
 export const TOOL_SEND_CHARS = 7000
 // The 360s answer in one call what used to take six, each of which could send 7,000 characters; they
 // get room for all their sections rather than having the upkeep rows halved to fit.
-const WIDE_TOOLS: Record<string, number> = { unit_360: 10000, building_360: 10000 }
+const WIDE_TOOLS: Record<string, number> = { unit_360: 10000, building_360: 10000, upkeep_rank: 9000, upkeep_advise: 9000, measure: 8000 }
 /** How many characters of JSON a tool's result may send (lib/eve/fit.ts fits to it, whole). */
 export function toolBudget(name: string): number { return WIDE_TOOLS[String(name)] || TOOL_SEND_CHARS }
 

@@ -3,7 +3,7 @@
 // The rules have always said "no data, no number" and "say when a list is partial" — as prose. This
 // file makes the receipt a thing: one line per lookup with the source it read, the window it covered,
 // when it was read, how many records it rests on and whether it was cut short. run.ts collects them
-// into meta.evidence and the chat shows them under "What I used".
+// into meta.evidence and the chat passes them to "What I used" as their own prop.
 //
 // Newer tools state it themselves in `_meta` (lib/eve/ctx.ts toolMeta). For the older ones the same
 // facts are read off the fields they already return — nothing is invented: a field that is not in the
@@ -54,6 +54,8 @@ export function evidenceOf(tool: string, output: any): EvidenceItem | null {
   if (!tool || tool === 'open_domain') return null
   if (!output || typeof output !== 'object' || Array.isArray(output)) return null
   if (output.error || output.ambiguous) return null
+  // A business-brain table that was missing or stale: the answer did NOT rest on it — say so in the panel.
+  if (output.stale === true) return { tool, source: 'business brain — not used (stale or not built)', truncated: true }
   const m = output._meta && typeof output._meta === 'object' ? output._meta : null
   const item: EvidenceItem = { tool }
   const source = m?.source
@@ -72,13 +74,9 @@ export function evidenceOf(tool: string, output: any): EvidenceItem | null {
   return item
 }
 
-/** The `_evidence:<json>` entry run.ts appends to meta.tools, parsed back out. Never throws. */
-export function evidenceFromTools(tools: any): EvidenceItem[] {
+/** meta.evidence as it arrives in the browser, kept to well-formed items. Never throws. */
+export function evidenceList(v: any): EvidenceItem[] {
   try {
-    const list: any[] = Array.isArray(tools) ? tools : []
-    const hit = list.find(t => typeof t === 'string' && t.indexOf('_evidence:') === 0)
-    if (!hit) return []
-    const parsed = JSON.parse(String(hit).slice('_evidence:'.length))
-    return Array.isArray(parsed) ? parsed.filter((x: any) => x && typeof x.tool === 'string') : []
+    return Array.isArray(v) ? v.filter((x: any) => x && typeof x === 'object' && typeof x.tool === 'string') : []
   } catch { return [] }
 }
