@@ -291,16 +291,6 @@ export async function retireTemplateQuestions(): Promise<{ retired: number }> {
   return { retired }
 }
 
-/** Open audit questions written before questions carried a key: found by their wording, matched by the audit they name. */
-async function legacyAuditQuestions(db: any): Promise<{ id: string; auditId: string }[]> {
-  try {
-    const { data } = await db.from('eve_questions').select('id,evidence')
-      .eq('status', 'open').like('question', '%has been open for%').limit(500)
-    return ((data || []) as any[])
-      .filter(q => q.evidence && typeof q.evidence === 'object' && q.evidence.audit_id && !q.evidence.dedupe_key)
-      .map(q => ({ id: String(q.id), auditId: String(q.evidence.audit_id) }))
-  } catch { return [] }
-}
 
 /**
  * Find the gaps worth asking about, deterministically.
@@ -322,57 +312,24 @@ export async function generateQuestions(): Promise<{ asked: number; repeated: nu
   }
 
   try {
-    // 1. Audit items that keep sitting open. Something is stopping them being fixed, and whatever
-    //    that is will not be in any table. Three weeks, not ten days: the audit re-raises daily and
-    //    a fortnight of "still open" is a busy month, not a mystery.
-    const { data: audits } = await db.from('eve_audits').select('id,title,area,severity,first_seen_at,fix')
-      .eq('status', 'open').order('first_seen_at').limit(50)
-    // ONE QUESTION PER ISSUE, NOT PER UNIT (2026-11-09 audit). "Capri 205 - 30day min is not
-    // connected on Vrbo" and the same line for thirty other units is one blocker, so it is one
-    // question that names how many units and which. The number of days lives in the evidence, not
-    // the wording — a question whose text changes every night can never be recognised as itself.
-    const groups: Record<string, { stem: string; items: { id: string; unit: string; title: string; days: number }[] }> = {}
-    const order: string[] = []
-    for (const a of (audits || []) as any[]) {
-      const days = Math.round((Date.now() - Date.parse(String(a.first_seen_at))) / 864e5)
-      if (days < 21 || a.severity === 'info') continue
-      const title = String(a.title || '').trim()
-      const m = /^(.{1,40}?)\s+[-–—:]\s+(.{8,})$/.exec(title)
-      const stem = (m ? m[2] : title).slice(0, 160)
-      const key = lc(String(a.area || '')) + '|' + lc(stem).replace(/\s+/g, ' ')
-      if (!groups[key]) { groups[key] = { stem, items: [] }; order.push(key) }
-      groups[key].items.push({ id: String(a.id), unit: m ? m[1].trim() : '', title, days })
-    }
-    const legacy = await legacyAuditQuestions(db)
-    for (const key of order) {
-      const g = groups[key]
-      const n = g.items.length
-      const days = g.items.reduce((mx, i) => Math.max(mx, i.days), 0)
-      const units = g.items.map(i => i.unit).filter(Boolean)
-      const question = n === 1
-        ? `"${g.items[0].title.slice(0, 160)}" has been open for over three weeks. What is actually stopping this getting fixed?`
-        : `${n} open audit items say "${g.stem}"${units.length ? ' (' + units.slice(0, 3).join(', ') + (units.length > 3 ? ' and ' + (units.length - 3) + ' more' : '') + ')' : ''}, all for over three weeks. What is actually stopping this getting fixed?`
-      const dedupeKey = 'audit:' + key
-      const ids = g.items.map(i => i.id)
-      // The rows the old generator left (no key on them): the first one that belongs to this issue
-      // becomes its question, keyed; any other is closed as the duplicate it is.
-      const mine = legacy.filter(l => ids.includes(l.auditId))
-      if (mine.length) {
+    // 1. NO QUESTIONS ABOUT THINGS THE APP ALREADY TRACKS (Jon, 2026-11-10: "a lot of these questions
+    //    are things the app already identifies — why isn't it connected to Expedia? We already built
+    //    an admin dashboard to manage that. It doesn't need to know why, it just needs to indicate
+    //    that it's not connected"). Open audit items — channel connections, door codes on file,
+    //    arrival instructions, past-dated tasks, review feeds — already show on the Admin desk,
+    //    Channels, Today and System health, where they are fixed. Eve flags them there; she no longer
+    //    asks a person what is stopping them. Any such question still open is closed here, once.
+    {
+      const { data: open } = await db.from('eve_questions').select('id,evidence').eq('status', 'open').limit(500)
+      const ids = ((open || []) as any[]).filter(q => {
+        const ev = q && typeof q.evidence === 'object' && q.evidence ? q.evidence : {}
+        return ev.audit_id || (Array.isArray(ev.audit_ids) && ev.audit_ids.length) || String(ev.dedupe_key || '').startsWith('audit:')
+      }).map(q => String(q.id))
+      if (ids.length) {
         const now = new Date().toISOString()
-        await db.from('eve_questions').update({ question, evidence: { audit_id: ids[0], audit_ids: ids, days, dedupe_key: dedupeKey } }).eq('id', mine[0].id)
-        if (mine.length > 1) {
-          await db.from('eve_questions').update({ status: 'dismissed', answered_by: 'system', answered_at: now, updated_at: now, answer: 'Folded into one question per issue (it was the same question raised once per unit).' })
-            .in('id', mine.slice(1).map(l => l.id))
-        }
-        for (const l of mine) legacy.splice(legacy.indexOf(l), 1)
-        considered++; repeated++
-        continue
+        await db.from('eve_questions').update({ status: 'dismissed', answered_by: 'system', answered_at: now, updated_at: now, answer: 'The app already tracks this on its own page (Admin desk, Channels, Today or System health), so Eve flags it there instead of asking.' })
+          .in('id', ids)
       }
-      await send({
-        question,
-        why: 'If it is blocked on something I cannot see, I should stop re-raising it and say what the real blocker is instead.',
-        kind: 'gap', evidence: { audit_id: ids[0], audit_ids: ids, days }, dedupeKey,
-      })
     }
 
     // 2. Recommendations that keep getting rejected. She is proposing something that does not fit,
