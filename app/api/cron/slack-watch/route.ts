@@ -6,7 +6,9 @@
 // gates itself to 11am–7pm ET.
 //
 // Costs are capped inside runSlackWatch (channels, candidates, model calls per run), so a busy day
-// costs a fixed amount and a quiet day costs a Slack read and nothing else.
+// costs a fixed amount and a quiet day costs a Slack read and nothing else. Outside 7am–8pm ET a room
+// is read with the model only when something new in it looks like a guest ask (2026-11-09); the rest
+// of the night is read in one call by the first pass after 7am.
 import { NextRequest, NextResponse } from 'next/server'
 import { runSlackWatch, openItems } from '@/lib/eve/slack-watch'
 import { runOnWatch } from '@/lib/eve/on-watch'
@@ -102,6 +104,9 @@ export async function POST(req: NextRequest) {
     const { flushApprovalDigest } = await import('@/lib/eve/slack-approvals')
     approvals = await flushApprovalDigest().catch((e: any) => ({ posted: 0, waiting: 0, upkeep: 0, error: String(e?.message || e).slice(0, 200) }))
     if (approvals && (approvals.posted || approvals.error)) recordRun({ name: 'eve-approvals-digest', ok: !approvals.error, itemCount: approvals.posted, detail: approvals, error: approvals.error || null, ms: Date.now() - a0 })
+    // SPENDS THE GATE HELD (2026-11-09): a spend filed outside 7am–8pm ET (or in quiet hours) waits in
+    // app_settings slack_spend_held and is posted here on the first pass the window is open.
+    try { const { flushHeldSpends } = await import('@/lib/eve/slack-approvals'); const sp = await flushHeldSpends(); if (approvals && (sp.posted || sp.waiting || sp.dropped)) approvals.spends = sp } catch { /* the next pass tries again */ }
   }
   let watch: any = null, opsDesk: any = null, shadow: any = null, pilotTwo: any = null
   if (url.searchParams.get('watch') !== '0') {

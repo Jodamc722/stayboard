@@ -29,7 +29,7 @@ import { Tag, type Tone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, TaskRow } from '@/lib/command-day'
 import { InlineAssign, type Roster } from '@/components/CommandCockpit'
-import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, GlitchRow, TeamRow, TeamWhereStrip, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf } from '@/components/command/Hub'
+import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, GlitchRow, TeamRow, TeamWhereStrip, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf, whoShort } from '@/components/command/Hub'
 import { opsHealth } from '@/lib/ops-health'
 import { publishHealth } from '@/components/command/health-bus'
 import { Check } from 'lucide-react'
@@ -51,12 +51,12 @@ const GROUPS: { label: string; keys: Key[] }[] = [
   { label: 'Office', keys: ['lostfound', 'glitches', 'claims', 'unpaid', 'channels'] },
 ]
 const CHECKS_URL = '/api/guest-checks'
-const BLOCKED_URL = '/api/blocked-units?days=30'
+const BLOCKED_URL = '/api/blocked-units?days=30&cached=1'
 const CHANNELS_URL = '/api/channels'
-type BlockedRunT = { listingId: string; unit: string; building: string; market: string; from: string; to: string; nights: number; startsInDays: number; live: boolean; openEnded: boolean; reason: string; note: string | null; guestyLabel?: string | null; blockEnd?: string | null }
+type BlockedRunT = { listingId: string; unit: string; building: string; market: string; from: string; to: string; nights: number; startsInDays: number; live: boolean; openEnded: boolean; reason: string; note: string | null; guestyLabel?: string | null; blockEnd?: string | null; createdAt?: string | null; blockStart?: string | null }
 type ChannelListingT = { id: string; name: string; building: string; verdict: string; missingMajor: string[]; cells: Record<string, { verdict: string; status: string | null }> }
 const REVIEWS_URL = '/api/reviews?days=60&hub=1'
-const NOTICES_URL = '/api/reservation-notices'
+const NOTICES_URL = '/api/reservation-notices?scope=today'
 type ReviewT = { id: string; rating: number | null; channel: string; guest: string; created_at: string; hasReply: boolean; listing_name: string; dismissed?: boolean; removed?: boolean }
 type NoticeT = { id: string; guest_name: string; unit_no: string; propertyName?: string; arrival_date: string; sent_at: string | null; sent_by?: string | null; urgency?: string; hasRecipient?: boolean }
 const fiveStar = (r: number | null, ch: string) => r == null ? null : /booking/i.test(ch) && r > 5 ? Math.round((r / 2) * 10) / 10 : r
@@ -94,7 +94,7 @@ function MaintRow({ t, roster, canAssign: _canAssign, onChanged }: { t: TaskRow;
         {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {pr && (pr.label === 'urgent' || pr.label === 'high') && !ta.done && <Tag tone={pr.tone} title="Priority in Breezeway">{pr.label}</Tag>}
       </>}
-      meta={[t.name, t.who, t.market].filter(Boolean).join(' · ')}
+      meta={[t.name, whoShort(t.who), t.market].filter(Boolean).join(' · ')}
       actions={ta.actions}>
       {ta.panels}
     </Row>
@@ -266,7 +266,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
 }) {
   const [open, setOpen] = useState<Key | null>(null)
   const [filter, setFilter] = useState<string>('all')
-  const callsQ = useCachedFetch<DayCalls & { error?: string }>(CALLS_URL, { ttl: 60_000 })
+  const callsQ = useCachedFetch<DayCalls & { error?: string }>(CALLS_URL, { ttl: 120_000 })
   const calls = callsQ.data && callsQ.data.ok ? callsQ.data : null
   const reloadCalls = () => { invalidateCache(CALLS_URL); callsQ.refresh() }
   const changed = () => { onChanged(); reloadCalls() }
@@ -358,6 +358,19 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const blQ = useCachedFetch<{ ok?: boolean; liveNow?: number; upcoming?: number; nightsBlocked?: number; runs?: BlockedRunT[]; error?: string }>(BLOCKED_URL, { ttl: 5 * 60_000 })
   const blRuns = blQ.data?.runs || []
   const blLive = blRuns.filter(r => r.live).length, blSoon = blRuns.filter(r => !r.live && r.startsInDays <= 7).length, blLater = Math.max(0, blRuns.length - blLive - blSoon)
+  // RED IS FOR NEWS (2026-11-09 audit: "62 off today" was red every day for blocks months old). A
+  // block is new when Guesty made it in the last 48h — or, with no made-on date, when Guesty's own
+  // start is today or yesterday. `from` cannot say: the window clips every standing block to today.
+  const blIsNew = (r: BlockedRunT): boolean => {
+    if (!r.live) return false
+    const made = r.createdAt ? Date.parse(r.createdAt) : NaN
+    if (Number.isFinite(made)) return Date.now() - made < 48 * 3600_000
+    const start = r.blockStart ? Date.parse(String(r.blockStart).slice(0, 10) + 'T12:00:00') : NaN
+    return Number.isFinite(start) && Date.now() - start < 48 * 3600_000
+  }
+  const blNew = blRuns.filter(blIsNew).length
+  // Standing, and nobody wrote why: worth a look, not an alarm.
+  const blBlank = blRuns.filter(r => r.live && !blIsNew(r) && !r.note && !r.guestyLabel).length
   const chQ = useCachedFetch<{ ok?: boolean; listings?: ChannelListingT[]; error?: string }>(CHANNELS_URL, { ttl: 10 * 60_000 })
   const chAll = chQ.data?.listings || []
   const chBad = chAll.filter(l => ['suspended', 'failed', 'disconnected', 'missing'].includes(l.verdict))
@@ -448,7 +461,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       segs: [{ label: 'promised', n: uPromised, cls: 'bg-emerald-500', tone: 'emerald', filter: 'promised' }, { label: 'contacted', n: uContacted, cls: 'bg-sky-400', tone: 'sky', filter: 'contacted' }, { label: 'disputed', n: uDisputed, cls: 'bg-rose-500', tone: 'rose', filter: 'disputed' }, { label: 'to chase', n: uOpen, cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'in 48h grace', n: uGrace, cls: 'bg-slate-100', tone: 'slate', filter: 'grace' }],
       sub: unpaidQ.error ? 'could not read the folios' : unpaidRows.length ? [uToday ? uToday + ' to collect today' : '', uWeek ? uWeek + ' arrive ≤7d' : '', uLater ? uLater + ' within 30d' : '', uOpen ? uOpen + ' to chase' : 'all chased', uGrace ? uGrace + ' in 48h grace' : ''].filter(Boolean).join(' · ') : 'direct, VRBO and Google all paid (30 days)' },
     { key: 'glitches', label: 'Glitches', done: glCovered, needed: gl.open, title: 'Open guest issues: past due, with no Breezeway task yet, and the ones with a task and an owner',
-      big: { value: String(gl.open), unit: gl.open === 1 ? 'open' : 'open', tone: gl.overdue ? 'text-rose-700' : gl.open ? 'text-ink' : 'text-emerald-700' },
+      big: { value: String(gl.open), unit: 'open', tone: gl.overdue ? 'text-rose-700' : gl.open ? 'text-ink' : 'text-emerald-700' },
       segs: [{ label: 'on it', n: glCovered, cls: 'bg-emerald-500', tone: 'emerald', filter: 'covered' }, { label: 'no task', n: gl.noTask, cls: 'bg-amber-400', tone: 'amber', filter: 'notask' }, { label: 'overdue', n: gl.overdue, cls: 'bg-rose-500', tone: 'rose', filter: 'overdue' }],
       sub: gl.open ? [gl.overdue ? gl.overdue + ' overdue' : 'none overdue', gl.noTask ? gl.noTask + ' without a task' : ''].filter(Boolean).join(' · ') : 'no open glitches' },
     { key: 'claims', label: 'Claims', done: clOk, needed: cl.open, title: 'Damage claims in flight: the filing countdown per channel, the ones due soon first',
@@ -468,9 +481,9 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       segs: [{ label: 'done', n: gcDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID photo to check', n: gcToCheck, cls: 'bg-rose-600', tone: 'rose', filter: 'check' }, { label: 'ID to verify', n: gcIdOpen - gcToCheck, cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'deposit to take', n: gcDepOpen, cls: 'bg-rose-500', tone: 'rose', filter: 'deposit' }],
       sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcNeeded ? [gcToCheck ? gcToCheck + ' ID photo' + (gcToCheck === 1 ? '' : 's') + ' to check' : '', gcTodayOpen ? gcTodayOpen + ' arriving today still open' : 'today’s arrivals covered', gcIdOpen - gcToCheck ? (gcIdOpen - gcToCheck) + ' ID' : '', gcDepOpen ? gcDepOpen + ' deposit' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
     { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, loading: !blQ.data && blQ.loading, title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
-      big: { value: String(blLive), unit: blLive === 1 ? 'off today' : 'off today', tone: blLive ? 'text-rose-700' : 'text-emerald-700' },
-      segs: [{ label: 'off now', n: blLive, cls: 'bg-rose-500', tone: 'rose', filter: 'live' }, { label: 'within 7 days', n: blSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: blLater, cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
-      sub: blQ.error ? 'could not read the calendar' : blRuns.length ? [blLive ? blLive + ' off now' : 'none off now', blSoon ? blSoon + ' starting this week' : '', blQ.data?.nightsBlocked ? blQ.data.nightsBlocked + ' nights blocked in 30d' : ''].filter(Boolean).join(' · ') : 'nothing blocked in the next 30 days' },
+      big: { value: String(blLive), unit: 'off today', tone: blNew ? 'text-rose-700' : blBlank ? 'text-amber-800' : blLive ? 'text-ink' : 'text-emerald-700' },
+      segs: [{ label: 'new in 48h', n: blNew, cls: 'bg-rose-500', tone: 'rose', filter: 'new' }, { label: 'standing', n: blLive - blNew, cls: 'bg-slate-400', tone: 'slate', filter: 'live' }, { label: 'within 7 days', n: blSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: blLater, cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
+      sub: blQ.error ? 'could not read the calendar' : blRuns.length ? [blLive ? blLive + ' off now' : 'none off now', blNew ? blNew + ' new in 48h' : '', blBlank ? blBlank + ' with no reason' : '', blSoon ? blSoon + ' starting this week' : '', blQ.data?.nightsBlocked ? blQ.data.nightsBlocked + ' nights blocked in 30d' : ''].filter(Boolean).join(' · ') : 'nothing blocked in the next 30 days' },
     { key: 'channels', label: 'Channels', done: Math.max(0, chAll.length - chBad.length), needed: chAll.length, loading: !chQ.data && chQ.loading, title: 'Every active listing against the major channels: live, or suspended / failed / disconnected, or simply not listed on one',
       big: { value: String(chHard), unit: chHard === 1 ? 'listing broken' : 'listings broken', tone: chHard ? 'text-rose-700' : chBad.length ? 'text-amber-800' : 'text-emerald-700' },
       segs: [{ label: 'live everywhere', n: Math.max(0, chAll.length - chBad.length), cls: 'bg-emerald-500', tone: 'emerald', filter: 'live' }, { label: 'not on a channel', n: chMissing, cls: 'bg-amber-400', tone: 'amber', filter: 'missing' }, { label: 'suspended / failed', n: chHard, cls: 'bg-rose-500', tone: 'rose', filter: 'hard' }],
@@ -533,7 +546,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
         {gcByHand === r.reservationId && canEdit && <ByHandStrip r={r} busy={b} ghost={GHOST} dark={DARK} field="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-brand-400" onClose={() => setGcByHand('')} onPatch={async (patch) => { await setCheck(r.reservationId, patch); setGcByHand('') }} />}
       </Row> })
     }
-    if (open === 'blocked') for (const r of blRuns) out.push({ key: 'bl:' + r.listingId + r.from, state: r.live ? 'live' : r.startsInDays <= 7 ? 'soon' : 'later', sort: r.live ? 0 : r.startsInDays, node: <Row dot={r.live ? 'rose' : null} title={r.unit} tags={<><Tag>{r.building}</Tag><Tag tone={r.live ? 'rose' : r.startsInDays <= 7 ? 'amber' : 'slate'}>{r.live ? 'off now' : 'in ' + r.startsInDays + 'd'}</Tag><Tag>{r.nights}{r.openEnded ? '+' : ''} night{r.nights === 1 ? '' : 's'}</Tag></>} meta={[r.from.slice(5) + ' → ' + (r.openEnded ? (r.blockEnd ? r.blockEnd.slice(5) + ' (Guesty)' : '?') : r.to.slice(5)), r.guestyLabel ? 'Guesty: ' + r.guestyLabel : r.reason, r.note].filter(Boolean).join(' · ')} actions={<Link href="/blocked" prefetch={false} className={GHOST}>Manage</Link>} /> })
+    if (open === 'blocked') for (const r of blRuns) out.push({ key: 'bl:' + r.listingId + r.from, state: blIsNew(r) ? 'new' : r.live ? 'live' : r.startsInDays <= 7 ? 'soon' : 'later', sort: blIsNew(r) ? -1 : r.live ? 0 : r.startsInDays, node: <Row dot={blIsNew(r) ? 'rose' : null} title={r.unit} tags={<><Tag>{r.building}</Tag><Tag tone={blIsNew(r) ? 'rose' : r.live ? 'slate' : r.startsInDays <= 7 ? 'amber' : 'slate'}>{blIsNew(r) ? 'new · off now' : r.live ? 'off now' : 'in ' + r.startsInDays + 'd'}</Tag><Tag>{r.nights}{r.openEnded ? '+' : ''} night{r.nights === 1 ? '' : 's'}</Tag></>} meta={[r.from.slice(5) + ' → ' + (r.openEnded ? (r.blockEnd ? r.blockEnd.slice(5) + ' (Guesty)' : '?') : r.to.slice(5)), r.guestyLabel ? 'Guesty: ' + r.guestyLabel : r.reason, r.note].filter(Boolean).join(' · ')} actions={<Link href="/blocked" prefetch={false} className={GHOST}>Manage</Link>} /> })
     if (open === 'channels') for (const l of chBad) out.push({ key: 'ch:' + l.id, state: l.verdict === 'missing' ? 'missing' : 'hard', sort: l.verdict === 'missing' ? 2 : 0, node: <Row dot={l.verdict !== 'missing' ? 'rose' : null} title={l.name} tags={<><Tag>{l.building}</Tag><Tag tone={l.verdict === 'missing' ? 'amber' : 'rose'}>{l.verdict}</Tag>{l.missingMajor.map(k => <Tag key={k}>not on {k.replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking.com')}</Tag>)}</>} meta={Object.entries(l.cells || {}).filter(([, c]) => c.verdict !== 'live').map(([k, c]) => k + ': ' + (c.status || c.verdict)).join(' · ')} actions={<Link href="/channels" prefetch={false} className={GHOST}>Channels</Link>} /> })
     if (open === 'unpaid') for (const r of unpaidRows) out.push({ key: 'unpaid:' + r.id, state: r.inGrace && r.tracking.status === 'open' ? 'grace' : r.tracking.status, sort: (r.bucket === 'in_house' ? 0 : r.bucket === 'today' ? 1 : 2) + (r.tracking.status === 'open' ? 0 : 0.5), node: <UnpaidRow r={r} today={unpaidQ.data?.today || d.today} canEdit={!!unpaidQ.data?.canEdit} onPatch={onUnpaidPatch} simple /> })
     if (open === 'recovery' && rc) for (const r of rc.rows.filter(x => x.today)) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls || !!calls?.canEdit} callers={calls?.callers || []} onChanged={changed} /> })

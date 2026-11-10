@@ -41,6 +41,7 @@ type Glitch = {
   history?: any[] | null
   created_at: string
 }
+const CLOSED_SHOWN = 20
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
 
 function dueState(due: string | null | undefined, closed: boolean): { label: string; cls: string } | null {
@@ -205,6 +206,7 @@ export function GlitchBoard() {
   const [dFrom, setDFrom] = useState('')
   const [dTo, setDTo] = useState('')
   const [dateBy, setDateBy] = useState<'reported' | 'incident'>('reported')
+  const [allClosed, setAllClosed] = useState(false)
   const [bldgOf, setBldgOf] = useState<Record<string, string>>({})
   useEffect(() => {
     fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json()).then(j => {
@@ -292,26 +294,28 @@ export function GlitchBoard() {
       {/* ONE LINE: the verb, the market filter, the board's numbers, then the quiet tools. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-3">
         <button onClick={() => setShowNew(true)} className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white inline-flex items-center gap-1"><Plus size={13} /> New glitch</button>
-        <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white">
+        <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white max-w-full">
           {markets.map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
         </select>
-        <span className="relative">
+        {/* PHONE (2026-11-09): the search takes the rest of its line and the date range may wrap
+            inside its own box — the two date inputs used to run off the right edge at 375px. */}
+        <span className="relative flex-1 min-w-[130px] sm:flex-none">
           <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest, unit, reservation…"
-            className="text-[12px] py-1 pl-6 pr-2 rounded-lg border border-line bg-white w-[160px]" />
+            className="text-[12px] py-1 pl-6 pr-2 rounded-lg border border-line bg-white w-full sm:w-[160px]" />
         </span>
-        <select value={prop} onChange={e => setProp(e.target.value)} title="Property" className={'text-[12px] py-1 pl-2 pr-6 rounded-lg border bg-white ' + (prop ? 'border-brand-300 text-brand-800 font-semibold' : 'border-line')}>
+        <select value={prop} onChange={e => setProp(e.target.value)} title="Property" className={'text-[12px] py-1 pl-2 pr-6 rounded-lg border bg-white max-w-full ' + (prop ? 'border-brand-300 text-brand-800 font-semibold' : 'border-line')}>
           <option value="">All properties</option>
           {props.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
-        <span className={'inline-flex items-center gap-1 text-[12px] rounded-lg border bg-white px-1.5 py-0.5 ' + (dFrom || dTo ? 'border-brand-300' : 'border-line')}>
+        <span className={'inline-flex items-center gap-1 flex-wrap max-w-full min-w-0 text-[12px] rounded-lg border bg-white px-1.5 py-0.5 ' + (dFrom || dTo ? 'border-brand-300' : 'border-line')}>
           <select value={dateBy} onChange={e => setDateBy(e.target.value as any)} title="Which date to filter on" className="text-[12px] bg-transparent pr-1">
             <option value="reported">Reported</option>
             <option value="incident">Incident</option>
           </select>
-          <input type="date" value={dFrom} onChange={e => { setDFrom(e.target.value); if (!dTo || e.target.value > dTo) setDTo(e.target.value) }} title="From" className="text-[12px] bg-transparent" />
+          <input type="date" value={dFrom} onChange={e => { setDFrom(e.target.value); if (!dTo || e.target.value > dTo) setDTo(e.target.value) }} title="From" className="text-[12px] bg-transparent min-w-0 w-[7.25rem] sm:w-auto" />
           <span className="text-muted">–</span>
-          <input type="date" value={dTo} min={dFrom || undefined} onChange={e => setDTo(e.target.value)} title="To" className="text-[12px] bg-transparent" />
+          <input type="date" value={dTo} min={dFrom || undefined} onChange={e => setDTo(e.target.value)} title="To" className="text-[12px] bg-transparent min-w-0 w-[7.25rem] sm:w-auto" />
         </span>
         {filtering ? (
           <button onClick={() => { setQ(''); setProp(''); setDFrom(''); setDTo('') }}
@@ -358,6 +362,11 @@ export function GlitchBoard() {
       <div className="flex gap-3 overflow-x-auto pb-3 -mx-1 px-1 snap-x snap-mandatory items-start" style={{ scrollbarGutter: 'stable' }}>
         {LANES.map(lane => {
           const cards = rows.filter(g => laneOf(g.status).key === lane.key)
+          // THE CLOSED LANE SHOWS ITS NEWEST 20 (2026-11-09): it held every closed card of the
+          // last 500 glitches, each one a mounted draggable card nobody was looking at. The count
+          // on the lane is still all of them; a search or filter shows every match.
+          const capped = lane.key === 'closed' && !allClosed && !filtering && cards.length > CLOSED_SHOWN
+          const shown = capped ? cards.slice(0, CLOSED_SHOWN) : cards
           return (
             <div key={lane.key} className="rounded-2xl bg-app/70 border border-line w-[86vw] sm:w-[300px] shrink-0 snap-start">
               <div className="px-3 py-2 border-b border-line flex items-center gap-2" title={lane.label + ' — ' + lane.hint}>
@@ -371,9 +380,14 @@ export function GlitchBoard() {
                   const id = e.dataTransfer.getData('text/plain')
                   if (id) act(id, { action: 'move', status: lane.write })
                 }}>
-                {cards.map(g => (
+                {shown.map(g => (
                   <GlitchCard key={g.id} g={g} onOpen={() => setOpen(g.id)} />
                 ))}
+                {capped ? (
+                  <button onClick={() => setAllClosed(true)} className="w-full text-[11.5px] font-semibold text-muted hover:text-ink rounded-lg border border-dashed border-line bg-white/60 py-1.5">
+                    Show {cards.length - CLOSED_SHOWN} more closed
+                  </button>
+                ) : null}
                 {cards.length === 0 && <p className="text-[11px] text-faint text-center py-4">Nothing here</p>}
               </div>
             </div>

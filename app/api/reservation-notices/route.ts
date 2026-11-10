@@ -93,12 +93,23 @@ export async function GET(req: NextRequest) {
     // and one capped read, soonest first, would silently drop the furthest-out notices and undercount
     // Upcoming. The first query error is kept so the missing-table message below still works.
     let error: any = null
-    const paged = await pageRows((a, b) => supabaseAdmin().from(TABLE).select('*')
-      .is('deleted_at', null)
-      .gte('arrival_date', floor)
-      .order('arrival_date', { ascending: true }).order('id')
-      .range(a, b)
-      .then((r: any) => { if (r && r.error && !error) error = r.error; return r }))
+    // ?scope=today (the Today tile, 2026-11-09 audit). The tile prints today's list and its counts,
+    // and was paying for 60 days of sent history plus everything ahead on every poll. Scoped, the
+    // read is exactly the Today section below — arriving today, or earlier and still unsent — so
+    // `upcoming` comes back empty and the counts cover today only. The Notices board does not pass it.
+    const todayOnly = sp.get('scope') === 'today'
+    const dayAfter = new Date(today + 'T12:00:00Z'); dayAfter.setUTCDate(dayAfter.getUTCDate() + 1)
+    const tomorrow = dayAfter.toISOString().slice(0, 10)
+    const paged = await pageRows((a, b) => {
+      let read = supabaseAdmin().from(TABLE).select('*')
+        .is('deleted_at', null)
+        .gte('arrival_date', floor)
+      if (todayOnly) read = read.lt('arrival_date', tomorrow).or('sent_at.is.null,arrival_date.gte.' + today)
+      return read
+        .order('arrival_date', { ascending: true }).order('id')
+        .range(a, b)
+        .then((r: any) => { if (r && r.error && !error) error = r.error; return r })
+    })
     const data = paged.rows
     if (paged.truncated && !error) console.error('reservation-notices: read stopped at the page budget')
     // The table only exists after migration 015 — say so plainly instead of throwing a 500.
@@ -159,7 +170,8 @@ export async function GET(req: NextRequest) {
 
     const openToday = today_.filter(r => !r.sent_at)
     return NextResponse.json({
-      ok: true, today: today_, upcoming, rows, properties, todayDate: today,
+      // Scoped, `rows` would be the Today list a second time.
+      ok: true, today: today_, upcoming, rows: todayOnly ? [] : rows, properties, todayDate: today,
       counts: {
         toSend: openToday.length,
         sentToday: today_.length - openToday.length,

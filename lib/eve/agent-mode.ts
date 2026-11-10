@@ -41,6 +41,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isSuperadmin } from '@/lib/access'
 import { setSetting } from '@/lib/app-settings'
 import { todayET, pageRows } from './ctx'
+// Static on purpose and safe: room-gate reaches back into this file only through dynamic imports.
+import { inPostWindow, POST_WINDOW_ET } from './room-gate'
 
 export const AGENT_KEY = 'eve_agent'
 export const AGENT_COUNTERS_KEY = 'eve_agent_counters'
@@ -82,7 +84,7 @@ export type ActionDef = {
 
 export const ACTIONS: ActionDef[] = [
   { key: 'slack_post', label: 'Post in Slack', what: 'Nudges in a thread, the urgent-today post, the morning roll-up in #vr-eve, door-code approval posts.', def: 3, cap: 4,
-    wiredAt: ['lib/eve/slack-watch.ts (nudge, urgent, digest)', 'lib/eve/approvals.ts postDoorCodeApproval'] },
+    wiredAt: ['lib/eve/slack-watch.ts (nudge)', 'lib/eve/on-watch.ts', 'lib/eve/ccs-desk.ts (handoff, escalation)', 'lib/eve/morning.ts', 'lib/eve/approvals.ts postDoorCodeApproval'] },
   { key: 'telegram_ask', label: 'Ask on Telegram', what: 'The morning ask (findings, questions), proposals waiting on a yes, approved questions to Ralphbot.', def: 2, cap: 4,
     wiredAt: ['lib/eve/ask.ts deliverOne', 'lib/eve/ralph.ts sendApproved', 'lib/eve/agent-mode.ts proposeAction'] },
   { key: 'email_draft', label: 'Draft an email', what: 'A Gmail draft in a connected mailbox. Nobody receives it until a person sends it.', def: 2, cap: 4, wiredAt: ['lib/eve/executors.ts email_draft', 'lib/eve/watches.ts channel_broken, stock_low'] },
@@ -594,6 +596,18 @@ export type Proposal = {
   note?: string | null
   /** Dedupe window for the thought; a watch passes its cooldown. */
   thoughtCooldownHours?: number
+  /**
+   * slack_post only: what the said-registry compares and records instead of the post's text — for a
+   * post whose opening words are the same every time (the CCS handoff header), so yesterday's list is
+   * not read as today's "already said". The post itself is always `exec.text`.
+   */
+  sayText?: string | null
+  /**
+   * slack_post only: this post may go out between 8pm and 7am ET (Jon's exceptions, 2026-11-09: a
+   * guest-safety or guest-waiting matter, a Salato or big-booking escalation). Everything else her own
+   * desks would post in those hours is held and goes out when the window opens at 7am.
+   */
+  afterHours?: boolean
 }
 
 /** The executor's answer (lib/eve/executors.ts ExecOut, minus the summary the caller already has). */
@@ -836,19 +850,22 @@ export type DeferKind = 'action' | 'proposal_notify'
  * Store an action to be carried out at the end of quiet hours — no yes required. Lands in
  * eve_actions kind 'ask', payload.type 'deferred' (no migration; same queue), with `deferUntil`.
  */
-export async function deferAction(p: Proposal, kind: DeferKind = 'action', settings?: AgentSettings): Promise<{ ok: boolean; id?: string; until: string }> {
+export async function deferAction(p: Proposal, kind: DeferKind = 'action', settings?: AgentSettings, opts: { until?: string; label?: string } = {}): Promise<{ ok: boolean; id?: string; until: string }> {
   const s = settings || await getAgentSettings()
-  const until = quietHoursEnd(s)
+  // `opts.until` / `opts.label`: a hold that is not quiet hours (the 8pm–7am posting window) names its
+  // own end and its own reason; without them this is the quiet-hours hold it has always been.
+  const until = opts.until || quietHoursEnd(s)
+  const label = opts.label || 'quiet hours'
   try {
     const { data, error } = await supabaseAdmin().from('eve_actions').insert({
       created_by: p.actor || p.by, kind: 'ask',
       payload: { type: 'deferred', ref: '', deferKind: kind, action: p.action, summary: p.summary.slice(0, 600), exec: p.exec || null, usd: p.usd ?? null, deferUntil: until, by: p.by, delivery_count: 0, ...proposalMeta(p) },
-      why: (p.why || `held for quiet hours until ${s.quietHours.end} ${s.quietHours.tz}`).slice(0, 400), status: 'proposed',
+      why: (p.why || (opts.label ? `held (${label}) until ${until}` : `held for quiet hours until ${s.quietHours.end} ${s.quietHours.tz}`)).slice(0, 400), status: 'proposed',
       expires_at: new Date(Date.now() + 3 * 86400_000).toISOString(),
     }).select('id').maybeSingle()
     if (error) throw error
     const id = (data as any)?.id ? String((data as any).id) : undefined
-    if (kind === 'action') await recordAgentAction(p.action, { rung: 3, allowed: false, mode: 'deferred', reason: `quiet hours; will run at ${until}`, summary: p.summary, ref: id || null, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
+    if (kind === 'action') await recordAgentAction(p.action, { rung: 3, allowed: false, mode: 'deferred', reason: `${label}; will run at ${until}`, summary: p.summary, ref: id || null, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
     return { ok: true, id, until }
   } catch (e: any) {
     await logAgent({ action: p.action, rung: 3, allowed: false, mode: 'deferred', reason: `could not defer: ${String(e?.message || e).slice(0, 120)}`, summary: p.summary, by: p.by, actor: p.actor })
@@ -878,6 +895,8 @@ export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; f
     const pl = r.payload || {}
     const due = Date.parse(String(pl.deferUntil || ''))
     if (Number.isFinite(due) && due > now) { out.skipped++; continue }
+    // A held Slack post never goes out between 8pm and 7am ET, whatever hour quiet hours are set to end.
+    if (pl.deferKind !== 'proposal_notify' && String(pl.action || 'slack_post') === 'slack_post' && !inPostWindow(new Date(now))) { out.skipped++; continue }
     // Claim it. Only the caller whose update lands moves on.
     let claimed = false
     try {
@@ -912,6 +931,13 @@ export async function flushDeferred(by = 'cron:flush'): Promise<{ ran: number; f
  * when it succeeds, logged with its undo, and turned into a graded recommendation row.
  * `deferred` stores the exec to run later, so `p.exec` must be complete enough for runExec.
  */
+/** The next instant the 7am–8pm ET posting window is open (now, when it already is). */
+export function nextPostWindowOpen(now = new Date()): string {
+  const t0 = Math.ceil(now.getTime() / 300_000) * 300_000
+  for (let i = 0; i <= 14 * 12; i++) { const t = new Date(t0 + i * 300_000); if (inPostWindow(t)) return t.toISOString() }
+  return new Date(now.getTime() + 11 * 3600_000).toISOString()
+}
+
 export type StepResult = { mode: Mode; ok: boolean; ref?: string | null; error?: string; done?: string; logId?: string | null; undo?: any }
 
 /**
@@ -952,7 +978,7 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
     try {
       const { alreadySaid } = await import('./said')
       const ch = String(p.exec.channel || p.exec.channel_id || '')
-      const dup = await alreadySaid({ channel: ch, threadTs: p.exec.thread_ts || null, text: String(p.exec.text || p.summary || ''), subject: p.subject || null })
+      const dup = await alreadySaid({ channel: ch, threadTs: p.exec.thread_ts || null, text: String(p.sayText || p.exec.text || p.summary || ''), subject: p.subject || null })
       if (dup.dup) {
         const logId = await recordAgentAction(p.action, { rung: verdict.rung, allowed: false, mode: 'observe', reason: `already said — ${dup.why}`, summary: p.summary, by: p.by, actor: p.actor, usd: p.usd, countAs: 'none' })
         return { mode: 'observe', ok: true, ref: null, logId, error: undefined }
@@ -980,6 +1006,18 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
       } catch { /* a cap that cannot be read never blocks a post */ }
     }
   }
+  // NOTHING FROM HER OWN DESKS BETWEEN 8PM AND 7AM ET (Jon, 2026-11-05; enforced here 2026-11-09). The
+  // window lived only in lib/eve/room-gate, so every post that came through this function — an
+  // escalation at 9:48pm, an evening recap catching up at 8:48pm — went out on agent quiet hours alone
+  // (10pm by default, and `urgent` skipped even those). A slack_post that a cron or a watch would make
+  // outside the window is now held and posted by flushDeferred when the window opens. Not held: a
+  // person's own ask (chat, the panel — `by` is not cron:/watch:), and a post the caller marked
+  // `afterHours` (guest safety, a guest waiting now, a Salato or big-booking escalation). Door-code
+  // asks never come through here (lib/eve/approvals posts them itself).
+  if (p.action === 'slack_post' && verdict.mode === 'act' && !p.afterHours && /^(cron:|watch:)/.test(String(p.by || '')) && !inPostWindow()) {
+    const r = await deferAction(p, 'action', verdict.settings, { until: nextPostWindowOpen(), label: `outside ${POST_WINDOW_ET.start}am–${POST_WINDOW_ET.end - 12}pm ET` })
+    return { mode: 'deferred', ok: r.ok, ref: r.id || null, error: r.ok ? undefined : 'could not defer' }
+  }
   if (verdict.mode === 'act') {
     let r: ExecResult
     if (act) {
@@ -990,7 +1028,7 @@ export async function stepDown(verdict: AgentVerdict, p: Proposal, act?: () => P
     const logId = await recordAgentAction(p.action, { rung: verdict.rung, allowed: r.ok, mode: 'act', reason: r.ok ? verdict.reason : `act failed: ${r.error || 'unknown'}`, summary: r.ok && r.done ? r.done : p.summary, ref: r.ref || null, by: p.by, actor: p.actor, usd: p.usd, countAs: r.ok ? 'action' : 'none', undo: r.undo || undefined })
     if (r.ok) await afterAct(p.action, r, { by: p.by, actor: p.actor, watchKey: p.watchKey, subject: p.subject, summary: p.summary, metric: p.metric })
     if (r.ok && act && p.action === 'slack_post' && p.exec && (p.exec.channel || p.exec.channel_id)) {   // runExec's own executor records itself
-      try { const { markSaid } = await import('./said'); await markSaid({ channel: String(p.exec.channel || p.exec.channel_id), threadTs: p.exec.thread_ts || null, text: String(p.exec.text || p.summary || ''), subject: p.subject || null, by: p.by, ts: r.ref || null }) } catch { /* best effort */ }
+      try { const { markSaid } = await import('./said'); await markSaid({ channel: String(p.exec.channel || p.exec.channel_id), threadTs: p.exec.thread_ts || null, text: String(p.sayText || p.exec.text || p.summary || ''), subject: p.subject || null, by: p.by, ts: r.ref || null }) } catch { /* best effort */ }
     }
     return { mode: 'act', ok: r.ok, ref: r.ref, error: r.error, done: r.done, logId, undo: r.undo || null }
   }

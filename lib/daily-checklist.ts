@@ -43,15 +43,15 @@ export async function todayList(at: Date = new Date()): Promise<{ day: string; c
   const { day, minutes, clock } = opsNow(at)
   try {
     const sb = supabaseAdmin()
-    const { data: items, error } = await sb.from('daily_checklist_items')
-      .select('*').eq('active', true)
-      .order('sort', { nullsFirst: false }).order('by_time', { nullsFirst: false }).limit(300)
+    // Side by side (2026-11-09 audit): today's ticks do not need the item ids first — a tick for a
+    // retired item simply matches no row below.
+    const [{ data: items, error }, { data: ticks }] = await Promise.all([
+      sb.from('daily_checklist_items')
+        .select('*').eq('active', true)
+        .order('sort', { nullsFirst: false }).order('by_time', { nullsFirst: false }).limit(300),
+      sb.from('daily_checklist_ticks').select('item_id,done_at,done_by,note').eq('day', day).limit(1000),
+    ])
     if (error || !items) return { day, clock, rows: [] }
-
-    const ids = (items as any[]).map(i => String(i.id))
-    const { data: ticks } = ids.length
-      ? await sb.from('daily_checklist_ticks').select('item_id,done_at,done_by,note').eq('day', day).in('item_id', ids)
-      : { data: [] as any[] }
     const byItem: Record<string, any> = {}
     for (const t of ((ticks || []) as any[])) byItem[String(t.item_id)] = t
 

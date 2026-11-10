@@ -41,8 +41,10 @@ export default function CleanerPicker({ people, value, existing, onChange, disab
   useEffect(() => { if (!open) return; let raf = 0; const h = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; place() }) }; window.addEventListener('scroll', h, true); window.addEventListener('resize', h); return () => { if (raf) cancelAnimationFrame(raf); window.removeEventListener('scroll', h, true); window.removeEventListener('resize', h) } }, [open])
   useEffect(() => {
     function onDoc(e: MouseEvent) { const t = e.target as Node; if ((ref.current && ref.current.contains(t)) || (panelRef.current && panelRef.current.contains(t))) return; setOpen(false) }
+    // Only while open: a hundred-row board used to hold a hundred document listeners.
+    if (!open) return
     document.addEventListener('mousedown', onDoc); return () => document.removeEventListener('mousedown', onDoc)
-  }, [])
+  }, [open])
   // On today's roster first, everyone else under them. Both lists stay complete.
   const [onToday, others] = useMemo(() => {
     const s = q.trim().toLowerCase()

@@ -283,11 +283,23 @@ export async function buildCommandDay(opts: { money?: boolean } = {}): Promise<C
 /** A cached core older than this is rebuilt in place rather than served as now (lib/bust). */
 const CORE_MAX_AGE_MS = 90_000
 
+/** The in-place rebuild under way on this instance, if any — so readers share it instead of each starting one. */
+let coreRebuild: { today: string; p: Promise<CommandCore> } | null = null
+
 async function commandCore(today: string): Promise<CommandCore> {
   let core: CommandCore
   try { core = await cachedCore(today) }
   catch (e: any) { if (e && e.uncachedCore) return e.uncachedCore as CommandCore; throw e }
-  return tooOld(core.generatedAt, CORE_MAX_AGE_MS) ? buildCommandCore(today) : core
+  if (!tooOld(core.generatedAt, CORE_MAX_AGE_MS)) return core
+  // ONE REBUILD AT A TIME (2026-11-09 audit). After a quiet spell every reader that arrived found
+  // the cached day too old and built its own — ~30 reads each, for the same answer. The first one
+  // builds; the rest wait on it. Dropped the moment it settles, so nothing here is ever served late.
+  if (coreRebuild && coreRebuild.today === today) return coreRebuild.p
+  const entry = { today, p: buildCommandCore(today) }
+  coreRebuild = entry
+  const clear = () => { if (coreRebuild === entry) coreRebuild = null }
+  entry.p.then(clear, clear)
+  return entry.p
 }
 
 const cachedCore = unstable_cache(async (today: string): Promise<CommandCore> => {
@@ -336,6 +348,9 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   // ── WAVE 1: everything that does not depend on anything else ──────────────────────────────────
   // The channel snapshot read starts with everything else (2026-10-01 audit) — it used to run alone, after.
   const snapshotP = readSnapshot().catch(() => null as any)
+  // Two small settings reads that used to wait their turn after the wave; started with it, awaited where they were.
+  const oursInspP = dutyIsOurs('inspections').catch(() => () => true)
+  const noSvcP = getNoService().catch(() => null)
   const [day, automation, presets, arrivalsRes, glitchesRes, claimsRes, sentimentRes, reviewsToReplyRes, waiting, approvalsRes, fieldOverdueRes, openTasksP, bzOverdueCountRes, callsDoneRes, refundsRes] = await Promise.all([
     // .catch, because buildOpsDay now THROWS on a failed read (2026-09-09) — right for the board's
     // own route, wrong here: a listings blip must not take claims, reviews, messages and the calls
@@ -410,11 +425,11 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   const noBzRe = noBreezewayRegex(presets.vendorBuildings)
   // A building whose inspections are not ours (operating model: Botanica, Opal's three) never shows
   // "no inspection" — there is nothing for us to file (Jon, 2026-10-16).
-  const oursInsp = await dutyIsOurs('inspections').catch(() => () => true)
+  const oursInsp = await oursInspP
   const canFile = (lid: string) => { const m = meta[lid]; return !!m && !noBzRe.test((m.building || '') + ' ' + m.name) && oursInsp(m.building, m.name) }
   // NO WELCOME CALLS THERE (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
   // for any Botanica units. So don't draft them or auto create them.") — never "call owed".
-  const noSvc = await getNoService().catch(() => null)
+  const noSvc = await noSvcP
 
   const openTasks = guard<any[]>('open tasks', openTasksP as any, [])
   const openByListing: Record<string, any[]> = {}

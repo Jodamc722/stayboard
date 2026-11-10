@@ -52,6 +52,19 @@ async function whole(label: string, q: (from: number, to: number) => PromiseLike
   return { data: r.rows }
 }
 
+// OPEN WORK ORDERS, ONLY THE COLUMNS THE QUEUE READS (2026-11-09). This was select('*') — every
+// description, photo list and history blob on every open work order — to read nine short fields.
+// If the narrow read comes back empty-and-stopped (a column this database names differently), the
+// whole-row read runs exactly as before, so the queue can never go quiet over a column name.
+const WO_COLS = 'id,status,priority,title,building,unit,assignee_email,due_at,created_at'
+async function openWorkOrders(db: ReturnType<typeof supabaseAdmin>) {
+  const read = (cols: string) => pageRows<any>((a, b) => db.from('field_requests').select(cols).not('status', 'in', '(' + WO_CLOSED.join(',') + ')').order('id').range(a, b))
+  let r = await read(WO_COLS)
+  if (r.truncated && !r.rows.length) r = await read('*')
+  if (r.truncated) console.error('[maintenance] work orders read stopped early — the page may be missing rows')
+  return { data: r.rows }
+}
+
 const GLITCH_OPEN = ['pool', 'ops', 'guest_followup', 'refund', 'manager_review', 'incident']
 const WO_CLOSED = ['done', 'cancelled']
 // ── A DELETED TASK IS NOT OPEN WORK (2026-09-14, the tab-by-tab walk) ──────────────────────────
@@ -76,7 +89,7 @@ export default async function MaintenancePage() {
   const d30 = shift(today, -30)
 
   const [woRes, taskRes, doneRes, glitchRes, blocked] = await Promise.all([
-    whole('work orders', (a, b) => db.from('field_requests').select('*').not('status', 'in', '(' + WO_CLOSED.join(',') + ')').order('id').range(a, b)),
+    openWorkOrders(db),
     // Open maintenance execution: unfinished Breezeway maintenance tasks scheduled in the last
     // 60 days or undated. Older than that is archaeology, not operations.
     whole('open tasks', (a, b) => db.from('breezeway_tasks_sync')
@@ -100,17 +113,21 @@ export default async function MaintenancePage() {
       .map(t => str(t.reference_property_id)).filter(Boolean)
   ))
   const lname: Record<string, string> = {}
-  for (let i = 0; i < listingIds.length; i += 400) {
-    const { data } = await db.from('guesty_listings').select('id,nickname,title,building').in('id', listingIds.slice(i, i + 400))
-    for (const l of ((data || []) as any[])) lname[str(l.id)] = str(l.nickname || l.title || l.building || l.id)
-  }
-
   // Billing details for closed work — a finished task with no dollars entered is the leak.
   const doneTasks = ((doneRes.data || []) as any[])
   const billed: Record<string, boolean> = {}
   const doneIds = doneTasks.map(t => str(t.id))
-  for (let i = 0; i < doneIds.length; i += 400) {
-    const { data } = await db.from('breezeway_billing_details').select('task_id, costs, supplies, rate_type').in('task_id', doneIds.slice(i, i + 400))
+  // PERF (2026-11-09): the listing names and the billing details were read chunk after chunk, one
+  // list after the other. Same chunks, same reads — asked for together.
+  const chunks = (ids: string[]) => { const out: string[][] = []; for (let i = 0; i < ids.length; i += 400) out.push(ids.slice(i, i + 400)); return out }
+  const [listingPages, billingPages] = await Promise.all([
+    Promise.all(chunks(listingIds).map(c => db.from('guesty_listings').select('id,nickname,title,building').in('id', c))),
+    Promise.all(chunks(doneIds).map(c => db.from('breezeway_billing_details').select('task_id, costs, supplies, rate_type').in('task_id', c))),
+  ])
+  for (const { data } of listingPages) {
+    for (const l of ((data || []) as any[])) lname[str(l.id)] = str(l.nickname || l.title || l.building || l.id)
+  }
+  for (const { data } of billingPages) {
     for (const d of ((data || []) as any[])) {
       const dollars = (Array.isArray(d.costs) ? d.costs : []).reduce((a: number, x: any) => a + (Number(x?.cost) || 0), 0)
         + (Array.isArray(d.supplies) ? d.supplies : []).reduce((a: number, x: any) => a + (Number(x?.total_price ?? x?.unit_cost) || 0), 0)

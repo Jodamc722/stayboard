@@ -110,17 +110,22 @@ export async function GET(req: NextRequest) {
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
     const ids = ((claims || []) as any[]).map(c => String(c.id))
     const byClaim: Record<string, ClaimItem[]> = {}
-    if (ids.length) {
-      const { data: items } = await db.from('claim_items').select('*').in('claim_id', ids).order('position', { ascending: true })
-      for (const it of (items || []) as any[]) {
-        const k = String(it.claim_id)
-        if (!byClaim[k]) byClaim[k] = []
-        byClaim[k].push(it as ClaimItem)
-      }
-    }
-    // The turnover clock, one query for the whole board. Attached to each claim rather than
+    // PERF (2026-11-09): the items, the turnover clock and the closer check do not depend on each
+    // other — asked for together instead of one after another. Same three reads.
+    // The turnover clock is one query for the whole board, attached to each claim rather than
     // stored, so a booking added or cancelled after the claim was opened is reflected immediately.
-    const arrivals = await nextCheckInMap(db, (claims || []) as any[])
+    const [itemsRes, arrivals, canClose] = await Promise.all([
+      ids.length
+        ? db.from('claim_items').select('*').in('claim_id', ids).order('position', { ascending: true })
+        : Promise.resolve({ data: [] as any[] }),
+      nextCheckInMap(db, (claims || []) as any[]),
+      canCloseClaims(gate.access),
+    ])
+    for (const it of (itemsRes.data || []) as any[]) {
+      const k = String(it.claim_id)
+      if (!byClaim[k]) byClaim[k] = []
+      byClaim[k].push(it as ClaimItem)
+    }
     const out = ((claims || []) as any[]).map(c => ({
       ...c,
       items: byClaim[String(c.id)] || [],
@@ -134,7 +139,7 @@ export async function GET(req: NextRequest) {
       recovered += num(c.amount_paid) || 0
     }
     return NextResponse.json({
-      ok: true, today: todayET(), claims: out, canClose: await canCloseClaims(gate.access),
+      ok: true, today: todayET(), claims: out, canClose,
       totals: { open: openCount, sought: Math.round(sought * 100) / 100, recovered: Math.round(recovered * 100) / 100 },
     })
   } catch (e: any) {

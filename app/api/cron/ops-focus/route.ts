@@ -28,10 +28,14 @@ import { recordRun } from '@/lib/automation-runs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-/** The four moments, in Eastern. */
-const SLOTS = [7, 12, 15, 20]
+/** The moments, in Eastern (three since 2026-11-09 — see below). */
+// The 8pm look was dropped 2026-11-09 (Jon: fewer, better — nobody acts on it at 8pm, and it was a
+// quarter of this job's model spend). The 0/1 UTC lines in vercel.json now return at once as misfires.
+const SLOTS = [7, 12, 15]
 /** Asked one at a time, in this order, so the markets people actually work are done first. */
-const MARKETS = ['Miami', 'Broward', 'North', 'all']
+// 'all' was dropped 2026-11-09: it re-read the three markets in one more model call; the board ranks
+// the combined view in code when someone opens it.
+const MARKETS = ['Miami', 'Broward', 'North']
 const SLOT_KEY = 'ops_focus_last_slot'
 
 const etParts = () => {
@@ -52,7 +56,7 @@ async function run(req: NextRequest) {
   const force = req.nextUrl.searchParams.get('force') === '1'
   const slot = SLOTS.indexOf(hour) >= 0 ? hour : null
   if (slot == null && !force) {
-    return NextResponse.json({ ok: true, skipped: 'not one of the four slots', etHour: hour, slots: SLOTS })
+    return NextResponse.json({ ok: true, skipped: 'not one of the slots', etHour: hour, slots: SLOTS })
   }
 
   // ONE RUN PER SLOT. Both UTC candidates fire every day, and only one of them is the real hour —

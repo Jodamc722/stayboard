@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { runAutoInspections, runArrivalFeedbackInspections, runLowReviewInspections, retireArrivalInspections, runDeepCleanInspections, backfillInspectionTemplates } from '@/lib/auto-inspections'
 import { runPmRecurrence, pmRecurrenceRanWithin } from '@/lib/pm-recurrence'
 import { requireCron } from '@/lib/cron-auth'
-import { withRouteReceipt } from '@/lib/automation-runs'
+import { withRouteReceipt, recordRun } from '@/lib/automation-runs'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -19,7 +19,8 @@ export const maxDuration = 120
 // RECEIPT (2026-09-28): one row per real run (a preview writes none), counting inspections created.
 const receipted = withRouteReceipt<NextRequest>('auto-inspections', run, {
   skipWhen: (req) => new URL(req.url).searchParams.get('preview') === '1',
-  count: (b) => (typeof b.created === 'number' ? b.created + (Number(b.arrivalFeedback?.created) || 0) : undefined),
+  // Every inspection this run filed, whichever rule filed it (low-review and deep-clean were left out before).
+  count: (b) => (typeof b.created === 'number' ? b.created + (Number(b.arrivalFeedback?.created) || 0) + (Number(b.lowReviews?.created) || 0) + (Number(b.deepCleanInspections?.created) || 0) : undefined),
 })
 export async function GET(req: NextRequest) { return receipted(req) }
 
@@ -67,6 +68,28 @@ async function run(req: NextRequest) {
     let pm: any = null
     if (!preview) {
       try { pm = (await pmRecurrenceRanWithin(6)) ? { skipped: 'ran within 6h' } : await runPmRecurrence() } catch (e: any) { pm = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+    }
+    // ONE RECEIPT PER CREATOR (2026-11-09, Upkeep → Automations): the route's own receipt says the
+    // cron ran; these say what each rule did, so the Automations tab can show "last run · made N" per
+    // row. Counts only — no guest or unit names. Never on a preview; recordRun never throws.
+    if (!preview) {
+      const part = (name: string, r: any, extra: Record<string, any> = {}) => {
+        if (!r) return Promise.resolve()
+        const off = r.enabled === false
+        return recordRun({
+          name, ok: r.ok !== false && !r.error, itemCount: Number(r.created) || 0,
+          detail: { ...(off ? { disabled: true } : {}), failed: Number(r.failed) || 0, ...extra },
+          error: r.error ? String(r.error) : null,
+        })
+      }
+      await Promise.all([
+        part('insp-prearrival', out, { scanned: out.scanned, candidates: out.candidates.length, skippedNoBreezeway: out.skippedNoBreezeway, retired: retired ? (retired.retired || []).length : 0 }),
+        part('insp-arrival-feedback', arrivalFeedback, { covered: Number(arrivalFeedback?.covered) || 0, movedForward: Number(arrivalFeedback?.movedForward) || 0 }),
+        part('insp-low-review', lowReviews, { movedForward: Number(lowReviews?.movedForward) || 0, alreadyCovered: Number(lowReviews?.alreadyCovered) || 0, waitingForCheckout: Number(lowReviews?.waitingForCheckout) || 0 }),
+        part('insp-deep-clean', deepCleans, { alreadyFiled: Number(deepCleans?.alreadyFiled) || 0 }),
+        // Only when the pass actually ran (it is held to once every six hours).
+        pm && !pm.skipped ? part('pm-recurrence', pm, { proposed: Number(pm.proposed) || 0, moved: Number(pm.moved) || 0, waiting: Number(pm.waiting) || 0, capped: Number(pm.capped) || 0 }) : Promise.resolve(),
+      ])
     }
     // The cron's own response carries counts only — no guest data on the scheduler's path.
     if (!preview && !gate.access) {

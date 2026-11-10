@@ -63,6 +63,12 @@ type Ctx = {
   errOf: (id: string) => string
   busy: string | null
   reload: () => void
+  /**
+   * LAZY (2026-11-09 audit). The engine behind this list pages thousands of history rows, and its
+   * answer is only ever drawn inside an OPENED row, the Vacant tab or the Focus tab — so the board
+   * no longer pays for it on every load. The first surface that needs the list calls this.
+   */
+  ensure: () => void
   act: (s: Sug, action: 'add' | 'dismiss', opts?: { assignee?: string; scheduleDate?: string }) => Promise<void>
   /** Everything still live, for one unit / one person / everything. */
   forUnit: (listingId: string) => Sug[]
@@ -75,6 +81,11 @@ type Ctx = {
 }
 const SugCtx = createContext<Ctx | null>(null)
 export const useSuggestions = () => useContext(SugCtx)
+/** Ask the provider to load the list (once). Call from any surface that is about to draw it. */
+export function useEnsureSuggestions(ctx: Ctx | null) {
+  const ensure = ctx?.ensure
+  useEffect(() => { if (ensure) ensure() }, [ensure])
+}
 
 export function SuggestionsProvider({ date, roster, onAdded, children }: {
   date: string
@@ -88,6 +99,8 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
   const [busy, setBusy] = useState<string | null>(null)
   const [errs, setErrs] = useState<Record<string, string>>({})
   const [note, setNote] = useState('')
+  const [wanted, setWanted] = useState(false)
+  const ensure = useCallback(() => setWanted(true), [])
 
   const load = useCallback(async () => {
     // WAIT FOR THE BOARD'S DATE (2026-09-09 audit). `date` arrives as '' until /api/ops-today
@@ -101,18 +114,20 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
       setRun(j && typeof j === 'object' ? j : null)
     } catch { setRun(null) } finally { setLoading(false) }
   }, [date])
-  useEffect(() => { if (date) load() }, [load, date])
+  useEffect(() => { if (date && wanted) load() }, [load, date, wanted])
   // THE WHOLE PREMISE IS "SOMEBODY IS STANDING THERE RIGHT NOW".
   // The board polls every five minutes; this list used to be fetched once and then sat there, so by
   // 11am it was still showing the 7am verdict and the 7am picks — after cleans had closed and people
   // had moved buildings. A list that stale is worse than no list, because the server rebuilds on
   // every Add and rejects picks that have gone off.
   useEffect(() => {
+    // Nobody has asked for the list yet: nothing to keep fresh.
+    if (!wanted) return
     const t = setInterval(() => { if (document.visibilityState === 'visible') load() }, 5 * 60_000)
     const onShow = () => { if (document.visibilityState === 'visible') load() }
     document.addEventListener('visibilitychange', onShow)
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', onShow) }
-  }, [load])
+  }, [load, wanted])
 
   const act = useCallback(async (s: Sug, action: 'add' | 'dismiss', opts?: { assignee?: string; scheduleDate?: string }) => {
     setBusy(s.id)
@@ -179,7 +194,7 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
     [run, gone])
 
   const value: Ctx = useMemo(() => ({
-    run, loading, roster, gone, busy, act, reload: load, push, note,
+    run, loading, roster, gone, busy, act, reload: load, ensure, push, note,
     errOf: (id: string) => errs[id] || '',
     pendingFor: (id: string) => (run?.pending || {})[String(id)] || [],
     forUnit: (id: string) => live.filter(s => s.listingId === id),
@@ -196,7 +211,7 @@ export function SuggestionsProvider({ date, roster, onAdded, children }: {
     // permanently empty.
     all: (market?: string) => live.filter(s =>
       !market || market === 'all' || (market === 'Vendor' ? s.vendor : s.market === market && !s.vendor)),
-  }), [run, loading, roster, gone, errs, busy, act, live, load, push, note])
+  }), [run, loading, roster, gone, errs, busy, act, live, load, ensure, push, note])
 
   return <SugCtx.Provider value={value}>{children}</SugCtx.Provider>
 }
@@ -311,10 +326,12 @@ function PendingRows({ listingId, unit, defaultAssignee }: {
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Pending in this unit</span>
         <span className="text-[10px] font-bold text-white bg-muted rounded-full px-1.5 py-0.5 tabular-nums leading-none">{rows.length}</span>
         <span className="flex-1" />
-        <input type="date" value={when} min={today} onChange={e => setWhen(e.target.value)}
+        {/* `when` starts empty when this row mounted before the (now lazy) list arrived — fall back
+            to the run's own day rather than pushing onto no date. */}
+        <input type="date" value={when || today} min={today} onChange={e => setWhen(e.target.value)}
           className="rounded-lg border border-line bg-white px-1.5 py-0.5 text-[11px]" />
         <button
-          onClick={() => ctx.push(listingId, unit, chosen.length ? chosen : allIds, when, defaultAssignee)}
+          onClick={() => ctx.push(listingId, unit, chosen.length ? chosen : allIds, when || today, defaultAssignee)}
           disabled={busy}
           className="rounded-lg bg-ink text-white px-2 py-1 text-[11px] font-bold disabled:opacity-40 inline-flex items-center gap-1">
           {busy ? <Loader2 size={10} className="animate-spin" /> : <CalendarClock size={10} />}
@@ -344,6 +361,7 @@ function PendingRows({ listingId, unit, defaultAssignee }: {
 // ── PUSH LEVEL: the band above the board ────────────────────────────────────────────────────────
 export function SuggestionsBand({ market }: { market: string }) {
   const ctx = useSuggestions()
+  useEnsureSuggestions(ctx)
   const [open, setOpen] = useState(true)
   const [notesOpen, setNotesOpen] = useState(false)
   if (!ctx || ctx.loading || !ctx.run) return null
@@ -478,6 +496,7 @@ function InlineSuggestions({ list, title, showUnit, defaultAssignee, done }: {
 /** What this unit is owed: what we would suggest, and what is already pending on it. */
 export function UnitSuggestions({ listingId, unit }: { listingId: string | null | undefined; unit?: string }) {
   const ctx = useSuggestions()
+  useEnsureSuggestions(ctx)
   if (!ctx || !listingId) return null
   const id = String(listingId)
   const done = Object.entries(ctx.gone).filter(([k]) => k.split('|')[1] === id).map(([, v]) => v)
@@ -493,6 +512,7 @@ export function UnitSuggestions({ listingId, unit }: { listingId: string | null 
 /** What this person could pick up, because they are already in that building today. */
 export function PersonSuggestions({ name }: { name: string }) {
   const ctx = useSuggestions()
+  useEnsureSuggestions(ctx)
   if (!ctx || !name) return null
   const list = ctx.forPerson(name)
   const ids = new Set(list.map(s => s.id))

@@ -32,7 +32,11 @@ async function handlePost(req: NextRequest) {
   if (!breezewayConfigured()) return NextResponse.json({ error: 'Breezeway not configured.' }, { status: 503 })
 
   const body = await req.json().catch(() => ({} as any))
-  const items = Array.isArray(body?.items) ? body.items.slice(0, 80) : []
+  const rawItems: any[] = Array.isArray(body?.items) ? body.items : []
+  // REFUSED, NOT TRIMMED (2026-11-09 audit): item 81 onward used to be dropped without a word. The
+  // board and the suggester both send batches well under this.
+  if (rawItems.length > 80) return NextResponse.json({ error: 'Too many cleans in one push (' + rawItems.length + '). Push 80 or fewer at a time.' }, { status: 413 })
+  const items = rawItems
   if (!items.length) return NextResponse.json({ error: 'No assignments to push.' }, { status: 400 })
   // NEVER ASSIGN (lib/never-assign): the whole push is refused before anything is written, so a
   // board with one bad pick is fixed and re-pushed rather than half-applied.

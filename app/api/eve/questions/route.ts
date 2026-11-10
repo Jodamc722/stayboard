@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
   const sp = new URL(req.url).searchParams
   // ?count=1 — the badge and the Command Center card. One digit, no rows.
   if (sp.get('count')) return NextResponse.json({ ok: true, count: await countOpenQuestions() })
-  return NextResponse.json({ ok: true, questions: await listQuestions(sp.get('status') || 'open') })
+  // ?slim=1 — the Today list: the columns a row prints, not the whole record.
+  return NextResponse.json({ ok: true, questions: await listQuestions(sp.get('status') || 'open', 60, { slim: !!sp.get('slim') }) })
 }
 
 export async function POST(req: NextRequest) {

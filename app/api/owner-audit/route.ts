@@ -23,8 +23,10 @@ import { appendReservationNote } from '@/lib/claim-note'
 import { pullReservationsByIds } from '@/lib/guesty'
 import { syncOwners, syncOwnerStatements, syncLedgerMonth, syncLedgerRange } from '@/lib/guesty-owner-sync'
 import { MONTH_LABEL } from '@/lib/owner-statements'
-import { auditMonths, buildAudit, defaultAuditMonth, prevMonthUnsigned, saveAuditRules, AuditStatus, WRITABLE_STATUSES, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
+import { buildAudit, defaultAuditMonth, prevMonthUnsigned, saveAuditRules, AuditStatus, WRITABLE_STATUSES, SIGNOFF_KEY, PREP_PREFIX, PREP_OWNER } from '@/lib/owner-audit'
 import { tagAndNotify } from '@/lib/mentions'
+import { getAudit, getAuditForDetail, getAuditMonths, bustAudit } from '@/lib/owner-audit-cache'
+import type { AuditData, AuditItem } from '@/lib/owner-audit'
 
 export const dynamic = 'force-dynamic'
 // 300s: the 'sync' action sweeps a whole month of statement line items out of Guesty.
@@ -59,24 +61,63 @@ async function whoAmI(): Promise<{ ok: boolean; internal: boolean; email: string
   return { ok: gate.ok, internal: false, email: '' }
 }
 
+// THE LIST GOES FIRST, THE DETAIL ON DEMAND (2026-11-09 audit: 3.5 MB and 10s+ on a phone).
+// Every row used to travel with its statement line items and its whole guest folio — tables that
+// are only drawn when a row is opened, on a board that opens with every row closed. The list now
+// leaves those two arrays behind (`slim: true` says so) and an opened row asks for its own with
+// ?month=&owner=&item=. Every number on the row is untouched: totals, flags, rates and lineCount
+// are computed by the engine before this runs. `cancelFeeLine` carries the one thing the page
+// worked out from the line items itself (the "Cancellation fee" tag), by the same test on the
+// same lines. ?full=1 returns the audit exactly as before.
+const CANCEL_FEE_LINE = /cancel+ation|cancel+ed?\s*fee|cancel+\s*(charge|penalty)/i
+function slimAudit(data: AuditData): AuditData {
+  return {
+    ...data,
+    items: data.items.map((it: AuditItem) => ({
+      ...it,
+      cancelFeeLine: it.lines.some(l => CANCEL_FEE_LINE.test(l.label) && Math.abs(l.amount) > 0.005),
+      slim: true,
+      lines: [],
+      folio: [],
+    })),
+  }
+}
+
 export async function GET(req: NextRequest) {
   const who = await whoAmI()
   if (!who.ok) return NextResponse.json({ ok: false, needsPassword: true, error: 'unauthorized' }, { status: 401 })
 
   try {
-    const months = await auditMonths()
-    const wanted = new URL(req.url).searchParams.get('month') || ''
-    let month = ''
-    if (/^\d{4}-\d{2}$/.test(wanted)) month = wanted
-    else {
+    const sp = new URL(req.url).searchParams
+    const wanted = sp.get('month') || ''
+
+    // ── ONE ROW'S DETAIL — the line items and the guest folio of an opened row.
+    const itemKey = sp.get('item')
+    if (itemKey != null) {
+      if (!/^\d{4}-\d{2}$/.test(wanted)) return NextResponse.json({ ok: false, error: 'month required' }, { status: 400 })
+      const ownerId = sp.get('owner') || ''
+      const audit = await getAuditForDetail(wanted)
+      const it = audit.items.find(x => x.ownerId === ownerId && x.key === itemKey)
+      if (!it) return NextResponse.json({ ok: false, error: 'That row is not on this month any more — reload the page.' }, { status: 404 })
+      return NextResponse.json({ ok: true, lines: it.lines, lineCount: it.lineCount, folio: it.folio })
+    }
+
+    const full = sp.get('full') === '1'
+    let months: Awaited<ReturnType<typeof getAuditMonths>>
+    let data: AuditData
+    if (/^\d{4}-\d{2}$/.test(wanted)) {
+      // The month is known, so the picker feed and the audit are read side by side.
+      ;[months, data] = await Promise.all([getAuditMonths(), getAudit(wanted)])
+    } else {
+      months = await getAuditMonths()
       const et = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
       const [y, m] = et.slice(0, 7).split('-').map(Number)
       const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7)
-      month = defaultAuditMonth(months, { prevUnsigned: Number(et.slice(8, 10)) <= 10 ? await prevMonthUnsigned(prev) : false })
+      const month = defaultAuditMonth(months, { prevUnsigned: Number(et.slice(8, 10)) <= 10 ? await prevMonthUnsigned(prev) : false })
+      if (!month) return NextResponse.json({ ok: true, internal: who.internal, months, data: null })
+      data = await getAudit(month)
     }
-    if (!month) return NextResponse.json({ ok: true, internal: who.internal, months, data: null })
-    const data = await buildAudit(month)
-    return NextResponse.json({ ok: true, internal: who.internal, months, data })
+    return NextResponse.json({ ok: true, internal: who.internal, months, data: full ? data : slimAudit(data) })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
@@ -89,12 +130,28 @@ export async function GET(req: NextRequest) {
 // click as "nothing was ever wrong".
 const STATUSES: AuditStatus[] = [...WRITABLE_STATUSES, 'clear']
 
+// Actions that change what the audit is BUILT from (the Guesty mirror, the rules) drop the kept
+// copy when they start and again when they finish, so a page that reloads after a Sync can never
+// be handed an audit built before — or halfway through — it. Review writes (status, note, comment,
+// sign-off) need no bust: the kept copy is checked against the saved reviews on every read.
+const REBUILDING_ACTIONS = ['rules', 'sync', 'prep-recheck', 'refresh']
+
 export async function POST(req: NextRequest) {
+  let rebuilt = false
+  try {
+    return await handlePost(req, () => { rebuilt = true; bustAudit() })
+  } finally {
+    if (rebuilt) bustAudit()
+  }
+}
+
+async function handlePost(req: NextRequest, willRebuild: () => void) {
   const who = await whoAmI()
   if (!who.ok) return NextResponse.json({ ok: false, needsPassword: true, error: 'unauthorized' }, { status: 401 })
 
   const body = await req.json().catch(() => ({}))
   const action = String(body.action || '')
+  if (REBUILDING_ACTIONS.includes(action)) willRebuild()
 
   // ── RULES — the flag thresholds. Signed-in users only: the share link can work the
   // audit, but it doesn't get to decide what the audit checks.

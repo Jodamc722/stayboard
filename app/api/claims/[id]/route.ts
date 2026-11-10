@@ -15,6 +15,7 @@ import { nextCheckInFor } from '@/lib/claim-turnover'
 import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { bustDay } from '@/lib/bust'
+import { bustAudit } from '@/lib/owner-audit-cache'
 import { claimReviewers } from '@/lib/claim-reviewers'
 import { canCloseClaims, CLOSE_DENIED } from '@/lib/claim-closers'
 
@@ -190,6 +191,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     if (upd.error) return NextResponse.json({ ok: false, error: upd.error.message }, { status: 500 })
     bustDay()   // stage, deadline and amount feed the Command Center's cached day
+    bustAudit() // a claim's amounts and its "owner adjusted" tick are read by the Statement review's kept copy
 
     const after: Claim = { ...before, ...patch } as Claim
 

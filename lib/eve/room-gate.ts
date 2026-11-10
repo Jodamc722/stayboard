@@ -33,7 +33,16 @@ export function inPostWindow(now = new Date(), win: { start: number; end: number
   return h >= win.start && h < win.end
 }
 
-export type GateInput = { channel: string; threadTs?: string | null; text: string; subject?: string | null; by: string; urgent?: boolean; summary?: string; now?: Date }
+/**
+ * `sayText` — WHAT THE REGISTRY COMPARES (2026-11-09). The said-registry fingerprints the first 14
+ * significant words of a post. A list whose header never changes ("For the desk (N) — anyone on the
+ * team: reply in this thread with …") had the same fingerprint every time, so after its first post
+ * every later list in that room was held for a week as "already said". A caller whose post opens with
+ * fixed furniture passes the part that changes (the item lines) here; the registry checks and records
+ * that instead of `text`. What is posted is always `text`.
+ */
+export type GateInput = { channel: string; threadTs?: string | null; text: string; sayText?: string | null; subject?: string | null; by: string; urgent?: boolean; summary?: string; now?: Date }
+const saidText = (p: GateInput): string => String(p.sayText || '').trim() || p.text
 
 /** May this post go out now? Never throws; a check that cannot be read never blocks (as in stepDown). */
 export async function roomGate(p: GateInput): Promise<{ ok: true } | { ok: false; why: string }> {
@@ -48,7 +57,7 @@ export async function roomGate(p: GateInput): Promise<{ ok: true } | { ok: false
   if (!channel) return { ok: true }
   try {
     const { alreadySaid } = await import('./said')
-    const dup = await alreadySaid({ channel, threadTs: p.threadTs || null, text: p.text, subject: p.subject || null })
+    const dup = await alreadySaid({ channel, threadTs: p.threadTs || null, text: saidText(p), subject: p.subject || null })
     if (dup.dup) return held(p, `already said — ${dup.why}`)
   } catch { /* the registry never blocks a post */ }
   if (!p.threadTs && String(p.by || '').startsWith('cron:') && !p.urgent) {
@@ -78,7 +87,7 @@ async function held(p: GateInput, why: string): Promise<{ ok: false; why: string
 export async function noteSaid(p: GateInput & { ts?: string | null }): Promise<void> {
   try {
     const { markSaid } = await import('./said')
-    await markSaid({ channel: p.channel, threadTs: p.threadTs || null, text: p.text, subject: p.subject || null, by: p.by, ts: p.ts || null })
+    await markSaid({ channel: p.channel, threadTs: p.threadTs || null, text: saidText(p), subject: p.subject || null, by: p.by, ts: p.ts || null })
   } catch { /* best effort */ }
   try {
     const { recordAgentAction } = await import('./agent-mode')

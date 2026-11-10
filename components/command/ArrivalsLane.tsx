@@ -15,12 +15,13 @@ import { Row, LIST, GHOST, DARK } from '@/components/command/Hub'
 import { CallNoteBtn, CallNoteStrip } from '@/components/CallNote'
 
 type CallOutcome = 'reached' | 'voicemail' | 'no_answer' | 'claim'
-const URL = '/api/front-desk'
+// ?slim=1: this lane draws arrivals only, so it asks for arrivals only (the Front desk board reads the full route).
+const URL = '/api/front-desk?slim=1'
 const CH = (s: string) => String(s || '').replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom|booking\.com/i, 'Booking.com').replace(/expedia/i, 'Expedia').replace(/vrbo|homeaway/i, 'Vrbo').replace(/direct|website|manual/i, 'Direct')
 const shortUnit = (u: string) => String(u || '').replace(/\s+-\s+.*$/, '')
 
 export function ArrivalsLane() {
-  const { data, loading, refresh } = useCachedFetch<FdData>(URL, { ttl: 60_000 })
+  const { data, loading, refresh } = useCachedFetch<FdData>(URL, { ttl: 120_000 })
   const reload = () => { invalidateCache(URL); refresh() }
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')

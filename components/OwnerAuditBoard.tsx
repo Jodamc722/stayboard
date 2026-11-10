@@ -101,6 +101,10 @@ type Item = {
   flags: Flag[]; needsReview: boolean
   status: Status; touched: boolean; note: string; comments: Comment[]
   updatedBy: string | null; updatedAt: string | null
+  // The list arrives without each row's line items and folio (slim); they are fetched when the row
+  // is opened. cancelFeeLine is the server's answer to "does a line item name itself a cancellation
+  // fee", worked out on the lines before they were left behind.
+  slim?: boolean; cancelFeeLine?: boolean
 }
 type Owner = {
   ownerId: string; ownerName: string; hasStatement: boolean; dueToOwner: number | null
@@ -217,6 +221,7 @@ const SECTIONS: { key: Status; title: string; blurb: string; collapsed: boolean 
 const CANCEL_FEE_LINE = /cancel+ation|cancel+ed?\s*fee|cancel+\s*(charge|penalty)/i
 const isCancelFee = (it: Item) =>
   (it.statusTag === 'canceled' && (Math.abs(it.rental) > 0.005 || Math.abs(it.net) > 0.005 || Math.abs(it.commission) > 0.005))
+  || !!it.cancelFeeLine
   || it.lines.some(l => CANCEL_FEE_LINE.test(l.label) && Math.abs(l.amount) > 0.005)
 
 const fmt = (n: number) => {
@@ -929,6 +934,39 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'expedia-prep-' + data.month + '.csv'; a.click(); URL.revokeObjectURL(a.href)
   }
 
+  // AN OPENED ROW FETCHES ITS OWN DETAIL (2026-11-09). The list no longer carries every row's line
+  // items and guest folio (3.5 MB on a phone); opening a row asks for that one row's. Nothing on
+  // the row's own line depends on it — the totals, flags and rates came with the list.
+  const detailBusy = useRef<Record<string, boolean>>({})
+  const [detailErr, setDetailErr] = useState<Record<string, string>>({})
+  const loadDetail = async (it: Item) => {
+    const k = it.ownerId + '|' + it.key
+    if (!it.slim || detailBusy.current[k] || !data) return
+    detailBusy.current[k] = true
+    setDetailErr(prev => { if (!prev[k]) return prev; const n = { ...prev }; delete n[k]; return n })
+    const forMonth = data.month
+    try {
+      const r = await fetch('/api/owner-audit?month=' + encodeURIComponent(forMonth) + '&owner=' + encodeURIComponent(it.ownerId) + '&item=' + encodeURIComponent(it.key), { cache: 'no-store' })
+      const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load the line items')
+      const lines: Line[] = Array.isArray(j.lines) ? j.lines : []
+      const folio: FolioItem[] = Array.isArray(j.folio) ? j.folio : []
+      // Only into the month it was asked for — a month switch mid-flight must not be written over.
+      setData(d => (d && d.month === forMonth)
+        ? { ...d, items: d.items.map(x => (x.ownerId === it.ownerId && x.key === it.key) ? { ...x, lines, folio, slim: false } : x) }
+        : d)
+    } catch (e: any) {
+      setDetailErr(prev => ({ ...prev, [k]: String(e?.message || e).slice(0, 160) }))
+    } finally {
+      detailBusy.current[k] = false
+    }
+  }
+  const toggleRow = (it: Item, open: boolean) => {
+    const k = it.ownerId + '|' + it.key
+    setOpenItems(prev => ({ ...prev, [k]: !open }))
+    if (!open) loadDetail(it)
+  }
+
   // ── one audited row (shared by the worklist and the statement view) ────────
   const renderItem = (it: Item) => {
     const k = it.ownerId + '|' + it.key
@@ -941,12 +979,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       <div key={k} className={'border-l-2 ' + (done ? 'border-l-emerald-300 opacity-90' : it.status === 'action' ? 'border-l-rose-300' : worst === 'high' ? 'border-l-rose-400' : worst === 'review' ? 'border-l-amber-300' : 'border-l-transparent')}>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2">
           <Tip label={open ? 'Close the row' : 'Open: payout, line items, notes'}>
-            <button onClick={() => setOpenItems(prev => ({ ...prev, [k]: !open }))} aria-label={open ? 'Close the row' : 'Open the row'} className="shrink-0 text-muted hover:text-ink">
+            <button onClick={() => toggleRow(it, open)} aria-label={open ? 'Close the row' : 'Open the row'} className="shrink-0 text-muted hover:text-ink">
               {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </button>
           </Tip>
           {/* ONE LINE: who · code, then where and when, then every tag. */}
-          <div onClick={() => setOpenItems(prev => ({ ...prev, [k]: !open }))} className="min-w-[180px] flex-1 cursor-pointer">
+          <div onClick={() => toggleRow(it, open)} className="min-w-[180px] flex-1 cursor-pointer">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">
                 {done && it.touched && <Check size={12} className="inline -mt-0.5 mr-1 text-emerald-600" />}
@@ -1121,6 +1159,16 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 </div>
               )}
             </div>
+            {it.slim && (
+              detailErr[k]
+                ? <div className="mb-2 max-w-2xl rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                    Line items did not load ({detailErr[k]}). <button onClick={() => loadDetail(it)} className="font-semibold underline">Try again</button>
+                  </div>
+                : <div className="mb-2 max-w-2xl rounded-xl border border-line px-3 py-2 text-xs text-muted">
+                    Loading {it.lineCount} line item{it.lineCount === 1 ? '' : 's'} and the guest folio…
+                    <div className="mt-2 h-10 rounded-lg bg-app animate-pulse" />
+                  </div>
+            )}
             {it.lines.length > 0 && (
               /* Four columns of statement detail (date, label, code, amount). On a phone the code
                  and the amount were being crushed to a couple of characters each, so the table

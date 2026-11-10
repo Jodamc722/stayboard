@@ -66,7 +66,9 @@ const COUNTERS: Record<string, () => Promise<number | null>> = {
     try {
       const { loadCallsDesk } = await import('./call-desk')
       const today = dayET(0)
-      const d = await loadCallsDesk(db(), today)
+      // dayOnly: one integer about today's arrivals does not need the desk's 17-day window, its
+      // checkouts or their glitches (2026-11-09 audit) — same rows, same rules, one day of them.
+      const d = await loadCallsDesk(db(), today, today, { dayOnly: true })
       return d.rows.filter(r => r.due && !r.closed && !r.done && r.check_in === today).length
     } catch { return null }
   },
@@ -128,13 +130,23 @@ async function headCount(build: (q: any) => any): Promise<number | null> {
  * The counts for the signals this list actually names — nothing else. A checklist with two
  * signalled items must not pay for every counter this file will ever grow.
  */
+// The same counts for 30 seconds: the Today page asks every minute for every viewer, and a count
+// that is half a minute old is still the count. Kept per set of signals, like tasksMemo above.
+const signalsMemo: Record<string, { at: number; p: Promise<Record<string, number | null>> }> = {}
 export async function countSignals(keys: string[]): Promise<Record<string, number | null>> {
   const wanted = keys.filter((k, i) => k && COUNTERS[k] && SIGNAL_META[k] && keys.indexOf(k) === i)
   if (!wanted.length) return {}
-  const counts = await Promise.all(wanted.map(k => COUNTERS[k]().catch(() => null)))
-  const out: Record<string, number | null> = {}
-  wanted.forEach((k, i) => { out[k] = counts[i] })
-  return out
+  const memoKey = wanted.slice().sort().join('|')
+  const hit = signalsMemo[memoKey]
+  if (hit && Date.now() - hit.at < 30_000) return hit.p
+  const p = (async () => {
+    const counts = await Promise.all(wanted.map(k => COUNTERS[k]().catch(() => null)))
+    const out: Record<string, number | null> = {}
+    wanted.forEach((k, i) => { out[k] = counts[i] })
+    return out
+  })()
+  signalsMemo[memoKey] = { at: Date.now(), p }
+  return p
 }
 
 /**

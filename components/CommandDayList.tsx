@@ -33,7 +33,7 @@
 //   · EveLine, VendorVisitsCard (→ "· N vendors on site" on the day line), the owner-lane filter.
 //
 // Data: the same one read (/api/command/day, lib/command-day unchanged). Everything is derived here.
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import {
   RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, AlertTriangle, ChevronDown, ChevronRight,
@@ -61,6 +61,7 @@ type EveQ = { id: string; question: string; why: string | null; scope: string; a
 type VendorVisit = { id: string; tone: 'today' | 'soon' | 'later' | 'missed' | 'done' }
 
 const EVE_COUNT_URL = '/api/eve/questions?count=1'
+const EVE_ROWS_URL = '/api/eve/questions?slim=1'
 const HOW_KEY = 'cc5.how'
 const SEV_RANK: Record<Sev, number> = { now: 0, today: 1, soon: 2 }
 const bz = (id: string) => 'https://app.breezeway.io/task/' + id
@@ -138,16 +139,9 @@ export function CommandDayList() {
   const { data: vendorRes } = useCachedFetch<{ visits: VendorVisit[] }>(data ? '/api/projects/vendor-visits' : null, { ttl: 120_000 })
   const roster = useMemo(() => Array.isArray(rosterRes?.people) ? rosterRes!.people : [], [rosterRes])
   const vendorsOnSite = useMemo(() => (Array.isArray(vendorRes?.visits) ? vendorRes!.visits : []).filter(v => v.tone === 'today').length, [vendorRes])
-  // When the day was last read. A tab switch re-reads it only when that is over a minute ago
-  // (2026-09-28 audit): every glance back at the tab used to rebuild the whole day.
-  const readAt = useRef(0)
-  useEffect(() => { if (data) readAt.current = Date.now() }, [data])
-  useEffect(() => {
-    const onShow = () => { if (document.visibilityState === 'visible' && Date.now() - readAt.current > 60_000) refresh() }
-    const t = setInterval(onShow, 5 * 60 * 1000)
-    document.addEventListener('visibilitychange', onShow)
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onShow) }
-  }, [refresh])
+  // No timer of its own (2026-11-09 audit): useCachedFetch already re-reads the day every ttl while
+  // the tab is visible and on coming back to it when stale — the 5-minute interval and the second
+  // visibility listener that lived here asked for the same read again.
   const reload = useCallback(() => { invalidateCache(DAY_URL); refresh() }, [refresh])
   /** Rows cleared from this screen since the last read — so a cleared row leaves at once. */
   const [gone, setGone] = useState<Record<string, boolean>>({})
@@ -312,7 +306,7 @@ function Row({ sev, title, meta, tags, primary, secondary, onTap, expanded, chil
 // It reads the same URL the bulletin card already fetched, so the shared cache serves it and the
 // page makes no extra request for this.
 function useReminders() {
-  const { data } = useCachedFetch<{ today?: string; canPost?: boolean; haveTo?: BoardPost[] }>(BULLETIN_URL, { ttl: 60_000 })
+  const { data } = useCachedFetch<{ today?: string; canPost?: boolean; haveTo?: BoardPost[] }>(BULLETIN_URL, { ttl: 300_000 })
   const [busy, setBusy] = useState('')
   const [local, setLocal] = useState<Record<string, boolean>>({})
   const rows = (data?.haveTo || []).filter(p => dueState(p, data?.today || '') !== 'done' || local[p.id] !== undefined)
@@ -357,7 +351,8 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
   const eveGroups = useMemo(() => groupEve(eve.rows), [eve.rows])
   const eveShown = allEve ? eveGroups : eveGroups.slice(0, EVE_COLLAPSED)
   const eveMore = eveGroups.slice(eveShown.length).reduce((a, g) => a + g.qs.length, 0)
-  const eveCount = eve.rows.length || (eve.loaded ? 0 : eve.count)
+  // Counted the way they are drawn: thirty copies of one question are one thing to decide.
+  const eveCount = eve.loaded ? eveGroups.length : eve.count
   const approvalsHidden = Math.max(0, d.tiles.guestDesk.approvals - d.tiles.guestDesk.rows.filter(r => r.kind === 'approval').length)
   // The band's count is what is WAITING on somebody — an already-answered draft is not.
   const liveDrafts = drafts.rows.filter(x => !x.followedUp).length
@@ -606,24 +601,24 @@ function EveDraftGroupRow({ g, act, busy }: { g: DraftGroup; act: (id: string, o
 function useEveQuestions() {
   const { data, error } = useCachedFetch<{ count: number }>(EVE_COUNT_URL, { ttl: 300_000 })
   const count = error ? 0 : Number(data?.count || 0)
-  const [qs, setQs] = useState<EveQ[] | null>(null)
+  // The rows are a remembered read like the rest of the page (2026-11-09 audit): a bare fetch re-read
+  // sixty full records on every visit. Slim rows, five minutes, and only when the count says so.
+  const rowsQ = useCachedFetch<{ questions?: EveQ[] }>(count > 0 ? EVE_ROWS_URL : null, { ttl: 300_000 })
+  const [gone, setGone] = useState<Record<string, true>>({})
   const [busy, setBusy] = useState('')
-  useEffect(() => {
-    if (count > 0 && qs === null) {
-      fetch('/api/eve/questions').then(r => r.json()).then(r => setQs(Array.isArray(r?.questions) ? r.questions : [])).catch(() => setQs([]))
-    }
-  }, [count, qs])
+  const qs = useMemo<EveQ[] | null>(() => Array.isArray(rowsQ.data?.questions) ? rowsQ.data!.questions!.filter(q => !gone[q.id]) : (rowsQ.error ? [] : null), [rowsQ.data, rowsQ.error, gone])
+  const rows = useMemo(() => qs || [], [qs])
   const act = async (id: string, op: 'answer' | 'dismiss', answer: string) => {
     setBusy(id)
     try {
       const res = await fetch('/api/eve/questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id, answer }) })
       if (!res.ok) return false
-      setQs(x => (x || []).filter(q => q.id !== id))
-      invalidateCache(EVE_COUNT_URL)
+      setGone(g => ({ ...g, [id]: true }))
+      invalidateCache(EVE_COUNT_URL); invalidateCache(EVE_ROWS_URL)
       return true
     } finally { setBusy('') }
   }
-  return { count, rows: qs || [], loaded: qs !== null || count === 0, busy, act }
+  return { count, rows, loaded: qs !== null || count === 0, busy, act }
 }
 
 // ── EVE'S QUESTIONS: grouped by template, compact until tapped (Jon, 2026-09-18) ────────────────
@@ -682,7 +677,7 @@ function EveRow({ q, act, busy, nested }: { q: EveQ; act: (id: string, op: 'answ
   const [open, setOpen] = useState(false)
   const [err, setErr] = useState('')
   const send = async () => { if (!draft.trim() || busy) return; setErr(''); const ok = await act(q.id, 'answer', draft.trim()); if (!ok) setErr('Could not save that answer.') }
-  const meta = [q.kind === 'plan' ? 'from the weekly review' : q.scope, Number(q.asked_count) > 1 ? 'asked ' + q.asked_count + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
+  const meta = [q.kind === 'plan' ? 'from the weekly review' : q.scope, /* A sweep re-raising its own question is not somebody asking: the count is shown for people's questions only, and capped. */ q.source !== 'system' && Number(q.asked_count) > 1 ? 'came up ' + (Number(q.asked_count) > 20 ? '20+' : q.asked_count) + ' times' : '', q.source === 'eve' ? 'came up in conversation' : ''].filter(Boolean).join(' · ')
   return (
     <Row sev={null} title={nested ? (q.scope || 'Question') : q.question} meta={nested && !open ? q.question : open && q.why ? 'Why: ' + q.why : meta} onTap={() => setOpen(o => !o)} expanded={open} err={err}
       secondary={<IconBtn title="Later — not worth answering now" onClick={() => act(q.id, 'dismiss', '')} disabled={busy}><X size={14} /></IconBtn>}>
@@ -956,7 +951,7 @@ function BacklogBatch({ rows }: { rows: NextItem[] }) {
 
 // ── 4. YOURS — every Projects board, your name on it ───────────────────────────────────────────
 function YoursBand() {
-  const { data, loading, error, refresh } = useCachedFetch<Mine>(MINE_URL, { ttl: 60_000 })
+  const { data, loading, error, refresh } = useCachedFetch<Mine>(MINE_URL, { ttl: 120_000 })
   const [busy, setBusy] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [err, setErr] = useState('')

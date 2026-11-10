@@ -6,7 +6,8 @@ import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
 import { ArrowRight, Sparkles } from 'lucide-react'
-import { LeanHead, Pill, Tag, LeanSection, LeanEmpty } from '@/components/lean'
+import { LeanHead, Pill, LeanEmpty } from '@/components/lean'
+import { GuidebookGroups, type GuidebookGroup } from '@/components/GuidebookGroups'
 import { PushGuestyButton } from '@/components/PushGuestyButton'
 import { EmergencyBackfillButton } from '@/components/EmergencyBackfillButton'
 import { pageRows } from '@/lib/db-page'
@@ -55,6 +56,19 @@ export default async function GuidebooksPage() {
 
 
   const drafts = rows.filter((r: any) => r.status === 'draft').length
+  // One compact line per book for the client list (components/GuidebookGroups) — the theme label
+  // and the date are worked out here, exactly as the row used to print them.
+  const lines: GuidebookGroup[] = groups.map((grp) => ({
+    name: grp.name,
+    items: grp.items.map((g: any) => ({
+      id: String(g.id),
+      name: String(g.listing_name || g.title || ''),
+      sub: [nickById[g.listing_id], new Date(g.updated_at).toLocaleDateString()].filter(Boolean).join(' · '),
+      themeLabel: g.theme === 'smart' ? 'Smart · ' + themeForBook(g, { building: buildingById[g.listing_id], nickname: nickById[g.listing_id] }).label : themeById(g.theme).label,
+      themeTone: g.theme === 'dark' ? 'violet' as const : 'sky' as const,
+      status: String(g.status || ''),
+    })),
+  }))
 
   return (
     <Shell>
@@ -72,25 +86,7 @@ export default async function GuidebooksPage() {
       {rows.length === 0 ? (
         <LeanEmpty>No guidebooks yet — generate one from a unit under <Link href="/buildings" className="underline font-semibold">Properties</Link>.</LeanEmpty>
       ) : (
-        groups.map((grp) => (
-          <LeanSection key={grp.name} title={grp.name} n={grp.items.length}>
-            <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl">
-              {grp.items.map((g: any) => (
-                <li key={g.id}>
-                  <Link href={`/guidebooks/${g.id}`} title="Open to view, edit or print" className="group flex items-center gap-2.5 px-3 sm:px-4 py-2 hover:bg-app/60">
-                    <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{g.listing_name || g.title}</span>
-                      <span className="text-[12px] text-muted truncate max-w-[18rem]">{[nickById[g.listing_id], new Date(g.updated_at).toLocaleDateString()].filter(Boolean).join(' · ')}</span>
-                      <Tag tone={g.theme === 'dark' ? 'violet' : 'sky'} title="Colour theme">{g.theme === 'smart' ? 'Smart · ' + themeForBook(g, { building: buildingById[g.listing_id], nickname: nickById[g.listing_id] }).label : themeById(g.theme).label}</Tag>
-                      {g.status ? <Tag tone={g.status === 'draft' ? 'amber' : 'emerald'}>{g.status}</Tag> : null}
-                    </div>
-                    <ArrowRight size={15} className="shrink-0 text-muted group-hover:text-ink transition" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </LeanSection>
-        ))
+        <GuidebookGroups groups={lines} />
       )}
     </Shell>
   )

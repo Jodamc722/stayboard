@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, CalendarClock, X, Wrench, Sparkles, ClipboardList, Trash2, CheckSquare, Square, ChevronRight, ChevronDown, ExternalLink, FileText, Cpu, ListOrdered } from 'lucide-react'
 import CommentThread from '@/components/CommentThread'
-import { useSuggestions, type Sug } from '@/components/SuggestionsBand'
+import { useSuggestions, useEnsureSuggestions, type Sug } from '@/components/SuggestionsBand'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
@@ -70,6 +70,8 @@ const CARD = 'rounded-2xl border border-line bg-white overflow-hidden'
 
 export function ReviewTab({ market, date, onRefresh }: { market: string; date?: string; onRefresh: () => void }) {
   const sugCtx = useSuggestions()
+  // The list is loaded on demand now; this tab is one of the surfaces that demands it.
+  useEnsureSuggestions(sugCtx)
   const [data, setData] = useState<any | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

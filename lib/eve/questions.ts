@@ -56,8 +56,19 @@ function sameQuestion(a: string, b: string): boolean {
   return inter / (A.size + B.size - inter) >= 0.6
 }
 
+/** A question closed (dismissed or answered) this recently is not raised again. */
+const REASK_AFTER_MS = 30 * 864e5
+
 export async function askQuestion(input: {
   question: string; why?: string; scope?: string; kind?: string; evidence?: any; source?: string
+  /**
+   * A stable name for WHAT is being asked about, for questions cut from a template. Words cannot
+   * tell these apart (2026-11-09 audit): thirty audits reading "<unit> - 30day min is not connected
+   * on Vrbo has been open for N days…" share almost every word, so all thirty landed on one row and
+   * each bumped its count every night — "asked 687 times". With a key the row is found by the key,
+   * refreshed in place and never counted again; without one the word match below still applies.
+   */
+  dedupeKey?: string
 }): Promise<{ ok: boolean; id?: string; repeated?: boolean; error?: string }> {
   const db = supabaseAdmin()
   const question = String(input.question || '').trim().slice(0, 500)
@@ -68,24 +79,56 @@ export async function askQuestion(input: {
 
   try {
     const scope = String(input.scope || 'portfolio')
-    const { data: open } = await db.from('eve_questions')
-      .select('id,question,asked_count,scope').eq('status', 'open').order('updated_at', { ascending: false }).limit(200)
+    const dedupeKey = String(input.dedupeKey || '').trim().slice(0, 200)
+    const evidence = dedupeKey ? { ...(input.evidence && typeof input.evidence === 'object' ? input.evidence : {}), dedupe_key: dedupeKey } : (input.evidence ?? null)
+    const nowMs = Date.now()
+    if (dedupeKey) {
+      const { data: keyed } = await db.from('eve_questions')
+        .select('id,status,answered_at,updated_at').eq('evidence->>dedupe_key', dedupeKey)
+        .order('updated_at', { ascending: false }).limit(10)
+      const rows = (keyed || []) as any[]
+      const live = rows.find(r => String(r.status) === 'open')
+      if (live) {
+        // Same subject, already waiting: keep the wording and the evidence current, count nothing.
+        await db.from('eve_questions').update({ question, why, evidence }).eq('id', live.id)
+        return { ok: true, id: String(live.id), repeated: true }
+      }
+      // Somebody closed it this month. Asking again the next night is how a list gets ignored.
+      const closed = rows.find(r => nowMs - Date.parse(String(r.answered_at || r.updated_at || '')) < REASK_AFTER_MS)
+      if (closed) return { ok: true, id: String(closed.id), repeated: true }
+    }
+    const { data: open } = dedupeKey ? { data: [] as any[] } : await db.from('eve_questions')
+      .select('id,question,asked_count,scope,updated_at').eq('status', 'open').order('updated_at', { ascending: false }).limit(200)
     // Same words AND same scope. Twenty-two "who does what at <building>?" questions differ by one
     // word each; on words alone they collapsed into two, and twenty buildings never got asked about.
     // A question about Eden is not a repeat of a question about Capri, however alike they read.
     const twin = ((open || []) as any[]).find(q => String(q.scope || 'portfolio') === scope && sameQuestion(String(q.question), question))
     if (twin) {
-      await db.from('eve_questions').update({
-        asked_count: Number(twin.asked_count || 1) + 1, updated_at: new Date().toISOString(),
-      }).eq('id', twin.id)
+      // ONE COUNT A DAY. "Asked four times" is meant to say it came up on four occasions; a sweep
+      // that raises the same thing forty times in one pass is one occasion.
+      const today = new Date(nowMs).toISOString().slice(0, 10)
+      if (String(twin.updated_at || '').slice(0, 10) !== today) {
+        await db.from('eve_questions').update({
+          asked_count: Number(twin.asked_count || 1) + 1, updated_at: new Date(nowMs).toISOString(),
+        }).eq('id', twin.id)
+      }
       return { ok: true, id: String(twin.id), repeated: true }
+    }
+    if (!dedupeKey) {
+      // Dismissed in the last 30 days, same words and scope: it was "not now", so it stays not now.
+      const { data: shut } = await db.from('eve_questions')
+        .select('id,question,scope').eq('status', 'dismissed')
+        .gte('updated_at', new Date(nowMs - REASK_AFTER_MS).toISOString())
+        .order('updated_at', { ascending: false }).limit(200)
+      const gone = ((shut || []) as any[]).find(q => String(q.scope || 'portfolio') === scope && sameQuestion(String(q.question), question))
+      if (gone) return { ok: true, id: String(gone.id), repeated: true }
     }
     const { data, error } = await db.from('eve_questions').insert({
       question, why, scope,
       // 'plan' is a question the weekly review could not answer from data — it carries a default
       // (evidence.what_i_will_assume) so an unanswered one still lets her act.
       kind: ['gap', 'verify', 'conflict', 'plan'].includes(String(input.kind)) ? String(input.kind) : 'gap',
-      evidence: input.evidence ?? null,
+      evidence,
       source: ['eve', 'review'].includes(String(input.source)) ? String(input.source) : 'system',
     }).select('id').maybeSingle()
     if (error) return { ok: false, error: error.message.slice(0, 200) }
@@ -93,8 +136,20 @@ export async function askQuestion(input: {
   } catch (e: any) { return { ok: false, error: String(e?.message || e).slice(0, 200) } }
 }
 
-export async function listQuestions(status = 'open', limit = 60): Promise<EveQuestion[]> {
+/** What a list row needs and nothing else: no answer fields, and of the evidence only the one line the row prints. */
+const SLIM_COLS = 'id,question,why,scope,kind,status,asked_count,source,created_at,what_i_will_assume:evidence->>what_i_will_assume'
+
+export async function listQuestions(status = 'open', limit = 60, opts: { slim?: boolean } = {}): Promise<EveQuestion[]> {
   const db = supabaseAdmin()
+  if (opts.slim) {
+    let s = db.from('eve_questions').select(SLIM_COLS)
+    if (status !== 'all') s = s.eq('status', status)
+    const { data } = await s.order('asked_count', { ascending: false }).order('updated_at', { ascending: false }).limit(Math.min(limit, 200))
+    return ((data || []) as any[]).map(({ what_i_will_assume, ...r }) => ({
+      ...r, memory_id: null, answer: null, answered_by: null, answered_at: null,
+      evidence: what_i_will_assume ? { what_i_will_assume } : null,
+    })) as any
+  }
   let q = db.from('eve_questions').select('*')
   if (status !== 'all') q = q.eq('status', status)
   const { data } = await q.order('asked_count', { ascending: false }).order('updated_at', { ascending: false }).limit(Math.min(limit, 200))
@@ -236,6 +291,17 @@ export async function retireTemplateQuestions(): Promise<{ retired: number }> {
   return { retired }
 }
 
+/** Open audit questions written before questions carried a key: found by their wording, matched by the audit they name. */
+async function legacyAuditQuestions(db: any): Promise<{ id: string; auditId: string }[]> {
+  try {
+    const { data } = await db.from('eve_questions').select('id,evidence')
+      .eq('status', 'open').like('question', '%has been open for%').limit(500)
+    return ((data || []) as any[])
+      .filter(q => q.evidence && typeof q.evidence === 'object' && q.evidence.audit_id && !q.evidence.dedupe_key)
+      .map(q => ({ id: String(q.id), auditId: String(q.evidence.audit_id) }))
+  } catch { return [] }
+}
+
 /**
  * Find the gaps worth asking about, deterministically.
  *
@@ -249,7 +315,7 @@ export async function generateQuestions(): Promise<{ asked: number; repeated: nu
   const db = supabaseAdmin()
   let asked = 0, repeated = 0, considered = 0
 
-  const send = async (q: { question: string; why: string; scope?: string; kind?: string; evidence?: any }) => {
+  const send = async (q: { question: string; why: string; scope?: string; kind?: string; evidence?: any; dedupeKey?: string }) => {
     considered++
     const r = await askQuestion({ ...q, source: 'system' })
     if (r.ok) { if (r.repeated) repeated++; else asked++ }
@@ -261,13 +327,51 @@ export async function generateQuestions(): Promise<{ asked: number; repeated: nu
     //    a fortnight of "still open" is a busy month, not a mystery.
     const { data: audits } = await db.from('eve_audits').select('id,title,area,severity,first_seen_at,fix')
       .eq('status', 'open').order('first_seen_at').limit(50)
+    // ONE QUESTION PER ISSUE, NOT PER UNIT (2026-11-09 audit). "Capri 205 - 30day min is not
+    // connected on Vrbo" and the same line for thirty other units is one blocker, so it is one
+    // question that names how many units and which. The number of days lives in the evidence, not
+    // the wording — a question whose text changes every night can never be recognised as itself.
+    const groups: Record<string, { stem: string; items: { id: string; unit: string; title: string; days: number }[] }> = {}
+    const order: string[] = []
     for (const a of (audits || []) as any[]) {
       const days = Math.round((Date.now() - Date.parse(String(a.first_seen_at))) / 864e5)
       if (days < 21 || a.severity === 'info') continue
+      const title = String(a.title || '').trim()
+      const m = /^(.{1,40}?)\s+[-–—:]\s+(.{8,})$/.exec(title)
+      const stem = (m ? m[2] : title).slice(0, 160)
+      const key = lc(String(a.area || '')) + '|' + lc(stem).replace(/\s+/g, ' ')
+      if (!groups[key]) { groups[key] = { stem, items: [] }; order.push(key) }
+      groups[key].items.push({ id: String(a.id), unit: m ? m[1].trim() : '', title, days })
+    }
+    const legacy = await legacyAuditQuestions(db)
+    for (const key of order) {
+      const g = groups[key]
+      const n = g.items.length
+      const days = g.items.reduce((mx, i) => Math.max(mx, i.days), 0)
+      const units = g.items.map(i => i.unit).filter(Boolean)
+      const question = n === 1
+        ? `"${g.items[0].title.slice(0, 160)}" has been open for over three weeks. What is actually stopping this getting fixed?`
+        : `${n} open audit items say "${g.stem}"${units.length ? ' (' + units.slice(0, 3).join(', ') + (units.length > 3 ? ' and ' + (units.length - 3) + ' more' : '') + ')' : ''}, all for over three weeks. What is actually stopping this getting fixed?`
+      const dedupeKey = 'audit:' + key
+      const ids = g.items.map(i => i.id)
+      // The rows the old generator left (no key on them): the first one that belongs to this issue
+      // becomes its question, keyed; any other is closed as the duplicate it is.
+      const mine = legacy.filter(l => ids.includes(l.auditId))
+      if (mine.length) {
+        const now = new Date().toISOString()
+        await db.from('eve_questions').update({ question, evidence: { audit_id: ids[0], audit_ids: ids, days, dedupe_key: dedupeKey } }).eq('id', mine[0].id)
+        if (mine.length > 1) {
+          await db.from('eve_questions').update({ status: 'dismissed', answered_by: 'system', answered_at: now, updated_at: now, answer: 'Folded into one question per issue (it was the same question raised once per unit).' })
+            .in('id', mine.slice(1).map(l => l.id))
+        }
+        for (const l of mine) legacy.splice(legacy.indexOf(l), 1)
+        considered++; repeated++
+        continue
+      }
       await send({
-        question: `"${String(a.title).slice(0, 160)}" has been open for ${days} days. What is actually stopping this getting fixed?`,
-        why: 'If it is blocked on something I cannot see, I should stop re-raising it every hour and say what the real blocker is instead.',
-        kind: 'gap', evidence: { audit_id: a.id, days },
+        question,
+        why: 'If it is blocked on something I cannot see, I should stop re-raising it and say what the real blocker is instead.',
+        kind: 'gap', evidence: { audit_id: ids[0], audit_ids: ids, days }, dedupeKey,
       })
     }
 
@@ -279,7 +383,7 @@ export async function generateQuestions(): Promise<{ asked: number; repeated: nu
       await send({
         question: `You have turned down ${(recs || []).length} of my recommendations recently — most recently "${String((recs as any[])[0]?.title || '').slice(0, 120)}". What am I getting wrong about how you want this run?`,
         why: 'I keep proposing the same shape of thing. Knowing why it does not fit is worth more than my next ten suggestions.',
-        kind: 'verify', evidence: { rejected: (recs || []).length },
+        kind: 'verify', evidence: { rejected: (recs || []).length }, dedupeKey: 'rejected-recommendations',
       })
     }
   } catch { /* a failed generator must never break the sweep it rides on */ }

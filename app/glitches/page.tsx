@@ -41,7 +41,12 @@ export default function GlitchesPage() {
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [tab])
   useEffect(() => { setLoading(true); load() }, [load])
-  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  // Only History assigns people from this page; the Board loads its own list. (2026-11-09: the same
+  // people list was fetched twice on every open of the board.)
+  useEffect(() => {
+    if (tab !== 'history' || people.length) return
+    fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {})
+  }, [tab, people.length])
   // board glitches (with category + $) power the insights strip on History
   const [board, setBoard] = useState<any>(null)
   // The Board tab's own component loads /api/glitches and announces it; this page only asks itself on

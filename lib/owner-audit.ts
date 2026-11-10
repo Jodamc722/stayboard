@@ -151,6 +151,12 @@ export type AuditItem = {
   comments: AuditComment[]
   updatedBy: string | null
   updatedAt: string | null
+  // Set only by the API when it sends the LIST without each row's detail (app/api/owner-audit):
+  // `slim` means lines and folio were left behind and are fetched when the row is opened;
+  // `cancelFeeLine` is the page's "a line item names itself a cancellation fee" test, run on the
+  // lines before they were left behind. The engine itself never sets either.
+  slim?: boolean
+  cancelFeeLine?: boolean
 }
 
 // The formal per-statement sign-off: stored in owner_audit_reviews under the reserved
@@ -609,7 +615,16 @@ export async function prevMonthUnsigned(prev: string): Promise<boolean> {
 export async function buildAudit(month: string): Promise<AuditData> {
   const sb = supabaseAdmin()
   const win = monthWindow(month)
-  const rules = await auditRules()
+  // PERF (2026-11-09): the rules, the statements, the coverage row and the saved reviews do not
+  // depend on each other, so they are asked for together instead of one after another. Same
+  // queries, same rows — only the waiting overlaps. The reviews answer is used in step 6.
+  const rulesP = auditRules()
+  const covP = Promise.resolve(sb.from('guesty_ledger_months').select('month, status, completed_at').eq('month', month))
+  const reviewsP = Promise.resolve(sb.from('owner_audit_reviews')
+    .select('owner_id, item_key, status, note, comments, updated_by, updated_at')
+    .eq('month', month))
+  // Never an unhandled rejection if the build stops before these are awaited.
+  covP.catch(() => {}); reviewsP.catch(() => {}); rulesP.catch(() => {})
 
   // 1. The generated statements for this month — the documents being audited.
   //    stmtStatus matters more than it looks: a PENDING statement is a DRAFT that Guesty is still
@@ -639,9 +654,10 @@ export async function buildAudit(month: string): Promise<AuditData> {
     if (!have || String(s.stmt_generated_at || '') > String(have.stmt_generated_at || '') || (String(s.stmt_generated_at || '') === String(have.stmt_generated_at || '') && String(s.id) > String(have.id))) stmtByOwner[k] = s
   }
   const stmts = Object.values(stmtByOwner) as any[]
+  const rules = await rulesP
 
   // 2. Ledger coverage — has the mirror actually swept this month, and how long ago?
-  const { data: cov } = await sb.from('guesty_ledger_months').select('month, status, completed_at').eq('month', month)
+  const { data: cov } = await covP
   const covRows = (cov || []) as any[]
   const covered = covRows.some(r => r.status === 'done')
   const syncedAt = covRows
@@ -658,8 +674,8 @@ export async function buildAudit(month: string): Promise<AuditData> {
   // Which column form this mirror supports is decided ONCE, on the first page, and kept for every
   // page after — mixing forms mid-read is how half a month lost its booking codes.
   let cols = LEDGER_COLS
-  for (let off = 0; off < 200_000; off += PAGE) {
-    // ORDERED (2026-09-03): an unordered range past 1,000 rows repeats and skips.
+  // ORDERED (2026-09-03): an unordered range past 1,000 rows repeats and skips.
+  const ledgerPage = async (off: number): Promise<LedgerRow[]> => {
     const run = (c: string) => sb.from('guesty_owner_ledger').select(c)
       .eq('recognized', true)
       .eq('entry_month', month)
@@ -673,9 +689,43 @@ export async function buildAudit(month: string): Promise<AuditData> {
     // A transient failure (statement timeout, 5xx) gets one retry of the same page, same columns.
     if (error) ({ data, error } = await run(cols))
     if (error) throw new Error('ledger read failed (' + error.message.slice(0, 120) + ') — the audit was not built rather than built wrong. Reload in a moment.')
-    const batch = (data || []) as unknown as LedgerRow[]
-    rows.push(...batch)
-    if (batch.length < PAGE) break
+    return (data || []) as unknown as LedgerRow[]
+  }
+  // PERF (2026-11-09): page one is read alone (it decides the column form). When it comes back
+  // full, the remaining pages are read side by side from an exact row count and appended IN PAGE
+  // ORDER — the same rows in the same order as the old one-after-another loop. If the count cannot
+  // be read, or the table grew meanwhile, the serial loop below finishes the job exactly as before.
+  {
+    const first = await ledgerPage(0)
+    rows.push(...first)
+    if (first.length === PAGE) {
+      let next = PAGE
+      let lastFull = true
+      const { count, error: cErr } = await sb.from('guesty_owner_ledger').select('id', { count: 'exact', head: true })
+        .eq('recognized', true).eq('entry_month', month)
+      if (!cErr && typeof count === 'number' && count > PAGE) {
+        const offs: number[] = []
+        for (let off = PAGE; off < count && off < 200_000; off += PAGE) offs.push(off)
+        // Six pages at a time — enough to overlap the waiting, not enough to crowd the database.
+        const pages: LedgerRow[][] = []
+        for (let i = 0; i < offs.length; i += 6) pages.push(...await Promise.all(offs.slice(i, i + 6).map(off => ledgerPage(off))))
+        for (const pg of pages) {
+          rows.push(...pg)
+          next += PAGE
+          lastFull = pg.length === PAGE
+          // A short page in the middle means the table shrank under us: stop here, as the serial
+          // loop would have.
+          if (!lastFull) break
+        }
+      } else if (!cErr && typeof count === 'number') {
+        lastFull = false
+      }
+      for (let off = next; lastFull && off < 200_000; off += PAGE) {
+        const batch = await ledgerPage(off)
+        rows.push(...batch)
+        lastFull = batch.length === PAGE
+      }
+    }
   }
   // REPEATED LINES (2026-10-05). Guesty re-issues a journal line under a new id each time it
   // recomputes a statement and never voids the old one; the sweep now retires what a full pass no
@@ -987,9 +1037,7 @@ export async function buildAudit(month: string): Promise<AuditData> {
   }
 
   // 6. Reviews already saved for this month.
-  const { data: revRows, error: revErr } = await sb.from('owner_audit_reviews')
-    .select('owner_id, item_key, status, note, comments, updated_by, updated_at')
-    .eq('month', month)
+  const { data: revRows, error: revErr } = await reviewsP
   // A missing table (migration not run yet) degrades to "no reviews saved", never to a 500 — but
   // the page is told, because an audit with every approval missing must not read as unreviewed.
   if (revErr) warnings.push('Saved reviews could not be read (' + String(revErr.message || '').slice(0, 80) + ') — approvals, notes and sign-offs are not shown this load. Do not approve or sign off until a reload shows them.')

@@ -24,7 +24,7 @@
 //
 // Assignment uses /api/breezeway/assign, creation /api/ops-today/add-task (which already takes
 // assigneeIds). This file is a front door on machinery that already works.
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Plus, ChevronDown, Users, Send, Loader2, Check, FileText, ChevronLeft, ChevronRight, CalendarDays, ClipboardList,
 } from 'lucide-react'
@@ -82,13 +82,16 @@ export function OpsV2({ unitsFooter, peopleFooter }: { unitsFooter?: ReactNode; 
   const isToday = date === todayYmd
   const { data, loading, error, refresh } = useCachedFetch<OpsData>(
     isToday ? '/api/ops-today' : `/api/ops-today?date=${date}`)
-  const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches')
+  // SLOWER THAN THE BOARD (2026-11-09 audit). The default is a 30-second live poll; the open-glitch
+  // backlog and the Homebase roster do not move that fast, and staffing was two live Homebase calls
+  // per viewer per poll. Two and five minutes — and both re-read at once after any action below.
+  const { data: gl } = useCachedFetch<{ glitches: Glitch[] }>('/api/ops-today/glitches', { ttl: 2 * 60_000 })
   // THE BOARD'S DATE, NOT TODAY'S (2026-09-09 audit). The route has taken ?date= since it was
   // written and the client never sent one, so planning tomorrow was done against today's clock-ins.
-  const { data: staff, error: staffErr } = useCachedFetch<Staffing>(
-    isToday ? '/api/ops-today/staffing' : `/api/ops-today/staffing?date=${date}`)
+  const { data: staff, error: staffErr, refresh: refreshStaff } = useCachedFetch<Staffing>(
+    isToday ? '/api/ops-today/staffing' : `/api/ops-today/staffing?date=${date}`, { ttl: 5 * 60_000 })
   // The capacity model prices the same day the board is showing — today or a planned date.
-  const { data: cap } = useCachedFetch<CapData>(
+  const { data: cap, refresh: refreshCap } = useCachedFetch<CapData>(
     isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
   // THE ROSTER IS THE SAME LIST ALL DAY (2026-09-14, the tab-by-tab walk). This was an uncached
   // `no-store` fetch fired on every mount, while every other read on this page goes through the
@@ -96,16 +99,15 @@ export function OpsV2({ unitsFooter, peopleFooter }: { unitsFooter?: ReactNode; 
   // Ten minutes, through the shared cache, so the second mount is free.
   const { data: rosterRes } = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
   const roster = useMemo<Roster[]>(() => (Array.isArray(rosterRes?.people) ? rosterRes!.people : []), [rosterRes])
-  // FIVE MINUTES, PLUS THE MOMENT YOU LOOK AT IT AGAIN.
-  // The interval alone meant a phone that had been in a pocket for forty minutes showed forty-minute
-  // -old rows for up to five minutes more — on the one screen where a stale row is how a walk-in
-  // happens. The suggestions provider already listened for this; the board did not.
-  useEffect(() => {
-    const t = setInterval(() => { if (document.visibilityState === 'visible') refresh() }, 5 * 60 * 1000)
-    const onShow = () => { if (document.visibilityState === 'visible') refresh() }
-    document.addEventListener('visibilitychange', onShow)
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onShow) }
-  }, [refresh])
+  // ONE REFRESH FOR EVERYTHING AN ACTION CHANGES (2026-11-09 audit). Assign, Done and Plan day
+  // re-read only /api/ops-today, so the crew chip, each person's capacity line and the Free rows
+  // kept the pre-action answer for up to five minutes — somebody just handed a clean still read
+  // "Free". The board, the capacity model and staffing now re-read together.
+  //
+  // The board's own timer went with it: useCachedFetch already refreshes each read while the tab
+  // is visible and catches up the moment it becomes visible again (lib/swr), so the five-minute
+  // interval and visibility listener that lived here were a second copy of the same behaviour.
+  const refreshAll = useCallback(() => { refresh(); refreshCap(); refreshStaff() }, [refresh, refreshCap, refreshStaff])
 
   // Which tab. Remembered per person — the research point about role-shaped views, cheaply.
   // GRID IS THE LANDING (Jon, 2026-08-25: "the Today in Ops board that I created with the Breezeway
@@ -160,7 +162,7 @@ export function OpsV2({ unitsFooter, peopleFooter }: { unitsFooter?: ReactNode; 
         <div className="shrink-0 inline-flex items-center rounded-lg border border-line bg-white h-8">
           <Tip label="Previous day">
             <button onClick={() => setDate(d => shiftYmd(d, -1))} aria-label="Previous day"
-              className="px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-l-lg"><ChevronLeft size={14} /></button>
+              className="px-2.5 sm:px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-l-lg"><ChevronLeft size={14} /></button>
           </Tip>
           {/* A REAL DATE PICKER (Jon, 2026-09-22: "It also should have a date selector so we can choose
               different dates and see all of the activities from there"). The chevrons step a day;
@@ -172,12 +174,13 @@ export function OpsV2({ unitsFooter, peopleFooter }: { unitsFooter?: ReactNode; 
           </Tip>
           <Tip label="Next day">
             <button onClick={() => setDate(d => shiftYmd(d, 1))} aria-label="Next day"
-              className="px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-r-lg"><ChevronRight size={14} /></button>
+              className="px-2.5 sm:px-1.5 h-8 text-muted hover:text-ink hover:bg-app rounded-r-lg"><ChevronRight size={14} /></button>
           </Tip>
         </div>
         <button onClick={() => setAddFor({})}
           className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 h-8 text-[13px] font-bold hover:opacity-90">
-          <Plus size={14} /> Add task
+          {/* PHONE: "Add" — the wider pager chevrons need the room, and the plus already says the rest. */}
+          <Plus size={14} /> Add<span className="hidden sm:inline">&nbsp;task</span>
         </button>
       </div>
 
@@ -194,16 +197,16 @@ export function OpsV2({ unitsFooter, peopleFooter }: { unitsFooter?: ReactNode; 
           Staffing tab it stands alone, in full, because staffing IS the question there. */}
       <OpsGrid data={data as any} glitches={glitches as any} roster={roster} staff={staff as any}
           loading={loading} error={error ? String(error) : null}
-          onRefresh={refresh} onAddTask={seed => setAddFor(seed)} openSheet={sheet} onSheet={onSheet} boardDate={date} cap={cap || null}
+          onRefresh={refreshAll} onAddTask={seed => setAddFor(seed)} openSheet={sheet} onSheet={onSheet} boardDate={date} cap={cap || null}
           wantPeople={wantPeople} staffErr={staffErr ? String(staffErr) : null}
-          aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refresh} onPeople={pick} compact />}
+          aside={<CapacityStrip cap={cap || null} roster={roster} onRefresh={refreshAll} onPeople={pick} compact />}
           unitsFooter={unitsFooter} peopleFooter={peopleFooter} />
 
       {sheet === 'add' && addFor !== null && (
         // Keyed on the seed so a ＋ on a different row remounts the sheet for THAT row rather than
         // reopening on whatever the last one left behind.
         <AddTaskSheet key={JSON.stringify(addFor)} roster={roster} seed={addFor} boardDate={date}
-          onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refresh() }} />
+          onClose={() => setAddFor(null)} onDone={() => { setAddFor(null); refreshAll() }} />
       )}
     </div>
   )
@@ -311,8 +314,8 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact, dayLabel, pa
   // PLAIN WORDS (Jon, 2026-10-01: "I also never understand this little section, the crew section …
   // I hate it"). "crew 86% · 9 over · 3 unowned · 6 moves" was four codes. The chip now says the
   // verdict in English, and the panel explains every number before it lists the moves: how much
-  // work, how many people, how many hours they have, who is past their day, which cleans have
-  // nobody on them, and what Eve would move.
+  // work, how many people, how many hours they have, who is past their day, which cleans are
+  // unassigned, and what Eve would move.
   if (compact) {
     const chipTone = over ? 'border-rose-300 bg-rose-100 text-rose-800' : warm ? 'border-amber-300 bg-amber-100 text-amber-900' : 'border-emerald-300 bg-emerald-100 text-emerald-900'
     const verdict = over ? 'Too much work for the team today' : warm ? 'The team is nearly full today' : 'The team has room today'
@@ -320,7 +323,7 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact, dayLabel, pa
     const lightPeople = (cap.people || []).filter(p => p.verdict === 'underloaded').sort((a, b) => a.utilisationPct - b.utilisationPct)
     const firstName = (n: string) => n.split(' ')[0]
     const bits: string[] = []
-    if (k.unassignedCount > 0) bits.push(k.unassignedCount + (k.unassignedCount === 1 ? ' clean has nobody on it' : ' cleans have nobody on them'))
+    if (k.unassignedCount > 0) bits.push(k.unassignedCount + (k.unassignedCount === 1 ? ' clean unassigned' : ' cleans unassigned'))
     if (k.overloaded > 0) bits.push(k.overloaded + (k.overloaded === 1 ? ' person has' : ' people have') + ' more than a day\'s work')
     return (
       <span className="relative inline-flex">
@@ -341,7 +344,7 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact, dayLabel, pa
                   The work on the board adds up to <b>{fmtH(k.workMinutes)}</b>{k.travelMinutes > 0 ? <> plus about <b>{fmtH(k.travelMinutes)}</b> of driving</> : null} — {k.cleans} clean{k.cleans === 1 ? '' : 's'}{k.otherTasks ? ` and ${k.otherTasks} other task${k.otherTasks === 1 ? '' : 's'}` : ''}, priced at how long each unit really takes.
                   {' '}<b>{k.peopleOnShift}</b> {k.peopleOnShift === 1 ? 'person is' : 'people are'} on shift with <b>{fmtH(k.capacityMinutes)}</b> between them, so the day is <b>{k.utilisationPct}% full</b>.
                 </p>
-                {k.unassignedCount > 0 && <p className="text-[12px] text-amber-900 leading-snug"><b>{k.unassignedCount} clean{k.unassignedCount === 1 ? '' : 's'}</b> {k.unassignedCount === 1 ? 'has' : 'have'} nobody assigned in Breezeway yet.</p>}
+                {k.unassignedCount > 0 && <p className="text-[12px] text-amber-900 leading-snug"><b>{k.unassignedCount} clean{k.unassignedCount === 1 ? '' : 's'}</b> {k.unassignedCount === 1 ? 'is' : 'are'} unassigned in Breezeway.</p>}
                 {overPeople.length > 0 && <p className="text-[12px] text-rose-800 leading-snug"><b>Past a full day:</b> {overPeople.slice(0, 8).map(p => `${firstName(p.person)} (${p.utilisationPct}%)`).join(', ')}{overPeople.length > 8 ? ` +${overPeople.length - 8}` : ''}.</p>}
                 {lightPeople.length > 0 && <p className="text-[12px] text-emerald-800 leading-snug"><b>Has room:</b> {lightPeople.slice(0, 8).map(p => `${firstName(p.person)} (${p.utilisationPct}%)`).join(', ')}{lightPeople.length > 8 ? ` +${lightPeople.length - 8}` : ''}.</p>}
                 <p className="text-[11px] text-muted leading-snug">100% means every hour of every shift is spoken for. A person is "past a full day" when the units on their list, at their real pace, run longer than their shift.</p>

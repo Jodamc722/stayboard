@@ -68,7 +68,7 @@ type StatNote = { text: string; href?: string }
 type StatsRes = { ok: boolean; facts: StatFact[]; highlights?: StatNote[]; lowlights?: StatNote[]; asOf?: string }
 
 export function BulletinBoard({ d }: { d: CommandDay }) {
-  const q = useCachedFetch<BoardRes>(BULLETIN_URL, { ttl: 60_000 })
+  const q = useCachedFetch<BoardRes>(BULLETIN_URL, { ttl: 300_000 })
   // THE REPORT (Jon, 2026-10-26: "get the bulletin report to show KPI, welcome call completion, avg
   // review scores, etc. Highlights and low lights") — three slides at the front of the card.
   const sq = useCachedFetch<StatsRes>(BULLETIN_URL + '/stats', { ttl: 300_000 })

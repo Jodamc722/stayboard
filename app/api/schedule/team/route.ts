@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase-server'
 import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { weekRoster } from '@/lib/team-roster'
+import { MARKETS } from '@/lib/segments'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +23,23 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'weekStart and market required' }, { status: 400 })
   }
   const sb = supabaseAdmin()
+  // ALL MARKETS IN ONE CALL (2026-11-09 audit): the day board asked three times, once per market,
+  // and each ask pulled the same seven days of Homebase shifts. The first market is built alone so
+  // lib/homebase's shift cache is warm before the other two run.
+  if (market === 'all') {
+    const { data: rowsAll, error: errAll } = await sb
+      .from('team_schedule')
+      .select('market, doc, updated_at')
+      .eq('week_start', weekStart)
+      .in('market', MARKETS as string[])
+    if (errAll) return NextResponse.json({ ok: false, error: errAll.message }, { status: 500 })
+    const docOf = (mk: string): any => ((rowsAll || []) as any[]).find(r => String(r.market) === mk)?.doc ?? null
+    const out: Record<string, { doc: any; roster: any }> = {}
+    const list = MARKETS as string[]
+    if (list.length) out[list[0]] = { doc: docOf(list[0]), roster: await weekRoster(weekStart, list[0], docOf(list[0])).catch(() => null) }
+    await Promise.all(list.slice(1).map(async mk => { out[mk] = { doc: docOf(mk), roster: await weekRoster(weekStart, mk, docOf(mk)).catch(() => null) } }))
+    return NextResponse.json({ ok: true, markets: out })
+  }
   const { data, error } = await sb
     .from('team_schedule')
     .select('doc, updated_at, share_token')

@@ -15,12 +15,21 @@ export const maxDuration = 60
 async function doSync() {
   // Pull the Guesty reservations DELTA first so altered/canceled stays don't linger as phantom
 // cleans (a reservation changed in Guesty otherwise sat stale until the next 5-minute reservations pass).
-try { await syncReservations() } catch { /* Guesty hiccup - still refresh from cached data */ }
+// EACH LEG REPORTS (2026-11-09 audit): both failures used to be swallowed and the button said
+// "synced" over data that had not moved. The cache is still busted either way; the board now says
+// which source did not refresh.
+const guesty: { ok: boolean; error?: string } = { ok: true }
+const breezeway: { ok: boolean; error?: string } = { ok: true }
+try { await syncReservations() } catch (e: any) { guesty.ok = false; guesty.error = String(e?.message || e).slice(0, 160) }
 // Re-pull the Breezeway task mirror (soonest checkouts first) so assignments made in Breezeway
 // moments ago show immediately on Refresh — the board was otherwise stale until the 30-min cron.
-try { await syncBreezewayTasks(35000) } catch { /* mirror refresh is best-effort */ }
+try {
+  const b = await syncBreezewayTasks(35000)
+  // 'not configured' is not a failure — the board already says Breezeway is off.
+  if (b && b.ok === false && b.reason !== 'not configured') { breezeway.ok = false; breezeway.error = String(b.error || b.reason || 'did not finish').slice(0, 160) }
+} catch (e: any) { breezeway.ok = false; breezeway.error = String(e?.message || e).slice(0, 160) }
 revalidateTag('schedule')
-  return NextResponse.json({ ok: true, syncedAt: new Date().toISOString() })
+  return NextResponse.json({ ok: true, guesty, breezeway, syncedAt: new Date().toISOString() })
 }
 
 // GET: the scheduler's bearer, or a signed-in admin (lib/cron-auth requireCron). Not on a schedule

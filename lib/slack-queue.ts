@@ -150,11 +150,21 @@ export async function draft(input: DraftInput, rulesIn?: SlackRules): Promise<Dr
 
   if (!rule.approval) {
     // Straight out, but still recorded so the Command Center and the firehose see it.
-    const ins = await db.from(TABLE).insert({ ...row, status: 'approved', expires_at: null }).select('id').single()
-    const id = ins.data && (ins.data as any).id ? String((ins.data as any).id) : ''
+    // ONE WAITING ROW PER GROUP (2026-11-09). A message held for the 8pm–7am window stays 'approved'
+    // until morning; a cron that drafts the same group again overnight refreshes that row instead of
+    // stacking another, so 7am brings one message with current numbers, not one per pass.
+    let id = ''
+    try {
+      const { data } = await db.from(TABLE).select('id').eq('group_key', groupKey).eq('status', 'approved').order('created_at', { ascending: false }).limit(1)
+      if (Array.isArray(data) && data[0]) { id = String((data[0] as any).id); await db.from(TABLE).update(row).eq('id', id) }
+    } catch { id = '' }
+    if (!id) {
+      const ins = await db.from(TABLE).insert({ ...row, status: 'approved', expires_at: null }).select('id').single()
+      id = ins.data && (ins.data as any).id ? String((ins.data as any).id) : ''
+    }
     if (!id) return { ok: false, reason: 'could not record message' }
-    await sendOne(id, rules)
-    return { ok: true, action: 'sent', id }
+    const sent = await sendOne(id, rules)
+    return { ok: true, action: sent.held ? 'queued' : 'sent', id }
   }
 
   // Re-draft an existing pending message for this group rather than stacking a second one.
@@ -242,8 +252,20 @@ async function firehoseCopyOn(): Promise<boolean> {
   try { const { getSetting } = await import('./app-settings'); const v = await getSetting<any>(FIREHOSE_KEY, null); return !!(v && v.copy === true) } catch { return false }
 }
 
+/**
+ * THE NIGHT WINDOW, FOR THE OUTBOX TOO (2026-11-09). Jon, 2026-11-05: "nothing posts between 8pm and
+ * 7am ET" — and the outbox never asked: the handover could go at 11pm, a sync failure at 3am, a
+ * listing-health message at 00:21. A message whose turn comes outside the window now WAITS: the row
+ * stays 'approved' and the half-hourly dispatch sends it on the first pass after 7am. Two events are
+ * not held, because a guest is at the door tonight: walk_in_risk and blocked_arrival. Nothing else
+ * about the rules changes — no room cap and no said-registry check is applied to a rules message; a
+ * message that does go out is only RECORDED in the registry, so the room's daily count for Eve's own
+ * posts includes it.
+ */
+const NIGHT_EXEMPT: string[] = ['walk_in_risk', 'blocked_arrival']
+
 /** Actually post. Channel first, then any DMs, then (only when switched on) a copy to the firehose. */
-export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: boolean; error?: string }> {
+export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: boolean; error?: string; held?: boolean }> {
   const rules = rulesIn || (await getSlackRules())
   const db = supabaseAdmin()
   const { data } = await db.from(TABLE).select('*').eq('id', id).single()
@@ -263,6 +285,13 @@ export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: b
     return { ok: false, error: 'muted since this was queued' }
   }
 
+  if (NIGHT_EXEMPT.indexOf(String(row.event_key)) < 0) {
+    try {
+      const { inPostWindow } = await import('./eve/room-gate')
+      if (!inPostWindow()) return { ok: false, held: true, error: 'held until 7am ET' }
+    } catch { /* a window that cannot be read never blocks a send */ }
+  }
+
   const problems: string[] = []
   let delivered = 0
 
@@ -272,6 +301,8 @@ export async function sendOne(id: string, rulesIn?: SlackRules): Promise<{ ok: b
     const r = await postToChannel(row.channel_id, mainBody)
     if (r.ok) {
       delivered++
+      // Counted with Eve's own posts in this room (lib/eve/said.ts) — recorded only, never checked.
+      try { const { markSaid } = await import('./eve/said'); await markSaid({ channel: row.channel_id, threadTs: null, text: mainBody, subject: row.group_key, by: 'cron:rules:' + row.event_key, ts: r.ts ? String(r.ts) : null }) } catch { /* best effort */ }
       // The reply is a nice-to-have: if it fails the main message still stands, so it is recorded
       // as a problem but never flips the row to 'failed'.
       if (threadBody && r.ts) {
@@ -319,7 +350,7 @@ export async function dispatchApproved(limit = 25): Promise<{ sent: number; fail
   for (const r of (data || []) as any[]) {
     const res = await sendOne(String(r.id), rules)
     if (res.ok) sent++
-    else failed++
+    else if (!res.held) failed++   // held for the night window: still approved, goes out after 7am
   }
   return { sent, failed }
 }

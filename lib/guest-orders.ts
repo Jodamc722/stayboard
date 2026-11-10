@@ -1349,7 +1349,10 @@ export async function pushOrder(order: OrderRow, cfg: GuestOrdersCfg, opts?: { d
   const who = await pickAssignee(order, date)
   const first = String(order.guest_name || 'Guest').split(' ')[0]
   const inHouse = order.check_in ? date > order.check_in : false
-  const title = 'Guest order — ' + summarizeLines(order.items, 3)
+  // THE ORDER'S OWN ID RIDES THE TITLE (2026-11-09 audit): createBreezewayTask keeps one open task
+  // per unit + name, so two different orders for the same items at one unit became ONE task and the
+  // second delivery was never made. The same order pushed twice still lands on its own task.
+  const title = 'Guest order — ' + summarizeLines(order.items, 3) + ' · #' + order.id.slice(0, 8)
   const description =
     'GUEST ORDER · deliver ' + (inHouse ? 'today (guest is in-house)' : 'before check-in') + '\n' +
     order.items.map(l => '• ' + l.qty + ' × ' + l.name + (l.unit_label ? ' (' + l.unit_label + ')' : '')).join('\n') +
@@ -1373,8 +1376,11 @@ export async function pushOrder(order: OrderRow, cfg: GuestOrdersCfg, opts?: { d
       return { ok: false, error: err }
     }
     taskId = String(r.data.id)
-    if (who.ids.length) { try { await updateBreezewayTask(taskId, { assignments: who.ids }) } catch { /* names still travel in the description */ } }
-    try {
+    // REUSED (this order's task was already open — a push whose reply was lost): keep its people and
+    // its mirror row; an assign here replaces whoever is on it.
+    const reused = !!r.reused
+    if (!reused && who.ids.length) { try { await updateBreezewayTask(taskId, { assignments: who.ids }) } catch { /* names still travel in the description */ } }
+    if (!reused) try {
       await db.from('breezeway_tasks_sync').upsert({
         id: taskId, reference_property_id: order.listing_id, name: title, status: 'created', scheduled_date: date, type_department: 'housekeeping',
         assignees: who.names, report_url: r.data.report_url || null, raw: r.data && typeof r.data === 'object' ? r.data : {}, synced_at: new Date().toISOString(),

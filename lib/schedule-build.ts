@@ -71,8 +71,8 @@ const db = supabaseAdmin()
 // arbitrary, truncated set — cached for five minutes for every viewer. A read that stops early now
 // throws, exactly like the listings guard below: an error beats a schedule that quietly misses a turn.
 const [outsRes, insRes, { data: listings }] = await Promise.all([
-pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,guest_id,guest_phone,check_out,check_in,status,nights,source,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).order('check_out').order('id').range(a, b), 8),
-pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status,nights,guest_name,guest_id,guest_phone').gte('check_in', start).lte('check_in', addDays(end, 30)).order('check_in').order('id').range(a, b), 12),
+pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,listing_name,guest_name,guest_id,guest_phone,check_out,check_in,status,nights,source,created_at,fee:raw->money->>fareCleaning').gte('check_out', start).lte('check_out', end).order('check_out').order('id').range(a, b), 8),
+pageRows<any>((a, b) => db.from('guesty_reservations').select('id,listing_id,check_in,status,nights,guest_name,guest_id,guest_phone,created_at').gte('check_in', start).lte('check_in', addDays(end, 30)).order('check_in').order('id').range(a, b), 12),
 // PERF: pull ONLY the raw sub-fields this route uses (customFields for door/cleaning codes +
 // check-in/out times) instead of the full multi-MB raw blob for every listing.
 db.from('guesty_listings').select('id,nickname,title,building,address_city,status,bedrooms,cfRaw:raw->customFields,ciRaw:raw->>defaultCheckInTime,coRaw:raw->>defaultCheckOutTime,lat:raw->address->>lat,lng:raw->address->>lng,listFee:raw->prices->>cleaningFee'),
@@ -119,17 +119,29 @@ units.sort((a, b) => a.name.localeCompare(b.name))
 const arrivalsByListing: Record<string, string[]> = {}
 // How long the INCOMING stay is, keyed listing+date: a 14-night booking needs the unit properly
 // ready, not just turned over.
-const arrivalInfo: Record<string, { nights: number | null; guest: string | null; guestId: string | null; phone: string | null }> = {}
+const arrivalInfo: Record<string, { nights: number | null; guest: string | null; guestId: string | null; phone: string | null; id: string | null; bookedAt: string | null }> = {}
+// NEW LAST-MINUTE BOOKINGS (Jon, 2026-11-09: "scheduler should show new booking if made last minute
+// and not been seen"). guesty_reservations.created_at is Guesty's own createdAt — when the
+// reservation record was made. A booking made in the last 36 hours for a date inside the next two
+// days is "new": either the checkout behind a clean, or an ARRIVAL into the unit on the clean's day
+// or the day after (which moves the clean's deadline). Whether a person has SEEN it is per user and
+// lives in the browser (see ScheduleBoard) — this only says the booking is fresh.
+const NEW_BOOKING_HOURS = 36
+const _nowMs = Date.now()
+const _newEnd = addDays(today, 2)
+const isFresh = (iso: any): boolean => { const t = Date.parse(String(iso || '')); return Number.isFinite(t) && _nowMs - t <= NEW_BOOKING_HOURS * 3600_000 }
+const inNewWindow = (d: string): boolean => !!d && d >= today && d <= _newEnd
 for (const r of (ins || [])) {
 if (!LIVE.test(str((r as any).status))) continue
 const id = String((r as any).listing_id); const ci = str((r as any).check_in).slice(0, 10)
 if (!ci) continue; (arrivalsByListing[id] ||= []).push(ci)
 const n = Number((r as any).nights)
-arrivalInfo[id + '__' + ci] = { nights: Number.isFinite(n) ? n : null, guest: str((r as any).guest_name) || null, guestId: str((r as any).guest_id) || null, phone: str((r as any).guest_phone) || null }
+arrivalInfo[id + '__' + ci] = { nights: Number.isFinite(n) ? n : null, guest: str((r as any).guest_name) || null, guestId: str((r as any).guest_id) || null, phone: str((r as any).guest_phone) || null, id: str((r as any).id) || null, bookedAt: str((r as any).created_at) || null }
 }
 for (const k of Object.keys(arrivalsByListing)) arrivalsByListing[k].sort()
 
-type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; nextNights?: number | null; nextGuest?: string | null; rebook?: boolean; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; guestyOnly?: boolean; calNote?: 'blocked' | 'booked' | 'open' | null; cleanMinutes?: number | null; cleaningFee?: number | null; feeSource?: 'guest' | 'listing' | null; city?: string | null; lat?: number | null; lng?: number | null }
+type NewBooking = { id: string; bookedAt: string; kind: 'checkout' | 'arrival'; arrival: string | null; arrivalTime: string | null; guest: string | null }
+type Clean = { listingId: string; unit: string; market: Market; hub: string; date: string; guestOut: string | null; nights: number | null; bedrooms: number | null; checkInTime: string | null; checkOutTime: string | null; sameDayTurn: boolean; nextArrival: string | null; nextNights?: number | null; nextGuest?: string | null; rebook?: boolean; doorCode: string | null; cleaningTime: string | null; vendor: string | null; assignedIds: number[]; assignedNames: string[] ; reservationId?: string | null; syncStatus?: 'synced' | 'guesty-only'; breezewayTaskId?: string | null; breezewayReportUrl?: string | null; taskStatus?: 'created' | 'in_progress' | 'completed'; manual?: boolean; bzOnly?: boolean; taskDate?: string | null; movedTo?: string | null; movedFrom?: string | null; extended?: boolean; extendedFrom?: string | null; ghost?: boolean; blocked?: boolean; blockedFrom?: string | null; blockedUntil?: string | null; missing?: boolean; walkInRisk?: boolean; guestyOnly?: boolean; calNote?: 'blocked' | 'booked' | 'open' | null; cleanMinutes?: number | null; cleaningFee?: number | null; feeSource?: 'guest' | 'listing' | null; city?: string | null; lat?: number | null; lng?: number | null; newBooking?: NewBooking | null }
 const cleans: Clean[] = []
 const seenClean = new Set<string>()
 for (const r of (outs || [])) {
@@ -144,7 +156,17 @@ const m = meta[id]
 const arrivals = arrivalsByListing[id] || []
 const sameDayTurn = arrivals.includes(date)
 const nextArrival = arrivals.find(a => a >= date) || null
+// A fresh ARRIVAL into this unit today/tomorrow outranks a fresh checkout: it is the one that
+// changes what the cleaner has to hit.
+const _arr = nextArrival ? arrivalInfo[id + '__' + nextArrival] : undefined
+let newBooking: NewBooking | null = null
+if (_arr && _arr.id && _arr.bookedAt && isFresh(_arr.bookedAt) && inNewWindow(nextArrival!) && nextArrival! <= addDays(date, 1)) {
+  newBooking = { id: _arr.id, bookedAt: _arr.bookedAt, kind: 'arrival', arrival: nextArrival, arrivalTime: m?.checkIn || null, guest: _arr.guest }
+} else if ((r as any).id && (r as any).created_at && isFresh((r as any).created_at) && inNewWindow(date)) {
+  newBooking = { id: String((r as any).id), bookedAt: String((r as any).created_at), kind: 'checkout', arrival: null, arrivalTime: null, guest: (r as any).guest_name || null }
+}
 cleans.push({
+newBooking,
 listingId: id,
 unit: m?.name || (r as any).listing_name || 'Unit',
 market: m?.market || 'Miami',
@@ -451,6 +473,29 @@ const d = new Date(date + 'T12:00:00')
 return { date, dow: DAYLABEL[d.getDay()], count: dayCleans.filter((c) => !c.movedTo).length, additional: mirror.filter((t: any) => String(t.scheduled_date || '').slice(0, 10) === date && !String(t.name || '').toLowerCase().includes('departure')).length, markets }
 })
 
+// NEW ARRIVALS WITH NO CLEAN ROW: a unit that was sitting empty and got booked for tonight has no
+// departure clean, so no row to hang a badge on — but it is exactly the booking nobody has seen.
+const newArrivals: { id: string; listingId: string; unit: string; market: string; date: string; guest: string | null; nights: number | null; bookedAt: string; arrivalTime: string | null; vendor: string | null }[] = []
+{
+  const _onRows = new Set<string>()
+  for (const c of cleans) if (c.newBooking) _onRows.add(c.newBooking.id)
+  // Only the day(s) on the board: for a later day there is no row here to say whether a clean covers it.
+  const _hi = end
+  const _seenArr = new Set<string>()
+  for (const r of (ins || [])) {
+    if (!LIVE.test(str((r as any).status))) continue
+    const ci = str((r as any).check_in).slice(0, 10)
+    if (!ci || ci < start || ci > _hi || !inNewWindow(ci)) continue
+    const rid = str((r as any).id); const bookedAt = str((r as any).created_at)
+    if (!rid || !bookedAt || !isFresh(bookedAt) || _onRows.has(rid) || _seenArr.has(rid)) continue
+    _seenArr.add(rid)
+    const lid = String((r as any).listing_id); const m = meta[lid]
+    const n = Number((r as any).nights)
+    newArrivals.push({ id: rid, listingId: lid, unit: m?.name || 'Unit', market: m?.market || 'Miami', date: ci, guest: str((r as any).guest_name) || null, nights: Number.isFinite(n) ? n : null, bookedAt, arrivalTime: m?.checkIn || null, vendor: m?.vendor || null })
+  }
+  newArrivals.sort((a, b) => a.date.localeCompare(b.date) || a.unit.localeCompare(b.unit))
+}
+
 let housekeepers: { id: number; name: string; region: string | null }[] = []
 if (breezewayConfigured()) {
 try {
@@ -464,14 +509,14 @@ ok: true, view, today, weekStart: start, weekEnd: end, longStayNights: LONG_STAY
 prev: view === 'day' ? addDays(start, -1) : addDays(start, -7),
 next: view === 'day' ? addDays(start, 1) : addDays(start, 7),
 totals: { cleans: cleans.filter((c) => !c.movedTo).length, feeTotal: cleans.filter(c => !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0), byMarket: MARKETS.map(m => ({ market: m, count: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).length, fee: cleans.filter(c => c.market === m && !c.movedTo && !c.vendor).reduce((s, c) => s + (c.cleaningFee || 0), 0) })) },
-days, housekeepers, units, breezeway: breezewayConfigured(),
+days, housekeepers, units, newArrivals, breezeway: breezewayConfigured(),
 syncedAt: new Date().toISOString(),
 }
 // A PARTIAL SNAPSHOT IS SHOWN, NEVER SHARED. Throwing is how a value is kept out of unstable_cache;
 // the caller below catches it and serves this one viewer the snapshot all the same.
 if (partial) { const e: any = new Error('schedule snapshot not cached: partial read'); e.uncachedSchedule = snapshot; throw e }
 return snapshot
-}, ['schedule-v2'], { tags: ['schedule'], revalidate: 300 })
+}, ['schedule-v3'], { tags: ['schedule'], revalidate: 300 })
 
 let payload: any
 try { payload = await compute(view, start, end, today, vendorKey, LONG_STAY) }

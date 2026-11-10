@@ -10,6 +10,8 @@ import { getShifts, nameMatches, nameMatchesRoster } from '@/lib/homebase'
 import { getTimecards } from '@/lib/homebase-labor'
 import { isTaskGone } from '@/lib/task-categories'
 import { requireVrUser } from '@/lib/vr-gate'
+import { unstable_cache } from 'next/cache'
+import { DAY_TAG, freshEnough } from '@/lib/bust'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -17,13 +19,34 @@ export const maxDuration = 30
 const TZ = 'America/New_York'
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
 
+// ONE HOMEBASE READ PER 90 SECONDS, NOT ONE PER VIEWER PER POLL (2026-11-09 audit). The board polls
+// this route, and every call made two live Homebase requests plus a task read — per open tab. The
+// answer is now shared for 90 seconds under the day tag (so an assign, which busts the day, also
+// refreshes the task counts here). A failed read THROWS and is therefore never cached — an outage
+// must stay an error, not become ninety seconds of "nobody is on today". A copy older than three
+// minutes is rebuilt in place rather than served (lib/bust freshEnough).
+const STAFFING_MAX_AGE_MS = 3 * 60_000
+const cachedStaffing = unstable_cache(
+  async (today: string) => buildStaffing(today),
+  ['ops-staffing-v1'], { tags: [DAY_TAG], revalidate: 90 },
+)
+
 export async function GET(req: NextRequest) {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   try {
     const qd = String(req.nextUrl.searchParams.get('date') || '')
     const today = /^\d{4}-\d{2}-\d{2}$/.test(qd) ? qd : ymd(new Date())
+    return NextResponse.json(await freshEnough(() => cachedStaffing(today), () => buildStaffing(today), v => v.builtAt, STAFFING_MAX_AGE_MS))
+  } catch (e: any) {
+    // 500, NOT 200 (2026-09-09 audit). A 200 with ok:false left the client's `data` undefined and
+    // every surface degraded to "No one on the Homebase schedule today" — a failed read reading as
+    // an empty crew, on the screen where "who is free" is the first question of the morning.
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
+  }
+}
 
+async function buildStaffing(today: string) {
     const db = supabaseAdmin()
     const [shifts, timecards, tRes] = await Promise.all([
       // A HOMEBASE OUTAGE IS NOT AN EMPTY CREW (2026-09-09 audit). These swallowed every failure
@@ -106,8 +129,9 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.tasks - a.tasks)
 
     const idle = people.filter(p => (p.clockedIn || p.worked || p.shift) && p.tasks === 0)
-    return NextResponse.json({
-      ok: true,
+    return {
+      ok: true as const,
+      builtAt: new Date().toISOString(),
       date: today,
       people,
       assignedOffShift,
@@ -117,11 +141,5 @@ export async function GET(req: NextRequest) {
         nothingAssigned: idle.length,
         idleNames: idle.map(p => p.name),
       },
-    })
-  } catch (e: any) {
-    // 500, NOT 200 (2026-09-09 audit). A 200 with ok:false left the client's `data` undefined and
-    // every surface degraded to "No one on the Homebase schedule today" — a failed read reading as
-    // an empty crew, on the screen where "who is free" is the first question of the morning.
-    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
-  }
+    }
 }

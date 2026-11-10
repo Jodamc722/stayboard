@@ -15,13 +15,14 @@
 // unit nobody has logged the job on — not "late", because it is far more often a data gap.
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, CalendarDays, Pencil, Wrench, Sparkles, Fan, ClipboardCheck, Building2 } from 'lucide-react'
+import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, CalendarDays, Pencil, Wrench, Sparkles, Fan, ClipboardCheck, Building2, Zap } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { LeanHead, Pill, Tag, LeanEmpty, type Tone } from '@/components/lean'
 import type { Upkeep, UpkeepProgram, UpkeepRow, UpkeepState } from '@/app/api/upkeep/route'
 import { UpkeepCalendar } from '@/components/UpkeepCalendar'
 import { UpkeepPrograms } from '@/components/UpkeepPrograms'
 import { UpkeepProgramEdit } from '@/components/UpkeepProgramEdit'
+import { UpkeepAutomations } from '@/components/UpkeepAutomations'
 
 const url = (market: string) => '/api/upkeep?market=' + encodeURIComponent(market)
 const bzTask = (id: string) => 'https://app.breezeway.io/task/' + encodeURIComponent(id)
@@ -56,7 +57,9 @@ export function UpkeepBoard() {
   // TWO TABS (Jon, 2026-10-19: "make a tab for calendar view instead of at the bottom"): the programs
   // (tiles + list) and the calendar, which gets the whole width and its own program filter.
   // Always opens on Programs (Jon, 2026-10-19); the calendar is one click away.
-  const [tab, setTab] = useState<'programs' | 'calendar' | 'property'>('programs')
+  // A FOURTH TAB (Jon, 2026-11-09: "automated task creations (should live in upkeep)"): every creator
+  // of Breezeway tasks, its switch, cap and last run — components/UpkeepAutomations.
+  const [tab, setTab] = useState<'programs' | 'calendar' | 'property' | 'automations'>('programs')
   const [calProg, setCalProg] = useState<string>('')
   const [editProg, setEditProg] = useState<string | null>(null)   // cadence key, '' = new program, null = closed
   const [savedMsg, setSavedMsg] = useState('')
@@ -162,10 +165,10 @@ export function UpkeepBoard() {
       {data.degraded.length ? <p className="text-[12px] text-amber-800">{data.degraded.join(' · ')}</p> : null}
 
       {/* ── THE TABS ── */}
-      <div className="flex items-center gap-1 border-b border-line">
-        {([['programs', 'Programs', LayoutGrid], ['property', 'Property programs', Building2], ['calendar', 'Calendar', CalendarDays]] as const).map(([k, label, Icon]) => (
+      <div className="flex items-center gap-1 border-b border-line overflow-x-auto">
+        {([['programs', 'Programs', LayoutGrid], ['property', 'Property programs', Building2], ['calendar', 'Calendar', CalendarDays], ['automations', 'Automations', Zap]] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setTab(k)} aria-pressed={tab === k}
-            className={'h-9 px-3 -mb-px inline-flex items-center gap-1.5 text-[13px] font-semibold border-b-2 ' + (tab === k ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink')}>
+            className={'h-9 px-3 -mb-px shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 text-[13px] font-semibold border-b-2 ' + (tab === k ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink')}>
             <Icon size={14} /> {label}
           </button>
         ))}
@@ -174,7 +177,7 @@ export function UpkeepBoard() {
 
       {savedMsg ? <p className="text-[12.5px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">{savedMsg}</p> : null}
       {editProg !== null && tab === 'programs' ? <UpkeepProgramEdit cadenceKey={editProg || undefined} onClose={() => setEditProg(null)} onSaved={label => { setEditProg(null); setSavedMsg('Saved ' + label + ' — the tiles refresh with it.'); reload() }} /> : null}
-      {tab === 'property' ? <UpkeepPrograms /> : tab === 'calendar' ? (
+      {tab === 'automations' ? <UpkeepAutomations onOpenPrograms={() => setTab('property')} /> : tab === 'property' ? <UpkeepPrograms /> : tab === 'calendar' ? (
         <section className="rounded-2xl border border-line bg-white overflow-hidden">
           <header className="px-3 py-2 border-b border-line flex items-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1 flex-wrap">

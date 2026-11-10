@@ -157,6 +157,26 @@ const task_create: Executor = async (p, ctx) => {
   const r = await createBreezewayTask(body)
   if (!r.ok || !r.data?.id) return { ok: false, summary: `Breezeway refused the task (${r.status})`, error: `Breezeway ${r.status}: ${str(r.text).slice(0, 160)}` }
   const taskId = str(r.data.id)
+  // REUSED, NOT CREATED (2026-11-09 audit): the one-open-task guard found this job already open on the
+  // unit and kept (or moved) THAT task. It is not ours to re-assign, its mirror row is not ours to
+  // overwrite with the date we asked for, and above all it carries NO UNDO — the undo is a cancel,
+  // and it would cancel a task somebody else made. The links (glitch, exactly-once row) still point at it.
+  if (r.reused) {
+    if (p?.glitchId) { try { await supabaseAdmin().from('glitches').update({ breezeway_task_id: taskId }).eq('id', str(p.glitchId)) } catch { /* the board shows it next sync */ } }
+    if (p?.autoInspectionKey) {
+      try {
+        await supabaseAdmin().from('auto_inspections').upsert({
+          reservation_id: str(p.autoInspectionKey), listing_id: home.listingId, unit_name: home.unit, guest_name: str(p?.guest) || null,
+          check_in: r.reused.to || date, reason: str(p?.autoInspectionReason) || 'Eve', market: home.market, task_id: taskId, assignees: [],
+        }, { onConflict: 'reservation_id' })
+      } catch { /* the watch's own cooldown still holds */ }
+    }
+    bustBoards()
+    return {
+      ok: true, ref: taskId,
+      summary: `"${title}" is already open on ${home.unit} as task #${taskId} — ${r.reused.to && r.reused.to !== r.reused.from ? `moved from ${r.reused.from} to ${r.reused.to}` : `kept on ${r.reused.to || r.reused.from || date}`}; no second task was created and its people were left as they are`,
+    }
+  }
   const wanted = Array.isArray(p?.assignees) ? p.assignees.map(str) : (p?.assignee ? [str(p.assignee)] : [])
   let assignedNames: string[] = []
   let leftOff: string[] = []

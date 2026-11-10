@@ -19,7 +19,7 @@ import 'server-only'
 // time; the ts match only finds the ask, it never authorises anything.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting, setSetting } from '@/lib/app-settings'
-import { postToChannel, postThreadReply, emailForSlackUser } from '@/lib/slack'
+import { postThreadReply, emailForSlackUser } from '@/lib/slack'
 import { isSuperadmin } from '@/lib/access'
 import { bustDay } from '@/lib/bust'
 import { getAgentSettings, executeProposal, rejectProposal, tierOf } from './agent-mode'
@@ -59,20 +59,8 @@ async function canDecide(email: string | null, rows: any[]): Promise<{ ok: boole
 
 // ── posting ─────────────────────────────────────────────────────────────────────────────────────
 
-/** A proposal into the approvals room, with the thread as the answer slot. Remembers the post on the row. */
-export async function postProposalToSlack(id: string, p: { summary: string; why?: string; usd?: number }): Promise<{ ok: boolean; error?: string; ts?: string; channel?: string }> {
-  const ch = await getApprovalsChannel()
-  if (!ch) return { ok: false, error: 'no Slack approvals channel' }
-  const text = `🤖 *Eve wants to:* ${p.summary.slice(0, 300)}${p.why ? `\n_Why:_ ${p.why.slice(0, 240)}` : ''}${p.usd ? `\n_Money:_ ${money(p.usd)}` : ''}\n\nReply *yes* in this thread and I'll do it · *no* and I'll drop it. (Also in Lighthouse → Eve → Agent mode.)`
-  const r = await postToChannel(ch.id, text)
-  if (!r.ok || !r.ts) return { ok: false, error: r.error || 'refused' }
-  try {
-    const { data } = await supabaseAdmin().from('eve_actions').select('payload').eq('id', id).maybeSingle()
-    const pl = (data as any)?.payload || {}
-    await supabaseAdmin().from('eve_actions').update({ payload: { ...pl, slack_channel: ch.id, slack_ts: String(r.ts), slack_sent_at: new Date().toISOString() } }).eq('id', id)
-  } catch { /* the post is up; a reply will still be read by ts below if the row kept it */ }
-  return { ok: true, ts: String(r.ts), channel: ch.id }
-}
+// (postProposalToSlack — one post per proposal — was removed 2026-11-09: nothing had called it since the
+// digest below replaced it on 2026-10-07. A proposal reaches Slack only through flushApprovalDigest.)
 
 /**
  * THE APPROVALS DIGEST (Eve audit 2026-10-07). Proposals are queued (payload.slack_pending) by
@@ -91,6 +79,9 @@ export async function postProposalToSlack(id: string, p: { summary: string; why?
  *     money and door codes never go to the desk room;
  *   · every post passes lib/eve/room-gate (the 8pm–7am window, quiet hours, the said-registry and the
  *     unchanged per-room cap). A held list waits for the next slot; nothing is stamped as sent.
+ *   · THE REGISTRY COMPARES THE ITEMS, NOT THE HEADER (2026-11-09). The desk list's header alone filled
+ *     the registry's 14-word fingerprint, so every list after the first was held for a week as "already
+ *     said" and its asks aged out unseen. Each post now passes its item lines as `sayText`.
  * `force` (a person pressing run) skips the slot check, never the gate.
  */
 export const DIGEST_MAX = 10
@@ -172,7 +163,7 @@ export async function flushApprovalDigest(opts: { preview?: boolean; force?: boo
       ].filter(Boolean).join('\n')
       if (opts.preview) previews.push(text)
       else {
-        const r = await gatedPost({ channel: ch.id, text, by: 'cron:approvals-digest', summary: `approvals digest in the approvals room (${list.length})` })
+        const r = await gatedPost({ channel: ch.id, text, sayText: list.map(x => `${x.id} ${String(x.payload?.summary || '')}`).join(' '), by: 'cron:approvals-digest', summary: `approvals digest in the approvals room (${list.length})` })
         if (r.held) held.push(`approvals room: ${r.held}`)
         else if (!r.ok || !r.ts) error = r.error || 'refused'
         else { await stamp(list, ch.id, String(r.ts)); posted += list.length }
@@ -202,7 +193,7 @@ export async function flushApprovalDigest(opts: { preview?: boolean; force?: boo
     ].filter(Boolean).join('\n')
     if (opts.preview) previews.push(text)
     else {
-      const r = await gatedPost({ channel: EVE_CHANNELS.ccsJon, text, by: 'cron:approvals-digest', summary: `desk list in #vr-customercareteam (${asks.length} asks, ${dList.length} drafts)` })
+      const r = await gatedPost({ channel: EVE_CHANNELS.ccsJon, text, sayText: [...asks, ...dList].map(x => `${x.id} ${String(x.payload?.summary || x.payload?.guest || '')}`).join(' '), by: 'cron:approvals-digest', summary: `desk list in #vr-customercareteam (${asks.length} asks, ${dList.length} drafts)` })
       if (r.held) held.push(`customer care room: ${r.held}`)
       else if (!r.ok || !r.ts) error = error || r.error || 'refused'
       else { await stamp(asks, EVE_CHANNELS.ccsJon, String(r.ts)); await stamp(dList, EVE_CHANNELS.ccsJon, String(r.ts), asks.length); posted += total }
@@ -230,15 +221,37 @@ export function parseDigestReply(text: string, n: number): { idx: number; yes: b
   return Object.keys(out).map(k => ({ idx: Number(k), yes: out[Number(k)] }))
 }
 
-/** A spend waiting on approval, into the approvals room. Called when the request is filed. */
-export async function postSpendToSlack(req: { id: string | number; title?: string | null; amount_usd?: number | null; unit?: string | null; building?: string | null; vendor?: string | null; created_by_email?: string | null; description?: string | null; type?: string | null }): Promise<{ ok: boolean; error?: string }> {
+/**
+ * A spend waiting on approval, into the approvals room. Called when the request is filed.
+ *
+ * THROUGH THE GATE (2026-11-09). This was a direct post at whatever hour the request was filed. It now
+ * passes lib/eve/room-gate (the 8pm–7am window, quiet hours, the said-registry; no room cap — a person
+ * filed it). A spend held by the gate is remembered (app_settings `slack_spend_held`) and posted by
+ * flushHeldSpends on the next hourly pass inside the window, if it is still pending. The Lighthouse
+ * buttons work the whole time.
+ */
+type SpendReq = { id: string | number; title?: string | null; amount_usd?: number | null; unit?: string | null; building?: string | null; vendor?: string | null; created_by_email?: string | null; description?: string | null; type?: string | null }
+const SPEND_HELD_KEY = 'slack_spend_held'
+type HeldSpend = { req: SpendReq; at: string }
+export async function postSpendToSlack(req: SpendReq, opts: { retry?: boolean } = {}): Promise<{ ok: boolean; error?: string; held?: string }> {
   const ch = await getApprovalsChannel()
   if (!ch) return { ok: false, error: 'no Slack approvals channel' }
   const where = [req.building, req.unit].filter(Boolean).join(' · ')
   const who = String(req.created_by_email || '').split('@')[0]
   const amt = Number(req.amount_usd) > 0 ? money(Number(req.amount_usd)) : 'amount not set'
   const text = `💵 *Spend to approve — ${amt}:* ${String(req.title || req.type || 'request').slice(0, 200)}${where ? `\n_Where:_ ${where}` : ''}${req.vendor ? `\n_Vendor:_ ${req.vendor}` : ''}${who ? `\n_Asked by:_ ${who}` : ''}${req.description ? `\n_Note:_ ${String(req.description).slice(0, 240)}` : ''}\n\nReply *yes* in this thread to approve · *no* to reject.`
-  const r = await postToChannel(ch.id, text)
+  const { gatedPost } = await import('./room-gate')
+  const r = await gatedPost({ channel: ch.id, text, sayText: `spend ${String(req.id)} ${String(req.title || req.type || '')}`, subject: 'spend:' + String(req.id), by: 'spend-approval', summary: `spend to approve (${amt}): ${String(req.title || req.type || 'request').slice(0, 120)}` })
+  if (r.held) {
+    if (!opts.retry) {
+      try {
+        const cur = (await getSetting<Record<string, HeldSpend>>(SPEND_HELD_KEY, {})) || {}
+        cur[String(req.id)] = { req, at: new Date().toISOString() }
+        await setSetting(SPEND_HELD_KEY, cur, 'slack-approvals')
+      } catch { /* it still waits in Lighthouse */ }
+    }
+    return { ok: false, held: r.held, error: 'held — ' + r.held }
+  }
   if (!r.ok || !r.ts) return { ok: false, error: r.error || 'refused' }
   try {
     const cur = (await getSetting<Record<string, SpendPost>>(SPEND_POSTS_KEY, {})) || {}
@@ -249,6 +262,42 @@ export async function postSpendToSlack(req: { id: string | number; title?: strin
     await setSetting(SPEND_POSTS_KEY, keep, 'slack-approvals')
   } catch { /* the post is up; without the map a reply cannot find it — the Lighthouse buttons still work */ }
   return { ok: true }
+}
+
+/**
+ * Post the spends the gate held, once the window is open. Called from the hourly slack-watch cron.
+ * A spend decided in Lighthouse meanwhile, or held for more than three days, is dropped from the list.
+ */
+export async function flushHeldSpends(): Promise<{ posted: number; waiting: number; dropped: number }> {
+  const out = { posted: 0, waiting: 0, dropped: 0 }
+  const { inPostWindow } = await import('./room-gate')
+  let held: Record<string, HeldSpend> = {}
+  try { held = (await getSetting<Record<string, HeldSpend>>(SPEND_HELD_KEY, {})) || {} } catch { return out }
+  const ids = Object.keys(held)
+  if (!ids.length) return out
+  if (!inPostWindow()) { out.waiting = ids.length; return out }
+  const db = supabaseAdmin()
+  const done: string[] = []
+  for (const id of ids) {
+    const h = held[id]
+    if (!h || !h.req || Date.parse(String(h.at || '')) < Date.now() - 3 * 86400_000) { done.push(id); out.dropped++; continue }
+    try {
+      const { data } = await db.from('field_requests').select('id,approval_status').eq('id', h.req.id).maybeSingle()
+      const st = String((data as any)?.approval_status || '')
+      if (!data || (st && st !== 'pending')) { done.push(id); out.dropped++; continue }
+    } catch { out.waiting++; continue }
+    const r = await postSpendToSlack(h.req, { retry: true })
+    if (r.ok) { done.push(id); out.posted++ } else out.waiting++
+  }
+  if (done.length) {
+    try {
+      // Re-read before writing: a spend filed while this ran must not be lost.
+      const cur = (await getSetting<Record<string, HeldSpend>>(SPEND_HELD_KEY, {})) || {}
+      for (const id of done) delete cur[id]
+      await setSetting(SPEND_HELD_KEY, cur, 'slack-approvals')
+    } catch { /* the next pass tries again; the said-registry stops a second post */ }
+  }
+  return out
 }
 
 // ── replies ─────────────────────────────────────────────────────────────────────────────────────

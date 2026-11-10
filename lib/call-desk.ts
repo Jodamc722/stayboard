@@ -700,7 +700,10 @@ export type DeskData = {
  * `today` is an Eastern calendar date. The page passes the real one; the nightly close-out passes
  * the same, and simply acts on the rows this reports as `closed && !done`.
  */
-export async function loadCallsDesk(sb: any, today: string, viewDate?: string): Promise<DeskData> {
+export async function loadCallsDesk(sb: any, today: string, viewDate?: string, opts?: { dayOnly?: boolean }): Promise<DeskData> {
+  // dayOnly (the Today lane, 2026-11-09 audit): that one day's arrivals and nothing else — no
+  // checkouts, so no follow-up rows. Every other caller leaves it off and gets the full desk.
+  const dayOnly = !!opts?.dayOnly
   const toDate = addDays(today, 14)
   const graceFrom = addDays(today, -WELCOME_GRACE_DAYS)     // the first day a call is still workable (= today)
   // Two days further back, so the nightly close-out — which runs after midnight with the NEW day as
@@ -714,12 +717,12 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
   // to include it; every row keeps the same due / closed rules, so a past day reads as history and
   // a far day as not-yet-due, never as a different kind of row.
   const vd = viewDate && /^\d{4}-\d{2}-\d{2}$/.test(viewDate) ? viewDate : today
-  const arrFrom = vd < closedFrom ? vd : closedFrom, arrTo = vd > toDate ? vd : toDate
+  const arrFrom = dayOnly ? vd : vd < closedFrom ? vd : closedFrom, arrTo = dayOnly ? vd : vd > toDate ? vd : toDate
   const depFrom = vd < postClosedFrom ? vd : postClosedFrom, depTo = vd > today ? vd : today
 
   const [{ data: arrivals }, { data: departures }, rec] = await Promise.all([
     sb.from('guesty_reservations').select(RES_SELECT).gte('check_in', arrFrom).lte('check_in', arrTo).order('check_in').limit(600),
-    sb.from('guesty_reservations').select(RES_SELECT).gte('check_out', depFrom).lte('check_out', depTo).order('check_out', { ascending: false }).limit(600),
+    dayOnly ? Promise.resolve({ data: [] as any[] }) : sb.from('guesty_reservations').select(RES_SELECT).gte('check_out', depFrom).lte('check_out', depTo).order('check_out', { ascending: false }).limit(600),
     cachedRecovery().then(e => ({ map: new Map<string, RecoveryUnit>(e), failed: false }))
       // recoveryUnits throws rather than flag units on a partial review scan. Falling back to an
       // empty map is right; PRETENDING that means "no unit is in recovery" is not, so the failure
@@ -732,42 +735,49 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string): 
   const callIds = Array.from(new Set([...(arrivals || []), ...(departures || [])].map((r: any) => String(r.id))))
   const idChunks: string[][] = []
   for (let i = 0; i < callIds.length; i += 200) idChunks.push(callIds.slice(i, i + 200))
-  const logs: CallLog[] = (await Promise.all(idChunks.map(chunk => sb.from('guest_calls')
-    .select('reservation_id,kind,outcome,note,called_by,caller_email,called_at,attempts,tier,source,last_attempt_at,last_result,talk_seconds')
-    .in('reservation_id', chunk).then((r: any) => r.data || [])))).flat()
-  const notes = await callNotes(sb, callIds)
-  const callers = await knownCallers(sb)
-  const checks = await phoneChecks(sb, [...(arrivals || []), ...(departures || [])].map((r: any) => ({ id: String(r.id), phone: String(r.guest_phone || ''), from: addDays(String(r.check_in || today).slice(0, 10), -14) })))
-  const callLog = new Map<string, CallLog>()
-  for (const c of logs) callLog.set(String(c.reservation_id) + '|' + String(c.kind), c)
-  const logOf = (id: any, kind: 'welcome' | 'post_checkout') => callLog.get(String(id) + '|' + kind) || null
-
   // Glitches from the EARLIEST CHECK-IN on the departures list, not from the checkout window.
   const earliestStay = (departures || []).reduce((min: string, r: any) => {
     const ci = String(r.check_in || '').slice(0, 10)
     return ci && ci < min ? ci : min
   }, postClosedFrom)
-  const glitchRows = await glitchesDuringStays(sb, earliestStay)
+  // The listing's `building` for every unit on the page, so a lux tier never depends on the
+  // nickname happening to contain the building's name.
+  const listingIds = Array.from(new Set([...(arrivals || []), ...(departures || [])].map((r: any) => String(r.listing_id || '')).filter(Boolean)))
+  const listingChunks: string[][] = []
+  for (let i = 0; i < listingIds.length; i += 200) listingChunks.push(listingIds.slice(i, i + 200))
+  // ONE WAVE (2026-11-09 audit). These seven reads need only the two reservation lists above, and
+  // ran one after another — seven round trips of waiting on every open of the desk. Same reads,
+  // same failures (a throw still throws), side by side.
+  const [logChunks, notes, callers, checks, glitchRows, buildingRows, noSvc] = await Promise.all([
+    Promise.all(idChunks.map(chunk => sb.from('guest_calls')
+      .select('reservation_id,kind,outcome,note,called_by,caller_email,called_at,attempts,tier,source,last_attempt_at,last_result,talk_seconds')
+      .in('reservation_id', chunk).then((r: any) => (r.data || []) as CallLog[]))),
+    callNotes(sb, callIds),
+    knownCallers(sb),
+    phoneChecks(sb, [...(arrivals || []), ...(departures || [])].map((r: any) => ({ id: String(r.id), phone: String(r.guest_phone || ''), from: addDays(String(r.check_in || today).slice(0, 10), -14) }))),
+    dayOnly ? Promise.resolve([] as any[]) : glitchesDuringStays(sb, earliestStay),
+    Promise.all(listingChunks.map(chunk => sb.from('guesty_listings').select('id,building').in('id', chunk).then((r: any) => (r.data || []) as any[]))),
+    // NO WELCOME CALLS THERE — see skipWelcome below.
+    getNoService().catch(() => null),
+  ])
+  const logs: CallLog[] = logChunks.flat()
+  const callLog = new Map<string, CallLog>()
+  for (const c of logs) callLog.set(String(c.reservation_id) + '|' + String(c.kind), c)
+  const logOf = (id: any, kind: 'welcome' | 'post_checkout') => callLog.get(String(id) + '|' + kind) || null
+
   const unlinked = assignUnlinkedGlitches(glitchRows, (departures || []).map((r: any) => String(r.listing_name || '')))
 
   const dueDate = addDays(today, WELCOME_AHEAD_DAYS)     // 72 hours ahead (Jon, 2026-09-09)
   const recOf = (listingId: any): RecoveryUnit | null => recovery.get(String(listingId || '')) || null
 
-  // The listing's `building` for every unit on the page, so a lux tier never depends on the
-  // nickname happening to contain the building's name.
-  const listingIds = Array.from(new Set([...(arrivals || []), ...(departures || [])].map((r: any) => String(r.listing_id || '')).filter(Boolean)))
   const buildingOfListing = new Map<string, string>()
-  for (let i = 0; i < listingIds.length; i += 200) {
-    const { data } = await sb.from('guesty_listings').select('id,building').in('id', listingIds.slice(i, i + 200))
-    for (const l of (data || [])) if ((l as any).building) buildingOfListing.set(String((l as any).id), String((l as any).building))
-  }
+  for (const l of buildingRows.flat()) if (l.building) buildingOfListing.set(String(l.id), String(l.building))
 
   // NO WELCOME CALLS THERE (Jon, 2026-11-06: "We do not need to do any inspections or welcome calls
   // for any Botanica units. So don't draft them or auto create them."). A pre-arrival (kind
   // 'welcome') call in a no-welcome-call building is never listed as owed, never counted as due and
   // never closed out as missed. One already made stays — that is history. Post-checkout recovery
   // follow-ups (kind 'post_checkout') are untouched: those are a guest problem, not the program.
-  const noSvc = await getNoService().catch(() => null)
   const skipWelcome = (r: any) => !!noSvc && skipsWelcomeCallsIn(noSvc, buildingOfListing.get(String(r.listing_id || '')), r.listing_name)
     && !(guestyCalled(r.custom_fields) || isCompleted(logOf(r.id, 'welcome')?.outcome))
 

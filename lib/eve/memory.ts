@@ -20,6 +20,7 @@ import { beliefStrength, beliefTag, currentConfidence, isHuman, RETIRE_BELOW, be
 import { aiFetch } from '@/lib/ai-usage'
 import { modelFor } from '@/lib/ai-models'
 import { looksLikeDoorCode, codeNearDigits } from './redact'
+import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 
 export const MEMORY_KINDS = ['rule', 'preference', 'insight', 'decision', 'person', 'issue', 'correction'] as const
 export type MemoryKind = typeof MEMORY_KINDS[number]
@@ -65,6 +66,28 @@ export function normScope(v: any): string {
   if (!m) return 'portfolio'
   if (lc(m[1]) === 'channel') { const ch = otaChannelOf(m[2]); return ch ? 'channel:' + ch : 'portfolio' }
   return lc(m[1]) + ':' + m[2].trim()
+}
+
+/**
+ * ONE SPELLING PER BUILDING, ON THE WAY IN (2026-11-09). A scope is matched as a plain string, and the
+ * reader of the Slack rooms wrote the name however the room did — "building:17 West", "building:17west",
+ * "building:17WEST" were three scopes, so the same-scope dedupe missed them and recall (which asks for
+ * 'building:' + the listing rollup) never loaded two of the three. canonBuilding maps a name onto the
+ * canonical label in lib/segments (the same label the rollup uses) or returns null for a name it does
+ * not know; canonScope applies it to a scope string and leaves anything else exactly as normScope does.
+ * Used on the WRITE path only — reads are unchanged, so rows already stored are still found as before.
+ */
+export function canonBuilding(name: any): string | null {
+  const raw = String(name || '').trim()
+  if (!raw) return null
+  const hit = buildingOf(raw, null)
+  return hit && KNOWN_BUILDINGS.some(b => b.label === hit) ? hit : null
+}
+export function canonScope(v: any): string {
+  const s = normScope(v)
+  if (!s.startsWith('building:')) return s
+  const b = canonBuilding(s.slice('building:'.length))
+  return b ? 'building:' + b : s
 }
 
 /**
@@ -511,22 +534,49 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
   // re-finds one of its own memories, the new text carries this week's figures, so the row takes the
   // new text and evidence (with evidence.sweptOn refreshed) instead of only a fresh timestamp.
   // A human-written twin is never rewritten by the sweep.
+  // ACROSS SCOPES TOO, FOR WHAT SHE LEARNED HERSELF (2026-11-09). 521 of 800 memories were overheard in
+  // Slack, many of them the same sentence saved once per building: the check below only ever looked
+  // inside ONE scope, at the 120 newest rows, with a near-exact match. For a machine-learned memory
+  // (source slack or eve) that finds no twin in its own scope, the whole portfolio + building pool is
+  // searched as well, at the looser 0.75 the memory audit uses (a number or a negation that differs
+  // still makes it a different thought). A twin found in another scope is reinforced instead of a new
+  // row being written; when both are machine-learned and sit in two different buildings, the surviving
+  // row is widened to portfolio — it was true in two places. A person's memory (jon, staff, doc,
+  // telegram) is never searched this way: a person scoping a rule to one building meant it.
+  const MACHINE = ['slack', 'eve']
   if (!input.supersedes) try {
-    const scope = normScope(input.scope)
+    const scope = canonScope(input.scope)
+    const src = normSource(input.source)
     const { data: peers } = await db.from('eve_memory')
-      .select('id,text,weight,why,source,evidence,confidence')
+      .select('id,text,weight,why,source,evidence,confidence,scope,expires_on')
       .is('superseded_by', null).eq('scope', scope)
       .order('updated_at', { ascending: false }).limit(120)
     // A sweep memory is also the twin of the live system row for the SAME finding, whatever its
     // numbers now say — the number check above would otherwise make every re-sweep a new row.
-    const finding = normSource(input.source) === 'system' && input.evidence && typeof input.evidence === 'object' ? input.evidence.finding : null
-    const twin = ((peers || []) as any[]).find(p => (finding && String(p.source) === 'system' && p?.evidence?.finding === finding) || sameThought(String(p.text || ''), text))
+    const finding = src === 'system' && input.evidence && typeof input.evidence === 'object' ? input.evidence.finding : null
+    let twin = ((peers || []) as any[]).find(p => (finding && String(p.source) === 'system' && p?.evidence?.finding === finding) || sameThought(String(p.text || ''), text))
+    let widen = false
+    if (!twin && MACHINE.includes(src) && (scope === 'portfolio' || scope.startsWith('building:'))) {
+      const { data: pool } = await db.from('eve_memory')
+        .select('id,text,weight,why,source,evidence,confidence,scope,expires_on')
+        .is('superseded_by', null).or('scope.eq.portfolio,scope.like."building:%"')
+        .order('updated_at', { ascending: false }).limit(2000)
+      twin = ((pool || []) as any[]).find(p => sameThought(String(p.text || ''), text, 0.75))
+      const today = new Date().toISOString().slice(0, 10)
+      widen = !!twin && MACHINE.includes(String(twin.source)) && String(twin.scope) !== scope
+        && String(twin.scope).startsWith('building:') && scope.startsWith('building:')
+        && !(twin.expires_on && String(twin.expires_on) <= today)
+      // Already known from a person or a document, in another scope: nothing to write and nothing of
+      // theirs to touch — their row keeps its weight, its scope and its confidence.
+      if (twin && !MACHINE.includes(String(twin.source))) return { ok: true, id: twin.id, deduped: true }
+    }
     if (twin) {
       const patch: any = {
         weight: Math.max(Number(twin.weight || 0), cappedWeight(input)),
         why: twin.why || (input.why ? String(input.why).slice(0, 500) : null),
         updated_at: new Date().toISOString(),
       }
+      if (widen) patch.scope = 'portfolio'
       if (normSource(input.source) === 'system' && String(twin.source) === 'system') {
         const prev = twin.evidence && typeof twin.evidence === 'object' && !Array.isArray(twin.evidence) ? twin.evidence : {}
         const next = input.evidence && typeof input.evidence === 'object' && !Array.isArray(input.evidence) ? input.evidence : {}
@@ -550,7 +600,7 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{ ok: boolean;
     kind: normKind(input.kind),
     text,
     why: input.why ? String(input.why).slice(0, 500) : null,
-    scope: normScope(input.scope),
+    scope: canonScope(input.scope),
     weight: cappedWeight(input),
     source: normSource(input.source),
     confidence: Number.isFinite(Number(input.confidence)) ? Math.min(1, Math.max(0, Number(input.confidence))) : null,
@@ -619,7 +669,8 @@ export async function touchMemories(ids: string[]): Promise<void> {
 /**
  * MEMORY HYGIENE (Jon, 2026-08-19: "update constantly"). Learning forever means accumulating
  * forever unless something forgets. Every learning pass retires self-learned insights that have
- * EARNED retirement: source 'eve', never once loaded into a prompt (use_count 0), low weight, and
+ * EARNED retirement: source 'eve' — and, since 2026-11-09, source 'slack' (what she overheard in the
+ * rooms, held to the same bar) — never once loaded into a prompt (use_count 0), low weight, and
  * untouched for 60+ days. They are expired, not deleted — visible under include_superseded-style
  * review, recoverable by editing, and gone from every future prompt. Anything Jon taught her
  * (source 'jon') is never touched by this: humans retire human knowledge.
@@ -631,7 +682,7 @@ export async function pruneStaleMemories(): Promise<number> {
     const today = new Date().toISOString().slice(0, 10)
     const { data } = await db.from('eve_memory')
       .update({ expires_on: today, updated_at: new Date().toISOString() })
-      .eq('source', 'eve').eq('use_count', 0).lte('weight', 4)
+      .in('source', ['eve', 'slack']).eq('use_count', 0).lte('weight', 4)
       .is('superseded_by', null).is('expires_on', null)
       .lt('updated_at', cutoff)
       .select('id')

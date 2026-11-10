@@ -17,43 +17,18 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
-import { CallsDesk } from '@/components/CallsDesk'
-import { getToken } from '@/lib/guesty'
-import { unstable_cache } from 'next/cache'
+import { CallsDeskPhones } from '@/components/CallsDeskPhones'
 import { ymdET } from '@/lib/team-schedule'
 import { loadCallsDesk } from '@/lib/call-desk'
 import { signedInName } from '@/lib/caller-name'
 
 export const dynamic = 'force-dynamic'
 
-// Some Airbnb reservations embed only a STUB guest (id + name, no phone) even though Guesty has the
-// number on the guest record. For any displayed reservation missing a phone we fetch /guests/{id} and
-// fill it in. Cached 30 min, gentle concurrency to respect Guesty's rate limit.
-const guestPhones = unstable_cache(async (ids: string[]) => {
-  const map: Record<string, string> = {}
-  if (!ids.length) return map
-  let tok = ''
-  try { tok = await getToken() } catch { return map }
-  const BASE = process.env.GUESTY_BASE_URL || 'https://open-api.guesty.com/v1'
-  const queue = [...ids]
-  async function worker() {
-    while (queue.length) {
-      const id = queue.shift()
-      if (!id) break
-      try {
-        const r = await fetch(`${BASE}/guests/${id}`, { headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' }, cache: 'no-store' })
-        if (r.ok) {
-          const g: any = await r.json()
-          const ph = g?.phone || (Array.isArray(g?.phones) && g.phones.length ? (typeof g.phones[0] === 'string' ? g.phones[0] : (g.phones[0]?.number || g.phones[0]?.phone)) : '')
-          if (ph) map[id] = String(ph)
-        }
-      } catch { /* skip */ }
-      await new Promise(res => setTimeout(res, 120))
-    }
-  }
-  await Promise.all([worker(), worker(), worker()])
-  return map
-}, ['welcome-guest-phones'], { revalidate: 1800 })
+// PHONES THE MIRROR IS MISSING (2026-11-09). Some Airbnb reservations embed only a STUB guest (id +
+// name, no phone) even though Guesty has the number. This page used to fetch those from Guesty
+// before rendering — one cache entry for the whole list, thrown away by any new arrival — which is
+// what made it take 3–5 seconds. The desk now draws at once and components/CallsDeskPhones asks
+// /api/calls/guest-phones for the blanks (cached per guest, 30 minutes).
 
 export default async function CallsPage({ searchParams }: { searchParams?: { date?: string } }) {
   const supabase = createClient()
@@ -63,20 +38,15 @@ export default async function CallsPage({ searchParams }: { searchParams?: { dat
   // ?date=YYYY-MM-DD points the desk at another day (2026-09-25). Default: today.
   const today = ymdET(new Date())
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(searchParams?.date || '')) ? String(searchParams!.date) : today
-  const d = await loadCallsDesk(supabaseAdmin(), today, date)
-
-  // Backfill phones for displayed reservations whose embedded guest is just a stub.
-  const missing = d.rows.filter(r => !r.phone && r.guestId)
-  if (missing.length) {
-    const pmap = await guestPhones(Array.from(new Set(missing.map(r => r.guestId))))
-    for (const r of missing) if (pmap[r.guestId]) r.phone = pmap[r.guestId]
-  }
-
-  const meName = await signedInName(supabaseAdmin(), String(user.email || ''))
+  // The signed-in person's name does not depend on the desk — read alongside it.
+  const [d, meName] = await Promise.all([
+    loadCallsDesk(supabaseAdmin(), today, date),
+    signedInName(supabaseAdmin(), String(user.email || '')),
+  ])
 
   return (
     <Shell>
-      <CallsDesk meName={meName} rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} date={date} me={String(user.email || '')} talkroute={d.talkroute} callers={d.callers} />
+      <CallsDeskPhones meName={meName} rows={d.rows} outRows={d.outRows} kpis={d.kpis as any} today={d.today} date={date} me={String(user.email || '')} talkroute={d.talkroute} callers={d.callers} />
     </Shell>
   )
 }

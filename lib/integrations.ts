@@ -112,21 +112,6 @@ export function slackAppConfigured(): boolean {
   return !!(process.env.SLACK_CLIENT_ID && process.env.SLACK_CLIENT_SECRET)
 }
 
-/**
- * Post to Slack. Prefers the connected workspace; falls back to the legacy env var so nothing that
- * worked before stops working. Returns a status string rather than throwing — a failed alert must
- * never take down the thing that was trying to alert.
- */
-export async function postSlack(text: string): Promise<'sent' | 'no-webhook' | 'failed'> {
-  let url = ''
-  try {
-    const c = await getConnections()
-    url = (c.slack && c.slack.webhookUrl) || ''
-  } catch { /* fall through to env */ }
-  if (!url) url = process.env.SLACK_WEBHOOK_URL || ''
-  if (!url) return 'no-webhook'
-  try {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })
-    return r.ok ? 'sent' : 'failed'
-  } catch { return 'failed' }
-}
+// (postSlack — the plain-text post to the one incoming webhook — was removed 2026-11-09: nothing had
+// called it since alerts moved to the bot client in lib/slack.ts and the outbox in lib/slack-queue.ts.
+// The webhook URL is still stored on the connection.)

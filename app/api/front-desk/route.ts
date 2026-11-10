@@ -10,6 +10,7 @@
 // the dollars on the tasks, and the finished tasks with no time on them (the hours nobody recorded).
 //
 //   GET ?date=YYYY-MM-DD   (default today, ET)
+//   GET ?slim=1            the Today lane: that day's arrivals with their notice and call, nothing else
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAnyLevel } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -69,10 +70,26 @@ export async function GET(req: NextRequest) {
   const date = /^\d{4}-\d{2}-\d{2}$/.test(q) ? q : today
   const db = supabaseAdmin()
   try {
+    // SLIM (2026-11-09 audit). The Today page draws one lane from this route — arrivals, notice, call
+    // — and paid for the whole board every minute: a week of billing, a 17-day calls window, the
+    // call log, the checklist. With ?slim=1 those are not read and come back empty; the Front desk
+    // board does not pass it and gets everything, as before.
+    const slim = !!req.nextUrl.searchParams.get('slim')
+    const noBilling = () => ({ tasks: [] as BillingTask[], owners: [], missingDetail: 0 })
+    // The three reads that used to wait their turn after the first wave now start with it.
+    const sentTodayP: Promise<any[]> = slim ? Promise.resolve([]) : Promise.resolve(
+      db.from('reservation_notices').select('sent_by,sent_at').gte('sent_at', new Date(Date.now() - 36 * 3600_000).toISOString()).is('deleted_at', null).limit(500),
+    ).then(r => (r.data || []) as any[], () => [])
+    const callLogP: Promise<any[]> = slim ? Promise.resolve([]) : Promise.resolve(
+      db.from('guest_calls').select('outcome,tier,called_at,caller_email,kind').gte('called_at', new Date(Date.now() - 7 * 86400_000).toISOString()).limit(5000),
+    ).then(r => (r.data || []) as any[], () => [])
+    const checklistP: Promise<FdCheck[]> = slim ? Promise.resolve([]) : import('@/lib/daily-checklist').then(m => m.todayList())
+      .then(t => t.rows.filter(r => !r.owner_role || /front ?desk|guest|cs/i.test(r.owner_role)).map(r => ({ id: r.id, title: r.title, by_time: r.by_time, owner_role: r.owner_role, link: r.link, done: r.done, late: r.late, in_minutes: r.in_minutes, done_by: r.done_by })))
+      .catch(() => [])   // the checklist is optional here
     const [desk, noticesRead, weekBilling] = await Promise.all([
-      loadCallsDesk(db, today, date),
+      loadCallsDesk(db, today, date, { dayOnly: slim }),
       db.from('reservation_notices').select('id,property_id,listing_id,unit_no,guest_name,arrival_date,reservation_id,sent_at,sent_by,doc_path,deleted_at').eq('arrival_date', date).is('deleted_at', null).limit(500),
-      billingRange(sundayOf(today), today).catch(() => ({ tasks: [] as BillingTask[], owners: [], missingDetail: 0 })),
+      slim ? Promise.resolve(noBilling()) : billingRange(sundayOf(today), today).catch(noBilling),
     ])
 
     // ── notices by reservation, then by listing, so a hand-made notice still lands on its card ──
@@ -110,22 +127,18 @@ export async function GET(req: NextRequest) {
       if (/talkroute|phone/i.test(who)) { phoneProven++; continue }   // the phone system confirming a call is not a person on the board
       const p = P(who); p.calls++; if (/voicemail/i.test(str(r.outcome))) p.voicemail++; else if (r.done) p.reached++
     }
-    try {
-      const { data: sentToday } = await db.from('reservation_notices').select('sent_by,sent_at').gte('sent_at', new Date(Date.now() - 36 * 3600_000).toISOString()).is('deleted_at', null).limit(500)
-      for (const n of (sentToday || []) as any[]) if (dayET(n.sent_at) === today) P(first(n.sent_by) || 'someone').notices++
-    } catch { /* optional */ }
+    for (const n of await sentTodayP) if (dayET(n.sent_at) === today) P(first(n.sent_by) || 'someone').notices++
     const team = Object.values(people).sort((a, b) => (b.calls + b.notices) - (a.calls + a.notices))
 
     // ── the week's rhythm and your own day, from the durable call log ──
     const myEmail = String(gate.access.email || '').toLowerCase()
     const me = { email: myEmail, calls: 0, reached: 0 }
     const history: { day: string; calls: number; mustDone: number }[] = []
-    try {
-      const since = new Date(Date.now() - 7 * 86400_000).toISOString()
-      const { data: log } = await db.from('guest_calls').select('outcome,tier,called_at,caller_email,kind').gte('called_at', since).limit(5000)
+    if (!slim) try {
+      const log = await callLogP
       const byDay: Record<string, { calls: number; mustDone: number }> = {}
       for (let i = 6; i >= 0; i--) byDay[addDays(today, -i)] = { calls: 0, mustDone: 0 }
-      for (const r of (log || []) as any[]) {
+      for (const r of log) {
         const d = dayET(r.called_at); const done = /reached|voicemail|happy|issue|completed/i.test(str(r.outcome))
         if (!done) continue
         if (byDay[d]) { byDay[d].calls++; if (/lux|big|recovery/i.test(str(r.tier))) byDay[d].mustDone++ }
@@ -160,12 +173,7 @@ export async function GET(req: NextRequest) {
       rating: r.recovery ? Number(r.recovery.rating) || null : null, done: !!r.done, outcome: str(r.outcome), by: first(r.calledBy), at: str(r.calledAt), claimedBy: first(r.claimedBy),
       reasons: (r.reasons || []).map((x: any) => str(x?.label || x?.text || x)).filter(Boolean).slice(0, 3),
     }))
-    let checklist: FdCheck[] = []
-    try {
-      const { todayList } = await import('@/lib/daily-checklist')
-      const t = await todayList()
-      checklist = t.rows.filter(r => !r.owner_role || /front ?desk|guest|cs/i.test(r.owner_role)).map(r => ({ id: r.id, title: r.title, by_time: r.by_time, owner_role: r.owner_role, link: r.link, done: r.done, late: r.late, in_minutes: r.in_minutes, done_by: r.done_by }))
-    } catch { /* the checklist is optional here */ }
+    const checklist: FdCheck[] = await checklistP
 
     const out: FdData = {
       ok: true, date, today, arrivals, postCalls, checklist, summary, team, me, history, phoneProven,

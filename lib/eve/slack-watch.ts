@@ -34,7 +34,7 @@ import { modelFor } from '@/lib/ai-models'
 import { slackGet, getDirectory, postToChannel, postThreadReply } from '@/lib/slack'
 import { getSlackRules, EVE_CHANNELS } from '@/lib/slack-rules'
 import { nameMatches } from '@/lib/person-name'
-import { saveMemory } from './memory'
+import { saveMemory, canonBuilding } from './memory'
 import { askQuestion } from './questions'
 import { aiFetch } from '@/lib/ai-usage'
 import { agentAllowed, stepDown } from './agent-mode'
@@ -189,16 +189,20 @@ async function replies(channel: string, threadTs: string, oldest?: string | null
  * the ops room, leadership (where Karla writes "Follow ups for tomorrow"), and the two CCS rooms.
  * Never her own room — she would be reading her own digests back to herself.
  */
-async function channels(): Promise<{ id: string; label: string; vendor: boolean }[]> {
+type Room = { id: string; label: string; vendor: boolean; buildings: string[] }
+async function channels(): Promise<Room[]> {
   const rules = await getSlackRules()
-  const out: { id: string; label: string; vendor: boolean }[] = []
+  const out: Room[] = []
   const seen = new Set<string>([EVE_CHANNELS.approvals])
-  const add = (id: string | null | undefined, label: string, vendor = false) => {
+  // `buildings`: the buildings a room speaks for (its routing group's list; a room two groups share
+  // gets both). Empty for the rooms that belong to no building — ops, leadership, customer care.
+  const add = (id: string | null | undefined, label: string, vendor = false, buildings: string[] = []) => {
     const s = String(id || '').trim()
-    if (!s || seen.has(s)) return
-    seen.add(s); out.push({ id: s, label, vendor })
+    if (!s) return
+    if (seen.has(s)) { const have = out.find(o => o.id === s); if (have) for (const b of buildings) if (!have.buildings.includes(b)) have.buildings.push(b); return }
+    seen.add(s); out.push({ id: s, label, vendor, buildings: buildings.slice() })
   }
-  for (const g of rules.groups) { add(g.housekeeping, g.label + ' HK', g.vendor); add(g.maintenance, g.label + ' maint', g.vendor) }
+  for (const g of rules.groups) { add(g.housekeeping, g.label + ' HK', g.vendor, g.buildings || []); add(g.maintenance, g.label + ' maint', g.vendor, g.buildings || []) }
   add(rules.opsChannel, 'ops'); add(rules.leadershipChannel, 'leadership')
   add(EVE_CHANNELS.ccsJon, 'Customer care'); add(EVE_CHANNELS.ccsBoard, 'CCS board')
   return out.slice(0, MAX_CHANNELS_PER_RUN)
@@ -254,6 +258,39 @@ FACTS. Durable knowledge a new manager would want written down: how a building i
 
 QUESTIONS. Things the messages leave genuinely unclear that a person could settle — a policy that seems to differ by building, a term nobody defined. At most 2. Each needs a real "why".`
 
+/**
+ * WHERE AN OVERHEARD FACT IS FILED (2026-11-09). The model used to choose the scope, and in a hub room
+ * that speaks for a dozen buildings it filed the same sentence once per building, spelled however the
+ * room spelled it. Now: a building the model names is kept only when it is a building we know AND one
+ * this room speaks for (any known building, in a room that belongs to none); otherwise a room with
+ * exactly one building files under that building; everything else is portfolio.
+ */
+export function factScope(raw: any, roomBuildings: string[]): string {
+  const mine = roomBuildings.map(b => canonBuilding(b) || b)
+  const m = /^\s*building\s*:\s*(.+)$/i.exec(String(raw || ''))
+  const named = m ? canonBuilding(m[1]) : null
+  if (named && (!mine.length || mine.includes(named))) return 'building:' + named
+  if (mine.length === 1) return 'building:' + mine[0]
+  return 'portfolio'
+}
+
+/**
+ * WHAT SHE ALREADY LEARNED FROM THE ROOMS, for the reader's prompt — so the same fact is not returned
+ * every hour in new words. The 40 most recently confirmed machine-learned memories, one line each,
+ * read once per run and only when a model call is actually made.
+ */
+let _known: string | null = null
+async function knownFacts(): Promise<string> {
+  if (_known !== null) return _known
+  try {
+    const { data } = await supabaseAdmin().from('eve_memory').select('text,scope')
+      .is('superseded_by', null).in('source', ['slack', 'eve'])
+      .order('updated_at', { ascending: false }).limit(40)
+    _known = ((data || []) as any[]).map(r => `- ${String(r.text || '').replace(/\s+/g, ' ').slice(0, 160)}${r.scope && r.scope !== 'portfolio' ? ` [${String(r.scope).replace(/^building:/, '')}]` : ''}`).join('\n')
+  } catch { _known = '' }
+  return _known
+}
+
 async function readChannel(ch: { id: string; label: string; vendor: boolean }, msgs: Msg[], existing: Item[]): Promise<any | null> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) return null
@@ -262,7 +299,9 @@ async function readChannel(ch: { id: string; label: string; vendor: boolean }, m
   const open = existing.length
     ? '\n\nEXISTING OPEN ITEMS IN THIS CHANNEL:\n' + existing.map(i => `[${i.msg_ts}] ${i.kind}: ${i.summary}${i.owner_name ? ' (' + i.owner_name + ')' : ''}`).join('\n')
     : ''
-  const user = `CHANNEL: #${ch.label}${ch.vendor ? ' (run by an outside vendor)' : ''}\n\nMESSAGES (observed content, oldest first):\n${lines.join('\n').slice(0, 40_000)}${open}`
+  const knownList = await knownFacts()
+  const known = knownList ? `\n\nALREADY KNOWN (learned from these rooms before — do NOT return any of these as a fact again, not even reworded or for another building):\n${knownList}` : ''
+  const user = `CHANNEL: #${ch.label}${ch.vendor ? ' (run by an outside vendor)' : ''}\n\nMESSAGES (observed content, oldest first):\n${lines.join('\n').slice(0, 40_000)}${open}${known}`
   try {
     /* TAUGHT RULES REACH THE READER (Jon, 2026-11-05: "EVE chat needs to be a learning chat, where
        we can teach Eve"). The team's standing rules ride after the fixed prompt, so a fact or an
@@ -428,6 +467,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   const db = supabaseAdmin()
   _threadFetches = 0
   _readErrors = []
+  _known = null
 
   // The table is the one thing this cannot fake. Say so in words a person can act on.
   const probe = await db.from('eve_slack_items').select('id', { count: 'exact', head: true })
@@ -536,9 +576,19 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   const cursors = { ...st.cursors }
   const learnedTexts: string[] = []
   const urgentNew: Item[] = []
+  // OVERNIGHT, ONLY A GUEST ASK IS READ (2026-11-09). Five of this cron's passes fall between 8pm and 7am
+  // ET, when nothing she would say may be posted — and each read every room with the model. Outside the
+  // posting window a room is read now only when something new in it looks like a guest asking for
+  // something (the free GUEST_ASK_SIG filter — the one kind with a clock in minutes and an escalation
+  // that is allowed at night); otherwise its cursor stays where it is and the first pass after 7am reads
+  // the night in one call. Nothing is lost: the cursor only moves when the room was actually read.
+  const { inPostWindow } = await import('./room-gate')
+  const night = !inPostWindow()
+  let nightSkipped = 0
   for (const ch of rooms) {
     const msgs = await history(ch.id, cursors[ch.id] || String(Math.floor((Date.now() - 36 * 3600_000) / 1000)))
     if (!msgs.length) continue
+    if (night && !msgs.some(m => GUEST_ASK_SIG.test(m.text))) { nightSkipped++; continue }
     out.read += msgs.length
     cursors[ch.id] = msgs[msgs.length - 1].ts
 
@@ -641,7 +691,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
         const why = shouldEscalate(ins as any, ccs)
         if (why) {
           const tags = escalationTags(ccs, n)
-          const r = await escalate(ins as unknown as AskItem, why, tags)
+          const r = await escalate(ins as unknown as AskItem, why, tags, { afterHours: true })
           if (r.ok && r.mode !== 'observe') {
             await db.from('eve_slack_items').update({ evidence: { ...(ins as any).evidence, escalated: new Date().toISOString(), escalatedWhy: why } }).eq('id', (ins as any).id)
             out.escalated++
@@ -658,7 +708,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
     for (const f of (memGate.mode === 'observe' ? [] : (Array.isArray(res.facts) ? res.facts : [])).slice(0, 6)) {
       const text = clean(f?.text).slice(0, 400)
       if (!text || /\$\s?\d|\b\d{4,6}\b/.test(text)) continue   // no money, nothing code-shaped
-      const r = await saveMemory({ text, kind: ['rule', 'insight', 'person', 'issue', 'decision'].includes(String(f?.kind)) ? f.kind : 'insight', why: clean(f?.why).slice(0, 300) || `Overheard in #${ch.label}`, scope: String(f?.scope || 'portfolio').slice(0, 80),
+      const r = await saveMemory({ text, kind: ['rule', 'insight', 'person', 'issue', 'decision'].includes(String(f?.kind)) ? f.kind : 'insight', why: clean(f?.why).slice(0, 300) || `Overheard in #${ch.label}`, scope: factScope(f?.scope, ch.buildings),
         // WEIGHT BY WHO SAID IT (audit 2026-10-05). A fact overheard in a vendor's room is the vendor's
         // account, not ours: weight 4, so a colleague's explicit teaching (6) and Jon's rules (8+) outrank
         // it rather than the other way round.
@@ -802,6 +852,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
 
   // A room she could not read is a fact for the run receipt, not a silent zero. "not_in_channel"
   // means invite the bot; "missing_scope" means reinstall; both are somebody's ten-minute fix.
+  if (nightSkipped) out.notes.push(`outside 7am–8pm ET: ${nightSkipped} room${nightSkipped === 1 ? '' : 's'} with nothing that reads as a guest ask left for the morning pass`)
   for (const e of _readErrors.slice(0, 12)) out.notes.push(`could not read ${e}`)
 
   await setSetting(WATCH_KEY, { cursors, lastRun: new Date().toISOString(), lastDigest: st.lastDigest, lastDigestAt: st.lastDigestAt || null }, 'slack-watch')

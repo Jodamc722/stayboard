@@ -63,6 +63,19 @@ export const DARK = BTN + ' bg-ink text-white'
 export const bz = (id: string) => 'https://app.breezeway.io/task/' + id
 export const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
 export const hm = (min: number) => { const a = Math.abs(min), h = Math.floor(a / 60), m = a % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
+/** ONE NAME AND A COUNT (2026-11-09 audit): a row listed all eight people on a task. The full list
+ *  stays on the data (assign, nudge and "nobody" all read it); only what is printed is capped. */
+export const whoShort = (who: string | null | undefined): string => {
+  const n = String(who || '').split(',').map(s => s.trim()).filter(Boolean)
+  return n.length <= 2 ? n.join(', ') : n[0] + ' +' + (n.length - 1)
+}
+/** HOW A PERSON'S LOAD READS (2026-11-09 audit: "no shift · 864% loaded"). A percentage needs a real
+ *  day under it. No Homebase shift and no punch: the model assumes 8h, so no percentage is shown.
+ *  'implausible' (lib/capacity, 200%+): named on tasks, not holding them — never "overloaded". */
+export const loadKind = (p: TeamRowT): 'credited' | 'noshift' | 'over' | 'ok' =>
+  p.verdict === 'implausible' ? 'credited'
+    : p.shiftStartMin == null && !p.clock ? 'noshift'
+      : p.utilisationPct > 100 ? 'over' : 'ok'
 /** High-ticket weighting: up to +10 on a $5,000 booking. */
 const valueBonus = (v: number) => Math.min(10, Math.max(0, v) / 500)
 export const INSPECT = /inspect|unit check|quality/i
@@ -164,7 +177,7 @@ export function CleanRow({ c, value, roster, canAssign: _canAssign, onChanged, l
         {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {value >= 1000 && <Tag tone="slate" title={'The arriving booking is worth ' + money(value) + ' — high-ticket, first in line'}>{money(value)}</Tag>}
       </>}
-      meta={[c.who, c.arrivingAt ? 'guest in ' + c.arrivingAt : '', c.market].filter(Boolean).join(' · ')}
+      meta={[whoShort(c.who), c.arrivingAt ? 'guest in ' + c.arrivingAt : '', c.market].filter(Boolean).join(' · ')}
       actions={ta.actions}>
       {ta.panels}
     </Row>
@@ -183,7 +196,7 @@ export function InspectionTaskRow({ t, big, roster, canAssign: _canAssign, onCha
         {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {big && <Tag tone="violet" title="A big arrival lands in this unit — walk it first">big arrival</Tag>}
       </>}
-      meta={[t.name, t.who, t.market].filter(Boolean).join(' · ')}
+      meta={[t.name, whoShort(t.who), t.market].filter(Boolean).join(' · ')}
       actions={ta.actions}>
       {ta.panels}
     </Row>
@@ -413,9 +426,11 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   // the row opens in place to the person's tasks in those four groups — every group always shown,
   // "none today" when empty — and the Board link lives inside, where moving work actually happens.
   const [open, setOpen] = useState(false)
-  const over = p.utilisationPct > 100
+  const kind = loadKind(p)
+  const over = kind === 'over'
   const tasks = p.tasks || []
-  const idle = tasks.length === 0 && p.cleans + p.otherTasks === 0
+  const jobs = p.cleans + p.otherTasks
+  const idle = tasks.length === 0 && jobs === 0
   // WHERE THEY PROBABLY ARE (Jon, 2026-10-05) — lib/team-where, the same read the strip above uses.
   const where = whereNow(tasks, new Date(), p.clock)
   const ck = shiftStatus(p.clock, p.shiftStartMin, p.shiftEndMin)
@@ -426,12 +441,17 @@ export function TeamRow({ p, lane }: { p: TeamRowT; lane?: string }) {
   const count = (g: PersonTaskGroup) => tasks.filter(t => t.group === g).length
   const summary = GROUPS.map(g => count(g.key) ? count(g.key) + ' ' + (g.key === 'clean' ? 'cleans' : g.key === 'inspection' ? 'inspections' : g.key === 'maintenance' ? 'maintenance' : 'misc') : '').filter(Boolean).join(' · ')
   const doing = tasks.filter(t => t.status === 'doing').length
-  const timeLine = p.capacityMinutes > 0 ? hm(p.loadMinutes) + ' of work in a ' + hm(p.capacityMinutes) + ' shift' : hm(p.loadMinutes) + ' of work · no shift on record'
+  // The assumed 8h day is not "a shift": only a real one is named as one.
+  const timeLine = kind === 'credited' ? 'named on ' + jobs + ' tasks'
+    : kind === 'noshift' || p.capacityMinutes <= 0 ? hm(p.loadMinutes) + ' of work · no shift on record'
+      : hm(p.loadMinutes) + ' of work in a ' + hm(p.capacityMinutes) + ' shift'
   return (
     <Row lane={lane} noteKey={'team:' + p.person} dot={over || where.tone === 'amber' || ck.tone === 'amber' ? 'amber' : null} title={p.person}
       tags={<>
         <Tag tone={ck.tone} title={ck.title}>{ck.label}</Tag>
-        {over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{p.utilisationPct}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
+        {kind === 'credited' ? <Tag tone="slate" title={(p.triggers || [])[0] || 'Named on more work than a day holds — almost certainly tasks closed out for the team, not work held'}>named on {jobs} tasks</Tag>
+          : kind === 'noshift' && !idle ? <Tag tone="slate" title="No Homebase shift today, so there is no day to measure this work against">{jobs} {jobs === 1 ? 'task' : 'tasks'}</Tag>
+          : over ? <Tag tone="amber" title={hm(p.loadMinutes - p.capacityMinutes) + ' more work than hours'}>{Math.min(p.utilisationPct, 199)}% loaded</Tag> : <Tag tone="sky" title={hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free today'}>{idle ? 'nothing assigned' : hm(Math.max(0, p.capacityMinutes - p.loadMinutes)) + ' free'}</Tag>}
       </>}
       meta={[where.line, p.role, doing ? doing + ' in progress' : '', summary || (idle ? '' : (p.cleans ? p.cleans + ' cleans' : '') + (p.otherTasks ? ' · ' + p.otherTasks + ' tasks' : '')), timeLine].filter(Boolean).join(' · ')}
       actions={<button type="button" onClick={() => setOpen(o => !o)} className={GHOST} aria-expanded={open} title={open ? 'Close this person’s tasks' : 'Open this person’s tasks, grouped by kind'}>{open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}</button>}>
@@ -810,15 +830,15 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
   // The other reads. Each fails soft: a 403 hides its rows, an error leaves the lane to the rest.
   const reviewsQ = useCachedFetch<{ reviews: Review[] }>(REVIEWS_URL, { ttl: 120_000 })
-  const ckQ = useCachedFetch<Ck>(CK_URL, { ttl: 60_000 })
-  const mineQ = useCachedFetch<Mine>(MINE_URL, { ttl: 60_000 })
+  const ckQ = useCachedFetch<Ck>(CK_URL, { ttl: 120_000 })
+  const mineQ = useCachedFetch<Mine>(MINE_URL, { ttl: 120_000 })
   const fixQ = useCachedFetch<{ actions?: FixAction[] }>('/api/listing-health?slim=1', { ttl: 10 * 60_000 })
   const optQ = useCachedFetch<{ rows?: OptimizeDue[]; due?: number }>(OPTIMIZE_URL, { ttl: 30 * 60_000 })
   const optimizeRows = (optQ.data?.rows || []).slice(0, 6)
   const optimizeDue = Number(optQ.data?.due) || 0
   const weekQ = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
   // Notes on every row — one read, added to in place (Jon, 2026-10-01).
-  const notesQ = useCachedFetch<{ byKey?: Record<string, DayNote[]> }>(NOTES_URL, { ttl: 60_000 })
+  const notesQ = useCachedFetch<{ byKey?: Record<string, DayNote[]> }>(NOTES_URL, { ttl: 120_000 })
   const [addedNotes, setAddedNotes] = useState<Record<string, DayNote[]>>({})
   const notesCtx = useMemo(() => {
     const byKey: Record<string, DayNote[]> = {}
@@ -850,7 +870,8 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const cleans = t.cleans.rows.filter(c => c.status in CLEAN_ST)
   const inspTasks = t.tasks.rows.filter(x => x.dept === 'inspection' || INSPECT.test(x.name))
   const arrivalsInsp = t.arrivals.rows.filter(a => a.inspection !== 'n/a' && a.big && (a.today || a.checkIn <= tomorrowOf(d.today)))
-  const teamRows = t.team.rows.filter(r => r.utilisationPct > 100 || (r.cleans + r.otherTasks === 0 && r.capacityMinutes > 0))
+  // Over a REAL day, or on shift with nothing: a credited or no-shift row is not a person to relieve.
+  const teamRows = t.team.rows.filter(r => loadKind(r) === 'over' || (r.cleans + r.otherTasks === 0 && r.capacityMinutes > 0 && r.verdict !== 'implausible'))
   const otherFix = fixRows.filter(i => i.kind !== 'inspection' && i.kind !== 'channel')
   const createFor = (resId: string) => live.find(i => i.key === 'insp:' + resId && i.action?.type === 'create_task') || null
 
@@ -950,8 +971,9 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const shownInNow = new Set(now.map(i => i.key))
 
   // ── the KPIs ──
-  const free = t.team.rows.reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
-  const over = t.team.rows.filter(r => r.utilisationPct > 100).length
+  // Only people with a real day count: an assumed 8h (no shift) or a credited row is not free time.
+  const free = t.team.rows.filter(r => { const k = loadKind(r); return k === 'over' || k === 'ok' }).reduce((a, r) => a + Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0)), 0)
+  const over = t.team.rows.filter(r => loadKind(r) === 'over').length
   // Cleans, inspections and welcome calls read needed-vs-completed in the DayKpis strip above (2026-09-30).
   const wkGl = week('glitches')
   const kpis: Kpi[] = [
@@ -962,6 +984,8 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     { key: 'admin', area: 'admin', label: 'Admin', value: String(approvals.length + claims.length + links.length), sub: [approvals.length + claims.length + links.length ? 'need your decision' : 'nothing to decide', mineRows.length ? mineRows.length + ' of yours' : '', optimizeDue ? optimizeDue + ' to optimize' : '', fixes.length ? fixes.length + ' fixes' : ''].filter(Boolean).join(' · '), tone: approvals.length || links.length ? 'amber' : ck?.progress?.late ? 'amber' : 'emerald', title: 'Decisions waiting on you, your own tasks, listings past their six-month optimization, and the listing fixes recommended for today' },
   ]
 
+  const laneRows = (a: Area) => items.filter(i => i.area === a && !shownInNow.has(i.key)).length
+  const laneCols: Area[][] = laneRows('ops') <= laneRows('guests') ? [['ops', 'admin'], ['guests']] : [['ops'], ['guests', 'admin']]
   const EMPTY: Record<Area, string> = { ops: 'every clean and inspection is covered', guests: 'nobody is waiting', reviews: 'nothing waiting on a reply', admin: 'nothing on your desk' }
   // One line of numbers per lane, from the same KPIs the tiles used to show.
   const laneStat = (a: Area): ReactNode => {
@@ -1001,18 +1025,18 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
           <button onClick={() => setFocus(null)} className="font-semibold text-brand-700 hover:underline">Show every lane</button>
         </div>
       )}
-      {/* TWO FIXED COLUMNS that stack (2026-10-01, visual pass): Operations over Reviews on the left,
-          Guests over Admin on the right. Each lane holds its spot; an empty one is a single line and
-          the lane under it moves up — the old grid left a hole beside an empty Reviews lane. */}
+      {/* TWO COLUMNS, BALANCED (2026-11-09 audit): Operations alone on the left left a hole under it
+          while Guests and Admin stacked on the right. Admin now sits under whichever of Operations and
+          Guests is shorter, counted on the rows each lane will actually draw. */}
       {focus ? (
         <Lane area={focus} items={items.filter(i => i.area === focus)} focused empty={EMPTY[focus]} right={laneStat(focus)} />
       ) : (
         <div className="grid gap-5 lg:grid-cols-2 items-start">
           {/* The Reviews lane is gone (2026-10-21 audit): reviews ride in the Guests lane (its Reviews tab),
               so the lane was always empty and read "nothing waiting on a reply" while 14 waited. */}
-          {[['ops'], ['guests', 'admin']].map((col, ci) => (
+          {laneCols.map((col, ci) => (
             <div key={ci} className="space-y-5 min-w-0">
-              {(col as Area[]).map(a => <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={false} empty={EMPTY[a]} right={laneStat(a)} hide={shownInNow} />)}
+              {col.map(a => <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={false} empty={EMPTY[a]} right={laneStat(a)} hide={shownInNow} />)}
             </div>
           ))}
         </div>

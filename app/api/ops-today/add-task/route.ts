@@ -130,11 +130,15 @@ async function handlePost(req: NextRequest) {
     // sees here with no deploy.
     const templateId = Number(body?.templateId)
     if (Number.isFinite(templateId) && templateId > 0) payload.template_id = templateId
+    // ONE PROPERTY ID, ALWAYS (2026-11-09 audit): the `else` below used to hang off the troubleshoot
+    // `if`, so a mapped unit was sent BOTH ids (an empty listing id for a "bz:" unit) and a maintenance
+    // task with a draft on an unmapped unit was sent NEITHER.
     if (Number.isFinite(homeId)) payload.home_id = homeId
+    else if (listingId) payload.reference_property_id = listingId
+    else return NextResponse.json({ ok: false, error: 'That unit is not in Breezeway, so a task cannot be created for it.' }, { status: 400 })
     // THE DRAFTED TROUBLESHOOT BLOCK (maintenance): exactly what the coordinator approved in the sheet;
     // '' = they turned it off. Absent (older client) = createBreezewayTask drafts it itself.
     if (department === 'maintenance' && typeof body?.troubleshoot === 'string') payload.troubleshoot = String(body.troubleshoot).slice(0, 2500)
-    else payload.reference_property_id = listingId
     const r = await createBreezewayTask(payload)
     if (!r.ok || !r.data || !r.data.id) return NextResponse.json({ ok: false, error: 'Breezeway ' + r.status + ': ' + String(r.text || '').slice(0, 160) }, { status: 502 })
     // Optional: assign it in the same click (the board sends the person picked in the panel).

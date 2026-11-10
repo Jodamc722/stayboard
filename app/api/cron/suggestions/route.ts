@@ -16,7 +16,7 @@ import { sweepUnit, deptOf } from '@/lib/pending-work'
 import { closeStaleCleans } from '@/lib/stale-cleans'
 import { closeStrayInspections } from '@/lib/task-audit'
 import { requireCron, tooSoon } from '@/lib/cron-auth'
-import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg } from '@/lib/suggestions'
+import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg, getSuggestionLog } from '@/lib/suggestions'
 import { isTaskDone } from '@/lib/task-categories'
 import { updateBreezewayTask, cancelBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 
@@ -71,9 +71,30 @@ export async function GET(req: NextRequest) {
     // older copies are cancelled (cancel, not complete — nobody did them). If today's or a later copy
     // already exists, the late ones are the duplicates. Runs even with suggestions switched off,
     // because these tasks exist either way.
-    let carried = 0, dupesCancelled = 0
+    //
+    // TWO LIMITS (2026-11-09 audit):
+    //  • A job that needs the unit EMPTY, or that rides a departure, is not carried to "today" — today
+    //    may have a guest in the unit. lib/pm-recurrence places those on the next empty day / checkout;
+    //    here they are left where they are (still shown late on Upkeep).
+    //  • Only a task LIGHTHOUSE created is ever cancelled as a duplicate: its id is on the PM ledger
+    //    (pm_schedule.task_id) or in the accepted-suggestions log. A task a person typed into Breezeway
+    //    that happens to match a cadence is never cancelled from here. If neither list can be read,
+    //    nothing is cancelled.
+    let carried = 0, dupesCancelled = 0, carrySkippedVacancy = 0, dupesLeftNotOurs = 0
     try {
-      if (breezewayConfigured()) {
+      if (breezewayConfigured() && run.overdue.length) {
+        const noCarry = new Set(cfg.cadences.filter(c => c.needsVacant || c.ridesDeparture).map(c => c.key))
+        const ours = new Set<string>()
+        try {
+          const ids = run.overdue.map(o => String(o.id))
+          for (let i = 0; i < ids.length; i += 200) {
+            const { data, error } = await supabaseAdmin().from('pm_schedule').select('task_id').in('task_id', ids.slice(i, i + 200))
+            if (error) throw new Error(error.message)
+            for (const r of (data || []) as any[]) if (r?.task_id) ours.add(String(r.task_id))
+          }
+          const log = await getSuggestionLog()
+          for (const a of log.accepted) if (a?.taskId) ours.add(String(a.taskId))
+        } catch { ours.clear() }
         const groups: Record<string, typeof run.overdue> = {}
         for (const o of run.overdue) (groups[o.key] = groups[o.key] || []).push(o)
         let budget = 120
@@ -81,12 +102,15 @@ export async function GET(req: NextRequest) {
           if (budget <= 0) break
           list.sort((a, b) => (a.since < b.since ? 1 : a.since > b.since ? -1 : Number(b.id) - Number(a.id)))
           const keep = list[0].hasCurrent ? null : list[0]
+          const cadenceKey = list[0].key.split('|').slice(1).join('|')
           for (const o of list) {
             if (budget-- <= 0) break
             if (o === keep) {
+              if (noCarry.has(cadenceKey)) { carrySkippedVacancy++; continue }
               const r = await updateBreezewayTask(o.id, { name: o.name, scheduled_date: date }).catch(() => null)
               if (r?.ok) { carried++; try { await supabaseAdmin().from('breezeway_tasks_sync').update({ scheduled_date: date }).eq('id', o.id) } catch { /* sync */ } }
             } else {
+              if (!ours.has(String(o.id))) { dupesLeftNotOurs++; continue }
               const c = await cancelBreezewayTask(o.id).catch(() => null)
               if (c?.ok) { dupesCancelled++; try { await supabaseAdmin().from('breezeway_tasks_sync').update({ status: 'cancelled' }).eq('id', o.id) } catch { /* sync */ } }
             }
@@ -97,8 +121,14 @@ export async function GET(req: NextRequest) {
     // EVERY DUPLICATE, NOT ONLY PREVENTATIVE ONES (Jon, 2026-11-03): one open copy per job per unit.
     try { const { cancelDuplicates } = await import('@/lib/task-dedupe'); const d = await cancelDuplicates({ max: 150 }); dupesCancelled += d.cancelled } catch { /* next morning */ }
     ;(safe as any).carried = carried; (safe as any).duplicatesCancelled = dupesCancelled
+    ;(safe as any).carrySkippedVacancy = carrySkippedVacancy; (safe as any).duplicatesLeftNotOurs = dupesLeftNotOurs
 
-    if (!cfg.enabled) return NextResponse.json({ ...safe, created: 0, note: 'Suggestions are switched off in settings.' })
+    // A RECEIPT EVEN WHEN SWITCHED OFF (2026-11-09 audit): the carry above ran, and tooSoon() reads
+    // this receipt — without it the "once a morning" throttle never held while suggestions were off.
+    if (!cfg.enabled) {
+      await recordRun({ name: 'suggestions', ok: true, itemCount: 0, detail: { disabled: true, carried, duplicatesCancelled: dupesCancelled, carrySkippedVacancy, duplicatesLeftNotOurs: dupesLeftNotOurs } })
+      return NextResponse.json({ ...safe, created: 0, note: 'Suggestions are switched off in settings.' })
+    }
 
     const autoKeys = new Set(cfg.cadences.filter(c => c.mode === 'auto').map(c => c.key))
     const toMake = run.suggestions.filter(s => autoKeys.has(s.cadenceKey))
@@ -107,6 +137,9 @@ export async function GET(req: NextRequest) {
     const failed: string[] = []
     for (const s of toMake) {
       const made = await createFromSuggestion(s, 'lighthouse-cron')
+      // A reuse (the job was already open on the unit) made nothing: not counted, and not logged as
+      // ours — the accepted log is what marks a task as Lighthouse's own for the duplicate sweep.
+      if (made.ok && made.reused) continue
       if (made.ok) { created.push(made.taskId || ''); await logAccepted(s, 'lighthouse-cron', made.taskId || null) }
       else failed.push(String(made.error || '').slice(0, 120))
     }
@@ -175,7 +208,7 @@ export async function GET(req: NextRequest) {
     await recordRun({
       name: 'suggestions', ok: failed.length === 0, itemCount: created.length,
       detail: {
-        suggested: run.suggestions.length, autoCreated: created.length, failed: failed.length, carried: (safe as any).carried || 0, duplicatesCancelled: (safe as any).duplicatesCancelled || 0,
+        suggested: run.suggestions.length, autoCreated: created.length, failed: failed.length, carried: (safe as any).carried || 0, duplicatesCancelled: (safe as any).duplicatesCancelled || 0, carrySkippedVacancy, duplicatesLeftNotOurs: dupesLeftNotOurs,
         consolidated, consolidatedUnits: consolidatedUnits.slice(0, 20), verdict: run.day.verdict,
         staleCleansClosed: stale?.closed?.length || 0, staleCleansSkipped: stale?.skipped || null,
         strayInspectionsClosed: strays?.closed?.length || 0, strayInspectionsSkipped: strays?.skipped || null,

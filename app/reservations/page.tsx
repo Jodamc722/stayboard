@@ -113,7 +113,9 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
   // 60 arrivals after that (the Upcoming tab shows 60); and an exact count of the whole set.
   const in7d = new Date(todayStr + 'T12:00:00Z'); in7d.setUTCDate(in7d.getUTCDate() + 7)
   const in7Str = in7d.toISOString().slice(0, 10)
-  const [near, { data: later }, { count: upCount }, { data: past }, { count: pastCount }, { data: sync }] = await Promise.all([
+  // PERF (2026-11-09): the custom-field names and the unpaid report used to be read one after the
+  // other AFTER these six; they depend on none of them, so all eight are asked for together.
+  const [near, { data: later }, { count: upCount }, { data: past }, { count: pastCount }, { data: sync }, cfMap, unpaidRep] = await Promise.all([
     pageRows<any>((a, b) => supabase
       .from('guesty_reservations')
       .select('id, listing_name, guest_name, guest_email, check_in, check_out, nights, status, source, money_total, money_paid, money_currency, custom_fields')
@@ -149,13 +151,13 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
       .select('id', { count: 'exact', head: true })
       .in('status', ['confirmed', 'checked_in', 'checked_out'])
       .lt('check_out', todayStr),
-    supabase.from('guesty_sync_status').select('last_sync_at, last_error, items_synced').eq('entity', 'reservations').maybeSingle()
+    supabase.from('guesty_sync_status').select('last_sync_at, last_error, items_synced').eq('entity', 'reservations').maybeSingle(),
+    customFieldNameMap(),
+    // UNPAID (Jon, 2026-10-01): direct / VRBO / Google stays still owing — the tab shows ALL of them, the 7-day ones first as 'take care now' (Jon: '7 days have to be taken care but we should see all').
+    loadUnpaidAll(),
   ])
 
   if (near.truncated) console.error('[reservations] read of stays arriving before ' + in7Str + ' stopped early — the pills and tabs may be short')
-  const cfMap = await customFieldNameMap()
-  // UNPAID (Jon, 2026-10-01): direct / VRBO / Google stays still owing — the tab shows ALL of them, the 7-day ones first as 'take care now' (Jon: '7 days have to be taken care but we should see all').
-  const unpaidRep = await loadUnpaidAll()
   const unpaidAll = (unpaidRep?.rows || []).filter(r => r.tracking.status !== 'waived')
   const unpaid7 = unpaidAll.filter(r => r.bucket !== 'later')
   // A short near read must not let next week's arrivals stand in for this week's: without them the

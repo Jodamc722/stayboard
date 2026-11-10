@@ -234,15 +234,21 @@ export function ClaimsBoard() {
       <LeanHead title="Claims" icon={<ShieldAlert size={20} className="text-muted" />}>
         {atRisk.length > 0 && <Pill tone="roseSolid" title={'About to age out unfiled: ' + atRisk.map(c => claimTitle(c)).join(' · ')}>{atRisk.length} aging out</Pill>}
         <Pill title="Claims not yet closed">{totals.open} open</Pill>
-        <Pill tone="amber" title="Total sought across claims">{money(totals.sought)} sought</Pill>
-        <Pill tone="emerald" title="Total recovered">{money(totals.recovered)} recovered</Pill>
-        <Pill tone="brand" title={decided.length ? decided.length + ' decided (won or partial counts as a win)' : 'Nothing decided yet'}>{winRate === null ? '—' : winRate + '%'} win</Pill>
+        {/* PHONE (2026-11-09): the header strip is one sideways-scrolling line there, and five pills
+            plus three buttons pushed "New claim" off the screen. On a phone the header keeps what
+            needs acting on (aging out, open) and New claim; the money pills show from tablet up, and
+            Merge / Payables report move to the icon row under the header. Nothing is removed. */}
+        <span className="hidden sm:contents">
+          <Pill tone="amber" title="Total sought across claims">{money(totals.sought)} sought</Pill>
+          <Pill tone="emerald" title="Total recovered">{money(totals.recovered)} recovered</Pill>
+          <Pill tone="brand" title={decided.length ? decided.length + ' decided (won or partial counts as a win)' : 'Nothing decided yet'}>{winRate === null ? '—' : winRate + '%'} win</Pill>
+        </span>
         <button onClick={() => { setMergeOn(v => !v); setPicked(new Set()); setKeepId('') }} title="Merge claims — tick two or more, pick the one to keep; every item moves into it"
-          className={'text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 ' + (mergeOn ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink hover:bg-app')}>
+          className={'text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border hidden sm:inline-flex items-center gap-1 ' + (mergeOn ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink hover:bg-app')}>
           <Combine size={13} /> {mergeOn ? 'Merging…' : 'Merge'}
         </button>
         <button onClick={() => setShowReport(true)} title="Claims report for payables — paid claims, amounts received, CSV / copy / print"
-          className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app inline-flex items-center gap-1">
+          className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app hidden sm:inline-flex items-center gap-1">
           <FileText size={13} /> Payables report
         </button>
         <button onClick={() => setNewOpen(true)} className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90 inline-flex items-center gap-1">
@@ -251,15 +257,19 @@ export function ClaimsBoard() {
       </LeanHead>
 
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <div className="ml-auto flex items-center gap-2 flex-wrap">
-          <span className="relative">
+        <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-2 flex-wrap">
+          <span className="relative flex-1 min-w-[140px] sm:flex-none">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, guest, code…" className={ctl + ' pl-6 pr-2 w-44 focus:outline-none focus:ring-2 focus:ring-brand-200'} />
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, guest, code…" className={ctl + ' pl-6 pr-2 w-full sm:w-44 focus:outline-none focus:ring-2 focus:ring-brand-200'} />
           </span>
-          <select value={channel} onChange={e => setChannel(e.target.value)} className={ctl + ' px-2'}>
+          <select value={channel} onChange={e => setChannel(e.target.value)} className={ctl + ' px-2 max-w-[40vw] sm:max-w-none'}>
             <option value="all">All channels</option>
             {channels.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <span className="inline-flex items-center gap-2 sm:hidden">
+            <IconBtn title={mergeOn ? 'Merging — tap to stop' : 'Merge claims — tick two or more, pick the one to keep'} tone={mergeOn ? 'brand' : undefined} onClick={() => { setMergeOn(v => !v); setPicked(new Set()); setKeepId('') }}><Combine size={14} /></IconBtn>
+            <IconBtn title="Payables report — paid claims, amounts received" onClick={() => setShowReport(true)}><FileText size={14} /></IconBtn>
+          </span>
           <IconBtn title="Filing policy — due dates per channel" onClick={() => setShowPolicy(!showPolicy)}><CalendarClock size={14} /></IconBtn>
           <IconBtn title="Recently deleted claims" onClick={() => setShowTrash(!showTrash)}><Trash2 size={14} /></IconBtn>
           <IconBtn title="Refresh" onClick={() => { setLoading(true); load() }}>{loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}</IconBtn>

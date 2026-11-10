@@ -27,6 +27,7 @@ import { markLaborDelivered } from '@/lib/briefs/labor-scorecard'
 import { buildMaintenanceRun, maintenanceTechs } from '@/lib/briefs/maintenance-run'
 import { asLang, type BriefLang } from '@/lib/brief-lang'
 import { sendGmail } from '@/lib/gmail-send'
+import { sendResendEmail } from '@/lib/resend-send'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { hashLegacyPasscodes } from '@/lib/share-links-server'
 import { atEasternHour } from '@/lib/et-clock'
@@ -66,6 +67,14 @@ const ccList = (cfg: BriefCfg): string[] => (Array.isArray(cfg.cc) ? cfg.cc : []
 const ccFor = (cfg: BriefCfg, to: string[]): string[] => {
   const already = new Set(to.map(t => String(t || '').trim().toLowerCase()))
   return ccList(cfg).filter(c => !already.has(c))
+}
+// AN ALERT THAT DOES NOT DEPEND ON THE MAILBOX THAT JUST FAILED (2026-11-09). The "did not send" notes
+// went out through the same Gmail mailbox as the briefs, with the error swallowed — a dead Gmail token
+// meant no brief AND no alert. The note now tries Gmail and, if that fails, Resend (lib/resend-send,
+// its own key and sender). Never throws.
+async function alertOwner(fromEmail: string, to: string[], cc: string[], subject: string, html: string): Promise<boolean> {
+  try { const g = await sendGmail({ fromEmail, to, cc, subject, html }); if (g.ok) return true } catch { /* try the other sender */ }
+  try { const r = await sendResendEmail({ to, cc, subject, html }); return !!r.ok } catch { return false }
 }
 const etToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 
@@ -166,11 +175,9 @@ async function send(req: NextRequest) {
   // It is still allowed to be off; it is no longer allowed to be off silently.
   if (cfg.enabled !== true) {
     if (!sp.get('preview') && !sp.get('test')) {
-      await sendGmail({
-        fromEmail, to: [DEFAULT_FROM],
-        subject: '⚠️ Morning briefs did not run — the system is switched off',
-        html: '<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.7;color:#0b1220">No Field Runs, no Ops morning, no GM morning and no vendor briefs went out this morning: <b>Morning briefs</b> is switched off in /users → App settings.</p><p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;color:#6b7280">Turn it on there and they resume tomorrow at 7:01am. This note is sent once a day while it is off.</p>',
-      }).catch(() => null)
+      await alertOwner(fromEmail, [DEFAULT_FROM], [],
+        '⚠️ Morning briefs did not run — the system is switched off',
+        '<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.7;color:#0b1220">No Field Runs, no Ops morning, no GM morning and no vendor briefs went out this morning: <b>Morning briefs</b> is switched off in /users → App settings.</p><p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;color:#6b7280">Turn it on there and they resume tomorrow at 7:01am. This note is sent once a day while it is off.</p>')
     }
     return NextResponse.json({ ok: true, skipped: 'ops_brief not enabled — turn it on in /users once recipients are set' })
   }
@@ -254,21 +261,24 @@ async function send(req: NextRequest) {
   } else out.push({ variant: 'GM', skipped: 'not in ?only' })
   // ANY FAILURE GETS A NOTE TO THE OWNER — a brief that didn't arrive looks identical to a quiet
   // morning, so the silence itself is reported. One short email listing what failed and why.
-  // A BRIEF WITH NOBODY ON IT IS NOT A SKIP, IT IS A BRIEF THAT DID NOT ARRIVE (audit 2026-09-21).
-  // 'no recipients' used to be excluded from this alert, so a list someone emptied by accident —
-  // or never filled, which is how Salato and the vendor briefs sat dark — raised nothing at all.
-  // '?only' is a deliberate human choice and stays quiet.
-  const failed = out.filter(o => (!o.skipped && !o.sent) || o.skipped === 'no recipients')
-  if (failed.length) {
+  // AN EMPTY LIST IS A CHOICE, NOT A FAILURE (Jon, 2026-11-09). Since 2026-09-21 a variant with nobody
+  // on it counted as "did not send", so every morning brought a ⚠️ email for lists left empty on
+  // purpose (a vendor group with no contact, a market with no coordinator) — an alert that arrives
+  // daily is one nobody reads. A variant with no recipients is a skip again. The one case still said
+  // out loud: NOT ONE brief has anybody on it, which is the system being on and going nowhere.
+  const failed = out.filter(o => !o.skipped && !o.sent)
+  const considered = out.filter(o => o.skipped !== 'not in ?only')
+  const allEmpty = !onlyList.length && considered.length > 0 && considered.every(o => o.skipped === 'no recipients')
+  if (failed.length || allEmpty) {
     const esc2 = (s: any) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    await sendGmail({
-      fromEmail, to: [DEFAULT_FROM], cc: ccFor(cfg, [DEFAULT_FROM]),
-      subject: `⚠️ Morning briefs: ${failed.length} of ${out.filter(o => o.skipped !== 'not in ?only').length} did not send`,
-      html: '<p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:14px;line-height:1.7;color:#0b1220">' +
-        'These briefs did not go out this morning:</p><ul style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;line-height:1.7;color:#374151">' +
-        failed.map(f => '<li><b>' + esc2(f.variant) + '</b> &mdash; ' + esc2(f.error || (f.skipped === 'no recipients' ? 'nobody is on this list — add recipients in /users → App settings' : 'unknown error')) + '</li>').join('') +
-        '</ul><p style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:13px;color:#6b7280">Any brief not listed above sent normally. They will all run again tomorrow morning.</p>',
-    }).catch(() => null)
+    const P = 'font-family:-apple-system,Segoe UI,Roboto,sans-serif'
+    await alertOwner(fromEmail, [DEFAULT_FROM], ccFor(cfg, [DEFAULT_FROM]),
+      allEmpty ? '⚠️ Morning briefs: switched on, but nobody is on any list' : `⚠️ Morning briefs: ${failed.length} of ${considered.filter(o => o.skipped !== 'no recipients').length} did not send`,
+      allEmpty
+        ? `<p style="${P};font-size:14px;line-height:1.7;color:#0b1220">Morning briefs is switched on, but every list is empty, so nothing went out this morning. Add recipients in /users → App settings → Morning briefs, or switch it off.</p>`
+        : `<p style="${P};font-size:14px;line-height:1.7;color:#0b1220">These briefs did not go out this morning:</p><ul style="${P};font-size:13px;line-height:1.7;color:#374151">` +
+          failed.map(f => '<li><b>' + esc2(f.variant) + '</b> &mdash; ' + esc2(f.error || 'unknown error') + '</li>').join('') +
+          `</ul><p style="${P};font-size:13px;color:#6b7280">Any brief not listed above sent normally (a list with nobody on it is skipped, not reported). They will all run again tomorrow morning.</p>`)
   }
   // THE REVIEW WATERMARK. Stamped only after a real send, so tomorrow's brief starts where this
   // one stopped and nobody reads the same review twice. Previews and tests never move it.

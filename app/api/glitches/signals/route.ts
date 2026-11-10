@@ -14,12 +14,37 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
 import { pageRows } from '@/lib/db-page'
+import { unstable_cache } from 'next/cache'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 const str = (v: any) => typeof v === 'string' ? v : (v == null ? '' : String(v))
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
+
+// THE PORTFOLIO AVERAGE, ONCE AN HOUR (2026-11-09). Every card open paged the whole review table
+// (thousands of ratings) to produce one number that moves in the second decimal over weeks. Same
+// read, same arithmetic — kept for an hour. A read that stopped early on an error is used for this
+// one answer, as before, but never kept.
+const PORTFOLIO_PAGES = 12
+async function readPortfolioAvg(): Promise<{ avg: number | null; whole: boolean }> {
+  const db = supabaseAdmin()
+  const { rows, truncated } = await pageRows<any>((a, b) => db.from('guesty_reviews').select('rating')
+    .eq('excluded_from_score', false).not('rating', 'is', null).order('id').range(a, b), PORTFOLIO_PAGES)
+  const portfolio = (rows || []).map((r: any) => Number(r.rating)).filter((n: number) => Number.isFinite(n) && n > 0)
+  const avg = portfolio.length ? Math.round((portfolio.reduce((a: number, b: number) => a + b, 0) / portfolio.length) * 100) / 100 : null
+  // truncated at the page ceiling is the read's own honest limit (what this always used); truncated
+  // short of it means a page failed.
+  return { avg, whole: rows.length > 0 && (!truncated || rows.length >= PORTFOLIO_PAGES * 1000) }
+}
+const cachedPortfolioAvg = unstable_cache(async (): Promise<number | null> => {
+  const r = await readPortfolioAvg()
+  if (!r.whole) throw new Error('portfolio average: incomplete read')
+  return r.avg
+}, ['glitch-signals-portfolio-avg-v1'], { revalidate: 3600 })
+async function portfolioAverage(): Promise<number | null> {
+  try { return await cachedPortfolioAvg() } catch { return (await readPortfolioAvg()).avg }
+}
 
 export type UnitFlag = {
   key: string
@@ -47,14 +72,13 @@ export async function GET(req: NextRequest) {
 
     // 1. This unit's reviews, and 2. the portfolio average to judge them against. A rating means
     //    nothing on its own — 4.3 is poor in a portfolio averaging 4.8 and fine in one averaging 4.1.
-    const [unitRevs, allRevs, priorGlitches, guestStays] = await Promise.all([
+    const [unitRevs, portfolioAvg, priorGlitches, guestStays] = await Promise.all([
       listingId
         ? db.from('guesty_reviews').select('rating, content, created_at, channel')
             .eq('listing_id', listingId).eq('excluded_from_score', false)
             .order('created_at', { ascending: false }).limit(200)
         : Promise.resolve({ data: [] as any[] }),
-      pageRows<any>((a, b) => db.from('guesty_reviews').select('rating')
-        .eq('excluded_from_score', false).not('rating', 'is', null).order('id').range(a, b), 12),
+      portfolioAverage(),
       listingId
         ? db.from('glitches').select('id, created_at, category, overview')
             .eq('listing_id', listingId).gte('incident_date', since180)
@@ -70,8 +94,6 @@ export async function GET(req: NextRequest) {
     const rated = (unitRevs.data || []).map((r: any) => Number(r.rating)).filter((n: number) => Number.isFinite(n) && n > 0)
     const unitAvg = rated.length ? Math.round((rated.reduce((a: number, b: number) => a + b, 0) / rated.length) * 100) / 100 : null
 
-    const portfolio = (allRevs.rows || []).map((r: any) => Number(r.rating)).filter((n: number) => Number.isFinite(n) && n > 0)
-    const portfolioAvg = portfolio.length ? Math.round((portfolio.reduce((a: number, b: number) => a + b, 0) / portfolio.length) * 100) / 100 : null
 
     const recentBad = (unitRevs.data || []).filter((r: any) =>
       Number(r.rating) > 0 && Number(r.rating) <= 3 && str(r.created_at) >= since90)

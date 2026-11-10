@@ -861,6 +861,8 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
   scheduleDate?: string | null
 } = {}): Promise<{
   ok: boolean; taskId?: string; assigned?: string | null; name?: string; scheduled?: string; error?: string
+  /** True when the job was already open on the unit and that task was kept or moved — nothing new was made. */
+  reused?: boolean
 }> {
   const { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson, breezewayConfigured } = await import('./breezeway')
   if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured on this server.' }
@@ -923,6 +925,11 @@ export async function createFromSuggestion(s: Suggestion, by: string | null, opt
     })
     if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
     const taskId = String(r.data.id)
+    // REUSED, NOT CREATED (2026-11-09 audit): the one-open-task guard found this job already open on
+    // the unit and kept or moved that task. Its people and its mirror row stay as they are — an
+    // assign here REPLACES whoever is on it, and the mirror would be overwritten with a date the task
+    // may not carry.
+    if (r.reused) return { ok: true, taskId, assigned: null, name, scheduled: r.reused.to || scheduled, reused: true }
     // THE PROGRAM'S TEAM (Upkeep → Edit program): when nobody was picked by hand, the team set for
     // this unit / building / program gets it — everyone on it, not just the first name.
     let teamIds: { id: number; name: string }[] = []

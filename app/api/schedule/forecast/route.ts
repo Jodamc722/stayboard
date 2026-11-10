@@ -170,6 +170,25 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // NEW LAST-MINUTE BOOKINGS per day (same rule as lib/schedule-build.ts: booked in the last 36h for
+  // a check-in or check-out inside today..today+2). Only the reservation ids go out — the board keeps
+  // "seen" per user in the browser and lights the day card's dot for the ones not seen yet.
+  const newBookings: Record<string, string[]> = {}
+  try {
+    const sinceIso = new Date(Date.now() - 36 * 3600_000).toISOString()
+    const newEnd = addDays(today, 2)
+    const { data: fresh } = await db.from('guesty_reservations').select('id,check_in,check_out,status,created_at').gte('created_at', sinceIso).lte('check_in', newEnd).gte('check_out', today).limit(500)
+    for (const r of (fresh || []) as any[]) {
+      if (!LIVE.test(str(r.status))) continue
+      const rid = str(r.id); if (!rid) continue
+      for (const d of [str(r.check_in).slice(0, 10), str(r.check_out).slice(0, 10)]) {
+        if (!d || d < today || d > newEnd) continue
+        if (!newBookings[d]) newBookings[d] = []
+        if (newBookings[d].indexOf(rid) < 0) newBookings[d].push(rid)
+      }
+    }
+  } catch (e) { console.error('schedule/forecast: new-booking read failed', e) }
+
   const dowOcc = zeros()
   for (let d = histStart; d < today; d = addDays(d, 1)) dowOcc[dow(d)]++
   const avgOf = (src: Record<string, number[]>) => {
@@ -211,6 +230,7 @@ export async function GET(req: NextRequest) {
     avgHoursPerClean: Object.fromEntries(MARKETS.map(m => [m, histN[m] ? Math.round((histHrs[m] / histN[m]) * 100) / 100 : Math.round((rates.marketRate[m as 'Miami'] / rates.payPerHour) * 100) / 100])),
     shiftHours: rates.shiftHours,
     payPerHour: rates.payPerHour,
+    newBookings,
     week,
     note: 'Week runs Sun->Sat. avg/actual = our team; vendor = Botanica (hotel-cleaned).',
     generatedAt: new Date().toISOString(),

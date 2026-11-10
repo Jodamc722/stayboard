@@ -209,6 +209,16 @@ async function reuseTwin(twin: any, body: Record<string, any>) {
 export async function createBreezewayTask(body: Record<string, any>): Promise<{ ok: boolean; status: number; data: any; text: string; reused?: { id: string; from: string; to: string } }> {
   const allowDuplicate = body?.allowDuplicate === true
   if (body && 'allowDuplicate' in body) { body = { ...body }; delete body.allowDuplicate }
+  // A LISTING ID WITH A MAPPED HOME BECOMES THE HOME (2026-11-09 audit): the one-open-task guard
+  // below and the mirror write at the end both key on home_id, so a caller that sent only
+  // reference_property_id skipped both. No mapping, or the lookup fails: the body goes as it came.
+  if (body && (body.home_id == null || !Number.isFinite(Number(body.home_id))) && body.reference_property_id != null && String(body.reference_property_id).trim()) {
+    try {
+      const { data: p } = await supabaseAdmin().from('breezeway_properties').select('home_id').eq('reference_property_id', String(body.reference_property_id).trim()).limit(1)
+      const mapped = ((p || []) as any[])[0]?.home_id
+      if (mapped != null && Number.isFinite(Number(mapped))) { body = { ...body, home_id: Number(mapped) }; delete body.reference_property_id }
+    } catch { /* unmapped: as before */ }
+  }
   if (!allowDuplicate) {
     const twin = await openTwin(body)
     if (twin) return reuseTwin(twin, body)

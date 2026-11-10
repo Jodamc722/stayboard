@@ -13,6 +13,7 @@ import { cronAllowed, tooSoon } from '@/lib/cron-auth'
 import { getSetting, setSetting } from '@/lib/app-settings'
 import { runGuestIssueWatch, recentDetections, decideDetection } from '@/lib/guest-issue'
 import { recordRun } from '@/lib/automation-runs'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -32,6 +33,28 @@ export async function GET(req: NextRequest) {
   }
   try {
     const days = Math.max(1, Math.min(90, Number(sp.get('days')) || 14))
+    // ?summary=1 — the glitch board's one-line banner ("Eve caught N possible issues"). It needs a
+    // count, a safety count and two names, and was being sent up to 300 whole detection rows
+    // (transcript excerpts and all) on every open of the board to get them. Same window, same
+    // order, same 300-row ceiling and the same "still open" test as the list — only the columns
+    // differ. If the narrow read fails (a column this database does not have), the whole rows
+    // are read exactly as before and summarised here.
+    if (sp.get('summary') === '1') {
+      const since = new Date(Date.now() - days * 86400_000).toISOString()
+      let list: any[] = []
+      const slim = await supabaseAdmin().from('guest_issue_detections')
+        .select('source_key,unit,guest_name,severity,category,headline,verdict,glitch_id')
+        .gte('detected_at', since).order('detected_at', { ascending: false }).limit(300)
+      if (slim.error) list = await recentDetections(days)
+      else list = (slim.data || []) as any[]
+      const open = list.filter(r => !r.glitch_id && r.verdict !== 'dismissed' && r.severity !== 'none')
+      return NextResponse.json({
+        ok: true, days,
+        open: open.length,
+        security: open.filter(r => r.severity === 'security').length,
+        top: open.slice(0, 2).map(r => ({ unit: r.unit || null, guest_name: r.guest_name || null, category: r.category || null, headline: r.headline || null })),
+      })
+    }
     const rows = await recentDetections(days)
     return NextResponse.json({ ok: true, days, rows, settings: await cfg(), canEdit: g.access.levels['glitches'] === 'edit' || g.access.levels['glitches'] === 'full' || g.access.role === 'admin' })
   } catch (e: any) {

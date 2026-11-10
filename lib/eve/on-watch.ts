@@ -367,8 +367,13 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
     ;(closures[k] = closures[k] || { channel: f.channel, ts: f.ts, lines: [] }).lines.push(`✅ ${f.label} — ${f.resolved}`)
   }
   for (const c of opts.preview ? [] : Object.values(closures)) {
-    const r = await postThreadReply(c.channel, c.ts, c.lines.join('\n'))
-    if (!r.ok) out.notes.push(`closure reply: ${r.error}`)
+    // THROUGH THE GATE (2026-11-09): this reply was the one On-watch post that went straight out — not in
+    // the said-registry, not held by the 8pm–7am window. A held reply is noted, not retried: the flag
+    // is already marked resolved, and the board shows it.
+    const { gatedPost } = await import('./room-gate')
+    const r = await gatedPost({ channel: c.channel, threadTs: c.ts, text: c.lines.join('\n'), by: 'cron:on-watch', summary: `on watch · ${c.lines.length} resolved, said in the thread` })
+    if (r.held) out.notes.push(`closure reply held: ${r.held}`)
+    else if (!r.ok) out.notes.push(`closure reply: ${r.error}`)
   }
 
   // ── Find what is slipping now

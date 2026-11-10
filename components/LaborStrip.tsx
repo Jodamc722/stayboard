@@ -5,6 +5,7 @@
 // payroll accrued vs scheduled, and per-person hour warnings (over schedule,
 // OT risk this workweek). Auto-refreshes every 5 minutes. Never blocks the page.
 import { useEffect, useState } from 'react'
+import { useCachedFetch } from '@/lib/swr'
 import { Zap, ChevronRight } from 'lucide-react'
 import { Tag } from '@/components/lean'
 
@@ -13,8 +14,6 @@ const fmt$ = (n: number | null | undefined) =>
   n == null ? '—' : '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
 export function LaborStrip() {
-  const [d, setD] = useState<any>(null)
-  const [err, setErr] = useState(false)
   const [open, setOpen] = useState(false)
 
   useEffect(() => { try { if (localStorage.getItem(KEY) === '1') setOpen(true) } catch {} }, [])
@@ -32,20 +31,13 @@ export function LaborStrip() {
   // AND ONLY WHILE SOMEONE IS LOOKING. The five-minute timer ran whether or not the tab was
   // visible — a phone in a pocket kept re-running it all afternoon. The board next to it has
   // checked visibilityState since the September audit; this never did.
-  useEffect(() => {
-    let alive = true
-    const load = () => {
-      if (document.visibilityState !== 'visible') return
-      fetch('/api/labor/kpi?days=1&summary=1', { cache: 'no-store' })
-        .then(r => r.json())
-        .then(j => { if (!alive) return; if (j.ok) setD(j); else setErr(true) })
-        .catch(() => { if (alive) setErr(true) })
-    }
-    load()
-    const iv = setInterval(load, 5 * 60 * 1000)
-    document.addEventListener('visibilitychange', load)
-    return () => { alive = false; clearInterval(iv); document.removeEventListener('visibilitychange', load) }
-  }, [])
+  //
+  // THROUGH THE SHARED CACHE (2026-11-09 audit). This was the last raw `no-store` fetch on the
+  // page: every flip onto the People view paid for it again. useCachedFetch gives it the same
+  // five-minute, visible-only refresh it had, and makes a second mount within that window free.
+  // persist:false — these are payroll numbers, so they stay in memory and off the device's storage.
+  const { data: d, error } = useCachedFetch<any>('/api/labor/kpi?days=1&summary=1', { ttl: 5 * 60_000, persist: false })
+  const err = (!!error && !d) || d?.ok === false
 
   if (err) return null
   const t = d?.today

@@ -27,10 +27,10 @@
 //
 // Everything actionable here reuses machinery that already works: /api/breezeway/assign for
 // assignment, /api/ops-today/add-task for creation (which now carries a Breezeway template_id),
-// /api/breezeway/comments for the last comment on a row you open.
+// and the shared task strip (components/task/TaskActions) for comments on a row you open.
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Search, Plus, Loader2, ChevronRight, ExternalLink, MessageSquare, AlertTriangle,
+  Search, Plus, Loader2, ChevronRight, ExternalLink, AlertTriangle,
   LayoutGrid, Users, X, MapPin, Clock, RefreshCw, CalendarClock,
   DoorOpen, Sparkles, Zap, Wrench, ClipboardCheck, ClipboardList, Check,
   Droplet, Bug, Hammer, KeyRound, ShieldCheck, Package, Star, BedDouble, Wand2,
@@ -39,8 +39,7 @@ import { catOfTask, type TaskCat } from '@/lib/task-categories'
 // ONE ANSWER TO "IS THIS THE SAME PERSON?" — see lib/person-name.ts. Never compare names here
 // with .toLowerCase(); that is the comparison that put Gehron Regis on the board twice.
 import { personKey, nameMatches, bestSpelling } from '@/lib/person-name'
-import { SuggestionsProvider, UnitSuggestions, PersonSuggestions, useSuggestions } from '@/components/SuggestionsBand'
-import { AssignPanel } from '@/components/AssignPanel'
+import { SuggestionsProvider, UnitSuggestions, PersonSuggestions } from '@/components/SuggestionsBand'
 import { type AddTaskSeed } from '@/components/AddTaskSheet'
 import { DayPlanPanel } from '@/components/DayPlanPanel'
 import { ReviewTab, ReviewCount } from '@/components/ReviewTab'
@@ -57,6 +56,8 @@ export type GTask = {
   startedAt: string | null; finishedAt: string | null; minutes: number | null
   reportUrl?: string | null
   done: boolean; running: boolean; late: boolean; atRisk: boolean; untracked?: boolean; guestyOnly?: boolean
+  /** On the deadline clock (a departure clean that is tracked and not on an extended stay), and finished after it. */
+  clocked?: boolean; missed?: boolean
   // A departure clean that is not today's turn: 'extended' = the stay ran past it, do not go in;
   // 'moved' = the checkout was earlier and this clean was moved onto today (the BFC hold).
   /** The category the SERVER assigned, against the saved taxonomy. Authoritative. */
@@ -88,6 +89,8 @@ export type GDeadline = {
 }
 export type GData = {
   ok: boolean; today: string; units: GUnit[]; vacants?: GVacant[]; categories?: GCat[]
+  /** False when the board is showing a day other than today (the deadline clock means nothing then). */
+  isToday?: boolean
   // COMPUTED ON EVERY REQUEST SINCE THE ROUTE WAS WRITTEN, AND RENDERED NOWHERE.
   // The whole job of this board is a 4pm deadline, and it had no clock. `atRisk` per task existed
   // only inside a sort expression; `deadline.minsLeft` and `lastSync` were never read at all.
@@ -101,7 +104,7 @@ export type GData = {
   degraded?: string[]
 }
 export type GStaff = {
-  people?: { name: string; role?: string | null; clockedIn?: boolean; shift?: string | null; bzAlias?: string | null }[]
+  people?: { name: string; role?: string | null; clockedIn?: boolean; shift?: string | null; bzAlias?: string | null; tasks?: number }[]
   summary?: { idleNames?: string[]; clockedIn?: number; assignedOffShift?: string[] }
 }
 export type GGlitch = { id: string; unit: string; issue: string; rawName?: string; market?: string | null; market2?: string | null; ageDays?: number | null; running?: boolean; unassigned?: boolean; assignees?: string[]; reportUrl?: string | null; done?: boolean }
@@ -187,10 +190,12 @@ type TaskState = 'done' | 'running' | 'open' | 'unassigned'
 // `swatch` went with the Key popover it existed for (2026-09-09).
 const STATE: Record<TaskState, { label: string; chip: string }> = {
   done: { label: 'Finished', chip: 'bg-emerald-500 border-emerald-500 text-white' },
-  running: { label: 'In progress', chip: 'bg-sky-400 border-sky-400 text-white' },
+  // AMBER, like every other "in progress" on this board (the unit pill, the hover card, the banner).
+  // The chip alone was sky-blue, so one state had two colours depending on where you looked.
+  running: { label: 'In progress', chip: 'bg-amber-400 border-amber-400 text-white' },
   open: { label: 'Not started', chip: 'bg-white border-slate-300 text-slate-500' },
   // Same paint as `open` — an unassigned task IS not-started; the dot says nobody owns it.
-  unassigned: { label: 'Nobody assigned', chip: 'bg-white border-slate-300 text-slate-500' },
+  unassigned: { label: 'Unassigned', chip: 'bg-white border-slate-300 text-slate-500' },
 }
 const stateOf = (t: GTask): TaskState =>
   t.done ? 'done' : t.running ? 'running' : t.assignees.length ? 'open' : 'unassigned'
@@ -293,15 +298,23 @@ function unitStatus(u: GUnit): { label: string; cls: string } {
 function TaskChip({ t }: { t: GTask }) {
   const { by } = useCats()
   const c = metaOf(by, catKeyOf(t))
-  const [at, setAt] = useState<{ x: number; y: number } | null>(null)
+  const [at, setAt] = useState<{ x: number; y: number; above: number } | null>(null)
   const [pinned, setPinned] = useState(false)
   const ref = useRef<HTMLButtonElement | null>(null)
   const Glyph = c.Icon
 
   const place = () => {
     const r = ref.current?.getBoundingClientRect()
-    if (r) setAt({ x: r.left + r.width / 2, y: r.bottom + 6 })
+    if (r) setAt({ x: r.left + r.width / 2, y: r.bottom + 6, above: r.top - 6 })
   }
+  // A PINNED CARD IS position:fixed, so it stayed where it was while the row it described scrolled
+  // away underneath it. Scrolling lets go of it.
+  useEffect(() => {
+    if (!pinned) return
+    const close = () => { setPinned(false); setAt(null) }
+    window.addEventListener('scroll', close, { capture: true, passive: true })
+    return () => window.removeEventListener('scroll', close, { capture: true })
+  }, [pinned])
   const state = stateOf(t)
   const open = pinned || !!at
   const mv = moveNote(t)
@@ -314,7 +327,7 @@ function TaskChip({ t }: { t: GTask }) {
         onClick={ev => { ev.stopPropagation(); place(); setPinned(p => !p) }}
         aria-label={c.label + ': ' + t.name}
         aria-expanded={open}
-        className={'relative w-7 h-7 lg:w-6 lg:h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
+        className={'relative w-8 h-8 lg:w-6 lg:h-6 rounded-[6px] border-2 shrink-0 inline-flex items-center justify-center transition-transform hover:scale-110 ' +
           STATE[state].chip +
           // SWITCHED OFF, NOT ALARMED. A guest is still in the unit, so this job must not happen
           // today. Muting it says that in the one way an alarm colour cannot: it removes the chip
@@ -332,7 +345,14 @@ function TaskChip({ t }: { t: GTask }) {
           {/* Click-away for the pinned state. Transparent, below the card, above everything else. */}
           {pinned && <div className="fixed inset-0 z-[60]" onClick={ev => { ev.stopPropagation(); setPinned(false); setAt(null) }} />}
           <div className="fixed z-[61] w-64 rounded-xl border border-line bg-white shadow-xl p-2.5 text-left"
-            style={{ left: Math.min(Math.max(at.x - 128, 8), (typeof window !== 'undefined' ? window.innerWidth : 1200) - 264), top: at.y }}
+            // NEAR THE BOTTOM OF THE SCREEN THE CARD OPENS UPWARD. It used to open below the chip
+            // unconditionally, so on the last rows of a phone screen it opened under the fold.
+            style={{
+              left: Math.min(Math.max(at.x - 128, 8), (typeof window !== 'undefined' ? window.innerWidth : 1200) - 264),
+              ...((typeof window !== 'undefined' && at.y > window.innerHeight - 280 && at.above > 280)
+                ? { bottom: window.innerHeight - at.above }
+                : { top: at.y }),
+            }}
             onClick={ev => ev.stopPropagation()}>
             <div className="flex items-center gap-1.5 mb-1">
               <span className={'w-4 h-4 rounded-[4px] border inline-flex items-center justify-center ' + STATE[state].chip}><Glyph size={10} strokeWidth={2.6} /></span>
@@ -356,7 +376,7 @@ function TaskChip({ t }: { t: GTask }) {
             <p className="text-[11.5px] mt-0.5">
               {t.assignees.length
                 ? <span className="text-muted">{t.assignees.join(', ')}</span>
-                : <span className="font-bold text-rose-600">Nobody assigned <span className="font-normal text-muted">— that is what the dot on the chip means</span></span>}
+                : <span className="font-bold text-rose-600">Unassigned <span className="font-normal text-muted">— that is what the dot on the chip means</span></span>}
             </p>
             {/* The projection, where the chip is. */}
             {t.landsAt && !t.done && (
@@ -413,19 +433,19 @@ type Row = {
   /** The bookings touching this unit today, each opening the full picture of that stay. */
   stays?: { label: string; id: string }[]
   /** People rows only: what the capacity model says this person's day costs. */
-  priced?: { loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string } | null
+  priced?: Priced | null
+  /** People rows only: finished everything and still on the clock — the best candidate for more work. */
+  freeNow?: boolean
   /** True when a market filter is on, so the priced day covers more than the row's own counts. */
   pricedIsWholeDay?: boolean
   building?: string | null
   market?: string
-  /** The clock facts already in the payload: when the guest left, when the next one lands. */
-  outAt?: string | null
-  inAt?: string | null
 }
+/** One person's day as the capacity model priced it. `lowConfidence` = no shift on record, a standard day was assumed. */
+type Priced = { loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string; lowConfidence?: boolean }
 
-function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
+function GridRow({ row, roster, mode, onRefresh, onAdd }: {
   row: Row; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void; onAdd: (seed: AddTaskSeed) => void
-  units: GUnit[]; staff?: GStaff | null
 }) {
   // WHAT THIS ROW KNOWS (Jon, 2026-09-14: "add task should be in today in ops at the team level,
   // unit level etc"). A unit row hands over the listing id — the answer, not a search term. A
@@ -434,24 +454,16 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
     ? { unit: row.title, listingId: row.listingId }
     : { assigneeName: row.title }
   const [open, setOpen] = useState(false)
-  const [comments, setComments] = useState<Record<string, { body: string; at: string } | null> | null>(null)
   const done = row.tasks.filter(t => t.done).length
   const total = row.tasks.length
-
-  // Comments cost a Breezeway call each, so they are fetched when a row is opened and never before.
-  useEffect(() => {
-    if (!open || comments) return
-    const ids = row.tasks.filter(isReal).slice(0, 6).map(t => t.id)
-    if (!ids.length) { setComments({}); return }
-    fetch('/api/breezeway/comments?taskIds=' + ids.join(','), { cache: 'no-store' })
-      .then(r => r.json()).then(j => setComments(j && j.comments ? j.comments : {})).catch(() => setComments({}))
-  }, [open, comments, row.tasks])
-
-  const lastComment = useMemo(() => {
-    if (!comments) return null
-    const all = Object.values(comments).filter(Boolean) as { body: string; at: string }[]
-    return all.sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] || null
-  }, [comments])
+  // ONE COMMENT SYSTEM (2026-11-09 audit). Opening a row used to read the last Breezeway comment
+  // for up to six tasks (a Breezeway call each, uncached, again on every reopen) and print it twice
+  // — under the task and at the foot of the row — beside the shared Comments thread every task
+  // already carries. The thread button is the one place comments live now.
+  // LATE / AT RISK REPLACES THE STATUS WORD rather than sitting beside it: one pill per row. The
+  // exception is "Guest still in" — that is a do-not-enter warning and must never be displaced.
+  const flag: 'LATE' | 'AT RISK' | null = row.status.label === 'Guest still in' ? null : row.late ? 'LATE' : row.atRisk ? 'AT RISK' : null
+  const isUnassignedRow = row.key === 'p:unassigned'
 
   // "Oasis - Royal Palm" above "Oasis · Fort Lauderdale" spends a line of a phone screen saying
   // Oasis twice. When the name already carries the building, the sub keeps only what it adds.
@@ -514,8 +526,11 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
         </div>
         {/* status — beside the name on a phone, its own column on desktop */}
         <div className="order-2 flex items-center gap-1.5 flex-wrap min-w-0 max-lg:flex-1 lg:order-none lg:flex-none lg:w-[14rem] lg:gap-2">
-          <span className={'text-[11.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>
-          {total > 0 && (
+          {flag
+            ? <span title={row.status.label} className={'text-[11.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + (flag === 'LATE' ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-amber-100 text-amber-800 border-amber-300')}>{flag}</span>
+            : <span className={'text-[11.5px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ' + row.status.cls}>{row.status.label}</span>}
+          {/* The Unassigned row holds only work that is NOT done, so its fraction was always 0/N. */}
+          {total > 0 && !isUnassignedRow && (
             <span className="text-[11px] font-semibold text-muted tabular-nums" title={done + ' of ' + total + ' finished'}>
               {done}/{total}
             </span>
@@ -531,10 +546,6 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           {row.gapNights != null && (
             <span className="lg:hidden text-[11px] text-muted font-semibold tabular-nums" title="Nights free before the next arrival">{row.gapNights}n</span>
           )}
-          {/* LATE AND AT RISK, IN WORDS. The rail catches the eye down the column; this says which
-              one it is without opening anything. */}
-          {row.late && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 whitespace-nowrap">LATE</span>}
-          {!row.late && row.atRisk && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">AT RISK</span>}
           {/* THE PROJECTION, not the hour. "lands 4:40 PM" says which clean is the problem and why
               — where it sits in that person's run — instead of flagging every unstarted clean at
               2:30. A loose guess (no shift on record) is shown with a ~ and never in red. */}
@@ -553,10 +564,20 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
             <span className="hidden lg:inline">{row.reservation.replace(/^TURN · /, '')}</span>
           </span>
           {/* What the day actually costs this person — the sentence the Staffing tab used to own. */}
+          {/* PLAIN WORDS (2026-11-09 audit). "≈ 0m of 5h 4m · 0% · room for 2 more" was four codes on
+              a row whose whole message is "this person is open". Nothing booked: say how much fits.
+              Something booked: hours booked of hours available, then the one conclusion. The
+              percentage is gone — the colour already carries it. A ~ marks a day priced without a
+              shift on record. */}
           {row.priced && row.priced.verdict !== 'implausible' && row.priced.capacityMinutes > 0 && (
-            <span className={'block text-[11px] font-semibold ' + (row.priced.utilisationPct > 100 ? 'text-rose-700' : row.priced.utilisationPct >= 85 ? 'text-amber-700' : 'text-emerald-700')}>
-              ≈ {fmtHm(row.priced.loadMinutes)} of {fmtHm(row.priced.capacityMinutes)} · {row.priced.utilisationPct}%
-              {row.priced.utilisationPct > 100 ? ' · over' : row.priced.headroomCleans > 0 ? ' · room for ' + row.priced.headroomCleans + ' more' : ' · full'}
+            <span title={row.priced.lowConfidence ? 'No shift on record for this person, so a standard day is assumed' : 'Hours are the shift, less a break and a small allowance for the unexpected'}
+              className={'block text-[11px] font-semibold ' + (row.priced.utilisationPct > 100 ? 'text-rose-700' : row.priced.utilisationPct >= 85 ? 'text-amber-700' : 'text-emerald-700')}>
+              {row.priced.lowConfidence ? '~' : ''}
+              {row.priced.loadMinutes <= 0
+                ? 'Open' + (row.priced.headroomCleans > 0 ? ' · about ' + row.priced.headroomCleans + (row.priced.headroomCleans === 1 ? ' clean fits' : ' cleans fit') : ' · ' + fmtHm(row.priced.capacityMinutes) + ' available')
+                : fmtHm(row.priced.loadMinutes) + ' booked of ' + fmtHm(row.priced.capacityMinutes)
+                  + (row.priced.utilisationPct > 100 ? ' · over by ' + fmtHm(row.priced.loadMinutes - row.priced.capacityMinutes)
+                    : row.priced.headroomCleans > 0 ? ' · room for ' + row.priced.headroomCleans + ' more' : ' · full')}
               {/* The model prices a WHOLE day; the row beside it counts one market. Say so, or the
                   two numbers read as a contradiction. */}
               {row.pricedIsWholeDay && <span className="font-normal text-muted"> (their whole day)</span>}
@@ -570,8 +591,11 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
         <div className="order-4 max-lg:flex-1 max-lg:min-w-0 flex items-center gap-1 flex-wrap lg:order-none lg:w-auto lg:flex-none lg:max-w-[15rem]">
           {row.tasks.length === 0
             ? <span className="text-[11px] text-muted">No tasks today</span>
-            : row.tasks.slice(0, 14).map(t => <TaskChip key={t.id} t={t} />)}
-          {row.tasks.length > 14 && <span className="text-[11px] text-muted font-semibold">+{row.tasks.length - 14}</span>}
+            // SIX ON A PHONE, FOURTEEN ON A DESK. Fourteen 32px chips is three wrapped lines of a
+            // phone row; the rest are one tap away in the opened row.
+            : row.tasks.slice(0, 14).map((t, i) => <span key={t.id} className={i >= 6 ? 'max-lg:hidden lg:contents' : 'contents'}><TaskChip t={t} /></span>)}
+          {row.tasks.length > 6 && <span className="lg:hidden text-[11px] text-muted font-semibold">+{row.tasks.length - 6}</span>}
+          {row.tasks.length > 14 && <span className="hidden lg:inline text-[11px] text-muted font-semibold">+{row.tasks.length - 14}</span>}
         </div>
         {/* issues + gap + the ＋ — desktop keeps its own right-hand column; the ＋ rides along on
             a phone too, because filing the task is the reason you opened the row. */}
@@ -594,7 +618,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
           <button type="button" aria-label={mode === 'units' ? 'Add a task on ' + row.title : 'Give ' + row.title + ' a task'}
             title={mode === 'units' ? 'Add a task on ' + row.title : 'Give ' + row.title + ' a task'}
             onClick={e => { e.stopPropagation(); onAdd(addSeed) }}
-            className="shrink-0 w-7 h-7 rounded-lg border border-line bg-white text-muted hover:text-ink hover:border-ink/30 grid place-items-center">
+            className="shrink-0 w-9 h-9 lg:w-7 lg:h-7 rounded-lg border border-line bg-white text-muted hover:text-ink hover:border-ink/30 grid place-items-center">
             <Plus size={13} />
           </button>
         </div>
@@ -618,9 +642,9 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
                     )}
                     {i.kind === 'glitch' && (
                       i.unassigned
-                        ? <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Nobody on it</span>
+                        ? <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-rose-600 text-white shrink-0">Unassigned</span>
                         : i.assignees?.length
-                          ? <span className="text-[11px] text-rose-800 shrink-0">{i.assignees.join(', ')}{i.running ? ' · working' : ''}</span>
+                          ? <span className="text-[11px] text-rose-800 shrink-0">{i.assignees.join(', ')}{i.running ? ' · in progress' : ''}</span>
                           : null
                     )}
                     {i.reportUrl && (
@@ -640,8 +664,6 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
             {row.tasks.length === 0 && <div className="px-3 py-2.5 text-[12.5px] text-muted">Nothing scheduled on this {mode === 'people' ? 'person' : 'unit'} today.</div>}
             {row.tasks.map(t => (
               <TaskLine key={t.id} t={t} roster={roster} mode={mode} onRefresh={onRefresh}
-                comment={comments ? comments[t.id] || null : null}
-                units={units} staff={staff}
                 unitMeta={{ listingId: row.listingId, building: row.building, market: row.market, unit: row.title }} />
             ))}
           </div>
@@ -672,13 +694,6 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
               className="text-[12px] font-bold px-2.5 py-1.5 rounded-lg border border-line bg-white hover:border-ink/30 inline-flex items-center gap-1.5">
               <Plus size={12} /> {mode === 'units' ? 'Add a task here' : 'Give ' + String(row.title).split(' ')[0] + ' a task'}
             </button>
-            {lastComment && (
-              <span className="text-[11.5px] text-muted inline-flex items-start gap-1.5 min-w-0">
-                <MessageSquare size={12} className="mt-0.5 shrink-0" />
-                <span className="truncate">{lastComment.body}</span>
-              </span>
-            )}
-            {open && !comments && <span className="text-[11px] text-muted inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> reading comments…</span>}
           </div>
         </div>
       )}
@@ -687,9 +702,8 @@ function GridRow({ row, roster, mode, onRefresh, onAdd, units, staff }: {
 }
 
 /** One task inside an opened row: what it is, who has it, where it stands, and one-tap assign. */
-function TaskLine({ t, roster, mode, onRefresh, comment, units: _units, staff: _staff, unitMeta }: {
-  t: GTask; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void; comment: { body: string; at: string } | null
-  units: GUnit[]; staff?: GStaff | null
+function TaskLine({ t, roster, mode, onRefresh, unitMeta }: {
+  t: GTask; roster: GRoster[]; mode: 'units' | 'people'; onRefresh: () => void
   unitMeta?: { listingId?: string; building?: string | null; market?: string; unit?: string }
 }) {
   // ONE TASK, ONE WAY (2026-10-01): the shared strip — Assign · Done · Nudge · Comments · Breezeway
@@ -734,18 +748,15 @@ function TaskLine({ t, roster, mode, onRefresh, comment, units: _units, staff: _
         {mv && <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded-md ' + mv.cls} title={mv.line}>{mv.tag}</span>}
         {mode === 'units' && t.assignees.length > 0 && <span className="text-[11.5px] text-muted">{t.assignees.join(', ')}</span>}
         {mode === 'people' && <span className="text-[11.5px] text-muted">{t.unit}</span>}
-        <span className="ml-auto flex items-center gap-1.5">
+        {/* THE VERBS WRAP. Up to eight 34px buttons in a span that could not wrap ran off the side of
+            a phone; under sm: they take their own line, left-aligned, and wrap within it. */}
+        <span className="ml-auto flex items-center gap-1.5 flex-wrap justify-end max-sm:basis-full max-sm:ml-0 max-sm:justify-start">
           {ta.actions}
           {t.reportUrl && <a href={t.reportUrl} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Read-only field report">Report</a>}
         </span>
       </div>
       {ta.panels}
       {mv && <p className={'mt-1 text-[11.5px] ' + (t.moveState === 'extended' ? 'font-semibold text-rose-700' : 'text-muted')}>{mv.line}</p>}
-      {comment && ta.panel !== 'comments' && (
-        <div className="mt-1 text-[11.5px] text-muted flex items-start gap-1.5">
-          <MessageSquare size={11} className="mt-0.5 shrink-0" /><span className="line-clamp-2">{comment.body}</span>
-        </div>
-      )}
       {err && <p className="mt-1 text-[11px] text-rose-600 font-semibold">{err}</p>}
     </div>
   )
@@ -780,7 +791,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   /** A deep link (?tab=people, or the crew chip) asking for the People axis. */
   wantPeople?: boolean
   /** The capacity model for this day — the planner's ceiling is minutes, not job counts. */
-  cap?: { people?: { person: string; loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string }[]; unassigned?: { stop: { id: string }; minutes: number }[] } | null
+  cap?: { people?: { person: string; loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string; lowConfidence?: boolean }[]; unassigned?: { stop: { id: string }; minutes: number }[] } | null
   /** The day the board is showing — Focus and the PM ledger answer for THAT day, not for today. */
   boardDate?: string
   /** The crew line (the capacity model, compact) — rides on the day line so the clock and the crew are one strip, not two banners. */
@@ -885,8 +896,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
 
   // The capacity model, matched to a person by the same key rule the rest of the board uses.
   const pricedOf = useMemo(() => {
-    const by: Record<string, { loadMinutes: number; capacityMinutes: number; utilisationPct: number; headroomCleans: number; verdict?: string }> = {}
-    for (const p of (cap?.people || [])) by[personKey(p.person)] = p as any
+    const by: Record<string, Priced> = {}
+    for (const p of (cap?.people || [])) by[personKey(p.person)] = p as Priced
     return (name: string) => by[personKey(name)] || null
   }, [cap])
 
@@ -975,7 +986,6 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           listingId: u.listingId,
           late: !!u.late, atRisk: !!u.atRisk,
           building: u.building || null, market: u.market,
-          outAt: u.checkOutTime || null, inAt: u.arrivingAt || null,
           // The clean's own projection, if the model could price it.
           lands: (u.tasks.find(t => t.type === 'departure_clean' && !t.done)?.landsAt) || null,
           stays: ([['Leaving', u.outReservationId], ['Arriving', u.inReservationId], ['In house', u.houseReservationId]] as [string, string | null | undefined][])
@@ -1049,10 +1059,23 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     // morning and it was structurally unanswerable on the board — while the answer sat in the
     // staffing payload, fetched two lines above where this component is mounted and never passed in.
     const idleNames: string[] = []
-    for (const sp of (staff?.people || [])) {
+    // The Homebase person behind a Breezeway name — by key (either spelling), then the full matcher.
+    const staffList = staff?.people || []
+    const staffOf = (name: string) => {
+      const k = personKey(name)
+      return staffList.find(x => personKey(x?.name) === k || (!!x?.bzAlias && personKey(x.bzAlias) === k))
+        || staffList.find(x => nameMatches(String(x?.name || ''), name))
+        || null
+    }
+    for (const sp of staffList) {
       const nm = String(sp?.name || '').replace(/\s+/g, ' ').trim()
       if (!nm) continue
       if (!(sp.clockedIn || sp.shift)) continue
+      // THE SERVER ALREADY COUNTED (2026-11-09 audit). /api/ops-today/staffing joins Homebase to
+      // Breezeway with its own matcher (it also bridges last-name drift by unique first name) and
+      // sends `tasks`. When it says this person carries work, they are not free — whatever the
+      // two name checks below make of the spelling.
+      if (typeof sp.tasks === 'number' && sp.tasks > 0) continue
       // The alias exists because the two systems genuinely disagree about some people's names, and
       // ignoring it is how a working person got called free. Either spelling counts as "known".
       // TWO PASSES, CHEAP THEN THOROUGH. The key catches the ordinary cases — spacing, accents,
@@ -1076,11 +1099,19 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       const running = tasks.filter(t => t.running && !t.done).length
       const late = tasks.filter(t => t.late).length
       const dep = tasks.filter(t => catKeyOf(t) === 'departure').length
+      // "NOT STARTED" MEANT "NOTHING RUNNING THIS SECOND" (2026-11-09 audit) — so somebody who had
+      // finished five of eight and was walking to the sixth read as not having begun. Four words now.
       const status = doneN === tasks.length
         ? { label: 'Done for today', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
         : running
-          ? { label: 'Working', cls: 'bg-amber-50 text-amber-800 border-amber-200' }
-          : { label: 'Not started', cls: 'bg-app text-muted border-line' }
+          ? { label: 'In progress', cls: 'bg-amber-50 text-amber-800 border-amber-200' }
+          : doneN > 0
+            ? { label: 'Between tasks', cls: 'bg-app text-ink border-line' }
+            : { label: 'Not started', cls: 'bg-app text-muted border-line' }
+      // FINISHED AND STILL ON THE CLOCK is the best answer to "who can take this" — and the default
+      // "still open" filter hid exactly these rows, because they have no open work. Only claimed
+      // with no category filter on: under one, "all done" would mean "all of that kind".
+      const freeNow = !cat && tasks.length > 0 && doneN === tasks.length && !!staffOf(name)?.clockedIn
       const roles = roster.find(p => personKey(p.name) === key) || roster.find(p => nameMatches(p.name, name))
       return {
         key: 'p:' + name, title: name,
@@ -1091,37 +1122,49 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
         // — moves here, and Staffing is retired.
         priced: pricedOf(name), pricedIsWholeDay: mkt !== 'all',
         reservation: [dep ? dep + ' departure clean' + (dep === 1 ? '' : 's') : '', tasks.length - doneN + ' left of ' + tasks.length,
-        Array.from(new Set(tasks.map(t => t.unit))).length + ' units'].filter(Boolean).join(' · '),
-        status, tasks, issues: [], gapNights: null,
-        urgent: late * 100 + (tasks.length - doneN),
+        Array.from(new Set(tasks.map(t => t.unit))).length + ' units', freeNow ? 'still on the clock' : ''].filter(Boolean).join(' · '),
+        status, tasks, issues: [], gapNights: null, freeNow,
+        // Finished-and-on-the-clock sorts directly under the Free rows.
+        urgent: freeNow ? 400_000 : late * 100 + (tasks.length - doneN),
       } as Row
     })
     // Free people sort just under the unassigned pile — the two rows a coordinator needs to put
     // together are then adjacent, which is the whole point of showing them at all.
     for (const nm of idleNames.sort()) {
-      const sp = (staff?.people || []).find(x => personKey(x?.name) === personKey(nm))
+      const sp = staffList.find(x => personKey(x?.name) === personKey(nm))
+      // FREE NOW vs ON THE SCHEDULE (2026-11-09 audit). Anyone with a shift today and no tasks was
+      // "Free" — including somebody whose shift starts at two, or who clocked out at noon. Only a
+      // person on the clock is free NOW; the rest are named for what they are and sort below.
+      const onClock = !!sp?.clockedIn
       out.push({
         key: 'p:free:' + nm, title: nm,
         sub: ((roster.find(p => personKey(p.name) === personKey(nm)) || roster.find(p => nameMatches(p.name, nm)))?.departments || []).join(' · '),
         priced: pricedOf(nm), pricedIsWholeDay: mkt !== 'all',
-        reservation: (sp?.clockedIn ? 'On the clock' : 'On shift') + ', nothing assigned'
+        reservation: (onClock ? 'On the clock' : 'Scheduled' + (sp?.shift ? ' ' + sp.shift : '') + ', not clocked in') + ', nothing assigned'
           + (mkt !== 'all' ? ' anywhere today' : ''),
         // NOT emerald: "Done for today" is emerald, and these two mean opposite things in the one
         // column a coordinator scans to answer "who can take this".
-        status: { label: 'Free', cls: 'bg-white text-ink border-ink/40 font-bold' },
+        status: onClock
+          ? { label: 'Free now', cls: 'bg-white text-ink border-ink/40 font-bold' }
+          : { label: 'Not clocked in', cls: 'bg-app text-muted border-line' },
         tasks: [], issues: [], gapNights: null,
         // Above ordinary working people, below the unassigned pile: an idle person is not urgent in
         // itself, but it is the answer to the row directly above them.
-        urgent: 500_000,
+        urgent: onClock ? 500_000 : 300_000,
       } as Row)
     }
 
-    if (unassigned.length) out.unshift({
-      key: 'p:unassigned', title: 'Nobody assigned', sub: 'open work with no name on it',
-      reservation: unassigned.length + ' task' + (unassigned.length === 1 ? '' : 's') + ' · ' + Array.from(new Set(unassigned.map(t => t.unit))).length + ' units',
-      status: { label: 'Needs a name', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
-      tasks: unassigned, issues: [], gapNights: null, urgent: 1e6,
-    })
+    if (unassigned.length) {
+      const nUnits = Array.from(new Set(unassigned.map(t => t.unit))).length
+      out.unshift({
+        key: 'p:unassigned', title: 'Unassigned', sub: 'open work with no name on it',
+        // The count lives in the pill, once. (The row used to say "0/10", "10 tasks" and "Needs a
+        // name" — one fact three ways, the first of them always zero.)
+        reservation: nUnits + (nUnits === 1 ? ' unit' : ' units'),
+        status: { label: unassigned.length + (unassigned.length === 1 ? ' needs an owner' : ' need an owner'), cls: 'bg-rose-50 text-rose-700 border-rose-200' },
+        tasks: unassigned, issues: [], gapNights: null, urgent: 1e6,
+      })
+    }
     return out
     // `staff` and `allUnits` belong here: staffing is a slower, separate fetch, and without it in
     // the deps the Free rows it produces never appeared until the next board refresh.
@@ -1135,7 +1178,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     // finished units included, which is what you want at 6pm when you are checking the day closed.
     // "Active" means work still to do — but a FREE person has no open tasks by definition, so the
     // default filter would have hidden the very rows that answer "who can take this".
-    if (activeOnly) r = r.filter(x => x.key.startsWith('p:free:') || x.tasks.some(t => !t.done) || x.issues.length > 0)
+    if (activeOnly) r = r.filter(x => x.key.startsWith('p:free:') || !!x.freeNow || x.tasks.some(t => !t.done) || x.issues.length > 0)
     // A filtered row earns its place with a matching task OR a matching issue — dropping the
     // issue-only rows here is what made the Glitches tile filter to an empty list.
     if (cat) r = r.filter(x => x.tasks.length > 0 || x.issues.length > 0)
@@ -1149,17 +1192,48 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
   // guest can walk in. The route has computed the countdown, the late count and the at-risk count
   // on every single request since it was written, and the board rendered none of it — so the one
   // number that decides the morning was the one number nobody could see.
-  const dl = data?.deadline || null
-  // THE BAND IS ABOUT WHAT YOU ARE LOOKING AT. Counting the portfolio above a two-name list is how
-  // a market filter turns a true number into a confusing one — so the filtered list drives all of it.
+  // THE BAND IS ABOUT WHAT YOU ARE LOOKING AT — and until 2026-11-09 only half of it was. The
+  // "not started" band followed the area filter; the deadline counts beside the clock were the
+  // server's portfolio totals, so "Miami" still read "12/31 cleans done · 3 late" over a Miami-only
+  // list. Under an area filter the same counts are taken from the rows on screen, by the server's
+  // own per-task flags (`clocked` = on the 4pm clock; the fallback is the same rule, for a deploy skew).
+  const dl = useMemo<GDeadline | null>(() => {
+    const base = data?.deadline || null
+    if (!base || mkt === 'all') return base
+    const dep = allTasks.filter(t => t.type === 'departure_clean')
+    const cl = dep.filter(t => t.clocked ?? (!t.untracked && t.moveState !== 'extended'))
+    return {
+      ...base,
+      cleans: cl.length,
+      done: cl.filter(t => t.done).length,
+      running: cl.filter(t => t.running && !t.done).length,
+      remaining: cl.filter(t => !t.done).length,
+      late: cl.filter(t => t.late).length,
+      atRisk: cl.filter(t => t.atRisk).length,
+      missed: cl.filter(t => !!t.missed).length,
+      untracked: dep.filter(t => !!t.untracked).length,
+    }
+  }, [data, mkt, allTasks])
   const bh = data?.behind || null
-  const behindHere = useMemo(() => (bh?.units || []).filter(u => mkt === 'all' || u.market === mkt), [bh, mkt])
+  // Same two-market rule as the rows (inMkt): a vendor building belongs to its geography as well.
+  const market2Of = useMemo(() => {
+    const m: Record<string, string | null | undefined> = {}
+    for (const u of allUnits) m[u.unit] = u.market2
+    return m
+  }, [allUnits])
+  const behindHere = useMemo(() => (bh?.units || []).filter(u => mkt === 'all' || u.market === mkt || market2Of[u.unit] === mkt), [bh, mkt, market2Of])
   const behindSameDay = behindHere.filter(u => !!u.arrivingAt).length
   const behindUnowned = behindHere.filter(u => !u.assignee).length
   const behindEarliest = behindHere.filter(u => !!u.arrivingAt).map(u => u.arrivingAt).sort()[0] || null
+  // ANOTHER DAY HAS NO COUNTDOWN. Off today the server sends the whole deadline as minutes left, so
+  // yesterday and tomorrow both read "16h 0m left". No clock off today; a day already gone gets
+  // its close-out line instead.
+  const notToday = data?.isToday === false
+  const pastDay = notToday && !!today && today < new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  const closedOut = !!dl && (dl.passed || pastDay)
   const hh = dl ? Math.floor(Math.abs(dl.minsLeft) / 60) : 0
   const mm = dl ? Math.abs(dl.minsLeft) % 60 : 0
-  const clock = dl ? (dl.passed ? `${hh}h ${mm}m past` : `${hh}h ${mm}m left`) : ''
+  const clock = dl && !notToday ? (dl.passed ? `${hh}h ${mm}m past` : `${hh}h ${mm}m left`) : ''
   // ONE LINE FOR "WHAT YOU SEE MAY BE WRONG" (2026-09-28 audit, 08 UX-11): a failed read and a
   // partial read used to be two stacked cards. The failure leads; a partial read names what it missed.
   const degradedList = Array.isArray(data?.degraded) ? data!.degraded! : []
@@ -1206,7 +1280,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           <AlertTriangle size={13} className={'shrink-0 ' + (behindSameDay > 0 ? 'text-rose-600' : 'text-amber-600')} />
           <LTag tone={behindSameDay > 0 ? 'roseSolid' : 'amber'} title="Departure cleans whose guest has left (checkout + 30 min) that nobody has started">{behindHere.length} not started</LTag>
           {behindSameDay > 0 && <LTag tone="rose" title={'Of those, ' + behindSameDay + ' with a guest checking in today' + (behindEarliest ? ' — the earliest at ' + behindEarliest : '')}>{behindSameDay} check-in today{behindEarliest ? ' · ' + behindEarliest : ''}</LTag>}
-          {behindUnowned > 0 && <LTag tone="amber" title={'Of those, ' + behindUnowned + ' with nobody assigned'}>{behindUnowned} unowned</LTag>}
+          {behindUnowned > 0 && <LTag tone="amber" title={'Of those, ' + behindUnowned + ' with nobody assigned'}>{behindUnowned} unassigned</LTag>}
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink/70" title={behindUnits}>{behindUnits}</span>
         </div>
       )}
@@ -1228,7 +1302,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           </span>
           <span className="inline-flex items-center gap-1.5 flex-wrap">
             <LTag tone={dl.remaining ? 'slate' : 'emerald'} title={dl.done + ' of ' + dl.cleans + ' departure cleans finished'}>{dl.done}/{dl.cleans} cleans done</LTag>
-            {dl.running > 0 && <LTag tone="amber">{dl.running} under way</LTag>}
+            {dl.running > 0 && <LTag tone="amber">{dl.running} in progress</LTag>}
             {dl.late > 0 && <LTag tone="roseSolid">{dl.late} late</LTag>}
             {dl.atRisk > 0 && <LTag tone="amber" title="Projected to land after the deadline">{dl.atRisk} at risk</LTag>}
             {dl.untracked > 0 && <LTag tone="slate" title="Vendor-cleaned units never close their tasks in Breezeway, so they carry no deadline.">{dl.untracked} vendor</LTag>}
@@ -1236,7 +1310,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           {/* CLOSED OUT, IN THE SAME CARD (Jon, 2026-10-03, phone screenshot: two cards both saying
               "3 still open · 0h 37m past" filled the first screen). Once the deadline has passed the
               verdict is one line here, with the units still open named. */}
-          {dl.passed && mode === 'units' && (
+          {closedOut && mode === 'units' && (
             <p className="basis-full text-[12px] text-ink/80 flex items-center gap-x-3 gap-y-0.5 flex-wrap">
               <span className="font-bold text-ink">Closed out</span>
               <span><b className="text-emerald-700 tabular-nums">{dl.done - (dl.missed || 0)}</b> <span className="text-muted">on time</span></span>
@@ -1250,7 +1324,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           <span className="text-[11.5px] text-muted shrink-0 inline-flex items-center gap-1.5">
             {loading && <Loader2 size={11} className="animate-spin" />}
             <span title={freshTitle || undefined}>{fresh || today}</span>
-            <LTip label="Refresh now"><button onClick={onRefresh} aria-label="Refresh the board" className="hover:text-ink p-0.5"><RefreshCw size={12} /></button></LTip>
+            <LTip label="Refresh now"><button onClick={onRefresh} aria-label="Refresh the board" className="hover:text-ink p-2 -m-1"><RefreshCw size={12} /></button></LTip>
           </span>
         </div>
       )}
@@ -1262,10 +1336,12 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             over "People" — because Safari lets a <button> flex item shrink under its own text. Each
             tab keeps its width (shrink-0) and the strip scrolls sideways instead. */}
         <div className="flex max-lg:basis-full rounded-xl border border-line bg-white overflow-hidden max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {([['units', 'Units', LayoutGrid], ['vacant', 'Vacant', DoorOpen], ['people', 'People', Users], ['review', 'Focus', Sparkles], ['due', 'Due', CalendarClock]] as const).map(([k, label, Icon]) => (
-            <button key={k} onClick={() => pickMode(k as any)}
+          {([['units', 'Units', LayoutGrid], ['vacant', 'Vacant', DoorOpen], ['people', 'People', Users], ['review', 'Focus', Sparkles], ['due', 'PM due', CalendarClock]] as const).map(([k, label, Icon]) => (
+            // PHONE: the view you are on keeps its word; the other four are their icon (and count),
+            // so all five fit one screen width and "PM due" is never scrolled out of sight.
+            <button key={k} onClick={() => pickMode(k as any)} aria-label={label} title={label} aria-pressed={mode === k}
               className={'shrink-0 px-3 py-2 text-[13px] font-bold inline-flex items-center gap-1.5 border-l border-line first:border-l-0 whitespace-nowrap ' + (mode === k ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink')}>
-              <Icon size={14} /> {label}
+              <Icon size={14} /> <span className={mode === k ? '' : 'max-sm:hidden'}>{label}</span>
               {k === 'vacant' && (data?.vacants || []).length > 0 && <span className="text-[11px] opacity-75 tabular-nums">{(data?.vacants || []).filter(v => mkt === 'all' || v.market === mkt || (v as any).market2 === mkt).length}</span>}
               {k === 'review' && <ReviewCount market={prefsReady ? mkt : null} date={boardDate} />}
               {k === 'due' && <DueCount market={prefsReady ? mkt : null} date={boardDate} />}
@@ -1292,11 +1368,13 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
           </label>
         )}
         {(mode === 'units' || mode === 'people') && (
-          <select value={activeOnly ? 'active' : 'all'} onChange={e => setActiveOnly(e.target.value === 'active')} aria-label="Which rows" title="Still open = has work left; Everything = finished units included"
-            className="rounded-xl border border-line bg-white px-2 py-1.5 text-[13px] font-semibold text-ink min-h-[36px]">
-            <option value="active">Still open</option>
-            <option value="all">Everything</option>
-          </select>
+          // A TOGGLE, NOT A THIRD DROPDOWN. Two options is a switch; as a select it was one more
+          // identical box in a row of them. Off (the default) = only rows with work left.
+          <button type="button" onClick={() => setActiveOnly(a => !a)} aria-pressed={!activeOnly}
+            title={activeOnly ? 'Showing only rows with work left — tap to include finished ones' : 'Showing everything, finished rows included — tap to hide them'}
+            className={'rounded-xl border px-2.5 py-1.5 text-[13px] font-semibold min-h-[36px] inline-flex items-center gap-1.5 whitespace-nowrap ' + (activeOnly ? 'border-line bg-white text-muted hover:text-ink' : 'border-ink bg-ink text-white')}>
+            <Check size={13} className={activeOnly ? 'opacity-30' : ''} /> Show finished
+          </button>
         )}
         {(mode === 'units' || mode === 'people') && !(searchOpen || q) && (
           <button onClick={() => setSearchOpen(true)} aria-label="Search" title="Search units, tasks and people" className="sm:hidden px-2.5 py-1.5 rounded-xl border border-line bg-white text-muted hover:text-ink min-h-[36px]"><Search size={14} /></button>
@@ -1307,7 +1385,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} onBlur={() => { if (!q) setSearchOpen(false) }}
               placeholder={mode === 'units' ? 'Unit, task, name…' : 'Person…'}
               className="w-full rounded-xl border border-line bg-white pl-7 pr-7 py-1.5 text-[13px] min-h-[36px] focus:outline-none focus:border-ink" />
-            {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} title="Clear the search" aria-label="Clear the search" className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink"><X size={12} /></button>}
+            {q && <button onClick={() => { setQ(''); setSearchOpen(false) }} title="Clear the search" aria-label="Clear the search" className="absolute right-0 top-1/2 -translate-y-1/2 p-2.5 text-muted hover:text-ink"><X size={12} /></button>}
           </div>
         )}
         <span className="ml-auto inline-flex items-center gap-1.5">
@@ -1359,8 +1437,7 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
             )}
           </div>
         ) : shown.map(r => (
-          <GridRow key={r.key} row={r} roster={roster} mode={mode as 'units' | 'people'} onRefresh={onRefresh} onAdd={onAddTask}
-            units={allUnits} staff={staff} />
+          <GridRow key={r.key} row={r} roster={roster} mode={mode as 'units' | 'people'} onRefresh={onRefresh} onAdd={onAddTask} />
         ))}
       </div>
       {mode === 'units' && unitsFooter ? <div className="mt-4">{unitsFooter}</div> : null}

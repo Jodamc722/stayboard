@@ -354,7 +354,11 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
     const assigneeIds = wanted.map(n => idOf[n]).filter((n): n is number => Number.isFinite(n as any))
     const assignedNames = wanted.filter(n => Number.isFinite(idOf[n] as any))
 
-    const name = `Pre-arrival inspection — ${c.unit_name || 'unit'} (${c.reason})`
+    // THE ARRIVAL DAY RIDES THE NAME (2026-11-09 audit): the one-open-task guard in createBreezewayTask
+    // matches on unit + name, so two big arrivals back to back at one unit shared a name — the first
+    // stay's inspection was MOVED to the second arrival and the first guest got no walk.
+    const arrives = (() => { const d = new Date(c.check_in + 'T12:00:00Z'); return isNaN(d.getTime()) ? str(c.check_in) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) })()
+    const name = `Pre-arrival inspection — ${c.unit_name || 'unit'} (${c.reason}, arrives ${arrives})`
     const description =
       `AUTO-CREATED: ${c.reason.toUpperCase()} arriving ${c.check_in}.\n` +
       `Guest: ${c.guest_name} · ${c.nights || '?'} night${c.nights === 1 ? '' : 's'}${c.value ? ' · $' + Math.round(c.value).toLocaleString('en-US') : ''}\n` +
@@ -374,9 +378,11 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
-      if (assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
+      // REUSED (the guard found this job already open): it keeps its people, its date and its mirror row.
+      const reused = !!r.reused
+      if (!reused && assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
       // Write-through so the boards see it before the next 30-minute sync (same as add-task).
-      try {
+      if (!reused) try {
         await db.from('breezeway_tasks_sync').upsert({
           id: taskId, reference_property_id: c.listing_id, name, status: 'created',
           scheduled_date: scheduled, type_department: 'inspection', assignees: assignedNames,
@@ -386,9 +392,9 @@ export async function runAutoInspections(opts: { dryRun?: boolean } = {}): Promi
       await db.from('auto_inspections').upsert({
         reservation_id: c.reservation_id, listing_id: c.listing_id, unit_name: c.unit_name,
         guest_name: c.guest_name, check_in: c.check_in, reason: c.reason, market: c.market,
-        task_id: taskId, assignees: assignedNames,
+        task_id: taskId, assignees: reused ? [] : assignedNames,
       }, { onConflict: 'reservation_id' })
-      created++
+      if (!reused) created++
     } catch (e) {
       failed++
       // Record the failure with no task_id so the next run retries it, and the row is visible.
@@ -805,8 +811,10 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
-      if (assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* visible unassigned */ } }
-      try {
+      // REUSED (the guard found this job already open): it keeps its people, its date and its mirror row.
+      const reused = !!r.reused
+      if (!reused && assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* visible unassigned */ } }
+      if (!reused) try {
         await db.from('breezeway_tasks_sync').upsert({
           id: taskId, reference_property_id: c.listing_id, name, status: 'created',
           scheduled_date: c.nextCheckout, type_department: 'inspection', assignees: assignedNames,
@@ -816,9 +824,9 @@ export async function runLowReviewInspections(opts: { dryRun?: boolean } = {}): 
       await db.from('auto_inspections').upsert({
         reservation_id: REV_KEY(c.reviewId), listing_id: c.listing_id, unit_name: c.unit_name,
         guest_name: c.guest_name, check_in: c.nextCheckout, reason: 'low review ' + c.rating + '★',
-        market: c.market, task_id: taskId, assignees: assignedNames,
+        market: c.market, task_id: taskId, assignees: reused ? [] : assignedNames,
       }, { onConflict: 'reservation_id' })
-      created++
+      if (!reused) created++
     } catch (e) {
       failed++
       console.error('low-review inspections: create failed for review', c.reviewId, e)
@@ -998,8 +1006,10 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
-      if (assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
-      try {
+      // REUSED (the guard found this job already open): it keeps its people, its date and its mirror row.
+      const reused = !!r.reused
+      if (!reused && assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
+      if (!reused) try {
         await db.from('breezeway_tasks_sync').upsert({
           id: taskId, reference_property_id: c.listing_id, name, status: 'created',
           scheduled_date: scheduled, type_department: 'inspection', assignees: assignedNames,
@@ -1010,9 +1020,9 @@ export async function runArrivalFeedbackInspections(opts: { dryRun?: boolean } =
         reservation_id: REV_KEY(c.reviewId), listing_id: c.listing_id, unit_name: c.unit_name,
         guest_name: c.guest_name, check_in: scheduled,
         reason: 'bad review ' + (Math.round(c.rating * 10) / 10) + '★ — before arrival ' + c.check_in,
-        market: c.market, task_id: taskId, assignees: assignedNames,
+        market: c.market, task_id: taskId, assignees: reused ? [] : assignedNames,
       }, { onConflict: 'reservation_id' })
-      created++
+      if (!reused) created++
     } catch (e) {
       // No receipt on failure: the next run finds the same review and tries again.
       failed++
@@ -1230,8 +1240,10 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
       })
       if (!r.ok || !r.data?.id) throw new Error('Breezeway ' + r.status)
       const taskId = str(r.data.id)
-      if (assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
-      try {
+      // REUSED (the guard found this job already open): it keeps its people, its date and its mirror row.
+      const reused = !!r.reused
+      if (!reused && assigneeIds.length) { try { await updateBreezewayTask(taskId, { assignments: assigneeIds }) } catch { /* shows unassigned; humans see it in the brief */ } }
+      if (!reused) try {
         await db.from('breezeway_tasks_sync').upsert({
           id: taskId, reference_property_id: c.listing_id, name, status: 'created',
           scheduled_date: scheduled, type_department: 'inspection', assignees: assignedNames,
@@ -1242,9 +1254,9 @@ export async function runDeepCleanInspections(opts: { dryRun?: boolean } = {}): 
         reservation_id: DC_KEY(c.deepCleanTaskId), listing_id: c.listing_id, unit_name: c.unit_name,
         guest_name: c.cleanedBy ? 'Deep clean by ' + c.cleanedBy : 'Deep clean', check_in: scheduled,
         reason: 'deep clean inspection (deep clean #' + c.deepCleanTaskId + ' finished ' + c.finishedDay + ')',
-        market: c.market, task_id: taskId, assignees: assignedNames,
+        market: c.market, task_id: taskId, assignees: reused ? [] : assignedNames,
       }, { onConflict: 'reservation_id' })
-      created++
+      if (!reused) created++
     } catch (e) {
       // No receipt on failure: the next run finds the same finished deep clean and tries again.
       failed++

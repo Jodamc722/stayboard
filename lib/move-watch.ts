@@ -161,13 +161,61 @@ export async function findMoveConflicts(): Promise<{ findings: MoveFinding[]; ch
   return { findings, checked: { reservations: res.length, blocks, notices, messages }, errors }
 }
 
-/** Find and raise. Returns how many new alerts went out (the rest were already open). */
+/**
+ * Find and raise. Returns how many new alerts went out (the rest were already open).
+ *
+ * ONE ALERT A RUN FOR WHAT IS NOT URGENT (2026-11-09). Every finding used to be its own alert — up to
+ * twelve posts in #vr-customercareteam from one pass. A double booking, a guest in a blocked unit and a
+ * notice on the wrong unit (severity urgent) are still raised one by one, at once. The rest ("we told
+ * the guest they moved" mentions) are said ONCE: a single new one is raised as before; two or more new
+ * ones go out as one alert naming the units, with each line in the body. What has been said is kept in
+ * app_settings `move_watch_said` for 14 days, so the same line is never raised again by a later pass.
+ */
+const SAID_KEY = 'move_watch_said'
 export async function runMoveWatch(): Promise<{ found: number; raised: number; errors: string[]; checked: any; findings: MoveFinding[] }> {
   const r = await findMoveConflicts()
-  const { raiseEveAlert } = await import('./handoff-store')
+  const { raiseEveAlert, readAlerts } = await import('./handoff-store')
+  const { getSetting, setSetting } = await import('./app-settings')
   let raised = 0
-  for (const f of r.findings.slice(0, 12)) {
+  const all = r.findings.slice(0, 12)
+  for (const f of all.filter(x => x.severity === 'urgent')) {
     try { if (await raiseEveAlert({ title: f.title, body: f.body, unit: f.unit, dedupe: f.dedupe, severity: f.severity })) raised++ } catch (e: any) { r.errors.push('raise: ' + String(e?.message || e).slice(0, 80)) }
   }
+  const quiet = all.filter(x => x.severity !== 'urgent')
+  if (!quiet.length) return { found: r.findings.length, raised, errors: r.errors, checked: r.checked, findings: r.findings }
+  let said: Record<string, string> = {}
+  try { const v = await getSetting<Record<string, string>>(SAID_KEY, {}); said = v && typeof v === 'object' ? { ...v } : {} } catch { said = {} }
+  const cutoff = Date.now() - 14 * 86400_000
+  for (const k of Object.keys(said)) if (!(Date.parse(said[k]) > cutoff)) delete said[k]
+  // Anything that already has an alert of its own (raised before this change, or as a single) is known too.
+  let have = new Set<string>()
+  try { have = new Set((await readAlerts()).map(a => String(a.dedupe || '')).filter(Boolean)) } catch { /* the said map still holds */ }
+  const fresh = quiet.filter(f => !said[f.dedupe] && !have.has(f.dedupe))
+  if (!fresh.length) return { found: r.findings.length, raised, errors: r.errors, checked: r.checked, findings: r.findings }
+  const nowIso = new Date().toISOString()
+  try {
+    let ok = false
+    if (fresh.length === 1) {
+      const f = fresh[0]
+      ok = await raiseEveAlert({ title: f.title, body: f.body, unit: f.unit, dedupe: f.dedupe, severity: f.severity })
+    } else {
+      const units = Array.from(new Set(fresh.map(f => f.unit).filter(Boolean)))
+      const key = fresh.map(f => f.dedupe).sort().join('|')
+      let h = 5381
+      for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0
+      ok = await raiseEveAlert({
+        title: `Guest moves to check (${fresh.length}): ${units.slice(0, 6).join(', ')}${units.length > 6 ? ', …' : ''}`,
+        body: fresh.map(f => `• ${f.title} — ${f.body}`).join('\n'),
+        unit: units.length === 1 ? units[0] : null,
+        dedupe: 'move:batch:' + h.toString(36),
+        severity: 'warn',
+      })
+    }
+    if (ok) {
+      raised++
+      for (const f of fresh) said[f.dedupe] = nowIso
+      await setSetting(SAID_KEY, said, 'move-watch')
+    }
+  } catch (e: any) { r.errors.push('raise: ' + String(e?.message || e).slice(0, 80)) }
   return { found: r.findings.length, raised, errors: r.errors, checked: r.checked, findings: r.findings }
 }

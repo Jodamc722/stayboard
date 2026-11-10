@@ -29,23 +29,28 @@ export function ScheduleHead() {
   const k = data && data.ok ? data.kpi : undefined
   const tone: Tone = !k ? 'slate' : k.utilisationPct > 100 ? 'rose' : k.utilisationPct >= 85 ? 'amber' : 'emerald'
   const title = (k
-    ? 'Today: ' + hrs(k.workMinutes + k.travelMinutes) + ' of work on ' + k.peopleOnShift + ' '
+    ? 'Today, by the clock (cleaning time + travel vs. shift time — a different question from the KPI hours on the board below): ' + hrs(k.workMinutes + k.travelMinutes) + ' of work on ' + k.peopleOnShift + ' '
       + (k.peopleOnShift === 1 ? 'person' : 'people') + ' ≈ ' + hrs(k.capacityMinutes) + ' capacity. '
     : 'Is the day doable? ')
     + (open ? 'Click to hide the capacity plan.' : 'Click for the capacity plan, other days and suggested moves.')
   return (
     <>
       <LeanHead title="Schedule" icon={<CalendarRange size={18} className="text-brand-600" />}>
-        {/* The sandbox (Jon, 2026-09-23): a proposed day in a popup, moved around, then approved. */}
-        <ScheduleSuggesterButton />
+        {/* PHONE (2026-11-09 audit): the right side of the header is one swipeable row with no
+            scrollbar, and the sentence ran off the edge behind the Suggest button. The pill goes
+            first and, under sm, says the short thing the comment at the top always promised. */}
         <Pill tone={tone} title={title} onClick={() => setOpen(o => !o)}>
           <span className="inline-flex items-center gap-1">
-            <Users size={12} /> {k ? (k.utilisationPct > 100 ? 'Too much work today' : k.utilisationPct >= 85 ? 'Team nearly full today' : 'Team has room today') + ' · ' + k.utilisationPct + '%' : 'Is today doable?'}
+            <Users size={12} />
+            <span className="sm:hidden">{k ? 'Crew ' + k.utilisationPct + '% today' : 'Doable?'}</span>
+            <span className="hidden sm:inline">{k ? (k.utilisationPct > 100 ? 'Too much work today' : k.utilisationPct >= 85 ? 'Team nearly full today' : 'Team has room today') + ' · ' + k.utilisationPct + '%' : 'Is today doable?'}</span>
             {k && k.unassignedCount > 0 ? <span className="opacity-80 hidden sm:inline">· {k.unassignedCount} {k.unassignedCount === 1 ? 'clean' : 'cleans'} with nobody on {k.unassignedCount === 1 ? 'it' : 'them'}</span> : null}
             {k && k.overloaded > 0 ? <span className="opacity-80 hidden sm:inline">· {k.overloaded} past a full day</span> : null}
             <ChevronDown size={12} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
           </span>
         </Pill>
+        {/* The sandbox (Jon, 2026-09-23): a proposed day in a popup, moved around, then approved. */}
+        <ScheduleSuggesterButton />
       </LeanHead>
       {/* IS THE DAY DOABLE — the measured capacity model (lib/capacity), pointed at whichever day is
           being planned. The board below decides WHO takes each clean; this says whether the day fits

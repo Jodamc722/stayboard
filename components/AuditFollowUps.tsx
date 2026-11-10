@@ -8,7 +8,8 @@
 //
 // It stays quiet when there is nothing outstanding — an ops board that always shows a section is a
 // board people stop reading.
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useCachedFetch } from '@/lib/swr'
 import Link from 'next/link'
 import { Sparkles, Loader2, ExternalLink, AlertTriangle, Check } from 'lucide-react'
 import { LeanSection, LeanList, LeanRow, Tag, IconBtn, Tip, Clamp, type Tone } from '@/components/lean'
@@ -20,19 +21,14 @@ type Data = { ok: boolean; units: Unit[]; open: number; dispatched: number; erro
 const SEV: Record<string, Tone> = { high: 'rose', medium: 'amber', low: 'slate' }
 
 export function AuditFollowUps() {
-  const [data, setData] = useState<Data | null>(null)
-  const [loading, setLoading] = useState(true)
+  // THROUGH THE SHARED CACHE (2026-11-09 audit): this was a raw `no-store` fetch on every mount of
+  // the Units view. Two minutes, shared; a dispatch re-reads at once (`load` below).
+  const { data, loading, refresh } = useCachedFetch<Data>('/api/audit/clean-pending', { ttl: 2 * 60_000 })
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
 
-  const load = useCallback(() => {
-    fetch('/api/audit/clean-pending', { cache: 'no-store' })
-      .then(r => r.json()).then(j => setData(j))
-      .catch(() => setData({ ok: false, units: [], open: 0, dispatched: 0, error: 'Could not load audit cleanliness.' }))
-      .finally(() => setLoading(false))
-  }, [])
-  useEffect(() => { load() }, [load])
+  const load = refresh
 
   // One code path for creating tasks: the audit task route, which writes the standardized brief and
   // stamps the Breezeway id back onto the item.
@@ -49,7 +45,7 @@ export function AuditFollowUps() {
     setBusy('')
   }
 
-  if (loading) return null
+  if (loading && !data) return null
   if (!data || !data.units || data.units.length === 0) return null
 
   const total = data.units.reduce((s, u) => s + u.items.length, 0)

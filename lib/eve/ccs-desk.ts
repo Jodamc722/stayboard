@@ -294,24 +294,37 @@ export async function runHandoff(open: AskItem[], cfg: CcsDeskCfg, now = new Dat
   // AT THE HOUR IT WAS SET FOR (2026-09-28 audit, F27). A handoff runs at the hours in this desk's
   // settings, which are a person's schedule, not Eve's initiative: urgent (the room cap does not apply).
   const gate = await agentAllowed('slack_post', { ask: true, urgent: true })
-  const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #vr-customercareteam (${shown.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'vr-customercareteam', text }, by: 'cron:slack-watch' },
+  // The registry compares the slot, not the words (2026-11-09): a handoff that opened with the same
+  // header and the same carried ask as yesterday's read as "already said" and was dropped in silence.
+  const r = await stepDown(gate, { action: 'slack_post', summary: `CCS handoff in #vr-customercareteam (${shown.length} open asks)`, exec: { channel: EVE_CHANNELS.ccsJon, channel_name: 'vr-customercareteam', text }, sayText: `CCS handoff ${slot} ${shown.map(it => it.id).join(' ')}`, by: 'cron:slack-watch' },
     async () => { const p = await postToChannel(EVE_CHANNELS.ccsJon, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
   if (r.ok && r.mode !== 'observe') {
     const next: Record<string, number> = {}
     for (const it of shown) next[it.id] = (listed[it.id] || 0) + 1
     await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, listed: next, escalated }, 'ccs-desk')
-  } else if (escNow) {
-    // The list was held, but the escalations went out: remember them so they are not said twice.
-    await setSetting(HANDOFF_STATE_KEY, { ...st, escalated: { ...priorEsc, ...escalated } }, 'ccs-desk')
+  } else {
+    // HELD IS SAID OUT LOUD, AND THE SLOT IS SPENT (2026-11-09). A handoff the gate held (observe) used
+    // to leave no trace: the slot was not claimed and the receipt carried the fence's reason, not the
+    // hold. The slot is claimed so a later pass in the same hour does not try again; the counts are
+    // left as they were, so tomorrow's list still treats these asks as not yet shown. Escalations that
+    // went out are remembered so they are not said twice.
+    await setSetting(HANDOFF_STATE_KEY, { ...st, lastHandoff: slot, escalated: escNow ? { ...priorEsc, ...escalated } : (st.escalated || {}) }, 'ccs-desk')
   }
-  return { posted: r.mode === 'act', mode: r.mode, note: r.mode !== 'act' ? gate.reason : undefined, escalated: escNow, hidden }
+  const held = !(r.ok && r.mode !== 'observe')
+  return { posted: r.mode === 'act' && r.ok, mode: r.mode, note: r.mode === 'act' ? (r.ok ? undefined : `Slack refused it: ${r.error || 'unknown'}`) : held ? `held, not posted (${shown.length} open asks) — the reason is on Eve → Thinking; fence said: ${gate.reason}` : gate.reason, escalated: escNow, hidden }
 }
 
 /** Escalate one ask in its own thread, gated. */
-export async function escalate(it: AskItem, why: string, tags: string[]): Promise<{ ok: boolean; mode: string }> {
+/**
+ * `opts.afterHours`: the escalation may go out between 8pm and 7am ET — set by the Slack watch for the
+ * at-once kind (a guest ask on an escalation building such as Salato, or on a big booking), which is one
+ * of Jon's named exceptions to the night window. The "listed twice" escalation from the 7am handoff
+ * does not set it and never needs to.
+ */
+export async function escalate(it: AskItem, why: string, tags: string[], opts: { afterHours?: boolean } = {}): Promise<{ ok: boolean; mode: string }> {
   const text = escalationText(it, why, tags)
   const gate = await agentAllowed('slack_post', { urgent: true, ask: true })
-  const r = await stepDown(gate, { action: 'slack_post', summary: `escalate guest ask (${why}) in #${it.channel_name}: ${it.summary.slice(0, 120)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch' },
+  const r = await stepDown(gate, { action: 'slack_post', summary: `escalate guest ask (${why}) in #${it.channel_name}: ${it.summary.slice(0, 120)}`, exec: { channel: it.channel, channel_name: it.channel_name, thread_ts: it.thread_ts || it.msg_ts, text }, why: it.summary.slice(0, 200), by: 'cron:slack-watch', afterHours: !!opts.afterHours },
     async () => { const p = await postThreadReply(it.channel, it.thread_ts || it.msg_ts, text); return { ok: p.ok, ref: p.ts || null, error: p.error } })
   return { ok: r.ok, mode: r.mode }
 }

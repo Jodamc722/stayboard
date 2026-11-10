@@ -20,8 +20,41 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { createBreezewayTask, updateBreezewayTask, breezewayConfigured, mapBreezewayTask, isDepartureCleanName } from './breezeway'
 import { isTaskDone, isTaskGone } from './task-categories'
-import { postToChannel } from './slack'
 import { EVE_CHANNELS } from './slack-rules'
+import { getSetting, setSetting } from './app-settings'
+
+// THE CUSTOMER-CARE NOTICE GOES THROUGH THE ROOM GATE (2026-11-09). It was a direct post from a cron
+// that runs until 9:38pm ET — outside the said-registry and the 8pm–7am window. It now passes
+// lib/eve/room-gate (urgent: it is once per stay per door move and is never dropped for the room's
+// daily cap). A notice the gate holds — the night window, quiet hours — is kept in app_settings
+// `connecting_doors_held` and said on the first pass after the window opens; the door task itself is
+// created at once either way, and the morning brief names the stay (doorBriefItems).
+const HELD_KEY = 'connecting_doors_held'
+type HeldNotice = { text: string; subject: string; at: string }
+async function tellCustomerCare(text: string, subject: string): Promise<{ state: 'told' | 'held' | 'failed'; why: string }> {
+  const { gatedPost } = await import('./eve/room-gate')
+  const r = await gatedPost({ channel: EVE_CHANNELS.ccsJon, text, subject, by: 'cron:connecting-doors', urgent: true, summary: text.replace(/\s+/g, ' ').slice(0, 200) })
+  if (r.ok) return { state: 'told', why: '' }
+  if (r.held) return { state: 'held', why: r.held }
+  return { state: 'failed', why: str(r.error) }
+}
+async function flushHeldNotices(lines: string[]): Promise<void> {
+  let held: HeldNotice[] = []
+  try { const v = await getSetting<HeldNotice[]>(HELD_KEY, []); held = Array.isArray(v) ? v : [] } catch { return }
+  if (!held.length) return
+  const { inPostWindow } = await import('./eve/room-gate')
+  if (!inPostWindow()) return
+  const keep: HeldNotice[] = []
+  for (const h of held) {
+    // Two days is the end of its usefulness: the stay has started or the door has been closed by then.
+    if (!h || !h.text || Date.parse(String(h.at || '')) < Date.now() - 2 * 86400_000) continue
+    const res = await tellCustomerCare(h.text, h.subject)
+    if (res.state === 'told') lines.push('held notice: customer care told (' + h.subject + ')')
+    else if (res.state === 'held' && /already said/.test(res.why)) continue   // the room has it
+    else keep.push(h)
+  }
+  try { await setSetting(HELD_KEY, keep, 'connecting-doors') } catch { /* the next pass tries again; the said-registry stops a second post */ }
+}
 
 type Pair = { label: string; door: string; parentListing: string; childListings: string[] }
 export const PAIRS: Pair[] = [
@@ -103,6 +136,7 @@ export async function runDoors(opts: { dryRun?: boolean } = {}) {
   const lines: string[] = []
   let created = 0, updated = 0, titled = 0
   if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured', jobs, lines, created, updated, titled }
+  if (!opts.dryRun) { try { await flushHeldNotices(lines) } catch { /* the next pass tries again */ } }
   const db = supabaseAdmin()
   const mirror = async (r: any, homeId: number | null) => {
     try { const m: any = r?.data ? mapBreezewayTask(r.data) : null; if (!m?.id) return; if (homeId != null && !m.home_id) m.home_id = homeId; m.synced_at = new Date().toISOString(); const rp = Number(m.rate_paid); m.rate_paid = Number.isFinite(rp) ? rp : null; await db.from('breezeway_tasks_sync').upsert(m, { onConflict: 'id' }) } catch { /* next sync */ }
@@ -149,7 +183,18 @@ export async function runDoors(opts: { dryRun?: boolean } = {}) {
       const text = j.kind === 'open'
         ? `🚪 *${j.pair} booked as ONE unit* — ${j.guest || 'guest'}, ${j.reservationDates}. The connecting door between ${door.replace('/', ' and ')} stays *LOCKED and CLOSED by default*; it is *opened for this stay only*, during the clean on ${nice(date)} — ${who}.`
         : `🚪 *${j.pair} one-unit stay ends ${nice(j.at)}* (${j.guest || 'guest'}). Back to default: the connecting door between ${door.replace('/', ' and ')} is *LOCKED and CLOSED* during the departure clean — ${who} — so ${door.split('/')[0]} and ${door.split('/')[1]} can be rented on their own.`
-      try { const pr = await postToChannel(EVE_CHANNELS.ccsJon, text); lines.push(tag + ': customer care ' + (pr.ok ? 'told' : 'post failed (' + str(pr.error) + ')')) } catch { lines.push(tag + ': customer care post failed') }
+      try {
+        const subject = 'door:' + j.pair + ':' + j.kind + ':' + j.at
+        const res = await tellCustomerCare(text, subject)
+        if (res.state === 'held' && /already said/.test(res.why)) lines.push(tag + ': customer care already told')
+        else if (res.state === 'held') {
+          const v = await getSetting<HeldNotice[]>(HELD_KEY, [])
+          const held = (Array.isArray(v) ? v : []).filter(h => h && h.subject !== subject)
+          held.push({ text, subject, at: new Date().toISOString() })
+          await setSetting(HELD_KEY, held.slice(-20), 'connecting-doors')
+          lines.push(tag + ': customer care notice held — goes out when the 7am–8pm ET window opens')
+        } else lines.push(tag + ': customer care ' + (res.state === 'told' ? 'told' : 'post failed (' + res.why + ')'))
+      } catch { lines.push(tag + ': customer care post failed') }
     } else lines.push(tag + ': create said ' + r.status + ' ' + str(r.text).slice(0, 120))
   }
   return { ok: true, jobs, lines, created, updated, titled }

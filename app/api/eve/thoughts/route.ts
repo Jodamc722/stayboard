@@ -24,22 +24,32 @@ export async function GET(req: NextRequest) {
   if (!gate.ok) return gate.res
   const email = str(gate.access.email).toLowerCase()
   const sp = new URL(req.url).searchParams
-  const settings = await getAgentSettings()
-  const observing = allObserving(settings)
+  // Started now, awaited with the reads below: the settings used to be read alone, first.
+  const settingsP = getAgentSettings()
   if (sp.get('count')) {
-    return NextResponse.json({ ok: true, unseen: await unseenCount(email), allObserving: observing, enabled: settings.enabled })
+    const [settings, unseen] = await Promise.all([settingsP, unseenCount(email)])
+    return NextResponse.json({ ok: true, unseen, allObserving: allObserving(settings), enabled: settings.enabled })
   }
   const since = str(sp.get('since')).trim()
   const source = str(sp.get('source')).trim()
   const status = sp.get('status') === 'all' ? 'all' : 'open'
   const limit = Math.min(500, Number(sp.get('limit')) || 200)
-  const [rows, seen] = await Promise.all([
-    listThoughts({ since: since && Number.isFinite(Date.parse(since)) ? new Date(since).toISOString() : undefined, source: source || undefined, status, limit }),
+  const sinceIso = since && Number.isFinite(Date.parse(since)) ? new Date(since).toISOString() : undefined
+  // ONE PASS (2026-11-09 audit): the page was read, then unseenCount read the open thoughts and the
+  // seen marks a second time. The unseen number is counted over the same open list unseenCount uses
+  // (the newest 300) — and when the page asked for IS that list, it is cut from it, not read again.
+  const plainOpen = status === 'open' && !sinceIso && !source
+  const [settings, openAll, seen, filtered] = await Promise.all([
+    settingsP,
+    listThoughts({ status: 'open', limit: Math.max(300, plainOpen ? limit : 0) }),
     readSeen(email),
+    plainOpen ? Promise.resolve(null) : listThoughts({ since: sinceIso, source: source || undefined, status, limit }),
   ])
+  const rows = filtered || openAll.slice(0, limit)
+  const unseen = openAll.slice(0, 300).filter(t => isUnseen(t, seen)).length
   let thoughts = rows.map(t => ({ ...t, unseen: t.status === 'open' && isUnseen(t, seen) }))
   if (sp.get('unseen')) thoughts = thoughts.filter(t => t.unseen)
-  return NextResponse.json({ ok: true, thoughts, unseen: await unseenCount(email), allObserving: observing, enabled: settings.enabled, rungs: settings.rungs })
+  return NextResponse.json({ ok: true, thoughts, unseen, allObserving: allObserving(settings), enabled: settings.enabled, rungs: settings.rungs })
 }
 
 export async function POST(req: NextRequest) {

@@ -40,6 +40,8 @@ const niceDate = (ymd: string) => {
 const lateWord = (d: number) => d > 0 ? (d === 1 ? '1 day late' : d + ' days late') : d === 0 ? 'due today' : 'due ' + (-d === 1 ? 'tomorrow' : 'in ' + -d + ' days')
 
 const dueUrl = (market: string, days: number, date?: string) => `/api/ops-today/due?market=${encodeURIComponent(market)}&days=${days}` + (date ? `&date=${date}` : '')
+/** The tab badge's read: the totals only (see the route's header). */
+const countUrl = (market: string, date?: string) => dueUrl(market, 30, date) + '&count=1'
 
 export function DueCalendar({ market, date, onRefresh }: { market: string; date?: string; onRefresh: () => void }) {
   const [days, setDays] = useState(30)
@@ -80,7 +82,7 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
   const addOne = async (it: DueItem) => {
     if (busy) return
     setBusy(it.id); setErr('')
-    try { const id = await fileOne(it); setFiled(f => ({ ...f, [it.id]: id })); invalidateCache(dueUrl(market, days, date)); onRefresh() }
+    try { const id = await fileOne(it); setFiled(f => ({ ...f, [it.id]: id })); invalidateCache(dueUrl(market, days, date)); invalidateCache(countUrl(market, date)); onRefresh() }
     catch (e: any) { setErr(it.unit + ' — ' + String(e?.message || e)) } finally { setBusy(null) }
   }
 
@@ -105,6 +107,7 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
     // The ledger has changed: those rows are booked now. Without this the 10-minute cache would
     // re-offer them the next time the market chip flipped back.
     invalidateCache(dueUrl(market, days, date))
+    invalidateCache(countUrl(market, date))
     onRefresh()
   }
 
@@ -250,11 +253,17 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
   )
 }
 
-/** The count on the tab: how much is late right now. */
+/**
+ * The count on the tab: preventative jobs past their cadence and not yet scheduled.
+ *
+ * NEUTRAL, CAPPED, AND CHEAP (2026-11-09 audit). A rose "228" beside today's tabs read as "228
+ * tasks due today" — it is the PM backlog, not the day. Rose on this board means a person is
+ * needed now, so the badge is slate; past 99 it says 99+ and the hover carries the real number.
+ * It reads the totals-only endpoint instead of downloading the whole ledger.
+ */
 export function DueCount({ market, date }: { market: string | null; date?: string }) {
-  // Same url as the tab's default view, so the badge does not trigger a second full ledger build.
-  const { data } = useCachedFetch<Due>(market ? dueUrl(market, 30, date) : null, { ttl: 10 * 60_000 })
+  const { data } = useCachedFetch<{ ok: boolean; totals?: { late?: number } }>(market ? countUrl(market, date) : null, { ttl: 10 * 60_000 })
   const n = data?.totals?.late || 0
   if (!n) return null
-  return <span className="ml-1 text-[10px] font-bold px-1 rounded bg-rose-500 text-white tabular-nums">{n}</span>
+  return <span title={n + ' preventative ' + (n === 1 ? 'job is' : 'jobs are') + ' overdue and not scheduled yet'} className="ml-1 text-[10px] font-bold px-1 rounded bg-slate-200 text-slate-700 tabular-nums">{n > 99 ? '99+' : n}</span>
 }

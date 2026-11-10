@@ -17,7 +17,6 @@
 //
 // Everything here is best-effort and silent on failure. A board must never fail to save a
 // comment because Slack was down, so every call is wrapped and the result is thrown away.
-import { postToChannel } from './slack'
 import { EVE_CHANNELS } from './slack-rules'
 import { supabaseAdmin } from './supabase-admin'
 
@@ -102,8 +101,13 @@ export async function eveningRecap(opts: { dry?: boolean } = {}): Promise<{ post
   const { routeReport } = await import('./eve/reports')
   const routed = await routeReport({ kind: 'shared_boards', title: 'Shared boards today', text, room: channel, pointer: `${parts.length} board${parts.length === 1 ? '' : 's'} changed` })
   if (!routed.post) return { posted: false, boards: parts.length, lines, text }
-  try { await postToChannel(channel, routed.text) } catch { return { posted: false, boards: parts.length, lines, text } }
-  return { posted: true, boards: parts.length, lines, text }
+  // THROUGH THE ROOM GATE (2026-11-09): this was a direct post — outside the said-registry, the room's
+  // daily cap and the 8pm–7am window. A held recap is not retried; it is filed on the Reports desk above.
+  try {
+    const { gatedPost } = await import('./eve/room-gate')
+    const r = await gatedPost({ channel, text: routed.text, subject: 'shared-boards:recap:' + todayET(), by: 'cron:shared-boards', summary: `shared boards today (${parts.length} board${parts.length === 1 ? '' : 's'})` })
+    return { posted: !!r.ok, boards: parts.length, lines, text }
+  } catch { return { posted: false, boards: parts.length, lines, text } }
 }
 
 /**
@@ -160,6 +164,10 @@ export async function morningIndex(opts: { dry?: boolean } = {}): Promise<{ post
   const routed = await routeReport({ kind: 'shared_boards', title: 'Shared boards — what is waiting', text, room: channel, pointer: overdue ? `${overdue} overdue` : 'nothing overdue' })
   const say = routed.post ? routed.text : (overdue && routed.url ? `📄 *Shared boards* — ${overdue} overdue · <${routed.url}|read it on the Eve tab>` : '')
   if (!say) return { posted: false, text, counts }
-  try { await postToChannel(channel, say) } catch { return { posted: false, text, counts } }
-  return { posted: true, text, counts }
+  // THROUGH THE ROOM GATE (2026-11-09), as the evening recap above.
+  try {
+    const { gatedPost } = await import('./eve/room-gate')
+    const r = await gatedPost({ channel, text: say, subject: 'shared-boards:index:' + t, by: 'cron:shared-boards', summary: `shared boards — what is waiting (${overdue} overdue)` })
+    return { posted: !!r.ok, text, counts }
+  } catch { return { posted: false, text, counts } }
 }
