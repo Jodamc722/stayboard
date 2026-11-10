@@ -1472,6 +1472,16 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
   }, [date])
   const clock = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).replace(' AM', 'a').replace(' PM', 'p') : ''
   const punchOf = (name: string) => punches && punches.date === date ? punches.list.find(p => nameMatches(p.name, name)) : undefined
+  // A shift that has not started yet is not a missed clock-in: "5:00 PM – 9:00 PM" waits until 5:15.
+  const shiftBegun = (shift: string | null) => {
+    const todayNY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+    if (date < todayNY) return true
+    const m = String(shift || '').match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i)
+    if (!m) return true
+    const start = (Number(m[1]) % 12 + (/pm/i.test(m[3]) ? 12 : 0)) * 60 + Number(m[2])
+    const [h, mi] = new Date().toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit' }).split(':').map(Number)
+    return (h % 24) * 60 + mi >= start + 15
+  }
   const dayStarted = (() => {
     const now = new Date(), todayNY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
     if (date < todayNY) return true
@@ -1626,7 +1636,7 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
                         const pc = punchOf(r.mem)
                         if (pc && pc.open) return <span className="text-[10.5px] font-semibold text-emerald-700 shrink-0 tabular-nums" title={'On the clock in Homebase since ' + clock(pc.firstIn)}>● In {clock(pc.firstIn)}</span>
                         if (pc) return <span className="text-[10.5px] text-muted shrink-0 tabular-nums" title={'Homebase timecards: ' + clock(pc.firstIn) + ' to ' + clock(pc.lastOut) + ' · ' + fmtH(pc.hours)}>{clock(pc.firstIn)}–{clock(pc.lastOut)} · {fmtH(pc.hours)}</span>
-                        if (/work/i.test(eff(r)) && dayStarted) return <span className="text-[10.5px] font-semibold text-amber-700 shrink-0" title="Working today, but no Homebase clock-in yet">No clock-in</span>
+                        if (/work/i.test(eff(r)) && dayStarted && shiftBegun(r.shift)) return <span className="text-[10.5px] font-semibold text-amber-700 shrink-0" title="Working today, but no Homebase clock-in yet">No clock-in</span>
                         return null
                       })()}
                       {lp ? <span className={'text-[10.5px] tabular-nums shrink-0 ' + (over ? 'text-rose-700 font-bold' : 'text-ink font-semibold')} title={lp.cleans + ' clean' + (lp.cleans === 1 ? '' : 's') + ' at their estimated time, against a ' + shiftHours + 'h shift' + (over ? ' — over a full shift' : '')}>{fmtH(lp.hours)}<span className="text-muted font-normal">/{shiftHours}h</span></span> : null}
