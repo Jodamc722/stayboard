@@ -673,7 +673,10 @@ export async function pullTasks(listingIds: string[], listingById: Record<string
 export function weekBuckets(from: string, to: string): { start: string; endIncl: string; label: string }[] {
   // Split the period into up to 3 trailing 7-day buckets ending at `to` (deck shows "last three weeks").
   const buckets: { start: string; endIncl: string; label: string }[] = []
-  let end = to
+  // A period still running ends TODAY, not on its last calendar day — otherwise the three weeks are
+  // all in the future and the Recent work slide comes back empty (2026-11-10).
+  const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  let end = to > todayET && from <= todayET ? todayET : to
   for (let i = 0; i < 3; i++) {
     const start = addDays(end, -6)
     const s = start < from ? from : start

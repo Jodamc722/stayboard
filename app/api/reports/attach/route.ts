@@ -22,6 +22,12 @@ export const maxDuration = 120
 
 const DOC_MODEL = 'claude-sonnet-5-5' // was claude-sonnet-4-6; current Sonnet (2026-11-09)
 
+// ROUTINE CLEANS ARE LEFT OUT — but only the cleans themselves (2026-11-10). The old pattern also
+// matched any line with "linen", "trash", "strip" or "turn", so notes like "new linens for 405" or
+// "trash chute repaired" were thrown away and a short note could come back with nothing at all —
+// "Could not read work items from that note."
+const ROUTINE_TURN_RE = /(departure clean|turnover clean|\bturnovers?\b|\bturn clean|unit strips?\b|\bstrip(ped)? the unit|linen\s*(and|&|\/)\s*trash walk|walk\s?-?through clean)/i
+
 function str(v: any): string { return typeof v === 'string' ? v : (v == null ? '' : String(v)) }
 
 async function anthropic(payload: any): Promise<string | null> {
@@ -154,7 +160,7 @@ async function parseCompleted(url: string, scopeLabel: string): Promise<{ catego
     messages: [{ role: 'user', content: [block, { type: 'text', text: 'This document or photo describes work completed at "' + scopeLabel + '". Extract the completed work an owner would care about and SORT it into type groups. Use clear UPPERCASE type headings such as MAINTENANCE, REPAIRS, INSTALLS & REPLACEMENTS, DELIVERIES, DEEP CLEAN, INSPECTIONS (add others as needed). ALWAYS include maintenance / PM work (HVAC, plumbing, electrical, appliance, preventive maintenance). EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs). Return JSON: {"groups": [{"category": UPPERCASE type, "items": [concise lines, each <= 140 chars; prefix with the unit like "Unit 405: ..." when known, max 8 per group]}]}. Up to 6 groups.' }] }],
   })
   const j = parseJson(text)
-  const isRoutineTurn = (s: any) => /(departure|turnover|\bturn\b|strip|walk\s?through|walkthrough|linen|\btrash\b)/i.test(String(s || ''))
+  const isRoutineTurn = (s: any) => ROUTINE_TURN_RE.test(String(s || ''))
   let groups = (Array.isArray(j?.groups) ? j.groups : []).map((g: any) => ({
     category: str(g?.category).toUpperCase().slice(0, 40) || 'COMPLETED WORK',
     items: (Array.isArray(g?.items) ? g.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).filter((x: string) => !isRoutineTurn(x)).slice(0, 8),
@@ -175,12 +181,15 @@ async function parseCompletedText(notes: string, scopeLabel: string): Promise<{ 
     messages: [{ role: 'user', content: [{ type: 'text', text: 'These are rough notes about work completed at "' + scopeLabel + '":\n\n' + notes.slice(0, 4000) + '\n\nRewrite them as concise, owner-facing completed-work items and SORT into type groups. Use clear UPPERCASE type headings such as MAINTENANCE, REPAIRS, INSTALLS & REPLACEMENTS, DELIVERIES, DEEP CLEAN, INSPECTIONS (add others as needed). ALWAYS include maintenance / PM work. EXCLUDE routine departure/turnover cleans and unit strips (linen/trash walkthroughs). Keep the unit number when given (prefix "Unit 405: ..."). Return JSON: {"groups": [{"category": UPPERCASE type, "items": [concise lines, each <= 140 chars, max 8 per group]}]}. Up to 6 groups.' }] }],
   })
   const j = parseJson(text)
-  const isRoutineTurn = (s: any) => /(departure|turnover|\bturn\b|strip|walk\s?through|walkthrough|linen|\btrash\b)/i.test(String(s || ''))
+  const isRoutineTurn = (s: any) => ROUTINE_TURN_RE.test(String(s || ''))
   const groups = (Array.isArray(j?.groups) ? j.groups : []).map((g: any) => ({
     category: str(g?.category).toUpperCase().slice(0, 40) || 'COMPLETED WORK',
     items: (Array.isArray(g?.items) ? g.items : []).map((x: any) => str(x).slice(0, 140)).filter(Boolean).filter((x: string) => !isRoutineTurn(x)).slice(0, 8),
   })).filter((g: any) => g.items.length && !isRoutineTurn(g.category)).slice(0, 6)
-  return groups.length ? groups : null
+  if (groups.length) return groups
+  // The AI gave nothing usable — never leave typed notes on the floor: each line / clause becomes an item.
+  const lines = notes.split(/\n|;|•|(?:,\s*(?=[A-Z0-9]))/).map(x => x.replace(/^[\s\-–*·\d.)]+/, '').trim()).filter(x => x.length > 2 && !isRoutineTurn(x)).map(x => (x.charAt(0).toUpperCase() + x.slice(1)).slice(0, 140)).slice(0, 12)
+  return lines.length ? [{ category: 'COMPLETED WORK', items: lines }] : null
 }
 
 // Re-pull the latest Breezeway completed work for the report's period and rebuild the grouped weeks (deterministic,
@@ -192,9 +201,14 @@ async function refreshWork(rep: any): Promise<{ label: string; groups: { categor
   const scope = await resolveScope(ids, [])
   const byId: Record<string, ReportListing> = {}
   for (const l of scope.listings) byId[l.id] = l
-  const from = str(rep.period_start).slice(0, 10), to = str(rep.period_end).slice(0, 10)
+  // A MONTH STILL IN PROGRESS ENDS TODAY (2026-11-10). The weeks are the last three ending at `to`; with
+  // to = Nov 30 on Nov 10 they were Nov 10–30 — all future — so a November report pulled nothing from
+  // Breezeway at all ("not pulling data from Breezeway into the owner report").
+  const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  const from = str(rep.period_start).slice(0, 10), periodEnd = str(rep.period_end).slice(0, 10)
+  const to = periodEnd && periodEnd > todayET ? todayET : periodEnd
   const tasks = await pullTasks(scope.listings.map(l => l.id), byId, from, to)
-  const isRoutineTurn = (s: any) => /(departure|turnover|\bturn\b|strip|walk\s?through|walkthrough|linen|\btrash\b)/i.test(String(s || ''))
+  const isRoutineTurn = (s: any) => ROUTINE_TURN_RE.test(String(s || ''))
   const buckets = weekBuckets(from, to)
   const weeks: { label: string; groups: { category: string; items: string[] }[] }[] = []
   for (const b of buckets) {
