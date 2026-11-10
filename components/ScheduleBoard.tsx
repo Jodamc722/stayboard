@@ -20,6 +20,7 @@ import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
 import CleanerPicker, { sameRosterPerson } from './CleanerPicker'
 import GeLog from './GeLog'
+import { nameMatches } from '@/lib/person-name'
 
 // Order cleans by LOCATION: group by city, then nearest-neighbour within each city (lat/lng).
 function schedDist2(a: Clean, b: Clean) { const dx = Number(a.lat) - Number(b.lat); const dy = Number(a.lng) - Number(b.lng); return dx * dx + dy * dy }
@@ -1452,6 +1453,31 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
   const [ratesOpen, setRatesOpen] = useState(false)
+  // WHO ACTUALLY CLOCKED IN (Jon, 2026-11-10). The list is the Homebase schedule; beside each name,
+  // the Homebase timecards for the same day: on the clock since, or in–out with hours. Someone set to
+  // Working with no punch once the day has started shows "No clock-in"; anyone who punched but is not
+  // on the list is listed under it. Today re-reads every two minutes.
+  type Punch = { name: string; firstIn: string | null; lastOut: string | null; open: boolean; hours: number }
+  const [punches, setPunches] = useState<{ date: string; list: Punch[]; error?: string } | null>(null)
+  useEffect(() => {
+    let dead = false
+    const todayNY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+    if (date > todayNY) { setPunches({ date, list: [] }); return }
+    const get = () => fetch('/api/schedule/punches?date=' + date, { cache: 'no-store' }).then(r => r.json())
+      .then(j => { if (!dead) setPunches(j && j.ok ? { date, list: j.punches || [] } : { date, list: [], error: (j && j.error) || 'Could not read Homebase' }) })
+      .catch(() => { if (!dead) setPunches({ date, list: [], error: 'Could not read Homebase' }) })
+    get()
+    const t = date === todayNY ? setInterval(get, 120_000) : null
+    return () => { dead = true; if (t) clearInterval(t) }
+  }, [date])
+  const clock = (iso: string | null) => iso ? new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).replace(' AM', 'a').replace(' PM', 'p') : ''
+  const punchOf = (name: string) => punches && punches.date === date ? punches.list.find(p => nameMatches(p.name, name)) : undefined
+  const dayStarted = (() => {
+    const now = new Date(), todayNY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now)
+    if (date < todayNY) return true
+    if (date > todayNY) return false
+    return Number(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false })) >= 10
+  })()
   // Phone: the rail is one line above the cleans until it is tapped open. From lg up it is always open.
   const [openSm, setOpenSm] = useState(false)
   const ACTIVE = /work|on.?call/i
@@ -1495,6 +1521,7 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="text-[13px] font-bold text-ink">Team — {dayLabel}</div>
         <span className={'text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ' + (isPast ? 'bg-neutral-100 text-neutral-600' : short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{isPast ? staff.working + ' scheduled' : staff.working + ' working · ' + staff.need + ' needed'}</span>
+        {punches && punches.date === date && !punches.error && punches.list.length > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 bg-emerald-50 text-emerald-800" title="Clocked in on Homebase today: on the clock now / punched at all">{punches.list.filter(p => p.open).length} on the clock · {punches.list.length} punched</span>}
       </div>
       <div className="mb-2.5 rounded-lg bg-app border border-line px-2.5 py-2">
         <div className="flex items-baseline justify-between text-[10px] uppercase tracking-wide text-muted font-semibold mb-1"><span>Labor KPI · hours</span><button onClick={() => setRatesOpen(true)} className="normal-case tracking-normal underline decoration-dotted hover:text-ink">Rates</button></div>
@@ -1594,6 +1621,14 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
                       <span className="text-xs text-ink flex-1 truncate">{shortTeamName(r.mem)}{NON_CLEANERS[r.mem] ? <span className="text-muted"> · {NON_CLEANERS[r.mem]}</span> : null}
                         {notCounted ? <span className="text-muted" title="Not in the working count: on call, not a cleaner by department, or already counted on another market's list."> · not counted</span> : null}
                         {r.shift ? <span className="text-muted"> · {r.shift}</span> : null}</span>
+                      {(() => {
+                        if (!punches || punches.date !== date || punches.error) return null
+                        const pc = punchOf(r.mem)
+                        if (pc && pc.open) return <span className="text-[10.5px] font-semibold text-emerald-700 shrink-0 tabular-nums" title={'On the clock in Homebase since ' + clock(pc.firstIn)}>● In {clock(pc.firstIn)}</span>
+                        if (pc) return <span className="text-[10.5px] text-muted shrink-0 tabular-nums" title={'Homebase timecards: ' + clock(pc.firstIn) + ' to ' + clock(pc.lastOut) + ' · ' + fmtH(pc.hours)}>{clock(pc.firstIn)}–{clock(pc.lastOut)} · {fmtH(pc.hours)}</span>
+                        if (/work/i.test(eff(r)) && dayStarted) return <span className="text-[10.5px] font-semibold text-amber-700 shrink-0" title="Working today, but no Homebase clock-in yet">No clock-in</span>
+                        return null
+                      })()}
                       {lp ? <span className={'text-[10.5px] tabular-nums shrink-0 ' + (over ? 'text-rose-700 font-bold' : 'text-ink font-semibold')} title={lp.cleans + ' clean' + (lp.cleans === 1 ? '' : 's') + ' at their estimated time, against a ' + shiftHours + 'h shift' + (over ? ' — over a full shift' : '')}>{fmtH(lp.hours)}<span className="text-muted font-normal">/{shiftHours}h</span></span> : null}
                       {/* Blank means "whatever Homebase says" — the placeholder shows what that is, so
                           an untouched cell still reads as a real answer rather than a dash. */}
@@ -1617,6 +1652,25 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
             </div>
           )
         })}
+        {/* Clocked in but on nobody's list for the day. */}
+        {(() => {
+          if (!punches || punches.date !== date) return null
+          if (punches.error) return <div className="text-[11px] text-amber-700">Clock-ins: {punches.error}</div>
+          const listed = markets.flatMap(mk => rosters[mk] ? rosters[mk].people.map(p => p.name) : (docs[mk]?.members || []))
+          const extra = punches.list.filter(p => !listed.some(n => nameMatches(p.name, n)))
+          if (!extra.length) return null
+          return (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1">Clocked in · not on the list</div>
+              {extra.map(p => (
+                <div key={p.name} className="flex items-baseline justify-between gap-2 text-[11px] py-0.5">
+                  <span className="text-ink truncate">{shortTeamName(p.name)}</span>
+                  <span className={'tabular-nums shrink-0 ' + (p.open ? 'font-semibold text-emerald-700' : 'text-muted')}>{p.open ? '● In ' + clock(p.firstIn) : clock(p.firstIn) + '–' + clock(p.lastOut) + ' · ' + fmtH(p.hours)}</span>
+                </div>
+              ))}
+            </div>
+          )
+        })()}
         {/* Holding cleans today but not on today's team list — the same fact the table flags per row. */}
         {unscheduled.length > 0 && (
           <div>
