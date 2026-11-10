@@ -35,7 +35,7 @@ export type AdStyle = {
   base?: string
   text?: string
 }
-export type LogoDress = 'none' | 'lights' | 'snow' | 'xmas' | 'sparkle' | 'leaves'
+export type LogoDress = 'none' | 'lights' | 'snow' | 'xmas' | 'sparkle' | 'leaves' | 'hearts' | 'glow' | 'bats' | 'stars'
 export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto', pace: 'normal', finish: 'auto', frame: 'none', logo: 'auto', dress: 'auto', wash: 'auto' }
 export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: string }[] } = {
   font: [{ key: 'auto', label: 'Look’s own' }, { key: 'sans', label: 'Bold sans' }, { key: 'serif', label: 'Serif' }, { key: 'condensed', label: 'Condensed' }, { key: 'elegant', label: 'Elegant' }],
@@ -45,7 +45,7 @@ export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: st
   finish: [{ key: 'auto', label: 'Look’s own' }, { key: 'film', label: 'Film grain' }, { key: 'soft', label: 'Soft' }, { key: 'glow', label: 'Light leak' }, { key: 'clean', label: 'Clean' }],
   frame: [{ key: 'none', label: 'Full bleed' }, { key: 'border', label: 'Border' }, { key: 'letterbox', label: 'Letterbox' }],
   logo: [{ key: 'auto', label: 'Look’s own' }, { key: 'white', label: 'White' }, { key: 'black', label: 'Black' }, { key: 'accent', label: 'Theme colour' }, { key: 'gold', label: 'Gold' }, { key: 'off', label: 'Off' }],
-  dress: [{ key: 'auto', label: 'Look’s own' }, { key: 'none', label: 'Plain' }, { key: 'xmas', label: 'Lights + snow' }, { key: 'lights', label: 'Christmas lights' }, { key: 'snow', label: 'Snow cap' }, { key: 'sparkle', label: 'Sparkle' }, { key: 'leaves', label: 'Autumn leaves' }],
+  dress: [{ key: 'auto', label: 'Look’s own' }, { key: 'none', label: 'Plain' }, { key: 'xmas', label: 'Lights + snow' }, { key: 'lights', label: 'Christmas lights' }, { key: 'snow', label: 'Snow cap' }, { key: 'sparkle', label: 'Sparkle' }, { key: 'leaves', label: 'Autumn leaves' }, { key: 'hearts', label: 'Hearts' }, { key: 'stars', label: 'Stars' }, { key: 'glow', label: 'Neon glow' }, { key: 'bats', label: 'Bats' }],
   wash: [{ key: 'auto', label: 'Look’s own' }, { key: 'look', label: 'Colour wash' }, { key: 'neutral', label: 'Just a scrim' }, { key: 'none', label: 'No filter' }],
 }
 
@@ -639,10 +639,13 @@ export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] 
   { key: 'holiday', label: 'Christmas green', blurb: 'Evergreen, warm gold, a red Book button — the mark in cream with lights and snow', c: { def: { font: 'serif', grade: 'warm', finish: 'glow', logo: 'white', logoTint: '#F6E7C8', dress: 'xmas', fx: ['snow'] }, btn: '#C8102E', gold: '#E9C46A', ink: '#FBF4E6', mut: '#CFC8AE', navy: '#0B3324', navy2: '#124632', deep: '#051A11', tint: '5,32,20', glass: 'rgba(8,44,30,0.66)', line: 'rgba(233,196,106,0.32)', green: '#7FD9A4' } },
   { key: 'xmasred', label: 'Christmas red', blurb: 'Deep cranberry, gold, an evergreen Book button — the mark in cream with lights', c: { def: { font: 'serif', grade: 'warm', finish: 'glow', logo: 'white', logoTint: '#FFF1DA', dress: 'xmas', fx: ['snow', 'bokeh'] }, btn: '#1E6B43', gold: '#F2C94C', ink: '#FFF6EA', mut: '#EBC9C2', navy: '#6A0D18', navy2: '#8C1424', deep: '#3A050C', tint: '70,8,18', glass: 'rgba(96,10,24,0.66)', line: 'rgba(242,201,76,0.34)', green: '#9EE0B4' } },
   { key: 'winter', label: 'Winter white', blurb: 'Snow white, cranberry type, the black mark with lights — clean and festive', c: { light: true, def: { font: 'elegant', grade: 'natural', finish: 'soft', logo: 'black', dress: 'lights', wash: 'neutral', fx: ['snow'] }, btn: '#B3121F', gold: '#B3121F', ink: '#1A1414', mut: '#5D5050', navy: '#FBF8F3', navy2: '#FFFFFF', deep: '#EDE6DA', tint: '251,248,243', glass: 'rgba(255,253,249,0.88)', line: 'rgba(179,18,31,0.18)', green: '#1E6B43' } },
-  { key: 'festival', label: 'Festival', blurb: 'Electric violet and acid lime, condensed caps, neon grid — Ultra, F1, race week', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white', fx: ['grid'], mesh: ['#3A0CA3', '#7209B7', '#0B0220'] }, gold: '#C8FF3D', ink: '#FFFFFF', mut: '#D8CCFF', navy: '#12063A', navy2: '#2B0E7A', deep: '#07021A', tint: '18,6,58', glass: 'rgba(30,10,90,0.6)', line: 'rgba(200,255,61,0.28)', green: '#C8FF3D' } },
+  { key: 'festival', label: 'Festival', blurb: 'Electric violet and acid lime, condensed caps, neon grid — Ultra, F1, race week', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white', dress: 'glow', fx: ['grid'], mesh: ['#3A0CA3', '#7209B7', '#0B0220'] }, gold: '#C8FF3D', ink: '#FFFFFF', mut: '#D8CCFF', navy: '#12063A', navy2: '#2B0E7A', deep: '#07021A', tint: '18,6,58', glass: 'rgba(30,10,90,0.6)', line: 'rgba(200,255,61,0.28)', green: '#C8FF3D' } },
+  // EVERY EVENT GETS ITS OWN DRESS (Jon, 2026-11-10: "need this for all events, not just Christmas").
+  { key: 'usa', label: 'Fourth of July', blurb: 'Deep navy, red and white, the mark with twinkling stars', c: { def: { font: 'condensed', caps: true, grade: 'natural', finish: 'clean', logo: 'white', dress: 'stars', wash: 'neutral', fx: ['fireworks'] }, btn: '#C8102E', gold: '#FF5A6A', ink: '#FFFFFF', mut: '#C9D3E6', navy: '#0B1F4D', navy2: '#14306E', deep: '#061233', tint: '8,22,60', glass: 'rgba(11,31,77,0.66)', line: 'rgba(255,255,255,0.24)', green: '#9BE3B5' } },
+  { key: 'spooky', label: 'Halloween', blurb: 'Midnight black and pumpkin orange, the mark in orange with bats', c: { def: { font: 'condensed', caps: true, grade: 'cool', finish: 'film', logo: 'white', logoTint: '#FF8A2A', dress: 'bats', fx: ['bokeh'] }, btn: '#FF7A1A', gold: '#FF8A2A', ink: '#F6EEE4', mut: '#BFB3C9', navy: '#120A1C', navy2: '#22132F', deep: '#07040C', tint: '14,8,22', glass: 'rgba(18,10,28,0.68)', line: 'rgba(255,138,42,0.3)', green: '#B8F28A' } },
   { key: 'nautical', label: 'Nautical', blurb: 'Navy, white and a red stripe, clean sans — boat shows and the Fourth', c: { light: true, def: { font: 'sans', caps: true, grade: 'cool', finish: 'clean', logo: 'black', fx: [] }, gold: '#C62828', ink: '#0B1F3A', mut: '#4B5E78', navy: '#F4F6F9', navy2: '#FFFFFF', deep: '#E6EBF2', tint: '244,246,249', glass: 'rgba(255,255,255,0.78)', line: 'rgba(11,31,58,0.16)', green: '#1B7F5A' } },
   { key: 'harvest', label: 'Harvest', blurb: 'Burnt orange, deep brown, cream — Thanksgiving and fall', c: { def: { font: 'serif', grade: 'warm', finish: 'soft', logo: 'white', logoTint: '#FBE3C4', dress: 'leaves', fx: ['leaves'] }, gold: '#E08A3C', ink: '#FBF1E3', mut: '#D9B99A', navy: '#3A1E12', navy2: '#5A2E1A', deep: '#24110A', tint: '48,24,14', glass: 'rgba(70,36,20,0.62)', line: 'rgba(224,138,60,0.3)', green: '#9DB36A' } },
-  { key: 'rose', label: 'Rose', blurb: 'Deep rose and blush, elegant serif — Valentine’s, romance', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'white', fx: ['hearts'] }, gold: '#FFB3C1', ink: '#FFF3F5', mut: '#E6BFC8', navy: '#4A1020', navy2: '#6E1A33', deep: '#2E0A14', tint: '60,12,28', glass: 'rgba(80,16,38,0.62)', line: 'rgba(255,179,193,0.3)', green: '#7FD9A4' } },
+  { key: 'rose', label: 'Rose', blurb: 'Deep rose and blush, elegant serif — Valentine’s, romance', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'white', logoTint: '#FFE3EA', dress: 'hearts', fx: ['hearts'] }, gold: '#FFB3C1', ink: '#FFF3F5', mut: '#E6BFC8', navy: '#4A1020', navy2: '#6E1A33', deep: '#2E0A14', tint: '60,12,28', glass: 'rgba(80,16,38,0.62)', line: 'rgba(255,179,193,0.3)', green: '#7FD9A4' } },
   { key: 'midnight', label: 'Midnight', blurb: 'Deep blue, light rays, cinematic', c: { def: { font: 'sans', grade: 'cool', finish: 'film', logo: 'gold', fx: ['rays'], mesh: ['#0A2A5A', '#071530', '#03091A'] }, gold: '#D2B077', ink: '#EAF0FF', mut: '#A8B6D0', navy: '#071530', navy2: '#0E2250', deep: '#030A1C', tint: '5,16,40', glass: 'rgba(8,22,60,0.6)', line: 'rgba(200,220,255,0.2)', green: '#5FE0A0' } },
   { key: 'golden', label: 'Golden hour', blurb: 'Warm amber, elegant serif, light leak', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'gold' }, gold: '#F2B544', ink: '#FFF6E8', mut: '#E3CDB0', navy: '#24170C', navy2: '#3D2814', deep: '#140C05', tint: '36,22,10', glass: 'rgba(40,24,10,0.6)', line: 'rgba(255,220,170,0.22)', green: '#B9D98A' } },
   // True-colour looks (Jon, 2026-11-04: "better colour schemes, some with no filter") — photos untouched, type reads on a soft shadow.
@@ -720,6 +723,11 @@ function star4(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, c
 /** Draws the Stay mark at x,y (w×h), tinted and dressed for the look. `t` drives the blink. */
 function drawMark(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number, t: number) {
   const snow = DRESS === 'snow' || DRESS === 'xmas'
+  if (DRESS === 'glow') {
+    // a neon halo that breathes behind the mark
+    ctx.save(); ctx.shadowColor = C.gold; ctx.shadowBlur = (18 + 10 * Math.sin(t * 3)) * (w / 220)
+    ctx.drawImage(markCanvas(img, LOGO_TINT, false), x, y, w, h); ctx.drawImage(markCanvas(img, LOGO_TINT, false), x, y, w, h); ctx.restore()
+  }
   ctx.drawImage(markCanvas(img, LOGO_TINT, snow), x, y, w, h)
   const s = w / 220
   if (DRESS === 'lights' || DRESS === 'xmas') {
@@ -739,6 +747,30 @@ function drawMark(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: numbe
   if (DRESS === 'sparkle') {
     const pts: [number, number, number][] = [[-0.06, 0.1, 1], [1.05, 0.05, 0.8], [0.92, 0.95, 0.6], [0.1, 0.95, 0.7], [0.5, -0.12, 0.55]]
     pts.forEach(([fx, fy, sz], k) => { const tw = 0.5 + 0.5 * Math.sin(t * 2.6 + k * 1.9); star4(ctx, x + fx * w, y + fy * h, 13 * s * sz * (0.6 + 0.6 * tw), LOGO_TINT || C.gold, 0.35 + 0.65 * tw) })
+  }
+  if (DRESS === 'hearts') {
+    ;[[-0.09, 0.2, 1], [1.07, 0.15, 0.8], [1.0, 0.95, 0.6], [-0.03, 0.9, 0.55]].forEach(([fx, fy, sz], k) => {
+      const hx = x + fx * w, hy = y + fy * h - 4 * s * Math.sin(t * 1.6 + k), r = 9 * s * sz * (1 + 0.08 * Math.sin(t * 3 + k))
+      ctx.save(); ctx.fillStyle = k % 2 ? '#FF8FA8' : (LOGO_TINT || '#FFB3C1'); ctx.globalAlpha = 0.85
+      ctx.beginPath(); ctx.moveTo(hx, hy + r); ctx.bezierCurveTo(hx - r * 1.3, hy, hx - r * 0.6, hy - r, hx, hy - r * 0.3); ctx.bezierCurveTo(hx + r * 0.6, hy - r, hx + r * 1.3, hy, hx, hy + r); ctx.fill(); ctx.restore()
+    })
+  }
+  if (DRESS === 'stars') {
+    ;[[-0.08, 0.05, 1, '#FFFFFF'], [1.06, 0.1, 0.8, '#E63946'], [0.95, 0.98, 0.6, '#FFFFFF'], [0.04, 0.95, 0.6, '#E63946'], [0.5, -0.14, 0.55, '#FFFFFF']].forEach(([fx, fy, sz, c], k) => {
+      const tw = 0.5 + 0.5 * Math.sin(t * 2.4 + k * 1.7), r = 11 * s * (sz as number) * (0.7 + 0.4 * tw), cx = x + (fx as number) * w, cy = y + (fy as number) * h
+      ctx.save(); ctx.fillStyle = c as string; ctx.globalAlpha = 0.5 + 0.5 * tw; ctx.beginPath()
+      for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr2 = i % 2 ? r * 0.45 : r; ctx.lineTo(cx + Math.cos(a) * rr2, cy + Math.sin(a) * rr2) }
+      ctx.closePath(); ctx.fill(); ctx.restore()
+    })
+  }
+  if (DRESS === 'bats') {
+    ;[[-0.12, 0.1, 1], [1.08, -0.05, 0.8], [1.02, 0.85, 0.65]].forEach(([fx, fy, sz], k) => {
+      const bx = x + fx * w + 6 * s * Math.sin(t * 1.3 + k), by = y + fy * h + 5 * s * Math.cos(t * 1.7 + k), r = 13 * s * sz, flap = 0.6 + 0.4 * Math.sin(t * 9 + k * 2)
+      ctx.save(); ctx.fillStyle = LOGO_TINT || '#FF7A1A'; ctx.globalAlpha = 0.9; ctx.beginPath()
+      ctx.moveTo(bx, by); ctx.quadraticCurveTo(bx - r * 0.5, by - r * 0.6 * flap, bx - r * 1.4, by - r * 0.2 * flap); ctx.quadraticCurveTo(bx - r * 0.9, by + r * 0.1, bx - r * 0.6, by + r * 0.35)
+      ctx.quadraticCurveTo(bx - r * 0.25, by + r * 0.1, bx, by + r * 0.3); ctx.quadraticCurveTo(bx + r * 0.25, by + r * 0.1, bx + r * 0.6, by + r * 0.35)
+      ctx.quadraticCurveTo(bx + r * 0.9, by + r * 0.1, bx + r * 1.4, by - r * 0.2 * flap); ctx.quadraticCurveTo(bx + r * 0.5, by - r * 0.6 * flap, bx, by); ctx.fill(); ctx.restore()
+    })
   }
   if (DRESS === 'leaves') {
     const cols = ['#C8541E', '#E08A3C', '#9C3B19', '#D9A441']

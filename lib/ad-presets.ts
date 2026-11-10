@@ -23,7 +23,9 @@ import type { AdKind } from './ad-engine'
 import type { Moment } from './marketing-calendar'
 
 export type PresetScene = { kind: AdKind; head: string; sub: string; items: string[]; q: string; n?: number; dur: number; fx?: string[]; eyebrow?: string; tr?: 'fade' | 'crosszoom' | 'push' | 'leak' | 'dip' | 'slide' | 'whip' | 'iris' }
-export type Angle = { key: string; name: string; pitch: string; post: PresetScene[]; flyer: PresetScene }
+export type Angle = { key: string; name: string; pitch: string; post: PresetScene[]; flyer: PresetScene
+  /** An owner angle inside a moment that is mostly for guests (boat shows, F1…) — the piece is built for owners. */
+  audience?: 'owners' | 'guests' }
 
 const NICK = 'Talk to Nick · 651-200-8283'
 const BOOK = 'Book at stay-hospitality.com'
@@ -38,6 +40,148 @@ const poster = (head: string, sub: string, row1: string, button: string, style: 
 const hub = (head: string, sub = 'One calendar, every channel, no double bookings'): PresetScene => ({ kind: 'hub', head, sub, eyebrow: 'Your listing', items: CHANNELS, q: 'living room', dur: 4.2, tr: 'crosszoom' })
 const nick = (q = 'building exterior'): PresetScene => ({ kind: 'contact', head: 'Talk to **Nick.**', sub: '', items: [], q, dur: 3.8, tr: 'fade' })
 const book = (head: string, sub: string, q: string, fx?: string[], button = BOOK): PresetScene => ({ kind: 'cta', head, sub, items: [button], q, dur: 3.8, fx, tr: 'fade' })
+
+// ── ANGLE BUILDERS (Jon, 2026-11-10: "need this for all events, not just Christmas"). Each is a different shape of ad —
+// the classic three reasons, a kinetic hook, a polaroid and three beats, a cinematic montage, a day-by-day plan, a
+// one-word mask — so two angles for the same event never look or read alike. The words are always the event's own.
+type G = { m: Moment; when: string; F: string[]; Am: string[] }
+const aClassic = (g: G, key: string, name: string, pitch: string, head: string, sub: string, rowsHead: string, rows: string[], cta: string, q: [string, string, string], style = ''): Angle => ({ key, name, pitch, post: [
+  poster(head, sub, g.when, '', style, q[0], g.F),
+  { kind: 'callouts', head: rowsHead, sub: '', items: rows, q: q[1], dur: 3.8, fx: g.Am, tr: 'crosszoom' },
+  book(cta, g.when, q[2], g.Am)],
+  flyer: poster(head, sub, g.when, BOOK, style, q[0], g.F) })
+const aKinetic = (g: G, key: string, name: string, pitch: string, hook: string, beats: string, cta: string, flyerHead: string, flyerSub: string, q: [string, string, string]): Angle => ({ key, name, pitch, post: [
+  { kind: 'kinetic', head: hook, sub: '', items: [], q: q[0], dur: 3, fx: g.Am },
+  { kind: 'beats', head: beats, sub: '', items: [], q: q[1], dur: 4.2, fx: g.Am, tr: 'whip' },
+  book(cta, g.when, q[2], g.Am)],
+  flyer: poster(flyerHead, flyerSub, g.when, BOOK, 'band', q[1], g.F) })
+const aBeats = (g: G, key: string, name: string, pitch: string, head: string, polaroidSub: string, cards: string[], cta: string, flyerHead: string, flyerSub: string, q: [string, string, string]): Angle => ({ key, name, pitch, post: [
+  { kind: 'polaroid', head, sub: polaroidSub, items: [], q: q[0], dur: 3.6, fx: g.F },
+  { kind: 'cards', head: '', sub: '', items: cards, q: q[1], n: 3, dur: 5, fx: g.Am, tr: 'push' },
+  book(cta, g.when, q[2], g.Am)],
+  flyer: poster(flyerHead, flyerSub, g.when, BOOK, 'gallery', q[0], g.F) })
+const aCinema = (g: G, key: string, name: string, pitch: string, head: string, place: string, wallHead: string, cta: string, flyerSub: string, q: [string, string, string]): Angle => ({ key, name, pitch, post: [
+  { kind: 'cinema', head, sub: place, items: [], q: q[0], dur: 4, fx: g.F },
+  { kind: 'wall', head: wallHead, sub: '', items: [], q: q[1], n: 3, dur: 4, fx: g.Am, tr: 'leak' },
+  book(cta, g.when, q[2], g.Am)],
+  flyer: poster(head, flyerSub, g.when, BOOK, 'dark', q[0], g.F) })
+const aPlan = (g: G, key: string, name: string, pitch: string, eventHead: string, date: string, planHead: string, rows: string[], cta: string, flyerHead: string, flyerSub: string, q: [string, string, string]): Angle => ({ key, name, pitch, post: [
+  { kind: 'event', head: eventHead, sub: '', items: [date], q: q[0], dur: 3.4, fx: g.F },
+  { kind: 'timeline', head: planHead, sub: '', items: rows, q: q[1], dur: 4.6, fx: g.Am, tr: 'crosszoom' },
+  book(cta, g.when, q[2], g.Am)],
+  flyer: poster(flyerHead, flyerSub, g.when, BOOK, 'band', q[0], g.F) })
+const aMask = (g: G, key: string, name: string, pitch: string, word: string, head: string, sub: string, cta: string, flyerHead: string, q: [string, string, string]): Angle => ({ key, name, pitch, post: [
+  { kind: 'mask', head: word, sub: '', items: [], q: q[0], dur: 3, fx: g.Am },
+  { kind: 'title', head, sub, items: [], q: q[1], dur: 3.6, fx: g.Am, tr: 'iris' },
+  book(cta, g.when, q[2], g.Am)],
+  flyer: poster(flyerHead, sub, g.when, BOOK, 'dark', q[1], g.F) })
+/** The owner side of a big guest event: the date is priced early, the listing is on every channel, Nick. */
+const aOwner = (g: G, event: string, date: string, hook: string): Angle => ({ key: 'owners', audience: 'owners', name: 'For owners: ' + event, pitch: 'Owner piece — what the event means for their unit', post: [
+  { kind: 'event', head: hook, sub: '', items: [date], q: 'building exterior', dur: 3.4, fx: g.F },
+  { kind: 'checks', head: 'Ready **before the rush**', sub: 'What we have done by now', items: [event + ' priced months ahead', 'Minimum stays tuned for the week', 'Live on every channel', 'Cleaned and inspected before arrival'], q: 'living room', dur: 4, tr: 'crosszoom' },
+  hub('Seen by **everyone coming.**'),
+  nick()],
+  flyer: poster(hook, 'We price the big dates months ahead — and review them every day', 'Priced daily · 40+ channels · in-house team', NICK, 'band', 'building exterior', g.F) })
+
+/** Angles for every other event on the calendar. */
+function eventAngles(m: Moment, when: string): Angle[] | null {
+  const g: G = { m, when, F: m.fx || [], Am: amb(m.fx) }
+  switch (m.key) {
+    case 'thanksgiving': return [
+      aClassic(g, 'water', 'Thanksgiving by the water', 'The table, the family, the beach after', 'Thanksgiving, **by the water.**', m.sub, 'This year, **host it here.**', ['A full kitchen for the big dinner', 'Room for everyone', 'The beach after'], 'Book **Thanksgiving.**', ['dining table', 'kitchen', 'beach'], 'dark'),
+      aBeats(g, 'table', 'A table for everyone', 'For the family that never fits in one house', 'A table for **everyone.**', 'Room for all of you', ['Thursday|Dinner at your own table', 'Friday|The beach, all day', 'Saturday|Leftovers by the pool'], 'Book **the long weekend.**', 'This year, **everyone fits.**', 'Full apartments with kitchens and room for the whole family', ['dining table', 'living room', 'pool']),
+      aKinetic(g, 'cold', 'Skip the cold', 'For families stuck with grey skies up north', 'Skip **the cold.**', 'Turkey at noon.\nPool by **three.**\nSunset by six.', 'Thanksgiving, **somewhere warm.**', 'Thanksgiving, **without the coat.**', 'Warm days and a full kitchen in South Florida', ['pool', 'balcony view', 'ocean view']),
+      aMask(g, 'grateful', 'Grateful for the view', 'Warm, simple, very shareable', 'THANKS.', 'Grateful **for the view.**', 'A long weekend by the water', 'Book **Thanksgiving.**', 'Grateful **for the view.**', ['ocean view', 'balcony view', 'kitchen']),
+    ]
+    case 'winter-sun': return [
+      aClassic(g, 'escape', 'Escape winter', 'The temperature does the selling', 'Escape **winter.**', m.sub, 'Winter, **cancelled.**', ['78° in January', 'The pool every morning', 'Weeks, not nights'], 'Escape **winter.**', ['pool', 'balcony view', 'ocean view'], 'dark'),
+      aKinetic(g, 'shovel', 'Put down the shovel', 'Straight at the snowbirds', 'Put down **the shovel.**', 'Pack light.\nStay long.\nIt’s **78° here.**', 'Winter, **somewhere warm.**', 'Put down the shovel. **Pick up the sunscreen.**', 'December to March in South Florida', ['beach', 'pool', 'ocean view']),
+      aBeats(g, 'month', 'A month in the sun', 'Long stays — work from the balcony', 'A month **in the sun.**', 'Stay as long as you like', ['Mornings|Coffee on the balcony', 'Afternoons|Work from the pool deck', 'Evenings|Sunset over the water'], 'Book **a longer stay.**', 'Stay a week. **Or the whole winter.**', 'Full apartments with kitchens and fast Wi-Fi', ['balcony view', 'living room', 'pool']),
+      aCinema(g, 'light', 'The winter light', 'Cinematic — golden afternoons in January', 'The best light **is in January.**', 'South Florida', 'Warm days. **Long evenings.**', 'Book **winter sun.**', 'Stays from Miami to Palm Beach', ['ocean view', 'pool', 'balcony view']),
+    ]
+    case 'mlk': return [
+      aClassic(g, 'sun', 'Three days in the sun', 'The long weekend, simple and warm', 'Three days **in the sun.**', m.sub, 'One long **weekend.**', ['Three days in the sun', 'The pool on Monday', 'Easy for the whole family'], 'Book **the weekend.**', ['pool', 'living room', 'balcony view'], 'dark'),
+      aKinetic(g, 'monday', 'Monday off, by the pool', 'Built on the extra day', 'Monday **off.**', 'Friday flight.\nSaturday beach.\nMonday **pool.**', 'Make it **a long one.**', 'Three days. **One extra.**', 'Long-weekend stays across South Florida', ['pool', 'beach', 'ocean view']),
+      aBeats(g, 'family', 'The family long weekend', 'Room for everyone, three easy days', 'The family **long weekend.**', 'Room for everyone', ['Saturday|The beach', 'Sunday|The pool', 'Monday|Brunch at home'], 'Book **the weekend.**', 'Room for the whole family **this long weekend.**', 'Full apartments with kitchens', ['living room', 'pool', 'kitchen']),
+    ]
+    case 'marathon': return [
+      aClassic(g, 'recover', 'Run Miami. Recover here.', 'Close to the start, built for recovery', 'Run Miami. **Recover here.**', m.sub, 'Race weekend, **sorted.**', ['Close to the start line', 'A real bed the night before', 'A kitchen to refuel'], 'Book **race weekend.**', ['city view', 'bedroom', 'kitchen'], 'dark'),
+      aKinetic(g, 'miles', '26.2 miles. Then the pool.', 'Energy for runners', '26.2 **miles.**', 'Carb up.\nRun it.\nThen **the pool.**', 'Book **race weekend.**', '26.2 miles. **Then the pool.**', 'Downtown stays near the start', ['city view', 'pool', 'bedroom']),
+      aPlan(g, 'plan', 'Race weekend, planned', 'Day by day for the runner and their crew', 'Miami **Marathon**', 'FEB', 'Your race weekend', ['Friday|Pick up your bib', 'Saturday|Pasta at home', 'Sunday|Run Miami', 'After|The pool, legs up'], 'Book **race weekend.**', 'Race weekend, **planned.**', 'Stays close to the start line', ['city view', 'kitchen', 'pool']),
+    ]
+    case 'boat-show-miami': return [
+      aClassic(g, 'water', 'Boat show week, on the water', 'Close to the docks, water views', 'Boat show week, **on the water.**', m.sub, 'Show week, **sorted.**', ['Close to the docks', 'Water views', 'Room for the crew'], 'Book **boat show week.**', ['water view', 'balcony view', 'living room'], 'band'),
+      aBeats(g, 'crew', 'Room for the whole crew', 'For buyers, brokers and crews travelling together', 'Room for **the whole crew.**', 'Close to the docks', ['Morning|Coffee with a water view', 'Show days|Minutes to the docks', 'Night|Dinner at your own table'], 'Book **for the crew.**', 'Bring the crew. **Skip the hotel.**', 'Full apartments close to the show', ['living room', 'water view', 'kitchen']),
+      aCinema(g, 'dock', 'From the dock to the balcony', 'Cinematic — boats by day, the bay by night', 'From the docks **to your balcony.**', 'Miami', 'Boats by day. **The bay by night.**', 'Book **boat show week.**', 'Water-view stays for boat show week', ['water view', 'balcony view', 'city view night']),
+      aOwner(g, 'the boat show', 'FEB 10–14', 'Boat show week is **already priced.**'),
+    ]
+    case 'valentines': return [
+      aClassic(g, 'two', 'A weekend for two', 'Sunsets, rooftops, the beach', 'A weekend **for two.**', m.sub, 'Just the **two of you.**', ['Sunsets from the balcony', 'A rooftop for two', 'No one else’s schedule'], 'Book **for two.**', ['balcony sunset', 'bedroom', 'rooftop'], 'dark'),
+      aMask(g, 'love', 'Love, with a view', 'A single word, then the feeling', 'LOVE.', 'Love, **with a view.**', 'Valentine’s weekend in South Florida', 'Book **for two.**', 'Love, **with a view.**', ['balcony sunset', 'ocean view', 'bedroom']),
+      aCinema(g, 'sunset', 'Sunset, just us', 'Cinematic and romantic', 'Sunset. **Just us.**', 'South Florida', 'Slow mornings. **Long sunsets.**', 'Book **Valentine’s.**', 'A weekend away for two', ['balcony sunset', 'bedroom', 'rooftop']),
+      aBeats(g, 'plan', 'The weekend, planned for two', 'Three moments they will picture', 'Plans **for two.**', 'Feb 12–14', ['Friday|Sunset on the roof', 'Saturday|The beach, then dinner', 'Sunday|Breakfast in bed'], 'Book **the weekend.**', 'Three days. **Two of you.**', 'Stays with views worth sharing', ['balcony sunset', 'beach', 'bedroom']),
+    ]
+    case 'sobewff': return [
+      aClassic(g, 'eat', 'Eat your way through Miami', 'Steps from the tents', 'Eat your way **through Miami.**', m.sub, 'Festival weekend, **your way.**', ['Steps from the tents', 'A kitchen of your own', 'The beach in between'], 'Book **festival weekend.**', ['beach', 'kitchen', 'ocean view'], 'gallery'),
+      aKinetic(g, 'taste', 'Taste it all, walk home', 'Location — no driving after the tastings', 'Taste **it all.**', 'Taste it all.\nWalk **home.**\nRepeat tomorrow.', 'Book **festival weekend.**', 'Taste it all. **Walk home.**', 'Stays steps from the festival', ['beach', 'living room', 'ocean view']),
+      aBeats(g, 'menu', 'A weekend on the menu', 'Food-first, three moments', 'A weekend **on the menu.**', 'South Beach', ['Friday|The tents open', 'Saturday|Brunch on the balcony', 'Sunday|One more tasting'], 'Book **the weekend.**', 'The weekend **is on the menu.**', 'South Beach stays for the festival', ['kitchen', 'balcony view', 'beach']),
+    ]
+    case 'spring-break': return [
+      aClassic(g, 'right', 'Spring break, done right', 'The pool, the beach, the city', 'Spring break, **done right.**', m.sub, 'All of it, **your way.**', ['The pool all day', 'Room for your group', 'The beach close by'], 'Book **spring break.**', ['pool', 'living room', 'beach'], 'neon'),
+      aKinetic(g, 'out', 'Out of office', 'Pure energy, made for Reels', 'Out of **office.**', 'Pool by ten.\nBeach by two.\nCity **by night.**', 'Book **spring break.**', 'Out of office. **Into the sun.**', 'March in South Florida', ['pool', 'beach', 'city view night']),
+      aBeats(g, 'group', 'Room for the group', 'Friends travelling together', 'Room for **the group.**', 'Everyone in one place', ['Bedrooms|For everyone', 'The kitchen|For mornings after', 'The pool|All day'], 'Book **for the group.**', 'One place. **Everyone in.**', 'Full apartments for groups', ['living room', 'kitchen', 'pool']),
+    ]
+    case 'miami-open': return [
+      aClassic(g, 'match', 'Match point in Miami', 'Easy to the stadium, a pool between matches', 'Match point **in Miami.**', m.sub, 'Tournament week, **sorted.**', ['Easy to the stadium', 'A pool between matches', 'Room to spread out'], 'Book **match week.**', ['pool', 'living room', 'balcony view'], 'dark'),
+      aKinetic(g, 'game', 'Game, set, pool', 'Playful — tennis words, holiday feeling', 'Game. **Set.**', 'Game.\nSet.\n**Pool.**', 'Book **match week.**', 'Game. Set. **Pool.**', 'Stays for the Miami Open', ['pool', 'pool', 'balcony view']),
+      aPlan(g, 'plan', 'Tournament week, planned', 'Days at the matches, evenings at home', 'Miami **Open**', 'MAR 14–28', 'Your week, planned', ['Day|Courtside', 'Afternoon|The pool', 'Evening|Dinner at home', 'Finals|The big match'], 'Book **match week.**', 'Two weeks of tennis. **One place to stay.**', 'Stays for the Miami Open', ['city view', 'pool', 'living room']),
+    ]
+    case 'ultra': return [
+      aClassic(g, 'downtown', 'Stay downtown, walk to the gates', 'Location first', 'Ultra weekend. **Stay downtown.**', m.sub, 'Ultra, **sorted.**', ['Walk to the gates', 'A rooftop before the gates open', 'Room for the whole crew'], 'Book **Ultra weekend.**', ['city view night', 'rooftop', 'living room'], 'neon'),
+      aKinetic(g, 'walk', 'No cab, no queue', 'High energy — the walk to the gates', 'Walk **to the gates.**', 'No cab.\nNo queue.\n**Just walk.**', 'Book **Ultra weekend.**', 'No cab. No queue. **Just walk.**', 'Downtown stays for Ultra', ['city view night', 'city view', 'rooftop']),
+      aBeats(g, 'crew', 'Room for the whole crew', 'Groups travelling together', 'Bring **the crew.**', 'Room for everyone', ['Before|The rooftop', 'Ultra|Walk to the gates', 'After|A real bed'], 'Book **for the crew.**', 'Three days of Ultra. **One place for the crew.**', 'Full apartments downtown', ['living room', 'rooftop', 'bedroom']),
+    ]
+    case 'easter': return [
+      aClassic(g, 'sea', 'Easter by the sea', 'Family stays, a long weekend', 'Easter **by the sea.**', m.sub, 'A long weekend, **together.**', ['Room for the whole family', 'A kitchen for Easter brunch', 'The sea close by'], 'Book **Easter.**', ['ocean view', 'kitchen', 'beach'], 'gallery'),
+      aBeats(g, 'brunch', 'Easter brunch at home', 'The meal as the memory', 'Brunch **at home.**', 'A kitchen for everyone', ['Friday|Fly in', 'Sunday|Easter brunch at your own table', 'Monday|One more beach day'], 'Book **Easter.**', 'Easter brunch, **with a view.**', 'Family stays with full kitchens', ['kitchen', 'dining table', 'beach']),
+      aCinema(g, 'spring', 'Spring, by the water', 'Cinematic and calm', 'Spring, **by the water.**', 'South Florida', 'Long days. **Warm sea.**', 'Book **Easter.**', 'Easter weekend stays', ['ocean view', 'beach', 'pool']),
+    ]
+    case 'f1': return [
+      aClassic(g, 'race', 'Race week, Miami', 'The city at full speed', 'Race week, **Miami.**', m.sub, 'Race week, **sorted.**', ['Race week in Miami', 'A rooftop to watch the city', 'Room for the crew'], 'Book **race week.**', ['city view', 'rooftop', 'living room'], 'neon'),
+      aKinetic(g, 'lights', 'Lights out', 'Race-start energy', 'Lights **out.**', 'Lights out.\n**Race week.**\nStay close.', 'Book **race week.**', 'Lights out. **Stay close.**', 'Race-week stays in Miami', ['city view night', 'city view', 'rooftop']),
+      aPlan(g, 'plan', 'Race weekend, planned', 'Practice, qualifying, race day', 'Miami **Grand Prix**', 'MAY', 'Your race weekend', ['Friday|Practice', 'Saturday|Qualifying', 'Sunday|Race day', 'Every night|The rooftop'], 'Book **race weekend.**', 'Three days. **Full throttle.**', 'Stays for race week', ['city view', 'rooftop', 'living room']),
+      aOwner(g, 'race week', 'MAY', 'Race week is **already priced.**'),
+    ]
+    case 'memorial': return [
+      aClassic(g, 'summer', 'Summer starts here', 'The first long weekend of summer', 'Summer **starts here.**', m.sub, 'The first **long weekend.**', ['Summer starts here', 'The pool all weekend', 'Room for everyone'], 'Book **the long weekend.**', ['pool', 'living room', 'balcony'], 'dark'),
+      aKinetic(g, 'first', 'First pool day of summer', 'Short and loud', 'Summer’s **here.**', 'Pool.\nBeach.\n**Repeat.**', 'Book **the long weekend.**', 'Pool. Beach. **Repeat.**', 'Memorial Day weekend stays', ['pool', 'beach', 'ocean view']),
+      aBeats(g, 'family', 'Three days, everyone together', 'Families and friends', 'Everyone, **one place.**', 'Room for all of you', ['Saturday|The beach', 'Sunday|A long lunch at home', 'Monday|One last swim'], 'Book **the weekend.**', 'Three days. **Everyone together.**', 'Full apartments for the long weekend', ['living room', 'kitchen', 'pool']),
+    ]
+    case 'july4': return [
+      aClassic(g, 'bay', 'Fireworks over the bay', 'Waterfront stays for the Fourth', 'Fireworks **over the bay.**', m.sub, 'The Fourth, **on the water.**', ['Fireworks over the bay', 'Waterfront stays', 'Room for the whole family'], 'Book **the Fourth.**', ['water view night', 'balcony view', 'living room'], 'band'),
+      aMask(g, 'boom', 'The best seat for the fireworks', 'One word, then the view', 'BOOM.', 'The best seat **for the fireworks.**', 'Waterfront stays for July 4', 'Book **the Fourth.**', 'The best seat **for the fireworks.**', ['city view night', 'balcony view', 'pool']),
+      aBeats(g, 'day', 'The whole Fourth, planned', 'Beach, grill, fireworks', 'The Fourth, **all day.**', 'Room for everyone', ['Morning|The beach', 'Afternoon|Lunch at home', 'Night|Fireworks from the balcony'], 'Book **the Fourth.**', 'Beach by day. **Fireworks by night.**', 'Waterfront stays for the Fourth', ['beach', 'kitchen', 'balcony view']),
+    ]
+    case 'labor': return [
+      aClassic(g, 'one-more', 'One more summer weekend', 'The last long weekend of summer', 'One more **summer weekend.**', m.sub, 'Before the **school run.**', ['One more pool day', 'Room to spread out', 'The beach close by'], 'Book **the weekend.**', ['pool', 'living room', 'beach'], 'dark'),
+      aKinetic(g, 'last', 'Last call for summer', 'Urgency, warmly', 'Last call **for summer.**', 'One more swim.\nOne more sunset.\n**One more weekend.**', 'Book **the weekend.**', 'Last call **for summer.**', 'Labor Day weekend stays', ['pool', 'balcony sunset', 'ocean view']),
+      aCinema(g, 'golden', 'Summer’s golden ending', 'Cinematic sunsets', 'Summer’s **golden ending.**', 'South Florida', 'Long swims. **Late sunsets.**', 'Book **Labor Day.**', 'The last long weekend of summer', ['balcony sunset', 'pool', 'beach']),
+    ]
+    case 'flibs': return [
+      aClassic(g, 'marina', 'Boat show week, Fort Lauderdale', 'Stays by the marina', 'Boat show week, **Fort Lauderdale.**', m.sub, 'Show week, **sorted.**', ['Close to the marinas', 'Water views', 'Room for the crew'], 'Book **boat show week.**', ['water view', 'balcony view', 'living room'], 'band'),
+      aBeats(g, 'crew', 'Room for the whole crew', 'Brokers, buyers and crews', 'Room for **the whole crew.**', 'By the marinas', ['Morning|Coffee by the water', 'Show days|Minutes to the docks', 'Night|Dinner at your own table'], 'Book **for the crew.**', 'Bring the crew. **Skip the hotel.**', 'Full apartments by the marinas', ['living room', 'water view', 'kitchen']),
+      aCinema(g, 'venice', 'The Venice of America', 'Cinematic Fort Lauderdale', 'Boat show week **in the Venice of America.**', 'Fort Lauderdale', 'Canals by day. **Sunsets by night.**', 'Book **boat show week.**', 'Stays by the water in Fort Lauderdale', ['water view', 'balcony sunset', 'pool']),
+      aOwner(g, 'the boat show', 'OCT', 'Boat show week is **already priced.**'),
+    ]
+    case 'halloween': return [
+      aClassic(g, 'city', 'Halloween in the city', 'A weekend of nights out', 'Halloween **in the city.**', m.sub, 'One spooky **weekend.**', ['A night in the city', 'Room to get ready', 'No drive home'], 'Book **the weekend.**', ['city view night', 'living room', 'bedroom'], 'neon'),
+      aKinetic(g, 'trick', 'Treat yourself', 'Playful — trick or treat', 'Trick **or stay?**', 'Costumes on.\nCity lights.\n**Treat yourself.**', 'Book **the weekend.**', 'Trick or treat? **Treat yourself.**', 'Halloween weekend stays', ['city view night', 'city view night', 'living room']),
+      aMask(g, 'boo', 'Boo', 'One word, made for Stories', 'BOO.', 'Halloween **in Miami.**', 'Oct 29–31', 'Book **the weekend.**', 'Halloween **in Miami.**', ['city view night', 'city view night', 'bedroom']),
+    ]
+    case 'christmas': case 'basel': return null
+  }
+  return null
+}
 
 /** Hand-written angles, by moment. Every claim is a house fact; every guest line is a feeling, not a promise. */
 function angles(m: Moment, when: string): Angle[] | null {
@@ -235,7 +379,7 @@ const tidy = (a: Angle): Angle => ({ ...a, post: a.post.map(treeSafe), flyer: tr
 /** Every angle for a moment — hand-written ones where they exist, else one designed for the audience. */
 export function momentAngles(m: Moment, when: string): Angle[] { return momentAnglesRaw(m, when).map(tidy) }
 function momentAnglesRaw(m: Moment, when: string): Angle[] {
-  const a = angles(m, when)
+  const a = angles(m, when) || eventAngles(m, when)
   if (a) return a
   const F = m.fx || [], Am = amb(m.fx)
   if (m.audience === 'owners') {

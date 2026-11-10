@@ -1296,7 +1296,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const startFlyer = async (m?: Moment, angle?: Angle) => {
     const cur = await newAd(); if (!cur) return
     setBusy('template')
-    const guests = !m || m.audience !== 'owners'
+    const guests = !m || (angle?.audience || m.audience) !== 'owners'
     const scenes: AdScene[] = m
       ? await fromPreset([angle ? { ...angle.flyer, dur: 6 } : momentFlyer(m, whenShort(m))], m)
       : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos: await libPhotos('exterior', 1, [], []), dur: 6 }]
@@ -1309,7 +1309,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const startPost = async (m?: Moment, angle?: Angle) => {
     const cur = await newAd(); if (!cur) return
     setBusy('template')
-    const guests = !m || m.audience !== 'owners'
+    const guests = !m || (angle?.audience || m.audience) !== 'owners'
     let scenes: AdScene[]
     if (m) scenes = await fromPreset(angle ? angle.post : momentPost(m, whenShort(m)), m)
     else {
@@ -1347,7 +1347,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     setBusy('template')
     const scenes = await fromPreset(k === 'flyer' ? [{ ...a.flyer, dur: 6 }] : a.post, m)
     setBusy('')
-    change(d => ({ ...d, name: m.name + ' · ' + a.name + (k === 'flyer' ? ' · photo post' : ' · post'), scenes }))
+    const g = (a.audience || m.audience) !== 'owners'
+    change(d => ({ ...d, name: m.name + ' · ' + a.name + (k === 'flyer' ? ' · photo post' : ' · post'), audience: g ? 'guests' : 'owners', goal: g ? 'bookings' : 'owners', scenes }))
     setSel(0); setT(k === 'flyer' ? 5.5 : 1.6)
   }
 
@@ -2508,14 +2509,14 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           <div onClick={e => e.stopPropagation()} style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflowY: 'auto', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, color: UI.ink, padding: '14px 18px 18px' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
               <span style={{ fontFamily: display, fontWeight: 800, fontSize: 19 }}>{ideas.m.emoji} {ideas.m.name} · {list.length} ideas</span>
-              <span style={{ fontSize: 12.5, color: UI.mut }}>{ideas.m.audience === 'owners' ? 'Written for owners' : 'Written for guests'} · a {ideas.k === 'flyer' ? 'photo post' : 'animated post'} · pick the angle</span>
+              <span style={{ fontSize: 12.5, color: UI.mut }}>{ideas.m.audience === 'owners' ? 'Written for owners' : ideas.m.audience === 'both' ? 'For guests, with an owner version' : 'Written for guests'} · a {ideas.k === 'flyer' ? 'photo post' : 'animated post'} · pick the angle</span>
               <span style={{ marginLeft: 'auto' }}><Btn small onClick={() => setIdeas(null)}>Close</Btn></span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
               {list.map(a => { const first = ideas.k === 'flyer' ? a.flyer : a.post[0]; return (
                 <button key={a.key} type="button" onClick={() => { const it = ideas; setIdeas(null); if (it.rebuild) reAngle(it.m, a, it.k); else if (it.k === 'flyer') startFlyer(it.m, a); else startPost(it.m, a) }}
                   style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 10, padding: '10px 12px', color: UI.ink, cursor: 'pointer' }}>
-                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800 }}>{a.name}</span>
+                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800 }}>{a.name}{a.audience === 'owners' && ideas.m.audience !== 'owners' ? <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#0E1116', background: '#fff', borderRadius: 6, padding: '1px 6px' }}>OWNERS</span> : null}</span>
                   <span style={{ display: 'block', fontSize: 11.5, color: UI.mut, margin: '2px 0 8px' }}>{a.pitch}</span>
                   <span style={{ display: 'block', fontFamily: display, fontSize: 16, fontWeight: 700, lineHeight: 1.25 }}>“{first.head.replace(/\*\*/g, '').replace(/\n/g, ' ')}”</span>
                   {first.sub ? <span style={{ display: 'block', fontSize: 11.5, color: UI.mut, marginTop: 4 }}>{first.sub}</span> : null}
