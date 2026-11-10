@@ -26,6 +26,7 @@ export const DEFAULT_BUDGET: AiBudget = { automaticUsd: 5, totalUsd: 9, monthUsd
 // Typed by a person, on the spot — the only calls that keep going after the automatic cap.
 // 'translate' is a person tagging Eve in a thread and waiting (Jon, 2026-10-01: "100% of the time") —
 // interactive, never paused by the automatic cap (independent audit 2026-10-10).
+const NEVER_CAPPED = new Set(['review-reply'])
 const INTERACTIVE = new Set(['eve', 'eve-fast', 'eve-vision', 'eve-investigate', 'listing-copy', 'review-reply', 'reports', 'guidebook', 'project-plan', 'expectations', 'guest-reply', 'translate'])
 
 const etMidnightIso = () => {
@@ -76,6 +77,10 @@ export async function budgetBlock(task: string): Promise<string | null> {
     const b = s.budget
     if (b.paused) return 'AI is paused in Lighthouse (Settings → AI models → Pause all AI).'
     await warn(s).catch(() => {})
+    // REVIEW REPLIES ARE NEVER CAPPED (Jon, 2026-11-09: "never not let me respond to reviews"). A
+    // reply costs a fraction of a cent; a review left unanswered costs bookings. Only the manual
+    // Pause above stops them — no daily, monthly or hourly cap does.
+    if (NEVER_CAPPED.has(task)) return null
     if (!b.on) return null
     if (s.month >= b.monthUsd) return `Lighthouse's monthly AI budget ($${b.monthUsd}) is used up — AI is paused until the 1st.`
     if (s.day >= b.totalUsd) return `Lighthouse's daily AI budget ($${b.totalUsd}) is used up — AI is paused until midnight.`
