@@ -1,12 +1,12 @@
-// THE STARTER KIT ORDER FORM (Jon, 2026-11-10: "we should also be able to generate a link like the
-// linens, just an order form to share what they need"). /kit/<code>/order is the plain version of the
-// starter kit report: only what still has to be bought, room by room, with the quantity, the product,
-// its link and the price, and the totals. Read-only — anyone the link is sent to (the owner, a buyer,
-// a vendor) sees the same list. It follows the client's latest choices on /kit/<code>.
+// THE STARTER KIT ORDER FORM (Jon, 2026-11-10: "a link like the linens, just an order form to share
+// what they need… just a count needed and items and recommended / must have, like the linen
+// calculator"). /kit/<code>/order is the plain list: room by room, each item, whether it is a
+// must-have or recommended, and how many the home needs. No products and no prices — those are on the
+// report. Read-only — anyone the link is sent to (the owner, a buyer, a vendor) sees the same list. It follows the client's latest choices on /kit/<code>.
 // Same capability as the report: the 20-hex code, a 404 when it is unknown or turned off.
 import { notFound } from 'next/navigation'
 import { openKit } from '@/lib/starter-kit-server'
-import { KIT_CATEGORIES, describeSize, fmtMoney, kitTotals } from '@/lib/starter-kit'
+import { KIT_CATEGORIES, describeSize, kitTotals, ruleText } from '@/lib/starter-kit'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,9 +20,9 @@ export default async function StarterKitOrderPage({ params }: { params: { code: 
   const kit = await openKit(code, false)
   if (!kit) notFound()
   const t = kitTotals(kit.size, kit.selection)
-  const buy = t.lines.filter(l => l.included && l.source !== 'self' && l.toBuy > 0)
-  const owner = t.lines.filter(l => l.included && (l.source === 'self' || l.toBuy === 0))
-  const grand = t.total + (kit.setupFee || 0)
+  const needed = t.lines.filter(l => l.included)
+  const TYPE = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
+  const count = (k: 'must' | 'recommended' | 'optional') => needed.filter(l => l.item.tier === k).length
   const date = new Date(kit.submitted?.at || kit.savedAt || kit.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 
   return (
@@ -36,52 +36,36 @@ export default async function StarterKitOrderPage({ params }: { params: { code: 
             <a href={`/api/public/starter-kit/${code}/pdf`}>PDF</a>
           </div>
         </header>
-        <div className="sko-eyebrow">Order form</div>
+        <div className="sko-eyebrow">What this home needs</div>
         <h1>{kit.client}</h1>
         <p className="sko-meta">{[kit.property, describeSize(kit.size), date].filter(Boolean).join(' · ')}</p>
 
         <div className="sko-sum">
-          <div><span>Items to buy</span><b>{buy.length}</b></div>
-          <div><span>Already covered</span><b>{owner.length}</b></div>
-          <div><span>Total</span><b>{fmtMoney(grand)}</b></div>
+          <div><span>Must-haves</span><b>{count('must')}</b></div>
+          <div><span>Recommended</span><b>{count('recommended')}</b></div>
+          <div><span>Optional chosen</span><b>{count('optional')}</b></div>
         </div>
 
-        <div className="sko-tablewrap">
-          <table className="sko-t">
-            <thead><tr><th>Item</th><th>Product</th><th className="n">Qty</th><th className="n">Each</th><th className="n">Total</th></tr></thead>
-            {KIT_CATEGORIES.map(cat => {
-              const rows = buy.filter(l => l.item.category === cat)
-              if (!rows.length) return null
-              return (
-                <tbody key={cat}>
-                  <tr className="cat"><td colSpan={5}>{cat}</td></tr>
-                  {rows.map(l => (
-                    <tr key={l.item.key}>
-                      <td><b>{l.item.name}</b>{l.have ? <small>need {l.qty}, have {l.have}</small> : null}</td>
-                      <td>{l.own ? <a href={l.own} target="_blank" rel="noopener noreferrer">Owner’s link</a> : l.url ? <a href={l.url} target="_blank" rel="noopener noreferrer">{l.detail}</a> : l.detail}</td>
-                      <td className="n">{l.toBuy}</td>
-                      <td className="n">{l.own ? '—' : l.price != null ? (l.option?.approx ? '~' : '') + fmtMoney(l.price) : '—'}</td>
-                      <td className="n">{l.own ? 'On review' : l.price === 0 ? 'Included' : fmtMoney(l.total || 0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              )
-            })}
-            <tfoot>
-              {kit.setupFee ? <tr><td colSpan={4}>Setup, delivery and installation</td><td className="n">{fmtMoney(kit.setupFee)}</td></tr> : null}
-              <tr className="tot"><td colSpan={4}>Total</td><td className="n">{fmtMoney(grand)}</td></tr>
-            </tfoot>
-          </table>
-        </div>
-        {!buy.length && <p className="sko-empty">Nothing left to buy: everything on the list is already covered.</p>}
-
-        {owner.length > 0 && (
-          <section className="sko-owner">
-            <h2>Already covered by the owner</h2>
-            <p>{owner.map(l => `${l.item.name}${l.source === 'self' ? ' (owner provides)' : ` (has ${l.have})`}`).join(' · ')}</p>
-          </section>
-        )}
-        <p className="sko-fine">Prices are retail prices from when this list was prepared and are confirmed before ordering. Coffee pods are supplied by Stay. Linen is quoted separately.</p>
+        <table className="sko-t">
+          <thead><tr><th>Item</th><th>Type</th><th className="n">Needed</th></tr></thead>
+          {KIT_CATEGORIES.map(cat => {
+            const rows = needed.filter(l => l.item.category === cat)
+            if (!rows.length) return null
+            return (
+              <tbody key={cat}>
+                <tr className="cat"><td colSpan={3}>{cat}</td></tr>
+                {rows.map(l => (
+                  <tr key={l.item.key}>
+                    <td><b>{l.item.name}</b><small>{ruleText(l.item, kit.size)}</small></td>
+                    <td><i className={'sko-tier ' + l.item.tier}>{TYPE[l.item.tier]}</i></td>
+                    <td className="n"><b className="sko-q">{l.qty}</b>{l.have ? <small>have {l.have} · {l.toBuy} more</small> : null}</td>
+                  </tr>
+                ))}
+              </tbody>
+            )
+          })}
+        </table>
+        <p className="sko-fine">Counts are sized to the home: place settings at 1.5 per guest, glasses per guest, bath items per bathroom, hangers and luggage racks per bedroom. Must-haves are what every home needs; the owner can use our pick, their own, or provide it. Coffee pods are supplied by Stay. Linen is quoted separately.</p>
       </main>
     </div>
   )
@@ -102,12 +86,15 @@ const CSS = `
 .sko-sum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:22px 0 26px}
 .sko-sum div{border:1px solid var(--line);border-radius:12px;padding:12px 14px}.sko-sum span{display:block;font-size:12px;color:var(--muted)}.sko-sum b{font-family:var(--display);font-weight:400;font-size:28px;font-variant-numeric:tabular-nums}
 .sko-tablewrap{overflow-x:auto}
-.sko-t{width:100%;border-collapse:collapse;min-width:560px;font-variant-numeric:tabular-nums}
+.sko-t{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
 .sko-t th{text-align:left;font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:2px solid var(--ink)}
 .sko-t td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
 .sko-t td small{display:block;color:var(--muted);font-size:12px}
 .sko-t .n{text-align:right;white-space:nowrap}
 .sko-t a{color:var(--accent);text-decoration:none}.sko-t a:hover{text-decoration:underline}
+.sko-tier{font-style:normal;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.sko-tier.must{background:#E1EAF5;color:#1C4A7E}.sko-tier.recommended{background:#E0EFE4;color:#25633A}.sko-tier.optional{background:#ECEFF1;color:#56626B}
+.sko-q{font-family:var(--display);font-weight:400;font-size:24px}
 .sko-t tr.cat td{font-family:var(--display);font-size:20px;padding-top:20px;border-bottom:1px solid var(--ink)}
 .sko-t tfoot td{border-bottom:0;padding-top:12px;font-weight:600}
 .sko-t tr.tot td{font-family:var(--display);font-weight:400;font-size:26px}
