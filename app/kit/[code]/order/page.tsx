@@ -56,7 +56,7 @@ export default async function StarterKitOrderPage({ params }: { params: { code: 
                 <tr className="cat"><td colSpan={3}>{cat}</td></tr>
                 {rows.map(l => (
                   <tr key={l.item.key}>
-                    <td><b>{l.item.name}</b><small>{ruleText(l.item, kit.size)}</small></td>
+                    <td><b>{l.item.name}</b><small>{ruleText(l.item, kit.size)}{l.item.each > 1 ? ` · count is sets of ${l.item.each}` : ""}</small></td>
                     <td><i className={'sko-tier ' + l.item.tier}>{TYPE[l.item.tier]}</i></td>
                     <td className="n"><b className="sko-q">{l.qty}</b>{l.have ? <small>have {l.have} · {l.toBuy} more</small> : null}</td>
                   </tr>
