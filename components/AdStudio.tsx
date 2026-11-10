@@ -16,13 +16,14 @@
 // a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
 import StudioHome, { KIND_META } from './StudioHome'
 import AdDesignPicker from './AdDesignPicker'
+import { TransitionPicker, GraphicsPicker } from './AdFxPickers'
 import AdScript from './AdScript'
 import { buildingsIn, inBuildings, byPlace, type AreaKey } from '@/lib/ad-places'
 import { type Moment, MOMENTS } from '@/lib/marketing-calendar'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, PRO_KINDS, PRO_DIM_OF, type SceneCustom, CU_SIZE, CU_FONTS, CU_SHADES, CU_GRADES, CU_ZOOMS, hasCustom, polishAd, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, DEFAULT_LOOK, TRANSITION_META, TR_DIRECTIONAL, trMeta, type TrDir, type TrLen, PRO_KINDS, PRO_DIM_OF, type SceneCustom, CU_SIZE, CU_FONTS, CU_SHADES, CU_GRADES, CU_ZOOMS, hasCustom, polishAd, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -143,6 +144,11 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [tab, setTab] = useState<'scene' | 'ad'>('scene')
   const [menu, setMenu] = useState(false)
   const [picker, setPicker] = useState<null | 'change' | 'add'>(null)
+  // the transitions and graphics browsers, and where a pick from them goes (this scene, or every scene)
+  const [trPick, setTrPick] = useState(false)
+  const [fxPick, setFxPick] = useState(false)
+  const [fxAll, setFxAll] = useState(false)
+  const [trAll, setTrAll] = useState(false)
   const [moreStart, setMoreStart] = useState(false)
   const [planMusic, setPlanMusic] = useState(false)
   const [ideasOpen, setIdeasOpen] = useState(false)
@@ -188,7 +194,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   // want to create it — prompt it, new visual, revamp, music vibe and goal").
   const [starting, setStarting] = useState(false)
   const [draft, setDraft] = useState<{ name: string; scenes: AdScene[]; settings: Plan['settings']; note: string } | null>(null)
-  const [st, setSt] = useState<{ mode: 'describe' | 'script' | 'template' | 'revamp' | 'blank' | 'story'; prompt: string; goal: string; music: string; vibe: string; look: string; format: AdFormat | ''; from: string; audience: AdAudience; who: string; why: string; script: string }>({ mode: 'describe', prompt: '', goal: 'bookings', music: '', vibe: '', look: 'stay', format: '', from: '', audience: 'guests', who: '', why: '', script: '' })
+  const [st, setSt] = useState<{ mode: 'describe' | 'script' | 'template' | 'revamp' | 'blank' | 'story'; prompt: string; goal: string; music: string; vibe: string; look: string; format: AdFormat | ''; from: string; audience: AdAudience; who: string; why: string; script: string }>({ mode: 'describe', prompt: '', goal: 'bookings', music: '', vibe: '', look: DEFAULT_LOOK, format: '', from: '', audience: 'guests', who: '', why: '', script: '' })
   const seed = useRef<{ fresh: boolean; look: string; goal: string; music: string; vibe: string; patch?: Partial<AdProject> } | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [planNote, setPlanNote] = useState('')
@@ -305,7 +311,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const openStart = (mode: typeof st.mode = 'describe') => {
     stop(); setPlan(null); setErr(''); setDraft(null); setShowAudit(false); setFirstPass(null); setMoreStart(false); setIdeasOpen(false); setMenu(false)
     startPatch.current = { kind: mode === 'story' ? 'story' : 'video' }
-    setSt(x => ({ ...x, mode, prompt: '', vibe: '', from: '', who: '', why: '', script: '', music: '', format: '', look: 'stay', goal: 'bookings', audience: 'guests' }))
+    setSt(x => ({ ...x, mode, prompt: '', vibe: '', from: '', who: '', why: '', script: '', music: '', format: '', look: DEFAULT_LOOK, goal: 'bookings', audience: 'guests' }))
     setStarting(true); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
   /** Leave the start / plan / script pages without building. */
@@ -420,6 +426,25 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     return out.length ? out : [sel]
   }
   const setMany = (fn: (s: AdScene, i: number) => Partial<AdScene>) => { const t = targetIdx(); change(d => ({ ...d, scenes: d.scenes.map((s, k) => (t.indexOf(k) >= 0 ? { ...s, ...fn(s, k) } : s)) })) }
+  /** A transition change: to the scene(s) being edited, or — from the browser with "All scenes" on — every scene change. */
+  const setTr = (patch: Partial<AdScene>, all = false) => {
+    if (all) change(d => ({ ...d, scenes: d.scenes.map((x, k) => (k > 0 ? { ...x, ...patch } : x)) }))
+    else setMany(() => patch)
+    const T = tl; if (T && !play0.current) setT(T.starts[sel] - 0.15 + (patch.tr ? 0.4 : 0))
+  }
+  /** A graphics change: to the scene(s) being edited, or to every scene when "All scenes" is on. */
+  const setFx = (fn: (s: AdScene) => Partial<AdScene>) => {
+    if (fxAll) change(d => ({ ...d, scenes: d.scenes.map(x => ({ ...x, ...fn(x) })) }))
+    else setMany(fn)
+  }
+  const toggleFx = (k: string) => {
+    const has = (sc0: AdScene) => (sc0.fx || []).indexOf(k) >= 0
+    const cur = pRef.current?.scenes[sel]
+    const turnOn = !(cur && has(cur))
+    setFx(x => turnOn
+      ? { fx: (x.fx || []).filter(y => y !== k).concat([k]).slice(-6), fxo: { ...(x.fxo || {}), ...(cur?.fxo && cur.fxo[k] ? { [k]: { ...cur.fxo[k] } } : {}) } }
+      : (() => { const o = { ...(x.fxo || {}) }; delete o[k]; return { fx: (x.fx || []).filter(y => y !== k), fxo: o } })())
+  }
   const togglePick = (i: number) => { const cur = pRef.current; if (!cur) return; const id = cur.scenes[i]?.id; if (!id) return
     setPicked(ps => { const base = ps.length ? ps : (cur.scenes[sel] ? [cur.scenes[sel].id] : []); return base.indexOf(id) >= 0 ? base.filter(x => x !== id) : base.concat([id]) }) }
   const pickAll = () => { const cur = pRef.current; if (cur) setPicked(cur.scenes.map(x => x.id)) }
@@ -574,7 +599,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** Jon: "a wide range of styles and looks" — one tap for a fresh combination. */
   const surprise = () => {
     const pick = <T,>(a: T[]) => a[Math.floor(Math.random() * a.length)]
-    const look = pick(LOOKS.filter(l => l.key !== (pRef.current?.look || 'stay'))).key
+    const look = pick(LOOKS.filter(l => l.key !== (pRef.current?.look || DEFAULT_LOOK))).key
     const style: AdStyle = {
       font: pick(['auto', 'auto', 'sans', 'serif', 'condensed', 'elegant'] as AdStyle['font'][]),
       caps: pick(['auto', 'auto', 'on'] as AdStyle['caps'][]),
@@ -644,11 +669,12 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     setOptions({ id: sc.id, list: r.options || [] })
   }
   // ── duplicate the whole ad (an A/B variant) ──
-  const duplicateAd = async () => {
+  const duplicateAd = async (plat?: string) => {
     if (!p) return
+    const pf = plat ? PLATFORMS.find(x => x.key === plat) : null
     const n = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
     if (!n?.ok) { setErr(n?.error || 'Could not duplicate.'); return }
-    const copy: AdProject = { ...p, id: n.project.id, name: p.name + ' · B', voice: null, status: 'draft', createdAt: n.project.createdAt, updatedAt: n.project.updatedAt }
+    const copy: AdProject = { ...p, id: n.project.id, name: pf ? p.name + ' · ' + pf.label : p.name + ' · B', ...(pf ? { platform: pf.key, format: pf.format } : {}), voice: null, status: 'draft', createdAt: n.project.createdAt, updatedAt: n.project.updatedAt }
     const sv = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: copy }) }).then(x => x.json()).catch(() => null)
     if (!sv?.ok) { setErr(sv?.error || 'Could not save the copy.'); return }
     stop(); resetHist(); setMenu(false); setP(sv.project); pRef.current = sv.project; setAudioUrl(null); setSaved('saved'); setSel(0); setT(1.6); setAudit(null); loadList()
@@ -907,17 +933,24 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const c = ctx(); if (c.state === 'suspended') await c.resume()
     const { v, m, fx } = await loadAudio()
     const dest = c.createMediaStreamDestination()
-    const vs = (cv as any).captureStream(30) as MediaStream
+    // QUALITY (Jon, 2026-11-10: "overall video quality"): frames are pushed one at a time as they are drawn
+    // (requestFrame), so the file never repeats or tears a frame when the page is busy, and photos are scaled with
+    // the browser's best filter. Falls back to a 30 fps capture where requestFrame is missing.
+    g.imageSmoothingEnabled = true; (g as any).imageSmoothingQuality = 'high'
+    let vs = (cv as any).captureStream(0) as MediaStream
+    let vtrack = vs.getVideoTracks()[0] as any
+    if (!vtrack || typeof vtrack.requestFrame !== 'function') { vs = (cv as any).captureStream(30) as MediaStream; vtrack = null }
+    const pushFrame = () => { try { vtrack?.requestFrame() } catch { /* */ } }
     const stream = new MediaStream([...vs.getVideoTracks(), ...dest.stream.getAudioTracks()])
     const types = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
     const mime = types.find(x => (window as any).MediaRecorder && MediaRecorder.isTypeSupported(x)) || ''
     if (!mime) { setErr('This browser cannot record video. Use Chrome or Safari.'); return }
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000, audioBitsPerSecond: 192_000 })
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.max(W, H) > 1920 ? 30_000_000 : 18_000_000, audioBitsPerSecond: 256_000 })
     const chunks: Blob[] = []
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     const done = new Promise<void>(res => { rec.onstop = () => res() })
     live.current = true
-    drawFrame(g, p, tl, 0, assets())
+    drawFrame(g, p, tl, 0, assets()); pushFrame()
     rec.start(500)
     const at = c.currentTime + 0.15
     const nodes = wire(c, dest, 0, v, m, at, fx)
@@ -925,7 +958,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     await new Promise<void>(res => {
       const step = () => {
         const x = Math.max(0, c.currentTime - at)
-        drawFrame(g, p, tl, Math.min(x, tl.total - 0.001), assets())
+        drawFrame(g, p, tl, Math.min(x, tl.total - 0.001), assets()); pushFrame()
         setExportPct(Math.min(100, Math.round(x / tl.total * 100)))
         if (x >= tl.total + 0.2) { res(); return }
         setTimeout(step, 1000 / 30)
@@ -1109,7 +1142,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     setStarting(false)
     await applyTemplate(st, true)
     resetHist()
-    change(d => ({ ...d, kind: 'story', name: st.name, audience: st.audience, format: st.format, goal: st.audience === 'partners' ? 'partners' : 'owners', look: d.look || 'stay' }))
+    change(d => ({ ...d, kind: 'story', name: st.name, audience: st.audience, format: st.format, goal: st.audience === 'partners' ? 'partners' : 'owners', look: d.look || DEFAULT_LOOK }))
   }
   const applyTemplate = async (tp: AdTemplate, quiet = false) => {
     const p = pRef.current
@@ -1225,7 +1258,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       ? [{ id: 's1', kind: 'poster', vo: '', head: m.headline, sub: m.sub, items: [m.audience === 'owners' ? '' : whenShort(m), m.audience === 'owners' ? 'Talk to Nick · 651-200-8283' : 'Book at stay-hospitality.com', m.poster || ''], photos, dur: 6, fx: m.fx || [] }]
       : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos, dur: 6 }]
     setBusy('')
-    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(5.5); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
@@ -1244,7 +1277,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     ]
     if (m?.fx) scenes[1].fx = m.fx
     setBusy('')
-    change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(1.6); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
@@ -1284,7 +1317,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const totalW = 100 // timeline is % based
   const pct = (x: number) => (tl ? (x / tl.total) * totalW : 0)
   const goHome = () => { stop(); setMenu(false); setHome(true); loadList() }
-  keysOn.current = editing && !picker && !menu && !versions && !watch && !showAudit
+  keysOn.current = editing && !picker && !trPick && !fxPick && !menu && !versions && !watch && !showAudit
   const fit = editing && !showAudit
   const notice = /^(Fact check|The ad is ready|Copied the ad|Saved to your computer)/.test(err)
   const card: React.CSSProperties = { background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 9, padding: 9 }
@@ -1355,7 +1388,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               </>) : null}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 12 }}>
                 <Btn small onClick={() => { setMenu(false); loadVersions() }} title="Earlier saved states of this piece">Versions — go back to an earlier state</Btn>
-                {canEdit ? <Btn small onClick={duplicateAd} title="A copy to try a different hook, look or ending">⧉ Duplicate as a variant</Btn> : null}
+                {canEdit ? <Btn small onClick={() => duplicateAd()} title="A copy to try a different hook, look or ending">⧉ Duplicate as a variant</Btn> : null}
                 {!isFlyer ? (
                   <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11.5, color: UI.mut, padding: '2px 2px' }}>
                     <input type="checkbox" checked={keepCopy} onChange={e => setKeepCopy(e.target.checked)} /> Keep a copy of every MP4 export in Finished videos
@@ -2036,9 +2069,24 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <Fold id="motion" title="Motion" folded={!!folded['motion']} onToggle={toggleFold}>
               {sel > 0 || targetIdx().length > 1 ? (
                 <>
-                  <Label>Comes in with</Label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {TRANSITIONS.map(x => <Btn key={x} small on={(sc.tr || 'auto') === x} disabled={!canEdit} onClick={() => { setMany(() => ({ tr: x as AdTransition })); if (tl) setT(tl.starts[sel] - 0.15) }}>{x === 'auto' ? 'Auto' : x[0].toUpperCase() + x.slice(1)}</Btn>)}
+                  <Label>Transition into this scene</Label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <b style={{ fontSize: 12.5 }}>{trMeta(sc.tr || 'auto')?.label || 'Auto'}</b>
+                    <span style={{ fontSize: 11, color: UI.mut, flex: 1, minWidth: 120 }}>{trMeta(sc.tr || 'auto')?.hint}</span>
+                    {canEdit ? <Btn small tone="blue" onClick={() => setTrPick(true)} title="Every transition, playing on your two scenes — like Final Cut's browser">Browse transitions</Btn> : null}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                    {(['fade', 'crosszoom', 'push', 'dip', 'leak', 'cut'] as AdTransition[]).map(x => <Btn key={x} small on={(sc.tr || 'auto') === x} disabled={!canEdit} title={trMeta(x)?.hint} onClick={() => setTr({ tr: x })}>{trMeta(x)?.label}</Btn>)}
+                  </div>
+                  {(sc.tr || 'auto') !== 'cut' ? (
+                    <FxRow name="Length">{(['short', 'normal', 'long'] as TrLen[]).map(x => <Btn key={x} small on={(sc.trs || 'normal') === x} disabled={!canEdit} onClick={() => setTr({ trs: x === 'normal' ? undefined : x })}>{x === 'short' ? 'Quick' : x === 'normal' ? 'Normal' : 'Slow'}</Btn>)}</FxRow>
+                  ) : null}
+                  {TR_DIRECTIONAL.indexOf(sc.tr || 'auto') >= 0 ? (
+                    <FxRow name="From">{([['right', '→ Right'], ['left', '← Left'], ['down', '↓ Bottom'], ['up', '↑ Top']] as [TrDir, string][]).map(([k, l]) => <Btn key={k} small on={(sc.trd || (sc.tr === 'slide' ? 'down' : sc.tr === 'wipe' ? 'left' : 'right')) === k} disabled={!canEdit} title={'The new scene comes in from the ' + (k === 'down' ? 'bottom' : k === 'up' ? 'top' : k)} onClick={() => setTr({ trd: k })}>{l}</Btn>)}</FxRow>
+                  ) : null}
+                  <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                    <Btn small onClick={() => { if (tl) start(Math.max(0, tl.starts[sel] - 0.8)) }} title="Plays from just before the cut">▶ Play the cut</Btn>
+                    {canEdit && p.scenes.length > 2 ? <Btn small title="Use this transition, length and direction on every scene change" onClick={() => change(d => ({ ...d, scenes: d.scenes.map((x, k) => (k > 0 ? { ...x, tr: sc.tr || 'auto', trs: sc.trs, trd: sc.trd } : x)) }))}>→ Every scene change</Btn> : null}
                   </div>
                 </>
               ) : null}
@@ -2056,27 +2104,31 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               </div>
               <div style={{ order: 3 }}>
               <Fold id="graphics" title="Graphics" folded={!!folded['graphics']} onToggle={toggleFold}>
-              <Label>{targetIdx().length > 1 ? 'Graphics on the ' + targetIdx().length + ' selected scenes' : 'Graphics on this scene'}</Label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {FX.map(f => { const on = (sc.fx || []).indexOf(f.key) >= 0; return <Btn key={f.key} small on={on} disabled={!canEdit} title={f.hint}
-                  onClick={() => setMany(x => on
-                    ? (() => { const o = { ...(x.fxo || {}) }; delete o[f.key]; return { fx: (x.fx || []).filter(k => k !== f.key), fxo: o } })()
-                    : { fx: (x.fx || []).filter(k => k !== f.key).concat([f.key]).slice(-6), fxo: { ...(x.fxo || {}), ...(sc.fxo && sc.fxo[f.key] ? { [f.key]: { ...sc.fxo[f.key] } } : {}) } })}>{f.label}</Btn> })}
-                {(sc.fx || []).length ? <Btn small tone="red" disabled={!canEdit} onClick={() => setMany(() => ({ fx: [], fxo: {} }))}>Clear</Btn> : null}
-                {canEdit && p.scenes.length > 1 ? <Btn small disabled={!(sc.fx || []).length} title="Put these graphics, with their settings, on every scene" onClick={() => change(d => ({ ...d, scenes: d.scenes.map(x => ({ ...x, fx: (sc.fx || []).slice(), fxo: { ...(sc.fxo || {}) } })) }))}>→ All scenes</Btn> : null}
+              {canEdit && p.scenes.length > 1 ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 10 }} title="Where graphic changes go">
+                  <span style={{ fontSize: 11, color: UI.mut, marginRight: 2 }}>Changes go to</span>
+                  <Btn small on={!fxAll} onClick={() => setFxAll(false)}>{targetIdx().length > 1 ? 'The ' + targetIdx().length + ' selected' : 'This scene'}</Btn>
+                  <Btn small on={fxAll} onClick={() => setFxAll(true)} title="Adding, removing or changing a graphic does it on every scene">All {p.scenes.length} scenes</Btn>
+                </div>
+              ) : null}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8, alignItems: 'center' }}>
+                {canEdit ? <Btn small tone="blue" onClick={() => setFxPick(true)} title="Every graphic, moving on this scene — click to add">＋ Add graphics</Btn> : null}
+                {(sc.fx || []).map(k => <Btn key={k} small on disabled={!canEdit} title={'Remove ' + (fxMeta(k)?.label || k)} onClick={() => toggleFx(k)}>{fxMeta(k)?.label || k} ✕</Btn>)}
+                {(sc.fx || []).length ? <Btn small tone="red" disabled={!canEdit} onClick={() => setFx(() => ({ fx: [], fxo: {} }))}>Clear{fxAll ? ' all scenes' : ''}</Btn> : null}
+                {canEdit && p.scenes.length > 1 && !fxAll && (sc.fx || []).length ? <Btn small title="Put these graphics, with their settings, on every scene" onClick={() => change(d => ({ ...d, scenes: d.scenes.map(x => ({ ...x, fx: (sc.fx || []).slice(), fxo: { ...(sc.fxo || {}) } })) }))}>→ Copy to all scenes</Btn> : null}
               </div>
-              <p style={{ fontSize: 10.5, color: UI.mut, marginTop: 4 }}>{(sc.fx || []).length ? 'Up to six per scene. Each one has its own placement, size and colour below. They render in the export too.' : 'None picked — the look’s own graphics show (if it has any).'}</p>
+              <p style={{ fontSize: 10.5, color: UI.mut, marginTop: 4 }}>{(sc.fx || []).length ? 'Up to six per scene. Each has its own placement, size and colour below.' : 'None on this scene' + ((LOOKS.find(l => l.key === (p.look || DEFAULT_LOOK))?.c.def?.fx || []).length ? ' — the look’s own graphics show.' : '.')}</p>
               {(sc.fx || []).map(k => {
                 const m = fxMeta(k); if (!m) return null
                 const o = fxOpts(sc, k)
-                const set = (patch: Partial<FxOpts>) => setMany(x => ((x.fx || []).indexOf(k) >= 0 ? { fxo: { ...(x.fxo || {}), [k]: { ...((x.fxo || {})[k] || {}), ...patch } } } : {}))
+                const set = (patch: Partial<FxOpts>) => setFx(x => ((x.fx || []).indexOf(k) >= 0 ? { fxo: { ...(x.fxo || {}), [k]: { ...((x.fxo || {})[k] || {}), ...patch } } } : {}))
                 return (
                   <div key={k} style={{ marginTop: 8, padding: '8px 10px', background: UI.panel2, borderRadius: 8, border: '1px solid ' + UI.line }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                       <b style={{ fontSize: 11.5 }}>{m.label}</b>
                       <span style={{ display: 'flex', gap: 4 }}>
-                        <Btn small disabled={!canEdit || !(sc.fxo && sc.fxo[k])} title="Back to this graphic’s defaults" onClick={() => setMany(x => { const n = { ...(x.fxo || {}) }; delete n[k]; return { fxo: n } })}>Reset</Btn>
-                        <Btn small tone="red" disabled={!canEdit} onClick={() => setMany(x => { const n = { ...(x.fxo || {}) }; delete n[k]; return { fx: (x.fx || []).filter(y => y !== k), fxo: n } })}>✕</Btn>
+                        <Btn small disabled={!canEdit || !(sc.fxo && sc.fxo[k])} title="Back to this graphic’s defaults" onClick={() => setFx(x => { const n = { ...(x.fxo || {}) }; delete n[k]; return { fxo: n } })}>Reset</Btn>
+                        <Btn small tone="red" disabled={!canEdit} title="Remove" onClick={() => toggleFx(k)}>✕</Btn>
                       </span>
                     </div>
                     {m.variants ? <FxRow name="Style">{m.variants.map(v => <Btn key={v.key} small on={o.variant === v.key} disabled={!canEdit} onClick={() => set({ variant: v.key })}>{v.label}</Btn>)}</FxRow> : null}
@@ -2121,31 +2173,42 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   ? FLYER_SIZES.map(x => <Btn key={x.key} small on={p.format === x.key} disabled={!canEdit} title={x.hint} onClick={() => change(d => ({ ...d, format: x.key, platform: x.key === '9:16' ? 'story' : x.key === '4:5' ? 'feed' : x.key === '1:1' ? 'square' : 'web' }))}>{x.label}</Btn>)
                   : PLATFORMS.map(x => <Btn key={x.key} small on={platformOf(p).key === x.key} disabled={!canEdit} title={`${FORMAT_LABEL[x.format]} · best ${x.best}`} onClick={() => change(d => ({ ...d, platform: x.key, format: x.format }))}>{x.label} <span style={{ opacity: 0.55, fontWeight: 500 }}>{x.format}</span></Btn>)}
               </div>
+              {!isFlyer && canEdit ? (<>
+                <Label>Same ad, another channel · a copy re-fitted to that shape and its safe zones</Label>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  {PLATFORMS.filter(x => x.key !== platformOf(p).key && x.format !== p.format).filter((x, k, a) => a.findIndex(y => y.format === x.format) === k).map(x => <Btn key={x.key} small onClick={() => duplicateAd(x.key)} title={'Makes a copy of this ad as ' + FORMAT_LABEL[x.format] + ' — check the photo crops, then export'}>⧉ {x.format === '9:16' ? 'Reels · TikTok · Shorts' : x.label} <span style={{ opacity: 0.55, fontWeight: 500 }}>{x.format}</span></Btn>)}
+                </div>
+              </>) : null}
               <Label>Audience · decides the facts and the end card</Label>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={p.audience === k} disabled={!canEdit} title={AUD[k].hint} onClick={() => change(d => ({ ...d, audience: k }))}>{AUD[k].label}</Btn>)}
               </div>
               </Fold>
-              <Fold id="look" title={'Look · ' + (LOOKS.find(l => l.key === (p.look || 'stay'))?.label || '')} folded={!!folded['look']} onToggle={toggleFold}>
+              <Fold id="look" title={'Look · ' + (LOOKS.find(l => l.key === (p.look || DEFAULT_LOOK))?.label || '')} folded={!!folded['look']} onToggle={toggleFold}>
               <div style={{ height: 8 }} />
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Vibe · one tap sets look, style, graphics and music</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
                 {VIBES.map(v => <Btn key={v.key} small disabled={!canEdit} title={v.blurb} onClick={() => applyVibe(v)}>{v.label}</Btn>)}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', margin: '0 0 6px' }}>
-                <p style={{ fontSize: 11.5, color: UI.mut, margin: 0 }}>Look · {LOOKS.find(l => l.key === (p.look || 'stay'))?.label}</p>
+                <p style={{ fontSize: 11.5, color: UI.mut, margin: 0 }}>Look · {LOOKS.find(l => l.key === (p.look || DEFAULT_LOOK))?.label}</p>
                 {canEdit ? <span style={{ marginLeft: 'auto' }}><Btn small onClick={surprise} title="A random look and style — keep pressing to explore">🎲 Surprise me</Btn></span> : null}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 6, marginBottom: 6 }}>
                 {looksShown(p.look).map(l => (
                   <button key={l.key} disabled={!canEdit} title={l.blurb} onClick={() => change(d => ({ ...d, look: l.key, style: { ...STYLE_DEFAULT, pace: d.style?.pace || 'normal', frame: d.style?.frame || 'none' } }))}
-                    style={{ padding: 0, border: '2px solid ' + ((p.look || 'stay') === l.key ? UI.gold : UI.line), borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: UI.panel2, color: UI.ink, textAlign: 'left' }}>
+                    style={{ padding: 0, border: '2px solid ' + ((p.look || DEFAULT_LOOK) === l.key ? UI.gold : UI.line), borderRadius: 8, overflow: 'hidden', cursor: 'pointer', background: UI.panel2, color: UI.ink, textAlign: 'left' }}>
                     <LookPreview proj={p} look={l.key} style={{}} assets={assets} w={100} />
                     <span style={{ display: 'block', fontSize: 10.5, fontWeight: 700, padding: '3px 5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l.label}</span>
                   </button>
                 ))}
               </div>
-              <div style={{ marginBottom: 10 }}><Btn small onClick={() => setMoreLooks(!moreLooks)}>{moreLooks ? 'Fewer looks' : 'More looks (' + (LOOKS.length - LOOKS_FEATURED.length) + ')'}</Btn></div>
+              <div style={{ marginBottom: 10, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {canEdit ? <Btn small disabled={(p.look || DEFAULT_LOOK) === DEFAULT_LOOK && JSON.stringify({ ...STYLE_DEFAULT, pace: (p.style || STYLE_DEFAULT).pace }) === JSON.stringify({ ...STYLE_DEFAULT, ...(p.style || {}) }) && !p.scenes.some(x => x.cu?.accent || x.cu?.text)}
+                  title="Back to the house look — Stay black, white type, the Stay logo — and clear colour overrides (photos, words and graphics stay)"
+                  onClick={() => change(d => ({ ...d, look: DEFAULT_LOOK, style: { ...STYLE_DEFAULT, pace: d.style?.pace || STYLE_DEFAULT.pace }, scenes: d.scenes.map(x => { if (!x.cu) return x; const n: any = { ...x.cu }; delete n.accent; delete n.text; return { ...x, cu: Object.keys(n).length ? n : undefined } }) }))}>↺ Default look</Btn> : null}
+                <Btn small onClick={() => setMoreLooks(!moreLooks)}>{moreLooks ? 'Fewer looks' : 'More looks (' + (LOOKS.length - LOOKS_FEATURED.length) + ')'}</Btn>
+              </div>
               </Fold>
               {!isFlyer ? (
               <Fold id="music" title={'Music · ' + track(p.music).label} folded={!!folded['music']} onToggle={toggleFold}>
@@ -2333,6 +2396,14 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   ) : null}
                 </div>
               ))}
+              {/* the transitions, sitting on the seams like Final Cut's — click one to change it */}
+              {p.scenes.map((s, i) => i === 0 ? null : (
+                <button key={'tr' + s.id} type="button" disabled={!canEdit} onClick={e => { e.stopPropagation(); pick(i); setTrPick(true) }}
+                  title={'Transition: ' + (trMeta(s.tr || 'auto')?.label || 'Auto') + (s.tr === 'cut' ? '' : ' · ' + (s.trs === 'short' ? 'quick' : s.trs === 'long' ? 'slow' : 'normal')) + ' — click to change'}
+                  style={{ position: 'absolute', left: `calc(${pct(tl.starts[i])}% - 13px)`, top: 27, width: 22, height: 20, borderRadius: 5, border: '1px solid ' + (i === sel ? '#fff' : 'rgba(255,255,255,.35)'), background: s.tr === 'cut' ? '#2A313C' : 'linear-gradient(90deg, #3a4657 0 50%, #59677a 50% 100%)', color: '#fff', fontSize: 10, lineHeight: '18px', padding: 0, cursor: canEdit ? 'pointer' : 'default', zIndex: 2, boxShadow: '0 1px 4px rgba(0,0,0,.5)' }}>
+                  {s.tr === 'cut' ? '|' : '⋈'}
+                </button>
+              ))}
             </div>
             <span style={{ fontSize: 10.5, color: UI.mut, alignSelf: 'center' }}>Voice</span>
             <div style={{ position: 'relative', height: 22 }}>
@@ -2354,6 +2425,15 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             <div style={{ position: 'absolute', top: 0, bottom: 0, left: `calc(64px + (100% - 64px) * ${tl.total ? t / tl.total : 0})`, width: 2, background: UI.red, pointerEvents: 'none' }} />
           </div>
         </div>
+      ) : null}
+      {trPick && p && sc && sel > 0 ? (
+        <TransitionPicker proj={p} from={p.scenes[sel - 1]} to={sc} current={sc.tr || 'auto'} assets={assets} display={display}
+          scope={trAll ? 'all' : 'one'} onScope={k => setTrAll(k === 'all')} onClose={() => setTrPick(false)}
+          onPick={k => { setTr({ tr: k }, trAll); setTrPick(false) }} />
+      ) : null}
+      {fxPick && p && sc ? (
+        <GraphicsPicker proj={p} scene={sc} on={sc.fx || []} assets={assets} display={display}
+          scope={fxAll ? 'all' : 'one'} onScope={k => setFxAll(k === 'all')} onClose={() => setFxPick(false)} onToggle={toggleFx} />
       ) : null}
       {picker && p && sc ? (
         <AdDesignPicker proj={p} assets={assets} display={display} onClose={() => setPicker(null)}
