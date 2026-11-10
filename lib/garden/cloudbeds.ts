@@ -196,7 +196,9 @@ export async function getReservations(opts: { from: string; to: string; modified
   const seen = new Map<string, CbReservation>()
   const pull = async (params: Record<string, string | number | undefined>) => {
     for (let page = 1; page <= 30; page++) {
-      const { data } = await cbGet<any[]>('getReservations', { ...params, includeGuestsDetails: 'true', pageNumber: page, pageSize: size })
+      // includeAllRooms: without it Cloudbeds leaves `rooms` off every reservation (2026-11-10: every
+      // reservation had no room, so rooms showed no guest, occupancy read 0 and no cleans were made).
+      const { data } = await cbGet<any[]>('getReservations', { ...params, includeGuestsDetails: 'true', includeAllRooms: 'true', pageNumber: page, pageSize: size })
       const rows = Array.isArray(data) ? data : []
       for (const r of rows) { const x = normReservation(r); if (x.id) seen.set(x.id, x) }
       if (rows.length < size) break
