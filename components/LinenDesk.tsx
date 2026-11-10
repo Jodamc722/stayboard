@@ -163,7 +163,6 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
           {ready && <Pill title="Items on the standard that are counted (switched-off items are kept but not counted)">{activeCount} items</Pill>}
           {ready && <Pill title="Sets in rotation: one on the bed, one in the wash, one on the shelf">par {draft.par}</Pill>}
           {dirty && <Pill tone="amber" title="The standard has edits that are not saved yet — the calculator and quote already use them; the documents wait for a save">unsaved</Pill>}
-          <PublicLinenLink />
           <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" role="tablist">
             {TABS.map(([k, label, tip]) => (
               <button key={k} role="tab" aria-selected={view === k} onClick={() => go(k)} title={tip}
@@ -1444,19 +1443,5 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
         onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(all[tier], label + (d.copies > 1 ? ' ×' + d.copies : ''))); return true } catch { return false } }} />
       </PricingFold>
     </div>
-  )
-}
-
-/** THE PUBLIC LINEN CALCULATOR (Jon, 2026-11-10: "linen calculator as a link, no login or password").
- *  /kit/linens counts from the SAVED standard, without prices, vendors or SKUs. */
-function PublicLinenLink() {
-  const [done, setDone] = useState(false)
-  const copy = async () => { const link = window.location.origin + '/kit/linens'; try { await navigator.clipboard.writeText(link); setDone(true); setTimeout(() => setDone(false), 1800) } catch { window.prompt('Copy this link', link) } }
-  return (
-    <span className="inline-flex items-center gap-1">
-      <button type="button" onClick={copy} title="A link anyone can open, no login or password: beds, bathrooms and guests in, every linen piece and how many out, from the saved standard (no prices, vendors or SKUs)"
-        className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">{done ? 'Copied' : 'Calculator link'}</button>
-      <a href="/kit/linens" target="_blank" rel="noopener noreferrer" title="Open the public linen calculator" className="inline-flex items-center rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">Open</a>
-    </span>
   )
 }
