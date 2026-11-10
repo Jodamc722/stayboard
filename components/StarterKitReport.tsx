@@ -215,7 +215,7 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
         <section className="skr-sec">
           <div className="skr-sec-h"><h2>How we size your home</h2><p>Simple rules, so a full house never runs short between turns.</p></div>
           <div className="skr-rules">
-            <div><b>{Math.ceil(size.guests * 1.5)}</b><span>place settings</span><p>{!size.kitchen ? 'Tall glasses at 1.5 per guest, so there is always a clean one between turns.' : 'Flatware, plates and tall glasses at 1.5 per guest, so the dishwasher can run while the next meal is served.'}</p></div>
+            <div><b>{size.guests * 2}</b><span>place settings</span><p>{!size.kitchen ? 'Tall glasses at two per guest, so there is always a clean one.' : 'Flatware, plates and tall glasses at two per guest, the vacation-rental standard, so a full house can eat twice before anything is washed.'}</p></div>
             <div><b>{size.guests}</b><span>of each glass</span><p>Wine glasses, mugs and short glasses at one per guest, bought in sets of four.</p></div>
             <div><b>{Math.max(1, size.bathrooms)}</b><span>bath kits</span><p>A hair dryer, a plunger and brush set and a touchless trash can for every bathroom.</p></div>
             <div><b>{Math.max(1, size.bedrooms) * 20}</b><span>hangers</span><p>Twenty wooden hangers and a luggage rack for every bedroom.</p></div>

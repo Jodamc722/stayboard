@@ -65,7 +65,7 @@ export default async function StarterKitOrderPage({ params }: { params: { code: 
             )
           })}
         </table>
-        <p className="sko-fine">Counts are sized to the home: place settings at 1.5 per guest, glasses per guest, bath items per bathroom, hangers and luggage racks per bedroom. Must-haves are what every home needs; the owner can use our pick, their own, or provide it. Coffee pods are supplied by Stay. Linen is quoted separately.</p>
+        <p className="sko-fine">Counts are sized to the home: place settings at two per guest, glasses per guest, bath items per bathroom, hangers and luggage racks per bedroom. Must-haves are what every home needs; the owner can use our pick, their own, or provide it. Coffee pods are supplied by Stay. Linen is quoted separately.</p>
       </main>
     </div>
   )
