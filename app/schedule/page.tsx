@@ -6,7 +6,7 @@
 // report, and it already sits on Today in Ops as the People footer), and the capacity strip folded
 // into a header Pill that opens it (ScheduleHead).
 import { Shell } from '@/components/Shell'
-import { ScheduleBoard } from '@/components/ScheduleBoard'
+import { ScheduleTabs } from './ScheduleTabs'
 import { ScheduleHead } from './ScheduleHead'
 
 export const dynamic = 'force-dynamic'
@@ -15,8 +15,9 @@ export default function SchedulePage() {
   return (
     <Shell>
       <ScheduleHead />
-      {/* Tomorrow at a glance (Jon, 2026-10-01): the schedule check lives here, not in Slack. */}
-      <ScheduleBoard />
+      {/* Tomorrow at a glance (Jon, 2026-10-01): the schedule check lives here, not in Slack.
+          Board | Multi-calendar tabs at the top (Jon, 2026-11-10). */}
+      <ScheduleTabs />
     </Shell>
   )
 }
