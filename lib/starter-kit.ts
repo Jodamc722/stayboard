@@ -18,7 +18,7 @@
 // live here. That is separate") — linen is its own quote and expense, on Onboarding → Linens.
 
 export type KitTier = 'must' | 'recommended' | 'optional'
-/** What a line scales with. `settings` is place settings: 1.5 per guest, so a turn never runs short. */
+/** What a line scales with. `settings` is place settings: 2 per guest, the vacation-rental standard (see lib/need-list.ts). */
 export type KitPer = 'unit' | 'bedroom' | 'bathroom' | 'guest' | 'settings'
 /** One model to choose from on an item that offers a choice (the coffee maker: Nespresso or Keurig). */
 export type KitOption = { id: string; group: string; name: string; detail: string; price: number; url: string; approx: boolean }
@@ -166,7 +166,7 @@ function driver(it: KitItem, z: KitSize): number {
     case 'bedroom': return Math.max(1, z.bedrooms)
     case 'bathroom': return Math.max(1, z.bathrooms)
     case 'guest': return z.guests
-    case 'settings': return Math.ceil(z.guests * 1.5)
+    case 'settings': return z.guests * 2
     default: return 1
   }
 }

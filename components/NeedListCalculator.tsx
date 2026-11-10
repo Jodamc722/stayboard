@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, FileSpreadsheet, Link2, Minus, Plus, Users } from 'lucide-react'
 import { APPLIANCES, SIZE_LIMITS, describeSize, type KitCount, type KitSize } from '@/lib/starter-kit'
 import { NEED_ROOMS, needList } from '@/lib/need-list'
+import { NeedPicture } from '@/components/NeedIcons'
 import { paramsFromSize, sizeFromParams, type NeedParams } from '@/lib/starter-kit-params'
 
 const TYPE = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
@@ -104,7 +105,7 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
                 <tr className="cat"><td colSpan={3}>{room}</td></tr>
                 {rows.map(l => (
                   <tr key={l.item.key}>
-                    <td><b>{l.item.name}</b><small>{l.rule}</small></td>
+                    <td><div className="nlc-it"><span className="nlc-pic"><NeedPicture k={l.item.key} name={l.item.name} /></span><span><b>{l.item.name}</b><small>{l.rule}</small></span></div></td>
                     <td><i className={'nlc-tier ' + l.tier}>{TYPE[l.tier]}</i></td>
                     <td className="n"><span className="nlc-q">{l.count}</span></td>
                   </tr>
@@ -113,7 +114,7 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
             )
           })}
         </table>
-        <p className="nlc-fine">Counts are pieces, sized to the home: plates, bowls, flatware and tall glasses at 1.5 place settings per guest; mugs, wine and short glasses one per guest; bath items per bathroom; hangers and luggage racks per bedroom. Must-haves are what every home needs, whoever supplies them. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
+        <p className="nlc-fine">Counts are pieces, sized to the home. Plates, bowls, mugs, tall glasses and everyday flatware follow the vacation-rental standard of two place settings per guest, so a full house can eat twice before anything is washed. Wine glasses are 1.5 per guest to allow for breakage. Bath items are per bathroom; hangers (20) and luggage racks per bedroom; smoke alarms one per bedroom plus one outside the bedrooms (check local code). Homes for 10 or more guests get a second coffee maker and extra pans, boards and serving pieces. Must-haves are what every home needs, whoever supplies them. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
       </main>
     </div>
   )
@@ -160,6 +161,7 @@ const CSS = `
 .nlc-t tr.cat td{font-family:var(--display);font-size:20px;padding-top:20px;border-bottom:1px solid var(--ink)}
 .nlc-tier{font-style:normal;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .nlc-tier.must{background:#E1EAF5;color:#1C4A7E}.nlc-tier.recommended{background:#E0EFE4;color:#25633A}.nlc-tier.optional{background:#ECEFF1;color:#56626B}
+.nlc-it{display:flex;align-items:center;gap:12px}.nlc-pic{flex:none;width:52px;height:52px;border-radius:12px;background:var(--soft);color:var(--accent);display:grid;place-items:center}
 .nlc-q{font-family:var(--display);font-size:24px}
 .nlc-fine{margin-top:22px;font-size:12.5px;color:var(--muted)}
 @media (max-width:560px){.nlc-counts{grid-template-columns:1fr}.nlc-t th:nth-child(2),.nlc-t td:nth-child(2){padding-inline:4px}}
