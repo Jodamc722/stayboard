@@ -88,7 +88,7 @@ export function NeedListCalculator({ initial, mode = 'share', children }: { init
     const out: string[] = []
     if (multi || view === 'order') {
       out.push(`Full order — ${units.length} unit${units.length === 1 ? '' : 's'} (${gradeLabel})`, '')
-      for (const r of order) out.push(`- ${r.qty.reduce((a, b) => a + b, 0)} × ${r.line.name}  [${units.map((u, i) => `${u.name}: ${r.qty[i]}`).join(', ')}]  ${r.line.shop[grade].url}`)
+      for (const r of order) out.push(`- ${r.qty.reduce((a, b) => a + b, 0)} × ${r.line.name}  [${units.map((u, i) => `${u.name}: ${r.qty[i]}`).join(', ')}]  ${r.line.shop[grade].pick || r.line.shop[grade].url}`)
     } else if (cur && size) {
       out.push(`What the home needs — ${describeSize(size)}`, '')
       for (const room of NEED_ROOMS) {
@@ -103,7 +103,7 @@ export function NeedListCalculator({ initial, mode = 'share', children }: { init
     return out.join('\n')
   }
   const shopA = (b: BuyLine, label = 'Shop') => (
-    <span className="nlc-shopw"><a className="nlc-shop" href={b.shop[grade].url} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /> {label}</a>{b.shop[grade].pinned && <span className="nlc-pick" title="The exact product on Stay’s own list"><Star size={11} /> Stay’s pick</span>}</span>
+    <span className="nlc-shopw"><a className="nlc-shop" href={b.shop[grade].url} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /> {label}</a>{b.shop[grade].pick && <a className="nlc-pick" href={b.shop[grade].pick} target="_blank" rel="noopener noreferrer" title="The exact product on Stay’s own list"><Star size={11} /> Stay’s pick</a>}</span>
   )
 
   return (
@@ -222,11 +222,11 @@ export function NeedListCalculator({ initial, mode = 'share', children }: { init
             })}
           </table>
         ) : null}
-        <p className="nlc-fine">Counts are pieces, sized to the home. Dinner plates, bowls, tall glasses, dinner forks, table knives and soup spoons follow the vacation-rental standard of two place settings per guest, so a full house can eat twice before anything is washed; side plates, mugs, wine and short glasses and teaspoons are one per guest. Where things are sold as a set we list the set, and anything the sets leave short is bought separately. Bath items are per bathroom; hangers (20) and luggage racks per bedroom; smoke alarms one per bedroom plus one outside the bedrooms (check local code). Homes for 10 or more guests get a second coffee maker and extra pans, boards and serving pieces. Shop opens Amazon; where it says Stay’s pick next to it, the link is the exact product on Stay’s own list, otherwise it is an Amazon search for that grade of the item. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
+        <p className="nlc-fine">Counts are pieces, sized to the home. Dinner plates, bowls, tall glasses, dinner forks, table knives and soup spoons follow the vacation-rental standard of two place settings per guest, so a full house can eat twice before anything is washed; side plates, mugs, wine and short glasses and teaspoons are one per guest. Where things are sold as a set we list the set, and anything the sets leave short is bought separately. Bath items are per bathroom; hangers (20) and luggage racks per bedroom; smoke alarms one per bedroom plus one outside the bedrooms (check local code). Homes for 10 or more guests get a second coffee maker and extra pans, boards and serving pieces. Shop opens Amazon to that grade of the item; Stay’s pick, where shown, opens the exact product on Stay’s own list. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
         <section className="nlc-cta" aria-label="Contact Stay Hospitality">
-          <div><b>Want it bought, delivered and set up for you?</b><span>Book a call with {STAY_CONTACT.person ? `${STAY_CONTACT.person.name}, ${STAY_CONTACT.person.role.toLowerCase()} at ${STAY_CONTACT.company}` : STAY_CONTACT.company}. We furnish and manage short-term rentals across Miami-Dade and Broward and will quote the whole kit.</span></div>
+          <div><b>Want help managing your rental in South Florida?</b><span>Give {STAY_CONTACT.person?.name.split(' ')[0] || 'us'} a call and see how we can help. {STAY_CONTACT.person ? `${STAY_CONTACT.person.name}, ${STAY_CONTACT.person.role.toLowerCase()} at ${STAY_CONTACT.company}.` : ''}</span></div>
           <div className="nlc-cta-c">
-            <a href={callTel()}><Phone size={14} /> Book a call · {STAY_CONTACT.person?.phone || STAY_CONTACT.phone}</a>
+            <a href={callTel()}><Phone size={14} /> Call Nick · {STAY_CONTACT.person?.phone || STAY_CONTACT.phone}</a>
             <a href={callMail()}><Mail size={14} /> {STAY_CONTACT.person?.email || STAY_CONTACT.email}</a>
             <a href={STAY_CONTACT.webUrl} target="_blank" rel="noopener">{STAY_CONTACT.web}</a>
           </div>
@@ -348,7 +348,7 @@ const CSS = `
 .nlc-uhead .nlc-del{color:#A3302A}
 .nlc-grade{display:inline-flex;border:1px solid var(--line);border-radius:999px;padding:3px}
 .nlc-grade button{border:0;background:none;border-radius:999px;padding:6px 14px;font:600 13px var(--ui);color:var(--muted);cursor:pointer}.nlc-grade button.on{background:var(--accent);color:#fff}
-.nlc-shopw{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}.nlc-pick{display:inline-flex;align-items:center;gap:3px;background:var(--soft,#E2EFED);color:var(--accent);border-radius:999px;padding:2px 8px;font:600 11px var(--ui)}
+.nlc-shopw{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}.nlc-pick{text-decoration:none;display:inline-flex;align-items:center;gap:3px;background:var(--soft,#E2EFED);color:var(--accent);border-radius:999px;padding:2px 8px;font:600 11px var(--ui)}
 .nlc-shop{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font:600 12.5px var(--ui);text-decoration:none;white-space:nowrap}.nlc-shop:hover{text-decoration:underline}
 .nlc-how{color:var(--ink)!important;margin-top:2px}
 .nlc-setrow td{background:var(--soft);border-bottom:1px solid var(--line)}

@@ -26,7 +26,7 @@ function letterhead(cols: number, title: string, sub: string): { rows: XCell[][]
     rows: [
       pad([C(`${STAY_CONTACT.company.toUpperCase()}   ·   ${title}`, 11)], cols, 11),
       pad([C(sub, 12)], cols, 12),
-      pad([C(`Want it bought, delivered and set up for you?  Book a call with ${STAY_CONTACT.person?.name || STAY_CONTACT.company}`, 22)], cols, 22),
+      pad([C(`Want help managing your rental in South Florida?  Give ${STAY_CONTACT.person?.name.split(' ')[0] || 'us'} a call and see how we can help.`, 22)], cols, 22),
       pad([C([STAY_CONTACT.person?.phone || STAY_CONTACT.phone, STAY_CONTACT.person?.email || STAY_CONTACT.email, STAY_CONTACT.web].join('   ·   '), 22)], cols, 22),
       [],
     ],
@@ -62,12 +62,13 @@ export function buildNeedListXlsx(units: NeedUnit[], showOpt: boolean, grade: Gr
       rows.push([C(r.line.name, 15), C(kind, 16), ...r.qty.map(q => N(q)),
         ...(multi ? [{ v: '', f: `SUM(${colRef(2)}${row}:${colRef(1 + units.length)}${row})`, s: 17 } as XCell] : []),
         C('Shop', 21),
-        C(r.line.shop[grade].pinned ? "★ Stay's pick" : '', 19),
+        C(r.line.shop[grade].pick ? "★ Stay's pick" : '', 19),
         C(r.line.contents ? r.line.contents.map(c => `${c.per} ${c.name.toLowerCase()}`).join(', ') : '', 16)])
       links.push({ ref: colRef(shopCol) + row, url: r.line.shop[grade].url })
+      if (r.line.shop[grade].pick) links.push({ ref: colRef(shopCol + 1) + row, url: r.line.shop[grade].pick! })
     }
   }
-  rows.push([], [C(`Sets are listed where items are sold as sets; anything a set leaves short is bought separately. Shop opens the product on Amazon; a star under Stay's pick means it is the exact product on Stay's own list, otherwise Shop opens an Amazon search for ${gradeLabel.toLowerCase()} grade. The coffee maker is a Nespresso or Keurig pod machine. Linen is quoted separately.`, 25)])
+  rows.push([], [C(`Sets are listed where items are sold as sets; anything a set leaves short is bought separately. Shop opens Amazon to that grade of the item; Stay's pick, where shown, opens the exact product on Stay's own list. The coffee maker is a Nespresso or Keurig pod machine. Linen is quoted separately.`, 25)])
   head.merges.push(`A${rows.length}:${colRef(cols - 1)}${rows.length}`)
   head.heights[rows.length] = 48
   const buySheet: XSheet = { name: multi ? 'Full order' : 'What to buy', widths: [46, 9, ...units.map(() => multi ? 12 : 8), ...(multi ? [9] : []), 10, 14, 54], rows, links,

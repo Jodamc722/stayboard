@@ -20,16 +20,21 @@ export const GRADES: { k: Grade; label: string; hint: string }[] = [
   { k: 'mid', label: 'Mid', hint: 'Better materials, Stay’s usual pick' },
   { k: 'lux', label: 'Luxury', hint: 'Premium brands and finishes' },
 ]
-export type ShopLink = { url: string; pinned: boolean }
+export type ShopLink = { url: string; pinned: boolean; pick?: string }
 export type Shop = Record<Grade, ShopLink>
 
-const search = (q: string): ShopLink => ({ url: 'https://www.amazon.com/s?k=' + encodeURIComponent(q), pinned: false })
-const dp = (asin: string): ShopLink => ({ url: 'https://www.amazon.com/dp/' + asin, pinned: true })
-/** Three searches from one base query and a grade word for each. */
+// Jon, 2026-11-10: "Shop should send them directly to Amazon and Stay's pick should be a specific item,
+// with its own link". So `url` is always the Amazon search for that grade, and `pick` (when there is one)
+// is the exact product page on Stay's own list, shown as its own "Stay's pick" link next to Shop.
+const amazon = (q: string) => 'https://www.amazon.com/s?k=' + encodeURIComponent(q)
+const link = (q: string, asin?: string): ShopLink => asin
+  ? { url: amazon(q), pinned: true, pick: 'https://www.amazon.com/dp/' + asin }
+  : { url: amazon(q), pinned: false }
+/** Three searches from one base query and a grade word for each, plus Stay's exact product where pinned. */
 const S = (base: string, std: string, mid: string, lux: string, pin?: Partial<Record<Grade, string>>): Shop => ({
-  std: pin?.std ? dp(pin.std) : search(`${std} ${base}`.trim()),
-  mid: pin?.mid ? dp(pin.mid) : search(`${mid} ${base}`.trim()),
-  lux: pin?.lux ? dp(pin.lux) : search(`${lux} ${base}`.trim()),
+  std: link(`${std} ${base}`.trim(), pin?.std),
+  mid: link(`${mid} ${base}`.trim(), pin?.mid),
+  lux: link(`${lux} ${base}`.trim(), pin?.lux),
 })
 
 // ── sets ─────────────────────────────────────────────────────────────────────────────────────────────

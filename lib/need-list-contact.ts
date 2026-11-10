@@ -16,7 +16,7 @@ export const STAY_CONTACT: NeedContact = {
   person: { name: 'Nick Carline', role: 'Business Development', phone: '(651) 200-8283', email: 'nicholas@stay-hospitality.com' },
 }
 export const contactLine = (c: NeedContact = STAY_CONTACT) =>
-  [c.person ? `Book a call with ${c.person.name}` : '', c.person?.phone || c.phone, c.person?.email || c.email, c.web].filter(Boolean).join('  ·  ')
+  [c.person ? `Want help managing your rental in South Florida? Call ${c.person.name}` : '', c.person?.phone || c.phone, c.person?.email || c.email, c.web].filter(Boolean).join('  ·  ')
 /** The sales call: a tel: link and a mailto: with a subject, for the "Book a call" buttons. */
 export const callTel = (c: NeedContact = STAY_CONTACT) => 'tel:+1' + (c.person?.phone || c.phone).replace(/\D/g, '')
-export const callMail = (c: NeedContact = STAY_CONTACT) => `mailto:${c.person?.email || c.email}?subject=${encodeURIComponent('Book a call: setting up my rental')}`
+export const callMail = (c: NeedContact = STAY_CONTACT) => `mailto:${c.person?.email || c.email}?subject=${encodeURIComponent('Help managing my rental')}`
