@@ -15,6 +15,7 @@
 // generates music and sound effects with ElevenLabs and keeps them as a playlist; any scene can carry
 // a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
 import StudioHome, { KIND_META } from './StudioHome'
+import AdDesignPicker from './AdDesignPicker'
 import AdScript from './AdScript'
 import { buildingsIn, inBuildings, byPlace, type AreaKey } from '@/lib/ad-places'
 import { type Moment, MOMENTS } from '@/lib/marketing-calendar'
@@ -136,7 +137,24 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [saved, setSaved] = useState<'saved' | 'saving' | 'dirty' | ''>('')
   const [brief, setBrief] = useState('')
   const [seconds, setSeconds] = useState(30)
-  const [side, setSide] = useState<'ads' | 'stories' | 'templates' | 'videos' | 'sounds' | 'ideas'>('ads')
+  // THE EDITOR, SIMPLER (Jon, 2026-11-10: "audit and fix the ad studio to make it easier to use"): the left panel is
+  // gone — one right panel with two tabs (this scene / the whole ad), a one-row top bar with a ⋯ menu, a visual
+  // design picker, and undo/redo for every edit.
+  const [tab, setTab] = useState<'scene' | 'ad'>('scene')
+  const [menu, setMenu] = useState(false)
+  const [picker, setPicker] = useState<null | 'change' | 'add'>(null)
+  const [moreStart, setMoreStart] = useState(false)
+  const [planMusic, setPlanMusic] = useState(false)
+  const [ideasOpen, setIdeasOpen] = useState(false)
+  /** The ElevenLabs maker, opened where it is needed: under Music (whole ad) or under Sound effect (scene). */
+  const [sndOpen, setSndOpen] = useState<'' | 'music' | 'sfx'>('')
+  const [lastId, setLastId] = useState('')
+  /** Undo / redo: whole-project snapshots. Typing coalesces into one step (a new step after 0.9 s of quiet). */
+  const hist = useRef<{ past: AdProject[]; future: AdProject[]; at: number }>({ past: [], future: [], at: 0 })
+  const [histN, setHistN] = useState<[number, number]>([0, 0])
+  const resetHist = () => { hist.current = { past: [], future: [], at: 0 }; setHistN([0, 0]) }
+  /** What a fresh start carries into the ad once it is built (kind, calendar moment) — nothing is saved before that. */
+  const startPatch = useRef<Partial<AdProject> | null>(null)
   const [audit, setAudit] = useState<Audit | null>(null)
   const [showAudit, setShowAudit] = useState(false)
   /** The first-pass review shown when an ad is freshly built: score before → after the touch-up, and what changed. */
@@ -147,9 +165,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [picked, setPicked] = useState<string[]>([])
   /** Collapsed inspector sections, remembered per browser. */
   const [folded, setFolded] = useState<Record<string, boolean>>({})
-  useEffect(() => { try { const v = localStorage.getItem('ads.folded'); if (v) setFolded(JSON.parse(v)) } catch { /* fine */ } }, [])
+  // The rarely-used sections start closed; anything you have opened or closed yourself is remembered.
+  useEffect(() => { let saved: Record<string, boolean> = {}; try { const v = localStorage.getItem('ads.folded'); if (v) saved = JSON.parse(v) || {} } catch { /* fine */ } setFolded({ motion: true, graphics: true, sound: true, style: true, brief: true, voice: true, ...saved }) }, [])
   const toggleFold = (id: string) => setFolded(f => { const n = { ...f, [id]: !f[id] }; try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } return n })
-  const setAllFolds = (v: boolean) => { const n: Record<string, boolean> = {}; ['ai', 'design', 'motion', 'words', 'photos', 'graphics', 'sound', 'whole'].forEach(k => (n[k] = v)); setFolded(n); try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } }
+  const setAllFolds = (v: boolean) => setFolded(f => { const n: Record<string, boolean> = { ...f }; (tab === 'scene' ? ['ai', 'design', 'motion', 'words', 'photos', 'graphics', 'sound'] : ['format', 'look', 'music', 'voice', 'style', 'brief']).forEach(k => (n[k] = v)); try { localStorage.setItem('ads.folded', JSON.stringify(n)) } catch { /* fine */ } return n })
   /** Script beside the player (Jon, 2026-11-04: "the script the most important part of walking through the video ads"). */
   const [beside, setBeside] = useState(true)
   useEffect(() => { try { const v = localStorage.getItem('ads.scriptBeside'); if (v != null) setBeside(v === '1') } catch { /* fine */ } }, [])
@@ -168,10 +187,9 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   // The "new ad" chooser (Jon, 2026-11-02: "when you select new ad it should let you decide how you
   // want to create it — prompt it, new visual, revamp, music vibe and goal").
   const [starting, setStarting] = useState(false)
-  const [ws, setWs] = useState(0)
   const [draft, setDraft] = useState<{ name: string; scenes: AdScene[]; settings: Plan['settings']; note: string } | null>(null)
-  const [st, setSt] = useState<{ mode: 'describe' | 'script' | 'template' | 'revamp' | 'blank'; prompt: string; goal: string; music: string; vibe: string; look: string; format: AdFormat | ''; from: string; audience: AdAudience; who: string; why: string; script: string }>({ mode: 'describe', prompt: '', goal: 'bookings', music: '', vibe: '', look: 'stay', format: '', from: '', audience: 'guests', who: '', why: '', script: '' })
-  const seed = useRef<{ fresh: boolean; look: string; goal: string; music: string; vibe: string } | null>(null)
+  const [st, setSt] = useState<{ mode: 'describe' | 'script' | 'template' | 'revamp' | 'blank' | 'story'; prompt: string; goal: string; music: string; vibe: string; look: string; format: AdFormat | ''; from: string; audience: AdAudience; who: string; why: string; script: string }>({ mode: 'describe', prompt: '', goal: 'bookings', music: '', vibe: '', look: 'stay', format: '', from: '', audience: 'guests', who: '', why: '', script: '' })
+  const seed = useRef<{ fresh: boolean; look: string; goal: string; music: string; vibe: string; patch?: Partial<AdProject> } | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [planNote, setPlanNote] = useState('')
   const [adAsk, setAdAsk] = useState('')
@@ -187,13 +205,16 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
   // Where photos come from: our library, or licensed stock (Jon, 2026-11-04).
-  const [photoSrc, setPhotoSrc] = useState<'library' | 'stock'>('library')
+  const [photoSrc, setPhotoSrc] = useState<'library' | 'stock' | 'video'>('library')
   const [stockNote, setStockNote] = useState('')
   const [searching, setSearching] = useState(false)
   const [exportPct, setExportPct] = useState<number | null>(null)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  /** True only while the editor itself is on screen with nothing over it — the keyboard shortcuts act then, and only then. */
+  const keysOn = useRef(false)
   const imgs = useRef<Record<string, HTMLImageElement>>({})
   const logo = useRef<HTMLImageElement | null>(null)
   const logos = useRef<{ gold: HTMLImageElement | null; black: HTMLImageElement | null; white: HTMLImageElement | null }>({ gold: null, black: null, white: null })
@@ -233,16 +254,15 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       if (quiet) { try { localStorage.removeItem('adstudio.last') } catch { /* fine */ } return }
       setErr(r?.error || 'Could not open that ad.'); return
     }
-    setErr(''); setPlan(null)
-    setP(r.project); setAudioUrl(r.audioUrl || null); setSel(0); setT(1.6); setSaved('saved'); setBrief(r.project.prompt || '')
+    setErr(''); setPlan(null); setDraft(null); setStarting(false); setShowAudit(false); setFirstPass(null); setAudit(null); setMenu(false); resetHist()
+    setP(r.project); pRef.current = r.project; setAudioUrl(r.audioUrl || null); setSel(0); setT(1.6); setSaved('saved'); setBrief(r.project.prompt || '')
     try { localStorage.setItem('adstudio.last', id) } catch { /* fine */ }
+    setLastId(id); setTab('scene'); try { if (panelRef.current) panelRef.current.scrollTop = 0 } catch { /* fine */ }
     setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    loadList().then(() => {
-      let last = ''
-      try { last = localStorage.getItem('adstudio.last') || '' } catch { /* fine */ }
-    })
+    loadList()
+    try { setLastId(localStorage.getItem('adstudio.last') || '') } catch { /* fine */ }
     const l = new Image(); l.src = '/ads/stay-logo-gold.png'; l.onload = () => { logo.current = l; logos.current.gold = l }
     ;(['black', 'white'] as const).forEach(c => { const im = new Image(); im.src = '/ads/stay-logo-' + c + '.png'; im.onload = () => { logos.current[c] = im } })
     loadLib(); loadSounds()
@@ -253,19 +273,32 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const r = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ new: true }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok) { setErr(r?.error || 'Could not start a new ad.'); return null }
-    stop(); setP(r.project); pRef.current = r.project; setAudioUrl(null); setSel(0); setT(1.6); setSaved('saved'); setBrief('')
+    stop(); resetHist(); setP(r.project); pRef.current = r.project; setAudioUrl(null); setSel(0); setT(1.6); setSaved('saved'); setBrief('')
+    setLastId(r.project.id); try { localStorage.setItem('adstudio.last', r.project.id) } catch { /* fine */ }
     loadList()
     return r.project
   }
   /** Videos library → Edit this video: an editable copy of a built-in sales video, opened in the editor. */
-  const editLibraryVideo = async (key: string) => {
+  const editLibraryVideo = async (key: string, existingId?: string) => {
+    // The editable copy you already have opens as it is — every press used to make another copy.
+    if (existingId) { await open(existingId); return }
     setBusy('import'); setErr('')
     const r = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fromLibrary: key }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok) { setErr(r?.error || 'Could not open that video for editing.'); return }
     await loadList(); await open(r.project.id)
   }
-  const openStart = () => { stop(); setPlan(null); setErr(''); setWs(0); setStarting(true); setSt(x => ({ ...x, prompt: '', vibe: '', from: '', who: '', why: '', script: '' })); setDraft(null) }
+  /** The start page for a video or a story. Nothing is created until it is built. */
+  const openStart = (mode: typeof st.mode = 'describe') => {
+    stop(); setPlan(null); setErr(''); setDraft(null); setShowAudit(false); setFirstPass(null); setMoreStart(false); setIdeasOpen(false); setMenu(false)
+    startPatch.current = { kind: mode === 'story' ? 'story' : 'video' }
+    setSt(x => ({ ...x, mode, prompt: '', vibe: '', from: '', who: '', why: '', script: '', music: '', format: '', look: 'stay', goal: 'bookings', audience: 'guests' }))
+    setStarting(true); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
+  }
+  /** Leave the start / plan / script pages without building. */
+  const cancelFlow = () => { const fresh = !!seed.current?.fresh || starting || !pRef.current; setStarting(false); setPlan(null); setDraft(null); seed.current = null; setErr(''); if (fresh) { setHome(true); loadList() } }
+  /** The areas this build is set in: the moment being started, else the open ad's. */
+  const whereNow = (): AreaKey[] => { const mk = seed.current?.fresh ? seed.current?.patch?.moment : pRef.current?.moment; return mk ? (MOMENTS.find(m => m.key === mk)?.where || []) : [] }
   const goalOf = (k: string) => GOALS.find(g => g.key === k)
   /** Brief extras the chooser adds: goal, music vibe and look, in words the planner and writer use. */
   const seedLines = () => [goalOf(st.goal)?.brief || '', st.why.trim() ? 'What we are trying to accomplish: ' + st.why.trim() + '.' : '', 'Audience: ' + AUD[st.audience].brief + (st.who.trim() ? ', specifically ' + st.who.trim() : '') + '.', st.vibe.trim() ? 'Music vibe: ' + st.vibe.trim() + '.' : st.music ? 'Music vibe: ' + (MUSIC.find(m => m.key === st.music)?.mood || '') + '.' : '', 'Visual style: ' + (LOOKS.find(l => l.key === st.look)?.blurb || '') + '.'].filter(Boolean).join(' ')
@@ -278,16 +311,26 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const mine = (r.sounds || []).find((x: any) => x.kind === 'music')
     if (mine) change(d => ({ ...d, music: mine.key }))
   }
-  const startGo = async () => {
-    const g = goalOf(st.goal)
-    const look = st.look, music = st.music, vibe = st.vibe
-    if (st.mode === 'describe') {
-      if (!st.prompt.trim()) { setErr('Describe the ad first — even one line, e.g. a cool video for Amrit.'); return }
-      seed.current = { fresh: true, look, goal: st.goal, music, vibe }
-      setBrief(st.prompt.trim()); setStarting(false)
-      await planAd(st.prompt.trim() + '\n\n' + seedLines(), { audience: st.audience, format: st.format || undefined })
+  /** Describe it → the plan to confirm (or, skipping the plan, straight to the build). */
+  const goPlan = async (skip?: boolean) => {
+    if (!st.prompt.trim()) { setErr('Say what the ad is about first — even one line, e.g. a cool video for Amrit.'); return }
+    setErr('')
+    seed.current = { fresh: true, look: st.look, goal: st.goal, music: st.music, vibe: st.vibe, patch: startPatch.current || undefined }
+    const text = st.prompt.trim()
+    setBrief(text)
+    if (skip) {
+      const set = { audience: st.audience, format: (st.format || '9:16') as AdFormat, seconds, music: st.music }
+      setBusy('write')
+      const w = await writeScenes(text + '\n\n' + seedLines(), set)
+      if (w) { await applyScenes(w.name, w.scenes, set, text); setStarting(false) }
+      setBusy('')
       return
     }
+    if (await planAd(text + '\n\n' + seedLines(), { audience: st.audience, format: st.format || undefined })) setStarting(false)
+  }
+  /** Revamp an ad we made, or start blank. */
+  const startGo = async () => {
+    const look = st.look, music = st.music, vibe = st.vibe
     if (st.mode === 'revamp') {
       if (!st.from) { setErr('Pick the ad to revamp.'); return }
       const src = await fetch('/api/ads?id=' + encodeURIComponent(st.from)).then(x => x.json()).catch(() => null)
@@ -296,7 +339,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       const n = await newAd(); if (!n) return
       setStarting(false); setBusy('adask')
       let scenes = S.scenes.map(x => ({ ...x, items: x.items.slice(), photos: x.photos.slice() }))
-      const base: AdProject = { ...n, name: S.name + ' · revamp', format: (st.format || S.format) as AdFormat, audience: st.audience, music: music || S.music, look, goal: st.goal, contact: S.contact, captions: S.captions, voiceId: S.voiceId, voiceName: S.voiceName, voiceSettings: S.voiceSettings, scenes }
+      const base: AdProject = { ...n, kind: S.kind || 'video', name: S.name + ' · revamp', format: (st.format || S.format) as AdFormat, audience: st.audience, music: music || S.music, look, goal: st.goal, contact: S.contact, captions: S.captions, voiceId: S.voiceId, voiceName: S.voiceName, voiceSettings: S.voiceSettings, moment: S.moment, scenes }
       const ask = 'REVAMP THIS AD: keep what works, make it fresher and stronger. ' + (st.prompt.trim() ? 'What to change: ' + st.prompt.trim() + '. ' : '') + seedLines()
       const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: ask, seconds, audience: AUD[base.audience].brief, format: base.format, current: base, where: whereOf(base) }) }).then(x => x.json()).catch(() => null)
       setBusy('')
@@ -308,19 +351,44 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       return
     }
     const n = await newAd(); if (!n) return
-    change(d => ({ ...d, look, goal: st.goal, audience: st.audience, music: music || d.music, format: (st.format || d.format) as AdFormat }))
-    setStarting(false)
-    if (st.mode === 'template') { setSide('templates'); vibeTrack(vibe); return }
+    change(d => ({ ...d, kind: 'video', look, goal: st.goal, audience: st.audience, music: music || d.music, format: (st.format || d.format) as AdFormat }))
+    setStarting(false); setTab('scene')
     vibeTrack(vibe)
+  }
+  /** A ready layout, filled with our photos — a new ad every time. */
+  const startTemplate = async (tp: AdTemplate) => {
+    if (!canEdit || busy) return
+    const n = await newAd(); if (!n) return
+    setStarting(false)
+    await applyTemplate(tp, true)
+    change(d => ({ ...d, kind: 'video' })); resetHist()
   }
 
   // ── editing + autosave ────────────────────────────────────────────────
   const change = (fn: (d: AdProject) => AdProject) => {
     if (!canEdit) return
+    // Undo: keep the state before this edit. A run of quick edits (typing, a slider) is one step.
+    const cur0 = pRef.current, H = hist.current, now = Date.now()
+    if (cur0 && (now - H.at > 900 || !H.past.length)) { H.past.push(cur0); if (H.past.length > 80) H.past.shift() }
+    H.at = now; H.future = []
+    setHistN([H.past.length, 0])
     setP(cur => (cur ? fn(cur) : cur))
     setSaved('dirty')
     clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(save, 1200)
+  }
+  const stepHist = (back: boolean) => {
+    if (!canEdit) return
+    const H = hist.current, cur = pRef.current
+    const from = back ? H.past : H.future, to = back ? H.future : H.past
+    if (!cur || !from.length) return
+    const prev = from.pop()!
+    if (prev.id !== cur.id) { resetHist(); return }
+    to.push(cur); H.at = 0
+    stop(); setP(prev); pRef.current = prev
+    setSel(i => Math.max(0, Math.min(i, prev.scenes.length - 1))); setPicked([]); setUndo(null)
+    setHistN([H.past.length, H.future.length])
+    setSaved('dirty'); clearTimeout(saveTimer.current); saveTimer.current = setTimeout(save, 600)
   }
   const save = async () => {
     const cur = pRef.current
@@ -375,21 +443,22 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (change_) setAdAsk('')
   }
   // ── plan first: sharpen the brief and confirm the details before anything is built ──
-  const planAd = async (override?: string, opt?: { audience?: AdAudience; format?: AdFormat }) => {
+  const planAd = async (override?: string, opt?: { audience?: AdAudience; format?: AdFormat }): Promise<boolean> => {
     const b = override || brief
-    if (!b.trim()) { setErr('Write a line about the ad first, e.g. "a cool video for Amrit".'); return }
+    if (!b.trim()) { setErr('Write a line about the ad first, e.g. "a cool video for Amrit".'); return false }
     if (!override) seed.current = null
     stop(); setBusy('plan'); setErr('')
     const r = await fetch('/api/ads/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brief: b, seconds, format: opt?.format || p?.format || '16:9', audience: opt?.audience || p?.audience || 'owners' }) }).then(x => x.json()).catch(() => null)
     setBusy('')
-    if (!r?.ok || !r.plan) { setErr(r?.error || 'Could not plan that one. Try again.'); return }
+    if (!r?.ok || !r.plan) { setErr(r?.error || 'Could not plan that one. Try again.'); return false }
     const pl: Plan = r.plan
     // What was picked in the chooser wins over the planner's suggestion.
     const sd = seed.current
     if (sd?.music) pl.settings.music = sd.music
     if (opt?.format) pl.settings.format = opt.format
-    setPlan(pl); setPlanNote('')
+    setPlan(pl); setPlanNote(''); setShowAudit(false)
     setAnswers(Object.fromEntries(pl.questions.map(q => [q.id, q.options[0]])))
+    return true
   }
   /** Rethink the plan with the answers and any note so far. */
   const replan = async () => {
@@ -415,13 +484,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** Ask the writer for scenes. */
   const writeScenes = async (prompt: string, set: Plan['settings'], current?: AdProject | null): Promise<{ name: string; scenes: AdScene[] } | null> => {
     setErr('')
-    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null, where: whereOf(pRef.current) }) }).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null, where: whereNow() }) }).then(x => x.json()).catch(() => null)
     if (!r?.ok || !r.scenes?.length) { setErr(r?.error || 'The writer did not answer. Try again.'); return null }
     if (r.warnings?.length) setErr('Fact check: ' + r.warnings.join(' · '))
     return { name: r.name || '', scenes: r.scenes }
   }
   /** Put finished scenes into an ad (a new one when the guide started it), with the chosen settings. */
-  const applyScenes = async (name: string, scenes: AdScene[], set: Plan['settings']) => {
+  const applyScenes = async (name: string, scenes: AdScene[], set: Plan['settings'], promptText?: string) => {
     const sd = seed.current
     let base = sd?.fresh ? null : pRef.current
     if (!base) {
@@ -432,8 +501,12 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     }
     setSeconds(set.seconds)
     const d0 = pRef.current || base
-    finishBuild({ ...d0, prompt: brief, name: name || d0.name, audience: set.audience, format: set.format, music: set.music || d0.music, look: sd?.look || d0.look, goal: sd?.goal || d0.goal, scenes })
-    setPlan(null); setDraft(null); setSel(0); setT(1.6); setUndo(null)
+    const pt = sd?.patch || {}
+    // The platform follows the shape that was chosen (a Reel start that became 16:9 is a web video).
+    const plat = PLATFORMS.find(x => x.key === (pt.platform || d0.platform) && x.format === set.format)?.key || PLATFORMS.find(x => x.format === set.format)?.key || d0.platform
+    finishBuild({ ...d0, ...pt, platform: plat, prompt: promptText ?? brief, name: name || d0.name, audience: set.audience, format: set.format, music: set.music || d0.music, look: sd?.look || d0.look, goal: sd?.goal || d0.goal, scenes })
+    setPlan(null); setDraft(null); setStarting(false); setHome(false); setTab('scene'); setSel(0); setT(1.6); setUndo(null)
+    if (sd?.fresh) resetHist()
     seed.current = null
     if (sd?.vibe) vibeTrack(sd.vibe)
   }
@@ -470,7 +543,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const layOutScript = async () => {
     if (!st.script.trim()) { setErr('Paste the script first.'); return false }
     const set = { audience: st.audience, format: (st.format || '16:9') as AdFormat, seconds: Math.max(15, Math.min(90, Math.round(st.script.trim().split(/\s+/).length / 2.5 / 15) * 15 || 30)), music: st.music }
-    seed.current = { fresh: true, look: st.look, goal: st.goal, music: st.music, vibe: st.vibe }
+    seed.current = { fresh: true, look: st.look, goal: st.goal, music: st.music, vibe: st.vibe, patch: startPatch.current || undefined }
     setBrief(st.prompt || 'From a script')
     setBusy('script')
     const w = await writeScenes('LAY OUT THIS SCRIPT AS SCENES. Keep the spoken words exactly as written (only split them across scenes; fix nothing but obvious typos). Choose the scene kinds, on-screen headlines and photoQuery words that fit each line.\n\n' + seedLines() + '\n\nTHE SCRIPT:\n' + st.script.trim(), set)
@@ -546,7 +619,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!p || !window.confirm('Go back to this version? The current state is kept as a version too.')) return
     const r = await fetch('/api/ads/versions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: p.id, ts }) }).then(x => x.json()).catch(() => null)
     if (!r?.ok) { setErr(r?.error || 'Could not restore.'); return }
-    stop(); setP(r.project); pRef.current = r.project; setAudioUrl(r.audioUrl || null); setSaved('saved'); setVersions(null); setSel(0); setT(1.6); setAudit(null)
+    stop(); resetHist(); setP(r.project); pRef.current = r.project; setAudioUrl(r.audioUrl || null); setSaved('saved'); setVersions(null); setSel(0); setT(1.6); setAudit(null)
   }
   // ── three headline options for the selected scene ──
   const headOptions = async () => {
@@ -565,14 +638,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const copy: AdProject = { ...p, id: n.project.id, name: p.name + ' · B', voice: null, status: 'draft', createdAt: n.project.createdAt, updatedAt: n.project.updatedAt }
     const sv = await fetch('/api/ads', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: copy }) }).then(x => x.json()).catch(() => null)
     if (!sv?.ok) { setErr(sv?.error || 'Could not save the copy.'); return }
-    stop(); setP(sv.project); pRef.current = sv.project; setAudioUrl(null); setSaved('saved'); setSel(0); setT(1.6); setAudit(null); loadList()
+    stop(); resetHist(); setMenu(false); setP(sv.project); pRef.current = sv.project; setAudioUrl(null); setSaved('saved'); setSel(0); setT(1.6); setAudit(null); loadList()
   }
   // ── start from an idea ──
   const useIdea = (idea: typeof IDEAS[number]) => {
-    openStart()
     const g = GOALS.find(x => x.key === idea.goal)
     setSt(x => ({ ...x, mode: 'describe', prompt: idea.prompt, goal: idea.goal, audience: g?.audience || 'guests' }))
-    setWs(1)
+    setIdeasOpen(false)
   }
   // ── safe-zone overlay on the preview (never in the export) ──
   useEffect(() => {
@@ -784,6 +856,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     return () => cancelAnimationFrame(raf)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => { try { if (panelRef.current) panelRef.current.scrollTop = 0 } catch { /* fine */ } }, [p?.id, home, tab])
   // Follow the playhead with the selection while playing; seek to a scene when it is picked.
   useEffect(() => { if (playing && tl) { const i = sceneAt(tl, t); if (i !== sel) setSel(i) } }, [t]) // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (i: number) => { setSel(i); if (tl && !playing) setT(tl.starts[i] + Math.min(1.6, tl.durs[i] * 0.6)) }
@@ -793,7 +866,9 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const h = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
-      if (!pRef.current) return
+      if (!pRef.current || !keysOn.current) return
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); stepHist(!e.shiftKey); return }
+      if (e.metaKey || e.ctrlKey || e.altKey) return
       if (e.key === ' ') { e.preventDefault(); if (play0.current) stop(); else { const T = timeline(pRef.current); start(tRef.current >= T.total - 0.05 ? 0 : tRef.current) } }
       else if (e.key === 'ArrowRight') { e.preventDefault(); const T = timeline(pRef.current); const i = Math.min(T.starts.length - 1, sel + 1); setSel(i); if (!play0.current) setT(T.starts[i] + Math.min(1.6, T.durs[i] * 0.6)) }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); const T = timeline(pRef.current); const i = Math.max(0, sel - 1); setSel(i); if (!play0.current) setT(T.starts[i] + Math.min(1.6, T.durs[i] * 0.6)) }
@@ -1014,10 +1089,11 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   // A story is a template that starts its own ad (Jon, 2026-11-03: our story, welcome, first 90 days, the team).
   const buildStory = async (st: AdStory) => {
     if (!canEdit || busy) return
-    let cur = pRef.current
-    if (!cur || cur.scenes.length > 2) { cur = await newAd(); if (!cur) return }
+    const cur = await newAd(); if (!cur) return
+    setStarting(false)
     await applyTemplate(st, true)
-    change(d => ({ ...d, name: st.name, audience: st.audience, format: st.format, goal: st.audience === 'partners' ? 'partners' : 'owners', look: d.look || 'stay' }))
+    resetHist()
+    change(d => ({ ...d, kind: 'story', name: st.name, audience: st.audience, format: st.format, goal: st.audience === 'partners' ? 'partners' : 'owners', look: d.look || 'stay' }))
   }
   const applyTemplate = async (tp: AdTemplate, quiet = false) => {
     const p = pRef.current
@@ -1048,7 +1124,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     }
     setBusy('')
     { const d0 = pRef.current || p; finishBuild({ ...d0, name: d0.name === 'Untitled ad' ? tp.name : d0.name, format: d0.goal ? d0.format : tp.format, audience: tp.audience, scenes }) }
-    setSel(0); setT(1.6); setSide('ads')
+    setSel(0); setT(1.6); setHome(false); setTab('scene')
   }
 
   // ── photos ────────────────────────────────────────────────────────────
@@ -1084,6 +1160,15 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!window.confirm('Delete "' + (row?.name || 'this piece') + '"? This cannot be undone.')) return
     await fetch('/api/ads?id=' + encodeURIComponent(id), { method: 'DELETE' })
     if (p?.id === id) { setP(null); pRef.current = null }
+    loadList()
+  }
+  const quickDeleteMany = async (ids: string[]) => {
+    if (!canDelete || !ids.length) return
+    if (!window.confirm('Delete ' + ids.length + ' piece' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return
+    setBusy('delete')
+    for (const id of ids) await fetch('/api/ads?id=' + encodeURIComponent(id), { method: 'DELETE' }).catch(() => null)
+    setBusy('')
+    if (p && ids.indexOf(p.id) >= 0) { setP(null); pRef.current = null }
     loadList()
   }
   const quickDuplicate = async (id: string) => {
@@ -1125,6 +1210,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos, dur: 6 }]
     setBusy('')
     change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(5.5); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
   /** An animated post: a 4–8 s loop — the moment scene, then the book-now card. */
@@ -1143,436 +1229,292 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (m?.fx) scenes[1].fx = m.fx
     setBusy('')
     change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || 'stay', moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(1.6); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
-  /** A video ad for a moment: the guided start, with the brief and the look already filled in. */
-  const startVideoFor = async (m?: Moment) => {
-    const cur = await newAd(); if (!cur) return
-    setHome(false)
-    if (m) change(d => ({ ...d, kind: 'video', name: m.name, look: m.look, moment: m.key, music: m.music || d.music, audience: m.audience === 'owners' ? 'owners' : 'guests', goal: m.audience === 'owners' ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings', format: '9:16', platform: 'reel' }))
-    else change(d => ({ ...d, kind: 'video' }))
-    openStart()
-    if (m) setSt(x => ({ ...x, mode: 'describe', prompt: m.brief, vibe: '' }))
+  /** A video ad (for a moment or not): the start page, with the brief and the look already filled in. Nothing is
+   *  saved until it is built — abandoned starts used to pile up in Your work as empty drafts. */
+  const startVideoFor = (m?: Moment) => {
+    openStart('describe')
+    if (!m) return
+    const owners = m.audience === 'owners'
+    startPatch.current = { kind: 'video', moment: m.key, platform: 'reel' }
+    setSt(x => ({ ...x, mode: 'describe', prompt: m.brief, vibe: '', look: m.look, music: m.music || '', format: '9:16', audience: owners ? 'owners' : 'guests', goal: owners ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings' }))
   }
-  const startStory = async () => {
-    const cur = await newAd(); if (!cur) return
-    change(d => ({ ...d, kind: 'story' }))
-    setHome(false); setSide('stories')
-  }
+  const startStory = () => openStart('story')
   const makeKind = (k: AdKindOf) => { if (k === 'flyer') startFlyer(); else if (k === 'post') startPost(); else if (k === 'story') startStory(); else startVideoFor() }
   const makeMoment = (m: Moment, k: AdKindOf) => { if (k === 'flyer') startFlyer(m); else if (k === 'post') startPost(m); else startVideoFor(m) }
-
-  const del = async () => {
-    if (!p || !canDelete) return
-    if (!window.confirm('Delete "' + p.name + '" and its voice takes? This cannot be undone.')) return
-    await fetch('/api/ads?id=' + encodeURIComponent(p.id), { method: 'DELETE' })
-    setP(null); loadList()
-  }
 
   // ─────────────────────────────── render ───────────────────────────────
   const sc = p ? p.scenes[sel] : null
   const [FW, FH] = p ? FORMATS[p.format] : [1920, 1080]
   const isFlyer = p?.kind === 'flyer'
-  const pw = FW >= FH ? (full ? 1280 : 960) : 540 * (FW / FH) * 1.6
-  const scriptSide = beside && !!p && (p.kind || 'video') !== 'flyer' && p.kind !== 'post'
+  const isSpoken = !!p && (p.kind || 'video') !== 'flyer' && p.kind !== 'post'
+  const scriptSide = beside && isSpoken
+  /** The start / plan / script pages: full width, no editor chrome. */
+  const flow = !home && (starting || !!plan || !!draft)
+  const editing = !home && !flow && !!p
+  const pw = FW >= FH ? (scriptSide ? 760 : full ? 1180 : 960) : 540 * (FW / FH) * 1.6
   const totalW = 100 // timeline is % based
   const pct = (x: number) => (tl ? (x / tl.total) * totalW : 0)
+  const goHome = () => { stop(); setMenu(false); setHome(true); loadList() }
+  keysOn.current = editing && !picker && !menu && !versions && !watch && !showAudit
+  const notice = /^(Fact check|The ad is ready|Copied the ad|Saved to your computer)/.test(err)
+  const card: React.CSSProperties = { background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 9, padding: 9 }
+  const choice = (on: boolean): React.CSSProperties => ({ textAlign: 'left', background: on ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (on ? UI.blue : UI.line), borderRadius: 9, padding: '9px 12px', cursor: 'pointer', color: UI.ink })
+
+  /** Make a music track or a sound effect with ElevenLabs — shown where it is needed. */
+  const soundMaker = (kind: 'music' | 'sfx') => (
+    <div style={{ ...card, marginTop: 8 }}>
+      <p style={{ fontSize: 12, fontWeight: 700, margin: '0 0 6px' }}>{kind === 'music' ? 'Compose a track with ElevenLabs' : 'Make a sound effect with ElevenLabs'}</p>
+      <textarea value={sndPrompt} onChange={e => setSndPrompt(e.target.value)} rows={2} style={{ ...field, fontSize: 12 }}
+        placeholder={kind === 'music' ? 'e.g. warm lounge house, sunset by the pool, upscale, steady beat' : 'e.g. soft whoosh · camera shutter · ocean waves · cash register ding'} />
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
+        {(kind === 'music' ? [15, 30, 60, 90] : [1, 2, 4, 8]).map(n => <Btn key={n} small on={sndSecs === n} onClick={() => setSndSecs(n)}>{n}s</Btn>)}
+        <input value={sndName} onChange={e => setSndName(e.target.value)} placeholder="Name (optional)" style={{ ...field, flex: 1, minWidth: 90, width: 'auto', padding: '5px 8px', fontSize: 12 }} />
+      </div>
+      <div style={{ marginTop: 6, display: 'flex', gap: 4 }}>
+        <Btn small tone="blue" disabled={!!busy} onClick={makeSound}>{busy === 'sound' ? (kind === 'music' ? 'Composing… up to a minute' : 'Making…') : 'Generate'}</Btn>
+        <Btn small onClick={() => setSndOpen('')}>Close</Btn>
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ background: UI.bg, color: UI.ink, borderRadius: full ? 0 : 14, border: full ? 0 : '1px solid ' + UI.line, overflow: 'hidden', fontFamily: body, minHeight: full ? '100vh' : undefined }}>
-      {/* ── top bar ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid ' + UI.line, flexWrap: 'wrap', background: UI.panel }}>
-        <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16, letterSpacing: '-0.01em' }}>Ad Studio</span>
-        {full
-          ? <a href="/ads" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Back to Lighthouse">← Lighthouse</a>
-          : <a href="/ads?full=1" target="_blank" rel="noopener" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Open the editor on its own, full screen, in a new tab">⤢ Full screen</a>}
-        <Btn small on={home} onClick={() => { stop(); setHome(true); loadList() }} title="Studio home: make something new, the calendar, your work">⌂ Studio</Btn>
-        {canEdit && !home ? <Btn tone="gold" small onClick={() => { stop(); setHome(true); loadList() }} title="Start something new">✦ New</Btn> : null}
-        {p && canDelete && !home ? <Btn tone="red" small onClick={async () => { const id = p.id; if (!window.confirm('Delete "' + p.name + '"? This cannot be undone.')) return; await fetch('/api/ads?id=' + encodeURIComponent(id), { method: 'DELETE' }); setP(null); pRef.current = null; setHome(true); loadList() }} title="Delete this piece">✕ Delete</Btn> : null}
-        {p ? (
-          <input value={p.name} disabled={!canEdit} onChange={e => change(d => ({ ...d, name: e.target.value }))} style={{ ...field, width: 260, padding: '6px 10px', fontWeight: 600 }} />
-        ) : null}
-        {p && p.kind === 'flyer' ? (
-          <div style={{ display: 'flex', gap: 4 }} title="Flyer size">
-            {FLYER_SIZES.map(x => <Btn key={x.key} small on={p.format === x.key} title={x.hint} onClick={() => change(d => ({ ...d, format: x.key, platform: x.key === '9:16' ? 'story' : x.key === '4:5' ? 'feed' : x.key === '1:1' ? 'square' : 'web' }))}>{x.label}</Btn>)}
-          </div>
-        ) : p ? (
-          <div style={{ display: 'flex', gap: 4 }}>
-            {PLATFORMS.map(x => <Btn key={x.key} small on={platformOf(p).key === x.key} title={`${x.label} · ${FORMAT_LABEL[x.format]} · best ${x.best}`} onClick={() => change(d => ({ ...d, platform: x.key, format: x.format }))}>{x.label}</Btn>)}
-          </div>
-        ) : null}
-        {p ? (
-          <div style={{ display: 'flex', gap: 3 }} title="Where this ad is in the team's workflow">
-            {([['draft', 'Draft'], ['review', 'In review'], ['approved', 'Approved']] as const).map(([k, l]) => <Btn key={k} small on={(p.status || 'draft') === k} disabled={!canEdit} onClick={() => change(d => ({ ...d, status: k }))}>{k === 'approved' && (p.status || 'draft') === k ? '✓ ' : ''}{l}</Btn>)}
-          </div>
-        ) : null}
-        {p ? <Btn small onClick={runAudit} disabled={!!busy} title="The expert review: hook, idea, rhythm, copy, call to action — with one-click fixes" tone={liveChecks.some(c => c.sev === 'high') ? 'red' : undefined}>{busy === 'audit' ? 'Auditing…' : `Audit${liveChecks.length ? ' · ' + liveChecks.length : ''}`}</Btn> : null}
-        {p ? <Btn small onClick={loadVersions} title="Earlier saved states of this ad">Versions</Btn> : null}
-        <span style={{ marginLeft: 'auto', fontSize: 11.5, color: saved === 'dirty' || saved === 'saving' ? UI.gold : UI.mut }}>
-          {saved === 'saving' ? 'Saving…' : saved === 'dirty' ? 'Unsaved changes' : saved === 'saved' ? 'Saved' : ''}
-        </span>
-        {p && canEdit && p.kind !== 'flyer' && p.kind !== 'post' ? <Btn tone={stale || !p.voice ? 'blue' : undefined} disabled={!!busy} onClick={makeVoice} title="Records the whole script as one take and cuts the scenes to it">{busy === 'voice' ? 'Recording voice…' : p.voice ? (stale ? 'Re-record voice (script changed)' : 'Re-record voice') : 'Make voice'}</Btn> : null}
-        {p ? (exportPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600 }}>Exporting {exportPct}% · keep this tab open</span> : libPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600 }}>Saving to the library {libPct}%</span> : (
-          <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            {p.kind === 'flyer' ? (<>
-              <Btn tone="gold" disabled={!!busy} onClick={exportPng} title="The flyer as an image at full size">Export PNG</Btn>
-              <Btn small disabled={!!busy} onClick={exportPdf} title="The flyer as a PDF (Letter prints at 300 dpi)">PDF</Btn>
-            </>) : (<>
-              <Btn tone="gold" disabled={!!busy} onClick={exportVideo} title="MP4 with sound, at full size">Export MP4</Btn>
-              <Btn small disabled={!!busy} onClick={exportGif} title="An animated GIF, no sound — moves like a post">GIF</Btn>
-              <Btn small disabled={!!busy} onClick={exportPng} title="A still of the frame on screen">PNG</Btn>
-            </>)}
+      {/* ── top bar: one row. Everything rare is behind ⋯ ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, rowGap: 6, flexWrap: 'wrap', padding: '8px 14px', borderBottom: '1px solid ' + UI.line, background: UI.panel, position: 'relative', minHeight: 34 }}>
+        {editing && p ? (<>
+          <Btn small onClick={goHome} title="Studio home: make something new, the calendar, your work">← Studio</Btn>
+          <input value={p.name} disabled={!canEdit} onChange={e => change(d => ({ ...d, name: e.target.value }))} title="The name of this piece" style={{ ...field, width: 'auto', flex: '0 1 280px', minWidth: 110, padding: '6px 10px', fontWeight: 600, resize: 'none' }} />
+          <button type="button" onClick={() => setTab('ad')} title="What this is and where it runs — change it under Whole ad"
+            style={{ background: 'transparent', border: '1px solid ' + UI.line, color: UI.mut, borderRadius: 8, padding: '5px 9px', fontSize: 11.5, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            {KIND_META[(p.kind || 'video') as AdKindOf].label} · {isFlyer ? (FLYER_SIZES.find(x => x.key === p.format)?.label || p.format) : platformOf(p).label} · {p.format}
+          </button>
+          {(p.status || 'draft') !== 'draft' ? <span style={{ fontSize: 11, fontWeight: 700, color: p.status === 'approved' ? UI.green : UI.gold, whiteSpace: 'nowrap' }}>{p.status === 'approved' ? '✓ Approved' : 'In review'}</span> : null}
+          {canEdit ? (<span style={{ display: 'flex', gap: 3 }}>
+            <Btn small disabled={!histN[0]} onClick={() => stepHist(true)} title="Undo (⌘Z)">↶</Btn>
+            <Btn small disabled={!histN[1]} onClick={() => stepHist(false)} title="Redo (⇧⌘Z)">↷</Btn>
+          </span>) : null}
+          <span style={{ fontSize: 11, color: saved === 'dirty' || saved === 'saving' ? UI.gold : UI.mut, whiteSpace: 'nowrap' }}>
+            {saved === 'saving' ? 'Saving…' : saved === 'dirty' ? 'Unsaved' : saved === 'saved' ? 'Saved' : ''}
           </span>
-        )) : null}
+          <span style={{ marginLeft: 'auto' }} />
+          <Btn small onClick={() => runAudit()} disabled={!!busy} title="The expert review: hook, idea, rhythm, copy, call to action — with one-click fixes" tone={liveChecks.some(c => c.sev === 'high') ? 'red' : undefined}>{busy === 'audit' ? 'Auditing…' : `Audit${liveChecks.length ? ' · ' + liveChecks.length : ' ✓'}`}</Btn>
+          {canEdit && isSpoken ? <Btn small tone={stale || !p.voice ? 'blue' : undefined} disabled={!!busy} onClick={makeVoice} title="Records the whole script as one take and cuts the scenes to it">{busy === 'voice' ? 'Recording…' : p.voice ? (stale ? 'Re-record voice' : 'Voice ✓ · re-record') : 'Make voice'}</Btn> : null}
+          {exportPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600, whiteSpace: 'nowrap' }}>Exporting {exportPct}% · keep this tab open</span> : libPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600, whiteSpace: 'nowrap' }}>Saving to the library {libPct}%</span> : (
+            <span style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+              {isFlyer ? (<>
+                <Btn tone="gold" small disabled={!!busy} onClick={exportPng} title="The flyer as an image at full size">Export PNG</Btn>
+                <Btn small disabled={!!busy} onClick={exportPdf} title="The flyer as a PDF (Letter prints at 300 dpi)">PDF</Btn>
+              </>) : (<>
+                <Btn tone="gold" small disabled={!!busy} onClick={exportVideo} title="MP4 with sound, at full size">Export MP4</Btn>
+                <Btn small disabled={!!busy} onClick={exportGif} title="An animated GIF, no sound — moves like a post">GIF</Btn>
+                <Btn small disabled={!!busy} onClick={exportPng} title="A still of the frame on screen">PNG</Btn>
+              </>)}
+            </span>
+          )}
+          <Btn small on={menu} onClick={() => setMenu(!menu)} title="Status, versions, duplicate, notes, delete">⋯</Btn>
+          {menu ? (<>
+            <div onClick={() => setMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+            <div style={{ position: 'absolute', right: 12, top: 44, zIndex: 61, width: 300, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '4px 12px 12px', boxShadow: '0 24px 60px -20px rgba(0,0,0,.9)' }}>
+              <Label>Status</Label>
+              <div style={{ display: 'flex', gap: 4 }} title="Where this piece is in the team's workflow">
+                {([['draft', 'Draft'], ['review', 'In review'], ['approved', 'Approved']] as const).map(([k, l]) => <Btn key={k} small on={(p.status || 'draft') === k} disabled={!canEdit} onClick={() => change(d => ({ ...d, status: k }))}>{k === 'approved' && p.status === k ? '✓ ' : ''}{l}</Btn>)}
+              </div>
+              {canEdit ? (<>
+                <Label>Team notes</Label>
+                <textarea rows={3} value={p.notes || ''} onChange={e => change(d => ({ ...d, notes: e.target.value }))} placeholder="For whoever picks this up: what to check, where it runs." style={{ ...field, fontSize: 12 }} />
+              </>) : null}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 12 }}>
+                <Btn small onClick={() => { setMenu(false); loadVersions() }} title="Earlier saved states of this piece">Versions — go back to an earlier state</Btn>
+                {canEdit ? <Btn small onClick={duplicateAd} title="A copy to try a different hook, look or ending">⧉ Duplicate as a variant</Btn> : null}
+                {!isFlyer ? (
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11.5, color: UI.mut, padding: '2px 2px' }}>
+                    <input type="checkbox" checked={keepCopy} onChange={e => setKeepCopy(e.target.checked)} /> Keep a copy of every MP4 export in Finished videos
+                  </label>
+                ) : null}
+                {!full ? <a href="/ads?full=1" target="_blank" rel="noopener" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px', fontWeight: 600 }}>⤢ Open full screen in a new tab</a> : null}
+                {canDelete ? <Btn small tone="red" onClick={async () => { const id = p.id; if (!window.confirm('Delete "' + p.name + '" and its voice takes? This cannot be undone.')) return; setMenu(false); await fetch('/api/ads?id=' + encodeURIComponent(id), { method: 'DELETE' }); setP(null); pRef.current = null; setHome(true); loadList() }} title="Delete this piece">✕ Delete this piece</Btn> : null}
+              </div>
+            </div>
+          </>) : null}
+        </>) : (<>
+          <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16, letterSpacing: '-0.01em' }}>Ad Studio</span>
+          {flow ? <Btn small onClick={cancelFlow} title="Leave without building">{seed.current?.fresh || starting || !p ? '← Studio' : '← Back to the ad'}</Btn> : null}
+          {home && p ? <Btn small onClick={() => setHome(false)} title="Back to the piece you had open">Back to “{p.name.length > 34 ? p.name.slice(0, 32) + '…' : p.name}” →</Btn> : null}
+          <span style={{ marginLeft: 'auto' }} />
+          {full
+            ? <a href="/ads" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Back to Lighthouse">← Lighthouse</a>
+            : <a href="/ads?full=1" target="_blank" rel="noopener" style={{ fontSize: 11.5, color: UI.mut, textDecoration: 'none', border: '1px solid ' + UI.line, borderRadius: 8, padding: '4px 8px' }} title="Open the studio on its own, full screen, in a new tab">⤢ Full screen</a>}
+        </>)}
       </div>
-      {err ? <div style={{ background: '#3a1d1b', color: '#F3C2BC', padding: '8px 14px', fontSize: 12.5, display: 'flex', gap: 10 }}><span style={{ flex: 1 }}>{err}</span><button onClick={() => setErr('')} style={{ background: 'none', border: 0, color: '#F3C2BC', cursor: 'pointer' }}>Dismiss</button></div> : null}
+      {err ? <div style={{ background: notice ? '#3a3016' : '#3a1d1b', color: notice ? '#F0DFB4' : '#F3C2BC', padding: '8px 14px', fontSize: 12.5, display: 'flex', gap: 10 }}><span style={{ flex: 1 }}>{err}</span><button onClick={() => setErr('')} style={{ background: 'none', border: 0, color: 'inherit', cursor: 'pointer' }}>Dismiss</button></div> : null}
 
       {home ? (
-        <StudioHome rows={list} canEdit={canEdit} canDelete={canDelete} busy={busy} display={display}
-          onMake={makeKind} onMoment={makeMoment} onOpen={id => open(id)} onDelete={quickDelete} onDuplicate={quickDuplicate} library={lib.filter(v => v.builtin).map(v => ({ key: v.key, name: v.name, thumb: v.thumb, dur: v.dur }))} onEditVideo={editLibraryVideo} />
+        <StudioHome rows={list} canEdit={canEdit} canDelete={canDelete} busy={busy} display={display} last={lastId}
+          onMake={makeKind} onMoment={makeMoment} onOpen={id => open(id)} onDelete={quickDelete} onDeleteMany={quickDeleteMany} onDuplicate={quickDuplicate}
+          library={lib} onEditVideo={editLibraryVideo} onWatch={v => setWatch(v as LibVideo)} onDeleteVideo={v => delVideo(v as LibVideo)} onUploadVideo={uploadVideo} />
       ) : null}
-      <div style={{ display: home ? 'none' : 'grid', gridTemplateColumns: full ? '280px minmax(0,1fr) 360px' : '260px minmax(0,1fr) 330px', minHeight: full ? 'calc(100vh - 230px)' : 560 }}>
-        {/* ── left: brief + ads ── */}
-        <div style={{ borderRight: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0 }}>
-          {!isFlyer ? <><Label>Brief</Label>
-          <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={5} disabled={!canEdit} placeholder="What is this ad for? Even one line works, e.g. a cool video for Amrit. I'll work through the details with you first." style={field} />
-          </> : null}
-          {!isFlyer ? <><Label>Length</Label>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{[15, 30, 45, 60, 90].map(s => <Btn key={s} small on={seconds === s} onClick={() => setSeconds(s)}>{s}s</Btn>)}</div>
-          </> : null}
-          <Label>Audience</Label>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={p?.audience === k} disabled={!p || !canEdit} title={AUD[k].hint} onClick={() => change(d => ({ ...d, audience: k }))}>{AUD[k].label}</Btn>)}
-          </div>
-          {!isFlyer ? (<>
-          <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
-            <Btn tone="blue" disabled={!canEdit || !!busy || !brief.trim()} onClick={() => planAd()} title="Works through the details with you first, then builds">{busy === 'plan' ? 'Thinking…' : busy === 'write' ? 'Writing…' : 'Plan the ad'}</Btn>
-            <Btn disabled={!p || !canEdit || !!busy || !p?.scenes.length} onClick={() => write(true)} title="Keeps what works and tightens the rest">{busy === 'rewrite' ? 'Rewriting…' : 'Improve draft'}</Btn>
-          </div>
-          <p style={{ fontSize: 11, color: UI.mut, marginTop: 8, lineHeight: 1.5 }}>I sharpen the brief, ask what matters, and show the scene plan before anything is built. House facts only — no made-up numbers.{p && canEdit ? <> <button onClick={() => write(false)} disabled={!!busy} style={{ background: 'none', border: 0, padding: 0, color: UI.blue, cursor: 'pointer', fontSize: 11 }}>Skip — write it now</button></> : null}</p>
-          </>) : null}
-          {p && canEdit && p.scenes.length ? (
-            <>
-              <Label>Change the whole ad</Label>
-              <textarea value={adAsk} onChange={e => setAdAsk(e.target.value)} rows={2} placeholder="e.g. make it faster, open on the rooftop, add a scene about guidebooks" style={field} />
-              <div style={{ marginTop: 6 }}><Btn small tone="blue" disabled={!!busy || !adAsk.trim()} onClick={() => write(true, adAsk.trim())}>{busy === 'adask' ? 'Changing…' : 'Apply to the ad'}</Btn></div>
-            </>
-          ) : null}
-
-          <div style={{ display: 'flex', gap: 4, marginTop: 16, borderTop: '1px solid ' + UI.line, paddingTop: 12 }}>
-            {([['ads', 'Ads'], ['stories', 'Stories'], ['ideas', 'Ideas'], ['templates', 'Templates'], ['videos', 'Videos'], ['sounds', 'Sounds']] as const).map(([k, l]) => <Btn key={k} small on={side === k} onClick={() => setSide(k)}>{l}</Btn>)}
-          </div>
-          {side === 'stories' ? (
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 560, overflowY: 'auto' }}>
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 4px', lineHeight: 1.5 }}>Longer pieces for owners and partners, written from the house facts and filled with photos from the library. Build one, then edit any word, swap photos, make the voice.</p>
-              {STORIES.map(st => (
-                <div key={st.key} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px' }}>
-                  <p style={{ fontSize: 12.5, fontWeight: 700, margin: 0 }}>{st.label} <span style={{ fontWeight: 500, color: UI.mut }}>· {st.length}</span></p>
-                  <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 2px', lineHeight: 1.45 }}>{st.blurb}</p>
-                  <p style={{ fontSize: 10.5, color: UI.mut, margin: '0 0 6px' }}>For: {st.who} · {st.scenes.length} scenes</p>
-                  {canEdit ? <Btn small tone="gold" disabled={!!busy} onClick={() => buildStory(st)}>{busy === 'template' ? 'Building…' : 'Build this story'}</Btn> : null}
-                </div>
-              ))}
-            </div>
-          ) : side === 'templates' ? (
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {TEMPLATES.map(tp => (
-                <button key={tp.key} disabled={!canEdit || !!busy} onClick={async () => { if (!pRef.current) { const n = await newAd(); if (!n) return } applyTemplate(tp) }} style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px', cursor: 'pointer', color: UI.ink, opacity: !p ? 0.5 : 1 }}>
-                  <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{tp.label} <span style={{ color: UI.mut, fontWeight: 500 }}>· {tp.format}</span></span>
-                  <span style={{ display: 'block', fontSize: 11, color: UI.mut, marginTop: 2 }}>{tp.blurb}</span>
-                </button>
-              ))}
-              {busy === 'template' ? <p style={{ fontSize: 11.5, color: UI.gold }}>Filling it with photos from the library…</p> : null}
-            </div>
-          ) : side === 'ideas' ? (
-            <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 560, overflowY: 'auto' }}>
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 4px', lineHeight: 1.5 }}>Proven ad concepts. Pick one, name the property, and the guide takes it from there.</p>
-              {IDEAS.map(idea => (
-                <div key={idea.key} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: '8px 9px' }}>
-                  <p style={{ fontSize: 12.5, fontWeight: 700, margin: 0 }}>{idea.title} <span style={{ fontWeight: 500, color: UI.mut }}>· {GOALS.find(g => g.key === idea.goal)?.label}</span></p>
-                  <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 6px', lineHeight: 1.45 }}>{idea.why}</p>
-                  {canEdit ? <Btn small tone="blue" onClick={() => useIdea(idea)}>Use this idea</Btn> : null}
-                </div>
-              ))}
-            </div>
-          ) : side === 'sounds' ? (
-            <div style={{ marginTop: 10 }}>
-              {canEdit ? (
-                <div style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: 9 }}>
-                  <p style={{ fontSize: 12, fontWeight: 700, margin: '0 0 6px' }}>Make a sound with ElevenLabs</p>
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <Btn small on={sndKind === 'music'} onClick={() => { setSndKind('music'); setSndSecs(30) }}>Music track</Btn>
-                    <Btn small on={sndKind === 'sfx'} onClick={() => { setSndKind('sfx'); setSndSecs(2) }}>Sound effect</Btn>
-                  </div>
-                  <textarea value={sndPrompt} onChange={e => setSndPrompt(e.target.value)} rows={3} style={{ ...field, marginTop: 6, fontSize: 12 }}
-                    placeholder={sndKind === 'music' ? 'e.g. warm lounge house, sunset by the pool, upscale, steady beat' : 'e.g. soft whoosh transition / camera shutter / ocean waves / cash register ding'} />
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
-                    {(sndKind === 'music' ? [15, 30, 60, 90] : [1, 2, 4, 8]).map(n => <Btn key={n} small on={sndSecs === n} onClick={() => setSndSecs(n)}>{n}s</Btn>)}
-                  </div>
-                  <input value={sndName} onChange={e => setSndName(e.target.value)} placeholder="Name (optional)" style={{ ...field, marginTop: 6, padding: '6px 9px', fontSize: 12 }} />
-                  <div style={{ marginTop: 6 }}><Btn small tone="blue" disabled={!!busy} onClick={makeSound}>{busy === 'sound' ? (sndKind === 'music' ? 'Composing… up to a minute' : 'Making…') : 'Generate'}</Btn></div>
-                </div>
-              ) : null}
-              <Label>Playlist · bundled</Label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {MUSIC.filter(m => m.file).map(m => (
-                  <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: p?.music === m.key ? '#232C38' : 'transparent', borderRadius: 7, padding: '4px 6px' }}>
-                    <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
-                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ display: 'block', fontSize: 12, fontWeight: 600 }}>{m.label}</span><span style={{ fontSize: 10.5, color: UI.mut }}>{m.mood}</span></span>
-                    {p && canEdit ? <Btn small on={p.music === m.key} onClick={() => change(d => ({ ...d, music: m.key }))}>{p.music === m.key ? 'In use' : 'Use'}</Btn> : null}
-                  </div>
-                ))}
-              </div>
-              <Label>Made with ElevenLabs</Label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
-                {sounds.map(x => (
-                  <div key={x.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: p?.music === x.key || (sc && sc.sfx === x.key) ? '#232C38' : 'transparent', borderRadius: 7, padding: '4px 6px' }}>
-                    <Btn small on={hear === x.url} onClick={() => preview(x.url)} title={x.prompt}>{hear === x.url ? '■' : '▶'}</Btn>
-                    <span style={{ flex: 1, minWidth: 0 }} title={x.prompt}>
-                      <span style={{ display: 'block', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{x.name}</span>
-                      <span style={{ fontSize: 10.5, color: UI.mut }}>{x.kind === 'music' ? 'Music' : 'Effect'} · {Math.round(x.dur)}s</span>
-                    </span>
-                    {p && canEdit ? (x.kind === 'music'
-                      ? <Btn small on={p.music === x.key} onClick={() => change(d => ({ ...d, music: x.key }))}>{p.music === x.key ? 'In use' : 'Use'}</Btn>
-                      : <Btn small on={!!sc && sc.sfx === x.key} title="Plays as the selected scene lands" onClick={() => setScene(sel, { sfx: sc && sc.sfx === x.key ? '' : x.key })}>{sc && sc.sfx === x.key ? 'On scene' : 'Add to scene'}</Btn>) : null}
-                    {canDelete ? <Btn small tone="red" onClick={() => delSound(x)} title="Delete">✕</Btn> : null}
-                  </div>
-                ))}
-                {!sounds.length ? <p style={{ fontSize: 11.5, color: UI.mut }}>Nothing generated yet. Describe a track or an effect above.</p> : null}
-              </div>
-            </div>
-          ) : side === 'videos' ? (
-            <div style={{ marginTop: 10 }}>
-              {canEdit ? (
-                <label style={{ display: 'inline-block', fontSize: 12, fontWeight: 600, color: UI.ink, border: '1px solid ' + UI.line, borderRadius: 8, padding: '6px 10px', cursor: 'pointer' }}>
-                  + Upload a video
-                  <input type="file" accept="video/mp4,video/quicktime,video/webm" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) uploadVideo(f); e.target.value = '' }} />
-                </label>
-              ) : null}
-              <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11.5, color: UI.mut, marginTop: 8 }}>
-                <input type="checkbox" checked={keepCopy} onChange={e => setKeepCopy(e.target.checked)} /> Keep a copy of every MP4 export here
-              </label>
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 460, overflowY: 'auto' }}>
-                {lib.map(v => (
-                  <div key={v.key} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, overflow: 'hidden' }}>
-                    <button onClick={() => setWatch(v)} title="Watch" style={{ display: 'block', width: '100%', aspectRatio: '16/9', border: 0, padding: 0, cursor: 'pointer', background: '#000 center/cover no-repeat', backgroundImage: v.thumb ? `url(${v.thumb})` : 'none', position: 'relative' }}>
-                      <span style={{ position: 'absolute', left: 6, bottom: 6, fontSize: 10, fontWeight: 700, background: 'rgba(0,0,0,.65)', color: '#fff', padding: '2px 6px', borderRadius: 4 }}>▶ {fmtT(v.dur).replace(/\.\d$/, '')}</span>
-                    </button>
-                    <div style={{ padding: '6px 8px' }}>
-                      <p style={{ fontSize: 12, fontWeight: 600, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</p>
-                      <p style={{ fontSize: 10.5, color: UI.mut, margin: '2px 0 6px' }}>{v.builtin ? 'Sales video' : (v.format || 'video') + ' · ' + (v.createdAt ? new Date(v.createdAt).toLocaleDateString() : '')}</p>
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                        {canEdit && v.builtin ? <Btn small tone="gold" disabled={!!busy} onClick={() => editLibraryVideo(v.key)} title="Opens this video scene by scene — every word, number, photo and timing editable. Makes a copy; the original stays here.">✎ Edit this video</Btn> : null}
-                        {canEdit && p ? <Btn small onClick={() => useVideo(v)} title="Puts this clip behind the selected scene">Use in scene</Btn> : null}
-                        <a href={v.url} download style={{ fontSize: 11.5, color: UI.mut, padding: '4px 6px' }}>Download</a>
-                        {!v.builtin && canDelete ? <Btn small tone="red" onClick={() => delVideo(v)}>Delete</Btn> : null}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {!lib.length ? <p style={{ fontSize: 12, color: UI.mut }}>Loading the library…</p> : null}
-              </div>
-            </div>
-          ) : (<>
-          <Label>Ads</Label>
-          {canEdit ? <Btn small disabled={!!busy} onClick={openStart}>✦ Create new ad</Btn> : null}
-          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 300, overflowY: 'auto' }}>
-            {list.map(a => (
-              <button key={a.id} onClick={() => open(a.id)} style={{ textAlign: 'left', background: p?.id === a.id ? '#232C38' : 'transparent', border: 0, borderRadius: 7, padding: '7px 8px', cursor: 'pointer', color: UI.ink }}>
-                <span style={{ display: 'block', fontSize: 12.5, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-                <span style={{ fontSize: 10.5, color: UI.mut }}>{a.status === 'approved' ? <span style={{ color: UI.green }}>✓ Approved · </span> : a.status === 'review' ? <span style={{ color: UI.gold }}>In review · </span> : null}{a.format} · {a.scenes} scenes · {new Date(a.updatedAt).toLocaleDateString()}</span>
-              </button>
-            ))}
-            {!list.length ? <p style={{ fontSize: 12, color: UI.mut }}>No ads yet. Start one with + New ad.</p> : null}
-          </div>
-          {p && canEdit ? (
-            <>
-              <Label>Team notes</Label>
-              <textarea rows={3} value={p.notes || ''} onChange={e => change(d => ({ ...d, notes: e.target.value }))} placeholder="For whoever picks this up: what to check, what the client said, where it runs." style={{ ...field, fontSize: 12 }} />
-              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}><Btn small onClick={duplicateAd} title="A copy to try a different hook, look or ending — an A/B variant">⧉ Duplicate as variant</Btn></div>
-            </>
-          ) : null}
-          {p && canDelete ? <div style={{ marginTop: 10 }}><Btn small tone="red" onClick={del}>Delete this ad</Btn></div> : null}
-          </>)}
-        </div>
-
-        {/* ── centre: viewer ── */}
-        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0, background: '#0A0D11' }}>
+      <div style={{ display: home ? 'none' : flow ? 'block' : 'grid', gridTemplateColumns: full ? 'minmax(0,1fr) 372px' : 'minmax(0,1fr) 340px', minHeight: full ? 'calc(100vh - 210px)' : 560 }}>
+        {/* ── centre: the start page, the plan, the script, the audit — or the player ── */}
+        <div style={{ padding: 16, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, minWidth: 0, background: '#0A0D11', minHeight: flow ? (full ? 'calc(100vh - 52px)' : 560) : undefined }}>
           {starting && !draft ? (() => {
-            // A guided "Create new ad" (Jon, 2026-11-02: "create new ad, then guide you through prompt,
-            // questions, etc."): one question per step, Back/Next, the AI's questions folded in.
-            const pre: string[] = st.mode === 'describe' ? ['how', 'prompt', 'goal', 'audience', 'music', 'look', 'shape']
-              : st.mode === 'script' ? ['how', 'script', 'goal', 'audience', 'music', 'look', 'shape']
-              : st.mode === 'revamp' ? ['how', 'pick', 'change', 'goal', 'audience', 'music', 'look', 'shape']
-              : st.mode === 'template' ? ['how', 'goal', 'audience', 'music', 'look', 'shape'] : ['how', 'goal', 'audience', 'look', 'shape']
-            const steps = st.mode === 'describe' ? (plan ? pre.concat(['think'], plan.questions.map((_, i) => 'q' + i), ['review']) : pre.concat(['think'])) : pre
-            const i = Math.min(ws, steps.length - 1), key = steps[i]
-            const last = i === steps.length - 1
-            const next = async () => {
-              if (key === 'script' && !st.script.trim()) { setErr('Paste the script first.'); return }
-              if (key === 'prompt' && !st.prompt.trim()) { setErr('Say what the ad is about first — even one line.'); return }
-              if (key === 'pick' && !st.from) { setErr('Pick the ad to revamp.'); return }
-              setErr('')
-              if (key === 'think' && plan) { setWs(i + 1); return }
-              if (key === 'think') {
-                seed.current = { fresh: true, look: st.look, goal: st.goal, music: st.music, vibe: st.vibe }
-                setBrief(st.prompt.trim())
-                await planAd(st.prompt.trim() + '\n\n' + seedLines(), { audience: st.audience, format: st.format || undefined })
-                setWs(i + 1)
-                return
-              }
-              if (last) {
-                if (st.mode === 'describe') { setStarting(false); return } // → the plan to review and build
-                if (st.mode === 'script') { if (await layOutScript()) setStarting(false); return } // → the script to review
-                await startGo(); return
-              }
-              setWs(i + 1)
-            }
-            const pickNext = (fn: () => void) => { fn(); setTimeout(() => setWs(w => Math.max(w, i + 1)), 160) }
-            const title: Record<string, string> = {
-              how: 'How do you want to start?', prompt: 'What’s the ad about?', goal: 'What are you trying to accomplish?', audience: 'Who is it for?', review: 'Here’s the plan', music: 'What’s the vibe?',
-              look: 'Pick a look', shape: 'Where will it run?', pick: 'Which ad are we revamping?', change: 'What should change?',
-              think: 'Ready — let me work it through', script: 'Paste your script',
-            }
-            const q = key.startsWith('q') && plan ? plan.questions[Number(key.slice(1))] : null
+            // THE START PAGE (Jon, 2026-11-10: "make it easier to use"). It was 8 to 12 screens — how, about, goal,
+            // audience, music, look, shape, think, the plan's questions, review — before the plan asked the same
+            // questions again. Now it is one page: what it is about, the goal, who it is for, how long, where it
+            // runs (look and music only if you want to choose). Then the plan to confirm, then the build.
+            const story = st.mode === 'story'
+            const H = ({ children, opt }: { children: React.ReactNode; opt?: boolean }) => <p style={{ fontSize: 12.5, fontWeight: 700, margin: '16px 0 6px', color: UI.ink }}>{children}{opt ? <span style={{ fontWeight: 500, color: UI.mut }}> · optional</span> : null}</p>
+            const goalRow = (<>
+              <H>What should it accomplish?</H>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                {GOALS.map(g => <Btn key={g.key} on={st.goal === g.key} title={g.brief.replace(/^Goal: /, '')} onClick={() => setSt(x => ({ ...x, goal: g.key, audience: g.audience }))}>{g.label}</Btn>)}
+              </div>
+            </>)
+            const audRow = (<>
+              <H>Who is it for?</H>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} on={st.audience === k} title={AUD[k].hint} onClick={() => setSt(x => ({ ...x, audience: k }))}>{AUD[k].label}</Btn>)}
+                <input value={st.who} onChange={e => setSt(x => ({ ...x, who: e.target.value }))} placeholder={st.audience === 'guests' ? 'Who exactly? e.g. couples, groups for Art Basel' : st.audience === 'owners' ? 'Who exactly? e.g. owners unhappy with their manager' : 'Who exactly? e.g. realtors in Brickell'} style={{ ...field, flex: 1, minWidth: 220, width: 'auto', padding: '7px 10px' }} />
+              </div>
+            </>)
+            const shapeRow = (<>
+              <H>Where will it run?</H>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                <Btn on={!st.format} onClick={() => setSt(x => ({ ...x, format: '' }))} title="The plan picks the shape that fits">Pick for me</Btn>
+                {(['9:16', '4:5', '1:1', '16:9'] as AdFormat[]).map(f => <Btn key={f} on={st.format === f} title={FORMAT_LABEL[f]} onClick={() => setSt(x => ({ ...x, format: f }))}>{f === '9:16' ? 'Reel · Story · TikTok' : f === '4:5' ? 'Feed post' : f === '1:1' ? 'Square' : 'YouTube · web'} <span style={{ opacity: 0.6, fontWeight: 500 }}>{f}</span></Btn>)}
+              </div>
+            </>)
+            const lengthRow = (<>
+              <H>How long?</H>
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>{[15, 30, 45, 60, 90].map(n => <Btn key={n} on={seconds === n} onClick={() => setSeconds(n)}>{n} s</Btn>)}</div>
+            </>)
+            const more = (<>
+              <button type="button" onClick={() => setMoreStart(!moreStart)} style={{ background: 'none', border: 0, color: UI.blue, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', padding: 0, marginTop: 16 }}>
+                {moreStart ? '▾' : '▸'} Choose the look and the music yourself <span style={{ color: UI.mut, fontWeight: 500 }}>· {LOOKS.find(l => l.key === st.look)?.label} look · {st.vibe || MUSIC.find(m => m.key === st.music)?.label || sounds.find(x => x.key === st.music)?.name || 'music picked for you'}</span>
+              </button>
+              {moreStart ? (<>
+                <H>Look</H>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 7 }}>
+                  {looksShown(st.look).map(l => (
+                    <button key={l.key} type="button" title={l.blurb} onClick={() => setSt(x => ({ ...x, look: l.key }))} style={{ padding: 0, border: '2px solid ' + (st.look === l.key ? UI.blue : UI.line), borderRadius: 10, overflow: 'hidden', cursor: 'pointer', background: 'none', color: UI.ink, textAlign: 'left' }}>
+                      <span style={{ display: 'block', background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '10px 10px', fontFamily: display, fontWeight: 800, fontSize: 16, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>
+                      <span style={{ display: 'block', background: UI.panel2, padding: '5px 8px', fontSize: 11.5, fontWeight: 700 }}>{l.label}</span>
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => setMoreLooks(!moreLooks)} style={{ border: '1px dashed ' + UI.line, borderRadius: 10, background: 'transparent', color: UI.mut, fontSize: 12, cursor: 'pointer', minHeight: 60 }}>{moreLooks ? 'Fewer looks' : '+ More looks'}</button>
+                </div>
+                <H>Music</H>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 4, maxHeight: 190, overflowY: 'auto' }}>
+                  <button type="button" onClick={() => setSt(x => ({ ...x, music: '', vibe: '' }))} style={{ ...choice(!st.music && !st.vibe), padding: '6px 10px', fontSize: 12.5, fontWeight: 600 }}>Pick for me</button>
+                  {MUSIC.filter(m => m.file).map(m => (
+                    <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid ' + (st.music === m.key ? UI.blue : UI.line), background: st.music === m.key ? '#1d2a3d' : 'transparent', borderRadius: 9, padding: '3px 6px' }}>
+                      <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
+                      <button type="button" title={m.mood} onClick={() => setSt(x => ({ ...x, music: m.key, vibe: '' }))} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 0, color: UI.ink, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.label}</button>
+                    </div>
+                  ))}
+                  {sounds.filter(x => x.kind === 'music').slice(0, 6).map(x => (
+                    <div key={x.key} style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid ' + (st.music === x.key ? UI.blue : UI.line), background: st.music === x.key ? '#1d2a3d' : 'transparent', borderRadius: 9, padding: '3px 6px' }}>
+                      <Btn small on={hear === x.url} onClick={() => preview(x.url)} title="Listen">{hear === x.url ? '■' : '▶'}</Btn>
+                      <button type="button" onClick={() => setSt(s2 => ({ ...s2, music: x.key, vibe: '' }))} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 0, color: UI.ink, cursor: 'pointer', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>♪ {x.name}</button>
+                    </div>
+                  ))}
+                </div>
+                <input value={st.vibe} onChange={e => setSt(x => ({ ...x, vibe: e.target.value, music: e.target.value ? '' : x.music }))} placeholder="Or describe a new vibe, e.g. sunset lounge house, warm, upscale — ElevenLabs composes it" style={{ ...field, marginTop: 6 }} />
+              </>) : null}
+            </>)
             return (
-              <div style={{ width: '100%', maxWidth: 720, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
+              <div style={{ width: '100%', maxWidth: 820, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.gold }}>Create new ad</span>
-                  <span style={{ fontSize: 11, color: UI.mut }}>Step {i + 1} of {steps.length}{st.mode === 'describe' && !plan ? '+' : ''}</span>
-                  <span style={{ marginLeft: 'auto' }}><Btn small onClick={() => { setStarting(false); setPlan(null) }}>Cancel</Btn></span>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.gold }}>{story ? 'New owner story' : 'New video ad'}</span>
+                  <span style={{ fontSize: 11.5, color: UI.mut }}>{story ? 'Pick one — it is built and opened for you to edit' : 'One page, then a plan to confirm, then it is built'}</span>
+                  <span style={{ marginLeft: 'auto' }}><Btn small onClick={cancelFlow}>Cancel</Btn></span>
                 </div>
-                <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                  {steps.map((x, k) => <span key={x} onClick={() => k < i && setWs(k)} style={{ flex: 1, height: 4, borderRadius: 2, background: k <= i ? UI.gold : UI.line, cursor: k < i ? 'pointer' : 'default' }} />)}
-                </div>
-                <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '18px 0 4px', letterSpacing: '-0.01em' }}>{q ? q.q : title[key]}</p>
-                {q ? <p style={{ fontSize: 12, color: UI.mut, margin: '0 0 12px' }}>A question from the plan · ★ is my recommendation</p> : null}
+                {story ? (<>
+                  <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '14px 0 4px', letterSpacing: '-0.01em' }}>Which story?</p>
+                  <p style={{ fontSize: 12.5, color: UI.mut, margin: '0 0 12px', lineHeight: 1.5 }}>Longer pieces for owners and partners, written from the house facts and filled with photos from the library. Build one, then edit any word, swap photos, make the voice.</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 8 }}>
+                    {STORIES.map(s0 => (
+                      <div key={s0.key} style={{ ...card, padding: '11px 12px', display: 'flex', flexDirection: 'column' }}>
+                        <p style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>{s0.label} <span style={{ fontWeight: 500, color: UI.mut, fontSize: 12 }}>· {s0.length}</span></p>
+                        <p style={{ fontSize: 12, color: UI.mut, margin: '4px 0 3px', lineHeight: 1.45, flex: 1 }}>{s0.blurb}</p>
+                        <p style={{ fontSize: 11, color: UI.mut, margin: '0 0 8px' }}>For: {s0.who} · {s0.scenes.length} scenes</p>
+                        <div><Btn small tone="gold" disabled={!!busy} onClick={() => buildStory(s0)}>{busy === 'template' || busy === 'new' ? 'Building…' : 'Build this story →'}</Btn></div>
+                      </div>
+                    ))}
+                  </div>
+                </>) : (<>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 12 }}>
+                    {([['describe', '✦ Describe it', 'Tell me in a line. I plan it with you, write the script, then build.'], ['script', '📝 I have a script', 'Paste it. I lay it out into scenes and build the video.'], ['template', '▦ Template', 'A ready layout, filled with our photos. No writing.'], ['revamp', '↻ Revamp one of ours', 'Take an ad we made and make it fresher.'], ['blank', '□ Blank', 'Empty — build it scene by scene.']] as const).map(([k, l, d]) => (
+                      <Btn key={k} on={st.mode === k} title={d} onClick={() => { setSt(x => ({ ...x, mode: k })); setErr('') }}>{l}</Btn>
+                    ))}
+                  </div>
 
-                <div style={{ marginTop: 12 }}>
-                  {key === 'how' ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 8 }}>
-                      {([['describe', '✦ Describe it', 'Tell me in your words. I ask a few questions, write the script, then build.'], ['script', '📝 From a script', 'Paste a script you have. I lay it out into scenes and build the video.'], ['revamp', '↻ Revamp an ad', 'Take one we made and make it fresher.'], ['template', '▦ From a template', 'A ready layout, filled with our photos.'], ['blank', '□ Blank', 'Empty — build it scene by scene.']] as const).map(([k, l, d]) => (
-                        <button key={k} onClick={() => pickNext(() => { setSt(x => ({ ...x, mode: k })); setPlan(null) })} style={{ textAlign: 'left', background: st.mode === k ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.mode === k ? UI.blue : UI.line), borderRadius: 11, padding: '14px 14px', cursor: 'pointer', color: UI.ink }}>
-                          <span style={{ display: 'block', fontSize: 15, fontWeight: 700 }}>{l}</span>
-                          <span style={{ display: 'block', fontSize: 12, color: UI.mut, marginTop: 4, lineHeight: 1.45 }}>{d}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : key === 'prompt' ? (
-                    <>
-                      <textarea autoFocus value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) next() }} rows={4}
-                        placeholder="e.g. a cool video for Amrit · a 15-second Reel for Art Basel weekend at 17WEST · why owners switch to Stay" style={{ ...field, fontSize: 15 }} />
-                      <p style={{ fontSize: 11.5, color: UI.mut, marginTop: 6 }}>One line is enough. Name a property and I’ll use its photos.</p>
-                    </>
-                  ) : key === 'script' ? (
-                    <>
-                      <textarea autoFocus value={st.script} onChange={e => setSt(x => ({ ...x, script: e.target.value }))} rows={9} placeholder={'Paste the voiceover script. Line breaks help me cut scenes.\n\ne.g.\nWake up to the ocean.\nRooftop pool. Sunset views.\nAmrit, Singer Island.\nBook your stay at stay-hospitality.com.'} style={{ ...field, fontSize: 14 }} />
-                      <p style={{ fontSize: 11.5, color: UI.mut, marginTop: 6 }}>{st.script.trim() ? `${st.script.trim().split(/\s+/).length} words · about ${Math.round(st.script.trim().split(/\s+/).length / 2.5)}s spoken · ` : ''}Your words are kept as written. You review the laid-out script before the video is built.</p>
-                    </>
-                  ) : key === 'pick' ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 300, overflowY: 'auto' }}>
-                      {list.map(a => (
-                        <button key={a.id} onClick={() => pickNext(() => setSt(x => ({ ...x, from: a.id })))} style={{ textAlign: 'left', background: st.from === a.id ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.from === a.id ? UI.blue : UI.line), borderRadius: 9, padding: '9px 11px', cursor: 'pointer', color: UI.ink }}>
-                          <span style={{ fontSize: 13.5, fontWeight: 700 }}>{a.name}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {a.format} · {a.scenes} scenes</span>
-                        </button>
-                      ))}
-                      {!list.length ? <p style={{ fontSize: 12, color: UI.mut }}>No ads to revamp yet — go back and pick Describe it.</p> : null}
-                    </div>
-                  ) : key === 'change' ? (
-                    <>
-                      <textarea autoFocus value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} rows={3} placeholder="e.g. make it for guests, faster cuts, open on the rooftop (or leave empty: just make it fresher)" style={{ ...field, fontSize: 14 }} />
-                      <p style={{ fontSize: 11.5, color: UI.mut, marginTop: 6 }}>The original stays as it is — the revamp is a new ad.</p>
-                    </>
-                  ) : key === 'goal' ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {GOALS.map(g => (
-                        <button key={g.key} onClick={() => setSt(x => ({ ...x, goal: g.key, audience: g.audience }))} style={{ textAlign: 'left', background: st.goal === g.key ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.goal === g.key ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink }}>
-                          <span style={{ fontSize: 14, fontWeight: 700 }}>{g.label}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {g.brief.replace(/^Goal: /, '')}</span>
-                        </button>
-                      ))}
-                      <Label>In your words (optional)</Label>
-                      <input value={st.why} onChange={e => setSt(x => ({ ...x, why: e.target.value }))} placeholder="e.g. fill the empty weekdays in December · get 5 owner calls this month" style={field} />
-                    </div>
-                  ) : key === 'audience' ? (
-                    <>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {(Object.keys(AUD) as AdAudience[]).map(k => (
-                          <button key={k} onClick={() => setSt(x => ({ ...x, audience: k }))} style={{ textAlign: 'left', background: st.audience === k ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.audience === k ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink }}>
-                            <span style={{ fontSize: 14, fontWeight: 700 }}>{AUD[k].label}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {AUD[k].hint}</span>
+                  {st.mode === 'describe' ? (<>
+                    <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '18px 0 8px', letterSpacing: '-0.01em' }}>What’s the ad about?</p>
+                    <textarea autoFocus value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) goPlan() }} rows={3}
+                      placeholder="e.g. a cool video for Amrit · a 15-second Reel for Art Basel weekend at 17WEST · why owners switch to Stay" style={{ ...field, fontSize: 15 }} />
+                    <p style={{ fontSize: 11.5, color: UI.mut, margin: '6px 0 0' }}>One line is enough. Name a property and its photos are used. <button type="button" onClick={() => setIdeasOpen(!ideasOpen)} style={{ background: 'none', border: 0, color: UI.blue, cursor: 'pointer', fontSize: 11.5, fontWeight: 600, padding: 0 }}>{ideasOpen ? 'Hide the ideas' : 'Need an idea?'}</button></p>
+                    {ideasOpen ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 6, marginTop: 8, maxHeight: 250, overflowY: 'auto' }}>
+                        {IDEAS.map(idea => (
+                          <button key={idea.key} type="button" onClick={() => useIdea(idea)} style={{ ...choice(false), padding: '8px 10px' }}>
+                            <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{idea.title} <span style={{ fontWeight: 500, color: UI.mut }}>· {GOALS.find(g => g.key === idea.goal)?.label}</span></span>
+                            <span style={{ display: 'block', fontSize: 11, color: UI.mut, marginTop: 3, lineHeight: 1.4 }}>{idea.why}</span>
                           </button>
                         ))}
                       </div>
-                      <Label>Who exactly? (optional)</Label>
-                      <input value={st.who} onChange={e => setSt(x => ({ ...x, who: e.target.value }))} placeholder={st.audience === 'guests' ? 'e.g. couples, families, groups for Art Basel, remote workers' : st.audience === 'owners' ? 'e.g. owners unhappy with their manager, new buyers in Miami' : 'e.g. realtors selling condos in Brickell'} style={field} />
-                    </>
-                  ) : key === 'review' && plan ? (
-                    <div style={{ fontSize: 13, lineHeight: 1.65 }}>
-                      <p style={{ margin: 0 }}><b>{plan.name}</b>{plan.property ? <span style={{ color: UI.gold }}> · {plan.property}</span> : null}</p>
-                      <p style={{ margin: '4px 0 0', color: UI.mut }}>{plan.brief}</p>
-                      {plan.hook ? <p style={{ margin: '6px 0 0' }}><b>Opens on:</b> “{plan.hook}”</p> : null}
-                      <ol style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12.5 }}>{plan.outline.map((o, k) => <li key={k}>{o.replace(/^\d+[.)]\s*/, '')}</li>)}</ol>
-                      <p style={{ fontSize: 12, color: UI.mut, marginTop: 8 }}>Next you can tweak any of it, then build.</p>
+                    ) : null}
+                    {goalRow}{audRow}{lengthRow}{shapeRow}{more}
+                    <div style={{ display: 'flex', gap: 10, marginTop: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <Btn tone="gold" disabled={!!busy || !st.prompt.trim()} onClick={() => goPlan()}>{busy === 'plan' ? 'Planning… about 20 seconds' : 'Plan it →'}</Btn>
+                      <span style={{ fontSize: 11.5, color: UI.mut, flex: 1, minWidth: 200 }}>I sharpen this into a plan, check our photos, and ask only what would change the ad. Nothing is built until you say so.</span>
+                      <button type="button" disabled={!!busy || !st.prompt.trim()} onClick={() => goPlan(true)} title="Writes and builds it straight away with the choices above" style={{ background: 'none', border: 0, color: UI.blue, cursor: 'pointer', fontSize: 11.5, padding: 0, opacity: busy || !st.prompt.trim() ? 0.5 : 1 }}>{busy === 'write' ? 'Building…' : 'Skip the plan — build it now'}</button>
                     </div>
-                  ) : key === 'music' ? (
-                    <>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <button onClick={() => setSt(x => ({ ...x, music: '', vibe: '' }))} style={{ textAlign: 'left', background: !st.music && !st.vibe ? '#1d2a3d' : 'transparent', border: '1.5px solid ' + (!st.music && !st.vibe ? UI.blue : UI.line), borderRadius: 9, padding: '8px 11px', cursor: 'pointer', color: UI.ink, fontSize: 13, fontWeight: 600 }}>Pick for me <span style={{ color: UI.mut, fontWeight: 500 }}>· the plan chooses a track that fits</span></button>
-                        {MUSIC.filter(m => m.file).map(m => (
-                          <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: st.music === m.key ? '#1d2a3d' : 'transparent', border: '1.5px solid ' + (st.music === m.key ? UI.blue : UI.line), borderRadius: 9, padding: '5px 8px' }}>
-                            <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
-                            <button onClick={() => setSt(x => ({ ...x, music: m.key, vibe: '' }))} style={{ flex: 1, textAlign: 'left', background: 'none', border: 0, color: UI.ink, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>{m.label} <span style={{ color: UI.mut, fontWeight: 500 }}>· {m.mood.toLowerCase()}</span></button>
-                          </div>
-                        ))}
-                        {sounds.filter(x => x.kind === 'music').slice(0, 6).map(x => (
-                          <div key={x.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: st.music === x.key ? '#1d2a3d' : 'transparent', border: '1.5px solid ' + (st.music === x.key ? UI.blue : UI.line), borderRadius: 9, padding: '5px 8px' }}>
-                            <Btn small on={hear === x.url} onClick={() => preview(x.url)}>{hear === x.url ? '■' : '▶'}</Btn>
-                            <button onClick={() => setSt(s2 => ({ ...s2, music: x.key, vibe: '' }))} style={{ flex: 1, textAlign: 'left', background: 'none', border: 0, color: UI.ink, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}>♪ {x.name} <span style={{ color: UI.mut, fontWeight: 500 }}>· made with ElevenLabs</span></button>
-                          </div>
-                        ))}
-                      </div>
-                      <Label>Or describe a new vibe</Label>
-                      <input value={st.vibe} onChange={e => setSt(x => ({ ...x, vibe: e.target.value, music: e.target.value ? '' : x.music }))} placeholder="e.g. sunset lounge house, warm, upscale — ElevenLabs composes it" style={field} />
-                    </>
-                  ) : key === 'look' ? (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8, maxHeight: 460, overflowY: 'auto' }}>
-                      {looksShown(st.look).map(l => (
-                        <button key={l.key} onClick={() => pickNext(() => setSt(x => ({ ...x, look: l.key })))} style={{ padding: 0, border: '2px solid ' + (st.look === l.key ? UI.blue : UI.line), borderRadius: 10, overflow: 'hidden', cursor: 'pointer', background: 'none', color: UI.ink, textAlign: 'left' }}>
-                          {p && p.scenes.some(x => x.photos.length) ? <LookPreview proj={p} look={l.key} style={{}} assets={assets} w={200} /> : <span style={{ display: 'block', height: 64, background: `linear-gradient(135deg, ${l.c.navy2}, ${l.c.deep})`, padding: '12px 12px', fontFamily: display, fontWeight: 800, fontSize: 18, color: l.c.ink }}>Stay <span style={{ color: l.c.gold }}>here</span></span>}
-                          <span style={{ display: 'block', background: UI.panel2, padding: '7px 10px' }}><span style={{ display: 'block', fontSize: 12.5, fontWeight: 700 }}>{l.label}</span><span style={{ fontSize: 10.5, color: UI.mut }}>{l.blurb}</span></span>
-                        </button>
-                      ))}
-                      <button onClick={() => setMoreLooks(!moreLooks)} style={{ border: '1px dashed ' + UI.line, borderRadius: 10, background: 'transparent', color: UI.mut, fontSize: 12, cursor: 'pointer', minHeight: 90 }}>{moreLooks ? 'Fewer looks' : '+ More looks'}</button>
-                    </div>
-                  ) : key === 'shape' ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {([['', 'Pick for me', 'the plan chooses from where it fits best']] as [AdFormat | '', string, string][]).concat((Object.keys(FORMATS) as AdFormat[]).map(f => [f, f, FORMAT_LABEL[f]])).map(([f, l, d]) => (
-                        <button key={l} onClick={() => pickNext(() => setSt(x => ({ ...x, format: f })))} style={{ textAlign: 'left', background: st.format === f ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + (st.format === f ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink }}>
-                          <span style={{ fontSize: 14, fontWeight: 700 }}>{l}</span> <span style={{ fontSize: 11.5, color: UI.mut }}>· {d}</span>
+                  </>) : st.mode === 'script' ? (<>
+                    <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '18px 0 8px', letterSpacing: '-0.01em' }}>Paste your script</p>
+                    <textarea autoFocus value={st.script} onChange={e => setSt(x => ({ ...x, script: e.target.value }))} rows={8} placeholder={'Paste the voiceover script. Line breaks help me cut scenes.\n\ne.g.\nWake up to the ocean.\nRooftop pool. Sunset views.\nAmrit, Singer Island.\nBook your stay at stay-hospitality.com.'} style={{ ...field, fontSize: 14 }} />
+                    <p style={{ fontSize: 11.5, color: UI.mut, margin: '6px 0 0' }}>{st.script.trim() ? `${st.script.trim().split(/\s+/).length} words · about ${Math.round(st.script.trim().split(/\s+/).length / 2.5)} s spoken · ` : ''}Your words are kept as written. You review the laid-out script before the video is built.</p>
+                    {audRow}{shapeRow}{more}
+                    <div style={{ marginTop: 20 }}><Btn tone="gold" disabled={!!busy || !st.script.trim()} onClick={async () => { if (await layOutScript()) setStarting(false) }}>{busy === 'script' ? 'Laying it out…' : 'Lay out my script →'}</Btn></div>
+                  </>) : st.mode === 'template' ? (<>
+                    <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '18px 0 4px', letterSpacing: '-0.01em' }}>Pick a template</p>
+                    <p style={{ fontSize: 12.5, color: UI.mut, margin: '0 0 10px' }}>A ready-made ad that fills itself with photos from the library. Every word is editable after.</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 7 }}>
+                      {TEMPLATES.map(tp => (
+                        <button key={tp.key} type="button" disabled={!!busy} onClick={() => startTemplate(tp)} style={{ ...choice(false), padding: '10px 12px' }}>
+                          <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700 }}>{tp.label} <span style={{ color: UI.mut, fontWeight: 500, fontSize: 11.5 }}>· {tp.format} · {AUD[tp.audience].label.toLowerCase()}</span></span>
+                          <span style={{ display: 'block', fontSize: 11.5, color: UI.mut, marginTop: 3, lineHeight: 1.45 }}>{tp.blurb}</span>
                         </button>
                       ))}
                     </div>
-                  ) : key === 'think' ? (
-                    <div style={{ fontSize: 13, lineHeight: 1.7, color: UI.ink }}>
-                      <p style={{ margin: 0 }}><b>Ad:</b> {st.prompt}</p>
-                      <p style={{ margin: 0 }}><b>Goal:</b> {goalOf(st.goal)?.label}{st.why ? ' — ' + st.why : ''} · <b>For:</b> {AUD[st.audience].label}{st.who ? ' (' + st.who + ')' : ''} · <b>Vibe:</b> {st.vibe || MUSIC.find(m => m.key === st.music)?.label || 'pick for me'} · <b>Look:</b> {LOOKS.find(l => l.key === st.look)?.label} · <b>Shape:</b> {st.format || 'pick for me'}</p>
-                      <p style={{ fontSize: 12, color: UI.mut, marginTop: 8 }}>Next, I sharpen this into a plan, check our photos of the property, and ask you only what would change the ad.</p>
-                    </div>
-                  ) : q ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {q.options.map((o, k) => (
-                        <button key={o} onClick={() => pickNext(() => setAnswers(a => ({ ...a, [q.id]: o })))} style={{ textAlign: 'left', background: (answers[q.id] || q.options[0]) === o ? '#1d2a3d' : UI.panel2, border: '1.5px solid ' + ((answers[q.id] || q.options[0]) === o ? UI.blue : UI.line), borderRadius: 9, padding: '10px 12px', cursor: 'pointer', color: UI.ink, fontSize: 13.5, fontWeight: 600 }}>
-                          {o}{k === 0 ? <span style={{ color: UI.gold }}> ★</span> : null}
+                    {busy === 'template' || busy === 'new' ? <p style={{ fontSize: 12, color: UI.gold, marginTop: 10 }}>Filling it with photos from the library…</p> : null}
+                  </>) : st.mode === 'revamp' ? (<>
+                    <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '18px 0 8px', letterSpacing: '-0.01em' }}>Which ad are we revamping?</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 5, maxHeight: 220, overflowY: 'auto' }}>
+                      {list.filter(a => (a.kind || 'video') !== 'flyer').map(a => (
+                        <button key={a.id} type="button" onClick={() => setSt(x => ({ ...x, from: a.id }))} style={{ ...choice(st.from === a.id), padding: '7px 10px' }}>
+                          <span style={{ display: 'block', fontSize: 12.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.name}</span>
+                          <span style={{ fontSize: 11, color: UI.mut }}>{a.format} · {a.scenes} scenes</span>
                         </button>
                       ))}
+                      {!list.length ? <p style={{ fontSize: 12, color: UI.mut }}>No ads to revamp yet — pick Describe it.</p> : null}
                     </div>
-                  ) : null}
-                </div>
-
-                <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
-                  {i > 0 ? <Btn disabled={!!busy} onClick={() => setWs(i - 1)}>← Back</Btn> : null}
-                  <span style={{ marginLeft: 'auto', fontSize: 11.5, color: UI.mut }}>{busy === 'plan' ? 'Working it through… about 20–30 seconds' : ''}</span>
-                  <Btn tone="gold" disabled={!!busy} onClick={next}>{busy === 'plan' ? 'Thinking…' : busy ? 'Working…' : key === 'think' ? (plan ? 'Next →' : 'Work it through →') : last ? (st.mode === 'describe' ? 'Review the plan →' : st.mode === 'script' ? (busy === 'script' ? 'Laying it out…' : 'Lay out my script →') : st.mode === 'revamp' ? 'Revamp it →' : st.mode === 'template' ? 'Next: pick a template →' : 'Create it →') : 'Next →'}</Btn>
-                </div>
+                    <H opt>What should change?</H>
+                    <textarea value={st.prompt} onChange={e => setSt(x => ({ ...x, prompt: e.target.value }))} rows={2} placeholder="e.g. make it for guests, faster cuts, open on the rooftop (or leave empty: just make it fresher)" style={{ ...field, fontSize: 13.5 }} />
+                    {goalRow}{audRow}{more}
+                    <div style={{ display: 'flex', gap: 10, marginTop: 20, alignItems: 'center' }}>
+                      <Btn tone="gold" disabled={!!busy || !st.from} onClick={startGo}>{busy ? 'Working…' : 'Revamp it →'}</Btn>
+                      <span style={{ fontSize: 11.5, color: UI.mut }}>The original stays as it is — the revamp is a new ad.</span>
+                    </div>
+                  </>) : (<>
+                    <p style={{ fontFamily: display, fontSize: 24, fontWeight: 800, margin: '18px 0 4px', letterSpacing: '-0.01em' }}>A blank ad</p>
+                    <p style={{ fontSize: 12.5, color: UI.mut, margin: 0 }}>Two empty scenes to start from. Add scenes, pick designs and photos yourself.</p>
+                    {audRow}{shapeRow}
+                    <div style={{ marginTop: 20 }}><Btn tone="gold" disabled={!!busy} onClick={startGo}>{busy ? 'Working…' : 'Create it →'}</Btn></div>
+                  </>)}
+                </>)}
               </div>
             )
           })() : showAudit && p ? (
@@ -1642,13 +1584,13 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               {audit?.note ? <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>{audit.note}</p> : null}
             </div>
           ) : draft ? (
-            <div style={{ width: '100%', maxWidth: 760, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
+            <div style={{ width: '100%', maxWidth: 820, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <span style={{ fontFamily: display, fontSize: 22, fontWeight: 800 }}>The script</span>
+                <span style={{ fontFamily: display, fontSize: 22, fontWeight: 800 }}>The script — read it, fix it, build</span>
                 <span style={{ fontSize: 12, color: UI.mut }}>{draft.scenes.length} scenes · about {Math.round(draft.scenes.reduce((a, x) => a + (x.vo.trim() ? x.vo.trim().split(/\s+/).length / 2.55 + 1 : 3), 0) + 4)}s · {AUD[draft.settings.audience].label} · {draft.settings.format}</span>
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
                   <Btn small onClick={copyScript} title="Copies the whole script as text">Copy</Btn>
-                  <Btn small onClick={() => setDraft(null)}>{plan ? '← Plan' : 'Cancel'}</Btn>
+                  <Btn small onClick={() => { setDraft(null); if (!plan) setStarting(true) }}>{plan ? '← Plan' : '← Back'}</Btn>
                 </span>
               </div>
               <input value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} style={{ ...field, fontWeight: 700, marginTop: 10 }} />
@@ -1684,10 +1626,10 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>Photos, timing and looks are laid out from this script. Then Make voice records it in one take.</p>
             </div>
           ) : plan ? (
-            <div style={{ width: '100%', maxWidth: 720, background: UI.panel, border: '1px solid #2b4470', borderRadius: 12, padding: '16px 18px' }}>
+            <div style={{ width: '100%', maxWidth: 820, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, padding: '18px 22px 20px' }}>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
-                <span style={{ fontFamily: display, fontSize: 19, fontWeight: 800 }}>Before I build it</span>
-                <span style={{ fontSize: 12, color: UI.mut }}>Check the plan, answer the questions, then build.</span>
+                <span style={{ fontFamily: display, fontSize: 22, fontWeight: 800 }}>The plan — confirm it</span>
+                <span style={{ fontSize: 12, color: UI.mut }}>Change anything, answer the questions, then build. Nothing is saved yet.</span>
               </div>
               <Label>The ad</Label>
               <input value={plan.name} onChange={e => setPlan({ ...plan, name: e.target.value })} style={{ ...field, fontWeight: 700, marginBottom: 6 }} />
@@ -1700,11 +1642,12 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <Label>Settings</Label>
               <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center' }}>
                 <span style={{ display: 'flex', gap: 4 }}>{(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={plan.settings.audience === k} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, audience: k } })}>{AUD[k].label}</Btn>)}</span>
-                <span style={{ display: 'flex', gap: 4 }}>{(Object.keys(FORMATS) as AdFormat[]).map(f => <Btn key={f} small on={plan.settings.format === f} title={FORMAT_LABEL[f]} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, format: f } })}>{f}</Btn>)}</span>
+                <span style={{ display: 'flex', gap: 4 }}>{(Object.keys(FORMATS) as AdFormat[]).filter(f => f !== 'letter').map(f => <Btn key={f} small on={plan.settings.format === f} title={FORMAT_LABEL[f]} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, format: f } })}>{f}</Btn>)}</span>
                 <span style={{ display: 'flex', gap: 4 }}>{[15, 30, 45, 60, 90].map(n => <Btn key={n} small on={plan.settings.seconds === n} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, seconds: n } })}>{n}s</Btn>)}</span>
               </div>
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
-                {MUSIC.filter(m => m.file).map(m => <Btn key={m.key} small on={plan.settings.music === m.key} title={m.mood} onClick={() => setPlan({ ...plan, settings: { ...plan.settings, music: m.key } })}>♪ {m.label}</Btn>)}
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
+                <Btn small on={planMusic} onClick={() => setPlanMusic(!planMusic)} title="The track picked for this ad — press to choose another">♪ {MUSIC.find(m => m.key === plan.settings.music)?.label || sounds.find(x => x.key === plan.settings.music)?.name || 'Music picked for you'} · {planMusic ? 'done' : 'change'}</Btn>
+                {planMusic ? MUSIC.filter(m => m.file).map(m => <Btn key={m.key} small on={plan.settings.music === m.key} title={m.mood} onClick={() => { setPlan({ ...plan, settings: { ...plan.settings, music: m.key } }); preview(m.file) }}>{hear === m.file ? '■ ' : '▶ '}{m.label}</Btn>) : null}
               </div>
 
               {plan.questions.length ? <Label>A few questions</Label> : null}
@@ -1726,35 +1669,17 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <input value={planNote} onChange={e => setPlanNote(e.target.value)} placeholder="Optional, e.g. lead with the rooftop, end on the sunset shot" style={field} />
               <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
                 <Btn tone="gold" disabled={!!busy} onClick={scriptFromPlan} title="Writes the full script for you to read and edit, then you build the video from it">{busy === 'script' ? 'Writing the script…' : 'Write the script →'}</Btn>
-                <Btn disabled={!!busy} onClick={buildFromPlan}>{busy === 'write' ? 'Building the ad…' : p && p.scenes.length > 1 && !seed.current?.fresh ? 'Skip to the video (replaces this ad’s scenes)' : 'Skip to the video'}</Btn>
+                <Btn disabled={!!busy} onClick={buildFromPlan} title="Writes it and builds the video in one go">{busy === 'write' ? 'Building the ad…' : p && p.scenes.length > 1 && !seed.current?.fresh ? 'Build it now (replaces this ad’s scenes)' : 'Build the video now'}</Btn>
                 <Btn disabled={!!busy} onClick={replan} title="Plans again with your answers and note">{busy === 'plan' ? 'Thinking…' : 'Rethink with my answers'}</Btn>
-                <Btn disabled={!!busy} onClick={() => setPlan(null)}>Cancel</Btn>
+                {seed.current?.fresh ? <Btn disabled={!!busy} onClick={() => { setPlan(null); setStarting(true) }} title="Back to the page before, with what you wrote">← Back</Btn> : null}
+                <Btn disabled={!!busy} onClick={cancelFlow}>Cancel</Btn>
               </div>
               <p style={{ fontSize: 11, color: UI.mut, marginTop: 8 }}>★ = my recommendation. Nothing is built or saved until you press build.</p>
             </div>
           ) : p ? (
-            <div style={scriptSide ? { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(360px, 1fr)', gap: 14, width: '100%', alignItems: 'start' } : { display: 'contents' }}>
+            <div style={scriptSide ? { display: 'grid', gridTemplateColumns: FW >= FH ? 'minmax(0, 1.15fr) minmax(360px, 1fr)' : 'minmax(0, auto) minmax(380px, 1fr)', gap: 14, width: '100%', alignItems: 'start', justifyContent: 'center' } : { display: 'contents' }}>
             <div style={scriptSide ? { position: 'sticky', top: 8, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 } : { display: 'contents' }}>
-              {sc && canEdit && tl && p.kind !== 'flyer' ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', width: '100%', maxWidth: FW >= FH ? pw : 520, padding: '6px 8px', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 9 }} title="Scene tools">
-                  <span style={{ fontSize: 11.5, fontWeight: 700, color: UI.ink }}>Scene {sel + 1}</span>
-                  <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: UI.mut }}>{tl.durs[sel].toFixed(1)} s</span>
-                  {!hasVoice ? (<>
-                    <Btn small onClick={() => nudge(sel, -0.5)} title="Half a second shorter">− Shorter</Btn>
-                    <Btn small onClick={() => nudge(sel, 0.5)} title="Half a second longer">+ Longer</Btn>
-                    {sc.dur ? <Btn small onClick={() => setScene(sel, { dur: null })} title="Back to automatic timing from the spoken line">Auto</Btn> : null}
-                    <span style={{ fontSize: 11, color: UI.mut, marginLeft: 6 }}>Cut the ad to</span>
-                    {[6, 10, 15, 30].map(n => <Btn key={n} small disabled={tl.total <= n} onClick={() => cutTo(n)} title="Cuts every scene's hold down together so the whole ad fits">{n} s</Btn>)}
-                  </>) : <span style={{ fontSize: 11, color: UI.mut }}>timed to the voice · shorten the spoken line, then re-make the voice</span>}
-                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                    <Btn small disabled={sel === 0} onClick={() => move(sel, sel - 1)} title="Move earlier">◀</Btn>
-                    <Btn small disabled={sel === p.scenes.length - 1} onClick={() => move(sel, sel + 1)} title="Move later">▶</Btn>
-                    <Btn small onClick={dupScene} title="Duplicate this scene">⧉ Duplicate</Btn>
-                    <Btn small tone="red" disabled={p.scenes.length < 2} onClick={() => delSceneAt(sel)} title="Delete this scene (Delete key)">✕ Delete scene</Btn>
-                  </span>
-                </div>
-              ) : null}
-              <div style={{ position: 'relative', ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? 'calc(100vh - 380px)' : 520, maxHeight: 640 }), aspectRatio: `${FW}/${FH}` }}>
+              <div style={{ position: 'relative', ...(FW >= FH ? { width: '100%', maxWidth: pw } : { height: full ? (isFlyer ? 'calc(100vh - 210px)' : 'calc(100vh - 300px)') : 520, minHeight: 340, maxHeight: 760, alignSelf: 'center', maxWidth: '100%' }), aspectRatio: `${FW}/${FH}` }}>
                 <canvas ref={canvasRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960}
                   style={{ width: '100%', height: '100%', display: 'block', borderRadius: 8, background: '#000', boxShadow: '0 20px 50px -25px rgba(0,0,0,.8)' }} />
                 <canvas ref={safeRef} width={FW >= FH ? 960 : Math.round(960 * FW / FH)} height={FW >= FH ? Math.round(960 * FH / FW) : 960} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', borderRadius: 8 }} />
@@ -1764,14 +1689,16 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   Static flyer · {FLYER_SIZES.find(x => x.key === p.format)?.label} · {FORMATS[p.format][0]}×{FORMATS[p.format][1]} · pick a design on the right, edit the words below, export PNG or PDF
                 </div>
               ) : (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', maxWidth: FW >= FH ? pw : 520 }}>
-                <Btn tone="gold" onClick={play}>{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
-                <Btn small onClick={() => seek(0)}>⏮ Start</Btn>
-                {platformOf(p).safe.bottom || platformOf(p).safe.top ? <Btn small on={safe} onClick={() => setSafe(!safe)} title="Shows what the app's own buttons cover on this platform — keep words out of the red">Safe zones</Btn> : null}
-                {p.kind !== 'post' ? <Btn small on={beside} onClick={toggleBeside} title="Script beside the player, or below a big player">{beside ? 'Script beside ⇆' : 'Script below ⇅'}</Btn> : null}
-                <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, color: UI.mut }}>{fmtT(t)} / {tl ? fmtT(tl.total) : '0:00'}</span>
-                <span style={{ marginLeft: 'auto', fontSize: 11.5, color: hasVoice ? UI.green : UI.gold }}>
-                  {scriptSide ? (hasVoice ? 'Timed to the voice' : p.voice ? 'Re-record the voice' : 'Estimated timing') : hasVoice ? 'Timed to the voice' : p.voice ? 'Script changed since the voice — re-record' : p.kind === 'post' ? 'Loop · ' + (tl ? tl.total.toFixed(1) : '0') + ' s' : 'Estimated timing · make the voice to lock it'}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: FW >= FH ? pw : 520, flexWrap: 'wrap' }}>
+                <Btn tone="gold" onClick={play} title="Play / pause (space)">{playing ? '❚❚ Pause' : '▶ Play'}</Btn>
+                <Btn small onClick={() => seek(0)} title="Back to the start">⏮</Btn>
+                <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12, color: UI.mut, whiteSpace: 'nowrap' }}>{fmtT(t)} / {tl ? fmtT(tl.total) : '0:00'}</span>
+                <span style={{ fontSize: 11.5, whiteSpace: 'nowrap', color: hasVoice ? UI.green : UI.gold }} title={hasVoice ? 'The scenes are cut to the recorded voice' : 'Scene lengths are estimated from the words until the voice is recorded'}>
+                  {p.kind === 'post' ? 'Loop' : hasVoice ? '● Timed to the voice' : p.voice ? '● Script changed — re-record' : '○ Estimated timing'}
+                </span>
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                  {platformOf(p).safe.bottom || platformOf(p).safe.top ? <Btn small on={safe} onClick={() => setSafe(!safe)} title="Shows what the app's own buttons cover on this platform — keep words out of the red">Safe zones</Btn> : null}
+                  {isSpoken ? <Btn small on={beside} onClick={toggleBeside} title="Script beside the player, or below a big player">{beside ? 'Script beside' : 'Script below'}</Btn> : null}
                 </span>
               </div>
               )}
@@ -1789,7 +1716,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                     setScenes={scenes => change(d => ({ ...d, scenes }))} />
                 </div>
               ) : sc && canEdit ? (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 520 }} title="Quick edit of the scene on screen">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, width: '100%', maxWidth: FW >= FH ? pw : 620 }} title="Quick edit of the scene on screen">
                   <input value={sc.head} onChange={e => setScene(sel, { head: e.target.value })} placeholder="Headline on screen" style={{ ...field, padding: '6px 9px', fontSize: 12.5, fontWeight: 700 }} />
                   {isFlyer || p.kind === 'post'
                     ? <input value={sc.sub} onChange={e => setScene(sel, { sub: e.target.value })} placeholder="Line under the headline" style={{ ...field, padding: '6px 9px', fontSize: 12.5 }} />
@@ -1799,17 +1726,24 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             </div>
           ) : (
             <div style={{ margin: 'auto', textAlign: 'center', color: UI.mut, maxWidth: 380 }}>
-              <p style={{ fontFamily: display, fontSize: 22, color: UI.ink, fontWeight: 800 }}>Make an ad</p>
-              <p style={{ fontSize: 13, lineHeight: 1.6 }}>Start a new ad, write a one-line brief, and let the writer lay out the scenes with photos from our library. Then edit, make the voice, and export for any platform.</p>
-              {canEdit ? <div style={{ marginTop: 12 }}><Btn tone="gold" onClick={openStart}>✦ Create new ad</Btn></div> : null}
+              <p style={{ fontFamily: display, fontSize: 22, color: UI.ink, fontWeight: 800 }}>Nothing open</p>
+              <p style={{ fontSize: 13, lineHeight: 1.6 }}>Pick something to make, or open a piece from Your work.</p>
+              <div style={{ marginTop: 12 }}><Btn tone="gold" onClick={goHome}>← Studio home</Btn></div>
             </div>
           )}
         </div>
 
-        {/* ── right: inspector ── */}
-        <div style={{ borderLeft: '1px solid ' + UI.line, padding: '4px 14px 14px', background: UI.panel, minWidth: 0, maxHeight: full ? 'calc(100vh - 230px)' : 760, overflowY: 'auto' }}>
+        {/* ── right: one panel, two tabs — this scene, or the whole ad ── */}
+        <div ref={panelRef} style={{ display: flow ? 'none' : 'block', borderLeft: '1px solid ' + UI.line, padding: '0 14px 14px', background: UI.panel, minWidth: 0, maxHeight: full ? 'calc(100vh - 52px)' : 820, overflowY: 'auto' }}>
           {p && sc ? (
             <>
+              <div style={{ position: 'sticky', top: 0, zIndex: 5, background: UI.panel, padding: '10px 0 8px', display: 'flex', alignItems: 'center', gap: 4, borderBottom: '1px solid ' + UI.line }}>
+                {([['scene', isFlyer ? 'Words · photo · design' : 'Scene ' + (sel + 1) + ' of ' + p.scenes.length, 'This scene: its words, photos, design, motion'], ['ad', isFlyer ? 'Size · look' : 'Whole ad', isFlyer ? 'The size and the look of the flyer' : 'The whole ad: where it runs, look, music, voice, captions']] as const).map(([k, l, tip]) => (
+                  <button key={k} type="button" title={tip} onClick={() => setTab(k)} style={{ flex: 1, background: tab === k ? '#2A3442' : 'transparent', color: tab === k ? UI.ink : UI.mut, border: '1px solid ' + (tab === k ? '#3A4657' : UI.line), borderRadius: 8, padding: '7px 8px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{l}</button>
+                ))}
+                <button type="button" onClick={() => setAllFolds(!['ai', 'design', 'words', 'photos', 'format', 'look', 'music'].every(k => folded[k]))} title="Collapse or open every section" style={{ background: 'none', border: 0, color: UI.mut, fontSize: 13, cursor: 'pointer', padding: '0 4px' }}>⇕</button>
+              </div>
+              {tab === 'scene' ? (<div style={{ display: 'flex', flexDirection: 'column' }}>
               {(() => { const n = targetIdx().length; return n > 1 ? (
                 <div style={{ marginTop: 12, background: 'rgba(210,176,119,0.1)', border: '1px solid rgba(210,176,119,0.45)', borderRadius: 9, padding: '8px 10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1823,12 +1757,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </div>
               ) : null })()}
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 12, fontWeight: 700 }}>Scene {sel + 1} of {p.scenes.length}</span>
-                <span style={{ display: 'flex', gap: 3 }}>
-                  <button type="button" onClick={() => setAllFolds(true)} title="Collapse every section" style={{ background: 'none', border: 0, color: UI.mut, fontSize: 10.5, cursor: 'pointer' }}>Collapse all</button>
-                  <button type="button" onClick={() => setAllFolds(false)} title="Open every section" style={{ background: 'none', border: 0, color: UI.mut, fontSize: 10.5, cursor: 'pointer' }}>Open all</button>
-                  {canEdit && p.scenes.length > 1 && !picked.length ? <button type="button" onClick={pickAll} title="Select every scene, then change them together" style={{ background: 'none', border: 0, color: UI.gold, fontSize: 10.5, cursor: 'pointer' }}>Select all scenes</button> : null}
-                </span>
+                <span style={{ fontSize: 12, fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 190 }} title="The scene being edited">{(sc.head || sc.vo || KINDS.find(k => k.kind === sc.kind)?.label || '').replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
+                {canEdit && p.scenes.length > 1 && !picked.length ? <button type="button" onClick={pickAll} title="Select every scene, then change design, motion or graphics on all of them" style={{ background: 'none', border: 0, color: UI.gold, fontSize: 10.5, cursor: 'pointer', whiteSpace: 'nowrap' }}>Select all</button> : null}
                 <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
                   <Btn small disabled={sel === 0} onClick={() => move(sel, sel - 1)} title="Earlier">↑</Btn>
                   <Btn small disabled={sel === p.scenes.length - 1} onClick={() => move(sel, sel + 1)} title="Later">↓</Btn>
@@ -1839,7 +1769,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               {canEdit ? (
                 <Fold id="ai" title="Change with AI" folded={!!folded['ai']} onToggle={toggleFold}>
                 <div style={{ marginTop: 10, background: '#18243a', border: '1px solid #2b4470', borderRadius: 9, padding: 9 }}>
-                  <p style={{ fontSize: 11.5, fontWeight: 700, margin: '0 0 6px', color: '#BFD4FA' }}>✦ Change this scene with AI</p>
+                  <p style={{ fontSize: 11.5, fontWeight: 700, margin: '0 0 6px', color: '#BFD4FA' }}>✦ Change this {isFlyer ? 'flyer' : 'scene'} with AI</p>
                   <textarea value={ask} onChange={e => setAsk(e.target.value)} rows={2} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) askScene(ask) }}
                     placeholder="e.g. make it punchier · show the rooftop pool · turn it into three numbers · mention Art Basel" style={{ ...field, fontSize: 12.5 }} />
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
@@ -1850,35 +1780,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 </div>
                 </Fold>
               ) : null}
-              <Fold id="design" title="Design" folded={!!folded['design']} onToggle={toggleFold}>
-              <Label>Look</Label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) < 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setMany(() => ({ kind: k.kind }))}>{k.label}</Btn>)}
-                <span style={{ width: '100%', fontSize: 10, color: UI.gold, letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 6 }}>Pro designs · from the sales videos</span>
-                {KINDS.filter(k => PRO_KINDS.indexOf(k.kind) >= 0).map(k => <Btn key={k.kind} small on={sc.kind === k.kind} title={k.hint} onClick={() => setMany(() => ({ kind: k.kind }))}>{k.label}</Btn>)}
-              </div>
-              <p style={{ fontSize: 11, color: UI.mut, marginTop: 6 }}>{KINDS.find(k => k.kind === sc.kind)?.hint}</p>
-              </Fold>
-              <Fold id="motion" title="Motion" folded={!!folded['motion']} onToggle={toggleFold}>
-              {sel > 0 || targetIdx().length > 1 ? (
-                <>
-                  <Label>Comes in with</Label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {TRANSITIONS.map(x => <Btn key={x} small on={(sc.tr || 'auto') === x} disabled={!canEdit} onClick={() => { setMany(() => ({ tr: x as AdTransition })); if (tl) setT(tl.starts[sel] - 0.15) }}>{x === 'auto' ? 'Auto' : x[0].toUpperCase() + x.slice(1)}</Btn>)}
-                  </div>
-                </>
-              ) : null}
-              {!isFlyer ? (<>
-              <Label>Headline animation</Label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {TEXT_ANIMS.map(x => <Btn key={x.key} small on={(sc.anim || 'auto') === x.key} disabled={!canEdit} onClick={() => { setMany(() => ({ anim: x.key as AdTextAnim })); if (tl) setT(tl.starts[sel] + 0.05) }}>{x.label}</Btn>)}
-              </div>
-              <Label>Camera</Label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {CAMS.map(x => <Btn key={x.key} small on={(sc.cam || 'auto') === x.key} disabled={!canEdit} onClick={() => setMany(() => ({ cam: x.key as AdCam }))}>{x.label}</Btn>)}
-              </div>
-              </>) : null}
-              </Fold>
+              <div style={{ order: isSpoken ? 2 : 0 }}>
               <Fold id="words" title="Words & layout" folded={!!folded['words']} onToggle={toggleFold}>
               {sc.kind === 'poster' ? (<>
                 <Label>Poster style</Label>
@@ -1960,6 +1862,8 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               ) : null}
 
               </Fold>
+              </div>
+              <div style={{ order: 1 }}>
               <Fold id="photos" title="Photos" folded={!!folded['photos']} onToggle={toggleFold}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginTop: 4 }}>
                 {sc.photos.map((u, k) => (
@@ -1980,7 +1884,20 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
                     <Btn small on={photoSrc === 'library'} onClick={() => { setPhotoSrc('library'); setHits([]); setStockNote('') }} title="Our own photos — every property, every unit">Our library</Btn>
                     <Btn small on={photoSrc === 'stock'} onClick={() => { setPhotoSrc('stock'); setHits([]) }} title="Licensed stock photos we may use in marketing (Pexels, Unsplash, public domain)">Stock photos</Btn>
+                    {!isFlyer ? <Btn small on={photoSrc === 'video'} onClick={() => { setPhotoSrc('video'); setHits([]); setStockNote('') }} title="A clip from Finished videos, playing behind this scene">Video clips</Btn> : null}
                   </div>
+                  {photoSrc === 'video' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8, maxHeight: 280, overflowY: 'auto' }}>
+                      {lib.map(v => (
+                        <div key={v.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: 5 }}>
+                          <button type="button" onClick={() => setWatch(v)} title="Watch" style={{ width: 64, height: 36, flex: 'none', borderRadius: 5, border: 0, cursor: 'pointer', background: '#000 center/cover no-repeat', backgroundImage: v.thumb ? `url(${v.thumb})` : 'none' }} />
+                          <span style={{ flex: 1, minWidth: 0 }}><span style={{ display: 'block', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.name}</span><span style={{ fontSize: 10.5, color: UI.mut }}>{fmtT(v.dur).replace(/\.\d$/, '')}{v.format ? ' · ' + v.format : ''}</span></span>
+                          <Btn small onClick={() => useVideo(v)} title="Puts this clip behind the selected scene">Use</Btn>
+                        </div>
+                      ))}
+                      {!lib.length ? <p style={{ fontSize: 11.5, color: UI.mut }}>No videos in the library yet — export an MP4 or upload one from Studio home.</p> : null}
+                    </div>
+                  ) : (<>
                   <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                     <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} placeholder={photoSrc === 'stock' ? 'e.g. christmas lights palm trees · miami skyline night · art gallery' : 'Search the library: 17west pool'} style={{ ...field, padding: '6px 9px' }} />
                     <Btn small onClick={search}>{searching ? '…' : 'Find'}</Btn>
@@ -2000,10 +1917,47 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                       })}
                     </div>
                   ) : null}
+                  </>)}
                 </>
               ) : null}
 
               </Fold>
+              </div>
+              <div style={{ order: 1 }}>
+              <Fold id="design" title={'Design · ' + (KINDS.find(k => k.kind === sc.kind)?.label || sc.kind)} folded={!!folded['design']} onToggle={toggleFold}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                <span style={{ width: 10, height: 34, borderRadius: 3, background: KIND_COLOR[sc.kind], flex: 'none' }} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 700 }}>{KINDS.find(k => k.kind === sc.kind)?.label}</span>
+                  <span style={{ display: 'block', fontSize: 11, color: UI.mut, lineHeight: 1.4 }}>{(KINDS.find(k => k.kind === sc.kind)?.hint || '').replace(/^Pro · /, '').split('. ')[0]}.</span>
+                </span>
+              </div>
+              {canEdit ? <div style={{ marginTop: 8 }}><Btn tone="blue" small onClick={() => setPicker('change')} title="See this scene in every design and pick one">Change the design — see them all</Btn></div> : null}
+              </Fold>
+              </div>
+              <div style={{ order: 3 }}>
+              <Fold id="motion" title="Motion" folded={!!folded['motion']} onToggle={toggleFold}>
+              {sel > 0 || targetIdx().length > 1 ? (
+                <>
+                  <Label>Comes in with</Label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {TRANSITIONS.map(x => <Btn key={x} small on={(sc.tr || 'auto') === x} disabled={!canEdit} onClick={() => { setMany(() => ({ tr: x as AdTransition })); if (tl) setT(tl.starts[sel] - 0.15) }}>{x === 'auto' ? 'Auto' : x[0].toUpperCase() + x.slice(1)}</Btn>)}
+                  </div>
+                </>
+              ) : null}
+              {!isFlyer ? (<>
+              <Label>Headline animation</Label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {TEXT_ANIMS.map(x => <Btn key={x.key} small on={(sc.anim || 'auto') === x.key} disabled={!canEdit} onClick={() => { setMany(() => ({ anim: x.key as AdTextAnim })); if (tl) setT(tl.starts[sel] + 0.05) }}>{x.label}</Btn>)}
+              </div>
+              <Label>Camera</Label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {CAMS.map(x => <Btn key={x.key} small on={(sc.cam || 'auto') === x.key} disabled={!canEdit} onClick={() => setMany(() => ({ cam: x.key as AdCam }))}>{x.label}</Btn>)}
+              </div>
+              </>) : null}
+              </Fold>
+              </div>
+              <div style={{ order: 3 }}>
               <Fold id="graphics" title="Graphics" folded={!!folded['graphics']} onToggle={toggleFold}>
               <Label>{targetIdx().length > 1 ? 'Graphics on the ' + targetIdx().length + ' selected scenes' : 'Graphics on this scene'}</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -2039,17 +1993,44 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 )
               })}
               </Fold>
+              </div>
+              <div style={{ order: 3 }}>
               <Fold id="sound" title="Sound effect" folded={!!folded['sound']} onToggle={toggleFold}>
-              <Label>Sound effect</Label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 <Btn small on={!sc.sfx} disabled={!canEdit} onClick={() => setMany(() => ({ sfx: '' }))}>None</Btn>
                 {sounds.filter(x => x.kind === 'sfx').slice(0, 12).map(x => <Btn key={x.key} small on={sc.sfx === x.key} disabled={!canEdit} title={x.prompt} onClick={() => { setMany(() => ({ sfx: x.key })); preview(x.url) }}>{x.name}</Btn>)}
-                {canEdit ? <Btn small onClick={() => { setSide('sounds'); setSndKind('sfx'); setSndSecs(2) }}>+ Make one</Btn> : null}
+                {canEdit ? <Btn small on={sndOpen === 'sfx'} onClick={() => { setSndOpen(sndOpen === 'sfx' ? '' : 'sfx'); setSndKind('sfx'); setSndSecs(2) }}>+ Make one</Btn> : null}
               </div>
-
+              {!sounds.some(x => x.kind === 'sfx') && sndOpen !== 'sfx' ? <p style={{ fontSize: 11, color: UI.mut, marginTop: 6 }}>No effects yet — make one (a whoosh, a shutter, waves) and it plays as the scene lands.</p> : null}
+              {sndOpen === 'sfx' ? soundMaker('sfx') : null}
               </Fold>
-              <Fold id="whole" title="Whole ad — look, style, voice, music" folded={!!folded['whole']} onToggle={toggleFold}>
-              <Label>Whole ad</Label>
+              </div>
+              </div>) : (<>
+              {canEdit && p.scenes.length ? (
+                <div style={{ marginTop: 12, background: '#18243a', border: '1px solid #2b4470', borderRadius: 9, padding: 9 }}>
+                  <p style={{ fontSize: 11.5, fontWeight: 700, margin: '0 0 6px', color: '#BFD4FA' }}>✦ Change the whole {isFlyer ? 'flyer' : 'ad'} with AI</p>
+                  <textarea value={adAsk} onChange={e => setAdAsk(e.target.value)} rows={2} onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && adAsk.trim()) write(true, adAsk.trim()) }} placeholder="e.g. make it faster · open on the rooftop · add a scene about guidebooks" style={{ ...field, fontSize: 12.5 }} />
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 6 }}>
+                    <Btn small tone="blue" disabled={!!busy || !adAsk.trim()} onClick={() => write(true, adAsk.trim())}>{busy === 'adask' ? 'Changing…' : 'Change it'}</Btn>
+                    {!isFlyer ? <Btn small disabled={!!busy} onClick={() => write(true)} title="Keeps what works and tightens the rest">{busy === 'rewrite' ? 'Rewriting…' : 'Tighten the draft'}</Btn> : null}
+                    <span style={{ fontSize: 10.5, color: UI.mut, alignSelf: 'center' }}>↶ undoes it</span>
+                  </div>
+                </div>
+              ) : null}
+              <Fold id="format" title="Where it runs" folded={!!folded['format']} onToggle={toggleFold}>
+              <Label>{isFlyer ? 'Size' : 'Platform · sets the shape and the safe zones'}</Label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {isFlyer
+                  ? FLYER_SIZES.map(x => <Btn key={x.key} small on={p.format === x.key} disabled={!canEdit} title={x.hint} onClick={() => change(d => ({ ...d, format: x.key, platform: x.key === '9:16' ? 'story' : x.key === '4:5' ? 'feed' : x.key === '1:1' ? 'square' : 'web' }))}>{x.label}</Btn>)
+                  : PLATFORMS.map(x => <Btn key={x.key} small on={platformOf(p).key === x.key} disabled={!canEdit} title={`${FORMAT_LABEL[x.format]} · best ${x.best}`} onClick={() => change(d => ({ ...d, platform: x.key, format: x.format }))}>{x.label} <span style={{ opacity: 0.55, fontWeight: 500 }}>{x.format}</span></Btn>)}
+              </div>
+              <Label>Audience · decides the facts and the end card</Label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {(Object.keys(AUD) as AdAudience[]).map(k => <Btn key={k} small on={p.audience === k} disabled={!canEdit} title={AUD[k].hint} onClick={() => change(d => ({ ...d, audience: k }))}>{AUD[k].label}</Btn>)}
+              </div>
+              </Fold>
+              <Fold id="look" title={'Look · ' + (LOOKS.find(l => l.key === (p.look || 'stay'))?.label || '')} folded={!!folded['look']} onToggle={toggleFold}>
+              <div style={{ height: 8 }} />
               <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Vibe · one tap sets look, style, graphics and music</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
                 {VIBES.map(v => <Btn key={v.key} small disabled={!canEdit} title={v.blurb} onClick={() => applyVibe(v)}>{v.label}</Btn>)}
@@ -2068,35 +2049,45 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 ))}
               </div>
               <div style={{ marginBottom: 10 }}><Btn small onClick={() => setMoreLooks(!moreLooks)}>{moreLooks ? 'Fewer looks' : 'More looks (' + (LOOKS.length - LOOKS_FEATURED.length) + ')'}</Btn></div>
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '4px 0 6px' }}>Style · fine-tune the look</p>
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '6px 0 4px' }}>Colours · any colour, on top of the look</p>
-              {([['accent', 'Accent (highlights, buttons)'], ['base', 'Background'], ['text', 'Text']] as ['accent' | 'base' | 'text', string][]).map(([k, lab]) => {
-                const cur = (p.style || STYLE_DEFAULT)[k] || ''
-                const setC = (v: string) => change(d => ({ ...d, style: { ...STYLE_DEFAULT, ...(d.style || {}), [k]: v } }))
-                return (
-                  <div key={k} style={{ marginBottom: 7 }}>
-                    <span style={{ fontSize: 10.5, color: UI.mut, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>{lab}
-                      {cur ? <button disabled={!canEdit} onClick={() => setC('')} style={{ marginLeft: 'auto', background: 'none', border: 0, color: UI.blue, fontSize: 10.5, cursor: 'pointer' }}>Look’s own</button> : <span style={{ marginLeft: 'auto' }}>Look’s own</span>}
-                    </span>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-                      {SWATCHES.map(c => <button key={c} disabled={!canEdit} title={c} onClick={() => setC(c)} style={{ width: 20, height: 20, borderRadius: 10, background: c, border: '2px solid ' + (cur.toLowerCase() === c.toLowerCase() ? UI.gold : 'rgba(255,255,255,0.25)'), cursor: 'pointer', padding: 0 }} />)}
-                      <label title="Any colour" style={{ position: 'relative', width: 22, height: 22, borderRadius: 11, background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)', cursor: 'pointer', border: '2px solid ' + (cur && !SWATCHES.some(x => x.toLowerCase() === cur.toLowerCase()) ? UI.gold : 'transparent') }}>
-                        <input type="color" disabled={!canEdit} value={cur || '#D2B077'} onChange={e => setC(e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
-                      </label>
-                      {cur ? <span style={{ fontSize: 10.5, color: UI.mut, fontFamily: 'ui-monospace, Menlo, monospace' }}>{cur}</span> : null}
-                    </div>
-                  </div>
-                )
-              })}
-              {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['wash', 'Photo wash'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo']] as [keyof AdStyle, string][]).map(([k, lab]) => (
-                <div key={k} style={{ marginBottom: 6 }}>
-                  <span style={{ fontSize: 10.5, color: UI.mut, display: 'block', marginBottom: 3 }}>{lab}</span>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
-                    {(STYLE_OPTIONS[k] as { key: string; label: string }[]).map(o => <Btn key={o.key} small disabled={!canEdit} on={((p.style || STYLE_DEFAULT)[k] || STYLE_DEFAULT[k]) === o.key} onClick={() => change(d => ({ ...d, style: { ...STYLE_DEFAULT, ...(d.style || {}), [k]: o.key } }))}>{o.label}</Btn>)}
-                  </div>
+              </Fold>
+              {!isFlyer ? (
+              <Fold id="music" title={'Music · ' + track(p.music).label} folded={!!folded['music']} onToggle={toggleFold}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 8, maxHeight: 250, overflowY: 'auto', border: '1px solid ' + UI.line, borderRadius: 9, padding: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: p.music === 'none' ? '#232C38' : 'transparent', borderRadius: 7, padding: '3px 5px' }}>
+                  <span style={{ width: 30 }} /><span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>No music</span>
+                  {canEdit ? <Btn small on={p.music === 'none'} onClick={() => change(d => ({ ...d, music: 'none' }))}>{p.music === 'none' ? 'In use' : 'Use'}</Btn> : null}
                 </div>
-              ))}
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '0 0 6px' }}>Voice{p.voiceName && !VOICES.some(v => v.id === p.voiceId) ? <span style={{ color: UI.gold }}> · using {p.voiceName}</span> : null}</p>
+                {sounds.filter(x => x.kind === 'music').map(x => (
+                  <div key={x.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: p.music === x.key ? '#232C38' : 'transparent', borderRadius: 7, padding: '3px 5px' }}>
+                    <Btn small on={hear === x.url} onClick={() => preview(x.url)} title="Listen">{hear === x.url ? '■' : '▶'}</Btn>
+                    <span style={{ flex: 1, minWidth: 0 }} title={x.prompt}><span style={{ display: 'block', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>♪ {x.name}</span><span style={{ fontSize: 10.5, color: UI.mut }}>Made with ElevenLabs · {Math.round(x.dur)} s</span></span>
+                    {canEdit ? <Btn small on={p.music === x.key} onClick={() => change(d => ({ ...d, music: x.key }))}>{p.music === x.key ? 'In use' : 'Use'}</Btn> : null}
+                    {canDelete ? <Btn small tone="red" onClick={() => delSound(x)} title="Delete this track">✕</Btn> : null}
+                  </div>
+                ))}
+                {MUSIC.filter(m => m.file).map(m => (
+                  <div key={m.key} style={{ display: 'flex', alignItems: 'center', gap: 6, background: p.music === m.key ? '#232C38' : 'transparent', borderRadius: 7, padding: '3px 5px' }}>
+                    <Btn small on={hear === m.file} onClick={() => preview(m.file)} title="Listen">{hear === m.file ? '■' : '▶'}</Btn>
+                    <span style={{ flex: 1, minWidth: 0 }}><span style={{ display: 'block', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.label}</span><span style={{ display: 'block', fontSize: 10.5, color: UI.mut, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.mood}</span></span>
+                    {canEdit ? <Btn small on={p.music === m.key} onClick={() => change(d => ({ ...d, music: m.key }))}>{p.music === m.key ? 'In use' : 'Use'}</Btn> : null}
+                  </div>
+                ))}
+              </div>
+              {p.music !== 'none' ? (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: UI.mut, marginTop: 8 }}>
+                  Level <input type="range" min={0.05} max={0.6} step={0.01} value={p.musicVol} disabled={!canEdit} onChange={e => change(d => ({ ...d, musicVol: Number(e.target.value) }))} style={{ flex: 1 }} />
+                </label>
+              ) : null}
+              {canEdit ? <div style={{ marginTop: 8 }}><Btn small on={sndOpen === 'music'} onClick={() => { setSndOpen(sndOpen === 'music' ? '' : 'music'); setSndKind('music'); setSndSecs(30) }}>+ Compose a new track</Btn></div> : null}
+              {sndOpen === 'music' ? soundMaker('music') : null}
+              </Fold>
+              ) : null}
+              {isSpoken ? (
+              <Fold id="voice" title={'Voice · ' + (p.voiceName || VOICES.find(v => v.id === p.voiceId)?.name || 'house voice')} folded={!!folded['voice']} onToggle={toggleFold}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10, cursor: 'pointer' }}>
+                <input type="checkbox" checked={p.captions} onChange={e => change(d => ({ ...d, captions: e.target.checked }))} /> Burn in captions (most people watch muted)
+              </label>
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '8px 0 6px' }}>House voices</p>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {VOICES.map(v => <Btn key={v.id} small on={p.voiceId === v.id} title={v.blurb} onClick={() => change(d => ({ ...d, voiceId: v.id, voiceName: v.name }))}>{v.name}</Btn>)}
                 {!VOICES.some(v => v.id === p.voiceId) ? <Btn small on>{p.voiceName || 'Library voice'}</Btn> : null}
@@ -2141,37 +2132,85 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </div>
                 )
               })()}
-              <p style={{ fontSize: 11.5, color: UI.mut, margin: '12px 0 6px' }}>Music · {track(p.music).label}</p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
-                {MUSIC.map(m => <Btn key={m.key} small on={p.music === m.key} title={m.mood} onClick={() => change(d => ({ ...d, music: m.key }))}>{m.label}</Btn>)}
-                {sounds.filter(x => x.kind === 'music').slice(0, 8).map(x => <Btn key={x.key} small on={p.music === x.key} title={x.prompt} onClick={() => change(d => ({ ...d, music: x.key }))}>♪ {x.name}</Btn>)}
-                <Btn small onClick={() => { setSide('sounds'); setSndKind('music'); setSndSecs(30) }}>+ Generate</Btn>
-              </div>
-              {p.music !== 'none' ? (
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5, color: UI.mut, marginTop: 8 }}>
-                  Level <input type="range" min={0.05} max={0.6} step={0.01} value={p.musicVol} onChange={e => change(d => ({ ...d, musicVol: Number(e.target.value) }))} style={{ flex: 1 }} />
-                </label>
-              ) : null}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, marginTop: 10, cursor: 'pointer' }}>
-                <input type="checkbox" checked={p.captions} onChange={e => change(d => ({ ...d, captions: e.target.checked }))} /> Burn in captions (most people watch muted)
-              </label>
               </Fold>
+              ) : null}
+              <Fold id="style" title="Fine-tune the style" folded={!!folded['style']} onToggle={toggleFold}>
+              <div style={{ height: 6 }} />
+              <p style={{ fontSize: 11.5, color: UI.mut, margin: '6px 0 4px' }}>Colours · any colour, on top of the look</p>
+              {([['accent', 'Accent (highlights, buttons)'], ['base', 'Background'], ['text', 'Text']] as ['accent' | 'base' | 'text', string][]).map(([k, lab]) => {
+                const cur = (p.style || STYLE_DEFAULT)[k] || ''
+                const setC = (v: string) => change(d => ({ ...d, style: { ...STYLE_DEFAULT, ...(d.style || {}), [k]: v } }))
+                return (
+                  <div key={k} style={{ marginBottom: 7 }}>
+                    <span style={{ fontSize: 10.5, color: UI.mut, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>{lab}
+                      {cur ? <button disabled={!canEdit} onClick={() => setC('')} style={{ marginLeft: 'auto', background: 'none', border: 0, color: UI.blue, fontSize: 10.5, cursor: 'pointer' }}>Look’s own</button> : <span style={{ marginLeft: 'auto' }}>Look’s own</span>}
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+                      {SWATCHES.map(c => <button key={c} disabled={!canEdit} title={c} onClick={() => setC(c)} style={{ width: 20, height: 20, borderRadius: 10, background: c, border: '2px solid ' + (cur.toLowerCase() === c.toLowerCase() ? UI.gold : 'rgba(255,255,255,0.25)'), cursor: 'pointer', padding: 0 }} />)}
+                      <label title="Any colour" style={{ position: 'relative', width: 22, height: 22, borderRadius: 11, background: 'conic-gradient(red, yellow, lime, cyan, blue, magenta, red)', cursor: 'pointer', border: '2px solid ' + (cur && !SWATCHES.some(x => x.toLowerCase() === cur.toLowerCase()) ? UI.gold : 'transparent') }}>
+                        <input type="color" disabled={!canEdit} value={cur || '#D2B077'} onChange={e => setC(e.target.value)} style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
+                      </label>
+                      {cur ? <span style={{ fontSize: 10.5, color: UI.mut, fontFamily: 'ui-monospace, Menlo, monospace' }}>{cur}</span> : null}
+                    </div>
+                  </div>
+                )
+              })}
+              {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['wash', 'Photo wash'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo']] as [keyof AdStyle, string][]).map(([k, lab]) => (
+                <div key={k} style={{ marginBottom: 6 }}>
+                  <span style={{ fontSize: 10.5, color: UI.mut, display: 'block', marginBottom: 3 }}>{lab}</span>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                    {(STYLE_OPTIONS[k] as { key: string; label: string }[]).map(o => <Btn key={o.key} small disabled={!canEdit} on={((p.style || STYLE_DEFAULT)[k] || STYLE_DEFAULT[k]) === o.key} onClick={() => change(d => ({ ...d, style: { ...STYLE_DEFAULT, ...(d.style || {}), [k]: o.key } }))}>{o.label}</Btn>)}
+                  </div>
+                </div>
+              ))}
+              </Fold>
+              {!isFlyer ? (
+              <Fold id="brief" title="Brief · plan it again" folded={!!folded['brief']} onToggle={toggleFold}>
+              <Label>Brief</Label>
+              <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={5} disabled={!canEdit} placeholder="What is this ad for? Even one line works." style={{ ...field, fontSize: 12.5 }} />
+              <Label>Length</Label>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{[15, 30, 45, 60, 90].map(n => <Btn key={n} small on={seconds === n} onClick={() => setSeconds(n)}>{n}s</Btn>)}</div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+                <Btn small tone="blue" disabled={!canEdit || !!busy || !brief.trim()} onClick={() => { seed.current = null; planAd() }} title="Plans it again from this brief; you confirm before this ad's scenes are replaced">{busy === 'plan' ? 'Thinking…' : 'Plan it again'}</Btn>
+                <Btn small disabled={!canEdit || !!busy || !brief.trim()} onClick={() => write(false)} title="Writes new scenes from this brief straight away (↶ undoes it)">{busy === 'write' ? 'Writing…' : 'Rewrite from the brief'}</Btn>
+              </div>
+              <p style={{ fontSize: 11, color: UI.mut, marginTop: 8, lineHeight: 1.5 }}>House facts only — no made-up numbers.</p>
+              </Fold>
+              ) : null}
+              </>)}
             </>
-          ) : <p style={{ fontSize: 12, color: UI.mut, marginTop: 16 }}>Pick a scene on the timeline to edit it.</p>}
+          ) : <p style={{ fontSize: 12, color: UI.mut, marginTop: 16 }}>Nothing open.</p>}
         </div>
       </div>
 
       {/* ── timeline ── */}
-      {p && tl && !home && p.kind !== 'flyer' ? (
+      {p && tl && editing && p.kind !== 'flyer' ? (
         <div style={{ borderTop: '1px solid ' + UI.line, padding: '10px 14px 14px', background: UI.panel }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: UI.mut }}>Timeline</span>
-            <span style={{ fontSize: 11, color: UI.mut }}>Drag to reorder · click to edit · shift / ⌘-click to select several</span>
-            {canEdit && p.scenes.length > 1 ? (picked.length
-              ? <><span style={{ fontSize: 11, color: UI.gold, fontWeight: 700 }}>{targetIdx().length} selected</span><Btn small onClick={() => setPicked([])}>Clear</Btn></>
-              : <Btn small onClick={pickAll} title="Select every scene, then change them together">Select all</Btn>) : null}
-            <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {canEdit ? KINDS.map(k => <Btn key={k.kind} small onClick={() => addScene(k.kind)} title={'Add a ' + k.label + ' scene after this one'}>+ {k.label}</Btn>) : null}
+            {canEdit ? <Btn small tone="blue" onClick={() => setPicker('add')} title="Add a scene after the selected one — pick its design from pictures">＋ Add scene</Btn> : null}
+            {sc && canEdit ? (<>
+              <span style={{ width: 1, height: 18, background: UI.line, margin: '0 4px' }} />
+              <span style={{ fontSize: 11.5, fontWeight: 700 }}>Scene {sel + 1}</span>
+              <span style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11.5, color: UI.mut }}>{tl.durs[sel].toFixed(1)} s</span>
+              {!hasVoice ? (<>
+                <Btn small onClick={() => nudge(sel, -0.5)} title="Half a second shorter">−</Btn>
+                <Btn small onClick={() => nudge(sel, 0.5)} title="Half a second longer">+</Btn>
+                {sc.dur ? <Btn small onClick={() => setScene(sel, { dur: null })} title="Back to automatic timing from the spoken line">Auto</Btn> : null}
+              </>) : <span style={{ fontSize: 11, color: UI.mut }} title="Shorten the spoken line, then re-record the voice">timed to the voice</span>}
+              <Btn small disabled={sel === 0} onClick={() => move(sel, sel - 1)} title="Move this scene earlier">◀</Btn>
+              <Btn small disabled={sel === p.scenes.length - 1} onClick={() => move(sel, sel + 1)} title="Move this scene later">▶</Btn>
+              <Btn small onClick={dupScene} title="Duplicate this scene">⧉</Btn>
+              <Btn small tone="red" disabled={p.scenes.length < 2} onClick={() => delSceneAt(sel)} title="Delete this scene (Delete key)">✕</Btn>
+            </>) : null}
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+              {canEdit && !hasVoice && tl.total > 6 ? (<>
+                <span style={{ fontSize: 11, color: UI.mut }}>Fit the whole ad into</span>
+                {[6, 10, 15, 30].map(n => <Btn key={n} small disabled={tl.total <= n} onClick={() => cutTo(n)} title="Cuts every scene's hold down together so the whole ad fits">{n} s</Btn>)}
+              </>) : null}
+              {canEdit && p.scenes.length > 1 ? (picked.length
+                ? <><span style={{ fontSize: 11, color: UI.gold, fontWeight: 700 }}>{targetIdx().length} selected</span><Btn small onClick={() => setPicked([])}>Clear</Btn></>
+                : <Btn small onClick={pickAll} title="Select every scene, then change design, motion or graphics on all of them (or shift / ⌘-click scenes)">Select all</Btn>) : null}
             </span>
           </div>
           <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: '64px 1fr', rowGap: 6 }}>
@@ -2188,7 +2227,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 <div key={s.id} draggable={canEdit} onDragStart={() => setDragFrom(i)} onDragOver={e => e.preventDefault()} onDrop={() => { if (dragFrom != null) move(dragFrom, i); setDragFrom(null) }}
                   onClick={e => { if (e.shiftKey || e.metaKey || e.ctrlKey) { togglePick(i); return } pick(i) }} title={(s.head || s.vo || KINDS.find(k => k.kind === s.kind)?.label || '').replace(/\*\*/g, '') + ' · shift / ⌘-click to select several'}
                   style={{ position: 'absolute', left: pct(tl.starts[i]) + '%', width: `calc(${pct(tl.durs[i])}% - 3px)`, top: 0, bottom: 0, borderRadius: 7, cursor: 'pointer', overflow: 'hidden',
-                    background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), borderLeft: '4px solid ' + KIND_COLOR[s.kind], border: '2px solid ' + (picked.indexOf(s.id) >= 0 ? UI.gold : i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
+                    background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), border: '2px solid ' + (picked.indexOf(s.id) >= 0 ? UI.gold : i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
                   <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{picked.indexOf(s.id) >= 0 ? '✓ ' : ''}{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}{(s.fx || []).length ? ' · ✦' : ''}</span>
                   <span style={{ display: 'block', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(s.head || s.vo).replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
                   {canEdit && p.scenes.length > 1 ? (
@@ -2218,6 +2257,14 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             <div style={{ position: 'absolute', top: 0, bottom: 0, left: `calc(64px + (100% - 64px) * ${tl.total ? t / tl.total : 0})`, width: 2, background: UI.red, pointerEvents: 'none' }} />
           </div>
         </div>
+      ) : null}
+      {picker && p && sc ? (
+        <AdDesignPicker proj={p} assets={assets} display={display} onClose={() => setPicker(null)}
+          scene={picker === 'add' ? { id: 'new', kind: 'cinema', vo: '', head: '', sub: '', items: [], photos: sc.photos.filter(u => !u.startsWith('video:')).slice(0, 1) } : sc}
+          current={picker === 'change' ? sc.kind : undefined}
+          title={picker === 'add' ? 'Add a scene' : targetIdx().length > 1 ? 'Design for the ' + targetIdx().length + ' selected scenes' : 'Design for scene ' + (sel + 1)}
+          sub={picker === 'add' ? 'Pick how it looks — it goes in after scene ' + (sel + 1) + '. Words and photos come next.' : 'This scene, drawn in every design. Pick one.'}
+          onPick={kind => { if (picker === 'add') { addScene(kind); setTab('scene') } else setMany(() => ({ kind })); setPicker(null) }} />
       ) : null}
       {versions ? (
         <div onClick={() => setVersions(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.65)', zIndex: 80, display: 'grid', placeItems: 'center', padding: 20 }}>

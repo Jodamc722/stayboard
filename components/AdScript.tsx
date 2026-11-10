@@ -71,10 +71,10 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
         <span style={{ fontFamily: display, fontWeight: 800, fontSize: 17 }}>Script</span>
         <span style={{ fontSize: 12, color: UI.mut }}>{p.scenes.length} scenes · {total} words · {fmt(tl.total)}</span>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: voiced ? UI.green : stale ? UI.gold : UI.mut }}>{voiced ? '● Voice matches the script' : stale ? '● Script changed — re-record the voice' : '○ No voice yet — timing is estimated'}</span>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           <button type="button" onClick={() => setShowScreen(!showScreen)} style={chip(showScreen)} title="Show what is on screen under each line">On screen</button>
           <button type="button" onClick={() => setFollow(!follow)} style={chip(follow)} title="Scroll with the video as it plays">Follow</button>
-          {canEdit ? <button type="button" onClick={() => (asText ? setAsText(false) : openText())} style={chip(asText)} title="Edit the whole voice-over as plain text — one paragraph per scene">{asText ? 'Back to scenes' : 'Write it as one script'}</button> : null}
+          {canEdit ? <button type="button" onClick={() => (asText ? setAsText(false) : openText())} style={chip(asText)} title="Edit the whole voice-over as plain text — one paragraph per scene">{asText ? 'Back to scenes' : 'Edit as text'}</button> : null}
           <button type="button" onClick={() => { try { navigator.clipboard.writeText(p.scenes.map((x, i) => `${i + 1}. [${fmt(tl.starts[i])}] ${x.vo || '(music)'}${x.head ? '\n   ON SCREEN: ' + plainHead(x.head) : ''}`).join('\n\n')) } catch { /* fine */ } }} style={chip(false)} title="Copy the script as text">Copy</button>
         </span>
       </div>
@@ -99,41 +99,42 @@ export default function AdScript({ p, tl, t, playing, sel, canEdit, voiced, stal
             const kind = KINDS.find(k => k.kind === x.kind)?.label || x.kind
             return (
               <div key={x.id || i} ref={el => { rows.current[i] = el }} onClick={e => { if ((e.shiftKey || e.metaKey || e.ctrlKey) && onTogglePick) { onTogglePick(i); return } onPick(i) }}
-                style={{ display: 'grid', gridTemplateColumns: '78px 1fr auto', gap: 10, padding: '10px 14px', borderLeft: '3px solid ' + (on ? UI.gold : 'transparent'), background: picked.indexOf(x.id) >= 0 ? 'rgba(210,176,119,0.13)' : on ? 'rgba(210,176,119,0.07)' : 'transparent', boxShadow: picked.indexOf(x.id) >= 0 ? 'inset 0 0 0 1px rgba(210,176,119,0.45)' : 'none', cursor: 'pointer', transition: 'background .15s' }}>
+                style={{ display: 'grid', gridTemplateColumns: '44px minmax(0, 1fr) 28px', gap: 8, padding: '10px 12px 10px 10px', borderLeft: '3px solid ' + (on ? UI.gold : 'transparent'), background: picked.indexOf(x.id) >= 0 ? 'rgba(210,176,119,0.13)' : on ? 'rgba(210,176,119,0.07)' : 'transparent', boxShadow: picked.indexOf(x.id) >= 0 ? 'inset 0 0 0 1px rgba(210,176,119,0.45)' : 'none', cursor: 'pointer', transition: 'background .15s' }}>
                 <div style={{ paddingTop: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                     {canEdit && onTogglePick ? <input type="checkbox" checked={picked.indexOf(x.id) >= 0} onClick={e => e.stopPropagation()} onChange={() => onTogglePick(i)} title="Select this scene to change several together" style={{ accentColor: UI.gold, cursor: 'pointer', margin: 0 }} /> : null}
                     <span style={{ fontFamily: display, fontWeight: 800, fontSize: 15, color: on ? UI.gold : UI.ink }}>{i + 1}</span>
                   </div>
-                  <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 11, color: UI.mut }}>{fmt(tl.starts[i] || 0)}</div>
-                  <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10.5, color: fast ? UI.red : UI.mut }}>{d.toFixed(1)} s</div>
+                  <div style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10.5, color: UI.mut }}>{fmt(tl.starts[i] || 0)}</div>
+                  <div title="How long this scene holds" style={{ fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10.5, color: fast ? UI.red : UI.mut }}>{d.toFixed(1)}s</div>
                 </div>
                 <div style={{ minWidth: 0 }} onClick={e => e.stopPropagation()}>
                   <Grow value={x.vo} disabled={!canEdit} onChange={v => setScene(i, { vo: v })} placeholder={x.vo ? '' : '(no voice — music and pictures)'}
-                    style={{ fontSize: 16, lineHeight: 1.55, fontFamily: 'Georgia, "Times New Roman", serif', padding: '4px 8px', color: x.vo ? UI.ink : UI.mut }} />
+                    style={{ fontSize: 16, lineHeight: 1.5, fontFamily: 'Georgia, "Times New Roman", serif', padding: '4px 8px', color: x.vo ? UI.ink : UI.mut }} />
                   {showScreen ? (
                     <div style={{ padding: '0 8px', marginTop: 4 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: UI.mut, textTransform: 'uppercase' }}>On screen</span>
-                        <span style={{ fontSize: 10.5, color: UI.gold, border: '1px solid rgba(210,176,119,0.35)', borderRadius: 5, padding: '0 5px' }}>{kind}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: UI.mut, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>On screen</span>
+                        <span style={{ fontSize: 10.5, color: UI.gold, border: '1px solid rgba(210,176,119,0.35)', borderRadius: 5, padding: '0 5px', whiteSpace: 'nowrap' }}>{kind}</span>
                       </div>
                       <Grow value={x.head} disabled={!canEdit} onChange={v => setScene(i, { head: v })} placeholder="headline on screen — **gold** a word"
                         style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.4, padding: '3px 6px', marginTop: 2, borderBottom: '1px dashed ' + UI.line }} />
                     </div>
                   ) : null}
                   {fast ? <p style={{ fontSize: 11, color: UI.red, margin: '3px 8px 0' }}>{w} words in {d.toFixed(1)} s — too fast to land. Trim the line or hold the scene longer.</p> : null}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                  <button type="button" onClick={() => onPlayFrom(i)} style={mini(true)} title="Play from this line">▶</button>
-                  {canEdit ? (
-                    <div style={{ display: 'flex', gap: 3, opacity: on ? 1 : 0.55 }}>
+                  {/* Row tools sit under the words of the line you are on, so the words keep the width. */}
+                  {canEdit && i === sel && !playing ? (
+                    <div style={{ display: 'flex', gap: 3, alignItems: 'center', margin: '6px 8px 0' }}>
                       <button type="button" disabled={i === 0} onClick={() => move(i, i - 1)} style={mini(false)} title="Move up">↑</button>
                       <button type="button" disabled={i === p.scenes.length - 1} onClick={() => move(i, i + 1)} style={mini(false)} title="Move down">↓</button>
-                      <button type="button" onClick={() => addAfter(i)} style={mini(false)} title="Add a scene after this one">＋</button>
+                      <button type="button" onClick={() => addAfter(i)} style={{ ...mini(false), width: 'auto', padding: '0 8px' }} title="Add a scene after this one">＋ Scene</button>
                       <button type="button" disabled={p.scenes.length < 2} onClick={() => del(i)} style={{ ...mini(false), color: UI.red }} title="Delete this scene">✕</button>
+                      {!voiced && w ? <span style={{ marginLeft: 'auto', fontSize: 10.5, color: UI.mut }}>{w} words</span> : null}
                     </div>
                   ) : null}
-                  {!voiced ? <span style={{ fontSize: 10, color: UI.mut }}>{w} w</span> : null}
+                </div>
+                <div onClick={e => e.stopPropagation()}>
+                  <button type="button" onClick={() => onPlayFrom(i)} style={mini(true)} title="Play from this line">▶</button>
                 </div>
               </div>
             )
