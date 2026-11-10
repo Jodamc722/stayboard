@@ -1256,7 +1256,7 @@ async function pushBlocks() {
                           const clock = fmtClock(nbk.arrivalTime)
                           const what = nbk.kind === 'arrival' ? 'arrives ' + dayWord(nbk.arrival || c.date) + (clock ? ' ' + clock : '') : 'checks out ' + dayWord(c.date)
                           return <button type="button" onClick={() => markSeen([nbk.id])} title={(nbk.kind === 'arrival' ? 'A new guest' + (nbk.guest ? ' (' + nbk.guest + ')' : '') + ' booked this unit ' + agoLabel(nbk.bookedAt) + ' — the clean now has a deadline.' : 'This stay was booked ' + agoLabel(nbk.bookedAt) + ', so this clean is new on the list.') + (unseen ? ' Click to mark it seen.' : ' Seen on this device.')}
-                            className={'inline-flex items-center gap-1 text-[10px] font-bold rounded px-1.5 py-0.5 mr-1 border whitespace-normal text-left ' + (unseen ? 'text-white bg-fuchsia-600 border-fuchsia-600' : 'text-fuchsia-800 bg-fuchsia-50 border-fuchsia-200')}>{unseen ? 'New booking' : 'Recent booking'} · booked {agoLabel(nbk.bookedAt)} · {what}</button>
+                            className={'flex w-fit max-w-full items-center gap-1 text-[10px] rounded px-1.5 py-0.5 mb-0.5 border whitespace-normal text-left ' + (unseen ? 'font-bold text-fuchsia-900 bg-fuchsia-100 border-fuchsia-400' : 'font-medium text-muted bg-white border-line')}>{unseen && <span className="inline-block w-1.5 h-1.5 rounded-full bg-fuchsia-600 shrink-0" />}{unseen ? 'New booking' : 'Recent booking'} · booked {agoLabel(nbk.bookedAt)} · {what}</button>
                         })()}{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
                         
                         <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap">{c.cleaningFee != null && c.cleaningFee > 0
@@ -1397,7 +1397,8 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 
           <span className="text-[9.5px] uppercase tracking-wide text-muted text-right">+/&minus;</span>
           {shownLines.map(l => (
             <Fragment key={l.market}>
-              <span className="text-ink font-semibold truncate">{mkLabel(l.market)} <span className="font-normal text-muted">· {l.cleans} clean{l.cleans === 1 ? '' : 's'}</span></span>
+              <span className="col-span-4 text-ink font-semibold mt-1">{mkLabel(l.market)} <span className="font-normal text-muted">· {l.cleans} clean{l.cleans === 1 ? '' : 's'}</span></span>
+              <span />
               <span className="text-right text-ink">{fmtH(l.kpiH)}</span>
               <span className="text-right text-ink" title={l.working + ' working × ' + shiftHours + 'h' + (l.onCall ? ' · ' + l.onCall + ' on call, not counted' : '')}>{fmtH(l.schedH)} <span className="text-muted">({l.working})</span></span>
               <span className={'text-right ' + diffCls(l.schedH - l.kpiH)}>{diffTxt(l.schedH - l.kpiH)}</span>
@@ -1405,7 +1406,8 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 
           ))}
           {staff.projCleans > 0 && (
             <>
-              <span className="text-muted truncate" title="Cleans history says are still likely to book for this weekday, at the market's average hours. Not on the list below yet.">Likely still to book · {staff.projCleans}</span>
+              <span className="col-span-4 text-muted mt-1" title="Cleans history says are still likely to book for this weekday, at the market's average hours. Not on the list below yet.">Likely still to book · {staff.projCleans}</span>
+              <span />
               <span className="text-right text-muted">{fmtH(staff.projH)}</span>
               <span className="text-right text-muted">&mdash;</span>
               <span className="text-right text-muted">{'−' + fmtH(staff.projH)}</span>
@@ -1413,16 +1415,18 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 
           )}
           {staff.bufferH > 0 && (
             <>
-              <span className="text-muted truncate" title="The growth buffer from Ops presets, on top of the hours above.">Buffer · {growth}%</span>
+              <span className="col-span-4 text-muted mt-1" title="The growth buffer from Ops presets, on top of the hours above.">Buffer · {growth}%</span>
+              <span />
               <span className="text-right text-muted">{fmtH(staff.bufferH)}</span>
               <span className="text-right text-muted">&mdash;</span>
               <span className="text-right text-muted">{'−' + fmtH(staff.bufferH)}</span>
             </>
           )}
-          <span className="text-ink font-bold border-t border-line pt-1 mt-0.5">Total <span className="font-normal text-muted">· {staff.cleans} clean{staff.cleans === 1 ? '' : 's'}</span></span>
-          <span className="text-right text-ink font-bold border-t border-line pt-1 mt-0.5">{fmtH(staff.targetH)}</span>
-          <span className="text-right text-ink font-bold border-t border-line pt-1 mt-0.5">{fmtH(staff.schedH)} <span className="text-muted font-normal">({staff.working})</span></span>
-          <span className={'text-right border-t border-line pt-1 mt-0.5 ' + diffCls(gap, true)}>{diffTxt(gap)}</span>
+          <span className="col-span-4 text-ink font-bold border-t border-line pt-1 mt-1.5">Total <span className="font-normal text-muted">· {staff.cleans} clean{staff.cleans === 1 ? '' : 's'}</span></span>
+          <span />
+          <span className="text-right text-ink font-bold">{fmtH(staff.targetH)}</span>
+          <span className="text-right text-ink font-bold">{fmtH(staff.schedH)} <span className="text-muted font-normal">({staff.working})</span></span>
+          <span className={'text-right font-bold ' + diffCls(gap, true)}>{diffTxt(gap)}</span>
         </div>
         <div className={'mt-1.5 text-[11.5px] ' + verdict.cls}>{verdict.text}</div>
         {staff.onCall > 0 && <div className="text-[10.5px] text-muted">{staff.onCall} on call — not counted in Scheduled.</div>}
