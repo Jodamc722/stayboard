@@ -167,6 +167,7 @@ export function normalize(p: any): AdProject {
     platform: PLATFORMS.some(x => x.key === p?.platform) ? String(p.platform) : '',
     status: (['draft', 'review', 'approved'].indexOf(p?.status) >= 0 ? p.status : 'draft') as AdProject['status'],
     notes: String(p?.notes || '').slice(0, 2000),
+    ...(p?.social ? { social: String(p.social).slice(0, 2200) } : {}),
     voiceId: String(p?.voiceId || 'qSeXEcewz7tA0Q0qk9fH').slice(0, 40),
     voiceName: String(p?.voiceName || '').slice(0, 80),
     voiceSettings: {

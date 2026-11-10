@@ -23,7 +23,14 @@ export async function askJson(key: string, prompt: string, opts: { maxTokens: nu
   const messages: any[] = [{ role: 'user', content: prompt }]
   for (let attempt = 0; attempt < 2; attempt++) {
     const r = await anthropicMessages(key, { model, max_tokens: opts.maxTokens + attempt * 2000, temperature: attempt ? 0.2 : opts.temperature, messages }, undefined, 'ad-script')
-    if (!r.ok) return { ok: false, error: `The model said ${r.status}. Try again.` }
+    // Say WHY (Jon, 2026-11-10: "the model said 429"): a budget stop is not a busy model — retrying will not
+    // help, raising the cap will. Anything else keeps the short retry line.
+    if (!r.ok) {
+      const e = r.data?.error
+      if (e?.type === 'budget_exceeded') return { ok: false, error: String(e.message || 'Today’s AI budget is used up.') + ' An admin can raise it in Settings → AI models.' }
+      if (r.status === 429 || r.status === 529 || r.status === 503) return { ok: false, error: 'The AI is busy right now (it was retried three times). Give it a minute and press it again.' }
+      return { ok: false, error: `The AI call failed (${r.status}${e?.message ? ': ' + String(e.message).slice(0, 120) : ''}). Try again.` }
+    }
     const text = (r.data?.content || []).filter((c: any) => c?.type === 'text').map((c: any) => String(c.text || '')).join('')
     const cut = r.data?.stop_reason === 'max_tokens'
     const j = cut ? null : looseJson(text)

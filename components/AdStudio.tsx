@@ -17,6 +17,7 @@
 import StudioHome, { KIND_META } from './StudioHome'
 import AdDesignPicker from './AdDesignPicker'
 import { TransitionPicker, GraphicsPicker } from './AdFxPickers'
+import { momentPost, momentFlyer, momentAngles, type PresetScene, type Angle } from '@/lib/ad-presets'
 import AdScript from './AdScript'
 import { buildingsIn, inBuildings, byPlace, type AreaKey } from '@/lib/ad-places'
 import { type Moment, MOMENTS } from '@/lib/marketing-calendar'
@@ -146,6 +147,18 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [picker, setPicker] = useState<null | 'change' | 'add'>(null)
   // the transitions and graphics browsers, and where a pick from them goes (this scene, or every scene)
   const [trPick, setTrPick] = useState(false)
+  // the post caption writer
+  const [capBusy, setCapBusy] = useState<'' | 'instagram' | 'facebook'>('')
+  const [capOpts, setCapOpts] = useState<{ label: string; text: string }[]>([])
+  const [capCopied, setCapCopied] = useState(false)
+  const writeCaption = async (channel: 'instagram' | 'facebook') => {
+    const cur = pRef.current; if (!cur) return
+    setCapBusy(channel); setErr('')
+    const r = await fetch('/api/ads/caption', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project: cur, channel }) }).then(x => x.json()).catch(() => null)
+    setCapBusy('')
+    if (r?.ok && r.options?.length) setCapOpts(r.options)
+    else setErr(r?.error || 'The caption writer did not answer. Try again.')
+  }
   const [fxPick, setFxPick] = useState(false)
   const [fxAll, setFxAll] = useState(false)
   const [trAll, setTrAll] = useState(false)
@@ -995,6 +1008,24 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const b = await new Promise<Blob | null>(res => cv.toBlob(x => res(x), 'image/png'))
     if (b) download(b, 'png')
   }
+  /** A CAROUSEL (Jon, 2026-11-10: "photo for our Facebook or IG"): every scene as its own full-size photo, drawn at the
+   *  moment the scene has fully landed, downloaded one after another (1.png, 2.png …) for an Instagram carousel. */
+  const exportCarousel = async () => {
+    if (!p || !tl) return
+    const [W, H] = FORMATS[p.format]
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H
+    const g = cv.getContext('2d')!
+    const base = fileBase()
+    for (let i = 0; i < p.scenes.length; i++) {
+      const at = tl.starts[i] + Math.max(0.2, tl.durs[i] - 0.35)
+      drawFrame(g, p, tl, Math.min(at, tl.total - 0.01), assets())
+      const b = await new Promise<Blob | null>(res => cv.toBlob(x => res(x), 'image/png'))
+      if (!b) continue
+      const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `${base} — ${i + 1}.png`
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000)
+      await new Promise(r => setTimeout(r, 350))
+    }
+  }
   /** The flyer as a PDF at its real size (Letter prints at 300 dpi; social sizes as a one-page PDF). */
   const exportPdf = async () => {
     if (!p || !tl) return
@@ -1249,35 +1280,47 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     return urls.slice(0, n)
   }
   /** A flyer: one designed page. From a calendar moment, or blank in the house look. */
-  const startFlyer = async (m?: Moment) => {
+  /** Turns a designed preset (lib/ad-presets) into scenes, each with its own photo from the library — our buildings
+   *  in the moment's area first, never the same photo twice. */
+  const fromPreset = async (ps: PresetScene[], m?: Moment): Promise<AdScene[]> => {
+    const used: string[] = []
+    const out: AdScene[] = []
+    for (let k = 0; k < ps.length; k++) {
+      const x = ps[k]
+      const photos = await libPhotos(x.q, x.n || 1, used, m?.where || [])
+      used.push(...photos)
+      out.push({ id: 's' + (k + 1), kind: x.kind, vo: '', head: x.head, sub: x.sub, items: x.items.slice(), photos, dur: x.dur, fx: (x.fx || []).slice(), ...(x.eyebrow ? { eyebrow: x.eyebrow } : {}), ...(x.tr ? { tr: x.tr as AdTransition } : {}) })
+    }
+    return out
+  }
+  const startFlyer = async (m?: Moment, angle?: Angle) => {
     const cur = await newAd(); if (!cur) return
     setBusy('template')
-    const photos = await libPhotos(m?.photo || 'exterior', 1, [], m?.where || [])
     const guests = !m || m.audience !== 'owners'
     const scenes: AdScene[] = m
-      ? [{ id: 's1', kind: 'poster', vo: '', head: m.headline, sub: m.sub, items: [m.audience === 'owners' ? '' : whenShort(m), m.audience === 'owners' ? 'Talk to Nick · 651-200-8283' : 'Book at stay-hospitality.com', m.poster || ''], photos, dur: 6, fx: m.fx || [] }]
-      : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos, dur: 6 }]
+      ? await fromPreset([angle ? { ...angle.flyer, dur: 6 } : momentFlyer(m, whenShort(m))], m)
+      : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos: await libPhotos('exterior', 1, [], []), dur: 6 }]
     setBusy('')
-    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + ' · flyer' : 'New flyer', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + (angle ? ' · ' + angle.name : '') + ' · photo post' : 'New photo post', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(5.5); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
-  /** An animated post: a 4–8 s loop — the moment scene, then the book-now card. */
-  const startPost = async (m?: Moment) => {
+  /** An animated post: a designed 3–4 scene sequence for the moment — built for owners when it is for owners. */
+  const startPost = async (m?: Moment, angle?: Angle) => {
     const cur = await newAd(); if (!cur) return
     setBusy('template')
-    const a = await libPhotos(m?.photo || 'pool', 1, [], m?.where || [])
-    const b = await libPhotos('ocean view', 1, a, m?.where || [])
     const guests = !m || m.audience !== 'owners'
-    const scenes: AdScene[] = [
-      { id: 's1', kind: 'poster', vo: '', head: m?.headline || 'Your South Florida **stay.**', sub: m?.sub || '', items: [m && guests ? whenShort(m) : '', '', m?.poster || ''], photos: a, dur: 4, fx: m?.fx || [] },
-      guests
-        ? { id: 's2', kind: 'cta', vo: '', head: 'Book **direct.**', sub: '', items: ['Book at stay-hospitality.com'], photos: b, dur: 3 }
-        : { id: 's2', kind: 'contact', vo: '', head: 'Talk to **Nick.**', sub: '', items: [], photos: b, dur: 3 },
-    ]
-    if (m?.fx) scenes[1].fx = m.fx
+    let scenes: AdScene[]
+    if (m) scenes = await fromPreset(angle ? angle.post : momentPost(m, whenShort(m)), m)
+    else {
+      const a = await libPhotos('pool', 1, [], []), b = await libPhotos('ocean view', 1, a, [])
+      scenes = [
+        { id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: '', items: ['', '', ''], photos: a, dur: 4 },
+        { id: 's2', kind: 'cta', vo: '', head: 'Book **direct.**', sub: '', items: ['Book at stay-hospitality.com'], photos: b, dur: 3, tr: 'fade' },
+      ]
+    }
     setBusy('')
-    change(d => ({ ...d, kind: 'post', name: m ? m.name + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    change(d => ({ ...d, kind: 'post', name: m ? m.name + (angle ? ' · ' + angle.name : '') + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(1.6); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
@@ -1292,7 +1335,21 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   }
   const startStory = () => openStart('story')
   const makeKind = (k: AdKindOf) => { if (k === 'flyer') startFlyer(); else if (k === 'post') startPost(); else if (k === 'story') startStory(); else startVideoFor() }
-  const makeMoment = (m: Moment, k: AdKindOf) => { if (k === 'flyer') startFlyer(m); else if (k === 'post') startPost(m); else startVideoFor(m) }
+  // IDEAS FIRST (Jon, 2026-11-10: "give us more options, built into those pre-templated designs"): a moment with more
+  // than one angle opens the ideas board; one with a single angle builds straight away.
+  const [ideas, setIdeas] = useState<null | { m: Moment; k: 'flyer' | 'post'; rebuild?: boolean }>(null)
+  const makeMoment = (m: Moment, k: AdKindOf) => {
+    if (k === 'flyer' || k === 'post') { if (momentAngles(m, whenShort(m)).length > 1) setIdeas({ m, k }); else if (k === 'flyer') startFlyer(m); else startPost(m); return }
+    startVideoFor(m)
+  }
+  /** Swap the open piece to another angle (undoable) — same moment, same kind. */
+  const reAngle = async (m: Moment, a: Angle, k: 'flyer' | 'post') => {
+    setBusy('template')
+    const scenes = await fromPreset(k === 'flyer' ? [{ ...a.flyer, dur: 6 }] : a.post, m)
+    setBusy('')
+    change(d => ({ ...d, name: m.name + ' · ' + a.name + (k === 'flyer' ? ' · photo post' : ' · post'), scenes }))
+    setSel(0); setT(k === 'flyer' ? 5.5 : 1.6)
+  }
 
   // ─────────────────────────────── render ───────────────────────────────
   const sc = p ? p.scenes[sel] : null
@@ -1317,7 +1374,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const totalW = 100 // timeline is % based
   const pct = (x: number) => (tl ? (x / tl.total) * totalW : 0)
   const goHome = () => { stop(); setMenu(false); setHome(true); loadList() }
-  keysOn.current = editing && !picker && !trPick && !fxPick && !menu && !versions && !watch && !showAudit
+  keysOn.current = editing && !ideas && !picker && !trPick && !fxPick && !menu && !versions && !watch && !showAudit
   const fit = editing && !showAudit
   const notice = /^(Fact check|The ad is ready|Copied the ad|Saved to your computer)/.test(err)
   const card: React.CSSProperties = { background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 9, padding: 9 }
@@ -1360,6 +1417,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
             {saved === 'saving' ? 'Saving…' : saved === 'dirty' ? 'Unsaved' : saved === 'saved' ? 'Saved' : ''}
           </span>
           <span style={{ marginLeft: 'auto' }} />
+          {canEdit && p.moment && (p.kind === 'flyer' || p.kind === 'post') && (() => { const mm = MOMENTS.find(x => x.key === p.moment); return mm && momentAngles(mm, whenShort(mm)).length > 1 ? <Btn small disabled={!!busy} title="The other angles for this moment — swaps the words and the designs (↶ undoes it)" onClick={() => setIdeas({ m: mm, k: p.kind as 'flyer' | 'post', rebuild: true })}>✦ Other ideas</Btn> : null })()}
           <Btn small onClick={() => runAudit()} disabled={!!busy} title="The expert review: hook, idea, rhythm, copy, call to action — with one-click fixes" tone={liveChecks.some(c => c.sev === 'high') ? 'red' : undefined}>{busy === 'audit' ? 'Auditing…' : `Audit${liveChecks.length ? ' · ' + liveChecks.length : ' ✓'}`}</Btn>
           {canEdit && isSpoken ? <Btn small tone={stale || !p.voice ? 'blue' : undefined} disabled={!!busy} onClick={makeVoice} title="Records the whole script as one take and cuts the scenes to it">{busy === 'voice' ? 'Recording…' : p.voice ? (stale ? 'Re-record voice' : 'Voice ✓ · re-record') : 'Make voice'}</Btn> : null}
           {exportPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600, whiteSpace: 'nowrap' }}>Exporting {exportPct}% · keep this tab open</span> : libPct != null ? <span style={{ fontSize: 12, color: UI.gold, fontWeight: 600, whiteSpace: 'nowrap' }}>Saving to the library {libPct}%</span> : (
@@ -1371,6 +1429,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                 <Btn tone="gold" small disabled={!!busy} onClick={exportVideo} title="MP4 with sound, at full size">Export MP4</Btn>
                 <Btn small disabled={!!busy} onClick={exportGif} title="An animated GIF, no sound — moves like a post">GIF</Btn>
                 <Btn small disabled={!!busy} onClick={exportPng} title="A still of the frame on screen">PNG</Btn>
+                {p.scenes.length > 1 ? <Btn small disabled={!!busy} onClick={exportCarousel} title="Every scene as its own photo — an Instagram / Facebook carousel">Carousel</Btn> : null}
               </>)}
             </span>
           )}
@@ -2166,6 +2225,24 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </div>
                 </div>
               ) : null}
+              <Fold id="caption" title={'Post caption' + (p.social ? ' · written' : '')} folded={!!folded['caption']} onToggle={toggleFold}>
+              <p style={{ fontSize: 11, color: UI.mut, margin: '8px 0 6px' }}>The words that go out with the {isFlyer ? 'photo' : p.kind === 'post' ? 'post' : 'video'} on Instagram or Facebook — written from what the piece says.</p>
+              {canEdit ? <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                <Btn small tone="blue" disabled={!!capBusy} onClick={() => writeCaption('instagram')}>{capBusy === 'instagram' ? 'Writing…' : '✦ Write for Instagram'}</Btn>
+                <Btn small tone="blue" disabled={!!capBusy} onClick={() => writeCaption('facebook')}>{capBusy === 'facebook' ? 'Writing…' : '✦ Write for Facebook'}</Btn>
+              </div> : null}
+              {capOpts.length ? capOpts.map((o, k) => (
+                <div key={k} style={{ marginTop: 8, padding: '8px 10px', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><b style={{ fontSize: 11.5 }}>{o.label}</b><span style={{ marginLeft: 'auto' }}><Btn small disabled={!canEdit} onClick={() => { change(d => ({ ...d, social: o.text })); setCapOpts([]) }}>Use this</Btn></span></div>
+                  <p style={{ fontSize: 12, whiteSpace: 'pre-wrap', margin: '6px 0 0', lineHeight: 1.45 }}>{o.text}</p>
+                </div>
+              )) : null}
+              <textarea value={p.social || ''} disabled={!canEdit} onChange={e => { const v = e.target.value; change(d => ({ ...d, social: v })) }} rows={6} placeholder="Write it, or press one of the buttons above." style={{ ...field, fontSize: 12.5, marginTop: 8 }} />
+              <div style={{ display: 'flex', gap: 4, marginTop: 6, alignItems: 'center' }}>
+                <Btn small disabled={!p.social} onClick={() => { try { navigator.clipboard.writeText(p.social || ''); setCapCopied(true); setTimeout(() => setCapCopied(false), 1500) } catch { /* */ } }}>{capCopied ? '✓ Copied' : 'Copy caption'}</Btn>
+                <span style={{ fontSize: 10.5, color: (p.social || '').length > 2200 ? UI.red : UI.mut }}>{(p.social || '').length} / 2,200</span>
+              </div>
+              </Fold>
               <Fold id="format" title="Where it runs" folded={!!folded['format']} onToggle={toggleFold}>
               <Label>{isFlyer ? 'Size' : 'Platform · sets the shape and the safe zones'}</Label>
               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -2315,7 +2392,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   </div>
                 )
               })}
-              {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['wash', 'Photo wash'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo']] as [keyof AdStyle, string][]).map(([k, lab]) => (
+              {([['font', 'Type'], ['caps', 'Case'], ['grade', 'Photo grade'], ['wash', 'Photo wash'], ['pace', 'Pace'], ['finish', 'Finish'], ['frame', 'Frame'], ['logo', 'Stay logo'], ['dress', 'Logo for the season']] as [keyof AdStyle, string][]).map(([k, lab]) => (
                 <div key={k} style={{ marginBottom: 6 }}>
                   <span style={{ fontSize: 10.5, color: UI.mut, display: 'block', marginBottom: 3 }}>{lab}</span>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
@@ -2426,6 +2503,29 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
           </div>
         </div>
       ) : null}
+      {ideas ? (() => { const list = momentAngles(ideas.m, whenShort(ideas.m)); const KL = (k: string) => KINDS.find(x => x.kind === k)?.label || k; return (
+        <div onClick={() => setIdeas(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.72)', zIndex: 90, display: 'grid', placeItems: 'center', padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 'min(980px, 100%)', maxHeight: '90vh', overflowY: 'auto', background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 14, color: UI.ink, padding: '14px 18px 18px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+              <span style={{ fontFamily: display, fontWeight: 800, fontSize: 19 }}>{ideas.m.emoji} {ideas.m.name} · {list.length} ideas</span>
+              <span style={{ fontSize: 12.5, color: UI.mut }}>{ideas.m.audience === 'owners' ? 'Written for owners' : 'Written for guests'} · a {ideas.k === 'flyer' ? 'photo post' : 'animated post'} · pick the angle</span>
+              <span style={{ marginLeft: 'auto' }}><Btn small onClick={() => setIdeas(null)}>Close</Btn></span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+              {list.map(a => { const first = ideas.k === 'flyer' ? a.flyer : a.post[0]; return (
+                <button key={a.key} type="button" onClick={() => { const it = ideas; setIdeas(null); if (it.rebuild) reAngle(it.m, a, it.k); else if (it.k === 'flyer') startFlyer(it.m, a); else startPost(it.m, a) }}
+                  style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 10, padding: '10px 12px', color: UI.ink, cursor: 'pointer' }}>
+                  <span style={{ display: 'block', fontSize: 13.5, fontWeight: 800 }}>{a.name}</span>
+                  <span style={{ display: 'block', fontSize: 11.5, color: UI.mut, margin: '2px 0 8px' }}>{a.pitch}</span>
+                  <span style={{ display: 'block', fontFamily: display, fontSize: 16, fontWeight: 700, lineHeight: 1.25 }}>“{first.head.replace(/\*\*/g, '').replace(/\n/g, ' ')}”</span>
+                  {first.sub ? <span style={{ display: 'block', fontSize: 11.5, color: UI.mut, marginTop: 4 }}>{first.sub}</span> : null}
+                  <span style={{ display: 'block', fontSize: 10.5, color: UI.mut, marginTop: 8, letterSpacing: '0.02em' }}>{ideas.k === 'flyer' ? 'Photo post · ' + (first.items[2] || 'auto') + ' style' : a.post.map(x => KL(x.kind)).join(' → ')}</span>
+                </button>
+              ) })}
+            </div>
+          </div>
+        </div>
+      ) })() : null}
       {trPick && p && sc && sel > 0 ? (
         <TransitionPicker proj={p} from={p.scenes[sel - 1]} to={sc} current={sc.tr || 'auto'} assets={assets} display={display}
           scope={trAll ? 'all' : 'one'} onScope={k => setTrAll(k === 'all')} onClose={() => setTrPick(false)}

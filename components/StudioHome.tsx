@@ -20,7 +20,7 @@ const mmss = (s: number) => Math.floor(s / 60) + ':' + String(Math.round(s % 60)
 const ago = (iso: string) => { const d = Math.round((Date.now() - Date.parse(iso)) / 86400_000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 14 ? d + ' days ago' : new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }
 
 export const KIND_META: Record<AdKindOf, { label: string; plural: string; blurb: string; icon: string; out: string }> = {
-  flyer: { label: 'Flyer', plural: 'Flyers', blurb: 'One designed page — an Instagram post, a Story, or a Letter PDF for print.', icon: '▣', out: 'PNG · PDF' },
+  flyer: { label: 'Photo post', plural: 'Photo posts', blurb: 'One designed photo for Instagram and Facebook — with its caption written for you. Also prints as a flyer.', icon: '▣', out: 'PNG · PDF · caption' },
   post: { label: 'Animated post', plural: 'Animated posts', blurb: 'A 4–8 second loop with motion and music, for the feed and Stories.', icon: '◐', out: 'MP4 · GIF' },
   video: { label: 'Video ad', plural: 'Video ads', blurb: 'A scripted spot with voice, captions and music — Reels, TikTok, YouTube.', icon: '▶', out: 'MP4 with voice' },
   story: { label: 'Owner story', plural: 'Owner stories', blurb: 'Our story, welcome aboard, the first 90 days, the team — for owners and partners.', icon: '✦', out: 'MP4 with voice' },

@@ -25,7 +25,9 @@ export type AdStyle = {
   pace: 'calm' | 'normal' | 'fast'
   finish: 'auto' | 'film' | 'soft' | 'glow' | 'clean'
   frame: 'none' | 'border' | 'letterbox'
-  logo: 'auto' | 'gold' | 'black' | 'white' | 'off'
+  logo: 'auto' | 'gold' | 'black' | 'white' | 'accent' | 'off'
+  /** What the Stay mark wears for the season (Jon, 2026-11-10: "revamp logo to fit theme, maybe add Christmas lights to the logo"). */
+  dress?: 'auto' | LogoDress
   /** What sits over the photo: the look's colour wash, a neutral scrim for legibility, or nothing at all (Jon, 2026-11-04: "some with no filter"). */
   wash?: 'auto' | 'look' | 'neutral' | 'none'
   /** Custom colours on top of the look ('' = the look's own). */
@@ -33,7 +35,8 @@ export type AdStyle = {
   base?: string
   text?: string
 }
-export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto', pace: 'normal', finish: 'auto', frame: 'none', logo: 'auto', wash: 'auto' }
+export type LogoDress = 'none' | 'lights' | 'snow' | 'xmas' | 'sparkle' | 'leaves'
+export const STYLE_DEFAULT: AdStyle = { font: 'auto', caps: 'auto', grade: 'auto', pace: 'normal', finish: 'auto', frame: 'none', logo: 'auto', dress: 'auto', wash: 'auto' }
 export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: string }[] } = {
   font: [{ key: 'auto', label: 'Look’s own' }, { key: 'sans', label: 'Bold sans' }, { key: 'serif', label: 'Serif' }, { key: 'condensed', label: 'Condensed' }, { key: 'elegant', label: 'Elegant' }],
   caps: [{ key: 'auto', label: 'Look’s own' }, { key: 'on', label: 'ALL CAPS' }, { key: 'off', label: 'Normal case' }],
@@ -41,7 +44,8 @@ export const STYLE_OPTIONS: { [K in keyof AdStyle]: { key: AdStyle[K]; label: st
   pace: [{ key: 'calm', label: 'Calm' }, { key: 'normal', label: 'Normal' }, { key: 'fast', label: 'Fast' }],
   finish: [{ key: 'auto', label: 'Look’s own' }, { key: 'film', label: 'Film grain' }, { key: 'soft', label: 'Soft' }, { key: 'glow', label: 'Light leak' }, { key: 'clean', label: 'Clean' }],
   frame: [{ key: 'none', label: 'Full bleed' }, { key: 'border', label: 'Border' }, { key: 'letterbox', label: 'Letterbox' }],
-  logo: [{ key: 'auto', label: 'Look’s own' }, { key: 'gold', label: 'Gold' }, { key: 'black', label: 'Black' }, { key: 'white', label: 'White' }, { key: 'off', label: 'Off' }],
+  logo: [{ key: 'auto', label: 'Look’s own' }, { key: 'white', label: 'White' }, { key: 'black', label: 'Black' }, { key: 'accent', label: 'Theme colour' }, { key: 'gold', label: 'Gold' }, { key: 'off', label: 'Off' }],
+  dress: [{ key: 'auto', label: 'Look’s own' }, { key: 'none', label: 'Plain' }, { key: 'xmas', label: 'Lights + snow' }, { key: 'lights', label: 'Christmas lights' }, { key: 'snow', label: 'Snow cap' }, { key: 'sparkle', label: 'Sparkle' }, { key: 'leaves', label: 'Autumn leaves' }],
   wash: [{ key: 'auto', label: 'Look’s own' }, { key: 'look', label: 'Colour wash' }, { key: 'neutral', label: 'Just a scrim' }, { key: 'none', label: 'No filter' }],
 }
 
@@ -208,6 +212,8 @@ export type AdProject = {
   /** Team workflow: draft → review → approved, with notes for whoever picks it up next. */
   status?: 'draft' | 'review' | 'approved'
   notes?: string
+  /** The Instagram / Facebook caption that goes out with the piece (Jon, 2026-11-10: "cool photos, captions and ads"). */
+  social?: string
   /** Fine-grained style on top of the look (each 'auto' falls back to the look's own choice). */
   style?: AdStyle
   scenes: AdScene[]
@@ -591,8 +597,10 @@ export type AdAssets = {
   mono: string
   credit: string
 }
-type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boolean; grade?: AdStyle['grade']; finish?: AdStyle['finish']; logo?: 'gold' | 'black' | 'white'; fx?: string[]; mesh?: [string, string, string]; wash?: 'look' | 'neutral' | 'none' }
-type Palette = { serif?: boolean; light?: boolean; def?: LookDef; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
+type LookDef = { font?: 'sans' | 'serif' | 'condensed' | 'elegant'; caps?: boolean; grade?: AdStyle['grade']; finish?: AdStyle['finish']; logo?: 'gold' | 'black' | 'white'; fx?: string[]; mesh?: [string, string, string]; wash?: 'look' | 'neutral' | 'none'
+  /** The mark in the look's own colour (the white logo, tinted), and what it wears for the season. */
+  logoTint?: string; dress?: LogoDress }
+type Palette = { serif?: boolean; light?: boolean; def?: LookDef; /** the Book button, when it is not the accent */ btn?: string; gold: string; ink: string; mut: string; navy: string; navy2: string; deep: string; tint: string; glass: string; line: string; green: string }
 /** Visual styles (Jon, 2026-11-02: "create new visual … revamp … vibe"). `gold` is the accent the
  *  headline's **marked** words, rings and buttons take; `tint` darkens photos so text reads. */
 /** The curated set shown first (Jon, 2026-11-04: "quality vs quantity"): six designed looks; the rest sit under "More looks". */
@@ -601,7 +609,7 @@ type Palette = { serif?: boolean; light?: boolean; def?: LookDef; gold: string; 
 // new ad starts in and what "Default look" puts back; gold lives on as a look you pick (Navy & gold, Black & gold,
 // Holiday, Champagne).
 export const DEFAULT_LOOK = 'house'
-export const LOOKS_FEATURED = ['house', 'housewhite', 'pure', 'editorial', 'ivory', 'stay', 'blackgold', 'miami', 'holiday']
+export const LOOKS_FEATURED = ['house', 'housewhite', 'pure', 'editorial', 'ivory', 'stay', 'holiday', 'xmasred', 'winter']
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
   { key: 'house', label: 'Stay black', blurb: 'The house look — black, white type, the Stay logo', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#FFFFFF', ink: '#FFFFFF', mut: '#B4B4B4', navy: '#0A0A0A', navy2: '#1B1B1B', deep: '#000000', tint: '0,0,0', glass: 'rgba(0,0,0,0.58)', line: 'rgba(255,255,255,0.24)', green: '#9BE3B5' } },
   { key: 'housewhite', label: 'Stay white', blurb: 'White, black type, black logo, the website’s navy — like stay-hospitality.com', c: { light: true, def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'black', wash: 'none' }, gold: '#0A175F', ink: '#0B0B0B', mut: '#55565E', navy: '#FFFFFF', navy2: '#FFFFFF', deep: '#EEEEEE', tint: '255,255,255', glass: 'rgba(255,255,255,0.88)', line: 'rgba(0,0,0,0.12)', green: '#1F9D55' } },
@@ -621,12 +629,19 @@ export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] 
   { key: 'miami', label: 'Miami nights', blurb: 'Neon pink on violet, vivid, light leak', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white' }, gold: '#FF5FA2', ink: '#FFFFFF', mut: '#D9C6F0', navy: '#1A0B2E', navy2: '#341457', deep: '#0D0518', tint: '26,8,46', glass: 'rgba(30,10,52,0.62)', line: 'rgba(255,180,230,0.25)', green: '#4FF0D0' } },
   { key: 'tropic', label: 'Tropic', blurb: 'Jungle green and coral, vivid', c: { def: { font: 'sans', grade: 'vivid', finish: 'soft', logo: 'white' }, gold: '#FF8A5B', ink: '#FFF8F0', mut: '#BFD9C8', navy: '#0B2A1F', navy2: '#124234', deep: '#061710', tint: '6,30,20', glass: 'rgba(8,36,26,0.62)', line: 'rgba(220,255,235,0.2)', green: '#7FE3A8' } },
   { key: 'aurora', label: 'Aurora', blurb: 'Teal-to-violet gradient, bokeh, modern', c: { def: { font: 'sans', grade: 'cool', finish: 'soft', logo: 'white', fx: ['bokeh'], mesh: ['#0E7C86', '#3B2A8C', '#0A1030'] }, gold: '#7CF2E0', ink: '#F4FBFF', mut: '#B9D4E6', navy: '#121A3F', navy2: '#1E2A5E', deep: '#080C22', tint: '14,18,56', glass: 'rgba(20,28,80,0.55)', line: 'rgba(200,240,255,0.22)', green: '#7CF2B0' } },
-  { key: 'champagne', label: 'Champagne', blurb: 'Gold gradient, elegant serif, sparkle', c: { def: { font: 'elegant', grade: 'golden', finish: 'glow', logo: 'white', fx: ['sparkle'], mesh: ['#8A6A2E', '#3A2A12', '#1A1208'] }, gold: '#F3D9A0', ink: '#FFF8EC', mut: '#D9C7A6', navy: '#2A1E0E', navy2: '#4A3617', deep: '#160F06', tint: '34,24,10', glass: 'rgba(50,36,16,0.6)', line: 'rgba(255,230,180,0.25)', green: '#CDE3A0' } },
+  { key: 'champagne', label: 'Champagne', blurb: 'Gold gradient, elegant serif, sparkle — New Year’s Eve', c: { def: { font: 'elegant', grade: 'golden', finish: 'glow', logo: 'white', logoTint: '#F3D9A0', dress: 'sparkle', fx: ['sparkle'], mesh: ['#8A6A2E', '#3A2A12', '#1A1208'] }, gold: '#F3D9A0', ink: '#FFF8EC', mut: '#D9C7A6', navy: '#2A1E0E', navy2: '#4A3617', deep: '#160F06', tint: '34,24,10', glass: 'rgba(50,36,16,0.6)', line: 'rgba(255,230,180,0.25)', green: '#CDE3A0' } },
   // Seasonal looks (Jon, 2026-11-04: Christmas post, Ultra, boat show — "real design").
-  { key: 'holiday', label: 'Holiday', blurb: 'Deep green, warm gold, soft bokeh lights — Christmas and New Year', c: { def: { font: 'serif', grade: 'warm', finish: 'glow', logo: 'gold', fx: ['bokeh'] }, gold: '#E8C27A', ink: '#FBF4E6', mut: '#C9C3A8', navy: '#0C2A22', navy2: '#143C31', deep: '#06170F', tint: '6,30,22', glass: 'rgba(10,40,30,0.62)', line: 'rgba(232,194,122,0.28)', green: '#7FD9A4' } },
+  // CHRISTMAS, DONE PROPERLY (Jon, 2026-11-10: "the theme builder like Christmas needs to be much better, fit the
+  // colours, revamp the logo to fit the theme, maybe add Christmas lights to the logo in Book now, be more creative").
+  // Three real Christmas palettes — evergreen, red, winter white — each with the Stay mark tinted to the season and
+  // wearing a string of blinking bulbs (and snow on the letters), a red or green Book button wrapped in lights, and
+  // the season's graphics on by default.
+  { key: 'holiday', label: 'Christmas green', blurb: 'Evergreen, warm gold, a red Book button — the mark in cream with lights and snow', c: { def: { font: 'serif', grade: 'warm', finish: 'glow', logo: 'white', logoTint: '#F6E7C8', dress: 'xmas', fx: ['snow'] }, btn: '#C8102E', gold: '#E9C46A', ink: '#FBF4E6', mut: '#CFC8AE', navy: '#0B3324', navy2: '#124632', deep: '#051A11', tint: '5,32,20', glass: 'rgba(8,44,30,0.66)', line: 'rgba(233,196,106,0.32)', green: '#7FD9A4' } },
+  { key: 'xmasred', label: 'Christmas red', blurb: 'Deep cranberry, gold, an evergreen Book button — the mark in cream with lights', c: { def: { font: 'serif', grade: 'warm', finish: 'glow', logo: 'white', logoTint: '#FFF1DA', dress: 'xmas', fx: ['snow', 'bokeh'] }, btn: '#1E6B43', gold: '#F2C94C', ink: '#FFF6EA', mut: '#EBC9C2', navy: '#6A0D18', navy2: '#8C1424', deep: '#3A050C', tint: '70,8,18', glass: 'rgba(96,10,24,0.66)', line: 'rgba(242,201,76,0.34)', green: '#9EE0B4' } },
+  { key: 'winter', label: 'Winter white', blurb: 'Snow white, cranberry type, the black mark with lights — clean and festive', c: { light: true, def: { font: 'elegant', grade: 'natural', finish: 'soft', logo: 'black', dress: 'lights', wash: 'neutral', fx: ['snow'] }, btn: '#B3121F', gold: '#B3121F', ink: '#1A1414', mut: '#5D5050', navy: '#FBF8F3', navy2: '#FFFFFF', deep: '#EDE6DA', tint: '251,248,243', glass: 'rgba(255,253,249,0.88)', line: 'rgba(179,18,31,0.18)', green: '#1E6B43' } },
   { key: 'festival', label: 'Festival', blurb: 'Electric violet and acid lime, condensed caps, neon grid — Ultra, F1, race week', c: { def: { font: 'condensed', caps: true, grade: 'vivid', finish: 'glow', logo: 'white', fx: ['grid'], mesh: ['#3A0CA3', '#7209B7', '#0B0220'] }, gold: '#C8FF3D', ink: '#FFFFFF', mut: '#D8CCFF', navy: '#12063A', navy2: '#2B0E7A', deep: '#07021A', tint: '18,6,58', glass: 'rgba(30,10,90,0.6)', line: 'rgba(200,255,61,0.28)', green: '#C8FF3D' } },
   { key: 'nautical', label: 'Nautical', blurb: 'Navy, white and a red stripe, clean sans — boat shows and the Fourth', c: { light: true, def: { font: 'sans', caps: true, grade: 'cool', finish: 'clean', logo: 'black', fx: [] }, gold: '#C62828', ink: '#0B1F3A', mut: '#4B5E78', navy: '#F4F6F9', navy2: '#FFFFFF', deep: '#E6EBF2', tint: '244,246,249', glass: 'rgba(255,255,255,0.78)', line: 'rgba(11,31,58,0.16)', green: '#1B7F5A' } },
-  { key: 'harvest', label: 'Harvest', blurb: 'Burnt orange, deep brown, cream — Thanksgiving and fall', c: { def: { font: 'serif', grade: 'warm', finish: 'soft', logo: 'gold', fx: ['leaves'] }, gold: '#E08A3C', ink: '#FBF1E3', mut: '#D9B99A', navy: '#3A1E12', navy2: '#5A2E1A', deep: '#24110A', tint: '48,24,14', glass: 'rgba(70,36,20,0.62)', line: 'rgba(224,138,60,0.3)', green: '#9DB36A' } },
+  { key: 'harvest', label: 'Harvest', blurb: 'Burnt orange, deep brown, cream — Thanksgiving and fall', c: { def: { font: 'serif', grade: 'warm', finish: 'soft', logo: 'white', logoTint: '#FBE3C4', dress: 'leaves', fx: ['leaves'] }, gold: '#E08A3C', ink: '#FBF1E3', mut: '#D9B99A', navy: '#3A1E12', navy2: '#5A2E1A', deep: '#24110A', tint: '48,24,14', glass: 'rgba(70,36,20,0.62)', line: 'rgba(224,138,60,0.3)', green: '#9DB36A' } },
   { key: 'rose', label: 'Rose', blurb: 'Deep rose and blush, elegant serif — Valentine’s, romance', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'white', fx: ['hearts'] }, gold: '#FFB3C1', ink: '#FFF3F5', mut: '#E6BFC8', navy: '#4A1020', navy2: '#6E1A33', deep: '#2E0A14', tint: '60,12,28', glass: 'rgba(80,16,38,0.62)', line: 'rgba(255,179,193,0.3)', green: '#7FD9A4' } },
   { key: 'midnight', label: 'Midnight', blurb: 'Deep blue, light rays, cinematic', c: { def: { font: 'sans', grade: 'cool', finish: 'film', logo: 'gold', fx: ['rays'], mesh: ['#0A2A5A', '#071530', '#03091A'] }, gold: '#D2B077', ink: '#EAF0FF', mut: '#A8B6D0', navy: '#071530', navy2: '#0E2250', deep: '#030A1C', tint: '5,16,40', glass: 'rgba(8,22,60,0.6)', line: 'rgba(200,220,255,0.2)', green: '#5FE0A0' } },
   { key: 'golden', label: 'Golden hour', blurb: 'Warm amber, elegant serif, light leak', c: { def: { font: 'elegant', grade: 'warm', finish: 'glow', logo: 'gold' }, gold: '#F2B544', ink: '#FFF6E8', mut: '#E3CDB0', navy: '#24170C', navy2: '#3D2814', deep: '#140C05', tint: '36,22,10', glass: 'rgba(40,24,10,0.6)', line: 'rgba(255,220,170,0.22)', green: '#B9D98A' } },
@@ -646,6 +661,111 @@ let C: Palette = LOOKS[0].c
 let GRADE = ''          // canvas filter for photos
 let DUO: [string, string] | null = null  // duotone shadows/highlights
 let FXS: string[] = []  // the look's default graphics
+let DRESS: LogoDress = 'none'   // what the Stay mark wears this frame
+let LOGO_TINT = ''               // the mark's colour when the look (or "Theme colour") tints it
+
+// ── THE SEASONAL MARK ─────────────────────────────────────────────────────────────────────────────────────────
+// The logo PNG recoloured (a white mark filled with any colour, cached) and dressed for the season: a string of
+// blinking Christmas bulbs swagged across the top of the letters, snow settled on them, champagne sparkle, or a
+// few autumn leaves. Used everywhere the mark is drawn — the corner, the Book now card, the contact card.
+const markCache = new Map<string, HTMLCanvasElement>()
+function markCanvas(img: HTMLImageElement, tint: string, snow: boolean): CanvasImageSource {
+  if (!tint && !snow) return img
+  if (typeof document === 'undefined') return img
+  const w = img.naturalWidth || 222, h = img.naturalHeight || 106
+  const key = img.src + '|' + tint + '|' + (snow ? 1 : 0)
+  const hit = markCache.get(key); if (hit) return hit
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h
+  const g = cv.getContext('2d'); if (!g) return img
+  g.drawImage(img, 0, 0, w, h)
+  if (tint) { g.globalCompositeOperation = 'source-in'; g.fillStyle = tint; g.fillRect(0, 0, w, h) }
+  if (snow) {
+    // snow settles on the top of every letter: a soft white band with a scalloped lower edge, kept to the glyphs
+    g.globalCompositeOperation = 'source-atop'
+    g.fillStyle = '#FFFFFF'
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(w, 0)
+    const n = 14
+    for (let k = n; k >= 0; k--) { const x = (k / n) * w, y = h * (0.2 + 0.07 * Math.sin(k * 2.3) + 0.04 * Math.sin(k * 5.1)); g.lineTo(x, y) }
+    g.closePath(); g.fill()
+    // a cool shadow under the snow line, so white snow reads even on a cream or white mark
+    g.strokeStyle = 'rgba(120,150,180,0.85)'; g.lineWidth = Math.max(1.5, h * 0.035); g.beginPath()
+    for (let k = 0; k <= n; k++) { const x = (k / n) * w, y = h * (0.2 + 0.07 * Math.sin(k * 2.3) + 0.04 * Math.sin(k * 5.1)) + g.lineWidth / 2; if (k) g.lineTo(x, y); else g.moveTo(x, y) }
+    g.stroke()
+    g.globalCompositeOperation = 'source-over'
+  }
+  if (markCache.size > 40) markCache.clear()
+  markCache.set(key, cv)
+  return cv
+}
+const XMAS = ['#E8343F', '#2FBF71', '#F6C744', '#5BC8F5', '#FF8A3D', '#FFFFFF']
+/** One Christmas bulb with its glow. `on` is 0–1 (the blink). */
+function bulb(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, on: number, ang = 0) {
+  ctx.save()
+  ctx.globalCompositeOperation = 'screen'
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r * 5.5); g.addColorStop(0, color); g.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.globalAlpha = 0.55 * on; ctx.fillStyle = g; ctx.fillRect(x - r * 5.5, y - r * 5.5, r * 11, r * 11)
+  ctx.restore()
+  ctx.save(); ctx.translate(x, y); ctx.rotate(ang)
+  ctx.fillStyle = '#2B2B2B'; ctx.fillRect(-r * 0.55, -r * 2.15, r * 1.1, r * 0.9)
+  ctx.globalAlpha = 0.55 + 0.45 * on; ctx.fillStyle = color
+  ctx.beginPath(); ctx.ellipse(0, 0, r, r * 1.45, 0, 0, Math.PI * 2); ctx.fill()
+  ctx.globalAlpha = 0.5 * on; ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.ellipse(-r * 0.3, -r * 0.45, r * 0.28, r * 0.45, 0, 0, Math.PI * 2); ctx.fill()
+  ctx.restore()
+}
+function star4(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, a: number) {
+  ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = color; ctx.beginPath()
+  ctx.moveTo(x, y - r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.quadraticCurveTo(x, y, x, y + r); ctx.quadraticCurveTo(x, y, x - r, y); ctx.quadraticCurveTo(x, y, x, y - r)
+  ctx.fill(); ctx.restore()
+}
+/** Draws the Stay mark at x,y (w×h), tinted and dressed for the look. `t` drives the blink. */
+function drawMark(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number, t: number) {
+  const snow = DRESS === 'snow' || DRESS === 'xmas'
+  ctx.drawImage(markCanvas(img, LOGO_TINT, snow), x, y, w, h)
+  const s = w / 220
+  if (DRESS === 'lights' || DRESS === 'xmas') {
+    // a wire swagged in two loops across the top of the letters, a bulb every so often, chasing on and off
+    const y0 = y + h * 0.02, x0 = x - w * 0.08, x1 = x + w * 1.08, sag = h * 0.32
+    const yAt = (f: number) => y0 + sag * Math.abs(Math.sin(f * Math.PI * 2))
+    ctx.save(); ctx.strokeStyle = 'rgba(30,40,30,0.85)'; ctx.lineWidth = Math.max(1, 2.2 * s); ctx.beginPath()
+    for (let k = 0; k <= 60; k++) { const f = k / 60, xx = x0 + f * (x1 - x0); if (k) ctx.lineTo(xx, yAt(f)); else ctx.moveTo(xx, yAt(f)) }
+    ctx.stroke(); ctx.restore()
+    const n = 11
+    for (let k = 0; k <= n; k++) {
+      const f = k / n, xx = x0 + f * (x1 - x0), yy = yAt(f) + 7 * s
+      const on = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 3.2 - k * 1.1))
+      bulb(ctx, xx, yy, 5.2 * s, XMAS[k % XMAS.length], on, Math.sin(k * 1.7) * 0.25)
+    }
+  }
+  if (DRESS === 'sparkle') {
+    const pts: [number, number, number][] = [[-0.06, 0.1, 1], [1.05, 0.05, 0.8], [0.92, 0.95, 0.6], [0.1, 0.95, 0.7], [0.5, -0.12, 0.55]]
+    pts.forEach(([fx, fy, sz], k) => { const tw = 0.5 + 0.5 * Math.sin(t * 2.6 + k * 1.9); star4(ctx, x + fx * w, y + fy * h, 13 * s * sz * (0.6 + 0.6 * tw), LOGO_TINT || C.gold, 0.35 + 0.65 * tw) })
+  }
+  if (DRESS === 'leaves') {
+    const cols = ['#C8541E', '#E08A3C', '#9C3B19', '#D9A441']
+    ;[[-0.1, 0.15, 0.6], [1.06, 0.7, -0.5], [0.97, -0.05, 1.2]].forEach(([fx, fy, rot], k) => {
+      const lx = x + fx * w, ly = y + fy * h + 3 * s * Math.sin(t * 1.4 + k), r = 12 * s
+      ctx.save(); ctx.translate(lx, ly); ctx.rotate(rot + 0.15 * Math.sin(t + k)); ctx.fillStyle = cols[k % cols.length]
+      ctx.beginPath(); ctx.moveTo(0, -r); ctx.quadraticCurveTo(r, -r * 0.2, 0, r); ctx.quadraticCurveTo(-r, -r * 0.2, 0, -r); ctx.fill()
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = s; ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(0, r * 1.3); ctx.stroke(); ctx.restore()
+    })
+  }
+}
+/** Bulbs all the way round a pill-shaped button, chasing — the Book now button dressed for Christmas. */
+function lightsAround(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, t: number, u: number) {
+  const r = h / 2, straight = w - 2 * r, per = 2 * straight + 2 * Math.PI * r
+  const n = Math.max(10, Math.round(per / (48 * u)))
+  const pad = 16 * u
+  for (let k = 0; k < n; k++) {
+    let d = (k / n) * per, px = 0, py = 0
+    const R = r + pad
+    if (d < straight) { px = x + r + d; py = y - pad }
+    else if ((d -= straight) < Math.PI * r) { const a = -Math.PI / 2 + d / r; px = x + w - r + Math.cos(a) * R; py = y + r + Math.sin(a) * R }
+    else if ((d -= Math.PI * r) < straight) { px = x + w - r - d; py = y + h + pad }
+    else { d -= straight; const a = Math.PI / 2 + d / r; px = x + r + Math.cos(a) * R; py = y + r + Math.sin(a) * R }
+    const on = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 4 - k * 0.9))
+    bulb(ctx, px, py, 6 * u, XMAS[k % XMAS.length], on, Math.atan2(py - (y + r), px - (x + w / 2)) + Math.PI / 2)
+  }
+}
 let PD = 1              // pace: >1 slower, <1 faster
 let CAPS = false
 let FONTW = 0           // a single-weight display face (condensed) draws at its own weight
@@ -690,6 +810,8 @@ export function resolveStyle(p: Pick<AdProject, 'look' | 'style'>) {
     finish: st.finish === 'auto' ? (d.finish || 'film') : st.finish,
     frame: st.frame,
     logo: st.logo === 'auto' ? (d.logo || (L.light ? 'black' : 'white')) : st.logo,
+    dress: ((st.dress || 'auto') === 'auto' ? (d.dress || 'none') : st.dress) as LogoDress,
+    logoTint: st.logo === 'auto' ? (d.logoTint || '') : '',
     accent: st.accent || '', base: st.base || '', text: st.text || '',
   }
 }
@@ -977,16 +1099,18 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
 
   if (sc.kind === 'cta') {
     background(ctx, W, H, im(0), local, dur, 0.95)
-    const lw = (portrait ? 200 : 210) * u
+    // a dressed mark is the star of a seasonal end card, so it is drawn larger
+    const lw = (portrait ? 200 : 210) * u * (DRESS !== 'none' ? 1.45 : 1)
     let y = portrait ? H * 0.2 : H * 0.17
     if (A.logo) {
       const lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
-      ctx.save(); ctx.globalAlpha *= appear(local, 0); ctx.drawImage(A.logo, (W - lw) / 2, y, lw, lh); ctx.restore()
-      y += lh + 60 * u
+      ctx.save(); ctx.globalAlpha *= appear(local, 0); drawMark(ctx, A.logo, (W - lw) / 2, y, lw, lh, local); ctx.restore()
+      y += lh + (DRESS === 'lights' || DRESS === 'xmas' ? 74 : 60) * u
     }
     const size = (portrait ? 112 : 118) * u
     y += rich(ctx, head || 'Your South Florida **stay.**', pad, y, W - pad * 2, size, { font: A.display, local, delay: 0.25, stagger: 0.3, align: 'center', maxH: H * 0.3 }) + 26 * u
     if (sc.sub) y += plain(ctx, sc.sub, pad, y, W - pad * 2, 38 * u, A.body, C.ink, 500, 'center', appear(local, 0.7)) + 40 * u
+    if (DRESS === 'lights' || DRESS === 'xmas') y += 26 * u  // the bulbs round the button need air
     const label = (sc.items[0] || 'Book at stay-hospitality.com').replace(/\|.*/, '')
     ctx.font = fnt(700, 40 * u, A.body)
     const bw = ctx.measureText(label).width + 110 * u, bh = 104 * u
@@ -995,8 +1119,9 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const pulse = 1 + 0.03 * Math.sin(Math.max(0, local - 1.6) * 4)
     ctx.save(); ctx.globalAlpha *= a
     ctx.translate(W / 2, y + bh / 2); ctx.scale(pulse, pulse); ctx.translate(-W / 2, -(y + bh / 2))
-    rr(ctx, (W - bw) / 2, y + (1 - a) * 30 * u, bw, bh, bh / 2); ctx.fillStyle = C.gold; ctx.fill()
-    ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(label, (W - bw) / 2 + 55 * u, y + bh / 2 + (1 - a) * 30 * u)
+    rr(ctx, (W - bw) / 2, y + (1 - a) * 30 * u, bw, bh, bh / 2); ctx.fillStyle = C.btn || C.gold; ctx.fill()
+    ctx.fillStyle = C.btn ? (lumOf(C.btn) > 150 ? '#14110B' : '#FFFFFF') : onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(label, (W - bw) / 2 + 55 * u, y + bh / 2 + (1 - a) * 30 * u)
+    if (DRESS === 'lights' || DRESS === 'xmas') lightsAround(ctx, (W - bw) / 2, y + (1 - a) * 30 * u, bw, bh, local, u)
     ctx.restore()
     if (sc.items[1]) plain(ctx, sc.items[1], pad, y + bh + 36 * u, W - pad * 2, 30 * u, A.body, C.mut, 500, 'center', appear(local, 1.4))
     if (A.credit && p.music !== 'none') plain(ctx, A.credit, W - 900 * u, H - 44 * u, 880 * u, 18 * u, A.mono, 'rgba(255,255,255,0.45)', 400)
@@ -1023,7 +1148,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     const al: 'left' | 'center' = portrait ? 'center' : 'left'
     if (A.logo) {
       const lw = 230 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
-      ctx.save(); ctx.globalAlpha *= appear(local, 0.2); ctx.drawImage(A.logo, portrait ? (W - lw) / 2 : tx, ty, lw, lh); ctx.restore()
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.2); drawMark(ctx, A.logo, portrait ? (W - lw) / 2 : tx, ty, lw, lh, local); ctx.restore()
       ty += lh + 50 * u
     }
     ty += rich(ctx, head || 'Book a **call.**', tx, ty, tw, fitHard(ctx, head || 'Book a **call.**', tw, 104 * u), { font: A.display, local, delay: 0.4, align: al, maxH: H * 0.22 }) + 30 * u
@@ -1391,13 +1516,17 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
   if (sc.kind === 'poster') {
     const img = im(0)
     const variant = (sc.items[2] || '').trim() || (C.light ? 'gallery' : (p.look === 'festival' || p.look === 'miami') ? 'neon' : 'dark')
+    // string lights along the top push the kicker down so the bulbs never sit on the words
+    const lightsTop = (sc.fx || []).indexOf('lights') >= 0 && ['top', 'both', 'frame'].indexOf(fxOpts(sc, 'lights').pos) >= 0
+    const kOff = lightsTop ? 78 * u : 0
+    const treeR = (sc.fx || []).indexOf('tree') >= 0 && ['br', 'right'].indexOf(fxOpts(sc, 'tree').pos) >= 0
     if (variant === 'gallery') {
       // GALLERY — a white mat, the photo sitting inside it, type below: Art Basel, editorial, print.
       // The mat is always light and the type dark — a gallery wall whatever the look; the accent colour stays.
       const mat = C.light ? C.navy2 : '#F4EFE6', inkG = C.light ? C.ink : '#15130F', mutG = C.light ? C.mut : '#5B564E'
       // a pale accent (cream gold, white) vanishes on the mat — the marked words take a deep gold instead
       const goldWas = C.gold
-      if (lumOf(C.gold) > 150) C.gold = '#8A6A2E'
+      if (lumOf(C.gold) > 150) C.gold = p.look === 'house' ? '#0A175F' : '#8A6A2E'  // the house look keeps its navy, not gold
       ctx.fillStyle = mat; ctx.fillRect(0, 0, W, H)
       const m = (portrait ? 70 : 90) * u, top = m + 60 * u
       const ph = portrait ? H * 0.56 : H * 0.62
@@ -1406,14 +1535,15 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       if (img) cover(ctx, img, m, top, W - m * 2, ph, 1.02 + 0.03 * clamp(local / Math.max(dur, 1))); else { ctx.fillStyle = C.deep; ctx.fillRect(m, top, W - m * 2, ph) }
       ctx.restore()
       const kicker = (sc.badge || 'Stay Hospitality · South Florida').toUpperCase()
-      ctx.save(); ctx.globalAlpha *= appear(local, 0.05); ctx.font = fnt(700, 24 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(kicker.split('').join(String.fromCharCode(8202)), m, m + 30 * u); ctx.restore()
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.05); ctx.font = fnt(700, 24 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(kicker.split('').join(String.fromCharCode(8202)), m, m + 30 * u + kOff); ctx.restore()
       const date = (sc.items[0] || '').replace(/\|.*/, '').toUpperCase().trim()
       if (date) {
         // the date as a pill inside the photo, bottom-right
         const a = appear(local, 0.2); ctx.save(); ctx.globalAlpha *= a; ctx.font = fnt(800, 30 * u, A.display)
         const dw = ctx.measureText(date).width + 50 * u, dh = 60 * u
-        rr(ctx, W - m - dw - 24 * u, top + ph - dh - 24 * u, dw, dh, dh / 2); ctx.fillStyle = C.gold; ctx.fill()
-        ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(date, W - m - dw, top + ph - dh / 2 - 22 * u); ctx.restore()
+        const px = treeR ? m + 24 * u : W - m - dw - 24 * u  // a tree in the right corner moves the date to the left
+        rr(ctx, px, top + ph - dh - 24 * u, dw, dh, dh / 2); ctx.fillStyle = C.gold; ctx.fill()
+        ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'; ctx.fillText(date, px + 25 * u, top + ph - dh / 2 - 22 * u); ctx.restore()
       }
       const ty = top + ph + 54 * u, tw = W - m * 2
       const cta = (sc.items[1] || '').replace(/\|.*/, '').trim()
@@ -1454,7 +1584,7 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
       // NEON — the photo cooled right down, a huge outlined headline in the middle, a glowing accent fill on the key word.
       ctx.fillStyle = `rgba(${C.tint},${TA(0.72)})`; ctx.fillRect(0, 0, W, H)
       const kicker = (sc.badge || 'Stay Hospitality · South Florida').toUpperCase()
-      ctx.save(); ctx.globalAlpha *= appear(local, 0.05); ctx.font = fnt(700, 26 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(kicker.split('').join(String.fromCharCode(8202)), pad, pad + 26 * u); ctx.restore()
+      ctx.save(); ctx.globalAlpha *= appear(local, 0.05); ctx.font = fnt(700, 26 * u, A.body); ctx.fillStyle = C.gold; ctx.fillText(kicker.split('').join(String.fromCharCode(8202)), pad, pad + 26 * u + kOff); ctx.restore()
       const date = (sc.items[0] || '').replace(/\|.*/, '').toUpperCase().trim(), cta = (sc.items[1] || '').replace(/\|.*/, '').trim()
       const tw = W - pad * 2
       const size = fitSize(ctx, head, tw, (portrait ? 150 : 140) * u, H * 0.5, 800, A.display, 0.98)
@@ -1478,21 +1608,22 @@ function drawScene(ctx: CanvasRenderingContext2D, p: AdProject, i: number, local
     ctx.save(); ctx.globalAlpha *= appear(local, 0.05)
     ctx.font = fnt(700, 26 * u, A.body); ctx.fillStyle = C.gold
     const kk = kicker.split('').join(String.fromCharCode(8202))
-    ctx.fillText(kk, pad, pad + 26 * u)
-    ctx.fillRect(pad, pad + 44 * u, 70 * u, 4 * u)
+    ctx.fillText(kk, pad, pad + 26 * u + kOff)
+    ctx.fillRect(pad, pad + 44 * u + kOff, 70 * u, 4 * u)
     ctx.restore()
     // bottom bar
     const barH = cta ? (portrait ? 118 : 104) * u : 0
     if (cta) {
       const a = appear(local, 0.9)
       ctx.save(); ctx.globalAlpha *= a
-      ctx.fillStyle = C.gold; ctx.fillRect(0, H - barH, W, barH)
+      const barC = C.btn || C.gold, barInk = C.btn ? (lumOf(C.btn) > 150 ? '#14110B' : '#FFFFFF') : onAccent()
+      ctx.fillStyle = barC; ctx.fillRect(0, H - barH, W, barH)
       const fs = fitSize(ctx, cta, W - pad * 2 - 80 * u, 40 * u, barH * 0.6, 800, A.body)
-      ctx.font = fnt(800, fs, A.body); ctx.fillStyle = onAccent(); ctx.textBaseline = 'middle'
+      ctx.font = fnt(800, fs, A.body); ctx.fillStyle = barInk; ctx.textBaseline = 'middle'
       ctx.fillText(cta.toUpperCase().split('').join(String.fromCharCode(8202)), pad, H - barH / 2 + 2 * u)
       // arrow
       const ax = W - pad - 40 * u, ay = H - barH / 2
-      ctx.strokeStyle = onAccent(); ctx.lineWidth = 5 * u; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(ax - 40 * u, ay); ctx.lineTo(ax, ay); ctx.moveTo(ax - 16 * u, ay - 16 * u); ctx.lineTo(ax, ay); ctx.lineTo(ax - 16 * u, ay + 16 * u); ctx.stroke()
+      ctx.strokeStyle = barInk; ctx.lineWidth = 5 * u; ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(ax - 40 * u, ay); ctx.lineTo(ax, ay); ctx.moveTo(ax - 16 * u, ay - 16 * u); ctx.lineTo(ax, ay); ctx.lineTo(ax - 16 * u, ay + 16 * u); ctx.stroke()
       ctx.restore()
     }
     // headline block, anchored to the bottom (above the bar); a corner tree gets its own column
@@ -2883,14 +3014,18 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   const sc0 = p.scenes[sceneAt(tl, t)]
   const galleryPage = !!sc0 && sc0.kind === 'poster' && !C.light && ((sc0.items[2] || '').trim() === 'gallery')
   const logoKey = R.logo === 'off' ? 'off' : galleryPage ? 'black' : R.logo
-  A = { ...A, display: fam || A.display, logo: logoKey === 'off' ? null : (A.logos && A.logos[logoKey as 'gold' | 'black' | 'white']) || (logoKey === 'gold' ? A.logo : null) }
+  const logoImgKey = logoKey === 'accent' || (R.logoTint && logoKey !== 'off') ? 'white' : logoKey
+  A = { ...A, display: fam || A.display, logo: logoKey === 'off' ? null : (A.logos && A.logos[logoImgKey as 'gold' | 'black' | 'white']) || (logoImgKey === 'gold' ? A.logo : null) }
   // CUSTOM COLOURS on top of the look (Jon, 2026-11-03: "colour options, not just theme changes").
   if (isHex(R.accent)) C = { ...C, gold: R.accent! }
   if (isHex(R.base)) {
     const b = R.base!, lt = lumOf(b) > 150, [r, g, bb] = hexRgb(b)
     C = { ...C, light: lt, navy: b, navy2: shade(b, lt ? 8 : 18), deep: shade(b, lt ? -14 : -12), tint: `${r},${g},${bb}`, glass: `rgba(${r},${g},${bb},${lt ? 0.86 : 0.62})`, line: lt ? 'rgba(0,0,0,0.13)' : 'rgba(255,255,255,0.2)', ink: lt ? '#151515' : '#F5F2EC', mut: lt ? '#555049' : '#B8BEC6' }
-    if ((p.style?.logo || 'auto') === 'auto') A = { ...A, logo: A.logos ? (lt ? A.logos.black : (A.logos.gold || A.logo)) : A.logo }
+    if ((p.style?.logo || 'auto') === 'auto') A = { ...A, logo: A.logos ? (lt ? A.logos.black : (A.logos.white || A.logo)) : A.logo }
   }
+  // the mark's colour and its seasonal dress (a gallery-mat page keeps a plain black mark)
+  LOGO_TINT = galleryPage ? '' : logoKey === 'accent' ? C.gold : (R.logoTint && !(isHex(R.base) && (p.style?.logo || 'auto') === 'auto') ? R.logoTint : '')
+  DRESS = R.dress
   if (isHex(R.text)) C = { ...C, ink: R.text!, mut: R.text! }
   DISPLAY = A.display; FONTW = R.font === 'condensed' && fam ? 400 : 0; FS = R.font === 'elegant' && fam ? 1.2 : 1
   GRADE = GRADES[R.grade] || ''
@@ -3010,7 +3145,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
   if (A.logo && sc.kind !== 'contact' && sc.kind !== 'cta') {
     const lw = 150 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
     const PF2 = platformOf(p)
-    ctx.drawImage(A.logo, W - lw - Math.max(56 * u, W * PF2.safe.right + 20 * u), Math.max(46 * u, H * PF2.safe.top + 20 * u), lw, lh)
+    drawMark(ctx, A.logo, W - lw - Math.max(56 * u, W * PF2.safe.right + 20 * u), Math.max(46 * u, H * PF2.safe.top + 20 * u) + (DRESS === 'lights' || DRESS === 'xmas' ? 10 * u : 0), lw, lh, t)
   }
   // CAPTIONS: the line being spoken (most viewers watch muted). Shown while the line plays.
   // Captions — unless the screen already says the same words (a kinetic hook, a title that IS the line).
