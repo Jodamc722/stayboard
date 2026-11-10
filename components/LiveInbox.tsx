@@ -45,6 +45,8 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
   // Answers can come back out of order (a slow Guesty pull, then a quick local re-read): only the
   // newest ask may write.
   const asked = useRef(0)
+  // The fingerprint of the list on screen: sent back so an unchanged list is not downloaded again.
+  const ver = useRef('')
 
   /** `pull: false` re-reads our own copy only — after a reply or a mark, where Guesty has nothing new to say. */
   const refresh = useCallback(async (pull: boolean = true) => {
@@ -52,10 +54,18 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
     const mine = ++asked.current
     setBusy(true)
     try {
-      const r = await fetch('/api/messages/live' + (pull ? '' : '?pull=0'), { cache: 'no-store' })
+      const qs = [pull ? '' : 'pull=0', ver.current ? 'v=' + encodeURIComponent(ver.current) : ''].filter(Boolean).join('&')
+      const r = await fetch('/api/messages/live' + (qs ? '?' + qs : ''), { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j?.error || 'Could not reach the inbox.')
       if (mine !== asked.current) return
+      if (j.unchanged) {
+        // Same list: move the clock and the header pills, leave every row (and the open thread) alone.
+        setData(d => ({ ...d, now: j.now, header: j.header }))
+        if (pull) setErr(j.pull?.error ? 'Guesty: ' + j.pull.error : '')
+        return
+      }
+      ver.current = String(j.v || '')
       // What moved since the last look: a new thread, or a newer last message on one we had.
       const fresh = new Set<string>()
       for (const it of j.items as InboxData['items']) {

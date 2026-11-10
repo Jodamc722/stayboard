@@ -24,7 +24,7 @@ import { pageRows } from './db-page'
 import { marketOf, buildingOf } from './segments'
 import { vendorRegex } from './ops-presets'
 import { getOpsPresets } from './app-settings'
-import { CADENCE_KEY, resolveCadences, cadenceRe, daysBetween, type CadenceDef } from './cadences'
+import { CADENCE_KEY, resolveCadences, cadenceRe, daysBetween, matchOrder as cadenceMatchOrder, type CadenceDef } from './cadences'
 import { getSetting, setSetting } from './app-settings'
 import { isTaskDone, isTaskGone } from './task-categories'
 import { linkedSets } from './linked-units'
@@ -125,14 +125,40 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
   const usable = live.filter(c => !(c.needsScope && !(c.scopeBuildings || []).length && !(c.scopeUnits || []).length))
   const maxEvery = usable.reduce((m, c) => Math.max(m, c.everyDays), 365)
 
-  const presets = await getOpsPresets()
-  const VENDOR_RE = vendorRegex(presets.vendorBuildings)
-  // Equipment per unit, for cadences with a rule (central A/C only, mini-splits only).
-  const acOf = usable.some(c => c.equipment && c.equipment !== 'any') ? await acTypeMap() : {}
+  // SPEED (2026-11-10: the Upkeep board took 4.4 s). Everything below that does not depend on another
+  // read is STARTED here and awaited where it is used, instead of one read after another: the presets,
+  // the equipment map, the listings, one read of the task mirror, and the small side reads (dates
+  // recorded by hand, FF&E walks, the started clocks). Same reads, same rules, same numbers.
+  const since = shift(today, -(maxEvery + 30))
+  // Far enough that a job booked beyond the view still counts as handled.
+  const ahead = shift(today, Math.max(horizon, maxEvery))
+  // ONE read of the mirror, not two. The "history" read (since → today) was a strict subset of the
+  // "open work" read (since → ahead), so every past row was fetched twice. Its pages are fetched six
+  // at a time. Departure cleans and strips are left out exactly as before — they are most of the
+  // volume, and a 365-day cadence depends on the oldest rows surviving.
+  const tasksP = pageWaves<any>((a, b) => db.from('breezeway_tasks_sync')
+    .select('id,reference_property_id,name,status,scheduled_date,finished_at,type_department')
+    .gte('scheduled_date', since).lte('scheduled_date', ahead)
+    .not('name', 'ilike', '%departure clean%')
+    .not('name', 'ilike', '%strip%')
+    .order('scheduled_date', { ascending: true }).order('id').range(a, b), 30)
+  const ffeP: Promise<any[]> = usable.some(c => c.key === 'ffe_audit')
+    ? Promise.resolve(db.from('ffe_unit_status').select('listing_id,completed_at').not('completed_at', 'is', null)).then((r: any) => (r && !r.error ? (r.data || []) : []), () => [])
+    : Promise.resolve([])
+  const recKeptP = readRecorded()
+  const recPagedP = pageRows<any>((a, b) => db.from('pm_schedule').select('listing_id,cadence_key,last_done,note')
+    .ilike('note', 'recorded %').not('last_done', 'is', null).order('listing_id').order('cadence_key').range(a, b), 8).catch(() => ({ rows: [] as any[], truncated: false }))
+  const clocksP = readClocks()
 
-  // ── the units ────────────────────────────────────────────────────────────────────────────────
-  const { data: lRes, error: lErr } = await db.from('guesty_listings')
-    .select('id,nickname,title,building,address_city,status,created:raw->>createdAt')
+  const [presets, acOf, lq] = await Promise.all([
+    getOpsPresets(),
+    // Equipment per unit, for cadences with a rule (central A/C only, mini-splits only).
+    usable.some(c => c.equipment && c.equipment !== 'any') ? acTypeMap() : Promise.resolve({} as Awaited<ReturnType<typeof acTypeMap>>),
+    // ── the units ──────────────────────────────────────────────────────────────────────────────
+    db.from('guesty_listings').select('id,nickname,title,building,address_city,status,created:raw->>createdAt'),
+  ])
+  const VENDOR_RE = vendorRegex(presets.vendorBuildings)
+  const { data: lRes, error: lErr } = lq
   if (lErr) throw new Error('could not read listings — ' + String(lErr.message).slice(0, 120))
   type Meta = { name: string; building: string | null; bucket: string; market: string; market2: string | null; vendor: boolean; created: string | null }
   const meta: Record<string, Meta> = {}
@@ -164,10 +190,12 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
   // ── history: when was each cadence last done, per unit ───────────────────────────────────────
   // One read back one full cadence plus slack, exactly as the suggestion engine does, so the two
   // never disagree about whether something has been done.
-  const since = shift(today, -(maxEvery + 30))
-  // Far enough that a job booked beyond the view still counts as handled.
-  const ahead = shift(today, Math.max(horizon, maxEvery))
-  const [histPaged, openPaged] = await Promise.all([
+  const [histPaged, openPaged] = await (async () => {
+    const all = await tasksP
+    // History = the rows dated today or earlier; open work looks at all of them, earliest first.
+    return [{ rows: all.rows.filter((t: any) => dOf(t.scheduled_date) <= today), truncated: all.truncated }, all] as const
+  })()
+  /* The two reads this replaced, kept for the record:
     // The same two exclusions lib/suggestions uses. Departure cleans and strips are the overwhelming
     // majority of task volume, and 395 days of them would blow past any page budget — with the
     // OLDEST rows dropped, which are exactly the completions a 365-day cadence depends on.
@@ -187,7 +215,7 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
       .not('name', 'ilike', '%departure clean%')
       .not('name', 'ilike', '%strip%')
       .order('scheduled_date', { ascending: true }).order('id').range(a, b), 12),
-  ])
+  ]) */
   if (histPaged.truncated) degraded.push('task history (the ledger is a floor, not a total)')
   if (openPaged.truncated) degraded.push('scheduled work')
 
@@ -209,7 +237,8 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
   // shipped patterns are loose ("inspect", "filter", "deep clean") and came first in the list, so a
   // finished "Quarterly inspection — 906/6" reset the generic unit-inspection clock and the new
   // program never saw its own task: always late, never booked, proposed again every run.
-  const matchOrder = usable.filter(c => str(c.match).startsWith('^\\s*')).concat(usable.filter(c => !str(c.match).startsWith('^\\s*')))
+  // (The rule itself now lives in lib/cadences matchOrder, shared with lib/suggestions and lib/pm-dedupe.)
+  const matchOrder = cadenceMatchOrder(usable)
   const matchOf = (name: string, deptRaw: string): string[] => {
     const dept = deptOf(deptRaw)
     for (const c of matchOrder) {
@@ -250,7 +279,7 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
   // finished there counts as that cadence done on that day. A missing table reads as "no record".
   if (usable.some(c => c.key === 'ffe_audit')) {
     try {
-      const { data: ffe } = await db.from('ffe_unit_status').select('listing_id,completed_at').not('completed_at', 'is', null)
+      const ffe = await ffeP
       for (const r of ((ffe || []) as any[])) {
         const lid = String(r.listing_id), day = dOf(r.completed_at)
         if (!day) continue
@@ -275,12 +304,11 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
   //    still carries its note. Where both exist the settings row wins — it is what the person last typed.
   const recordedDay: Record<string, string> = {}
   {
-    const kept = await readRecorded()
+    const kept = await recKeptP
     for (const k of Object.keys(kept || {})) { const d = dOf((kept as any)[k]); if (d) recordedDay[k] = d }
     const backfill: Record<string, string> = {}
     try {
-      const recPaged = await pageRows<any>((a, b) => db.from('pm_schedule').select('listing_id,cadence_key,last_done,note')
-        .ilike('note', 'recorded %').not('last_done', 'is', null).order('listing_id').order('cadence_key').range(a, b), 8)
+      const recPaged = await recPagedP
       if (recPaged.truncated) degraded.push('dates recorded by hand')
       for (const r of recPaged.rows as any[]) {
         const lid = String(r.listing_id), day = dOf(r.last_done), key = String(r.cadence_key)
@@ -345,7 +373,7 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
 
   // The tickers already started (see DueItem.clock). One app_settings row, read once.
   // A failed read must never be written back as "no clocks" — that would restart every ticker.
-  const stored = await readClocks()
+  const stored = await clocksP
   const clocks: Record<string, { s: string; d: string }> = { ...(stored || {}) }
   let clocksDirty = false
 
@@ -465,6 +493,35 @@ export async function buildDueCalendar(today: string, opts: { horizonDays?: numb
     },
     buildings, degraded,
   }
+}
+
+/**
+ * Page an ALREADY-ORDERED query to completion, six pages at a time (lib/db-page reads one page after
+ * another — ten round trips for ten thousand rows). The first page goes alone: most reads end there.
+ * A failed page is "stopped early", never "the end", exactly as pageRows reports it.
+ */
+async function pageWaves<T = any>(q: (from: number, to: number) => PromiseLike<any>, maxPages = 30): Promise<{ rows: T[]; truncated: boolean }> {
+  const out: T[] = []
+  const seen: Record<string, boolean> = {}
+  const take = (data: any[]) => { for (const row of data) { const k = row && row.id != null ? String(row.id) : null; if (k) { if (seen[k]) continue; seen[k] = true } out.push(row as T) } }
+  const one = async (p: number): Promise<any[] | null> => {
+    try { const res: any = await q(p * 1000, p * 1000 + 999); if (res && res.error) return null; return (res?.data || []) as any[] } catch { return null }
+  }
+  const first = await one(0)
+  if (!first) return { rows: out, truncated: true }
+  take(first)
+  if (first.length < 1000) return { rows: out, truncated: false }
+  for (let p = 1; p < maxPages; p += 6) {
+    const idx: number[] = []
+    for (let i = p; i < Math.min(maxPages, p + 6); i++) idx.push(i)
+    const pages = await Promise.all(idx.map(one))
+    for (const d of pages) {            // in page order, so the rows stay in the query's order
+      if (!d) return { rows: out, truncated: true }
+      take(d)
+      if (d.length < 1000) return { rows: out, truncated: false }
+    }
+  }
+  return { rows: out, truncated: true }
 }
 
 /** Where the started tickers live: { "<listingId>|<cadenceKey>": { s: started, d: first due } }. */

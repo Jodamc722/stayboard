@@ -35,6 +35,7 @@ import { marketOf } from '@/lib/segments'
 import { rollupBuilding } from '@/lib/optimize-score'
 import { getSetting } from '@/lib/app-settings'
 import { pageRows } from '@/lib/db-page'
+import { channelFeeOf } from '@/lib/basis'
 
 export const SETTINGS_KEY = 'owner_projections_v1'
 
@@ -222,7 +223,7 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
   const histFrom = histSeason[0] + '-01'
   const histTo = histSeason[histSeason.length - 1] + '-' + daysInMonth(histSeason[histSeason.length - 1])
   const reservations = await pageAll('reservations', (a, b) => db.from('guesty_reservations')
-    .select('id,listing_id,check_in,check_out,nights,status,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee,money_total')
+    .select('id,listing_id,check_in,check_out,nights,status,fare:raw->money->>fareAccommodationAdjusted,fareBase:raw->money->>fareAccommodation,channelFee:raw->money->>hostServiceFee,channelFeeInc:raw->money->>hostServiceFeeIncTax,money_total')
     .in('status', LIVE_RES)
     .gte('check_out', histFrom).lte('check_in', histTo).order('check_out').order('id').range(a, b))
 
@@ -240,11 +241,13 @@ export async function buildProjections(): Promise<ProjectionsPayload> {
     const ci = str(r.check_in).slice(0, 10), co = str(r.check_out).slice(0, 10)
     if (!ci || !co || co <= ci) continue
     const totalNights = Math.max(1, Number(r.nights) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000) || 1)
-    // NET OF THE CHANNEL'S HOST FEE — the owner statement's Net (lib/basis `net`: fare − hostServiceFee).
+    // NET OF THE CHANNEL'S HOST FEE — THE ONE NET of lib/basis (2026-11-10): fare − hostServiceFeeIncTax,
+    // falling back to hostServiceFee (channelFeeOf), the same subtraction Revenue Center, pacing,
+    // Properties and Sales make.
     // `money_total` is only the last resort for a stay with no fare fields; it is a payout figure,
     // already past the channel, so nothing more comes off it.
     const gross = num(r.fare) || num(r.fareBase)
-    const fare = gross > 0 ? Math.max(0, gross - Math.max(0, num(r.channelFee))) : num(r.money_total)
+    const fare = gross > 0 ? Math.max(0, gross - channelFeeOf(num(r.channelFeeInc), num(r.channelFee))) : num(r.money_total)
     // walk the stay night by night into its months (stays are short; this is cheap)
     let d = ci
     while (d < co) {

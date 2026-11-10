@@ -26,6 +26,7 @@ import { createInvoiceItems } from './guesty-payments'
 import { createBreezewayTask, updateBreezewayTask, matchBreezewayPerson } from './breezeway'
 import { getTaskAutomation } from './auto-inspections'
 import { neverAssignGuard } from './never-assign'
+import { taskCreatorOn } from './task-creators'
 import { hostVoiceFor } from './host-voice'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -167,7 +168,10 @@ export async function syncSent(): Promise<number> {
     else if (!/cancel|delet/i.test(str(t.status)) && str(t.scheduled_date) && str(t.scheduled_date).slice(0, 10) < today) late.push(t)
   }
   // MOVE, NEVER RECREATE: an open delivery past its Tuesday goes to the next Tuesday, same task.
-  for (const t of late) {
+  // THE SWITCH (Upkeep → Automations, lib/task-creators; on unless someone turned it off): off = a
+  // late delivery stays on its day until a person moves it. Marking finished ones Sent is unaffected.
+  const moveOn = late.length ? await taskCreatorOn('lostFoundMove') : true
+  for (const t of (moveOn ? late : [])) {
     const to = deliveryTuesday(today)
     const u = await updateBreezewayTask(String(t.id), { scheduled_date: to }).catch(() => null)
     if (!u || !u.ok) continue

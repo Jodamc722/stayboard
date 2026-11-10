@@ -13,7 +13,7 @@ type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string; newBooking
 type TechCfg = { to: string[]; lang?: string }
 // `trueup` (app_settings labor_weekly) is still read, never edited: labor goes to the GM morning list
 // now, and `legacyLabor` is whoever was on the old labor lists and is not on the GM morning yet.
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; cc?: string[]; trueup?: Digest; legacyLabor?: string[]; salato?: Digest; eod?: Digest; laborPlan?: { targetMarginPct?: number | null }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; cc?: string[]; alertTo?: string[]; trueup?: Digest; legacyLabor?: string[]; salato?: Digest; eod?: Digest; laborPlan?: { targetMarginPct?: number | null }
   // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets only —
   // the Ops morning and the GM morning are management documents and stay English.
   lang?: { miami?: string; broward?: string } }
@@ -62,7 +62,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '),
     maint: (c.maint || []).join(', '),
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
-    d_salato: (c.salato?.to || []).join(', '), d_eod: (c.eod?.to || []).join(', '), cc: (c.cc || []).join(', '),
+    d_salato: (c.salato?.to || []).join(', '), d_eod: (c.eod?.to || []).join(', '), cc: (c.cc || []).join(', '), alertTo: (c.alertTo || []).join(', '),
     lp_target: c.laborPlan?.targetMarginPct != null ? String(c.laborPlan.targetMarginPct) : '',
   })
   const load = useCallback(async () => {
@@ -101,6 +101,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
         techs: Object.fromEntries(techRows.filter(t => t.name.trim()).map(t => [t.name.trim(), { to: parse(t.to), lang: t.lang }])),
         vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
         cc: parse(raw.cc || ''),
+        alertTo: parse(raw.alertTo || ''),
         salato: { ...(cfg.salato || {}), newBookings: cfg.salato?.newBookings !== false, to: parse(raw.d_salato || '') },
         eod: { enabled: cfg.eod ? cfg.eod.enabled !== false : true, ...(cfg.eod || {}), to: parse(raw.d_eod || '') },
         laborPlan: (() => {
@@ -192,6 +193,15 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
           <div className="text-[11px] text-muted mb-1.5">Gets a copy of every brief above and below — team, vendor, Salato and the EOD recap. Leave empty for nobody. Never doubled for someone already on that brief&apos;s list.</div>
           <textarea rows={1} disabled={!isOwner} value={raw.cc ?? ''} onChange={e => setRaw(x => ({ ...x, cc: e.target.value }))}
             placeholder="emails, comma separated"
+            className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+        </div>
+
+        {/* WHO HEARS WHEN A BRIEF FAILS (2026-11-10) — ops_brief.alertTo, read by lib/briefs/delivery. */}
+        <div className="rounded-xl border border-line p-3">
+          <div className="text-[12px] font-bold text-ink">Send failure alerts to</div>
+          <div className="text-[11px] text-muted mb-1.5">Who is told when a brief does not go out — the &ldquo;did not send&rdquo; email, the in-app bell for a brief missing by 7:30am, and the labor check email. Leave empty for the owner.</div>
+          <textarea rows={1} disabled={!isOwner} value={raw.alertTo ?? ''} onChange={e => setRaw(x => ({ ...x, alertTo: e.target.value }))}
+            placeholder="emails, comma separated — empty = the owner"
             className="w-full text-[12px] bg-app border border-line rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
         </div>
 

@@ -20,7 +20,7 @@ type G = {
   reservation_id: string | null; guest_name: string | null; guest_phone: string | null; guest_email: string | null
   channel: string | null; check_in: string | null; check_out: string | null
   incident_date: string | null; overview: string | null; refund_approved: number | null
-  reported_by: string | null; assignee?: string | null; closed_at?: string | null; created_at: string
+  reported_by: string | null; assignee?: string | null; closed_at?: string | null; closed_at_estimated?: boolean | null; created_at: string
 }
 
 // The same themes the Trends tab reads, so the two never disagree about what "A/C" means.
@@ -48,9 +48,12 @@ const etDay = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime
 const ymdAgo = (n: number) => etDay(new Date(Date.now() - n * 86400_000).toISOString())
 const fmt = (d: string) => d ? new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''
 const usd = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
-const isClosed = (g: G) => String(g.status) === 'closed'
+// ONE DEFINITION OF CLOSED (2026-11-10): the board's own (its Closed lane also holds the legacy
+// 'done' and 'resolved' statuses, which this report was counting as still open).
+const isClosed = (g: G) => ['closed', 'done', 'resolved'].indexOf(String(g.status)) >= 0
 const propOf = (g: G) => g.building || str(g.unit).trim().split(/[\s\-–#/]+/)[0] || 'Unknown'
-const STATUS_LABEL: Record<string, string> = { pool: 'Pool', ops: 'Ops', guest_followup: 'Guest follow-up', refund: 'Refund', manager_review: 'Manager review', incident: 'Incident', closed: 'Closed' }
+// The board's lane names, word for word — "Pool" and "Ops" were this report's own vocabulary.
+const STATUS_LABEL: Record<string, string> = { pool: 'Open', ops: 'With ops', guest_followup: 'Guest follow-up', refund: 'Refund', manager_review: 'Manager review', incident: 'With ops', closed: 'Closed', done: 'Closed', resolved: 'Closed' }
 
 /** Monday of the week an ISO day falls in. */
 const weekOf = (d: string) => { const x = new Date(d + 'T12:00:00Z'); const dow = (x.getUTCDay() + 6) % 7; x.setUTCDate(x.getUTCDate() - dow); return x.toISOString().slice(0, 10) }
@@ -82,7 +85,12 @@ export function GlitchReport({ initialQ = '' }: { initialQ?: string }) {
   useEffect(() => { pull() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const quick = (days: number) => { const f = ymdAgo(days), t = ymdAgo(0); setFrom(f); setTo(t); pull(f, t) }
 
-  const all = data || []
+  // A card merged into another as a duplicate (category 'Duplicate', closed, nothing refunded on it)
+  // is the same issue counted twice — it is left out of the numbers and said so. One that carries a
+  // refund stays in, so no money goes missing.
+  const isMergedDup = (g: G) => g.category === 'Duplicate' && !(Number(g.refund_approved) > 0)
+  const all = useMemo(() => (data || []).filter(g => !isMergedDup(g)), [data])
+  const nDup = (data || []).length - all.length
   const rows = useMemo(() => {
     const n = q.trim().toLowerCase()
     const digits = n.replace(/\D/g, '')
@@ -104,7 +112,9 @@ export function GlitchReport({ initialQ = '' }: { initialQ?: string }) {
   const stats = useMemo(() => {
     const open = rows.filter(g => !isClosed(g)).length
     const refunds = rows.reduce((t, g) => t + (Number(g.refund_approved) || 0), 0)
-    const closeDays = rows.filter(g => isClosed(g) && g.closed_at).map(g => (Date.parse(String(g.closed_at)) - Date.parse(g.created_at)) / 86400_000).filter(d => d >= 0).sort((a, b) => a - b)
+    // Measured closes only — a close time that was back-filled as an estimate is not timed (the
+    // board's "to close" pill leaves those out too).
+    const closeDays = rows.filter(g => isClosed(g) && g.closed_at && !g.closed_at_estimated).map(g => (Date.parse(String(g.closed_at)) - Date.parse(g.created_at)) / 86400_000).filter(d => d >= 0).sort((a, b) => a - b)
     const median = closeDays.length ? closeDays[Math.floor(closeDays.length / 2)] : null
     const guests: Record<string, number> = {}
     for (const g of rows) { const k = str(g.guest_email || g.guest_name).toLowerCase().trim(); if (k && k !== 'guest') guests[k] = (guests[k] || 0) + 1 }
@@ -192,9 +202,9 @@ export function GlitchReport({ initialQ = '' }: { initialQ?: string }) {
 
       {/* NARROW */}
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="relative">
+        <span className="relative w-full sm:w-auto">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest name, email, phone, reservation, unit, words…" className={ctl + ' pl-7 w-[300px]'} />
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Guest name, email, phone, reservation, unit, words…" className={ctl + ' pl-7 w-full sm:w-[300px]'} />
         </span>
         <select value={market} onChange={e => setMarket(e.target.value)} className={ctl}>
           {['all', 'Miami', 'Broward', 'North', 'Vendor'].map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
@@ -224,6 +234,7 @@ export function GlitchReport({ initialQ = '' }: { initialQ?: string }) {
           <Pill>{stats.n} glitch{stats.n === 1 ? '' : 'es'}{filtering ? ' (filtered)' : ''}</Pill>
           <Pill tone={stats.open ? 'rose' : 'emerald'}>{stats.open} still open</Pill>
           <Pill tone="emerald">{rows.length - stats.open} closed</Pill>
+          {nDup > 0 && <Pill title="Cards merged into another card as a duplicate — the same issue reported twice. Not counted in any number here.">{nDup} merged duplicate{nDup === 1 ? '' : 's'} left out</Pill>}
           {stats.median != null && <Pill title="Half of the closed glitches took less than this from report to close">Median {stats.median < 1 ? Math.round(stats.median * 24) + 'h' : stats.median.toFixed(1) + 'd'} to close</Pill>}
           {stats.refunds > 0 && <Pill tone="amber">{usd(stats.refunds)} refunded</Pill>}
           {stats.repeatGuests > 0 && <Pill tone="violet" title="Guests with more than one glitch in this window">{stats.repeatGuests} repeat guest{stats.repeatGuests === 1 ? '' : 's'}</Pill>}

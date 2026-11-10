@@ -157,6 +157,8 @@ export type AuditItem = {
   // lines before they were left behind. The engine itself never sets either.
   slim?: boolean
   cancelFeeLine?: boolean
+  /** With `slim`: the reservation note exists but was left for the row's detail. */
+  hasResNote?: boolean
 }
 
 // The formal per-statement sign-off: stored in owner_audit_reviews under the reserved

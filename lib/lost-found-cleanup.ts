@@ -11,7 +11,8 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getSettingFresh, setSetting } from './app-settings'
 
-export const HOLD_DAYS = 30
+import { HOLD_DAYS, SHIPPED_CLOSE_DAYS, isValuable, holdDaysLeft, shippedAt, reopenedAfter } from './lost-found-rules'
+export { HOLD_DAYS }
 export const NOT_LF = 'not_lost_found'
 const IGNORED_KEY = 'lost_found_ignored_ts'
 
@@ -34,11 +35,20 @@ export async function ignoreSlackTs(ts: string[], by: string): Promise<void> {
 export async function autoToss(): Promise<number> {
   const db = supabaseAdmin()
   const cutoff = shift(todayET(), -HOLD_DAYS)
-  const { data } = await db.from('lost_found_items').select('id,history,found_date,status,pay_requested_at,shipping_paid')
-    .in('status', ['held', 'contacted']).lte('found_date', cutoff).limit(200)
+  // Shipped items close themselves too — same pass, so the cron and the page both run it.
+  try { await autoCloseShipped() } catch { /* next run */ }
+  const today = todayET()
+  const { data } = await db.from('lost_found_items').select('id,item,description,category,history,found_date,contacted_at,status,pay_requested_at,shipping_paid')
+    .in('status', ['held', 'contacted']).lte('found_date', cutoff).limit(300)
   let n = 0
   for (const r of (data || []) as any[]) {
     if (r.pay_requested_at || r.shipping_paid) continue
+    // VALUABLES ARE NEVER TOSSED BY THE CLOCK (2026-11-10): electronics, jewellery, documents, wallets,
+    // IDs stay open and the page lists them under "Hold ended — needs a decision".
+    if (isValuable(r)) continue
+    // THE HOLD RUNS FROM THE LAST CONTACT, not the find (2026-11-10): a guest told on day 29 gets
+    // their own 30 days. lib/lost-found-rules holdStart() is the one definition, shared with the page.
+    if (holdDaysLeft(r, today) > 0) continue
     const history = Array.isArray(r.history) ? r.history.slice() : []
     // REOPENED BY A PERSON = their call (2026-11-09 audit): an item reopened after the hold ended was
     // discarded again on the very next page load. A reopen in the last HOLD_DAYS days keeps it open.
@@ -46,6 +56,31 @@ export async function autoToss(): Promise<number> {
     if (history.some((h: any) => h && h.what === 'status' && h.who !== 'Lighthouse' && /^(returned|donated|discarded|not_lost_found) → /.test(String(h.note || '')) && Date.parse(String(h.at)) > since)) continue
     history.push({ at: new Date().toISOString(), who: 'Lighthouse', what: 'status', note: r.status + ' → discarded: not collected or requested within ' + HOLD_DAYS + ' days of the find — toss it' })
     const { error } = await db.from('lost_found_items').update({ status: 'discarded', resolved_at: new Date().toISOString(), history, updated_at: new Date().toISOString() }).eq('id', r.id).in('status', ['held', 'contacted'])
+    if (!error) n++
+  }
+  return n
+}
+
+/**
+ * SHIPPED ITEMS CLOSE ON THEIR OWN (2026-11-10): 10 days after shipping, a Shipped item is closed as
+ * returned to the guest. They used to sit in Open forever unless someone remembered to close them.
+ * "Reopening holds": once a person reopens an item after it shipped, the clock leaves it alone.
+ * Nothing is sent to the guest. Returns how many were closed.
+ */
+export async function autoCloseShipped(): Promise<number> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('lost_found_items').select('id,status,sent_at,history,updated_at').eq('status', 'shipping').limit(300)
+  const cutoff = Date.now() - SHIPPED_CLOSE_DAYS * 86400000
+  let n = 0
+  for (const r of (data || []) as any[]) {
+    // No record of when it shipped (an old row marked Sent by hand): count from its last change.
+    const at = shippedAt(r) || (r.updated_at ? String(r.updated_at) : null)
+    if (!at) continue
+    const t = Date.parse(at)
+    if (isNaN(t) || t > cutoff) continue
+    if (reopenedAfter(r, at)) continue
+    const history = [...(Array.isArray(r.history) ? r.history : []), { at: new Date().toISOString(), who: 'Lighthouse', what: 'status', note: 'shipping → returned: Closed automatically ' + SHIPPED_CLOSE_DAYS + ' days after shipping' }].slice(-60)
+    const { error } = await db.from('lost_found_items').update({ status: 'returned', resolved_at: new Date().toISOString(), history, updated_at: new Date().toISOString() }).eq('id', r.id).eq('status', 'shipping')
     if (!error) n++
   }
   return n

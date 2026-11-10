@@ -8,7 +8,8 @@
 //
 // NOTHING NEW IS STORED. Every row points at the switch the creator ALREADY reads (app_settings:
 // task_automation, preventative_cadences, guest_orders, site_programs) and at the receipt it ALREADY
-// writes (automation_runs, lib/automation-runs). A creator with no switch says so ("always on")
+// writes (automation_runs, lib/automation-runs). The four that had no switch at all share one key,
+// task_creators (lib/task-creators — default on). A creator with no switch says so ("always on")
 // rather than pretending to have one. lib/eve/automations.ts stays the registry of every scheduled
 // job; this file is only the task creators, in the words a coordinator uses.
 //
@@ -24,11 +25,12 @@ import { CADENCE_KEY, resolveCadences, type CadenceCfg } from './cadences'
 import { GUEST_ORDERS_KEY, getGuestOrdersCfg } from './guest-orders'
 import { getNoService } from './no-service'
 import { getNeverAssign } from './never-assign'
+import { TASK_CREATORS_KEY, getTaskCreators, TASK_CREATORS_DEFAULTS, type TaskCreatorSwitches } from './task-creators'
 
 export type CreatorKind = 'auto' | 'human' | 'retired'
 export type CreatorGroup = 'Programs' | 'Preventative' | 'Inspections' | 'Guests' | 'Eve' | 'Housekeeping moves' | 'People' | 'Retired'
 
-type Ctx = { ta: TaskAutomationCfg; cad: CadenceCfg; ordersOn: boolean; programs: { total: number; active: number } }
+type Ctx = { ta: TaskAutomationCfg; cad: CadenceCfg; ordersOn: boolean; programs: { total: number; active: number }; creators: TaskCreatorSwitches }
 
 export type TaskCreatorDef = {
   key: string
@@ -91,12 +93,13 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
     key: 'walk-fix', group: 'Programs', label: 'Fix tasks from a finished walk', kind: 'auto',
     makes: 'One maintenance task per failed line of a program walk that has an owner report, with the photo and note.',
     schedule: 'When such a walk is finished in Breezeway (checked three times a day)', runName: 'walk-reports', countIsMade: false,
+    configKey: TASK_CREATORS_KEY, enabledPath: 'walkFixTasks', toggle: true,
     cap: () => 'At most 20 per walk',
     who: () => 'The program’s people',
     settingsHref: '#property', settingsLabel: 'Program → report settings',
     guard: TWIN + ' The same issue found again on the next walk reuses the open fix task.',
     noService: 'Not an inspection — not affected.',
-    note: 'Always on for programs whose report is not “off”. No separate switch yet.',
+    note: 'Only for programs whose report is not “off”. Off = the report is still written and sent; no fix tasks are raised.',
   },
   // ── Preventative ──────────────────────────────────────────────────────────────────────────────
   {
@@ -116,11 +119,12 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
     key: 'cadence-carry', group: 'Preventative', label: 'Late preventative tasks carried to today', kind: 'auto',
     makes: 'Moves each open preventative task dated before today to today (never a second task). Older copies of the same job that Lighthouse itself created are cancelled.',
     schedule: 'Every morning, with the list above', runName: 'suggestions', countIsMade: false,
+    configKey: TASK_CREATORS_KEY, enabledPath: 'carry', toggle: true,
     cap: () => '120 tasks a run',
     who: () => 'Whoever is already on the task',
     guard: 'Moves only. Does not move a job that needs the unit empty or rides a departure (those wait for the next empty day / checkout). Removes only tasks on the PM ledger or the accepted-suggestions log — deleted when the creation log proves Lighthouse made it and nobody has touched it, otherwise cancelled.',
     noService: 'Moves existing tasks only.',
-    note: 'Always on — it runs even when the preventative switch is off, because the tasks exist either way. No separate switch yet.',
+    note: 'Its own switch — it runs even when the preventative switch above is off, because the tasks exist either way. Off = late tasks stay on their day and no duplicate is removed from the morning run.',
   },
   {
     key: 'pm-recurrence', group: 'Preventative', label: 'Next preventative task books itself', kind: 'auto',
@@ -239,11 +243,12 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
     key: 'connecting-doors', group: 'Housekeeping moves', label: 'Connecting door — Capri 115/116', kind: 'auto',
     makes: '“Open connecting door” before a combined booking arrives and “Close connecting door” at its checkout, for the cleaner on that clean; the clean’s title gets the note too.',
     schedule: 'Hourly through the day', runName: 'connecting-doors', countIsMade: false,
+    configKey: TASK_CREATORS_KEY, enabledPath: 'connectingDoors', toggle: true,
     cap: () => 'One open and one close task per combined booking',
     who: () => 'The cleaner(s) on that departure clean',
     guard: 'A task of the same kind already at the unit in the window is the one.',
     noService: 'Not an inspection — not affected.',
-    note: 'Always on. The pair of units is set in code (lib/connecting-doors); no switch yet.',
+    note: 'The pair of units is set in code (lib/connecting-doors). Off = no door tasks and no title notes.',
   },
   // ── Guests ────────────────────────────────────────────────────────────────────────────────────
   {
@@ -259,12 +264,22 @@ export const TASK_CREATORS: TaskCreatorDef[] = [
   },
   {
     key: 'lost-found', group: 'Guests', label: 'Lost & Found delivery', kind: 'human',
-    makes: '“Lost & Found Delivery — guest” on the Lost and Found property for the next Tuesday. Not done → the same task moves to the following Tuesday (automatic, every 15 minutes).',
-    schedule: 'When someone marks the item paid / presses ship', runName: 'lost-found', countIsMade: false,
+    makes: '“Lost & Found Delivery — guest” on the Lost and Found property for the next Tuesday.',
+    schedule: 'When someone marks the item paid', runName: 'lost-found', countIsMade: false,
     who: () => 'The delivery people for the item’s market',
     settingsHref: '/lost-found', settingsLabel: 'Lost & Found',
     guard: 'The item keeps its task id; one task per item.',
     noService: 'Filed on the Lost and Found property — not affected.',
+  },
+  {
+    key: 'lost-found-move', group: 'Guests', label: 'Lost & Found delivery moved to the next Tuesday', kind: 'auto',
+    makes: 'Creates nothing. A delivery task still open after its Tuesday is moved — the same task — to the following Tuesday, and the item’s history says so.',
+    schedule: 'Every 15 minutes', runName: 'lost-found', countIsMade: false,
+    configKey: TASK_CREATORS_KEY, enabledPath: 'lostFoundMove', toggle: true,
+    who: () => 'Whoever is already on the task',
+    settingsHref: '/lost-found', settingsLabel: 'Lost & Found',
+    guard: 'Moves only.', noService: 'Filed on the Lost and Found property — not affected.',
+    note: 'Off = a late delivery stays on its day until a person moves it. Finished deliveries are still marked Sent.',
   },
   {
     key: 'glitch-push', group: 'Guests', label: 'Glitch → Breezeway task', kind: 'human',
@@ -394,8 +409,10 @@ const LOGGED_SOURCES = new Set(['site-programs', 'cadence-suggest', 'suggestion-
 async function readMadeToday(): Promise<{ bySource: Record<string, number>; sum: NonNullable<MadeToday> } | null> {
   try {
     const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-    const { data, error } = await supabaseAdmin().from('task_creations').select('source,action').eq('day', day).limit(5000)
-    if (error || !Array.isArray(data) || data.length >= 5000) return null
+    // One page (PostgREST hands back at most 1,000 rows whatever the limit says): a day that fills it
+    // is "unknown", never a low count.
+    const { data, error } = await supabaseAdmin().from('task_creations').select('source,action').eq('day', day).limit(1000)
+    if (error || !Array.isArray(data) || data.length >= 1000) return null
     const bySource: Record<string, number> = {}
     const sum = { total: 0, moved: 0, removed: 0 }
     for (const r of data as any[]) {
@@ -411,18 +428,19 @@ async function readMadeToday(): Promise<{ bySource: Record<string, number>; sum:
 const readPath = (obj: any, path: string): any => path.split('.').reduce((o: any, k) => (o && typeof o === 'object' ? o[k] : undefined), obj)
 
 async function loadCtx(): Promise<Ctx> {
-  const [ta, cadRaw, orders, progRaw] = await Promise.all([
+  const [ta, cadRaw, orders, progRaw, creators] = await Promise.all([
     getTaskAutomation().catch(() => TASK_AUTOMATION_DEFAULTS),
     getSetting<any>(CADENCE_KEY, null).catch(() => null),
     getGuestOrdersCfg().catch(() => null),
     // Read raw on purpose: lib/site-programs loadPrograms() seeds the setting on a first read, and a
     // page that only LOOKS must not write.
     getSetting<any>('site_programs', null).catch(() => null),
+    getTaskCreators().catch(() => ({ ...TASK_CREATORS_DEFAULTS })),
   ])
   const list: any[] = Array.isArray(progRaw?.programs) ? progRaw.programs : []
   return {
     ta, cad: resolveCadences(cadRaw), ordersOn: !!orders && orders.enabled === true,
-    programs: { total: list.length, active: list.filter(p => p && p.active !== false).length },
+    programs: { total: list.length, active: list.filter(p => p && p.active !== false).length }, creators,
   }
 }
 
@@ -432,6 +450,8 @@ function switchOf(def: TaskCreatorDef, c: Ctx): boolean | null {
   if (def.configKey === TASK_AUTOMATION_KEY) return readPath(c.ta, def.enabledPath) === true
   if (def.configKey === CADENCE_KEY) return readPath(c.cad, def.enabledPath) === true
   if (def.configKey === GUEST_ORDERS_KEY) return c.ordersOn
+  // Default ON, fail-open: only an explicit false is off (lib/task-creators).
+  if (def.configKey === TASK_CREATORS_KEY) return readPath(c.creators, def.enabledPath) !== false
   return null
 }
 

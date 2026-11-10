@@ -9,10 +9,15 @@
 //      cancellations and the daily trend sit behind tabs.
 // One money format (whole dollars), one percent format (whole points, signed), calm colours: a
 // number is only red or green when it is a comparison.
-import { useMemo, useState, type ReactNode } from 'react'
+//
+// LOADS ITSELF (2026-11-10). The page draws the frame and this fetches /api/revenue/sales behind a
+// skeleton. The first answer carries the headline and the worst 60 units; the full unit list
+// (?part=units) is asked for only when "All", "Raise rate", a search or "Show all" needs it, and the
+// daily series (?part=daily) only when the Daily tab is opened.
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import { LeanHead, LeanTabs, LeanList, LeanRow, LeanEmpty, LeanPick, Pill, Tag, type Tone } from '@/components/lean'
-import type { SalesReport as Report, SalesPeriod, PaceUnit, PaceStatus, SalesMonth } from '@/lib/sales-report'
+import type { SalesReport as Report, SalesPeriod, PaceUnit, PaceStatus, SalesMonth, SalesDay } from '@/lib/sales-report'
 
 type TabKey = 'pace' | 'channels' | 'months' | 'cancels' | 'daily'
 type PaceView = 'action' | 'ahead' | 'all'
@@ -128,13 +133,86 @@ function MonthRow({ m, showMoney }: { m: SalesMonth; showMoney: boolean }) {
   )
 }
 
-export function SalesReport({ data, asOfLabel, error }: { data: Report | null; asOfLabel: string; error?: string }) {
+const API = '/api/revenue/sales'
+
+/** The frame of the report while it loads: four tiles, the sentence, a few rows. */
+function Skeleton() {
+  const bar = 'rounded bg-line/60 animate-pulse'
+  return (
+    <div aria-busy="true" aria-label="Loading the sales report">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3 mb-3">
+        {[0, 1, 2, 3].map(i => (
+          <div key={i} className="rounded-2xl border border-line bg-white px-3.5 py-3">
+            <div className={`${bar} h-2.5 w-20`} />
+            <div className={`${bar} h-7 w-28 mt-2`} />
+            <div className={`${bar} h-2.5 w-24 mt-2`} />
+            <div className={`${bar} h-2.5 w-32 mt-1.5`} />
+          </div>
+        ))}
+      </div>
+      <div className="rounded-2xl border border-line bg-white px-3.5 py-3 mb-4"><div className={`${bar} h-3 w-4/5`} /></div>
+      <div className="rounded-2xl border border-line bg-white divide-y divide-line/70">
+        {[0, 1, 2, 3, 4, 5].map(i => <div key={i} className="px-3 sm:px-4 py-3"><div className={`${bar} h-3`} style={{ width: `${70 - i * 6}%` }} /></div>)}
+      </div>
+    </div>
+  )
+}
+
+export function SalesReport() {
+  const [data, setData] = useState<Report | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [allUnits, setAllUnits] = useState<PaceUnit[] | null>(null)
+  const [unitsFailed, setUnitsFailed] = useState(false)
+  const [days, setDays] = useState<SalesDay[] | null>(null)
+  const [daysFailed, setDaysFailed] = useState(false)
   const [tab, setTab] = useState<TabKey>('pace')
   const [paceView, setPaceView] = useState<PaceView>('action')
   const [q, setQ] = useState('')
   const [showAll, setShowAll] = useState(false)
 
-  const units = data ? data.pace.units : null
+  // The report itself — once, when the page opens.
+  useEffect(() => {
+    let live = true
+    fetch(API, { cache: 'no-store' })
+      .then(async r => {
+        const j = await r.json().catch(() => null)
+        if (!live) return
+        if (r.ok && j && j.ok) setData(j as Report)
+        else setError(String((j && (j.message || j.error)) || 'the server answered ' + r.status))
+      })
+      .catch(e => { if (live) setError(String((e && e.message) || e)) })
+      .finally(() => { if (live) setLoading(false) })
+    return () => { live = false }
+  }, [])
+
+  // Every unit — only when a view needs more than the first answer carried.
+  const partial = !!data && data.pace.unitsPartial
+  const wantAll = paceView !== 'action' || q.trim() !== '' || showAll
+  const needUnits = partial && wantAll && allUnits == null && !unitsFailed
+  useEffect(() => {
+    if (!needUnits) return
+    let live = true
+    fetch(API + '?part=units', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!live) return; if (j && j.ok && Array.isArray(j.units)) setAllUnits(j.units as PaceUnit[]); else setUnitsFailed(true) })
+      .catch(() => { if (live) setUnitsFailed(true) })
+    return () => { live = false }
+  }, [needUnits])
+
+  // The daily series — only when its tab is opened.
+  const needDays = !!data && data.daysDeferred && tab === 'daily' && days == null && !daysFailed
+  useEffect(() => {
+    if (!needDays) return
+    let live = true
+    fetch(API + '?part=daily', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => { if (!live) return; if (j && j.ok && Array.isArray(j.days)) setDays(j.days as SalesDay[]); else setDaysFailed(true) })
+      .catch(() => { if (live) setDaysFailed(true) })
+    return () => { live = false }
+  }, [needDays])
+
+  const units = allUnits || (data ? data.pace.units : null)
   const paceRows = useMemo(() => {
     let r: PaceUnit[] = units || []
     if (paceView === 'action') r = r.filter(u => u.status === 'behind' || u.status === 'cold' || u.status === 'watch')
@@ -147,14 +225,15 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
   if (!data) {
     return (
       <div className="p-4 sm:p-6 max-w-[1100px] mx-auto">
-        <LeanHead title="Sales" />
-        <LeanEmpty>The sales report could not be built{error ? ` — ${error}` : ''}. Reload in a minute; if it keeps failing, check the Guesty sync on System health.</LeanEmpty>
+        <LeanHead title="Sales" sub={loading ? 'Booked by the day the booking was made · against last year' : undefined} />
+        {loading ? <Skeleton /> : <LeanEmpty>The sales report could not be built{error ? ` — ${error}` : ''}. Reload in a minute; if it keeps failing, check the Guesty sync on System health.</LeanEmpty>}
       </div>
     )
   }
 
   const d = data
   const sm = d.showMoney
+  const asOfLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(d.generatedAt)) + ' ET'
   const P = (k: SalesPeriod['key']): SalesPeriod => d.periods.find(p => p.key === k) || d.periods[0]
   const pToday = P('today'), pYest = P('yesterday'), pWeek = P('week'), pMonth = P('month')
   const head = (p: SalesPeriod): string => (sm ? money(p.now.revenue) : plural(p.now.bookings, 'booking'))
@@ -174,7 +253,7 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
     return out
   }
   const needs = d.pace.behind + d.pace.cold
-  const watch = d.pace.units.filter(u => u.status === 'watch').length
+  const watch = d.pace.watch
   const first = d.pace.units.find(u => u.status === 'behind' || u.status === 'cold')
   const dirPts = d.directShare != null && d.lyDirectShare != null ? Math.round((d.directShare - d.lyDirectShare) * 100) : null
 
@@ -191,6 +270,12 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
   ].filter(Boolean).join('; ') + '.'
 
   const visible = showAll ? paceRows : paceRows.slice(0, 30)
+  // While the full list is on its way the rows on screen are only the top of it.
+  const unitsLoading = needUnits
+  const dayRows = d.daysDeferred ? days : d.days
+  // How many rows this view has in all — known from the counts even before the full list arrives.
+  const viewTotal = !partial || allUnits != null || q.trim() !== '' ? paceRows.length
+    : paceView === 'action' ? needs + watch : paceView === 'ahead' ? d.pace.ahead : d.pace.totalUnits
   const chMax = d.channels.reduce((m, c) => Math.max(m, c.share), 0) || 1
 
   return (
@@ -251,12 +336,16 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
               options={[
                 { v: 'action', label: `Needs action ${int(needs + watch)}`, title: 'Behind last year, gone cold, or under the building' },
                 { v: 'ahead', label: `Raise rate ${int(d.pace.ahead)}`, title: '85%+ booked and well up on last year' },
-                { v: 'all', label: `All ${int(d.pace.units.length)}` },
+                { v: 'all', label: `All ${int(d.pace.totalUnits)}` },
               ]} />
             <input value={q} onChange={e => { setQ(e.target.value); setShowAll(false) }} placeholder="Unit or building…" aria-label="Filter units"
               className="rounded-lg border border-line bg-white px-2.5 py-1 text-[12.5px] text-ink w-full sm:w-48 sm:ml-auto focus:outline-none focus:border-brand-500" />
           </div>
-          {paceRows.length === 0 ? (
+          {unitsLoading ? (
+            <LeanEmpty>Loading every unit…</LeanEmpty>
+          ) : unitsFailed && wantAll && partial && allUnits == null ? (
+            <LeanEmpty>The full unit list did not load. <button onClick={() => setUnitsFailed(false)} className="font-semibold text-brand-700 hover:underline">Try again</button></LeanEmpty>
+          ) : paceRows.length === 0 ? (
             <LeanEmpty>{paceView === 'action' ? 'No unit is behind pace for the next 30 days.' : 'No units match.'}</LeanEmpty>
           ) : (
             <LeanList>
@@ -288,8 +377,8 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
               })}
             </LeanList>
           )}
-          {paceRows.length > visible.length && (
-            <button onClick={() => setShowAll(true)} className="mt-2 text-[12.5px] font-semibold text-brand-700 hover:underline">Show all {int(paceRows.length)}</button>
+          {!unitsLoading && !showAll && viewTotal > visible.length && (
+            <button onClick={() => setShowAll(true)} className="mt-2 text-[12.5px] font-semibold text-brand-700 hover:underline">Show all {int(viewTotal)}</button>
           )}
           <p className="text-[11.5px] text-muted mt-2 px-1">
             Pace = guest nights on the books for {md(d.pace.from)} – {md(d.pace.to30)} against the same weekdays last year, counting only what had been booked by {md(d.asOfLastYear)}. Confirmed, checked-in and checked-out stays only. A unit is compared with last year only if it is same-store (live on that date). Owner and friends-&amp;-family stays are not sales; their nights come off what is left to sell. Last year leaves out stays cancelled after that date, so a small gap is not a signal.
@@ -374,7 +463,13 @@ export function SalesReport({ data, asOfLabel, error }: { data: Report | null; a
         <section className="rounded-2xl border border-line bg-white p-3.5 sm:p-5">
           <p className="text-[12.5px] text-muted mb-2">{sm ? 'Value' : 'Number'} of bookings made each day, last 28 days. Bar = this year · line = the same weekday last year.</p>
           <div className="lh-hscroll -mx-3.5 px-3.5 sm:mx-0 sm:px-0">
-            <div className="min-w-[560px] sm:min-w-0"><DailyChart days={d.days} showMoney={sm} /></div>
+            <div className="min-w-[560px] sm:min-w-0">
+              {dayRows
+                ? <DailyChart days={dayRows} showMoney={sm} />
+                : daysFailed
+                  ? <p className="text-[13px] text-muted py-6 text-center">The daily series did not load. <button onClick={() => setDaysFailed(false)} className="font-semibold text-brand-700 hover:underline">Try again</button></p>
+                  : <div className="h-[170px] rounded-xl bg-line/40 animate-pulse" aria-busy="true" aria-label="Loading the daily series" />}
+            </div>
           </div>
         </section>
       )}

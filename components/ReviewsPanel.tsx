@@ -104,6 +104,8 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   // and nothing posts without that person's key or tap on that review.
   const [flow, setFlow] = useState(false)
   const [cur, setCur] = useState<string | null>(null)
+  // The key legend, opened with "?" (or its button) while a run is on.
+  const [legend, setLegend] = useState(false)
   const autoTried = useRef<Record<string, boolean>>({})
   const autoOff = useRef(false)
   const draftsRef = useRef<Record<string, string>>({})
@@ -362,7 +364,9 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
     const r = needs.find(x => x.id === cur) || needs[0]
     if (!r) return
     const k = key.toLowerCase()
-    if (k === 'escape') { setFlow(false); return }
+    if (k === '?') { e.preventDefault(); setLegend(v => !v); return }
+    // Escape closes the legend first, and only then ends the run.
+    if (k === 'escape') { if (legend) setLegend(false); else setFlow(false); return }
     if (k === 'a') { e.preventDefault(); approveCur(r, true) }
     else if (k === 'e') { e.preventDefault(); focusBox(r.id) }
     else if (k === 's' || k === 'j' || k === 'arrowdown') { e.preventDefault(); setCur(neighbour(r.id, 1, false)) }
@@ -587,11 +591,36 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
         </IconBtn>
       </div>
       {flow && view === 'needs' && needs.length > 0 && (
-        <p className="text-[11.5px] text-muted mb-2 px-1">
-          <span className="font-semibold text-ink tabular-nums">{curIdx >= 0 ? curIdx + 1 : 1} of {needs.length}</span>
-          <span className="hidden sm:inline"> · <kbd className="font-semibold text-ink">A</kbd> approve &amp; post · <kbd className="font-semibold text-ink">E</kbd> edit · <kbd className="font-semibold text-ink">S</kbd> skip · <kbd className="font-semibold text-ink">R</kbd> rewrite · <kbd className="font-semibold text-ink">D</kbd> no reply needed · <kbd className="font-semibold text-ink">Esc</kbd> stop</span>
-          <span className="sm:hidden"> · the draft is written for you — approve, edit or skip</span>
-        </p>
+        <div className="mb-2 px-1">
+          <p className="text-[11.5px] text-muted flex items-center gap-1.5 flex-wrap">
+            <span className="font-semibold text-ink tabular-nums">{curIdx >= 0 ? curIdx + 1 : 1} of {needs.length}</span>
+            <span className="hidden sm:inline">· <kbd className="font-semibold text-ink">A</kbd> approve · <kbd className="font-semibold text-ink">E</kbd> edit · <kbd className="font-semibold text-ink">S</kbd> skip</span>
+            <span className="sm:hidden">· the draft is written for you — approve, edit or skip</span>
+            <button type="button" onClick={() => setLegend(v => !v)} aria-expanded={legend} title="All the keys (?)"
+              className={'hidden sm:inline-flex items-center justify-center w-5 h-5 rounded-md border text-[11px] font-bold ' + (legend ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')}>?</button>
+          </p>
+          {legend && (
+            <div className="hidden sm:grid grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 mt-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12px] text-ink max-w-2xl">
+              {([
+                ['A', 'Approve & post, then next'],
+                ['E', 'Edit the draft'],
+                ['S / J / ↓', 'Skip to the next review'],
+                ['K / ↑', 'Back to the previous one'],
+                ['R', 'Rewrite the draft'],
+                ['D', 'No reply needed'],
+                ['Ctrl/⌘ + Enter', 'Post from inside the text box'],
+                ['Esc', 'Leave the text box · stop the run'],
+                ['?', 'Show or hide this list'],
+              ] as [string, string][]).map(([k, what]) => (
+                <div key={k} className="flex items-baseline gap-2 min-w-0">
+                  <kbd className="shrink-0 font-semibold text-[11px] px-1.5 py-0.5 rounded-md border border-line bg-app">{k}</kbd>
+                  <span className="text-muted truncate">{what}</span>
+                </div>
+              ))}
+              <p className="col-span-full text-[11px] text-muted">A will not post a draft that mentions money, admits fault or carries contact details — read it and use the button.</p>
+            </div>
+          )}
+        </div>
       )}
       {err && <p className="text-[12px] text-rose-700 mb-2">{err}</p>}
       {note && <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 flex items-center gap-2"><span className="flex-1">{note}</span><button onClick={() => setNote(null)} className="text-amber-700 hover:text-amber-900 font-semibold">OK</button></p>}

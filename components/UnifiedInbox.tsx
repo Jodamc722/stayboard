@@ -206,16 +206,16 @@ export function UnifiedInbox(props: {
     return () => window.removeEventListener('keydown', onKey)
   }, [step, act, newTask, canAct, cur.done, cur.snoozed, mine])
 
-  // Glitches opens filtered to this unit (?q=, which the board reads today). The reservation rides
-  // along for the day the board can pre-fill a new card from it.
+  // "Glitch" opens the Glitches page on a NEW card for this stay (?new=1&reservation=<id>&unit=<listing id>,
+  // read by the Glitches page since 2026-11-10). With no booking and no listing it just opens Glitches.
   const glitchHref = useMemo(() => {
     if (!thread) return '/glitches'
     const u = new URLSearchParams()
-    const unitName = (thread.kind === 'guesty' ? thread.listingName : '') || thread.reservation?.listing_name || thread.unit || ''
-    if (unitName) u.set('q', unitName)
+    u.set('new', '1')
     if (thread.reservationId) u.set('reservation', thread.reservationId)
-    const qs = u.toString()
-    return '/glitches' + (qs ? '?' + qs : '')
+    const listing = thread.kind === 'guesty' ? (thread.listingId || '') : ''
+    if (listing) u.set('unit', listing)
+    return '/glitches?' + u.toString()
   }, [thread])
 
   return (
@@ -260,7 +260,7 @@ export function UnifiedInbox(props: {
                     : <button onClick={() => act('assign')} disabled={!!acting} className={ACT_PLAIN} title={(cur.assignee ? 'With ' + cur.assigneeName + ' — take it yourself' : 'Take this thread, so the desk can see it is yours') + ' (m)'}><UserCheck size={13} /> {cur.assignee ? 'With ' + cur.assigneeName.split(' ')[0] : 'Take it'}</button>}
                   <button onClick={openHand} disabled={!!acting} aria-expanded={menu === 'hand'} className={ACT_PLAIN} title="Hand this thread to a teammate — they get a line in their Messages with a link to it"><UserPlus size={13} /> Hand to…</button>
                   <button onClick={newTask} className={ACT_PLAIN} title="Start a field task on this unit — you choose the type and who before it is created (t)"><ClipboardList size={13} /> Task</button>
-                  <Link href={glitchHref} className={ACT_PLAIN} title="Open Glitches on this unit to file the issue"><AlertTriangle size={13} /> Glitch</Link>
+                  <Link href={glitchHref} className={ACT_PLAIN} title="File a glitch for this stay — opens a new card with the booking and unit filled in"><AlertTriangle size={13} /> Glitch</Link>
                   <button onClick={() => setMenu(m => (m === 'keys' ? '' : 'keys'))} aria-expanded={menu === 'keys'} className={ACT_PLAIN + ' hidden lg:inline-flex ml-auto'} title="Keyboard shortcuts (?)"><Keyboard size={13} /></button>
                 </div>
                 {menu === 'snooze' && (

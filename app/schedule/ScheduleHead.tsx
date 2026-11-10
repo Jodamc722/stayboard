@@ -4,7 +4,7 @@
 // colour, the sentence on hover. The full capacity strip (its ‹ day › pager and the suggested moves)
 // opens underneath on a click instead of taking a band above the board on every visit. The Pill and
 // the strip read the same cached /api/capacity entry (lib/swr), so opening it costs no second call.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CalendarRange, ChevronDown, Users } from 'lucide-react'
 import { LeanHead, Pill, type Tone } from '@/components/lean'
 import { CapacityPanel } from '@/components/OpsV2'
@@ -24,14 +24,29 @@ const hrs = (mins: number) => {
 
 export function ScheduleHead() {
   const [open, setOpen] = useState(false)
-  // Same key and TTL as CapacityPanel's own read for today, so both share one cache entry.
-  const { data } = useCachedFetch<{ ok?: boolean; kpi?: Kpi }>('/api/capacity', { ttl: 5 * 60_000 })
+  // THE PILL FOLLOWS THE BOARD'S DAY (2026-11-10). The board announces the day it is showing
+  // ('lh:schedule-day', see ScheduleBoard) and /api/capacity takes ?date=. Before this the pill
+  // said "today" over whatever day was open. Today keeps the bare key, so it still shares one
+  // cache entry with CapacityPanel's own read; another day uses the same key the panel's pager does.
+  const [sel, setSel] = useState<{ date: string; today: string } | null>(null)
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent).detail
+      if (d && typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) setSel({ date: d.date, today: typeof d.today === 'string' ? d.today : '' })
+    }
+    window.addEventListener('lh:schedule-day', on)
+    return () => window.removeEventListener('lh:schedule-day', on)
+  }, [])
+  const other = !!sel && !!sel.today && sel.date !== sel.today
+  const dayWord = other && sel ? new Date(sel.date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : 'today'
+  const { data } = useCachedFetch<{ ok?: boolean; kpi?: Kpi }>(other && sel ? '/api/capacity?date=' + sel.date : '/api/capacity', { ttl: 5 * 60_000 })
   const k = data && data.ok ? data.kpi : undefined
   const tone: Tone = !k ? 'slate' : k.utilisationPct > 100 ? 'rose' : k.utilisationPct >= 85 ? 'amber' : 'emerald'
   const title = (k
-    ? 'Today, by the clock (cleaning time + travel vs. shift time — a different question from the KPI hours on the board below): ' + hrs(k.workMinutes + k.travelMinutes) + ' of work on ' + k.peopleOnShift + ' '
+    ? (other ? dayWord : 'Today') + ', by the clock (cleaning time + travel vs. shift time — a different question from the KPI hours on the board below): ' + hrs(k.workMinutes + k.travelMinutes) + ' of work on ' + k.peopleOnShift + ' '
       + (k.peopleOnShift === 1 ? 'person' : 'people') + ' ≈ ' + hrs(k.capacityMinutes) + ' capacity. '
     : 'Is the day doable? ')
+    + (other ? 'The plan that opens below starts on today — use its pager for ' + dayWord + '. ' : '')
     + (open ? 'Click to hide the capacity plan.' : 'Click for the capacity plan, other days and suggested moves.')
   return (
     <>
@@ -42,8 +57,8 @@ export function ScheduleHead() {
         <Pill tone={tone} title={title} onClick={() => setOpen(o => !o)}>
           <span className="inline-flex items-center gap-1">
             <Users size={12} />
-            <span className="sm:hidden">{k ? 'Crew ' + k.utilisationPct + '% today' : 'Doable?'}</span>
-            <span className="hidden sm:inline">{k ? (k.utilisationPct > 100 ? 'Too much work today' : k.utilisationPct >= 85 ? 'Team nearly full today' : 'Team has room today') + ' · ' + k.utilisationPct + '%' : 'Is today doable?'}</span>
+            <span className="sm:hidden">{k ? 'Crew ' + k.utilisationPct + '% ' + dayWord : 'Doable?'}</span>
+            <span className="hidden sm:inline">{k ? (k.utilisationPct > 100 ? 'Too much work ' + dayWord : k.utilisationPct >= 85 ? 'Team nearly full ' + dayWord : 'Team has room ' + dayWord) + ' · ' + k.utilisationPct + '%' : 'Is today doable?'}</span>
             {k && k.unassignedCount > 0 ? <span className="opacity-80 hidden sm:inline">· {k.unassignedCount} {k.unassignedCount === 1 ? 'clean' : 'cleans'} with nobody on {k.unassignedCount === 1 ? 'it' : 'them'}</span> : null}
             {k && k.overloaded > 0 ? <span className="opacity-80 hidden sm:inline">· {k.overloaded} past a full day</span> : null}
             <ChevronDown size={12} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />

@@ -24,6 +24,7 @@ import { isTaskDone, isTaskGone } from './task-categories'
 import { sendGmail, draftGmail, draftStatus } from './gmail-send'
 import { sendResendEmail } from './resend-send'
 import { recordRun } from './automation-runs'
+import { taskCreatorOn } from './task-creators'
 
 const str = (v: any): string => (typeof v === 'string' ? v : v == null ? '' : String(v))
 const APP = () => (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
@@ -206,7 +207,9 @@ export async function walkReportForTask(task: any, opts: { force?: boolean; prog
       comments: (cmts.comments || []).map(c => ({ body: c.body, at: c.at })).slice(0, 20), photos: photoUrls(t?.photos), reportUrl: str(t?.report_url || t?.task_report_url),
       fixTasks: [], carried: [], emailedAt: null, emailedTo: [], emailError: null, createdAt: new Date().toISOString(),
     }
-    report.fixTasks = await raiseFixTasks(report, program).catch(() => [])
+    // THE SWITCH (Upkeep → Automations, lib/task-creators; on unless someone turned it off): off = the
+    // report is still written and sent, but no maintenance task is raised from its failed lines.
+    report.fixTasks = (await taskCreatorOn('walkFixTasks')) ? await raiseFixTasks(report, program).catch(() => []) : []
     report.carried = await carriedIssues(program, report).catch(() => [])
     await saveReport(report)
     const wantMail = rep.mode === 'always' || (rep.mode === 'issues' && issues > 0)

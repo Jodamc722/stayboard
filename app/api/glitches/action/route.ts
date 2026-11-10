@@ -140,6 +140,49 @@ export async function POST(req: NextRequest) {
 
     // PRIORITY WITHOUT A TASK. Marking something urgent should not require filing a Breezeway job
     // first — the triage decision comes before the work order, not after it.
+    // MERGE A DUPLICATE (2026-11-10). The same issue filed twice for one stay — the board flags it;
+    // this folds one card into the other. `id` is the card that STAYS, `mergeId` the duplicate.
+    //   the keeper gains: the duplicate's photos, its description and work notes (as a dated
+    //                     "Merged from" block in the work notes) and its history entries, each
+    //                     marked with where it came from, plus one 'merged_from' line
+    //   the duplicate:    is CLOSED, never deleted — category 'Duplicate', a "Duplicate — merged
+    //                     into <id>" line on its notes, its old category kept in its history.
+    //                     Reopening it is the undo (its own photos, notes and history are intact).
+    // Money is not moved: a refund logged on the duplicate stays on the duplicate, so it is still
+    // counted once. Nothing is sent to anyone. Needs edit access (the gate above).
+    if (action === 'merge') {
+      const mergeId = str(b.mergeId)
+      if (!mergeId || mergeId === id) return NextResponse.json({ ok: false, error: 'Pick the duplicate card to merge in.' }, { status: 400 })
+      const { data: o, error: oe } = await db.from('glitches').select('*').eq('id', mergeId).maybeSingle()
+      if (oe || !o) return NextResponse.json({ ok: false, error: 'The duplicate card was not found.' }, { status: 404 })
+      const nowIso = new Date().toISOString()
+      const who = user.email || 'team'
+      const day = (iso: any) => str(iso).slice(0, 10)
+      const photos = Array.from(new Set([...(Array.isArray(g.photos) ? g.photos : []), ...(Array.isArray(o.photos) ? o.photos : [])].filter((x: any) => typeof x === 'string'))).slice(0, 40)
+      const block = ['— Merged from a duplicate card (' + mergeId + ', reported ' + day(o.created_at) + (o.reported_by ? ' by ' + str(o.reported_by) : '') + ') on ' + day(nowIso) + ' —',
+        str(o.overview).trim(), str(o.details).trim() ? 'Its work notes: ' + str(o.details).trim() : '',
+        Number(o.refund_approved) > 0 ? 'Note: a refund of $' + Number(o.refund_approved) + ' is logged on that card and stays there.' : '',
+      ].filter(Boolean).join('\n')
+      const oHist = (Array.isArray(o.history) ? o.history : []).map((h: any) => ({ ...(h && typeof h === 'object' ? h : { note: String(h) }), mergedFrom: mergeId }))
+      const keepHist = hist.concat(oHist).concat([{ at: nowIso, by: who, action: 'merged_from', from: mergeId, detail: 'Photos, notes and history of a duplicate card merged in' }]).slice(-300)
+      const up1 = await db.from('glitches').update({
+        photos, details: [str(g.details).trim(), block].filter(Boolean).join('\n\n'), history: keepHist, updated_at: nowIso,
+      }).eq('id', id)
+      if (up1.error) return NextResponse.json({ ok: false, error: 'Nothing was merged: ' + up1.error.message.slice(0, 160) }, { status: 500 })
+      const dupPatch: Record<string, any> = {
+        status: 'closed', category: 'Duplicate', updated_at: nowIso,
+        details: [str(o.details).trim(), 'Duplicate — merged into ' + id + ' on ' + day(nowIso) + ' by ' + who + '.'].filter(Boolean).join('\n\n'),
+        history: (Array.isArray(o.history) ? o.history : []).concat([{ at: nowIso, by: who, action: 'merged_into', to: id, was_category: o.category || null, was_status: o.status || null }]),
+      }
+      if (!o.closed_at) { dupPatch.closed_at = nowIso; dupPatch.closed_at_estimated = false }
+      let up2 = await db.from('glitches').update(dupPatch).eq('id', mergeId)
+      if (up2.error && /column|schema/i.test(up2.error.message)) { delete dupPatch.closed_at; delete dupPatch.closed_at_estimated; up2 = await db.from('glitches').update(dupPatch).eq('id', mergeId) }
+      // The keeper already has everything; say plainly that the duplicate is still open.
+      if (up2.error) return NextResponse.json({ ok: false, error: 'Merged into the card you kept, but the duplicate could not be closed (' + up2.error.message.slice(0, 120) + ') — close it by hand.' }, { status: 500 })
+      bustDay()
+      return NextResponse.json({ ok: true, merged: mergeId, into: id })
+    }
+
     if (action === 'priority') {
       const PRIOS_EDIT = ['urgent', 'high', 'normal', 'low']
       const want = str(b.priority)

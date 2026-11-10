@@ -16,6 +16,7 @@ import { modelFor } from '@/lib/ai-models'
 import { isStandardHowto, dedupeHowtos } from '@/lib/guide-print'
 import { aiFetch } from '@/lib/ai-usage'
 import { buildEmergency, mergeEmergency } from '@/lib/emergency'
+import { isSurfside, guideSignoff, SURFSIDE_HOSTS } from '@/lib/guide-voice'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -297,7 +298,13 @@ export async function POST(req: NextRequest) {
     } catch { /* skip doc */ }
   }
 
+  // WHO SPEAKS (lib/guide-voice): the Boynton Beach property ("Surfside") talks to guests as its owners,
+  // Vanessa & Taylor — never the company, never the general manager. Everyone else as always.
+  const voiceTag = { listing_name: name, title: name, _building: building, _nickname: str(l.nickname), sections: { guidelines: { address: str(l.address_full) } } }
+  const surfside = isSurfside(voiceTag)
+
   const fallback = buildFallback({ name, building, city, l, answers, selectedRecs })
+  if (surfside) fallback.contact.signoff = SURFSIDE_HOSTS
 
   // ---- PASS 2: COMPOSE — the 30-years-of-experience writer. ----
   let sections: any = fallback
@@ -310,7 +317,8 @@ PRINCIPLES:
 4. FIT THE PAGE. cover lines <= 4 words each; about.body 50-80 words; retreat.lines 3 lines, each <= 20 words; special: 2-4 groups of 2-4 short items; guidelines: <= 5 items, one sentence each; arrival entry/parking 30-60 words each; host.body 50-70 words; gettingThere 40-70 words; gettingAround.body 40-60 words (ONLY from operator notes - omit if none); beforeYouGo <= 5 short items; review.body 40-60 words, warm and PERSONAL - written as the host speaking to this guest, never corporate; thankyou.line = a warm personal send-off of 6-12 words. houseGuide item titles must NAME the equipment (e.g. "Induction Cooktop", not "Kitchen"). NEVER write how-tos for STANDARD items a guest already knows how to use - stove, oven, microwave, kettle, toaster, fridge, coffee maker, espresso / Nespresso / Keurig machines, dishwasher, washer & dryer, TV / Smart TV / streaming, A/C and a plain thermostat, lights, toilet, shower, manual blinds, grill, iron, hair dryer. Write how-tos ONLY for what a guest could get wrong: an induction cooktop, remote or motorised blinds, smart-home controls (hub, smart lock, smart thermostat, smart lights), the door / keypad / fob / gate / elevator / garage, parking, the way to the beach, the pool or hot tub, the safe, trash & recycling rules.
 5. Audience: ${audience}. ${highlights ? 'MUST gracefully feature: ' + highlights : ''}
 6. localPlaces and restaurants are MANDATORY (never omit): 4-6 REAL spots each with a 6-12 word "note", plus "address" (street address) and "phone" - the book is PRINTED, guests cannot click. Only include an address or phone you are confident is correct for that well-known place; leave the field "" rather than guess. Prefer the provided LOCAL KNOWLEDGE; if absent, use well-known, long-established places near the given city (no inventions, no chains unless iconic).
-Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, gettingAround, addons). No markdown.`
+${surfside ? `7. VOICE FOR THIS HOME: it is hosted by its owners, ${SURFSIDE_HOSTS}. Write every word as them speaking to their guest ("we", "our home"). NEVER write "Stay Hospitality", "the Stay Hospitality team", "our management team" or the general manager's name anywhere in the book; where a host is named or a note is signed, it is "${SURFSIDE_HOSTS}". contact.signoff must be exactly "${SURFSIDE_HOSTS}". Keep the phone numbers and email in contact exactly as given in the EXAMPLE.
+` : ''}Return STRICT minified JSON with EXACTLY the same keys/shapes as the EXAMPLE object, plus an "omit" array of section keys to drop (choose from: retreat, special, host, houseGuide, gettingThere, gettingAround, addons). No markdown.`
     const USER_TEXT = `THE HOME:
 name: ${name} | building: ${building} | ${city}
 ${l.bedrooms} BR / ${l.bathrooms} BA / sleeps ${l.max_occupancy}
@@ -332,6 +340,8 @@ ${JSON.stringify(fallback)}`
     const parsed = parseJson(text || '')
     if (parsed && parsed.cover && parsed.wifi) sections = { ...fallback, ...parsed, wifi: fallback.wifi }
   }
+  // The sign-off is the house rule's, not the writer's: a Surfside book is saved signed by its owners.
+  if (surfside) sections.contact = { ...(sections.contact && typeof sections.contact === 'object' ? sections.contact : fallback.contact), signoff: guideSignoff({ ...voiceTag, sections: { ...voiceTag.sections, contact: sections.contact } }) }
 
   if (selectedAuditHowTos.length) {
     const hg: any = (sections && sections.houseGuide && typeof sections.houseGuide === 'object') ? sections.houseGuide : { items: [] }

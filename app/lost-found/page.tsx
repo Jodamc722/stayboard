@@ -22,6 +22,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Shell } from '@/components/Shell'
 import { RefreshCw, Search, ExternalLink, Plus, X, Camera, Ban, CheckSquare, Square, Link2, Slack, Settings2, Phone, Mail, Truck, Check, Trash2, Gift, PackageCheck, DollarSign, Send, ClipboardList, ImagePlus, RotateCcw } from 'lucide-react'
+import { QUOTE_CHASE_DAYS, QUOTE_EXPIRE_DAYS, SHIPPED_CLOSE_DAYS, isValuable, holdDaysLeft, trackingSentAt } from '@/lib/lost-found-rules'
 import { LeanHead, LeanTabs, Pill, Tag, LeanList, LeanRow, LeanSection, LeanEmpty, Tip, type Tone } from '@/components/lean'
 
 type Stay = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; confirmationCode: string | null; guestyUrl: string }
@@ -49,14 +50,17 @@ const catLabel = (c: string) => c === 'keys_cards' ? 'Keys / cards' : c.charAt(0
 const RESOLVED = ['returned', 'donated', 'discarded', 'not_lost_found']
 
 // ── the stage: where an item is, and the one thing to do next ───────────────────────────────────
-type StageKey = 'paid_no_task' | 'task_cancelled' | 'paid_waiting' | 'sent_no_tracking' | 'sent' | 'no_stay' | 'contact' | 'quote' | 'awaiting_pay' | 'waiting_guest' | 'closed'
-type GroupKey = 'ship' | 'you' | 'guest' | 'shipped' | 'closed'
+type StageKey = 'quote_expired' | 'hold_decision' | 'sent_tell' | 'paid_no_task' | 'task_cancelled' | 'paid_waiting' | 'sent_no_tracking' | 'sent' | 'no_stay' | 'contact' | 'quote' | 'awaiting_pay' | 'waiting_guest' | 'closed'
+type GroupKey = 'ship' | 'you' | 'decide' | 'guest' | 'shipped' | 'closed'
 const STAGE: Record<StageKey, { label: string; tone: Tone; group: GroupKey; next: string }> = {
   paid_no_task:     { label: 'Paid · no delivery task', tone: 'rose', group: 'ship', next: 'The guest paid, but the delivery task was not created. Create it so the team ships it.' },
-  task_cancelled:   { label: 'Paid · task cancelled', tone: 'rose', group: 'ship', next: 'The guest paid, but the delivery task was cancelled in Breezeway. Reopen it there, or ship it and add the tracking number here.' },
+  task_cancelled:   { label: 'Paid · task cancelled', tone: 'rose', group: 'ship', next: 'The guest paid, but the delivery task was cancelled in Breezeway. Create a new one so the team ships it.' },
+  quote_expired:    { label: 'Quote expired', tone: 'amber', group: 'you', next: 'The guest was asked to pay ' + QUOTE_EXPIRE_DAYS + ' or more days ago and has not. Close it — or mark it paid if the money did come in. Nothing is sent to the guest.' },
+  hold_decision:    { label: 'Hold ended · decide', tone: 'amber', group: 'decide', next: 'The 30-day hold has ended. Valuables are never discarded automatically — decide: keep holding, donate or discard.' },
+  sent_tell:        { label: 'Shipped · send tracking', tone: 'amber', group: 'you', next: 'It shipped and the tracking number is in. Send it to the guest.' },
   paid_waiting:     { label: 'Paid · not shipped', tone: 'rose', group: 'ship', next: 'The guest paid and is waiting. The team ships it on delivery day — add the tracking number when it goes out.' },
   sent_no_tracking: { label: 'Shipped · no tracking', tone: 'amber', group: 'you', next: 'It has shipped. Add the tracking number so there is a record for the guest.' },
-  sent:             { label: 'Shipped', tone: 'emerald', group: 'shipped', next: 'Shipped with tracking. Close it once the guest has it.' },
+  sent:             { label: 'Shipped', tone: 'emerald', group: 'shipped', next: 'Shipped, and the guest has the tracking number. It closes on its own ' + SHIPPED_CLOSE_DAYS + ' days after shipping — or close it now.' },
   no_stay:          { label: 'No stay attached', tone: 'amber', group: 'you', next: 'Attach the stay this belongs to, so the guest can be contacted.' },
   contact:          { label: 'Contact guest', tone: 'amber', group: 'you', next: 'Tell the guest we have it and ask whether they want it back.' },
   quote:            { label: 'Guest waiting on a quote', tone: 'amber', group: 'you', next: 'The guest wants it back. Work out the shipping cost, then ask them to pay.' },
@@ -64,16 +68,18 @@ const STAGE: Record<StageKey, { label: string; tone: Tone; group: GroupKey; next
   waiting_guest:    { label: 'Waiting on guest', tone: 'slate', group: 'guest', next: 'The guest has been told. When they answer, record it here.' },
   closed:           { label: 'Closed', tone: 'slate', group: 'closed', next: '' },
 }
-function stageOf(i: Item): StageKey {
+function stageOf(i: Item, today: string): StageKey {
   if (RESOLVED.includes(i.status)) return 'closed'
-  if (i.sent_at || i.status === 'shipping') return i.tracking ? 'sent' : 'sent_no_tracking'
+  if (i.sent_at || i.status === 'shipping') return !i.tracking ? 'sent_no_tracking' : trackingSentAt(i) ? 'sent' : 'sent_tell'
   if (i.shipping_paid) {
     if (!i.breezeway_task_id) return 'paid_no_task'
     if (i.delivery && /cancel|delet/i.test(i.delivery.status)) return 'task_cancelled'
     return 'paid_waiting'
   }
+  // The hold ended and the clock did not discard it (a valuable, or a person reopened it): someone decides.
+  if ((i.status === 'held' || i.status === 'contacted') && !i.pay_requested_at && holdDaysLeft(i, today) <= 0) return 'hold_decision'
   if (!i.reservation_id) return 'no_stay'
-  if (i.pay_requested_at) return 'awaiting_pay'
+  if (i.pay_requested_at) return (daysSince(i.pay_requested_at) ?? 0) >= QUOTE_EXPIRE_DAYS ? 'quote_expired' : 'awaiting_pay'
   if (i.status === 'claimed') return 'quote'
   if (i.status === 'contacted') return 'waiting_guest'
   return 'contact'
@@ -203,7 +209,7 @@ export default function LostFoundPage() {
       const it = j.item as Item
       setItems(list => list.map(i => i.id === id ? { ...it, delivery: it.breezeway_task_id && it.breezeway_task_id === i.breezeway_task_id ? i.delivery : undefined } : i))
       // Paid is saved even when Breezeway refuses the task — say so where it will be seen.
-      if (j.task && j.task.ok === false) setErr('Paid is saved, but the Breezeway delivery task was not created: ' + (j.task.error || 'unknown reason') + ' — press “Create delivery task” on the item to try again.')
+      if (j.task && j.task.ok === false) setErr('The payment is saved, but the Breezeway delivery task was not created: ' + (j.task.error || 'unknown reason') + ' — open the item and try the delivery task again.')
       return it
     } catch { setErr('Could not save — check the connection and try again.'); return null }
   }, [])
@@ -250,21 +256,21 @@ export default function LostFoundPage() {
   // Header numbers come from the list on screen, so they move the moment an item does (they used to be
   // the server's counts from the last load, and "to toss" counted items that are never tossed).
   const n = useMemo(() => {
-    const c: Record<StageKey, number> = { paid_no_task: 0, task_cancelled: 0, paid_waiting: 0, sent_no_tracking: 0, sent: 0, no_stay: 0, contact: 0, quote: 0, awaiting_pay: 0, waiting_guest: 0, closed: 0 }
-    for (const i of items) c[stageOf(i)]++
+    const c: Record<StageKey, number> = { quote_expired: 0, hold_decision: 0, sent_tell: 0, paid_no_task: 0, task_cancelled: 0, paid_waiting: 0, sent_no_tracking: 0, sent: 0, no_stay: 0, contact: 0, quote: 0, awaiting_pay: 0, waiting_guest: 0, closed: 0 }
+    for (const i of items) c[stageOf(i, today)]++
     return c
-  }, [items])
+  }, [items, today])
   const nShip = n.paid_no_task + n.task_cancelled + n.paid_waiting
   const nOpen = items.length - n.closed
 
   const groups = useMemo(() => {
-    const g: Record<GroupKey, Item[]> = { ship: [], you: [], guest: [], shipped: [], closed: [] }
-    for (const i of rows) g[STAGE[stageOf(i)].group].push(i)
+    const g: Record<GroupKey, Item[]> = { ship: [], you: [], decide: [], guest: [], shipped: [], closed: [] }
+    for (const i of rows) g[STAGE[stageOf(i, today)].group].push(i)
     const oldest = (a: Item, b: Item) => a.found_date < b.found_date ? -1 : a.found_date > b.found_date ? 1 : 0
     g.ship.sort((a, b) => String(a.paid_at || '').localeCompare(String(b.paid_at || '')))   // longest-waiting guest first
-    g.you.sort(oldest); g.guest.sort(oldest)
+    g.you.sort(oldest); g.decide.sort(oldest); g.guest.sort(oldest)
     return g
-  }, [rows])
+  }, [rows, today])
 
   // The same find logged twice (once by hand, once from Slack): same unit, a day apart at most, and a word in common.
   const dupIds = useMemo(() => {
@@ -298,11 +304,13 @@ export default function LostFoundPage() {
   const slackBad = !!slack?.state?.lastError
   return (
     <Shell>
-      <LeanHead title="Lost & Found" sub={tab === 'open' && !loading ? (nOpen ? nOpen + ' open · ' + (nShip + n.no_stay + n.contact + n.quote + n.sent_no_tracking) + ' need you' : 'Nothing open') : undefined}>
+      <LeanHead title="Lost & Found" sub={tab === 'open' && !loading ? (nOpen ? nOpen + ' open · ' + (nShip + n.no_stay + n.contact + n.quote + n.sent_no_tracking + n.sent_tell + n.quote_expired + n.hold_decision) + ' need you' : 'Nothing open') : undefined}>
         <button onClick={() => { setAdding(true); try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { /* fine */ } }} className={btnP + ' lh-primary'}><Camera size={14} /> Log a find</button>
         {tab === 'open' && nShip > 0 && <Pill tone="rose" onClick={() => jump('lf-sec-ship')} title="The guest paid and is waiting for it to ship">{nShip} paid, not shipped</Pill>}
         {tab === 'open' && n.quote > 0 && <Pill tone="amber" onClick={() => jump('lf-sec-you')} title="The guest wants it back — work out the shipping cost and ask them to pay">{n.quote} waiting on a quote</Pill>}
         {tab === 'open' && n.contact > 0 && <Pill tone="amber" onClick={() => jump('lf-sec-you')} title="Stay attached, guest not told yet">{n.contact} to contact</Pill>}
+        {tab === 'open' && n.quote_expired > 0 && <Pill tone="amber" onClick={() => jump('lf-sec-you')} title={'Asked to pay ' + QUOTE_EXPIRE_DAYS + '+ days ago and still unpaid — close it'}>{n.quote_expired} quote expired</Pill>}
+        {tab === 'open' && n.hold_decision > 0 && <Pill tone="amber" onClick={() => jump('lf-sec-decide')} title="The hold ended on something valuable — it is never discarded automatically">{n.hold_decision} need a decision</Pill>}
         {tab === 'open' && n.no_stay > 0 && <Pill tone="amber" onClick={() => jump('lf-sec-you')} title="Nobody knows whose it is yet">{n.no_stay} with no stay</Pill>}
         {tab === 'open' && tossQueue.length > 0 && <Pill tone="slate" onClick={() => jump('lf-sec-toss')} title={'Past the ' + holdDays + '-day hold with nothing requested — toss or donate'}>{tossQueue.length} hold ended</Pill>}
         {slackBad && <Pill tone="amber" onClick={() => setSlackOpen(true)} title={String(slack.state.lastError)}>Slack not reading</Pill>}
@@ -360,8 +368,9 @@ export default function LostFoundPage() {
           <>
             {groups.ship.length > 0 && <div id="lf-sec-ship" className="scroll-mt-4"><LeanSection title="Paid — ship it" n={groups.ship.length} tone="rose" right="The guest has paid and is waiting">{list(groups.ship)}</LeanSection></div>}
             {groups.you.length > 0 && <div id="lf-sec-you" className="scroll-mt-4"><LeanSection title="Needs you" n={groups.you.length} right="Oldest find first">{list(groups.you)}</LeanSection></div>}
+            {groups.decide.length > 0 && <div id="lf-sec-decide" className="scroll-mt-4"><LeanSection title="Hold ended — needs a decision" n={groups.decide.length} right="Valuables are never discarded automatically">{list(groups.decide)}</LeanSection></div>}
             {groups.guest.length > 0 && <LeanSection title="Waiting on the guest" n={groups.guest.length}>{list(groups.guest)}</LeanSection>}
-            {groups.shipped.length > 0 && <LeanSection title="Shipped" n={groups.shipped.length} right="Close once the guest has it">{list(groups.shipped)}</LeanSection>}
+            {groups.shipped.length > 0 && <LeanSection title="Shipped" n={groups.shipped.length} right={'Closes on its own ' + SHIPPED_CLOSE_DAYS + ' days after shipping'}>{list(groups.shipped)}</LeanSection>}
             {groups.closed.length > 0 && <LeanSection title="Closed just now" n={groups.closed.length}>{list(groups.closed)}</LeanSection>}
             {tossQueue.length > 0 && !q.trim() && (
               <div id="lf-sec-toss" className="scroll-mt-4">
@@ -385,7 +394,7 @@ export default function LostFoundPage() {
           </>
         ) : list(rows)}
 
-      <p className="text-[11.5px] text-muted mt-3 px-1">Held items nobody collects or asks for within {holdDays} days of the find are closed as Discarded automatically and listed under “Hold ended” until someone confirms. Anything a guest asked for is never tossed.</p>
+      <p className="text-[11.5px] text-muted mt-3 px-1">Items nobody collects or asks for within {holdDays} days of the find — or of the last contact with the guest — are closed as Discarded automatically and listed under “Hold ended” until someone confirms. Valuables (electronics, jewellery, documents, wallets, IDs) and anything a guest asked for are never tossed automatically. Shipped items close {SHIPPED_CLOSE_DAYS} days after shipping.</p>
     </Shell>
   )
 }
@@ -434,11 +443,12 @@ function Timeline({ i }: { i: Item }) {
 
 // ── one item ────────────────────────────────────────────────────────────────────────────────────
 function ItemRow({ i, today, holdDays, patch, focus, dup, listings, onErr, onDelete, onNotLF }: { i: Item; today: string; holdDays: number; patch: Patch; focus?: boolean; dup: boolean; listings: Listing[]; onErr: (e: string) => void; onDelete: () => void; onNotLF: () => void }) {
-  const sk = stageOf(i)
+  const sk = stageOf(i, today)
   const sm = STAGE[sk]
   const open = sk !== 'closed'
   const age = daysBetween(i.found_date, today)
-  const holdLeft = holdDays - age
+  const holdLeft = holdDaysLeft(i, today)   // from the find, or the last contact with the guest
+  const valuable = isValuable(i)
   // The hold clock only runs on items nobody has asked for (the server never tosses anything else).
   const onClock = (i.status === 'held' || i.status === 'contacted') && !i.pay_requested_at && !i.shipping_paid
   const [isOpen, setIsOpen] = useState(!!focus)
@@ -451,12 +461,27 @@ function ItemRow({ i, today, holdDays, patch, focus, dup, listings, onErr, onDel
   const withNote = async (body: any) => { const t = note.trim(); const r = await patch(i.id, t ? { ...body, note: t } : body); if (r) setNote('') }
   const go = async (body: any) => { setBusy(true); try { await withNote(body) } finally { setBusy(false) } }
 
+  // A quote nobody paid: a person closes it. Nothing goes to the guest.
+  const closeNoPay = () => {
+    const onFolio = Array.isArray(i.folio_item_ids) && i.folio_item_ids.length > 0
+    if (!confirm('Close this — the guest never paid?' + (onFolio ? '\n\nThe “Lost & found shipping” line is still on the Guesty folio: remove it in Guesty so the guest is not charged later.' : '') + '\n\nNothing is sent to the guest.')) return
+    void run({ status: 'discarded', note: 'Quote expired — no payment within ' + QUOTE_EXPIRE_DAYS + ' days of the ask. Closed by a person; nothing was sent to the guest.' })
+  }
+  // Shipping an unpaid item is a goodwill shipment: the server refuses it without a reason.
+  const shipFree = () => {
+    const why = (prompt('Ship this at no charge to the guest? Say why (kept on the item):') || '').trim()
+    if (why.length < 3) return
+    void run({ status: 'shipping', goodwill: true, note: why })
+  }
   // THE ONE NEXT STEP, as the row's button.
   let pLabel = 'Open'
   let pGo: () => void = () => setIsOpen(true)
   switch (sk) {
     case 'paid_no_task': pLabel = 'Create delivery task'; pGo = () => { void run({ action: 'push_task' }) }; break
-    case 'task_cancelled': pLabel = 'Check the task'; break
+    case 'task_cancelled': pLabel = 'New delivery task'; pGo = () => { void run({ action: 'recreate_task' }) }; break
+    case 'quote_expired': pLabel = 'Close — no payment'; pGo = closeNoPay; break
+    case 'hold_decision': pLabel = 'Decide'; break
+    case 'sent_tell': pLabel = 'Send tracking'; break
     case 'paid_waiting': pLabel = 'Add tracking'; break
     case 'sent_no_tracking': pLabel = 'Add tracking'; break
     case 'sent': pLabel = 'Close — delivered'; pGo = () => { void run({ status: 'returned', note: 'Shipped and delivered — closed' }) }; break
@@ -469,7 +494,7 @@ function ItemRow({ i, today, holdDays, patch, focus, dup, listings, onErr, onDel
   }
   const waited = sk === 'awaiting_pay' ? daysSince(i.pay_requested_at) : sk === 'waiting_guest' ? daysSince(i.contacted_at) : sm.group === 'ship' ? daysSince(i.paid_at) : null
   const mailHref = i.guest_email ? 'mailto:' + i.guest_email + '?subject=' + encodeURIComponent('Something you left behind — ' + i.unit) + '&body=' + encodeURIComponent('Hi ' + (i.guest_name || '').split(' ')[0] + ',\n\nOur housekeeping team found ' + i.item.toLowerCase() + ' in the unit after your stay. We are holding it for you — let us know if you would like it shipped (at cost) or prefer to pick it up.\n\nStay Hospitality') : ''
-  const showShip = !!i.reservation_id && (sk === 'quote' || sk === 'awaiting_pay' || sm.group === 'ship' || sk === 'sent' || sk === 'sent_no_tracking' || (!open && (i.shipping_paid || !!i.pay_requested_at)))
+  const showShip = (!!i.reservation_id || sk === 'sent_tell' || sk === 'sent' || sk === 'sent_no_tracking') && (sk === 'quote' || sk === 'awaiting_pay' || sk === 'quote_expired' || sk === 'sent_tell' || sm.group === 'ship' || sk === 'sent' || sk === 'sent_no_tracking' || (!open && (i.shipping_paid || !!i.pay_requested_at)))
 
   return (
     <LeanRow
@@ -480,8 +505,8 @@ function ItemRow({ i, today, holdDays, patch, focus, dup, listings, onErr, onDel
       meta={<>{i.unit} · found {fmtShort(i.found_date)}{i.guest_name ? ' · ' + i.guest_name : ''}</>}
       tags={<>
         <Tag tone={open ? sm.tone : 'slate'}>{open ? sm.label : (STATUS[i.status] || 'Closed')}</Tag>
-        {waited != null && waited >= 1 && <Tag tone={sm.group === 'ship' ? 'rose' : waited >= 3 ? 'amber' : 'slate'} title={sk === 'awaiting_pay' ? 'When the guest was asked to pay' : sk === 'waiting_guest' ? 'When the guest was contacted' : 'When the guest paid'}>{sk === 'awaiting_pay' ? 'asked ' : sk === 'waiting_guest' ? 'told ' : 'paid '}{ago(waited)}</Tag>}
-        {open && onClock && holdLeft <= 7 && <Tag tone="amber" title={'Not collected or requested within ' + holdDays + ' days of the find → closed as Discarded'}>{holdLeft <= 0 ? 'hold ended' : 'hold ends in ' + holdLeft + 'd'}</Tag>}
+        {waited != null && waited >= 1 && <Tag tone={sm.group === 'ship' ? 'rose' : waited >= 3 ? 'amber' : 'slate'} title={sk === 'awaiting_pay' ? 'When the guest was asked to pay' : sk === 'waiting_guest' ? 'When the guest was contacted' : 'When the guest paid'}>{sk === 'awaiting_pay' ? (waited >= QUOTE_CHASE_DAYS ? 'chase · asked ' : 'asked ') : sk === 'waiting_guest' ? 'told ' : 'paid '}{ago(waited)}</Tag>}
+        {open && onClock && holdLeft <= 7 && <Tag tone="amber" title={'Not collected or requested within ' + holdDays + ' days of the find or the last contact → ' + (valuable ? 'needs a decision (valuables are never discarded automatically)' : 'closed as Discarded')}>{holdLeft <= 0 ? 'hold ended' : 'hold ends in ' + holdLeft + 'd'}</Tag>}
         {open && !onClock && age > holdDays && sm.group !== 'ship' && sm.group !== 'shipped' && <Tag title="The guest asked for it, so it is never tossed — but it has been a while">found {age}d ago</Tag>}
         {dup && open && <Tag title="Another open item from the same unit, found within a day, with a similar name — close one as Not lost & found if it is the same thing">possible duplicate</Tag>}
       </>}
@@ -491,6 +516,15 @@ function ItemRow({ i, today, holdDays, patch, focus, dup, listings, onErr, onDel
       {open && (
         <div className={'rounded-xl border px-3 py-2.5 space-y-2 ' + (sm.group === 'ship' ? 'border-rose-200 bg-rose-50/50' : 'border-brand-200 bg-brand-50/40')}>
           <div><div className={cap}>Next step</div><div className="text-[13px] font-semibold text-ink">{sm.next}</div></div>
+          {sk === 'hold_decision' && (
+            <div className="flex flex-wrap gap-1.5">
+              <button disabled={busy} onClick={() => run({ action: 'extend_hold' })} className={btnP}><RotateCcw size={13} /> Keep holding {holdDays} more days</button>
+              <button disabled={busy} onClick={() => go({ status: 'donated' })} className={btn}><Gift size={13} /> Donated</button>
+              <button disabled={busy} onClick={() => { if (confirm('Mark as discarded? This closes the item.')) void go({ status: 'discarded' }) }} className={btn}><Trash2 size={13} /> Discarded</button>
+              {i.guest_phone && <a href={'tel:' + i.guest_phone} className={btn}><Phone size={13} /> Call guest</a>}
+            </div>
+          )}
+          {sk === 'quote_expired' && <div><button disabled={busy} onClick={closeNoPay} className={btnP}><X size={13} /> Close — no payment</button></div>}
           {sk === 'no_stay' && (
             <>
               {!i.listing_id && (listings.length > 0
@@ -561,10 +595,11 @@ function ItemRow({ i, today, holdDays, patch, focus, dup, listings, onErr, onDel
       <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-line/70">
         <span className={cap + ' mr-1'}>Other</span>
         {open && sk !== 'contact' && sk !== 'waiting_guest' && <button disabled={busy} onClick={() => go({ status: 'returned' })} className={btn}><PackageCheck size={13} /> Picked up / returned</button>}
-        {open && holdLeft <= 0 && <>
+        {open && holdLeft <= 0 && sk !== 'hold_decision' && <>
           <button disabled={busy} onClick={() => go({ status: 'donated' })} className={btn}><Gift size={13} /> Donated</button>
           <button disabled={busy} onClick={() => { if (confirm('Mark as discarded? This closes the item.')) void go({ status: 'discarded' }) }} className={btn}><Trash2 size={13} /> Discarded</button>
         </>}
+        {open && !i.shipping_paid && !i.sent_at && i.status !== 'shipping' && <button disabled={busy} title="A goodwill shipment: we pay the postage. Asks for the reason." onClick={shipFree} className={btn}><Truck size={13} /> Shipped at no charge</button>}
         {open && <button disabled={busy} title="Not a lost & found item — close it and keep the record" onClick={onNotLF} className={btn}><Ban size={13} /> Not lost &amp; found</button>}
         {!open && <button disabled={busy} onClick={() => run({ status: 'held', note: 'Reopened' })} className={btn}><RotateCcw size={13} /> Reopen</button>}
         <button title="Delete for good" onClick={onDelete} className={btn + ' text-muted'}><Trash2 size={13} /> Delete</button>
@@ -691,6 +726,10 @@ function NewItemForm({ listings, existing, onDone, onErr }: { listings: Listing[
   const set = (k: string, v: string) => setF(x => ({ ...x, [k]: v }))
   // Already logged? Same unit, within two days — shown before the same find goes in twice.
   const same = useMemo(() => f.listingId ? existing.filter(i => i.listing_id === f.listingId && !RESOLVED.includes(i.status) && Math.abs(daysBetween(i.found_date, f.foundDate)) <= 2).slice(0, 4) : [], [existing, f.listingId, f.foundDate])
+  // Photos go up the moment they are taken, before the item exists. If the form is cancelled (or a
+  // photo is taken off), they are removed again instead of being left in storage.
+  const drop = (paths: string[]) => { if (paths.length) fetch('/api/lost-found/photo', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paths }), keepalive: true }).catch(() => {}) }
+  const cancel = () => { drop(photos); onDone(null) }
   const submit = async () => {
     if (busy) return
     setBusy(true)
@@ -703,7 +742,7 @@ function NewItemForm({ listings, existing, onDone, onErr }: { listings: Listing[
   }
   return (
     <div className="rounded-2xl border border-line bg-white p-3 sm:p-4 mb-3 space-y-3">
-      <div className="flex items-center justify-between"><div className="text-[14px] font-semibold">Log a find</div><button onClick={() => onDone(null)} aria-label="Close" className="w-9 h-9 -mr-1.5 inline-flex items-center justify-center text-muted hover:text-ink"><X size={16} /></button></div>
+      <div className="flex items-center justify-between"><div className="text-[14px] font-semibold">Log a find</div><button onClick={cancel} aria-label="Close" className="w-9 h-9 -mr-1.5 inline-flex items-center justify-center text-muted hover:text-ink"><X size={16} /></button></div>
 
       <div>
         <div className={cap + ' mb-1'}>1 · Photo</div>
@@ -711,7 +750,7 @@ function NewItemForm({ listings, existing, onDone, onErr }: { listings: Listing[
           {photos.map(p => (
             <span key={p} className="relative">
               <img src={photoSrc(p)} alt="" className="w-16 h-16 rounded-lg object-cover border border-line bg-slate-100" />
-              <button onClick={() => setPhotos(a => a.filter(x => x !== p))} aria-label="Remove photo" className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-white border border-line shadow-sm inline-flex items-center justify-center text-muted"><X size={12} /></button>
+              <button onClick={() => { drop([p]); setPhotos(a => a.filter(x => x !== p)) }} aria-label="Remove photo" className="absolute -top-2 -right-2 w-7 h-7 rounded-full bg-white border border-line shadow-sm inline-flex items-center justify-center text-muted"><X size={12} /></button>
             </span>
           ))}
           <FilePick label={photos.length ? 'Another photo' : 'Take a photo'} icon={<Camera size={14} />} accept="image/*" max={1} itemId="new" prefix="" capture primary={!photos.length} onErr={onErr} onAdded={p => setPhotos(a => [...a, ...p].slice(0, 12))} />
@@ -750,7 +789,7 @@ function NewItemForm({ listings, existing, onDone, onErr }: { listings: Listing[
 
       <div className="flex gap-2">
         <button onClick={submit} disabled={busy || !f.item.trim() || !f.unit.trim()} className={btnP + ' flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] sm:px-6'}>{busy ? 'Saving…' : !f.unit.trim() ? 'Pick the unit first' : !f.item.trim() ? 'Say what it is' : 'Save find'}</button>
-        <button onClick={() => onDone(null)} className={btn + ' min-h-[44px] sm:min-h-[36px]'}>Cancel</button>
+        <button onClick={cancel} disabled={busy} className={btn + ' min-h-[44px] sm:min-h-[36px]'}>Cancel</button>
       </div>
     </div>
   )
@@ -785,11 +824,22 @@ function SlackPanel({ slack, syncing, onSync, onPick, onClose }: { slack: any; s
 // pay, once paid mark paid in the tab and then once paid should send breezeway task"). Cost and address
 // → Ask the guest to pay (a message on their booking, plus the folio line for bookings Guesty bills;
 // Airbnb guests through the Resolution Center) → Mark paid → the Breezeway ship task goes out.
+// Where the guest follows the parcel. USPS unless the carrier says otherwise; no link for a carrier we do not know.
+function trackLink(carrier: string | null | undefined, tracking: string): string {
+  const c = String(carrier || '').toLowerCase(), t = encodeURIComponent(tracking.trim())
+  if (!c || /usps|postal|priority|first.?class/.test(c)) return 'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + t
+  if (/ups/.test(c)) return 'https://www.ups.com/track?tracknum=' + t
+  if (/fedex|fed ex/.test(c)) return 'https://www.fedex.com/fedextrack/?trknbr=' + t
+  if (/dhl/.test(c)) return 'https://www.dhl.com/us-en/home/tracking.html?tracking-id=' + t
+  return ''
+}
 const PAID_VIA = ['Card on file', 'Payment link', 'Airbnb Resolution Center', 'Cash / other']
 function ShipPay({ i, run, busy, onErr }: { i: Item; run: (body: any) => Promise<void>; busy: boolean; onErr: (e: string) => void }) {
   const [asking, setAsking] = useState(false)
   const [paying, setPaying] = useState(false)
   const [via, setVia] = useState(PAID_VIA[0])
+  const [telling, setTelling] = useState(false)
+  const toldAt = trackingSentAt(i)
   const cost = i.shipping_cost != null ? Number(i.shipping_cost) : null
   const closed = RESOLVED.includes(i.status)
   const shipped = !!i.sent_at || i.status === 'shipping'
@@ -805,7 +855,8 @@ function ShipPay({ i, run, busy, onErr }: { i: Item; run: (body: any) => Promise
 
       {/* THE COST COMES FROM USPS (Jon, 2026-11-05: "https://postcalc.usps.com/ here how you calculate"):
           weigh and measure the item, open the USPS calculator with the ship-to ZIP, type the price here. */}
-      {!i.shipping_paid && !closed && (
+      {!i.shipping_paid && shipped && <div className="text-[12.5px] text-muted">Shipped at no charge to the guest (goodwill) — the reason is in the history.</div>}
+      {!i.shipping_paid && !closed && !shipped && (
         <div className="text-[12px] text-muted flex items-center gap-1.5 flex-wrap">
           Weigh and measure it, then
           <a href="https://postcalc.usps.com/" target="_blank" rel="noreferrer" className="text-brand-700 font-semibold hover:underline inline-flex items-center gap-0.5 py-1">get the price on USPS <ExternalLink size={10} /></a>
@@ -821,17 +872,17 @@ function ShipPay({ i, run, busy, onErr }: { i: Item; run: (body: any) => Promise
       </div>
 
       {/* 1 · ask */}
-      {!i.shipping_paid && !closed && (
+      {!i.shipping_paid && !closed && !shipped && (
         i.pay_requested_at
           ? <div className="text-[12.5px] text-muted">Asked {fmtWhen(i.pay_requested_at)} · {i.pay_requested_via}{cost != null ? ' · ' + fmt$(cost) : ''} <button onClick={() => setAsking(a => !a)} className="underline hover:text-ink ml-1 py-1">{asking ? 'cancel' : 'send a reminder'}</button></div>
           : <span className="flex gap-1.5 flex-wrap"><button disabled={busy || !cost} onClick={() => setAsking(a => !a)} className={btnP}><DollarSign size={13} /> {cost ? 'Ask guest to pay ' + fmt$(cost) : 'Type the cost to ask the guest'}</button>
             {cost ? <button disabled={busy} onClick={() => run({ action: 'request_pay', amount: cost, via: 'by hand' })} title="The team already messaged the guest (Guesty, phone, text)" className={btn}><Check size={13} /> Already asked</button> : null}</span>
       )}
-      {asking && cost != null && !i.shipping_paid && <PayAsk i={i} cost={cost} onDone={() => setAsking(false)} run={run} />}
+      {asking && cost != null && !i.shipping_paid && !shipped && <PayAsk i={i} cost={cost} onDone={() => setAsking(false)} run={run} />}
 
       {/* 2 · paid */}
       {!i.shipping_paid ? (
-        closed ? null : paying ? (
+        closed || shipped ? null : paying ? (
           <div className="flex items-center gap-1.5 flex-wrap rounded-lg bg-app/60 border border-line p-2">
             <span className="text-[12.5px]">Paid via</span>
             <select value={via} onChange={e => setVia(e.target.value)} className="text-[16px] sm:text-[12.5px] min-h-[36px] border border-line rounded-lg px-2 py-1 bg-white">{PAID_VIA.map(v => <option key={v}>{v}</option>)}</select>
@@ -847,7 +898,7 @@ function ShipPay({ i, run, busy, onErr }: { i: Item; run: (body: any) => Promise
       {i.shipping_paid && (i.breezeway_task_id
         ? <div className="text-[12.5px] flex items-center gap-1.5 flex-wrap"><ClipboardList size={13} className={i.sent_at ? 'text-emerald-700' : 'text-muted'} />
           {i.sent_at ? <b className="text-emerald-700">Shipped {fmtWhen(i.sent_at)}{i.sent_by ? ' · ' + i.sent_by : ''}</b>
-            : cancelled ? <b className="text-rose-700">The delivery task was cancelled in Breezeway</b>
+            : cancelled ? <><b className="text-rose-700">The delivery task was cancelled in Breezeway</b> <button disabled={busy} onClick={() => run({ action: 'recreate_task' })} className={btnP}>{busy ? 'Creating…' : 'Create a new delivery task'}</button></>
             : <span>Delivery task{i.delivery?.date ? ' set for ' + fmtShort(i.delivery.date) : ' for the next delivery Tuesday'}{i.delivery ? (i.delivery.assignees.length ? ' · ' + i.delivery.assignees.join(', ') : ' · nobody assigned in Breezeway') : ''} — completing it marks this Shipped</span>}
           <a href={'https://app.breezeway.io/task/' + i.breezeway_task_id} target="_blank" rel="noreferrer" className="text-brand-700 hover:underline inline-flex items-center gap-0.5 py-1">#{i.breezeway_task_id} <ExternalLink size={10} /></a></div>
         : <div className="text-[12.5px] text-rose-700 flex items-center gap-2 flex-wrap">The delivery task was not created{i.breezeway_error ? ' — ' + i.breezeway_error : ''} <button disabled={busy} onClick={() => run({ action: 'push_task' })} className={btnP}>{busy ? 'Creating…' : 'Create delivery task'}</button></div>)}
@@ -855,9 +906,18 @@ function ShipPay({ i, run, busy, onErr }: { i: Item; run: (body: any) => Promise
       {(i.shipping_paid || shipped) && (
         <div className="flex items-end gap-1.5">
           <div className="flex-1"><InlineField label={shipped ? 'Tracking number' : 'Tracking number (adding it marks this Shipped)'} value={i.tracking} onSave={v => run({ tracking: v, ...(i.status !== 'shipping' && !closed && v ? { status: 'shipping' } : {}) })} placeholder="9400…" /></div>
-          {i.tracking && (!i.shipping_carrier || /usps|postal/i.test(i.shipping_carrier)) && <a href={'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + encodeURIComponent(i.tracking)} target="_blank" rel="noreferrer" className={btn}>Track <ExternalLink size={11} /></a>}
+          {i.tracking && trackLink(i.shipping_carrier, i.tracking) && <a href={trackLink(i.shipping_carrier, i.tracking)} target="_blank" rel="noreferrer" className={btn}>Track <ExternalLink size={11} /></a>}
         </div>
       )}
+
+      {/* TRACKING TO THE GUEST (2026-11-10): a draft a person reads, edits and sends — never automatic. */}
+      {i.tracking && shipped && (
+        <div className="text-[12.5px] flex items-center gap-2 flex-wrap">
+          {toldAt ? <span className="text-emerald-700">Tracking sent to the guest {fmtWhen(toldAt)}</span> : <span className="text-muted">The guest has not been sent the tracking number yet.</span>}
+          {!telling && <button disabled={busy} onClick={() => setTelling(true)} className={toldAt ? btn : btnP}><Send size={13} /> {toldAt ? 'Send again' : 'Send tracking to guest'}</button>}
+        </div>
+      )}
+      {telling && i.tracking && <TrackSend i={i} run={run} onDone={() => setTelling(false)} />}
 
       {/* RECEIPTS (Jon, 2026-11-05: "can we also have receipt attached") — the payment confirmation
           and the postage receipt, photos or PDFs, kept on the item. */}
@@ -930,6 +990,64 @@ function PayAsk({ i, cost, run, onDone }: { i: Item; cost: number; run: (body: a
           ? <button disabled={busy || !text.trim()} onClick={() => send('message')} className={btnP}><Send size={13} /> {busy ? 'Sending…' : 'Send to guest'}</button>
           : <span className="text-[12.5px] text-muted">No Guesty conversation for this booking in Lighthouse — send it from Guesty, then mark it sent:</span>}
         <button disabled={busy} onClick={() => send('by hand')} className={btn}>Mark message sent</button>
+        <button onClick={() => { try { void navigator.clipboard.writeText(text) } catch { /* no clipboard */ } }} className={btn}>Copy</button>
+        <button onClick={onDone} className={btn}>Cancel</button>
+      </div>
+    </div>
+  )
+}
+
+// ── TRACKING TO THE GUEST: an editable draft, sent by a person through the Guesty message path ────
+// Nothing here sends on its own. The draft names the unit, the item, the carrier and the tracking
+// link; the person edits it, presses Send (the same /api/messages/send the payment ask uses, with its
+// duplicate guard), and "tracking sent" is written on the item's history.
+function TrackSend({ i, run, onDone }: { i: Item; run: (body: any) => Promise<void>; onDone: () => void }) {
+  const [ctx, setCtx] = useState<{ conversationId: string | null } | null>(null)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const tracking = String(i.tracking || '').trim()
+  useEffect(() => {
+    let live = true
+    fetch('/api/lost-found?pay=' + encodeURIComponent(String(i.reservation_id || 'none')) + '&unit=' + encodeURIComponent(i.unit), { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (!live) return
+      const ok = !!j && j.ok !== false
+      const first = (ok && j.guestFirst) || (i.guest_name || '').split(' ')[0] || 'there'
+      const link = trackLink(i.shipping_carrier, tracking)
+      setCtx({ conversationId: ok && i.reservation_id ? (j.conversationId || null) : null })
+      setText('Hi ' + first + ',\n\nYour ' + i.item.toLowerCase() + ' from ' + i.unit + ' is on its way' + (i.shipping_carrier ? ' with ' + i.shipping_carrier : '') + '.'
+        + '\n\nTracking number: ' + tracking + (link ? '\nTrack it here: ' + link : '')
+        + '\n\n' + ((ok && j.signOff) || 'Stay Hospitality'))
+    }).catch(() => { if (live) setMsg('Could not read the booking — check the connection.') })
+    return () => { live = false }
+  }, [i.reservation_id, i.unit, i.item, i.guest_name, i.shipping_carrier, tracking])
+
+  const send = async (how: 'message' | 'by hand') => {
+    if (busy) return
+    setBusy(true); setMsg('')
+    try {
+      if (how === 'message') {
+        if (!ctx?.conversationId) return
+        const m = await fetch('/api/messages/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: ctx.conversationId, body: text }) })
+        const mj: any = await m.json().catch(() => ({}))
+        if (!m.ok || !mj.ok) { setMsg('The message did not go: ' + (mj.error || m.status) + ' — copy it and send it from Guesty, then press “Mark as sent”.'); return }
+      }
+      await run({ action: 'tracking_sent', via: how === 'message' ? 'Guesty message' : 'by hand' })
+      onDone()
+    } catch { setMsg('Could not reach Lighthouse — check the thread in Guesty before sending again.') } finally { setBusy(false) }
+  }
+
+  if (!ctx) return <div className="text-[12.5px] text-muted">{msg || 'Reading the booking…'}</div>
+  return (
+    <div className="rounded-lg bg-app/60 border border-line p-2 space-y-1.5">
+      <div className="text-[12px] text-muted">Draft — read it, change anything, then send. Nothing goes to the guest until you press Send.</div>
+      <textarea value={text} onChange={e => setText(e.target.value)} rows={7} aria-label="Tracking message to the guest" className={inp + ' font-normal'} />
+      {msg && <div role="alert" className="text-[12.5px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">{msg}</div>}
+      <div className="flex flex-wrap gap-1.5 items-center">
+        {ctx.conversationId
+          ? <button disabled={busy || !text.trim()} onClick={() => send('message')} className={btnP}><Send size={13} /> {busy ? 'Sending…' : 'Send to guest'}</button>
+          : <span className="text-[12.5px] text-muted">No Guesty conversation for this item in Lighthouse — copy it, send it from Guesty, then mark it sent:</span>}
+        <button disabled={busy} onClick={() => send('by hand')} className={btn}>Mark as sent</button>
         <button onClick={() => { try { void navigator.clipboard.writeText(text) } catch { /* no clipboard */ } }} className={btn}>Copy</button>
         <button onClick={onDone} className={btn}>Cancel</button>
       </div>

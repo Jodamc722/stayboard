@@ -15,6 +15,7 @@ import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildingOf } from '@/lib/segments'
 import { THEMES, THEME_BY_KEY, sentenceAbout, looksNegative } from '@/lib/review-themes'
+import { pageRows } from '@/lib/db-page'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -63,11 +64,43 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  const { data: allRows } = await db.from('review_actions').select('status')
+  // COUNTED, NOT FETCHED (2026-11-10): this read every row's status to add them up, which stops at
+  // 1,000 rows and so under-counts "done" once the table has a history. Four head counts instead.
   const counts = { open: 0, doing: 0, done: 0, dismissed: 0 } as Record<string, number>
-  for (const r of ((allRows || []) as any[])) counts[str(r.status)] = (counts[str(r.status)] || 0) + 1
+  await Promise.all(Object.keys(counts).map(async st => {
+    try { const { count } = await db.from('review_actions').select('id', { count: 'exact', head: true }).eq('status', st); counts[st] = count ?? 0 } catch { /* stays 0 */ }
+  }))
 
-  return NextResponse.json({ ok: true, actions: data || [], counts })
+  // THE TASK BEHIND A SENT ROW. Dispatching from the board writes "Breezeway task <id> scheduled
+  // <date>" into the note; here that id is looked up in the Breezeway mirror so the row can say
+  // whether the visit is still open or has been finished, instead of only that it was once sent.
+  const actions = ((data || []) as any[])
+  try {
+    const idOf = (note: any) => { const m = str(note).match(/Breezeway task (\S+) scheduled (\d{4}-\d{2}-\d{2})/); return m ? { id: m[1], date: m[2] } : null }
+    const ids = Array.from(new Set(actions.map(a => idOf(a.note)).filter(Boolean).map(x => (x as { id: string }).id)))
+    if (ids.length) {
+      const state: Record<string, any> = {}
+      const chunks: string[][] = []
+      for (let i = 0; i < ids.length; i += 150) chunks.push(ids.slice(i, i + 150))
+      const got = await Promise.all(chunks.map(part => db.from('breezeway_tasks_sync').select('id,status,finished_at,scheduled_date').in('id', part)))
+      for (const g of got) for (const t of ((g.data || []) as any[])) state[str(t.id)] = t
+      for (const a of actions) {
+        const ref = idOf(a.note)
+        if (!ref) continue
+        const t = state[ref.id]
+        const finished = !!(t && (t.finished_at || /complet|finish|close|approv/i.test(str(t.status))))
+        const cancelled = !!(t && !finished && /cancel|delet|void/i.test(str(t.status)))
+        a.task = {
+          id: ref.id,
+          date: t && t.scheduled_date ? str(t.scheduled_date).slice(0, 10) : ref.date,
+          state: !t ? 'sent' : finished ? 'finished' : cancelled ? 'cancelled' : 'open',
+          finishedAt: t && t.finished_at ? str(t.finished_at).slice(0, 10) : null,
+        }
+      }
+    }
+  } catch { /* no mirror: the row still shows that it was sent */ }
+
+  return NextResponse.json({ ok: true, actions, counts })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -120,7 +153,9 @@ export async function POST(req: NextRequest) {
     if (rows.length < 1000) break
   }
 
-  const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building')
+  // Paged: a single read stops at 1,000 listings, and a unit past the cut has its complaints dropped
+  // below ("a review whose listing is gone is not actionable").
+  const { rows: lRows } = await pageRows<any>((a, b) => db.from('guesty_listings').select('id,nickname,title,building').order('id').range(a, b), 6)
   const lmap: Record<string, { name: string; building: string }> = {}
   for (const l of ((lRows || []) as any[])) {
     const name = l.nickname || l.title || 'Unit'
@@ -156,7 +191,12 @@ export async function POST(req: NextRequest) {
   }
 
   // Existing rows, so we update instead of duplicating.
-  const { data: existingRows, error: exErr } = await db.from('review_actions').select('*')
+  // Probe first (so a missing table still gets its own message), then read every row, paged — past
+  // 1,000 rows an unseen existing row was re-inserted and hit the (unit, theme) unique index.
+  const { error: exErr } = await db.from('review_actions').select('id').limit(1)
+  const exRead = exErr ? { rows: [] as any[], truncated: false } : await pageRows<any>((a, b) => db.from('review_actions').select('*').order('id').range(a, b), 20)
+  if (!exErr && exRead.truncated) return NextResponse.json({ error: 'Could not read every existing action — nothing was changed. Try Rebuild again.' }, { status: 500 })
+  const existingRows = exRead.rows
   if (exErr) {
     if (/relation .* does not exist|schema cache/i.test(str(exErr.message))) {
       return NextResponse.json({ error: 'The review_actions table is not in the database yet — run supabase/migrations/022_review_actions.sql.' }, { status: 503 })
@@ -248,8 +288,9 @@ export async function POST(req: NextRequest) {
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     created = inserts.length
   }
-  for (const u of updates) {
-    await db.from('review_actions').update(u.patch).eq('id', u.id)
+  // Twenty at a time instead of one after another — each update is its own row.
+  for (let i = 0; i < updates.length; i += 20) {
+    await Promise.all(updates.slice(i, i + 20).map(u => db.from('review_actions').update(u.patch).eq('id', u.id)))
   }
 
   // PRUNE, BUT ONLY INSIDE THE WINDOW WE ACTUALLY SCANNED.

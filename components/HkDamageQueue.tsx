@@ -48,6 +48,7 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
   const [scanning, setScanning] = useState(false)
   const [err, setErr] = useState('')
   const [showDone, setShowDone] = useState(false)
+  const [note, setNote] = useState('')
   const load = useCallback(async () => {
     try { const r = await fetch('/api/claims/hk', { cache: 'no-store' }); const j = await r.json(); if (j.ok) setData(j); else setErr(j.error || 'Could not load HK reports.') } catch (e: any) { setErr(String(e?.message || e)) }
   }, [])
@@ -56,14 +57,33 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
   const patch = (r: Report) => setData(d => d ? { ...d, reports: d.reports.map(x => x.id === r.id ? r : x) } : d)
 
   if (!data) return null
-  const open = data.reports.filter(r => r.status === 'new')
+  // TOO LATE IS NOT NEW (2026-11-10). A report whose stay is already past the channel's filing
+  // cutoff sat in the queue as "new" for good, wearing the same badge as one posted this morning.
+  // It is marked "Too late to file", sorted under the live ones and left out of the "new" count —
+  // still there to close with a reason, or to autofill if someone knows better.
+  const tooLate = (r: Report) => { const h = daysTo(r.stay?.deadline || null); return h != null && h < 0 }
+  // SAME STAY, SEVERAL POSTS: kept next to each other and labelled — Autofill already puts every
+  // report about one stay onto ONE claim.
+  const keyOf = (r: Report) => r.stay?.reservationId ? 's:' + r.stay.reservationId : r.listingId ? 'u:' + r.listingId + ':' + r.postedAt.slice(0, 10) : 'r:' + r.id
+  const allOpen = data.reports.filter(r => r.status === 'new')
+  const groupN: Record<string, number> = {}
+  for (const r of allOpen) groupN[keyOf(r)] = (groupN[keyOf(r)] || 0) + 1
+  const firstAt: Record<string, string> = {}
+  for (const r of allOpen) { const k = keyOf(r); if (!firstAt[k] || r.postedAt > firstAt[k]) firstAt[k] = r.postedAt }
+  const open = allOpen.slice().sort((a, b) =>
+    Number(tooLate(a)) - Number(tooLate(b))
+    || firstAt[keyOf(b)].localeCompare(firstAt[keyOf(a)]) || keyOf(a).localeCompare(keyOf(b))
+    || b.postedAt.localeCompare(a.postedAt))
+  const nLate = open.filter(tooLate).length
+  const nLive = open.length - nLate
   const done = data.reports.filter(r => r.status !== 'new')
   return (
     <section className="mb-5">
       <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
         <h2 className="text-[13px] font-bold text-ink">HK damage reports</h2>
         <span className="text-[12px] text-muted">from #vr-hkdamagereports — autofill a claim or close it as not claimable</span>
-        {open.length ? <Pill tone="amber">{open.length} new</Pill> : null}
+        {nLive ? <Pill tone="amber">{nLive} new</Pill> : null}
+        {nLate ? <Pill title="Past the channel's filing cutoff — close them with a reason">{nLate} too late to file</Pill> : null}
         <span className="ml-auto inline-flex items-center gap-2 text-[11.5px] text-muted">
           {data.lastScanAt ? 'Read ' + ago(data.lastScanAt) : 'Not read yet'}
           <button onClick={scan} disabled={scanning} title="Read the channel now" className="inline-flex items-center gap-1 font-semibold text-ink hover:text-brand-700 disabled:opacity-50">
@@ -73,11 +93,12 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
       </div>
       {data.lastError ? <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2">{data.lastError}</p> : null}
       {err ? <p className="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-1.5 mb-2">{err}</p> : null}
+      {note ? <p role="status" className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2 flex items-start gap-2"><span className="flex-1">{note}</span><button onClick={() => setNote('')} aria-label="Dismiss" className="shrink-0 font-semibold">✕</button></p> : null}
       {open.length === 0 ? (
         <div className="rounded-xl border border-line bg-white px-3 py-2.5 text-[12.5px] text-muted">Nothing new from housekeeping.</div>
       ) : (
         <ul className="space-y-2">
-          {open.map(r => <Card key={r.id} r={r} reasons={data.closeReasons} focus={focusId === r.id} onPatch={patch} onOpenClaim={onOpenClaim} onClaimsChanged={onClaimsChanged} />)}
+          {open.map(r => <Card key={r.id} r={r} reasons={data.closeReasons} focus={focusId === r.id} late={tooLate(r)} siblings={groupN[keyOf(r)] || 1} onNote={setNote} onPatch={patch} onOpenClaim={onOpenClaim} onClaimsChanged={onClaimsChanged} />)}
         </ul>
       )}
       {done.length ? (
@@ -106,7 +127,7 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
   )
 }
 
-function Card({ r, reasons, focus, onPatch, onOpenClaim, onClaimsChanged }: { r: Report; reasons: string[]; focus: boolean; onPatch: (r: Report) => void; onOpenClaim: (id: string) => void; onClaimsChanged: () => void }) {
+function Card({ r, reasons, focus, late, siblings, onNote, onPatch, onOpenClaim, onClaimsChanged }: { r: Report; reasons: string[]; focus: boolean; late: boolean; siblings: number; onNote: (s: string) => void; onPatch: (r: Report) => void; onOpenClaim: (id: string) => void; onClaimsChanged: () => void }) {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [closing, setClosing] = useState(false)
@@ -115,7 +136,25 @@ function Card({ r, reasons, focus, onPatch, onOpenClaim, onClaimsChanged }: { r:
   const due = daysTo(s?.due || null)
   const autofill = async () => {
     setBusy('claim'); setErr('')
-    try { const j = await post({ action: 'claim', id: r.id }); onPatch({ ...r, status: 'claimed', claimId: j.claimId }); onClaimsChanged(); onOpenClaim(j.claimId) } catch (e: any) { setErr(e.message) } finally { setBusy('') }
+    if (late && !window.confirm('This stay is past the channel\'s filing cutoff' + (s?.deadline ? ' (' + md(s.deadline) + ')' : '') + '. Make the claim anyway?')) return
+    try {
+      const j = await post({ action: 'claim', id: r.id })
+      // Said out loud, because the card is about to leave the queue: what did NOT make it onto the claim.
+      const said: string[] = []
+      if (j.existing) said.push('Added to the claim already open for this stay.')
+      if (j.itemsError) said.push('The items could not be written onto the claim (' + j.itemsError + ') — add them by hand.')
+      if (j.photosMissing > 0) said.push(j.photosMissing + ' photo' + (j.photosMissing === 1 ? ' is' : 's are') + ' still only in Slack' + (j.photoError ? ' (' + j.photoError + ')' : '') + ' — open the post and add ' + (j.photosMissing === 1 ? 'it' : 'them') + ' to the claim by hand.')
+      onNote(said.length ? (r.unit || 'Report') + ': ' + said.join(' ') : '')
+      onPatch({ ...r, status: 'claimed', claimId: j.claimId }); onClaimsChanged(); onOpenClaim(j.claimId)
+    } catch (e: any) { setErr(e.message) } finally { setBusy('') }
+  }
+  const copyPhotos = async () => {
+    setBusy('photos'); setErr('')
+    try {
+      const j = await post({ action: 'photos', id: r.id })
+      onPatch(j.report)
+      if (j.photosMissing > 0) setErr('Still not copied: ' + (j.photoError || 'Slack did not hand them over') + '.')
+    } catch (e: any) { setErr(e.message) } finally { setBusy('') }
   }
   const close = async (reason: string) => {
     setBusy('close'); setErr('')
@@ -126,7 +165,8 @@ function Card({ r, reasons, focus, onPatch, onOpenClaim, onClaimsChanged }: { r:
       <div className="flex items-start gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <Tag tone="brand">New HK damage report</Tag>
+            {late ? <Tag tone="slate" title={'The channel\'s filing cutoff' + (s?.deadline ? ' was ' + md(s.deadline) : ' has passed') + ' — close it with a reason unless you know better'}>Too late to file</Tag> : <Tag tone="brand">New HK damage report</Tag>}
+            {siblings > 1 ? <Tag tone="amber" title="More than one post about this stay — Autofill puts them all on one claim">{siblings} reports · same stay</Tag> : null}
             <b className="text-[13.5px] text-ink">{r.unit || <span className="text-amber-800">{r.unitAsWritten || 'Unit?'} — not matched</span>}</b>
             <span className="text-[11.5px] text-muted">{r.author} · {ago(r.postedAt)}</span>
             {r.permalink ? <a href={r.permalink} target="_blank" rel="noreferrer" title="Open the post in Slack" className="text-muted hover:text-ink"><ExternalLink size={12} /></a> : null}
@@ -158,24 +198,24 @@ function Card({ r, reasons, focus, onPatch, onOpenClaim, onClaimsChanged }: { r:
               ))}
             </div>
           ) : r.photoCount ? (
-            <p className="text-[11.5px] text-muted mt-1.5 inline-flex items-center gap-1" title={r.photoError || undefined}><Camera size={12} /> {r.photoCount} photo{r.photoCount === 1 ? '' : 's'} in Slack{r.photoError ? ' — not copied yet' : ''}</p>
+            <p className="text-[11.5px] text-muted mt-1.5 inline-flex items-center gap-1" title={r.photoError || undefined}><Camera size={12} /> {r.photoCount} photo{r.photoCount === 1 ? '' : 's'} in Slack{r.photoError ? ' — not copied yet' : ''}{r.photoError ? <button onClick={copyPhotos} disabled={!!busy} className="ml-1 font-semibold text-ink underline disabled:opacity-50">{busy === 'photos' ? 'Copying…' : 'Copy now'}</button> : null}</p>
           ) : null}
           {r.text && r.text !== r.summary ? <details className="mt-1.5"><summary className="text-[11.5px] text-muted cursor-pointer">What was posted</summary><p className="text-[12px] text-ink/80 whitespace-pre-line mt-1">{r.text}</p></details> : null}
         </div>
-        <div className="flex flex-col items-stretch gap-1.5 shrink-0 w-[150px]">
+        <div className="flex flex-row sm:flex-col flex-wrap items-stretch gap-1.5 shrink-0 w-full sm:w-[150px] [&>button]:flex-1 sm:[&>button]:flex-none">
           <button onClick={autofill} disabled={!!busy || !s} title={s ? 'Make a draft claim against ' + s.guestName + ' with these items and photos, and open it' : 'Fix the match first — no stay picked'}
-            className="h-8 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center justify-center gap-1 disabled:opacity-40">
+            className="h-9 sm:h-8 px-2 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center justify-center gap-1 disabled:opacity-40">
             {busy === 'claim' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} Autofill claim
           </button>
-          <button onClick={() => setClosing(!closing)} disabled={!!busy} className="h-8 rounded-lg border border-line text-[12px] font-semibold text-ink inline-flex items-center justify-center gap-1 hover:border-ink/40">
+          <button onClick={() => setClosing(!closing)} disabled={!!busy} className="h-9 sm:h-8 px-2 rounded-lg border border-line text-[12px] font-semibold text-ink inline-flex items-center justify-center gap-1 hover:border-ink/40">
             {busy === 'close' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Not claimable
           </button>
-          <button onClick={() => setFixing(!fixing)} className="text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center justify-center gap-1"><Pencil size={11} /> Fix unit / guest</button>
+          <button onClick={() => setFixing(!fixing)} className="min-h-[36px] sm:min-h-0 text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center justify-center gap-1"><Pencil size={11} /> Fix unit / guest</button>
         </div>
       </div>
       {closing ? (
         <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-line">
-          {reasons.map(x => <button key={x} onClick={() => close(x)} className="text-[12px] rounded-full border border-line px-2.5 py-1 hover:border-ink/40 text-ink">{x}</button>)}
+          {(late ? ['Too late to file'].concat(reasons.filter(x => x !== 'Too late to file')) : reasons).map(x => <button key={x} onClick={() => close(x)} className="text-[12px] rounded-full border border-line px-2.5 py-1 min-h-[36px] sm:min-h-0 hover:border-ink/40 text-ink">{x}</button>)}
         </div>
       ) : null}
       {fixing ? <FixMatch r={r} onPatch={x => { onPatch(x); setFixing(false) }} /> : null}
@@ -190,11 +230,11 @@ function FixMatch({ r, onPatch }: { r: Report; onPatch: (r: Report) => void }) {
   const [stays, setStays] = useState<Stay[] | null>(null)
   const [err, setErr] = useState('')
   const day = new Date(Date.parse(r.postedAt) - 4 * 3600000).toISOString().slice(0, 10)
-  useEffect(() => { fetch('/api/claims/hk?units=1').then(x => x.json()).then(j => setUnits(j.units || [])).catch(() => {}) }, [])
+  useEffect(() => { fetch('/api/claims/hk?units=1').then(x => x.json()).then(j => setUnits(j.units || [])).catch(() => setErr('Could not load the unit list — reload and try again.')) }, [])
   useEffect(() => {
     if (!listingId) { setStays(null); return }
     setStays(null)
-    fetch('/api/claims/hk?stays=' + encodeURIComponent(listingId) + '&day=' + day).then(x => x.json()).then(j => setStays(j.stays || [])).catch(() => setStays([]))
+    fetch('/api/claims/hk?stays=' + encodeURIComponent(listingId) + '&day=' + day).then(x => x.json()).then(j => setStays(j.stays || [])).catch(() => { setStays([]); setErr('Could not load the stays for that unit — try again.') })
   }, [listingId, day])
   const pick = async (reservationId: string) => {
     setErr('')

@@ -27,6 +27,7 @@ import { DEFAULT_EMERGENCY_CONTACTS, keepContact } from '@/lib/emergency'
 import { themeForBook } from '@/lib/guide-themes'
 import { GuideFlyer } from '@/components/GuideFlyer'
 import { printPrefs, howtoShown, isMapItem, splitSteps, dedupeHowtos } from '@/lib/guide-print'
+import { guideSignoff, guideBrand } from '@/lib/guide-voice'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -107,7 +108,9 @@ export function guideData(gb: any) {
     gettingAround: has('gettingAround', true) ? str(s.gettingAround?.body) : '',
     address,
     phone: str(s.contact?.customerService), email: str(s.contact?.email),
-    signoff: str(s.contact?.signoff) || 'Jon McGill, General Manager',
+    // Who signs and who answers (lib/guide-voice): Surfside speaks as Vanessa & Taylor — display only.
+    signoff: guideSignoff(gb),
+    brand: guideBrand(gb),
     about: has('about', true) ? str(s.about?.body) : '',
     highlights: has('special', true) ? list(s.special?.groups).filter((g: any) => g && list(g.items).length) : [],
     // Common-sense how-tos (microwave, kettle, fridge…) are left out unless brought back in the editor's
@@ -453,7 +456,7 @@ export function GuideMobile({ gb, autoPrint = false, photoToken = '' }: { gb: an
                 <div className="flex items-center gap-3 rounded-2xl p-3.5" style={{ background: c.tint }}>
                   <Siren size={20} style={{ color: '#b42318' }} /><div><p className="text-[15px] font-semibold leading-tight">In an emergency, dial 911</p><p className="text-[12.5px]" style={{ color: c.mute }}>Police · fire · ambulance — then let us know</p></div>
                 </div>
-                {d.phone ? <CallRow Icon={Phone} value={d.phone} sub={'Stay Hospitality · urgent issues, 24/7 · everything else, message us in your booking app'} c={c} /> : null}
+                {d.phone ? <CallRow Icon={Phone} value={d.phone} sub={d.brand + ' · urgent issues, 24/7 · everything else, message us in your booking app'} c={c} /> : null}
                 {d.police ? <CallRow Icon={ShieldAlert} value={d.police} sub={d.policeLabel + ' · non-emergency'} c={c} /> : null}
                 {d.contacts.map((x: any, i: number) => <CallRow key={i} Icon={Phone} value={x.value} sub={x.label + (x.note ? ' · ' + x.note : '')} c={c} />)}
               </div>

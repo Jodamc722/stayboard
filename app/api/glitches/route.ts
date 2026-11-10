@@ -42,7 +42,11 @@ export async function GET(req: NextRequest) {
     }
     const guest = str(req.nextUrl.searchParams.get('guest')).trim()
 
-    if (guest) {
+    // ?reservation=<id> — the same answer for ONE known booking (the Inbox and other pages link to
+    // /glitches?new=1&reservation=<id>, and the New glitch form fills itself from this).
+    const resQ = str(req.nextUrl.searchParams.get('reservation')).trim()
+
+    if (guest || resQ) {
       // Reservation search. DEFAULT = guests IN-HOUSE today (most glitches are live stays);
       // ?scope=all searches past/upcoming too. Inquiries / canceled / declined (never booked)
       // are ALWAYS excluded — only real stays attach to glitches.
@@ -53,9 +57,11 @@ export async function GET(req: NextRequest) {
       for (const l of (lRows || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
       let qy = db.from('guesty_reservations')
         .select('id,listing_id,guest_name,guest_phone,guest_email,notes,check_in,check_out,status,source,confirmation_code,total:raw->money->>hostPayout,fare:raw->money->>fareAccommodationAdjusted,cleaning:raw->money->>fareCleaning')
-        .ilike('guest_name', '%' + guest + '%')
-        .in('status', ['confirmed', 'closed'])
-      if (scope === 'active') qy = qy.lte('check_in', today).gte('check_out', today)
+      if (resQ) qy = qy.eq('id', resQ)
+      else {
+        qy = qy.ilike('guest_name', '%' + guest + '%').in('status', ['confirmed', 'closed'])
+        if (scope === 'active') qy = qy.lte('check_in', today).gte('check_out', today)
+      }
       const { data: rows, error } = await qy
         .order('check_in', { ascending: false })
         .limit(12)
@@ -100,7 +106,7 @@ export async function GET(req: NextRequest) {
       const lo = from + 'T03:00:00Z'
       const hiD = new Date(to + 'T12:00:00Z'); hiD.setUTCDate(hiD.getUTCDate() + 1)
       const hi = hiD.toISOString().slice(0, 10) + 'T06:00:00Z'
-      const cols = 'id,status,glitch_type,category,listing_id,unit,market,reservation_id,guest_name,guest_phone,guest_email,channel,check_in,check_out,reservation_total,incident_date,overview,refund_approved,reported_by,assignee,breezeway_task_id,priority,reported_via,closed_at,created_at'
+      const cols = 'id,status,glitch_type,category,listing_id,unit,market,reservation_id,guest_name,guest_phone,guest_email,channel,check_in,check_out,reservation_total,incident_date,overview,refund_approved,reported_by,assignee,breezeway_task_id,priority,reported_via,closed_at,closed_at_estimated,created_at'
       const etDay = (iso: string) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(iso))
       const read = (c: string) => pageRows<any>((a, b) => db.from('glitches').select(c).gte('created_at', lo).lt('created_at', hi).order('created_at', { ascending: false }).range(a, b), 10)
       let { rows: got, truncated } = await read(cols)
@@ -173,9 +179,11 @@ export async function GET(req: NextRequest) {
     const byCat: Record<string, number> = {}
     let refunds = 0, inPlay = 0
     for (const g of list) {
-      if (g.status !== 'closed') inPlay++
+      // "In play" is everything outside the board's Closed lane (which also holds the legacy
+      // 'done' / 'resolved'); a merged duplicate is not a category of problem.
+      if (!CLOSED_STATUSES.includes(str(g.status))) inPlay++
       refunds += Number(g.refund_approved) || 0
-      if (g.category) byCat[g.category] = (byCat[g.category] || 0) + 1
+      if (g.category && g.category !== 'Duplicate') byCat[g.category] = (byCat[g.category] || 0) + 1
     }
     const summary = {
       total: list.length, inPlay, refunds,

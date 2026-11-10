@@ -14,7 +14,7 @@ import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { bustDay } from '@/lib/bust'
-import { readHk, writeHk, scanHk, stayFor, stayOf, CLOSE_REASONS, type HkReport } from '@/lib/hk-damage'
+import { readHk, writeHk, scanHk, stayFor, stayOf, recopyHkPhotos, CLOSE_REASONS, type HkReport } from '@/lib/hk-damage'
 import { createClaimFromReservation, loadClaimPolicy } from '@/lib/claim-create'
 
 export const dynamic = 'force-dynamic'
@@ -92,6 +92,13 @@ export async function POST(req: NextRequest) {
     }
     return save(rep)
   }
+  // Try the report's photos again, on their own ("Copy photos" on the card).
+  if (action === 'photos') {
+    const rc = await recopyHkPhotos(rep)
+    const w = await writeHk(s, by)
+    if (!w.ok) return deny('Could not save: ' + w.error, 500)
+    return NextResponse.json({ ok: true, report: rep, copied: rc.copied, photosMissing: rc.missing, photoError: rc.error })
+  }
   if (action === 'claim') {
     const resId = str(b?.reservationId) || rep.stay?.reservationId || ''
     if (!resId) return deny('Pick the stay this is against first — no guest checked out of that unit in the three days before the report.')
@@ -124,6 +131,15 @@ export async function POST(req: NextRequest) {
     // The items: one row per thing found, the count in the description, the report's photos on each
     // (the channel wants evidence per item — remove the ones that don't belong). Cost, age and
     // condition are left for a person: they are what the channel checks hardest.
+    // PHOTOS THAT NEVER COPIED ARE TRIED AGAIN NOW, before the items are written — and the answer
+    // says how many are still only in Slack, so the page can say it instead of a claim quietly
+    // arriving with no evidence on it.
+    let photosMissing = Math.max(0, rep.photoCount - rep.photos.length)
+    let photoError: string | null = photosMissing ? rep.photoError : null
+    if (photosMissing > 0) {
+      const rc = await recopyHkPhotos(rep)
+      photosMissing = rc.missing; photoError = rc.missing ? rc.error : null
+    }
     const { data: last } = await db.from('claim_items').select('position').eq('claim_id', claimId).order('position', { ascending: false }).limit(1)
     let pos = Number(last?.[0]?.position ?? -1) + 1
     const items = rep.items.length ? rep.items : [{ description: rep.summary || 'Damage found by housekeeping', qty: 1 }]
@@ -133,7 +149,7 @@ export async function POST(req: NextRequest) {
     const w = await writeHk(s, by)
     if (!w.ok) return deny('The claim was made but the report could not be marked: ' + w.error, 500)
     bustDay()
-    return NextResponse.json({ ok: true, claimId, existing, itemsError: ins.error ? ins.error.message : null })
+    return NextResponse.json({ ok: true, claimId, existing, itemsError: ins.error ? ins.error.message : null, photosMissing, photoError })
   }
   return deny('Unknown action.')
 }

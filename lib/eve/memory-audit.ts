@@ -30,7 +30,8 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { lc } from './ctx'
-import type { EveMemory } from './memory'
+import { sameThought, type EveMemory } from './memory'
+import { getSettingFresh, setSetting } from '@/lib/app-settings'
 
 const STOP = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'what', 'when', 'where', 'which', 'have', 'has', 'are', 'was', 'were', 'you', 'your', 'her', 'she', 'about', 'should', 'would', 'could', 'from', 'into', 'they', 'them', 'there', 'their', 'been', 'being', 'not', 'can', 'will', 'why', 'how', 'who', 'all', 'any', 'our', 'out', 'get', 'got', 'more', 'less', 'than', 'over', 'under'])
 
@@ -77,6 +78,11 @@ export type MemoryAudit = {
   promptCost: { chars: number; approxTokens: number; note: string }
   neverUsed: number
   humanWritten: number
+  /** Every duplicate group (not capped like `findings`) — what "Merge all" would act on. */
+  duplicateGroups: number
+  duplicateRows: number
+  /** Slack-learned, never loaded into a prompt, older than STALE_SLACK_DAYS — what "Retire" would act on. */
+  staleSlack: number
   findings: MemoryFinding[]
   summary: string
 }
@@ -86,6 +92,55 @@ const shape = (m: any) => ({
   source: String(m.source), text: String(m.text || '').slice(0, 400),
   use_count: Number(m.use_count || 0), updated_at: String(m.updated_at),
 })
+
+/** Sources a person (or a document a person gave her) wrote. Never retired or superseded by a clean-up. */
+const MACHINE_SOURCES = ['slack', 'eve', 'system']
+const isMachine = (m: any) => MACHINE_SOURCES.includes(String(m?.source))
+
+export const STALE_SLACK_DAYS = 60
+const isStaleSlack = (m: any) => String(m?.source) === 'slack' && Number(m?.use_count || 0) === 0
+  && Date.parse(String(m?.created_at)) < Date.now() - STALE_SLACK_DAYS * 864e5
+
+/**
+ * Groups of live memories that say the same thing, across every scope. Same words (0.75 overlap) AND
+ * the same numbers and negations (memory.ts sameThought) — "pets are allowed" and "pets are not
+ * allowed" share every word and are opposites, so they are never a group. Word sets are built once.
+ */
+function findDuplicateGroups(rows: any[]): any[][] {
+  const sets = rows.map(r => new Set(words(String(r.text || ''))))
+  const ov = (i: number, j: number): number => {
+    const A = sets[i], B = sets[j]
+    if (!A.size || !B.size) return 0
+    let inter = 0
+    A.forEach(w => { if (B.has(w)) inter++ })
+    return inter / (A.size + B.size - inter)
+  }
+  const taken = new Set<number>()
+  const out: any[][] = []
+  for (let i = 0; i < rows.length; i++) {
+    if (taken.has(i)) continue
+    const group = [rows[i]]
+    const members = [i]
+    for (let j = i + 1; j < rows.length; j++) {
+      if (taken.has(j)) continue
+      if (ov(i, j) >= 0.75 && sameThought(String(rows[i].text || ''), String(rows[j].text || ''), 0)) { group.push(rows[j]); members.push(j) }
+    }
+    if (group.length < 2) continue
+    members.forEach(m => taken.add(m))
+    // A group of only person-written rows is theirs to sort out; there is nothing a clean-up may merge.
+    if (group.filter(isMachine).length === 0) continue
+    out.push(group)
+  }
+  return out
+}
+
+async function liveRows(limit = 800): Promise<any[]> {
+  const { data } = await supabaseAdmin().from('eve_memory')
+    .select('id,kind,text,why,scope,weight,source,confidence,evidence,use_count,last_used_at,expires_on,created_at,updated_at')
+    .is('superseded_by', null).is('expires_on', null)
+    .order('weight', { ascending: false }).limit(Math.min(limit, 1500))
+  return (data || []) as any[]
+}
 
 export async function auditMemory(opts?: { limit?: number }): Promise<MemoryAudit> {
   const db = supabaseAdmin()
@@ -108,16 +163,8 @@ export async function auditMemory(opts?: { limit?: number }): Promise<MemoryAudi
   const human = rows.filter(m => String(m.source) === 'jon')
 
   // ---- duplicates, INCLUDING across scopes (the gap saveMemory cannot see) ----
-  const seen = new Set<string>()
-  for (let i = 0; i < rows.length; i++) {
-    if (seen.has(String(rows[i].id))) continue
-    const group = [rows[i]]
-    for (let j = i + 1; j < rows.length; j++) {
-      if (seen.has(String(rows[j].id))) continue
-      if (overlap(rows[i].text, rows[j].text) >= 0.75) group.push(rows[j])
-    }
-    if (group.length < 2) continue
-    group.forEach(g => seen.add(String(g.id)))
+  const dupGroups = findDuplicateGroups(rows)
+  for (const group of dupGroups) {
     const scopes = Array.from(new Set(group.map(g => String(g.scope))))
     findings.push({
       kind: 'duplicate', severity: group.length > 2 ? 'high' : 'medium',
@@ -188,7 +235,11 @@ export async function auditMemory(opts?: { limit?: number }): Promise<MemoryAudi
       note: `Roughly ${approxTokens} tokens of memory exist. Not all of it loads on every turn — memories are selected by scope and question — but this is the pool, and it is paid for out of the same budget as the actual conversation.`,
     },
     neverUsed, humanWritten: human.length,
-    findings: findings.slice(0, 60),
+    duplicateGroups: dupGroups.length,
+    duplicateRows: dupGroups.reduce((n, g) => n + g.length, 0),
+    staleSlack: rows.filter(isStaleSlack).length,
+    // Duplicates first and never cut off by the cap: they are what the Memory clean-up card lists.
+    findings: [...findings.filter(f => f.kind === 'duplicate'), ...findings.filter(f => f.kind !== 'duplicate').slice(0, 60)],
     summary: `${rows.length} live memories (${human.length} written by a person, the rest learned). ${neverUsed} have never been used. ${findings.length} thing(s) worth cleaning up.`,
   }
 }
@@ -213,7 +264,7 @@ export async function applyMemoryDecision(input: {
     // A human's own memory is never expired by this path, whatever was asked for.
     const { data } = await db.from('eve_memory').select('id,source,weight,use_count').in('id', ids)
     const rows = (data || []) as any[]
-    const touchable = rows.filter(r => String(r.source) !== 'jon')
+    const touchable = rows.filter(isMachine)
     if (!touchable.length) return { ok: false, changed: 0, error: 'Those memories were written by a person. Edit or delete them yourself in the Memory tab.' }
 
     if (input.op === 'keep') {
@@ -222,18 +273,126 @@ export async function applyMemoryDecision(input: {
     }
 
     if (input.op === 'merge') {
-      const survivor = rows.slice().sort((a, b) =>
-        Number(b.use_count || 0) - Number(a.use_count || 0) || Number(b.weight || 0) - Number(a.weight || 0)
-      )[0]
-      const losers = touchable.filter(r => String(r.id) !== String(survivor.id))
-      if (!losers.length) return { ok: true, changed: 0, kept: String(survivor.id) }
-      const weight = Math.min(10, Math.max(...rows.map(r => Number(r.weight || 0))))
-      await db.from('eve_memory').update({ weight, updated_at: now }).eq('id', survivor.id)
-      await db.from('eve_memory').update({ superseded_by: survivor.id, updated_at: now }).in('id', losers.map(r => r.id))
-      return { ok: true, changed: losers.length, kept: String(survivor.id) }
+      const r = await mergeGroup(ids, input.by)
+      return r.error ? { ok: false, changed: 0, error: r.error } : { ok: true, changed: r.merged, kept: r.kept || undefined }
     }
 
     await db.from('eve_memory').update({ expires_on: today, updated_at: now }).in('id', touchable.map(r => r.id))
     return { ok: true, changed: touchable.length }
   } catch (e: any) { return { ok: false, changed: 0, error: String(e?.message || e).slice(0, 200) } }
+}
+
+// ---- Memory clean-up: merge and retire, with a record ------------------------------------------------
+// (2026-11-10) What the "Memory clean-up" card on Settings → Eve → Memory runs.
+//
+// MERGE. One row is kept per group and the others point at it (superseded_by) — nothing is deleted.
+//   • A row a person wrote (jon, staff, a document, a Telegram answer) is ALWAYS the one kept when the
+//     group has one, and is never changed: not its weight, not its scope. Any other person-written row
+//     in the group is left exactly as it is.
+//   • Otherwise the heaviest machine-learned row is kept (then the most used), takes the group's highest
+//     weight, and — when the copies sat in different scopes — becomes portfolio, so the thought is not
+//     lost for the buildings whose copy was folded in.
+//   • Kept by a person's row scoped to one building: only the machine copies in that same scope (or all
+//     of them, if the person's row is portfolio) are folded into it; copies in other scopes are merged
+//     among themselves by the rule above.
+// Every merge and every retire is written to app_settings `eve_memory_cleanup_log` (newest first, 300
+// kept): who, when, which row was kept, which were folded in, with their words.
+const CLEANUP_LOG_KEY = 'eve_memory_cleanup_log'
+type CleanupEntry = { at: string; by: string; op: 'merge' | 'retire_slack'; kept?: { id: string; source: string; scope: string; text: string } | null; merged?: { id: string; source: string; scope: string; text: string }[]; count?: number }
+async function logCleanup(entries: CleanupEntry[]): Promise<void> {
+  if (!entries.length) return
+  try {
+    const cur = await getSettingFresh<CleanupEntry[]>(CLEANUP_LOG_KEY, [])
+    await setSetting(CLEANUP_LOG_KEY, [...entries, ...(Array.isArray(cur) ? cur : [])].slice(0, 300), 'memory-cleanup')
+  } catch { /* the merge stands; superseded_by on each row is the record of last resort */ }
+}
+const brief = (r: any) => ({ id: String(r.id), source: String(r.source), scope: String(r.scope), text: String(r.text || '').slice(0, 200) })
+const byWeight = (a: any, b: any) => Number(b.weight || 0) - Number(a.weight || 0) || Number(b.use_count || 0) - Number(a.use_count || 0)
+
+async function mergeRows(rows: any[], by: string, log: CleanupEntry[]): Promise<{ merged: number; kept: string | null }> {
+  const db = supabaseAdmin()
+  const now = new Date().toISOString()
+  const people = rows.filter(r => !isMachine(r)).sort(byWeight)
+  const machines = rows.filter(isMachine).sort(byWeight)
+  if (!machines.length) return { merged: 0, kept: people[0] ? String(people[0].id) : null }
+  if (people.length) {
+    const keep = people[0]
+    const fold = machines.filter(m => String(keep.scope) === 'portfolio' || String(m.scope) === String(keep.scope))
+    const rest = machines.filter(m => !fold.includes(m))
+    let merged = 0
+    if (fold.length) {
+      const { error } = await db.from('eve_memory').update({ superseded_by: keep.id, updated_at: now }).in('id', fold.map(r => r.id))
+      if (error) throw new Error(error.message)
+      merged += fold.length
+      log.push({ at: now, by, op: 'merge', kept: brief(keep), merged: fold.map(brief) })
+    }
+    if (rest.length > 1) merged += (await mergeRows(rest, by, log)).merged
+    return { merged, kept: String(keep.id) }
+  }
+  const keep = machines[0]
+  const losers = machines.slice(1)
+  if (!losers.length) return { merged: 0, kept: String(keep.id) }
+  const patch: any = { weight: Math.min(10, Math.max(...machines.map(r => Number(r.weight || 0)))), updated_at: now }
+  if (machines.some(m => String(m.scope) !== String(keep.scope))) patch.scope = 'portfolio'
+  const up = await db.from('eve_memory').update(patch).eq('id', keep.id)
+  if (up.error) throw new Error(up.error.message)
+  const { error } = await db.from('eve_memory').update({ superseded_by: keep.id, updated_at: now }).in('id', losers.map(r => r.id))
+  if (error) throw new Error(error.message)
+  log.push({ at: now, by, op: 'merge', kept: { ...brief(keep), scope: String(patch.scope || keep.scope) }, merged: losers.map(brief) })
+  return { merged: losers.length, kept: String(keep.id) }
+}
+
+/** Merge one group, named by its ids (the "Merge" button on a row). Only live rows take part. */
+export async function mergeGroup(ids: string[], by: string): Promise<{ merged: number; kept: string | null; error?: string }> {
+  try {
+    const { data } = await supabaseAdmin().from('eve_memory').select('id,text,scope,weight,source,use_count')
+      .in('id', ids.slice(0, 200)).is('superseded_by', null).is('expires_on', null)
+    const rows = (data || []) as any[]
+    if (rows.length < 2) return { merged: 0, kept: rows[0] ? String(rows[0].id) : null }
+    if (!rows.some(isMachine)) return { merged: 0, kept: null, error: 'Those memories were written by a person. Edit or delete them yourself in the Memory tab.' }
+    const log: CleanupEntry[] = []
+    const r = await mergeRows(rows, by, log)
+    await logCleanup(log)
+    return r
+  } catch (e: any) { return { merged: 0, kept: null, error: String(e?.message || e).slice(0, 200) } }
+}
+
+/** Merge every duplicate group, found fresh on the server at the moment of the click. */
+export async function mergeAllDuplicates(by: string): Promise<{ ok: boolean; groups: number; merged: number; error?: string }> {
+  let groups = 0, merged = 0
+  const log: CleanupEntry[] = []
+  try {
+    for (const g of findDuplicateGroups(await liveRows())) {
+      const r = await mergeRows(g, by, log)
+      if (r.merged) { groups++; merged += r.merged }
+    }
+    await logCleanup(log)
+    return { ok: true, groups, merged }
+  } catch (e: any) {
+    await logCleanup(log)
+    return { ok: false, groups, merged, error: String(e?.message || e).slice(0, 200) }
+  }
+}
+
+/** Retire (expire, not delete) what she overheard in Slack, never used, older than STALE_SLACK_DAYS. */
+export async function retireStaleSlack(by: string): Promise<{ ok: boolean; retired: number; error?: string }> {
+  try {
+    const ids = (await liveRows()).filter(isStaleSlack).map(r => String(r.id))
+    if (!ids.length) return { ok: true, retired: 0 }
+    const now = new Date().toISOString()
+    let retired = 0
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await supabaseAdmin().from('eve_memory').update({ expires_on: now.slice(0, 10), updated_at: now })
+        .in('id', ids.slice(i, i + 100)).eq('source', 'slack').eq('use_count', 0).is('expires_on', null).select('id')
+      if (error) throw new Error(error.message)
+      retired += (data || []).length
+    }
+    await logCleanup([{ at: now, by, op: 'retire_slack', count: retired }])
+    return { ok: true, retired }
+  } catch (e: any) { return { ok: false, retired: 0, error: String(e?.message || e).slice(0, 200) } }
+}
+
+/** The last things the clean-up did, for the card. */
+export async function cleanupLog(limit = 10): Promise<CleanupEntry[]> {
+  try { const v = await getSettingFresh<CleanupEntry[]>(CLEANUP_LOG_KEY, []); return (Array.isArray(v) ? v : []).slice(0, limit) } catch { return [] }
 }

@@ -105,6 +105,15 @@ type Item = {
   // is opened. cancelFeeLine is the server's answer to "does a line item name itself a cancellation
   // fee", worked out on the lines before they were left behind.
   slim?: boolean; cancelFeeLine?: boolean
+  // With slim: the Guesty reservation note exists but arrives with the row's detail.
+  hasResNote?: boolean
+}
+// The rows arrive as a table (field names once, one array per row) and are rebuilt here into the
+// same objects the API used to send one by one. Nothing is computed — it is only unpacked.
+function unpackItems(p: any): Item[] | null {
+  if (!p || !Array.isArray(p.cols) || !Array.isArray(p.rows)) return null
+  const cols: string[] = p.cols
+  return (p.rows as any[][]).map(r => { const o: Record<string, any> = {}; for (let i = 0; i < cols.length; i++) o[cols[i]] = r[i]; return o as Item })
 }
 type Owner = {
   ownerId: string; ownerName: string; hasStatement: boolean; dueToOwner: number | null
@@ -454,6 +463,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       const j = await r.json()
       if (seq !== loadSeq.current) return
       fullDone = true
+      if (j && j.data && j.data.itemsPacked) { const un = unpackItems(j.data.itemsPacked); if (un) j.data.items = un; delete j.data.itemsPacked }
       if (r.status === 401 || j.needsPassword) { setNeedsPw(true); setLoading(false); return }
       if (!j.ok) { setError(j.error || 'Could not load the audit'); setLoading(false); return }
       setNeedsPw(false)
@@ -925,8 +935,25 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   }, [filtered])
 
 
-  const exportCsv = () => {
-    if (!data) return
+  // THE CSV PRINTS EVERY ROW'S GUESTY NOTE, which the list no longer carries — so the export asks
+  // for the whole audit first (?full=1) and takes the notes from it. If that read fails there is
+  // no export: a CSV with the notes column quietly blank would be worse than an error.
+  const [exporting, setExporting] = useState(false)
+  const exportCsv = async () => {
+    if (!data || exporting) return
+    setExporting(true); setError('')
+    const noteOf: Record<string, string> = {}
+    try {
+      const r = await fetch('/api/owner-audit?month=' + encodeURIComponent(data.month) + '&full=1', { cache: 'no-store' })
+      const j = await r.json().catch(() => ({} as any))
+      if (!r.ok || !j.ok || !j.data || !Array.isArray(j.data.items)) throw new Error(j.error || 'the full audit could not be read')
+      for (const x of j.data.items as Item[]) noteOf[x.ownerId + '|' + x.key] = x.resNote || ''
+    } catch (e: any) {
+      setError('The CSV was not made — ' + String(e?.message || e) + '. Try again.')
+      setExporting(false)
+      return
+    }
+    setExporting(false)
     const esc = (v: any) => '"' + String(v ?? '').split('"').join('""') + '"'
     const head = ['Owner', 'Unit', 'Guest', 'Code', 'Source', 'Stay type', 'Check-in', 'Check-out', 'Nights (month)', 'Rental', 'Rate (month)', 'Avg rate (stay)', 'Expected/n', '% of expected', 'Commission', 'Net', 'Flags', 'Status', 'Note', 'Comments', 'Guesty note', 'Last touched by', 'Statement signed off']
     const src = view === 'stmt' && stmtOwner ? data.items.filter(i => i.ownerId === stmtOwner) : filtered
@@ -940,7 +967,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
         it.benchRate == null ? '' : it.benchRate.toFixed(2), it.benchPct == null ? '' : it.benchPct + '%',
         it.commission.toFixed(2), it.net.toFixed(2),
         it.flags.map(f => FLAG_LABEL[f.type]).join('; '), STATUS_LABEL[it.status], it.note,
-        it.comments.map(c => c.author + ': ' + c.body).join(' | '), it.resNote.split('\n').join(' / '),
+        it.comments.map(c => c.author + ': ' + c.body).join(' | '), (it.resNote || noteOf[it.ownerId + '|' + it.key] || '').split('\n').join(' / '),
         it.updatedBy || '', o?.signOff ? 'by ' + o.signOff.by + ' ' + o.signOff.at.slice(0, 10) : '',
       ].map(esc).join(',')
     })
@@ -981,9 +1008,12 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load the line items')
       const lines: Line[] = Array.isArray(j.lines) ? j.lines : []
       const folio: FolioItem[] = Array.isArray(j.folio) ? j.folio : []
+      const resNote: string = typeof j.resNote === 'string' ? j.resNote : ''
+      const allocation: Allocation | null = j.allocation || null
       // Only into the month it was asked for — a month switch mid-flight must not be written over.
+      // A note stamped onto the row meanwhile (x.resNote) is newer than the detail and is kept.
       setData(d => (d && d.month === forMonth)
-        ? { ...d, items: d.items.map(x => (x.ownerId === it.ownerId && x.key === it.key) ? { ...x, lines, folio, slim: false } : x) }
+        ? { ...d, items: d.items.map(x => (x.ownerId === it.ownerId && x.key === it.key) ? { ...x, lines, folio, allocation, resNote: x.resNote || resNote, slim: false } : x) }
         : d)
     } catch (e: any) {
       setDetailErr(prev => ({ ...prev, [k]: String(e?.message || e).slice(0, 160) }))
@@ -1103,7 +1133,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
             )}
           </div>
           <div className="flex items-center gap-1.5 text-muted">
-            {it.resNote && <Tip label="Has a Guesty reservation note — open the row"><span aria-label="Guesty reservation note"><FileText size={13} className="text-muted" /></span></Tip>}
+            {(it.resNote || it.hasResNote) && <Tip label="Has a Guesty reservation note — open the row"><span aria-label="Guesty reservation note"><FileText size={13} className="text-muted" /></span></Tip>}
             {it.reservationId && (
               <Tip label="Open in Guesty"><a href={gyUrl(it.reservationId)} target="_blank" rel="noopener noreferrer" aria-label="Open in Guesty"
                 className="p-1 rounded-md hover:bg-app text-muted hover:text-brand-700 inline-flex"><ExternalLink size={13} /></a></Tip>

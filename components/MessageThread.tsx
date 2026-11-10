@@ -399,6 +399,9 @@ function ReplyBox({ conversationId, guest, channel, checkIn, signOff, lastGuestT
   const [note, setNote] = useState('')
   const who = guest || 'the guest'
   const box = useRef<HTMLTextAreaElement | null>(null)
+  // ONE PRESS, ONE MESSAGE. `busy` is state, and two presses in the same instant (a double click, a
+  // held Ctrl+Enter) both read it as free; this is set and read at once, so the second press stops here.
+  const sending = useRef(false)
 
   // WHAT YOU TYPED SURVIVES A LOOK AT ANOTHER THREAD. Kept per conversation for this browser tab
   // only (sessionStorage) and cleared the moment it is sent. Read after mount, so the server's HTML
@@ -445,9 +448,11 @@ function ReplyBox({ conversationId, guest, channel, checkIn, signOff, lastGuestT
 
   const send = async () => {
     const body = text.trim()
-    if (busy || !body) return
+    if (busy || sending.current || !body) return
     // One press sends. It asks again only when the text trips a rail.
     if (!confirmWarnings(warnings, who)) return
+    if (sending.current) return
+    sending.current = true
     setBusy('send'); setErr(null); setReceipt(null); setNote('')
     try {
       const res = await fetch('/api/messages/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId, body }) })
@@ -471,7 +476,7 @@ function ReplyBox({ conversationId, guest, channel, checkIn, signOff, lastGuestT
     } catch {
       // The request never got an answer. It may or may not have reached Guesty.
       setErr({ msg: 'Lost the connection while sending. It may or may not have gone — check the thread in Guesty before pressing Send again. Your text is still here.', kind: 'maybe_sent' })
-    } finally { setBusy('') }
+    } finally { sending.current = false; setBusy('') }
   }
 
   const openSaved = async () => {
@@ -581,6 +586,7 @@ function EveDraftCard({ conversationId, guest, guard, onSent }: { conversationId
   const [busy, setBusy] = useState<'' | 'send' | 'discard'>('')
   const [err, setErr] = useState('')
   const [done, setDone] = useState('')
+  const acting = useRef(false)
   useEffect(() => {
     let alive = true
     fetch('/api/eve/guest-drafts?conversation=' + encodeURIComponent(conversationId)).then(r => r.json()).then(r => {
@@ -596,6 +602,8 @@ function EveDraftCard({ conversationId, guest, guard, onSent }: { conversationId
     if (busy) return
     // Eve's draft was written without anyone watching, so sending it always asks — and lists what it tripped.
     if (op === 'send' && !(warnings.length ? confirmWarnings(warnings, guest || 'the guest') : confirm('Send this to ' + (guest || 'the guest') + ' now?'))) return
+    if (acting.current) return
+    acting.current = true
     setBusy(op); setErr('')
     try {
       const res = await fetch('/api/eve/guest-drafts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id: draft.id, body: text }) })
@@ -603,7 +611,7 @@ function EveDraftCard({ conversationId, guest, guard, onSent }: { conversationId
       if (!r?.ok) { setErr((op === 'send' ? 'Not sent — ' : '') + (r?.error || 'that did not work.') + (op === 'send' ? ' The draft is still here.' : '')); return }
       if (op === 'send') { onSent(text); setDone('Sent to ' + (guest || 'the guest') + '.') } else setDone('Discarded.')
       setDraft(null)
-    } catch { setErr(op === 'send' ? 'Lost the connection while sending. It may or may not have gone — check the thread in Guesty before sending again.' : 'Could not reach Lighthouse.') } finally { setBusy('') }
+    } catch { setErr(op === 'send' ? 'Lost the connection while sending. It may or may not have gone — check the thread in Guesty before sending again.' : 'Could not reach Lighthouse.') } finally { acting.current = false; setBusy('') }
   }
   return (
     <div className="border-t border-line px-3 sm:px-5 py-3 bg-brand-50/40">

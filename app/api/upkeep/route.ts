@@ -17,13 +17,13 @@ import { buildDueCalendar, setRecordedDay, type DueItem } from '@/lib/pm-calenda
 import { pageRows } from '@/lib/db-page'
 import { getNoService, skipsInspectionsIn } from '@/lib/no-service'
 import { CADENCE_KEY, resolveCadences, teamFor, type CadenceDef } from '@/lib/cadences'
-import { getSetting } from '@/lib/app-settings'
+import { getSetting, getSettingFresh, setSetting } from '@/lib/app-settings'
 import { requireLevel, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
 import { buildingOf, marketOf } from '@/lib/segments'
 import { getOperatingModel, weDo } from '@/lib/eve/operating-model'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { planUpkeep, type UpkeepPlan } from '@/lib/upkeep-plan'
+import { planUpkeep, teamVisits, type UpkeepPlan } from '@/lib/upkeep-plan'
 import { buildUnitCells } from '@/lib/upkeep-cells'
 import { bestDay, type DayPick } from '@/lib/upkeep-schedule'
 import { blockListingNights } from '@/lib/guesty'
@@ -100,7 +100,11 @@ export type Upkeep = {
   canProgram: boolean
   /** Per unit: filter size, quantity, location, notes — what the person sent needs to know. */
   info: Record<string, UnitInfo>
+  /** True on the summary: `programs[].rows` is empty and the rows come from ?rows=<key> | all. */
+  rowsOnDemand?: boolean
 }
+/** GET ?rows=<program key> | all — the unit rows the summary leaves off. */
+export type UpkeepRows = { ok: true; today: string; market: string; which: string; rows: Record<string, UpkeepRow[]>; info: Record<string, UnitInfo> }
 
 /** The duty the operating model has to say is ours for a cadence's department. */
 const DUTY_OF: Record<string, any> = { housekeeping: 'cleaning', maintenance: 'maintenance', inspection: 'inspections' }
@@ -138,23 +142,128 @@ function groupOf(c: CadenceDef): UpkeepProgram['group'] {
 // The order Jon named them, roughly: the A/C programs, the deep clean, the maintenance walks, the quality walks.
 const ORDER = ['pm_audit', 'deep_clean', 'ac_filter', 'ac_deep', 'ac_split_clean', 'batteries', 'unit_inspection', 'ffe_audit']
 
+// ── SPEED (2026-11-10: this read took 4.4 s and shipped 602 KB) ──────────────────────────────────
+// WHY IT WAS SLOW. (1) Every unit row of every program went out on every load — ~1,700 rows the
+// page only shows after a tile is opened. (2) The ledger was read one thing after another: the task
+// mirror twice over (lib/pm-calendar, now once, pages in parallel), then "who is going where", then
+// the unit info, each waiting for the one before. (3) Nothing was remembered: the tab ticking over,
+// a second person opening the page, the page's own follow-up request all recomputed everything.
+//
+// NOW. The whole board is computed ONCE per area and kept for 60 seconds (`core` below — nothing in
+// it depends on who is asking). From it:
+//   GET ?market=            → the SUMMARY: tiles, pills, totals. No unit rows. A few KB.
+//   GET ?market=&rows=<key> → that program's unit rows (+ the unit info they print), when its tile opens
+//   GET ?market=&rows=all   → every program's rows — the Calendar tab and the Grid need them all
+// The numbers are the same numbers: the summary is the full board with the rows left off.
+//
+// KEPT HONEST. A record / approve / decline / unit-info save stamps `upkeep_bust` in app_settings and
+// every read checks that stamp (one tiny query), so a change made on any server instance is seen by
+// all of them at once. A program saved in settings changes the cadence config's updatedAt, which is
+// part of the key. Otherwise the copy is at most 60 seconds old.
+type Core = {
+  at: number; sig: string; today: string; market: string
+  programs: UpkeepProgram[]                      // WITH rows
+  markets: string[]; buildings: string[]
+  totals: Upkeep['totals']
+  degraded: string[]; enabled: boolean
+  info: Record<string, UnitInfo>
+  /** Programs that need an approver and have at least one unit — who may approve is decided per request. */
+  approvalKeys: string[]
+  cadences: CadenceDef[]
+}
+const CORE_TTL_MS = 60_000
+const CORE = new Map<string, Core>()
+const CORE_INFLIGHT = new Map<string, Promise<Core>>()
+const BUST_KEY = 'upkeep_bust'
+/** When the board last changed by somebody's action (ms). 0 = never; null = could not be read (then nothing cached is trusted). */
+async function readBust(): Promise<number | null> {
+  try {
+    const { data, error } = await supabaseAdmin().from('app_settings').select('value').eq('key', BUST_KEY).limit(1)
+    if (error) return null
+    const raw = (data as any[])?.[0]?.value
+    if (!raw) return 0
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw
+    const n = Number(v && v.at)
+    return Number.isFinite(n) ? n : 0
+  } catch { return null }
+}
+/** Forget the kept board everywhere: here at once, and on the other instances through the stamp. */
+async function bustBoard(by?: string | null): Promise<void> {
+  CORE.clear()
+  try { await setSetting(BUST_KEY, { at: Date.now() }, by || 'upkeep') } catch { /* this instance is already fresh; the others catch up within the minute */ }
+}
+
+async function getCore(market: string, today: string): Promise<Core> {
+  // Fresh reads on purpose (both tiny): the stamp, and the cadence config whose updatedAt is the key.
+  const [bust, rawCfg] = await Promise.all([readBust(), getSettingFresh<any>(CADENCE_KEY, null).catch(() => null)])
+  const sig = market + '|' + String(rawCfg?.updatedAt || '') + '|' + today
+  const hit = CORE.get(market)
+  // 2 s of slack for clocks that disagree between instances: a stamp that close to the copy rebuilds it.
+  if (hit && hit.sig === sig && Date.now() - hit.at < CORE_TTL_MS && bust != null && bust < hit.at - 2000) return hit
+  // One build at a time per area: the page asks for the summary and a tile's rows together.
+  const flying = CORE_INFLIGHT.get(sig)
+  if (flying) return flying
+  const p = buildCore(market, today, sig).then(c => { CORE.set(market, c); return c }).finally(() => { CORE_INFLIGHT.delete(sig) })
+  CORE_INFLIGHT.set(sig, p)
+  return p
+}
+
 export async function GET(req: NextRequest) {
   const gate = await requireLevel('upkeep', 'view')
   if (!gate.ok) return gate.res
   const canEdit = atLeast(gate.access.levels['upkeep'], 'edit')
   const market = String(req.nextUrl.searchParams.get('market') || 'all')
+  const wantRows = String(req.nextUrl.searchParams.get('rows') || '').trim()
   const today = ymd(new Date())
   try {
+    const core = await getCore(market, today)
+    if (wantRows) {
+      const rows: Record<string, UpkeepRow[]> = {}
+      for (const p of core.programs) if (wantRows === 'all' || p.key === wantRows) rows[p.key] = p.rows
+      // Only the unit info these rows print (all of it for "all").
+      let info = core.info
+      if (wantRows !== 'all') { const ids = new Set((rows[wantRows] || []).map(r => r.listingId)); info = {}; for (const id of Object.keys(core.info)) if (ids.has(id)) info[id] = core.info[id] }
+      const body: UpkeepRows = { ok: true, today: core.today, market, which: wantRows, rows, info }
+      return NextResponse.json(body)
+    }
+    const me = String(gate.access.email || '').toLowerCase()
+    const myName = String(gate.access.profile?.name || gate.access.profile?.full_name || '')
+    const isAdmin = gate.access.role === 'admin'
+    const cadBy = new Map(core.cadences.map(c => [c.key, c]))
+    const canApprove = core.approvalKeys.filter(k => { const c = cadBy.get(k); return !!c && (isAdmin || isApprover(c, me, myName)) })
+    const out: Upkeep = {
+      ok: true, today: core.today, market, soonDays: SOON_DAYS,
+      markets: core.markets, buildings: core.buildings,
+      // THE SUMMARY: every number, no unit rows (they load when a tile is opened — ?rows=<key>).
+      programs: core.programs.map(p => ({ ...p, rows: [] })),
+      totals: core.totals,
+      degraded: core.degraded, enabled: core.enabled, canEdit, canApprove, me,
+      canProgram: isSuperadmin(gate.access.email),
+      info: {}, rowsOnDemand: true,
+    }
+    return NextResponse.json(out)
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
+  }
+}
+
+/** The whole board for one area — every program with its unit rows. Nothing here depends on who is asking. */
+async function buildCore(market: string, today: string, sig: string): Promise<Core> {
+  {
     const db = supabaseAdmin()
     // The ledger is PAGED (2026-11-09 audit): `.limit(3000)` still came back as PostgREST's 1,000,
     // so past the first thousand rows a "declined" note was not seen and the row asked for approval again.
-    const [cal, raw, om, ledgerPaged, feeRes, noSvc] = await Promise.all([
+    // ALL AT ONCE: "who is going where" (three weeks of open work) and the unit info used to wait for
+    // the ledger to finish; neither needs it.
+    const [cal, raw, om, ledgerPaged, feeRes, noSvc, visitsPre, infoRead] = await Promise.all([
       buildDueCalendar(today, { market, horizonDays: 400 }),
       getSetting<any>(CADENCE_KEY, null).catch(() => null),
       getOperatingModel().catch(() => null),
       pageRows<any>((a, b) => db.from('pm_schedule').select('listing_id,cadence_key,status,note,updated_at').order('listing_id').order('cadence_key').range(a, b), 10),
       db.from('guesty_listings').select('id,fee:raw->prices->>cleaningFee').limit(1000),
       getNoService().catch(() => null),
+      teamVisits(today, 21).catch(() => null),
+      getUnitInfo().then(v => ({ ok: true as const, v }), () => ({ ok: false as const, v: {} as Record<string, UnitInfo> })),
     ])
     const cfg = resolveCadences(raw)
     const cadBy = new Map(cfg.cadences.map(c => [c.key, c]))
@@ -162,9 +271,6 @@ export async function GET(req: NextRequest) {
     for (const r of ledgerPaged.rows) ledger.set(`${r.listing_id}|${r.cadence_key}`, r)
     const fee = new Map<string, number | null>()
     for (const r of ((feeRes.data as any[]) || [])) { const n = Number(r.fee); fee.set(String(r.id), Number.isFinite(n) && n > 0 ? n : null) }
-    const me = String(gate.access.email || '').toLowerCase()
-    const myName = String(gate.access.profile?.name || gate.access.profile?.full_name || '')
-    const isAdmin = gate.access.role === 'admin'
     const inertWhy = new Map(cal.inert.map(i => [i.key, i.why]))
     const byKey = new Map<string, UpkeepProgram>()
     const howOf = (c: CadenceDef) => {
@@ -218,7 +324,7 @@ export async function GET(req: NextRequest) {
         const declined = declinedOn && Date.parse(declinedOn + 'T12:00:00Z') > Date.now() - 30 * 86400_000 ? note : null
         const waiting = p.needsApproval && !it.scheduled && (state === 'late' || state === 'soon' || state === 'none') && !declined
         if (waiting) p.awaiting++
-        if (p.needsApproval && (isAdmin || isApprover(c, me, myName))) canApprove.add(c.key)
+        if (p.needsApproval) canApprove.add(c.key)
         p.rows.push({
           id: it.id, listingId: it.listingId, unit: it.unit, building, market: it.market,
           lastDone: it.lastDone, dueOn: it.dueOn, daysOver: it.daysOver, state, task: it.scheduled ? { id: it.scheduled.taskId, date: it.scheduled.date } : null, taskLate: taskLate || undefined, dept: it.dept, minutes: it.minutes, label: it.label,
@@ -238,10 +344,11 @@ export async function GET(req: NextRequest) {
       // Programs that ride the departure clean (and Salato) are booked on the next checkout instead.
       const want = Array.from(byKey.values()).filter(p => !cadBy.get(p.key)?.ridesDeparture).flatMap(p => p.rows.filter(r => (r.state === 'late' || r.state === 'soon' || r.state === 'none') && !r.task && !/salato/i.test(r.building))
         .map(r => ({ id: r.id, listingId: r.listingId, building: r.building, dept: r.dept, dueOn: r.dueOn, late: r.state === 'late', needsVacant: !!cadBy.get(p.key)?.needsVacant })))
-      const plans = await planUpkeep(want, today)
+      // Same plan as before; the visits were read alongside the ledger (a failed read falls back to reading them here).
+      const plans = await planUpkeep(want, today, 21, visitsPre || undefined)
       for (const p of Array.from(byKey.values())) for (const r of p.rows) if (r.id in plans) r.plan = plans[r.id]
     } catch { degradedPlan.push('smart booking (who is going where)') }
-    const info = await getUnitInfo().catch(() => ({} as Record<string, UnitInfo>))
+    const info = infoRead.v
     const rank: Record<UpkeepState, number> = { late: 0, soon: 1, none: 2, booked: 3, ok: 4 }
     for (const p of Array.from(byKey.values())) {
       p.units = new Set(p.rows.map(r => r.listingId)).size
@@ -260,20 +367,16 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => (ORDER.indexOf(a.key) < 0 ? 99 : ORDER.indexOf(a.key)) - (ORDER.indexOf(b.key) < 0 ? 99 : ORDER.indexOf(b.key)) || a.label.localeCompare(b.label))
     const sum = (k: UpkeepState) => programs.reduce((n, p) => n + p[k], 0)
     const lateUnits = new Set(programs.flatMap(p => p.rows.filter(r => r.state === 'late').map(r => r.listingId))).size
-    const out: Upkeep = {
-      ok: true, today, market, soonDays: SOON_DAYS,
+    return {
+      at: Date.now(), sig, today, market,
       markets: Array.from(markets).sort(), buildings: Array.from(buildings).sort(),
       programs,
       totals: { late: sum('late'), soon: sum('soon'), ok: sum('ok'), booked: sum('booked'), none: sum('none'), lateUnits, late90plus: programs.reduce((n, p) => n + p.late90plus, 0), awaiting: programs.reduce((n, p) => n + p.awaiting, 0),
         bookedLate: programs.reduce((n, p) => n + p.bookedLate, 0), onClock: programs.reduce((n, p) => n + p.rows.filter(r => r.source === 'clock').length, 0),
         units: new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size, live: programs.filter(p => !p.setup).length },
-      degraded: [...cal.degraded, ...(ledgerPaged.truncated ? ['the approvals ledger (a declined job may ask again)'] : []), ...degradedPlan], enabled: cal.enabled, canEdit, canApprove: Array.from(canApprove), me,
-      canProgram: isSuperadmin(gate.access.email),
-      info,
+      degraded: [...cal.degraded, ...(ledgerPaged.truncated ? ['the approvals ledger (a declined job may ask again)'] : []), ...degradedPlan], enabled: cal.enabled,
+      info, approvalKeys: Array.from(canApprove), cadences: cfg.cadences,
     }
-    return NextResponse.json(out)
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
 }
 
@@ -317,6 +420,7 @@ export async function POST(req: NextRequest) {
     // rewritten by the next proposal, decline or approval, and the date used to go with it.
     const kept = await setRecordedDay(listingId, cadenceKey, lastDone, me).catch(() => false)
     if (!kept) return NextResponse.json({ error: 'The date was written to the ledger but could not be saved to the recorded-dates list — press Save again.' }, { status: 500 })
+    await bustBoard(me)
     return NextResponse.json({ ok: true, lastDone, nextDue: shiftDay(lastDone, c.everyDays) })
   }
 
@@ -324,6 +428,7 @@ export async function POST(req: NextRequest) {
     // Unit info (filter size etc.) — not tied to a program; cadenceKey is whichever row it was edited from.
     try {
       const saved = await setUnitInfo(listingId, { filterSize: body?.filterSize, filterQty: body?.filterQty, filterLocation: body?.filterLocation, notes: body?.notes }, me)
+      await bustBoard(me)
       return NextResponse.json({ ok: true, info: saved })
     } catch (e: any) { return NextResponse.json({ error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
   }
@@ -349,6 +454,7 @@ export async function POST(req: NextRequest) {
     const note = `declined ${today} by ${me}${body?.reason ? ' — ' + String(body.reason).slice(0, 120) : ''}`
     const { error } = await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, next_due: shiftDay(today, 30), status: 'scheduled', note, updated_at: now }, { onConflict: 'listing_id,cadence_key' })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    await bustBoard(me)
     return NextResponse.json({ ok: true })
   }
 
@@ -415,6 +521,8 @@ export async function POST(req: NextRequest) {
     const { runExecutor } = await import('@/lib/eve/executors')
     const r = await runExecutor('task_create', { listingId, unit, title, department: c.dept, priority: 'normal', date, description, assignees }, { by: 'upkeep', actor: me, human: true })
     if (!r.ok) return NextResponse.json({ error: r.error || r.summary }, { status: 502 })
+    // The task exists from here on, whatever happens below: the kept board is stale.
+    await bustBoard(me)
     await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, next_due: today, status: 'created', task_id: String(r.ref || ''), task_date: date, note: `approved ${today} by ${me}`, updated_at: now }, { onConflict: 'listing_id,cadence_key' }).then(() => {}, () => {})
     // BLOCK THE NIGHTS (a person ticked it): only nights no live stay covers, re-read just now.
     let blocked: { from: string; to: string } | null = null, blockError: string | null = null

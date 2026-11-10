@@ -19,6 +19,29 @@ type Action = {
   evidence: any[]; first_seen: string | null; last_seen: string | null
   status: string; completed_at: string | null; completed_by: string | null
   reopened_count: number; note: string | null
+  /** The Breezeway task this row was sent in, with its state from the mirror (api/reviews/actions). */
+  task?: { id: string; date: string; state: 'sent' | 'open' | 'finished' | 'cancelled'; finishedAt: string | null } | null
+}
+
+const isLive = (a: Action) => a.status === 'open' || a.status === 'doing'
+
+/** Where the job stands, as one chip. A sent row links to its task. */
+function StatusChip({ a }: { a: Action }) {
+  const base = 'text-[10px] font-semibold px-1.5 py-0.5 rounded whitespace-nowrap '
+  const t = a.task
+  if (t && isLive(a)) {
+    const label = t.state === 'finished' ? 'Task finished' + (t.finishedAt ? ' ' + t.finishedAt.slice(5) : '') + ' — confirm'
+      : t.state === 'cancelled' ? 'Task cancelled — send again'
+        : 'In Breezeway' + (t.date ? ' ' + t.date.slice(5) : '')
+    const cls = t.state === 'finished' ? 'bg-emerald-100 text-emerald-700' : t.state === 'cancelled' ? 'bg-rose-100 text-rose-700' : 'bg-sky-100 text-sky-700'
+    return t.id
+      ? <a href={'https://app.breezeway.io/task/' + t.id} target="_blank" rel="noreferrer" title="Opens the task in Breezeway" className={base + cls + ' hover:underline'}>{label} {'\u2197'}</a>
+      : <span className={base + cls}>{label}</span>
+  }
+  if (a.status === 'doing') return <span className={base + 'bg-sky-100 text-sky-700'}>In progress</span>
+  if (a.status === 'done') return <span className={base + 'bg-emerald-100 text-emerald-700'} title={a.completed_by ? 'by ' + a.completed_by : undefined}>Done{a.completed_at ? ' ' + String(a.completed_at).slice(5, 10) : ''}</span>
+  if (a.status === 'dismissed') return <span className={base + 'bg-slate-100 text-slate-600'}>Not an issue</span>
+  return <span className={base + 'bg-amber-100 text-amber-800'}>To do</span>
 }
 
 const KINDS = [
@@ -39,60 +62,61 @@ const KIND_UI: Record<string, string> = {
   maintenance: 'bg-amber-50 text-amber-700 border-amber-200',
 }
 
-/** One complaint theme inside a unit's card. */
+/**
+ * One complaint-turned-job inside a unit's card.
+ *
+ * THE ROW (2026-11-10): what it is, where it stands, the guest's line that caused it, and ONE
+ * action — Done while it is live, Reopen once it is not. Start, "not an issue", the instruction for
+ * the field and the other quotes are behind the row's expand.
+ */
 function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => void }) {
   const [open, setOpen] = useState(false)
-  const busyDone = a.status === 'done' || a.status === 'dismissed'
+  const live = isLive(a)
   // "Cleanliness — 1201 Brickell" → "Cleanliness". The unit is the card heading; repeating it on
   // every line is noise.
   const short = a.title.split(' — ')[0]
+  const ev: any[] = Array.isArray(a.evidence) ? a.evidence : []
+  const first = ev[0] || null
+  const score = (e: any) => (e && e.rating ? (isBookingChannel(e.channel) ? ratingDisplay(e.rating, e.channel) : e.rating + '★') : '')
+  const small = 'inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-line text-muted hover:text-ink hover:bg-app'
   return (
-    <div className={'border-t border-line/60 ' + (busyDone ? 'opacity-55' : '')}>
+    <div className="border-t border-line/60 first:border-t-0">
       <div className="flex items-start gap-2 py-1.5">
-        <button onClick={() => setOpen(o => !o)} title={open ? 'Hide what guests said' : 'Show what guests said'} className="pt-0.5 flex-shrink-0">
+        <button onClick={() => setOpen(o => !o)} title={open ? 'Close' : 'What to do, every quote, other actions'} className="pt-0.5 flex-shrink-0">
           <ChevronRight size={12} className={'text-muted transition-transform ' + (open ? 'rotate-90' : '')} />
         </button>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 cursor-pointer" onClick={() => setOpen(o => !o)}>
           <div className="flex items-center gap-1.5 flex-wrap">
-            {a.severity === 'urgent' && !busyDone && <AlertTriangle size={11} className="text-rose-600 flex-shrink-0" />}
-            <span className={'text-[12.5px] font-semibold ' + (busyDone ? 'text-muted line-through' : 'text-ink')}>{short}</span>
+            {a.severity === 'urgent' && live && <AlertTriangle size={11} className="text-rose-600 flex-shrink-0" />}
+            <span className={'text-[12.5px] font-semibold ' + (live ? 'text-ink' : 'text-muted')}>{short}</span>
             <span className={'text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded border ' + (KIND_UI[a.kind] || 'bg-slate-100 text-muted border-line')}>{a.kind}</span>
+            <span onClick={e => e.stopPropagation()}><StatusChip a={a} /></span>
             {a.reopened_count > 0 && (
               <span className="text-[9px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-600 text-white inline-flex items-center gap-1"
                 title="Marked done, then guests raised it again — the fix did not hold">
                 <RotateCcw size={9} /> came back ×{a.reopened_count}
               </span>
             )}
+            {a.mentions > 1 && <span className="text-[10.5px] text-muted">{a.mentions} guests</span>}
           </div>
-          <div className="text-[12px] text-muted mt-0.5">{a.action}</div>
-          <div className="text-[10.5px] text-muted mt-0.5">
-            {a.mentions} mention{a.mentions === 1 ? '' : 's'}
-            {a.worst_rating != null ? ' · worst ' + a.worst_rating + '★' : ''}
-            {a.last_seen ? ' · ' + a.last_seen : ''}
-            {a.completed_by ? ' · by ' + a.completed_by : ''}
-          </div>
-        </div>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {!busyDone ? (
-            <>
-              {a.status !== 'doing' && (
-                <button onClick={() => onSet(a.id, 'doing')} title="Mark in progress"
-                  className="inline-flex items-center text-[11px] font-semibold px-1.5 py-1 rounded border border-line text-muted hover:text-ink hover:bg-app">
-                  <Play size={11} />
-                </button>
-              )}
-              <button onClick={() => onSet(a.id, 'done')} title="Mark complete"
-                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
-                <Check size={11} /> Done
-              </button>
-              <button onClick={() => onSet(a.id, 'dismissed')} title="Not a real issue"
-                className="inline-flex items-center text-[11px] px-1.5 py-1 rounded border border-line text-muted hover:text-ink hover:bg-app">
-                <X size={11} />
-              </button>
-            </>
+          {/* The review line that made this a job — the reason, in the guest's words. */}
+          {first && first.quote ? (
+            <p className={'text-[12px] mt-0.5 ' + (open ? '' : 'line-clamp-1 ') + (live ? 'text-ink/85' : 'text-muted')}>
+              {'“'}{first.quote}{'”'}
+              <span className="text-[10.5px] text-muted"> {[score(first), first.channel, first.at].filter(Boolean).join(' · ')}</span>
+            </p>
           ) : (
-            <button onClick={() => onSet(a.id, 'open')} title="Reopen"
-              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-line text-muted hover:text-ink hover:bg-app">
+            <p className="text-[12px] text-muted mt-0.5">{a.action}</p>
+          )}
+        </div>
+        <div className="flex-shrink-0">
+          {live ? (
+            <button onClick={() => onSet(a.id, 'done')} title="The fix is done — a new complaint after today brings it back"
+              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+              <Check size={11} /> Done
+            </button>
+          ) : (
+            <button onClick={() => onSet(a.id, 'open')} title="Put it back on the list" className={small}>
               <RotateCcw size={11} /> Reopen
             </button>
           )}
@@ -100,15 +124,29 @@ function Item({ a, onSet }: { a: Action; onSet: (id: string, status: string) => 
       </div>
       {open && (
         <div className="pl-5 pb-2 space-y-1">
-          {(a.evidence || []).map((e: any, i: number) => (
+          {first && first.quote ? <div className="text-[12px] text-ink"><span className="text-muted">What to do: </span>{a.action}</div> : null}
+          {ev.slice(1).map((e: any, i: number) => (
             <div key={i} className="text-[11.5px] border-l-2 border-rose-200 pl-2">
               <span className="text-ink">{'“'}{e.quote}{'”'}</span>
-              <div className="text-[10.5px] text-muted">
-                {e.at}{e.channel ? ' · ' + e.channel : ''}{e.rating ? ' · ' + (isBookingChannel(e.channel) ? ratingDisplay(e.rating, e.channel) : e.rating + '★') : ''}
-              </div>
+              <div className="text-[10.5px] text-muted">{[e.at, e.channel, score(e)].filter(Boolean).join(' · ')}</div>
             </div>
           ))}
-          {a.note && <div className="text-[11.5px] text-muted">Note: {a.note}</div>}
+          <div className="text-[10.5px] text-muted">
+            {a.mentions} mention{a.mentions === 1 ? '' : 's'}
+            {a.worst_rating != null ? ' · worst ' + a.worst_rating + '★' : ''}
+            {a.first_seen && a.first_seen !== a.last_seen ? ' · first ' + a.first_seen : ''}
+            {a.last_seen ? ' · last ' + a.last_seen : ''}
+            {a.completed_by ? ' · closed by ' + a.completed_by : ''}
+          </div>
+          {a.note && !a.task && <div className="text-[11.5px] text-muted">Note: {a.note}</div>}
+          {live && (
+            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+              {a.status !== 'doing' && (
+                <button onClick={() => onSet(a.id, 'doing')} title="Somebody is on it" className={small}><Play size={11} /> Mark in progress</button>
+              )}
+              <button onClick={() => onSet(a.id, 'dismissed')} title="Not a real issue — take it off the list" className={small}><X size={11} /> Not an issue</button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -258,34 +296,47 @@ function Dispatch({ unit, rows, onDone }: { unit: any; rows: Action[]; onDone: (
  * it that way.
  */
 function UnitCard({ unit, rows, onSet, onAll, onDispatch }: { unit: any; rows: Action[]; onSet: (id: string, s: string) => void; onAll: (ids: string[]) => void; onDispatch: (ids: string[], taskId: string, date: string) => void }) {
-  const live = rows.filter(r => r.status === 'open' || r.status === 'doing')
+  const live = rows.filter(isLive)
+  const closed = rows.filter(r => !isLive(r))
+  // Only what has not already gone to Breezeway (or whose task was cancelled) is offered for sending,
+  // so the same checklist is not dispatched twice.
+  const toSend = live.filter(r => !r.task || r.task.state === 'cancelled')
   const urgent = live.filter(r => r.severity === 'urgent').length
   const back = rows.filter(r => r.reopened_count > 0).length
+  // Finished rows fold away; a card with nothing live left opens them, or it would be an empty box.
+  const [showClosed, setShowClosed] = useState(false)
+  const closedOpen = showClosed || !live.length
   return (
     <div className="rounded-xl border border-line bg-white mb-2.5">
       <div className="flex items-center gap-2 px-3 py-2 bg-app/40 rounded-t-xl flex-wrap">
-        <a href={'/listings/' + unit.listing_id} className="inline-flex items-center gap-1 text-[13px] font-bold text-ink hover:text-brand-700">
-          {unit.unit || 'Unit'} <ExternalLink size={11} className="text-muted" />
+        <a href={'/listings/' + unit.listing_id} className="inline-flex items-center gap-1 text-[13px] font-bold text-ink hover:text-brand-700 min-w-0">
+          <span className="truncate max-w-[14rem]">{unit.unit || 'Unit'}</span> <ExternalLink size={11} className="text-muted shrink-0" />
         </a>
         {unit.building && <span className="text-[11px] text-muted">{unit.building}</span>}
-        <span className="text-[11px] text-muted">· {live.length} to check</span>
+        <span className="text-[11px] text-muted">· {live.length ? live.length + ' to check' : 'all closed'}</span>
         {!!urgent && <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-600 text-white">{urgent} urgent</span>}
         {!!back && <span className="text-[9.5px] uppercase font-semibold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 border border-rose-200">{back} came back</span>}
-        {!!live.length && (
-          <button onClick={() => onAll(live.map(r => r.id))}
-            className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
+        {live.length > 1 && (
+          <button onClick={() => onAll(live.map(r => r.id))} title="Everything on this unit is fixed"
+            className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded border border-line text-muted hover:text-ink hover:bg-white">
             <Check size={11} /> All done
           </button>
         )}
       </div>
       {/* Full width on its own row: the day strip needs the space when it opens. */}
-      {!!live.length && (
+      {!!toSend.length && (
         <div className="px-3 pt-2">
-          <Dispatch unit={unit} rows={live} onDone={onDispatch} />
+          <Dispatch unit={unit} rows={toSend} onDone={onDispatch} />
         </div>
       )}
       <div className="px-3 pb-1">
-        {rows.map(a => <Item key={a.id} a={a} onSet={onSet} />)}
+        {live.map(a => <Item key={a.id} a={a} onSet={onSet} />)}
+        {!!closed.length && !!live.length && (
+          <button onClick={() => setShowClosed(v => !v)} className="w-full flex items-center gap-1 text-[11px] font-semibold text-muted hover:text-ink py-1.5 border-t border-line/60">
+            <ChevronRight size={11} className={'transition-transform ' + (closedOpen ? 'rotate-90' : '')} /> {closed.length} closed
+          </button>
+        )}
+        {closedOpen && closed.map(a => <Item key={a.id} a={a} onSet={onSet} />)}
       </div>
     </div>
   )
@@ -339,7 +390,9 @@ export function ReviewActionBoard() {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }),
       })
       if (!r.ok) throw new Error('save failed')
-      if (view !== 'all') setTimeout(load, 350)
+      // The row stays in its card, folded under "closed", so a mis-tap can be undone in place; the
+      // header counts are nudged here and corrected by the next load.
+      setCounts(c => { const from = rows.find(x => x.id === id); const n = { ...c }; if (from && from.status !== status) { n[from.status] = Math.max(0, (n[from.status] || 0) - 1); n[status] = (n[status] || 0) + 1 } return n })
     } catch { load() }
   }
 
@@ -349,7 +402,7 @@ export function ReviewActionBoard() {
       await Promise.all(ids.map(id => fetch('/api/reviews/actions', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status: 'done' }),
       })))
-      if (view !== 'all') setTimeout(load, 400)
+      setTimeout(load, 400)
     } catch { load() }
   }
 
@@ -357,7 +410,7 @@ export function ReviewActionBoard() {
   // the Breezeway task id and date so this board can answer "was anything actually sent?".
   async function afterDispatch(ids: string[], taskId: string, date: string) {
     const note = 'Breezeway task ' + taskId + ' scheduled ' + date
-    setRows(rs => rs.map(r => (ids.includes(r.id) ? { ...r, status: 'doing', note } : r)))
+    setRows(rs => rs.map(r => (ids.includes(r.id) ? { ...r, status: 'doing', note, task: { id: taskId, date, state: 'sent' as const, finishedAt: null } } : r)))
     setMsg('Sent ' + ids.length + ' item' + (ids.length === 1 ? '' : 's') + ' to Breezeway for ' + date + ' (task ' + taskId + ')')
     try {
       await Promise.all(ids.map(id => fetch('/api/reviews/actions', {
@@ -375,7 +428,9 @@ export function ReviewActionBoard() {
     }
     return Object.values(by).sort((a, b) => {
       const u = (g: any) => g.rows.filter((r: Action) => r.severity === 'urgent' && (r.status === 'open' || r.status === 'doing')).length
-      return (u(b) - u(a)) || (b.rows.length - a.rows.length)
+      const l = (g: any) => g.rows.filter(isLive).length
+      // Cards with nothing live left sink to the bottom; then urgent, then the busiest.
+      return (Number(l(b) > 0) - Number(l(a) > 0)) || (u(b) - u(a)) || (l(b) - l(a))
     })
   })()
 
@@ -386,7 +441,7 @@ export function ReviewActionBoard() {
           title="What guests raised in the last 10 days, turned into jobs and grouped by unit — so one visit closes everything outstanding on that door. Tick them off as they are done. Anything marked done that a guest raises again comes back flagged, because a fix that did not hold is the argument for replacing something rather than repairing it again.">
           <ClipboardList size={13} /> Actions from feedback
         </span>
-        {!!counts.open && <span className="text-[12px] font-semibold text-ink">{counts.open} to do</span>}
+        {!!(counts.open || counts.doing) && <span className="text-[12px] font-semibold text-ink">{counts.open || 0} to do{counts.doing ? ' · ' + counts.doing + ' in progress' : ''}</span>}
         {!!groups.length && <span className="text-[11.5px] text-muted">across {groups.length} unit{groups.length === 1 ? '' : 's'}</span>}
         {!!counts.done && <span className="text-[11.5px] text-muted">· {counts.done} done</span>}
 

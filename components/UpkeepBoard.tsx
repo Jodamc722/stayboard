@@ -18,7 +18,7 @@ import Link from 'next/link'
 import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, CalendarDays, Pencil, Wrench, Sparkles, Fan, ClipboardCheck, Building2, Zap, ArrowRight } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { LeanHead, Pill, Tag, LeanEmpty, type Tone } from '@/components/lean'
-import type { Upkeep, UpkeepProgram, UpkeepRow, UpkeepState } from '@/app/api/upkeep/route'
+import type { Upkeep, UpkeepProgram, UpkeepRow, UpkeepState, UpkeepRows } from '@/app/api/upkeep/route'
 import { UpkeepCalendar } from '@/components/UpkeepCalendar'
 import { UpkeepPrograms } from '@/components/UpkeepPrograms'
 import { UpkeepProgramEdit } from '@/components/UpkeepProgramEdit'
@@ -96,7 +96,7 @@ export function UpkeepBoard() {
       if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not record it')
       setDone(d => ({ ...d, [r.id]: 'recorded ' + nice(j.lastDone) + ' · next ' + nice(j.nextDue) })); setRecording('')
       // Re-read, not only forget: the tile's numbers stayed as they were until the page was left and reopened.
-      invalidateCache(url(market)); refresh()
+      reread()
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
   }
   // AN APPROVER SAYS YES (Jon, 2026-10-07): the task is booked — next empty day, or the next departure
@@ -110,12 +110,12 @@ export function UpkeepBoard() {
       if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not ' + op)
       if (op === 'approve') { setFiled(f => ({ ...f, [r.id]: String(j.taskId || '') })); setDone(d => ({ ...d, [r.id]: 'booked ' + nice(j.date) + (Array.isArray(j.assignees) && j.assignees.length ? ' · ' + j.assignees.join(', ') : '') + (j.why ? ' — ' + j.why : '') + (j.blockAdvice ? ' · ' + j.blockAdvice : '') })) }
       else setDone(d => ({ ...d, [r.id]: 'declined — back in 30 days' }))
-      invalidateCache(url(market)); refresh()
+      reread()
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
   }
   // UNIT INFO (Jon, 2026-10-16: "should add info, like AC filter sizes etc"): saved per unit, printed
   // on every upkeep task booked for it.
-  const infoOf = (lid: string): any => (lid in infoLocal ? infoLocal[lid] : data?.info?.[lid]) || null
+  const infoOf = (lid: string): any => (lid in infoLocal ? infoLocal[lid] : unitInfo[lid]) || null
   const saveInfo = async () => {
     if (!infoEdit || busy) return
     setBusy('info'); setErr('')
@@ -124,7 +124,7 @@ export function UpkeepBoard() {
       const j = await res.json().catch(() => ({}))
       if (!res.ok || !j?.ok) throw new Error(j?.error || 'could not save the unit info')
       setInfoLocal(m => ({ ...m, [infoEdit.listingId]: j.info || null })); setInfoEdit(null)
-      invalidateCache(url(market))
+      invalidateCache(url(market)); if (rowsUrl) invalidateCache(rowsUrl)
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setBusy('') }
   }
   // Booking from the calendar changed the ledger, but re-reading while the calendar is open would
@@ -133,12 +133,29 @@ export function UpkeepBoard() {
   const calDirty = useRef(false)
   const rereadSoon = () => { calDirty.current = true }
   useEffect(() => {
-    if (tab !== 'calendar' && calDirty.current) { calDirty.current = false; invalidateCache(url(market)); refresh() }
+    if (tab !== 'calendar' && calDirty.current) { calDirty.current = false; invalidateCache(url(market)); invalidateCache(url(market) + '&rows=all'); refresh() }
   }, [tab, market, refresh])
   const pickMarket = (m: string) => { setMarket(m); try { localStorage.setItem('upkeep.market', m) } catch { /* fine */ } }
-  const reload = () => { invalidateCache(url(market)); refresh() }
+  const reload = () => reread()
 
-  const programs = data?.programs || []
+  // THE UNIT ROWS LOAD WHEN THEY ARE NEEDED (2026-11-10: the board shipped every row of every program
+  // on every load — 602 KB, 4.4 s). The first read is the summary; an opened tile asks for its own
+  // rows; the Calendar tab and the Grid need every program's, so they ask for all of them.
+  const rowsWhich = !data || !data.rowsOnDemand ? '' : tab === 'calendar' || (tab === 'programs' && !!open && view === 'grid') ? 'all' : tab === 'programs' && open ? open : ''
+  const rowsUrl = rowsWhich ? url(market) + '&rows=' + encodeURIComponent(rowsWhich) : null
+  const rowsQ = useCachedFetch<UpkeepRows>(rowsUrl, { ttl: 10 * 60_000, persist: false })
+  // Only rows read for THIS area and day; a summary from before this change still carries its own.
+  const rowsFor = rowsQ.data && rowsQ.data.market === market ? rowsQ.data.rows : null
+  const programs = useMemo(() => {
+    const base = data?.programs || []
+    if (!data?.rowsOnDemand) return base
+    return base.map(p => (rowsFor && rowsFor[p.key] ? { ...p, rows: rowsFor[p.key] } : p))
+  }, [data, rowsFor])
+  /** Are this program's unit rows on the page yet? (A program with no units has nothing to wait for.) */
+  const rowsReady = (p: UpkeepProgram) => !data?.rowsOnDemand || !(p.late + p.soon + p.ok + p.booked + p.none) || !!(rowsFor && rowsFor[p.key])
+  const unitInfo: Record<string, any> = data?.rowsOnDemand ? (rowsQ.data?.info || {}) : (data?.info || {})
+  // After anything that changes the ledger: the summary AND whichever rows are on screen.
+  const reread = () => { invalidateCache(url(market)); refresh(); if (rowsUrl) { invalidateCache(rowsUrl); rowsQ.refresh() } }
   const prog = programs.find(p => p.key === open) || null
   const rows = useMemo(() => {
     if (!prog) return [] as UpkeepRow[]
@@ -157,7 +174,7 @@ export function UpkeepBoard() {
       const live = programs.filter(p => !(p.setup || p.inert)).length, setup = programs.length - live
       const tiles = prop.data?.tiles || null
       const total = programs.length + (tiles ? tiles.length : 0)
-      return `${new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size} units · ${total} programs — ${live} on a clock${setup ? ` (+${setup} to set up)` : ''}${tiles ? ` · ${tiles.length} property program${tiles.length === 1 ? '' : 's'}` : ' · property programs not read yet'} · as of ${nice(data.today)}`
+      return `${t && typeof t.units === 'number' ? t.units : new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size} units · ${total} programs — ${live} on a clock${setup ? ` (+${setup} to set up)` : ''}${tiles ? ` · ${tiles.length} property program${tiles.length === 1 ? '' : 's'}` : ' · property programs not read yet'} · as of ${nice(data.today)}`
     })() : 'Recurring programs, every unit, on their clocks'}>
       {t ? <>
         <Pill tone={t.late ? 'roseSolid' : 'emerald'} title="Jobs past their due date">{t.late} late{t.lateUnits ? ' · ' + t.lateUnits + ' units' : ''}{t.late90plus ? ' · ' + t.late90plus + ' over 90d' : ''}</Pill>
@@ -165,7 +182,7 @@ export function UpkeepBoard() {
         {t.awaiting ? <Pill tone="amber" title="Due on a program that needs an approver's yes before it is booked">{t.awaiting} to approve</Pill> : null}
         <Pill tone="sky" title="Already on the board in Breezeway">{t.booked} booked</Pill>
         {t.bookedLate ? <Pill tone="amber" title="Booked, but the task's day has passed and it is still open — on the board, not done. Counted inside “booked”.">{t.bookedLate} booked past their day</Pill> : null}
-        {(() => { const n = programs.reduce((k, p) => k + p.rows.filter(r => r.source === 'clock').length, 0); return n ? <Pill tone="slate" title="Never recorded, so the clock was started — first rounds are spread over one interval. Record a real date to replace one.">{n} on a new clock</Pill> : null })()}
+        {(() => { const n = typeof t.onClock === 'number' ? t.onClock : programs.reduce((k, p) => k + p.rows.filter(r => r.source === 'clock').length, 0); return n ? <Pill tone="slate" title="Never recorded, so the clock was started — first rounds are spread over one interval. Record a real date to replace one.">{n} on a new clock</Pill> : null })()}
         {t.none ? <Pill tone="slate" title="Never recorded on this unit — a data gap more often than neglect">{t.none} no record</Pill> : null}
       </> : null}
       {data && data.markets.length > 1 ? (
@@ -235,8 +252,12 @@ export function UpkeepBoard() {
           </header>
           {(() => {
             const cp = programs.find(p => p.key === calProg) || null
+            // Every program's rows are needed here; say so while they load (or if they could not be read).
+            if (data.rowsOnDemand && !(rowsFor && rowsQ.data?.which === 'all')) return rowsQ.error
+              ? <p className="px-3 py-4 text-[12.5px] text-rose-700">The units could not be read ({rowsQ.error}). <button onClick={() => { if (rowsUrl) invalidateCache(rowsUrl); rowsQ.refresh() }} className="underline font-semibold">Try again</button></p>
+              : <p className="px-3 py-6 text-[12.5px] text-muted inline-flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Reading every unit that is due…</p>
             return <UpkeepCalendar key={calProg || 'all'} programs={programs} prog={cp} rows={cp ? cp.rows.filter(r => r.state !== 'ok') : []} building={building} q={q}
-              canEdit={!!data.canEdit} canApprove={data.canApprove || []} info={data.info || {}}
+              canEdit={!!data.canEdit} canApprove={data.canApprove || []} info={unitInfo}
               onBooked={(id, msg, taskId) => { setDone(d => ({ ...d, [id]: msg })); setFiled(f => ({ ...f, [id]: taskId })); rereadSoon() }} />
           })()}
         </section>
@@ -293,7 +314,7 @@ export function UpkeepBoard() {
             <span className="text-[11.5px] text-muted">{every(prog.everyDays)} · {prog.units} units{prog.equipment !== 'any' ? ' · ' + prog.equipment.replace('non-central', 'mini-split / wall') + ' A/C' : ''}</span>
             <span className="inline-flex items-center gap-1 flex-wrap ml-1">
               {(['all', ...ORDER] as const).map(k => {
-                const n = k === 'all' ? prog.rows.length : prog[k]
+                const n = k === 'all' ? prog.late + prog.soon + prog.ok + prog.booked + prog.none : prog[k]
                 if (k !== 'all' && !n) return null
                 return <button key={k} onClick={() => setState(k)} aria-pressed={state === k} className={'text-[11px] font-semibold px-2 h-6 rounded-md border ' + (state === k ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{k === 'all' ? 'Needs attention' : STATE[k].label} {n}</button>
               })}
@@ -315,7 +336,11 @@ export function UpkeepBoard() {
           </header>
           {prog ? <p className="px-3 py-1.5 text-[11.5px] text-muted border-b border-line bg-app/40">{prog.how}{prog.awaiting ? ` · ${prog.awaiting} waiting on an approver` : ''}{prog.late90plus ? ` · ${prog.late90plus} over 90 days late` : ''}</p> : null}
           {err ? <p className="px-3 py-1.5 text-[12px] text-rose-700 bg-rose-50 border-b border-rose-200">{err}</p> : null}
-          {view === 'grid' ? (
+          {!rowsReady(prog) || (view === 'grid' && data.rowsOnDemand && rowsQ.data?.which !== 'all') ? (
+            rowsQ.error
+              ? <p className="px-3 py-4 text-[12.5px] text-rose-700">This program’s units could not be read ({rowsQ.error}). <button onClick={() => { if (rowsUrl) invalidateCache(rowsUrl); rowsQ.refresh() }} className="underline font-semibold">Try again</button></p>
+              : <p className="px-3 py-5 text-[12.5px] text-muted inline-flex items-center gap-2"><Loader2 size={13} className="animate-spin" /> Reading {view === 'grid' ? 'every unit against every program' : 'its ' + prog.units + ' units'}…</p>
+          ) : view === 'grid' ? (
             <Matrix programs={programs} building={building} market={market} q={q} />
           ) : rows.length === 0 ? (
             <p className="px-3 py-4 text-[12.5px] text-muted">{state === 'all' ? 'Nothing needs attention here — every unit is on track or booked.' : 'Nothing in this state.'}</p>

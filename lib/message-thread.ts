@@ -119,6 +119,7 @@ export async function loadPhoneThreadData(number: string, access: Access): Promi
   if (t.reservationId) {
     const { data: r } = await sb.from('guesty_reservations').select(RES_COLS).eq('id', t.reservationId).maybeSingle()
     if (r) reservation = canSeeMoney(access) ? r : { ...r, money_total: null, money_balance: null, money_currency: null }
+    if (reservation && reservation.guest_name) reservation = { ...reservation, guest_name: cleanGuestName(reservation.guest_name, t.guestName) || reservation.guest_name }
   }
   return {
     kind: 'phone', number: t.number, display: t.display, guest: cleanGuestName(t.guestName || reservation?.guest_name, reservation?.guest_name) || t.display, unit: unitOf(reservation?.listing_name || ''),

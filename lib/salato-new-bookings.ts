@@ -90,7 +90,7 @@ export async function sendSalatoNewBookingTest(toEmail: string): Promise<{ ok: b
     nights: Number(r.nights) || 0, guests: Number(r.guestsCount) || null, source: str(r.source), code: str(r.confirmation_code) }))
   if (!rows.length) return { ok: false, error: 'no upcoming Salato stay to show' }
   const { subject, html } = newBookingsEmail(rows)
-  const r = await sendGmail({ fromEmail: cfg.fromEmail, to: [toEmail], subject: '[TEST] ' + subject, html })
+  const r = await sendGmail({ fromEmail: cfg.fromEmail, to: [toEmail], subject: '[TEST] ' + subject, html, source: 'salato-daily' })
   return { ok: r.ok, subject: '[TEST] ' + subject, error: r.error }
 }
 
@@ -145,7 +145,7 @@ export async function runSalatoNewBookingEmail(opts: { dryRun?: boolean } = {}):
   for (const f of fresh) state.sent[f.id] = today
   await writeState(state)
   const { subject, html } = newBookingsEmail(fresh)
-  const r = await sendGmail({ fromEmail, to, subject, html })
+  const r = await sendGmail({ fromEmail, to, subject, html, source: 'salato-daily' })
   if (!r.ok) {
     const back = await readState()
     for (const f of fresh) delete back.sent[f.id]

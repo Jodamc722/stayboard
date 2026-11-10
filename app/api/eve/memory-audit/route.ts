@@ -1,6 +1,8 @@
-// The memory audit: what Eve believes that is duplicated, contradictory, vague or unused.
+// The memory audit: what Eve believes that is duplicated, contradictory, vague or unused — and the
+// Memory clean-up card's two bulk actions (2026-11-10): merge every duplicate group, and retire what
+// she overheard in Slack and never used. Nothing is deleted; a person's memory is never touched.
 import { NextRequest, NextResponse } from 'next/server'
-import { auditMemory, applyMemoryDecision } from '@/lib/eve/memory-audit'
+import { auditMemory, applyMemoryDecision, mergeAllDuplicates, retireStaleSlack, cleanupLog, STALE_SLACK_DAYS } from '@/lib/eve/memory-audit'
 import { eveGate } from '../../agent/route'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 
@@ -11,7 +13,12 @@ export async function GET() {
   const gate = await eveGate()
   if (!gate.ok) return gate.res
   if (!isVrLogin(gate.access)) return hotelOnlyRes()
-  return NextResponse.json({ ok: true, ...(await auditMemory()) })
+  try {
+    const [audit, log] = await Promise.all([auditMemory(), cleanupLog(8)])
+    return NextResponse.json({ ok: true, ...audit, staleSlackDays: STALE_SLACK_DAYS, log })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -20,9 +27,18 @@ export async function POST(req: NextRequest) {
   if (!isVrLogin(gate.access)) return hotelOnlyRes()
   const body = await req.json().catch(() => ({} as any))
   const op = String(body?.op || '')
-  if (op !== 'expire' && op !== 'merge' && op !== 'keep') {
-    return NextResponse.json({ ok: false, error: 'op must be expire, merge or keep' }, { status: 400 })
+  const by = String(gate.access.email || 'unknown')
+  if (op === 'merge_all') {
+    const r = await mergeAllDuplicates(by)
+    return NextResponse.json(r, { status: r.ok ? 200 : 500 })
   }
-  const r = await applyMemoryDecision({ op, ids: Array.isArray(body?.ids) ? body.ids : [], by: String(gate.access.email || 'unknown') })
+  if (op === 'retire_slack') {
+    const r = await retireStaleSlack(by)
+    return NextResponse.json(r, { status: r.ok ? 200 : 500 })
+  }
+  if (op !== 'expire' && op !== 'merge' && op !== 'keep') {
+    return NextResponse.json({ ok: false, error: 'op must be expire, merge, keep, merge_all or retire_slack' }, { status: 400 })
+  }
+  const r = await applyMemoryDecision({ op, ids: Array.isArray(body?.ids) ? body.ids : [], by })
   return NextResponse.json(r, { status: r.ok ? 200 : 400 })
 }

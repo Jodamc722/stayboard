@@ -40,6 +40,8 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { rollupBuilding } from './optimize-score'
 import { pageRows } from './db-page'
+import { readInboxState } from './inbox-state'
+import { effectiveState, markTime, type InboxStateMap } from './inbox-queue'
 
 export type ConversationResponse = {
   conversation_id: string
@@ -355,6 +357,8 @@ export type AwaitingSet = {
   slaKnown: boolean
   /** True if the read hit the 1,000-row page — say so rather than show a short count as complete. */
   truncated: boolean
+  /** How many waiting threads the desk marked "no reply needed" or snoozed, and so are left out (0 when includeParked). */
+  parked?: number
   error?: string
 }
 
@@ -376,8 +380,15 @@ export function stillAwaiting(awaiting: any, lastGuestAt: any, now: number = Dat
  * on a run that began earlier is still waiting). `overdue` is past sla_due_at.
  *
  * Rows computed before migration 134 carry no awaiting_since and simply have no reply-by time.
+ *
+ * THE DESK'S MARKS COUNT (2026-11-10). A thread someone in the inbox marked "no reply needed", or
+ * snoozed, is not waiting — for Today's "guests waiting", Eve's unanswered watch and every other
+ * caller, not only for the inbox. The mark is measured against the guest's last message
+ * (lib/inbox-queue), so the guest writing again puts the thread straight back. If the marks cannot
+ * be read, nothing is left out: a guest is never hidden by a failed read. The inbox itself passes
+ * `includeParked` because it shows those threads in its Snoozed tab and applies the marks itself.
  */
-export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?: number } = {}): Promise<AwaitingSet> {
+export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?: number; includeParked?: boolean } = {}): Promise<AwaitingSet> {
   const db = opts.db || supabaseAdmin()
   const now = opts.now ?? Date.now()
   const from = isoNoMs(now - (opts.horizonHours ?? AWAITING_HORIZON_H) * 3600_000)
@@ -396,7 +407,9 @@ export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?:
   }
   if (res.error) return { rows: [], ids: [], overdue: 0, slaKnown: false, truncated: false, error: String(res.error.message || res.error).slice(0, 200) }
   const data: any[] = res.data || []
-  const rows: AwaitingRow[] = data.map(r => {
+  // Fail open: no marks read, no thread left out.
+  const marks: InboxStateMap = opts.includeParked ? {} : await readInboxState().catch(() => ({} as InboxStateMap))
+  const all: AwaitingRow[] = data.map(r => {
     let since = slaKnown && r.awaiting_since ? String(r.awaiting_since) : null
     let due = slaKnown && r.sla_due_at ? String(r.sla_due_at) : null
     // analyseThread never stores a run that began more than the horizon before the guest's latest
@@ -417,12 +430,19 @@ export async function awaitingSet(opts: { db?: any; now?: number; horizonHours?:
       overdue: !!due && Date.parse(due) <= now,
     }
   })
+  const rows = all.filter(r => {
+    const st = marks['g:' + r.conversation_id]
+    if (!st) return true
+    const e = effectiveState(st, markTime(null, r.last_guest_at), now)
+    return !e.done && !e.snoozed
+  })
   return {
     rows,
     ids: rows.map(r => r.conversation_id),
     overdue: rows.filter(r => r.overdue).length,
     slaKnown,
     truncated: data.length >= 1000,
+    parked: all.length - rows.length,
   }
 }
 

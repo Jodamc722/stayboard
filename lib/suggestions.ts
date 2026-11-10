@@ -45,7 +45,7 @@ import { linkedSets } from './linked-units'
 import { pendingForUnits, stampDescription, type PendingTask } from './pending-work'
 import { isLiveStay } from './stay-status'
 import {
-  CADENCE_KEY, resolveCadences, cadenceRe, daysBetween,
+  CADENCE_KEY, resolveCadences, cadenceRe, daysBetween, matchOrder,
   type CadenceCfg, type CadenceDef,
 } from './cadences'
 import { acTypeMap, equipmentMatches } from './unit-equipment'
@@ -474,7 +474,9 @@ export async function buildSuggestions(date: string): Promise<SuggestionRun> {
   // lives in — deliberately NOT the fuzzy Homebase name match, which cannot be trusted to place a
   // person in a building.
   // Compiled once, and used by BOTH the day loop and the history loop.
-  const liveRes = live.map(c => ({ c, re: cadenceRe(c.match) }))
+  // Page-made programs are matched first (lib/cadences matchOrder) — first match wins below, and a
+  // program named on the Upkeep page must see its own tasks before a loose shipped pattern takes them.
+  const liveRes = matchOrder(live).map(c => ({ c, re: cadenceRe(c.match) }))
     .filter(x => !!x.re) as { c: CadenceDef; re: RegExp }[]
 
   const deptOf = (v: any): CadenceDef['dept'] | 'other' => {

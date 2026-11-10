@@ -6,7 +6,6 @@
 // The whole board is keyed on when a booking was MADE, not when the stay happens. That is the
 // only honest way to answer "did marketing work in July?".
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { madeKind } from '@/lib/marketing'
 import { Search, RefreshCw, Download, Lock, AlertTriangle, Loader2 } from 'lucide-react'
 
 type Bucket = 'be' | 'website' | 'direct' | 'manual' | 'owner' | 'ota'
@@ -82,25 +81,17 @@ const fmtDay = (iso: string) => { if (!iso) return '—'; const d = new Date(iso
 const fmtDayY = (iso: string) => { if (!iso) return '—'; const d = new Date(iso + 'T12:00:00'); return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) }
 const addDays = (iso: string, n: number) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 const firstOfMonth = (iso: string) => iso.slice(0, 8) + '01'
-// Timezone-proof day shift for the last-year window (52 weeks back = the same weekdays).
-const shiftIso = (iso: string, n: number) => new Date(Date.parse(iso + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10)
-
 // DIRECT BOOKINGS MADE — the Sales report's count (lib/marketing madeKind): still standing, or
-// cancelled since. Null when the row list is not the whole window (the API ships at most 6,000
-// rows), because a count off part of a window is not a count.
-type Made = { made: number; cancelled: number; accom: number | null }
-function directMade(dt: Data | null): Made | null {
-  if (!dt || !dt.rows || dt.rowsTotal == null || dt.rowsTotal > dt.rows.length) return null
-  let made = 0, cancelled = 0, accom = 0, anyMoney = false
-  for (const r of dt.rows) {
-    if (r.family !== 'direct') continue
-    const k = madeKind(r.status)
-    if (!k) continue
-    made += 1
-    if (k === 'cancelled') cancelled += 1
-    if (typeof r.accom === 'number') { accom += r.accom; anyMoney = true }
-  }
-  return { made, cancelled, accom: anyMoney || dt.showMoney !== false ? accom : null }
+// cancelled since. Counted on the server by /api/marketing/made for three equal windows — this
+// one, the one before it, and the same weekdays last year — so both comparisons use ONE count and
+// no range is too long (the first version counted the shipped booking list, capped at 6,000 rows).
+type Made = { made: number; cancelled: number; accom: number | null; cancelledAccom: number | null }
+type MadeData = {
+  ok: boolean; showMoney?: boolean; error?: string
+  range?: { from: string; to: string; span: number }
+  prior?: { from: string; to: string }
+  lastYear?: { from: string; to: string }
+  now?: Made; before?: Made; ly?: Made
 }
 
 type PresetKey = 'mtd' | 'last30' | 'lastMonth' | 'last90' | 'ytd' | 'custom'
@@ -445,9 +436,9 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const [limit, setLimit] = useState(100)
   const [months, setMonths] = useState<MonthsData | null>(null)
   // The same weekdays last year (2026-11-09) — a second read of the same route, 364 days back.
-  const [ly, setLy] = useState<Data | null>(null)
-  const lyReq = useRef(0)
-  const [lyDone, setLyDone] = useState(false)
+  const [madeData, setMadeData] = useState<MadeData | null>(null)
+  const madeReq = useRef(0)
+  const [madeDone, setMadeDone] = useState(false)
 
   // `fresh` = the range itself changed. In that case the numbers on screen belong to a DIFFERENT
   // period, so they are cleared before the request goes out: a slow or failed load must never
@@ -456,8 +447,8 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   const load = useCallback(async (from?: string, to?: string, fresh?: boolean) => {
     setLoading(true); setErr('')
     if (fresh) setData(null)
-    const req = ++lyReq.current
-    setLy(null); setLyDone(false)
+    const req = ++madeReq.current
+    setMadeData(null); setMadeDone(false)
     try {
       const qs = from && to ? '?from=' + from + '&to=' + to : ''
       const r = await fetch('/api/public/marketing-report' + qs, { cache: 'no-store' })
@@ -473,18 +464,17 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
       setData(j)
       if (j.range) {
         setFromD(j.range.from); setToD(j.range.to)
-        // LAST YEAR, never blocking the board. Kept only if it is the window we asked for — a partner
-        // link pinned to a period answers with ITS period, and that is not last year — and only if
-        // this is still the newest request.
-        const lf = shiftIso(j.range.from, -364), lt = shiftIso(j.range.to, -364)
-        fetch('/api/public/marketing-report?from=' + lf + '&to=' + lt, { cache: 'no-store' })
+        // BOOKINGS MADE for this window, the one before and last year — never blocking the board,
+        // and kept only if it answers the window on screen and is still the newest request.
+        const wf = j.range.from, wt = j.range.to
+        fetch('/api/marketing/made?from=' + wf + '&to=' + wt, { cache: 'no-store' })
           .then(x => x.json())
-          .then((y: Data) => {
-            if (lyReq.current !== req) return
-            if (y && y.ok && y.range && y.range.from === lf && y.range.to === lt) setLy(y)
-            setLyDone(true)
+          .then((y: MadeData) => {
+            if (madeReq.current !== req) return
+            if (y && y.ok && y.range && y.range.from === wf && y.range.to === wt) setMadeData(y)
+            setMadeDone(true)
           })
-          .catch(() => { if (lyReq.current === req) setLyDone(true) })
+          .catch(() => { if (madeReq.current === req) setMadeDone(true) })
       }
     } catch (e: any) { setData(null); setErr(String(e && e.message ? e.message : e)) }
     setLoading(false)
@@ -598,9 +588,11 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
   }, [cur, prev])
   const buildingMax = buildingRows.reduce((m, b) => (b.now > m ? b.now : m), 0)
 
-  // Direct bookings MADE, this window and the same weekdays last year (see directMade).
-  const madeNow = useMemo(() => directMade(data), [data])
-  const madeLy = useMemo(() => directMade(ly), [ly])
+  // Direct bookings MADE: this window, the one before it, the same weekdays last year (see Made).
+  const madeNow = madeData && madeData.now ? madeData.now : null
+  const madeBefore = madeData && madeData.before ? madeData.before : null
+  const madeLy = madeData && madeData.ly ? madeData.ly : null
+  const lyRange = madeData && madeData.lastYear ? madeData.lastYear : null
 
   // ── password gate ─────────────────────────────────────────────────────────
   if (needsPw) {
@@ -645,8 +637,12 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
 
   // One sentence a partner can read without decoding a single tile.
   const takeaway = (() => {
-    const c = dirPrev.won ? (dirNow.won - dirPrev.won) / dirPrev.won : 0
-    const word = !dirPrev.won ? null : c > 0.005 ? 'up' : c < -0.005 ? 'down' : 'flat'
+    // On bookings MADE once that count is in (the figure the comparison line above shows); on
+    // bookings still standing until then, so the sentence never contradicts the line beside it.
+    const a = madeNow && madeBefore ? madeNow.made : dirNow.won
+    const b = madeNow && madeBefore ? madeBefore.made : dirPrev.won
+    const c = b ? (a - b) / b : 0
+    const word = !b ? null : c > 0.005 ? 'up' : c < -0.005 ? 'down' : 'flat'
     const tone = word === 'down' ? 'text-rose-700' : word === 'up' ? 'text-emerald-700' : 'text-ink'
     return (
       <>
@@ -676,7 +672,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
                 are already standing on the page; from 640px it is the full paragraph again. */}
             <p className="text-[13px] text-muted mt-1.5 leading-relaxed max-w-[80ch] line-clamp-2 sm:line-clamp-none">
               Every booking <strong className="text-ink">made</strong> between {fmtDayY(fromD)} and {fmtDayY(toD)} — counted on the day it came in, whenever the guest actually stays.
-              {data && data.compare ? <span> Measured against {fmtDay(data.compare.from)}&ndash;{fmtDay(data.compare.to)}{ly && ly.range ? <> and against the same weekdays last year ({fmtDayY(ly.range.from)}&ndash;{fmtDayY(ly.range.to)})</> : null}.</span> : null}
+              {data && data.compare ? <span> Measured against {fmtDay(data.compare.from)}&ndash;{fmtDay(data.compare.to)}{lyRange ? <> and against the same weekdays last year ({fmtDayY(lyRange.from)}&ndash;{fmtDayY(lyRange.to)})</> : null}.</span> : null}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -744,19 +740,30 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
               <div>
                 <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Direct bookings</div>
                 <div className="text-[54px] sm:text-6xl font-extrabold text-ink tracking-[-0.035em] leading-none mt-1.5">{dirNow.won}</div>
-                <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
-                  <Delta now={dirNow.won} before={dirPrev.won} />
-                  <span className="text-[11.5px] text-muted">vs previous {spanDays} days</span>
-                </div>
-                {/* vs LAST YEAR, on bookings MADE (still standing + cancelled since) — the Sales report's count. */}
-                {madeNow && madeLy && ly && ly.range ? (
-                  <div className="mt-1 flex items-baseline gap-2 flex-wrap"
-                    title={`Direct bookings made: ${madeNow.made} now (${madeNow.cancelled} cancelled since) vs ${madeLy.made} on ${fmtDayY(ly.range.from)} – ${fmtDayY(ly.range.to)} (${madeLy.cancelled} cancelled since)` + (!noMoney && madeNow.accom != null && madeLy.accom != null ? ` · ${money0(madeNow.accom)} vs ${money0(madeLy.accom)} booked value` : '')}>
-                    <Delta now={madeNow.made} before={madeLy.made} />
-                    <span className="text-[11.5px] text-muted">vs same weekdays last year · {madeNow.made} made vs {madeLy.made}</span>
-                  </div>
+                <div className="text-[11.5px] text-muted mt-1">still standing{madeNow ? <> · <span className="text-ink font-semibold tabular-nums">{madeNow.made}</span> made, {madeNow.cancelled} cancelled since</> : null}</div>
+                {/* BOTH comparisons on bookings MADE (standing + cancelled since) — the Sales report's count. */}
+                {madeNow && madeBefore && madeLy ? (
+                  <>
+                    <div className="mt-2.5 flex items-baseline gap-2 flex-wrap"
+                      title={`Direct bookings made: ${madeNow.made} (${madeNow.cancelled} cancelled since) vs ${madeBefore.made} in the ${spanDays} days before (${madeBefore.cancelled} cancelled since)` + (!noMoney && madeNow.accom != null && madeBefore.accom != null ? ` · ${money0(madeNow.accom)} vs ${money0(madeBefore.accom)} booked value` : '')}>
+                      <Delta now={madeNow.made} before={madeBefore.made} />
+                      <span className="text-[11.5px] text-muted">vs previous {spanDays} days · {madeBefore.made} made</span>
+                    </div>
+                    <div className="mt-1 flex items-baseline gap-2 flex-wrap"
+                      title={`Direct bookings made: ${madeNow.made} (${madeNow.cancelled} cancelled since) vs ${madeLy.made}${lyRange ? ` on ${fmtDayY(lyRange.from)} – ${fmtDayY(lyRange.to)}` : ''} (${madeLy.cancelled} cancelled since)` + (!noMoney && madeNow.accom != null && madeLy.accom != null ? ` · ${money0(madeNow.accom)} vs ${money0(madeLy.accom)} booked value` : '')}>
+                      <Delta now={madeNow.made} before={madeLy.made} />
+                      <span className="text-[11.5px] text-muted">vs same weekdays last year · {madeLy.made} made</span>
+                    </div>
+                  </>
                 ) : (
-                  <div className="mt-1 text-[11.5px] text-muted">{!lyDone ? 'Last year: loading…' : ly ? 'Last year: too many bookings in this range to compare one by one — pick a shorter range' : 'Last year: not available for this view'}</div>
+                  <>
+                    {/* Until the made-count is in (or if it fails): the standing count against the period before. */}
+                    <div className="mt-2.5 flex items-baseline gap-2 flex-wrap">
+                      <Delta now={dirNow.won} before={dirPrev.won} />
+                      <span className="text-[11.5px] text-muted">vs previous {spanDays} days · still standing</span>
+                    </div>
+                    <div className="mt-1 text-[11.5px] text-muted">{madeDone ? 'Last year: could not be read — Refresh to try again' : 'Last year: loading…'}</div>
+                  </>
                 )}
                 <p className="text-[13px] text-muted mt-3.5 max-w-[34ch] leading-relaxed">{takeaway}</p>
               </div>
@@ -1006,7 +1013,7 @@ export function MarketingBoard({ partner }: { partner?: boolean }) {
 
           <p className="text-[11px] text-muted px-1 pb-2">
             Booking dates are Eastern time. Revenue is accommodation before channel fees (no cleaning, no taxes) on bookings that are confirmed, in house or completed — canceled bookings and open inquiries carry $0; `closed` requests that never booked count as canceled, never as bookings.
-            {' '}Two comparisons, two counts: <strong className="text-ink">vs the previous period</strong> counts bookings still standing; <strong className="text-ink">vs last year</strong> counts bookings MADE — standing plus cancelled since, the Sales report’s rule — because last year’s have had a year to cancel. Owner stays are their own line here; Sales also leaves out friends-and-family bookings, so its Direct figure can be a little lower.
+            {' '}The big number is direct bookings still standing. Both comparisons under it — <strong className="text-ink">vs the previous period</strong> and <strong className="text-ink">vs the same weekdays last year</strong> — count bookings MADE: standing plus cancelled since, the Sales report’s rule, because an older window has had longer to cancel. The small arrows on the tiles below compare standing figures with the previous period. Owner stays are their own line here; Sales also leaves out friends-and-family bookings, so its Direct figure can be a little lower.
             {partner ? ' Guest names are shortened on this link.' : ''}
           </p>
         </>

@@ -249,6 +249,41 @@ async function copyPhotos(db: any, reportId: string, files: any[]): Promise<{ pa
   return { paths, error }
 }
 
+/**
+ * TRY THE PHOTOS AGAIN (2026-11-10). A report whose photos could not be copied when it was read
+ * ("N photos in Slack — not copied yet") stayed that way for good: the scan only retries when MORE
+ * photos arrive, and Autofill attached whatever had been copied — often nothing — without a word.
+ * This re-reads the post (and its thread) from Slack and copies its photos; the caller says so when
+ * it still fails. Reads Slack only; posts nothing. Mutates and returns the report.
+ */
+export async function recopyHkPhotos(rep: HkReport): Promise<{ copied: number; missing: number; error: string | null }> {
+  const before = rep.photos.length
+  try {
+    const isImg = (f: any) => /^image\//.test(str(f?.mimetype)) || /\.(jpe?g|png|heic|webp)$/i.test(str(f?.name))
+    const h = await slackGet('conversations.history', { channel: HK_CHANNEL_ID, latest: rep.id, inclusive: 'true', limit: '1' })
+    if (!h.ok) return { copied: 0, missing: Math.max(0, rep.photoCount - before), error: 'Slack: ' + str(h.error) }
+    const m: any = h.messages && h.messages[0]
+    const files: any[] = []
+    if (m && str(m.ts) === rep.id) {
+      files.push(...(Array.isArray(m.files) ? m.files : []))
+      if ((m.reply_count || 0) > 0) {
+        const t = await slackGet('conversations.replies', { channel: HK_CHANNEL_ID, ts: rep.id, limit: '50' })
+        for (const y of ((t.ok && t.messages) || []) as any[]) if (y.ts !== rep.id && !y.bot_id) files.push(...(Array.isArray(y.files) ? y.files : []))
+      }
+    }
+    const imgs = files.filter(isImg)
+    if (!imgs.length) return { copied: 0, missing: Math.max(0, rep.photoCount - before), error: rep.photoError || 'The photos were posted as separate messages — open the post in Slack and add them to the claim by hand' }
+    const cp = await copyPhotos(supabaseAdmin(), rep.id, imgs)
+    rep.photos = Array.from(new Set([...rep.photos, ...cp.paths]))
+    if (imgs.length > rep.photoCount) rep.photoCount = imgs.length
+    const missing = Math.max(0, rep.photoCount - rep.photos.length)
+    rep.photoError = missing > 0 ? (cp.error || 'Some photos could not be copied') : null
+    return { copied: rep.photos.length - before, missing, error: rep.photoError }
+  } catch (e: any) {
+    return { copied: 0, missing: Math.max(0, rep.photoCount - before), error: String(e?.message || e).slice(0, 160) }
+  }
+}
+
 async function permalink(ts: string): Promise<string | null> {
   const j = await slackGet('chat.getPermalink', { channel: HK_CHANNEL_ID, message_ts: ts })
   return j.ok ? str(j.permalink) || null : null

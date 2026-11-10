@@ -365,7 +365,7 @@ function PatternsView({ all, board, onDrill }: { all: Glitch[]; board: any; onDr
         <div className="rounded-2xl border border-line bg-white p-4">
           <div className="text-sm font-semibold text-ink mb-2">Board categories{focused ? ' \u2014 ' + (uFilter || bFilter) : ''}</div>
           <div className="flex flex-wrap gap-1.5 text-[11px]">
-            {Object.entries(bg.reduce((m: Record<string, number>, g: any) => { if (g.category) m[g.category] = (m[g.category] || 0) + 1; return m }, {})).sort((a: any, b: any) => b[1] - a[1]).map(([k, n]: any) => (
+            {Object.entries(bg.reduce((m: Record<string, number>, g: any) => { if (g.category && g.category !== 'Duplicate') m[g.category] = (m[g.category] || 0) + 1; return m }, {})).sort((a: any, b: any) => b[1] - a[1]).map(([k, n]: any) => (
               <Tag key={k} title={k}>{k.replace('Maintenance - ', '')} {n}</Tag>
             ))}
           </div>

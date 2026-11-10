@@ -181,6 +181,7 @@ export function GlitchBoard() {
   const [err, setErr] = useState('')
   const [market, setMarket] = useState('all')
   const [showNew, setShowNew] = useState(false)
+  const [newPrefill, setNewPrefill] = useState<{ reservationId?: string; listingId?: string } | null>(null)
   const [open, setOpen] = useState<string>('')
   const [people, setPeople] = useState<{ id: number; name: string; departments: string[] }[]>([])
   const [refundFor, setRefundFor] = useState('')  // glitch id whose refund logger is open
@@ -235,6 +236,15 @@ export function GlitchBoard() {
       if (id) { linked.current = id; setOpen(id) }
       const qq = (sp.get('q') || '').trim()
       if (qq) setQ(qq)
+      // ?new=1&reservation=<id>&unit=<listingId> opens New glitch already filled in, and the three
+      // parameters leave the address so a reload does not open it again.
+      if (sp.get('new') === '1') {
+        setNewPrefill({ reservationId: (sp.get('reservation') || '').trim() || undefined, listingId: (sp.get('unit') || '').trim() || undefined })
+        setShowNew(true)
+        const u = new URL(window.location.href)
+        u.searchParams.delete('new'); u.searchParams.delete('reservation'); u.searchParams.delete('unit')
+        window.history.replaceState(null, '', u.pathname + u.search)
+      }
     } catch { /* no URL, no deep link */ }
   }, [])
   // Closing a linked card drops ?id= from the address, so a reload does not reopen it.
@@ -312,6 +322,33 @@ export function GlitchBoard() {
     for (const ids of Object.values(by)) if (ids.length > 1) for (const id of ids) out[id] = ids.length
     return out
   }, [glitches])
+  // The same groups as cards, oldest first — the first report is the one a merge keeps.
+  const dupGroups = useMemo(() => {
+    const by: Record<string, Glitch[]> = {}
+    for (const g of glitches) {
+      if (!g.reservation_id || !g.category || laneOf(g.status).key === 'closed') continue
+      const k = g.reservation_id + '|' + g.category
+      ;(by[k] = by[k] || []).push(g)
+    }
+    return Object.values(by).filter(l => l.length > 1).map(l => l.slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))))
+  }, [glitches])
+  const [merging, setMerging] = useState('')
+  const mergeGroup = async (group: Glitch[]) => {
+    const keep = group[0], others = group.slice(1)
+    if (!window.confirm('Merge ' + group.length + ' cards for ' + (keep.unit || 'this unit') + (keep.guest_name ? ' · ' + keep.guest_name : '') + '?\n\n'
+      + 'The first report (' + etDay(keep.created_at) + ') is kept. Photos, notes and history from the other ' + (others.length === 1 ? 'card' : others.length + ' cards') + ' move onto it, and '
+      + (others.length === 1 ? 'that card is' : 'those cards are') + ' closed as "Duplicate".\n\nNothing is deleted — reopen a closed duplicate to undo. Nothing is sent to anyone.')) return
+    setMerging(keep.id); setErr('')
+    try {
+      for (const o of others) {
+        const r = await fetch('/api/glitches/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: keep.id, action: 'merge', mergeId: o.id }) })
+        const j = await r.json().catch(() => ({} as any))
+        if (!r.ok || !j.ok) { setErr(j.error || 'The merge did not finish.'); break }
+      }
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setMerging('')
+    load()
+  }
   // "/" jumps to the search, "n" starts a glitch — unless you are typing or a card is open.
   const searchRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -405,10 +442,28 @@ export function GlitchBoard() {
       <Sheet open={showTrain} onClose={() => setShowTrain(false)} title="Train the refund advisor" subtitle="House guidance and saved cases — read on every recommendation">
         {showTrain ? <RefundTraining compact /> : null}
       </Sheet>
-      {showNew && <NewGlitch onDone={() => { setShowNew(false); load() }} onCancel={() => setShowNew(false)} />}
+      {showNew && <NewGlitch prefill={newPrefill} onDone={() => { setShowNew(false); setNewPrefill(null); load() }} onCancel={() => { setShowNew(false); setNewPrefill(null) }} />}
 
       {/* FOR MANAGERS: what is waiting on your signature (Jon, 2026-10-02). Cards the team marked
           complete sit in Guest follow-up with a badge; this row puts them one click away. */}
+      {/* THE SAME ISSUE FILED TWICE (2026-11-10): one line per pair, one tap to fold them together. */}
+      {dupGroups.length > 0 && !filtering ? (
+        <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50/60 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] font-bold text-amber-900">{dupGroups.length} possible duplicate{dupGroups.length === 1 ? '' : 's'}</span>
+          {dupGroups.slice(0, 6).map(grp => (
+            <span key={grp[0].id} className="inline-flex items-center rounded-lg border border-amber-200 bg-white overflow-hidden">
+              <button onClick={() => setOpen(grp[0].id)} title="Open the first report" className="text-[12px] font-semibold px-2.5 min-h-[36px] sm:min-h-[28px] text-amber-900 hover:bg-amber-50">
+                {grp[0].unit || 'No unit'} · {String(grp[0].category || '').replace(/^Maintenance - /, '')} ×{grp.length}
+              </button>
+              <button onClick={() => mergeGroup(grp)} disabled={!!merging} title="Keep the first report, move the others' photos, notes and history onto it, close the others as Duplicate"
+                className="text-[12px] font-semibold px-2.5 min-h-[36px] sm:min-h-[28px] border-l border-amber-200 bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50">
+                {merging === grp[0].id ? 'Merging…' : 'Merge'}
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       {/* REFUNDS FIRST (2026-11-09): a refund over the cap is a guest waiting on money, so for an
           approver it leads; the close sign-offs follow. Each chip opens the card where the decision is. */}
       {canApprove && (toApprove.refunds.length > 0 || toApprove.closes.length > 0) ? (
@@ -1599,7 +1654,11 @@ function ResPicker({ busy, onPick, initialQuery }: { busy: boolean; onPick: (m: 
   )
 }
 
-function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
+function NewGlitch({ onDone, onCancel, prefill }: { onDone: () => void; onCancel: () => void; prefill?: { reservationId?: string; listingId?: string } | null }) {
+  // OPENED FROM ANOTHER PAGE (2026-11-10): /glitches?new=1&reservation=<id>&unit=<listingId>. With a
+  // reservation the stay is filled in and the form starts on "what went wrong"; with only a unit the
+  // glitch is filed against that unit with no stay. Either can be changed before saving.
+  const [preUnit, setPreUnit] = useState<{ listingId: string; unit: string } | null>(null)
   const [step, setStep] = useState(0)
   const [furthest, setFurthest] = useState(0)
   const [q, setQ] = useState('')
@@ -1654,6 +1713,7 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
       const body: Record<string, any> = {
         glitchType, category, incidentDate, overview, guestTone, reportedVia, photos, reportedBy, guestEmail, priority,
       }
+      if (!res && preUnit) Object.assign(body, { listingId: preUnit.listingId, unit: preUnit.unit })
       if (res) Object.assign(body, { reservationId: res.reservationId, listingId: res.listingId, unit: res.unit, market: res.market, guestName: res.guestName, guestPhone: res.guestPhone, channel: res.channel, checkIn: res.checkIn, checkOut: res.checkOut, reservationTotal: res.total, reservationNotes: res.notes, sentiment: res.sentiment })
       const r = await fetch('/api/glitches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const j = await r.json()
@@ -1675,12 +1735,35 @@ function NewGlitch({ onDone, onCancel }: { onDone: () => void; onCancel: () => v
   }
   const blocked = blockedAt(step)
   const go = (i: number) => { setStep(i); if (i > furthest) setFurthest(i) }
+  const prefilled = useRef(false)
+  useEffect(() => {
+    if (prefilled.current || !prefill || (!prefill.reservationId && !prefill.listingId)) return
+    prefilled.current = true
+    ;(async () => {
+      try {
+        if (prefill.reservationId) {
+          const r = await fetch('/api/glitches?reservation=' + encodeURIComponent(prefill.reservationId), { cache: 'no-store' })
+          const j = await r.json().catch(() => ({} as any))
+          const m: ResMatch | undefined = r.ok && j.ok && Array.isArray(j.matches) ? j.matches[0] : undefined
+          if (m) { setRes(m); setNoRes(false); if (m.guestEmail) setGuestEmail(m.guestEmail); setStep(1); setFurthest(f => Math.max(f, 1)); return }
+          setErr('That reservation could not be found — search for the guest instead.')
+        }
+        if (prefill.listingId) {
+          const r = await fetch('/api/listings?slim=1', { cache: 'no-store' })
+          const j = await r.json().catch(() => ({} as any))
+          const l = (Array.isArray(j?.results) ? j.results : []).find((x: any) => String(x?.id) === prefill.listingId)
+          if (l) { setPreUnit({ listingId: String(l.id), unit: String(l.nickname || l.title || 'Unit') }); setNoRes(true); setStep(1); setFurthest(f => Math.max(f, 1)) }
+          else setErr('That unit could not be found — search for the guest instead.')
+        }
+      } catch (e: any) { setErr('Could not fill the form in: ' + String(e?.message || e)) }
+    })()
+  }, [prefill])
   const next = () => { if (step >= STEPS.length - 1) { create(); return } go(step + 1) }
 
   const catChips = (moreCats ? CAT_CHIPS : CAT_CHIPS.slice(0, 7))
   const stayLine = res
     ? res.unit + ' · ' + fmtShort(res.checkIn) + ' → ' + fmtShort(res.checkOut) + (res.channel ? ' · ' + res.channel : '')
-    : 'No reservation attached'
+    : preUnit ? preUnit.unit + ' · no reservation attached' : 'No reservation attached'
 
   return (
     <Sheet

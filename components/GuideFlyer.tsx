@@ -17,6 +17,7 @@ import { useEffect } from 'react'
 import { guideData, qrSrc, LOGO_URL } from '@/components/GuideMobile'
 import { themeForBook } from '@/lib/guide-themes'
 import { printPrefs } from '@/lib/guide-print'
+import { flyerLabel, flyerSignoffDefault, FLYER_WELCOME_DEFAULT } from '@/lib/guide-voice'
 
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif"
 const SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -41,11 +42,11 @@ export function GuideFlyer({ gb, screen = false, autoPrint = false }: { gb: any;
   // THE WELCOME (Jon, 2026-11-06: "have a welcome message and get rid of the parking, the beach etc.").
   // Editable per book in the editor's labels (flyer.welcome / flyer.signoff). Surfside speaks as Vanessa &
   // Taylor, never Stay Hospitality.
-  const lab = (k: string) => { const v = (d.s._labels || {})[k]; return typeof v === 'string' && v.trim() ? v.trim() : '' }
-  const surfside = /surfside|boynton/i.test([gb?._unit, gb?._building, gb?._nickname, gb?.listing_name, gb?.title, d.address].join(' '))
   // A welcome, not a road map (Jon, 2026-11-06): thanks for booking, have a wonderful time.
-  const welcome = lab('flyer.welcome') || "Thank you so much for choosing to stay with us. We hope this place feels like home from the moment you walk in, and that you make some wonderful memories here. We're a small, local team, so reviews mean the world to our business — if you love your stay, a few kind words in your booking app truly help us. Enjoy every minute."
-  const signoff = lab('flyer.signoff') || (surfside ? 'Vanessa & Taylor' : 'Your hosts at Stay Hospitality')
+  // The words and who signs them come from lib/guide-voice (one helper for every version); the editor's
+  // Print options › 1-pager fields save the two labels, and an empty field is the default again.
+  const welcome = flyerLabel(gb, 'flyer.welcome') || FLYER_WELCOME_DEFAULT
+  const signoff = flyerLabel(gb, 'flyer.signoff') || flyerSignoffDefault(gb)
 
   return (
     <div className={'gf-wrap' + (screen ? ' gf-screen' : '')}>

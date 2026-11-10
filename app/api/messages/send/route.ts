@@ -55,6 +55,14 @@ function certainlyNotSent(err: string): boolean {
 
 type Dup = { at: number; unconfirmed: boolean }
 
+// THE SAME MESSAGE, PRESSED TWICE AT ONCE (2026-11-10). recentSend below reads what has already been
+// recorded — two requests that arrive together both read "nothing yet" and both send. A send claims
+// its thread + text here before it reads anything and lets go when it finishes, so the second one
+// is refused while the first is still on its way to Guesty. Per server instance; the reply box also
+// refuses a second press on its side, and recentSend still covers everything after the first lands.
+const inFlight = new Map<string, number>()
+const IN_FLIGHT_MS = 90_000
+
 /** The most recent send of this exact text to this thread in the last two minutes, if any. Fails open. */
 async function recentSend(db: any, conversationId: string, body: string, fp: string): Promise<Dup | null> {
   const since = new Date(Date.now() - DUP_WINDOW_MS).toISOString()
@@ -101,6 +109,13 @@ export async function POST(req: NextRequest) {
   const channel = str((conv as any).channel) || null
 
   const fp = fingerprintOf(body)
+  const claim = conversationId + ':' + fp
+  const held = inFlight.get(claim)
+  if (held && Date.now() - held < IN_FLIGHT_MS) {
+    return NextResponse.json({ ok: false, duplicate: true, error: 'This exact message is already being sent — wait a moment and look at the thread.' }, { status: 409 })
+  }
+  inFlight.set(claim, Date.now())
+  try {
   const dup = await recentSend(db, conversationId, body, fp).catch(() => null)
   if (dup) {
     const ago = Math.max(1, Math.round((Date.now() - dup.at) / 1000))
@@ -146,4 +161,5 @@ export async function POST(req: NextRequest) {
   bustDay()
 
   return NextResponse.json({ ok: true, module: via, id: r.ref && r.ref !== conversationId ? r.ref : null, at, by: who })
+  } finally { inFlight.delete(claim) }
 }

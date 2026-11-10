@@ -34,7 +34,7 @@
 // LEAN PASS (2026-09-22, Jon: "should be clean, one liners and tags"): the KPI tiles became header
 // pills, the par paragraph and the explainers moved into hover titles, and the stacked sections
 // became tabs.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   ChevronRight, RefreshCw, ExternalLink,
   AlertTriangle, MessageSquare, ClipboardCheck, Check, X, TrendingDown, TrendingUp,
@@ -511,23 +511,66 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
   const showAll = unitView === 'all'
   // On a phone the four pickers fold behind one "Filters" button; from sm up they are always inline.
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [d, setD] = useState<any>(null)
+  // THE NUMBERS ARRIVE IN SLICES (2026-11-10). `head` is what the first screen draws — header,
+  // channel cards, the top of the at-risk list, the tab counts — and each table is asked for when
+  // its tab opens (/api/reviews/kpi?part=…). Every slice is cut from one cached build on the server,
+  // so they cannot disagree. "Recalculate" asks for the whole thing uncached and fills every slice.
+  const [head, setHead] = useState<any>(null)
+  const [parts, setParts] = useState<Record<string, any>>({})
+  const [got, setGot] = useState<Record<string, boolean>>({})
+  const [partBusy, setPartBusy] = useState('')
+  const gen = useRef(0)
+  const lastQs = useRef('')
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  const baseQs = useMemo(() => new URLSearchParams({ days: String(days), market, building, owner, channel }).toString(), [days, market, building, owner, channel])
 
   const load = useCallback(async (fresh = false) => {
+    const mine = ++gen.current
     setLoading(true); setErr('')
     try {
-      const qs = new URLSearchParams({ days: String(days), market, building, owner, channel })
-      if (fresh) qs.set('refresh', '1')
-      const r = await fetch('/api/reviews/kpi?' + qs.toString(), { cache: 'no-store' })
+      const r = await fetch('/api/reviews/kpi?' + baseQs + (fresh ? '&refresh=1' : '&part=head'), { cache: 'no-store' })
       const j = await r.json()
+      if (mine !== gen.current) return
       if (!r.ok || !j.ok) throw new Error(j.error || 'Could not load the reputation numbers')
-      setD(j)
-    } catch (e: any) { setErr(String(e?.message || e)); setD(null) }
+      setHead(j)
+      // A full (recalculated) answer already carries every table; a head answer carries none, and
+      // the effect below fetches the open tab's again against the new numbers.
+      // A plain reload of the same filters (the tab coming back into view) keeps the tables on
+      // screen while their fresh copies load; a new filter set clears them.
+      const sameFilters = lastQs.current === baseQs
+      lastQs.current = baseQs
+      setParts(p => (fresh ? j : sameFilters ? p : {}))
+      setGot(fresh ? { units: true, buildings: true, owners: true, complaints: true, praise: true, categories: true, team: true } : {})
+    } catch (e: any) { if (mine !== gen.current) return; setErr(String(e?.message || e)); setHead(null); setParts({}); setGot({}) }
     setLoading(false)
-  }, [days, market, building, owner, channel])
+  }, [baseQs])
   useEffect(() => { load() }, [load])
+
+  // Which table the open tab needs, if any.
+  const need = page === 'units' ? 'units' : page === 'buildings' ? tab : ''
+  useEffect(() => {
+    if (!need || !head || loading || got[need]) return
+    const mine = gen.current
+    let live = true
+    setPartBusy(need)
+    fetch('/api/reviews/kpi?' + baseQs + '&part=' + need, { cache: 'no-store' })
+      .then(r => r.json())
+      .then(j => {
+        if (!live || mine !== gen.current) return
+        if (!j || !j.ok) { setErr(String((j && j.error) || 'Could not load this table')); return }
+        setParts(p => ({ ...p, ...j }))
+        setGot(g => ({ ...g, [need]: true }))
+      })
+      .catch(e => { if (live && mine === gen.current) setErr(String(e?.message || e)) })
+      .finally(() => { if (live) setPartBusy(b => (b === need ? '' : b)) })
+    return () => { live = false }
+  }, [need, head, loading, got, baseQs])
+  // Head last: its at-risk list is the short one until the Units slice brings the full one, and its
+  // scalars (headline, counts, lists for the pickers) are never overwritten by a table slice.
+  const d = useMemo<any>(() => (head ? { ...head, ...parts, headline: head.headline, counts: head.counts, atRisk: parts.atRisk || head.atRisk } : null), [head, parts])
+  const PART_FIRST: Record<string, string> = { units: 'units', buildings: 'buildings', owners: 'owners', complaints: 'themes', praise: 'praise', categories: 'categories', team: 'cleaners' }
+  const tableLoading = !!need && !got[need] && !(PART_FIRST[need] in parts) && (partBusy === need || loading)
 
   // A board left open overnight must never be showing yesterday's reputation.
   useEffect(() => {
@@ -582,7 +625,16 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
   const filterN = [market, building, owner, channel].filter(v => v !== 'all').length
   const unranked: any[] = d?.unranked || []
   const atRisk: any[] = d?.atRisk || []
-  const holdN = atRisk.filter(u => u.kind === 'hold').length
+  // Counts for the pills and tabs come with the head, so they are right before any table is in.
+  const cnt: any = d?.counts || null
+  const unitsLoaded = !!got.units
+  const failingN: number = unitsLoaded || !cnt ? failing.length : cnt.failing
+  const unitsN: number = unitsLoaded || !cnt ? units.length : cnt.units
+  const unrankedN: number = unitsLoaded || !cnt ? unranked.length : cnt.unranked
+  const atRiskN: number = unitsLoaded || !cnt ? atRisk.length : cnt.atRisk
+  const buildingsN: number | null = d?.buildings ? d.buildings.length : cnt ? cnt.buildings : null
+  const ownersN: number | null = d?.owners ? d.owners.length : cnt ? cnt.owners : null
+  const holdN: number = unitsLoaded || !cnt ? atRisk.filter(u => u.kind === 'hold').length : cnt.atRiskHold
   const base: number | null = d?.categoryBase ?? null
   // Four cards at most, biggest channels first: the ones with lines to stand on, then by volume.
   const channelCards: any[] = ((d?.channelScores || []) as any[]).filter(c => (c.lines || []).length > 0 || c.n >= 10).slice(0, 4)
@@ -610,7 +662,7 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         </Pill>
         <Pill tone={holdN ? 'amber' : 'slate'} onClick={() => { setUnitView('risk'); setPage('units') }}
           title={'Units whose next disappointed review takes the public score under a line it holds today (' + holdN + '), or that are a few five-star stays from the next line up. Basis: the all-time published score on the live listing.'}>
-          At risk {d ? atRisk.length : '—'}
+          At risk {d ? atRiskN : '—'}
         </Pill>
         <Pill onClick={() => { setUnitView('work'); setPage('units') }} title={'Units more than ' + (d?.belowPar ?? 0.15) + ' below our normal for their channel — window average on live listings only'}>
           Below par {h.unitsBelowPar ?? '—'}
@@ -684,8 +736,8 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
       <LeanTabs<RepTab>
         tabs={[
           { key: 'reply', label: 'To reply', n: replyN },
-          { key: 'units', label: 'Units', n: d ? failing.length : null },
-          { key: 'buildings', label: 'Buildings', n: d?.buildings ? d.buildings.length : null },
+          { key: 'units', label: 'Units', n: d ? failingN : null },
+          { key: 'buildings', label: 'Buildings', n: buildingsN },
           { key: 'all', label: 'All reviews', n: feedCounts && !feedCounts.loading ? feedCounts.total : null },
           // The action board (last 10 days of complaints turned into jobs, grouped by unit) was its own
           // page until 2026-09-28; /reviews/actions now redirects to this tab.
@@ -699,9 +751,9 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         <div className="flex items-center gap-1.5 flex-wrap mb-1.5 px-1">
           <div className="inline-flex rounded-lg border border-line overflow-hidden">
             {([
-              { k: 'work', l: 'Needs work', n: failing.length, t: 'Below par in this window (live listings only), or waiting for a good review since a low one (every review) — worst first' },
-              { k: 'risk', l: 'At risk', n: atRisk.length, t: 'Ranked by what the next review does to the public score (all-time, live listing only): about to lose a line it holds, or close to the next one' },
-              { k: 'all', l: 'All', n: units.length, t: 'Every unit with ' + (d?.minReviews ?? 5) + '+ reviews in this window, worst first' },
+              { k: 'work', l: 'Needs work', n: failingN, t: 'Below par in this window (live listings only), or waiting for a good review since a low one (every review) — worst first' },
+              { k: 'risk', l: 'At risk', n: atRiskN, t: 'Ranked by what the next review does to the public score (all-time, live listing only): about to lose a line it holds, or close to the next one' },
+              { k: 'all', l: 'All', n: unitsN, t: 'Every unit with ' + (d?.minReviews ?? 5) + '+ reviews in this window, worst first' },
             ] as { k: 'work' | 'risk' | 'all'; l: string; n: number; t: string }[]).map(v => (
               <button key={v.k} onClick={() => setUnitView(v.k)} title={v.t} aria-pressed={unitView === v.k}
                 className={'text-[12px] font-semibold px-2 py-1 border-l border-line first:border-l-0 whitespace-nowrap ' + (unitView === v.k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>
@@ -710,14 +762,14 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
             ))}
           </div>
           <span className="ml-auto" />
-          {unitView === 'work' && !!unranked.length && (
-            <Tag title={'Have reviews but fewer than ' + (d?.minReviews ?? 5) + ' — too few to rank, so not scored here'}>+{unranked.length} unranked</Tag>
+          {unitView === 'work' && !!unrankedN && (
+            <Tag title={'Have reviews but fewer than ' + (d?.minReviews ?? 5) + ' — too few to rank, so not scored here'}>+{unrankedN} unranked</Tag>
           )}
           {!!h.retiredReviews && (
             <Tag title="Reviews left on channel listings that have since been replaced. They stay visible and are left out of every published score on this page.">{h.retiredReviews} on replaced listings</Tag>
           )}
         </div>
-        {loading && !d ? (
+        {(loading && !d) || (tableLoading && unitView !== 'risk') || (tableLoading && !atRisk.length) ? (
           <LeanEmpty>Working out where we stand…</LeanEmpty>
         ) : unitView === 'risk' ? (
           !atRisk.length ? <LeanEmpty>No unit is within a review or two of a line. Nothing to get ahead of.</LeanEmpty> : (
@@ -741,12 +793,13 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
             <button key={t} onClick={() => setTab(t)} title={TAB_TITLE[t]}
               className={'lh-tab text-[12px] font-semibold px-2 py-1 rounded-lg capitalize whitespace-nowrap ' + (tab === t ? 'lh-tab-on bg-ink text-white' : 'text-muted hover:text-ink hover:bg-app')}>
               {t}
-              {t === 'buildings' && d?.buildings ? ' ' + d.buildings.length : ''}
-              {t === 'owners' && d?.owners ? ' ' + d.owners.length : ''}
+              {t === 'buildings' && buildingsN != null ? ' ' + buildingsN : ''}
+              {t === 'owners' && ownersN != null ? ' ' + ownersN : ''}
             </button>
           ))}
         </div>
-        <div className="px-3 py-2">
+        <div className={tableLoading ? 'px-3 py-4 text-[12.5px] text-muted' : 'hidden'}>Loading {tab}…</div>
+        <div className={tableLoading ? 'hidden' : 'px-3 py-2'}>
           {/* Under each building: its three weakest Airbnb categories — where its stars are going. */}
           {tab === 'buildings' && (
             <League rows={d?.buildings || []}

@@ -220,11 +220,56 @@ export async function GET(req: NextRequest) {
     const qs = keys.filter(k => sp.get(k) != null).map(k => k + '=' + encodeURIComponent(String(sp.get(k)))).join('&')
     const fresh = sp.get('refresh') === '1'
     const payload = fresh ? await build(sp, canSeeCleaners) : await cachedBuild(qs, canSeeCleaners)
-    return NextResponse.json(payload)
+    // ?part= — ONE BUILD, SERVED IN SLICES (2026-11-10). The whole payload is ~500KB and /reviews
+    // draws a header, four cards and a short list first. `part` is not in the cache key: every slice
+    // is cut from the same cached build, so a number can never differ between the header and a tab.
+    // No `part` answers the whole thing, as before — the KPI home and the admin desk read that.
+    return NextResponse.json(slice(payload, str(sp.get('part'))))
   } catch (e: any) {
     // Honest failure. The page shows the reason; it does not show a plausible 4.7 out of nothing.
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }
+}
+
+// What each tab of /reviews needs. Small shared scalars ride along so a slice stands on its own.
+const HEAVY = ['units', 'unranked', 'buildings', 'owners', 'themes', 'praise', 'categories', 'cleaners', 'inspectors']
+const PART_KEYS: Record<string, string[]> = {
+  units: ['units', 'unranked', 'atRisk'],
+  buildings: ['buildings'],
+  owners: ['owners'],
+  complaints: ['themes'],
+  praise: ['praise'],
+  categories: ['categories'],
+  team: ['cleaners', 'cleanersNote', 'inspectors', 'inspectorNote', 'inspectorHoldRate'],
+}
+const HEAD_AT_RISK = 30
+function slice(p: any, part: string): any {
+  if (!part || !p || p.ok !== true) return p
+  if (part === 'head') {
+    const out: Record<string, any> = {}
+    for (const k of Object.keys(p)) if (HEAVY.indexOf(k) < 0) out[k] = p[k]
+    const units: any[] = p.units || []
+    const atRisk: any[] = p.atRisk || []
+    out.atRisk = atRisk.slice(0, HEAD_AT_RISK)
+    // The counts the tabs and pills show before their tables have been asked for — taken from the
+    // same arrays the tables are, with the page's own "needs work" rule.
+    out.counts = {
+      units: units.length,
+      failing: units.filter(u => (u.vsPar != null && u.vsPar <= -p.belowPar) || u.recoveryDays != null).length,
+      unranked: (p.unranked || []).length,
+      buildings: (p.buildings || []).length,
+      owners: (p.owners || []).length,
+      atRisk: atRisk.length,
+      atRiskHold: atRisk.filter(u => u.kind === 'hold').length,
+    }
+    out.part = 'head'
+    return out
+  }
+  const keys = PART_KEYS[part]
+  if (!keys) return p
+  const out: Record<string, any> = { ok: true, part }
+  for (const k of keys) out[k] = p[k]
+  return out
 }
 
 async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any> {
@@ -252,14 +297,20 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   //
   // AN ERROR IS NOT AN EMPTY PAGE. This used to `break` on error and hand the caller a short list
   // with no signal, which is how a statement timeout became "0 reviews, 4.7 average". It throws.
+  //
+  // PAGES AFTER THE FIRST GO THREE AT A TIME (2026-11-10). Every caller orders its query, so page N
+  // is a fixed range and does not depend on page N-1 — fetching them one after another only added
+  // their round-trips together (the lifetime pass alone is four or five). They are still APPENDED in
+  // order, and the scan still ends at the first short page, so the rows are the same rows.
   async function page(table: string, select: string, apply: (q: any) => any, maxPages = 12): Promise<any[]> {
     const out: any[] = []
     const seen = new Set<string>()
-    for (let i = 0; i < maxPages; i++) {
-      const q = apply(db.from(table).select(select)).range(i * 1000, i * 1000 + 999)
-      const { data, error } = await q
+    const one = async (i: number): Promise<any[]> => {
+      const { data, error } = await apply(db.from(table).select(select)).range(i * 1000, i * 1000 + 999)
       if (error) throw new Error('could not read ' + table + ' — ' + String(error.message || error).slice(0, 140))
-      const rows = (data || []) as any[]
+      return (data || []) as any[]
+    }
+    const take = (rows: any[]) => {
       for (const r of rows) {
         // created_at is not unique, so a row can straddle a page boundary. Dedupe on id where the
         // select carries one, or the lifetime channel counts are not reproducible between loads.
@@ -267,7 +318,18 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
         if (k) { if (seen.has(k)) continue; seen.add(k) }
         out.push(r)
       }
-      if (rows.length < 1000) return out
+    }
+    const first = await one(0)
+    take(first)
+    if (first.length < 1000) return out
+    for (let i = 1; i < maxPages; i += 3) {
+      const idx: number[] = []
+      for (let k = i; k < Math.min(i + 3, maxPages); k++) idx.push(k)
+      const batch = await Promise.all(idx.map(one))
+      for (const rows of batch) {
+        take(rows)
+        if (rows.length < 1000) return out
+      }
     }
     throw new Error('the ' + table + ' scan stopped early — more rows than the page budget')
   }
@@ -767,6 +829,10 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   // WALKED SINCE THE REVIEW (Jon, 2026-09-28: a bad review that has had its inspection done should
   // not keep asking for one). For every unit carrying a "worst" review, the quality inspection that
   // finished on or after that review's day, if any. The UI swaps the walk button for the receipt.
+  // FOUR INDEPENDENT SIDE READS, RUN TOGETHER (2026-11-10): walked/queued, cleaners, inspectors and
+  // the benchmark save each waited for the one before it though none reads another's result. Each
+  // is now a job; they are awaited as a group just before the payload is assembled.
+  const walkJob = (async () => {
   try {
     const { finishedInspectionsSince, inspectionCovering } = await import('@/lib/review-inspections')
     const all = (units as any[]).concat(recoveryOnly as any[]).filter(u => u.worst && u.worst.at)
@@ -786,14 +852,20 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
     const all = (units as any[]).concat(recoveryOnly as any[]).filter(u => u.worst && u.worst.at && !u.walked && u.listingId)
     const lids = Array.from(new Set(all.map(u => String(u.listingId))))
     if (lids.length) {
-      const { data: rec } = await db.from('auto_inspections').select('listing_id, task_id, reason')
-        .in('listing_id', lids.slice(0, 500)).not('task_id', 'is', null).gte('check_in', addDays(today, -60)).limit(500)
-      const recs = ((rec || []) as any[])
+      // IN CHUNKS, ORDERED (was one unordered read of the first 500 listings, capped at 500 rows: a
+      // unit past either cut silently lost its "auto-queued" receipt and offered a second walk).
+      const chunks = <T,>(a: T[], n: number): T[][] => { const o: T[][] = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o }
+      const recParts = await Promise.all(chunks(lids, 150).map(part => db.from('auto_inspections').select('listing_id, task_id, reason, check_in')
+        .in('listing_id', part).not('task_id', 'is', null).gte('check_in', addDays(today, -60)).order('check_in', { ascending: false }).limit(1000)))
+      const recs: any[] = []
+      for (const r of recParts) for (const x of ((r.data || []) as any[])) recs.push(x)
       if (recs.length) {
-        const { data: ts } = await db.from('breezeway_tasks_sync').select('id, status, finished_at, scheduled_date')
-          .in('id', recs.map(r => String(r.task_id)).slice(0, 500))
+        const taskIds = Array.from(new Set(recs.map(r => String(r.task_id))))
+        const taskParts = await Promise.all(chunks(taskIds, 150).map(part => db.from('breezeway_tasks_sync').select('id, status, finished_at, scheduled_date').in('id', part)))
+        const ts: any[] = []
+        for (const r of taskParts) for (const x of ((r.data || []) as any[])) ts.push(x)
         const openTask: Record<string, any> = {}
-        for (const t of ((ts || []) as any[])) {
+        for (const t of ts) {
           if (t.finished_at || /complet|finish|close|approv|cancel|delet|void/i.test(String(t.status || ''))) continue
           openTask[String(t.id)] = t
         }
@@ -806,6 +878,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       }
     }
   } catch { /* unreadable: the walk button is offered as before, and add-task still refuses a duplicate */ }
+  })()
   // Units per building comes from the LISTING MAP, not the review set: a building with 25 units of
   // which 6 got reviewed should read "6 of 25 reviewed", not "6 units". Silence is data too.
   const unitsTotalByBuilding: Record<string, number> = {}
@@ -871,7 +944,8 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
 
   // ---- CLEANLINESS BY CLEANER (gated). review -> reservation -> that day's clean -> assignees.
   let cleaners: any[] = []
-  let cleanersNote: string | null = null
+  let cleanersNote = null as string | null
+  const cleanersJob = (async () => {
   if (canSeeCleaners) {
     try {
       const link: { resId: string; rating: number; unit: string; listingId: string; at: string; comment: string }[] = []
@@ -889,8 +963,11 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       }
       const ids = Array.from(new Set(link.map(l => l.resId)))
       const resById: Record<string, any> = {}
-      for (let i = 0; i < ids.length; i += 200) {
-        const { data, error } = await db.from('guesty_reservations').select('id,listing_id,check_out').in('id', ids.slice(i, i + 200))
+      // All the chunks at once — each is its own id list, none depends on another.
+      const idChunks: string[][] = []
+      for (let i = 0; i < ids.length; i += 200) idChunks.push(ids.slice(i, i + 200))
+      const resParts = await Promise.all(idChunks.map(part => db.from('guesty_reservations').select('id,listing_id,check_out').in('id', part)))
+      for (const { data, error } of resParts) {
         if (error) throw new Error(error.message)
         for (const x of ((data || []) as any[])) resById[String(x.id)] = x
       }
@@ -911,27 +988,37 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
         // 90-day window is far more rows than 1000 and — with no order — an unstable arbitrary
         // slice: a cleaner's average moved between reloads for no visible reason. Every clean that
         // fell off the end silently vanished from the coaching numbers.
-        for (let i = 0; i < listingIds.length; i += 40) {
-          const slice = listingIds.slice(i, i + 40)
+        // The 40-listing groups are read side by side (each still paged in id order within itself)
+        // and then folded in the same group order as before, so a later task still wins a key.
+        const groups: string[][] = []
+        for (let i = 0; i < listingIds.length; i += 40) groups.push(listingIds.slice(i, i + 40))
+        const groupRows = await Promise.all(groups.map(async group => {
+          const got: any[] = []
+          let cut = false
           for (let pg = 0; pg < 8; pg++) {
             const { data, error } = await db.from('breezeway_tasks_sync')
               .select('id,reference_property_id,scheduled_date,name,assignees,status')
-              .in('reference_property_id', slice)
+              .in('reference_property_id', group)
               .in('scheduled_date', dates)
               .order('id')
               .range(pg * 1000, pg * 1000 + 999)
             if (error) throw new Error(error.message)
             const rows = (data || []) as any[]
-            for (const t of rows) {
-              // THE departure clean, by the one shared rule (lib/breezeway). The old test — any name
-              // with "clean" that is not a strip or walkthrough — credited oven cleans, refresh cleans
-              // and mid-stays with the next guest's cleanliness score.
-              if (!isDepartureCleanName(t.name)) continue
-              taskByKey[String(t.reference_property_id) + '|' + str(t.scheduled_date).slice(0, 10)] = t
-            }
+            for (const t of rows) got.push(t)
             if (rows.length < 1000) break
-            if (pg === 7) cleanersNote = 'some cleans were not scanned — narrow the window'
+            if (pg === 7) cut = true
           }
+          return { got, cut }
+        }))
+        for (const g of groupRows) {
+          for (const t of g.got) {
+            // THE departure clean, by the one shared rule (lib/breezeway). The old test — any name
+            // with "clean" that is not a strip or walkthrough — credited oven cleans, refresh cleans
+            // and mid-stays with the next guest's cleanliness score.
+            if (!isDepartureCleanName(t.name)) continue
+            taskByKey[String(t.reference_property_id) + '|' + str(t.scheduled_date).slice(0, 10)] = t
+          }
+          if (g.cut) cleanersNote = 'some cleans were not scanned — narrow the window'
         }
       }
       // Per person we keep not just the average but the UNIT BREAKDOWN — the coaching conversation is
@@ -988,6 +1075,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       cleanersNote = 'could not be worked out — ' + String(e?.message || e).slice(0, 120)
     }
   }
+  })()
 
   // ---- DID THE INSPECTION ACTUALLY WORK? (gated)
   //
@@ -1002,8 +1090,9 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   // RUBBER-STAMP is the sharp one: an inspector whose own scores are near-perfect while guests
   // score the same units below the portfolio is passing units that are not passing.
   let inspectors: any[] = []
-  let inspectorNote: string | null = null
-  let inspectorHoldRate: number | null = null
+  let inspectorNote = null as string | null
+  let inspectorHoldRate = null as number | null
+  const inspectorsJob = (async () => {
   if (canSeeCleaners) {
     try {
       const AFTER = 45, BEFORE = 45
@@ -1104,6 +1193,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       inspectorNote = 'could not be worked out — ' + String(e?.message || e).slice(0, 120)
     }
   }
+  })()
 
   // PORTFOLIO CATEGORY BENCHMARK, saved for the field.
   // The intel block a cleaner or inspector gets names the ONE category a unit is behind the
@@ -1111,6 +1201,7 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
   // sweeping every review in the account while somebody waits. This page already has it, so it
   // writes it down. Only from the unfiltered view: a benchmark taken from one building is not a
   // benchmark. Fire-and-forget — a failed write must never affect the dashboard.
+  const benchJob = (async () => {
   if (market === 'all' && building === 'all' && owner === 'all' && channel === 'all' && overall.n >= 100) {
     const bench: Record<string, number> = {}
     for (const k of Object.keys(cat)) if (cat[k].n >= 20) bench[k] = round(cat[k].sum / cat[k].n)
@@ -1118,6 +1209,9 @@ async function build(sp: URLSearchParams, canSeeCleaners: boolean): Promise<any>
       try { await setSetting('review_category_benchmark', bench, 'reviews-kpi') } catch (e) { console.error('kpi: benchmark save failed', e) }
     }
   }
+  })()
+  // Every job catches its own failures, so this never rejects; it only waits for the slowest one.
+  await Promise.all([walkJob, cleanersJob, inspectorsJob, benchJob])
 
   // Review RATE — a quiet unit is not a happy unit, it is an unmeasured one.
   const stays = ((resRes.data || []) as any[]).filter(r => !/cancel|declin|inquir|expire/i.test(str(r.status)) && inScope(String(r.listing_id)))

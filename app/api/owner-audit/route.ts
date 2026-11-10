@@ -70,17 +70,29 @@ async function whoAmI(): Promise<{ ok: boolean; internal: boolean; email: string
 // worked out from the line items itself (the "Cancellation fee" tag), by the same test on the
 // same lines. ?full=1 returns the audit exactly as before.
 const CANCEL_FEE_LINE = /cancel+ation|cancel+ed?\s*fee|cancel+\s*(charge|penalty)/i
-function slimAudit(data: AuditData): AuditData {
-  return {
-    ...data,
-    items: data.items.map((it: AuditItem) => ({
-      ...it,
-      cancelFeeLine: it.lines.some(l => CANCEL_FEE_LINE.test(l.label) && Math.abs(l.amount) > 0.005),
-      slim: true,
-      lines: [],
-      folio: [],
-    })),
-  }
+// PASS 5 (2026-11-10: the rows were still 1.7 MB). Two more things, neither of which touches a number:
+//   1. The Guesty reservation note and the resolution allocation are only drawn in an OPENED row,
+//      so they travel with the row's detail too. The list keeps `hasResNote` (the little note icon).
+//      The CSV export, which prints the notes, asks for ?full=1 first.
+//   2. The rows are sent as a TABLE — the field names once, then one array per row — instead of
+//      ~1,500 objects each spelling out the same ~50 field names. The page rebuilds the same
+//      objects (unpackItems in OwnerAuditBoard). Same values, same order; only the envelope changes.
+function slimAudit(data: AuditData): AuditData & { itemsPacked: { cols: string[]; rows: any[][] } } {
+  const slim = data.items.map((it: AuditItem) => ({
+    ...it,
+    cancelFeeLine: it.lines.some(l => CANCEL_FEE_LINE.test(l.label) && Math.abs(l.amount) > 0.005),
+    hasResNote: !!it.resNote,
+    slim: true,
+    lines: [],
+    folio: [],
+    resNote: '',
+    allocation: null,
+  })) as Record<string, any>[]
+  const colSet: Record<string, true> = {}
+  for (const it of slim) for (const k of Object.keys(it)) colSet[k] = true
+  const cols = Object.keys(colSet)
+  const rows = slim.map(it => cols.map(c => (it[c] === undefined ? null : it[c])))
+  return { ...data, items: [], itemsPacked: { cols, rows } }
 }
 
 export async function GET(req: NextRequest) {
@@ -99,7 +111,7 @@ export async function GET(req: NextRequest) {
       const audit = await getAuditForDetail(wanted)
       const it = audit.items.find(x => x.ownerId === ownerId && x.key === itemKey)
       if (!it) return NextResponse.json({ ok: false, error: 'That row is not on this month any more — reload the page.' }, { status: 404 })
-      return NextResponse.json({ ok: true, lines: it.lines, lineCount: it.lineCount, folio: it.folio })
+      return NextResponse.json({ ok: true, lines: it.lines, lineCount: it.lineCount, folio: it.folio, resNote: it.resNote, allocation: it.allocation })
     }
 
     const full = sp.get('full') === '1'

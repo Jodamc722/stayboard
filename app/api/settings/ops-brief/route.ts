@@ -82,6 +82,8 @@ export async function GET() {
       maint: cleanEmails(s.maint), techs: cleanTechs(s.techs),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
       cc: cleanEmails(s.cc),
+      // Who is told when a brief does not go out (lib/briefs/delivery). Empty = the owner's address.
+      alertTo: cleanEmails(typeof s.alertTo === 'string' ? s.alertTo.split(/[,;\s]+/) : s.alertTo),
       trueup, salato, legacyLabor,
       // The EOD recap lives on this key (Eve audit 2026-10-10): on unless switched off, to its own list or the GM morning list.
       eod: { enabled: !(s.eod && s.eod.enabled === false), to: cleanEmails(s.eod?.to) },
@@ -106,6 +108,8 @@ export async function PUT(req: NextRequest) {
     lang: { miami: asLang(c.lang?.miami), broward: asLang(c.lang?.broward) },
     eod: { enabled: !(c.eod && typeof c.eod === 'object' && c.eod.enabled === false), to: cleanEmails(c.eod?.to) },
     cc: cleanEmails(c.cc),
+    // Kept on save since 2026-11-10 — this route writes a fixed list of fields, so it was wiped before.
+    alertTo: cleanEmails(c.alertTo),
   }
   const res = await setSetting(KEY, config, access.email)
   if (!res.ok) return NextResponse.json({ error: res.error || 'Could not save.' }, { status: 500 })

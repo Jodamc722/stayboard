@@ -7,6 +7,7 @@
 import { themeForBook, THEME_CHOICES, SMART } from '@/lib/guide-themes'
 import { guideFaq } from '@/components/GuideMobile'
 import { printPrefs, isCommonSense, howtoShown, isMapItem, splitSteps, dedupeHowtos } from '@/lib/guide-print'
+import { guideSignoff, guideHostLabel, guideHostName, guideBrand, flyerSignoffDefault, FLYER_WELCOME_DEFAULT, FLYER_WELCOME_MAX } from '@/lib/guide-voice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
@@ -44,6 +45,8 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
   const [printOpen, setPrintOpen] = useState(false)
   useEffect(() => { if (autoPrint) { const t = setTimeout(() => window.print(), 1500); return () => clearTimeout(t) } }, [autoPrint])
   const [printSaved, setPrintSaved] = useState('')
+  // The 1-pager's welcome / signature fields (Print options) save when you click out of them, not per keystroke.
+  const flyerDirty = useRef(false)
   const [askText, setAskText] = useState('')
   const [askBusy, setAskBusy] = useState(false)
   const [askErr, setAskErr] = useState('')
@@ -680,8 +683,28 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
             .then(r => setPrintSaved(r.ok ? 'Saved' : 'Not saved')).catch(() => setPrintSaved('Not saved'))
         }
         const toggleIn = (arr: string[], k: string, want: boolean) => want ? Array.from(new Set(arr.concat(k))) : arr.filter(x => x !== k)
+        // THE 1-PAGER'S WELCOME (2026-11-10): the message and who signs it, per book, in
+        // sections._labels['flyer.welcome' | 'flyer.signoff'] (read by components/GuideFlyer). Saved
+        // through the same PUT as the options above when the field loses focus; an emptied field is
+        // removed, so the 1-pager goes back to the default wording.
+        const labs: Record<string, any> = (s._labels && typeof s._labels === 'object') ? s._labels : {}
+        const flyerWelcome: string = typeof labs['flyer.welcome'] === 'string' ? labs['flyer.welcome'] : ''
+        const flyerSigned: string = typeof labs['flyer.signoff'] === 'string' ? labs['flyer.signoff'] : ''
+        const flyerLen = (flyerWelcome.trim() || FLYER_WELCOME_DEFAULT).length
+        const typeFlyer = (k: 'flyer.welcome' | 'flyer.signoff', v: string) => { flyerDirty.current = true; setPrintSaved(''); set(['_labels', k], v) }
+        const saveFlyer = () => {
+          if (!flyerDirty.current) return
+          flyerDirty.current = false
+          const g2 = JSON.parse(JSON.stringify(gb))
+          const l2: Record<string, any> = (g2.sections._labels && typeof g2.sections._labels === 'object') ? g2.sections._labels : {}
+          for (const k of ['flyer.welcome', 'flyer.signoff']) { if (typeof l2[k] === 'string' && !l2[k].trim()) delete l2[k] }
+          g2.sections._labels = l2
+          setGb(g2); setPrintSaved('Saving…')
+          fetch('/api/guidebook', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: gb.id, sections: g2.sections }) })
+            .then(r => setPrintSaved(r.ok ? 'Saved' : 'Not saved')).catch(() => setPrintSaved('Not saved'))
+        }
         return (
-          <div className="gb-chrome sticky top-[57px] z-10 border-b border-black/10 bg-white/95 px-4 py-3 text-neutral-800 backdrop-blur">
+          <div className="gb-chrome sticky top-[57px] z-10 max-h-[calc(100vh-57px)] overflow-y-auto border-b border-black/10 bg-white/95 px-4 py-3 text-neutral-800 backdrop-blur">
             <div className="mx-auto grid max-w-[760px] gap-4 sm:grid-cols-2">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">What prints for this unit</p>
@@ -707,6 +730,27 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
                     </label>
                   )
                 }) : <p className="mt-2 text-[13px] text-neutral-500">No how-tos in this book.</p>}
+              </div>
+            </div>
+            <div className="mx-auto mt-4 max-w-[760px] border-t border-black/10 pt-3">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">1-pager</p>
+                <span className="text-[12px] text-neutral-500">The welcome note on the one-page flyer and who signs it. Leave a field empty to use the default.</span>
+                <a href={'/g/' + gb.id + '?flyer=1'} target="_blank" rel="noreferrer" className="ml-auto text-[12px] font-semibold text-neutral-800 underline">Preview 1-pager</a>
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+                <label className="block text-[12px] font-semibold text-neutral-700">Welcome message
+                  <textarea rows={4} value={flyerWelcome} placeholder={FLYER_WELCOME_DEFAULT} onChange={e => typeFlyer('flyer.welcome', e.target.value)} onBlur={saveFlyer}
+                    className="mt-1 block w-full rounded-lg border border-neutral-300 bg-white p-2 text-[13px] font-normal leading-snug text-neutral-900" />
+                  <span className={'mt-0.5 block text-[11px] font-normal tabular-nums ' + (flyerLen > FLYER_WELCOME_MAX ? 'text-rose-600' : 'text-neutral-500')}>
+                    {flyerLen} / {FLYER_WELCOME_MAX} characters{flyerWelcome.trim() ? '' : ' (default message)'}{flyerLen > FLYER_WELCOME_MAX ? ' — too long, it may not fit on the one page' : ''}
+                  </span>
+                </label>
+                <label className="block text-[12px] font-semibold text-neutral-700">Signed
+                  <input type="text" value={flyerSigned} maxLength={80} placeholder={flyerSignoffDefault(gb)} onChange={e => typeFlyer('flyer.signoff', e.target.value)} onBlur={saveFlyer}
+                    className="mt-1 block w-full rounded-lg border border-neutral-300 bg-white p-2 text-[13px] font-normal text-neutral-900" />
+                  <span className="mt-0.5 block text-[11px] font-normal text-neutral-500">Saves when you click out of the field.</span>
+                </label>
               </div>
             </div>
             <div className="mx-auto mt-3 flex max-w-[760px] items-center gap-3 text-[12px] text-neutral-500">
@@ -1082,7 +1126,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
           </div>
           <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="contact.csLabel" def="CUSTOMER SERVICE · 24/7" /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p><div className="mt-1 text-[9.5px] font-light opacity-70"><L k="contact.emergency" def="Emergencies: dial 911 first, then call us." rows={2} /></div></div>
-            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><T path={['contact', 'gmLabel']} value={s.contact?.gmLabel || 'GENERAL MANAGER'} rows={1} /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={s.contact?.gmName} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
+            <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><T path={['contact', 'gmLabel']} value={edit ? (s.contact?.gmLabel || guideHostLabel(gb)) : guideHostLabel(gb)} rows={1} /></p><p className="mt-1.5 text-[14px]" style={{ fontFamily: SERIF }}><T path={['contact', 'gmName']} value={edit ? (s.contact?.gmName || guideHostName(gb)) : guideHostName(gb)} rows={1} /> · <Tel v={s.contact?.gmPhone}><T path={['contact', 'gmPhone']} value={s.contact?.gmPhone} rows={1} /></Tel></p></div>
             <div><p className="text-[9px] tracking-[0.35em]" style={{ color: accentColor }}><L k="contact.addressLabel" def="ADDRESS" /></p><p className="mt-1.5 text-[11px] font-light leading-snug"><MapLink v={s.guidelines?.address}><T path={['guidelines', 'address']} value={s.guidelines?.address} rows={2} /></MapLink></p></div>
           </div>
 
@@ -1192,7 +1236,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
               <p className="text-[13px] tracking-[0.5em]" style={{ color: accentColor }}><L k="closing.stars" def="★ ★ ★ ★ ★" /></p>
               <h3 className="mt-3 text-[26px] lowercase font-medium" style={{ fontFamily: SERIF }}><L k="closing.reviewHeading" def="loved your stay?" /></h3>
               <p className="mt-3 max-w-[40ch] text-[12px] font-light italic leading-[1.8]" style={{ fontFamily: SERIF }}><T path={['review', 'body']} value={s.review?.body} rows={4} /></p>
-              <p className="mt-4 text-[11.5px]" style={{ fontFamily: SERIF }}>— <T path={['contact', 'signoff']} value={s.contact?.signoff || 'Jon McGill, General Manager'} rows={1} /></p>
+              <p className="mt-4 text-[11.5px]" style={{ fontFamily: SERIF }}>— <T path={['contact', 'signoff']} value={edit ? (s.contact?.signoff || guideSignoff(gb)) : guideSignoff(gb)} rows={1} />{edit && s.contact?.signoff && String(s.contact.signoff).trim() !== guideSignoff(gb) ? <span className="mt-1 block text-[10px] opacity-70">Guests see: — {guideSignoff(gb)} (this property signs as its owners)</span> : null}</p>
             </div>
           </div>
           <div className="mt-5 flex flex-col items-center border-t pt-5 text-center" style={{ borderColor: accentColor + '33' }}>
@@ -1259,7 +1303,7 @@ export function GuidebookView({ initial, guest = false, photoToken = '', paper: 
                   <p className="mt-2 text-[10.5px] font-light leading-snug opacity-70"><L k="em.911Note" def="Police · Fire · Ambulance" /></p>
                 </div>
                 <div className="rounded-xl border px-4 py-4" style={card}>
-                  {label(<L k="em.usLabel" def="Stay Hospitality · 24/7" />)}
+                  {label(<L k="em.usLabel" def={guideBrand(gb) + ' · 24/7'} />)}
                   <p className="mt-2 text-[19px] leading-tight" style={{ fontFamily: SERIF }}><Tel v={s.contact?.customerService}><T path={['contact', 'customerService']} value={s.contact?.customerService} rows={1} /></Tel></p>
                   <p className="mt-2 text-[10.5px] font-light leading-snug opacity-70"><L k="em.usNote" def="Lockouts, leaks, power, anything in the home" rows={2} /></p>
                 </div>

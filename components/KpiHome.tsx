@@ -317,7 +317,11 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
             <Tile label="Occupancy" value={pct(r.occupancy, 1)} Icon={Users} href="/revenue"
-              sub={r.nights != null ? count(r.nights) + ' of ' + count(r.available) + ' unit-nights' : undefined}
+              // Owner / friends-and-family nights sit inside the occupied nights and are named beside
+              // them (2026-11-10); ADR and RevPAR next door leave them out (lib/kpi OWNER NIGHTS).
+              sub={r.nights != null
+                ? count(r.nights) + ' of ' + count(r.available) + ' unit-nights' + (r.ownerNights != null ? ' · ' + count(r.ownerNights) + ' owner night' + (Number(r.ownerNights) === 1 ? '' : 's') : '')
+                : undefined}
               delta={<Delta v={r.occupancyChange} suffix=" pts" />} accent />
             <Tile label="ADR" value={canSeeMoney ? exact(r.adr) : '—'} Icon={DollarSign} href="/revenue"
               sub={canSeeMoney && r.adrGross != null ? exact(r.adrGross) + ' incl. cleaning' : undefined}
@@ -698,7 +702,7 @@ export function KpiHome({ dateLabel }: { dateLabel: string }) {
       )}
 
       <p className="text-[11px] text-muted mt-4 leading-relaxed">
-        Occupancy counts booked nights at active units against those units × days in the window — combo &ldquo;Full&rdquo; listings left out, as on Revenue. ADR and RevPAR are room revenue (RevPAR = occupancy × ADR); the cleaning-inclusive figure sits under each.
+        Occupancy counts booked nights at active units against those units × days in the window — combo &ldquo;Full&rdquo; listings left out, as on Revenue. Owner and friends-and-family nights count in occupancy and are shown beside it; ADR is guest room revenue per guest night and RevPAR per sellable night (available minus owner nights); the cleaning-inclusive figure sits under each. Confirmed, checked-in and checked-out stays only.
         Cleaning revenue is NET of the channel&apos;s cut, on units our own crew turns (vendor checkouts counted separately);
         Expedia-bundled fees are rebuilt from the unit&apos;s own booking history — the same rules as the Labor board.
         {c.costKnown

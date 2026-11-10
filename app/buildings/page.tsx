@@ -202,7 +202,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
 // longer cache and only runs for the views that show it.
 const getRevenue = unstable_cache(
   async (from: string, to: string, basis: Basis) => unitRevenue(from, to, basis),
-  ['portfolio-revenue-v2'], { revalidate: 300 },
+  ['portfolio-revenue-v3'], { revalidate: 300 },
 )
 
 export default async function PortfolioPage({ searchParams }: { searchParams?: { d?: string; v?: string; rev?: string; b?: string } }) {

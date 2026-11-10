@@ -79,3 +79,30 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
   }
 }
+
+// DELETE { paths: string[] } — photos taken in "Log a find" and then abandoned (2026-11-10: cancelling
+// the form used to leave them in the bucket for good). Deliberately narrow: only files under new/
+// (where the form uploads before an item exists), and never one that a saved item points at.
+export async function DELETE(req: NextRequest) {
+  const gate = await requireLevel('lost-found', 'edit')
+  if (!gate.ok) return gate.res
+  try {
+    const b = await req.json().catch(() => ({} as any))
+    const paths: string[] = (Array.isArray(b.paths) ? b.paths : []).map(str).filter((p: string) => /^new\/[A-Za-z0-9._-]+$/.test(p)).slice(0, 12)
+    if (!paths.length) return NextResponse.json({ ok: true, removed: 0 })
+    const db = supabaseAdmin()
+    const free: string[] = []
+    for (const p of paths) {
+      // jsonb containment: is this path in any item's photos?
+      const { data, error } = await db.from('lost_found_items').select('id').contains('photos', JSON.stringify([p])).limit(1)
+      if (!error && !(data || []).length) free.push(p)
+    }
+    if (free.length) {
+      const { error } = await db.storage.from(BUCKET).remove(free)
+      if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
+    }
+    return NextResponse.json({ ok: true, removed: free.length })
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 })
+  }
+}

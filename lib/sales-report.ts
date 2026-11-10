@@ -142,6 +142,8 @@ export type SalesReport = {
   directShare: number | null
   lyDirectShare: number | null
   days: SalesDay[]
+  /** True on the first-paint copy: `days` is empty and comes from its own request when the Daily tab opens. */
+  daysDeferred: boolean
   pace: {
     activeUnits: number
     from: string; to30: string; lyFrom: string
@@ -153,6 +155,11 @@ export type SalesReport = {
     sameNights60: number; sameLy60: number; pct60: number | null
     occ30: number
     behind: number; cold: number; ahead: number
+    /** Units under their building but not short enough to be "behind". */
+    watch: number
+    /** Every unit in the pace table, and whether `units` here is only the top of it (first paint). */
+    totalUnits: number
+    unitsPartial: boolean
     units: PaceUnit[]
   }
   months: SalesMonth[]
@@ -613,7 +620,7 @@ async function compute(today: string): Promise<SalesReport> {
     generatedAt: new Date(nowMs).toISOString(),
     today, asOfLastYear: asOf, lastSync, showMoney: true,
     sameStoreUnits, activeUnits: active.length,
-    periods, channels, directShare, lyDirectShare, days,
+    periods, channels, directShare, lyDirectShare, days, daysDeferred: false,
     pace: {
       activeUnits: active.length, from: today, to30: shift(today, 29), lyFrom: asOf,
       nights30, nights60,
@@ -624,6 +631,8 @@ async function compute(today: string): Promise<SalesReport> {
       behind: units.filter(u => u.status === 'behind').length,
       cold: units.filter(u => u.status === 'cold').length,
       ahead: units.filter(u => u.status === 'ahead').length,
+      watch: units.filter(u => u.status === 'watch').length,
+      totalUnits: units.length, unitsPartial: false,
       units,
     },
     months,
@@ -637,12 +646,33 @@ async function compute(today: string): Promise<SalesReport> {
   return report
 }
 
-const cached = unstable_cache(compute, ['sales-report-v2'], { revalidate: 600, tags: ['revenue', 'sales'] })
+const cached = unstable_cache(compute, ['sales-report-v3'], { revalidate: 600, tags: ['revenue', 'sales'] })
 
 /** The sales report for today (Eastern), cached ten minutes. */
 export async function buildSalesReport(opts: { fresh?: boolean } = {}): Promise<SalesReport> {
   const today = ymdET()
   return opts.fresh ? compute(today) : cached(today)
+}
+
+/** How many "needs action" units ride with the first paint. */
+export const FIRST_PAINT_UNITS = 60
+
+/**
+ * THE FIRST-PAINT COPY (2026-11-10). The page shipped every unit's pace row and the 28-day series
+ * inside the HTML — 230KB — to show four numbers and a list whose first screen is thirty rows. This
+ * keeps the headline, channels, months and cancellations whole and trims the two long lists: the
+ * pace table to the worst FIRST_PAINT_UNITS units that need action (it is already sorted worst
+ * first), and the daily series to nothing. The rest is one small request each, made when asked for
+ * (/api/revenue/sales?part=units | daily), out of the same ten-minute cache — never a second build.
+ */
+export function firstPaint(r: SalesReport): SalesReport {
+  const action = r.pace.units.filter(u => u.status === 'behind' || u.status === 'cold' || u.status === 'watch')
+  const top = action.slice(0, FIRST_PAINT_UNITS)
+  return {
+    ...r,
+    days: [], daysDeferred: true,
+    pace: { ...r.pace, units: top, unitsPartial: top.length < r.pace.units.length },
+  }
 }
 
 /**

@@ -20,6 +20,7 @@ import { buildSuggestions, createFromSuggestion, logAccepted, getCadenceCfg, get
 import { isTaskDone } from '@/lib/task-categories'
 import { updateBreezewayTask, breezewayConfigured } from '@/lib/breezeway'
 import { removeOwnDuplicate } from '@/lib/own-tasks'
+import { taskCreatorOn } from '@/lib/task-creators'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -82,8 +83,11 @@ export async function GET(req: NextRequest) {
     //    that happens to match a cadence is never cancelled from here. If neither list can be read,
     //    nothing is cancelled.
     let carried = 0, dupesCancelled = 0, carrySkippedVacancy = 0, dupesLeftNotOurs = 0
+    // THE SWITCH (Upkeep → Automations, lib/task-creators; on unless someone turned it off): off = late
+    // tasks stay on their day and no duplicate is removed from here.
+    const carryOn = await taskCreatorOn('carry')
     try {
-      if (breezewayConfigured() && run.overdue.length) {
+      if (carryOn && breezewayConfigured() && run.overdue.length) {
         const noCarry = new Set(cfg.cadences.filter(c => c.needsVacant || c.ridesDeparture).map(c => c.key))
         const ours = new Set<string>()
         try {
@@ -121,8 +125,8 @@ export async function GET(req: NextRequest) {
       }
     } catch { /* carrying must never fail the run */ }
     // EVERY DUPLICATE, NOT ONLY PREVENTATIVE ONES (Jon, 2026-11-03): one open copy per job per unit.
-    try { const { cancelDuplicates } = await import('@/lib/task-dedupe'); const d = await cancelDuplicates({ max: 150 }); dupesCancelled += d.cancelled; dupesLeftNotOurs += d.leftNotOurs } catch { /* next morning */ }
-    ;(safe as any).carried = carried; (safe as any).duplicatesCancelled = dupesCancelled
+    if (carryOn) try { const { cancelDuplicates } = await import('@/lib/task-dedupe'); const d = await cancelDuplicates({ max: 150 }); dupesCancelled += d.cancelled; dupesLeftNotOurs += d.leftNotOurs } catch { /* next morning */ }
+    ;(safe as any).carried = carried; (safe as any).duplicatesCancelled = dupesCancelled; if (!carryOn) (safe as any).carryOff = true
     ;(safe as any).carrySkippedVacancy = carrySkippedVacancy; (safe as any).duplicatesLeftNotOurs = dupesLeftNotOurs
 
     // A RECEIPT EVEN WHEN SWITCHED OFF (2026-11-09 audit): the carry above ran, and tooSoon() reads

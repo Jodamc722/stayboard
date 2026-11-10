@@ -20,7 +20,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { pageRows } from './db-page'
 import { getSetting } from './app-settings'
-import { CADENCE_KEY, resolveCadences, cadenceRe, type CadenceDef } from './cadences'
+import { CADENCE_KEY, resolveCadences, cadenceRe, matchOrder, type CadenceDef } from './cadences'
 import { updateBreezewayTask, breezewayConfigured } from './breezeway'
 import { lighthouseCreatedIds, removeOwnDuplicate } from './own-tasks'
 import { isTaskDone, isTaskGone, isTaskRunning } from './task-categories'
@@ -33,7 +33,8 @@ export type OpenCadenceTask = { id: string; listingId: string; name: string; dat
 
 /** Open tasks matching each cadence, by cadence key then listing id. Any department; 200 days back, 200 ahead. One read for all. */
 export async function openCadenceTaskMap(cads: CadenceDef[], today = ymdET(new Date())): Promise<Record<string, Record<string, OpenCadenceTask[]>>> {
-  const res = cads.map(c => ({ c, re: cadenceRe(c.match) })).filter(x => !!x.re) as { c: CadenceDef; re: RegExp }[]
+  // Page-made programs first (lib/cadences matchOrder), so their task is not counted as the generic program's duplicate.
+  const res = matchOrder(cads).map(c => ({ c, re: cadenceRe(c.match) })).filter(x => !!x.re) as { c: CadenceDef; re: RegExp }[]
   const out: Record<string, Record<string, OpenCadenceTask[]>> = {}
   if (!res.length) return out
   const db = supabaseAdmin()

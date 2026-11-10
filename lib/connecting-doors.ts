@@ -22,6 +22,7 @@ import { createBreezewayTask, updateBreezewayTask, breezewayConfigured, mapBreez
 import { isTaskDone, isTaskGone } from './task-categories'
 import { EVE_CHANNELS } from './slack-rules'
 import { getSetting, setSetting } from './app-settings'
+import { taskCreatorOn } from './task-creators'
 
 // THE CUSTOMER-CARE NOTICE GOES THROUGH THE ROOM GATE (2026-11-09). It was a direct post from a cron
 // that runs until 9:38pm ET — outside the said-registry and the 8pm–7am window. It now passes
@@ -136,6 +137,9 @@ export async function runDoors(opts: { dryRun?: boolean } = {}) {
   const lines: string[] = []
   let created = 0, updated = 0, titled = 0
   if (!breezewayConfigured()) return { ok: false, error: 'Breezeway is not configured', jobs, lines, created, updated, titled }
+  // THE SWITCH (Upkeep → Automations, lib/task-creators; on unless someone turned it off). Off = this
+  // pass creates, assigns and retitles nothing; a dry run still shows what it would do.
+  if (!opts.dryRun && !(await taskCreatorOn('connectingDoors'))) return { ok: true, jobs, lines: ['switched off on Upkeep → Automations — nothing created'], created, updated, titled }
   if (!opts.dryRun) { try { await flushHeldNotices(lines) } catch { /* the next pass tries again */ } }
   const db = supabaseAdmin()
   const mirror = async (r: any, homeId: number | null) => {

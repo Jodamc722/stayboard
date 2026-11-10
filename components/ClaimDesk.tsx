@@ -87,6 +87,7 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
   // THE APPROVERS for "Recommend to file" (2026-10-21) and the inline picker the stage rail opens.
   const [reviewers, setReviewers] = useState<Reviewer[]>([])
   const [pickReview, setPickReview] = useState(false)
+  const [packetCopied, setPacketCopied] = useState(false)
   useEffect(() => { fetch('/api/claims/reviewers', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) setReviewers(j.reviewers || []) }).catch(() => {}) }, [])
 
   const load = useCallback(async () => {
@@ -133,6 +134,34 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
   const u = urgencyOf(claim)
   const stageIndex = STAGES.findIndex(s => s.key === claim.stage)
   const waitingOn = reviewerOf(claim)
+  const unfiled = claim.stage === 'draft' || claim.stage === 'review' || claim.stage === 'ready' || !claim.stage
+  const jumpTo = (elId: string) => { try { document.getElementById(elId)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } catch { /* no scroll, the step is still there */ } }
+  // THE FILING PACKET: everything the channel's form asks for, as text, in the order it asks.
+  // Copied to the clipboard only — nothing is sent anywhere. Photos are counted, not linked: they
+  // are private files, uploaded to the channel by hand from each item below.
+  const copyPacket = async () => {
+    const lines: string[] = [
+      'DAMAGE CLAIM — ' + claimTitle(claim),
+      'Channel: ' + (claim.channel || '—') + (claim.confirmation_code ? ' · Confirmation: ' + claim.confirmation_code : ''),
+      'Stay: ' + (claim.check_in || '—') + ' to ' + (claim.check_out || '—') + (claim.discovered_on ? ' · Damage found: ' + claim.discovered_on : ''),
+      'Total sought: ' + money(total),
+      'Guest contacted before filing: ' + (claim.guest_called ? 'Yes' : 'No'),
+      '',
+      'SUMMARY',
+      String(claim.summary || '').trim() || '—',
+      '',
+      'ITEMS (' + items.length + ')',
+    ]
+    items.forEach((it, i) => {
+      const n = Array.isArray(it.photo_urls) ? it.photo_urls.length : 0
+      lines.push((i + 1) + '. ' + (String(it.description || '').trim() || 'Item') + ' — ' + money(it.cost))
+      lines.push('   Condition before: ' + (String(it.condition_prior || '').trim() || '—') + ' · Age: ' + (String(it.age_text || '').trim() || '—'))
+      lines.push('   Replacement: ' + (String(it.replacement_url || '').trim() || '—'))
+      lines.push('   Photos: ' + n)
+    })
+    try { await navigator.clipboard.writeText(lines.join('\n')); setPacketCopied(true); setTimeout(() => setPacketCopied(false), 2500) }
+    catch { setErr('Could not copy to the clipboard — your browser blocked it. Select the summary and items by hand.') }
+  }
 
   // MOVE IT ANYWHERE (Jon, 2026-10-21: "allow user to move the claim once created through the
   // process"). Every stage on the rail is a button — forward, back, or a skip. Recommending to file
@@ -226,6 +255,45 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
         </div>
       )}
 
+      {/* WHAT IS BLOCKING FILING — FIRST, NOT LAST (2026-11-10). The checklist lived in step 4 and in
+          the side rail, which on a phone is the bottom of the page: you scrolled past everything to
+          learn what was missing. Before a claim is filed it now leads, one line per missing thing,
+          and each line either fixes it here (the guest call) or takes you to the field that does.
+          When nothing is missing it turns into the one "Ready to file" state, with the packet. */}
+      {unfiled && failing.length > 0 && (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50/60 p-3 mb-4">
+          <h2 className="text-sm font-semibold text-ink">{failing.length} thing{failing.length === 1 ? '' : 's'} before this can be filed</h2>
+          <ul className="mt-1.5 divide-y divide-amber-200/70">
+            {failing.map(g => (
+              <li key={g.key} className="py-1.5 flex items-center gap-2 flex-wrap">
+                <span className="min-w-0 flex-1 basis-48 text-[13px] text-ink font-medium">
+                  {g.label}
+                  {g.detail ? <span className="block text-[11.5px] text-muted font-normal">{g.detail}</span> : null}
+                </span>
+                {g.key === 'called' ? (
+                  <button onClick={() => patch({ guest_called: true })} disabled={busy} className="shrink-0 text-[12.5px] font-semibold px-3 min-h-[36px] rounded-lg bg-ink text-white disabled:opacity-40">The guest was called ✓</button>
+                ) : g.key === 'deadline' ? (
+                  <span className="shrink-0 text-[12px] font-semibold text-rose-700">Cannot be fixed here — override to file late</span>
+                ) : (
+                  <button onClick={() => jumpTo(g.key === 'reservation' ? 'claim-step-stay' : g.key === 'summary' ? 'claim-step-writeup' : 'claim-step-items')}
+                    className="shrink-0 text-[12.5px] font-semibold px-3 min-h-[36px] rounded-lg border border-line bg-white text-ink hover:bg-app">
+                    {g.key === 'items' ? 'Add an item' : g.key === 'photos' ? 'Add photos' : g.key === 'cost' ? 'Add costs' : g.key === 'link' ? 'Add links' : g.key === 'condition' ? 'Add condition & age' : g.key === 'summary' ? 'Write it' : 'Fix it'} ↓
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {unfiled && failing.length === 0 && (
+        <section className="rounded-2xl border border-emerald-300 bg-emerald-50 p-3 mb-4 flex items-center gap-2 flex-wrap">
+          <CheckCircle2 size={16} className="text-emerald-700 shrink-0" />
+          <span className="text-sm font-semibold text-emerald-900 flex-1 min-w-0 basis-48">Ready to file — every evidence gate is met.{claim.stage === 'draft' ? ' Recommend it to an approver below.' : claim.stage === 'review' ? ' Waiting on approval.' : ' File it with the channel, then mark it submitted below.'}</span>
+          <button onClick={copyPacket} className="shrink-0 text-[12.5px] font-semibold px-3 min-h-[36px] rounded-lg bg-emerald-700 text-white inline-flex items-center gap-1.5">{packetCopied ? <Check size={13} /> : null}{packetCopied ? 'Copied' : 'Copy the filing packet'}</button>
+          <button onClick={() => jumpTo('claim-step-file')} className="shrink-0 text-[12.5px] font-semibold px-3 min-h-[36px] rounded-lg border border-emerald-300 bg-white text-emerald-900">Go to filing ↓</button>
+        </section>
+      )}
+
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
       {flash && <div className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mb-3 flex items-center gap-2"><Check size={14} />{flash}</div>}
 
@@ -234,7 +302,7 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
         {STAGES.map((s, i) => (
           <button key={s.key} type="button" onClick={() => moveTo(s.key)} disabled={busy || i === stageIndex}
             title={i === stageIndex ? 'Where it is now' : 'Move the claim to ' + s.label + ' — ' + s.blurb}
-            className={'text-[11px] font-semibold px-2 py-1 rounded-lg border transition ' + (i === stageIndex ? 'bg-ink text-white border-ink cursor-default' : i < stageIndex ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-400' : 'bg-white text-muted border-line hover:border-ink/40 hover:text-ink')}>
+            className={'text-[11px] font-semibold px-2 py-1 min-h-[36px] sm:min-h-0 rounded-lg border transition ' + (i === stageIndex ? 'bg-ink text-white border-ink cursor-default' : i < stageIndex ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:border-emerald-400' : 'bg-white text-muted border-line hover:border-ink/40 hover:text-ink')}>
             {i < stageIndex ? '✓ ' : ''}{s.label}
           </button>
         ))}
@@ -255,10 +323,10 @@ export function ClaimDesk({ id, embedded, onClose, onChanged }: Props) {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
         <div className="lg:col-span-2 space-y-4">
-          <StepStay claim={claim} policy={policy} patch={patch} busy={busy} />
-          <StepItems claimId={id} items={items} onItems={(next: ClaimItem[]) => setClaim(c => c ? { ...c, items: next } : c)} setErr={setErr} />
-          <StepWriteUp claim={claim} items={items} patch={patch} busy={busy} />
-          <StepFile claim={claim} gates={gates} failing={failing} blocked={blocked} patch={patch} busy={busy} reviewers={reviewers} />
+          <div id="claim-step-stay" className="scroll-mt-4"><StepStay claim={claim} policy={policy} patch={patch} busy={busy} /></div>
+          <div id="claim-step-items" className="scroll-mt-4"><StepItems claimId={id} items={items} onItems={(next: ClaimItem[]) => setClaim(c => c ? { ...c, items: next } : c)} setErr={setErr} /></div>
+          <div id="claim-step-writeup" className="scroll-mt-4"><StepWriteUp claim={claim} items={items} patch={patch} busy={busy} /></div>
+          <div id="claim-step-file" className="scroll-mt-4"><StepFile claim={claim} gates={gates} failing={failing} blocked={blocked} patch={patch} busy={busy} reviewers={reviewers} /></div>
           {(claim.stage === 'submitted' || claim.stage === 'decided' || claim.stage === 'settle' || claim.stage === 'closed') && (
             <StepOutcome claim={claim} patch={patch} busy={busy} canClose={canClose} />
           )}
@@ -557,7 +625,7 @@ function StepWriteUp({ claim, items, patch, busy }: { claim: Claim; items: Claim
       <div className="grid grid-cols-2 gap-3 mt-3">
         <label className="block">
           <span className="text-[11px] uppercase tracking-wide text-muted">Total sought</span>
-          <input value={amount} onChange={e => setAmount(e.target.value)} onBlur={() => patch({ amount_sought: amount })} inputMode="decimal"
+          <input value={amount} onChange={e => setAmount(e.target.value)} onBlur={() => { if (amount !== (claim.amount_sought == null ? '' : String(claim.amount_sought))) patch({ amount_sought: amount }) }} inputMode="decimal"
             placeholder={sum ? String(sum) : '0.00'} className="mt-1 w-full text-sm border border-line rounded-lg px-2 py-1.5 bg-white tabular-nums" />
           <span className="text-[11px] text-muted">Items add up to {money(sum)}.{' '}
             {mismatch && <button onClick={() => { setAmount(String(sum)); patch({ amount_sought: sum }) }} className="text-brand-600 font-semibold hover:underline">Use {money(sum)}</button>}
@@ -656,7 +724,7 @@ function StepFile({ claim, gates, failing, blocked, patch, busy, reviewers }: {
         </>)}
         {stage === 'ready' && (<>
           <input value={caseId} onChange={e => setCaseId(e.target.value)} placeholder="Channel case / claim ref (optional)"
-            className="text-sm border border-line rounded-lg px-2 py-2 bg-white w-64" />
+            className="text-sm border border-line rounded-lg px-2 py-2 bg-white w-full sm:w-64" />
           <button onClick={() => patch({ stage: 'submitted', channel_case_id: caseId })} disabled={busy} className="text-sm font-semibold px-3 py-2 rounded-lg bg-ink text-white disabled:opacity-40">
             Mark as submitted
           </button>

@@ -369,6 +369,22 @@ const SUPERSEDED_FIELDS: Record<string, Partial<Record<'everyDays' | 'label' | '
 }
 const superseded = (key: string, field: 'everyDays' | 'label' | 'equipment' | 'needsScope', v: any) => ((SUPERSEDED_FIELDS[key] || {})[field] || []).indexOf(v) >= 0
 
+/**
+ * THE ORDER TASK NAMES ARE MATCHED IN: programs made on the Upkeep page FIRST, then the shipped ones
+ * in their own order (2026-11-09/10 audit).
+ *
+ * Every reader of task history is "first match wins". A program made on the page is matched by its
+ * own name, anchored ("^\\s*Quarterly inspection"), and its tasks are named exactly that — but the
+ * shipped patterns are loose ("inspect", "filter", "deep clean") and sat first in the list, so the
+ * new program's finished task reset the generic clock instead of its own, and its open task was
+ * filed as the generic program's duplicate. One rule, used by lib/pm-calendar, lib/suggestions and
+ * lib/pm-dedupe so the three cannot disagree. The stored order (what settings shows) is untouched.
+ */
+export const isPageMadeMatch = (match: any): boolean => String(match ?? '').startsWith('^\\s*')
+export function matchOrder<T extends { match: string }>(cads: T[]): T[] {
+  return cads.filter(c => isPageMadeMatch(c.match)).concat(cads.filter(c => !isPageMadeMatch(c.match)))
+}
+
 /** A pattern that does not compile is worse than no pattern — it would read every task as a match. */
 export function cadenceRe(src: string): RegExp | null {
   try { return new RegExp(src, 'i') } catch { return null }

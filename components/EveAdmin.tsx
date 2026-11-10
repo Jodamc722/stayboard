@@ -35,12 +35,21 @@ const card = 'bg-white border border-line rounded-2xl shadow-soft'
 const input = 'w-full text-sm text-ink bg-app border border-line rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-200'
 
 type EveTab = 'thinking' | 'agent' | 'learning' | 'ota' | 'review' | 'memory' | 'voice' | 'direction' | 'approvals' | 'audits' | 'telegram' | 'docs'
+const EVE_TABS: EveTab[] = ['thinking', 'agent', 'learning', 'ota', 'review', 'memory', 'voice', 'direction', 'approvals', 'audits', 'telegram', 'docs']
 
 export function EveAdmin({ canEdit }: { canEdit: boolean }) {
   // THINKING FIRST while she only observes (Jon, 2026-09-21: "keep her observing but I want to see
   // what she is thinking"); once any rung is above observe, Agent mode leads and Thinking is second.
   const [tab, setTab] = useState<EveTab | null>(null)
   const [thinking, setThinking] = useState<{ unseen: number; allObserving: boolean } | null>(null)
+  // DEEP LINK (2026-11-10): /users?tab=settings&panel=eve&section=memory opens straight on a tab —
+  // `section` is any tab key here (memory, agent, learning, …). The Memory tab scrolls to its clean-up card.
+  useEffect(() => {
+    try {
+      const sec = String(new URLSearchParams(window.location.search).get('section') || '').toLowerCase()
+      if ((EVE_TABS as string[]).includes(sec)) setTab(sec as EveTab)
+    } catch { /* no deep link */ }
+  }, [])
   useEffect(() => {
     let alive = true
     fetch(THOUGHTS_URL + '?count=1').then(r => r.json()).then(j => {
@@ -131,6 +140,9 @@ function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
 
   return (
     <div>
+      {/* MEMORY CLEAN-UP FIRST (2026-11-10): it sat below the questions, folded shut, and rendered
+          nothing at all until its audit had loaded — the owner could not find it. */}
+      <EveMemoryCleanup canEdit={canEdit} onChanged={load} />
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Search her memory…" className={`${input} max-w-xs`} />
         <span className="text-xs text-muted">{shown.length} of {rows.length}</span>
@@ -164,7 +176,6 @@ function EveMemoryAdmin({ canEdit }: { canEdit: boolean }) {
       </div>
 
       <EveQuestions canEdit={canEdit} onAnswered={load} />
-      <EveMemoryHealth canEdit={canEdit} onChanged={load} />
 
       {err && <div className="mb-3 text-[13px] text-[#9A6200] bg-[#FDF3E0] border border-[#F0DAA8] rounded-xl px-3.5 py-2.5">{err}</div>}
       {learnNote && <div className="mb-3 text-[13px] text-ink bg-app border border-line rounded-xl px-3.5 py-2.5">{learnNote}</div>}
@@ -849,77 +860,188 @@ type MemFinding = {
   rows: { id: string; kind: string; scope: string; weight: number; source: string; text: string; use_count: number }[]
 }
 
-function EveMemoryHealth({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
+function EveMemoryCleanup({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
   const [data, setData] = useState<any>(null)
-  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
+  const [note, setNote] = useState('')
+  const [showAll, setShowAll] = useState(false)
+  const [showOther, setShowOther] = useState(false)
 
   const load = useCallback(async () => {
-    try { setData(await fetch('/api/eve/memory-audit').then(x => x.json())) } catch { /* extra */ }
+    setLoading(true)
+    try {
+      const r = await fetch('/api/eve/memory-audit')
+      const d = await r.json().catch(() => null)
+      if (!r.ok || !d?.ok) { setErr(String(d?.error || `The memory audit did not load (HTTP ${r.status}).`)); setData(null) }
+      else { setErr(''); setData(d) }
+    } catch (e: any) { setErr(e?.message || String(e)); setData(null) } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
-
-  async function apply(f: MemFinding, op: 'expire' | 'merge' | 'keep') {
-    setBusy(f.ids.join(','))
+  // The deep link (?section=memory) lands here.
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null
     try {
-      await fetch('/api/eve/memory-audit', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, ids: f.ids }),
-      })
+      if (new URLSearchParams(window.location.search).get('section') === 'memory') {
+        t = setTimeout(() => { document.getElementById('memory-cleanup')?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }, 150)
+      }
+    } catch { /* fine */ }
+    return () => { if (t) clearTimeout(t) }
+  }, [])
+
+  async function run(key: string, payload: any, done: (d: any) => string) {
+    setBusy(key); setNote('')
+    try {
+      const r = await fetch('/api/eve/memory-audit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const d = await r.json().catch(() => ({} as any))
+      setNote(r.ok && d?.ok !== false ? done(d) : String(d?.error || 'That did not go through — nothing was changed.'))
       await load(); onChanged()
-    } finally { setBusy('') }
+    } catch (e: any) { setNote(e?.message || String(e)) } finally { setBusy('') }
   }
 
-  if (!data?.ok) return null
-  const findings: MemFinding[] = data.findings || []
+  const findings: MemFinding[] = data?.findings || []
+  const dups = findings.filter(f => f.kind === 'duplicate')
+  const other = findings.filter(f => f.kind !== 'duplicate')
+  const groups = Number(data?.duplicateGroups ?? dups.length) || 0
+  const extra = Math.max(0, (Number(data?.duplicateRows) || 0) - groups)
+  const stale = Number(data?.staleSlack) || 0
+  const days = Number(data?.staleSlackDays) || 60
+  const person = (src: string) => src !== 'slack' && src !== 'eve' && src !== 'system'
+  const btn = 'inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50'
+  const stat = (n: number | string, label: string) => (
+    <div className="rounded-xl border border-line bg-app px-3 py-2 min-w-[92px]">
+      <p className="text-lg font-bold text-ink leading-none">{n}</p>
+      <p className="text-[11px] text-muted mt-1">{label}</p>
+    </div>
+  )
 
   return (
-    <div className={`${card} p-4 mb-4`}>
-      <button onClick={() => setOpen(o => !o)} className="flex items-center justify-between w-full text-left">
+    <div id="memory-cleanup" className={`${card} p-4 mb-4 scroll-mt-20`}>
+      <div className="flex items-center justify-between gap-2">
         <p className="text-sm font-semibold text-ink inline-flex items-center gap-1.5">
-          <Layers size={14} /> Memory health
-          {findings.length > 0 && <span className="text-[11px] font-semibold rounded-full bg-[#FDF3E0] text-[#9A6200] border border-[#F0DAA8] px-2 py-0.5">{findings.length} to clean up</span>}
+          <Layers size={14} /> Memory clean-up
+          {!loading && !err && groups + stale > 0 && <span className="text-[11px] font-semibold rounded-full bg-[#FDF3E0] text-[#9A6200] border border-[#F0DAA8] px-2 py-0.5">{groups + (stale ? 1 : 0)} to clean up</span>}
         </p>
-        <span className="text-[12px] text-muted">{open ? 'hide' : 'show'}</span>
-      </button>
-      <p className="text-[12px] text-muted mt-1">{data.summary}</p>
-      {open && (
+        <button onClick={load} disabled={loading || !!busy} className="inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink disabled:opacity-50">
+          <RefreshCw size={12} /> {loading ? 'Checking…' : 'Check again'}
+        </button>
+      </div>
+      <p className="text-[12px] text-muted mt-1">Merge memories that say the same thing and retire what she overheard and never used. Nothing is deleted, and a memory a person wrote is never changed or removed.</p>
+
+      {loading && !data && <p className="text-[13px] text-muted mt-3">Reading her memory…</p>}
+      {err && (
+        <div className="mt-3 text-[13px] text-[#9A6200] bg-[#FDF3E0] border border-[#F0DAA8] rounded-xl px-3.5 py-2.5">
+          Could not check her memory: {err} <button onClick={load} className="underline font-semibold ml-1">Try again</button>
+        </div>
+      )}
+      {note && <div className="mt-3 text-[13px] text-ink bg-app border border-line rounded-xl px-3.5 py-2.5">{note}</div>}
+
+      {data && (
         <div className="mt-3 space-y-3">
-          <p className="text-[12px] text-muted">
-            {data.promptCost?.note} Nothing here is deleted — items are expired, recoverable, and anything you wrote yourself is never touched.
-          </p>
-          {!findings.length && <p className="text-[13px] text-ink">Nothing to clean up. Her memory is tight.</p>}
-          {findings.map((f, i) => (
-            <div key={i} className={`rounded-xl border px-3 py-2.5 ${f.severity === 'high' ? 'border-[#F0C9C9] bg-[#FDF3F3]' : 'border-line bg-app'}`}>
-              <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold">{f.kind}</p>
-              <p className="text-[13px] text-ink mt-1">{f.reason}</p>
-              <div className="mt-2 space-y-1">
-                {f.rows.slice(0, 6).map(r => (
-                  <p key={r.id} className="text-[12px] text-muted">
-                    <span className="font-mono text-[11px]">{r.scope}</span> · w{r.weight} · used {r.use_count}× — {r.text.slice(0, 160)}
-                  </p>
-                ))}
-                {f.rows.length > 6 && <p className="text-[12px] text-muted">…and {f.rows.length - 6} more.</p>}
+          <div className="flex flex-wrap gap-2">
+            {stat(Number(data.live) || 0, 'live memories')}
+            {stat(Number(data.neverUsed) || 0, 'never used')}
+            {stat(groups, groups === 1 ? 'duplicate group' : 'duplicate groups')}
+            {stat(stale, `Slack-learned, unused ${days}+ days`)}
+          </div>
+
+          {groups === 0 && stale === 0 && <p className="text-[13px] text-ink">Nothing to clean up. No duplicates, and nothing overheard is sitting unused.</p>}
+
+          {canEdit && (groups > 0 || stale > 0) && (
+            <div className="flex flex-wrap gap-2">
+              {groups > 0 && (
+                <button disabled={!!busy} className={btn}
+                  onClick={() => { if (window.confirm(`Merge all ${groups} duplicate group${groups === 1 ? '' : 's'}?\n\nOne memory is kept in each group and ${extra} repeat${extra === 1 ? ' is' : 's are'} folded into it. A memory a person wrote is always the one kept and is never changed. Nothing is deleted, and each merge is recorded.`)) run('merge_all', { op: 'merge_all' }, d => `Merged ${Number(d?.groups) || 0} group${Number(d?.groups) === 1 ? '' : 's'} — ${Number(d?.merged) || 0} repeat${Number(d?.merged) === 1 ? '' : 's'} folded in.`) }}>
+                  <Merge size={12} /> {busy === 'merge_all' ? 'Merging…' : `Merge all ${groups} duplicate group${groups === 1 ? '' : 's'}`}
+                </button>
+              )}
+              {stale > 0 && (
+                <button disabled={!!busy} className={btn}
+                  onClick={() => { if (window.confirm(`Retire ${stale} never-used Slack-learned memor${stale === 1 ? 'y' : 'ies'} older than ${days} days?\n\nThey stop loading into her prompts. They are not deleted and can be brought back. Nothing a person wrote is included.`)) run('retire_slack', { op: 'retire_slack' }, d => `Retired ${Number(d?.retired) || 0} Slack-learned memor${Number(d?.retired) === 1 ? 'y' : 'ies'}.`) }}>
+                  <Trash2 size={12} /> {busy === 'retire_slack' ? 'Retiring…' : `Retire ${stale} never-used Slack-learned memor${stale === 1 ? 'y' : 'ies'} older than ${days} days`}
+                </button>
+              )}
+            </div>
+          )}
+
+          {dups.length > 0 && (
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold mb-1.5">Duplicate groups</p>
+              <div className="rounded-xl border border-line divide-y divide-line">
+                {(showAll ? dups : dups.slice(0, 12)).map(f => {
+                  const key = f.ids.join(',')
+                  const scopes = Array.from(new Set(f.rows.map(r => r.scope)))
+                  const kept = f.rows.find(r => person(r.source))
+                  return (
+                    <div key={key} className="flex items-start gap-3 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[13px] text-ink">{f.rows[0]?.text.slice(0, 170)}</p>
+                        <p className="text-[11px] text-muted mt-0.5">
+                          {f.rows.length} copies · {scopes.slice(0, 4).join(', ')}{scopes.length > 4 ? ` +${scopes.length - 4}` : ''}
+                          {kept ? ' · keeps the one a person wrote' : scopes.length > 1 ? ' · kept as one portfolio memory' : ''}
+                        </p>
+                      </div>
+                      {canEdit && (
+                        <button disabled={!!busy} onClick={() => run(key, { op: 'merge', ids: f.ids }, d => `Merged — ${Number(d?.changed) || 0} repeat${Number(d?.changed) === 1 ? '' : 's'} folded in.`)}
+                          className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-brand-700 bg-brand-50 border border-brand-200 rounded-lg px-2.5 py-1.5 hover:bg-brand-100 disabled:opacity-50">
+                          <Merge size={12} /> {busy === key ? 'Merging…' : 'Merge'}
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
-              {canEdit && (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {f.proposal === 'merge' && (
-                    <button onClick={() => apply(f, 'merge')} disabled={!!busy}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">
-                      <Merge size={12} /> Merge into one
-                    </button>
-                  )}
-                  {f.proposal === 'expire' && (
-                    <button onClick={() => apply(f, 'expire')} disabled={!!busy}
-                      className="inline-flex items-center gap-1.5 text-xs font-semibold bg-brand-600 text-white rounded-lg px-3 py-1.5 hover:bg-brand-700 disabled:opacity-50">
-                      <Trash2 size={12} /> Retire {f.ids.length}
-                    </button>
-                  )}
-                  <button onClick={() => apply(f, 'keep')} disabled={!!busy}
-                    className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Leave them</button>
+              {dups.length > 12 && <button onClick={() => setShowAll(v => !v)} className="mt-1.5 text-[12px] text-muted hover:text-ink">{showAll ? 'Show fewer' : `Show all ${dups.length} groups`}</button>}
+            </div>
+          )}
+
+          {other.length > 0 && (
+            <div>
+              <button onClick={() => setShowOther(v => !v)} className="text-[12px] font-semibold text-muted hover:text-ink">{showOther ? 'Hide' : 'Show'} {other.length} other thing{other.length === 1 ? '' : 's'} worth a look (contradictions, vague or unused lines)</button>
+              {showOther && (
+                <div className="mt-2 space-y-3">
+                  {other.map((f, i) => (
+                    <div key={i} className={`rounded-xl border px-3 py-2.5 ${f.severity === 'high' ? 'border-[#F0C9C9] bg-[#FDF3F3]' : 'border-line bg-app'}`}>
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold">{f.kind}</p>
+                      <p className="text-[13px] text-ink mt-1">{f.reason}</p>
+                      <div className="mt-2 space-y-1">
+                        {f.rows.slice(0, 6).map(r => (
+                          <p key={r.id} className="text-[12px] text-muted">
+                            <span className="font-mono text-[11px]">{r.scope}</span> · w{r.weight} · used {r.use_count}× — {r.text.slice(0, 160)}
+                          </p>
+                        ))}
+                        {f.rows.length > 6 && <p className="text-[12px] text-muted">…and {f.rows.length - 6} more.</p>}
+                      </div>
+                      {canEdit && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {f.proposal === 'expire' && (
+                            <button disabled={!!busy} className={btn}
+                              onClick={() => { if (window.confirm(`Retire these ${f.ids.length} memories? They are not deleted, and anything a person wrote is skipped.`)) run('x' + i, { op: 'expire', ids: f.ids }, d => `Retired ${Number(d?.changed) || 0}.`) }}>
+                              <Trash2 size={12} /> Retire {f.ids.length}
+                            </button>
+                          )}
+                          <button disabled={!!busy} onClick={() => run('k' + i, { op: 'keep', ids: f.ids }, () => 'Left as they are.')}
+                            className="text-xs font-semibold text-muted hover:text-ink px-2 py-1.5">Leave them</button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-          ))}
+          )}
+
+          {Array.isArray(data.log) && data.log.length > 0 && (
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.14em] text-muted font-semibold mb-1">Recent clean-ups</p>
+              {data.log.slice(0, 5).map((l: any, i: number) => (
+                <p key={i} className="text-[12px] text-muted">
+                  {String(l.at || '').slice(0, 10)} · {String(l.by || '').split('@')[0]} · {l.op === 'retire_slack' ? `retired ${Number(l.count) || 0} Slack-learned` : `merged ${(l.merged || []).length} into “${String(l.kept?.text || '').slice(0, 70)}”`}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -73,6 +73,8 @@ type Fc = { ok: boolean; today: string; weekStart: string; week: FcDay[]; avgByM
 //   Needed      = Target ÷ one shift, rounded up ONCE (15 minutes of slack)
 //   Over/short  = Scheduled − Target   (so "short" and "working < needed" are always the same fact)
 // A person is counted once, on the first market that lists them; on-call is shown but not counted.
+// Somebody on the day's schedule who is NOT in the working count, and why.
+type CrewSkip = { name: string; market: string; why: string }
 type CrewPerson = { name: string; market: string; status: 'Working' | 'On Call'; shift: string | null }
 type MarketLine = { market: string; cleans: number; kpiH: number; cost: number; projCleans: number; projH: number; working: number; onCall: number; schedH: number }
 type Staffing = { lines: MarketLine[]; cleans: number; kpiH: number; cost: number; projCleans: number; projH: number; hours: number; bufferH: number; targetH: number; working: number; onCall: number; schedH: number; need: number }
@@ -367,6 +369,8 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     if (!silent) { busyRef.current.load++; setLoading(true); setError(null) }
     try {
       const qs = new URLSearchParams({ view: v }); if (d) qs.set('date', d)
+      // The week grid draws four fields per clean; ask for only those (see /api/schedule).
+      if (v === 'week' && !embedded) qs.set('slim', '1')
       const r = await fetch(`/api/schedule?${qs.toString()}`)
       const raw = await r.text(); let j: any = null; try { j = raw ? JSON.parse(raw) : null } catch { j = null }
       if (my !== loadSeq.current) return
@@ -481,9 +485,14 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   // only (see NOT_CLEANER_DEPT), each person once — on the first market that lists them — and every
   // market is read, so filtering the board to Broward never makes a Miami cleaner "not scheduled".
   const crewCache = useMemo(() => new Map<string, CrewPerson[]>(), [teamDocs, rosters, NON_CLEANERS])
+  const skipCache = useMemo(() => new Map<string, CrewSkip[]>(), [teamDocs, rosters, NON_CLEANERS])
   const crewFor = (d: string): CrewPerson[] => {
     const hit = crewCache.get(d); if (hit) return hit
     const out: CrewPerson[] = []
+    // WHO IS LEFT OUT, BY NAME — the rail lists them so "8 working" can be checked against the rota.
+    const skipped: CrewSkip[] = []
+    const skipSeen: Record<string, boolean> = {}
+    const skip = (name: string, mk: string, why: string) => { const id = name.trim().toLowerCase(); if (skipSeen[id]) return; skipSeen[id] = true; skipped.push({ name, market: mk, why }) }
     const taken: Record<string, boolean> = {}
     for (const mk of MARKETS) {
       const doc = teamDocs[mk] || { members: [], cells: {} }
@@ -492,19 +501,21 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
         ? ros.people.map(p => ({ name: p.name, dept: String(p.dept || ''), manual: !!p.manual, cell: p.days[d] || null }))
         : doc.members.map(m => ({ name: m, dept: '', manual: true, cell: null }))
       for (const p of list) {
-        if (NON_CLEANERS[p.name]) continue
         const set = String(doc.cells[p.name + '__' + d] || '')
         const eff = set || (p.cell && p.cell.source === 'homebase' ? String(p.cell.status || '') : '')
         const status: 'Working' | 'On Call' | null = /on.?call/i.test(eff) ? 'On Call' : /work/i.test(eff) ? 'Working' : null
+        if (NON_CLEANERS[p.name]) { if (status) skip(p.name, mk, String(NON_CLEANERS[p.name] || 'not a cleaner') + ' (Ops presets)'); continue }
         if (!status) continue
-        if (!set && !p.manual && NOT_CLEANER_DEPT.test(p.dept)) continue
+        if (!set && !p.manual && NOT_CLEANER_DEPT.test(p.dept)) { skip(p.name, mk, p.dept === 'ccs' ? 'CCS' : p.dept); continue }
         const id = p.name.trim().toLowerCase()
         if (taken[id]) continue
         taken[id] = true
         out.push({ name: p.name, market: mk, status, shift: p.cell ? p.cell.shift : null })
       }
     }
+    // Somebody counted on one market's list is not "left out" because another list also names them.
     crewCache.set(d, out)
+    skipCache.set(d, skipped.filter(x => !taken[x.name.trim().toLowerCase()]))
     return out
   }
 
@@ -556,7 +567,16 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   const boardFcDay = stripDays.find(x => x.date === boardDate) || null
   const boardStaff = staffingFor(boardDate, boardFcDay)
   const boardCrew = crewFor(boardDate)
+  const boardSkipped = skipCache.get(boardDate) || []
   const boardIsPast = !!data && !!boardDate && boardDate < data.today
+  // Tell the page header which day is open, so its capacity pill describes this day and not
+  // always today (app/schedule/ScheduleHead.tsx listens). Not when embedded in another page.
+  const todayForHead = (data && data.today) || ''
+  useEffect(() => {
+    if (embedded || !boardDate || !todayForHead || typeof window === 'undefined') return
+    window.dispatchEvent(new CustomEvent('lh:schedule-day', { detail: { date: view === 'day' ? boardDate : todayForHead, today: todayForHead } }))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardDate, todayForHead, view])
   // WHERE CLEANS COULD GO when the day is short: the first later day of this week whose schedule
   // has room for the whole shortfall, else the one with the most room. Same staffingFor() numbers
   // as the strip; null when the day is not short or no later day has spare hours.
@@ -1000,6 +1020,7 @@ async function pushBlocks() {
 
   const rangeLabel = data ? (view === 'day' ? new Date(data.weekStart + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) : `${fmtDate(data.weekStart)} – ${fmtDate(data.weekEnd)}`) : ''
   const pickable = rows.filter(c => !c.vendor && !c.movedTo)
+  const movingN = Object.keys(blockStaged).filter(k => blockStaged[k]).length
   const allSelected = pickable.length > 0 && pickable.every(c => selected[keyOf(c)])
   const guestyOnlyCount = rows.filter(r => r.syncStatus === 'guesty-only').length
 
@@ -1212,7 +1233,7 @@ async function pushBlocks() {
               sheet that sat under it is in the More menu. */}
           {!embedded && (
           <div className="space-y-3">
-            <WorkingRail rosters={rosters} date={boardDate} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(boardDate)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} staff={boardStaff} crew={boardCrew} shiftHours={SHIFT_H} growth={Number(GROWTH) || 0} load={cleanerLoad} dollars={rateDollars} payPerHour={PAY} isPast={boardIsPast} moveTo={moveTo} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+            <WorkingRail rosters={rosters} date={boardDate} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(boardDate)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} staff={boardStaff} crew={boardCrew} skipped={boardSkipped} shiftHours={SHIFT_H} growth={Number(GROWTH) || 0} load={cleanerLoad} dollars={rateDollars} payPerHour={PAY} isPast={boardIsPast} moveTo={moveTo} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
           </div>
           )}
           <div className="space-y-2 min-w-0">
@@ -1367,29 +1388,32 @@ async function pushBlocks() {
         </div>
       ) : null}
 
-      {/* Both sticky action bars sat under the phone's fixed bottom nav — you could stage a move
-          and never see the button that applies it. Lift them clear of the bar + home indicator. */}
-      {view === 'day' && Object.keys(blockStaged).filter(k => blockStaged[k]).length > 0 && (
-        <div className="sticky bottom-[calc(env(safe-area-inset-bottom,0px)+8rem)] sm:bottom-16 z-20 flex justify-center">
-          <div className="inline-flex items-center gap-3 rounded-full border border-red-200 bg-white shadow-lg px-4 py-2">
-            <span className="text-[13px] font-semibold text-red-700">{Object.keys(blockStaged).filter(k => blockStaged[k]).length} staged to move</span>
-            <button onClick={() => setBlockStaged({})} className="text-[12px] text-muted hover:text-ink">Clear</button>
-            <button onClick={pushBlocks} disabled={Object.keys(blocking).some(k => blocking[k])} className="inline-flex items-center gap-1.5 rounded-full bg-red-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-red-700 disabled:opacity-50">Move to next day</button>
-          </div>
-        </div>
-      )}
-      {selectedKeys.length > 0 && view === 'day' && (
+      {/* ONE STICKY BAR, TWO ACTIONS (2026-11-10). Staged moves had a red bar of their own stacked
+          above the selection bar — on a phone the pair covered a third of the list. Now it is one
+          bar, lifted clear of the phone's bottom nav: Push N for the selection, Move N for the
+          cleans staged to go to tomorrow. Either half shows only when it has something to do. */}
+      {view === 'day' && (selectedKeys.length > 0 || movingN > 0) && (
         <div className="sticky bottom-[calc(env(safe-area-inset-bottom,0px)+4.25rem)] sm:bottom-3 z-20 flex justify-center">
-          {/* TWO TIDY ROWS on a phone (count + Clear, then picker + Push); one line from sm up. */}
           <div className="flex flex-col gap-1.5 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-brand-200 bg-white shadow-lg px-3 py-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:rounded-full sm:px-4">
-            <div className="flex items-center gap-3">
-              <span className="text-[13px] font-semibold text-ink inline-flex items-center gap-1.5"><Users size={14} className="text-brand-600" /> {selectedKeys.length} selected</span>
-              <button onClick={() => setSelected({})} className="ml-auto sm:ml-0 text-[12px] text-muted hover:text-ink">Clear</button>
-            </div>
-            <div className="flex items-center gap-2">
-              {data?.breezeway && <div className="flex-1 min-w-0 sm:flex-none sm:w-44"><CleanerPicker people={people} scheduled={scheduledSet} value={null} existing="" onChange={p => bulkAssign(p)} placeholder="Pick cleaner…" /></div>}
-              <span className="shrink-0 ml-auto"><button onClick={push} disabled={pushing} className="inline-flex items-center gap-1.5 rounded-full bg-brand-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{pushing ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />} Push {selectedKeys.filter(k => { const c = cleanByKey[k]; return !!c && !c.vendor && !c.movedTo }).length} to Breezeway</button></span>
-            </div>
+            {selectedKeys.length > 0 && (
+              <>
+                <div className="flex items-center gap-3">
+                  <span className="text-[13px] font-semibold text-ink inline-flex items-center gap-1.5"><Users size={14} className="text-brand-600" /> {selectedKeys.length} selected</span>
+                  <button onClick={() => setSelected({})} className="ml-auto sm:ml-0 text-[12px] text-muted hover:text-ink">Clear</button>
+                </div>
+                <div className="flex items-center gap-2">
+                  {data?.breezeway && <div className="flex-1 min-w-0 sm:flex-none sm:w-44"><CleanerPicker people={people} scheduled={scheduledSet} value={null} existing="" onChange={p => bulkAssign(p)} placeholder="Pick cleaner…" /></div>}
+                  <span className="shrink-0 ml-auto"><button onClick={push} disabled={pushing} className="inline-flex items-center gap-1.5 rounded-full bg-brand-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{pushing ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />} Push {selectedKeys.filter(k => { const c = cleanByKey[k]; return !!c && !c.vendor && !c.movedTo }).length} to Breezeway</button></span>
+                </div>
+              </>
+            )}
+            {movingN > 0 && (
+              <div className={'flex items-center gap-2 ' + (selectedKeys.length > 0 ? 'border-t border-line pt-1.5 sm:border-t-0 sm:pt-0 sm:border-l sm:pl-3' : '')}>
+                <span className="text-[13px] font-semibold text-red-700">{movingN} to move</span>
+                <button onClick={() => setBlockStaged({})} className="text-[12px] text-muted hover:text-ink">Clear</button>
+                <button onClick={pushBlocks} disabled={Object.keys(blocking).some(k => blocking[k])} title="Move the staged cleans to the next day" className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-red-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-red-700 disabled:opacity-50">Move {movingN} to next day</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1420,7 +1444,7 @@ async function pushBlocks() {
 //              because "needed" is the Total's KPI hours ÷ a shift, rounded up.
 //   The team:  each person with the hours of cleans on them against their shift (red when over),
 //              then anyone holding cleans who is not scheduled today, then what nobody holds yet.
-function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 8, growth = 0, load, dollars = false, payPerHour = 20, isPast = false, moveTo = null, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; staff: Staffing; crew: CrewPerson[]; shiftHours?: number; growth?: number; load?: CleanerLoad; dollars?: boolean; payPerHour?: number; isPast?: boolean; moveTo?: { label: string; spare: number } | null; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
+function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [], shiftHours = 8, growth = 0, load, dollars = false, payPerHour = 20, isPast = false, moveTo = null, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; staff: Staffing; crew: CrewPerson[]; skipped?: CrewSkip[]; shiftHours?: number; growth?: number; load?: CleanerLoad; dollars?: boolean; payPerHour?: number; isPast?: boolean; moveTo?: { label: string; spare: number } | null; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
   const NON_CLEANERS = useOpsPresets().roster.nonCleaners
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
@@ -1519,6 +1543,14 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, shiftHours = 
             <p><b className="text-ink">Scheduled</b> — cleaners working today × a {shiftHours}h shift. A status set by hand wins; otherwise it is the Homebase schedule. On-call people, supervisors, maintenance and inspectors are not counted unless set to Working by hand. A person on two market lists is counted once.</p>
             <p><b className="text-ink">Needed</b> — the Total KPI hours ({fmtH(staff.targetH)}) ÷ {shiftHours}h, rounded up (a quarter-hour over does not add a person) = {staff.need}.</p>
             <p><b className="text-ink">+/&minus;</b> — Scheduled minus KPI. Each column adds up to its Total.</p>
+            {/* WHO COUNTS, BY NAME — so "8 working" can be checked against the rota, and changed
+                from the list below without anyone touching code. */}
+            <div className="border-t border-line pt-1 space-y-0.5">
+              <p><b className="text-ink">Who counts · {crew.filter(p => p.status === 'Working').length} working</b>{crew.some(p => p.status === 'Working') ? ' — ' + crew.filter(p => p.status === 'Working').map(p => shortTeamName(p.name)).join(', ') : ' — nobody'}</p>
+              {crew.some(p => p.status === 'On Call') && <p><b className="text-ink">On call, not counted</b> — {crew.filter(p => p.status === 'On Call').map(p => shortTeamName(p.name)).join(', ')}</p>}
+              {skipped.length > 0 && <p><b className="text-ink">On the schedule, not counted</b> — {skipped.map(x => shortTeamName(x.name) + ' (' + x.why + ')').join(', ')}</p>}
+              <p>To change it: set a person to <b className="text-ink">Working</b> in the list below and they count today, whatever their department; set them to OFF or On Call and they do not. To leave someone out every day, add them to the non-cleaners list in Users → Ops presets.</p>
+            </div>
           </div>
         </details>
       </div>

@@ -219,14 +219,21 @@ export async function PATCH(req: NextRequest) {
     if (b.status !== undefined) {
       const s = str(b.status)
       if (!(STATUSES as readonly string[]).includes(s)) return NextResponse.json({ ok: false, error: 'Bad status' }, { status: 400 })
+      // NO PAYMENT, NO SHIPPED (2026-11-10): shipping is paid by the guest, so an unpaid item can only
+      // be marked Shipped as an explicit goodwill shipment — goodwill:true plus a note saying why. The
+      // page asks for the reason; the history keeps it.
+      const goodwill = s === 'shipping' && s !== cur.status && !cur.shipping_paid
+      if (goodwill && !(b.goodwill === true && str(b.note).trim().length >= 3)) return NextResponse.json({ ok: false, error: 'The guest has not paid — mark it paid first. Shipping it at no charge needs a reason (use “Shipped at no charge”).' }, { status: 400 })
       if (s !== cur.status) {
         upd.status = s
         if (s === 'contacted' && !cur.contacted_at) upd.contacted_at = new Date().toISOString()
         upd.resolved_at = RESOLVED.includes(s) ? new Date().toISOString() : null
-        history.push(entry(who, 'status', cur.status + ' → ' + s + (b.note ? ': ' + str(b.note).trim().slice(0, 500) : '')))
+        history.push(goodwill
+          ? entry(who, 'goodwill shipment', 'Shipped at no charge to the guest — ' + str(b.note).trim().slice(0, 500))
+          : entry(who, 'status', cur.status + ' → ' + s + (b.note ? ': ' + str(b.note).trim().slice(0, 500) : '')))
       }
     }
-    if (b.note && b.status === undefined) history.push(entry(who, 'note', str(b.note).trim().slice(0, 1000)))
+    if (b.note && b.status === undefined && b.action !== 'extend_hold') history.push(entry(who, 'note', str(b.note).trim().slice(0, 1000)))
     for (const [k, col, max] of [['contactNote', 'contact_note', 1000], ['shippingCarrier', 'shipping_carrier', 60], ['tracking', 'tracking', 120], ['storageLocation', 'storage_location', 200], ['description', 'description', 2000], ['foundWhere', 'found_where', 200], ['foundBy', 'found_by', 120], ['notes', 'notes', 4000], ['item', 'item', 160]] as [string, string, number][]) {
       if (b[k] !== undefined) upd[col] = str(b[k]).trim().slice(0, max) || null
     }
@@ -253,7 +260,7 @@ export async function PATCH(req: NextRequest) {
     if (b.shipTo !== undefined) upd.ship_to = str(b.shipTo).trim().slice(0, 500) || null
 
     // ── PAID SHIPPING (lib/lost-found-pay). Ask → paid → Breezeway task. ──
-    let after: 'push' | null = null
+    let after: 'push' | 'recreate' | null = null
     if (b.action === 'request_pay') {
       const amount = num(b.amount ?? cur.shipping_cost)
       if (!amount || amount <= 0) return NextResponse.json({ ok: false, error: 'Type the shipping cost first.' }, { status: 400 })
@@ -294,6 +301,27 @@ export async function PATCH(req: NextRequest) {
       if (!cur.shipping_paid) return NextResponse.json({ ok: false, error: 'The delivery task goes out once the guest has paid — mark it paid first.' }, { status: 400 })
       after = 'push'
     }
+    // A DELIVERY TASK CANCELLED IN BREEZEWAY CAN BE MADE AGAIN (2026-11-10). Only for a paid item, and
+    // only when the mirror really shows the old task cancelled or deleted — an open task is moved to the
+    // next Tuesday, never duplicated (Jon, 2026-11-05).
+    if (b.action === 'recreate_task') {
+      if (!cur.shipping_paid) return NextResponse.json({ ok: false, error: 'The delivery task goes out once the guest has paid — mark it paid first.' }, { status: 400 })
+      if (cur.sent_at) return NextResponse.json({ ok: false, error: 'This one already shipped — no new task needed.' }, { status: 400 })
+      if (cur.breezeway_task_id) {
+        const { data: old } = await db.from('breezeway_tasks_sync').select('id,status').eq('id', str(cur.breezeway_task_id)).maybeSingle()
+        if (!old || !/cancel|delet/i.test(str((old as any).status))) return NextResponse.json({ ok: false, error: 'The delivery task #' + str(cur.breezeway_task_id) + ' is not cancelled in Breezeway — it is moved to the next Tuesday instead of being made twice.' }, { status: 409 })
+        history.push(entry(who, 'breezeway task', 'Delivery task #' + str(cur.breezeway_task_id) + ' was cancelled in Breezeway — a new one was asked for'))
+      }
+      after = 'recreate'
+    }
+    // "Tracking sent": the person sent (or says they sent) the tracking number to the guest. Kept in the
+    // history — there is no column for it — and read back by lib/lost-found-rules trackingSentAt().
+    if (b.action === 'tracking_sent') {
+      if (!str(cur.tracking).trim()) return NextResponse.json({ ok: false, error: 'Add the tracking number first.' }, { status: 400 })
+      history.push(entry(who, 'tracking sent', str(cur.tracking).trim() + (cur.shipping_carrier ? ' (' + str(cur.shipping_carrier) + ')' : '') + ' — ' + (str(b.via).slice(0, 60) || 'by hand')))
+    }
+    // "Keep holding": a person restarts the 30-day hold (lib/lost-found-rules holdStart()).
+    if (b.action === 'extend_hold') history.push(entry(who, 'hold extended', str(b.note).trim().slice(0, 300) || 'Kept for another ' + HOLD_DAYS + ' days'))
     if (Array.isArray(b.addReceipts)) {
       const add = b.addReceipts.filter((x: any) => typeof x === 'string')
       upd.receipts = [...(Array.isArray(cur.receipts) ? cur.receipts : []), ...add].slice(0, 12)
@@ -315,8 +343,10 @@ export async function PATCH(req: NextRequest) {
     }
     // Paid → the Breezeway task that ships it. The payment is saved either way; a failed push is
     // written on the item and the page offers a retry.
-    if (after === 'push') {
-      const t = await pushShipTask(data)
+    if (after === 'push' || after === 'recreate') {
+      // Recreate: pushShipTask never makes a second task while the item still names one, so the
+      // cancelled task's id is put aside for this call (and kept on the item if the new one fails).
+      const t = await pushShipTask(after === 'recreate' ? { ...data, breezeway_task_id: null } : data)
       const h2 = [...(Array.isArray(data.history) ? data.history : []), t.ok ? entry('Lighthouse', 'breezeway task', 'Lost & Found Delivery #' + t.taskId + ' created in Breezeway for Tuesday ' + ((t as any).date || '') + ((t as any).assignedTo?.length ? ' — assigned to ' + (t as any).assignedTo.join(', ') : ' — unassigned (nobody matched in Breezeway)')) : entry('Lighthouse', 'breezeway task failed', t.error || '')].slice(-60)
       const { data: d2 } = await db.from('lost_found_items').update({ breezeway_task_id: t.ok ? t.taskId : data.breezeway_task_id, breezeway_error: t.ok ? null : (t.error || 'failed'), history: h2, updated_at: new Date().toISOString() }).eq('id', id).select('*').single()
       return NextResponse.json({ ok: true, item: d2 || data, task: t })

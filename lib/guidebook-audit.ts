@@ -9,6 +9,7 @@
 //   tidy  — polish (photos, empty sections, sign-off)
 // Every flag names the review PAGE it belongs to, so the page-by-page review shows it where it is.
 import { isCommonSense } from '@/lib/guide-print'
+import { isSurfside, guideSignoff } from '@/lib/guide-voice'
 
 export type Flag = { level: 'block' | 'ask' | 'tidy'; page: string; text: string }
 export const REVIEW_PAGES: { key: string; label: string }[] = [
@@ -111,7 +112,10 @@ export function auditGuidebook(gb: any, listing?: { nickname?: string | null; bu
   for (const k of slots) { const u = urlOf(pa[k]); (seen[u] = seen[u] || []).push(k) }
   const dup = Object.values(seen).filter(v => v.length > 1)
   if (dup.length) add('tidy', 'cover', 'The same photo is used on: ' + dup.map(v => v.join(' + ')).join('; '))
-  if (/surfside|boynton/i.test(tag) && !/vanessa|taylor/i.test(str(s.contact?.signoff))) add('ask', 'help', 'Surfside books are signed Vanessa & Taylor — the sign-off says "' + (str(s.contact?.signoff) || 'Jon McGill, General Manager') + '"')
+  // Surfside is SHOWN signed "Vanessa & Taylor" whenever the saved sign-off is empty or the company
+  // default (lib/guide-voice, display only) — so only a sign-off a person typed with another name is asked about.
+  const voiceGb = { ...gb, _building: listing?.building || '', _nickname: listing?.nickname || '' }
+  if (isSurfside(voiceGb) && !/vanessa|taylor/i.test(guideSignoff(voiceGb))) add('ask', 'help', 'Surfside books are signed Vanessa & Taylor — guests see the sign-off "' + guideSignoff(voiceGb) + '"')
 
   return out
 }

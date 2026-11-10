@@ -9,6 +9,7 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { parseListing } from './parse-listing'
 import { fetchWithTimeout } from './fetch-timeout'
+import { cleanGuestName } from './guest-name'
 
 const BASE      = process.env.GUESTY_BASE_URL  || 'https://open-api.guesty.com/v1'
 const TOKEN_URL = process.env.GUESTY_TOKEN_URL || 'https://open-api.guesty.com/oauth2/token'
@@ -270,7 +271,9 @@ function mapReservation(r: any) {
     listing_id:        r.listingId || r.listing?._id || r.listing?.id || null,
     listing_name:      r.listing?.nickname || r.listing?.title || null,
     guest_id:          r.guest?._id || r.guest?.id || r.guestId || null,
-    guest_name:        r.guest?.fullName || [r.guest?.firstName, r.guest?.lastName].filter(Boolean).join(' ') || null,
+    // REPAIRED AT THE SOURCE (2026-11-10, lib/guest-name): Expedia hands Guesty "MAR??A GABRIELA" — stored as
+    // "María Gabriela", so every page, Slack post and Eve read gets the name a person would write. `raw` keeps Guesty's own.
+    guest_name:        cleanGuestName(r.guest?.fullName || [r.guest?.firstName, r.guest?.lastName].filter(Boolean).join(' '), [r.guest?.firstName, r.guest?.lastName].filter(Boolean).join(' ')) || null,
     guest_email:       r.guest?.email || null,
     guest_phone:       r.guest?.phone || null,
     // Use Guesty's authoritative LOCAL calendar dates (timezone-proof). Fall back to the
@@ -328,7 +331,7 @@ function mapConversation(c: any) {
     id:                   c._id || c.id,
     reservation_id:       res0?._id || c.reservationId || c.reservation?._id || null,
     listing_id:           (lst && (lst._id || lst.id)) || c.listingId || c.listing?._id || null,
-    guest_name:           meta.guest?.fullName || c.guest?.fullName || c.lastMessage?.from?.fullName || null,
+    guest_name:           cleanGuestName(meta.guest?.fullName || c.guest?.fullName || c.lastMessage?.from?.fullName, c.guest?.fullName, [meta.guest?.firstName, meta.guest?.lastName].filter(Boolean).join(' ')) || null,
     channel:              (c.channel || c.lastMessage?.module || res0?.source || 'other').toLowerCase(),
     last_message_at:      c.lastMessageAt || c.lastMessageReceivedAt || c.updatedAt || c.createdAt || null,
     last_message_preview: (c.lastMessage?.body || '').slice(0, 200) || null,
@@ -359,9 +362,17 @@ function mapMessage(conversationId: string, m: any) {
   //
   // The real signal is the reverse of what was being looked for: Guesty types OUR side
   // (employee | user | account) and leaves the guest's side untyped.
+  // AN UNTYPED POST THAT NAMES OUR OWN ACCOUNT AS ITS AUTHOR IS OURS (2026-11-10). A reply typed
+  // straight into the Airbnb / Vrbo app may reach Guesty without a `from.type`; filed as "guest" it
+  // would keep the thread in Needs reply after we had answered. The one signal that cannot be a
+  // guest is the author id being this Guesty account's own id — only that flips an untyped post to
+  // host. No id, or any other id, and the classification is exactly as before.
+  const fromId = String(m.from?._id ?? m.from?.id ?? m.author?._id ?? m.author?.id ?? '')
+  const fromIsAccount = !!fromId && !!ACCOUNT_ID && fromId === ACCOUNT_ID
   const sender =
     (GUESTY_LOG_KINDS.has(moduleStr || '') || fromType === 'system') ? 'system'
     : (fromType && GUESTY_HOST_TYPES.has(fromType)) ? 'host'
+    : fromIsAccount ? 'host'
     : 'guest'
   const body = m.body ?? m.text ?? m.message ?? m.content ?? m.rawMessage?.text ?? ''
   const sentAt = m.createdAt ?? m.sentAt ?? m.timestamp ?? m.date ?? null
@@ -858,7 +869,8 @@ function mapReview(v: any) {
     rr.host_response ?? rr.hostResponse ?? rr.owner_response ?? rr.ownerResponse ?? rr.response ?? rr.management_response ??
     v.hostResponse ?? v.ownerResponse ?? null
   const listingId = v.listingId ?? v.listing?._id ?? rr.listing_id ?? v.listing?.id ?? null
-  const guest = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? rr.reviewer_name ?? rr.reviewer?.name ?? v.from?.fullName ?? null
+  const guestRaw = v.guest?.fullName ?? v.reviewer?.name ?? v.guestName ?? rr.reviewer_name ?? rr.reviewer?.name ?? v.from?.fullName ?? null
+  const guest = guestRaw == null ? null : (cleanGuestName(String(guestRaw)) || null)
   const rawChannel = String(v.channelId ?? v.channel ?? rr.channel ?? v.platform ?? v.source ?? v.integration ?? v.module ?? '')
   const replies = Array.isArray(v.reviewReplies) ? v.reviewReplies : (Array.isArray(rr.reviewReplies) ? rr.reviewReplies : (Array.isArray(rr.review_replies) ? rr.review_replies : []))
   const replyFromArray = replies.length
