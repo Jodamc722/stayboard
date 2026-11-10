@@ -2,9 +2,12 @@
 // THE NEED LIST CALCULATOR (Jon, 2026-11-10) — /kit/list, open to anyone. The home's details in, the
 // list out: every item, must-have or recommended (optional on request), and how many. Like the linen
 // calculator. The details stay in the address so the filled-in list can be shared as a link.
+// It counts PIECES (plates, bowls, forks, wine glasses), from lib/need-list.ts — its own standard, not
+// the starter kit's products or the client order form.
 import { useEffect, useMemo, useState } from 'react'
 import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, FileSpreadsheet, Link2, Minus, Plus, Users } from 'lucide-react'
-import { APPLIANCES, KIT_CATEGORIES, SIZE_LIMITS, describeSize, kitTotals, ruleText, EMPTY_SELECTION, type KitCount, type KitSize } from '@/lib/starter-kit'
+import { APPLIANCES, SIZE_LIMITS, describeSize, type KitCount, type KitSize } from '@/lib/starter-kit'
+import { NEED_ROOMS, needList } from '@/lib/need-list'
 import { paramsFromSize, sizeFromParams, type NeedParams } from '@/lib/starter-kit-params'
 
 const TYPE = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
@@ -20,23 +23,19 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
   useEffect(() => { try { window.history.replaceState(null, '', '/kit/list?' + query) } catch { /* the list still works */ } }, [query])
 
   // Recommended items are always on this list; optional ones only when asked for.
-  const lines = useMemo(() => {
-    const inc: Record<string, boolean> = {}
-    const t = kitTotals(size, { ...EMPTY_SELECTION, inc })
-    return t.lines.filter(l => l.item.tier !== 'optional' || showOpt)
-  }, [size, showOpt])
-  const n = (tier: 'must' | 'recommended' | 'optional') => lines.filter(l => l.item.tier === tier).length
+  const lines = useMemo(() => needList(size).filter(l => l.tier !== 'optional' || showOpt), [size, showOpt])
+  const n = (tier: 'must' | 'recommended' | 'optional') => lines.filter(l => l.tier === tier).length
 
   const setCount = (k: KitCount, v: number) => { const [lo, hi] = SIZE_LIMITS[k]; setSize(z => ({ ...z, [k]: Math.max(lo, Math.min(hi, Math.round(v) || lo)) })) }
   const flash = (what: string) => { setCopied(what); setTimeout(() => setCopied(''), 1800) }
   const copyText = async (text: string, what: string) => { try { await navigator.clipboard.writeText(text); flash(what) } catch { window.prompt('Copy this', text) } }
   const asText = () => {
     const out = [`What the home needs — ${describeSize(size)}`, '']
-    for (const cat of KIT_CATEGORIES) {
-      const rows = lines.filter(l => l.item.category === cat)
+    for (const room of NEED_ROOMS) {
+      const rows = lines.filter(l => l.item.room === room)
       if (!rows.length) continue
-      out.push(cat.toUpperCase())
-      for (const l of rows) out.push(`- ${l.qty} × ${l.item.name} (${TYPE[l.item.tier]})`)
+      out.push(room.toUpperCase())
+      for (const l of rows) out.push(`- ${l.count} ${l.item.name} (${TYPE[l.tier]})`)
       out.push('')
     }
     out.push('Coffee maker: Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.')
@@ -97,24 +96,24 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
 
         <table className="nlc-t">
           <thead><tr><th>Item</th><th>Type</th><th className="n">Needed</th></tr></thead>
-          {KIT_CATEGORIES.map(cat => {
-            const rows = lines.filter(l => l.item.category === cat)
+          {NEED_ROOMS.map(room => {
+            const rows = lines.filter(l => l.item.room === room)
             if (!rows.length) return null
             return (
-              <tbody key={cat}>
-                <tr className="cat"><td colSpan={3}>{cat}</td></tr>
+              <tbody key={room}>
+                <tr className="cat"><td colSpan={3}>{room}</td></tr>
                 {rows.map(l => (
                   <tr key={l.item.key}>
-                    <td><b>{l.item.name}</b><small>{ruleText(l.item, size)}{l.item.each > 1 ? ` · count is sets of ${l.item.each}` : ""}</small></td>
-                    <td><i className={'nlc-tier ' + l.item.tier}>{TYPE[l.item.tier]}</i></td>
-                    <td className="n"><span className="nlc-q">{l.qty}</span></td>
+                    <td><b>{l.item.name}</b><small>{l.rule}</small></td>
+                    <td><i className={'nlc-tier ' + l.tier}>{TYPE[l.tier]}</i></td>
+                    <td className="n"><span className="nlc-q">{l.count}</span></td>
                   </tr>
                 ))}
               </tbody>
             )
           })}
         </table>
-        <p className="nlc-fine">Counts follow the home: place settings at 1.5 per guest, glasses per guest, bath items per bathroom, hangers and luggage racks per bedroom. Must-haves are what every home needs, whoever supplies them. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
+        <p className="nlc-fine">Counts are pieces, sized to the home: plates, bowls, flatware and tall glasses at 1.5 place settings per guest; mugs, wine and short glasses one per guest; bath items per bathroom; hangers and luggage racks per bedroom. Must-haves are what every home needs, whoever supplies them. The coffee maker is a Nespresso or Keurig pod machine; Stay supplies the pods. Linen is quoted separately.</p>
       </main>
     </div>
   )
