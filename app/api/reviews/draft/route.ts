@@ -206,7 +206,9 @@ export async function POST(req: NextRequest) {
   try {
     const reqBody = JSON.stringify({
       model: await modelFor('review-reply'),
-      max_tokens: 500,
+      // 2000, not 500 (2026-11-09): the model thinks before it writes, and on a hard 1-star review the
+      // thinking used the whole 500 and the reply came back empty ("Empty draft from AI.").
+      max_tokens: 2000,
       system,
       messages: [{ role: 'user', content: userMsg }],
     })
@@ -233,8 +235,18 @@ export async function POST(req: NextRequest) {
       if (!RETRYABLE.has(r.status)) return NextResponse.json({ error: lastErr }, { status: 502 })
     }
     if (!d) return NextResponse.json({ error: overloaded ? 'Anthropic is briefly overloaded - please click Rewrite again in a few seconds.' : (lastErr || 'AI request failed.') }, { status: 503 })
-    const out = Array.isArray(d?.content) ? d.content.map((c: any) => c?.text || '').join('').trim() : ''
-    if (!out) return NextResponse.json({ error: 'Empty draft from AI.' }, { status: 502 })
+    let out = Array.isArray(d?.content) ? d.content.filter((c: any) => c?.type === 'text').map((c: any) => c?.text || '').join('').trim() : ''
+    if (!out) {
+      // Still empty: one more try with thinking off and a larger budget, then say exactly why.
+      const again = await aiFetch('review-reply', {
+        method: 'POST',
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ ...JSON.parse(reqBody), max_tokens: 3000, thinking: { type: 'disabled' } }),
+      }).catch(() => null)
+      const d2: any = again && again.ok ? await again.json().catch(() => null) : null
+      out = Array.isArray(d2?.content) ? d2.content.filter((c: any) => c?.type === 'text').map((c: any) => c?.text || '').join('').trim() : ''
+      if (!out) return NextResponse.json({ error: 'The AI returned no reply text (' + String(d?.stop_reason || 'unknown') + '). Click Draft again.' }, { status: 502 })
+    }
     return NextResponse.json({ draft: hv ? applyHostVoice(weNotThem(out), hv, 'review') : weNotThem(out) })
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })
