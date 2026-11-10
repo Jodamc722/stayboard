@@ -11,7 +11,9 @@ import { gardenFrontDesk } from '@/lib/garden/frontdesk'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const gate = await requireGarden('today', 'view')
+  // Today (the front desk) or Rooms & cleans (the housekeeping board reads the same data).
+  let gate = await requireGarden('today', 'view')
+  if (!gate.ok) { const g2 = await requireGarden('rooms', 'view'); if (g2.ok) gate = g2 }
   if (!gate.ok) return gate.res
   try {
     return NextResponse.json({ ok: true, ...(await gardenFrontDesk()) })

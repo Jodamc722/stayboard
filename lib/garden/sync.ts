@@ -173,7 +173,9 @@ export async function ensureCleans(): Promise<number> {
         const k = `${rid}|${r.check_out}|clean`
         if (!have.has(k)) { have.add(k); inserts.push({ room_id: rid, room_name: nm, date: r.check_out, kind: 'clean', reservation_id: r.id, source: 'auto', note: `Departure · ${r.guest_name || ''}`.trim() }) }
       }
-      if (r.status === 'checked_in' && r.check_in < t0 && r.check_out > t0) {
+      // In house = the dates say so. The desk often leaves a long stay "confirmed" instead of checking
+      // it in (2026-11-10: a 106-night guest), which used to mean no stayover was ever made.
+      if (['checked_in', 'confirmed', 'not_confirmed'].includes(r.status) && r.check_in < t0 && r.check_out > t0) {
         const k = `${rid}|${t0}|stayover`
         if (!have.has(k)) { have.add(k); inserts.push({ room_id: rid, room_name: nm, date: t0, kind: 'stayover', reservation_id: r.id, source: 'auto', note: `In house · ${r.guest_name || ''}`.trim() }) }
       }

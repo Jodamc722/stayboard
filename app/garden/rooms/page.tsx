@@ -1,17 +1,16 @@
-// The Garden Hotel — rooms. Gated by the person's hotel role on 'rooms' (lib/garden/access).
+// The Garden Hotel — rooms: the housekeeping board (components/GardenHKBoard). Gated by the person's hotel role on 'rooms' (lib/garden/access).
 import { Shell } from '@/components/Shell'
-import { GardenDesk } from '@/components/GardenDesk'
+import { GardenHKBoard } from '@/components/GardenHKBoard'
 import { gardenPage } from '@/lib/garden/access'
 
 export const dynamic = 'force-dynamic'
 
 export default async function GardenRoomsPage() {
-  const { canEdit, canFull } = await gardenPage('rooms')
-  void canFull
+  const { canEdit } = await gardenPage('rooms')
   return (
     <Shell>
-      <div className="max-w-[1100px] mx-auto">
-        <GardenDesk view="rooms" canEdit={canEdit} owner={canFull} />
+      <div className="max-w-[1400px] mx-auto">
+        <GardenHKBoard canEdit={canEdit} />
       </div>
     </Shell>
   )
