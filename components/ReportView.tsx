@@ -8,6 +8,7 @@
 import { ComposedSlide } from '@/components/report/ComposedSlide'
 import { buildVerdict } from '@/lib/report-verdict'
 import { type ReportCalendar, type BigEvent, eventsFor, eventStats, baselineStats, eventKey, rangeLabel, nightsIn, addDaysIso } from '@/lib/report-calendar'
+import { createPortal } from 'react-dom'
 import { Fragment, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Pencil, Save, Loader2, Eye, EyeOff, X, Plus, Link as LinkIcon, Check, Paperclip, Image as ImageIcon, Download, UploadCloud, Sparkles, Star, Play, ChevronLeft, ChevronRight, Lock, RefreshCw, CalendarCheck, Wrench, TrendingUp, Camera, BookOpen, MessagesSquare } from 'lucide-react'
 import { type Basis, BASES, BASIS_SHORT, BASIS_LABEL, BASIS_NOTE, basisTriple, isBasis } from '@/lib/basis'
@@ -2593,6 +2594,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // The multi-calendar's month pill, and the big-dates "add a date" row (Jon, 2026-11-10).
   const [calIx, setCalIx] = useState(0)
   const [bdTab, setBdTab] = useState('dates')
+  const [calFull, setCalFull] = useState(false)
   const [bdNew, setBdNew] = useState<{ label: string; from: string; to: string }>({ label: '', from: '', to: '' })
   const [rfMsg, setRfMsg] = useState<{ key: string; text: string; bad: boolean } | null>(null)
   // THE NEW-BOOKINGS WINDOW, PICKED IN EDIT (Jon, 2026-11-03: "ability to select a date range in edit").
@@ -9777,7 +9779,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // ONE SLIDE, TWO TABS (Jon, 2026-11-10: "want option for multi to view, can be a tab on
           // the one slide"). The calendar is built here as a view and shown on the Big Dates slide
           // when its Calendar tab is picked — owners can flip between them on the link.
-          let calView: React.ReactNode = null
+          let calView: ((big: boolean) => React.ReactNode) | null = null
           if (cal) {
             const months: { iso: string; label: string; from: string; to: string }[] = []
             if (cal) {
@@ -9811,8 +9813,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             const tot = unitStats.reduce((a, s) => ({ sold: a.sold + s.sold, live: a.live + s.live }), { sold: 0, live: 0 })
             const nd = days.length || 1
             const fmtD = (iso: string) => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-            const LABEL_W = 116, PCT_W = 46, ROW_H = 22
-            calView = (
+            // BIGGER, AND EXPANDABLE (Jon, 2026-11-10: "expand it a bit and make it bigger on the
+            // slides"). Rows and type are larger on the slide, and Expand opens the same calendar
+            // full screen — `big` sizes everything up for that view.
+            calView = (big: boolean) => { const LABEL_W = big ? 160 : 128, PCT_W = big ? 58 : 48, ROW_H = big ? 34 : 28, fs = big ? 1.3 : 1.12
+            return (
                   <>
                     <div className="flex flex-wrap items-center" style={{ gap: 6, marginTop: 12 }}>
                       {months.map((m, i) => (
@@ -9831,9 +9836,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <Lbl>{M ? M.label.replace(/\s+\d{4}$/, '') + ' booked' : 'Booked'}</Lbl>
                         <span style={{ display: 'inline-block' }}><Fig size={26} ok={'cal_occ_' + mi}>{(tot.live ? Math.round((tot.sold / tot.live) * 100) : 0) + '%'}</Fig></span>
                       </span>
+                      <button className="sb-noprint" onClick={() => setCalFull(!big)}
+                        style={{ fontSize: 11.5, fontWeight: 600, padding: '5px 13px', borderRadius: 999, marginLeft: 6, background: big ? t.ink : tint(0.07), color: big ? '#fff' : tint(0.62) }}>
+                        {big ? 'Close \u2715' : 'Expand \u2922'}
+                      </button>
                     </div>
                     <div className="sb-scrollpane" style={{ marginTop: 14, flex: '1 1 auto', minHeight: 0, overflow: 'auto', fontVariantNumeric: 'tabular-nums' }}>
-                      <div style={{ minWidth: LABEL_W + PCT_W + nd * 17 }}>
+                      <div style={{ minWidth: LABEL_W + PCT_W + nd * (big ? 30 : 20) }}>
                         {/* header: day numbers, weekends shaded, big dates ticked */}
                         <div style={{ display: 'flex', position: 'sticky', top: 0, zIndex: 2, background: GROUND.light }}>
                           <div style={{ width: LABEL_W, flex: '0 0 auto' }} />
@@ -9843,21 +9852,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                               const we = dow === 5 || dow === 6
                               return (
                                 <div key={d} title={evName[d] ? fmtD(d) + ' · ' + evName[d] : fmtD(d)} style={{ textAlign: 'center', padding: '2px 0 5px', borderBottom: '1px solid ' + tint(0.14) }}>
-                                  <span style={{ display: 'block', fontSize: 8.5, color: tint(0.38), letterSpacing: '0.04em' }}>{'SMTWTFS'[dow]}</span>
-                                  <span style={{ display: 'block', fontSize: 10.5, fontWeight: d === today ? 700 : (we ? 600 : 400), color: d === today ? t.accent : tint(we ? 0.7 : 0.5) }}>{Number(d.slice(8))}</span>
+                                  <span style={{ display: 'block', fontSize: 8.5 * fs, color: tint(0.38), letterSpacing: '0.04em' }}>{'SMTWTFS'[dow]}</span>
+                                  <span style={{ display: 'block', fontSize: 10.5 * fs, fontWeight: d === today ? 700 : (we ? 600 : 400), color: d === today ? t.accent : tint(we ? 0.7 : 0.5) }}>{Number(d.slice(8))}</span>
                                   <span style={{ display: 'block', width: 4, height: 4, borderRadius: 4, margin: '2px auto 0', background: evNights.has(d) ? t.accent : 'transparent' }} />
                                 </div>
                               )
                             })}
                           </div>
-                          <div style={{ width: PCT_W, flex: '0 0 auto', textAlign: 'right', fontSize: 8.5, color: tint(0.38), alignSelf: 'end', paddingBottom: 6 }}>OCC</div>
+                          <div style={{ width: PCT_W, flex: '0 0 auto', textAlign: 'right', fontSize: 8.5 * fs, color: tint(0.38), alignSelf: 'end', paddingBottom: 6 }}>OCC</div>
                         </div>
                         {cal.units.map((u, ui) => {
                           const stays = cal.stays.filter(s => s.u === ui && s.co > M.from && s.ci <= M.to)
                           return (
                             <div key={u.id} style={{ display: 'flex', alignItems: 'center', height: ROW_H + 6, borderBottom: '1px solid ' + tint(0.06) }}>
                               <div title={u.building + (u.beds != null ? ' · ' + (u.beds <= 0 ? 'Studio' : u.beds + 'BR') : '')}
-                                style={{ width: LABEL_W, flex: '0 0 auto', fontSize: 11.5, color: t.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 8 }}>
+                                style={{ width: LABEL_W, flex: '0 0 auto', fontSize: 11.5 * fs, color: t.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', paddingRight: 8 }}>
                                 {u.label}
                               </div>
                               <div style={{ flex: '1 1 auto', position: 'relative', height: ROW_H, display: 'grid', gridTemplateColumns: 'repeat(' + nd + ', minmax(0,1fr))' }}>
@@ -9872,7 +9881,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                                   const span = Math.max(1, nightsIn(a, addDaysIso(bEx, -1)).length)
                                   if (start < 0) return null
                                   const nights = nightsIn(s.ci, addDaysIso(s.co, -1)).length
-                                  const tip = s.ch + ' · ' + fmtD(s.ci) + ' – ' + fmtD(s.co) + ' · ' + nights + (nights === 1 ? ' night' : ' nights')
+                                  // NO CHANNELS ON THE OWNER CALENDAR (Jon, 2026-11-10: "Calendar view should not show OTAs").
+                                  const tip = (s.own ? 'Owner stay' : 'Booked') + ' · ' + fmtD(s.ci) + ' – ' + fmtD(s.co) + ' · ' + nights + (nights === 1 ? ' night' : ' nights')
                                   return (
                                     <div key={si} title={tip}
                                       style={{ position: 'absolute', top: 3, bottom: 3, left: 'calc(' + (start / nd * 100) + '% + 2px)', width: 'calc(' + (span / nd * 100) + '% - 4px)',
@@ -9880,12 +9890,12 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                                         ...(s.own
                                           ? { background: 'repeating-linear-gradient(135deg,' + tint(0.32) + ' 0 2px, transparent 2px 6px)', border: '1px solid ' + tint(0.35) }
                                           : { background: inkA(t.ink, 0.72) }) }}>
-                                      {span >= 3 ? <span style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.02em', color: s.own ? t.ink : '#fff', whiteSpace: 'nowrap' }}>{s.ch}</span> : null}
+                                      {s.own && span >= 3 ? <span style={{ fontSize: 9 * fs, fontWeight: 600, letterSpacing: '0.02em', color: t.ink, whiteSpace: 'nowrap' }}>Owner</span> : null}
                                     </div>
                                   )
                                 })}
                               </div>
-                              <div style={{ width: PCT_W, flex: '0 0 auto', textAlign: 'right', fontSize: 11, color: tint(0.6) }}>{(unitStats[ui] ? unitStats[ui].pct : 0) + '%'}</div>
+                              <div style={{ width: PCT_W, flex: '0 0 auto', textAlign: 'right', fontSize: 11 * fs, color: tint(0.6) }}>{(unitStats[ui] ? unitStats[ui].pct : 0) + '%'}</div>
                             </div>
                           )
                         })}
@@ -9895,7 +9905,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                       {O('cal_foot', 'Paid nights only count as booked; owner stays are shown but not counted. As of ' + fmtD(cal.asOf) + ' — future nights keep filling in.')}
                     </p>
                   </>
-            )
+            ) }
           }
 
           // ── 7b · BIG DATES (Jon, 2026-11-10: "big dates slide, occ adr etc. They keep asking about it") ──
@@ -9945,7 +9955,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                     ))}
                   </div>
                 ) : null}
-                {cal && bdTab === 'calendar' ? calView : !cal ? (
+                {cal && calFull && calView && typeof document !== 'undefined' ? createPortal(
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: GROUND.light, padding: '28px 40px 24px', display: 'flex', flexDirection: 'column' }}
+                    onKeyDown={e => { if (e.key === 'Escape') setCalFull(false) }} tabIndex={-1}>
+                    <div className="flex items-baseline justify-between">
+                      <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: tint(0.45), margin: 0 }}>{footLeft}</p>
+                      <p style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: tint(0.45), margin: 0 }}>Calendar</p>
+                    </div>
+                    {calView(true)}
+                  </div>, document.body) : null}
+                {cal && bdTab === 'calendar' && calView ? calView(false) : !cal ? (
                   <p className="sb-noprint" style={{ marginTop: 26, fontSize: 14, color: tint(0.55), maxWidth: '60ch' }}>
                     This report was made before the calendar existed. Press <b>Refresh</b> above to pull every stay for this month and the next two — then this slide and the calendar fill in. Owners don’t see this slide until it has data.
                   </p>
