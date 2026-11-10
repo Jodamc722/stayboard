@@ -18,7 +18,7 @@ import { requireReportLevel } from '@/lib/garden/access'
 import { requireUser } from '@/lib/access'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 const DOC_MODEL = 'claude-sonnet-5-5' // was claude-sonnet-4-6; current Sonnet (2026-11-09)
 
@@ -31,11 +31,15 @@ async function anthropic(payload: any): Promise<string | null> {
     const r = await aiFetch('reports', {
       method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify((({ _retried, ...p }) => p)(payload)),
     })
     const d: any = await r.json().catch(() => ({}))
     if (!r.ok) return null
-    return Array.isArray(d?.content) ? d.content.map((x: any) => x?.text || '').join('').trim() : null
+    const t = Array.isArray(d?.content) ? d.content.filter((x: any) => x?.type === 'text').map((x: any) => x?.text || '').join('').trim() : ''
+    if (t) return t
+    // Thinking ate the budget and no answer came out: once more with double the room.
+    if (d?.stop_reason === 'max_tokens' && !payload._retried) return anthropic({ ...payload, max_tokens: Math.max(8000, Number(payload.max_tokens || 0) * 2), _retried: true })
+    return null
   } catch { return null }
 }
 

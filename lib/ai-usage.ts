@@ -98,6 +98,16 @@ export function adaptForModel(rawBody: string): string {
     // Sampling params are refused by every model from the 5 generation on — not only Haiku 5.5. Seen
     // live 2026-10-29: /api/ai/polish sent temperature 0.2 to Sonnet 5, got a 400, and every polish
     // was quietly re-sent to the older, pricier Sonnet 4.6. Dropped here for all of them.
+    // ROOM TO THINK (2026-11-10). The current models (Opus 4.8 and the 5.x family) think before they
+    // write, and the thinking counts against max_tokens. Dozens of callers were written for older
+    // models with 400–1200 tokens, so on anything non-trivial the thinking used the whole budget and
+    // the answer came back EMPTY — "Empty draft from AI" on 1-star reviews, "Could not read that
+    // file" on owner-report uploads. A floor of 4096 is a ceiling, not a cost: only tokens actually
+    // produced are billed.
+    if (b && /opus-4-8|(sonnet|opus)-5|fable|mythos/.test(model) && Number(b.max_tokens) > 0 && Number(b.max_tokens) < 4096) {
+      b.max_tokens = 4096
+      rawBody = JSON.stringify(b)
+    }
     const newGen = /(sonnet|opus|haiku)-5|fable|mythos/.test(model)
     if (!b || !newGen) return rawBody
     const out: any = { ...b }
