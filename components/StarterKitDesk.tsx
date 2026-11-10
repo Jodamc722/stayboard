@@ -4,7 +4,7 @@
 // report sized to the home, makes their choices and presses Send to Stay. This table shows who
 // opened it, what they sent back and the total.
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Copy, Download, ExternalLink, Loader2, Lock, Plus, RotateCcw, Search, X, Package } from 'lucide-react'
+import { Check, ClipboardList, Copy, Download, ExternalLink, Loader2, Lock, Plus, RotateCcw, Search, X, Package } from 'lucide-react'
 import { LeanHead, Pill, Tag } from '@/components/lean'
 import { APPLIANCES, DEFAULT_SIZE, SIZE_LIMITS, describeSize, fmtMoney, kitTotals, type KitCount, type KitLink, type KitSize } from '@/lib/starter-kit'
 
@@ -56,8 +56,8 @@ export function StarterKitDesk() {
   }
   useEffect(() => { load() }, [])
 
-  const url = (code: string) => `${typeof window !== 'undefined' ? window.location.origin : ''}/kit/${code}`
-  const copy = async (code: string) => { try { await navigator.clipboard.writeText(url(code)); setCopied(code); setTimeout(() => setCopied(''), 1800) } catch { window.prompt('Copy this link', url(code)) } }
+  const url = (code: string, page = '') => `${typeof window !== 'undefined' ? window.location.origin : ''}/kit/${code}${page ? '/' + page : ''}`
+  const copy = async (code: string, page = '') => { try { await navigator.clipboard.writeText(url(code, page)); setCopied(code + page); setTimeout(() => setCopied(''), 1800) } catch { window.prompt('Copy this link', url(code, page)) } }
   const preview = useMemo(() => kitTotals(size, { inc: {}, qty: {}, own: {}, pick: {}, self: {}, have: {} }), [size])
   const shown = useMemo(() => links.filter(l => (showOff || !l.revokedAt) && (!q.trim() || (l.client + ' ' + l.property).toLowerCase().includes(q.trim().toLowerCase()))), [links, q, showOff])
   const stats = useMemo(() => ({ live: links.filter(l => !l.revokedAt).length, opened: links.filter(l => !l.revokedAt && l.views > 0 && !l.submitted).length, sent: links.filter(l => !l.revokedAt && l.submitted).length }), [links])
@@ -175,6 +175,7 @@ export function StarterKitDesk() {
                   </td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
                     {!l.revokedAt && <button type="button" onClick={() => copy(l.code)} className="text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1">{copied === l.code ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy link</>}</button>}
+                    {!l.revokedAt && <button type="button" onClick={() => copy(l.code, 'order')} title="Copy the order form link: just what still has to be bought, with quantities, products and prices, to send to the owner, a buyer or a vendor" className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1">{copied === l.code + 'order' ? <><Check size={12} /> Copied</> : <><ClipboardList size={12} /> Order form</>}</button>}
                     {!l.revokedAt && <a href={`/kit/${l.code}`} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1"><ExternalLink size={12} /> Open</a>}
                     {!l.revokedAt && <a href={`/api/public/starter-kit/${l.code}/pdf`} title="Download their report as a PDF" className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1"><Download size={12} /> PDF</a>}
                     {l.revokedAt

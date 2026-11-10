@@ -19,7 +19,7 @@
 // someone outside the company, so it does not follow the app theme or its dark mode.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bath, BedDouble, Check, ChefHat, Coffee, Dices, Download, ExternalLink, FileSpreadsheet, Home, Link2, Loader2, Lock, Minus, Plus, Send, ShieldCheck, Sparkles, Users, UtensilsCrossed, Wine,
+  Bath, BedDouble, Check, ChefHat, ClipboardList, Coffee, Dices, Download, ExternalLink, FileSpreadsheet, Home, Link2, Loader2, Lock, Minus, Plus, Send, ShieldCheck, Sparkles, Users, UtensilsCrossed, Wine,
 } from 'lucide-react'
 import {
   APPLIANCES, KIT_CATEGORIES, SIZE_LIMITS, describeSize, fmtMoney, kitTotals, normLink, ruleText,
@@ -94,6 +94,13 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
     setTimeout(() => setDl(false), 2500)
   }
 
+  // The order form link: just what is left to buy, read-only, to send to whoever is buying.
+  const [orderCopied, setOrderCopied] = useState(false)
+  const shareOrder = async () => {
+    await fetch(`/api/public/starter-kit/${initial.code}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selection: sel, size }) }).catch(() => null)
+    const link = `${window.location.origin}/kit/${initial.code}/order`
+    try { await navigator.clipboard.writeText(link); setOrderCopied(true); setTimeout(() => setOrderCopied(false), 2000) } catch { window.open(link, '_blank') }
+  }
   const send = async () => {
     setSendErr('')
     if (!name.trim()) { setSendErr('Add your name so we know who sent it.'); return }
@@ -275,6 +282,7 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
             </table>
             <p className="skr-fine">Product prices are current retail prices from when this kit was prepared and can change before we order. We confirm every price with you before anything is bought. Coffee pods are on us.</p>
             <div className="skr-dls skr-noprint">
+              <button type="button" className="skr-btn ghost" onClick={shareOrder}><ClipboardList size={15} /> {orderCopied ? 'Order form link copied' : 'Copy order form link'}</button>
               <button type="button" className="skr-btn ghost" onClick={() => download('xlsx')} disabled={dl}><FileSpreadsheet size={15} /> Download need list (Excel)</button>
               <button type="button" className="skr-btn ghost" onClick={() => download('pdf')} disabled={dl}>{dl ? <Loader2 size={15} className="spin" /> : <Download size={15} />} Download report (PDF)</button>
             </div>
