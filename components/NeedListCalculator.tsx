@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, FileSpreadsheet, Link2, Minus, Plus, Users } from 'lucide-react'
 import { APPLIANCES, SIZE_LIMITS, describeSize, type KitCount, type KitSize } from '@/lib/starter-kit'
-import { NEED_ROOMS, needList } from '@/lib/need-list'
+import { GROUP_NOTE, NEED_ROOMS, needList } from '@/lib/need-list'
 import { NeedPicture } from '@/components/NeedIcons'
 import { paramsFromSize, sizeFromParams, type NeedParams } from '@/lib/starter-kit-params'
 
@@ -35,7 +35,7 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
     for (const room of NEED_ROOMS) {
       const rows = lines.filter(l => l.item.room === room)
       if (!rows.length) continue
-      out.push(room.toUpperCase())
+      out.push(`${room.toUpperCase()} (${rows.reduce((a, l) => a + l.count, 0)} pieces)`)
       for (const l of rows) out.push(`- ${l.count} ${l.item.name} (${TYPE[l.tier]})`)
       out.push('')
     }
@@ -102,7 +102,7 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
             if (!rows.length) return null
             return (
               <tbody key={room}>
-                <tr className="cat"><td colSpan={3}>{room}</td></tr>
+                <tr className="cat"><td colSpan={3}><div className="nlc-grp"><span>{room}</span><span className="nlc-grp-n">{rows.length} item{rows.length === 1 ? '' : 's'} · {rows.reduce((a, l) => a + l.count, 0)} pieces</span></div>{GROUP_NOTE[room] && <small className="nlc-grp-d">{GROUP_NOTE[room]}</small>}</td></tr>
                 {rows.map(l => (
                   <tr key={l.item.key}>
                     <td><div className="nlc-it"><span className="nlc-pic"><NeedPicture k={l.item.key} name={l.item.name} /></span><span><b>{l.item.name}</b><small>{l.rule}</small></span></div></td>
@@ -162,6 +162,8 @@ const CSS = `
 .nlc-tier{font-style:normal;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap}
 .nlc-tier.must{background:#E1EAF5;color:#1C4A7E}.nlc-tier.recommended{background:#E0EFE4;color:#25633A}.nlc-tier.optional{background:#ECEFF1;color:#56626B}
 .nlc-it{display:flex;align-items:center;gap:12px}.nlc-pic{flex:none;width:52px;height:52px;border-radius:12px;background:var(--soft);color:var(--accent);display:grid;place-items:center}
+.nlc-grp{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.nlc-grp-n{font-family:var(--ui);font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.nlc-grp-d{display:block;font-family:var(--ui);font-size:12.5px;color:var(--muted);margin-top:2px}
 .nlc-q{font-family:var(--display);font-size:24px}
 .nlc-fine{margin-top:22px;font-size:12.5px;color:var(--muted)}
 @media (max-width:560px){.nlc-counts{grid-template-columns:1fr}.nlc-t th:nth-child(2),.nlc-t td:nth-child(2){padding-inline:4px}}

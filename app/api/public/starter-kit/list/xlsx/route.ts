@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   const lines = needList(size).filter(l => l.tier !== 'optional' || showOpt)
   const rows: XCell[][] = [
     [T('What the home needs', 2)], [T(describeSize(size), 8)], [],
-    ['Room', 'Item', 'Type', 'Needed', 'Have', 'To buy', 'Why this many'].map(h => T(h, 3)),
+    ['Set', 'Item', 'Type', 'Needed', 'Have', 'To buy', 'Why this many'].map(h => T(h, 3)),
   ]
   for (const l of lines) {
     const r = rows.length + 1

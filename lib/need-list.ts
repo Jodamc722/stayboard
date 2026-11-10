@@ -31,7 +31,40 @@ export type NeedPer = 'unit' | 'bedroom' | 'bathroom' | 'guest' | 'settings'
 export type NeedItem = { key: string; room: string; name: string; tier: NeedTier; per: NeedPer; n: number; kitchen?: boolean; needs?: KitAppliance[]
   min?: number; plus?: number; big?: number; note?: string }   // at least `min`; `plus` added always; `big` added at 10+ guests
 
-export const NEED_ROOMS = ['Dishes & glassware', 'Flatware', 'Cookware', 'Kitchen tools', 'Kitchen appliances', 'Kitchen essentials', 'Bathroom', 'Bedroom', 'Cleaning & safety', 'Family & games'] as const
+// GROUPED AS SETS (Jon, 2026-11-10: "group cooking utensils together, dining set, and list what is in
+// it and counts of each… knife set, for example"). Each group is what you would buy or unpack together;
+// its contents and the count of each piece are listed under it. Items are defined below by kind and
+// placed in their set by GROUP_OF.
+export const NEED_ROOMS = ['Dining set', 'Glassware', 'Flatware set', 'Knife set', 'Cookware set', 'Bakeware set', 'Prep set', 'Cooking utensil set', 'Serving pieces',
+  'Small appliances', 'Kitchen extras', 'Bathroom', 'Bedroom', 'Cleaning & safety', 'Family & games'] as const
+export const GROUP_NOTE: Record<string, string> = {
+  'Dining set': 'Plates, bowls and mugs for every place setting',
+  Glassware: 'Everyday and wine glasses, with extras for breakage',
+  'Flatware set': 'Forks, knives and spoons for every place setting',
+  'Knife set': 'Kitchen knives, steak knives and shears, kept in a block',
+  'Cookware set': 'Pots and pans with lids',
+  'Bakeware set': 'For the oven',
+  'Prep set': 'Boards, bowls and measuring',
+  'Cooking utensil set': 'Tools that live by the stove',
+  'Serving pieces': 'For putting food on the table',
+  'Small appliances': 'Countertop appliances',
+  'Kitchen extras': 'Openers, mitts, bins and storage',
+}
+const GROUP_OF: Record<string, string> = {
+  'dinner-plates': 'Dining set', 'side-plates': 'Dining set', bowls: 'Dining set', mugs: 'Dining set',
+  'tall-glasses': 'Glassware', 'wine-glasses': 'Glassware', 'short-glasses': 'Glassware', 'cocktail-glasses': 'Glassware', 'shot-glasses': 'Glassware',
+  forks: 'Flatware set', 'salad-forks': 'Flatware set', 'table-knives': 'Flatware set', spoons: 'Flatware set', teaspoons: 'Flatware set',
+  'chef-knife': 'Knife set', 'bread-knife': 'Knife set', 'paring-knife': 'Knife set', 'steak-knives': 'Knife set', shears: 'Knife set', 'knife-block': 'Knife set',
+  'fry-large': 'Cookware set', 'fry-small': 'Cookware set', saucepans: 'Cookware set', 'stock-pot': 'Cookware set',
+  'sheet-pans': 'Bakeware set', 'baking-dish': 'Bakeware set', 'muffin-tin': 'Bakeware set',
+  'cutting-boards': 'Prep set', 'mixing-bowls': 'Prep set', colander: 'Prep set', 'measuring-cups': 'Prep set', 'measuring-spoons': 'Prep set', peeler: 'Prep set', grater: 'Prep set',
+  spatulas: 'Cooking utensil set', 'wooden-spoons': 'Cooking utensil set', 'slotted-spoon': 'Cooking utensil set', ladle: 'Cooking utensil set', tongs: 'Cooking utensil set', whisk: 'Cooking utensil set', 'utensil-holder': 'Cooking utensil set',
+  'serving-bowls': 'Serving pieces', 'serving-platter': 'Serving pieces', 'serving-utensils': 'Serving pieces',
+  'coffee-maker': 'Small appliances', toaster: 'Small appliances', kettle: 'Small appliances', blender: 'Small appliances',
+  'can-opener': 'Kitchen extras', corkscrew: 'Kitchen extras', 'oven-mitts': 'Kitchen extras', trivets: 'Kitchen extras', 'dish-rack': 'Kitchen extras', 'kitchen-trash': 'Kitchen extras',
+  recycling: 'Kitchen extras', 'paper-towel-holder': 'Kitchen extras', 'food-storage': 'Kitchen extras',
+}
+
 
 type X = Partial<Pick<NeedItem, 'min' | 'plus' | 'big' | 'note' | 'needs'>>
 const K = (room: string, key: string, name: string, tier: NeedTier, per: NeedPer, n: number, x: X = {}): NeedItem => ({ key, room, name, tier, per, n, kitchen: true, ...x })
@@ -57,7 +90,7 @@ export const NEED_ITEMS: NeedItem[] = [
   K('Flatware', 'spoons', 'Soup spoons', 'must', 'settings', 1),
   K('Flatware', 'teaspoons', 'Teaspoons', 'must', 'settings', 1),
   K('Flatware', 'salad-forks', 'Salad forks', 'recommended', 'guest', 1),
-  K('Flatware', 'steak-knives', 'Steak knives', 'optional', 'guest', 1),
+  K('Flatware', 'steak-knives', 'Steak knives', 'recommended', 'guest', 1),
   K('Flatware', 'serving-utensils', 'Serving spoons and forks', 'recommended', 'unit', 4, { big: 2 }),
   // Cookware
   K('Cookware', 'fry-large', 'Frying pan, large (12 in)', 'must', 'unit', 1, { needs: ['stove'], big: 1 }),
@@ -84,11 +117,13 @@ export const NEED_ITEMS: NeedItem[] = [
   K('Kitchen tools', 'can-opener', 'Can opener', 'must', 'unit', 1),
   H('Kitchen tools', 'corkscrew', 'Wine opener / bottle opener', 'must', 'unit', 1),
   K('Kitchen tools', 'shears', 'Kitchen shears', 'recommended', 'unit', 1),
+  K('Kitchen tools', 'knife-block', 'Knife block (or magnetic strip)', 'recommended', 'unit', 1),
+  K('Kitchen tools', 'slotted-spoon', 'Slotted spoon', 'recommended', 'unit', 1),
   K('Kitchen tools', 'measuring-cups', 'Measuring cups (set)', 'recommended', 'unit', 1),
   K('Kitchen tools', 'measuring-spoons', 'Measuring spoons (set)', 'recommended', 'unit', 1),
   K('Kitchen tools', 'oven-mitts', 'Oven mitts', 'must', 'unit', 2, { needs: ['oven'] }),
   K('Kitchen tools', 'trivets', 'Trivets / pot holders', 'recommended', 'unit', 2),
-  K('Kitchen tools', 'utensil-holder', 'Utensil holder', 'optional', 'unit', 1),
+  K('Kitchen tools', 'utensil-holder', 'Utensil crock', 'recommended', 'unit', 1),
   // Small appliances
   H('Kitchen appliances', 'coffee-maker', 'Coffee maker (Nespresso or Keurig)', 'must', 'unit', 1, { big: 1 }),
   K('Kitchen appliances', 'toaster', 'Toaster', 'must', 'unit', 1),
@@ -128,6 +163,9 @@ export const NEED_ITEMS: NeedItem[] = [
   H('Family & games', 'board-games', 'Board games', 'optional', 'unit', 2),
 ]
 
+for (const it of NEED_ITEMS) if (GROUP_OF[it.key]) it.room = GROUP_OF[it.key]
+const GROUP_ORDER = Object.keys(GROUP_OF)
+
 function driver(per: NeedPer, z: KitSize): number {
   switch (per) {
     case 'settings': return z.guests * 2
@@ -159,5 +197,7 @@ export function needList(z: KitSize): NeedLine[] {
     const rule = [base, big ? `+${big} for ${BIG_HOME}+ guests` : '', it.note || ''].filter(Boolean).join(' · ')
     out.push({ item: it, tier, count, rule })
   }
-  return out.sort((a, b) => NEED_ROOMS.indexOf(a.item.room as any) - NEED_ROOMS.indexOf(b.item.room as any))
+  // By set, then in the order the set is written out in GROUP_OF (chef's knife before steak knives).
+  const within = (k: string) => { const i = GROUP_ORDER.indexOf(k); return i < 0 ? 999 : i }
+  return out.sort((a, b) => NEED_ROOMS.indexOf(a.item.room as any) - NEED_ROOMS.indexOf(b.item.room as any) || within(a.item.key) - within(b.item.key))
 }
