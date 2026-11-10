@@ -1,15 +1,19 @@
 'use client'
 // THE NEED LIST CALCULATOR (Jon, 2026-11-10) — /kit/list, open to anyone. The home's details in, the
 // list out: every item, must-have or recommended (optional on request), and how many, grouped into the
-// sets things are bought in. Like the linen calculator. Everything stays in the address, so a
-// filled-in list (one home or a whole building) can be shared as a link.
+// sets things are bought in. Like the linen calculator.
+// ONE CLEAN LINK, EACH PERSON THEIR OWN LIST (Jon, 2026-11-10: "have the link refresh and clear it out,
+// make it per person who clicks in can modify it"): /kit/list always opens on a blank, default home;
+// whatever someone changes is theirs alone and stays on their screen only — the address never
+// changes, so the link they pass on is still blank, and a refresh starts over. A link that still
+// carries old settings (?u=…) opens with them once, then the address is cleaned.
 //   • PIECES come from lib/need-list.ts (its own standard, not the starter kit or the order form).
 //   • WHAT TO BUY comes from lib/need-buy.ts: sets where things are sold as sets, packs, singles, each
 //     with a Standard / Mid / Luxury Amazon link (Stay's own picks are marked).
 //   • SEVERAL UNITS (Jon: "if onboarding multiple units, create a full order — add unit"): one tab per
 //     unit, and a Full order tab that adds them up, with a column per unit.
 import { useEffect, useMemo, useState } from 'react'
-import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, Copy, ExternalLink, FileSpreadsheet, Link2, Minus, Package, Plus, Star, Trash2, Users } from 'lucide-react'
+import { Bath, BedDouble, Check, ChefHat, ClipboardCopy, Copy, ExternalLink, FileSpreadsheet, Link2, Minus, Package, Plus, RotateCcw, Star, Trash2, Users } from 'lucide-react'
 import { APPLIANCES, SIZE_LIMITS, describeSize, type KitCount, type KitSize } from '@/lib/starter-kit'
 import { GROUP_NOTE, NEED_ROOMS, needList, type NeedLine } from '@/lib/need-list'
 import { GRADES, buyList, howBought, type BuyLine, type Grade } from '@/lib/need-buy'
@@ -29,7 +33,9 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
   const [grade, setGrade] = useState<Grade>(initial.t === 'std' || initial.t === 'lux' ? initial.t : 'mid')
   const [copied, setCopied] = useState('')
   const query = needQuery(units, showOpt, grade)
-  useEffect(() => { try { window.history.replaceState(null, '', '/kit/list?' + query) } catch { /* the list still works */ } }, [query])
+  // The address stays the plain link: strip anything an older shared link carried, once, on open.
+  useEffect(() => { try { if (window.location.search) window.history.replaceState(null, '', '/kit/list') } catch { /* the list still works */ } }, [])
+  const startOver = () => { setUnits([{ name: SINGLE, size: sizeFromParams({}) }]); setView(0); setShowOpt(false); setGrade('mid') }
 
   const multi = units.length > 1
   const idx = view === 'order' ? -1 : Math.min(view, units.length - 1)
@@ -96,7 +102,7 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
         </header>
         <div className="nlc-eyebrow">Need list</div>
         <h1>{multi ? 'What your units need' : 'What your home needs'}</h1>
-        <p className="nlc-lede">Tell us about the home and the list sizes itself: every item a short-term rental needs, how many, and how to buy it. Onboarding several units? Add each one and get the full order.</p>
+        <p className="nlc-lede">Tell us about the home and the list sizes itself: every item a short-term rental needs, how many, and how to buy it. Onboarding several units? Add each one and get the full order. Your changes are only on your screen; download the Excel or copy the list to keep them.</p>
 
         <div className="nlc-tabs" role="tablist" aria-label="Units">
           {multi && units.map((u, i) => (
@@ -152,7 +158,8 @@ export function NeedListCalculator({ initial }: { initial: NeedParams }) {
             {GRADES.map(g => <button key={g.k} type="button" role="radio" aria-checked={grade === g.k} title={g.hint} className={grade === g.k ? 'on' : ''} onClick={() => setGrade(g.k)}>{g.label}</button>)}
           </div>
           <div className="nlc-acts">
-            <button type="button" onClick={() => copyText(window.location.origin + '/kit/list?' + query, 'link')}><Link2 size={14} /> {copied === 'link' ? 'Link copied' : 'Copy link'}</button>
+            <button type="button" onClick={() => copyText(window.location.origin + '/kit/list', 'link')} title="The plain link: whoever opens it starts with a blank list of their own"><Link2 size={14} /> {copied === 'link' ? 'Link copied' : 'Copy link'}</button>
+            <button type="button" onClick={startOver} title="Clear everything and start from a blank home"><RotateCcw size={14} /> Start over</button>
             <button type="button" onClick={() => copyText(asText(), 'list')}><ClipboardCopy size={14} /> {copied === 'list' ? 'Copied' : 'Copy list'}</button>
             <a href={'/api/public/starter-kit/list/xlsx?' + query}><FileSpreadsheet size={14} /> Excel</a>
           </div>
