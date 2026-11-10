@@ -212,6 +212,9 @@ export async function getReservations(opts: { from: string; to: string; modified
   return Array.from(seen.values())
 }
 
+// Cloudbeds writes "N/A" for an unassigned room (143 of 155 rooms looked assigned to someone named N/A).
+const na = (v: any): string | null => { const t = s(v).trim(); return !t || /^(n\/?a|none|null|-)$/i.test(t) ? null : t }
+
 /** Room condition as the front desk sees it (clean / dirty / inspected + occupied). */
 export async function getHousekeeping(): Promise<CbHousekeeping[]> {
   // Cloudbeds returns one flat row per room, 100 a page (older payloads nested them under the
@@ -224,7 +227,7 @@ export async function getHousekeeping(): Promise<CbHousekeeping[]> {
     for (const r of rows) {
       if (!r?.roomID) continue
       out.push({ roomId: s(r.roomID), roomName: s(r.roomName), condition: s(r.roomCondition).toLowerCase() || null, occupied: r.roomOccupied == null ? null : !!r.roomOccupied, frontdeskStatus: s(r.frontdeskStatus) || null,
-        housekeeper: s(r.housekeeper) || null, housekeeperId: s(r.housekeeperID) || null, comments: s(r.roomComments) || null, dnd: !!r.doNotDisturb, refused: !!r.refusedService, blocked: !!r.roomBlocked, raw: r })
+        housekeeper: na(r.housekeeper), housekeeperId: na(r.housekeeperID), comments: na(r.roomComments), dnd: !!r.doNotDisturb, refused: !!r.refusedService, blocked: !!r.roomBlocked, raw: r })
     }
     if (rows.length < 100 || (total != null && page * 100 >= total)) break
   }
