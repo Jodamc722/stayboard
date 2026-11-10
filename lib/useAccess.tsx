@@ -24,12 +24,20 @@ const RANK: Record<string, number> = { off: 0, view: 1, edit: 2, full: 3 }
 
 let _cache: any = null
 let _cacheAt = 0
+// One request shared by every component that mounts at once (2026-11-09 audit: Today fired /api/access/me
+// three times in parallel, ~2s each, because each tile's hook asked on its own).
+let _inflight: Promise<any> | null = null
 
 export function useAccess(): ClientAccess {
   const [me, setMe] = useState<any>(_cache)
   useEffect(() => {
     if (_cache && Date.now() - _cacheAt < 60_000) { setMe(_cache); return }
-    fetch('/api/access/me').then(r => r.json()).then(j => { _cache = j; _cacheAt = Date.now(); setMe(j) }).catch(() => {})
+    let off = false
+    // The sidebar (Shell) keeps the same answer in sessionStorage for two minutes — use it first.
+    try { const raw = sessionStorage.getItem('shell:/api/access/me'); const hit = raw ? JSON.parse(raw) : null; if (hit && hit.v && Date.now() - hit.at < 120_000) { _cache = hit.v; _cacheAt = hit.at; setMe(hit.v); return } } catch { /* ask the server */ }
+    if (!_inflight) _inflight = fetch('/api/access/me').then(r => r.json()).then(j => { _cache = j; _cacheAt = Date.now(); return j }).finally(() => { setTimeout(() => { _inflight = null }, 0) })
+    _inflight.then(j => { if (!off) setMe(j) }).catch(() => {})
+    return () => { off = true }
   }, [])
   const levels: Record<string, string> = (me?.levels && typeof me.levels === 'object') ? me.levels : {}
   const level = (key: string) => {

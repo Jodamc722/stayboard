@@ -152,16 +152,18 @@ export function LeanRow({ lead, name, meta, tags, actions, children, tint, open:
   const bg = tint === 'rose' ? 'bg-rose-50/40' : tint === 'amber' ? 'bg-amber-50/40' : tint === 'emerald' ? 'bg-emerald-50/30' : ''
   return (
     <li className={bg}>
-      <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+      {/* On a phone the actions drop to their own line instead of squeezing the name to nothing
+          (2026-11-09 audit: the Calls desk row showed "A…" under five icon buttons). */}
+      <div className="flex items-center gap-x-2.5 gap-y-1.5 px-3 sm:px-4 py-2 flex-wrap sm:flex-nowrap">
         {lead}
-        <div onClick={can ? toggle : undefined} className={`flex-1 min-w-0 ${can ? 'cursor-pointer' : ''}`}>
+        <div onClick={can ? toggle : undefined} className={`flex-1 min-w-[55%] sm:min-w-0 ${can ? 'cursor-pointer' : ''}`}>
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{name}</span>
             {meta ? <span className="text-[12px] text-muted truncate max-w-[18rem]">{meta}</span> : null}
             {tags}
           </div>
         </div>
-        {actions ? <div className="flex items-center gap-1 shrink-0">{actions}</div> : null}
+        {actions ? <div className="flex items-center gap-1 shrink-0 ml-auto">{actions}</div> : null}
         {can && <button onClick={toggle} title={open ? 'Close' : 'Open'} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>}
       </div>
       {can && open && <div className="px-3 sm:px-4 pb-3 space-y-2">{children}</div>}

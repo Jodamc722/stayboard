@@ -542,22 +542,31 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           </button>
           <LighthouseMark size={22} />
           <span className="font-semibold text-[15px] text-ink truncate">{currentLabel}</span>
+          {/* Room for the Brief + alerts pair (HandoffFloater), which sits in this bar on a phone. */}
+          {business !== 'garden' && <span aria-hidden className="ml-auto w-[92px] shrink-0" />}
           {canSee('/plan') && (
             <button type="button" onClick={() => openAddTask()} aria-label="Add a task"
-              className="ml-auto w-10 h-10 rounded-lg bg-ink text-white grid place-items-center active:opacity-80">
+              className={(business !== 'garden' ? '' : 'ml-auto ') + 'w-10 h-10 rounded-lg bg-ink text-white grid place-items-center active:opacity-80'}>
               <Plus size={18} />
             </button>
           )}
           <button type="button" onClick={() => setPaletteOpen(true)} aria-label="Jump to a tab"
-            className={(canSee('/plan') ? '' : 'ml-auto ') + 'w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app'}>
+            className={(canSee('/plan') || business !== 'garden' ? '' : 'ml-auto ') + 'w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app'}>
             <Search size={17} />
           </button>
         </header>
 
+        {/* DESKTOP UTILITY STRIP (2026-11-09 audit): one slim bar that owns the Brief + alerts pair, so they
+            stop floating over each page's header buttons. The page name on the left doubles as a breadcrumb. */}
+        {!full && (
+          <div className="hidden lg:flex items-center h-[46px] flex-shrink-0 border-b border-line/70 bg-app px-8 print:hidden">
+            <span className="text-[12px] font-semibold uppercase tracking-[0.14em] text-muted">{currentLabel}</span>
+          </div>
+        )}
         <main className="flex-1 overflow-auto overscroll-contain px-safe">
           {/* pb-24 on a phone: Eve's bubble floats above the bottom bar, and without room to scroll
               past it the last row of every board sits permanently under a 56px circle. */}
-          <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-24 sm:p-6 lg:p-8 animate-fade-in'}>
+          <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-10 sm:p-6 lg:px-8 lg:pt-6 lg:pb-8 animate-fade-in'}>
             {children}
           </div>
         </main>

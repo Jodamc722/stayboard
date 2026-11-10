@@ -44,7 +44,14 @@ export default function GlitchesPage() {
   useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
   // board glitches (with category + $) power the insights strip on History
   const [board, setBoard] = useState<any>(null)
-  useEffect(() => { fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(setBoard).catch(() => {}) }, [])
+  // The Board tab's own component loads /api/glitches and announces it; this page only asks itself on
+  // the other tabs (2026-11-09 audit: the same 142 KB answer was fetched twice on every open).
+  useEffect(() => {
+    const on = (e: any) => { if (e && e.detail) setBoard(e.detail) }
+    window.addEventListener('glitches:loaded', on)
+    return () => window.removeEventListener('glitches:loaded', on)
+  }, [])
+  useEffect(() => { if (tab !== 'board' && !board) fetch('/api/glitches', { cache: 'no-store' }).then(r => r.json()).then(setBoard).catch(() => {}) }, [tab, board])
 
   const assign = async (taskId: string, personId: number) => {
     try {

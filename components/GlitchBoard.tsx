@@ -240,6 +240,7 @@ export function GlitchBoard() {
       if (!r.ok || !j.ok) { setErr(j.error || 'Failed to load'); setLoading(false); return }
       setGlitches(j.glitches || [])
       setLoaded(true)
+      try { window.dispatchEvent(new CustomEvent('glitches:loaded', { detail: j })) } catch { /* header pills only */ }
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
@@ -1373,8 +1374,9 @@ function GlitchCard({ g, onOpen }: { g: Glitch; onOpen: () => void }) {
         <div className="flex items-center gap-1.5 min-w-0">
           {/* UNIT · GUEST (Sulaman via Jon, 2026-10-02: "show the guest name in the title as well"). */}
           <p className="text-[13px] font-semibold text-ink flex-1 min-w-0 flex items-baseline gap-1">
-            <span className="shrink-0">{g.unit || 'No unit'}</span>
-            {g.guest_name ? <span className="font-medium text-ink/70 truncate min-w-0">· {g.guest_name}</span> : null}
+            {/* A long unit name truncates instead of running under the age and the assignee (audit 2026-11-09). */}
+            <span className="truncate min-w-0 shrink">{g.unit || 'No unit'}</span>
+            {g.guest_name ? <span className="font-medium text-ink/70 truncate min-w-0 shrink-[4] basis-[30%]">· {g.guest_name}</span> : null}
           </p>
           {age ? (
             <span title={'Open for ' + age} className={'shrink-0 text-[10.5px] font-bold tabular-nums px-1.5 py-[2px] rounded-md ' +

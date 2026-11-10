@@ -16,6 +16,7 @@
 //   3. Typing on a phone is the slowest way to ask a question while you are standing in a lobby.
 //      Hold the mic, say it, let go. Turn the speaker on and she reads the answer back.
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { usePathname } from 'next/navigation'
 import { Sparkles, Send, ThumbsUp, ThumbsDown, X, Eraser, Mic, Volume2, VolumeX, KeyRound, GraduationCap } from 'lucide-react'
 import { LearnedChips, WhatIUsed, type Learned } from '@/components/EveChatBits'
 
@@ -47,6 +48,7 @@ export function openEve(question?: string) {
 
 export function EveFloat() {
   const [open, setOpen] = useState(false)
+  const onEvePage = (usePathname() || '').startsWith('/eve')
   const [msgs, setMsgs] = useState<Msg[]>([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -180,9 +182,11 @@ export function EveFloat() {
     <>
       {/* The bubble. Always present, never in the way — and on a phone it clears the bottom nav
           bar AND the home indicator, which is where it used to sit. */}
-      {!open && (
+      {/* 2026-11-09 audit: not on the Eve page itself, and not on a phone — the bottom bar already has an
+          Eve tab, and the bubble sat on top of the last row of every list. */}
+      {!open && !onEvePage && (
         <button onClick={() => setOpen(true)} aria-label="Ask Eve" title="Ask Eve"
-          className="print:hidden fixed above-bar lg:bottom-5 right-4 z-40 h-11 pl-3 pr-3.5 rounded-full bg-ink text-white shadow-lg hover:opacity-90 inline-flex items-center gap-2 transition-transform active:scale-95">
+          className="print:hidden fixed hidden lg:inline-flex lg:bottom-5 right-4 z-40 h-11 pl-3 pr-3.5 rounded-full bg-ink text-white shadow-lg hover:opacity-90 items-center gap-2 transition-transform active:scale-95">
           <span aria-hidden className="w-2 h-2 rounded-full bg-brand-400 shadow-[0_0_0_3px_rgb(var(--c-brand-400)/0.3)]" />
           <span className="text-[13px] font-semibold tracking-wide">Eve</span>
         </button>

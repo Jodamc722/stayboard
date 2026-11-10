@@ -372,8 +372,11 @@ export function HandoffFloater() {
   const tuck = (id: string) => { try { localStorage.setItem(DISMISS_KEY(id), String(Date.now())) } catch { /* fine */ } force(x => x + 1) }
   const open = typeof view === 'string' && view !== 'list' && view !== 'new' && view !== 'brief' ? (s.open.find(x => x.id === view) || mine.find(x => x.id === view)) : null
   const sevBar = (a: Alert) => a.severity === 'urgent' ? 'bg-rose-600' : a.severity === 'warn' ? 'bg-amber-500' : 'bg-ink'
+  // 2026-11-09 audit: the pair floated over every page's own header (it hid "New claim", "Add task", the
+  // Reviews pills). It now sits IN the bars: the phone header (left of + and search) and the desktop
+  // utility strip Shell renders — never over page content.
   return (
-    <div className="fixed z-[65] right-3 top-[64px] lg:right-5 lg:top-4 flex flex-col items-end pointer-events-none print:hidden">
+    <div className="fixed z-[65] right-[104px] top-[calc(env(safe-area-inset-top,0px)+10px)] lg:right-5 lg:top-[5px] flex flex-col items-end pointer-events-none print:hidden">
       <div className="flex items-center gap-1.5">
       {/* THE SHIFT BRIEF (Jon, 2026-10-07) — the running checklist, beside the bell on every page. */}
       <button data-handoff-bell onClick={() => setView(v => v === 'brief' ? null : 'brief')}
