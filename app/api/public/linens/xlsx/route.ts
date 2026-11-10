@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { makeXlsx, colRef, type XCell, type XSheet } from '@/lib/xlsx-lite'
 import { getSetting } from '@/lib/app-settings'
 import { LINEN_STANDARD_KEY, isLinenTier, linenNeeds, linenTotals, normLinenStandard, parSentence, tierOf } from '@/lib/linens'
-import { linenUnitsFromParam, publicLinenStandard } from '@/lib/linens-public'
+import { linenShopUrl, linenUnitsFromParam, publicLinenStandard, publicTierLabel } from '@/lib/linens-public'
 
 export const dynamic = 'force-dynamic'
 const T = (v: string | number, s = 0): XCell => ({ v, s })
@@ -22,20 +22,22 @@ export async function GET(req: NextRequest) {
   const all = linenTotals(std, units, tier)
   const per = units.map(u => linenTotals(std, [u], tier))
 
-  const rows: XCell[][] = [[T(`Linen — ${units.length} unit${units.length === 1 ? '' : 's'} (${std.tierLabels[tier as 'mid']})`, 2)], [T(parSentence(std), 8)], []]
-  rows.push([T('Group', 3), T('Item', 3), T('Size', 3), T('Product', 3), ...units.map(u => T(u.name, 3)), T('Total', 3)])
+  const rows: XCell[][] = [[T(`Linen — ${units.length} unit${units.length === 1 ? '' : 's'} (${publicTierLabel(std.tierLabels[tier as 'mid'])})`, 2)], [T(parSentence(std), 8)], []]
+  rows.push([T('Group', 3), T('Item', 3), T('Size', 3), T('Product', 3), ...units.map(u => T(u.name, 3)), T('Total', 3), T('Shop', 3)])
+  const links: { ref: string; url: string }[] = []
   for (const r of all.rows.filter(x => x.need > 0)) {
     const row = rows.length + 1
     rows.push([T(r.group), T(r.name), T(r.size || ''), T(product(r.itemId), 8), ...per.map(p => N(p.rows.find(x => x.key === r.key)?.need || 0)),
-      { v: '', f: `SUM(${colRef(4)}${row}:${colRef(3 + units.length)}${row})` }])
+      { v: '', f: `SUM(${colRef(4)}${row}:${colRef(3 + units.length)}${row})` }, T('Amazon', 9)])
+    links.push({ ref: colRef(5 + units.length) + row, url: linenShopUrl(product(r.itemId), r.name, r.size) })
   }
-  const sheets: XSheet[] = [{ name: 'Full order', widths: [10, 22, 12, 36, ...units.map(() => 11), 9], rows }]
+  const sheets: XSheet[] = [{ name: 'Full order', widths: [10, 22, 12, 36, ...units.map(() => 11), 9, 10], rows, links }]
   const used = new Set(['Full order'])
   units.forEach((u, i) => {
     let name = u.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 28) || 'Unit'
     while (used.has(name)) name = name.slice(0, 26) + ' ' + used.size
     used.add(name)
-    const r2: XCell[][] = [[T(u.name, 2)], [T(`${u.bedrooms} bedrooms · ${u.bathrooms} baths · ${u.guests} guests · beds: ${Object.entries(u.beds).map(([s, n]) => `${n} ${s}`).join(', ') || 'none'}`, 8)], [],
+    const r2: XCell[][] = [[T(u.name, 2)], [T(`Beds: ${Object.entries(u.beds).filter(([, n]) => n > 0).map(([s, n]) => `${n} ${s}`).join(', ') || 'none'} · sleeps ${u.guests} · ${u.bathrooms} full bath${u.bathrooms === 1 ? '' : 's'} · ${u.kitchens ?? 1} kitchen${u.kitchens === 1 ? '' : 's'}`, 8)], [],
       ['Group', 'Item', 'Size', 'On the bed', 'In rotation', 'Needed', 'Have', 'To buy'].map(h => T(h, 3))]
     for (const n of linenNeeds(std, units[i])) {
       const row = r2.length + 1

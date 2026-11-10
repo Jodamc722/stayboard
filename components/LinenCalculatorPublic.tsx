@@ -1,17 +1,21 @@
 'use client'
 // THE LINEN CALCULATOR, FOR ANYONE WITH THE LINK (Jon, 2026-11-10) — /kit/linens. The same arithmetic
 // as Onboarding → Linens (lib/linens.ts linenNeeds / linenTotals) on Jon's standard, without prices,
-// vendors or SKUs. Like the need list: beds by size, bathrooms, guests and kitchen in; every linen
-// piece and how many out, at the standard's par. Several units add up to a full order. Each person who
+// vendors or SKUs. FOUR INPUTS (Jon, 2026-11-10: "linen will just be bed type, kitchen number, full
+// bathrooms, and occupancy"): beds by type, occupancy, full bathrooms, kitchens. Bedrooms is not asked;
+// the one per-bedroom item (throw blanket) goes by the beds that are not sofa beds. Several units add up to a full order. Each person who
 // opens the link starts blank; nothing is saved and the address never changes.
 import { useEffect, useMemo, useState } from 'react'
-import { Bath, BedDouble, ChefHat, ClipboardCopy, Copy, FileSpreadsheet, Link2, Minus, Package, Plus, RotateCcw, Trash2, Users } from 'lucide-react'
+import { Bath, BedDouble, ChefHat, ClipboardCopy, Copy, ExternalLink, FileSpreadsheet, Link2, Minus, Package, Plus, RotateCcw, Trash2, Users } from 'lucide-react'
 import { LINEN_GROUPS, LINEN_TIERS, SOFA_BED, linenNeeds, linenTotals, linenText, parSentence, tierOf, type LinenStandard, type LinenTier, type LinenUnit } from '@/lib/linens'
+import { linenShopUrl, publicTierLabel } from '@/lib/linens-public'
 
-type U = { name: string; bedrooms: number; bathrooms: number; guests: number; kitchen: boolean; beds: Record<string, number> }
-const blank = (name = 'This home'): U => ({ name, bedrooms: 2, bathrooms: 2, guests: 6, kitchen: true, beds: { King: 1, Queen: 1 } })
-const toUnit = (u: U, i: number): LinenUnit => ({ id: 'u' + i, name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, kitchens: u.kitchen ? 1 : 0, beds: u.beds, bedsSource: 'manual' })
-const GROUP_NOTE: Record<string, string> = { Bed: 'Sized to each bed', Bath: 'Per guest and per bathroom', Kitchen: 'Full kitchens only', Other: 'Per bedroom' }
+type U = { name: string; bathrooms: number; guests: number; kitchens: number; beds: Record<string, number> }
+const blank = (name = 'This home'): U => ({ name, bathrooms: 2, guests: 6, kitchens: 1, beds: { King: 1, Queen: 1 } })
+/** Bedrooms for the per-bedroom items: the beds that are not sofa beds, at least one. */
+const roomsOf = (beds: Record<string, number>) => Math.max(1, Object.entries(beds).filter(([s]) => s !== SOFA_BED).reduce((a, [, n]) => a + (n || 0), 0))
+const toUnit = (u: U, i: number): LinenUnit => ({ id: 'u' + i, name: u.name, bedrooms: roomsOf(u.beds), bathrooms: u.bathrooms, guests: u.guests, kitchens: u.kitchens, beds: u.beds, bedsSource: 'manual' })
+const GROUP_NOTE: Record<string, string> = { Bed: 'Sized to each bed', Bath: 'Per guest and per full bathroom', Kitchen: 'Per kitchen', Other: 'Per bed (sofa beds not counted)' }
 
 export function LinenCalculatorPublic({ standard }: { standard: LinenStandard }) {
   const [units, setUnits] = useState<U[]>([blank()])
@@ -42,11 +46,12 @@ export function LinenCalculatorPublic({ standard }: { standard: LinenStandard })
   const needsOf = useMemo(() => (idx >= 0 ? linenNeeds(standard, lus[idx]) : []), [standard, lus, idx])
   const itemById = useMemo(() => new Map(standard.items.map(i => [i.id, i] as const)), [standard])
   const productOf = (id: string) => { const it = itemById.get(id); return it ? tierOf(it, tier).product || '' : '' }
+  const shop = (id: string, name: string, size?: string) => <a className="nlc-shop" href={linenShopUrl(productOf(id), name, size)} target="_blank" rel="noopener noreferrer"><ExternalLink size={12} /> Shop</a>
   const rowNeed = (key: string) => needsOf.find(r => r.itemId + '|' + (r.size || '') === key)
 
   const flash = (w: string) => { setCopied(w); setTimeout(() => setCopied(''), 1800) }
   const copyText = async (t: string, w: string) => { try { await navigator.clipboard.writeText(t); flash(w) } catch { window.prompt('Copy this', t) } }
-  const xlsx = '/api/public/linens/xlsx?t=' + tier + '&u=' + encodeURIComponent(JSON.stringify(units.map(x => ({ n: x.name, bd: x.bedrooms, ba: x.bathrooms, g: x.guests, k: x.kitchen ? 1 : 0, beds: x.beds }))))
+  const xlsx = '/api/public/linens/xlsx?t=' + tier + '&u=' + encodeURIComponent(JSON.stringify(units.map(x => ({ n: x.name, bd: roomsOf(x.beds), ba: x.bathrooms, g: x.guests, k: x.kitchens, beds: x.beds }))))
   const bedSizes = standard.bedSizes
   const beds = u ? Object.values(u.beds).reduce((a, b) => a + (b || 0), 0) : 0
 
@@ -57,11 +62,11 @@ export function LinenCalculatorPublic({ standard }: { standard: LinenStandard })
         <header className="nlc-head"><img src="/stay-logo.png" alt="Stay Hospitality" className="nlc-logo" /></header>
         <div className="nlc-eyebrow">Linen calculator</div>
         <h1>{multi ? 'Linen for your units' : 'Linen for your home'}</h1>
-        <p className="nlc-lede">Enter the beds, bathrooms and guests and the list sizes itself: every sheet, towel and pillow, at {parSentence(standard) || `${standard.par} sets in rotation`}. One set on the bed, one in the wash, one on the shelf. Onboarding several units? Add each one for the full order. Your changes are only on your screen.</p>
+        <p className="nlc-lede">Enter the beds, occupancy, full bathrooms and kitchens and the list sizes itself: every sheet, towel and pillow, at {parSentence(standard) || `${standard.par} sets in rotation`}. One set on the bed, one in the wash, one on the shelf. Onboarding several units? Add each one for the full order. Your changes are only on your screen.</p>
 
         <div className="nlc-tabs" role="tablist" aria-label="Units">
           {multi && units.map((x, i) => (
-            <button key={i} type="button" role="tab" aria-selected={view === i} className={view === i ? 'on' : ''} onClick={() => setView(i)}>{x.name || `Unit ${i + 1}`}<small>{Object.values(x.beds).reduce((a, b) => a + b, 0)} beds · {x.guests} gst</small></button>
+            <button key={i} type="button" role="tab" aria-selected={view === i} className={view === i ? 'on' : ''} onClick={() => setView(i)}>{x.name || `Unit ${i + 1}`}<small>{Object.values(x.beds).reduce((a, b) => a + b, 0)} beds · sleeps {x.guests}</small></button>
           ))}
           <button type="button" className="nlc-add" onClick={() => addUnit()}><Plus size={14} /> Add unit</button>
           {multi && <button type="button" role="tab" aria-selected={view === 'order'} className={'nlc-ordertab' + (view === 'order' ? ' on' : '')} onClick={() => setView('order')}><Package size={14} /> Full order</button>}
@@ -76,16 +81,8 @@ export function LinenCalculatorPublic({ standard }: { standard: LinenStandard })
                 <button type="button" onClick={removeUnit} className="nlc-del"><Trash2 size={13} /> Remove</button>
               </div>
             )}
-            <div className="nlc-counts">
-              {([['bedrooms', 'Bedrooms', BedDouble, 0, 20], ['bathrooms', 'Bathrooms', Bath, 0, 20], ['guests', 'Guests', Users, 1, 50]] as const).map(([k, label, Icon, lo, hi]) => (
-                <div key={k} className="nlc-count">
-                  <span className="nlc-l"><Icon size={15} /> {label}</span>
-                  <Step v={u[k]} label={label} onChange={n => set({ [k]: Math.max(lo, Math.min(hi, n)) } as any)} />
-                </div>
-              ))}
-            </div>
             <div className="nlc-beds">
-              <span className="nlc-l"><BedDouble size={15} /> Beds by size <small className="nlc-bedn">{beds} bed{beds === 1 ? '' : 's'}</small></span>
+              <span className="nlc-l"><BedDouble size={15} /> Beds by type <small className="nlc-bedn">{beds} bed{beds === 1 ? '' : 's'}</small></span>
               <div className="nlc-bedgrid">
                 {bedSizes.map(sz => (
                   <div key={sz} className={'nlc-bed' + ((u.beds[sz] || 0) > 0 ? ' on' : '')}>
@@ -95,22 +92,24 @@ export function LinenCalculatorPublic({ standard }: { standard: LinenStandard })
                 ))}
               </div>
             </div>
-            <div className="nlc-kit">
-              <span className="nlc-l"><ChefHat size={15} /> Full kitchen</span>
-              <div className="nlc-yn" role="radiogroup" aria-label="Full kitchen">
-                {[true, false].map(v => <button key={String(v)} type="button" role="radio" aria-checked={u.kitchen === v} className={u.kitchen === v ? 'on' : ''} onClick={() => set({ kitchen: v })}>{v ? 'Yes' : 'No'}</button>)}
-              </div>
+            <div className="nlc-counts">
+              {([['guests', 'Occupancy', Users, 1, 50], ['bathrooms', 'Full bathrooms', Bath, 0, 20], ['kitchens', 'Kitchens', ChefHat, 0, 10]] as const).map(([k, label, Icon, lo, hi]) => (
+                <div key={k} className="nlc-count">
+                  <span className="nlc-l"><Icon size={15} /> {label}</span>
+                  <Step v={u[k]} label={label} onChange={n => set({ [k]: Math.max(lo, Math.min(hi, n)) } as any)} />
+                </div>
+              ))}
             </div>
           </section>
         )}
 
         <div className="nlc-bar">
           <div className="nlc-grade" role="radiogroup" aria-label="Linen tier">
-            {LINEN_TIERS.map(t => <button key={t} type="button" role="radio" aria-checked={tier === t} className={tier === t ? 'on' : ''} onClick={() => setTier(t)}>{standard.tierLabels[t]}</button>)}
+            {LINEN_TIERS.map(t => <button key={t} type="button" role="radio" aria-checked={tier === t} className={tier === t ? 'on' : ''} onClick={() => setTier(t)}>{publicTierLabel(standard.tierLabels[t])}</button>)}
           </div>
           <div className="nlc-acts">
             <button type="button" onClick={() => copyText(window.location.origin + '/kit/linens', 'link')}><Link2 size={14} /> {copied === 'link' ? 'Link copied' : 'Copy link'}</button>
-            <button type="button" onClick={() => copyText(linenText(view === 'order' ? all : one || all, `Linen — ${view === 'order' ? units.length + ' units' : u?.name} (${standard.tierLabels[tier]})`), 'list')}><ClipboardCopy size={14} /> {copied === 'list' ? 'Copied' : 'Copy list'}</button>
+            <button type="button" onClick={() => copyText(linenText(view === 'order' ? all : one || all, `Linen — ${view === 'order' ? units.length + ' units' : u?.name} (${publicTierLabel(standard.tierLabels[tier])})`), 'list')}><ClipboardCopy size={14} /> {copied === 'list' ? 'Copied' : 'Copy list'}</button>
             <a href={xlsx}><FileSpreadsheet size={14} /> Excel</a>
             <button type="button" onClick={startOver}><RotateCcw size={14} /> Start over</button>
           </div>
@@ -119,18 +118,19 @@ export function LinenCalculatorPublic({ standard }: { standard: LinenStandard })
         {view === 'order' ? (
           <div className="nlc-scroll">
             <table className="nlc-t nlc-order">
-              <thead><tr><th>Item</th>{units.map((x, i) => <th key={i} className="n">{x.name}</th>)}<th className="n">Total</th></tr></thead>
+              <thead><tr><th>Item</th>{units.map((x, i) => <th key={i} className="n">{x.name}</th>)}<th className="n">Total</th><th /></tr></thead>
               {LINEN_GROUPS.map(g => {
                 const rows = all.rows.filter(r => r.group === g && r.need > 0)
                 if (!rows.length) return null
                 return (
                   <tbody key={g}>
-                    <tr className="cat"><td colSpan={units.length + 2}>{g}</td></tr>
+                    <tr className="cat"><td colSpan={units.length + 3}>{g}</td></tr>
                     {rows.map(r => (
                       <tr key={r.key}>
                         <td><b>{r.name}</b>{r.size ? <small>{r.size}</small> : null}{productOf(r.itemId) ? <small>{productOf(r.itemId)}</small> : null}</td>
                         {perUnit.map((p, i) => <td key={i} className="n">{p.rows.find(x => x.key === r.key)?.need || '—'}</td>)}
                         <td className="n"><span className="nlc-q">{r.need}</span></td>
+                        <td className="n">{shop(r.itemId, r.name, r.size)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -151,7 +151,7 @@ export function LinenCalculatorPublic({ standard }: { standard: LinenStandard })
                     const n = rowNeed(r.key)
                     return (
                       <tr key={r.key}>
-                        <td><b>{r.name}{r.size ? ` · ${r.size}` : ''}</b>{productOf(r.itemId) ? <small>{productOf(r.itemId)}</small> : null}</td>
+                        <td><b>{r.name}{r.size ? ` · ${r.size}` : ''}</b><small>{productOf(r.itemId)}{productOf(r.itemId) ? ' · ' : ''}{shop(r.itemId, r.name, r.size)}</small></td>
                         <td className="n">{n ? <>{n.perUnitQty}{n.par !== 1 ? <small>× {n.par} in rotation</small> : <small>stocked once</small>}</> : '—'}</td>
                         <td className="n"><span className="nlc-q">{r.need}</span></td>
                       </tr>
@@ -162,7 +162,7 @@ export function LinenCalculatorPublic({ standard }: { standard: LinenStandard })
             })}
           </table>
         ) : null}
-        <p className="nlc-fine">Counts follow Stay’s linen standard: {parSentence(standard) || `${standard.par} sets in rotation`}. Pillows are stocked per bed; pillow protectors and cases are counted per pillow. A sofa bed takes {standard.sofaSize} linen at {standard.sofaPar} sets. Kitchen towels are for full kitchens only. Prices are quoted separately by Stay.</p>
+        <p className="nlc-fine">Counts follow Stay’s linen standard: {parSentence(standard) || `${standard.par} sets in rotation`}. Pillows are stocked per bed; pillow protectors and cases are counted per pillow. A sofa bed takes {standard.sofaSize} linen at {standard.sofaPar} sets. Kitchen towels are per kitchen; bath towels and washcloths follow occupancy; hand towels, makeup towels and bath mats follow full bathrooms. Shop links open an Amazon search for that tier of each piece. Prices are quoted separately by Stay.</p>
       </main>
     </div>
   )
@@ -209,7 +209,8 @@ const CSS = `
 .nlc-step input{border:0;width:100%;min-width:0;text-align:center;font:400 24px var(--display);color:var(--ink);background:none;-moz-appearance:textfield}
 .nlc-step.sm button{width:32px;height:32px}.nlc-step.sm input{font-size:20px}
 .nlc-step input::-webkit-outer-spin-button,.nlc-step input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-.nlc-beds{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:14px}
+.nlc-beds{display:grid;gap:8px}
+.nlc-beds + .nlc-counts{border-top:1px solid var(--line);padding-top:14px}
 .nlc-bedgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
 .nlc-bed{display:grid;gap:6px;border:1px solid var(--line);border-radius:12px;padding:10px}.nlc-bed.on{border-color:var(--accent);background:var(--soft)}
 .nlc-bed span{font-weight:600;font-size:13.5px}.nlc-bed small{display:block;font-weight:400;font-size:11.5px;color:var(--muted)}
@@ -233,6 +234,7 @@ const CSS = `
 .nlc-t tr.cat td{font-family:var(--display);font-size:20px;padding-top:20px;border-bottom:1px solid var(--ink)}
 .nlc-grp{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.nlc-grp-n{font-family:var(--ui);font-size:12.5px;color:var(--muted)}
 .nlc-grp-d{display:block;font-family:var(--ui);font-size:12.5px;color:var(--muted);margin-top:2px}
+.nlc-shop{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font:600 12.5px var(--ui);text-decoration:none;white-space:nowrap}.nlc-shop:hover{text-decoration:underline}
 .nlc-q{font-family:var(--display);font-size:24px}
 .nlc-fine{margin-top:22px;font-size:12.5px;color:var(--muted)}
 @media (max-width:560px){.nlc-counts{grid-template-columns:1fr}}

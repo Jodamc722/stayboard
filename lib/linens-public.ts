@@ -30,3 +30,15 @@ export function linenUnitsFromParam(raw: string | null | undefined): LinenUnit[]
     kitchens: Math.round(int(x?.k, 0, 10, 1)), beds: normBeds(x?.beds), bedsSource: 'manual' as const,
   }))
 }
+
+// SHOP LINKS (Jon, 2026-11-10: "let's build lux and standard tiers and actually shop items"). An Amazon
+// search per row and tier, from the tier's product description, the item and the size — "T-300 cotton
+// percale fitted sheet King" — so each tier lands on that grade of that exact piece. The lowest tier is
+// shown as Standard to people outside Stay (Jon's label for it stays as he set it inside Lighthouse).
+export function linenShopUrl(product: string | undefined, name: string, size?: string): string {
+  const pillow = /pillow/i.test(name) && size ? (size === 'King' ? 'king size' : 'standard size') : ''
+  const sz = /pillow/i.test(name) ? pillow : size ? size.toLowerCase() + ' size' : ''
+  const q = [product || '', name.replace(/s$/i, ''), sz].filter(Boolean).join(' ')
+  return 'https://www.amazon.com/s?k=' + encodeURIComponent(q.replace(/[,~]+/g, ' ').replace(/\s+/g, ' ').trim())
+}
+export const publicTierLabel = (label: string) => (/^low$/i.test(label.trim()) ? 'Standard' : label)
