@@ -16,7 +16,7 @@
 // THE GRID. Letter pages, 816 × 1056 px. Margins 64 px, a running head and a folio on every inside
 // page, one idea per page. Display: the theme's serif (Fraunces by default) for headlines and figures;
 // Inter for reading text at 12.5/20 and for small caps labels. Hairlines, not boxes.
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
@@ -161,6 +161,25 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const [brandUrl, setBrandUrl] = useState('')
   const [brandMsg, setBrandMsg] = useState('')
   const dirty = touched.length > 0
+  // A PAGE THAT NO LONGER FITS (2026-11-11). Every word is editable and a page is a fixed letter
+  // sheet, so a long edit would be silently clipped in print. Editors see which pages are too full.
+  const [overfull, setOverfull] = useState<string[]>([])
+  useEffect(() => {
+    if (!canEdit) return
+    const id = setTimeout(() => {
+      const keys: string[] = []
+      document.querySelectorAll('.mz-page[data-k]').forEach(el => {
+        const body = el.querySelector('.mz-body, .mz-split-body') as HTMLElement | null
+        const foot = el.querySelector('.mz-foot') as HTMLElement | null
+        if (body && foot) {
+          const last = body.lastElementChild as HTMLElement | null
+          if (last && last.getBoundingClientRect().bottom > foot.getBoundingClientRect().top + 1) keys.push(String((el as HTMLElement).dataset.k))
+        }
+      })
+      setOverfull(k => (k.join() === keys.join() ? k : keys))
+    }, 400)
+    return () => clearTimeout(id)
+  })
 
   const touch = (k: string) => setTouched(t => t.includes(k) ? t : [...t, k])
   const patch = (path: string, val: Any) => {
@@ -323,7 +342,8 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   ].filter(x => x.n > 0).map(x => ({ ...x, n: two(x.n) }))
 
   const frame = (key: string, body: React.ReactNode, o: { section?: string; tone?: string } = {}) => (
-    <section key={key} className={'mz-page mz-' + (o.tone || 'paper')}>
+    <section key={key} data-k={key} className={'mz-page mz-' + (o.tone || 'paper')}>
+      {canEdit && overfull.includes(key) ? <p className="mz-overfull">This page is too full to print. Shorten a passage or hide a section.</p> : null}
       <header className="mz-run">
         <span className="mz-run-mark">STAY</span>
         <span>{o.section}</span>
@@ -457,7 +477,8 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         </>
       ), { section: 'Who we are', tone: 'warm' })
       case s.key === 'manage': return (
-        <section key="manage" className="mz-page mz-split-page">
+        <section key="manage" data-k="manage" className="mz-page mz-split-page">
+          {canEdit && overfull.includes('manage') ? <p className="mz-overfull">This page is too full to print. Shorten a passage or hide a section.</p> : null}
           <div className="mz-split-photo" style={{ backgroundImage: `url(${photo('manage')})` }}><p className="mz-caption">A Stay-managed home</p></div>
           <div className="mz-split-text">
             <header className="mz-run mz-run-tight"><span className="mz-run-mark">STAY</span><span>How we manage</span><span>{short(building)}</span></header>
@@ -953,9 +974,11 @@ const CSS = `
 .mz-steps-4{grid-template-columns:repeat(4,1fr)}.mz-steps-3{grid-template-columns:repeat(3,1fr)}
 .mz-steps li{border-top:1px solid ${C.ink};padding-top:12px}
 .mz-steps li>span{font:300 30px ${SERIF};color:${C.sand}}
-.mz-steps b{display:block;font:400 18px/1.25 ${SERIF};color:${C.ink};margin-top:8px;min-height:46px}
+.mz-steps b{display:block;font:400 18px/1.25 ${SERIF};color:${C.ink};margin-top:8px}
+.mz-steps-4 b{min-height:46px}
+.mz-qa>div:last-child:nth-child(odd){grid-column:1/-1}
 .mz-steps p{font:400 13.5px/1.45 ${SERIF};margin:6px 0 0}
-.mz-partner+.mz-kicker{margin-top:48px}.mz-qa+.mz-kicker{margin-top:28px}
+.mz-partner+.mz-kicker{margin-top:48px}.mz-qa+.mz-kicker{margin-top:24px}
 
 /* second option */
 .mz-qa{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:24px;border-top:1px solid ${C.ink}}
@@ -1049,6 +1072,8 @@ const CSS = `
 .mz-fine{margin:0 -72px;padding:20px 72px 36px;background:rgba(6,10,30,.88);font:400 10.5px/1.55 ${SANS};color:rgba(255,255,255,.82)}
 
 /* editing */
+.mz-overfull{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:6;margin:0;font:600 11.5px ${SANS};background:#B4232F;color:#fff;border-radius:999px;padding:6px 12px;white-space:nowrap}
+@media print{.mz-overfull{display:none}}
 .mz-ed{outline:1px dashed rgba(58,91,217,.55);outline-offset:2px;border-radius:2px;cursor:text;min-width:1ch}
 div.mz-ed{display:block}
 .mz-ed:hover{background:rgba(58,91,217,.07)}
