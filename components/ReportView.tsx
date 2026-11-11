@@ -150,6 +150,29 @@ const THEMES: Record<string, Any> = {
   // NOTE: this theme is shared with owner REPORTS, not just onboarding. That is deliberate — the
   // same numbers were failing there too — but it means a report regenerated today looks different
   // from one sent last month.
+  // ATELIER (Jon, 2026-11-11: "use this new design for the sales deck too, not just the magazine"). The
+  // magazine's quiet-luxury look on the slides: warm paper, warm charcoal for the bands, a bronze
+  // accent, Cormorant Garamond over Jost (FONT_PAIRS.atelier). Contrast checked on the card: ink 15.9,
+  // body 10.4, muted 5.4, accent 5.1.
+  // STAY MODERN, the sales deck's standard (Jon, 2026-11-11: "standard should be modern, following our
+  // look and feel"): Lighthouse's ground and ink, Stay's bronze, near-black bands; with the 'stay' font
+  // pair (Instrument Serif over Inter). Contrast on the card: ink 18.6, body 11.0, muted 4.9, accent 4.9.
+  stayModern: {
+    label: 'Stay Modern', bg: '#F7F7F5', ink: '#101114', body: '#3A3B40', sub: '#5E5F65', muted: '#6B6C72',
+    card: '#FFFFFF', cardBorder: '#E4E2DD', chip: '#F3F2EF', accent: '#8C6D3A', gold: '#8C6D3A', band: '#14161B',
+    statusHotBg: '#F3ECE0', statusHotInk: '#7A5C2E', statusColdBg: '#EEEFF1', statusColdInk: '#4F5258',
+    good: '#2F6B47', downGray: '#9A9BA0', rule: '#E4E2DD', toolbarBg: 'rgba(247,247,245,0.94)', toolbarBorder: '#DAD8D2',
+    trackBg: '#FBFBFA', footA: '#86878C', footB: '#A3A4A8', barA: '#14161B', barB: '#8C6D3A',
+    edBg: 'rgba(255,255,255,0.7)', edBorder: '#8C6D3A',
+  },
+  atelier: {
+    label: 'Atelier', bg: '#F6F2EA', ink: '#1C1A17', body: '#3B3731', sub: '#665E53', muted: '#6B6358',
+    card: '#FCFAF6', cardBorder: '#E2DACB', chip: '#EFE9DE', accent: '#8A6A3F', gold: '#8A6A3F', band: '#262320',
+    statusHotBg: '#F1E7D6', statusHotInk: '#7A5C34', statusColdBg: '#ECEAE4', statusColdInk: '#55504A',
+    good: '#3F6B4A', downGray: '#9A9288', rule: '#E2DACB', toolbarBg: 'rgba(246,242,234,0.94)', toolbarBorder: '#D9D0C1',
+    trackBg: '#FAF7F1', footA: '#8A8274', footB: '#A39B8E', barA: '#262320', barB: '#8A6A3F',
+    edBg: 'rgba(255,255,255,0.7)', edBorder: '#8A6A3F',
+  },
   capri: {
     label: 'Capri', bg: '#FCFAF6', ink: '#0E2740', body: '#3A5167', sub: '#5A6E80', muted: '#5A6E80',
     card: '#ffffff', cardBorder: '#E7DFCF', chip: '#F8F4ED', accent: '#B54B33', gold: '#9C7A23', band: '#0E2740',
@@ -250,6 +273,13 @@ Object.assign(THEMES, {
 // exactly the bytes it shipped yesterday.
 const FONT_PAIRS: Record<string, { label: string; display: string; href: string; body?: string; caps?: boolean }> = {
   modern: { label: 'Modern', display: '', href: '' },
+  // The sales magazine's pairing, for the sales deck (see THEMES.atelier).
+  atelier: {
+    label: 'Atelier',
+    display: "'Cormorant Garamond', 'Iowan Old Style', Georgia, serif",
+    body: "'Jost', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    href: 'https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Jost:wght@300;400;500;600&display=swap',
+  },
   stay: {
     label: 'Stay',
     display: "'Instrument Serif', Georgia, 'Times New Roman', serif",
@@ -1438,14 +1468,16 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [saving, setSaving] = useState(false)
   const [savedFlash, setSavedFlash] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [themeKey, setThemeKey] = useState<string>(THEMES[initial.theme] ? initial.theme : 'capri')
+  // A sales deck wears Atelier unless someone picked another look for it (capri was only ever the default).
+  const isSalesKind = String(((initial.content || {}).meta || {}).kind || '') === 'sales'
+  const [themeKey, setThemeKey] = useState<string>(isSalesKind && (!initial.theme || initial.theme === 'capri') ? 'stayModern' : THEMES[initial.theme] ? initial.theme : 'capri')
   // ── style overrides (content.style): custom accent + font pairing (2026-08-17) ──
   // The accent override is merged into the theme object itself, so every downstream consumer —
   // pace chips, bars, buttons, the PPTX export — inherits it with no further plumbing.
   const styleCfg: Any = (c && c.style) || {}
   const accentOv: string = /^#[0-9a-fA-F]{6}$/.test(String(styleCfg.accent || '')) ? String(styleCfg.accent) : ''
   const fontKey: string = FONT_PAIRS[styleCfg.font] ? styleCfg.font
-    : (String(((c || {}).meta || {}).kind || '') === 'onboarding' ? 'stay' : 'modern')
+    : (String(((c || {}).meta || {}).kind || '') === 'sales' ? (themeKey === 'atelier' ? 'atelier' : 'stay') : String(((c || {}).meta || {}).kind || '') === 'onboarding' ? 'stay' : 'modern')
   const fontPair = FONT_PAIRS[fontKey]
   // Type size rides with the other style overrides, so it saves and shares like the rest.
   const TEXT_SIZES: { k: string; label: string; v: number }[] = [
@@ -3326,6 +3358,10 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
         /* The hotel's headings: Playfair at 500, uppercase and letterspaced, as on its own site. */
         .sb-report h1, .sb-report h2, .sb-present h1, .sb-present h2 { text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500 !important; }
         .sb-report, .sb-present { letter-spacing: 0.01em; }` : ''}
+        ${fontKey === 'atelier' ? `
+        /* Atelier: the figures and serif lines drawn with SERIF (lib/deck) take the pair's display face too. */
+        .sb-report, .sb-present { --font-serif: 'Cormorant Garamond'; }
+        .sb-report *, .sb-present * { font-variant-numeric: lining-nums tabular-nums; font-feature-settings: 'lnum' 1, 'tnum' 1; }` : ''}
         /* Numbers align down a column everywhere — tables, stat rows, statements. */
         .sb-report, .sb-present { font-variant-numeric: tabular-nums; }
         /* A printed / PDF'd share page gets the report, not the chrome. */
