@@ -143,6 +143,8 @@ export function CommandDayList() {
   const reload = useCallback(() => { invalidateCache(DAY_URL); refresh() }, [refresh])
   /** Rows cleared from this screen since the last read — so a cleared row leaves at once. */
   const [gone, setGone] = useState<Record<string, boolean>>({})
+  /** The Eve & Slack rows inside "Needs you" report their own count (2026-11-10). */
+  const [decideN, setDecideN] = useState(0)
   const hide = useCallback((key: string) => setGone(g => ({ ...g, [key]: true })), [])
   // Every new read carries the server's own cleared rows, so the local ones reset on each response.
   // Keyed on the response, not on generatedAt: the day core is shared and cached now, so two reads a
@@ -190,9 +192,10 @@ export function CommandDayList() {
       <BulletinBoard d={data} />
       {/* THE OPERATIONAL HUB (Jon, 2026-09-30): KPIs by area, the Now list, four lanes side by side —
           every row actionable in place, no drop-downs. components/command/Hub.tsx. */}
-      <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload} />
-      {/* Eve's inbox (one line + her top three), and Slack posts waiting to send — the calls only a person makes. */}
-      <div id="decide" className="scroll-mt-4"><DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} /></div>
+      {/* Eve's inbox head, reminders and Slack posts waiting to send now sit INSIDE the Hub's "Needs you",
+          right under the strip (Today revamp, 2026-11-10) — they used to be at the very bottom. */}
+      <CommandHub d={data} live={live} roster={roster} fixRows={fixRows} claims={claims} links={links} approvals={approvals} onCleared={hide} onChanged={reload}
+        needsCount={decideN} needs={<DecideBand d={data} claims={[]} links={[]} approvals={[]} onCleared={hide} onChanged={reload} bare onCount={setDecideN} />} />
       <ClearBand d={data} dups={dups} vendorNotes={vendorNotes} backlog={backlog} onCleared={hide} onChanged={reload} />
       {/* "Eve is thinking about N things" lived here until 2026-11-10: her thoughts are a filter of
           the one Eve inbox now (/eve?tab=inbox → Would have done), and the band above carries its head. */}
@@ -336,7 +339,7 @@ function ReminderRow({ p, today, done, busy, tick }: { p: BoardPost; today: stri
   )
 }
 
-function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: CommandDay; claims: NextItem[]; links: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void }) {
+function DecideBand({ d, claims, links, approvals, onCleared, onChanged, bare, onCount }: { d: CommandDay; claims: NextItem[]; links: NextItem[]; approvals: GuestDeskRow[]; onCleared: (key: string) => void; onChanged: () => void; bare?: boolean; onCount?: (n: number) => void }) {
   // EVE IS ONE INBOX NOW (2026-11-10). Her questions, plans and reply drafts used to be rows of their
   // own here, each read from its own endpoint; they are all in /eve?tab=inbox, ranked, and this band
   // shows its head: one line ("Eve: N for you — top: …") and the top three with their main button.
@@ -362,6 +365,14 @@ function DecideBand({ d, claims, links, approvals, onCleared, onChanged }: { d: 
   if (approvalsHidden > 0) rows.push({ key: 'ap:more', sev: 'today', rank: 3.5, node: <Row sev={null} title={plural(approvalsHidden, 'more approval') + ' waiting'} primary={<Link href="/requests" className={PRIMARY}>Approvals</Link>} /> })
   if (eveRows) rows.push({ key: 'eve:inbox', sev: eve.items[0]?.urgency.level === 'now' ? 'now' : 'today', rank: 2.5, node: <EveInboxToday q={eve} /> })
   rows.sort((a, b) => SEV_RANK[a.sev] - SEV_RANK[b.sev] || a.rank - b.rank)
+  // BARE: just the rows, drawn inside Today's "Needs you" (2026-11-10) — the section counts them.
+  useEffect(() => { onCount?.(rows.length) }, [rows.length, onCount])
+  if (bare) return (
+    <>
+      {slack.err && <p className="px-3 py-2 text-[12px] text-rose-700">{slack.err}</p>}
+      {rows.map(r => <div key={r.key}>{r.node}</div>)}
+    </>
+  )
 
   return (
     <Band name="Eve & Slack — your call" count={count} empty="Nothing waiting on you.">
