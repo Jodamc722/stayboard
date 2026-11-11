@@ -25,7 +25,7 @@
 // (/api/projects/mine — the Leadership board since 2026-11-06), the listing fixes (/api/listing-health?slim=1) and the week (/api/command/scoreboard).
 import { cloneElement, createContext, isValidElement, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp, StickyNote, Circle, CheckCircle2 } from 'lucide-react'
+import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp, StickyNote, Circle, CheckCircle2, Wrench, Users, Wallet } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
 import { signalLabel } from '@/lib/checklist-shared'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
@@ -41,7 +41,7 @@ import { DayKpis } from '@/components/command/DayKpis'
 import { ArrivalsLane } from '@/components/command/ArrivalsLane'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import { whereNow, shiftStatus } from '@/lib/team-where'
-import { UnpaidBoard } from '@/components/UnpaidBoard'
+import { UnpaidBoard, UnpaidRow as UnpaidBoardRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
 // ── shared bits ─────────────────────────────────────────────────────────────────────────────────
 export type Area = 'ops' | 'guests' | 'reviews' | 'admin'
@@ -63,7 +63,7 @@ export const GHOST = BTN + ' max-sm:min-h-[36px] border border-line bg-white tex
 export const DARK = BTN + ' max-sm:min-h-[36px] bg-ink text-white'
 export const bz = (id: string) => 'https://app.breezeway.io/task/' + id
 export const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
-export const hm = (min: number) => { const a = Math.abs(min), h = Math.floor(a / 60), m = a % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
+export const hm = (min: number) => { const a = Math.round(Math.abs(min)), h = Math.floor(a / 60), m = a % 60; return (min < 0 ? '-' : '') + (h ? h + 'h' + (m ? ' ' + m + 'm' : '') : m + 'm') }
 /** ONE NAME AND A COUNT (2026-11-09 audit): a row listed all eight people on a task. The full list
  *  stays on the data (assign, nudge and "nobody" all read it); only what is printed is capped. */
 export const whoShort = (who: string | null | undefined): string => {
@@ -821,9 +821,11 @@ function Lane({ area, items, focused, empty, right, hide }: { area: Area; items:
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
-export function CommandHub({ d, live, roster, fixRows, claims, links, approvals, onCleared, onChanged }: {
+export function CommandHub({ d, live, roster, fixRows, claims, links, approvals, onCleared, onChanged, needs, needsCount = 0 }: {
   d: CommandDay; live: NextItem[]; roster: Roster[]; fixRows: NextItem[]; claims: NextItem[]; links: NextItem[]; approvals: GuestDeskRow[]
   onCleared: (key: string) => void; onChanged: () => void
+  /** Eve's asks and Slack posts waiting to send (CommandDayList's DecideBand rows), drawn inside Needs you. */
+  needs?: ReactNode; needsCount?: number
 }) {
   const acc = useAccess()
   const can = { assign: acc.atLeast('schedule', 'edit'), plan: acc.atLeast('plan', 'edit'), calls: acc.atLeast('welcome-calls', 'edit'), glitches: acc.atLeast('glitches', 'edit'), reviews: acc.atLeast('reviews', 'edit'), unpaid: acc.atLeast('reservations', 'edit') }
@@ -836,11 +838,22 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const reviewsQ = useCachedFetch<{ reviews: Review[] }>(REVIEWS_URL, { ttl: 120_000 })
   const ckQ = useCachedFetch<Ck>(CK_URL, { ttl: 120_000 })
   const mineQ = useCachedFetch<Mine>(MINE_URL, { ttl: 120_000 })
-  const fixQ = useCachedFetch<{ actions?: FixAction[] }>('/api/listing-health?slim=1', { ttl: 10 * 60_000 })
-  const optQ = useCachedFetch<{ rows?: OptimizeDue[]; due?: number }>(OPTIMIZE_URL, { ttl: 30 * 60_000 })
+  // THE BOTTOM OF THE PAGE WAITS (Today revamp, 2026-11-10: fewer reads racing the day). Listing
+  // fixes and the optimize queue sit in the last section, so they are asked for 2.5s after the page
+  // is up instead of alongside the day read.
+  const [later, setLater] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setLater(true), 2500); return () => clearTimeout(t) }, [])
+  const fixQ = useCachedFetch<{ actions?: FixAction[] }>(later ? '/api/listing-health?slim=1' : null, { ttl: 10 * 60_000 })
+  const optQ = useCachedFetch<{ rows?: OptimizeDue[]; due?: number }>(later ? OPTIMIZE_URL : null, { ttl: 30 * 60_000 })
+  // UNPAID, its own section (Jon, 2026-10-01: a flat list, due date on each). Same read as the strip's tile.
+  const unpaidQ = useCachedFetch<{ ok?: boolean; today?: string; rows?: UnpaidRowT[]; canEdit?: boolean }>(UNPAID_URL, { ttl: 5 * 60_000 })
+  const [unpaidPatch, setUnpaidPatch] = useState<Record<string, UnpaidRowT['tracking']>>({})
+  const unpaidRows = (unpaidQ.data?.rows || []).map(r => unpaidPatch[r.id] ? { ...r, tracking: unpaidPatch[r.id] } : r)
+    .filter(r => r.bucket === 'in_house' || r.bucket === 'today' || r.bucket === 'week')
+    .sort((a, b) => (a.bucket === 'in_house' ? 0 : a.bucket === 'today' ? 1 : 2) - (b.bucket === 'in_house' ? 0 : b.bucket === 'today' ? 1 : 2) || (a.tracking.status === 'open' ? 0 : 1) - (b.tracking.status === 'open' ? 0 : 1))
   const optimizeRows = (optQ.data?.rows || []).slice(0, 6)
   const optimizeDue = Number(optQ.data?.due) || 0
-  const weekQ = useCachedFetch<{ tiles?: { key: string; value: string; sub: string }[] }>(SCOREBOARD_URL, { ttl: 5 * 60_000 })
+  // The week scoreboard read is gone from Today (2026-11-10): it fed one "wk … to close" fragment.
   // Notes on every row — one read, added to in place (Jon, 2026-10-01).
   const notesQ = useCachedFetch<{ byKey?: Record<string, DayNote[]> }>(NOTES_URL, { ttl: 120_000 })
   const [addedNotes, setAddedNotes] = useState<Record<string, DayNote[]>>({})
@@ -862,7 +875,6 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const reloadReviews = () => { invalidateCache(REVIEWS_URL); reviewsQ.refresh() }
   const reloadCk = () => { invalidateCache(CK_URL); ckQ.refresh() }
   const reloadMine = () => { invalidateCache(MINE_URL); mineQ.refresh() }
-  const week = (key: string) => (weekQ.data?.tiles || []).find(t => t.key === key) || null
 
   const t = d.tiles
   // The arriving booking's value per unit today, so a clean or an inspection can be ranked by the money on it.
@@ -875,7 +887,10 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const inspTasks = t.tasks.rows.filter(x => x.dept === 'inspection' || INSPECT.test(x.name))
   const arrivalsInsp = t.arrivals.rows.filter(a => a.inspection !== 'n/a' && a.big && (a.today || a.checkIn <= tomorrowOf(d.today)))
   // Over a REAL day, or on shift with nothing: a credited or no-shift row is not a person to relieve.
-  const teamRows = t.team.rows.filter(r => loadKind(r) === 'over' || (r.cleans + r.otherTasks === 0 && r.capacityMinutes > 0 && r.verdict !== 'implausible'))
+  // THE TEAM SECTION SHOWS EVERYONE IN THE FIELD (Today revamp, 2026-11-10) — who's working, where,
+  // how full their day is. Over-loaded and idle people still score higher, so they lead the list.
+  const teamRows = t.team.rows.filter(r => r.field !== false && (r.cleans + r.otherTasks > 0 || r.capacityMinutes > 0 || !!r.clock))
+  const teamFlag = (r: TeamRowT) => loadKind(r) === 'over' || (r.cleans + r.otherTasks === 0 && r.capacityMinutes > 0 && r.verdict !== 'implausible')
   const otherFix = fixRows.filter(i => i.kind !== 'inspection' && i.kind !== 'channel')
   const createFor = (resId: string) => live.find(i => i.key === 'insp:' + resId && i.action?.type === 'create_task') || null
 
@@ -937,7 +952,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   for (const r of teamRows.filter(x => x.field !== false)) {   // field team only — not CCS / office
     const w = whereNow(r.tasks || [], new Date(), r.clock)
     const active = r.clock?.open || w.kind === 'at' || w.kind === 'still' || w.kind === 'heading'
-    items.push({ key: 'team:' + r.person, area: 'ops', sub: 'Team', score: (active ? 44 : 24) + Math.min(r.utilisationPct, 150) / 15 /* ≤ 54: never reaches Now */, node: <TeamRow p={r} /> })
+    items.push({ key: 'team:' + r.person, area: 'ops', sub: 'Team', score: (teamFlag(r) ? 20 : 0) + (active ? 24 : 4) + Math.min(r.utilisationPct, 150) / 15 /* ≤ 54: never reaches Now */, node: <TeamRow p={r} /> })
   }
 
   for (const a of calls) items.push({ key: 'call:' + a.reservationId, area: 'guests', sub: 'Calls', score: (a.big ? 78 : 50) + valueBonus(a.value), node: <CallRow a={a} canLog={can.calls} onChanged={onChanged} /> })
@@ -979,11 +994,10 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   const free = t.team.rows.filter(r => { const k = loadKind(r); return k === 'over' || k === 'ok' }).reduce((a, r) => a + (r.roomNowMinutes != null ? r.roomNowMinutes : Math.max(0, (r.capacityMinutes || 0) - (r.loadMinutes || 0))), 0)
   const over = t.team.rows.filter(r => loadKind(r) === 'over').length
   // Cleans, inspections and welcome calls read needed-vs-completed in the DayKpis strip above (2026-09-30).
-  const wkGl = week('glitches')
   const kpis: Kpi[] = [
     { key: 'hours', area: 'ops', label: 'Free hours', short: 'Hours', value: t.team.onShift ? hm(free) : '—', sub: t.team.onShift ? t.team.onShift + ' on shift' + (over ? ' · ' + over + ' over' : '') : 'nobody on shift', tone: !t.team.onShift ? 'rose' : over ? 'amber' : free < 60 ? 'amber' : 'emerald', title: 'Hours the people on shift can still take today: their capacity minus the work already on them' },
     { key: 'waiting', area: 'guests', label: 'Guests waiting', short: 'Waiting', value: String(inbox.length), sub: [lateReplies.length ? lateReplies.length + ' past the hour' : '', unhappy.length ? unhappy.length + ' unhappy' : 'sentiment clear'].filter(Boolean).join(' · '), tone: unhappy.length || lateReplies.length ? 'rose' : inbox.length ? 'amber' : 'emerald', title: 'Guests waiting on a reply (1-hour rule), and current guests the sentiment scan reads as unhappy' },
-    { key: 'glitches', area: 'guests', label: 'Glitches', value: String(glitches.length), sub: [t.glitches.overdue ? t.glitches.overdue + ' overdue' : 'none overdue', wkGl && /to close/.test(wkGl.sub) ? 'wk ' + wkGl.sub.split(' · ').filter(s => /to close/.test(s))[0] : ''].filter(Boolean).join(' · '), tone: t.glitches.overdue ? 'rose' : glitches.length ? 'amber' : 'emerald', title: 'Open guest issues, how many are past due, and the month’s median time to close' },
+    { key: 'glitches', area: 'guests', label: 'Glitches', value: String(glitches.length), sub: t.glitches.overdue ? t.glitches.overdue + ' overdue' : 'none overdue', tone: t.glitches.overdue ? 'rose' : glitches.length ? 'amber' : 'emerald', title: 'Open guest issues, how many are past due, and the month’s median time to close' },
     { key: 'reviews', area: 'guests', label: 'Reviews', value: String(reviews.length), sub: [lowReviews.length ? lowReviews.length + ' at 3★ or under' : reviews.length ? 'to answer' : 'all answered', avg30 ? avg30.avg + '★ last 30d' : ''].filter(Boolean).join(' · '), tone: lowReviews.length ? 'rose' : reviews.length ? 'amber' : 'emerald', title: 'Reviews waiting on a public reply, and the average score of the last 30 days' },
     { key: 'admin', area: 'admin', label: 'Admin', value: String(approvals.length + claims.length + links.length), sub: [approvals.length + claims.length + links.length ? 'need your decision' : 'nothing to decide', mineRows.length ? mineRows.length + ' of yours' : '', optimizeDue ? optimizeDue + ' to optimize' : '', fixes.length ? fixes.length + ' fixes' : ''].filter(Boolean).join(' · '), tone: approvals.length || links.length ? 'amber' : ck?.progress?.late ? 'amber' : 'emerald', title: 'Decisions waiting on you, your own tasks, listings past their six-month optimization, and the listing fixes recommended for today' },
   ]
@@ -998,59 +1012,118 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
     return <span className="text-[11px] text-muted inline-flex items-center gap-1.5 flex-wrap">{ks.map(k => <span key={k.key} title={k.title} className="inline-flex items-center gap-1"><span className={'font-bold tabular-nums ' + (k.tone === 'rose' ? 'text-rose-700' : k.tone === 'amber' ? 'text-amber-800' : 'text-ink')}>{k.value}</span>{k.label.toLowerCase()}{k.sub ? <span className="hidden xl:inline"> · {k.sub}</span> : null}</span>)}</span>
   }
 
+  // ── THE PAGE, TOP TO BOTTOM (Today revamp, Jon 2026-11-10: mockup approved — "leave as is, makes
+  // better"). Strip → Needs you → Now → seven fixed sections that hold their place even when empty.
+  // Every item lives in exactly one section; a row lifted into Now leaves its section, which says so.
+  const needsItems = items.filter(i => i.sub === 'Needs you' && !shownInNow.has(i.key)).sort((x, y) => y.score - x.score)
+  const needsN = needsItems.length + needsCount
+  const sec = (subs: string[]) => items.filter(i => subs.indexOf(i.sub) >= 0)
+  const unpaidEdit = (id: string, tr: UnpaidRowT['tracking']) => { setUnpaidPatch(p => ({ ...p, [id]: tr })); invalidateCache(UNPAID_URL) }
+
   return (
     <NotesCtx.Provider value={notesCtx}>
     <div className="space-y-5">
-      {/* THE WORK TODAY — needed vs completed, with the granular list under the strip (Jon, 2026-09-30). */}
+      {/* THE DAY IN SIX NUMBERS — done against needed; the other counts sit under More. */}
       <DayKpis d={d} live={live} roster={roster} can={{ assign: can.assign, plan: can.plan, calls: can.calls, glitchApprove: acc.atLeast('glitches', 'full') }} onChanged={onChanged} />
 
-      {/* THE CHECKLIST, next two things, then NOW. The second row of tiles that used to sit here
-          (free hours, guests waiting, glitches, reviews, admin) now reads as one line in each lane's
-          header below — same numbers, one less band to scan (Jon, 2026-10-01: "cleaner … better organized"). */}
-
-      {/* UNPAID — the actual reservations, one flat list with a due date each (Jon, 2026-10-01). The
-          Unpaid tile above scrolls here. Hidden when nothing is owed this week. */}
-
-      {!focus && <ArrivalsLane />}
-
-      {!focus && (
-        <section>
-          <h2 className="px-1 mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink flex items-center gap-2">
-            <button onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={nowOpen ? 'Back to the top six' : 'Open the whole list'}>Now {nowAll.length ? <span className="tabular-nums text-muted whitespace-nowrap">{nowOpen ? nowAll.length : now.length + (nowAll.length > now.length ? ' of ' + nowAll.length : '')}</span> : null} {nowAll.length > NOW_MAX ? (nowOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</button>
-            <span className="normal-case tracking-normal font-medium text-muted">— {now.length ? 'what matters most in the next two hours, high-ticket first' : 'nothing urgent — the lanes below have the rest'}</span>
-          </h2>
-          {now.length > 0 && <div className={LIST}>
-            {now.map(i => <div key={'now:' + i.key}>{withLane(i)}</div>)}
-            {/* Six at most, then one line that says how many more — the count in the title was easy to miss. */}
-            {nowAll.length > NOW_MAX && <button type="button" onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="w-full text-left px-3.5 min-h-[36px] text-[12px] font-semibold text-muted hover:text-ink">{nowOpen ? 'Show the top ' + NOW_MAX : (nowAll.length - NOW_MAX) + ' more'}</button>}
-          </div>}
-        </section>
-      )}
-
-      {focus && (
-        <div className="px-1 flex items-center gap-2 text-[12px] text-muted">
-          <span>Focused on <b className="text-ink">{AREA[focus].label}</b>.</span>
-          <button onClick={() => setFocus(null)} className="font-semibold text-brand-700 hover:underline">Show every lane</button>
+      {/* NEEDS YOU — the calls only you make, at the top, always here. */}
+      <section id="needs" className="scroll-mt-4">
+        <h2 className="px-1 mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink flex items-center gap-2">
+          Needs you {needsN ? <span className="tabular-nums text-muted">{needsN}</span> : null}
+          <span className="normal-case tracking-normal font-medium text-muted">— {needsN ? 'approvals, refunds, claims, Eve’s asks and Slack posts waiting to send' : 'nothing waiting on your decision'}</span>
+        </h2>
+        {/* Always mounted: the Eve & Slack rows report their own count, so they must be drawn to be counted. */}
+        <div className={needsN > 0 ? LIST + ' !border-brand-300 ring-2 ring-brand-50' : 'hidden'}>
+          {needsItems.map(i => <div key={i.key}>{i.node}</div>)}
+          {needs}
         </div>
-      )}
-      {/* TWO COLUMNS, BALANCED (2026-11-09 audit): Operations alone on the left left a hole under it
-          while Guests and Admin stacked on the right. Admin now sits under whichever of Operations and
-          Guests is shorter, counted on the rows each lane will actually draw. */}
-      {focus ? (
-        <Lane area={focus} items={items.filter(i => i.area === focus)} focused empty={EMPTY[focus]} right={laneStat(focus)} />
-      ) : (
-        <div className="grid gap-5 lg:grid-cols-2 items-start">
-          {/* The Reviews lane is gone (2026-10-21 audit): reviews ride in the Guests lane (its Reviews tab),
-              so the lane was always empty and read "nothing waiting on a reply" while 14 waited. */}
-          {laneCols.map((col, ci) => (
-            <div key={ci} className="space-y-5 min-w-0">
-              {col.map(a => <Lane key={a} area={a} items={items.filter(i => i.area === a)} focused={false} empty={EMPTY[a]} right={laneStat(a)} hide={shownInNow} />)}
+      </section>
+
+      <section>
+        <h2 className="px-1 mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink flex items-center gap-2">
+          <button onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={nowOpen ? 'Back to the top six' : 'Open the whole list'}>Now {nowAll.length ? <span className="tabular-nums text-muted whitespace-nowrap">{nowOpen ? nowAll.length : now.length + (nowAll.length > now.length ? ' of ' + nowAll.length : '')}</span> : null} {nowAll.length > NOW_MAX ? (nowOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</button>
+          <span className="normal-case tracking-normal font-medium text-muted">— {now.length ? 'the next two hours, most money on the line first' : 'nothing urgent — the sections below have the rest'}</span>
+        </h2>
+        {now.length > 0 && <div className={LIST}>
+          {now.map(i => <div key={'now:' + i.key}>{withLane(i)}</div>)}
+          {nowAll.length > NOW_MAX && <button type="button" onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="w-full text-left px-3.5 min-h-[36px] text-[12px] font-semibold text-muted hover:text-ink">{nowOpen ? 'Show the top ' + NOW_MAX : (nowAll.length - NOW_MAX) + ' more'}</button>}
+        </div>}
+      </section>
+
+      <div className="grid gap-5 lg:grid-cols-2 items-start">
+        <div className="space-y-5 min-w-0">
+          <Section id="turn" label="Turnovers & inspections" Icon={ListChecks} items={sec(['Cleans', 'Inspections'])} hide={shownInNow} href="/schedule" hrefLabel="Schedule" empty="every clean and inspection is covered" right={laneStat('ops')} />
+          <div id="lane-arrivals" className="scroll-mt-4"><ArrivalsLane /></div>
+          <Section id="maint" label="Maintenance & glitches" Icon={Wrench} items={sec(['Tasks', 'Glitches'])} hide={shownInNow} href="/glitches" hrefLabel="Glitches" empty="nothing open" />
+        </div>
+        <div className="space-y-5 min-w-0">
+          <Section id="guests" label="Guests" Icon={MessageSquare} items={sec(['Inbox', 'Reviews'])} hide={shownInNow} href="/inbox" hrefLabel="Inbox" empty="nobody is waiting" right={laneStat('guests')} />
+          <Section id="team" label="Team" Icon={Users} items={sec(['Team'])} hide={shownInNow} href="/schedule" hrefLabel="Schedule" empty="nobody on the field team today" top={teamRows.length ? <TeamWhereStrip rows={teamRows} /> : null} />
+          <section id="lane-unpaid" className="scroll-mt-4 min-w-0">
+            <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5"><Wallet size={13} className="text-brand-600" /> Unpaid</span>
+              {unpaidRows.length ? <span className="text-[11px] font-bold tabular-nums text-muted">{unpaidRows.length}</span> : null}
+              <span className="text-[11px] text-muted">— {!unpaidQ.data ? 'reading…' : unpaidRows.length ? 'in house, today and the next 7 days' : 'nothing owed this week'}</span>
+              <Link href="/reservations/unpaid" prefetch={false} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link>
             </div>
-          ))}
+            {unpaidRows.length > 0 && <div className={LIST}>{unpaidRows.slice(0, 8).map(r => <div key={'up:' + r.id}><UnpaidBoardRow r={r} today={unpaidQ.data?.today || d.today} canEdit={!!unpaidQ.data?.canEdit} onPatch={unpaidEdit} simple /></div>)}
+              {unpaidRows.length > 8 && <Link href="/reservations/unpaid" prefetch={false} className="block px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-app">{unpaidRows.length - 8} more on the Unpaid board</Link>}
+            </div>}
+          </section>
+          <div className="space-y-2">
+            <ChecklistStrip ck={ck} onTicked={reloadCk} />
+            <Section id="admin" label="Yours, optimize & fixes" Icon={FileText} items={sec(['Yours', 'Optimize', 'Fixes'])} hide={shownInNow} href="/leadership" hrefLabel="Leadership board" empty="nothing on your desk" right={laneStat('admin')} />
+          </div>
         </div>
-      )}
+      </div>
     </div>
     </NotesCtx.Provider>
+  )
+}
+
+/** A FIXED SECTION ON TODAY (2026-11-10). Holds its place when empty; its own sub-filters; the
+ *  first rows, then "N more"; and a line for the rows lifted into Now. */
+function Section({ id, label, Icon, items, hide, href, hrefLabel, empty, right, top }: {
+  id: string; label: string; Icon: any; items: HubItem[]; hide: Set<string>; href: string; hrefLabel: string; empty: string; right?: ReactNode; top?: ReactNode
+}) {
+  const [sub, setSub] = useState<string | null>(null)
+  const [all, setAll] = useState(false)
+  const subs = useMemo(() => {
+    const n: Record<string, number> = {}
+    for (const it of items) n[it.sub] = (n[it.sub] || 0) + 1
+    return Object.keys(n).sort((a, b) => SUB_ORDER.indexOf(a) - SUB_ORDER.indexOf(b)).map(k => ({ key: k, n: n[k] }))
+  }, [items])
+  const pick = sub && subs.some(s => s.key === sub) ? sub : null
+  const base = pick ? items.filter(i => i.sub === pick) : items
+  const upTop = base.filter(i => hide.has(i.key)).length
+  const list = base.filter(i => !hide.has(i.key)).sort((a, b) => b.score - a.score)
+  const shown = all ? list : list.slice(0, LANE_ROWS)
+  const more = list.length - shown.length
+  return (
+    <section id={'lane-' + id} className="scroll-mt-4 min-w-0">
+      <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5"><Icon size={13} className="text-brand-600" /> {label}</span>
+        {items.length ? <span className="text-[11px] font-bold tabular-nums text-muted">{items.length}</span> : <span className="text-[11px] text-muted">— {empty}</span>}
+        {subs.length > 1 && (
+          <span className="inline-flex items-center gap-1 flex-wrap" role="group" aria-label={label + ' filters'}>
+            <button onClick={() => setSub(null)} aria-pressed={!pick} className={'lh-tab text-[11px] font-semibold px-2 py-0.5 rounded-full border ' + (!pick ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>All</button>
+            {subs.map(s => <button key={s.key} onClick={() => setSub(pick === s.key ? null : s.key)} aria-pressed={pick === s.key}
+              className={'lh-tab text-[11px] font-semibold px-2 py-0.5 rounded-full border tabular-nums ' + (pick === s.key ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{s.key} {s.n}</button>)}
+          </span>
+        )}
+        <Link href={href} prefetch={false} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline">{hrefLabel} →</Link>
+      </div>
+      {right ? <div className="px-1 -mt-0.5 mb-1.5">{right}</div> : null}
+      {(top || list.length > 0 || upTop > 0) && (
+        <div className={LIST}>
+          {top}
+          {upTop > 0 && <p className="px-3 py-2 text-[11.5px] text-muted">{upTop} more {upTop === 1 ? 'is' : 'are'} up in Now ↑</p>}
+          {shown.map(i => <div key={i.key}>{i.node}</div>)}
+          {more > 0 && <button onClick={() => setAll(true)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-app inline-flex items-center gap-1"><ChevronDown size={13} /> {more} more</button>}
+          {all && list.length > LANE_ROWS && <button onClick={() => setAll(false)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-muted hover:bg-app inline-flex items-center gap-1"><ChevronUp size={13} /> Show fewer</button>}
+        </div>
+      )}
+    </section>
   )
 }
 

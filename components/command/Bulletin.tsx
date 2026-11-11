@@ -95,6 +95,12 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
   const [framing, setFraming] = useState<Post | null>(null)
   const [viewing, setViewing] = useState<string | null>(null)
   const [err, setErr] = useState('')
+  // ONE SLIM LINE BY DEFAULT (Jon, 2026-11-10, Today revamp: the work comes first). The board still
+  // turns; the line shows the slide's name and the day's headline, and Open shows the full slide.
+  // Remembered per browser. Writing a post, framing a photo or reading a post always opens it.
+  const [expanded, setExpanded] = useState(false)
+  useEffect(() => { try { setExpanded(localStorage.getItem('lh.bulletin.open') === '1') } catch { /* closed */ } }, [])
+  const toggleOpen = () => setExpanded(o => { const n = !o; try { localStorage.setItem('lh.bulletin.open', n ? '1' : '0') } catch { /* fine */ } return n })
   const act = useCallback(async (body: any) => {
     setErr('')
     try { const j = await send(body); setLocal(prev => ({ ...(prev || q.data || {} as any), ...j })); invalidateCache(BULLETIN_URL) }
@@ -195,7 +201,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
       onFocusCapture={() => { if (!held) hold(true) }} onBlurCapture={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) hold(false) }}>
       <div className="flex items-center gap-2 px-3.5 h-9 border-b border-line/70">
         <span className="lh-display text-[16px] leading-none text-ink">Bulletin</span>
-        {cur && <span className="text-[12px] text-muted truncate">{cur.label}</span>}
+        {cur && <button onClick={() => { if (!expanded) toggleOpen() }} className="text-[12px] text-muted truncate hover:text-ink text-left" title={expanded ? undefined : 'Open the slide'}>{cur.label}</button>}
         {ready && manualIdx >= 0 && <button onClick={() => { setManual(null); setNow(Date.now()) }} className="text-[11.5px] text-muted hover:text-ink underline shrink-0">Back to live</button>}
         <span className="flex-1" />
         {ready && slides.length > 1 && (
@@ -210,6 +216,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
           <button onClick={() => go(idx - 1)} aria-label="Previous" className="w-6 h-6 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><ChevronLeft size={14} /></button>
           <button onClick={() => go(idx + 1)} aria-label="Next" className="w-6 h-6 rounded-md flex items-center justify-center text-muted hover:text-ink hover:bg-slate-100"><ChevronRight size={14} /></button>
         </>}
+        <button onClick={toggleOpen} aria-expanded={expanded} className="inline-flex items-center gap-1 rounded-lg border border-line px-2 h-7 text-[12px] font-semibold text-muted hover:text-ink hover:border-ink/40" title={expanded ? 'Fold the board to one line' : 'Show the whole slide'}>{expanded ? 'Fold' : 'Open'}</button>
         {data?.canPost && <button onClick={() => setComposing(c => c ? null : 'eotm')} className="ml-1 inline-flex items-center gap-1 rounded-lg border border-line px-2 h-7 text-[12px] font-semibold text-ink hover:border-ink/40"><Plus size={12} /> Post</button>}
       </div>
       {/* time to the next slide */}
@@ -222,7 +229,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
         <FrameDialog p={framing} onClose={() => setFraming(null)} onSave={async frames => { await act({ action: 'edit', id: framing.id, post: { frames } }); setFraming(null) }} />
       ) : composing && data ? (
         <Composer data={data} initial={composing} onClose={() => setComposing(null)} onPost={async p => { await act({ action: 'create', post: p }); setComposing(null) }} onAct={act} />
-      ) : (
+      ) : !expanded ? null : (
         // ONE HEIGHT for every slide, so the page under it never jumps as the board turns.
         <div className="px-4 py-3 h-[150px] flex items-center overflow-hidden" aria-live="polite">
           {!ready ? (
