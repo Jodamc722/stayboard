@@ -1,4 +1,5 @@
 'use client'
+// (redeploy marker 2026-11-11: makes the newest Garden commit the live build)
 // ONE RESERVATION IN FULL (lib/garden/res-live, live from Cloudbeds — or Guesty for a Botanica stay
 // still there): confirmation and OTA number, rooms with rate plan and nightly rates, every guest,
 // the folio split, payments, every note with who wrote it, vouchers and the other tags, custom
