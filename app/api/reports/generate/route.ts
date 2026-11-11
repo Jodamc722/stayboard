@@ -27,6 +27,7 @@ import { buildStatementSection } from '@/lib/statement-section'
 import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { buildSalesContent } from '@/lib/sales-deck'
+import { riderTemplate, blankCma } from '@/lib/sales-cma'
 import { measureEdge } from '@/lib/sales-edge'
 import { proofListings, proofRows, monthLabel as proofMonth, effectiveFee, completedMonths, ownersForListings } from '@/lib/sales-proof'
 import { marketIntel } from '@/lib/sales-market'
@@ -309,6 +310,15 @@ export async function POST(req: NextRequest) {
       heroImage: heroImageUrl || (cards[0] && cards[0].photos[0] ? cards[0].photos[0] : null),
       contact: contactIn,
     })
+    // THE BUILDING PAGES (Jon, 2026-11-11). body.cma 'rider' starts the deck with The Rider example
+    // (comps, every floor plan, partner program, second option); 'blank' starts them empty for this
+    // building; nothing leaves a plain proposal. Edited afterwards on the Sales tab.
+    const cmaPick = str(body?.cma)
+    if (cmaPick === 'rider' || cmaPick === 'blank') {
+      ;(contentS as any).cma = cmaPick === 'rider' ? riderTemplate() : blankCma(str(intake?.building) || scopeLabel, str(body?.market) || String(marketS || ''))
+      // A building package is one photograph-led cover: the Miami skyline when no photo was chosen.
+      if (cmaPick === 'rider' && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = '/deck-img/miami-skyline.jpg'
+    }
     // OUR HOMES AGAINST THE MARKET (lib/sales-edge). Measured now so the deck arrives carrying it;
     // a market with no published benchmark, or where we do not win, simply has no rows.
     try {

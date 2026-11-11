@@ -4,7 +4,8 @@
 // open the share page). Each row answers three things at a glance: what it is, whether it has
 // gone to the owner, and whether they opened it — and shares the owner link in one tap.
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X, Share2, Check, Send, Search, RefreshCw } from 'lucide-react'
+import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X, Share2, Check, Send, Search, RefreshCw, Building2, BookOpen } from 'lucide-react'
+import { SalesCmaEditor } from '@/components/SalesCmaEditor'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
 type StatementPick = {
@@ -124,7 +125,10 @@ function monthDefaults(): { start: string; end: string } {
   return PRESETS[0].range()
 }
 
-export function ReportsDesk() {
+// scope 'sales' (Jon, 2026-11-11: "create a sales tab… separate, and those builds should live there")
+// is this same desk on /sales showing only sales decks; Owner Reports no longer lists or makes them.
+export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' } = {}) {
+  const salesOnly = scope === 'sales'
   const [reports, setReports] = useState<ReportRow[]>([])
   const [buildings, setBuildings] = useState<string[]>([])
   const [picked, setPicked] = useState<string[]>([])
@@ -150,7 +154,10 @@ export function ReportsDesk() {
   // IS the period — and skips the AI pass, so it generates in a few seconds.
   // 'onboarding' = the welcome presentation for a NEW owner (Jon, 2026-09-16). Also periodless —
   // the unit has no history yet, which is why we are having the call.
-  const [kind, setKind] = useState<DocKind>('review')
+  const [kind, setKind] = useState<DocKind>(scope === 'sales' ? 'sales' : 'review')
+  // The building pages a new sales deck starts with (lib/sales-cma): none, The Rider example, or empty.
+  const [cmaPick, setCmaPick] = useState<'' | 'rider' | 'blank'>('')
+  const [cmaFor, setCmaFor] = useState<ReportRow | null>(null)
   const [ownerName, setOwnerName] = useState('')
   /** Who is presenting the sales deck. Seeds the contact card; the photo is added on the slide. */
   const [presenter, setPresenter] = useState('')
@@ -384,6 +391,7 @@ export function ReportsDesk() {
           length: kind === 'sales' ? deckLength : undefined,
           intake: kind === 'sales' ? intake : undefined,
           market: kind === 'sales' ? (intake.market || undefined) : undefined,
+          cma: kind === 'sales' && cmaPick ? cmaPick : undefined,
           // Review-only attachments. The statement picker is not on screen for the other three
           // document types, so nothing it holds may ride along with them.
           pacingUrl: kind === 'review' && pacing ? pacing.url : undefined,
@@ -466,10 +474,12 @@ export function ReportsDesk() {
 
   const q = listQ.trim().toLowerCase()
   const shownReports = reports
+    .filter(r => salesOnly ? kindOfRow(r) === 'sales' : kindOfRow(r) !== 'sales')
     .filter(r => listKind === 'all' || kindOfRow(r) === listKind)
     .filter(r => !q || (String(r.title || '') + ' ' + String(r.scope_label || '')).toLowerCase().indexOf(q) >= 0)
 
   const nKind = (k: DocKind) => reports.filter(r => kindOfRow(r) === k).length
+  const shownCount = reports.filter(r => salesOnly ? kindOfRow(r) === 'sales' : kindOfRow(r) !== 'sales').length
   const nSent = reports.filter(r => String(r.status) === 'sent').length
   const nUnopened = reports.filter(r => String(r.status) === 'sent' && !r.views).length
   const KIND_TAG: Record<DocKind, { l: string; t: 'brand' | 'violet' | 'emerald' | 'amber' }> = {
@@ -486,13 +496,20 @@ export function ReportsDesk() {
 
   return (
     <div className="space-y-4">
-      <LeanHead title="Owner Reports">
-        <Pill title="Owner documents generated so far">{reports.length} report{reports.length === 1 ? '' : 's'}</Pill>
+      <LeanHead title={salesOnly ? 'Sales decks' : 'Owner Reports'}>
+        <Pill title={salesOnly ? 'Sales decks made so far' : 'Owner documents generated so far'}>{shownCount} {salesOnly ? 'deck' : 'report'}{shownCount === 1 ? '' : 's'}</Pill>
         {nSent > 0 && <Pill tone="brand" title="Marked as sent to the owner">{nSent} sent</Pill>}
         {nUnopened > 0 && <Pill tone="amber" title="Sent, but the owner link has not been opened yet">{nUnopened} not opened</Pill>}
         {!showNew && (
           <button onClick={() => { setShowNew(true); setMade(null) }} className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-3 py-1.5 hover:bg-brand-700">
-            <Plus size={14} /> New report
+            <Plus size={14} /> {salesOnly ? 'New sales deck' : 'New report'}
+          </button>
+        )}
+        {salesOnly && !showNew && (
+          <button title="A deck for The Rider Residences sales team: every floor plan, the comps, the partner program and Stay as a second option, as a magazine and as keynote slides"
+            onClick={() => { setShowNew(true); setMade(null); setKind('sales'); setCmaPick('rider'); setOwnerName('The Rider sales team'); setIv('building', 'The Rider Residences'); setIv('address', 'Wynwood, Miami'); if (!presenter) setPresenter('Nick Carline') }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white text-ink text-[12.5px] font-semibold px-3 py-1.5 hover:bg-app">
+            <Sparkles size={14} /> The Rider example
           </button>
         )}
       </LeanHead>
@@ -509,7 +526,7 @@ export function ReportsDesk() {
           <div className="space-y-4">
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-[13.5px] font-bold text-ink flex items-center gap-1.5 mr-1"><Sparkles size={14} className="text-brand-600" /> New report</h2>
-              <div className="flex items-center rounded-lg border border-line bg-neutral-50 overflow-x-auto max-w-full w-fit whitespace-nowrap">
+              {!salesOnly && <div className="flex items-center rounded-lg border border-line bg-neutral-50 overflow-x-auto max-w-full w-fit whitespace-nowrap">
                 <button onClick={() => setKind('review')} title={KIND_HELP.review}
                   className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'review' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Owner review
@@ -522,11 +539,7 @@ export function ReportsDesk() {
                   className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'onboarding' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
                   Owner onboarding
                 </button>
-                <button onClick={() => setKind('sales')} title={KIND_HELP.sales}
-                  className={'px-3 py-1 text-[12px] font-semibold ' + (kind === 'sales' ? 'bg-ink text-white' : 'text-muted hover:text-ink')}>
-                  Sales deck
-                </button>
-              </div>
+              </div>}
               {/* THE PROJECTION BUILDER LIVES HERE (Jon, 2026-08-25): projections are built for an
                   owner from this toggle; the model editor is one link off it (own page, API, gate). */}
               {kind === 'projection' && (
@@ -774,6 +787,15 @@ export function ReportsDesk() {
                       <option value="full">Full — present it</option>
                     </select>
                   </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Building pages</span>
+                    <select value={cmaPick} onChange={e => setCmaPick(e.target.value as '' | 'rider' | 'blank')} title="Rental comparisons for every floor plan, the comparable set, the agent partner program and Stay as a second option. Edit them after with Floor plans & comps."
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink">
+                      <option value="">None — a proposal</option>
+                      <option value="blank">Floor plans and comps (fill in after)</option>
+                      <option value="rider">Start from The Rider example</option>
+                    </select>
+                  </label>
                   {/* THE PROPERTY IS OPTIONAL ON THIS ONE (2026-10-27). A prospect's unit is
                       usually not on our account yet, so the deck generates on a name alone; pick
                       a building we DO run and it fills with that building's own photographs. */}
@@ -949,13 +971,12 @@ export function ReportsDesk() {
       )}
 
       {/* List — one row per document, filtered by kind */}
-      <LeanTabs
+      {salesOnly ? null : <LeanTabs
         tabs={[
-          { key: 'all' as const, label: 'All', n: reports.length },
+          { key: 'all' as const, label: 'All', n: shownCount },
           { key: 'review' as const, label: 'Reviews', n: nKind('review') },
           { key: 'projection' as const, label: 'Projections', n: nKind('projection') },
           { key: 'onboarding' as const, label: 'Onboarding', n: nKind('onboarding') },
-          { key: 'sales' as const, label: 'Proposals', n: nKind('sales') },
         ]}
         value={listKind} onChange={setListKind}
         right={reports.length > 6 ? (
@@ -964,7 +985,8 @@ export function ReportsDesk() {
             <input value={listQ} onChange={e => setListQ(e.target.value)} placeholder="Find an owner or property" aria-label="Find a report"
               className="w-56 max-w-full rounded-xl border border-line bg-white pl-8 pr-3 py-1.5 text-[12.5px] text-ink" />
           </label>
-        ) : undefined} />
+        ) : undefined} />}
+      {cmaFor && <SalesCmaEditor report={cmaFor} onClose={() => setCmaFor(null)} />}
       {listErr && (
         <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 flex items-center gap-3 flex-wrap">
           <p className="text-[13px] text-rose-800 flex-1 min-w-[12rem]">{listErr}</p>
@@ -1019,7 +1041,19 @@ export function ReportsDesk() {
                     onClick={() => setStatus(r, sent ? 'draft' : 'sent')}>
                     <Send size={14} />
                   </IconBtn>
-                  <Tip label="Open in a new tab">
+                  {rk === 'sales' && (
+                    <>
+                      <button type="button" onClick={() => setCmaFor(cmaFor && cmaFor.id === r.id ? null : r)} title="Floor plans, comps, partner program and second-option pages"
+                        className={'shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 h-8 text-[12px] font-semibold ' + (cmaFor && cmaFor.id === r.id ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink hover:bg-app')}>
+                        <Building2 size={13} /> Floor plans &amp; comps
+                      </button>
+                      <Tip label="Magazine: letter pages to print, leave at a building or read on a phone">
+                        <a href={'/r/' + r.code + '?view=magazine'} target="_blank" rel="noreferrer" aria-label="Open the magazine"
+                          className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 h-8 text-[12px] font-semibold text-ink hover:bg-app"><BookOpen size={13} /> Magazine</a>
+                      </Tip>
+                    </>
+                  )}
+                  <Tip label={rk === 'sales' ? 'Keynote: the slides, with Present mode, PDF and PowerPoint' : 'Open in a new tab'}>
                     <a href={'/r/' + r.code} target="_blank" rel="noreferrer" aria-label="Open in a new tab"
                       className="shrink-0 inline-flex items-center justify-center rounded-lg border border-line bg-white w-8 h-8 text-muted hover:text-ink hover:bg-app"><ExternalLink size={14} /></a>
                   </Tip>

@@ -14,7 +14,7 @@ export type Feature = { key: string; label: string; path: string; group: string 
 // feature's group is the label of the desk that owns its path (lib/__tests__/desks.test.mjs checks
 // it), and every feature MUST name one of these groups — anything else lands in an auto-generated "New tabs" bucket in the grid, so a tab
 // can never silently miss the permission editor again.
-export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Marketing', 'Owners', 'Team', 'Financials', 'Admin', 'Garden Hotel']
+export const GROUP_ORDER = ['Today', 'Eve', 'Operations', 'Guest Experience', 'Reviews', 'Listings', 'Marketing', 'Sales', 'Owners', 'Team', 'Financials', 'Admin', 'Garden Hotel']
 
 export const FEATURES: Feature[] = [
   { key: 'command',       label: 'Today (everyone)',  path: '/command', group: 'Today' },
@@ -158,6 +158,10 @@ export const FEATURES: Feature[] = [
   // around it. Its numbers already flow in through lib/revenue-app.ts; this is the screen itself.
   { key: 'revenue-app',   label: 'Revenue App',       path: '/revenue-app', group: 'Financials' },
   { key: 'reports',       label: 'Owner Reports',     path: '/reports', group: 'Owners' },
+  // SALES (Jon, 2026-11-11: "it should be where the owner reports work, but let's create a sales tab…
+  // separate, and those builds should live there"). Sales proposals (owner_reports of the sales kind,
+  // the same editor, link, PDF and PowerPoint) and the rental CMA and partner packets, for Nick.
+  { key: 'sales',         label: 'Sales decks',       path: '/sales', group: 'Sales' },
   // AD STUDIO (Jon, 2026-11-02: "a video editor for ads … prompt, have you write scripts, get
   // previews … think Final Cut Pro but AI, built for custom ads"). View = watch and export; edit =
   // write, voice and change ads; full = delete. Deliberately in no ops/cs/data bundle: admin and GM
@@ -265,6 +269,9 @@ export const OPEN_PREFIXES = [
   // client opens: every item Stay puts in the home, sized to it, with their choices and Send to Stay.
   // The 20-hex code is the capability, checked by /api/public/starter-kit on every call.
   '/kit/',
+  // SALES DECK PHOTOS (Jon, 2026-11-11). /deck-img/ holds the stock photos the sales decks show (the
+  // Miami skyline cover), which a prospect opening an /r/ link is not signed in to see.
+  '/deck-img/',
   // CATALOG PRODUCT PHOTOS (2026-10-28): the static images the catalog links show. Without this an
   // owner who is not signed in got a redirect to the login page instead of every product photo.
   '/ffe/17west/img/',

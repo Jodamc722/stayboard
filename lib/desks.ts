@@ -130,6 +130,16 @@ export const DESKS: Desk[] = [
     ],
   },
   {
+    // SALES (Jon, 2026-11-11): its own tab, separate from Owners. The sales decks are owner reports
+    // of the sales kind, so they keep the deck editor, the link, PDF and PowerPoint; each one opens
+    // as keynote slides or as a magazine, and a building package adds the floor plans and comps.
+    key: 'sales', label: 'Sales',
+    blurb: 'Sales decks and building packages for owners, developers and realtor groups: keynote slides, a printable magazine and one link to share.',
+    views: [
+      { to: '/sales', label: 'Sales decks', hint: 'Proposals and building packages: floor-plan rental comparisons, comps, the agent partner program; keynote and magazine from one link' },
+    ],
+  },
+  {
     key: 'owners', label: 'Owners',
     blurb: 'Owner onboarding and inventory, linens, quality walks, purchasing, owner reports and projections.',
     views: [
@@ -139,7 +149,7 @@ export const DESKS: Desk[] = [
       { to: '/orders', label: 'Purchasing', hint: 'Buying desk: approve, buy, receive and install', more: true },
       // Catalog (Jon, 2026-10-27): the default onboarding catalog and one per property — approved replacement lists with links.
       { to: '/catalogs', match: ['/catalog'], label: 'Catalog', hint: 'Approved furniture and amenity catalogs per property, with the links to buy from; build one from a listing’s photos', more: true },
-      { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks' },
+      { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks (sales decks are on the Sales tab)' },
       // Ad Studio (Jon, 2026-11-02): AI-written video ads — brief, script, voice, timeline, export.
       { to: '/projections', label: 'Projections', hint: 'Next season’s owner revenue model behind the projection decks', more: true },
     ],
