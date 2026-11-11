@@ -10,6 +10,7 @@ import { reportByListingForEngine } from '@/lib/report-listings-v2'
 import { reportRecommendations } from '@/lib/report-recommendations'
 import { reportDelta } from '@/lib/report-delta'
 import { picsAsUrls } from '@/lib/pic-url'
+import { SalesMagazine } from '@/components/SalesMagazine'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,7 +25,7 @@ export async function generateMetadata({ params }: { params: { code: string } })
   return { ...base, title, description: 'Owner performance review prepared by Stay Hospitality.' }
 }
 
-export default async function PublicReportPage({ params }: { params: { code: string } }) {
+export default async function PublicReportPage({ params, searchParams }: { params: { code: string }; searchParams?: { view?: string } }) {
   const code = String(params.code || '')
   if (!/^[0-9a-f]{12,32}$/i.test(code)) notFound()
   const { data } = await supabaseAdmin().from('owner_reports').select('*').eq('code', code).limit(1)
@@ -53,6 +54,9 @@ export default async function PublicReportPage({ params }: { params: { code: str
   // that slide was printing one night of performance per unit under a season forecast.
   const docKind = String((rep.content as any)?.meta?.kind || '')
   const isDeckDoc = docKind === 'onboarding' || docKind === 'sales'
+  // THE MAGAZINE (Jon, 2026-11-11): the same sales deck laid out as letter pages to print, leave at a
+  // building or read on a phone. Same row, same link, ?view=magazine. It reads no review tables.
+  if (docKind === 'sales' && searchParams?.view === 'magazine') return <SalesMagazine report={rep} />
   const isReview = !isDeckDoc && docKind !== 'projection'
   const [gallery, listingTable, recs, delta] = await Promise.all([
     reportGallery(rep).catch(() => [] as string[]),
@@ -60,5 +64,16 @@ export default async function PublicReportPage({ params }: { params: { code: str
     !isDeckDoc ? reportRecommendations(rep).catch(() => null) : Promise.resolve(null),
     isReview ? reportDelta(rep).catch(() => null) : Promise.resolve(null),
   ])
-  return <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} listingTable={listingTable} recs={recs} delta={delta} />
+  const view = <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} listingTable={listingTable} recs={recs} delta={delta} />
+  if (docKind !== 'sales') return view
+  // The keynote deck's way to the magazine. Bottom-left, out of the deck toolbar's way; never printed.
+  return (
+    <>
+      {view}
+      <a href={'/r/' + code + '?view=magazine'} className="sb-noprint"
+        style={{ position: 'fixed', left: 16, bottom: 16, zIndex: 40, background: '#121A4F', color: '#fff', borderRadius: 999, padding: '9px 16px', font: '600 12.5px Inter, system-ui, sans-serif', textDecoration: 'none', boxShadow: '0 6px 20px rgba(18,26,79,.3)' }}>
+        Magazine view
+      </a>
+    </>
+  )
 }

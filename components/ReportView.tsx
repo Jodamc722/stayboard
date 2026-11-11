@@ -37,6 +37,8 @@ import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
+import { cmaSlides } from '@/components/SalesCmaSlides'
+import { normalizeCma } from '@/lib/sales-cma'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
 import { useViewTracking } from '@/components/useViewTracking'
@@ -8126,6 +8128,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               </div>
             </Slide>
           ) }) }
+
+          // ── 8b · THE BUILDING PAGES (Jon, 2026-11-11) ────────────────────────
+          // The rental CMA pages from the Rider packet: partner program, second option, market,
+          // comparable set, every floor plan at a glance, one comparison per floor plan. They live
+          // on content.cma, are edited on the Sales tab, and print the same numbers the magazine does.
+          if (isSales) { const cmaC = normalizeCma((c as Any).cma)
+            if (cmaC) for (const sl of cmaSlides(cmaC, { Slide: Slide as Any, t, edit, prospect: String((c.meta || {}).prospect || ''), serif: SERIF }))
+              if (!isHidden(sl.key)) slides.push({ key: sl.key, node: sl.node })
+          }
 
           // ── 8c · THE CLOSE (Jon, 2026-10-27) ─────────────────────────────────
           // The last slide is an ask with four concrete next steps, not a thank-you card.

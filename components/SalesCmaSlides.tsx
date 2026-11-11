@@ -1,0 +1,309 @@
+// THE BUILDING PAGES OF A SALES DECK, AS KEYNOTE SLIDES (Jon, 2026-11-11: "the same engine that builds
+// our current sales decks, revamped: one magazine version and the other a keynote version… a package
+// building and realtor groups can share, leave at the building, or send to one owner").
+//
+// ReportView pushes these into the sales deck just before the close, so they ride on everything the
+// deck already does: the /r/<code> link, Present mode, PDF and PowerPoint, slide hiding and order.
+// The words and numbers come from content.cma (lib/sales-cma) and are edited on the Sales tab; the
+// math is planNumbers, the same function the magazine prints from.
+import React from 'react'
+import {
+  planNumbers, upliftLine, range, money, kMoney, compGross, pctRange, MONTHS,
+  type SalesCma, type PacketPlan,
+} from '@/lib/sales-cma'
+
+type Any = any
+type SlideFn = (p: { nav?: string; children: React.ReactNode; pad?: number; warn?: boolean; ground?: string }) => React.ReactElement
+export type CmaSlide = { key: string; node: React.ReactNode }
+
+/** Monthly bars, low and high, for one floor plan. Pure SVG so it prints and exports. */
+export function MonthBars({ months, lo, hi, ink, muted, w = 560, h = 190 }: { months: { lo: number; hi: number }[]; lo: string; hi: string; ink: string; muted: string; w?: number; h?: number }) {
+  const max = Math.max(1, ...months.map(m => m.hi))
+  const top = 22, bottom = 22, ch = h - top - bottom
+  const gw = w / 12, bw = Math.min(16, gw * 0.3)
+  return (
+    <svg viewBox={`-4 0 ${w + 22} ${h}`} width="100%" role="img" aria-label="Monthly rental income, low and high end">
+      {months.map((m, i) => {
+        const x = i * gw + gw / 2
+        const hl = (m.lo / max) * ch, hh = (m.hi / max) * ch
+        return (
+          <g key={i}>
+            <rect x={x - bw - 1.5} y={top + ch - hl} width={bw} height={hl} rx={2.5} fill={lo} />
+            <rect x={x + 1.5} y={top + ch - hh} width={bw} height={hh} rx={2.5} fill={hi} />
+            <text x={x + bw / 2 + 1.5} y={top + ch - hh - 6} textAnchor="middle" fontSize={10.5} fontWeight={700} fill={ink}>{kMoney(m.hi)}</text>
+            <text x={x} y={h - 5} textAnchor="middle" fontSize={11} fill={muted}>{MONTHS[i]}</text>
+          </g>
+        )
+      })}
+    </svg>
+  )
+}
+
+export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: boolean; prospect: string; serif: string }): CmaSlide[] {
+  const { Slide, t, edit, serif } = d
+  const out: CmaSlide[] = []
+  const S = cma.sections
+  const where = [cma.building, cma.area].filter(Boolean).join(' · ')
+  const eyebrow = (x: string, dark?: boolean) => (
+    <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.accent, margin: 0 }}>{x}</p>
+  )
+  const title = (x: string, dark?: boolean, size = 38) => (
+    <h2 style={{ fontFamily: serif, fontWeight: 400, fontSize: size, lineHeight: 1.08, letterSpacing: '-0.015em', color: dark ? '#fff' : t.ink, margin: '10px 0 0', textWrap: 'balance' as Any }}>{x}</h2>
+  )
+  const note = edit ? (
+    <p className="sb-noprint" style={{ position: 'absolute', right: 18, bottom: 12, fontSize: 11, color: t.muted, background: t.chip, padding: '3px 8px', borderRadius: 6 }}>Edit these numbers on the Sales tab → Floor plans &amp; comps</p>
+  ) : null
+  const cell: React.CSSProperties = { padding: '9px 10px', borderTop: '1px solid ' + t.rule, fontSize: 13, color: t.body, verticalAlign: 'top' }
+  const th: React.CSSProperties = { padding: '0 10px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, textAlign: 'left' }
+
+  // ── Agent partner program ─────────────────────────────────────────────────────────────────────
+  if (S.partner) {
+    const P = cma.partner
+    out.push({ key: 'cma-partner', node: (
+      <Slide nav="Partner program" pad={48} warn={edit}>
+        <div style={{ position: 'relative', height: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 360px', gap: 36 }}>
+          <div style={{ minWidth: 0 }}>
+            {eyebrow('For sales teams and agents')}
+            {title('Agent partner program')}
+            <p style={{ fontSize: 15, lineHeight: 1.55, color: t.body, margin: '14px 0 0', maxWidth: '58ch' }}>{P.lead}</p>
+            <div style={{ display: 'grid', gap: 12, marginTop: 22 }}>
+              {P.cards.map(([k, v], i) => (
+                <div key={i} style={{ background: t.chip, borderRadius: 14, padding: '14px 18px' }}>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{k}</p>
+                  <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '4px 0 0' }}>{v}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ background: t.band, color: '#fff', borderRadius: 18, padding: '28px 26px', display: 'flex', flexDirection: 'column' }}>
+            {eyebrow('Referral fees, in writing', true)}
+            <div style={{ display: 'grid', gap: 14, marginTop: 22 }}>
+              {P.fees.map(([amt, what], i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 12, paddingBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.14)' }}>
+                  <span style={{ fontFamily: serif, fontSize: 40, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{amt}</span>
+                  <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.78)' }}>{what}</span>
+                </div>
+              ))}
+            </div>
+            <p style={{ marginTop: 'auto', fontSize: 13, lineHeight: 1.5, color: 'rgba(255,255,255,0.8)' }}>{P.feeNote}</p>
+          </div>
+          {note}
+        </div>
+      </Slide>
+    ) })
+    out.push({ key: 'cma-partner-steps', node: (
+      <Slide nav="How it works" pad={48} warn={edit}>
+        <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column' }}>
+          {eyebrow('How it works')}
+          {title('From your listing to your referral fee')}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginTop: 30 }}>
+            {P.steps.map(([k, v], i) => (
+              <div key={i} style={{ borderTop: '3px solid ' + t.accent, paddingTop: 16 }}>
+                <span style={{ fontFamily: serif, fontSize: 34, color: t.accent, lineHeight: 1 }}>{i + 1}</span>
+                <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, margin: '12px 0 0' }}>{k}</p>
+                <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '6px 0 0' }}>{v}</p>
+              </div>
+            ))}
+          </div>
+          {P.here.length ? (
+            <div style={{ marginTop: 'auto', background: t.chip, borderRadius: 14, padding: '16px 20px' }}>
+              <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>{cma.building ? 'At ' + cma.building : 'For your buyers'}</p>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18, display: 'grid', gap: 4 }}>
+                {P.here.map((x, i) => <li key={i} style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45 }}>{x}</li>)}
+              </ul>
+            </div>
+          ) : null}
+          {note}
+        </div>
+      </Slide>
+    ) })
+  }
+
+  // ── Stay as a second option ───────────────────────────────────────────────────────────────────
+  if (S.second) {
+    const Q = cma.second
+    out.push({ key: 'cma-second', node: (
+      <Slide nav="Second option" pad={48} warn={edit}>
+        <div style={{ position: 'relative', height: '100%', display: 'grid', gridTemplateColumns: '330px minmax(0,1fr)', gap: 36 }}>
+          <div>
+            {eyebrow('For buyers who ask for options')}
+            {title(cma.building ? 'Stay as a second option at ' + cma.building.replace(/ Residences$/, '') : 'Stay as a second option', false, 34)}
+            <p style={{ fontSize: 14, lineHeight: 1.55, color: t.body, margin: '14px 0 0' }}>{Q.choose}</p>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', alignSelf: 'start' }}>
+            <tbody>
+              {Q.qa.map(([q, a], i) => (
+                <tr key={i}>
+                  <td style={{ ...cell, width: 170, fontWeight: 600, color: t.ink, fontSize: 13.5 }}>{q}</td>
+                  <td style={{ ...cell, fontSize: 13 }}>{a}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {note}
+        </div>
+      </Slide>
+    ) })
+    out.push({ key: 'cma-second-steps', node: (
+      <Slide nav="Getting a unit ready" pad={48} warn={edit} ground={t.band}>
+        <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column' }}>
+          {eyebrow('How we would get a unit ready', true)}
+          {title('Contract to opening day', true)}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + Math.max(1, Q.steps.length) + ', 1fr)', gap: 20, marginTop: 30 }}>
+            {Q.steps.map(([k, v], i) => (
+              <div key={i} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 16, padding: '20px 22px' }}>
+                <span style={{ fontFamily: serif, fontSize: 30, color: '#fff', lineHeight: 1 }}>{i + 1}</span>
+                <p style={{ fontSize: 17, fontWeight: 600, color: '#fff', margin: '12px 0 0' }}>{k}</p>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.78)', margin: '6px 0 0' }}>{v}</p>
+              </div>
+            ))}
+          </div>
+          {Q.ask.length ? (
+            <div style={{ marginTop: 'auto' }}>
+              <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.55)', margin: 0 }}>What we would ask of the sales team</p>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18, display: 'grid', gap: 4 }}>
+                {Q.ask.map((x, i) => <li key={i} style={{ fontSize: 14, color: 'rgba(255,255,255,0.86)', lineHeight: 1.45 }}>{x}</li>)}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      </Slide>
+    ) })
+  }
+
+  // ── Market and the comparable set ─────────────────────────────────────────────────────────────
+  if (S.market) {
+    const bullets = cma.market.bullets.filter(([, v]) => v.trim())
+    if (bullets.length || edit) out.push({ key: 'cma-market', node: (
+      <Slide nav="The market" pad={48} warn={edit}>
+        <div style={{ position: 'relative', height: '100%' }}>
+          {eyebrow(where || 'The market')}
+          {title((cma.area || 'The') + ' rental market')}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + (bullets.length > 4 ? 3 : 2) + ', 1fr)', gap: '18px 26px', marginTop: 26 }}>
+            {bullets.map(([k, v], i) => (
+              <div key={i} style={{ borderTop: '1px solid ' + t.rule, paddingTop: 12 }}>
+                <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{k.replace(/\.$/, '')}</p>
+                <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, margin: '5px 0 0' }}>{v}</p>
+              </div>
+            ))}
+          </div>
+          {note}
+        </div>
+      </Slide>
+    ) })
+    if (cma.comps.length) out.push({ key: 'cma-comps', node: (
+      <Slide nav="Comparable set" pad={48} warn={edit}>
+        <div style={{ position: 'relative', height: '100%' }}>
+          {eyebrow('The evidence')}
+          {title('The comparable set')}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 24 }}>
+            <thead><tr><th style={th}>Comparable</th><th style={th}>Market</th><th style={th}>Basis</th><th style={th}>Gross per year</th><th style={th}>Nightly</th><th style={th}>Occupancy</th></tr></thead>
+            <tbody>
+              {cma.comps.map(c => (
+                <tr key={c.id}>
+                  <td style={{ ...cell, fontWeight: 600, color: t.ink }}>{c.name}</td>
+                  <td style={cell}>{c.market}</td>
+                  <td style={cell}>{c.basis}</td>
+                  <td style={{ ...cell, fontVariantNumeric: 'tabular-nums' }}>{compGross(c)}</td>
+                  <td style={{ ...cell, fontVariantNumeric: 'tabular-nums' }}>{money(c.nightlyLo)} to {money(c.nightlyHi)}</td>
+                  <td style={cell}>{pctRange(c.occLo, c.occHi)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {note}
+        </div>
+      </Slide>
+    ) })
+  }
+
+  // ── Every floor plan at a glance ──────────────────────────────────────────────────────────────
+  if (S.glance && cma.plans.length) {
+    const nums = cma.plans.map(p => ({ p, n: planNumbers(cma, p) }))
+    const max = Math.max(1, ...nums.map(x => x.n.hi)) * 1.04
+    out.push({ key: 'cma-glance', node: (
+      <Slide nav="Floor plans at a glance" pad={48} warn={edit}>
+        <div style={{ position: 'relative', height: '100%' }}>
+          {eyebrow(where || 'Floor plans')}
+          {title('Every floor plan at a glance', false, 34)}
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 18 }}>
+            <thead><tr><th style={th}>Floor plan</th><th style={{ ...th, width: '34%' }}>Gross per year</th><th style={{ ...th, textAlign: 'right' }}>Per year</th><th style={{ ...th, textAlign: 'right' }}>Per month</th></tr></thead>
+            <tbody>
+              {nums.map(({ p, n }) => (
+                <tr key={p.id}>
+                  <td style={{ ...cell, padding: '6px 10px' }}><span style={{ fontWeight: 600, color: t.ink }}>{p.name}</span> <span style={{ fontSize: 11, color: t.muted }}>{p.sf}{p.price ? ' · from ' + p.price : ''}</span></td>
+                  <td style={{ ...cell, padding: '6px 10px' }}>
+                    <div style={{ position: 'relative', height: 10, background: t.chip, borderRadius: 99 }}>
+                      <div style={{ position: 'absolute', left: (n.lo / max * 100) + '%', width: Math.max(2, (n.hi - n.lo) / max * 100) + '%', top: 0, bottom: 0, background: t.accent, borderRadius: 99 }} />
+                    </div>
+                  </td>
+                  <td style={{ ...cell, padding: '6px 10px', textAlign: 'right', fontWeight: 600, color: t.ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{range(n.lo, n.hi)}</td>
+                  <td style={{ ...cell, padding: '6px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{range(n.monthLo, n.monthHi)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={{ fontSize: 11, color: t.muted, margin: '10px 0 0', maxWidth: '110ch' }}>Gross rental revenue once fully ramped, before channel fees and the management fee. {upliftLine(cma)}</p>
+          {note}
+        </div>
+      </Slide>
+    ) })
+  }
+
+  // ── One rental comparison per floor plan ──────────────────────────────────────────────────────
+  if (S.plans) for (const p of cma.plans) out.push({ key: 'cma-plan-' + p.id, node: planSlide(cma, p, d, { eyebrow, title, cell, th, note, where }) })
+  return out
+}
+
+function planSlide(cma: SalesCma, p: PacketPlan, d: { Slide: SlideFn; t: Any; edit: boolean; serif: string }, h: Any) {
+  const { Slide, t, edit, serif } = d
+  const n = planNumbers(cma, p)
+  const comps = p.compIds.map(id => cma.comps.find(c => c.id === id)).filter(Boolean) as SalesCma['comps']
+  const stat = (label: string, value: string, sub: string, dark?: boolean) => (
+    <div style={{ background: dark ? t.band : t.chip, color: dark ? '#fff' : t.ink, borderRadius: 14, padding: '14px 18px' }}>
+      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.muted, margin: 0 }}>{label}</p>
+      <p style={{ fontFamily: serif, fontSize: 26, lineHeight: 1.1, margin: '6px 0 0', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{value}</p>
+      <p style={{ fontSize: 11.5, color: dark ? 'rgba(255,255,255,0.7)' : t.muted, margin: '3px 0 0' }}>{sub}</p>
+    </div>
+  )
+  return (
+    <Slide nav={p.name} pad={44} warn={edit}>
+      <div style={{ position: 'relative', height: '100%', display: 'grid', gridTemplateColumns: '400px minmax(0,1fr)', gap: 30 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {h.eyebrow((h.where ? h.where + ' · ' : '') + 'Rental comparison')}
+          {h.title(p.name, false, 40)}
+          <p style={{ fontSize: 12.5, color: t.muted, margin: '8px 0 0' }}>{[p.sf, p.price ? 'from ' + p.price : '', p.rules].filter(Boolean).join('  ·  ')}</p>
+          <div style={{ display: 'grid', gap: 10, marginTop: 18 }}>
+            {stat('Per year', range(n.lo, n.hi), 'Gross rental revenue')}
+            {stat('Per month, on average', range(n.monthLo, n.monthHi), 'Gross rental revenue', true)}
+            {stat('Peak month', 'up to ' + money(n.peak), n.peakMonth + ', high end')}
+          </div>
+        </div>
+        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+          <MonthBars months={n.months} lo={t.accent + '88'} hi={t.band} ink={t.ink} muted={t.muted} w={600} h={200} />
+          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 10 }}>
+            <thead><tr><th style={h.th}>Comparable</th><th style={h.th}>Gross per year</th><th style={h.th}>Nightly</th><th style={h.th}>Occ.</th></tr></thead>
+            <tbody>
+              {comps.map(c => (
+                <tr key={c.id}>
+                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12 }}>{c.name}<div style={{ fontSize: 10.5, color: t.muted }}>{c.market}</div></td>
+                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>{compGross(c)}</td>
+                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{money(c.nightlyLo)}–{money(c.nightlyHi)}</td>
+                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>{pctRange(c.occLo, c.occHi)}</td>
+                </tr>
+              ))}
+              <tr>
+                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip }}>{(cma.building ? cma.building.replace(/ Residences$/, '') + ' ' : '') + p.name}</td>
+                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip, fontVariantNumeric: 'tabular-nums' }}>{range(n.lo, n.hi)}</td>
+                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip, whiteSpace: 'nowrap' }}>{money(n.nightlyLo)}–{money(n.nightlyHi)}{p.suites > 1 ? ' /suite' : ''}</td>
+                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip, whiteSpace: 'nowrap' }}>{pctRange(p.occLo, p.occHi)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p style={{ fontSize: 10.5, lineHeight: 1.45, color: t.muted, margin: '8px 0 0' }}><b style={{ color: t.body }}>How we got there:</b> {p.how} {n.manual ? 'Range set by hand.' : upliftLine(cma)}</p>
+        </div>
+        {h.note}
+      </div>
+    </Slide>
+  )
+}
