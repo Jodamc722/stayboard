@@ -231,7 +231,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const brandImg = String(mag.brandImage || '').trim()
   const allPhotos = Array.from(new Set([...(brandImg ? [brandImg] : []), ...pool]))
   const slotIdx: Record<string, number> = { cover: 0, contents: 1, about: 2, manage: 3, work: 4, numbers: 5, back: 6 }
-  const photo = (slot: string) => String((mag.photos || {})[slot] || '').trim() || pool[(slotIdx[slot] || 0) % pool.length]
+  const photo = (slot: string): string => String((mag.photos || {})[slot] || '').trim() || (slot === 'back' ? photo('cover') : pool[(slotIdx[slot] || 0) % pool.length])
   const brandLogo = String(mag.brandLogo || '').trim()
 
   const rows = (a: Any): { k: string; v: string; i: number }[] => (Array.isArray(a) ? a : []).map((r: Any, i: number) => ({ k: String(r?.k || ''), v: String(r?.v || ''), i })).filter(r => r.k.trim() && r.v.trim())
@@ -272,7 +272,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     aboutHead: 'Stay-managed homes earn *20% more* than the market.',
     aboutDek: 'Full-service short-term rental management for owners across Miami and South Florida. One local team, priced every night, listed everywhere guests book.',
     aboutNote: 'On average; results vary by unit, building and season.',
-    teamHead: 'The people who pick up at *2 a.m.*',
+    teamHead: 'The team on your building, *with 24/7 guest care*',
     manageHead: 'How we run a home',
     manageDek: 'Our own team, our own standard, on every stay.',
     techHead: 'Priced every day. Listed everywhere. *Reported every month.*',
@@ -558,7 +558,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
                 <div className="mz-gl-gridlayer">{ticks.map(v => <s key={v} style={{ left: pos(v) }} />)}</div>
                 {nums.map(({ p, n }) => { const pr = priceOf(p.price); return (
                   <div key={p.id} className="mz-gl-row">
-                    <div className="mz-gl-name"><b>{p.name}</b><span>{p.sf}</span>{p.price ? <span>From {p.price}</span> : null}</div>
+                    <div className="mz-gl-name"><b>{p.name}</b><span>{p.sf}{p.price ? ' · from ' + p.price : ''}</span></div>
                     <div className="mz-gl-track"><i style={{ left: pos(n.lo), width: 'calc(' + pos(n.hi - n.lo) + ')' }} /><em style={{ left: pos(n.lo) }} /><em style={{ left: pos(n.hi) }} /></div>
                     <div className="mz-gl-v"><b>{dash(n.lo, n.hi)}</b><span>{dash(n.monthLo, n.monthHi)} a month</span></div>
                     {showYield ? <div className="mz-gl-y">{pr ? (Math.round(n.lo / pr * 1000) / 10).toFixed(1) + '–' + pct1(n.hi / pr) : '—'}</div> : null}
@@ -947,7 +947,7 @@ const CSS = `
 .mz-fee{padding:16px 0;border-bottom:1px solid rgba(255,255,255,.2)}
 .mz-fee b{display:block;font:300 44px/1 ${SERIF};letter-spacing:-.02em}
 .mz-fee>span{display:block;margin-top:8px;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.78)}
-.mz-fees>p{font:italic 400 13px/1.5 ${SERIF};color:rgba(255,255,255,.85);margin:20px 0 0}
+.mz-fees>p:not(.mz-kicker){font:italic 400 13px/1.5 ${SERIF};color:rgba(255,255,255,.85);margin:20px 0 0}
 .mz-steps{list-style:none;padding:0;margin:0;display:grid;gap:24px;align-items:start}
 .mz-steps-4{grid-template-columns:repeat(4,1fr)}.mz-steps-3{grid-template-columns:repeat(3,1fr)}
 .mz-steps li{border-top:1px solid ${C.ink};padding-top:12px}
@@ -963,14 +963,14 @@ const CSS = `
 .mz-a{font:400 13.5px/1.5 ${SERIF};margin:6px 0 0}
 
 /* market */
-.mz-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:32px;border-top:1px solid ${C.ink}}
-.mz-col-item{padding:14px 0;border-bottom:1px solid ${C.grid}}
-.mz-col-item b{font:400 19px ${SERIF};color:${C.ink}}.mz-col-item p{font:400 13.5px/1.5 ${SERIF};margin:6px 0 0}
-.mz-comps{margin-top:48px}
+.mz-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:24px;border-top:1px solid ${C.ink}}
+.mz-col-item{padding:11px 0;border-bottom:1px solid ${C.grid}}
+.mz-col-item b{font:400 18px ${SERIF};color:${C.ink}}.mz-col-item p{font:400 13px/1.42 ${SERIF};margin:4px 0 0}
+.mz-comps{margin-top:32px}
 .mz-table{width:100%;border-collapse:collapse;font:400 11.5px ${SANS};color:${C.body}}
 .mz-table th{font:600 10px ${SANS};letter-spacing:.12em;text-transform:uppercase;color:${C.muted};text-align:left;padding:0 14px 8px 12px;border-bottom:1.25px solid ${C.ink};vertical-align:bottom}
-.mz-table td{padding:0 14px 0 12px;height:36px;border-bottom:1px solid ${C.grid};vertical-align:middle;line-height:1.35;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
-.mz-table td:first-child{white-space:normal;width:34%}
+.mz-table td{padding:6px 14px 6px 12px;height:34px;border-bottom:1px solid ${C.grid};vertical-align:middle;line-height:1.35;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.mz-table td:first-child{white-space:normal;width:38%}
 .mz-table th:first-child,.mz-table td:first-child{padding-left:12px}
 .mz-table td b{font-weight:600;color:${C.ink}}
 .mz-table .r{text-align:right}
@@ -980,7 +980,7 @@ const CSS = `
 .mz-table tr.mz-us td:last-child{padding-right:8px}
 
 /* at a glance: dumbbells on one continuous grid */
-.mz-gl{margin-top:32px}
+.mz-gl{margin-top:24px}
 .mz-gl-head,.mz-gl-row{display:grid;grid-template-columns:184px 1fr 156px;gap:20px;align-items:center}
 .mz-gl.with-yield .mz-gl-head,.mz-gl.with-yield .mz-gl-row{grid-template-columns:184px 1fr 148px 84px}
 .mz-gl-head{font:600 10px ${SANS};letter-spacing:.12em;text-transform:uppercase;color:${C.muted};padding-bottom:10px;border-bottom:1.25px solid ${C.ink}}
@@ -993,9 +993,9 @@ const CSS = `
 .mz-gl.with-yield .mz-gl-gridlayer{right:272px}
 .mz-gl:not(.with-yield) .mz-gl-gridlayer{right:176px}
 .mz-gl-gridlayer s{position:absolute;top:0;bottom:0;width:1px;background:${C.grid}}
-.mz-gl-row{position:relative;padding:12px 0;border-bottom:1px solid ${C.grid}}
-.mz-gl-name b{display:block;font:400 19px ${SERIF};color:${C.ink};white-space:nowrap}
-.mz-gl-name span{display:block;font:400 12px/1.35 ${SERIF};color:${C.muted}}
+.mz-gl-row{position:relative;padding:10px 0;border-bottom:1px solid ${C.grid}}
+.mz-gl-name b{display:block;font:400 18px ${SERIF};color:${C.ink};white-space:nowrap}
+.mz-gl-name span{display:block;font:400 11.5px/1.35 ${SERIF};color:${C.muted};white-space:nowrap}
 .mz-gl-track{position:relative;height:24px}
 .mz-gl-track i{position:absolute;top:10.5px;height:3px;background:${C.navy}}
 .mz-gl-track em{position:absolute;top:7px;width:10px;height:10px;margin-left:-5px;border-radius:999px;background:${C.navy}}
@@ -1003,7 +1003,7 @@ const CSS = `
 .mz-gl-v b{display:block;font:400 16px ${SERIF};color:${C.ink};font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
 .mz-gl-v span{display:block;font:400 12px ${SERIF};color:${C.muted};margin-top:2px;white-space:nowrap}
 .mz-gl-y{text-align:right;font:400 14px ${SERIF};color:${C.ink};font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
-.mz-read{margin-top:32px}
+.mz-read{margin-top:24px}
 .mz-read p{font:italic 400 13px/1.55 ${SERIF};color:${C.muted};margin:0;max-width:46em}
 
 /* floor plan */

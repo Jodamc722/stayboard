@@ -252,7 +252,7 @@ export function riderTemplate(): SalesCma {
       choose: 'The Rider allows short-term rentals, with optional management through the building’s program or by a third party. A buyer is free to pick the manager that fits how they want to own. Stay works with the building’s rules, access and registration requirements, and with the sales team, from contract to opening day.',
       qa: [
         ['What does it cost?', '15% of rental revenue after channel fees. No setup fees, no monthly fees. Guests pay the cleaning fee.'],
-        ['Who is on the ground?', 'Our own housekeeping, maintenance and inspection teams, with a local 24/7 guest team on every check-in and every 2 a.m. issue.'],
+        ['Who is on the ground?', 'Our own housekeeping, maintenance and inspection teams, with a local 24/7 CCS team on every check-in.'],
         ['What will I see each month?', 'An owner portal with the live calendar, pricing and occupancy, plus a monthly P&L statement and payout for your unit, with every booking and fee itemized.'],
         ['Can I use my unit?', 'Yes. Block your own dates anytime, with no blackout restrictions.'],
         ['How do I get out?', 'A 90-day exit. We earn your business every month.'],
@@ -319,6 +319,9 @@ export function blankCma(building = '', area = ''): SalesCma {
 export function normalizeCma(p: any): SalesCma | null {
   if (!p || typeof p !== 'object') return null
   const t = riderTemplate()
+  // Jon, 2026-11-11: "we do not pick up at 2am — just say 24/7 CCS team". Decks saved with the old
+  // line are corrected as they are read, so no deck already out there keeps it.
+  if (p.second && Array.isArray(p.second.qa)) p = { ...p, second: { ...p.second, qa: p.second.qa.map((r: any) => Array.isArray(r) ? [r[0], String(r[1] || '').replace(/ with a local 24\/7 guest team on every check-in and every 2 a\.m\. issue\./, ' with a local 24/7 CCS team on every check-in.')] : r) } }
   return {
     ...t, ...p,
     sections: { ...t.sections, ...(p.sections || {}) },
