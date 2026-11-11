@@ -11,6 +11,7 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { cbGet, cloudbedsConfigured } from './cloudbeds'
+import { botanicaGuestyReservations, botanicaListings } from './guesty-bridge'
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
 const addDays = (s: string, n: number) => ymd(new Date(Date.parse(s + 'T12:00:00Z') + n * 86400000))
@@ -41,21 +42,25 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const fEnd = addDays(t0, ahead - 1)
 
   const [{ data: res }, { data: cal }, { data: chans }, { data: pays }, roomsQ] = await Promise.all([
-    db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,balance,source,room_ids,booked_at').lte('check_in', to).gte('check_out', from).limit(5000),
+    db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,balance,source,room_ids,room_names,guest_name,booked_at').lte('check_in', to).gte('check_out', from).limit(5000),
     db.from('garden_calendar').select('room_type_id,room_type,date,available,total,rate,min_stay,closed').gte('date', t0).lte('date', fEnd).limit(30000),
     db.from('garden_channels').select('id,name,kind,status').order('name'),
     db.from('garden_payments').select('kind,amount,paid_at').gte('paid_at', new Date(Date.now() - 30 * 86400000).toISOString()),
-    db.from('garden_rooms').select('id,room_type_id,virtual:raw->isVirtual'),
+    db.from('garden_rooms').select('id,name,room_type_id,virtual:raw->isVirtual'),
   ])
+  // Botanica units still in Guesty count as rooms, and their stays as bookings (reporting only).
+  const [gyRes, gyUnits] = await Promise.all([botanicaGuestyReservations(from, to).catch(() => []), botanicaListings().catch(() => [])])
   // Sellable rooms per type: the physical (non-virtual) rooms Cloudbeds lists under it. The
   // calendar carries what is left per night, not the type's size, so the size comes from here.
   const RM = ((roomsQ.data || []) as any[]).filter(r => r.virtual !== true && r.virtual !== 'true')
-  const rooms = RM.length
+  const cbNames = new Set(RM.map(r => String(r.name || '').trim().toLowerCase()))
+  const gyOnly = gyUnits.filter(u => !cbNames.has(u.name.trim().toLowerCase()))
+  const rooms = RM.length + gyOnly.length
   const unitsOf: Record<string, number> = {}
   for (const r of RM) unitsOf[String(r.room_type_id)] = (unitsOf[String(r.room_type_id)] || 0) + 1
 
   // ── On the books ────────────────────────────────────────────────────────────────────────────
-  const R = ((res || []) as any[])
+  const R = [...((res || []) as any[]).map(r => ({ ...r, origin: 'cloudbeds' })), ...(gyRes as any[])]
   const live = R.filter(r => r.status !== 'canceled' && r.status !== 'no_show')
   const cancelled = R.filter(r => r.status === 'canceled' || r.status === 'no_show')
   const lo = Date.parse(from + 'T00:00:00Z'), hi = Date.parse(to + 'T00:00:00Z') + 86400000
@@ -137,5 +142,10 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
     byChannel, byMonth: Object.entries(month).sort(([a], [b]) => a.localeCompare(b)).map(([m, v]) => ({ month: m, nights: v.nights, revenue: Math.round(v.revenue), adr: v.nights ? Math.round(v.revenue / v.nights) : null })),
     forward, forwardSummary: { occupancy: fwdUnits ? Math.round((fwdSold / fwdUnits) * 100) : null, rate: forward.length ? Math.round(forward.filter(d => d.rate).reduce((a, d) => a + (d.rate || 0), 0) / Math.max(1, forward.filter(d => d.rate).length)) : null },
     types, channels,
+    guesty: { units: gyOnly.length, bookings: (gyRes as any[]).length, revenue: Math.round((gyRes as any[]).reduce((a, r) => a + num(r.total), 0)) },
+    bookings: live.slice().sort((a, b) => String(a.check_in).localeCompare(String(b.check_in))).slice(0, 400).map(r => ({
+      id: r.id, guest: r.guest_name || null, rooms: r.room_names || null, checkIn: r.check_in, checkOut: r.check_out, nights: num(r.nights) || null,
+      channel: channelName(r.source), total: Math.round(num(r.total)), balance: r.balance != null ? Math.round(num(r.balance)) : null, status: r.status, bookedAt: r.booked_at || null, origin: r.origin,
+    })),
   }
 }

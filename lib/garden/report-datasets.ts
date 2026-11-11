@@ -7,6 +7,7 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { reviewStats } from './reviews'
+import { botanicaGuestyReservations, botanicaListings } from './guesty-bridge'
 
 export type Dataset<T = any> = { key: string; label: string; what: string; rows: T[]; summary?: Record<string, any> }
 const LIVE = ['confirmed', 'not_confirmed', 'checked_in', 'checked_out']
@@ -16,7 +17,7 @@ export const monthLabel = (iso: string) => new Date(iso.slice(0, 7) + '-15T12:00
 export const monthShort = (iso: string) => new Date(iso.slice(0, 7) + '-15T12:00:00Z').toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' })
 const daysBetween = (a: string, b: string) => Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1)
 
-type Res = { id: string; status: string; check_in: string; check_out: string; nights: number | null; total: number | null; source: string | null; room_ids: string[]; room_names: string[]; guest_name: string | null }
+type Res = { id: string; status: string; check_in: string; check_out: string; nights: number | null; total: number | null; source: string | null; room_ids: string[]; room_names: string[]; guest_name: string | null; balance?: number | null; booked_at?: string | null; origin?: 'cloudbeds' | 'guesty' }
 
 /** Room-nights and revenue a set of reservations puts inside [from, to]. */
 function stayMetrics(res: Res[], from: string, to: string, rooms: number) {
@@ -39,13 +40,22 @@ function stayMetrics(res: Res[], from: string, to: string, rooms: number) {
   return { roomNights, revenue: Math.round(revenue), arrivals, stays, available, occPct: available ? Math.round((roomNights / available) * 1000) / 10 : 0, adr: roomNights ? Math.round(revenue / roomNights) : 0, revpar: available ? Math.round(revenue / available) : 0 }
 }
 
+// BOTANICA STILL IN GUESTY (2026-11-11): until every unit is in Cloudbeds, the Guesty Botanica stays and
+// units are folded in here so the report is the whole property. A unit whose name Cloudbeds already has
+// is not added twice; a stay Cloudbeds already holds is dropped in the bridge.
 async function pull(from: string, to: string): Promise<{ res: Res[]; rooms: any[] }> {
   const db = supabaseAdmin()
-  const [{ data: res }, { data: rooms }] = await Promise.all([
-    db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,source,room_ids,room_names,guest_name').in('status', LIVE).lte('check_in', to).gte('check_out', from).limit(5000),
+  const [{ data: res }, { data: rooms }, gyRes, gyUnits] = await Promise.all([
+    db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,balance,source,room_ids,room_names,guest_name,booked_at').in('status', LIVE).lte('check_in', to).gte('check_out', from).limit(5000),
     db.from('garden_rooms').select('id,name,room_type,status'),
+    botanicaGuestyReservations(from, to).catch(() => []),
+    botanicaListings().catch(() => []),
   ])
-  return { res: (res || []) as Res[], rooms: (rooms || []) as any[] }
+  const R = (rooms || []) as any[]
+  const have = new Set(R.map(r => String(r.name || '').trim().toLowerCase()))
+  const extra = gyUnits.filter(u => !have.has(u.name.trim().toLowerCase())).map(u => ({ id: 'gy:' + u.id, name: u.name, room_type: 'Botanica · in Guesty', status: 'active' }))
+  const cb = ((res || []) as any[]).map(r => ({ ...r, origin: 'cloudbeds' as const })) as Res[]
+  return { res: [...cb, ...(gyRes as Res[])], rooms: [...R, ...extra] }
 }
 
 export async function datasetsFor(from: string, to: string): Promise<Record<string, Dataset>> {
@@ -95,6 +105,15 @@ export async function datasetsFor(from: string, to: string): Promise<Record<stri
     ahead.push({ monthIso: mf, label: monthLabel(mf), short: monthShort(mf), ...stayMetrics(aRes, mf, mt, roomCount) })
   }
   out.ahead = { key: 'ahead', label: 'On the books', what: 'The next three months as they stand today: occupancy, ADR and revenue already booked.', rows: ahead }
+
+  // 5b) Every booking in the period — who, which room, channel, money, balance, and where it lives
+  // (Cloudbeds or still Guesty), so nothing about a booking is hidden behind a total.
+  const bookings = res.filter(r => r.check_in <= to && r.check_out > from).sort((a, b) => a.check_in.localeCompare(b.check_in)).map(r => ({
+    id: r.id, guest: r.guest_name || 'Guest', rooms: (r.room_names || []).join(', '), checkIn: r.check_in, checkOut: r.check_out,
+    nights: r.nights ?? null, source: r.source || 'Direct', total: Math.round(Number(r.total) || 0), balance: r.balance != null ? Math.round(Number(r.balance)) : null,
+    status: r.status, bookedAt: r.booked_at || null, origin: r.origin || 'cloudbeds',
+  }))
+  out.bookings = { key: 'bookings', label: 'Bookings', what: 'Every booking touching the period — guest, room, channel, nights, total, balance owed, and whether it is in Cloudbeds or still in Guesty.', rows: bookings, summary: { count: bookings.length, guesty: bookings.filter(b => b.origin === 'guesty').length, balanceOwed: bookings.reduce((a, b) => a + Math.max(0, b.balance || 0), 0) } }
 
   // 6) Operations — cleans, calls, verifications, welcome calls.
   const [{ data: tasks }, { data: calls }, { data: vers }, { data: queue }, { data: missed }] = await Promise.all([

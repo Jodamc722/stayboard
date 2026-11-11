@@ -84,7 +84,7 @@ export async function guestProfile(opts: { key?: string; res?: string }) {
   const stays = rs.map(r => {
     const nts = notes[s(r.id)] || [], rd = readNotes(nts), d = (det as any)[s(r.id)] || null, op = ops?.byRes?.[s(r.id)] || null
     const v = Object.fromEntries(vers.filter((x: any) => x.reservation_id === r.id).map((x: any) => [x.kind, x.status]))
-    return { ...stayOf(r), notes: nts, tags: rd.tags, vehicle: rd.vehicle, writers: rd.initials,
+    return { ...stayOf(r), resId: s(r.id), notes: nts, tags: rd.tags, vehicle: rd.vehicle, writers: rd.initials,
       id: { decision: v.id || null, onFile: d ? d.idOnFile : null, type: d?.idType || null, guests: d ? `${d.idGuests}/${d.guests}` : null },
       card: { decision: v.card || null, onFile: d ? d.cardOnFile : null },
       operto: op, guestStatus: d?.guestStatus || null }
