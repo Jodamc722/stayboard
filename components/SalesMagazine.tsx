@@ -242,7 +242,7 @@ function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number
 }
 
 // ── The magazine ──────────────────────────────────────────────────────────────────────────────────
-export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canEdit?: boolean; onePager?: boolean }) {
+export function SalesMagazine({ report, canEdit, onePager, digital }: { report: Any; canEdit?: boolean; onePager?: boolean; digital?: boolean }) {
   const original: Any = report.content || {}
   const [doc, setDoc] = useState<Any>(() => structuredClone(original))
   const [touched, setTouched] = useState<string[]>([])
@@ -252,7 +252,14 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   // A phone keeps the stacked phone layout in page view too (see MagazineFlipbook); only a wider screen binds fixed pages.
   const [phone, setPhone] = useState(false)
   useEffect(() => { const on = () => setPhone(window.innerWidth < 760); on(); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
-  const [flip, setFlip] = useState<boolean>(() => !canEdit && !(typeof window !== 'undefined' && /[?&]scroll=1/.test(window.location.search)))
+  // TWO VERSIONS, TWO LINKS (Jon, 2026-11-11: "that should be the shareable link, not the standard… the
+  // print version is one version, [digital] is another"). ?view=magazine is the print version — every
+  // page laid out for print and PDF, where the team builds; ?view=digital is the page-turning magazine
+  // that gets shared.
+  const flip = !!digital
+  const [copied, setCopied] = useState(false)
+  // Print from the digital version opens the print version and prints it (?print=1).
+  useEffect(() => { if (!digital && /[?&]print=1/.test(window.location.search)) { const id = setTimeout(() => window.print(), 1400); return () => clearTimeout(id) } }, [digital])
   const [drawer, setDrawer] = useState<null | 'proj' | 'comps' | 'pages' | 'style'>(null)
   const [tuneId, setTuneId] = useState<string | null>(null)
   const [saving, setSaving] = useState('')
@@ -1198,13 +1205,18 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
       }).join('') }} />
       <nav className="mz-bar-top">
         <span className="mz-run-mark mz-on-dark">STAY</span>
-        <span className="mz-switch">{format === 'onepage' ? <><a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Magazine</a><b>One page</b></> : <><b>{format === 'brochure' ? 'Brochure' : 'Magazine'}</b>{cma ? <a href={keynote + '?view=onepage'}>One page</a> : null}</>}<a href={keynote}>Keynote</a></span>
+        <span className="mz-switch">
+          {format === 'onepage' ? <a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Print</a> : flip ? <a href={keynote + '?view=magazine'}>Print</a> : <b>{format === 'brochure' ? 'Print · brochure' : 'Print'}</b>}
+          {format === 'onepage' ? <a href={keynote + '?view=digital'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }); window.location.href = keynote + '?view=digital' } }}>Digital</a> : flip ? <b>Digital</b> : <a href={keynote + '?view=digital'}>Digital</a>}
+          {cma ? (format === 'onepage' ? <b>One page</b> : <a href={keynote + '?view=onepage'}>One page</a>) : null}
+          <a href={keynote}>Keynote</a>
+        </span>
         <span className="mz-bar-r">
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
           {dirty ? <button type="button" onClick={save}>Save changes</button> : saving ? <span className="mz-saved">{saving}</span> : null}
-          {format !== 'onepage' ? <button type="button" className={'mz-ghost' + (flip ? ' on' : '')} onClick={() => { setFlip(f => !f); if (!flip) setEditText(false) }}>{flip ? 'Scroll view' : 'Page view'}</button> : null}
-          <button type="button" onClick={() => { if (flip) { setFlip(false); setTimeout(() => window.print(), 450) } else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
+          {canEdit ? <button type="button" className="mz-ghost" title="Copy the link to the digital magazine, to send" onClick={async () => { const u = window.location.origin + keynote + '?view=digital'; try { await navigator.clipboard.writeText(u) } catch { window.prompt('Copy this link', u) } setCopied(true); setTimeout(() => setCopied(false), 1800) }}>{copied ? 'Link copied' : 'Copy share link'}</button> : null}
+          <button type="button" onClick={() => { if (flip) window.location.href = keynote + '?view=magazine&print=1'; else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
         </span>
       </nav>
       {drawerEl}

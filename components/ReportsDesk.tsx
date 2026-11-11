@@ -1118,9 +1118,13 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
                         className={'shrink-0 inline-flex items-center gap-1 rounded-lg border px-2 h-8 text-[12px] font-semibold ' + (cmaFor && cmaFor.id === r.id ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink hover:bg-app')}>
                         <Building2 size={13} /> Floor plans &amp; comps
                       </button>
-                      <Tip label="Magazine: letter pages to print, leave at a building or read on a phone">
-                        <a href={'/r/' + r.code + '?view=magazine'} target="_blank" rel="noreferrer" aria-label="Open the magazine"
-                          className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 h-8 text-[12px] font-semibold text-ink hover:bg-app"><BookOpen size={13} /> Magazine</a>
+                      <Tip label="Print version: letter pages to print or save as PDF, and where the magazine is built">
+                        <a href={'/r/' + r.code + '?view=magazine'} target="_blank" rel="noreferrer" aria-label="Open the print magazine"
+                          className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 h-8 text-[12px] font-semibold text-ink hover:bg-app"><BookOpen size={13} /> Print</a>
+                      </Tip>
+                      <Tip label="Digital magazine: the page-turning version, the link to send">
+                        <a href={'/r/' + r.code + '?view=digital'} target="_blank" rel="noreferrer" aria-label="Open the digital magazine"
+                          className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 h-8 text-[12px] font-semibold text-ink hover:bg-app"><BookOpen size={13} /> Digital</a>
                       </Tip>
                     </>
                   )}
