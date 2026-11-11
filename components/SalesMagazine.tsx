@@ -520,7 +520,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         <>
           {kicker('For buyers who ask for options')}
           <h2 className="mz-h mz-h1">{building ? <>Stay as a second option at <em>{short(building)}</em></> : 'Stay as a second option'}</h2>
-          <p className="mz-lead mz-lead-s"><E v={cma!.second.choose} p="cma.second.choose" block /></p>
+          <p className="mz-lead mz-lead-xs"><E v={cma!.second.choose} p="cma.second.choose" block /></p>
           <div className="mz-qa">{cma!.second.qa.map(([q, a], i) => <div key={i}><p className="mz-q"><E v={q} p={`cma.second.qa.${i}.0`} /></p><p className="mz-a"><E v={a} p={`cma.second.qa.${i}.1`} block /></p></div>)}</div>
           {kicker('How we would get a unit ready')}
           <ol className="mz-steps mz-steps-3">{cma!.second.steps.map(([k, v], i) => <li key={i}><span>{two(i + 1)}</span><b><E v={k.replace(/\.$/, '')} p={`cma.second.steps.${i}.0`} /></b><p><E v={v} p={`cma.second.steps.${i}.1`} block /></p></li>)}</ol>
@@ -848,6 +848,7 @@ const CSS = `
 .mz-on-dark{color:#fff}
 .mz-lead{font:300 20px/1.45 ${SERIF};color:${C.body};margin:20px 0 0;max-width:30em}
 .mz-lead-s{font-size:19px}
+.mz-lead-xs{font-size:16.5px;line-height:1.5;max-width:36em}
 .mz-small{font:italic 400 12px/17px ${SERIF};color:${C.muted}}
 .mz-caption{position:absolute;left:24px;bottom:20px;margin:0;font:italic 400 12px ${SERIF};color:rgba(255,255,255,.9);text-shadow:0 1px 8px rgba(0,0,0,.45)}
 .mz-caption-top{position:static;align-self:flex-end}
@@ -954,23 +955,23 @@ const CSS = `
 .mz-steps li>span{font:300 30px ${SERIF};color:${C.sand}}
 .mz-steps b{display:block;font:400 18px/1.25 ${SERIF};color:${C.ink};margin-top:8px;min-height:46px}
 .mz-steps p{font:400 13.5px/1.45 ${SERIF};margin:6px 0 0}
-.mz-partner+.mz-kicker,.mz-qa+.mz-kicker{margin-top:48px}
+.mz-partner+.mz-kicker{margin-top:48px}.mz-qa+.mz-kicker{margin-top:28px}
 
 /* second option */
-.mz-qa{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:32px;border-top:1px solid ${C.ink}}
-.mz-qa>div{padding:14px 0;border-bottom:1px solid ${C.grid}}
-.mz-q{font:italic 400 19px ${SERIF};color:${C.ink};margin:0}
-.mz-a{font:400 13.5px/1.5 ${SERIF};margin:6px 0 0}
+.mz-qa{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:24px;border-top:1px solid ${C.ink}}
+.mz-qa>div{padding:10px 0;border-bottom:1px solid ${C.grid}}
+.mz-q{font:italic 400 17px ${SERIF};color:${C.ink};margin:0}
+.mz-a{font:400 13px/1.42 ${SERIF};margin:4px 0 0}
 
 /* market */
 .mz-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:24px;border-top:1px solid ${C.ink}}
 .mz-col-item{padding:11px 0;border-bottom:1px solid ${C.grid}}
 .mz-col-item b{font:400 18px ${SERIF};color:${C.ink}}.mz-col-item p{font:400 13px/1.42 ${SERIF};margin:4px 0 0}
 .mz-comps{margin-top:32px}
-.mz-table{width:100%;border-collapse:collapse;font:400 11.5px ${SANS};color:${C.body}}
+.mz-table{width:100%;border-collapse:collapse;font:400 11px ${SANS};color:${C.body}}
 .mz-table th{font:600 10px ${SANS};letter-spacing:.12em;text-transform:uppercase;color:${C.muted};text-align:left;padding:0 14px 8px 12px;border-bottom:1.25px solid ${C.ink};vertical-align:bottom}
-.mz-table td{padding:6px 14px 6px 12px;height:34px;border-bottom:1px solid ${C.grid};vertical-align:middle;line-height:1.35;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
-.mz-table td:first-child{white-space:normal;width:38%}
+.mz-table td{padding:5px 12px 5px 12px;height:32px;border-bottom:1px solid ${C.grid};vertical-align:middle;line-height:1.35;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.mz-table td:first-child{white-space:normal;width:44%}
 .mz-table th:first-child,.mz-table td:first-child{padding-left:12px}
 .mz-table td b{font-weight:600;color:${C.ink}}
 .mz-table .r{text-align:right}
