@@ -21,7 +21,10 @@ const lab = 'text-[10.5px] uppercase tracking-wider text-muted font-semibold'
 const pairsToText = (p: [string, string][]) => p.map(([a, b]) => a + ' | ' + b).join('\n')
 const textToPairs = (t: string): [string, string][] => t.split('\n').map(l => l.trim()).filter(Boolean).map(l => { const i = l.indexOf('|'); return i < 0 ? [l, ''] as [string, string] : [l.slice(0, i).trim(), l.slice(i + 1).trim()] as [string, string] })
 
-export function SalesCmaEditor({ report, onClose }: { report: { id: string; code: string; scope_label: string | null }; onClose: () => void }) {
+// Two homes for the same editor: a deck's own building pages (report), or a building in the projections
+// library (library: an id, or null for a new one — lib/sales-library). A deck can also be filled from
+// the library, and saved back to it.
+export function SalesCmaEditor({ report, library, onClose, onSaved }: { report?: { id: string; code: string; scope_label: string | null }; library?: { id: string | null; name?: string }; onClose: () => void; onSaved?: () => void }) {
   const [cma, setCma] = useState<SalesCma | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -30,25 +33,59 @@ export function SalesCmaEditor({ report, onClose }: { report: { id: string; code
   const [wordOpen, setWordOpen] = useState(false)
   const [tune, setTune] = useState<string | null>(null)
 
+  const [libId, setLibId] = useState<string | null>(library?.id || null)
+  const [libList, setLibList] = useState<{ id: string; name: string; area: string; plans: number }[]>([])
+  const [libPick, setLibPick] = useState('')
   useEffect(() => {
     let live = true
-    fetch('/api/reports?id=' + encodeURIComponent(report.id), { cache: 'no-store' }).then(r => r.json()).then(d => {
+    if (library) {
+      if (!library.id) { setCma(blankCma(library.name || '', '')); setDirty(true); setLoading(false); return }
+      fetch('/api/sales/buildings?id=' + encodeURIComponent(library.id), { cache: 'no-store' }).then(r => r.json()).then(d => {
+        if (!live) return
+        setCma(normalizeCma(d?.building?.cma)); setLoading(false)
+      }).catch(() => { if (live) { setMsg('Could not load this building.'); setLoading(false) } })
+      return () => { live = false }
+    }
+    fetch('/api/reports?id=' + encodeURIComponent(report!.id), { cache: 'no-store' }).then(r => r.json()).then(d => {
       if (!live) return
       setCma(normalizeCma(d?.report?.content?.cma))
       setLoading(false)
     }).catch(() => { if (live) { setMsg('Could not load this deck.'); setLoading(false) } })
+    fetch('/api/sales/buildings', { cache: 'no-store' }).then(r => r.json()).then(d => { if (live && d?.ok) setLibList(d.buildings) }).catch(() => {})
     return () => { live = false }
-  }, [report.id])
+  }, [report?.id, library?.id])
+
+  async function saveToLibrary(value: SalesCma, id: string | null): Promise<string | null> {
+    const r = await fetch('/api/sales/buildings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id || undefined, name: value.building, area: value.area, cma: value }) })
+    const d = await r.json().catch(() => null)
+    if (!r.ok || !d?.ok) throw new Error(d?.error || 'Save failed')
+    return d.building?.id || null
+  }
+  async function loadFromLibrary(id: string) {
+    if (!id) return
+    setBusy(true)
+    try {
+      const d = await fetch('/api/sales/buildings?id=' + encodeURIComponent(id), { cache: 'no-store' }).then(r => r.json())
+      const next = normalizeCma(d?.building?.cma)
+      if (next) { setCma(next); setDirty(true); setMsg('Copied from the library. Save to put it in this deck; the library entry stays as it is.') }
+    } catch { setMsg('Could not load that building.') }
+    setBusy(false)
+  }
 
   const set = (f: (c: SalesCma) => SalesCma) => { setCma(c => c ? f(structuredClone(c)) : c); setDirty(true); setMsg('') }
 
   async function save(next?: SalesCma | null) {
     const value = next === undefined ? cma : next
     setBusy(true); setMsg('')
+    if (library) {
+      try { const id = await saveToLibrary(value!, libId); setLibId(id); setDirty(false); setMsg('Saved to the library. New decks can start from it now; decks already made keep their own copy.'); onSaved?.() }
+      catch (e: Any) { setMsg(e?.message || 'Save failed') }
+      setBusy(false); return
+    }
     try {
-      const fresh = await fetch('/api/reports?id=' + encodeURIComponent(report.id), { cache: 'no-store' }).then(r => r.json())
+      const fresh = await fetch('/api/reports?id=' + encodeURIComponent(report!.id), { cache: 'no-store' }).then(r => r.json())
       const content = { ...(fresh?.report?.content || {}), cma: value }
-      const r = await fetch('/api/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: report.id, content }) })
+      const r = await fetch('/api/reports', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: report!.id, content }) })
       const d = await r.json().catch(() => null)
       if (!r.ok || !d?.ok) throw new Error(d?.error || 'Save failed')
       setDirty(false); setMsg('Saved. The magazine and the keynote show it now.')
@@ -61,9 +98,13 @@ export function SalesCmaEditor({ report, onClose }: { report: { id: string; code
   const shell = (body: React.ReactNode) => (
     <section className="rounded-2xl border border-ink/20 bg-white p-4 space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <h2 className="text-[14px] font-bold text-ink mr-auto">Floor plans &amp; comps <span className="text-muted font-normal">· {report.scope_label || 'Sales deck'}</span></h2>
-        <a href={'/r/' + report.code + '?view=magazine'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink hover:bg-app"><BookOpen size={13} /> Magazine</a>
-        <a href={'/r/' + report.code} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink hover:bg-app"><Presentation size={13} /> Keynote</a>
+        <h2 className="text-[14px] font-bold text-ink mr-auto">{library ? <>Projections library <span className="text-muted font-normal">· {cma?.building || library.name || 'New building'}</span></> : <>Floor plans &amp; comps <span className="text-muted font-normal">· {report!.scope_label || 'Sales deck'}</span></>}</h2>
+        {report && <>
+          <a href={'/r/' + report.code + '?view=magazine'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink hover:bg-app"><BookOpen size={13} /> Magazine</a>
+          <a href={'/r/' + report.code} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink hover:bg-app"><Presentation size={13} /> Keynote</a>
+          {libList.length > 0 && <select value={libPick} disabled={busy} onChange={e => { const v = e.target.value; setLibPick(''); loadFromLibrary(v) }} title="Replace this deck's building pages with a copy from the projections library" className="rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink"><option value="">Fill from library…</option>{libList.map(b => <option key={b.id} value={b.id}>{b.name}{b.area ? ' · ' + b.area : ''} ({b.plans} plans)</option>)}</select>}
+          {cma && <button type="button" disabled={busy} onClick={async () => { setBusy(true); try { await saveToLibrary(cma, null); setMsg('Saved to the projections library as ' + cma.building + '. The deck is unchanged.') } catch (e: Any) { setMsg(e?.message || 'Save failed') } setBusy(false) }} title="Put these comps and floor plans in the library so new decks can start from them" className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink hover:bg-app">Save to library</button>}
+        </>}
         {cma && <button type="button" disabled={busy || !dirty} onClick={() => save()} className="inline-flex items-center gap-1 rounded-lg bg-ink text-white px-3 py-1 text-[12px] font-semibold disabled:opacity-40">{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</button>}
         <button type="button" onClick={onClose} aria-label="Close" className="rounded-lg p-1 text-muted hover:text-ink"><X size={16} /></button>
       </div>
@@ -76,7 +117,7 @@ export function SalesCmaEditor({ report, onClose }: { report: { id: string; code
   if (!cma) return shell(
     <div className="flex items-center gap-2 flex-wrap">
       <p className="text-[13px] text-muted mr-2">This deck has no building pages yet.</p>
-      <button type="button" onClick={() => { const c = blankCma(report.scope_label || '', ''); setCma(c); setDirty(true) }} className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:bg-app">Start blank for this building</button>
+      <button type="button" onClick={() => { const c = blankCma(report?.scope_label || '', ''); setCma(c); setDirty(true) }} className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:bg-app">Start blank for this building</button>
       <button type="button" onClick={() => { setCma(riderTemplate()); setDirty(true) }} className="rounded-lg border border-line px-3 py-1.5 text-[12.5px] font-semibold text-ink hover:bg-app">Start from The Rider example</button>
     </div>,
   )
@@ -140,10 +181,9 @@ export function SalesCmaEditor({ report, onClose }: { report: { id: string; code
         <div className="space-y-2.5">
           {cma.plans.map((p, i) => { const n = nums[i]; return (
             <div key={p.id} className="rounded-xl border border-line p-3 space-y-2">
-              <div className="grid gap-2 grid-cols-2 sm:grid-cols-[1.3fr_1fr_0.9fr_1.4fr_0.55fr_0.6fr_0.5fr_0.55fr_0.55fr_auto]">
+              <div className="grid gap-2 grid-cols-2 sm:grid-cols-[1.3fr_1fr_1.4fr_0.55fr_0.6fr_0.5fr_0.55fr_0.55fr_auto]">
                 <label><span className={lab}>Floor plan</span><input className={inp} value={p.name} onChange={e => plan(i, { name: e.target.value })} /></label>
                 <label><span className={lab}>Size</span><input className={inp} value={p.sf} onChange={e => plan(i, { sf: e.target.value })} /></label>
-                <label><span className={lab}>From price</span><input className={inp} value={p.price} onChange={e => plan(i, { price: e.target.value })} /></label>
                 <label><span className={lab}>Built from</span>
                   <select className={inp} value={p.baseId} onChange={e => plan(i, { baseId: e.target.value })}>
                     {cma.comps.map(x => <option key={x.id} value={x.id}>{x.name || 'Unnamed comparable'}</option>)}

@@ -184,6 +184,11 @@ export const AI_TASKS: AiTask[] = [
   // FILE READING (2026-09-29, lib/files/extract.ts). Jon: "Adam and Eve should have file upload…
   // for learning or reference for handbooks, SOPs". A PDF (typed or scanned) or a photo of a page
   // is transcribed to text once, at upload, so the agents can search and quote it.
+  // Sales projections reader (Jon, 2026-11-11): a sheet, deck, PDF or screenshot of projections, or a
+  // building's website, read into unit types and figures for the Projections library.
+  { key: 'sales-read', title: 'Sales — reading projection sheets and building websites', group: 'Listings & reports', def: 'sonnet',
+    what: 'Reads an uploaded projection sheet, deck, PDF or screenshot (or a building website) into unit types with yearly, monthly, nightly and occupancy figures.',
+    matters: 'These figures go in front of owners. A weak model misreads a column; every figure is shown for review before it is saved. One call per upload or scan.' },
   { key: 'file-read', title: 'Adam & Eve — reading uploaded files', group: 'Background', def: 'sonnet', background: true,
     what: 'Transcribes an uploaded PDF or image of a document into faithful markdown (headings, lists, tables kept) so it can be filed, searched and learned from.',
     matters: 'What the agents quote as written policy is this transcription. A weak model drops lines; a missing line in an SOP is a rule nobody follows. One call per upload.' },

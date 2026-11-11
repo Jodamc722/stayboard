@@ -116,7 +116,9 @@ export function shapeOf(w?: number[] | null): number[] {
 
 /** The range before any scale: the math, or the numbers set by hand. */
 function baseRange(p: SalesCma, plan: PacketPlan) {
-  const base = p.comps.find(c => c.id === plan.baseId) || p.comps[0]
+  // baseId 'none': a unit type waiting for its own figures (scanned from a website, added by hand) is
+  // never quietly priced off the first comparable.
+  const base = plan.baseId === 'none' ? null : (p.comps.find(c => c.id === plan.baseId) || p.comps[0])
   const k = (plan.scale || 1) * (1 - (plan.less || 0) / 100)
   const manual = !!(plan.override && plan.override.lo > 0 && plan.override.hi > 0)
   return {
@@ -242,7 +244,7 @@ export function riderTemplate(): SalesCma {
         ['You get paid.', 'Once the unit has been live with us for 90 days, the referral fee goes to your brokerage, in writing.'],
       ],
       here: [
-        'A rental comparison for every floor plan, so buyers see a range before they make an offer (included in this packet).',
+        'A rental comparison for every floor plan, so buyers see a range before they make an offer (included in this package).',
         'A unit-level projection within 48 hours for any buyer you introduce.',
         'A short session for your sales team on how rental numbers are built and what buyers ask.',
       ],
@@ -270,10 +272,10 @@ export function riderTemplate(): SalesCma {
       ],
     },
     market: {
-      lead: 'The evidence behind each floor-plan comparison in this packet.',
+      lead: 'The evidence behind each floor-plan comparison in this package.',
       bullets: [
         ['Supply.', 'NoMad Wynwood opened in May 2026 with 329 units and allows short-term rentals. The Rider adds 152 furnished residences. Guests will compare the two buildings on nightly rate and reviews, so how well each unit is run decides who gets the booking.'],
-        ['Competition is real.', 'New Wynwood units compete hard on rate, and units that pushed price at the March and April peak gave back bookings into summer. The owners who do best fill the calendar first and earn on rate where demand supports it.'],
+        ['Competition is real.', 'New Wynwood units compete hard on rate, and units that pushed price at the March and April peak gave back bookings into summer. The owners who do best fill the calendar first and raise rates only where demand supports it.'],
         ['What wins.', 'Occupancy-first pricing, daily rate changes, a fast and clean turnover, and fast answers to guests. Review scores follow operations, and reviews drive the next booking.'],
         ['Event dates.', 'Art Basel week and New Year’s Eve carry a large premium to the base rate. A unit live and reviewed before then is positioned for it.'],
         ['New-build advantage.', 'A brand-new building opens with new furnishings, fresh photos and launch-period demand, and has no aging inventory to discount.'],
@@ -322,7 +324,9 @@ export function normalizeCma(p: any): SalesCma | null {
   // Jon, 2026-11-11: "we do not pick up at 2am — just say 24/7 CCS team". Decks saved with the old
   // line are corrected as they are read, so no deck already out there keeps it.
   // Jon, 2026-11-11: 40+ platforms, not 30+. Same treatment for the steps.
-  const fix = (x: string) => String(x || '').replace(/ with a local 24\/7 guest team on every check-in and every 2 a\.m\. issue\./, ' with a local 24/7 CCS team on every check-in.').replace(/\b30\+ platforms\b/g, '40+ platforms')
+  const fix = (x: string) => String(x || '').replace(/ with a local 24\/7 guest team on every check-in and every 2 a\.m\. issue\./, ' with a local 24/7 CCS team on every check-in.').replace(/\b30\+ platforms\b/g, '40+ platforms').replace(/\bthis packet\b/g, 'this package').replace(/earn on rate where demand supports it/g, 'raise rates only where demand supports it')
+  if (p.partner && Array.isArray(p.partner.here)) p = { ...p, partner: { ...p.partner, here: p.partner.here.map((x: any) => typeof x === 'string' ? fix(x) : x) } }
+  if (p.market) p = { ...p, market: { ...p.market, lead: fix(p.market.lead), bullets: Array.isArray(p.market.bullets) ? p.market.bullets.map((r: any) => Array.isArray(r) ? [r[0], fix(r[1])] : r) : p.market.bullets } }
   if (p.second) p = { ...p, second: { ...p.second,
     qa: Array.isArray(p.second.qa) ? p.second.qa.map((r: any) => Array.isArray(r) ? [r[0], fix(r[1])] : r) : p.second.qa,
     steps: Array.isArray(p.second.steps) ? p.second.steps.map((r: any) => Array.isArray(r) ? [r[0], fix(r[1])] : r) : p.second.steps } }
