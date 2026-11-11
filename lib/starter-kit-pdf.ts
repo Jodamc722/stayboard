@@ -2,17 +2,19 @@
 // report"). Built on the server from what the client saved, so the file always matches what the team
 // sees: their name and home, the selected items room by room with quantities, the models they
 // picked, their own product links, and the totals. Items they left out are not in the file.
+// 2026-11-11: grouped Must have → Recommended → Optional (colour bands), with ☐ Ordered and ☐ In unit
+// boxes on every line for ticking on paper; boxes already ticked on the kit page print ticked.
 //
 // jspdf is already a dependency; it is imported dynamically so it stays out of every other bundle.
 import 'server-only'
 import { STAY_LOGO_PNG_BASE64 } from './brand-logo'
-import { KIT_CATEGORIES, describeSize, fmtMoney, kitTotals, ruleText, type KitPublic } from './starter-kit'
+import { KIT_CATEGORIES, describeSize, fmtMoney, kitTotals, needsOrder, ruleText, type KitPublic } from './starter-kit'
 
 const INK: [number, number, number] = [21, 33, 43]
 const MUTED: [number, number, number] = [107, 120, 128]
 const ACCENT: [number, number, number] = [31, 95, 91]
 const LINE: [number, number, number] = [220, 226, 224]
-const TIER = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
+const TIER = { must: 'Must have', recommended: 'Recommended', optional: 'Optional' } as const
 
 export function kitPdfName(kit: KitPublic): string {
   const clean = (s: string) => s.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim()
@@ -75,32 +77,51 @@ export async function buildKitPdf(kit: KitPublic): Promise<ArrayBuffer> {
     doc.text(lines, M + 14, y); y += lines.length * 15 + 18
   }
 
-  // the kit, room by room — only what is included
-  const colQty = W - M - 200, colPrice = W - M
-  for (const cat of KIT_CATEGORIES) {
-    const lines = t.lines.filter(l => l.item.category === cat && l.included)
+  // the kit, by tier (Jon, 2026-11-11: must have, recommended, optional) — only what is included — with
+  // two boxes per line to tick by hand: Ordered and Added to unit (filled in when already ticked online).
+  const TIERS = ['must', 'recommended', 'optional'] as const
+  const BLURB = { must: 'Every home needs these before the first guest', recommended: 'Guests notice when these are missing', optional: 'Nice extras you chose' } as const
+  const TIER_RGB: Record<string, [number, number, number]> = { must: [28, 74, 126], recommended: [37, 99, 58], optional: [86, 98, 107] }
+  const ordered = kit.selection.ordered || {}, added = kit.selection.added || {}
+  const colPrice = W - M, colAdd = W - M - 96, colOrd = W - M - 140, colQty = W - M - 262
+  const box = (x: number, yy: number, on: boolean) => {
+    doc.setDrawColor(INK[0], INK[1], INK[2]); doc.setLineWidth(0.8); doc.rect(x - 5.5, yy - 9, 11, 11)
+    if (on) { doc.setDrawColor(37, 99, 58); doc.setLineWidth(1.6); doc.line(x - 3.5, yy - 3.5, x - 1, yy - 0.5); doc.line(x - 1, yy - 0.5, x + 4, yy - 7.5) }
+  }
+  const catIdx = (c: string) => KIT_CATEGORIES.indexOf(c as (typeof KIT_CATEGORIES)[number])
+  for (const tier of TIERS) {
+    const lines = t.lines.filter(l => l.item.tier === tier && l.included).sort((a, b) => catIdx(a.item.category) - catIdx(b.item.category))
     if (!lines.length) continue
-    need(60)
-    doc.setFont('times', 'normal'); doc.setFontSize(17); color(INK)
-    doc.text(cat, M, y)
+    need(80)
+    const c = TIER_RGB[tier]
+    doc.setFillColor(c[0], c[1], c[2]); doc.roundedRect(M, y - 15, W - 2 * M, 24, 4, 4, 'F')
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(11)
+    doc.text(`${TIER[tier].toUpperCase()}  ·  ${lines.length} item${lines.length === 1 ? '' : 's'}`, M + 10, y + 1)
     const sub = lines.reduce((a, l) => a + (l.total || 0), 0)
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); color(MUTED)
-    doc.text(fmtMoney(sub), colPrice, y, { align: 'right' })
-    y += 6; doc.setDrawColor(INK[0], INK[1], INK[2]); doc.setLineWidth(1); doc.line(M, y, W - M, y); y += 16
+    const toOrder = lines.filter(needsOrder), done = toOrder.filter(l => ordered[l.item.key]).length, inUnit = lines.filter(l => added[l.item.key]).length
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
+    doc.text(`${BLURB[tier]}  ·  ordered ${done}/${toOrder.length}  ·  in unit ${inUnit}/${lines.length}  ·  ${fmtMoney(sub)}`, W - M - 10, y + 1, { align: 'right' })
+    y += 26
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); color(MUTED)
+    doc.text('ITEM', M, y); doc.text('QTY', colQty, y); doc.text('ORDERED', colOrd, y, { align: 'center' }); doc.text('IN UNIT', colAdd, y, { align: 'center' }); doc.text('TO BUY', colPrice, y, { align: 'right' })
+    y += 14
     for (const l of lines) {
       const it = l.item
       const detail = l.source === 'self' ? `You provide this (${l.detail})` : l.own ? `Your product: ${l.own}` : l.detail
-      const dl = doc.splitTextToSize(detail, colQty - M - 20)
+      const dl = doc.splitTextToSize(detail, colQty - M - 16)
       const h = 14 + dl.length * 11 + 13 + 8
       need(h)
       doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); color(INK)
       doc.text(it.name, M, y)
       const nw = doc.getTextWidth(it.name)
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); color(it.tier === 'must' ? INK : ACCENT)
-      doc.text(TIER[it.tier].toUpperCase(), M + nw + 8, y)
-      doc.setFontSize(10.5); color(INK)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); color(MUTED)
+      doc.text(it.category.toUpperCase(), M + nw + 8, y)
+      doc.setFontSize(9); color(INK)
       doc.text(l.have ? `need ${l.qty} · have ${l.have} · buy ${l.toBuy}` : `need ${l.qty}`, colQty, y)
-      doc.text(l.source === 'self' ? 'You provide' : l.toBuy === 0 ? 'Covered' : l.own ? 'Priced on review' : it.price === 0 ? 'Included' : fmtMoney(l.total || 0), colPrice, y, { align: 'right' })
+      if (needsOrder(l)) box(colOrd, y, !!ordered[it.key]); else { doc.setFontSize(8); color(MUTED); doc.text(l.source === 'self' ? 'yours' : 'covered', colOrd, y, { align: 'center' }) }
+      box(colAdd, y, !!added[it.key])
+      color(INK); doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5)
+      doc.text(l.source === 'self' ? 'You provide' : l.toBuy === 0 ? 'Covered' : l.own ? 'On review' : it.price === 0 ? 'Included' : fmtMoney(l.total || 0), colPrice, y, { align: 'right' })
       y += 13
       doc.setFontSize(9); color(l.own ? ACCENT : MUTED)
       doc.text(dl, M, y); y += dl.length * 11
@@ -108,7 +129,7 @@ export async function buildKitPdf(kit: KitPublic): Promise<ArrayBuffer> {
       doc.text(ruleText(it, kit.size), M, y); y += 8
       doc.setDrawColor(LINE[0], LINE[1], LINE[2]); doc.setLineWidth(0.5); doc.line(M, y, W - M, y); y += 16
     }
-    y += 8
+    y += 10
   }
 
   // the summary and the fine print

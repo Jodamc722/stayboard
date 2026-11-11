@@ -4,9 +4,9 @@
 // report sized to the home, makes their choices and presses Send to Stay. This table shows who
 // opened it, what they sent back and the total.
 import { useEffect, useMemo, useState } from 'react'
-import { Check, ClipboardList, Copy, Download, ExternalLink, Loader2, Lock, Plus, RotateCcw, Search, X, Package, Globe } from 'lucide-react'
+import { Check, ClipboardList, Copy, Download, ExternalLink, FileSpreadsheet, Loader2, Lock, Plus, RotateCcw, Search, X, Package, Globe } from 'lucide-react'
 import { LeanHead, Pill, Tag } from '@/components/lean'
-import { APPLIANCES, DEFAULT_SIZE, SIZE_LIMITS, describeSize, fmtMoney, kitTotals, type KitCount, type KitLink, type KitSize } from '@/lib/starter-kit'
+import { APPLIANCES, DEFAULT_SIZE, SIZE_LIMITS, describeSize, fmtMoney, kitTotals, needsOrder, type KitCount, type KitLink, type KitSize } from '@/lib/starter-kit'
 import type { NeedLead } from '@/lib/need-list-leads'
 
 const BTN = 'inline-flex items-center gap-1.5 rounded-xl font-bold text-[13px] min-h-[38px] px-3.5 disabled:opacity-50'
@@ -159,6 +159,9 @@ export function StarterKitDesk() {
             {loading && <tr><td colSpan={5} className="px-4 py-6 text-muted"><Loader2 size={14} className="inline animate-spin mr-1.5" />Loading…</td></tr>}
             {!loading && shown.map(l => {
               const t = kitTotals(l.size, l.selection)
+              // The client's order & set-up checklist (2026-11-11): ticks they made on /kit/<code>.
+              const inc = t.lines.filter(x => x.included), toOrder = inc.filter(needsOrder)
+              const nOrd = toOrder.filter(x => l.selection.ordered?.[x.item.key]).length, nAdd = inc.filter(x => l.selection.added?.[x.item.key]).length
               return (
                 <tr key={l.code} className={'border-b border-line last:border-0 align-top ' + (l.revokedAt ? 'opacity-55' : '')}>
                   <td className="px-4 py-2.5">
@@ -175,6 +178,7 @@ export function StarterKitDesk() {
                               : <Tag>not opened</Tag>}
                       {t.ownLinks > 0 && <Tag tone="violet">{t.ownLinks} own link{t.ownLinks === 1 ? '' : 's'}</Tag>}
                       {t.selfSupplied > 0 && <Tag tone="violet">{t.selfSupplied} they provide</Tag>}
+                      {(nOrd > 0 || nAdd > 0) && <Tag tone={nAdd === inc.length && nOrd === toOrder.length ? 'emerald' : 'sky'} title="From the checklist on their kit page">ordered {nOrd}/{toOrder.length} · in unit {nAdd}/{inc.length}</Tag>}
                     </div>
                     {l.submitted?.email && <div className="text-[11.5px] text-muted mt-1 select-all">{l.submitted.email}</div>}
                     {l.submitted?.note && <div className="text-[12px] text-ink mt-1 max-w-sm">“{l.submitted.note}”</div>}
@@ -188,6 +192,7 @@ export function StarterKitDesk() {
                     {!l.revokedAt && <button type="button" onClick={() => copy(l.code, 'order')} title="Copy the order form link: each item, must-have or recommended, and how many the home needs — like the linen calculator" className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1">{copied === l.code + 'order' ? <><Check size={12} /> Copied</> : <><ClipboardList size={12} /> Order form</>}</button>}
                     {!l.revokedAt && <a href={`/kit/${l.code}`} target="_blank" rel="noopener noreferrer" className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1"><ExternalLink size={12} /> Open</a>}
                     {!l.revokedAt && <a href={`/api/public/starter-kit/${l.code}/pdf`} title="Download their report as a PDF" className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1"><Download size={12} /> PDF</a>}
+                    {!l.revokedAt && <a href={`/api/public/starter-kit/${l.code}/xlsx`} title="Download the checklist as Excel: Must have, Recommended and Optional, with Ordered and Added to unit ticks" className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1"><FileSpreadsheet size={12} /> Excel</a>}
                     {l.revokedAt
                       ? <button type="button" onClick={() => update(l.code, { revoke: false })} className="ml-1.5 text-[12px] font-semibold text-ink border border-line rounded-lg px-2.5 py-1 hover:border-ink inline-flex items-center gap-1"><RotateCcw size={12} /> Turn on</button>
                       : <button type="button" onClick={() => { if (window.confirm(`Turn off ${l.client}'s link? They will no longer be able to open it. Their choices stay here.`)) update(l.code, { revoke: true }) }} aria-label="Turn link off" title="Turn link off" className="ml-1.5 text-muted hover:text-rose-700 align-middle"><X size={16} /></button>}

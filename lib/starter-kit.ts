@@ -39,7 +39,11 @@ export const APPLIANCES: { k: KitAppliance; label: string }[] = [
   { k: 'fridge', label: 'Refrigerator' }, { k: 'dishwasher', label: 'Dishwasher' },
 ]
 export type KitSize = { bedrooms: number; bathrooms: number; guests: number; kitchen: boolean; appliances: Record<KitAppliance, boolean> }
-export type KitSelection = { inc: Record<string, boolean>; qty: Record<string, number>; own: Record<string, string>; pick: Record<string, string>; self: Record<string, boolean>; have: Record<string, number> }
+export type KitSelection = { inc: Record<string, boolean>; qty: Record<string, number>; own: Record<string, string>; pick: Record<string, string>; self: Record<string, boolean>; have: Record<string, number>
+  // THE CHECKLIST (Jon, 2026-11-11: "a checkmark list… when they order they can check it off and a checklist
+  // for added to unit"). Ticked item keys only. Saved with the rest of the selection through the same
+  // POST /api/public/starter-kit/<code>, so the owner, a buyer and the team all see the same ticks.
+  ordered?: Record<string, boolean>; added?: Record<string, boolean> }
 
 export const KIT_CATEGORIES = ['Kitchen appliances', 'Cookware & prep', 'Dining & glassware', 'Kitchen essentials', 'Cleaning & safety', 'Bedroom & guest comfort', 'Games'] as const
 
@@ -158,6 +162,11 @@ export function normSelection(raw: any): KitSelection {
   for (const [k, v] of Object.entries(r.self || {})) { const it = BY_KEY.get(k); if (it && it.price !== 0 && v === true) { out.self[k] = true; delete out.own[k] } }
   for (const [k, v] of Object.entries(r.have || {})) { const it = BY_KEY.get(k); if (it) { const n = clampInt(v, 0, 999, 0); if (n) out.have[k] = n } }
   for (const [k, v] of Object.entries(r.pick || {})) { const it = BY_KEY.get(k); if (it?.options?.some(o => o.id === v)) out.pick[k] = String(v) }
+  for (const f of ['ordered', 'added'] as const) {
+    const m: Record<string, boolean> = {}
+    for (const [k, v] of Object.entries(r[f] || {})) if (BY_KEY.has(k) && v === true) m[k] = true
+    if (Object.keys(m).length) out[f] = m
+  }
   return out
 }
 
@@ -209,6 +218,9 @@ export function lineFor(it: KitItem, z: KitSize, s: KitSelection): KitLine {
   const url = own || option?.url || (it.asin ? amazonUrl(it.asin) : null)
   return { item: it, included, qty, suggested, have, toBuy, own, total, source, option, price, detail: option ? option.name : it.detail, url }
 }
+
+/** Does this line get an "Ordered" tick? Only when something is left to buy (not owner-provided, not covered by what they have). */
+export const needsOrder = (l: KitLine) => l.included && l.source !== 'self' && l.toBuy > 0
 
 export function kitTotals(z: KitSize, s: KitSelection): KitTotals {
   let must = 0, addOns = 0, items = 0, toBuy = 0, covered = 0, ownLinks = 0, selfSupplied = 0

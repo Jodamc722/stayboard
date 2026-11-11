@@ -21,7 +21,7 @@ export default async function StarterKitOrderPage({ params }: { params: { code: 
   if (!kit) notFound()
   const t = kitTotals(kit.size, kit.selection)
   const needed = t.lines.filter(l => l.included)
-  const TYPE = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
+  const TYPE = { must: 'Must have', recommended: 'Recommended', optional: 'Optional' } as const
   const count = (k: 'must' | 'recommended' | 'optional') => needed.filter(l => l.item.tier === k).length
   const date = new Date(kit.submitted?.at || kit.savedAt || kit.createdAt || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
 

@@ -12,6 +12,9 @@
 //      added; any quantity can change; any product can be swapped for one they link to.
 //   5. The totals and Send to Stay (name, email, note). Choices save as they go.
 // Download report builds a PDF on the server from what they saved (/api/public/starter-kit/<code>/pdf).
+//   6. (2026-11-11) The order & set-up checklist (components/StarterKitChecklist): two ticks per item,
+//      Ordered and In unit, by tier, with progress. Ticks are part of the saved selection, so they
+//      reach the team, the Excel and the PDF. The kit list can also be filtered by tier.
 // A MUST-HAVE means the home needs it, not that it must be ours: every line can be our pick, their
 // own link, or something they provide. The coffee maker is Nespresso or Keurig only; we supply pods.
 //
@@ -19,18 +22,19 @@
 // someone outside the company, so it does not follow the app theme or its dark mode.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bath, BedDouble, Check, ChefHat, ClipboardList, Coffee, Dices, Download, ExternalLink, FileSpreadsheet, Home, Link2, Loader2, Lock, Minus, Plus, Send, ShieldCheck, Sparkles, Users, UtensilsCrossed, Wine,
+  Bath, BedDouble, Check, ChefHat, ClipboardList, ListChecks, Coffee, Dices, Download, ExternalLink, FileSpreadsheet, Home, Link2, Loader2, Lock, Minus, Plus, Send, ShieldCheck, Sparkles, Users, UtensilsCrossed, Wine,
 } from 'lucide-react'
 import {
-  APPLIANCES, KIT_CATEGORIES, SIZE_LIMITS, describeSize, fmtMoney, kitTotals, normLink, ruleText,
-  type KitAppliance, type KitCount, type KitLine, type KitPublic, type KitSelection, type KitSize,
+  APPLIANCES, KIT_CATEGORIES, SIZE_LIMITS, describeSize, fmtMoney, kitTotals, needsOrder, normLink, ruleText,
+  type KitAppliance, type KitCount, type KitLine, type KitPublic, type KitSelection, type KitSize, type KitTier,
 } from '@/lib/starter-kit'
+import { StarterKitChecklist, type TickKind } from '@/components/StarterKitChecklist'
 
 const CAT_ICON: Record<string, any> = {
   'Kitchen appliances': Coffee, 'Cookware & prep': ChefHat, 'Dining & glassware': Wine, 'Kitchen essentials': UtensilsCrossed,
   'Cleaning & safety': ShieldCheck, 'Bedroom & guest comfort': BedDouble, Games: Dices,
 }
-const TIER_LABEL = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' } as const
+const TIER_LABEL = { must: 'Must have', recommended: 'Recommended', optional: 'Optional' } as const
 const SIZE_LABEL: Record<KitCount, string> = { bedrooms: 'Bedrooms', bathrooms: 'Bathrooms', guests: 'Guests' }
 const SIZE_ICON: Record<KitCount, any> = { bedrooms: BedDouble, bathrooms: Bath, guests: Users }
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -49,12 +53,14 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
   const [sendErr, setSendErr] = useState('')
   const [justSent, setJustSent] = useState(false)
   const dirty = useRef(false)
+  const ticked = useRef(false)          // a checklist tick: saves like any change, but is not an edit to the kit itself
+  const [tierView, setTierView] = useState<'all' | KitTier>('all')
   const t = useMemo(() => kitTotals(size, sel), [size, sel])
   const grand = t.total + (initial.setupFee || 0)
 
   // Saves a moment after the last change, so a client clicking through does not lose anything.
   useEffect(() => {
-    if (!dirty.current) return
+    if (!dirty.current && !ticked.current) return
     setSave('saving')
     const h = setTimeout(async () => {
       const r = await fetch(`/api/public/starter-kit/${initial.code}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selection: sel, size }) })
@@ -63,7 +69,12 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
     }, 900)
     return () => clearTimeout(h)
   }, [sel, size, initial.code])
-  const change = (fn: (s: KitSelection) => KitSelection) => { dirty.current = true; setSel(s => fn({ inc: { ...s.inc }, qty: { ...s.qty }, own: { ...s.own }, pick: { ...s.pick }, self: { ...s.self }, have: { ...s.have } })) }
+  const copySel = (s: KitSelection): KitSelection => ({ inc: { ...s.inc }, qty: { ...s.qty }, own: { ...s.own }, pick: { ...s.pick }, self: { ...s.self }, have: { ...s.have }, ordered: { ...s.ordered }, added: { ...s.added } })
+  const change = (fn: (s: KitSelection) => KitSelection) => { dirty.current = true; setSel(s => fn(copySel(s))) }
+  const tick = (kind: TickKind, key: string, on: boolean) => {
+    ticked.current = true
+    setSel(s => { const n = copySel(s); const m = n[kind] || {}; if (on) m[key] = true; else delete m[key]; n[kind] = m; return n })
+  }
   const setKitchen = (on: boolean) => { dirty.current = true; setSize(z => ({ ...z, kitchen: on })) }
   const setAppliance = (a: KitAppliance, on: boolean) => { dirty.current = true; setSize(z => ({ ...z, appliances: { ...z.appliances, [a]: on } })) }
   const setHave = (l: KitLine, n: number) => change(s => { const v = Math.max(0, Math.min(999, Math.round(n) || 0)); if (v) s.have[l.item.key] = v; else delete s.have[l.item.key]; return s })
@@ -112,6 +123,8 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
     setSubmitted(r.kit.submitted); setJustSent(true); setSave('saved')
   }
 
+  const included = t.lines.filter(l => l.included)
+  const ckDone = included.filter(l => sel.added?.[l.item.key] && (!needsOrder(l) || sel.ordered?.[l.item.key])).length
   const byCat = KIT_CATEGORIES.map(c => {
     const lines = t.lines.filter(l => l.item.category === c)
     const on = lines.filter(l => l.included)
@@ -127,6 +140,7 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
           <img src="/stay-logo.png" alt="Stay Hospitality" className="skr-logo" />
           <div className="skr-top-r">
             <span className={'skr-save skr-noprint ' + save} aria-live="polite">{save === 'saving' ? 'Saving…' : save === 'saved' ? 'Saved' : save === 'error' ? 'Not saved, retrying on your next change' : ''}</span>
+            <a href="#checklist" className="skr-btn ghost skr-noprint" title="Order and set-up checklist"><ListChecks size={15} /> <span className="skr-hide-sm">Checklist</span> {ckDone}/{included.length}</a>
             <button type="button" className="skr-btn ghost skr-noprint" onClick={() => download('xlsx')} disabled={dl}><FileSpreadsheet size={15} /> <span className="skr-hide-sm">Need list</span> Excel</button>
             <button type="button" className="skr-btn ghost skr-noprint" onClick={() => download('pdf')} disabled={dl}>{dl ? <Loader2 size={15} className="spin" /> : <Download size={15} />} <span className="skr-hide-sm">Report</span> PDF</button>
           </div>
@@ -240,14 +254,20 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
         </section>
 
         {/* 4 — the kit */}
-        <div className="skr-legend skr-noprint">
-          <span><i className="skr-tier must">Must-have</i> your home needs it; our pick, your link or your own</span>
-          <span><i className="skr-tier recommended">Recommended</i> included unless you remove it</span>
-          <span><i className="skr-tier optional">Optional</i> add it if you’d like it</span>
+        <div className="skr-legend skr-noprint" role="radiogroup" aria-label="Show items by tier">
+          <button type="button" role="radio" aria-checked={tierView === 'all'} className={'skr-tf' + (tierView === 'all' ? ' on' : '')} onClick={() => setTierView('all')}>All · {t.lines.length}</button>
+          {(['must', 'recommended', 'optional'] as KitTier[]).map(k => (
+            <button key={k} type="button" role="radio" aria-checked={tierView === k} className={'skr-tf' + (tierView === k ? ' on' : '')} onClick={() => setTierView(v => (v === k ? 'all' : k))}>
+              <i className={'skr-tier ' + k}>{TIER_LABEL[k]}</i>
+              <span>{k === 'must' ? 'your home needs it; our pick, your link or your own' : k === 'recommended' ? 'included unless you remove it' : 'add it if you’d like it'} · {t.lines.filter(l => l.item.tier === k).length}</span>
+            </button>
+          ))}
         </div>
         <div className="skr-cols skr-noprint" aria-hidden="true"><span>Item</span><span>Need</span><span>Have</span><span>To buy</span><span /></div>
         {byCat.map(c => {
           const Ico = CAT_ICON[c.cat] || Sparkles
+          const visible = tierView === 'all' ? c.lines : c.lines.filter(l => l.item.tier === tierView)
+          if (!visible.length) return null
           return (
             <section key={c.cat} id={slug(c.cat)} className="skr-cat">
               <div className="skr-cat-h">
@@ -255,7 +275,7 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
                 <span>{c.on} needed · {c.lines.filter(l => l.included && l.toBuy > 0).length} to buy · {fmtMoney(c.sub)}</span>
               </div>
               <div className="skr-items">
-                {c.lines.map(l => <ItemRow key={l.item.key} l={l} size={size} ownDraft={ownOpen[l.item.key]}
+                {visible.map(l => <ItemRow key={l.item.key} l={l} size={size} ownDraft={ownOpen[l.item.key]}
                   onToggle={() => toggle(l)} onQty={n => setQty(l, n)} onHave={n => setHave(l, n)} onSource={src => setSource(l, src)} onPick={id => setPick(l, id)}
                   onOwnDraft={v => setOwnOpen(o => ({ ...o, [l.item.key]: v }))}
                   onOwnCancel={() => setOwnOpen(o => { const n = { ...o }; delete n[l.item.key]; return n })} onOwnSave={() => saveOwn(l)} />)}
@@ -306,6 +326,8 @@ export function StarterKitReport({ initial }: { initial: KitPublic }) {
             <button type="button" className="skr-btn solid wide" disabled={sending} onClick={send}>{sending ? <Loader2 size={16} className="spin" /> : <Send size={16} />} {submitted ? 'Send update' : 'Send to Stay'} · {fmtMoney(grand, false)}</button>
           </div>
         </section>
+
+        <StarterKitChecklist lines={included} ordered={sel.ordered || {}} added={sel.added || {}} onTick={tick} saving={save} />
 
         <footer className="skr-foot">
           <img src="/stay-logo.png" alt="" className="skr-logo sm" />
@@ -498,8 +520,12 @@ const CSS = `
 .skr-over-n{display:flex;align-items:center;gap:8px;font-weight:500;font-size:14.5px}
 .skr-over-bar{height:8px;background:var(--ground);border-radius:999px;overflow:hidden}.skr-over-bar i{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .3s}
 .skr-over-v{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}.skr-over-v small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
-.skr-legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:44px;font-size:13px;color:var(--muted)}
+.skr-legend{display:flex;flex-wrap:wrap;gap:8px;margin-top:44px;font-size:13px;color:var(--muted)}
 .skr-legend span{display:flex;align-items:center;gap:7px}
+.skr-tf{display:inline-flex;align-items:center;gap:8px;min-height:44px;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:0 14px 0 8px;font:500 13px var(--ui);color:var(--muted);cursor:pointer;text-align:left}
+.skr-tf:first-child{padding:0 16px;font-weight:600;color:var(--ink)}
+.skr-tf.on{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink);color:var(--ink)}
+@media (max-width:640px){.skr-tf span{display:none}.skr-tf{padding:0 8px}.skr-tf:first-child{padding:0 14px}}
 .skr-tier{font-style:normal;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap;letter-spacing:.01em}
 .skr-tier.must{background:var(--must-bg);color:var(--must)}.skr-tier.recommended{background:var(--rec-bg);color:var(--rec)}.skr-tier.optional{background:var(--opt-bg);color:var(--opt)}.skr-tier.own{background:var(--own-bg);color:var(--own)}
 .skr-cat{margin-top:30px;scroll-margin-top:80px}
