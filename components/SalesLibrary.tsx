@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import { Loader2, Plus, Pencil, Trash2, Sparkles, Building2 } from 'lucide-react'
 import { SalesCmaEditor } from '@/components/SalesCmaEditor'
 
-type Row = { id: string; name: string; area: string; plans: number; comps: number; range: [number, number] | null; updatedAt: string; updatedBy?: string | null }
+type Row = { id: string; name: string; area: string; photo?: string; plans: number; comps: number; range: [number, number] | null; updatedAt: string; updatedBy?: string | null }
 const k = (n: number) => '$' + (n >= 100000 ? Math.round(n / 1000) : (n / 1000).toFixed(1)) + 'K'
 export const START_FROM_EVENT = 'sales:start-from'
 
@@ -63,5 +63,22 @@ export function SalesLibrary() {
         </div>
       )}
     </section>
+  )
+}
+
+/** On the Sales desk: the library is its own page now (/sales/projections). */
+export function SalesLibraryLink() {
+  const [rows, setRows] = useState<Row[] | null>(null)
+  useEffect(() => { fetch('/api/sales/buildings', { cache: 'no-store' }).then(r => r.json()).then(d => { if (d?.ok) setRows(d.buildings) }).catch(() => setRows([])) }, [])
+  return (
+    <a href="/sales/projections" className="mt-6 flex flex-wrap items-center gap-4 rounded-2xl border border-line bg-white p-4 hover:border-ink/40">
+      <Building2 size={20} className="text-ink" />
+      <div className="mr-auto">
+        <p className="font-serif text-[22px] leading-none text-ink">Projections library</p>
+        <p className="text-[12.5px] text-muted mt-1">{rows ? rows.length + ' building' + (rows.length === 1 ? '' : 's') + ' · ' + rows.reduce((a, r) => a + r.plans, 0) + ' floor plans' : 'Every building’s floor plans and projections'} · add, import and edit them; new decks start from them.</p>
+      </div>
+      <div className="flex -space-x-3">{(rows || []).slice(0, 5).map(r => <span key={r.id} className="w-11 h-11 rounded-full border-2 border-white bg-app bg-cover bg-center" style={r.photo ? { backgroundImage: `url("${r.photo}")` } : undefined} title={r.name} />)}</div>
+      <span className="rounded-xl bg-ink text-white px-3.5 py-2 text-[13px] font-semibold">Open the library</span>
+    </a>
   )
 }

@@ -1482,6 +1482,11 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [busy, setBusy] = useState('')
   const [attachMsg, setAttachMsg] = useState('')
   const [picker, setPicker] = useState(false)
+  // PHOTO SEARCH IN EVERY PHOTO PICKER (Jon, 2026-11-11: "the same customization ability in the report
+  // and the magazine… the photo search feature"). Our photo library's smart search, as in the magazine.
+  const [libQ, setLibQ] = useState('')
+  const [libHits, setLibHits] = useState<Any[] | null>(null)
+  const [libBusy, setLibBusy] = useState(false)
   const [photoPick, setPhotoPick] = useState<{ title: string; cur: string; set: (u: string) => void; choices?: string[]; choicesLabel?: string; groups?: { id: string; name: string; pics: string[] }[] } | null>(null)
   // The properties slide's galleries, by building (Jon, 2026-09-24: "let me select").
   const [buildingListings, setBuildingListings] = useState<Record<string, { id: string; name: string; pics: string[] }[]>>({})
@@ -3958,6 +3963,22 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                 className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40"
                 style={{ background: t.ink, color: t.bg }}>Use</button>
             </div>
+            <form className="flex gap-2 mb-2" onSubmit={async e => { e.preventDefault(); const q = libQ.trim(); if (!q) return; setLibBusy(true); try { const d = await fetch('/api/sales/photos?q=' + encodeURIComponent(q)).then(r => r.json()); setLibHits(d?.ok ? d.hits : []) } catch { setLibHits([]) } setLibBusy(false) }}>
+              <input value={libQ} onChange={e => setLibQ(e.target.value)} placeholder="Search our photos: elser pool, 17 west view, brickell kitchen"
+                className="flex-1 rounded-lg px-3 py-2 text-[13px]" style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }} />
+              <button type="submit" disabled={libBusy || !libQ.trim()} className="rounded-lg px-3.5 py-2 text-[13px] font-semibold disabled:opacity-40" style={{ background: t.ink, color: t.bg }}>{libBusy ? 'Searching\u2026' : 'Search'}</button>
+            </form>
+            {libHits ? (libHits.length ? (
+              <div className="grid gap-2 mb-4" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', maxHeight: 280, overflowY: 'auto' }}>
+                {libHits.map((h: Any) => (
+                  <button key={h.url} onClick={() => { photoPick.set(h.url); answerChanged(); setPhotoPick(null); setPhotoUrl('') }} title={[h.building, h.unit, h.caption].filter(Boolean).join(' \u00b7 ')} className="text-left">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={h.thumb || h.url} alt="" loading="lazy" className="w-full rounded-lg object-cover" style={{ aspectRatio: '4 / 3', border: '2px solid ' + (h.url === photoPick.cur ? t.accent : 'transparent') }} />
+                    <span className="block text-[10.5px] truncate mt-0.5" style={{ color: t.muted }}>{h.building}{h.unit ? ' \u00b7 ' + h.unit : ''}</span>
+                  </button>
+                ))}
+              </div>
+            ) : <p className="text-[12px] italic mb-4" style={{ color: t.muted }}>No photos match. Try fewer words, or a building and a room.</p>) : null}
             {isOnboarding ? (
               <button onClick={() => setLibFor('one')} className="mb-4 inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-[13px] font-semibold"
                 style={{ background: t.chip, border: '1px solid ' + t.cardBorder, color: t.ink }}>

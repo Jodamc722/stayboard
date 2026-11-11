@@ -7,7 +7,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { ReportsDesk } from '@/components/ReportsDesk'
-import { SalesLibrary } from '@/components/SalesLibrary'
+import { SalesLibraryLink } from '@/components/SalesLibrary'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +18,7 @@ export default async function SalesPage() {
   return (
     <Shell>
       <ReportsDesk scope="sales" />
-      <SalesLibrary />
+      <SalesLibraryLink />
     </Shell>
   )
 }

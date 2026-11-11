@@ -325,11 +325,13 @@ export async function POST(req: NextRequest) {
     const audience: Audience = (AUDIENCES as any)[str(body?.audience)] ? (str(body?.audience) as Audience) : 'owner'
     ;(contentS as any).audience = audience
     if (cmaPick === 'rider' || cmaPick === 'blank' || libEntry) {
-      ;(contentS as any).cma = libEntry ? { ...structuredClone(libEntry.cma), libraryId: libEntry.id } : cmaPick === 'rider' ? riderTemplate() : blankCma(str(intake?.building) || scopeLabel, str(body?.market) || String(marketS || ''))
+      // Only the unit types picked on the form (body.planIds); none picked = every floor plan.
+      const pickPlans = Array.isArray(body?.planIds) ? (body.planIds as any[]).map(String) : []
+      ;(contentS as any).cma = libEntry ? { ...structuredClone(libEntry.cma), plans: pickPlans.length ? libEntry.cma.plans.filter(p => pickPlans.includes(p.id)) : libEntry.cma.plans, libraryId: libEntry.id } : cmaPick === 'rider' ? riderTemplate() : blankCma(str(intake?.building) || scopeLabel, str(body?.market) || String(marketS || ''))
       ;(contentS as any).cma.sections = { ...(contentS as any).cma.sections, ...AUDIENCES[audience].sections }
       if (libEntry?.website) (contentS as any).magazine = { ...((contentS as any).magazine || {}), brandSource: libEntry.website }
       // A building package is one photograph-led cover: the Miami skyline when no photo was chosen.
-      if ((cmaPick === 'rider' || libEntry) && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = '/deck-img/miami-skyline.jpg'
+      if ((cmaPick === 'rider' || libEntry) && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = libEntry?.photo || '/deck-img/miami-skyline.jpg'
       // A building package already carries the projections, so the close asks for a call (Jon, 2026-11-11).
       if ((contentS as any).close) (contentS as any).close.headline = 'Book a call to learn more'
     }

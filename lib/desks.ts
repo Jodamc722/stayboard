@@ -137,6 +137,7 @@ export const DESKS: Desk[] = [
     blurb: 'Sales decks and building packages for owners, developers and realtor groups: keynote slides, a printable magazine and one link to share.',
     views: [
       { to: '/sales', label: 'Sales decks', hint: 'Proposals and building packages: floor-plan rental comparisons, comps, the agent partner program; keynote and magazine from one link' },
+      { to: '/sales/projections', label: 'Projections library', hint: 'Every building’s floor plans and rental projections, edited in one place; new decks start from them' },
     ],
   },
   {

@@ -162,12 +162,30 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
   const [libBuildings, setLibBuildings] = useState<{ id: string; name: string; area: string; plans: number }[]>([])
   // Who the deck is for (lib/sales-audience): one owner, buyers and agents, or a building's sales team.
   const [audience, setAudience] = useState<Audience>('owner')
+  // The unit types of the chosen library building, and which of them go in the deck (all by default).
+  const [libPlans, setLibPlans] = useState<{ id: string; name: string; sf: string }[]>([])
+  const [planPick, setPlanPick] = useState<string[]>([])
+  useEffect(() => {
+    if (!cmaPick.startsWith('lib:')) { setLibPlans([]); setPlanPick([]); return }
+    let live = true
+    fetch('/api/sales/buildings?id=' + encodeURIComponent(cmaPick.slice(4)), { cache: 'no-store' }).then(r => r.json()).then(d => {
+      if (!live) return
+      const ps = ((d?.building?.cma?.plans) || []).map((p: any) => ({ id: String(p.id), name: String(p.name || ''), sf: String(p.sf || '') }))
+      setLibPlans(ps); setPlanPick(ps.map((p: any) => p.id))
+    }).catch(() => {})
+    return () => { live = false }
+  }, [cmaPick])
   useEffect(() => {
     if (!salesOnly) return
     fetch('/api/sales/buildings', { cache: 'no-store' }).then(r => r.json()).then(d => { if (d?.ok) setLibBuildings(d.buildings) }).catch(() => {})
     // "New deck" on a library building (components/SalesLibrary) lands here.
     const on = (e: Event) => { const d = (e as CustomEvent).detail || {}; if (d.id) { setCmaPick('lib:' + d.id); setIntake(p => ({ ...p, building: p.building || d.name || '' })); if (audience === 'owner') setAudience('building') } }
     window.addEventListener('sales:start-from', on)
+    // From the Projections library page: /sales?from=<building id>.
+    try {
+      const from = new URLSearchParams(window.location.search).get('from')
+      if (from) { setShowNew(true); setKind('sales'); setCmaPick('lib:' + from); setAudience('building'); fetch('/api/sales/buildings?id=' + encodeURIComponent(from)).then(r => r.json()).then(d => { if (d?.building?.name) setIntake(p => ({ ...p, building: p.building || d.building.name })) }).catch(() => {}) }
+    } catch { /* no query string */ }
     return () => window.removeEventListener('sales:start-from', on)
   }, [salesOnly])
   const [cmaFor, setCmaFor] = useState<ReportRow | null>(null)
@@ -406,6 +424,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
           market: kind === 'sales' ? (intake.market || undefined) : undefined,
           cma: kind === 'sales' && cmaPick ? cmaPick : undefined,
           audience: kind === 'sales' ? audience : undefined,
+          planIds: kind === 'sales' && cmaPick.startsWith('lib:') && planPick.length && planPick.length < libPlans.length ? planPick : undefined,
           // Review-only attachments. The statement picker is not on screen for the other three
           // document types, so nothing it holds may ride along with them.
           pacingUrl: kind === 'review' && pacing ? pacing.url : undefined,
@@ -817,6 +836,21 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
                       <option value="blank">Empty floor plans and comps</option>
                     </select>
                   </label>
+                  {libPlans.length > 0 && (
+                    <div className="basis-full">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Unit types in this deck</span>
+                        <button type="button" onClick={() => setPlanPick(libPlans.map(p => p.id))} className="text-[11.5px] font-semibold text-brand-700 hover:underline">All</button>
+                        <a href={'/sales/projections'} className="text-[11.5px] text-muted hover:underline ml-auto">Edit them in the Projections library</a>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {libPlans.map(p => { const on = planPick.includes(p.id); return (
+                          <button key={p.id} type="button" title={p.sf} onClick={() => setPlanPick(x => on ? (x.length > 1 ? x.filter(y => y !== p.id) : x) : [...x, p.id])}
+                            className={'rounded-full border px-3 py-1 text-[12.5px] font-semibold ' + (on ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:text-ink')}>{p.name}</button>
+                        ) })}
+                      </div>
+                    </div>
+                  )}
                   {/* THE PROPERTY IS OPTIONAL ON THIS ONE (2026-10-27). A prospect's unit is
                       usually not on our account yet, so the deck generates on a name alone; pick
                       a building we DO run and it fills with that building's own photographs. */}
