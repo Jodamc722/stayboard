@@ -583,7 +583,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           <div className="mz-icover-mast">
             <div className="mz-lockup">
               <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />
-              {brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}
+              {brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" title="Remove the building’s logo" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}
             </div>
             <span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span>
           </div>
@@ -605,7 +605,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       case s.key === 'cover': return (
         <section key="cover" className="mz-page mz-cover mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(22,19,16,.66) 0%, rgba(22,19,16,.10) 26%, rgba(22,19,16,.04) 50%, rgba(22,19,16,.86) 100%)', 'center 40%')}>
           <div className="mz-mast">
-            <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}</div>
+            <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" title="Remove the building’s logo" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}</div>
             <div className="mz-mast-r"><span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span><span>{monthYear}</span></div>
           </div>
           <div className="mz-cover-main">
@@ -859,7 +859,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       }
       case s.key === 'back': return (
         <section key="back" className="mz-page mz-backcover mz-ph" style={ph('back', 'linear-gradient(180deg, rgba(22,19,16,.55) 0%, rgba(22,19,16,.80) 45%, rgba(22,19,16,.95) 100%)')}>
-          <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}</div>
+          <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" title="Remove the building’s logo" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}</div>
           <div className="mz-back-main">
             {kicker('Next step', true)}
             <h2 className="mz-back-title"><CT k="backTitle" /></h2>
@@ -1079,7 +1079,16 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           <p className="mz-form-h">Fine-tune colours</p>
           <div className="mz-colors">{color('navy', 'Primary')}{color('sand', 'Accent')}{color('ink', 'Headlines')}{color('warm', 'Tint pages')}</div>
           {custom?.display ? <p className="mz-drawer-note">Headlines in {custom.display}, from the building’s site.</p> : null}
-          {brandLogo ? <label className="mz-toggle"><input type="checkbox" checked onChange={() => setMag({ brandLogo: '' })} /> The building’s logo on the cover</label> : null}
+          {/* THE BUILDING'S LOGO (Jon, 2026-11-11: "need to be able to remove their logos"): shown beside
+              Stay's on the cover and the close; remove it, or put in the right one. */}
+          <p className="mz-form-h">Building logo</p>
+          <div className="mz-logo-ctl">
+            {brandLogo ? <span className="mz-logo-prev"><img src={brandLogo} alt="" /></span> : <span className="mz-logo-none">No building logo. Stay’s logo shows alone.</span>}
+            {brandLogo ? <button type="button" onClick={() => setMag({ brandLogo: '' })}>Remove logo</button> : null}
+          </div>
+          <input className="mz-logo-url" placeholder={brandLogo ? 'Replace: paste a logo image link' : 'Add one: paste a logo image link'} defaultValue="" key={brandLogo}
+            onKeyDown={e => { if (e.key === 'Enter') { const v = (e.target as HTMLInputElement).value.trim(); if (/^https?:\/\/|^\//.test(v)) setMag({ brandLogo: v }) } }}
+            onBlur={e => { const v = e.target.value.trim(); if (/^https?:\/\/|^\//.test(v)) setMag({ brandLogo: v }) }} />
           <p className="mz-form-h">Chart on each floor plan</p>
           <div className="mz-drawer-tabs">{CHARTS.map(([k, l]) => <button key={k} type="button" className={chart === k ? 'on' : ''} onClick={() => setMag({ chart: k })}>{l}</button>)}</div>
           <p className="mz-form-h">Data</p>
@@ -1189,7 +1198,17 @@ const CSS = `
 .mz-icover-mast{display:flex;justify-content:space-between;align-items:center}
 .mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
 .mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
-.mz-lockup{display:flex;align-items:center;gap:18px}.mz-lockup i{width:1px;height:34px;background:${C.ink};opacity:.35}
+.mz-lockup{display:flex;align-items:center;gap:18px}
+.mz-lockup-wrap{position:relative;display:inline-flex}
+.mz-logo-x{position:absolute;top:-10px;right:-12px;width:20px;height:20px;border-radius:999px;border:0;background:#C0392B;color:#fff;font:600 13px/20px "Inter",sans-serif;cursor:pointer;opacity:0;transition:opacity .15s}
+.mz-lockup-wrap:hover .mz-logo-x{opacity:1}
+@media print{.mz-logo-x{display:none}}
+.mz-logo-ctl{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.mz-logo-prev{display:inline-flex;align-items:center;justify-content:center;height:44px;min-width:90px;padding:6px 10px;border:1px solid #E3DED3;border-radius:8px;background:#fff}
+.mz-logo-prev img{max-height:32px;max-width:140px;object-fit:contain}
+.mz-logo-none{font:400 12px "Inter",sans-serif;color:#80859A}
+.mz-logo-ctl button{font:600 12px "Inter",sans-serif;border:1px solid #E3DED3;background:#fff;color:#B03A2E;border-radius:8px;padding:6px 10px;cursor:pointer}
+.mz-logo-url{width:100%;font:500 12.5px "Inter",sans-serif;border:1px solid #E3DED3;border-radius:8px;padding:7px 9px;color:#0F1640;background:#fff}.mz-lockup i{width:1px;height:34px;background:${C.ink};opacity:.35}
 .mz-lockup-b{max-width:130px;max-height:38px;object-fit:contain;filter:brightness(0);opacity:.82}
 .mz-lockup-dark i{background:#fff}.mz-lockup-dark .mz-lockup-b{filter:brightness(0) invert(1);opacity:.9}
 .mz-icover-photo{margin-top:36px;height:488px;flex:none}
