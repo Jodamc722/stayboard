@@ -17,6 +17,7 @@ import { clampLimit, clampDays, shiftDay, lc, has, safe, cap, chunk, resolveList
 import { nameMatches, personKey, bestSpelling } from '@/lib/person-name'
 import { assigneeNames as assigneeNamesOf } from './dossiers'
 import { TASK_DONE_RE } from '@/lib/task-categories'
+import { INSPECTION_RESULTS } from './reach'
 
 // Status predicates. There is no enum on the mirror — every board in the app regex-matches, and
 // finished_at OVERRIDES the status label because the field app sets it even when the string is odd.
@@ -458,7 +459,7 @@ export const OPS_TOOLS: EveTool[] = [
 
   {
     name: 'inspections',
-    description: 'The coordinator inspection log (manual walk-throughs, NOT Breezeway tasks): who inspected, which cleaner, a 1-5 rating, notes and whether a follow-up was flagged. Also returns per-cleaner averages. Optional days, cleaner, unit.',
+    description: 'The coordinator inspection log (manual walk-throughs, NOT Breezeway tasks): who inspected, which cleaner, a 1-5 rating, notes and whether a follow-up was flagged. Also returns per-cleaner averages. Optional days, cleaner, unit. For "what failed on an inspection" or anything about a building\'s Breezeway inspections, use inspection_results instead (it takes a building). If this log cannot be read it answers from inspection_results.',
     input_schema: obj({ days: S.num, cleaner: S.str, unit: S.str, follow_up_only: S.bool, limit: S.num }),
     run: async (input, ctx) => {
       const days = clampDays(input?.days, 30, 365)
@@ -475,7 +476,23 @@ export const OPS_TOOLS: EveTool[] = [
       if (unitQ) iq = iq.ilike('unit', `%${unitQ}%`)
       if (input?.follow_up_only) iq = iq.eq('follow_up', true)
       const { data, error, count } = await iq.order('inspected_on', { ascending: false }).order('id').limit(lim)
-      if (error) return { error: 'Inspections table not available (migration may not have run).' }
+      if (error) {
+        // NO DEAD END (eval 2026-11-11: "what failed on the last inspections at Botanica" hit this
+        // error and stopped). unit_inspections has no migration in this repo; the Breezeway inspection
+        // checklists live in inspection_results (migration 174). Answer from there instead, and say so.
+        const unitText = String(input?.unit || '').trim()
+        const asBuilding = unitText ? ctx.idsForBuilding(unitText) : []
+        const fwd: any = { days: input?.days, person: input?.cleaner, limit: input?.limit }
+        if (asBuilding.length) fwd.building = unitText
+        else if (unitText) fwd.unit = unitText
+        let fallback: any = null
+        try { fallback = await INSPECTION_RESULTS.run(fwd, ctx) } catch (e: any) { fallback = { error: String(e?.message || e).slice(0, 160) } }
+        return {
+          manual_log_unavailable: 'The coordinator\'s manual inspection log (table unit_inspections) could not be read: ' + String(error.message || '').slice(0, 100),
+          answered_from: 'inspection_results — the Breezeway inspection checklists (post-clean audits, PM and arrival inspections, with what failed on each)',
+          ...(fallback && typeof fallback === 'object' ? fallback : {}),
+        }
+      }
       const totalRows: number | null = typeof count === 'number' ? count : null
       const cut = totalRows != null ? totalRows > (data || []).length : cap(data || [], lim).truncated
       let rows = (data || []).map((r: any) => ({ unit: r.unit, inspected_on: r.inspected_on, inspector: r.inspector, cleaner: r.cleaner, rating: r.rating, follow_up: !!r.follow_up, notes: String(r.notes || '').slice(0, 200) }))

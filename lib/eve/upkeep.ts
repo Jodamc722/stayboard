@@ -509,6 +509,8 @@ const VENDOR_360: EveTool = {
     const ev = eS.ok ? eS.v.rows : []
     return {
       vendor: label, key,
+      // Every month asked for is named: a month with no vendor_month row is said as 0 jobs, not skipped.
+      months_with_no_vendor_tagged_jobs: months.filter(m => !rows.some(r => String(r.month || '').slice(0, 7) === String(m).slice(0, 7))),
       by_month: rows.map(r => ({ month: r.month, jobs: r.jobs, jobs_closed: r.jobs_closed, median_hours_to_close: r.median_hours_to_close, repeat_visits: r.repeat_visits, billed_to_owner_amount: hideMoney(ctx, r.billed_owner == null ? null : round2(num(r.billed_owner))), invoices_amount: hideMoney(ctx, r.invoices_total == null ? null : round2(num(r.invoices_total))), invoices: r.invoices_n })),
       latest_events: ev.slice(0, 12).map(e => ({ unit: physName(ctx, d, str(e.physical_unit_id) || str(e.listing_id)), system: sysWord(e.system), what: str(e.title).slice(0, 80), opened: etDay(e.opened_at), closed: e.closed_at ? etDay(e.closed_at) : 'open', repeat: e.is_repeat === true || undefined })),
       events_180d: ev.length, events_truncated: eS.ok ? eS.v.truncated : undefined,

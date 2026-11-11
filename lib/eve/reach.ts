@@ -23,6 +23,8 @@ import { blockedUnits, type BlockedReport } from '@/lib/blocked-units'
 import { getVendors } from '@/lib/staffing'
 import { vendorSummary } from '@/lib/project-vendors'
 import { spendNow } from '@/lib/ai-budget'
+import { CADENCE_KEY, resolveCadences } from '@/lib/cadences'
+import { getSetting } from '@/lib/app-settings'
 import type { EveTool } from './types'
 import { obj, S } from './types'
 import type { EveCtx } from './ctx'
@@ -72,12 +74,13 @@ export function dueLine(it: DueItem): any {
 // ───────────────────────────────────────────────────────────── ops drawer
 const UPKEEP_DUE: EveTool = {
   name: 'upkeep_due',
-  description: 'THE UPKEEP LEDGER — what recurring upkeep is due or LATE, per unit and per cadence (A/C filter changes, deep cleans, coil and mini-split cleans, battery changes, PM, inspections, FF&E audits — whatever cadences are switched on in Settings). For each: last done, next due, days late, and whether a task is already scheduled. Filters: building, unit (name) or id, cadence (a word from its name, e.g. "filter", "deep clean"), state ("late" | "week" | "later" | "no_record"; default = late + this week + no record). Returns totals for everything that matched and the worst-first list. Use it for "what is overdue", "which units need filters", "is 1205 up to date" — never infer upkeep from task names when this exists.',
+  description: 'THE UPKEEP LEDGER — what recurring upkeep is due or LATE, per unit and per cadence (A/C filter changes, deep cleans, coil and mini-split cleans, battery changes, PM, inspections, FF&E audits — whatever cadences are switched on in Settings). For each: last done, next due, days late, and whether a task is already scheduled. Filters: building, unit (name) or id, cadence (a word from its name, e.g. "filter", "deep clean"), state ("late" | "week" | "later" | "no_record"; default = late + this week + no record). Returns totals for everything that matched, each cadence\'s interval as configured (measured_against, e.g. "every 35 days" — always say it), and EVERY matching item as one compact line grouped by cadence, worst first. Use it for "what is overdue", "which units need filters", "is 1205 up to date" — never infer upkeep from task names when this exists.',
   input_schema: obj({ building: S.str, unit: S.str, id: S.str, cadence: S.str, state: S.str, limit: S.num }),
   run: async (input, ctx) => {
-    const lim = clampLimit(input?.limit, 40, 120)
+    // No small cap: every overdue / due / no-record item is listed as one compact line (500 is a guard, not a page).
+    const lim = clampLimit(input?.limit, 500, 500)
     const scope = scopeIds(ctx)
-    if (scope && !scope.length) return { count: 0, total_rows: 0, truncated: false, items: [], note: 'This room is scoped to buildings that match no units, so there is no upkeep to show from here.' }
+    if (scope && !scope.length) return { count: 0, total_rows: 0, truncated: false, items_by_cadence: [], note: 'This room is scoped to buildings that match no units, so there is no upkeep to show from here.' }
     const unit = input?.unit || input?.id ? resolveListing(ctx, { id: input?.id, name: input?.unit, building: input?.building }) : null
     if ((input?.unit || input?.id) && !unit) return { error: `No unit matches "${input?.unit || input?.id}".`, note: 'That is not the same as "nothing due" — check the unit name, or use resolve.' }
     let cal: DueCalendar
@@ -110,17 +113,45 @@ const UPKEEP_DUE: EveTool = {
     for (const it of everything) (byBuilding[String(it.building || 'Other')] = byBuilding[String(it.building || 'Other')] || []).push(it)
     const cut = listed.length > lim
     const degraded = cal.degraded && cal.degraded.length > 0
+    // THE CADENCE IT IS MEASURED AGAINST (eval 2026-11-11: she listed overdue filters without ever
+    // saying "every 35 days"). Read from the same settings the ledger was built from (lib/cadences),
+    // never written here.
+    const every: Record<string, number> = {}
+    try {
+      const cfg = resolveCadences(await getSetting<any>(CADENCE_KEY, null).catch(() => null))
+      for (const c of cfg.cadences) if (Number(c.everyDays) > 0) every[c.key] = Number(c.everyDays)
+    } catch { /* the cadence column then says it could not be read */ }
+    const everyOf = (it: DueItem): number | null => every[it.cadenceKey] ?? null
+    // EVERY LISTED ITEM, ONE COMPACT LINE (eval 2026-11-11: a 40-row list of objects, then halved to fit,
+    // missed units). Grouped by cadence so the cadence and its interval are said once, worst first.
+    const compact = (it: DueItem): string => [
+      `${it.unit}${it.building ? ` (${it.building})` : ''}`,
+      it.band === 'late' ? `${it.daysOver}d LATE` : it.band === 'week' ? 'due this week' : it.band === 'unknown' ? 'NO RECORD' : 'not due yet',
+      `last ${it.lastDone || 'none on record'}${it.recorded ? ' (recorded by a person)' : it.newUnit ? ` (new unit, go-live ${it.newUnit.goLive})` : it.clock ? ` (clock started ${it.clock.started})` : ''}`,
+      `due ${it.dueOn}`,
+      it.scheduled ? `already scheduled ${it.scheduled.date}` : '',
+    ].filter(Boolean).join(' · ')
+    const shown = listed.slice(0, lim)
+    const groups: Record<string, DueItem[]> = {}
+    for (const it of shown) (groups[it.label] = groups[it.label] || []).push(it)
     return {
       scope: unit ? `unit: ${unit.meta.name}` : input?.building ? `building: ${input.building}` : scope ? 'this room\'s buildings' : 'whole portfolio',
       as_of_day: cal.today,
       upkeep_tracking_on: cal.enabled,
       totals: tally(everything),
-      by_cadence: Object.keys(byCadence).map(k => ({ cadence: k, ...tally(byCadence[k]), worst_days_late: Math.max(0, ...byCadence[k].map(r => r.daysOver)) })).sort((a, b) => b.late - a.late),
+      by_cadence: Object.keys(byCadence).map(k => ({ cadence: k, every_days: everyOf(byCadence[k][0]), ...tally(byCadence[k]), worst_days_late: Math.max(0, ...byCadence[k].map(r => r.daysOver)) })).sort((a, b) => b.late - a.late),
       by_building: unit ? undefined : Object.keys(byBuilding).map(k => ({ building: k, ...tally(byBuilding[k]) })).sort((a, b) => b.late - a.late).slice(0, 25),
-      count: Math.min(listed.length, lim), total_rows: listed.length, truncated: cut || degraded,
-      items: listed.slice(0, lim).map(dueLine),
+      count: shown.length, total_rows: listed.length, truncated: cut || degraded,
+      line_format: 'unit (building) · days LATE / due this week / NO RECORD · last done (and where that date came from) · next due · already scheduled',
+      items_by_cadence: Object.keys(groups).map(k => ({
+        cadence: k,
+        measured_against: everyOf(groups[k][0]) ? `every ${everyOf(groups[k][0])} days` : 'interval could not be read — say so',
+        units: groups[k].length,
+        lines: groups[k].map(compact),
+      })),
       cadences_not_running: cal.inert.length ? cal.inert.map(c => `${c.label} (${c.why})`) : undefined,
       note: [
+        'Name the cadence each list is measured against (measured_against, e.g. "every 35 days") and list EVERY unit in the lines — do not sample.',
         cut ? `Listing the ${lim} most overdue of ${listed.length}; the totals above count everything that matched.` : '',
         degraded ? `Some reads stopped early (${cal.degraded.join('; ').slice(0, 200)}) — the counts are floors, not exact. Say so.` : '',
         '"no record" means we have never seen it done and its clock has not started — it is unknown, not late.',
@@ -130,7 +161,7 @@ const UPKEEP_DUE: EveTool = {
   },
 }
 
-const INSPECTION_RESULTS: EveTool = {
+export const INSPECTION_RESULTS: EveTool = {
   name: 'inspection_results',
   description: 'THE BREEZEWAY INSPECTION CHECKLISTS, LINE BY LINE — the post-clean housekeeping audits (kind "hk_post_clean"), PM inspections ("pm") and arrival inspections ("arrival"): for each finished inspection the unit, date, who inspected, who was being inspected, yes/no counts, pass %, the 1-5 score and exactly WHICH checklist items failed. Also the roll-up: overall pass %, the items that fail most often, and pass % by unit. Filters: building, unit (name) or id, kind, person (the housekeeper / technician inspected, or the inspector), days (default 30). Use it for "what keeps failing at Eden", "how did the last inspection of 1205 go", "which checklist items do we miss most". This is NOT the coordinator\'s manual log (that is `inspections`).',
   input_schema: obj({ building: S.str, unit: S.str, id: S.str, kind: S.str, person: S.str, days: S.num, limit: S.num }),
@@ -161,7 +192,7 @@ const INSPECTION_RESULTS: EveTool = {
     if (kindQ) q = q.eq('kind', kindQ)
     if (person) q = q.or(`subject_name.ilike.%${person}%,inspector.ilike.%${person}%`)
     const { data, error, count } = await q.order('finished_at', { ascending: false }).order('task_id').limit(lim)
-    if (error) return { error: 'Inspection results are not available (migration 174 may not have run, or the sync has not filled the table yet): ' + String(error.message || '').slice(0, 120) }
+    if (error) return { error: 'Inspection results are not available (migration 174 may not have run, or the sync has not filled the table yet): ' + String(error.message || '').slice(0, 120), note: 'Say plainly that the Breezeway inspection checklists could not be read — never report a pass. For a unit\'s inspection history, unit_360 / building_360 also carry an inspection section.' }
     let rows: any[] = (data as any[]) || []
     if (ids && !idsInQuery) { const ok: Record<string, true> = {}; for (const id of ids) ok[id] = true; rows = rows.filter(r => ok[String(r.listing_id)]) }
     const totalRows: number | null = ids && !idsInQuery ? null : (typeof count === 'number' ? count : null)
@@ -215,7 +246,7 @@ const INSPECTION_RESULTS: EveTool = {
 
 const BLOCKED_UNITS: EveTool = {
   name: 'blocked_units',
-  description: 'WHAT CANNOT BE SOLD RIGHT NOW, AND WHY — every unit with nights blocked on the Guesty calendar over the next days (default 30, up to 120): out of service today or upcoming, the block\'s dates and nights, the reason as Guesty labels it, the note someone left, who created it and whether it has an end date. Blocks Guesty made automatically because a linked listing sold are counted apart (they are the system working, not a unit down). Optional building. Use it for "which units are blocked", "why is 1205 offline", "how many nights are we losing to blocks". Read from Guesty\'s live calendar, cached ten minutes.',
+  description: 'WHAT CANNOT BE SOLD RIGHT NOW, AND WHY — every unit with nights blocked on the Guesty calendar over the next days (default 30, up to 120): out of service today or upcoming, the block\'s dates and nights, the reason as Guesty labels it, the note someone left, who created it and whether it has an end date. Blocks Guesty made automatically because a linked listing sold are counted apart (they are the system working, not a unit down). Optional building. Returns EVERY block as one compact line (unit · reason on record · since · until or "no end date" · note), grouped by building — list them all. Use it for "which units are blocked", "why is 1205 offline", "how many nights are we losing to blocks". Read from Guesty\'s live calendar, cached ten minutes.',
   input_schema: obj({ building: S.str, days: S.num }),
   run: async (input, ctx) => {
     const days = Math.min(Math.max(Math.round(Number(input?.days) || 30), 1), 120)
@@ -229,27 +260,44 @@ const BLOCKED_UNITS: EveTool = {
     const runs = rep.runs.filter(inScope).sort((a, b) => (Number(b.live) - Number(a.live)) || (b.nights - a.nights))
     const linked = rep.linkedRuns.filter(inScope)
     const hide = guarded(ctx)
-    const CAP = 40
+    // EVERY BLOCK, ONE LINE EACH (eval 2026-11-11: "which units are blocked" got 10 of 67 — a 40-row
+    // cap, then the 7,000-character fit halved the list of objects twice). One compact line per block,
+    // grouped by building, under a wider budget (registry.ts WIDE_TOOLS), so the whole list arrives.
+    const line = (r: any): string => {
+      const since = r.blockStart ? String(r.blockStart).slice(0, 10) : r.live ? `before ${r.from} (start not on record)` : r.from
+      const until = r.blockEnd ? String(r.blockEnd).slice(0, 10) : r.openEnded ? 'no end date' : r.to
+      const note = !hide && r.note ? String(r.note).replace(/\s+/g, ' ').trim().slice(0, 70) : ''
+      const who = !hide && r.createdBy ? String(r.createdBy).slice(0, 30) : ''
+      return [
+        r.unit,
+        r.guestyLabel || r.reason || 'no reason on record',
+        `since ${since}`,
+        `until ${until}`,
+        r.live ? 'OUT NOW' : `starts in ${r.startsInDays}d`,
+        `${r.nights}n in window`,
+        note ? `note: ${note}` : '',
+        who ? `by ${who}` : '',
+        r.alsoBlocks && r.alsoBlocks.length ? `also takes offline ${r.alsoBlocks.slice(0, 3).join(', ')}` : '',
+      ].filter(Boolean).join(' · ')
+    }
+    const byB: Record<string, any[]> = {}
+    for (const r of runs) (byB[String(r.building || 'Other')] = byB[String(r.building || 'Other')] || []).push(r)
+    const buildings = Object.keys(byB).sort((a, b) => byB[b].length - byB[a].length || a.localeCompare(b))
     return {
+      as_of: new Date().toISOString(),
       window: `${rep.from} → ${rep.to} (next ${rep.days} days)`,
       scope: bq ? `building: ${input.building}` : ctx.scopedBuildings ? 'this room\'s buildings' : 'whole portfolio',
       listings_checked: bq || ctx.scopedBuildings ? undefined : rep.listingsChecked,
       out_of_service_now: runs.filter(r => r.live).length,
       upcoming_blocks: runs.filter(r => !r.live).length,
       nights_blocked: runs.reduce((s, r) => s + (Number(r.nights) || 0), 0),
-      no_end_date: runs.filter(r => r.openEnded).length,
+      no_end_date: runs.filter(r => r.openEnded && !r.blockEnd).length,
       auto_blocked_by_a_linked_listing: linked.length,
-      count: Math.min(runs.length, CAP), total_rows: runs.length, truncated: runs.length > CAP,
-      blocks: runs.slice(0, CAP).map(r => ({
-        unit: r.unit, building: r.building, from: r.from, to: r.to, nights: r.nights,
-        out_of_service_today: r.live, starts_in_days: r.live ? 0 : r.startsInDays,
-        reason: r.guestyLabel || r.reason, note: hide ? undefined : (r.note ? String(r.note).slice(0, 200) : undefined),
-        created_by: hide ? undefined : (r.createdBy || undefined), created_on: r.createdAt ? String(r.createdAt).slice(0, 10) : undefined,
-        block_started: r.blockStart || undefined, block_ends: r.blockEnd || (r.openEnded ? 'no end date inside the window' : r.to),
-        also_takes_offline: r.alsoBlocks && r.alsoBlocks.length ? r.alsoBlocks.slice(0, 4) : undefined,
-      })),
-      note: `Forward-looking only: nights blocked from today for ${rep.days} days, as Guesty's calendar shows them (cached up to ten minutes). It does not say how long a unit has ALREADY been down beyond block_started. nights_blocked counts nights, not dollars — for what a blocked night is worth use the unit's ADR from unit_360.`,
-      _meta: toolMeta({ source: 'Guesty multi-calendar (live, cached 10 min)', window: `${rep.from} → ${rep.to}`, n: runs.length, truncated: runs.length > CAP }),
+      count: runs.length, total_rows: runs.length, truncated: false,
+      line_format: 'unit · reason on record (as Guesty labels it) · since · until (or "no end date") · OUT NOW or starts in Nd · nights in window · note · created by',
+      blocks_by_building: buildings.map(b => ({ building: b, blocks: byB[b].length, lines: byB[b].map(line) })),
+      note: `Every out-of-service block in the window is listed — quote them all, grouped by building. "since" is Guesty's own block start when it has one; "until" is Guesty's own last blocked night, or "no end date" when the block runs past the window with none set. The reason is exactly as recorded — never guess one when it says "no reason on record". Nights are counted from today for ${rep.days} days (cached up to ten minutes); they are nights, not dollars.`,
+      _meta: toolMeta({ source: 'Guesty multi-calendar (live, cached 10 min)', window: `${rep.from} → ${rep.to}`, n: runs.length, truncated: false }),
     }
   },
 }
@@ -257,7 +305,7 @@ const BLOCKED_UNITS: EveTool = {
 const VENDOR_WORK: EveTool = {
   name: 'vendor_work',
   money: true,
-  description: 'WHAT AN OUTSIDE VENDOR HAS DONE FOR US — pass the vendor (name or key; use resolve if unsure). Returns the vendor\'s record (trade, buildings, whether they are a regular with a cadence, insurance certificate state), open work with them and recent finished work across project steps, guest issues (glitches assigned to them) and field requests, their last visit and whether a regular is overdue, guest issues sent to them in the window (default 180 days) by category with how long they took to close, and invoices approved or paid in the last 12 months. With no vendor: the vendor list. It does NOT include cleaning-company invoices read on the Cleaning invoices page or Breezeway tasks assigned to a vendor crew — say so if asked for a vendor\'s total cost.',
+  description: 'WHAT AN OUTSIDE VENDOR HAS DONE FOR US — pass the vendor (name or key; use resolve if unsure). Returns the vendor\'s record (trade, buildings, whether they are a regular with a cadence, insurance certificate state), open work with them and recent finished work across project steps, guest issues (glitches assigned to them) and field requests, their last visit and whether a regular is overdue, guest issues sent to them in the window (default 180 days) by category with how long they took to close, and invoices approved or paid in the last 12 months, plus jobs_by_month — a job count for EVERY month of the window (project visits done, guest issues sent and closed, field requests); for "the last three months" pass days 90 and quote each month. With no vendor: the vendor list. If several vendors fit (e.g. more than one A/C company), it asks which one — never pick one silently. It does NOT include cleaning-company invoices read on the Cleaning invoices page or Breezeway tasks assigned to a vendor crew — say so if asked for a vendor\'s total cost.',
   input_schema: obj({ vendor: S.str, days: S.num }),
   run: async (input, ctx) => {
     if (guarded(ctx)) return { error: 'Vendor records are not read out in this room. Ask in a Stay Hospitality team room or in the app.' }
@@ -281,10 +329,37 @@ const VENDOR_WORK: EveTool = {
     if (pool.length > 1) return { ambiguous: true, question: `Which one? "${text}" fits ${pool.length} vendors.`, candidates: pool.slice(0, 12).map(v => ({ key: v.key, name: v.label, covers: v.buildings.slice(0, 6) })), note: 'Do not pick one yourself — ask, or call again with the key.' }
     const v = pool[0]
     const since = shiftDay(ctx.today, -days)
-    const [sum, gl] = await Promise.all([
+    const [sum, gl, steps, reqs] = await Promise.all([
       vendorSummary(v.key, ctx.today).catch(() => null),
       pageRows<any>((a, b) => ctx.db.from('glitches').select('id,category,status,unit,listing_id,created_at,closed_at,closed_at_estimated,vendor_visit_on').eq('vendor_key', v.key).gte('created_at', since + 'T00:00:00Z').order('id').range(a, b), 5),
+      // For the month-by-month counts (eval 2026-11-11: "what has our A/C vendor done in the last three
+      // months" got no per-month figure). A vendor's project steps are few, so they are read whole and
+      // dated in code (visit day, else done day); field requests by the day they were raised.
+      pageRows<any>((a, b) => ctx.db.from('project_steps').select('id,status,done,visit_on,done_at').eq('vendor_key', v.key).order('id').range(a, b), 5),
+      pageRows<any>((a, b) => ctx.db.from('field_requests').select('id,status,created_at').eq('vendor_key', v.key).gte('created_at', since + 'T00:00:00Z').order('id').range(a, b), 5),
     ])
+    // ── jobs by month, every month of the window listed (a month with nothing says 0, not nothing)
+    const monthKeys: string[] = []
+    for (let m = since.slice(0, 7); m <= ctx.today.slice(0, 7);) {
+      monthKeys.push(m)
+      const [y, mo] = m.split('-').map(Number)
+      m = mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`
+    }
+    type MonthRow = { month: string; project_visits_done: number; guest_issues_sent: number; guest_issues_closed: number; field_requests_raised: number }
+    const months: Record<string, MonthRow> = {}
+    for (const m of monthKeys) months[m] = { month: m, project_visits_done: 0, guest_issues_sent: 0, guest_issues_closed: 0, field_requests_raised: 0 }
+    const monthOf = (iso: any): string => { const d = etDay(iso) || String(iso || '').slice(0, 10); return d >= since && d <= ctx.today ? d.slice(0, 7) : '' }
+    for (const s of steps.rows) {
+      if (!(s.done === true || String(s.status) === 'done')) continue
+      const k = monthOf(s.visit_on ? String(s.visit_on).slice(0, 10) + 'T12:00:00Z' : s.done_at)
+      if (k && months[k]) months[k].project_visits_done++
+    }
+    for (const g of gl.rows) {
+      const k = monthOf(g.created_at); if (k && months[k]) months[k].guest_issues_sent++
+      if (/^(closed|done|resolved)$/i.test(String(g.status || '')) && g.closed_at) { const c = monthOf(g.closed_at); if (c && months[c]) months[c].guest_issues_closed++ }
+    }
+    for (const r of reqs.rows) { const k = monthOf(r.created_at); if (k && months[k]) months[k].field_requests_raised++ }
+    const byMonth = monthKeys.map(m => ({ ...months[m], jobs: months[m].project_visits_done + months[m].guest_issues_sent + months[m].field_requests_raised }))
     const byCat: Record<string, { n: number; open: number; hours: number[] }> = {}
     for (const g of gl.rows) {
       const c = String(g.category || 'uncategorised')
@@ -304,6 +379,12 @@ const VENDOR_WORK: EveTool = {
       vendor: { key: v.key, name: v.label, active: v.active, covers: v.buildings, billing: v.billing || undefined, trade: rec?.trade || undefined, regular: rec?.regular ? (rec?.cadence || true) : false, insurance_certificate: sum?.coi ? sum.coi.label : undefined },
       last_visit: sum?.lastVisit || null,
       overdue_by_days: sum?.overdueBy ?? null,
+      jobs_by_month: {
+        window: `${since} → ${ctx.today}`,
+        what_counts: 'jobs = project visits finished in the month + guest issues sent to them in the month + field requests raised for them in the month. guest_issues_closed is shown alongside, not added. Breezeway tasks done by their crew are not in this.',
+        months: byMonth,
+        truncated: steps.truncated || gl.truncated || reqs.truncated || undefined,
+      },
       open_work: (sum?.open || []).slice(0, 20).map(j => ({ kind: j.kind, what: j.title, where: j.where, when: j.when })),
       recent_finished: (sum?.recent || []).slice(0, 20).map(j => ({ kind: j.kind, what: j.title, where: j.where, when: j.when })),
       guest_issues_sent_to_them: {

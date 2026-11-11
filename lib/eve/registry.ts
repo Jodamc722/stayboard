@@ -190,7 +190,9 @@ function unitNamesRe(ctx: EveCtx): RegExp | null {
 export const TOOL_SEND_CHARS = 7000
 // The 360s answer in one call what used to take six, each of which could send 7,000 characters; they
 // get room for all their sections rather than having the upkeep rows halved to fit.
-const WIDE_TOOLS: Record<string, number> = { unit_360: 10000, building_360: 10000, upkeep_rank: 9000, upkeep_advise: 9000, measure: 8000, property_card: 8000, area_guide: 8000 }
+const WIDE_TOOLS: Record<string, number> = { unit_360: 10000, building_360: 10000, upkeep_rank: 9000, upkeep_advise: 9000, measure: 8000, property_card: 8000, area_guide: 8000,
+  // Whole lists, one compact line per row (eval 2026-11-11): every block, and every overdue upkeep item.
+  blocked_units: 20000, upkeep_due: 16000 }
 /** How many characters of JSON a tool's result may send (lib/eve/fit.ts fits to it, whole). */
 export function toolBudget(name: string): number { return WIDE_TOOLS[String(name)] || TOOL_SEND_CHARS }
 

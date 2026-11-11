@@ -31,7 +31,7 @@ import type { EveTool } from './types'
 import { obj, S } from './types'
 import type { EveCtx } from './ctx'
 import { clampDays, shiftDay, lc, num, round2, chunk, pageRows, resolveListing, DEAD_LISTING, toolMeta } from './ctx'
-import { reviewStats } from './reviews'
+import { reviewStats, channelLine, NEVER_BLEND } from './reviews'
 import { brainDims, brainFresh, freshAll, brainMeta, readUnitDays, readEvents, readHealthLatest, newAcc, addDayRow, perfOf, physName, BRAIN_NIGHTS_BASIS, BILLED_NOTE, type Acc, type BrainTable } from './brain-data'
 import { etDay } from '@/lib/brain/shared'
 import { dueCalendarCached, blockedReportCached } from './reach'
@@ -348,17 +348,23 @@ const UNIT_360: EveTool = {
       const st = reviewsS.v
       const life = lifetimeS.ok ? lifetimeS.v : null
       reviews = {
-        in_window: { window: st.window, avg_rating: st.avg_rating, rated: st.rated_count, unanswered: st.unanswered, low_reviews_3_stars_or_below: (st.distribution_by_star['1'] || 0) + (st.distribution_by_star['2'] || 0) + (st.distribution_by_star['3'] || 0) },
-        window_before: st.prior || undefined,
-        by_channel_in_window: st.by_channel,
+        in_window: { window: st.window, rated: st.rated_count, unanswered: st.unanswered, low_reviews_3_stars_or_below: (st.distribution_by_star['1'] || 0) + (st.distribution_by_star['2'] || 0) + (st.distribution_by_star['3'] || 0) },
+        window_before: st.prior ? { window: st.prior.window, by_channel: st.prior.by_channel.map(channelLine) } : undefined,
+        by_channel_in_window: st.by_channel.map(channelLine),
         sub_scores_in_window: st.sub_scores.length ? st.sub_scores : undefined,
-        lifetime: life ? { avg_rating: life.avg_rating, rated: life.rated_count, by_channel: life.by_channel.map(c => ({ channel: c.channel, avg: c.avg, reviews: c.reviews })), older_listing_reviews_left_out: life.older_listing_left_out } : gap(lifetimeS.ok ? 'lifetime reviews' : lifetimeS.why),
-        rating_scale: '/5 (Booking normalized from /10)',
+        lifetime: life ? { rated: life.rated_count, by_channel: life.by_channel.map(channelLine), older_listing_reviews_left_out: life.older_listing_left_out } : gap(lifetimeS.ok ? 'lifetime reviews' : lifetimeS.why),
+        rule: NEVER_BLEND,
         current_listing_check: st.current_listing_check === 'checked' ? undefined : 'UNAVAILABLE — reviews from a replaced channel listing may be included.',
         _meta: toolMeta({ source: 'guesty_reviews', window: st.window, n: st.rated_count, truncated: st.truncated, basis: 'current channel listing only' }),
       }
-      if (st.prior && st.prior.avg_rating != null && st.avg_rating != null && st.rated_count >= 3 && st.prior.rated_count >= 3 && st.avg_rating <= st.prior.avg_rating - 0.2) {
-        stands.push(`Reviews are down: ${st.avg_rating} over ${st.rated_count} in this window against ${st.prior.avg_rating} over ${st.prior.rated_count} in the one before.`)
+      // Compared channel by channel, each on its own scale — never a blended average (eval 2026-11-11).
+      if (st.prior) {
+        for (const c of st.by_channel) {
+          const p = st.prior.by_channel.find(x => x.channel === c.channel)
+          if (!p || c.avg == null || p.avg == null || c.reviews < 3 || p.reviews < 3 || c.avg > p.avg - 0.2) continue
+          const now = channelLine(c), before = channelLine(p)
+          stands.push(`${c.channel} reviews are down: ${now.average}${now.scale} over ${c.reviews} in this window against ${before.average}${before.scale} over ${p.reviews} in the one before.`)
+        }
       }
       const low = reviews.in_window.low_reviews_3_stars_or_below
       if (low >= 2) stands.push(`${low} reviews at three stars or below in the last ${days} days.`)
@@ -655,11 +661,11 @@ const BUILDING_360: EveTool = {
       const st = reviewsS.v
       for (const u of st.units) if (rows[u.listing_id]) { rows[u.listing_id].review_avg = u.avg; rows[u.listing_id].reviews = u.reviews }
       reviews = {
-        window: st.window, avg_rating: st.avg_rating, rated: st.rated_count, unanswered: st.unanswered,
-        window_before: st.prior || undefined,
-        by_channel: st.by_channel, sub_scores: st.sub_scores.length ? st.sub_scores : undefined,
+        window: st.window, rated: st.rated_count, unanswered: st.unanswered,
+        window_before: st.prior ? { window: st.prior.window, by_channel: st.prior.by_channel.map(channelLine) } : undefined,
+        by_channel: st.by_channel.map(channelLine), sub_scores: st.sub_scores.length ? st.sub_scores : undefined,
         older_listing_reviews_left_out: st.older_listing_left_out,
-        rating_scale: '/5 (Booking normalized from /10)',
+        rule: NEVER_BLEND,
         current_listing_check: st.current_listing_check === 'checked' ? undefined : 'UNAVAILABLE — reviews from replaced channel listings may be included.',
         _meta: toolMeta({ source: 'guesty_reviews', window: st.window, n: st.rated_count, truncated: st.truncated, basis: 'active units · current channel listing' }),
       }

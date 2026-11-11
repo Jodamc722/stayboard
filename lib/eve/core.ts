@@ -14,7 +14,7 @@ import {
   clampLimit, clampDays, daysAgoISO, normStar, lc, has, safe, cap, pageRows, num, round2,
   resolveListing, listingCandidates, toolMeta,
 } from './ctx'
-import { reviewStats } from './reviews'
+import { reviewStats, channelLine, NEVER_BLEND } from './reviews'
 import { LIVE_STAY_STATUSES, channelFeeOf, NET_BASIS_NOTE } from '@/lib/basis'
 import { isOwnerOrFriendsFamily } from '@/lib/owner-audit'
 import { loadMemories, saveMemory, normKind, MEMORY_KINDS } from './memory'
@@ -341,8 +341,8 @@ export const CORE_TOOLS: EveTool[] = [
 
   {
     name: 'review_summary',
-    description: 'THE review score, the way a guest sees it: for a BUILDING, one unit (name/id), or the whole portfolio (no args). Counts ACTIVE units only and, per channel, only reviews left on the channel listing that is live NOW (recreated Airbnb listings start over) — `older_listing_reviews_left_out` says how many were set aside. Returns avg_rating on a 5-STAR scale (Booking normalized from /10), by_channel (Airbnb / Vrbo / Booking.com… each with its own average and count — quote these when asked how a channel is doing), sub_scores when the channel sent them (cleanliness, check-in, accuracy, communication, location, value), star distribution, unanswered count and the lowest-rated units. Pass days (e.g. 30, 90) for a recent window — it then also returns the window before it for comparison; no days = all time. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.',
-    input_schema: obj({ building: S.str, name: S.str, id: S.str, days: S.num }),
+    description: 'THE review score, the way a guest sees it: for a BUILDING, one unit (name/id), or the whole portfolio (no args). Counts ACTIVE units only and, per channel, only reviews left on the channel listing that is live NOW (recreated Airbnb listings start over) — `older_listing_reviews_left_out` says how many were set aside. Returns by_channel ONLY — Airbnb / Vrbo / Booking.com… each with its own average ON THAT CHANNEL\'S OWN SCALE (Airbnb /5, Vrbo /5, Booking.com /10) and its review count; there is deliberately no blended cross-channel average — NEVER blend channels or average the channel figures together. Also sub_scores when the channel sent them (cleanliness, check-in, accuracy, communication, location, value), star distribution, unanswered count and the lowest-rated units. Pass days (e.g. 30, 90) or from (YYYY-MM-DD, e.g. the first day of this quarter) for a window — it then also returns the window before it, per channel, for comparison; neither = all time. ALWAYS use this for any "average review score/rating" question — never average raw ratings yourself.',
+    input_schema: obj({ building: S.str, name: S.str, id: S.str, days: S.num, from: S.str }),
     run: async (input, ctx) => {
       let ids: string[] | null = null
       let scope = 'whole portfolio (active units)'
@@ -364,25 +364,29 @@ export const CORE_TOOLS: EveTool[] = [
         if (!ids.length) return { error: `No building matches "${input.building}".`, note: 'That is not the same as "no reviews" — check the building name, or use resolve.' }
         scope = `building: ${input.building}`
       }
-      const days = input?.days ? clampDays(input.days, 90, 1500) : null
+      // A window can be named by its first day ("this quarter" = from the 1st of Oct): reviewStats counts
+      // back `days` from today, so the start day is turned into that count.
+      const fromDay = /^\d{4}-\d{2}-\d{2}$/.test(String(input?.from || '')) ? String(input.from) : ''
+      const fromDays = fromDay && fromDay <= ctx.today ? Math.round((Date.parse(ctx.today + 'T00:00:00Z') - Date.parse(fromDay + 'T00:00:00Z')) / 86400_000) : 0
+      const days = fromDays > 0 ? Math.min(fromDays, 1500) : input?.days ? clampDays(input.days, 90, 1500) : null
       const st = await reviewStats(ctx, { ids, days, withPrior: !!days })
       return {
         scope,
         window: st.window,
-        rating_scale: '/5 (Airbnb and Vrbo /5; Booking normalized from /10)',
+        as_of: ctx.today,
+        rule: NEVER_BLEND,
         truncated: st.truncated || undefined,
         review_count: st.review_count, rated_count: st.rated_count,
-        avg_rating: st.avg_rating,
-        prior_window: st.prior || undefined,
-        by_channel: st.by_channel,
+        by_channel: st.by_channel.map(channelLine),
+        prior_window: st.prior ? { window: st.prior.window, by_channel: st.prior.by_channel.map(channelLine) } : undefined,
         sub_scores: st.sub_scores.length ? st.sub_scores : undefined,
         distribution_by_star: st.distribution_by_star,
         unanswered: st.unanswered,
         older_listing_reviews_left_out: st.older_listing_left_out,
-        avg_if_older_listings_were_counted: st.avg_including_older_listings ?? undefined,
         current_listing_check: st.current_listing_check === 'checked' ? undefined : 'UNAVAILABLE — the channel listing ids could not be read, so reviews from replaced listings may be included. Say so.',
         units_covered: st.units.length,
-        lowest_units: st.units.slice(0, 8).map(u => ({ name: u.name, reviews: u.reviews, avg: u.avg })),
+        lowest_units: st.units.slice(0, 8).map(u => ({ name: u.name, reviews: u.reviews, avg_5_star_basis_all_channels: u.avg })),
+        lowest_units_note: 'For ranking units only (5-star basis, the unit\'s channels together). Never quote these as a channel score — ask for one unit to get its per-channel figures.',
         basis: 'Active units only (live, not Waves). Reviews marked excluded-from-score are left out. Each channel counts only reviews on the channel listing that is live now; a review whose listing cannot be identified is kept.',
         _meta: toolMeta({ source: 'guesty_reviews', window: st.window, n: st.rated_count, truncated: st.truncated, basis: 'active units · current channel listing' }),
       }

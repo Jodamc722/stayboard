@@ -37,6 +37,26 @@ export function reviewChannel(v: any): string {
 const r2 = (n: number) => Math.round(n * 100) / 100
 
 export type ChannelScore = { channel: string; avg: number | null; reviews: number; five_star_pct: number | null; older_listing_left_out: number }
+
+// EACH CHANNEL ON ITS OWN SCALE, NEVER BLENDED (eval 2026-11-11: she quoted a 4.43 "portfolio average"
+// that mixed Airbnb, Vrbo and Booking.com). Superhost, Premier Host and Booking's score are each earned
+// on one channel and shown on that channel's own scale, so a cross-channel average is not a number any
+// guest or channel ever sees. Stored ratings are on a 5-star basis (Booking halved at sync / normStar);
+// Booking.com is shown back on its own /10 here.
+export function channelScaleOf(channel: string): 10 | 5 { return channel === 'Booking.com' ? 10 : 5 }
+/** One channel's average for a person to read: on that channel's own scale, with its count. */
+export function channelLine(c: ChannelScore): { channel: string; average: number | null; scale: string; reviews: number; five_star_pct?: number | null; older_listing_reviews_left_out?: number } {
+  const scale = channelScaleOf(c.channel)
+  return {
+    channel: c.channel,
+    average: c.avg == null ? null : r2(scale === 10 ? c.avg * 2 : c.avg),
+    scale: scale === 10 ? '/10' : '/5',
+    reviews: c.reviews,
+    five_star_pct: scale === 5 ? c.five_star_pct : undefined,
+    older_listing_reviews_left_out: c.older_listing_left_out || undefined,
+  }
+}
+export const NEVER_BLEND = 'Per channel only, each on its own scale (Airbnb /5, Vrbo /5, Booking.com /10), each with its review count. NEVER blend channels into one average — there is no portfolio-wide score.'
 export type UnitScore = { listing_id: string; name: string; reviews: number; avg: number | null }
 export type ReviewStats = {
   window: string
@@ -56,7 +76,7 @@ export type ReviewStats = {
   /** 'checked' | 'unavailable' — unavailable means the listing ids could not be read, so nothing was left out. */
   current_listing_check: 'checked' | 'unavailable'
   /** Same window immediately before this one (only when a window was asked for). */
-  prior: { window: string; avg_rating: number | null; rated_count: number } | null
+  prior: { window: string; avg_rating: number | null; rated_count: number; by_channel: ChannelScore[] } | null
   truncated: boolean
 }
 
@@ -121,6 +141,7 @@ export async function reviewStats(ctx: EveCtx, opts: { ids?: string[] | null; da
 
   const dist: Record<string, number> = { '5': 0, '4': 0, '3': 0, '2': 0, '1': 0 }
   const byCh: Record<string, { sum: number; n: number; five: number; old: number }> = {}
+  const priorCh: Record<string, { sum: number; n: number; five: number; old: number }> = {}
   const byUnit: Record<string, { count: number; sum: number; rated: number }> = {}
   const sub: Record<string, { label: string; sum: number; n: number }> = {}
   let reviewCount = 0, rated = 0, sum = 0, unanswered = 0, old = 0, allSum = 0, allN = 0, priorSum = 0, priorN = 0
@@ -135,7 +156,12 @@ export async function reviewStats(ctx: EveCtx, opts: { ids?: string[] | null; da
     const current = isCurrent(r, ch)
     // The window before this one: same rules, kept apart.
     if (since && day < since) {
-      if (current && stars != null) { priorSum += stars; priorN++ }
+      if (current && stars != null) {
+        priorSum += stars; priorN++
+        if (!priorCh[ch]) priorCh[ch] = { sum: 0, n: 0, five: 0, old: 0 }
+        priorCh[ch].sum += stars; priorCh[ch].n++
+        if (stars >= 4.75) priorCh[ch].five++
+      }
       continue
     }
     if (stars != null) { allSum += stars; allN++ }
@@ -166,13 +192,14 @@ export async function reviewStats(ctx: EveCtx, opts: { ids?: string[] | null; da
     }
   }
 
-  const by_channel: ChannelScore[] = Object.keys(byCh).map(ch => ({
+  const chScores = (m: Record<string, { sum: number; n: number; five: number; old: number }>): ChannelScore[] => Object.keys(m).map(ch => ({
     channel: ch,
-    avg: byCh[ch].n ? r2(byCh[ch].sum / byCh[ch].n) : null,
-    reviews: byCh[ch].n,
-    five_star_pct: byCh[ch].n >= 5 ? Math.round((byCh[ch].five / byCh[ch].n) * 100) : null,
-    older_listing_left_out: byCh[ch].old,
+    avg: m[ch].n ? r2(m[ch].sum / m[ch].n) : null,
+    reviews: m[ch].n,
+    five_star_pct: m[ch].n >= 5 ? Math.round((m[ch].five / m[ch].n) * 100) : null,
+    older_listing_left_out: m[ch].old,
   })).sort((a, b) => b.reviews - a.reviews)
+  const by_channel: ChannelScore[] = chScores(byCh)
   const units: UnitScore[] = Object.keys(byUnit).map(id => ({
     listing_id: id, name: ctx.nameOf(id), reviews: byUnit[id].count,
     avg: byUnit[id].rated ? r2(byUnit[id].sum / byUnit[id].rated) : null,
@@ -192,7 +219,7 @@ export async function reviewStats(ctx: EveCtx, opts: { ids?: string[] | null; da
     avg_including_older_listings: old && allN ? r2(allSum / allN) : null,
     sub_scores: Object.keys(sub).map(k => ({ key: k, label: sub[k].label, avg: r2(sub[k].sum / sub[k].n), n: sub[k].n })).sort((a, b) => a.avg - b.avg),
     current_listing_check: check,
-    prior: since && priorSince ? { window: `${priorSince} → ${shiftDay(since, -1)}`, avg_rating: priorN ? r2(priorSum / priorN) : null, rated_count: priorN } : null,
+    prior: since && priorSince ? { window: `${priorSince} → ${shiftDay(since, -1)}`, avg_rating: priorN ? r2(priorSum / priorN) : null, rated_count: priorN, by_channel: chScores(priorCh) } : null,
     truncated: got.truncated,
   }
 }
