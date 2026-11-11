@@ -249,6 +249,9 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   const [editText, setEditText] = useState(false)
   // The page-turning digital magazine for whoever opens the link; the team builds in the scroll view.
   // ?scroll=1 opens the scroll view for anyone.
+  // A phone keeps the stacked phone layout in page view too (see MagazineFlipbook); only a wider screen binds fixed pages.
+  const [phone, setPhone] = useState(false)
+  useEffect(() => { const on = () => setPhone(window.innerWidth < 760); on(); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
   const [flip, setFlip] = useState<boolean>(() => !canEdit && !(typeof window !== 'undefined' && /[?&]scroll=1/.test(window.location.search)))
   const [drawer, setDrawer] = useState<null | 'proj' | 'comps' | 'pages' | 'style'>(null)
   const [tuneId, setTuneId] = useState<string | null>(null)
@@ -1184,7 +1187,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   ) : null
 
   return (
-    <div className={'mz-root' + (flip && !editText && format !== 'onepage' ? ' mz-flipping' : '') + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
+    <div className={'mz-root' + (flip && !editText && format !== 'onepage' && !phone ? ' mz-flipping' : '') + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
       <link rel="stylesheet" href={fontHref(drawer === 'style' ? Object.values(MAG_THEMES).flatMap(x => [x.display, x.sans]).concat([theme.display, theme.sans]) : [theme.display, theme.sans])} />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />

@@ -18,7 +18,9 @@ export function MagazineFlipbook({ pages, labels, top = 56 }: { pages: React.Rea
     const on = () => { setVw(window.innerWidth); setVh(window.innerHeight) }
     on(); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on)
   }, [])
-  const single = vw < 900
+  // phone (<760): the readable stacked page; tablet (<1100): one bound page at a time; wider: spreads.
+  const phone = vw < 760
+  const single = vw < 1100
   // Spreads: [left, right] page indexes. The cover sits alone on the right, like a closed book's front.
   const spreads = useMemo(() => {
     const n = pages.length
@@ -71,13 +73,27 @@ export function MagazineFlipbook({ pages, labels, top = 56 }: { pages: React.Rea
   const label = (labels || [])[R ?? L ?? 0] || ''
   const pageNo = (i: number | null) => (i == null ? '' : String(i + 1))
 
+  // ON A PHONE (Jon, 2026-11-11: "that will look too small on a phone"): one page at a time in the
+  // magazine's phone layout, full width and readable, scrolled within; swipe or the arrows turn it.
+  useEffect(() => { if (phone) window.scrollTo({ top: 0 }) }, [at, phone])
+  if (phone) return (
+    <div className="mz-flip mz-flip-phone" onPointerDown={onDown} onPointerUp={onUp}>
+      <style>{FLIP_CSS}</style>
+      <div className="mz-phone-page" key={at}>{pages[R ?? 0]}</div>
+      <div className="mz-flip-bar mz-flip-bar-fixed">
+        <button type="button" onClick={() => go(at - 1)} disabled={at === 0} aria-label="Previous page"><ChevronLeft size={18} /></button>
+        <span className="mz-flip-where"><b>{pageNo(R)}</b> of {pages.length}</span>
+        <button type="button" onClick={() => go(at + 1)} disabled={at >= spreads.length - 1} aria-label="Next page"><ChevronRight size={18} /></button>
+      </div>
+    </div>
+  )
   return (
     <div className="mz-flip" onPointerDown={onDown} onPointerUp={onUp}>
       <style>{FLIP_CSS}</style>
       <div className="mz-book" style={{ width: bookW * scale, height: PH * scale }}>
         <div className="mz-book-in" style={{ width: bookW, height: PH, transform: `scale(${scale})` }}>
           {single ? (
-            <div className="mz-slot" style={{ left: 0 }} key={at}>{page(R)}</div>
+            <div className="mz-slot mz-slot-r" style={{ left: 0 }} key={at}><div className="mz-phone-page">{page(R)}</div></div>
           ) : (
             <>
               <div className={'mz-slot mz-slot-l' + (leftBase == null ? ' empty' : '')} style={{ left: 0 }}>{page(leftBase)}</div>
@@ -138,6 +154,12 @@ const FLIP_CSS = `
 .mz-flip-bar button:disabled{opacity:.25;cursor:default}
 .mz-flip-bar input{width:min(280px,30vw);accent-color:#1C1A17}
 .mz-flip-where{min-width:120px;text-align:center;white-space:nowrap}.mz-flip-where em{font-style:normal;color:#7A7164}
+.mz-slot .mz-phone-page{animation:mzPageIn .35s ease-out}
 @media (max-width:899px){.mz-flip-bar input{display:none}.mz-flip-where em{display:none}}
+.mz-flip-phone{display:block;min-height:0;padding-bottom:80px}
+.mz-phone-page{animation:mzPageIn .35s ease-out}
+.mz-phone-page>.mz-page{margin:0 auto}
+@keyframes mzPageIn{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+.mz-flip-bar-fixed{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);margin:0;z-index:15}
 @media print{.mz-flip{display:none}}
 `
