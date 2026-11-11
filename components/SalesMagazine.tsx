@@ -965,7 +965,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             <div className="mz-form" style={{ marginTop: 8 }}>
               <label>Timeline title<input defaultValue={T('timelineTitle')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTitle: e.target.value } })} /></label>
               <label>Timeline closing line<input defaultValue={T('timelineNote')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineNote: e.target.value } })} /></label>
-              <label>Small labels under each step, separated by |<input defaultValue={String(copy.timelineTags || 'The night before | At check-out | Before arrival | As it happens | Around the clock | Right away')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTags: e.target.value } })} /></label>
+              <label>Small labels under each step, separated by |<input defaultValue={String(copy.timelineTags || 'The night before | At check-out | Before arrival | As it happens | Around the clock | Resolved quickly')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTags: e.target.value } })} /></label>
             </div>
           ) : null}
           <p className="mz-form-h">Photos</p>

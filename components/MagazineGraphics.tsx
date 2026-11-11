@@ -29,7 +29,7 @@ function smooth(pts: [number, number][]): string {
 
 /** One stay, start to finish: a vertical line of moments on the brand colour. */
 export function StayTimeline({ steps, title = 'One stay, start to finish', note = 'Our own team, on every stay.', tags }: { steps: { k: string; v?: string }[]; title?: string; note?: string; tags?: string[] }) {
-  const TAGS = ['THE NIGHT BEFORE', 'AT CHECK-OUT', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'RIGHT AWAY'].map((d, i) => (tags && tags[i] ? tags[i].toUpperCase() : d))
+  const TAGS = ['THE NIGHT BEFORE', 'AT CHECK-OUT', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'RESOLVED QUICKLY'].map((d, i) => (tags && tags[i] ? tags[i].toUpperCase() : d))
   const list = steps.slice(0, 6)
   const W = 304, H = 1056, top = 250, bottom = 150
   const gap = (H - top - bottom) / Math.max(1, list.length - 1)
