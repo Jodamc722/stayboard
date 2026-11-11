@@ -108,6 +108,15 @@ function setPath(obj: Any, path: string, val: Any) {
 
 // ── Charts ────────────────────────────────────────────────────────────────────────────────────────
 const CHART_H = 210, CHART_MIN = 100
+/** How far a page's words run past its sheet: into the footer, or pushing the footer off the page. */
+function overOf(el: Element): number | null {
+  const body = el.querySelector('.mz-body, .mz-split-body') as HTMLElement | null
+  const foot = el.querySelector('.mz-foot') as HTMLElement | null
+  const last = body?.lastElementChild as HTMLElement | null
+  if (!body || !foot || !last) return null
+  const page = el.getBoundingClientRect(), f = foot.getBoundingClientRect()
+  return Math.max(last.getBoundingClientRect().bottom - f.top + 4, f.bottom + 24 - page.bottom)
+}
 function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number }) {
   // Information-design audit (2026-11-11): one column per month, not paired bars — solid to the low
   // end, lighter from low to high, so it reads "at least X, up to Y". Four gridlines, axis labels
@@ -229,17 +238,36 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   // printed narrow and off-centre. Now the chart always runs the full width and is drawn only as tall as
   // the page has room for (never under CHART_MIN). Text in the chart stays the same size.
   const [chartH, setChartH] = useState<Record<string, number>>({})
-  useEffect(() => { setChartH({}) }, [doc])
+  useEffect(() => { setChartH({}); setFit({}) }, [doc])
+  // EVERY PAGE FITS ITS SHEET (Jon, 2026-11-11: "make sure everything is formatted to fit"). A page whose
+  // words run past its footer — longer copy, a website theme with a larger face, a longer comp table —
+  // steps down until it fits: up to three steps, each setting the display type and the reading blocks a
+  // little smaller and tighter. Measured in the browser after each render, so it holds for whatever the
+  // deck says. Only a page that still overflows at the last step is flagged to the editor.
+  const [fit, setFit] = useState<Record<string, number>>({})
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const next: Record<string, number> = {}
+      document.querySelectorAll('.mz-page[data-k]').forEach(el => {
+        const k = String((el as HTMLElement).dataset.k)
+        // Over if the words reach the footer, or the footer itself is pushed off the sheet.
+        const over = overOf(el)
+        if (over == null) return
+        const lvl = fit[k] || 0
+        if (over > 0 && lvl < 3 && !(k.startsWith('plan-') && (chartH[k] || CHART_H) > CHART_MIN)) next[k] = lvl + 1
+      })
+      if (Object.keys(next).length) setFit(h => ({ ...h, ...next }))
+    }, 160)
+    return () => clearTimeout(id)
+  })
   useEffect(() => {
     const id = setTimeout(() => {
       const next: Record<string, number> = {}
       document.querySelectorAll('.mz-page[data-k^="plan-"]').forEach(el => {
         const k = String((el as HTMLElement).dataset.k)
-        const body = el.querySelector('.mz-body') as HTMLElement | null, foot = el.querySelector('.mz-foot') as HTMLElement | null
         const svg = el.querySelector('svg.mz-chart-svg') as SVGElement | null
-        const last = body?.lastElementChild as HTMLElement | null
-        if (!body || !foot || !svg || !last) return
-        const over = last.getBoundingClientRect().bottom - foot.getBoundingClientRect().top + 6
+        const over = overOf(el)
+        if (!svg || over == null) return
         const cur = chartH[k] || CHART_H
         const unit = svg.getBoundingClientRect().width / 688
         if (over > 0 && cur > CHART_MIN && unit > 0) next[k] = Math.max(CHART_MIN, Math.floor(cur - over / unit))
@@ -313,7 +341,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   // NO UNIT PRICES (Jon, 2026-11-11: "noticed cost of units, remove that, don't need that"). The
   // starting price, and the gross yield worked from it, no longer print anywhere in the package.
   const showYield = false
-  const showNet = !!mag.net
+  const showNet = mag.net != null ? !!mag.net : (!!cma && AUDIENCES[audienceOf(c.audience)].net)
   const channelPct = Number.isFinite(+mag.channelPct) ? +mag.channelPct : 15
   const mgmtPct = Number.isFinite(+mag.mgmtPct) ? +mag.mgmtPct : 15
   const netOf = (g: number) => Math.round(g * (1 - channelPct / 100) * (1 - mgmtPct / 100) / 100) * 100
@@ -406,13 +434,21 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     manageDek: 'Our own team, our own standard, on every stay.',
     techHead: 'Priced every day. Listed everywhere. *Reported every month.*',
     techDek: (tools.slice(0, 5).length > 1 ? (['', '', 'Two', 'Three', 'Four', 'Five'][tools.slice(0, 5).length] + ' systems working together, so') : 'One system, so') + ' pricing, distribution, housekeeping and reporting run on data rather than guesswork.',
-    workTitle: showPartner ? (aud === 'agents' ? 'For agents, and the buyers they bring' : 'For the sales team, and the buyers they bring') : aud === 'owner' ? 'If you are weighing your options' : 'For buyers who ask for options',
-    numbersTitle: plans.length > 1 ? `${['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][plans.length] || plans.length} floor plans. *One question, answered.*` : 'What a home at ' + (short(building) || 'this building') + ' could earn',
+    workTitle: showPartner || aud === 'owner' ? AUDIENCES[aud].workTitle : 'For buyers who ask for options',
+    numbersTitle: aud === 'owner' && cma ? 'What your residence *could earn.*' : plans.length > 1 ? `${['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][plans.length] || plans.length} floor plans. *One question, answered.*` : 'What a home at ' + (short(building) || 'this building') + ' could earn',
     glanceHead: 'At a glance',
     marketHead: `${area || 'The market'}, *by the night.*`,
     glanceDek: 'Estimated gross rental revenue in a full year, once the listing is established. Each line runs from the low end of the year to the high end.',
-    backTitle: 'Book a call *to learn more.*',
-    backDek: cma ? `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through these projections, the terms, and how we would run a home${building ? ' at ' + short(building) : ''}.` : `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through the numbers, the terms and the onboarding, and answer every question before you decide.`,
+    backTitle: cma ? AUDIENCES[aud].backTitle : 'Book a call *to learn more.*',
+    secondKicker: AUDIENCES[aud].secondKicker,
+    secondTitle: AUDIENCES[aud].secondTitle.replace('{at}', building ? ' at *' + short(building) + '*' : ''),
+    // Every label on the page is the team's to rewrite too (Jon, 2026-11-11: "everything should be editable").
+    kPeople: 'The people', kTerms: 'How we work together', kListed: 'Where your home is listed', kFees: 'Referral fees, in writing',
+    kHow: 'How it works', kReady: 'How we would get a unit ready', kCompsAll: 'The comparable set used across this package',
+    heroLabel: 'Could earn in a year, once established', heroNote: 'Gross rental revenue, before channel fees and the management fee',
+    kChart: 'Through the year', chartSource: 'Seasonal shape from Miami market pricing data.', kComps: 'Against the comparable set',
+    timelineTitle: 'One stay, start to finish', timelineNote: 'Our own team, on every stay.',
+    backDek: cma ? AUDIENCES[aud].backDek.replace('{with}', presenterFirst ? ' with ' + presenterFirst : '').replace('{at}', building ? ' at ' + short(building) : '') : `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through the numbers, the terms and the onboarding, and answer every question before you decide.`,
   }
   const T = (k: keyof typeof D) => (copy[k] != null && String(copy[k]).trim() ? String(copy[k]) : D[k])
   const CT = ({ k, block }: { k: keyof typeof D; block?: boolean }) => <E v={T(k)} p={'magazine.copy.' + k} rich block={block} />
@@ -426,21 +462,35 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   add({ key: 'cover', kind: 'cover', render: () => null })
   // Off unless switched on (Jon, 2026-11-11: "table of contents — remove").
   if (mag.showContents) add({ key: 'contents', kind: 'page', section: 'Contents', render: () => null })
-  if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
-  if (showPage('team') && (team.length || terms.length)) add({ key: 'team', kind: 'page', section: 'Who we are', tone: 'warm', render: () => null })
-  if (showPage('manage') && ops.length) add({ key: 'manage', kind: 'page', section: 'How we manage', render: () => null })
-  if (showPage('tech') && tools.length) add({ key: 'tech', kind: 'page', section: 'Our technology', render: () => null })
-  if (cma && (showPartner || showSecond)) {
-    add({ key: 'op-work', kind: 'opener', section: 'Working together', render: () => null })
-    if (showPartner) add({ key: 'partner', kind: 'page', section: 'Agent partner program', render: () => null })
-    if (showSecond) add({ key: 'second', kind: 'page', section: 'Owner options', render: () => null })
+  const parts = {
+    who: () => {
+      if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
+      if (showPage('team') && (team.length || terms.length)) add({ key: 'team', kind: 'page', section: 'Who we are', tone: 'warm', render: () => null })
+      if (showPage('manage') && ops.length) add({ key: 'manage', kind: 'page', section: 'How we manage', render: () => null })
+      if (showPage('tech') && tools.length) add({ key: 'tech', kind: 'page', section: 'Our technology', render: () => null })
+    },
+    work: () => {
+      if (!cma || !(showPartner || showSecond)) return
+      add({ key: 'op-work', kind: 'opener', section: 'Working together', render: () => null })
+      if (showPartner) add({ key: 'partner', kind: 'page', section: 'Agent partner program', render: () => null })
+      if (showSecond) add({ key: 'second', kind: 'page', section: aud === 'owner' ? 'Terms' : 'Owner options', render: () => null })
+    },
+    num: () => {
+      if (!cma || !(showMarket || showGlance || plans.length)) return
+      add({ key: 'op-num', kind: 'opener', section: 'The numbers', render: () => null })
+      // One owner, one or two unit types: their own projection before the market around it.
+      if (aud === 'owner') {
+        for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Your projection', render: () => null })
+        if (showGlance && plans.length > 2) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
+        if (showMarket) add({ key: 'market', kind: 'page', section: 'The market', render: () => null })
+        return
+      }
+      if (showMarket) add({ key: 'market', kind: 'page', section: 'The market', render: () => null })
+      if (showGlance) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
+      for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Rental comparison', render: () => null })
+    },
   }
-  if (cma && (showMarket || showGlance || plans.length)) {
-    add({ key: 'op-num', kind: 'opener', section: 'The numbers', render: () => null })
-    if (showMarket) add({ key: 'market', kind: 'page', section: 'The market', render: () => null })
-    if (showGlance) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
-    for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Rental comparison', render: () => null })
-  }
+  for (const k of AUDIENCES[aud].order) parts[k]()
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
   specs.forEach((s, i) => { folioOf[s.key] = i + 1 })
@@ -502,13 +552,17 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       case s.key === 'cover' && theme.cover === 'inset': return (
         // THE INSET COVER (Atelier): the photograph framed on paper, the name set beneath it.
         <section key="cover" className="mz-page mz-icover">
+          {/* STAY, WITH THE BUILDING (Jon, 2026-11-11: "really Stay branded, with design elements of the
+              property"): our mark and the building's own logo as one lockup, its colours in the theme. */}
           <div className="mz-icover-mast">
-            <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />
+            <div className="mz-lockup">
+              <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />
+              {brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}
+            </div>
             <span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span>
           </div>
           <div className="mz-icover-photo mz-ph" style={ph('cover', '', 'center 45%')} />
           <div className="mz-icover-main">
-            {brandLogo ? <img src={brandLogo} alt="" className="mz-icover-brand" /> : null}
             <p className="mz-icover-kick">{cma ? <E v={area} p="cma.area" ph="Area" /> : area || 'South Florida'}{' · Miami'}</p>
             <h1 className="mz-icover-title">
               {canEdit && editText ? <E v={building} p={buildingPath} ph="Building" /> : <>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</>}
@@ -593,7 +647,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         <>
           {team.length ? (
             <>
-              {kicker('The people')}
+              {kicker(<CT k="kPeople" />)}
               <h2 className="mz-h mz-h1"><CT k="teamHead" /></h2>
               <div className={'mz-team mz-team-' + Math.min(4, Math.max(3, team.length <= 3 ? 3 : 4))}>
                 {team.map(({ p, i }, j) => (
@@ -610,7 +664,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           ) : null}
           {terms.length ? (
             <div className="mz-terms-wrap">
-              {kicker('How we work together')}
+              {kicker(<CT k="kTerms" />)}
               <dl className="mz-terms">{terms.map(r => <div key={r.i}><dt><E v={r.k} p={`terms.rows.${r.i}.k`} /></dt><dd><E v={r.v} p={`terms.rows.${r.i}.v`} block /></dd></div>)}</dl>
             </div>
           ) : null}
@@ -620,7 +674,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         <section key="manage" data-k="manage" className="mz-page mz-split-page">
           {canEdit && overfull.includes('manage') ? <p className="mz-overfull">This page is too full to print. Shorten a passage or hide a section.</p> : null}
           {gfx('manage')
-            ? <div className="mz-split-photo"><StayTimeline steps={ops} /></div>
+            ? <div className="mz-split-photo"><StayTimeline steps={ops} title={T('timelineTitle')} note={T('timelineNote')} tags={String(copy.timelineTags || '').split('|').map((x: string) => x.trim())} /></div>
             : <div className="mz-split-photo mz-ph" style={ph('manage')}><p className="mz-caption">A Stay-managed home</p></div>}
           <div className="mz-split-text">
             <header className="mz-run mz-run-tight"><span className="mz-run-mark">STAY</span><span>How we manage</span><span>{short(building)}</span></header>
@@ -653,7 +707,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             ))}
           </div>
           <div className="mz-channels">
-            {kicker('Where your home is listed')}
+            {kicker(<CT k="kListed" />)}
             {gfx('tech') ? <ChannelHub channels={channels} count={channelCount} /> : <p>{channels.map((ch, i) => <React.Fragment key={i}>{i ? <i>·</i> : null}<span>{ch}</span></React.Fragment>)}<i>·</i><span className="mz-plus">{channelCount} platforms in all</span></p>}
           </div>
         </>
@@ -673,22 +727,22 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
               <div className="mz-cards">{cma!.partner.cards.map(([k, v], i) => <div key={i}><b><E v={k} p={`cma.partner.cards.${i}.0`} /></b><p><E v={v} p={`cma.partner.cards.${i}.1`} block /></p></div>)}</div>
             </div>
             <aside className="mz-fees">
-              {kicker('Referral fees, in writing', true)}
+              {kicker(<CT k="kFees" />, true)}
               {cma!.partner.fees.map(([a, w], i) => <div key={i} className="mz-fee"><b><E v={a} p={`cma.partner.fees.${i}.0`} /></b><span><E v={w} p={`cma.partner.fees.${i}.1`} /></span></div>)}
               <p><E v={cma!.partner.feeNote} p="cma.partner.feeNote" block /></p>
             </aside>
           </div>
-          {kicker('How it works')}
+          {kicker(<CT k="kHow" />)}
           <ol className="mz-steps mz-steps-4">{cma!.partner.steps.map(([k, v], i) => <li key={i}><span>{two(i + 1)}</span><b><E v={k} p={`cma.partner.steps.${i}.0`} /></b><p><E v={v} p={`cma.partner.steps.${i}.1`} block /></p></li>)}</ol>
         </>
       ), { section: 'Agent partner program' })
       case s.key === 'second' && !!cma: return frame('second', (
         <>
-          {kicker('For buyers who ask for options')}
-          <h2 className="mz-h mz-h1">{building ? <>Stay as a second option at <em>{short(building)}</em></> : 'Stay as a second option'}</h2>
+          {kicker(<CT k="secondKicker" />)}
+          <h2 className="mz-h mz-h1"><CT k="secondTitle" /></h2>
           <p className="mz-lead mz-lead-xs"><E v={cma!.second.choose} p="cma.second.choose" block /></p>
           <div className="mz-qa">{cma!.second.qa.map(([q, a], i) => <div key={i}><p className="mz-q"><E v={q} p={`cma.second.qa.${i}.0`} /></p><p className="mz-a"><E v={a} p={`cma.second.qa.${i}.1`} block /></p></div>)}</div>
-          {kicker('How we would get a unit ready')}
+          {kicker(<CT k="kReady" />)}
           <ol className="mz-steps mz-steps-3">{cma!.second.steps.map(([k, v], i) => <li key={i}><span>{two(i + 1)}</span><b><E v={k.replace(/\.$/, '')} p={`cma.second.steps.${i}.0`} /></b><p><E v={v} p={`cma.second.steps.${i}.1`} block /></p></li>)}</ol>
         </>
       ), { section: 'Owner options' })
@@ -699,7 +753,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           <p className="mz-lead mz-lead-s"><E v={cma!.market.lead} p="cma.market.lead" block /></p>
           <div className="mz-cols">{cma!.market.bullets.map(([k, v], i) => (v.trim() || (canEdit && editText)) ? <div key={i} className="mz-col-item"><b><E v={k.replace(/\.$/, '')} p={`cma.market.bullets.${i}.0`} /></b><p><E v={v} p={`cma.market.bullets.${i}.1`} block /></p></div> : null)}</div>
           {cma!.comps.length ? (() => { const bases = Array.from(new Set(cma!.comps.map(x => x.basis.trim()).filter(Boolean))); return (
-            <div className="mz-comps">{kicker('The comparable set used across this package')}{compsTable(cma!.comps, null, bases.length > 1)}{bases.length === 1 ? <p className="mz-source">Every comparable: {bases[0].replace(/^./, m => m.toLowerCase())}.</p> : null}</div>
+            <div className="mz-comps">{kicker(<CT k="kCompsAll" />)}{compsTable(cma!.comps, null, bases.length > 1)}{bases.length === 1 ? <p className="mz-source">Every comparable: {bases[0].replace(/^./, m => m.toLowerCase())}.</p> : null}</div>
           ) })() : null}
         </>
       ), { section: 'The market' })
@@ -757,19 +811,19 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             <h2 className="mz-h mz-plan-name"><E v={p.name} p={`cma.plans.${pi}.name`} /></h2>
             <p className="mz-plan-sub"><E v={p.sf} p={`cma.plans.${pi}.sf`} ph="Size" /><span> · </span><E v={p.rules} p={`cma.plans.${pi}.rules`} ph="Rental rules" /></p>
             <div className="mz-hero">
-              <span>Could earn in a year, once established</span>
+              <span><CT k="heroLabel" /></span>
               <b>{money(n.lo)}<i>–</i>{money(n.hi)}</b>
-              <small>Gross rental revenue, before channel fees and the management fee</small>
+              <small><CT k="heroNote" /></small>
             </div>
             <dl className="mz-row3">{row3.map(([l, v, sm], i) => <div key={i}><dt>{l}</dt><dd>{v}</dd><small>{sm}</small></div>)}</dl>
             <div className="mz-chart-head">
-              {kicker(chart === 'cumulative' ? 'The year, as it adds up' : 'Through the year')}
+              {kicker(chart === 'cumulative' ? 'The year, as it adds up' : <CT k="kChart" />)}
               {chart === 'line' ? <p className="mz-legend mz-legend-line"><i className="hi" /> High end <i className="lo" /> Low end</p> : <p className="mz-legend"><i className="lo" /> Low end <i className="hi" /> High end</p>}
             </div>
             <Chart months={n.months} kind={chart} h={chartH['plan-' + p.id]} />
-            <p className="mz-source">Seasonal shape from Miami market pricing data.</p>
+            <p className="mz-source"><CT k="chartSource" /></p>
             <div className="mz-comps">
-              {kicker('Against the comparable set')}
+              {kicker(<CT k="kComps" />)}
               {compsTable(comps, (
                 <tr className="mz-us"><td><b>{(short(building) ? short(building) + ' ' : '') + p.name}</b></td><td>{area ? area + ', new build' : 'New build'}</td><td className="r"><b>{dash(n.lo, n.hi)}</b></td><td className="r"><b>{dash(n.nightlyLo, n.nightlyHi)}</b></td><td className="r"><b>{pctRange(p.occLo, p.occHi).replace(' to ', '–')}</b></td></tr>
               ))}
@@ -780,7 +834,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       }
       case s.key === 'back': return (
         <section key="back" className="mz-page mz-backcover mz-ph" style={ph('back', 'linear-gradient(180deg, rgba(22,19,16,.55) 0%, rgba(22,19,16,.80) 45%, rgba(22,19,16,.95) 100%)')}>
-          <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
+          <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}</div>
           <div className="mz-back-main">
             {kicker('Next step', true)}
             <h2 className="mz-back-title"><CT k="backTitle" /></h2>
@@ -907,6 +961,13 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           {([['manage', 'How we manage: the stay timeline'], ['numbers', 'The numbers: the Miami year'], ['tech', 'Our technology: the platform diagram']] as ['manage' | 'numbers' | 'tech', string][]).map(([k, l]) => (
             <label key={k} className="mz-toggle"><input type="checkbox" checked={gfx(k)} onChange={e => setMag({ graphics: { ...(mag.graphics || {}), [k]: e.target.checked } })} /> {l}</label>
           ))}
+          {gfx('manage') ? (
+            <div className="mz-form" style={{ marginTop: 8 }}>
+              <label>Timeline title<input defaultValue={T('timelineTitle')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTitle: e.target.value } })} /></label>
+              <label>Timeline closing line<input defaultValue={T('timelineNote')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineNote: e.target.value } })} /></label>
+              <label>Small labels under each step, separated by |<input defaultValue={String(copy.timelineTags || 'The night before | On departure | Before arrival | As it happens | Around the clock | In seconds')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTags: e.target.value } })} /></label>
+            </div>
+          ) : null}
           <p className="mz-form-h">Photos</p>
           <div className="mz-psearch">
             <form onSubmit={async e => { e.preventDefault(); const q = photoQ.trim(); if (!q) return; setPhotoBusy(true); try { const d = await fetch('/api/sales/photos?q=' + encodeURIComponent(q)).then(r => r.json()); setPhotoHits(d?.ok ? d.hits : []) } catch { setPhotoHits([]) } setPhotoBusy(false) }}>
@@ -1017,6 +1078,11 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Jost:wght@300;400;500;600&family=Josefin+Sans:wght@300;400&family=Inter:wght@400;500;600;700&display=swap" />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: Object.entries(fit).map(([k, l]) => {
+        const f = [1, 0.93, 0.87, 0.81][l] || 1, z = [1, 0.95, 0.9, 0.85][l] || 1
+        const sel = `.mz-page[data-k="${k.replace(/"/g, '')}"]`
+        return `${sel}{--mz-ds:${((theme.ds || 1) * f).toFixed(3)}}${sel} .mz-body,${sel} .mz-split-body{padding-top:${Math.round(40 * f)}px}${sel} .mz-practice,${sel} .mz-how,${sel} .mz-table,${sel} .mz-qa,${sel} .mz-cards,${sel} .mz-steps,${sel} .mz-cols,${sel} .mz-tools,${sel} .mz-terms,${sel} .mz-lead,${sel} .mz-row3,${sel} .mz-partner,${sel} .mz-gl{zoom:${z}}`
+      }).join('') }} />
       <nav className="mz-bar-top">
         <span className="mz-run-mark mz-on-dark">STAY</span>
         <span className="mz-switch"><b>Magazine</b><a href={keynote}>Keynote</a></span>
@@ -1094,6 +1160,9 @@ const CSS = `
 .mz-icover-mast{display:flex;justify-content:space-between;align-items:center}
 .mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
 .mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
+.mz-lockup{display:flex;align-items:center;gap:18px}.mz-lockup i{width:1px;height:34px;background:${C.ink};opacity:.35}
+.mz-lockup-b{max-width:130px;max-height:38px;object-fit:contain;filter:brightness(0);opacity:.82}
+.mz-lockup-dark i{background:#fff}.mz-lockup-dark .mz-lockup-b{filter:brightness(0) invert(1);opacity:.9}
 .mz-icover-photo{margin-top:36px;height:488px;flex:none}
 .mz-icover-main{text-align:center;margin-top:40px}
 .mz-icover-brand{max-width:150px;max-height:44px;object-fit:contain;filter:brightness(0);opacity:.85;display:block;margin:0 auto 18px}
@@ -1152,7 +1221,7 @@ const CSS = `
 .mz-terms dt{font:400 calc(20px * var(--mz-ds))/1.25 ${SERIF};color:${C.ink}}.mz-terms dd{margin:6px 0 0;font:400 14px/1.5 ${TEXT}}
 
 /* how we manage */
-.mz-split-page{display:grid;grid-template-columns:304px 1fr;flex-direction:row}
+.mz-split-page{display:grid;grid-template-columns:304px 1fr;grid-template-rows:100%;flex-direction:row}
 .mz-split-photo{background-size:cover;background-position:center;position:relative}
 .mz-split-text{display:flex;flex-direction:column;min-width:0}
 .mz-run-tight{margin:48px 64px 0 48px}

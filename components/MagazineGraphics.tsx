@@ -28,7 +28,8 @@ function smooth(pts: [number, number][]): string {
 }
 
 /** One stay, start to finish: a vertical line of moments on the brand colour. */
-export function StayTimeline({ steps, title = 'One stay, start to finish' }: { steps: { k: string; v?: string }[]; title?: string }) {
+export function StayTimeline({ steps, title = 'One stay, start to finish', note = 'Our own team, on every stay.', tags }: { steps: { k: string; v?: string }[]; title?: string; note?: string; tags?: string[] }) {
+  const TAGS = ['THE NIGHT BEFORE', 'ON DEPARTURE', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'IN SECONDS'].map((d, i) => (tags && tags[i] ? tags[i].toUpperCase() : d))
   const list = steps.slice(0, 6)
   const W = 304, H = 1056, top = 250, bottom = 150
   const gap = (H - top - bottom) / Math.max(1, list.length - 1)
@@ -50,11 +51,11 @@ export function StayTimeline({ steps, title = 'One stay, start to finish' }: { s
             <circle cx={58} cy={y} r={15} style={{ fill: V.navy, stroke: V.glow }} strokeWidth={1.25} />
             <text x={58} y={y + 4.5} textAnchor="middle" fontFamily={SERIF} fontSize={13} style={{ fill: V.glow }}>{String(i + 1).padStart(2, '0')}</text>
             {(() => { const w = s.k.split(' '); const lines: string[] = ['']; for (const x of w) { if ((lines[lines.length - 1] + ' ' + x).trim().length > 20) lines.push(x); else lines[lines.length - 1] = (lines[lines.length - 1] + ' ' + x).trim() } return lines.slice(0, 2).map((l, j) => <text key={j} x={88} y={y - 2 + j * 21 - (lines.length > 1 ? 10 : 0)} fontFamily={SERIF} fontSize={18} style={{ fill: '#fff' }}>{l}</text>) })()}
-            <text x={88} y={y + 18 + (s.k.length > 20 ? 11 : 0)} fontFamily={SANS} fontSize={9.5} fontWeight={600} letterSpacing="1.6" style={{ fill: '#fff', opacity: 0.55 }}>{['THE NIGHT BEFORE', 'ON DEPARTURE', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'IN SECONDS'][i] || ''}</text>
+            <text x={88} y={y + 18 + (s.k.length > 20 ? 11 : 0)} fontFamily={SANS} fontSize={9.5} fontWeight={600} letterSpacing="1.6" style={{ fill: '#fff', opacity: 0.55 }}>{TAGS[i] || ''}</text>
           </g>
         )
       })}
-      <text x={40} y={H - 70} fontFamily={SERIF} fontSize={13} fontStyle="italic" style={{ fill: '#fff', opacity: 0.7 }}>Our own team, on every stay.</text>
+      <text x={40} y={H - 70} fontFamily={SERIF} fontSize={13} fontStyle="italic" style={{ fill: '#fff', opacity: 0.7 }}>{note}</text>
     </svg>
   )
 }
