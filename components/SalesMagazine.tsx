@@ -488,6 +488,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   add({ key: 'cover', kind: 'cover', render: () => null })
   // Off unless switched on (Jon, 2026-11-11: "table of contents — remove").
   if (mag.showContents) add({ key: 'contents', kind: 'page', section: 'Contents', render: () => null })
+  const format: 'full' | 'brochure' | 'onepage' = onePager ? 'onepage' : (['brochure', 'onepage'].includes(mag.format) ? mag.format : 'full')
   const parts = {
     who: () => {
       if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
@@ -516,7 +517,20 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
       for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Rental comparison', render: () => null })
     },
   }
-  for (const k of AUDIENCES[aud].order) parts[k]()
+  // THE TYPE OF MAGAZINE (Jon, 2026-11-11: "have the option to change the type of magazine we want").
+  //   full     — every section (the default)
+  //   brochure — the short version: cover, who we are, the floor plans at a glance (or an owner's own
+  //              projection), the page that audience needs most (agents: the partner program; an owner:
+  //              the terms), and the close
+  //   onepage  — the one-pager (see onePage)
+  if (format === 'brochure' && cma) {
+    if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
+    if (aud === 'building' && showPage('manage') && ops.length) add({ key: 'manage', kind: 'page', section: 'How we manage', render: () => null })
+    if (aud === 'agents' && showPartner) add({ key: 'partner', kind: 'page', section: 'Agent partner program', render: () => null })
+    if (aud === 'owner' && plans.length <= 2) for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Your projection', render: () => null })
+    else if (cma.plans.length) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
+    if (aud === 'owner' && showSecond) add({ key: 'second', kind: 'page', section: 'Terms', render: () => null })
+  } else for (const k of AUDIENCES[aud].order) parts[k]()
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
   specs.forEach((s, i) => { folioOf[s.key] = i + 1 })
@@ -1008,6 +1022,12 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
         <div>
           {cma ? (
             <>
+              <p className="mz-form-h">Type of magazine</p>
+              <div className="mz-aud mz-format">
+                {([['full', 'Full magazine', 'Every section: who we are, how we run a home, the technology, working together, the market and one page per floor plan'], ['brochure', 'Brochure', 'About six pages: the cover, who we are, the floor plans at a glance, the page this reader needs most, and the close'], ['onepage', 'One-pager', 'Everything on one letter page: every unit type’s range, three reasons and who to call']] as const).map(([k, l, h]) => (
+                  <button key={k} type="button" className={format === k ? 'on' : ''} onClick={() => { if (onePager && k !== 'onepage') { window.location.href = keynote + '?view=magazine'; return } setMag({ format: k }) }}><b>{l}</b><span>{h}</span></button>
+                ))}
+              </div>
               <p className="mz-form-h">Who it is for</p>
               <div className="mz-aud">
                 {(Object.keys(AUDIENCES) as Audience[]).map(k => (
@@ -1166,7 +1186,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
       }).join('') }} />
       <nav className="mz-bar-top">
         <span className="mz-run-mark mz-on-dark">STAY</span>
-        <span className="mz-switch">{onePager ? <><a href={keynote + '?view=magazine'}>Magazine</a><b>One page</b></> : <><b>Magazine</b>{cma ? <a href={keynote + '?view=onepage'}>One page</a> : null}</>}<a href={keynote}>Keynote</a></span>
+        <span className="mz-switch">{format === 'onepage' ? <><a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Magazine</a><b>One page</b></> : <><b>{format === 'brochure' ? 'Brochure' : 'Magazine'}</b>{cma ? <a href={keynote + '?view=onepage'}>One page</a> : null}</>}<a href={keynote}>Keynote</a></span>
         <span className="mz-bar-r">
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
@@ -1175,7 +1195,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
         </span>
       </nav>
       {drawerEl}
-      {onePager && cma ? onePage() : specs.map(render)}
+      {format === 'onepage' && cma ? onePage() : specs.map(render)}
     </div>
   )
 }
