@@ -238,3 +238,9 @@ export async function getHousekeeping(): Promise<CbHousekeeping[]> {
 export async function setHousekeeping(roomId: string, condition: 'clean' | 'dirty' | 'inspected'): Promise<void> {
   await cbPost('postHousekeepingStatus', { roomID: roomId, roomCondition: condition })
 }
+
+/** Assign rooms to a housekeeper in Cloudbeds (postHousekeepingAssignment; roomIDs comma-separated). */
+export async function assignHousekeeper(housekeeperId: string, roomIds: string[]): Promise<void> {
+  if (!housekeeperId || !roomIds.length) return
+  await cbPost('postHousekeepingAssignment', { housekeeperID: housekeeperId, roomIDs: roomIds.join(',') })
+}
