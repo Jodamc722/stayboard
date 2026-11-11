@@ -108,6 +108,15 @@ function setPath(obj: Any, path: string, val: Any) {
 
 // ── Charts ────────────────────────────────────────────────────────────────────────────────────────
 const CHART_H = 210, CHART_MIN = 100
+/** How far a page's words run past its sheet: into the footer, or pushing the footer off the page. */
+function overOf(el: Element): number | null {
+  const body = el.querySelector('.mz-body, .mz-split-body') as HTMLElement | null
+  const foot = el.querySelector('.mz-foot') as HTMLElement | null
+  const last = body?.lastElementChild as HTMLElement | null
+  if (!body || !foot || !last) return null
+  const page = el.getBoundingClientRect(), f = foot.getBoundingClientRect()
+  return Math.max(last.getBoundingClientRect().bottom - f.top + 4, f.bottom + 24 - page.bottom)
+}
 function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number }) {
   // Information-design audit (2026-11-11): one column per month, not paired bars — solid to the low
   // end, lighter from low to high, so it reads "at least X, up to Y". Four gridlines, axis labels
@@ -241,13 +250,9 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       const next: Record<string, number> = {}
       document.querySelectorAll('.mz-page[data-k]').forEach(el => {
         const k = String((el as HTMLElement).dataset.k)
-        const body = el.querySelector('.mz-body, .mz-split-body') as HTMLElement | null
-        const foot = el.querySelector('.mz-foot') as HTMLElement | null
-        const last = body?.lastElementChild as HTMLElement | null
-        if (!body || !foot || !last) return
-        const page = el.getBoundingClientRect(), f = foot.getBoundingClientRect()
         // Over if the words reach the footer, or the footer itself is pushed off the sheet.
-        const over = Math.max(last.getBoundingClientRect().bottom - f.top + 1, f.bottom + 24 - page.bottom)
+        const over = overOf(el)
+        if (over == null) return
         const lvl = fit[k] || 0
         if (over > 0 && lvl < 3 && !(k.startsWith('plan-') && (chartH[k] || CHART_H) > CHART_MIN)) next[k] = lvl + 1
       })
@@ -260,11 +265,9 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       const next: Record<string, number> = {}
       document.querySelectorAll('.mz-page[data-k^="plan-"]').forEach(el => {
         const k = String((el as HTMLElement).dataset.k)
-        const body = el.querySelector('.mz-body') as HTMLElement | null, foot = el.querySelector('.mz-foot') as HTMLElement | null
         const svg = el.querySelector('svg.mz-chart-svg') as SVGElement | null
-        const last = body?.lastElementChild as HTMLElement | null
-        if (!body || !foot || !svg || !last) return
-        const over = last.getBoundingClientRect().bottom - foot.getBoundingClientRect().top + 6
+        const over = overOf(el)
+        if (!svg || over == null) return
         const cur = chartH[k] || CHART_H
         const unit = svg.getBoundingClientRect().width / 688
         if (over > 0 && cur > CHART_MIN && unit > 0) next[k] = Math.max(CHART_MIN, Math.floor(cur - over / unit))
@@ -338,7 +341,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   // NO UNIT PRICES (Jon, 2026-11-11: "noticed cost of units, remove that, don't need that"). The
   // starting price, and the gross yield worked from it, no longer print anywhere in the package.
   const showYield = false
-  const showNet = !!mag.net
+  const showNet = mag.net != null ? !!mag.net : (!!cma && AUDIENCES[audienceOf(c.audience)].net)
   const channelPct = Number.isFinite(+mag.channelPct) ? +mag.channelPct : 15
   const mgmtPct = Number.isFinite(+mag.mgmtPct) ? +mag.mgmtPct : 15
   const netOf = (g: number) => Math.round(g * (1 - channelPct / 100) * (1 - mgmtPct / 100) / 100) * 100
@@ -431,19 +434,21 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     manageDek: 'Our own team, our own standard, on every stay.',
     techHead: 'Priced every day. Listed everywhere. *Reported every month.*',
     techDek: (tools.slice(0, 5).length > 1 ? (['', '', 'Two', 'Three', 'Four', 'Five'][tools.slice(0, 5).length] + ' systems working together, so') : 'One system, so') + ' pricing, distribution, housekeeping and reporting run on data rather than guesswork.',
-    workTitle: showPartner ? (aud === 'agents' ? 'For agents, and the buyers they bring' : 'For the sales team, and the buyers they bring') : aud === 'owner' ? 'If you are weighing your options' : 'For buyers who ask for options',
-    numbersTitle: plans.length > 1 ? `${['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][plans.length] || plans.length} floor plans. *One question, answered.*` : 'What a home at ' + (short(building) || 'this building') + ' could earn',
+    workTitle: showPartner || aud === 'owner' ? AUDIENCES[aud].workTitle : 'For buyers who ask for options',
+    numbersTitle: aud === 'owner' && cma ? 'What your residence *could earn.*' : plans.length > 1 ? `${['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][plans.length] || plans.length} floor plans. *One question, answered.*` : 'What a home at ' + (short(building) || 'this building') + ' could earn',
     glanceHead: 'At a glance',
     marketHead: `${area || 'The market'}, *by the night.*`,
     glanceDek: 'Estimated gross rental revenue in a full year, once the listing is established. Each line runs from the low end of the year to the high end.',
-    backTitle: 'Book a call *to learn more.*',
+    backTitle: cma ? AUDIENCES[aud].backTitle : 'Book a call *to learn more.*',
+    secondKicker: AUDIENCES[aud].secondKicker,
+    secondTitle: AUDIENCES[aud].secondTitle.replace('{at}', building ? ' at *' + short(building) + '*' : ''),
     // Every label on the page is the team's to rewrite too (Jon, 2026-11-11: "everything should be editable").
     kPeople: 'The people', kTerms: 'How we work together', kListed: 'Where your home is listed', kFees: 'Referral fees, in writing',
     kHow: 'How it works', kReady: 'How we would get a unit ready', kCompsAll: 'The comparable set used across this package',
     heroLabel: 'Could earn in a year, once established', heroNote: 'Gross rental revenue, before channel fees and the management fee',
     kChart: 'Through the year', chartSource: 'Seasonal shape from Miami market pricing data.', kComps: 'Against the comparable set',
     timelineTitle: 'One stay, start to finish', timelineNote: 'Our own team, on every stay.',
-    backDek: cma ? `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through these projections, the terms, and how we would run a home${building ? ' at ' + short(building) : ''}.` : `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through the numbers, the terms and the onboarding, and answer every question before you decide.`,
+    backDek: cma ? AUDIENCES[aud].backDek.replace('{with}', presenterFirst ? ' with ' + presenterFirst : '').replace('{at}', building ? ' at ' + short(building) : '') : `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through the numbers, the terms and the onboarding, and answer every question before you decide.`,
   }
   const T = (k: keyof typeof D) => (copy[k] != null && String(copy[k]).trim() ? String(copy[k]) : D[k])
   const CT = ({ k, block }: { k: keyof typeof D; block?: boolean }) => <E v={T(k)} p={'magazine.copy.' + k} rich block={block} />
@@ -457,21 +462,35 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   add({ key: 'cover', kind: 'cover', render: () => null })
   // Off unless switched on (Jon, 2026-11-11: "table of contents — remove").
   if (mag.showContents) add({ key: 'contents', kind: 'page', section: 'Contents', render: () => null })
-  if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
-  if (showPage('team') && (team.length || terms.length)) add({ key: 'team', kind: 'page', section: 'Who we are', tone: 'warm', render: () => null })
-  if (showPage('manage') && ops.length) add({ key: 'manage', kind: 'page', section: 'How we manage', render: () => null })
-  if (showPage('tech') && tools.length) add({ key: 'tech', kind: 'page', section: 'Our technology', render: () => null })
-  if (cma && (showPartner || showSecond)) {
-    add({ key: 'op-work', kind: 'opener', section: 'Working together', render: () => null })
-    if (showPartner) add({ key: 'partner', kind: 'page', section: 'Agent partner program', render: () => null })
-    if (showSecond) add({ key: 'second', kind: 'page', section: 'Owner options', render: () => null })
+  const parts = {
+    who: () => {
+      if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
+      if (showPage('team') && (team.length || terms.length)) add({ key: 'team', kind: 'page', section: 'Who we are', tone: 'warm', render: () => null })
+      if (showPage('manage') && ops.length) add({ key: 'manage', kind: 'page', section: 'How we manage', render: () => null })
+      if (showPage('tech') && tools.length) add({ key: 'tech', kind: 'page', section: 'Our technology', render: () => null })
+    },
+    work: () => {
+      if (!cma || !(showPartner || showSecond)) return
+      add({ key: 'op-work', kind: 'opener', section: 'Working together', render: () => null })
+      if (showPartner) add({ key: 'partner', kind: 'page', section: 'Agent partner program', render: () => null })
+      if (showSecond) add({ key: 'second', kind: 'page', section: aud === 'owner' ? 'Terms' : 'Owner options', render: () => null })
+    },
+    num: () => {
+      if (!cma || !(showMarket || showGlance || plans.length)) return
+      add({ key: 'op-num', kind: 'opener', section: 'The numbers', render: () => null })
+      // One owner, one or two unit types: their own projection before the market around it.
+      if (aud === 'owner') {
+        for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Your projection', render: () => null })
+        if (showGlance && plans.length > 2) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
+        if (showMarket) add({ key: 'market', kind: 'page', section: 'The market', render: () => null })
+        return
+      }
+      if (showMarket) add({ key: 'market', kind: 'page', section: 'The market', render: () => null })
+      if (showGlance) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
+      for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Rental comparison', render: () => null })
+    },
   }
-  if (cma && (showMarket || showGlance || plans.length)) {
-    add({ key: 'op-num', kind: 'opener', section: 'The numbers', render: () => null })
-    if (showMarket) add({ key: 'market', kind: 'page', section: 'The market', render: () => null })
-    if (showGlance) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
-    for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Rental comparison', render: () => null })
-  }
+  for (const k of AUDIENCES[aud].order) parts[k]()
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
   specs.forEach((s, i) => { folioOf[s.key] = i + 1 })
@@ -533,13 +552,17 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       case s.key === 'cover' && theme.cover === 'inset': return (
         // THE INSET COVER (Atelier): the photograph framed on paper, the name set beneath it.
         <section key="cover" className="mz-page mz-icover">
+          {/* STAY, WITH THE BUILDING (Jon, 2026-11-11: "really Stay branded, with design elements of the
+              property"): our mark and the building's own logo as one lockup, its colours in the theme. */}
           <div className="mz-icover-mast">
-            <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />
+            <div className="mz-lockup">
+              <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />
+              {brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}
+            </div>
             <span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span>
           </div>
           <div className="mz-icover-photo mz-ph" style={ph('cover', '', 'center 45%')} />
           <div className="mz-icover-main">
-            {brandLogo ? <img src={brandLogo} alt="" className="mz-icover-brand" /> : null}
             <p className="mz-icover-kick">{cma ? <E v={area} p="cma.area" ph="Area" /> : area || 'South Florida'}{' · Miami'}</p>
             <h1 className="mz-icover-title">
               {canEdit && editText ? <E v={building} p={buildingPath} ph="Building" /> : <>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</>}
@@ -715,8 +738,8 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       ), { section: 'Agent partner program' })
       case s.key === 'second' && !!cma: return frame('second', (
         <>
-          {kicker('For buyers who ask for options')}
-          <h2 className="mz-h mz-h1">{building ? <>Stay as a second option at <em>{short(building)}</em></> : 'Stay as a second option'}</h2>
+          {kicker(<CT k="secondKicker" />)}
+          <h2 className="mz-h mz-h1"><CT k="secondTitle" /></h2>
           <p className="mz-lead mz-lead-xs"><E v={cma!.second.choose} p="cma.second.choose" block /></p>
           <div className="mz-qa">{cma!.second.qa.map(([q, a], i) => <div key={i}><p className="mz-q"><E v={q} p={`cma.second.qa.${i}.0`} /></p><p className="mz-a"><E v={a} p={`cma.second.qa.${i}.1`} block /></p></div>)}</div>
           {kicker(<CT k="kReady" />)}
@@ -811,7 +834,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       }
       case s.key === 'back': return (
         <section key="back" className="mz-page mz-backcover mz-ph" style={ph('back', 'linear-gradient(180deg, rgba(22,19,16,.55) 0%, rgba(22,19,16,.80) 45%, rgba(22,19,16,.95) 100%)')}>
-          <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
+          <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}</div>
           <div className="mz-back-main">
             {kicker('Next step', true)}
             <h2 className="mz-back-title"><CT k="backTitle" /></h2>
@@ -1137,6 +1160,9 @@ const CSS = `
 .mz-icover-mast{display:flex;justify-content:space-between;align-items:center}
 .mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
 .mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
+.mz-lockup{display:flex;align-items:center;gap:18px}.mz-lockup i{width:1px;height:34px;background:${C.ink};opacity:.35}
+.mz-lockup-b{max-width:130px;max-height:38px;object-fit:contain;filter:brightness(0);opacity:.82}
+.mz-lockup-dark i{background:#fff}.mz-lockup-dark .mz-lockup-b{filter:brightness(0) invert(1);opacity:.9}
 .mz-icover-photo{margin-top:36px;height:488px;flex:none}
 .mz-icover-main{text-align:center;margin-top:40px}
 .mz-icover-brand{max-width:150px;max-height:44px;object-fit:contain;filter:brightness(0);opacity:.85;display:block;margin:0 auto 18px}
