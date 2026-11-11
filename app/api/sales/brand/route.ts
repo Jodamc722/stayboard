@@ -80,7 +80,7 @@ const W: RGB = [255, 255, 255], K: RGB = [0, 0, 0]
 
 function pickTheme(css: string, themeColor: string | null) {
   const counts = new Map<string, number>()
-  for (const m of css.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b|rgba?\([^)]+\)/g)) {
+  for (const m of Array.from(css.matchAll(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b|rgba?\([^)]+\)/g))) {
     const c = parseColor(m[0]); if (!c) continue
     const k = hex(c); counts.set(k, (counts.get(k) || 0) + 1)
   }
@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
     const image = abs(meta('og:image') || meta('twitter:image'))
     // The logo: an <img> whose src, class or alt says logo; else an SVG/PNG icon link.
     let logo = ''
-    for (const m of html.matchAll(/<img[^>]+>/gi)) {
+    for (const m of Array.from(html.matchAll(/<img[^>]+>/gi))) {
       const tag = m[0]
       if (/logo/i.test(tag)) { const src = (tag.match(/\ssrc=["']([^"']+)["']/i) || [])[1] || (tag.match(/data-src=["']([^"']+)["']/i) || [])[1]; if (src && !/^data:/.test(src)) { logo = abs(src); break } }
     }
@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
     // Display face: a family the site loads from Google Fonts, preferring a serif or display face.
     let display = '', displayUrl = ''
     const fams: string[] = []
-    for (const l of gfLinks) for (const m of l.matchAll(/family=([^&:]+)/g)) fams.push(decodeURIComponent(m[1].replace(/\+/g, ' ')))
+    for (const l of gfLinks) for (const m of Array.from(l.matchAll(/family=([^&:]+)/g))) fams.push(decodeURIComponent(m[1].replace(/\+/g, ' ')))
     const pick = fams.find(f => /serif|garamond|caslon|baskerville|bodoni|didot|playfair|cormorant|lora|crimson|prata|gilda|italiana|marcellus|cinzel|dm serif|fraunces/i.test(f)) || fams.find(f => SERIFY.test(f))
     if (pick) { display = pick; displayUrl = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(pick).replace(/%20/g, '+') + ':wght@300;400;500&display=swap' }
     return NextResponse.json({ ok: true, theme: { label: title || new URL(base).hostname.replace(/^www\./, ''), ...pal, ...(display ? { display, displayUrl } : {}) }, logo, image })
