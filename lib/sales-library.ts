@@ -14,7 +14,7 @@ import { getSetting, getSettingFresh, setSetting } from './app-settings'
 import { normalizeCma, riderTemplate, newId, type SalesCma } from './sales-cma'
 
 export const SALES_LIBRARY_KEY = 'sales_buildings'
-export type LibraryBuilding = { id: string; name: string; area: string; website?: string; note?: string; photo?: string; cma: SalesCma; updatedAt: string; updatedBy?: string | null }
+export type LibraryBuilding = { id: string; name: string; area: string; website?: string; address?: string; note?: string; photo?: string; cma: SalesCma; updatedAt: string; updatedBy?: string | null }
 /** The list view: no comps or plans, just enough to choose from. */
 export type LibrarySummary = Omit<LibraryBuilding, 'cma'> & { plans: number; comps: number; range: [number, number] | null }
 
@@ -22,7 +22,7 @@ function clean(list: any): LibraryBuilding[] {
   return (Array.isArray(list) ? list : []).map((e: any) => {
     const cma = normalizeCma(e?.cma)
     if (!cma || !e?.id) return null
-    return { id: String(e.id), name: String(e.name || cma.building || 'Building').trim(), area: String(e.area || cma.area || '').trim(), website: e.website ? String(e.website) : undefined, note: e.note ? String(e.note) : undefined, photo: e.photo ? String(e.photo) : undefined, cma, updatedAt: String(e.updatedAt || ''), updatedBy: e.updatedBy || null }
+    return { id: String(e.id), name: String(e.name || cma.building || 'Building').trim(), area: String(e.area || cma.area || '').trim(), website: e.website ? String(e.website) : undefined, note: e.note ? String(e.note) : undefined, photo: e.photo ? String(e.photo) : undefined, address: e.address ? String(e.address) : undefined, cma, updatedAt: String(e.updatedAt || ''), updatedBy: e.updatedBy || null }
   }).filter(Boolean) as LibraryBuilding[]
 }
 
@@ -45,7 +45,7 @@ export async function getBuilding(id: string): Promise<LibraryBuilding | null> {
 }
 
 /** Add or update one entry. With no id, an entry with the same building name is updated instead of duplicated. */
-export async function saveBuilding(input: { id?: string; name?: string; area?: string; website?: string; note?: string; photo?: string; cma: any }, by?: string | null): Promise<{ ok: boolean; entry?: LibraryBuilding; error?: string }> {
+export async function saveBuilding(input: { id?: string; name?: string; area?: string; website?: string; address?: string; note?: string; photo?: string; cma: any }, by?: string | null): Promise<{ ok: boolean; entry?: LibraryBuilding; error?: string }> {
   const cma = normalizeCma(input.cma)
   if (!cma) return { ok: false, error: 'Those building pages could not be read.' }
   const list = await readLibrary(true)
@@ -58,6 +58,7 @@ export async function saveBuilding(input: { id?: string; name?: string; area?: s
     id: prev?.id || input.id || newId(), name, area: String(input.area ?? prev?.area ?? cma.area ?? '').trim(),
     website: input.website !== undefined ? String(input.website).trim() || undefined : prev?.website,
     note: input.note !== undefined ? String(input.note).trim() || undefined : prev?.note,
+    address: input.address !== undefined ? String(input.address).trim() || undefined : prev?.address,
     photo: input.photo !== undefined ? String(input.photo).trim() || undefined : prev?.photo,
     cma: { ...cma, building: cma.building || name }, updatedAt: new Date().toISOString(), updatedBy: by || null,
   }

@@ -116,7 +116,9 @@ export function shapeOf(w?: number[] | null): number[] {
 
 /** The range before any scale: the math, or the numbers set by hand. */
 function baseRange(p: SalesCma, plan: PacketPlan) {
-  const base = p.comps.find(c => c.id === plan.baseId) || p.comps[0]
+  // baseId 'none': a unit type waiting for its own figures (scanned from a website, added by hand) is
+  // never quietly priced off the first comparable.
+  const base = plan.baseId === 'none' ? null : (p.comps.find(c => c.id === plan.baseId) || p.comps[0])
   const k = (plan.scale || 1) * (1 - (plan.less || 0) / 100)
   const manual = !!(plan.override && plan.override.lo > 0 && plan.override.hi > 0)
   return {
