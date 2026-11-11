@@ -394,7 +394,7 @@ export const DEFAULT_TEMPLATE: OnboardingTemplate = {
   seasonLowNote: 'September is the floor \u2014 the quietest month of the year, and the one we use for deep cleans, touch-ups and anything that needs the unit empty.',
 
   seasonNote:
-    'The shape of the year, drawn from our own book across 450+ units and cross-checked against market data. It is not a forecast for your unit: we do not put a figure on a unit until it has a season of its own history.',
+    'The shape of the year, drawn from our own book across 500+ units and cross-checked against market data. It is not a forecast for your unit: we do not put a figure on a unit until it has a season of its own history.',
 
   // CONTACTS LIVE IN THE DEFAULTS TOO (Jon, 2026-09-18: "share email and phone number for about
   // team, numbers for Roberto and I"). The saved template in app_settings is what a generated

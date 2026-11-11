@@ -548,7 +548,8 @@ export const RETURNS_HEADLINE = 'What the listings we manage actually earn'
 /** HOMES → LISTINGS (Jon, 2026-10-29: "change homes to listing"). Decks generated before the change
  *  stored the old house line; the renderer shows the new one in its place until someone edits it. */
 export const RETIRED_WORDING: Record<string, string> = {
-  'Ten years. 450 homes. One standard.': 'Ten years. 450 listings. One standard.',
+  'Ten years. 450 homes. One standard.': 'Ten years. 500+ listings. One standard.',
+  'Ten years. 450 listings. One standard.': 'Ten years. 500+ listings. One standard.',
   'What the homes we manage actually earn': 'What the listings we manage actually earn',
 }
 export const RETURNS_SUBTITLE = 'Twelve months of settled bookings, by building.'
