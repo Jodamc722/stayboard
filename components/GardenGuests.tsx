@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Contact, Loader2, Mail, Phone, Search, X } from 'lucide-react'
 import { Tag, LeanPick, type Tone } from '@/components/lean'
+import { ResDetail } from '@/components/GardenResDetail'
 
 const j = async (u: string) => { const r = await fetch(u, { cache: 'no-store' }); return r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` })) }
 const usd = (n: number) => '$' + Math.round(n || 0).toLocaleString('en-US')
@@ -21,6 +22,7 @@ export function GardenGuests() {
   const [view, setView] = useState<View>('now')
   const [prof, setProf] = useState<any | null>(null)
   const [pErr, setPErr] = useState('')
+  const [full, setFull] = useState<string>('')
   const sel = sp.get('res') || sp.get('key')
 
   useEffect(() => { j('/api/garden/guests').then(setD) }, [])
@@ -102,14 +104,14 @@ export function GardenGuests() {
                 <h3 className="text-[11px] uppercase tracking-wider text-muted font-semibold mt-4 mb-1.5">Stays</h3>
                 <div className="space-y-2">
                   {prof.stays.map((st: any) => (
-                    <div key={st.id} className="rounded-xl border border-line p-3">
+                    <div key={st.resId} className="rounded-xl border border-line p-3">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[13.5px] font-semibold text-ink">{dayShort(st.checkIn)} → {dayShort(st.checkOut)}</span>
                         <span className="text-[12px] text-muted">{st.nights ?? '?'} nts · room {st.rooms.join(', ') || '—'} · {st.source || 'Direct'}</span>
                         <span className="flex-1" />
                         <Tag tone={st.status === 'canceled' ? 'rose' : st.status === 'checked_in' ? 'brand' : st.status === 'checked_out' ? 'slate' : 'emerald'}>{st.status.replace('_', ' ')}</Tag>
                       </div>
-                      <div className="text-[12px] text-muted mt-0.5">{usd(st.total)}{st.balance > 0 ? <span className="text-amber-700 font-semibold"> · {usd(st.balance)} open</span> : ' · paid'} · <span className="font-mono">{st.id}</span></div>
+                      <div className="text-[12px] text-muted mt-0.5">{usd(st.total)}{st.balance > 0 ? <span className="text-amber-700 font-semibold"> · {usd(st.balance)} open</span> : ' · paid'} · <span className="font-mono">{st.resId}</span> · <button onClick={() => setFull(f => f === st.resId ? '' : st.resId)} className="font-semibold text-brand-700 hover:underline">{full === st.resId ? 'hide details' : 'full details'}</button></div>
                       <div className="flex flex-wrap gap-1 mt-2">
                         <Tag tone={st.id.decision === 'passed' || st.id.onFile ? 'emerald' : st.id.decision === 'failed' ? 'rose' : 'slate'}>ID {st.id.decision ? st.id.decision : st.id.onFile ? 'on file' + (st.id.type ? ' · ' + st.id.type : '') : st.id.onFile === false ? 'not on file' : 'unknown'}</Tag>
                         <Tag tone={st.card.decision === 'passed' || st.card.onFile ? 'emerald' : st.card.decision === 'failed' ? 'rose' : 'slate'}>card {st.card.decision ? st.card.decision : st.card.onFile ? 'on file' : st.card.onFile === false ? 'none on file' : 'unknown'}</Tag>
@@ -121,6 +123,7 @@ export function GardenGuests() {
                       </div>
                       {st.tags.length ? <div className="flex flex-wrap gap-1 mt-1.5">{st.tags.map((t: any) => <Tag key={t.key} tone={t.tone as Tone} title={t.detail || undefined}>{t.label}{t.detail ? ': ' + t.detail : ''}</Tag>)}</div> : null}
                       {st.notes.length ? <div className="mt-2 space-y-1">{st.notes.map((n: string, i: number) => <p key={i} className="text-[12px] text-ink bg-app rounded-lg px-2 py-1.5 whitespace-pre-wrap">{n}</p>)}</div> : null}
+                      {full === st.resId ? <div className="mt-2 border-t border-line pt-2"><ResDetail id={st.resId} compact /></div> : null}
                     </div>
                   ))}
                 </div>

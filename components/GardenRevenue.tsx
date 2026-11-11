@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { LeanEmpty, Pill, Tag } from '@/components/lean'
+import { ResDrawer } from '@/components/GardenResDetail'
 
 const money = (n: number | null | undefined) => n == null ? '—' : '$' + Math.round(n).toLocaleString('en-US')
 const pct = (n: number | null | undefined) => n == null ? '—' : n + '%'
@@ -30,6 +31,9 @@ function Section({ title, note, children }: { title: string; note?: string; chil
 export function GardenRevenue() {
   const [ahead, setAhead] = useState(60)
   const [d, setD] = useState<any>(null)
+  const [bf, setBf] = useState<'all' | 'owed' | 'guesty' | 'cloudbeds'>('all')
+  const [bq, setBq] = useState('')
+  const [open, setOpen] = useState<any | null>(null)
   useEffect(() => { setD(null); fetch(`/api/garden/revenue?ahead=${ahead}`, { cache: 'no-store' }).then(r => r.json()).then(setD).catch(e => setD({ ok: false, error: String(e) })) }, [ahead])
   if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>
   if (!d.ok) return <LeanEmpty>{d.error}</LeanEmpty>
@@ -62,7 +66,44 @@ export function GardenRevenue() {
             <Stat label="Booked last 7 days" value={String(d.books.pickup7.bookings)} sub={money(d.books.pickup7.revenue)} />
           </div>
         ) : <LeanEmpty>No reservations in Cloudbeds yet. Revenue, ADR, occupancy and pickup fill in here from the first booking.</LeanEmpty>}
+        {d.guesty?.bookings ? <p className="text-[11.5px] text-muted mt-1.5">Includes {d.guesty.bookings} Botanica booking{d.guesty.bookings === 1 ? '' : 's'} still in Guesty ({money(d.guesty.revenue)}, accommodation + cleaning){d.guesty.units ? ` and ${d.guesty.units} Guesty unit${d.guesty.units === 1 ? '' : 's'} in the room count` : ''} — until they move to Cloudbeds.</p> : null}
       </Section>
+
+      {/* Every booking — who, where, channel, money, what is owed, and where it lives. */}
+      {d.bookings?.length ? (() => {
+        const ql = bq.trim().toLowerCase()
+        const rows = d.bookings.filter((b: any) => (bf === 'all' || (bf === 'owed' ? (b.balance || 0) > 0 : b.origin === bf)) && (!ql || [b.guest, (b.rooms || []).join(' '), b.channel, b.id].join(' ').toLowerCase().includes(ql)))
+        const owed = d.bookings.filter((b: any) => (b.balance || 0) > 0)
+        return (
+          <Section title="Bookings" note={`${d.bookings.length} staying ${dayLabel(d.from)} → ${dayLabel(d.to)} · click one for notes, vouchers, folio`}>
+            <div className="flex items-center gap-1.5 flex-wrap mb-2">
+              <Pill tone={bf === 'all' ? 'emerald' : 'slate'} onClick={() => setBf('all')}>All {d.bookings.length}</Pill>
+              <Pill tone={bf === 'owed' ? 'emerald' : 'slate'} onClick={() => setBf('owed')}>Balance owed {owed.length} · {money(owed.reduce((a: number, b: any) => a + (b.balance || 0), 0))}</Pill>
+              <Pill tone={bf === 'cloudbeds' ? 'emerald' : 'slate'} onClick={() => setBf('cloudbeds')}>Cloudbeds</Pill>
+              {d.guesty?.bookings ? <Pill tone={bf === 'guesty' ? 'emerald' : 'slate'} onClick={() => setBf('guesty')}>Botanica · Guesty {d.guesty.bookings}</Pill> : null}
+              <input value={bq} onChange={e => setBq(e.target.value)} placeholder="Guest, room, channel" className="ml-auto h-7 w-48 rounded-lg border border-line bg-white px-2 text-[12px]" />
+            </div>
+            <div className="rounded-2xl border border-line bg-white overflow-x-auto max-h-[480px] overflow-y-auto">
+              <table className="w-full text-[12.5px] tabular-nums">
+                <thead className="text-[10.5px] uppercase tracking-wider text-muted sticky top-0 bg-white"><tr className="border-b border-line">{['Guest', 'Room', 'Stay', 'Nts', 'Channel', 'Total', 'Balance', 'Status', 'Booked'].map(h => <th key={h} className={'px-3 py-2 font-semibold ' + (['Total', 'Balance', 'Nts'].includes(h) ? 'text-right' : 'text-left')}>{h}</th>)}</tr></thead>
+                <tbody>{rows.map((b: any) => (
+                  <tr key={b.id} onClick={() => setOpen(b)} className="border-b border-line/60 last:border-0 hover:bg-app/60 cursor-pointer">
+                    <td className="px-3 py-1.5 font-semibold text-ink whitespace-nowrap">{b.guest || 'Guest'}{b.origin === 'guesty' ? <span className="ml-1"><Tag tone="violet" title="Botanica stay still in Guesty — counted for reporting">Guesty</Tag></span> : null}</td>
+                    <td className="px-3 py-1.5 text-muted max-w-[10rem] truncate">{(b.rooms || []).join(', ') || '—'}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">{dayLabel(b.checkIn)} → {dayLabel(b.checkOut)}</td>
+                    <td className="px-3 py-1.5 text-right">{b.nights ?? '—'}</td>
+                    <td className="px-3 py-1.5 text-muted">{b.channel}</td>
+                    <td className="px-3 py-1.5 text-right">{money(b.total)}</td>
+                    <td className={'px-3 py-1.5 text-right ' + ((b.balance || 0) > 0 ? 'text-amber-700 font-semibold' : 'text-muted')}>{(b.balance || 0) > 0 ? money(b.balance) : 'paid'}</td>
+                    <td className="px-3 py-1.5 text-muted whitespace-nowrap">{String(b.status || '').replace(/_/g, ' ')}</td>
+                    <td className="px-3 py-1.5 text-muted whitespace-nowrap">{b.bookedAt ? dayLabel(String(b.bookedAt).slice(0, 10)) : '—'}</td>
+                  </tr>))}</tbody>
+              </table>
+            </div>
+            <ResDrawer id={open?.id || null} title={open ? `${open.guest || 'Guest'} · ${(open.rooms || []).join(', ') || 'unassigned'}` : ''} onClose={() => setOpen(null)} />
+          </Section>
+        )
+      })() : null}
 
       {d.byChannel.length ? (
         <Section title="Revenue by channel" note="share of room revenue, ADR, lead time, length of stay, cancellations">

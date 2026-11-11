@@ -9,7 +9,8 @@
 // Cloudbeds has no task API: the "operations" view is the per-room housekeeping detail it does
 // expose (condition, housekeeper, comments, DND, refused service, blocks) plus our garden_tasks.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Hotel, RefreshCw, Loader2, Search, Check, Play, X, Phone } from 'lucide-react'
+import { Hotel, RefreshCw, Loader2, Search, Check, Play, X, Phone, FileText } from 'lucide-react'
+import { ResDrawer } from '@/components/GardenResDetail'
 import { LeanHead, LeanTabs, LeanEmpty, LeanPick, Tag, IconBtn, type Tone } from '@/components/lean'
 
 type TabKey = 'arrivals' | 'departures' | 'inhouse' | 'unpaid' | 'verify' | 'hk' | 'team'
@@ -134,6 +135,37 @@ export function GardenFrontDesk({ canEdit, canVerify, canTasks }: { canEdit: boo
 }
 
 // ---- pieces ------------------------------------------------------------------------------------
+
+// GUEST READINESS (Jon, 2026-11-11: "track paid bookings, verified virtually, pre-arrival check-in
+// pending"). Paid = nothing owed (or the desk marked it prepaid / pre-auth). Verified = ID and card
+// both passed, on file or waived — the virtual check, before the guest is at the desk. Pre-arrival
+// check-in = Operto self check-in finished.
+const OKV = ['passed', 'on_file', 'waived']
+export const isPaid = (g: any) => g.balance <= 0 || (g.noteTags || []).some((t: any) => t.key === 'prepaid')
+export const isVerified = (g: any) => OKV.includes(g.id_status) && OKV.includes(g.card_status)
+export const checkinState = (g: any): 'done' | 'started' | 'pending' | 'none' => !g.operto ? 'none' : g.operto.checkin === 'done' ? 'done' : g.operto.checkin === 'started' ? 'started' : 'pending'
+type Ready = '' | 'unpaid' | 'unverified' | 'checkin'
+function Readiness({ rows, value, onPick }: { rows: any[]; value: Ready; onPick: (r: Ready) => void }) {
+  const live = rows.filter(g => !g.done)
+  const paid = live.filter(isPaid).length, ver = live.filter(isVerified).length
+  const ci = live.filter(g => checkinState(g) === 'done').length, ciKnown = live.filter(g => checkinState(g) !== 'none').length
+  const chip = (k: Ready, labelTxt: string, ok: number, of: number, sub: string) => (
+    <button onClick={() => onPick(value === k ? '' : k)} className={`text-left rounded-xl border bg-white px-3 py-1.5 min-w-[9rem] ${value === k ? 'border-brand-400 ring-1 ring-brand-200' : 'border-line'}`} title={value === k ? 'Show everyone' : 'Show only the ones not done'}>
+      <div className="text-[10.5px] uppercase tracking-wider text-muted font-semibold">{labelTxt}</div>
+      <div className={`text-[16px] font-semibold tabular-nums ${of && ok === of ? 'text-emerald-700' : ok < of ? 'text-amber-700' : 'text-ink'}`}>{ok}/{of}</div>
+      <div className="text-[11px] text-muted">{sub}</div>
+    </button>
+  )
+  if (!live.length) return null
+  return (
+    <div className="flex gap-1.5 flex-wrap mb-2">
+      {chip('unpaid', 'Paid', paid, live.length, live.length - paid ? `${live.length - paid} still owe` : 'all paid')}
+      {chip('unverified', 'Verified virtually', ver, live.length, live.length - ver ? `${live.length - ver} ID / card to check` : 'all verified')}
+      {chip('checkin', 'Pre-arrival check-in', ci, ciKnown || live.length, ciKnown ? (ciKnown - ci ? `${ciKnown - ci} pending` : 'all done') : 'no Operto link')}
+    </div>
+  )
+}
+const readyHit = (g: any, r: Ready) => r === 'unpaid' ? !isPaid(g) : r === 'unverified' ? !isVerified(g) : r === 'checkin' ? checkinState(g) !== 'done' : true
 function Tile({ label: l, value, sub, tone, on, onClick }: { label: string; value: ReactNode; sub?: string; tone?: 'emerald' | 'amber' | 'rose'; on?: boolean; onClick?: () => void }) {
   const t = tone === 'emerald' ? 'text-emerald-700' : tone === 'amber' ? 'text-amber-700' : tone === 'rose' ? 'text-rose-700' : 'text-ink'
   return (
@@ -168,33 +200,39 @@ const CallTag = ({ g }: { g: any }) => <Tag tone={g.call === 'reached' ? 'emeral
 const matchGuest = (g: any, q: string) => !q || [g.guest, g.rooms.join(' '), g.source, g.phone, g.email, g.id].join(' ').toLowerCase().includes(q.toLowerCase())
 
 function Guests({ rows, q, mode, empty }: { rows: any[]; q: string; mode: 'arrival' | 'departure' | 'inhouse' | 'unpaid'; empty: string }) {
-  const list = rows.filter(g => matchGuest(g, q))
+  const [ready, setReady] = useState<Ready>('')
+  const [open, setOpen] = useState<any | null>(null)
+  const list = rows.filter(g => matchGuest(g, q) && readyHit(g, ready))
   if (!rows.length) return <LeanEmpty>{empty}</LeanEmpty>
-  if (!list.length) return <LeanEmpty>No guest matches “{q}”.</LeanEmpty>
+  const strip = mode === 'arrival' || mode === 'inhouse' ? <Readiness rows={rows} value={ready} onPick={setReady} /> : null
+  if (!list.length) return <>{strip}<LeanEmpty>{ready ? 'Everyone here is done on that.' : `No guest matches “${q}”.`}</LeanEmpty></>
   const ordered = mode === 'unpaid' ? list : [...list].sort((a, b) => Number(a.done) - Number(b.done) || (a.rooms[0] || '').localeCompare(b.rooms[0] || '', undefined, { numeric: true }))
-  return (
-    <Table head={['Guest', 'Room', mode === 'departure' ? 'Stay' : 'Dates', 'Nts', 'Source', 'Balance', 'ID', 'Card', 'Code', 'Call', 'Notes', mode === 'unpaid' ? 'When' : 'Status']}>
+  return (<>
+    {strip}
+    <ResDrawer id={open?.id || null} title={open ? `${open.guest} · ${open.rooms.join(', ') || 'unassigned'}` : ''} onClose={() => setOpen(null)} />
+    <Table head={['Guest', 'Room', mode === 'departure' ? 'Stay' : 'Dates', 'Nts', 'Source', 'Paid', 'ID', 'Card', 'Check-in', 'Call', 'Notes', mode === 'unpaid' ? 'When' : 'Status', '']}>
       {ordered.map(g => (
         <tr key={g.id} className={g.done ? 'opacity-60' : ''}>
           <Td className="font-semibold text-ink max-w-[14rem] truncate" title={[g.guest, g.phone, g.email].filter(Boolean).join(' · ')}>
-            <span className="inline-flex items-center gap-1.5">{g.phone ? <a href={`tel:${g.phone}`} aria-label={`Call ${g.guest}`} className="text-muted hover:text-brand-700"><Phone size={12} /></a> : null}<a href={`/garden/guests?res=${encodeURIComponent(g.id)}`} className="hover:underline">{g.guest}</a></span>
+            <span className="inline-flex items-center gap-1.5">{g.phone ? <a href={`tel:${g.phone}`} aria-label={`Call ${g.guest}`} className="text-muted hover:text-brand-700"><Phone size={12} /></a> : null}<button onClick={() => setOpen(g)} className="hover:underline font-semibold" title="Full reservation — notes, vouchers, folio, payments">{g.guest}</button></span>
             {(g.adults || g.children) ? <span className="ml-1 text-muted font-normal">· {g.adults || 0}{g.children ? `+${g.children}` : ''}</span> : null}
           </Td>
           <Td className="tabular-nums">{g.rooms.join(', ') || <span className="text-rose-700">unassigned</span>}</Td>
           <Td className="text-muted tabular-nums">{dayShort(g.checkIn)} → {dayShort(g.checkOut)}</Td>
           <Td className="tabular-nums text-muted">{g.nights ?? '—'}</Td>
           <Td className="text-muted max-w-[9rem] truncate" title={g.source || ''}>{g.source || 'Direct'}</Td>
-          <Td className={`tabular-nums font-semibold ${g.balance > 0 ? 'text-amber-700' : 'text-muted font-normal'}`}>{g.balance > 0 ? usd(g.balance) : '—'}</Td>
+          <Td className="tabular-nums">{g.balance > 0 && !isPaid(g) ? <span className="font-semibold text-amber-700">{usd(g.balance)} owed</span> : <Tag tone="emerald" title={g.balance > 0 ? `Marked prepaid in the notes · Cloudbeds still shows ${usd(g.balance)}` : 'Nothing owed'}>paid ✓</Tag>}</Td>
           <Td><Ver k="ID" v={g.id_status} title={g.id_status === 'on_file' ? `ID on file${g.idType ? ' · ' + g.idType : ''}` : undefined} /></Td>
           <Td><Ver k="card" v={g.card_status} /></Td>
           <Td><Code g={g} /></Td>
           <Td><CallTag g={g} /></Td>
           <Td className="max-w-[18rem]"><NoteTags g={g} /></Td>
           <Td>{mode === 'unpaid' ? <Tag tone={g.when === 'departing' ? 'rose' : g.when === 'arriving' ? 'amber' : 'brand'}>{g.when}</Tag> : <Tag tone={STATUS_TONE[g.status] || 'slate'}>{label(g.status)}</Tag>}</Td>
+          <Td><button onClick={() => setOpen(g)} className="inline-flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-[11px] font-semibold text-muted hover:text-ink" title="Full reservation"><FileText size={11} /> details</button></Td>
         </tr>
       ))}
     </Table>
-  )
+  </>)
 }
 
 function Verifications({ rows, q, canVerify, reload, today }: { rows: any[]; q: string; canVerify: boolean; reload: () => void; today: string }) {
@@ -252,6 +290,7 @@ function Housekeeping({ d, q, canTasks, reload }: { d: any; q: string; canTasks:
   const [cond, setCond] = useState<Cond>('all')
   const [who, setWho] = useState<string>('')
   const [warn, setWarn] = useState('')
+  const [kind, setKind] = useState<string>('')
   const rooms: any[] = d.rooms
   const hkNames: string[] = useMemo(() => Array.from(new Set<string>([...rooms.map(r => r.housekeeper), ...d.tasks.map((t: any) => t.assigned_to)].filter(Boolean))).sort(), [rooms, d.tasks])
   const ql = q.toLowerCase()
@@ -264,13 +303,35 @@ function Housekeeping({ d, q, canTasks, reload }: { d: any; q: string; canTasks:
     return !ql || [r.name, r.type, r.housekeeper, r.comments, r.stay?.guest, r.arriving, r.frontdesk].join(' ').toLowerCase().includes(ql)
   }
   const list = rooms.filter(roomHit)
-  const tasks: any[] = d.tasks.filter((t: any) => (!who || t.assigned_to === who) && (!ql || [t.room_name, t.kind, t.assigned_to, t.note].join(' ').toLowerCase().includes(ql)))
+  const tasks: any[] = d.tasks.filter((t: any) => (!kind || t.kind === kind) && (!who || t.assigned_to === who) && (!ql || [t.room_name, t.kind, t.assigned_to, t.note].join(' ').toLowerCase().includes(ql)))
   const setTask = async (t: any, status: string) => { setWarn(''); const r = await post('/api/garden/tasks', { id: t.id, status }, 'PATCH'); setWarn(r?.warning || r?.error || r?.message || ''); reload() }
   const s = d.summary.hk
+  // CLEANS BY TYPE (Jon, 2026-11-11: "stayover cleans, inspected units and checkout cleans").
+  const byKind = (k: string) => { const L = d.tasks.filter((t: any) => t.kind === k && t.status !== 'cancelled'); return { total: L.length, done: L.filter((t: any) => t.status === 'done').length, going: L.filter((t: any) => t.status === 'in_progress').length } }
+  const co = byKind('clean'), so = byKind('stayover'), ins = byKind('inspection')
+  const turned = rooms.filter(r => r.departing && !r.oos)
+  const turnedInspected = turned.filter(r => r.condition === 'inspected').length
   const n = (c: Cond) => c === 'all' ? rooms.length : c === 'oos' ? s.oos : c === 'flags' ? rooms.filter(r => r.dnd || r.refused || r.comments).length : c === 'turning' ? rooms.filter(r => r.departing || r.arriving).length : s[c]
 
+  const cleanChip = (k: string, l: string, x: { total: number; done: number; going: number }, extra?: string) => (
+    <button key={k} onClick={() => setKind(v => v === k ? '' : k)} className={`text-left rounded-xl border bg-white px-3 py-1.5 min-w-[9rem] ${kind === k ? 'border-brand-400 ring-1 ring-brand-200' : 'border-line'}`} title="Show these tasks below">
+      <div className="text-[10.5px] uppercase tracking-wider text-muted font-semibold">{l}</div>
+      <div className={`text-[16px] font-semibold tabular-nums ${x.total && x.done === x.total ? 'text-emerald-700' : 'text-ink'}`}>{x.done}/{x.total}</div>
+      <div className="text-[11px] text-muted">{x.going ? `${x.going} in progress` : x.total - x.done ? `${x.total - x.done} to go` : x.total ? 'all done' : 'none today'}{extra ? ' · ' + extra : ''}</div>
+    </button>
+  )
   return (
     <>
+      <div className="flex gap-1.5 flex-wrap mb-2">
+        {cleanChip('clean', 'Checkout cleans', co)}
+        {cleanChip('stayover', 'Stayover cleans', so)}
+        {cleanChip('inspection', 'Inspections', ins, `${s.inspected} rooms inspected`)}
+        <button onClick={() => setCond(c => c === 'turning' ? 'all' : 'turning')} className={`text-left rounded-xl border bg-white px-3 py-1.5 min-w-[9rem] ${cond === 'turning' ? 'border-brand-400 ring-1 ring-brand-200' : 'border-line'}`} title="Rooms with a departure today">
+          <div className="text-[10.5px] uppercase tracking-wider text-muted font-semibold">Turned rooms inspected</div>
+          <div className={`text-[16px] font-semibold tabular-nums ${turned.length && turnedInspected === turned.length ? 'text-emerald-700' : 'text-ink'}`}>{turnedInspected}/{turned.length}</div>
+          <div className="text-[11px] text-muted">{turned.filter(r => r.condition === 'clean').length} clean, awaiting inspection</div>
+        </button>
+      </div>
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <LeanPick<Cond> size="sm" value={cond} onPick={setCond} options={(['all', 'dirty', 'clean', 'inspected', 'turning', 'oos', 'flags'] as Cond[]).map(c => ({ v: c, label: <>{c === 'oos' ? 'Out of service' : c === 'flags' ? 'DND / refused / notes' : c === 'turning' ? 'Arriving / departing' : c[0].toUpperCase() + c.slice(1)} <span className="opacity-60 tabular-nums">{n(c)}</span></> }))} />
       </div>
@@ -329,7 +390,7 @@ function Housekeeping({ d, q, canTasks, reload }: { d: any; q: string; canTasks:
         </Table>
       )}
 
-      <h2 className="text-[11px] font-bold uppercase tracking-wider mb-1.5 px-1 text-muted flex items-center gap-2">Tasks today <span className="tabular-nums">{d.summary.tasks.done}/{d.summary.tasks.total} done</span></h2>
+      <h2 className="text-[11px] font-bold uppercase tracking-wider mb-1.5 px-1 text-muted flex items-center gap-2">Tasks today <span className="tabular-nums">{d.summary.tasks.done}/{d.summary.tasks.total} done</span>{kind ? <button onClick={() => setKind('')} className="normal-case tracking-normal font-semibold text-brand-700">· {KIND_LABEL[kind] || kind} only — show all</button> : null}</h2>
       {warn ? <p className="text-[12px] text-amber-700 mb-1 px-1">{warn}</p> : null}
       {!d.tasks.length ? <LeanEmpty>No tasks today. Departure cleans and stayovers are created from Cloudbeds reservations on every sync.</LeanEmpty> : !tasks.length ? <LeanEmpty>No tasks in this view.</LeanEmpty> : (
         <Table head={['Room', 'Task', 'Assigned', 'Status', 'Started', 'Done', 'Note', '']}>

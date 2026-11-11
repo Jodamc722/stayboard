@@ -80,7 +80,8 @@ export function GardenReviews({ canEdit }: { canEdit: boolean }) {
   const [note, setNote] = useState('')
   const load = useCallback(async () => setD(await j(`/api/garden/reviews?status=${status}`)), [status])
   useEffect(() => { load() }, [load])
-  const act = async (op: string, id: string, extra: any = {}) => { setBusy(id); const r = await post('/api/garden/reviews', { op, id, ...extra }); if (op === 'draft' && r?.draft) setDrafts(x => ({ ...x, [id]: r.draft })); setBusy(''); load() }
+  const act = async (op: string, id: string, extra: any = {}) => { setBusy(id); const r = await post('/api/garden/reviews', { op, id, ...extra }); if (op === 'draft' && r?.draft) setDrafts(x => ({ ...x, [id]: r.draft })); if (r?.error) setNote(String(r.error)); else if (op === 'post') setNote('Reply posted through Guesty.'); setBusy(''); load() }
+  const syncGuesty = async () => { setBusy('sync'); const r = await post('/api/garden/reviews', { op: 'sync_guesty' }); setNote(r?.error ? String(r.error) : `Guesty: ${r.added ?? 0} new · ${r.updated ?? 0} updated from ${r.units ?? 0} Botanica units`); setBusy(''); load() }
   const importCsv = async () => { const r = await post('/api/garden/reviews', { op: 'import_csv', csv }); setNote(`${r.added ?? 0} added · ${r.updated ?? 0} updated${r.errors?.length ? ` · ${r.errors.length} errors` : ''}`); setCsv(''); setShowImport(false); load() }
   if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>
   if (!d.ok) return <><LeanHead title="Reviews" icon={<Star size={20} className="text-brand-600" />} /><LeanEmpty>{/does not exist|schema cache/i.test(d.error || '') ? 'Run migration 117_garden_ops.sql, then reload.' : d.error}</LeanEmpty></>
@@ -93,6 +94,7 @@ export function GardenReviews({ canEdit }: { canEdit: boolean }) {
         <Pill title="Share of 5-star (or top score)">{st.fiveStarShare != null ? `${st.fiveStarShare}% five-star` : '—'}</Pill>
         <Pill tone={st.negative ? 'rose' : 'slate'}>{st.negative} negative</Pill>
         <Pill tone={st.unanswered ? 'amber' : 'emerald'}>{st.unanswered} unanswered</Pill>
+        {canEdit ? <button onClick={syncGuesty} disabled={busy === 'sync'} className="rounded-lg border border-line px-2.5 h-7 text-[12px] font-semibold inline-flex items-center gap-1" title="Pull the Botanica reviews from Guesty now (it also happens on its own)">{busy === 'sync' ? <Loader2 size={12} className="animate-spin" /> : null} Pull from Guesty</button> : null}
         {canEdit ? <button onClick={() => setShowImport(s => !s)} className="rounded-lg border border-line px-2.5 h-7 text-[12px] font-semibold">Import</button> : null}
       </LeanHead>
       {note ? <p className="text-[12px] text-muted mb-2">{note}</p> : null}
@@ -111,7 +113,9 @@ export function GardenReviews({ canEdit }: { canEdit: boolean }) {
                 <div className="space-y-1.5">
                   <textarea value={draft} onChange={e => setDrafts(x => ({ ...x, [r.id]: e.target.value }))} rows={3} placeholder="The reply — ask Adam for a draft, then edit" className={`${input} w-full`} />
                   <div className="flex gap-2 flex-wrap">
-                    <button onClick={() => act('reply', r.id, { reply: draft, sent: true })} disabled={!draft.trim()} className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"><Check size={12} /> Posted it — mark sent</button>
+                    {r.raw?.guestyReviewId
+                      ? <button onClick={() => act('post', r.id, { reply: draft })} disabled={!draft.trim() || busy === r.id} className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-50" title="Posts the reply on the channel through Guesty">{busy === r.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Post reply</button>
+                      : <button onClick={() => act('reply', r.id, { reply: draft, sent: true })} disabled={!draft.trim()} className="rounded-lg bg-ink text-white px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-50"><Check size={12} /> Posted it — mark sent</button>}
                     <button onClick={() => act('reply', r.id, { reply: draft })} disabled={!draft.trim()} className="rounded-lg border border-line px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50">Save draft</button>
                     <button onClick={() => { try { navigator.clipboard.writeText(draft) } catch {} }} className="rounded-lg border border-line px-3 py-1.5 text-[12px] font-semibold inline-flex items-center gap-1"><Copy size={12} /> Copy</button>
                   </div>

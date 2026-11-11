@@ -531,7 +531,9 @@ function ReviewView({ det, canEdit, canReview, reload, op, saving }: { det: Deta
             {r.reply_status !== 'sent' ? <>
               <button disabled={!!busy} onClick={() => rv({ op: 'draft' }, 'draft')} className="h-8 px-3 rounded-lg border border-line bg-white text-[12px] font-semibold inline-flex items-center gap-1 disabled:opacity-40">{busy === 'draft' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />} {draft ? 'Redraft with Adam' : 'Draft with Adam'}</button>
               <button disabled={!!busy || !draft.trim()} onClick={() => rv({ op: 'reply', reply: draft, sent: false }, 'approve')} className="h-8 px-3 rounded-lg border border-line bg-white text-[12px] font-semibold disabled:opacity-40">Approve</button>
-              <button disabled={!!busy || !draft.trim()} onClick={() => rv({ op: 'reply', reply: draft, sent: true }, 'sent')} className="h-8 px-3 rounded-lg bg-ink text-white text-[12px] font-semibold disabled:opacity-40" title="Mark it posted once you have pasted it on the review site">Mark posted</button>
+              {r.raw?.guestyReviewId
+                ? <button disabled={!!busy || !draft.trim()} onClick={() => rv({ op: 'post', reply: draft }, 'sent')} className="h-8 px-3 rounded-lg bg-ink text-white text-[12px] font-semibold disabled:opacity-40" title="Posts the reply on the channel through Guesty">Post reply</button>
+                : <button disabled={!!busy || !draft.trim()} onClick={() => rv({ op: 'reply', reply: draft, sent: true }, 'sent')} className="h-8 px-3 rounded-lg bg-ink text-white text-[12px] font-semibold disabled:opacity-40" title="Mark it posted once you have pasted it on the review site">Mark posted</button>}
               <button disabled={!!busy} onClick={() => rv({ op: 'skip' }, 'skip')} className="h-8 px-2.5 rounded-lg text-[12px] font-semibold text-muted hover:text-ink">Skip</button>
             </> : null}
             {draft ? <button onClick={copy} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold inline-flex items-center gap-1">{busy === 'copied' ? <Check size={12} /> : <Copy size={12} />} Copy</button> : null}
