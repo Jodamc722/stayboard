@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buildDueCalendar, setRecordedDay, type DueItem } from '@/lib/pm-calendar'
 import { pageRows } from '@/lib/db-page'
 import { getNoService, skipsInspectionsIn } from '@/lib/no-service'
-import { CADENCE_KEY, resolveCadences, teamFor, type CadenceDef } from '@/lib/cadences'
+import { CADENCE_KEY, resolveCadences, teamFor, canBlock, type CadenceDef } from '@/lib/cadences'
 import { getSetting, getSettingFresh, setSetting } from '@/lib/app-settings'
 import { requireLevel, isSuperadmin } from '@/lib/access'
 import { atLeast } from '@/lib/features'
@@ -75,6 +75,8 @@ export type UpkeepProgram = {
   awaiting: number
   /** The job needs the unit empty, and for how many nights (smart scheduling + Guesty block). */
   needsVacant: boolean; needsDays: number
+  /** May book a Guesty block (PM audit / deep clean only — lib/cadences canBlock). */
+  canBlock: boolean
   /** The cadence's own switch: off · suggest · auto. */
   mode: 'off' | 'suggest' | 'auto'
   /**
@@ -294,7 +296,7 @@ async function buildCore(market: string, today: string, sig: string): Promise<Co
         mode: c.mode, setup: null, countingSince: null, bookedLate: 0,
         units: 0, late: 0, soon: 0, ok: 0, booked: 0, none: 0, late30: 0, late90: 0, late90plus: 0, healthPct: 0, rows: [],
         how: howOf(c), needsApproval: !!(c.approvers && c.approvers.length), awaiting: 0,
-        needsVacant: !!c.needsVacant, needsDays: Math.max(1, c.needsDays || 1),
+        needsVacant: !!c.needsVacant, needsDays: Math.max(1, c.needsDays || 1), canBlock: canBlock(c),
       })
     }
     const markets = new Set<string>(), buildings = new Set<string>()
@@ -436,6 +438,8 @@ export async function POST(req: NextRequest) {
   if (op === 'block') {
     // BLOCK NIGHTS IN GUESTY from the calendar (Jon, 2026-10-19: "will I be able to block the units
     // from here?"). Only nights no live stay covers — re-read now, never from the page's copy.
+    // Only for a PM audit or a deep clean (Jon, 2026-11-11: "never block, only … PM / deep clean").
+    if (!canBlock(c)) return NextResponse.json({ error: `${c.label} never blocks the unit — only PM audits and deep cleans do.` }, { status: 400 })
     const from = String(body?.from || '').slice(0, 10)
     const nights = Math.max(1, Math.min(30, Math.round(Number(body?.nights) || 1)))
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || from < today) return NextResponse.json({ error: 'pick a start night from today on' }, { status: 400 })
@@ -526,7 +530,7 @@ export async function POST(req: NextRequest) {
     await db.from('pm_schedule').upsert({ listing_id: listingId, cadence_key: cadenceKey, unit_name: unit, building, next_due: today, status: 'created', task_id: String(r.ref || ''), task_date: date, note: `approved ${today} by ${me}`, updated_at: now }, { onConflict: 'listing_id,cadence_key' }).then(() => {}, () => {})
     // BLOCK THE NIGHTS (a person ticked it): only nights no live stay covers, re-read just now.
     let blocked: { from: string; to: string } | null = null, blockError: string | null = null
-    if (body?.block && c.needsVacant) {
+    if (body?.block && c.needsVacant && canBlock(c)) {
       const n = Math.max(1, c.needsDays || 1)
       const from = date, to = shiftDay(date, n - 1)
       try {
@@ -536,7 +540,7 @@ export async function POST(req: NextRequest) {
         else { await blockListingNights(listingId, from, to, `${c.label} — booked from Lighthouse Upkeep by ${me.split('@')[0]} (task ${r.ref || ''})`); blocked = { from, to } }
       } catch (e: any) { blockError = String(e?.message || e).slice(0, 160) }
     }
-    const blockAdvice = !body?.block && c.needsVacant && dayPick?.recommendBlock ? `No arrival booked — block ${dayPick.nights.length === 1 ? 'the night of ' + dayPick.nights[0] : dayPick.nights[0] + ' to ' + dayPick.nights[dayPick.nights.length - 1]} in Guesty so it cannot be booked over (Plan calendar → the unit's day).` : null
+    const blockAdvice = !body?.block && c.needsVacant && canBlock(c) && dayPick?.recommendBlock ? `No arrival booked — block ${dayPick.nights.length === 1 ? 'the night of ' + dayPick.nights[0] : dayPick.nights[0] + ' to ' + dayPick.nights[dayPick.nights.length - 1]} in Guesty so it cannot be booked over (Plan calendar → the unit's day).` : null
     return NextResponse.json({ ok: true, taskId: r.ref, date, bill, why, assignees, blocked, blockError, blockAdvice })
   }
   return NextResponse.json({ error: 'unknown op' }, { status: 400 })

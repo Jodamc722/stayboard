@@ -311,7 +311,7 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
       set(it.row.id, { state: 'busy', msg: '' })
       try {
         const i = idxOf(l.date)
-        const wantBlock = !!it.prog.needsVacant && l.block && i >= 0 && pickFor(cells, i, optsOf(it)).recommendBlock
+        const wantBlock = !!it.prog.needsVacant && !!it.prog.canBlock && l.block && i >= 0 && pickFor(cells, i, optsOf(it)).recommendBlock
         const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'approve', listingId, cadenceKey: it.prog.key, dueOn: it.row.dueOn, date: l.date, assignee: l.who, note: l.note.trim() || undefined, block: wantBlock || undefined }) })
         const j = await res.json().catch(() => ({}))
         if (!res.ok || !j?.ok) throw new Error(j?.error || 'Breezeway would not take it')
@@ -342,13 +342,15 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
   const [blk, setBlk] = useState({ from: date >= today ? date : today, nights: '1', reason: 'Maintenance', note: '' })
   const [blkBusy, setBlkBusy] = useState(false)
   const [blkMsg, setBlkMsg] = useState('')
+  // Only a PM audit or a deep clean blocks (Jon, 2026-11-11) — the block form is for those jobs.
+  const blockProg = items.find(it => it.prog.canBlock)?.prog || null
   const doBlock = async () => {
-    if (blkBusy || !items[0] && !listingId) return
+    if (blkBusy || !blockProg) return
     const n = Math.max(1, Math.min(30, Number(blk.nights) || 1))
     if (!window.confirm(`Block ${unit} in Guesty for ${n} night${n === 1 ? '' : 's'} from ${nice(blk.from)}? It can't be booked on those nights.`)) return
     setBlkBusy(true); setBlkMsg('')
     try {
-      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'block', listingId, cadenceKey: items[0]?.prog.key || 'pm_audit', from: blk.from, nights: n, reason: blk.reason, note: blk.note }) })
+      const res = await fetch('/api/upkeep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'block', listingId, cadenceKey: blockProg.key, from: blk.from, nights: n, reason: blk.reason, note: blk.note }) })
       const j = await res.json().catch(() => ({}))
       if (!res.ok || !j?.ok) throw new Error(j?.error || 'not blocked')
       setBlkMsg(`Blocked in Guesty: ${nice(j.from)}${j.to !== j.from ? ' → ' + nice(j.to) : ''} (${j.reason}). It shows on the calendar after a refresh.`)
@@ -456,7 +458,7 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
                           : <span className="text-muted">No day in the next 3 weeks fits{it.prog.needsVacant ? ` (needs the unit empty ${it.prog.needsDays || 1} night${(it.prog.needsDays || 1) === 1 ? '' : 's'})` : ''}.</span>}
                       </div>
                       {bad ? <p className="sm:col-span-2 text-[11.5px] text-amber-800 inline-flex items-center gap-1"><AlertTriangle size={12} /> {it.prog.needsVacant ? `Needs the unit empty ${it.prog.needsDays || 1} night${(it.prog.needsDays || 1) === 1 ? '' : 's'} from ${nice(l.date)} — ${KIND[lc!.k].hint.toLowerCase()} or a guest arrives inside that window.` : `${KIND[lc!.k].hint} on ${nice(l.date)}.`} Pick another day unless it can be done around the guest.</p> : null}
-                      {it.prog.needsVacant && fits && here?.recommendBlock ? (
+                      {it.prog.needsVacant && it.prog.canBlock && fits && here?.recommendBlock ? (
                         <label className="sm:col-span-2 inline-flex items-center gap-1.5 text-[11.5px] text-ink">
                           <input type="checkbox" checked={l.block} onChange={e => set(it.row.id, { block: e.target.checked })} disabled={running} />
                           Block {here.nights.length === 1 ? `the night of ${short(here.nights[0])}` : `${short(here.nights[0])}–${short(here.nights[here.nights.length - 1])}`} in Guesty (Maintenance) — no arrival is booked, so it can't be sold over the work
@@ -472,9 +474,9 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
           )}
         </section>
 
-        {canEdit ? (
+        {canEdit && blockProg ? (
           <section className="rounded-lg border border-line p-2.5">
-            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Block in Guesty</h4>
+            <h4 className="text-[11px] font-semibold uppercase tracking-wide text-muted mb-1.5">Block in Guesty for the {blockProg.label.toLowerCase()}</h4>
             <div className="flex items-center gap-1.5 flex-wrap text-[12px]">
               <span>From the night of</span>
               <input type="date" value={blk.from} min={today} onChange={e => setBlk({ ...blk, from: e.target.value })} className="h-8 rounded-md border border-line px-1.5" />
@@ -482,12 +484,12 @@ function DayPanel({ unit, listingId, date, today, cells, people, items, focus, c
               <input type="number" min={1} max={30} value={blk.nights} onChange={e => setBlk({ ...blk, nights: e.target.value })} className="h-8 w-14 rounded-md border border-line px-1.5" />
               <span>night(s) ·</span>
               <select value={blk.reason} onChange={e => setBlk({ ...blk, reason: e.target.value })} className="h-8 rounded-md border border-line px-1.5 bg-white">
-                <option>Maintenance</option><option>Owner block</option><option>Other</option>
+                <option>Maintenance</option>
               </select>
               <input value={blk.note} onChange={e => setBlk({ ...blk, note: e.target.value })} placeholder="Note (shows in Guesty)" className="h-8 flex-1 min-w-[10rem] rounded-md border border-line px-2" />
               <button onClick={doBlock} disabled={blkBusy || !blk.from} className="h-8 px-3 rounded-md bg-ink text-white font-semibold disabled:opacity-40">{blkBusy ? 'Blocking…' : 'Block'}</button>
             </div>
-            <p className="mt-1 text-[11px] text-muted">{blkMsg || 'Only nights with no booking can be blocked — Lighthouse checks the reservations again before it touches Guesty.'}</p>
+            <p className="mt-1 text-[11px] text-muted">{blkMsg || 'Only PM audits and deep cleans block the unit, and only on nights with no booking — Lighthouse checks the reservations again before it touches Guesty.'}</p>
           </section>
         ) : null}
 

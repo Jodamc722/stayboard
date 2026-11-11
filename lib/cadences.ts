@@ -180,6 +180,19 @@ export type CadenceCfg = {
 // meant to be argued with in settings, which is where they can now be changed.
 // Jon, 2026-10-07: "Approvers: Carlo, Alberto, Jon, Guillermo, or Yoslenis. Any one of them." Names
 // are matched to Lighthouse users by first name when no email is listed (Settings → Cadences).
+/**
+ * MAY THIS JOB BLOCK THE UNIT IN GUESTY? (Jon, 2026-11-11: "never block, only blocks should for PM /
+ * deep clean".) Only a PM audit or a deep clean — the shipped ones by key, a page-made one by its name.
+ * Every other job (A/C filters, batteries, coil and mini-split cleans, dryer vents, water heaters…)
+ * is still scheduled on a good day, empty if it needs it, but never takes the unit off sale.
+ */
+export function canBlock(c: Pick<CadenceDef, 'key' | 'label'>): boolean {
+  if (c.key === 'pm_audit' || c.key === 'deep_clean') return true
+  const l = String(c.label || '')
+  if (/filter|batter|a\/?c\b|hvac|coil|split|dryer|water heater|pest|pressure/i.test(l)) return false
+  return /\bPM\b|preventive|preventative|deep\s*clean/i.test(l)
+}
+
 export const DEEP_CLEAN_APPROVERS = ['jon@stay-hospitality.com', 'carlo', 'alberto', 'guillermo', 'yoslenis']
 export const DEFAULT_CADENCES: CadenceDef[] = [
   {
