@@ -41,7 +41,10 @@ export async function assignRooms(date: string, roomIds: string[], to: string | 
 export async function autoAssign(date: string, people: string[]): Promise<{ ok: true; assigned: number; perPerson: Record<string, { rooms: string[]; minutes: number }>; warnings: string[] }> {
   const db = supabaseAdmin()
   const { data } = await db.from('garden_tasks').select('room_id,room_name,kind,assigned_to,status').eq('date', date).in('kind', ['clean', 'stayover']).neq('status', 'cancelled')
-  const T = (data || []) as any[]
+  // A room Cloudbeds already gave to someone counts as theirs.
+  const { data: rm } = await db.from('garden_rooms').select('id,housekeeper').not('housekeeper', 'is', null)
+  const cbWho: Record<string, string> = {}; for (const r of ((rm || []) as any[])) cbWho[r.id] = r.housekeeper
+  const T = ((data || []) as any[]).map(t => ({ ...t, assigned_to: t.assigned_to || cbWho[t.room_id] || null }))
   const names = Array.from(new Set(people.map(p => p.trim()).filter(Boolean)))
   if (!names.length) throw new Error('Nobody to assign to — put housekeepers on the schedule for the day, or pick them.')
   // Each room once; a room with a checkout counts as a checkout.

@@ -11,7 +11,7 @@ const post = async (url: string, body: any) => { const r = await fetch(url, { me
 const MIN = { clean: 45, stayover: 20 } as Record<string, number>
 const hrs = (m: number) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`
 
-type Room = { id: string; name: string; condition: string | null; arriving: string | null; departing: boolean; dnd: boolean; tasks: { id: string; kind: string; status: string; assigned_to: string | null }[] }
+type Room = { id: string; name: string; housekeeper?: string | null; condition: string | null; arriving: string | null; departing: boolean; dnd: boolean; tasks: { id: string; kind: string; status: string; assigned_to: string | null }[] }
 type Work = { id: string; name: string; kind: 'clean' | 'stayover'; status: string; who: string | null; arriving: string | null; dnd: boolean; condition: string | null }
 
 export function GardenAssign({ rooms, date, canEdit, onChanged }: { rooms: Room[]; date: string; canEdit: boolean; onChanged: () => void }) {
@@ -35,7 +35,7 @@ export function GardenAssign({ rooms, date, canEdit, onChanged }: { rooms: Room[
     const t = r.tasks.filter(x => (x.kind === 'clean' || x.kind === 'stayover') && x.status !== 'cancelled')
     if (!t.length) return []
     const main = t.find(x => x.kind === 'clean') || t[0]
-    return [{ id: r.id, name: r.name, kind: main.kind as Work['kind'], status: t.every(x => x.status === 'done') ? 'done' : t.some(x => x.status === 'in_progress') ? 'in_progress' : 'open', who: t.find(x => x.assigned_to)?.assigned_to || null, arriving: r.arriving, dnd: r.dnd, condition: r.condition }]
+    return [{ id: r.id, name: r.name, kind: main.kind as Work['kind'], status: t.every(x => x.status === 'done') ? 'done' : t.some(x => x.status === 'in_progress') ? 'in_progress' : 'open', who: t.find(x => x.assigned_to)?.assigned_to || r.housekeeper || null, // Lighthouse's assignment, else Cloudbeds' own arriving: r.arriving, dnd: r.dnd, condition: r.condition }]
   }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })), [rooms])
 
   const people = useMemo(() => {
