@@ -60,6 +60,18 @@ const themeVars = (t: MagTheme): React.CSSProperties => ({
 export type ChartKind = 'bars' | 'band' | 'cumulative'
 const CHARTS: [ChartKind, string][] = [['bars', 'Bars'], ['band', 'Range band'], ['cumulative', 'Running total']]
 const PAGES: [string, string][] = [['about', 'Who we are'], ['team', 'The team and terms'], ['manage', 'How we manage'], ['tech', 'Our technology']]
+// PHOTO LOOKS (Jon, 2026-11-11: "filters for the photo like blur, enhance, modify"). Drawn with CSS
+// filters on a layer behind the page's own shading, so the words never blur with the picture. These
+// change how a photo looks on the page; they do not change who owns it — that is the Rights field below.
+const LOOKS: Record<string, { label: string; f: string; tint?: number }> = {
+  original: { label: 'Original', f: '' },
+  enhance: { label: 'Enhance', f: 'contrast(1.08) saturate(1.15) brightness(1.03)' },
+  warm: { label: 'Warm', f: 'sepia(.2) saturate(1.1) contrast(1.04) brightness(1.02)' },
+  muted: { label: 'Muted', f: 'saturate(.55) contrast(.95) brightness(1.05)' },
+  bw: { label: 'Black & white', f: 'grayscale(1) contrast(1.12)' },
+  tint: { label: 'Theme tint', f: 'grayscale(1) contrast(1.1) brightness(1.05)', tint: 42 },
+}
+const RIGHTS: [string, string][] = [['', 'Where is this photo from?'], ['own', 'Our own photo (Stay)'], ['building', 'Building or developer, with permission'], ['licensed', 'Licensed stock (paid)'], ['free', 'Free licence (Unsplash, Pexels)'], ['unknown', 'Not sure']]
 const PHOTO_SLOTS: [string, string][] = [['cover', 'Cover'], ['contents', 'Contents'], ['about', 'Who we are'], ['manage', 'How we manage'], ['work', 'Working together opener'], ['numbers', 'The numbers opener'], ['back', 'Back cover']]
 
 const short = (b: string) => b.replace(/\s+Residences$/i, '')
@@ -255,6 +267,23 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const slotIdx: Record<string, number> = { cover: 0, contents: 1, about: 2, manage: 3, work: 4, numbers: 5, back: 6 }
   const photo = (slot: string): string => String((mag.photos || {})[slot] || '').trim() || (slot === 'back' ? photo('cover') : pool[(slotIdx[slot] || 0) % pool.length])
   const brandLogo = String(mag.brandLogo || '').trim()
+  const fxOf = (slot: string): Any => ({ ...((mag.photoFx && mag.photoFx.all) || {}), ...((mag.photoFx || {})[slot] || {}) })
+  const lookCss = (fx: Any): string => [(LOOKS[fx.look] || LOOKS.original).f, Number(fx.blur) ? `blur(${Number(fx.blur)}px)` : ''].filter(Boolean).join(' ') || 'none'
+  /** A photo layer's style: the picture with its look, under the page's own shading (see .mz-ph). */
+  const ph = (slot: string, grad = '', pos = ''): React.CSSProperties => {
+    const fx = fxOf(slot), look = LOOKS[fx.look] || LOOKS.original
+    const blur = Number(fx.blur) || 0, zoom = (Number(fx.zoom) || 100) / 100
+    const wash = look.tint ? `linear-gradient(color-mix(in srgb, var(--mz-navy) ${look.tint}%, transparent), color-mix(in srgb, var(--mz-navy) ${look.tint}%, transparent))` : ''
+    const v: Any = { '--ph': `url("${photo(slot).replace(/"/g, '%22')}")`, '--pf': lookCss(fx), '--pg': [grad, wash].filter(Boolean).join(', ') || 'none', '--pi': blur ? `-${blur * 3}px` : '0', '--pt': fx.flip || zoom !== 1 ? `scale(${fx.flip ? -zoom : zoom}, ${zoom})` : 'none' }
+    if (pos) v['--pp'] = pos
+    return v
+  }
+  // Where each photo came from, kept with the photo (by its link) so it follows it to any page.
+  const rightsOf = (u: string): Any => ((mag.photoRights || {})[u]) || (/guesty|cloudinary/i.test(u) ? { rights: 'own' } : {})
+  const usedSlots = PHOTO_SLOTS.filter(([k]) => !(k === 'manage' && gfx('manage')) && !(k === 'numbers' && gfx('numbers')) && !(k === 'contents' && !mag.showContents)).map(([k]) => k)
+  const usedPhotos = Array.from(new Set(usedSlots.map(k => photo(k)).filter(Boolean)))
+  const unconfirmed = usedPhotos.filter(u => !rightsOf(u).rights || rightsOf(u).rights === 'unknown')
+  const credits = Array.from(new Set(usedPhotos.map(u => String(rightsOf(u).credit || '').trim()).filter(Boolean)))
 
   const rows = (a: Any): { k: string; v: string; i: number }[] => (Array.isArray(a) ? a : []).map((r: Any, i: number) => ({ k: String(r?.k || ''), v: String(r?.v || ''), i })).filter(r => r.k.trim() && r.v.trim())
   // A stat's figure is whichever side carries the digits: "450+" over "Units managed", whichever way the deck stored it.
@@ -359,9 +388,9 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       </footer>
     </section>
   )
-  const opener = (key: string, _num: string, kick: string, titleKey: 'workTitle' | 'numbersTitle', img: string) => (
+  const opener = (key: string, _num: string, kick: string, titleKey: 'workTitle' | 'numbersTitle', slot: string) => (
     <section key={key} className="mz-page">
-      <div className="mz-opener" style={{ backgroundImage: `linear-gradient(180deg, rgba(6,10,30,.30) 0%, rgba(6,10,30,0) 28%, rgba(6,10,30,.08) 52%, rgba(6,10,30,.84) 100%), url(${img})` }}>
+      <div className="mz-opener mz-ph" style={ph(slot, 'linear-gradient(180deg, rgba(6,10,30,.30) 0%, rgba(6,10,30,0) 28%, rgba(6,10,30,.08) 52%, rgba(6,10,30,.84) 100%)')}>
         <p className="mz-caption mz-caption-top">A Stay-managed home</p>
         <div>
           {kicker(kick, true)}
@@ -393,7 +422,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const render = (s: Spec): React.ReactNode => {
     switch (true) {
       case s.key === 'cover': return (
-        <section key="cover" className="mz-page mz-cover" style={{ backgroundImage: `linear-gradient(180deg, rgba(6,10,30,.66) 0%, rgba(6,10,30,.10) 26%, rgba(6,10,30,.04) 50%, rgba(6,10,30,.86) 100%), url(${photo('cover')})` }}>
+        <section key="cover" className="mz-page mz-cover mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(6,10,30,.66) 0%, rgba(6,10,30,.10) 26%, rgba(6,10,30,.04) 50%, rgba(6,10,30,.86) 100%)', 'center 40%')}>
           <div className="mz-mast">
             <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
             <div className="mz-mast-r"><span>{cma ? 'The Building Package' : 'Management Proposal'}</span><span>{monthYear}</span></div>
@@ -411,7 +440,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       )
       case s.key === 'contents': return frame('contents', (
         <div className="mz-contents">
-          <div className="mz-contents-photo" style={{ backgroundImage: `url(${photo('contents')})` }} />
+          <div className="mz-contents-photo mz-ph" style={ph('contents')} />
           <div className="mz-contents-r">
             {kicker('In this package')}
             <h2 className="mz-h mz-h1">Contents</h2>
@@ -431,7 +460,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       ), { section: 'Contents' })
       case s.key === 'about': return (
         <section key="about" className="mz-page">
-          <div className="mz-about-photo" style={{ backgroundImage: `linear-gradient(180deg, rgba(6,10,30,.05) 30%, rgba(6,10,30,.78) 100%), url(${photo('about')})` }}>
+          <div className="mz-about-photo mz-ph" style={ph('about', 'linear-gradient(180deg, rgba(6,10,30,.05) 30%, rgba(6,10,30,.78) 100%)')}>
             <header className="mz-run mz-run-dark"><span className="mz-run-mark">STAY</span><span>Who we are</span><span>{short(building)}</span></header>
             <div className="mz-about-head">
               {kicker('Stay Hospitality', true)}
@@ -484,7 +513,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           {canEdit && overfull.includes('manage') ? <p className="mz-overfull">This page is too full to print. Shorten a passage or hide a section.</p> : null}
           {gfx('manage')
             ? <div className="mz-split-photo"><StayTimeline steps={ops} /></div>
-            : <div className="mz-split-photo" style={{ backgroundImage: `url(${photo('manage')})` }}><p className="mz-caption">A Stay-managed home</p></div>}
+            : <div className="mz-split-photo mz-ph" style={ph('manage')}><p className="mz-caption">A Stay-managed home</p></div>}
           <div className="mz-split-text">
             <header className="mz-run mz-run-tight"><span className="mz-run-mark">STAY</span><span>How we manage</span><span>{short(building)}</span></header>
             <div className="mz-split-body">
@@ -521,11 +550,11 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           </div>
         </>
       ), { section: 'Our technology' })
-      case s.key === 'op-work': return opener('op-work', '02', 'Working together', 'workTitle', photo('work'))
+      case s.key === 'op-work': return opener('op-work', '02', 'Working together', 'workTitle', 'work')
       case s.key === 'op-num' && gfx('numbers'): return (
         <section key="op-num" className="mz-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
       )
-      case s.key === 'op-num': return opener('op-num', specs.some(x => x.key === 'op-work') ? '03' : '02', 'The numbers', 'numbersTitle', photo('numbers'))
+      case s.key === 'op-num': return opener('op-num', specs.some(x => x.key === 'op-work') ? '03' : '02', 'The numbers', 'numbersTitle', 'numbers')
       case s.key === 'partner' && !!cma: return frame('partner', (
         <>
           {kicker('For sales teams and agents')}
@@ -648,7 +677,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         ), { section: 'Rental projection' })
       }
       case s.key === 'back': return (
-        <section key="back" className="mz-page mz-backcover" style={{ backgroundImage: `linear-gradient(180deg, rgba(6,10,30,.55) 0%, rgba(6,10,30,.80) 45%, rgba(6,10,30,.95) 100%), url(${photo('back')})` }}>
+        <section key="back" className="mz-page mz-backcover mz-ph" style={ph('back', 'linear-gradient(180deg, rgba(6,10,30,.55) 0%, rgba(6,10,30,.80) 45%, rgba(6,10,30,.95) 100%)')}>
           <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
           <div className="mz-back-main">
             {kicker('Next step', true)}
@@ -666,7 +695,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
               </div>
             ) : null}
           </div>
-          <p className="mz-fine">{cma ? <E v={cma.disclaimer} p="cma.disclaimer" block /> : 'Projections are estimates, not guarantees. Management terms are set in the written agreement.'}<br />Stay Hospitality · stay-hospitality.com</p>
+          <p className="mz-fine">{cma ? <E v={cma.disclaimer} p="cma.disclaimer" block /> : 'Projections are estimates, not guarantees. Management terms are set in the written agreement.'}<br />Stay Hospitality · stay-hospitality.com{credits.length ? <><br />Photography: {credits.join(' · ')}</> : null}</p>
         </section>
       )
       default: return null
@@ -764,6 +793,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             <label key={k} className="mz-toggle"><input type="checkbox" checked={gfx(k)} onChange={e => setMag({ graphics: { ...(mag.graphics || {}), [k]: e.target.checked } })} /> {l}</label>
           ))}
           <p className="mz-form-h">Photos</p>
+          {unconfirmed.length ? <p className="mz-rights-warn">{unconfirmed.length === 1 ? 'One photo in this package has' : unconfirmed.length + ' photos in this package have'} no confirmed source. Confirm we have the rights before sending: a filter changes how a photo looks, not who owns it.</p> : null}
           {PHOTO_SLOTS.map(([slot, label]) => (
             <div key={slot} className="mz-slot">
               <span>{label}</span>
@@ -771,6 +801,32 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
                 {allPhotos.slice(0, 14).map(u => <button key={u} type="button" className={photo(slot) === u ? 'on' : ''} style={{ backgroundImage: `url(${u})` }} onClick={() => setMag({ photos: { ...(mag.photos || {}), [slot]: u } })} aria-label={'Use this photo for ' + label} />)}
               </div>
               <input placeholder="or paste an image link" defaultValue={(mag.photos || {})[slot] && !allPhotos.includes((mag.photos || {})[slot]) ? (mag.photos || {})[slot] : ''} onBlur={e => { const v = e.target.value.trim(); if (/^https?:\/\/|^\//.test(v)) setMag({ photos: { ...(mag.photos || {}), [slot]: v } }) }} />
+              {(() => {
+                const fx = fxOf(slot), u = photo(slot), r = rightsOf(u)
+                const setFx = (f: Any) => setMag({ photoFx: { ...(mag.photoFx || {}), [slot]: { ...((mag.photoFx || {})[slot] || {}), ...f } } })
+                const setR = (f: Any) => setMag({ photoRights: { ...(mag.photoRights || {}), [u]: { ...r, ...f } } })
+                return (
+                  <>
+                    <div className="mz-looks">
+                      {Object.entries(LOOKS).map(([k, l]) => (
+                        <button key={k} type="button" className={(fx.look || 'original') === k ? 'on' : ''} onClick={() => setFx({ look: k })}>
+                          <i style={{ backgroundImage: `url("${u}")`, filter: l.f || 'none' }}>{l.tint ? <b style={{ background: `color-mix(in srgb, var(--mz-navy) ${l.tint}%, transparent)` }} /> : null}</i>{l.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mz-fx">
+                      <label>Blur<input type="range" min={0} max={16} value={Number(fx.blur) || 0} onChange={e => setFx({ blur: Number(e.target.value) })} /></label>
+                      <label>Zoom<input type="range" min={100} max={160} value={Number(fx.zoom) || 100} onChange={e => setFx({ zoom: Number(e.target.value) })} /></label>
+                      <label className="mz-toggle"><input type="checkbox" checked={!!fx.flip} onChange={e => setFx({ flip: e.target.checked })} /> Mirror</label>
+                      <button type="button" onClick={() => setMag({ photoFx: { all: fxOf(slot) } })} title="Use this look, blur and zoom on every photo">Use on all photos</button>
+                    </div>
+                    <div className="mz-rights">
+                      <select value={r.rights || ''} onChange={e => setR({ rights: e.target.value })} className={!r.rights || r.rights === 'unknown' ? 'warn' : ''}>{RIGHTS.map(([k, l]) => <option key={k} value={k} disabled={!k}>{l}</option>)}</select>
+                      <input placeholder="Credit, if the licence asks for one" defaultValue={r.credit || ''} key={u} onBlur={e => { if ((e.target.value.trim()) !== (r.credit || '')) setR({ credit: e.target.value.trim() }) }} />
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           ))}
         </div>
@@ -1128,6 +1184,22 @@ div.mz-ed{display:block}
 .mz-color input{width:44px;height:30px;border:1px solid #E3DED3;border-radius:8px;padding:2px;background:#fff;cursor:pointer}
 .mz-brand{display:flex;gap:8px}.mz-brand button{flex:none;font:600 12.5px ${SANS};background:#111A4A;color:#fff;border:0;border-radius:8px;padding:0 14px;cursor:pointer}
 .mz-slot{padding:10px 0;border-bottom:1px solid #EEE9DF}
+.mz-ph{position:relative;isolation:isolate;overflow:hidden;background:none}
+.mz-ph::before{content:"";position:absolute;inset:var(--pi,0);background:var(--ph) var(--pp,center)/cover no-repeat;filter:var(--pf,none);transform:var(--pt,none);z-index:-2;pointer-events:none}
+.mz-ph::after{content:"";position:absolute;inset:0;background:var(--pg,none);z-index:-1;pointer-events:none}
+.mz-looks{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;margin:8px 0 6px}
+.mz-looks button{display:flex;flex-direction:column;gap:3px;align-items:center;font:500 9.5px ${SANS};color:#0F1640;background:none;border:0;padding:0;cursor:pointer;text-align:center;line-height:1.15}
+.mz-looks i{position:relative;display:block;width:100%;aspect-ratio:1;border-radius:6px;background-size:cover;background-position:center;border:2px solid transparent;overflow:hidden}
+.mz-looks i b{position:absolute;inset:0}
+.mz-looks button.on i{border-color:#111A4A}
+.mz-fx{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font:600 11px ${SANS};color:#5A6080}
+.mz-fx label{display:flex;align-items:center;gap:6px}
+.mz-fx input[type=range]{width:84px;accent-color:#111A4A}
+.mz-fx button{font:600 11px ${SANS};padding:4px 9px;border:1px solid #E3DED3;border-radius:999px;background:#fff;color:#0F1640;cursor:pointer}
+.mz-rights{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.mz-rights select{font:500 12px ${SANS};border:1px solid #E3DED3;border-radius:8px;padding:6px 7px;background:#fff;color:#0F1640;min-width:0}
+.mz-rights select.warn{border-color:#D9A441;background:#FFF8E8}
+.mz-rights-warn{font:500 12px/1.45 ${SANS};color:#7A5410;background:#FFF5DE;border:1px solid #F0D49A;border-radius:8px;padding:8px 10px;margin:0 0 6px}
 .mz-slot>span{display:block;font:600 12px ${SANS};margin-bottom:6px}
 .mz-thumbs{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:6px}
 .mz-thumbs button{aspect-ratio:1;background-size:cover;background-position:center;border:2px solid transparent;border-radius:6px;cursor:pointer;padding:0}
