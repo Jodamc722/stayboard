@@ -73,6 +73,24 @@ const PICK_KEY = 'lighthouse.linens.selected'
 const TIER_KEY = 'lighthouse.linens.tier'
 const isTier = (v: any): v is LinenTier => LINEN_TIERS.includes(v)
 
+/**
+ * THE ONE SAVE for the standard — Par levels' Save and the Calculator's "Save pars" both come here, so
+ * the stale-tab guard and the full-access check (PUT /api/onboard/linens, `standard`) are the same.
+ */
+async function putStandard(standard: LinenStandard): Promise<{ ok: true; standard: LinenStandard } | { ok: false; error: string }> {
+  try {
+    const r = await fetch('/api/onboard/linens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ standard }) })
+    const j = await r.json().catch(() => ({}))
+    if (r.status === 409 && j.stale) return { ok: false, error: j.error + ' Reload the page (your unsaved edits will be lost).' }
+    if (!r.ok || !j.ok) return { ok: false, error: String(j.message || j.error || 'Could not save') }
+    return { ok: true, standard: normLinenStandard(j.standard) }
+  } catch (e: any) { return { ok: false, error: String(e?.message || e) } }
+}
+/** Why the standard cannot be saved as it is ('' = it can). */
+const unsaveable = (s: LinenStandard) =>
+  s.items.some(i => !i.name.trim()) ? 'Give every item a name (or remove the blank one) before saving.'
+    : s.vendors.some(v => !v.name.trim()) ? 'Give every vendor a name (or remove the blank one) before saving.' : ''
+
 function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -133,6 +151,20 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
     return () => window.removeEventListener('beforeunload', h)
   }, [dirty])
 
+  // PAR ON THE CALCULATOR (Jon, 2026-11-11: "want to be able to edit par on an item, on the calculator
+  // page"): an item's par typed there goes into this same draft, and "Save pars" saves it the same way.
+  const [parBusy, setParBusy] = useState(false)
+  const [parMsg, setParMsg] = useState<{ text: string; bad?: boolean } | null>(null)
+  const setItemPar = (id: string, par: number | null) => { setParMsg(null); setDraft(s => ({ ...s, items: s.items.map(i => i.id === id ? { ...i, par } : i) })) }
+  const saveFromCalc = async () => {
+    const why = unsaveable(draft)
+    if (why) { setParMsg({ text: why + ' (on Par levels)', bad: true }); return }
+    setParBusy(true); setParMsg(null)
+    const r = await putStandard(draft)
+    if (r.ok) { setSaved(r.standard); setDraft(r.standard); setEdited(true); setParMsg({ text: 'Pars saved — every unit, quote and export uses them now.' }) }
+    else setParMsg({ text: r.error, bad: true })
+    setParBusy(false)
+  }
   const pick = (ids: string[]) => { setPicked(ids); store.set(PICK_KEY, JSON.stringify(ids)) }
   const [quoteOpened, setQuoteOpened] = useState(false)
   useEffect(() => { if (view === 'quote') setQuoteOpened(true) }, [view])
@@ -183,7 +215,8 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
               onSaved={(s) => { setSaved(s); setDraft(s); setEdited(true) }} />}
           {view !== 'standard' && <ParPicker value={viewPar ?? draft.par} standardPar={draft.par} onChange={p => setViewPar(p === draft.par ? null : p)} onEditPars={() => go('standard')}
             note={viewPar === null ? 'Counting at the standard par' : `Counting at par ${viewPar} for this view only — the saved par is ${draft.par}`} />}
-          {view === 'calculator' && <CalculatorView standard={calcStd} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
+          {view === 'calculator' && <CalculatorView standard={calcStd} dirty={dirty}
+              parEdit={{ canEdit: canStd, onPar: setItemPar, onSave: saveFromCalc, onUndo: () => { setDraft(saved); setParMsg(null) }, busy: parBusy, msg: parMsg, capped: viewPar, std: draft }} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
           {/* The Quote view stays mounted once opened, so what was typed (and Bill to) survives a tab switch. */}
           <div hidden={view !== 'quote'}>
             {(view === 'quote' || quoteOpened) && <QuoteView standard={calcStd} dirty={dirty} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
@@ -218,27 +251,37 @@ function ParPicker({ value, onChange, standardPar, note, disabled, onEditPars }:
 
 /** "2.5" not "2.50"; whole numbers stay whole. */
 const tallyNum = (x: number) => String(Math.round(x * 10) / 10)
+const plural = (n: number, one: string, many: string = one + 's') => `${tallyNum(n)} ${n === 1 ? one : many}`
+/** "2 bedrooms + 5 studios" — a studio (0 bedrooms) is called out, not hidden in a 0. */
+function bedroomsText(t: LinenTally): string {
+  if (!t.studios) return plural(t.bedrooms, 'bedroom')
+  if (!t.bedrooms) return plural(t.studios, 'studio')
+  return plural(t.bedrooms, 'bedroom') + ' + ' + plural(t.studios, 'studio')
+}
+/** "8 beds (7 Queen · 1 Sofa bed)" in the standard's size order. */
+function bedsTallyText(t: LinenTally, order: string[]): string {
+  const sizes = sortSizes(Object.keys(t.bedsBySize).filter(k => t.bedsBySize[k] > 0), order)
+  return plural(t.beds, 'bed') + (sizes.length ? ' (' + sizes.map(k => `${t.bedsBySize[k]} ${k}`).join(' · ') + ')' : '')
+}
 /**
  * THE TALLY (Jon, 2026-11-11: "a tally of bedrooms, kitchens, bathrooms and occupancy show when selecting
  * units"). Totals across the selection, from the numbers the units carry — a kitchen nobody has on record
  * is counted as 1 and labelled so.
  */
-function TallyBar({ t, className = '' }: { t: LinenTally; className?: string }) {
+function TallyBar({ t, sizeOrder, className = '' }: { t: LinenTally; sizeOrder: string[]; className?: string }) {
   if (!t.units) return null
-  const cell = (n: number, one: string, many: string, title: string) => (
-    <span title={title} className="whitespace-nowrap"><b className="text-ink text-[13px]">{tallyNum(n)}</b> {n === 1 ? one : many}</span>
-  )
+  const cell = (text: string, title: string) => <span title={title} className="whitespace-nowrap text-ink">{text}</span>
   const dot = <span aria-hidden className="text-line">·</span>
   return (
     <div className={'flex items-center gap-x-2 gap-y-1 flex-wrap rounded-xl border border-line bg-app/60 px-3 py-1.5 text-[12.5px] text-muted tabular-nums ' + className} aria-label="Tally of the selected units">
-      {cell(t.units, 'unit', 'units', 'Units in the selection')}{dot}
-      {cell(t.bedrooms, 'bedroom', 'bedrooms', 'Bedrooms across the selection (a studio counts as 0)')}{dot}
-      {cell(t.bathrooms, 'bathroom', 'bathrooms', 'Bathrooms across the selection (halves count as .5)')}{dot}
-      {cell(t.kitchens, 'kitchen', 'kitchens', 'Full kitchens across the selection — a kitchenette counts as 0')}
+      {cell(plural(t.units, 'unit'), 'Units in the selection')}{dot}
+      {cell(bedroomsText(t), 'Bedrooms across the selection — a studio has none and is counted as a studio')}{dot}
+      {cell(plural(t.bathrooms, 'bathroom'), 'Bathrooms across the selection (halves count as .5)')}{dot}
+      {cell(plural(t.kitchens, 'kitchen'), 'Full kitchens across the selection — a kitchenette counts as 0')}
       {t.kitchensAssumed > 0 && <Tag tone="amber" title={`${t.kitchensAssumed} of ${t.units} unit${t.units === 1 ? ' has' : 's have'} no kitchen on record (no Guesty amenities, nothing saved) — counted as 1 each`}>
         {t.kitchensAssumed === t.units ? 'assumed 1 each' : `${t.kitchensAssumed} assumed 1 each`}</Tag>}{dot}
-      {cell(t.guests, 'max guest', 'max guests', 'Occupancy: the max guests added up across the selection')}{dot}
-      {cell(t.beds, 'bed', 'beds', 'Beds of every size, sofa beds included')}
+      {cell(plural(t.guests, 'max guest'), 'Occupancy: the max guests added up across the selection')}{dot}
+      {cell(bedsTallyText(t, sizeOrder), 'Beds by size — the same beds the chips on each unit show (a sofa bed is its own size here; its linen is bought as the sofa-bed size on Par levels)')}
     </div>
   )
 }
@@ -498,18 +541,13 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
 
   const put = async (standard: LinenStandard, done: string) => {
     setBusy(true); setMsg(null)
-    try {
-      const r = await fetch('/api/onboard/linens', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ standard }) })
-      const j = await r.json().catch(() => ({}))
-      if (r.status === 409 && j.stale) { setMsg({ text: j.error + ' Reload the page (your unsaved edits will be lost).', bad: true }); setBusy(false); return }
-      if (!r.ok || !j.ok) throw new Error(j.message || j.error || 'Could not save')
-      onSaved(normLinenStandard(j.standard)); setMsg({ text: done })
-    } catch (e: any) { setMsg({ text: String(e?.message || e), bad: true }) }
+    const r = await putStandard(standard)
+    if (r.ok) { onSaved(r.standard); setMsg({ text: done }) } else setMsg({ text: r.error, bad: true })
     setBusy(false)
   }
   const save = () => {
-    if (draft.items.some(i => !i.name.trim())) { setMsg({ text: 'Give every item a name (or remove the blank one) before saving.', bad: true }); return }
-    if (draft.vendors.some(v => !v.name.trim())) { setMsg({ text: 'Give every vendor a name (or remove the blank one) before saving.', bad: true }); return }
+    const why = unsaveable(draft)
+    if (why) { setMsg({ text: why, bad: true }); return }
     put(draft, 'Saved — the Calculator, Quote and every export use these par levels from now on.')
   }
   const reset = () => { setConfirmReset(false); put(normLinenStandard(DEFAULT_LINEN_STANDARD), 'Back to the starting values.') }
@@ -662,13 +700,14 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
   )
 }
 
-/** "2 per bed", "King 4 · Queen 2 per bed" — the item's count as a short rule for the par table. */
+/** "2 per bed", "King 4 · Queen 2 (else 2) per bed" — the item's count as a short rule for the par table. */
 function shortRule(it: LinenItem): string {
   const per = LINEN_PER.find(p => p.key === it.per)?.label || 'per ' + it.per
   const by = it.per === 'bed' && it.qtyBySize ? Object.entries(it.qtyBySize) : []
   if (by.length) return by.map(([sz, q]) => `${sz} ${n2(q)}`).join(' · ') + ` (else ${n2(it.qty)}) ${per}`
   return `${n2(it.qty)} ${per}`
 }
+const clampPar = (n: number) => Math.max(0, Math.min(LIMITS.num, Math.round(n * 2) / 2))
 
 /**
  * QUICK PAR TABLE (Jon, 2026-11-11: "a table that allow us to change the par per item, so quicker
@@ -678,7 +717,6 @@ function shortRule(it: LinenItem): string {
 function ParTable({ draft, setDraft, canEdit }: { draft: LinenStandard; setDraft: (f: (s: LinenStandard) => LinenStandard) => void; canEdit: boolean }) {
   const [open, setOpen] = useState(true)
   const patch = (id: string, p: Partial<LinenItem>) => setDraft(s => ({ ...s, items: s.items.map(i => i.id === id ? { ...i, ...p } : i) }))
-  const clampPar = (n: number) => Math.max(0, Math.min(LIMITS.num, Math.round(n * 2) / 2))
   const own = draft.items.filter(i => i.rotates && typeof i.par === 'number').length
   const rows = LINEN_GROUPS.flatMap(g => draft.items.filter(i => i.group === g))
   return (
@@ -707,7 +745,6 @@ function ParTable({ draft, setDraft, canEdit }: { draft: LinenStandard; setDraft
               {rows.map(it => {
                 const off = it.active === false
                 const ownPar = typeof it.par === 'number'
-                const par = ownPar ? (it.par as number) : draft.par
                 return (
                   <tr key={it.id} className={off ? 'opacity-55' : ''}>
                     <td className="px-3 sm:px-4 py-1 text-muted">{it.group}</td>
@@ -721,20 +758,9 @@ function ParTable({ draft, setDraft, canEdit }: { draft: LinenStandard; setDraft
                       </button>
                     </td>
                     <td className="px-2 py-1">
-                      {!it.rotates ? (
-                        <span className="block text-center text-muted cursor-help" title="Does not rotate — one set is bought, so par does not apply. Switch Rotates on to give it a par.">—</span>
-                      ) : (
-                        <span className="flex items-center justify-center gap-0.5">
-                          <button type="button" onClick={() => patch(it.id, { par: clampPar(par - 1) })} disabled={!canEdit || par <= 0} title="One set less" aria-label={`Lower the par for ${it.name}`}
-                            className="rounded-md p-1 text-muted hover:text-ink hover:bg-app disabled:opacity-30"><Minus size={12} /></button>
-                          <input type="number" inputMode="decimal" min={0} max={LIMITS.num} step={0.5} value={par} disabled={!canEdit} aria-label={`Par for ${it.name}`}
-                            onChange={e => { const n = toNum(e.target.value); patch(it.id, { par: n === null ? null : clampPar(n) }) }}
-                            title={ownPar ? `Its own par (the standard is ${draft.par})` : `The standard par (${draft.par}) — type or step to give it its own`}
-                            className={NUM + ' w-14 py-1 px-1.5 text-center' + (ownPar ? ' border-violet-300 bg-violet-50 font-semibold' : '')} />
-                          <button type="button" onClick={() => patch(it.id, { par: clampPar(par + 1) })} disabled={!canEdit || par >= LIMITS.num} title="One set more (type a half, e.g. 2.5, in the box)" aria-label={`Raise the par for ${it.name}`}
-                            className="rounded-md p-1 text-muted hover:text-ink hover:bg-app disabled:opacity-30"><Plus size={12} /></button>
-                        </span>
-                      )}
+                      {!it.rotates
+                        ? <span className="block text-center text-muted cursor-help" title="Does not rotate — one set is bought, so par does not apply. Switch Rotates on to give it a par.">—</span>
+                        : <span className="flex justify-center"><ParStepper it={it} std={draft} canEdit={canEdit} onPar={par => patch(it.id, { par })} /></span>}
                     </td>
                     <td className="px-3 sm:px-4 py-1 text-right whitespace-nowrap">
                       {it.rotates && ownPar
@@ -750,6 +776,26 @@ function ParTable({ draft, setDraft, canEdit }: { draft: LinenStandard; setDraft
         </div>
       ))}
     </section>
+  )
+}
+
+/** An item's par as − value +: its own par (violet) or the standard's. ±1 on the buttons; halves by typing. Read-only → text. */
+function ParStepper({ it, std, canEdit, onPar, compact = false }: { it: LinenItem; std: LinenStandard; canEdit: boolean; onPar: (par: number | null) => void; compact?: boolean }) {
+  const ownPar = typeof it.par === 'number'
+  const par = ownPar ? (it.par as number) : std.par
+  const tip = ownPar ? `${it.name}: its own par ${par} (the standard is ${std.par})` : `${it.name}: the standard par (${std.par})`
+  if (!canEdit) return <span className={'tabular-nums text-[12px] ' + (ownPar ? 'text-violet-700 font-semibold' : 'text-muted')} title={tip + ' — changing it needs full access on Linens'}>par {par}</span>
+  const btn = 'rounded-md text-muted hover:text-ink hover:bg-app disabled:opacity-30 ' + (compact ? 'p-0.5' : 'p-1')
+  return (
+    <span className="inline-flex items-center gap-0.5" title={tip}>
+      {compact && <span className="text-[10.5px] uppercase tracking-wider text-muted font-semibold mr-0.5">par</span>}
+      <button type="button" onClick={() => onPar(clampPar(par - 1))} disabled={par <= 0} title="One set less" aria-label={`Lower the par for ${it.name}`} className={btn}><Minus size={12} /></button>
+      <input type="number" inputMode="decimal" min={0} max={LIMITS.num} step={0.5} value={par} aria-label={`Par for ${it.name}`}
+        onChange={e => { const n = toNum(e.target.value); onPar(n === null ? null : clampPar(n)) }}
+        title={tip + ' — type a half (e.g. 2.5) if you need one'}
+        className={NUM + (compact ? ' w-11 py-0.5 px-1' : ' w-14 py-1 px-1.5') + ' text-center' + (ownPar ? ' border-violet-300 bg-violet-50 font-semibold' : '')} />
+      <button type="button" onClick={() => onPar(clampPar(par + 1))} disabled={par >= LIMITS.num} title="One set more" aria-label={`Raise the par for ${it.name}`} className={btn}><Plus size={12} /></button>
+    </span>
   )
 }
 
@@ -937,8 +983,14 @@ function VendorsCard({ vendors, canEdit, onChange }: { vendors: LinenVendor[]; c
 // ── CALCULATOR ────────────────────────────────────────────────────────────────────────────────────
 const shapeOf = (u: LinenDeskUnit): ManualUnitInput => ({ name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, kitchens: u.kitchens, beds: u.beds })
 
-function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pick, canBeds, tier, setTier, inventory, setInventory }: {
-  standard: LinenStandard; dirty: boolean; units: LinenDeskUnit[]; setUnits: (f: (u: LinenDeskUnit[]) => LinenDeskUnit[]) => void; partial: boolean
+type ParEdit = {
+  canEdit: boolean; onPar: (itemId: string, par: number | null) => void; onSave: () => void; onUndo: () => void
+  busy: boolean; msg: { text: string; bad?: boolean } | null; capped: number | null
+  std: LinenStandard   // the draft standard (not the capped view) — the par shown and edited per item
+}
+
+function CalculatorView({ standard, dirty, parEdit, units, setUnits, partial, picked, pick, canBeds, tier, setTier, inventory, setInventory }: {
+  standard: LinenStandard; dirty: boolean; parEdit: ParEdit; units: LinenDeskUnit[]; setUnits: (f: (u: LinenDeskUnit[]) => LinenDeskUnit[]) => void; partial: boolean
   picked: string[]; pick: (ids: string[]) => void; canBeds: boolean; tier: LinenTier; setTier: (t: LinenTier) => void
   inventory: Record<string, LinenCount>; setInventory: (f: (m: Record<string, LinenCount>) => Record<string, LinenCount>) => void
 }) {
@@ -1018,16 +1070,27 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
           {shown.length > SHOW_MAX && <span className="text-[12px] text-muted self-center">+{shown.length - SHOW_MAX} more — search or pick a building to narrow</span>}
           {!shown.length && <span className="text-[12.5px] text-muted">{units.length ? 'No unit matches.' : 'No active units found.'}</span>}
         </div>
-        {chosen.length > 0 && <TallyBar t={tally} className="mt-2.5" />}
+        {chosen.length > 0 && <TallyBar t={tally} sizeOrder={standard.bedSizes} className="mt-2.5" />}
         {partial && <p className="mt-2 text-[12px] text-amber-800 font-semibold" title="The listings read stopped early — reload the page to try again">Some listings did not load — reload to get the full list.</p>}
       </section>
 
       {!chosen.length ? <LeanEmpty>Pick units above to size the order.</LeanEmpty> : (
         <>
-          <NeededList totals={totals} title={title} property={property} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
+          {(dirty || parEdit.msg) && (
+            <div className="sticky bottom-0 z-10 mb-2 flex items-center gap-2 flex-wrap rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px]">
+              {dirty && <span className="font-semibold text-amber-900" title="Par changes (here or on Par levels) not saved yet — the counts on this page already use them; the documents wait for a save">Unsaved par changes</span>}
+              {dirty && parEdit.canEdit && <button onClick={parEdit.onSave} disabled={parEdit.busy} title="Save the par levels for everyone — the same Save as on Par levels (it saves every unsaved change to the standard)" className={PRIMARY + ' min-h-[30px]'}>
+                {parEdit.busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save pars</button>}
+              {dirty && parEdit.canEdit && <button onClick={parEdit.onUndo} disabled={parEdit.busy} title="Throw away every unsaved change to the standard" className={GHOST + ' min-h-[30px]'}>Undo</button>}
+              {dirty && !parEdit.canEdit && <span className="text-amber-900">Saving pars needs full access on Linens.</span>}
+              {parEdit.msg && <span className={'font-semibold ' + (parEdit.msg.bad ? 'text-rose-600' : 'text-emerald-700')}>{parEdit.msg.text}</span>}
+            </div>
+          )}
+          <NeededList totals={totals} title={title} property={property} bedsBySize={tally.bedsBySize} std={standard}
+            par={parEdit} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
           <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
             <h2 className={EYEBROW}>Selected <span className="tabular-nums">{chosen.length}</span></h2>
-            <span className="text-[12px] text-muted tabular-nums" title="Totals across the selected units">{tallyNum(tally.bedrooms)} BR · {tallyNum(tally.bathrooms)} BA · {tallyNum(tally.kitchens)} kitchen{tally.kitchens === 1 ? '' : 's'}{tally.kitchensAssumed ? ' (some assumed)' : ''} · sleeps {tallyNum(tally.guests)} · {tallyNum(tally.beds)} beds</span>
+            <span className="text-[12px] text-muted tabular-nums" title="Totals across the selected units">{bedroomsText(tally)} · {plural(tally.bathrooms, 'bath')} · {plural(tally.kitchens, 'kitchen')}{tally.kitchensAssumed ? ' (some assumed)' : ''} · sleeps {tallyNum(tally.guests)} · {bedsTallyText(tally, standard.bedSizes)}</span>
             {dirty && <Tag tone="amber" title="The standard has edits that are not saved — these numbers already use them">unsaved standard</Tag>}
             {countedChosen > 0
               ? <Tag tone="emerald" title="These units have a shelf count — the order below is only what is missing (need − have)">{countedChosen} of {chosen.length} counted · order is net of stock</Tag>
@@ -1095,7 +1158,7 @@ function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, on
   return (
     <LeanRow open={open} onToggle={onToggle}
       name={u.name}
-      meta={[u.building, unitLine(u), (u.kitchenSaved || !u.kitchensAssumed ? (u.kitchens ?? 1) + ' kitchen' + ((u.kitchens ?? 1) === 1 ? '' : 's') : '1 kitchen (assumed)'), Object.values(u.beds).reduce((a, b) => a + (b || 0), 0) + ' beds'].filter(Boolean).join(' · ')}
+      meta={[u.building, unitLine(u), (!u.kitchenSaved && u.kitchensAssumed ? '1 kitchen (assumed)' : plural(u.kitchens ?? 1, 'kitchen')), plural(sizes.reduce((a, s) => a + u.beds[s], 0), 'bed')].filter(Boolean).join(' · ')}
       tags={<>
         {sizes.map(s => <Tag key={s} title={`${u.beds[s]} ${s} bed${u.beds[s] > 1 ? 's' : ''}`}>{s} ×{u.beds[s]}</Tag>)}
         <Tag tone={src.tone} title={src.title}>{src.label}</Tag>
@@ -1353,7 +1416,7 @@ function TotalsCard({ totals, label, onCsv, onCopy, copied }: { totals: LinenTot
 // not need to be invoice"). Starts from the standard (net of shelf counts on the Calculator); every
 // quantity can be typed over, a line can be zeroed out, and lines can be added. Edits live on this page
 // only — they never change the standard — and reset when the units or the standard change.
-type NeedLine = { key: string; group: string; name: string; size: string; qty: number; base: number | null }
+type NeedLine = { key: string; itemId: string; group: string; name: string; size: string; qty: number; base: number | null }
 const csvSafe = (v: any) => { let x = String(v ?? ''); if (/^[=+\-@\t\r]/.test(x)) x = "'" + x; return /[",\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x }
 
 // SECTIONS (Jon, 2026-11-05: "organize by linen type and make it visually easier to see and read —
@@ -1379,19 +1442,41 @@ function sectioned<T extends { group: string; size?: string }>(rows: T[]): { key
   return Array.from(m.values()).sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
 }
 
-function NeededList({ totals, title, resetKey, property }: { totals: LinenTotals; title: string; resetKey: string; property: string }) {
+function NeededList({ totals, title, resetKey, property, bedsBySize, std, par }: {
+  totals: LinenTotals; title: string; resetKey: string; property: string
+  bedsBySize: Record<string, number>; std: LinenStandard; par?: ParEdit
+}) {
   const [edits, setEdits] = useState<Record<string, number>>({})
   const [extra, setExtra] = useState<NeedLine[]>([])
   const [copied, setCopied] = useState(false)
   useEffect(() => { setEdits({}); setExtra([]) }, [resetKey])
-  const base: NeedLine[] = totals.rows.map(r => ({ key: r.key, group: r.group, name: r.name, size: r.size || '', qty: r.qty, base: r.qty }))
+  const base: NeedLine[] = totals.rows.map(r => ({ key: r.key, itemId: r.itemId, group: r.group, name: r.name, size: r.size || '', qty: r.qty, base: r.qty }))
+  const parStd = par ? par.std : std
+  const itemById = useMemo(() => new Map(parStd.items.map(i => [i.id, i] as const)), [parStd])
+  // A par change re-counts that item's lines, so a typed-over quantity on them would hide it — drop those overrides.
+  const changePar = (itemId: string, p: number | null) => {
+    if (!par) return
+    setEdits(e => { const n: Record<string, number> = {}; for (const [k, v] of Object.entries(e)) if (!base.some(b => b.key === k && b.itemId === itemId)) n[k] = v; return n })
+    par.onPar(itemId, p)
+  }
+  // Which beds a bed section is for. A sofa bed's linen is bought as the sofa-bed size (Queen), so it sits in that section.
+  const sofaKey = Object.keys(bedsBySize).find(k => k.toLowerCase() === 'sofa bed')
+  const sofaBeds = sofaKey ? bedsBySize[sofaKey] : 0
+  const bedsFor = (sec: { key: string }): string => {
+    if (!sec.key.startsWith('bed-')) return ''
+    const size = sec.key.slice(4)
+    const own = Object.entries(bedsBySize).find(([k]) => k.toLowerCase() === size.toLowerCase())?.[1] || 0
+    const sofa = std.sofaSize && std.sofaSize.toLowerCase() === size.toLowerCase() ? sofaBeds : 0
+    const parts = [own ? plural(own, size + ' bed') : '', sofa ? plural(sofa, 'sofa bed') : ''].filter(Boolean)
+    return parts.join(' + ')
+  }
   const lines: NeedLine[] = [...base.map(l => (l.key in edits ? { ...l, qty: edits[l.key] } : l)), ...extra]
   const out = lines.filter(l => l.qty > 0 && l.name.trim())
   const pieces = out.reduce((a, l) => a + l.qty, 0)
   const changed = Object.keys(edits).filter(k => base.some(b => b.key === k && b.base !== edits[k])).length + extra.length
   const setQty = (key: string, v: string) => { const n = Math.max(0, Math.min(99_999, Math.round(toNum(v) ?? 0))); setEdits(e => ({ ...e, [key]: n })) }
   const patchExtra = (key: string, p: Partial<NeedLine>) => setExtra(x => x.map(l => (l.key === key ? { ...l, ...p } : l)))
-  const addLine = () => setExtra(x => [...x, { key: 'extra-' + Date.now() + '-' + x.length, group: 'Other', name: '', size: '', qty: 1, base: null }])
+  const addLine = () => setExtra(x => [...x, { key: 'extra-' + Date.now() + '-' + x.length, itemId: '', group: 'Other', name: '', size: '', qty: 1, base: null }])
   const sections = sectioned(lines)
   const outSections = sectioned(out)
   const csv = () => ['Section,Item,Size,Qty', ...outSections.flatMap(sec => sec.rows.map(l => [sec.label, l.name.trim(), l.size.trim(), l.qty].map(csvSafe).join(',')))].join('\n') + '\n'
@@ -1413,7 +1498,7 @@ function NeededList({ totals, title, resetKey, property }: { totals: LinenTotals
         <h2 className="text-[15px] font-bold text-ink">What's needed</h2>
         <span className="text-[13px] text-muted tabular-nums"><b className="text-ink text-[15px]">{pieces.toLocaleString('en-US')}</b> pieces</span>
         {totals.counted > 0 && <Tag tone="emerald" title="Net of what was counted on the shelf">net of {totals.counted} count{totals.counted === 1 ? '' : 's'}</Tag>}
-        {changed > 0 && <Tag tone="amber" title="Lines you changed or added on this page — the par levels themselves are not changed">{changed} edited</Tag>}
+        {changed > 0 && <Tag tone="amber" title="Quantities you typed over or lines you added — for this export only; the par levels are not changed">{changed} edited for this export</Tag>}
         <span className="ml-auto flex items-center gap-1.5 flex-wrap">
           {changed > 0 && <button onClick={() => { setEdits({}); setExtra([]) }} title="Put every quantity back and drop added lines" className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><RotateCcw size={12} /> Reset</button>}
           <button onClick={download} disabled={!out.length} title="Download this list as a spreadsheet (CSV) — exactly what is on the page, by section" className={PRIMARY}><Download size={13} /> Download list</button>
@@ -1421,6 +1506,10 @@ function NeededList({ totals, title, resetKey, property }: { totals: LinenTotals
         </span>
       </div>
 
+      {par && <p className="px-3 sm:px-4 pt-2 text-[12px] text-muted">
+        <b className="text-violet-700">Par</b> (− value +) changes the saved standard for every unit — it needs Save pars. <b className="text-ink">Qty</b> boxes change this export only.
+        {par.capped !== null && <span className="text-amber-800"> Counting at par {par.capped} for this view — no item counts above it.</span>}
+      </p>}
       {/* One card per linen type: King bed, Queen bed, …, Standard pillows, Bath, Kitchen, Other. */}
       <div className="p-2 sm:p-3 grid gap-2 sm:gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {sections.map(sec => {
@@ -1431,20 +1520,33 @@ function NeededList({ totals, title, resetKey, property }: { totals: LinenTotals
                 <h3 className="text-[13.5px] font-bold text-ink">{sec.label}</h3>
                 <span className="ml-auto text-[12px] text-muted tabular-nums" title="Pieces in this section">{sub.toLocaleString('en-US')} pcs</span>
               </div>
+              {bedsFor(sec) && <p className="px-3 py-1 text-[11.5px] text-muted border-b border-line/60" title="The beds in the selection this section's linen is for">For {bedsFor(sec)}</p>}
               <ul className="divide-y divide-line/60">
                 {sec.rows.map(l => {
                   const isExtra = l.base === null
                   const edited = !isExtra && l.qty !== l.base
                   return (
-                    <li key={l.key} className={'px-3 py-1.5 flex items-center gap-2 ' + (l.qty === 0 ? 'opacity-45' : '')}>
+                    <li key={l.key} className={'px-3 py-1.5 flex items-center gap-2 flex-wrap ' + (l.qty === 0 ? 'opacity-45' : '')}>
                       {isExtra ? (
                         <>
                           <input value={l.name} onChange={e => patchExtra(l.key, { name: e.target.value.slice(0, LIMITS.name) })} placeholder="Item name" title="What to add" className={INPUT + ' py-1 flex-1 min-w-0'} autoFocus={!l.name} />
                           <button onClick={() => setExtra(x => x.filter(y => y.key !== l.key))} title="Remove this added line" className="text-muted hover:text-rose-600"><Trash2 size={13} /></button>
                         </>
                       ) : (
-                        <span className="flex-1 min-w-0 text-[13.5px] text-ink truncate" title={l.name + (l.size ? ' — ' + l.size : '')}>{l.name}</span>
+                        <span className="flex-1 min-w-[7rem] text-[13.5px] text-ink truncate" title={l.name + (l.size ? ' — ' + l.size : '')}>{l.name}</span>
                       )}
+                      {par && !isExtra && (() => {
+                        const it = itemById.get(l.itemId)
+                        if (!it) return null
+                        if (!it.rotates) return <span className="text-[11px] text-muted whitespace-nowrap" title="Does not rotate — one set is bought, par does not apply">1 set</span>
+                        return (
+                          <span className="inline-flex items-center gap-0.5">
+                            <ParStepper it={it} std={parStd} canEdit={par.canEdit} onPar={p => changePar(it.id, p)} compact />
+                            {par.canEdit && typeof it.par === 'number' && <button type="button" onClick={() => changePar(it.id, null)} title={`Use standard par (${parStd.par}) — drop this item's own par`} aria-label="Use standard par"
+                              className="rounded-md p-0.5 text-muted hover:text-ink hover:bg-app"><RotateCcw size={11} /></button>}
+                          </span>
+                        )
+                      })()}
                       {edited && <span className="text-[11px] text-muted tabular-nums line-through" title={`Standard: ${l.base}`}>{l.base}</span>}
                       <input type="number" inputMode="numeric" min={0} value={l.qty}
                         onChange={e => isExtra ? patchExtra(l.key, { qty: Math.max(0, Math.round(toNum(e.target.value) ?? 0)) }) : setQty(l.key, e.target.value)}
@@ -1460,7 +1562,7 @@ function NeededList({ totals, title, resetKey, property }: { totals: LinenTotals
       </div>
       <div className="px-3 sm:px-4 py-2 border-t border-line flex items-center gap-2 flex-wrap">
         <button onClick={addLine} title="Add a line that is not on the par levels" className="text-[12.5px] font-bold text-brand-700 hover:underline inline-flex items-center gap-1"><Plus size={13} /> Add a line</button>
-        <span className="text-[12px] text-muted">Changes here are for this export only — the par levels stay as they are.</span>
+        <span className="text-[12px] text-muted">Qty changes and added lines are for this export only — the par levels stay as they are{par ? ' (change par with the − / + on a line, then Save pars)' : ''}.</span>
       </div>
     </section>
   )
@@ -1553,10 +1655,10 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
           {bedCount === 0 && <Tag tone="rose" title="No beds — nothing per bed (sheets, pillows, duvets) is counted">no beds</Tag>}
           {d.guests === 0 && <Tag tone="rose" title="No occupancy — per-guest items (towels, washcloths) are not counted">no occupancy</Tag>}
         </div>
-        <TallyBar t={tally} className="mt-2.5" />
+        <TallyBar t={tally} sizeOrder={standard.bedSizes} className="mt-2.5" />
       </section>
 
-      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} property={property} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
+      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} property={property} bedsBySize={tally.bedsBySize} std={standard} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
       <PricingFold>
       <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
         <h2 className={EYEBROW}>Tiers</h2>

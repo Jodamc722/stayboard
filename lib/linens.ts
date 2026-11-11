@@ -493,21 +493,31 @@ export function amenitiesKnown(...sources: any[]): boolean {
 
 // ── the tally of a selection (Jon, 2026-11-11: "a tally of bedrooms, kitchens, bathrooms and occupancy
 // show when selecting units") ─────────────────────────────────────────────────────────────────────────
-export type LinenTally = { units: number; bedrooms: number; bathrooms: number; kitchens: number; kitchensAssumed: number; guests: number; beds: number }
+export type LinenTally = {
+  units: number; bedrooms: number; studios: number; bathrooms: number; kitchens: number; kitchensAssumed: number; guests: number
+  beds: number; bedsBySize: Record<string, number>   // every bed the units carry, by size (Sofa bed its own size) — sums to `beds`
+}
 /** Totals across units; `copies` multiplies a typed-in unit. A unit with no kitchen on record counts as 1 (and in kitchensAssumed). */
 export function linenTally(units: { bedrooms?: number; bathrooms?: number; guests?: number; kitchens?: number | null; kitchensAssumed?: boolean; beds?: Record<string, number>; copies?: number }[]): LinenTally {
-  const t: LinenTally = { units: 0, bedrooms: 0, bathrooms: 0, kitchens: 0, kitchensAssumed: 0, guests: 0, beds: 0 }
+  const t: LinenTally = { units: 0, bedrooms: 0, studios: 0, bathrooms: 0, kitchens: 0, kitchensAssumed: 0, guests: 0, beds: 0, bedsBySize: {} }
   const n = (v: any) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
   for (const u of units) {
     const c = Math.max(1, Math.round(n(u.copies)) || 1)
     const assumed = u.kitchensAssumed === true || u.kitchens === undefined || u.kitchens === null
+    const br = Math.round(n(u.bedrooms))
     t.units += c
-    t.bedrooms += n(u.bedrooms) * c
+    t.bedrooms += br * c
+    if (!br) t.studios += c
     t.bathrooms += n(u.bathrooms) * c
     t.guests += n(u.guests) * c
     t.kitchens += (assumed ? 1 : Math.round(n(u.kitchens))) * c
     if (assumed) t.kitchensAssumed += c
-    t.beds += Object.values(u.beds || {}).reduce((a, b) => a + n(b), 0) * c
+    for (const [size, k] of Object.entries(u.beds || {})) {
+      const b = Math.round(n(k)) * c
+      if (!b) continue
+      t.beds += b
+      t.bedsBySize[size] = (t.bedsBySize[size] || 0) + b
+    }
   }
   return t
 }
