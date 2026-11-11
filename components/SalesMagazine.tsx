@@ -258,6 +258,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
   // that gets shared.
   const flip = !!digital
   const [copied, setCopied] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   // Print from the digital version opens the print version and prints it (?print=1).
   useEffect(() => { if (!digital && /[?&]print=1/.test(window.location.search)) { const id = setTimeout(() => window.print(), 1400); return () => clearTimeout(id) } }, [digital])
   const [drawer, setDrawer] = useState<null | 'proj' | 'comps' | 'pages' | 'style'>(null)
@@ -1215,7 +1216,27 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
           {dirty ? <button type="button" onClick={save}>Save changes</button> : saving ? <span className="mz-saved">{saving}</span> : null}
-          {canEdit ? <button type="button" className="mz-ghost" title="Copy the link to the digital magazine, to send" onClick={async () => { const u = window.location.origin + keynote + '?view=digital'; try { await navigator.clipboard.writeText(u) } catch { window.prompt('Copy this link', u) } setCopied(true); setTimeout(() => setCopied(false), 1800) }}>{copied ? 'Link copied' : 'Copy share link'}</button> : null}
+          <span className="mz-share-wrap">
+            <button type="button" className={'mz-ghost' + (shareOpen ? ' on' : '')} onClick={() => setShareOpen(o => !o)}>Share</button>
+            {shareOpen ? (() => {
+              const u = (typeof window !== 'undefined' ? window.location.origin : '') + keynote + '?view=digital'
+              const subject = (short(building) || 'Stay Hospitality') + ' · Stay Hospitality'
+              const body = (cma ? T('coverDek').replace(/\*/g, '') + '\n\n' : '') + u
+              return (
+                <div className="mz-share">
+                  <p>The digital magazine, to send</p>
+                  <input readOnly value={u} onFocus={e => e.target.select()} />
+                  <div>
+                    <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(u) } catch { /* the box above is selectable */ } setCopied(true); setTimeout(() => setCopied(false), 1800) }}>{copied ? 'Copied' : 'Copy link'}</button>
+                    <a href={'sms:?&body=' + encodeURIComponent(body)}>Text</a>
+                    <a href={'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body)}>Email</a>
+                    {typeof navigator !== 'undefined' && (navigator as Any).share ? <button type="button" onClick={() => (navigator as Any).share({ title: subject, text: body.replace(u, '').trim(), url: u }).catch(() => {})}>More…</button> : null}
+                  </div>
+                  <small>Opens without a sign-in. Pasted into a text or an email, it shows the building’s photo and name.</small>
+                </div>
+              )
+            })() : null}
+          </span>
           <button type="button" onClick={() => { if (flip) window.location.href = keynote + '?view=magazine&print=1'; else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
         </span>
       </nav>
@@ -1287,6 +1308,14 @@ const CSS = `
 .mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
 .mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
 .mz-lockup{display:flex;align-items:center;gap:18px}
+.mz-share-wrap{position:relative}
+.mz-share{position:absolute;right:0;top:calc(100% + 10px);width:320px;background:#fff;color:#1C1A17;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.25);padding:14px;z-index:30;font:400 12.5px "Inter",sans-serif}
+.mz-share p{margin:0 0 8px;font-weight:600}
+.mz-share input{width:100%;font:500 12px "Inter",sans-serif;border:1px solid #E3DED3;border-radius:8px;padding:7px 9px;color:#1C1A17;background:#F7F7F5}
+.mz-share div{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.mz-share div button,.mz-share div a{font:600 12px "Inter",sans-serif;border:1px solid #E3DED3;border-radius:999px;padding:6px 12px;background:#fff;color:#1C1A17;text-decoration:none;cursor:pointer}
+.mz-share div button:first-child{background:#1C1A17;color:#fff;border-color:#1C1A17}
+.mz-share small{display:block;margin-top:8px;color:#7A7164;line-height:1.4}
 /* the one-pager */
 .mz-one{background:${C.paper};color:${C.ink}}
 .mz-one-top{display:flex;justify-content:space-between;align-items:center;padding:36px 56px 20px}

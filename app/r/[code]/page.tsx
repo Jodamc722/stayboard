@@ -23,9 +23,25 @@ export async function generateMetadata({ params }: { params: { code: string } })
   const code = String(params.code || '')
   const base = { robots: { index: false, follow: false } }
   if (!/^[0-9a-f]{12,32}$/i.test(code)) return base
-  const { data } = await supabaseAdmin().from('owner_reports').select('title, scope_label').eq('code', code).limit(1)
+  const { data } = await supabaseAdmin().from('owner_reports').select('title, scope_label, content').eq('code', code).limit(1)
   const rep = (data || [])[0] as any
   if (!rep) return base
+  // A SALES PACKAGE SHARES LIKE A MAGAZINE (Jon, 2026-11-11: "that should be shareable like a link"):
+  // pasted into a text or an email, the link shows the building, a line about it and the cover photo.
+  const ct: any = rep.content || {}
+  if (String(ct?.meta?.kind || '') === 'sales') {
+    const origin = process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app'
+    const building = String(ct?.cma?.building || ct?.hero?.title || rep.scope_label || 'Stay Hospitality')
+    const area = String(ct?.cma?.area || '')
+    const aud = String(ct?.audience || 'building')
+    const pic = String(ct?.magazine?.photos?.cover || ct?.hero?.heroImage || '/deck-img/miami-skyline.jpg')
+    const image = /^https?:\/\//.test(pic) ? pic : origin + (pic.startsWith('/') ? pic : '/' + pic)
+    const title = building + ' · Stay Hospitality'
+    const description = aud === 'owner' ? `Your residence${area ? ' in ' + area : ''}, and what it could earn. A proposal from Stay Hospitality.`
+      : aud === 'agents' ? `Every floor plan at ${building}, and what each could earn. For agents and their buyers, from Stay Hospitality.`
+      : `What a residence at ${building} could earn, and who would run it. The building package from Stay Hospitality.`
+    return { ...base, title, description, openGraph: { title, description, images: [{ url: image, width: 1200, height: 800 }], type: 'article', siteName: 'Stay Hospitality' }, twitter: { card: 'summary_large_image', title, description, images: [image] } }
+  }
   const title = rep.title || ((rep.scope_label || 'Owner') + ' — Owner Review')
   return { ...base, title, description: 'Owner performance review prepared by Stay Hospitality.' }
 }
