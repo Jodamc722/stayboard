@@ -33,7 +33,7 @@ import { pageRows } from '@/lib/db-page'
 import { rollupBuilding } from '@/lib/optimize-score'
 import {
   LINEN_STANDARD_KEY, LINEN_UNIT_BEDS_KEY, LINEN_QUOTES_KEY, LINEN_INVENTORY_KEY, LINEN_UNIT_KITCHENS_KEY, LINEN_UNIT_ID, ONBOARD_CODE,
-  kitchensFromAmenities, normUnitKitchens,
+  kitchensFromAmenities, amenitiesKnown, normUnitKitchens,
   normLinenStandard, normBeds, normLinenQuotes, normLinenInventory, normLinenCount, isLinenTier,
   bedsFromGuestyRooms, assumedBeds, resolveLinenUnit,
   type LinenDeskUnit, type BedsSource,
@@ -103,7 +103,7 @@ export async function GET(req: NextRequest) {
       getSetting<any>(LINEN_UNIT_KITCHENS_KEY, null),
       // Only the columns the calculator reads, and only the rooms sub-field of raw (never raw whole).
       pageRows<any>((a, b) => db.from('guesty_listings')
-        .select('id,nickname,title,building,bedrooms,bathrooms,beds,max_occupancy,status,amenities,rooms:raw->listingRooms,rawAmen:raw->amenities')
+        .select('id,nickname,title,building,bedrooms,bathrooms,beds,max_occupancy,status,amenities,rooms:raw->listingRooms,rawAmen:raw->amenities,accommodates:raw->accommodates')
         .order('id').range(a, b), 3),
       // Not yet live: onboarding links with no listing assigned. A link is minted per new unit.
       Promise.resolve(db.from('onboarding_units').select('id,code,name,building,details,status,listing_id')
@@ -126,15 +126,17 @@ export async function GET(req: NextRequest) {
       const autoKitchens = kitchensFromAmenities(l.amenities, l.rawAmen)
       const kSaved = id in savedKitchens
       units.push({
-        id, name, building: rollupBuilding(l.building, name), bedrooms, bathrooms: num(l.bathrooms), guests: Math.round(num(l.max_occupancy)),
-        kitchens: kSaved ? savedKitchens[id] : autoKitchens, autoKitchens, kitchenSaved: kSaved,
+        // Occupancy: the max_occupancy column, else Guesty's own `accommodates` on the raw listing.
+        id, name, building: rollupBuilding(l.building, name), bedrooms, bathrooms: num(l.bathrooms), guests: Math.round(num(l.max_occupancy) || num(l.accommodates)),
+        // No saved choice and no amenities on the listing at all → the 1 kitchen is an assumption (the tally says so).
+        kitchens: kSaved ? savedKitchens[id] : autoKitchens, autoKitchens, kitchenSaved: kSaved, kitchensAssumed: !kSaved && !amenitiesKnown(l.amenities, l.rawAmen),
         beds: mine || auto[0], bedsSource: mine ? 'saved' : auto[1], autoBeds: auto[0], autoSource: auto[1], live: true,
       })
     }
 
     for (const u of onboardRead as any[]) {
       const x = onboardUnit(u, saved)
-      if (x) { if (x.id in savedKitchens) { x.kitchens = savedKitchens[x.id]; x.kitchenSaved = true } units.push(x) }
+      if (x) { if (x.id in savedKitchens) { x.kitchens = savedKitchens[x.id]; x.kitchenSaved = true } else x.kitchensAssumed = true; units.push(x) }
     }
 
     // The unit the page was opened for, when it is an onboarding unit already assigned to a listing
@@ -145,6 +147,7 @@ export async function GET(req: NextRequest) {
         .eq('code', wantCode).neq('status', 'archived').limit(1)).catch(() => null)
       const row = r && !r.error && Array.isArray(r.data) ? r.data[0] : null
       if (row) focus = onboardUnit(row, saved, row.listing_id ? listingRead.rows.find((l: any) => String(l.id) === String(row.listing_id)) || null : null)
+      if (focus) { if (focus.id in savedKitchens) { focus.kitchens = savedKitchens[focus.id]; focus.kitchenSaved = true } else focus.kitchensAssumed = true }
     }
 
     units.sort((a, b) => String(a.building || '').localeCompare(String(b.building || '')) || a.name.localeCompare(b.name, undefined, { numeric: true }))

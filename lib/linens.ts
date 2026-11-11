@@ -462,7 +462,9 @@ export type LinenUnit = {
 }
 
 /** A unit as the linen desk receives it: the beds in use, and what they would be without a save. */
-export type LinenDeskUnit = LinenUnit & { autoBeds: Record<string, number>; autoSource: BedsSource; live: boolean; autoKitchens?: number; kitchenSaved?: boolean }
+// kitchensAssumed: true when nothing on record says whether the unit has a kitchen (no Guesty amenities,
+// no saved choice, nothing on the onboarding form) — it is counted as 1 and the tally labels it assumed.
+export type LinenDeskUnit = LinenUnit & { autoBeds: Record<string, number>; autoSource: BedsSource; live: boolean; autoKitchens?: number; kitchenSaved?: boolean; kitchensAssumed?: boolean }
 
 /**
  * FULL KITCHEN OR NOT (Jon, 2026-11-05: "kitchen full only, kitchenette no kitchen towels"). From the
@@ -478,6 +480,65 @@ export function kitchensFromAmenities(...sources: any[]): number {
   }
   if (!names.length) return 1
   return names.some(n => n === 'kitchen' || n === 'full kitchen') ? 1 : 0
+}
+
+/** True when any of the amenity lists names at least one amenity (so a "no kitchen" answer is real, not a gap). */
+export function amenitiesKnown(...sources: any[]): boolean {
+  for (const src of sources) if (Array.isArray(src)) for (const a of src) {
+    const t = typeof a === 'string' ? a : String((a && (a.amenity || a.name || a.title || a.label)) || '')
+    if (t.trim()) return true
+  }
+  return false
+}
+
+// ── the tally of a selection (Jon, 2026-11-11: "a tally of bedrooms, kitchens, bathrooms and occupancy
+// show when selecting units") ─────────────────────────────────────────────────────────────────────────
+export type LinenTally = { units: number; bedrooms: number; bathrooms: number; kitchens: number; kitchensAssumed: number; guests: number; beds: number }
+/** Totals across units; `copies` multiplies a typed-in unit. A unit with no kitchen on record counts as 1 (and in kitchensAssumed). */
+export function linenTally(units: { bedrooms?: number; bathrooms?: number; guests?: number; kitchens?: number | null; kitchensAssumed?: boolean; beds?: Record<string, number>; copies?: number }[]): LinenTally {
+  const t: LinenTally = { units: 0, bedrooms: 0, bathrooms: 0, kitchens: 0, kitchensAssumed: 0, guests: 0, beds: 0 }
+  const n = (v: any) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : 0 }
+  for (const u of units) {
+    const c = Math.max(1, Math.round(n(u.copies)) || 1)
+    const assumed = u.kitchensAssumed === true || u.kitchens === undefined || u.kitchens === null
+    t.units += c
+    t.bedrooms += n(u.bedrooms) * c
+    t.bathrooms += n(u.bathrooms) * c
+    t.guests += n(u.guests) * c
+    t.kitchens += (assumed ? 1 : Math.round(n(u.kitchens))) * c
+    if (assumed) t.kitchensAssumed += c
+    t.beds += Object.values(u.beds || {}).reduce((a, b) => a + n(b), 0) * c
+  }
+  return t
+}
+
+// ── download names (Jon, 2026-11-11: "name the property so when we download the download has name of
+// property and date") — "<Property> - <what> - <YYYY-MM-DD>.<ext>", the date in Eastern time ───────────
+/** Today in America/New_York as YYYY-MM-DD. */
+export function linenYmd(d: Date = new Date()): string {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d) }
+  catch { return d.toISOString().slice(0, 10) }
+}
+/** A filename part with the characters file systems refuse taken out. */
+export function fileSafe(v: any, max = 80): string {
+  return String(v ?? '').replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/^\.+/, '').slice(0, max).trim()
+}
+/** The property a selection belongs to: its buildings (a unit with none counts by its own name), up to two, then "+N more". */
+export function linenPropertyName(units: { building?: string | null; name?: string }[], fallback = 'Linen quote'): string {
+  const seen: string[] = []
+  for (const u of units) {
+    const b = fileSafe(u.building || u.name || '', 60)
+    if (b && !seen.some(x => x.toLowerCase() === b.toLowerCase())) seen.push(b)
+  }
+  if (!seen.length) return fallback
+  return seen.slice(0, 2).join(' + ') + (seen.length > 2 ? ` +${seen.length - 2} more` : '')
+}
+/** "Salato - Linen order - 2026-11-11.pdf" */
+export function linenFileName(property: string, what: string, ext: string, ymd: string = linenYmd()): string {
+  const p = fileSafe(property, 100) || 'Linen quote'
+  const w = fileSafe(what, 60) || 'Linens'
+  const e = String(ext || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'txt'
+  return `${p} - ${w} - ${ymd}.${e}`
 }
 
 /** The `linen_unit_kitchens` setting: known unit ids → 0 or 1. */

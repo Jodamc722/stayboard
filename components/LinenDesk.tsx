@@ -18,7 +18,8 @@ import { Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/c
 import {
   LINEN_GROUPS, LINEN_PER, LINEN_TIERS, LIMITS, MANUAL_LIMITS, DEFAULT_LINEN_STANDARD, normLinenStandard, linenNeeds, linenTotals, linenCsv, linenText, sortSizes,
   linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf, linenGap, LINEN_COUNT_LIMITS, pillowsOn, atPar, PAR_CHOICES,
-  type LinenCount, type LinenGap,
+  linenTally, linenPropertyName, linenFileName,
+  type LinenCount, type LinenGap, type LinenTally,
   type LinenStandard, type LinenItem, type LinenGroup, type LinenPer, type LinenDeskUnit, type BedsSource, type LinenTotals, type LinenTier, type TierOption,
   type LinenVendor, type LinenQuote, type VendorOrder, type LinenQuoteChoice, type ManualUnitInput,
 } from '@/lib/linens'
@@ -180,7 +181,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
         : <>
           {view === 'standard' && <StandardView draft={draft} setDraft={setDraft} saved={saved} edited={edited} canEdit={canStd}
               onSaved={(s) => { setSaved(s); setDraft(s); setEdited(true) }} />}
-          {view !== 'standard' && <ParPicker value={viewPar ?? draft.par} standardPar={draft.par} onChange={p => setViewPar(p === draft.par ? null : p)}
+          {view !== 'standard' && <ParPicker value={viewPar ?? draft.par} standardPar={draft.par} onChange={p => setViewPar(p === draft.par ? null : p)} onEditPars={() => go('standard')}
             note={viewPar === null ? 'Counting at the standard par' : `Counting at par ${viewPar} for this view only — the saved par is ${draft.par}`} />}
           {view === 'calculator' && <CalculatorView standard={calcStd} dirty={dirty} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
           {/* The Quote view stays mounted once opened, so what was typed (and Bill to) survives a tab switch. */}
@@ -196,7 +197,7 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
 // ── shared pieces ─────────────────────────────────────────────────────────────────────────────────
 /** A segmented Low | Mid | Luxury switch. */
 /** Par as buttons: tap one and every count on the page follows. */
-function ParPicker({ value, onChange, standardPar, note, disabled }: { value: number; onChange: (p: number) => void; standardPar?: number; note?: string; disabled?: boolean }) {
+function ParPicker({ value, onChange, standardPar, note, disabled, onEditPars }: { value: number; onChange: (p: number) => void; standardPar?: number; note?: string; disabled?: boolean; onEditPars?: () => void }) {
   const choices = Array.from(new Set([...PAR_CHOICES, value, ...(standardPar !== undefined ? [standardPar] : [])])).sort((a, b) => a - b)
   return (
     <div className="sticky top-0 z-20 -mx-1 px-1 py-2 mb-2 bg-app/95 backdrop-blur flex items-center gap-1.5 flex-wrap">
@@ -209,6 +210,35 @@ function ParPicker({ value, onChange, standardPar, note, disabled }: { value: nu
         </button>
       ))}
       {note && <span className="text-[12px] text-muted ml-1">{note}</span>}
+      {onEditPars && <button type="button" onClick={onEditPars} title="Open Par levels to change the par item by item (the quick-edit table is at the top)"
+        className="ml-auto inline-flex items-center gap-1 text-[12px] font-semibold text-brand-700 hover:underline"><Pencil size={12} /> Edit pars</button>}
+    </div>
+  )
+}
+
+/** "2.5" not "2.50"; whole numbers stay whole. */
+const tallyNum = (x: number) => String(Math.round(x * 10) / 10)
+/**
+ * THE TALLY (Jon, 2026-11-11: "a tally of bedrooms, kitchens, bathrooms and occupancy show when selecting
+ * units"). Totals across the selection, from the numbers the units carry — a kitchen nobody has on record
+ * is counted as 1 and labelled so.
+ */
+function TallyBar({ t, className = '' }: { t: LinenTally; className?: string }) {
+  if (!t.units) return null
+  const cell = (n: number, one: string, many: string, title: string) => (
+    <span title={title} className="whitespace-nowrap"><b className="text-ink text-[13px]">{tallyNum(n)}</b> {n === 1 ? one : many}</span>
+  )
+  const dot = <span aria-hidden className="text-line">·</span>
+  return (
+    <div className={'flex items-center gap-x-2 gap-y-1 flex-wrap rounded-xl border border-line bg-app/60 px-3 py-1.5 text-[12.5px] text-muted tabular-nums ' + className} aria-label="Tally of the selected units">
+      {cell(t.units, 'unit', 'units', 'Units in the selection')}{dot}
+      {cell(t.bedrooms, 'bedroom', 'bedrooms', 'Bedrooms across the selection (a studio counts as 0)')}{dot}
+      {cell(t.bathrooms, 'bathroom', 'bathrooms', 'Bathrooms across the selection (halves count as .5)')}{dot}
+      {cell(t.kitchens, 'kitchen', 'kitchens', 'Full kitchens across the selection — a kitchenette counts as 0')}
+      {t.kitchensAssumed > 0 && <Tag tone="amber" title={`${t.kitchensAssumed} of ${t.units} unit${t.units === 1 ? ' has' : 's have'} no kitchen on record (no Guesty amenities, nothing saved) — counted as 1 each`}>
+        {t.kitchensAssumed === t.units ? 'assumed 1 each' : `${t.kitchensAssumed} assumed 1 each`}</Tag>}{dot}
+      {cell(t.guests, 'max guest', 'max guests', 'Occupancy: the max guests added up across the selection')}{dot}
+      {cell(t.beds, 'bed', 'beds', 'Beds of every size, sofa beds included')}
     </div>
   )
 }
@@ -369,7 +399,7 @@ function VendorOrderCard({ order }: { order: VendorOrder }) {
 }
 
 /** The documents: owner invoice (PDF), vendor order (PDF / CSV), and the copy-as-text. */
-function DocActions({ tier, units, dirty, onCopy, copyLabel, priced = 1 }: { tier: LinenTier; units: ManualUnitInput[]; dirty: boolean; onCopy: () => Promise<boolean>; copyLabel: string; priced?: number }) {
+function DocActions({ tier, tierLabel, property, units, dirty, onCopy, copyLabel, priced = 1 }: { tier: LinenTier; tierLabel: string; property: string; units: ManualUnitInput[]; dirty: boolean; onCopy: () => Promise<boolean>; copyLabel: string; priced?: number }) {
   const [busy, setBusy] = useState<string>('')
   const [msg, setMsg] = useState('')
   const [billTo, setBillTo] = useState('')
@@ -380,11 +410,11 @@ function DocActions({ tier, units, dirty, onCopy, copyLabel, priced = 1 }: { tie
   const run = async (doc: 'invoice' | 'order' | 'order-csv') => {
     setBusy(doc); setMsg('')
     try {
-      const r = await fetch('/api/onboard/linens/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc, tier, units, billTo: billTo.trim() || undefined }) })
+      const r = await fetch('/api/onboard/linens/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc, tier, units, billTo: billTo.trim() || undefined, property }) })
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || j.message || 'Could not build the document') }
       const blob = await r.blob()
-      const m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '')
-      saveBlob(blob, m ? m[1] : 'linens-' + doc + (doc === 'order-csv' ? '.csv' : '.pdf'))
+      // Named here the way the server names it: "<Property> - Linen order (Mid) - <YYYY-MM-DD>.pdf".
+      saveBlob(blob, linenFileName(property, `${doc === 'invoice' ? 'Linen invoice' : 'Linen order'} (${tierLabel})`, doc === 'order-csv' ? 'csv' : 'pdf'))
     } catch (e: any) { setMsg(String(e?.message || e)) }
     setBusy('')
   }
@@ -576,6 +606,8 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
         </div>
       </section>
 
+      <ParTable draft={draft} setDraft={setDraft} canEdit={canEdit} />
+
       {pricing && <VendorsCard vendors={draft.vendors} canEdit={canEdit} onChange={vendors => setDraft(s => ({ ...s, vendors }))} />}
       <datalist id="linen-vendors">{draft.vendors.map(v => <option key={v.name} value={v.name} />)}</datalist>
 
@@ -627,6 +659,97 @@ function StandardView({ draft, setDraft, saved, edited, canEdit, onSaved }: {
         </div>
       )}
     </div>
+  )
+}
+
+/** "2 per bed", "King 4 · Queen 2 per bed" — the item's count as a short rule for the par table. */
+function shortRule(it: LinenItem): string {
+  const per = LINEN_PER.find(p => p.key === it.per)?.label || 'per ' + it.per
+  const by = it.per === 'bed' && it.qtyBySize ? Object.entries(it.qtyBySize) : []
+  if (by.length) return by.map(([sz, q]) => `${sz} ${n2(q)}`).join(' · ') + ` (else ${n2(it.qty)}) ${per}`
+  return `${n2(it.qty)} ${per}`
+}
+
+/**
+ * QUICK PAR TABLE (Jon, 2026-11-11: "a table that allow us to change the par per item, so quicker
+ * adjustments"). One row per item: its rule, whether it rotates, and its par with − / + — the same draft
+ * as the item cards below, saved by the same Save button (full access only). Blank par = the standard's.
+ */
+function ParTable({ draft, setDraft, canEdit }: { draft: LinenStandard; setDraft: (f: (s: LinenStandard) => LinenStandard) => void; canEdit: boolean }) {
+  const [open, setOpen] = useState(true)
+  const patch = (id: string, p: Partial<LinenItem>) => setDraft(s => ({ ...s, items: s.items.map(i => i.id === id ? { ...i, ...p } : i) }))
+  const clampPar = (n: number) => Math.max(0, Math.min(LIMITS.num, Math.round(n * 2) / 2))
+  const own = draft.items.filter(i => i.rotates && typeof i.par === 'number').length
+  const rows = LINEN_GROUPS.flatMap(g => draft.items.filter(i => i.group === g))
+  return (
+    <section className={CARD + ' mb-3 overflow-hidden'}>
+      <div className="px-3 sm:px-4 py-2 flex items-center gap-2 flex-wrap border-b border-line bg-app/60">
+        <h2 className={EYEBROW}>Par by item</h2>
+        <span className="text-[11px] text-muted tabular-nums">{rows.length}</span>
+        {own > 0 && <Tag tone="violet" title="Items with a par of their own instead of the standard's">{own} own par</Tag>}
+        <span className="text-[12px] text-muted">Standard par {draft.par}. Changes join the unsaved edits — Save below.</span>
+        <button onClick={() => setOpen(o => !o)} title={open ? 'Fold the par table away' : 'Show the par table'} className="ml-auto text-[12px] font-semibold text-muted hover:text-ink">{open ? '− Hide' : '+ Show'}</button>
+      </div>
+      {open && (!rows.length ? <p className="px-4 py-3 text-[12.5px] text-muted">No items on the standard yet.</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[600px] text-[12.5px]">
+            <thead className="text-[10.5px] uppercase tracking-wider text-muted">
+              <tr>
+                <th className="text-left font-semibold px-3 sm:px-4 py-1.5">Group</th>
+                <th className="text-left font-semibold px-2 py-1.5">Item</th>
+                <th className="text-left font-semibold px-2 py-1.5" title="How many go on the unit for one par">Rule</th>
+                <th className="text-left font-semibold px-2 py-1.5" title="Rotating items are bought par times; the rest are one set">Rotates</th>
+                <th className="text-center font-semibold px-2 py-1.5" title="Sets in rotation for this item">Par</th>
+                <th className="px-3 sm:px-4 py-1.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line/70">
+              {rows.map(it => {
+                const off = it.active === false
+                const ownPar = typeof it.par === 'number'
+                const par = ownPar ? (it.par as number) : draft.par
+                return (
+                  <tr key={it.id} className={off ? 'opacity-55' : ''}>
+                    <td className="px-3 sm:px-4 py-1 text-muted">{it.group}</td>
+                    <td className="px-2 py-1 text-ink font-semibold">{it.name || <span className="text-rose-600 font-normal">Unnamed</span>}{off && <> <Tag tone="slate" title="Switched off — kept on the list, not counted">off</Tag></>}</td>
+                    <td className="px-2 py-1 text-muted whitespace-nowrap">{shortRule(it)}</td>
+                    <td className="px-2 py-1">
+                      <button type="button" onClick={() => canEdit && patch(it.id, { rotates: !it.rotates })} disabled={!canEdit}
+                        title={it.rotates ? 'Rotates: bought par times. Click for one set.' : 'One set: bought once, not rotated. Click to rotate it.'}
+                        className={'rounded-md border px-2 py-0.5 text-[11.5px] font-semibold ' + (it.rotates ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted') + (canEdit ? '' : ' cursor-default')}>
+                        {it.rotates ? 'Yes' : 'No'}
+                      </button>
+                    </td>
+                    <td className="px-2 py-1">
+                      {!it.rotates ? (
+                        <span className="block text-center text-muted cursor-help" title="Does not rotate — one set is bought, so par does not apply. Switch Rotates on to give it a par.">—</span>
+                      ) : (
+                        <span className="flex items-center justify-center gap-0.5">
+                          <button type="button" onClick={() => patch(it.id, { par: clampPar(par - 1) })} disabled={!canEdit || par <= 0} title="One set less" aria-label={`Lower the par for ${it.name}`}
+                            className="rounded-md p-1 text-muted hover:text-ink hover:bg-app disabled:opacity-30"><Minus size={12} /></button>
+                          <input type="number" inputMode="decimal" min={0} max={LIMITS.num} step={0.5} value={par} disabled={!canEdit} aria-label={`Par for ${it.name}`}
+                            onChange={e => { const n = toNum(e.target.value); patch(it.id, { par: n === null ? null : clampPar(n) }) }}
+                            title={ownPar ? `Its own par (the standard is ${draft.par})` : `The standard par (${draft.par}) — type or step to give it its own`}
+                            className={NUM + ' w-14 py-1 px-1.5 text-center' + (ownPar ? ' border-violet-300 bg-violet-50 font-semibold' : '')} />
+                          <button type="button" onClick={() => patch(it.id, { par: clampPar(par + 1) })} disabled={!canEdit || par >= LIMITS.num} title="One set more (type a half, e.g. 2.5, in the box)" aria-label={`Raise the par for ${it.name}`}
+                            className="rounded-md p-1 text-muted hover:text-ink hover:bg-app disabled:opacity-30"><Plus size={12} /></button>
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 sm:px-4 py-1 text-right whitespace-nowrap">
+                      {it.rotates && ownPar
+                        ? <button type="button" onClick={() => patch(it.id, { par: null })} disabled={!canEdit} title={`Drop its own par and follow the standard (${draft.par})`}
+                            className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted hover:text-ink disabled:opacity-40"><RotateCcw size={11} /> Use standard par</button>
+                        : it.rotates ? <span className="text-[11px] text-muted" title="Follows the standard par">standard</span> : null}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </section>
   )
 }
 
@@ -849,7 +972,9 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
   const scope = bld === 'all' ? (q.trim() ? 'shown' : 'units') : 'in ' + bld
 
   const title = chosen.length === 1 ? 'Linens — ' + chosen[0].name : `Linens — ${chosen.length} units` + (chosen.length <= 6 ? ': ' + chosen.map(u => u.name).join(', ') : '')
-  const download = () => saveBlob(new Blob([linenCsv(totals)], { type: 'text/csv;charset=utf-8' }), 'linens-' + tier + '-' + new Date().toISOString().slice(0, 10) + '.csv')
+  const property = useMemo(() => linenPropertyName(chosen, 'Linens'), [chosen])
+  const tally = useMemo(() => linenTally(chosen), [chosen])
+  const download = () => saveBlob(new Blob([linenCsv(totals)], { type: 'text/csv;charset=utf-8' }), linenFileName(property, `Linen pieces (${standard.tierLabels[tier]})`, 'csv'))
   const copy = async () => { try { await navigator.clipboard.writeText(linenText(totals, title + ' (' + standard.tierLabels[tier] + ')')); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked — the CSV still works */ } }
   const shapes = useMemo(() => chosen.map(shapeOf), [chosen])
 
@@ -893,14 +1018,16 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
           {shown.length > SHOW_MAX && <span className="text-[12px] text-muted self-center">+{shown.length - SHOW_MAX} more — search or pick a building to narrow</span>}
           {!shown.length && <span className="text-[12.5px] text-muted">{units.length ? 'No unit matches.' : 'No active units found.'}</span>}
         </div>
+        {chosen.length > 0 && <TallyBar t={tally} className="mt-2.5" />}
         {partial && <p className="mt-2 text-[12px] text-amber-800 font-semibold" title="The listings read stopped early — reload the page to try again">Some listings did not load — reload to get the full list.</p>}
       </section>
 
       {!chosen.length ? <LeanEmpty>Pick units above to size the order.</LeanEmpty> : (
         <>
-          <NeededList totals={totals} title={title} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
+          <NeededList totals={totals} title={title} property={property} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
           <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
             <h2 className={EYEBROW}>Selected <span className="tabular-nums">{chosen.length}</span></h2>
+            <span className="text-[12px] text-muted tabular-nums" title="Totals across the selected units">{tallyNum(tally.bedrooms)} BR · {tallyNum(tally.bathrooms)} BA · {tallyNum(tally.kitchens)} kitchen{tally.kitchens === 1 ? '' : 's'}{tally.kitchensAssumed ? ' (some assumed)' : ''} · sleeps {tallyNum(tally.guests)} · {tallyNum(tally.beds)} beds</span>
             {dirty && <Tag tone="amber" title="The standard has edits that are not saved — these numbers already use them">unsaved standard</Tag>}
             {countedChosen > 0
               ? <Tag tone="emerald" title="These units have a shelf count — the order below is only what is missing (need − have)">{countedChosen} of {chosen.length} counted · order is net of stock</Tag>
@@ -926,7 +1053,7 @@ function CalculatorView({ standard, dirty, units, setUnits, partial, picked, pic
           <TierCards quotes={allTiers} value={tier} onChange={setTier} />
           <TotalsCard totals={totals} label={standard.tierLabels[tier]} onCsv={download} onCopy={copy} copied={copied} />
           <VendorOrderCard order={order} />
-          <DocActions tier={tier} units={shapes} dirty={dirty} priced={allTiers[tier].priced} copyLabel="Copy the owner quote for this tier as text"
+          <DocActions tier={tier} tierLabel={standard.tierLabels[tier]} property={property} units={shapes} dirty={dirty} priced={allTiers[tier].priced} copyLabel="Copy the owner quote for this tier as text"
             onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(allTiers[tier], title)); return true } catch { return false } }} />
           </PricingFold>
         </>
@@ -968,7 +1095,7 @@ function UnitRow({ u, std, canBeds, count, open, editing, counting, onToggle, on
   return (
     <LeanRow open={open} onToggle={onToggle}
       name={u.name}
-      meta={[u.building, unitLine(u)].filter(Boolean).join(' · ')}
+      meta={[u.building, unitLine(u), (u.kitchenSaved || !u.kitchensAssumed ? (u.kitchens ?? 1) + ' kitchen' + ((u.kitchens ?? 1) === 1 ? '' : 's') : '1 kitchen (assumed)'), Object.values(u.beds).reduce((a, b) => a + (b || 0), 0) + ' beds'].filter(Boolean).join(' · ')}
       tags={<>
         {sizes.map(s => <Tag key={s} title={`${u.beds[s]} ${s} bed${u.beds[s] > 1 ? 's' : ''}`}>{s} ×{u.beds[s]}</Tag>)}
         <Tag tone={src.tone} title={src.title}>{src.label}</Tag>
@@ -1252,7 +1379,7 @@ function sectioned<T extends { group: string; size?: string }>(rows: T[]): { key
   return Array.from(m.values()).sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
 }
 
-function NeededList({ totals, title, resetKey }: { totals: LinenTotals; title: string; resetKey: string }) {
+function NeededList({ totals, title, resetKey, property }: { totals: LinenTotals; title: string; resetKey: string; property: string }) {
   const [edits, setEdits] = useState<Record<string, number>>({})
   const [extra, setExtra] = useState<NeedLine[]>([])
   const [copied, setCopied] = useState(false)
@@ -1277,7 +1404,7 @@ function NeededList({ totals, title, resetKey }: { totals: LinenTotals; title: s
     o.push('', `Total: ${pieces.toLocaleString('en-US')} pieces`)
     return o.join('\n') + '\n'
   }
-  const download = () => saveBlob(new Blob([csv()], { type: 'text/csv;charset=utf-8' }), 'linen-needed-' + new Date().toISOString().slice(0, 10) + '.csv')
+  const download = () => saveBlob(new Blob([csv()], { type: 'text/csv;charset=utf-8' }), linenFileName(property, 'Linen needed', 'csv'))
   const copy = async () => { try { await navigator.clipboard.writeText(text()); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked — the CSV still works */ } }
 
   return (
@@ -1381,6 +1508,11 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
   const set = (p: Partial<Draft>) => setD(x => ({ ...x, ...p }))
   const setBed = (s: string, n: number) => setD(x => { const beds = { ...x.beds }; if (n > 0) beds[s] = n; else delete beds[s]; return { ...x, beds } })
   const label = d.name.trim() || 'Linen quote'
+  // Downloads are named for the onboarding property (its building) when the quote came from one, else the unit name typed in.
+  const property = linenPropertyName([{ building: linked?.building || null, name: d.name }], 'Linen quote')
+  // A kitchen count carried over from a unit with none on record stays "assumed" until someone changes it.
+  const kitchenGuess = !!linked && !!linked.kitchensAssumed && d.kitchens === (linked.kitchens ?? 1)
+  const tally = useMemo(() => linenTally([{ bedrooms: d.bedrooms, bathrooms: d.bathrooms, guests: d.guests, kitchens: d.kitchens, kitchensAssumed: kitchenGuess, beds: d.beds, copies: d.copies }]), [d, kitchenGuess])
 
   const choose = async (t: LinenTier | null) => {
     if (!code) return
@@ -1421,9 +1553,10 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
           {bedCount === 0 && <Tag tone="rose" title="No beds — nothing per bed (sheets, pillows, duvets) is counted">no beds</Tag>}
           {d.guests === 0 && <Tag tone="rose" title="No occupancy — per-guest items (towels, washcloths) are not counted">no occupancy</Tag>}
         </div>
+        <TallyBar t={tally} className="mt-2.5" />
       </section>
 
-      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
+      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} property={property} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
       <PricingFold>
       <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
         <h2 className={EYEBROW}>Tiers</h2>
@@ -1439,7 +1572,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
       <TierCards quotes={all} value={tier} onChange={setTier} chosen={chosen} />
       <QuoteCard q={all[tier]} />
       <VendorOrderCard order={order} />
-      <DocActions tier={tier} units={[input]} dirty={dirty} priced={all[tier].priced} copyLabel="Copy this tier's quote as text — for an email or a message to the owner"
+      <DocActions tier={tier} tierLabel={standard.tierLabels[tier]} property={property} units={[input]} dirty={dirty} priced={all[tier].priced} copyLabel="Copy this tier's quote as text — for an email or a message to the owner"
         onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(all[tier], label + (d.copies > 1 ? ' ×' + d.copies : ''))); return true } catch { return false } }} />
       </PricingFold>
     </div>

@@ -5,6 +5,8 @@
 //   { doc: 'invoice',   tier, units, billTo? }  → the owner's invoice, a DRAFT, as a PDF
 //   { doc: 'order',     tier, units }           → the vendor order / quantity sheet as a PDF, a page per vendor
 //   { doc: 'order-csv', tier, units }           → the same vendor order as CSV
+//   + property? (any doc)                         → the download is named "<property> - Linen order (Mid) - <YYYY-MM-DD>.pdf"
+//                                                  (Jon, 2026-11-11); blank → "Linen quote". Date in Eastern time.
 //
 // `units` is whatever the page is quoting — typed in on the Quote view, or picked listings on the
 // Calculator — as shapes: [{ name, bedrooms, bathrooms, guests, beds: { King: 1 }, copies }]. At most
@@ -21,7 +23,7 @@ import { requireLevel, type Gate } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting } from '@/lib/app-settings'
 import { buildQuotePdf } from '@/lib/order-pdf'
-import { LINEN_STANDARD_KEY, MANUAL_LIMITS, normLinenStandard, isLinenTier, manualUnits, linenQuote, vendorOrder, vendorOrderCsv, type LinenTier } from '@/lib/linens'
+import { LINEN_STANDARD_KEY, MANUAL_LIMITS, normLinenStandard, isLinenTier, manualUnits, linenQuote, vendorOrder, vendorOrderCsv, linenFileName, type LinenTier } from '@/lib/linens'
 import { linenInvoiceDoc, linenOrderDoc, linenDraftNo } from '@/lib/linen-docs'
 
 export const dynamic = 'force-dynamic'
@@ -69,21 +71,25 @@ export async function POST(req: NextRequest) {
 
     const standard = normLinenStandard(await getSetting<any>(LINEN_STANDARD_KEY, null))
     const { ymd, label: dateLabel } = today()
-    const pdfHeaders = (name: string) => ({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store' })
+    // "<Property> - <what> (<tier>) - <date>.<ext>": an ASCII filename= for old browsers, the real name in filename*.
+    const property = str(body.property, 100) || 'Linen quote'
+    const fileName = (what: string, ext: string) => linenFileName(property, `${what} (${standard.tierLabels[tier] || tier})`, ext, ymd)
+    const disposition = (name: string) => `attachment; filename="${name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`
+    const pdfHeaders = (name: string) => ({ 'Content-Type': 'application/pdf', 'Content-Disposition': disposition(name), 'Cache-Control': 'no-store' })
 
     if (doc === 'invoice') {
       // Never a $0.00 invoice: a tier with nothing priced has nothing to bill yet.
       if (linenQuote(standard, units, tier).priced === 0) return fail('Nothing in this tier is priced yet — add prices on the Standard view first.', 400)
       const pdf = buildQuotePdf(linenInvoiceDoc(standard, units, tier, { labels, dateLabel, invoiceNo: linenDraftNo(ymd), billTo: str(body.billTo, 120) }))
-      return new NextResponse(pdf as any, { headers: pdfHeaders(`linen-invoice-${tier}-${ymd}.pdf`) })
+      return new NextResponse(pdf as any, { headers: pdfHeaders(fileName('Linen invoice', 'pdf')) })
     }
     if (doc === 'order-csv') {
       return new NextResponse(vendorOrderCsv(vendorOrder(standard, units, tier)), {
-        headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="linen-order-${tier}-${ymd}.csv"`, 'Cache-Control': 'no-store' },
+        headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': disposition(fileName('Linen order', 'csv')), 'Cache-Control': 'no-store' },
       })
     }
     const pdf = buildQuotePdf(linenOrderDoc(standard, units, tier, { labels, dateLabel }))
-    return new NextResponse(pdf as any, { headers: pdfHeaders(`linen-order-${tier}-${ymd}.pdf`) })
+    return new NextResponse(pdf as any, { headers: pdfHeaders(fileName('Linen order', 'pdf')) })
   } catch (e: any) {
     return fail(String(e?.message || e).slice(0, 200), 500)
   }
