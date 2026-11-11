@@ -34,6 +34,7 @@ import { BRAIN_TOOLS } from './brain'
 import { CS_TOOLS } from './cs'
 import { DOC_TOOLS } from './docs'
 import { SCHEDULE_PLAN_TOOLS } from './schedule-plan-tool'
+import { PLACE_TOOLS } from './places'
 
 // The five tools that were core before and now live alongside their siblings. Built as NEW objects
 // rather than by mutating the imported domain — a module-level `.tools = .tools.concat(...)` runs
@@ -74,7 +75,7 @@ const SYSTEM: EveDomain = { ...SYSTEM_DOMAIN, blurb: SYSTEM_DOMAIN.blurb + ', an
 // above; the rest of the drawer (property_look, look_at_unit, channel_health) stays behind it.
 const FAST_GUEST = ['faq_search', 'house_rules', 'guest_guidebook']
 const GUEST_ANSWER_TOOLS: EveTool[] = PROPERTY_DOMAIN.tools.filter(t => FAST_GUEST.indexOf(t.name) >= 0)
-const PROPERTY: EveDomain = { ...PROPERTY_DOMAIN, blurb: 'What each unit physically contains — she can LOOK AT the photos directly, plus amenities and the room-by-room FF&E inventory (property_look, look_at_unit) — and which channels each listing is actually connected to (channel_health). The FAQ bank, house rules and guidebook are already in your core tools: no need to open this for a policy or "what does the guest see" question.', tools: PROPERTY_DOMAIN.tools.filter(t => FAST_GUEST.indexOf(t.name) < 0) }
+const PROPERTY: EveDomain = { ...PROPERTY_DOMAIN, blurb: 'What each unit physically contains — she can LOOK AT the photos directly, plus amenities and the room-by-room FF&E inventory (property_look, look_at_unit) — and which channels each listing is actually connected to (channel_health). The FAQ bank, house rules, guidebook, property_card, access_info and area_guide are already in your core tools: no need to open this for a policy, a unit fact, a way in or "what does the guest see" question.', tools: PROPERTY_DOMAIN.tools.filter(t => FAST_GUEST.indexOf(t.name) < 0) }
 
 export const DOMAINS: EveDomain[] = [OPS, MONEY, QUALITY, LABOR_DOMAIN, GUESTS, SLACK_DOMAIN, PROPERTY, SYSTEM]
 export const DOMAIN_KEYS = DOMAINS.map(d => d.key)
@@ -97,7 +98,9 @@ export function coreTools(): EveTool[] {
   // a domain-opening turn.
   // The guest answers and the next-week plan are core too (2026-11-10): the two kinds of question the
   // team asks most — what do we tell the guest, and are we staffed — answered without opening a drawer.
-  return CORE_TOOLS.concat(ENTITY_TOOLS).concat(UNIT360_TOOLS).concat(DOC_TOOLS).concat(GUEST_ANSWER_TOOLS).concat(SCHEDULE_PLAN_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat(BRAIN_TOOLS).concat([OPEN_DOMAIN])
+  // The place tools are core too (owner, 2026-11-10: "Eve needs to know everything about our properties"):
+  // property_card, access_info and area_guide answer the questions the team asks about a door in one call.
+  return CORE_TOOLS.concat(ENTITY_TOOLS).concat(UNIT360_TOOLS).concat(DOC_TOOLS).concat(GUEST_ANSWER_TOOLS).concat(PLACE_TOOLS).concat(SCHEDULE_PLAN_TOOLS).concat(SYSTEM_TOOLS.filter(t => t.name === 'my_actions_today')).concat(BRAIN_TOOLS).concat([OPEN_DOMAIN])
 }
 
 export function domainByKey(key: string): EveDomain | null {
@@ -187,7 +190,7 @@ function unitNamesRe(ctx: EveCtx): RegExp | null {
 export const TOOL_SEND_CHARS = 7000
 // The 360s answer in one call what used to take six, each of which could send 7,000 characters; they
 // get room for all their sections rather than having the upkeep rows halved to fit.
-const WIDE_TOOLS: Record<string, number> = { unit_360: 10000, building_360: 10000, upkeep_rank: 9000, upkeep_advise: 9000, measure: 8000 }
+const WIDE_TOOLS: Record<string, number> = { unit_360: 10000, building_360: 10000, upkeep_rank: 9000, upkeep_advise: 9000, measure: 8000, property_card: 8000, area_guide: 8000 }
 /** How many characters of JSON a tool's result may send (lib/eve/fit.ts fits to it, whole). */
 export function toolBudget(name: string): number { return WIDE_TOOLS[String(name)] || TOOL_SEND_CHARS }
 

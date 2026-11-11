@@ -72,11 +72,18 @@ export function countWords(s: string): number {
 export const DOC_TOOLS: EveTool[] = [
   {
     name: 'doc_search',
-    description: "Search the company's WRITTEN documents — playbooks, SOPs, checklists, policies, research — and get back the passages that answer the question, with the document and section they came from. Use this whenever a question is about how we DO something, what our policy IS, or what a standard says, rather than what the records show. Written policy from a human outranks anything you concluded from data: if a document says it, quote it and name the document.",
-    input_schema: obj({ query: S.str, category: S.str, limit: S.num }, ['query']),
+    description: "Search the company's WRITTEN documents — playbooks, SOPs, checklists, policies, research — and get back the passages that answer the question, with the document and section they came from. Use this whenever a question is about how we DO something, what our policy IS, or what a standard says, rather than what the records show. Written policy from a human outranks anything you concluded from data: if a document says it, quote it and name the document. This is the FIRST stop for any handbook / policy / \"how do we…\" question. If nothing answers it, say \"that isn't in the handbook yet\" — a search with no match is logged on the missing-answers list by itself; when passages came back but none actually answers, call again with the same query and log_gap=true to log it (no search is run).",
+    input_schema: obj({ query: S.str, category: S.str, limit: S.num, log_gap: S.bool }, ['query']),
     run: async (input, ctx) => {
       const q = String(input?.query || '').trim()
       if (!q) return { error: 'Give me something to search for.' }
+      // NOT IN THE HANDBOOK YET (owner, 2026-11-10): an unanswered policy question goes on the same short
+      // list as a missing FAQ answer (lib/eve/faq-gaps), marked as a handbook gap, instead of being guessed.
+      const logGap = async () => { try { const { noteFaqGap } = await import('./faq-gaps'); await noteFaqGap('Handbook: ' + q, null) } catch { /* best-effort */ } }
+      if (input?.log_gap === true) {
+        await logGap()
+        return { logged: true, note: 'Logged on the missing-answers list as a handbook gap. Tell them in one line: that isn\'t in the handbook yet.' }
+      }
       const words = terms(q)
       const lim = clampLimit(input?.limit, 6, 15)
 
@@ -85,7 +92,8 @@ export const DOC_TOOLS: EveTool[] = [
       const { data: docs } = await safe(dq, { data: [] } as any)
       const docList = ((docs as any[]) || [])
       if (!docList.length) {
-        return { found: 0, note: 'There are no documents loaded yet. Anything I know is inferred from records, not from written policy — say so rather than implying there is a document behind it.' }
+        await logGap()
+        return { found: 0, gap_logged: true, note: 'There are no documents loaded yet. Anything I know is inferred from records, not from written policy — say so rather than implying there is a document behind it.' }
       }
       const byId: Record<string, any> = {}
       for (const d of docList) byId[String(d.id)] = d
@@ -111,11 +119,13 @@ export const DOC_TOOLS: EveTool[] = [
       }).filter(x => x.score > 0).sort((a, b) => b.score - a.score).slice(0, lim)
 
       if (!scored.length) {
+        if (!short) await logGap()
         return {
           found: 0,
           documents_searched: docList.map(d => d.title),
           truncated: short || undefined,
-          note: `Nothing in the written documents matches "${q}". Say that the documents do not cover it rather than answering from general knowledge about short-term rentals — and if it is something we clearly should have written down, that is worth flagging.`,
+          gap_logged: !short || undefined,
+          note: `Nothing in the written documents matches "${q}". Say "that isn't in the handbook yet" in one line (it is now on the missing-answers list) rather than answering from general knowledge about short-term rentals.`,
         }
       }
       return {

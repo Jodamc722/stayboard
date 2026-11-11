@@ -86,6 +86,11 @@ const ENTRY_TOOLS = ['door_code', 'door_code_check']
 // owner_360 (2026-11-10): one owner's months, units and fees — the GM's, never a colleague's in a room.
 // vendor_360 goes with vendor_work, which was already admin-only here.
 const ADMIN_ONLY = ['ask_ralph', 'slack_queue', 'ai_spend', 'vendor_work', 'owner_360', 'vendor_360']
+// property_card / access_info / area_guide (2026-11-10) are open to every tier on purpose: staff and vendor
+// rooms need the way in and what is nearby. A vendor room only ever sees its own buildings (the listing
+// registry is narrowed in buildCtx and the tools have no name-match fallback); the owner fields follow
+// owner_360's gate inside the tool (money access, never a staff or vendor tier, never a guarded room);
+// and none of them carries a code — door codes stay with door_code_check and enforceDoorCodes below.
 // A vendor room has an outside company reading it, so a guest's own words and contact details stay
 // out too — those are ours and the guest's, not the contractor's.
 // 2026-09-18 audit (P0-7): reservation_detail, awaiting_reply, unread_conversations, welcome_calls

@@ -20,7 +20,7 @@ import { atLeast } from '@/lib/features'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildCtx, todayET, daysAgoISO, safe, count as cnt, lc } from './ctx'
 import { wireTools, runTool, DOMAIN_KEYS, toolBudget } from './registry'
-import { guessDomains } from './domain-guess'
+import { guessDomains, firstToolHints } from './domain-guess'
 import { loadMemories, renderMemories, touchMemories, scopesForText, saveMemory, memoryHitsFor, recordMemoryHits, STAFF_MAX_WEIGHT } from './memory'
 import { teacherFor, identityOfAccess, teacherSource, type Teacher } from './teachers'
 import { appAtlas } from './atlas'
@@ -429,7 +429,10 @@ export async function runEve(input: RunEveInput): Promise<RunEveResult> {
 3. Pick the narrowest scope it is about: portfolio, building:<Name>, unit:<listingId>, channel:<Airbnb|Vrbo|Booking.com|Expedia|Direct> or person:<email>.
 4. Call remember with text, kind, scope, why and weight ${Math.max(1, Math.min(effCap || STAFF_MAX_WEIGHT, 8))}${isJon ? ' (up to 10 if they say it is critical)' : ''}; add expires_on if it is time-bound. If it replaces something you already believe, pass supersedes with that memory's id (search_memory first).
 5. Reply in one or two lines: what you saved, as what, for where ("Saved as a rule for Botanica: …"). If it is genuinely ambiguous (which building? always or only this week?), ask ONE short question instead of saving.` : ''
-  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', voiceLessons, input.surfaceNote || '', emptyScope, teachNote].filter(Boolean).join('\n')
+  // THE FIRST CALL FOR A PLACE / ACCESS / AREA / HANDBOOK / OWNER QUESTION (lib/eve/domain-guess, tested): at
+  // most two one-line hints, per turn — the stable prompt does not grow. Not in teach mode.
+  const routeHints = !noTools && !input.teach ? firstToolHints(lastUser).join('\n') : ''
+  const surface = [source === 'telegram' ? TELEGRAM_NOTE : source === 'slack' ? SLACK_NOTE : '', voiceLessons, input.surfaceNote || '', emptyScope, teachNote, routeHints].filter(Boolean).join('\n')
   // ORDER IS PRECEDENCE. The prompt tells the model these notes override what came before, so the
   // last word belongs to the narrowest instruction: house vocabulary first, then where she is
   // standing, then Jon's own hand-written voice notes, and the language rule last of all, because

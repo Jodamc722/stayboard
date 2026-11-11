@@ -47,8 +47,9 @@ export function appAtlas(): string {
     + 'and point to; you do not chase why it is unresolved.\n'
     + desks
     + '\nSETTINGS: ' + SETTINGS.join('. ') + '.'
-    + '\nALWAYS-ON ANSWERS: guest and policy questions — faq_search, house_rules, guest_guidebook, doc_search; '
-    + 'staffing next week — schedule_plan; one unit or building — unit_360 / building_360.'
+    + '\nALWAYS-ON ANSWERS: a unit or building — property_card; getting in / door or access code — access_info (never a code); '
+    + 'nearby — area_guide; guest questions — faq_search, house_rules, guest_guidebook; handbook / policy — doc_search; '
+    + 'staffing — schedule_plan; one unit or building in depth — unit_360 / building_360. OWNERS & REVENUE (money drawer): owner_360, measure by owner.'
     + '\nTOOL DRAWERS (open_domain):\n'
     + drawers
   return _cache

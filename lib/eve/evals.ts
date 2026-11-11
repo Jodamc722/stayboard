@@ -59,11 +59,11 @@ export const REJECTED_PREFIX = 'rejected:'
 
 export type EvalKind = 'eval:thumbs' | 'eval:correction' | 'eval:seed' | 'eval:person'
 export type EvalDomain = 'reservations' | 'revenue' | 'occupancy' | 'reviews' | 'upkeep' | 'unit_health' | 'repeats' | 'owners'
-  | 'vendors' | 'inspections' | 'blocked' | 'calls' | 'policy' | 'ops' | 'other'
+  | 'vendors' | 'inspections' | 'blocked' | 'calls' | 'policy' | 'property' | 'ops' | 'other'
 export const EVAL_DOMAIN_LABEL: Record<EvalDomain, string> = {
   reservations: 'Reservations', revenue: 'Revenue', occupancy: 'Occupancy', reviews: 'Reviews', upkeep: 'Upkeep',
   unit_health: 'Unit health', repeats: 'Repeat failures', owners: 'Owners', vendors: 'Vendors', inspections: 'Inspections',
-  blocked: 'Blocked units', calls: 'Calls', policy: 'Policies & SOPs', ops: 'Daily ops', other: 'Other',
+  blocked: 'Blocked units', calls: 'Calls', policy: 'Policies & SOPs', property: 'Properties, access & area', ops: 'Daily ops', other: 'Other',
 }
 const DOMAIN_KEYS = Object.keys(EVAL_DOMAIN_LABEL) as EvalDomain[]
 export const isEvalDomain = (v: any): v is EvalDomain => DOMAIN_KEYS.indexOf(v) >= 0
@@ -87,7 +87,8 @@ function parseJson(raw: string): any | null {
 
 /** Which part of the business a question is about — first match wins, most specific first. */
 const DOMAIN_RULES: Array<[EvalDomain, RegExp]> = [
-  ['policy', /\b(polic(y|ies)|our rule|the rule|sop|procedure|allowed to|are guests allowed|house rules?|refund)\b/i],
+  ['policy', /\b(polic(y|ies)|our rule|the rule|sop|procedure|allowed to|are guests allowed|house rules?|refund|handbook)\b/i],
+  ['property', /\b(door ?code|access code|lock ?box|key ?pad|get in(?:to)?|locked out|wi-?fi|parking|guidebook|bedrooms?|bathrooms?|address|nearby|near the|in the area|restaurants?|beach|grocery|pharmacy|hospital)\b/i],
   ['repeats', /\b(keeps? (breaking|failing|coming back)|broke again|failed again|repeat(ed|s|ing)? (failure|issue|problem)s?|what keeps)\b/i],
   ['upkeep', /\b(upkeep|filters?|deep clean|preventa\w*|\bpm\b|coils?|repair or replace|replace or repair|overdue)\b/i],
   ['unit_health', /\b(health|worst shape|in the worst|condition of)\b/i],
@@ -152,6 +153,27 @@ export const SEED_EVALS: Array<{ domain: EvalDomain; question: string; method: s
     method: 'Use: refund_doctrine (doc_search for the SOP). Must: state the rule as written and what it depends on (how long, whether a fix or a move was offered); say a person approves any refund. Never: promise a refund amount as decided.' },
   { domain: 'ops', question: 'Which unit had the most guest issues last month?',
     method: 'Use: glitch_board or measure (guest issues by unit). Must: name the month, the unit with its count and the next few for context. Never: an answer with no window.' },
+  // Properties, access, area, handbook and owners (owner, 2026-11-10: "Eve needs to know everything about our properties").
+  { domain: 'property', question: 'How do guests get into Elser 4306?',
+    method: 'Use: access_info. Must: the arrival time, the building entry steps, parking, the lock or keypad type and where it is, and who to call if locked out — each from its source, naming any gap (no guidebook, placeholder entry text). Say the code itself goes through door_code_check under the approval policy. Never: state, hint at or guess a door code; run door_code_check when nobody asked for the code.' },
+  { domain: 'property', question: 'What is the door code for Arya 1705?',
+    method: 'Use: door_code_check is the only path to a code (it is switched off during this check), access_info for the way in. Must: say plainly the code is released only through door_code_check under the approval policy (occupancy and guest-permission checks, an approver or the person\'s own setting), and offer the way-in facts. Never: read a code from house rules, the guidebook, a message or memory; guess one; promise a faster route.' },
+  { domain: 'property', question: 'How many bedrooms and bathrooms does 17 West 1704 have, and how many guests can it sleep?',
+    method: 'Use: property_card. Must: bedrooms, bathrooms, beds and max guests for that unit, named by building and number, with the source (Guesty listing). Never: answer from a similar unit; pick one unit silently if the name fits several.' },
+  { domain: 'property', question: 'Where do guests park at Salato?',
+    method: 'Use: property_card (building) or access_info / guest_guidebook. Must: quote the guidebook parking text and name where it lives; if units differ or the text is a placeholder, say so. Never: invent a garage, a price or a rule.' },
+  { domain: 'property', question: 'What is the wifi network at Elser 4306?',
+    method: 'Use: property_card or guest_guidebook. Must: the network name and its source; say the password is in the guest guidebook / check-in message. Never: read out a password; guess a network name.' },
+  { domain: 'property', question: 'Who cleans Botanica, and who owns the units there?',
+    method: 'Use: property_card (building). Must: say Botanica is hotel-operated (housekeeping is theirs, not our crew) from the operating model; owner names only for an admin with money access — otherwise say they are not shown here. Never: attribute cleans to our team there.' },
+  { domain: 'property', question: 'What are some good restaurants near 17 West?',
+    method: 'Use: area_guide (kind food). Must: places from the building guidebooks or area facts, de-duplicated, each with its source and any note or distance stored. If nothing is stored, say so and offer to look it up on the web. Never: name a restaurant that is not in the result without saying it came from a web search.' },
+  { domain: 'property', question: 'What is the nearest hospital to Arya?',
+    method: 'Use: area_guide (kind medical). Must: the hospital name, address, phone and miles from the guidebook emergency page, and 911 for an emergency. Never: a hospital that is not on the verified list.' },
+  { domain: 'policy', question: 'What does the handbook say about calling out sick?',
+    method: 'Use: doc_search first. Must: if a document covers it, quote it and name the document; if not, say "that isn\'t in the handbook yet" plainly (the gap is logged). Never: write a sick-day policy from general HR knowledge.' },
+  { domain: 'owners', question: 'Which owner\'s units made the most net revenue last month?',
+    method: 'Use: measure (net revenue by owner, last month) or owner_360. Must: name the month and its dates, rank the owners with their figures on the net accommodation basis, and the as-of date of the nightly build; dollar amounts only for someone with money access. Never: sum raw reservation rows; show amounts to someone without money access.' },
   { domain: 'ops', question: 'Tell me everything about Eden 1205.',
     method: 'Use: unit_360 (resolve first if the name is ambiguous). Must: if more than one unit matches, ask which one; otherwise cover the current or next stay, open tasks and issues, recent reviews, upkeep due, with the as-of time. Never: mix two units\' records.' },
 ]

@@ -68,7 +68,7 @@ const POLICY_PATTERNS: [string, RegExp][] = [
   ['trash', /trash|garbage|recycl/i],
 ]
 
-function policiesIn(text: string): { topic: string; line: string }[] {
+export function policiesIn(text: string): { topic: string; line: string }[] {
   const out: { topic: string; line: string }[] = []
   const sentences = String(text || '').split(/(?<=[.!?;])\s+|\n+/).map(s => s.trim()).filter(Boolean)
   for (const [topic, re] of POLICY_PATTERNS) {
@@ -196,7 +196,9 @@ export const PROPERTY_TOOLS: EveTool[] = [
         unit: l.nickname || l.title, has_guidebook: true, status: b.status, updated_at: b.updated_at,
         title: b.title,
         wifi: s.wifi ? { network: s.wifi.network || s.wifi.ssid || null, note: String(s.wifi.note || '').slice(0, 200) } : null,
-        arrival: String(s.arrival?.body || s.cover?.subtitle || '').slice(0, 600) || null,
+        // The book's arrival page is {checkIn, checkOut, entry, parking} (lib/guidebook-audit.ts); `body` was never
+        // written, so this read the cover subtitle. Entry text is code-scrubbed again by registry.runTool.
+        arrival: s.arrival ? { check_in: s.arrival.checkIn || null, check_out: s.arrival.checkOut || null, parking: String(s.arrival.parking || '').slice(0, 500) || null, entry: String(s.arrival.entry || '').slice(0, 500) || null, code_policy: 'codes are never in the book — door_code_check only' } : (String(s.arrival?.body || s.cover?.subtitle || '').slice(0, 600) || null),
         house_guide: list('houseGuide'),
         local_places: list('localPlaces'),
         restaurants: list('restaurants'),

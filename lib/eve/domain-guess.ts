@@ -42,3 +42,30 @@ export function guessDomains(text: string, max = 2): DomainKey[] {
   // The second domain rides along when it has at least one clear word of its own and is not dwarfed.
   return ranked.filter(([, n], i) => i === 0 || (i < max && n >= 2 && n >= top / 3)).slice(0, max).map(([k]) => k)
 }
+
+// WHICH ALWAYS-ON TOOL A QUESTION SHOULD START WITH (owner, 2026-11-10: "Our guest access codes are
+// frequently asked questions. Things in the area need to be a resource … needs to understand our
+// handbook"). The place, access, area and handbook tools are core, so no drawer has to open for them;
+// what goes wrong instead is the FIRST call — door_code_check for "how do guests get in", general
+// knowledge for "what's our policy". This is a plain keyword match, run once before the first call,
+// that adds at most two one-line hints to the turn. The model still chooses; door_code_check stays the
+// only path to an actual code.
+const HINTS: { key: string; re: RegExp; line: string }[] = [
+  { key: 'access', re: /\b(door ?codes?|access codes?|entry codes?|gate codes?|lock ?box(?:es)?|key ?pads?|smart ?locks?|fobs?|key ?cards?|locked out|get (?:in|into|inside)|let (?:them|him|her|the guests?) in|how (?:do|does|can|will|would) (?:i|we|they|he|she|the guests?|guests?) (?:get|go) in(?:to|side)?|c[oó]digos?(?: de (?:la )?puerta)?|c[oó]mo (?:entran|entro|entrar))\b/i,
+    line: 'ROUTE: an access question — call access_info first (arrival, entry steps, parking, lock type and where, who to call). A code itself comes only from door_code_check under its rules, and only if they actually need the code and you have that tool here.' },
+  { key: 'policy', re: /\b(handbook|employee manual|polic(?:y|ies)|our rules?|sop|procedures?|dress code|uniforms?|time off|pto|vacation days?|sick days?|call(?:ing)? out|how do we (?:handle|deal with|do|process|treat|charge|bill|respond|manage)|what do we do (?:when|if)|are we allowed|is it allowed|what'?s the rule)\b/i,
+    line: 'ROUTE: a handbook / policy question — doc_search first. If the documents do not answer it, say "that isn\'t in the handbook yet" (doc_search logs it; log_gap=true when passages came back but none answers) and do not fill it from general knowledge.' },
+  { key: 'area', re: /\b(near(?:by)?|close to|around (?:the )?(?:unit|building|there|here)|in the area|walking distance|restaurants?|places to eat|where to eat|beach(?:es)?|grocer(?:y|ies)|supermarket|pharmac(?:y|ies)|hospitals?|urgent care|things to do|attractions?|nightlife|bars? near|transit|train station|brightline|tri-?rail|cerca|restaurantes?|playa)\b/i,
+    line: 'ROUTE: a things-in-the-area question — area_guide first (the building guidebooks and measured area facts). If nothing is stored, say so and offer web_search; never name a place from memory.' },
+  { key: 'card', re: /\b(how many (?:bedrooms|bathrooms|beds|guests)|sleeps|max(?:imum)? (?:guests|occupancy)|bedrooms?|bathrooms?|address of|what(?:'s| is) the address|check-?in time|check-?out time|what time is check|wi-?fi|parking|who owns|owner of|who cleans|cleaning vendor|guidebook link|in breezeway)\b/i,
+    line: 'ROUTE: a unit or building fact — property_card first (one call, each fact with its source).' },
+  { key: 'owner', re: /\b(owner'?s?|owners|due[nñ]os?|propietari[oa]s?)\b[^.?!]{0,60}\b(make|made|earn(?:ed|s)?|revenue|net|payout|gross|do(?:ing)?|perform\w*)\b|\bwhich owners?\b|\b\w+'s (?:units|properties|apartments|condos|portfolio)\b[^.?!]{0,40}\b(?:make|made|earn\w*|revenue|gross|net|do(?:ing)?)\b/i,
+    line: 'ROUTE: an owner / revenue question — owner_360 for one owner, measure (by owner) to compare; open the money drawer. Dollar amounts follow money access.' },
+]
+
+/** One-line routing hints for the first call, at most two, strongest (listed first) first. */
+export function firstToolHints(text: string, max = 2): string[] {
+  const t = String(text || '').slice(0, 1200)
+  if (!t.trim()) return []
+  return HINTS.filter(h => h.re.test(t)).slice(0, max).map(h => h.line)
+}
