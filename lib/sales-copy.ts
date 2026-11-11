@@ -45,19 +45,19 @@ export const CONTACT_DEFAULT: ContactCard = {
 // answers concretely: who physically shows up, when, and how do you know they did. Written as the
 // shape of a day, because a day is checkable and an org chart is not.
 export const OPS_HEADLINE = 'Run by our own team, on the record'
-export const OPS_SUBTITLE = 'Our own people, on our own payroll, running the same day every day.'
+export const OPS_SUBTITLE = 'Our own people, on our own payroll, working to one standard every day.'
 export const OPS_BODY =
-  'Housekeeping, maintenance, inspections and guest care are in-house. Nobody is dispatched from an app and hoped for. Every market has its own crew, its own supervisor and its own escalation path, and every job carries a checklist, an assignee, a timestamp and photographs.'
+  'Housekeeping, maintenance, inspections and guest care are in-house. We never hand your home to a stranger booked through an app. Every market has its own crew, its own supervisor and its own escalation path, and every job is logged with a checklist, a name, a time and photos.'
 export const OPS_ROWS: KV[] = [
-  { k: 'The day starts the night before', v: 'Tomorrow\'s departures, arrivals and same-day turns are scheduled and assigned by name before anyone goes to bed.' },
-  { k: 'The turn', v: 'Departure clean against the standard checklist, photographed as it runs. A same-day turn is flagged as one.' },
-  { k: 'The inspection', v: 'A supervisor stands in the unit before the guest does, against a fixed list. Not a glance from the doorway.' },
-  { k: 'Maintenance', v: 'Anything found becomes a tracked job with an owner and a deadline. Preventative work runs on a routine, not when something breaks.' },
-  { k: 'Guest care', v: 'Messages answered around the clock from one inbox. A guest who cannot get in is our emergency, not theirs.' },
-  { k: 'Escalation', v: 'Housekeeping, maintenance, guest care and management in one room, in two languages. A problem reaches whoever can fix it in seconds.' },
+  { k: 'The day starts the night before', v: 'Tomorrow\'s check-outs, check-ins and same-day turnovers are scheduled and assigned to a named person the evening before.' },
+  { k: 'The clean', v: 'Every check-out is cleaned to our standard checklist and photographed as it goes. Same-day turnovers are flagged and done first.' },
+  { k: 'The inspection', v: 'A supervisor walks the home with a set checklist before every arrival. Not a glance from the doorway.' },
+  { k: 'Maintenance', v: 'Anything we find becomes a tracked job with a person responsible and a deadline. Preventive maintenance runs on a schedule, not only when something breaks.' },
+  { k: 'Guest care', v: 'Our 24/7 CCS team answers every guest message from one inbox. If a guest cannot get in, it is our emergency, not theirs.' },
+  { k: 'Escalation', v: 'Our 24/7 guest care team, our local team on the ground and a list of trusted vendors make sure guest issues are resolved quickly.' },
 ]
 export const OPS_NOTE =
-  'All of it is recorded as it happens, so readiness is documented rather than assumed — and so the answer to "what happened at my property last Tuesday" is a record, not a recollection.'
+  'Everything is logged as it happens. Ask what happened at your home last Tuesday, and we show you the record, not a recollection.'
 
 // ── 3 · MARKETING ───────────────────────────────────────────────────────────
 // Jon: "talk marketing". Distinct from distribution below: distribution is WHERE the calendar is
@@ -70,7 +70,7 @@ export const MARKETING_ROWS: KV[] = [
   { k: 'Photography and the first three frames', v: 'The images a guest sees before deciding, ordered by us and re-ordered as we learn what converts. The hero shot is a decision, not whatever the camera took first.' },
   { k: 'Copy written for the choice', v: 'Titles and descriptions written for the guest comparing options right now: specific about the space, honest about the trade-offs, and tuned to the words people actually search.' },
   { k: 'Channel promotions', v: 'New-listing boosts, early-bird and last-minute offers, seasonal pushes and member rates used deliberately on the dates that need them, not switched on and forgotten.' },
-  { k: 'Social and content', v: 'The property and the neighbourhood shown the way a guest would experience them, feeding the channels and the direct site.' },
+  { k: 'Social and content', v: 'The property and the neighborhood shown the way a guest would experience them, feeding the channels and the direct site.' },
   { k: 'The guidebook', v: 'A digital guidebook for every unit — arrival, building rules, local tips, emergencies — which earns the review as much as it serves the guest.' },
   { k: 'Email to past guests', v: 'Every stay builds a guest profile. Campaigns bring the right ones back for the right dates, at no channel commission.' },
 ]
@@ -82,13 +82,13 @@ export const MARKETING_ROWS: KV[] = [
 export const DIST_HEADLINE = 'Distribution'
 export const DIST_SUBTITLE = 'One calendar, 40+ places to sell it.'
 export const DIST_BODY =
-  'A property on one channel sells at the speed of one audience. Yours is published across every major channel and a long tail of partners from a single calendar, so a booking can arrive from wherever it arrives and two guests can never book the same night.'
+  'A home listed on one channel reaches one audience. Yours is listed on every major channel and 40+ partner sites from one calendar, so bookings come from everywhere and two guests can never book the same night.'
 export const DIST_ROWS: KV[] = [
   { k: 'One calendar, every channel', v: 'Rates and availability out, bookings back, in real time. No double bookings and no channel quietly out of date.' },
   { k: 'The channels you know', v: 'Airbnb, Vrbo, Booking.com, Expedia and their partner networks — plus corporate and extended-stay demand.' },
   { k: 'The long tail', v: 'Dozens of regional partners that cost nothing to be on and reach audiences the big four do not.' },
   { k: 'Direct', v: 'Our own booking site and the guidebook link, where a repeat guest books without a channel taking a cut.' },
-  { k: 'Channel mix by date', v: 'Which channels carry which dates, and where a slow window gets pushed. A soft March is worked in December.' },
+  { k: 'Channel mix by date', v: 'Which channels carry which dates, and where a slow stretch gets a push. We work on a slow March in December.' },
   { k: 'One set of rules', v: 'House rules, cancellation terms, fees and screening applied the same way on every site.' },
 ]
 
@@ -101,9 +101,9 @@ export const DIST_ROWS: KV[] = [
 export const DIRECT_HEADLINE = 'Direct bookings'
 export const DIRECT_SUBTITLE = 'Every channel booking costs a commission. A direct one does not.'
 export const DIRECT_BODY =
-  'Channels are how a guest finds you the first time. They should not be how the same guest finds you the third time. Our own site, written and tuned with AI and fed by the guest profiles every stay builds, is how a share of your nights arrive without a channel in the middle.'
+  'Channels are how a guest finds you the first time. They should not be how the same guest finds you the third time. Our own site, written and tuned with AI and fed by the guest profiles every stay builds, is how more of your nights are booked with no channel in the middle.'
 export const DIRECT_ROWS: KV[] = [
-  { k: 'Pages written for search', v: 'Property and neighbourhood pages generated and kept current for the terms guests actually search — the building, the area, the season — so the site ranks for the searches a channel listing cannot.' },
+  { k: 'Pages written for search', v: 'Property and neighborhood pages generated and kept current for the terms guests actually search — the building, the area, the season — so the site ranks for the searches a channel listing cannot.' },
   { k: 'Tuned on what converts', v: 'Titles, descriptions and photo order measured against what guests stop on and praise, then rewritten. The same optimization runs on the channel listings.' },
   { k: 'Guest profiles', v: 'Every stay records who came, what they valued and how often they have booked. That is the list the campaigns go to.' },
   { k: 'Campaigns that bring them back', v: 'Past guests invited back for the dates that need filling, with an offer that still nets more than the channel would have left you.' },
@@ -120,7 +120,7 @@ export const DIRECT_NOTE =
 export const LH_HEADLINE = 'Lighthouse: our own AI'
 export const LH_SUBTITLE = 'Proprietary software we built to optimize, manage and automate everything behind your property.'
 export const LH_BODY =
-  'Most managers run on the same three or four bought platforms as everyone else, and live with the gaps between them. We built the layer that closes those gaps — and it is the reason the answer to a question about your property is a screen rather than a phone call to somebody who might remember.'
+  'Most managers run on the same three or four off-the-shelf platforms and live with the gaps between them. We built the software that closes those gaps, so any question about your home is answered from live data, not from someone’s memory.'
 export const LH_ROWS: KV[] = [
   { k: 'Operations', v: 'Every clean, inspection and repair scheduled, assigned and tracked live.' },
   { k: 'Preventive maintenance', v: 'PM care automated: scheduled on a routine for every unit, tracked to done.' },
@@ -134,7 +134,7 @@ export const LH_ROWS: KV[] = [
 // SIX ROWS, BECAUSE SEVEN SCROLLED. Owner reporting moved into the note rather than being cut:
 // on a slide that is presented at 16:9, a row you have to scroll to is a row nobody reads.
 export const LH_NOTE =
-  'The report you receive is generated from this same data, so nothing is retyped on the way to you. And none of it is yours to learn or log into — it exists so the people running your property are never working from memory.'
+  'Your monthly report comes from the same data, so nothing is retyped along the way. There is nothing for you to learn or log into: it is there so the people running your home always work from the facts.'
 
 // ── 7 · ONBOARDING, FROM THE OWNER'S SIDE ───────────────────────────────────
 // Jon: "walk through onboarding". The internal checklist already exists in the onboarding deck
@@ -150,10 +150,10 @@ export const ONB_STEPS: Step[] = [
   { k: 'The walk-through', v: 'We walk the property and record it: condition, contents, what is missing, what needs work before a guest sees it.', who: 'Us', when: 'Week 1' },
   { k: 'Furnishing and supplies', v: 'Anything needed is specified and ordered — furniture, linen, kitchen, consumables — through our partner accounts, including HostGPO member pricing.', who: 'Us, you approve', when: 'Weeks 1–2' },
   { k: 'Photography and the listing', v: 'Professional photography, then the listing built from scratch: title, description, amenities audited against every channel\'s filters.', who: 'Us', when: 'Week 2' },
-  { k: 'Published everywhere', v: 'The calendar goes live across every channel at once, into the new-listing promotion window each channel grants exactly once.', who: 'Us', when: 'Week 3' },
+  { k: 'Published everywhere', v: 'The calendar goes live on every channel at once, timed to use the one-time new-listing boost each channel offers.', who: 'Us', when: 'Week 3' },
   { k: 'Pricing set', v: 'Your revenue manager builds the rate strategy: opening rate, minimum stays, seasonality and the first ninety days of the calendar.', who: 'Us', when: 'Week 3' },
   { k: 'Operations live', v: 'Access, door codes, parking, building rules and the cleaning standard loaded, and the property enters the daily schedule.', who: 'Us', when: 'Week 3' },
-  { k: 'The kickoff call', v: 'We walk your finished listing with you channel by channel, agree the strategy, and answer everything. You get that session as a document.', who: 'Us, with you', when: 'Week 4' },
+  { k: 'The kickoff call', v: 'We walk you through your finished listing on each channel, agree on the strategy, and answer every question. You get a written summary afterwards.', who: 'Us, with you', when: 'Week 4' },
 ]
 export const ONB_NOTE =
   'Your part is the agreement, access, and approving what gets bought. Everything else is work we do and show you.'
@@ -167,10 +167,10 @@ export const ONB_NOTE =
 export const GPO_HEADLINE = 'Furnishing, at our pricing'
 export const GPO_SUBTITLE = 'Our HostGPO membership comes with the onboarding profile.'
 export const GPO_BODY =
-  'Furnishing a short-term rental well is the biggest cheque an owner writes before the first guest arrives. Through our HostGPO group-purchasing membership, that cheque is written at member pricing across a catalogue of brands, and you do not need an account, a minimum order or a membership of your own to use it.'
+  'Furnishing a short-term rental well is the biggest check an owner writes before the first guest arrives. Through our HostGPO group-purchasing membership, you pay member pricing across a catalog of brands, with no account, minimum order or membership of your own.'
 export const GPO_ROWS: KV[] = [
-  { k: 'The brands', v: 'Furniture, mattresses and beds, rugs, linen, appliances, kitchen and outdoor — recognised brands through group-purchasing agreements rather than whatever is in stock locally.' },
-  { k: 'Member pricing', v: 'Our membership rate on the catalogue, with the terms the group negotiated rather than the retail price in front of a single buyer.' },
+  { k: 'The brands', v: 'Furniture, mattresses and beds, rugs, linen, appliances, kitchen and outdoor — recognized brands through group-purchasing agreements, not whatever is in stock locally.' },
+  { k: 'Member pricing', v: 'Our membership rate across the catalog, on terms the group negotiated, not the retail price a single buyer pays.' },
   { k: 'Specified for rental use', v: 'Chosen for what survives turnover and photographs well, not for a showroom. A mattress in a rental is a different purchase from a mattress at home.' },
   { k: 'Ordered and tracked', v: 'Every item specified, approved by you, ordered, received and installed on a tracked list, so nothing arrives late or goes missing between the order and the unit.' },
   { k: 'Restocking too', v: 'Consumables and replacements run through the same accounts for the life of the agreement, not just at setup.' },
@@ -194,7 +194,7 @@ export const MARKET_PROMPTS: KV[] = [
 export const MARKET_HINTS: Record<string, string> = {
   'The property': 'What this unit is, what it has, and what a guest is buying when they book it.',
   'The market': 'Who is booking in this building and at what rate — comp set, season, the demand you are competing for.',
-  'The area': 'Why a guest chooses this neighbourhood: what is walkable, what is on, what fills the calendar.',
+  'The area': 'Why a guest chooses this neighborhood: what is walkable, what is on, what fills the calendar.',
   'What we would do first': 'The first three things we would change about how this property is sold.',
 }
 
@@ -360,7 +360,7 @@ export const SALES_WELCOME = 'Three things decide what a property earns: how the
 // set, distribution, the listing craft, direct — and each of those is a better slide than this
 // one. This is the version for someone who has given us ninety seconds.
 export const MAXREV_HEADLINE = 'The technology behind your revenue'
-export const MAXREV_SUBTITLE = 'Five levers, worked every day.'
+export const MAXREV_SUBTITLE = 'Four levers, worked every day.'
 export const MAXREV_BODY =
   'Revenue is not one decision at the start. It is a rate moved daily against live demand, on a listing built to convert, sold in every place a guest might look.'
 // One row per platform, in the order the money is made: the rate, where it sells, the operation
@@ -444,10 +444,10 @@ export const PLAN_SUBTITLE = ''
 export const PLAN_BODY =
   'Built from a market revenue estimate for this building, bedroom count and size, checked against what our own units nearby actually earned.'
 export const PLAN_NOTE =
-  'Figures are fully ramped projections, assuming an established listing with reviews and booking history.'
+  'Projections assume an established listing, with reviews and a booking history.'
 export const PLAN_LABELS = {
   annual: 'Projected annual revenue',
-  annualSub: 'Gross rental revenue a year, once fully ramped',
+  annualSub: 'Gross rental revenue a year, once established',
   monthly: 'Per month',
   monthlySub: 'Average rental revenue a month',
   rate: 'Projected nightly rate',
@@ -486,7 +486,7 @@ export const PROPERTY_BODY = ''
 export const PROPERTY_FACT_HINTS: Record<string, string> = {
   'The unit': 'Bedrooms, bathrooms, how many it sleeps',
   'The building': 'Building or community, and what it offers a guest',
-  'Where it is': 'Neighbourhood, and what is within a walk',
+  'Where it is': 'Neighborhood, and what is within a walk',
   'What it sells': 'The one thing a guest books this property for',
 }
 export const PROPERTY_FACTS: KV[] = [

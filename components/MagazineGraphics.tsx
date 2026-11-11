@@ -29,7 +29,7 @@ function smooth(pts: [number, number][]): string {
 
 /** One stay, start to finish: a vertical line of moments on the brand colour. */
 export function StayTimeline({ steps, title = 'One stay, start to finish', note = 'Our own team, on every stay.', tags }: { steps: { k: string; v?: string }[]; title?: string; note?: string; tags?: string[] }) {
-  const TAGS = ['THE NIGHT BEFORE', 'ON DEPARTURE', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'IN SECONDS'].map((d, i) => (tags && tags[i] ? tags[i].toUpperCase() : d))
+  const TAGS = ['THE NIGHT BEFORE', 'AT CHECK-OUT', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'RESOLVED QUICKLY'].map((d, i) => (tags && tags[i] ? tags[i].toUpperCase() : d))
   const list = steps.slice(0, 6)
   const W = 304, H = 1056, top = 250, bottom = 150
   const gap = (H - top - bottom) / Math.max(1, list.length - 1)
@@ -105,7 +105,7 @@ export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; 
       <div style={{ position: 'absolute', left: 72, right: 72, top: 64 }}>
         <p className="mz-kicker mz-on-dark">{kicker}</p>
         <h2 className="mz-opener-title" style={{ color: '#fff' }}>{title}</h2>
-        <p style={{ font: `300 18px/1.5 ${SERIF}`, color: 'rgba(255,255,255,.82)', maxWidth: '26em', margin: '20px 0 0' }}>The shape of a Miami year, from the seasonal curve behind every projection in this package.</p>
+        <p style={{ font: `300 18px/1.5 ${SERIF}`, color: 'rgba(255,255,255,.82)', maxWidth: '26em', margin: '20px 0 0' }}>How demand moves through a Miami year: the same seasonal pattern behind every projection here.</p>
       </div>
     </div>
   )

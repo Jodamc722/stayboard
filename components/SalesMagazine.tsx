@@ -418,7 +418,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
 
   const aud = audienceOf(c.audience)
   const D = {
-    coverDek: cma ? (aud === 'owner' ? `Your residence in ${area || 'Miami'}, and what it can return.` : aud === 'agents' ? `Every floor plan, and what it can return.` : `A residence in ${area || 'Miami'}, and what it can return.`) : String(hero.headline || 'How we manage revenue, tools and team around the success of your property.'),
+    coverDek: cma ? (aud === 'owner' ? `Your residence in ${area || 'Miami'}, and what it could earn.` : aud === 'agents' ? `Every floor plan, and what each could earn.` : `What a residence in ${area || 'Miami'} could earn.`) : String(hero.headline || 'How we manage revenue, tools and team around the success of your property.'),
     note: cma
       ? (aud === 'owner'
         ? `This is what a home at ${short(building) || 'your building'} could earn, built from comparable homes we run nearby, and how we would run it for you: the team, the standard and the technology behind it.`
@@ -427,7 +427,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           : `Every buyer${building ? ' at ' + short(building) : ''} asks the same first question: what will it earn? This package answers it for every floor plan, from one comparable set, so a buyer sees a range before they make an offer. It also shows who we are, how we run a home, and the technology behind it.`)
       : 'Thank you for your time. This is how we would run your property: the revenue, the tools and the team around it, and what happens from the day you sign.',
     aboutHead: 'Stay-managed homes earn *20% more* than the market.',
-    aboutDek: 'Full-service short-term rental management for owners across Miami and South Florida. One local team, priced every night, listed everywhere guests book.',
+    aboutDek: 'Full-service short-term rental management for owners across Miami and South Florida: one local team, pricing every night and listing everywhere guests book.',
     aboutNote: 'On average; results vary by unit, building and season.',
     teamHead: 'The team on your building, *with 24/7 guest care*',
     manageHead: 'How we run a home',
@@ -435,10 +435,10 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     techHead: 'Priced every day. Listed everywhere. *Reported every month.*',
     techDek: (tools.slice(0, 5).length > 1 ? (['', '', 'Two', 'Three', 'Four', 'Five'][tools.slice(0, 5).length] + ' systems working together, so') : 'One system, so') + ' pricing, distribution, housekeeping and reporting run on data rather than guesswork.',
     workTitle: showPartner || aud === 'owner' ? AUDIENCES[aud].workTitle : 'For buyers who ask for options',
-    numbersTitle: aud === 'owner' && cma ? 'What your residence *could earn.*' : plans.length > 1 ? `${['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][plans.length] || plans.length} floor plans. *One question, answered.*` : 'What a home at ' + (short(building) || 'this building') + ' could earn',
+    numbersTitle: aud === 'owner' && cma ? 'What your residence *could earn.*' : plans.length > 1 ? `${['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][plans.length] || plans.length} floor plans. *What each could earn.*` : 'What a home at ' + (short(building) || 'this building') + ' could earn',
     glanceHead: 'At a glance',
     marketHead: `${area || 'The market'}, *by the night.*`,
-    glanceDek: 'Estimated gross rental revenue in a full year, once the listing is established. Each line runs from the low end of the year to the high end.',
+    glanceDek: 'Estimated gross rental revenue for a full year, once the listing is established. Each line runs from the low estimate to the high one.',
     backTitle: cma ? AUDIENCES[aud].backTitle : 'Book a call *to learn more.*',
     secondKicker: AUDIENCES[aud].secondKicker,
     secondTitle: AUDIENCES[aud].secondTitle.replace('{at}', building ? ' at *' + short(building) + '*' : ''),
@@ -446,7 +446,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     kPeople: 'The people', kTerms: 'How we work together', kListed: 'Where your home is listed', kFees: 'Referral fees, in writing',
     kHow: 'How it works', kReady: 'How we would get a unit ready', kCompsAll: 'The comparable set used across this package',
     heroLabel: 'Could earn in a year, once established', heroNote: 'Gross rental revenue, before channel fees and the management fee',
-    kChart: 'Through the year', chartSource: 'Seasonal shape from Miami market pricing data.', kComps: 'Against the comparable set',
+    kChart: 'Through the year', chartSource: 'Monthly pattern based on Miami market pricing data.', kComps: 'Against the comparable set',
     timelineTitle: 'One stay, start to finish', timelineNote: 'Our own team, on every stay.',
     backDek: cma ? AUDIENCES[aud].backDek.replace('{with}', presenterFirst ? ' with ' + presenterFirst : '').replace('{at}', building ? ' at ' + short(building) : '') : `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through the numbers, the terms and the onboarding, and answer every question before you decide.`,
   }
@@ -800,7 +800,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         const n = planNumbers(cma!, p)
         const comps = p.compIds.map(id => cma!.comps.find(x => x.id === id)).filter(Boolean) as PacketComp[]
         const row3: [string, string, string][] = [
-          ['Per month, on average', dash(n.monthLo, n.monthHi), 'the year divided by twelve'],
+          ['Per month, on average', dash(n.monthLo, n.monthHi), 'averaged across the year'],
           ['Peak month', 'up to ' + money(n.peak), n.peakMonth + ', high end'],
           showNet ? ['Owner keeps, est.', dash(netOf(n.lo), netOf(n.hi)), 'a year, after fees'] : ['Nightly rate' + (p.suites > 1 ? ', per suite' : ''), dash(n.nightlyLo, n.nightlyHi), 'at ' + pctRange(p.occLo, p.occHi) + ' occupancy'],
         ]
@@ -931,7 +931,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
               <button type="button" className="mz-remove wide" onClick={() => setCma({ ...cma, comps: cma.comps.filter((_, j) => j !== i), plans: cma.plans.map(p => ({ ...p, compIds: p.compIds.filter(id => id !== x.id) })) })}>Remove this comparable</button>
             </div>
           ))}
-          <button type="button" className="mz-add" onClick={() => setCma({ ...cma, comps: [...cma.comps, { id: newId(), name: 'New comparable', market: '', basis: 'Stay projection, fully ramped', lo: 0, hi: 0, nightlyLo: 0, nightlyHi: 0, occLo: 70, occHi: 75 }] })}>+ Add a comparable</button>
+          <button type="button" className="mz-add" onClick={() => setCma({ ...cma, comps: [...cma.comps, { id: newId(), name: 'New comparable', market: '', basis: 'Stay projection, established listing', lo: 0, hi: 0, nightlyLo: 0, nightlyHi: 0, occLo: 70, occHi: 75 }] })}>+ Add a comparable</button>
           <p className="mz-drawer-note">Every range built from a comparable moves as soon as its low or high changes.</p>
         </>
       ) : <p className="mz-drawer-empty">This deck has no comparables yet.</p>)}
@@ -965,7 +965,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             <div className="mz-form" style={{ marginTop: 8 }}>
               <label>Timeline title<input defaultValue={T('timelineTitle')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTitle: e.target.value } })} /></label>
               <label>Timeline closing line<input defaultValue={T('timelineNote')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineNote: e.target.value } })} /></label>
-              <label>Small labels under each step, separated by |<input defaultValue={String(copy.timelineTags || 'The night before | On departure | Before arrival | As it happens | Around the clock | In seconds')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTags: e.target.value } })} /></label>
+              <label>Small labels under each step, separated by |<input defaultValue={String(copy.timelineTags || 'The night before | At check-out | Before arrival | As it happens | Around the clock | Resolved quickly')} onBlur={e => setMag({ copy: { ...(mag.copy || {}), timelineTags: e.target.value } })} /></label>
             </div>
           ) : null}
           <p className="mz-form-h">Photos</p>
