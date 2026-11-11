@@ -169,7 +169,7 @@ export async function POST(req: NextRequest) {
   const periodStart = str(body?.periodStart)
   const periodEnd = str(body?.periodEnd)
   const asOf = str(body?.asOf) || etToday()
-  const theme = str(body?.theme) || (str(body?.kind) === 'sales' ? 'atelier' : 'capri')
+  const theme = str(body?.theme) || (str(body?.kind) === 'sales' ? 'stayModern' : 'capri')
   const pacingUrl = str(body?.pacingUrl)
   // Owner statements are now SELECTED from the Guesty mirror rather than uploaded as PDFs.
   // Cap matches the picker's own fetch limit (listStatements(ids, 60)) so choosing "All
