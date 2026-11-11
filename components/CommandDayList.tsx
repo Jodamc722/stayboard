@@ -254,7 +254,8 @@ function DayLine({ d, loading, reload, roster, vendorsOnSite }: { d: CommandDay;
 function Band({ name, count, empty, children }: { name: string; count: number; empty: string; children?: ReactNode }) {
   // FOLDED UNTIL ASKED (Jon, 2026-10-02: "clunky, noisy"): these bands sit below the day's work and open
   // from their title, like every other section on the page. A short band (three rows or fewer) stays open.
-  const [open, setOpen] = useState(count <= 3)
+  // Open (Jon, 2026-11-10: "I like tabs open not collapsible").
+  const [open, setOpen] = useState(true)
   return (
     <section>
       <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted flex items-center gap-2">
@@ -685,7 +686,7 @@ function YoursBand() {
 // ── COMPLETED — one line, the card behind it ───────────────────────────────────────────────────
 function CompletedLine({ d, onChanged }: { d: CommandDay; onChanged: () => void }) {
   const tick = useTick()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const c = d.completed
   return (
     <section>
