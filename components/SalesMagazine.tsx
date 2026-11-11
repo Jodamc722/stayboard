@@ -97,11 +97,12 @@ function setPath(obj: Any, path: string, val: Any) {
 }
 
 // ── Charts ────────────────────────────────────────────────────────────────────────────────────────
-function Chart({ months, kind }: { months: { lo: number; hi: number }[]; kind: ChartKind }) {
+const CHART_H = 190, CHART_MIN = 120
+function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number }) {
   // Information-design audit (2026-11-11): one column per month, not paired bars — solid to the low
   // end, lighter from low to high, so it reads "at least X, up to Y". Four gridlines, axis labels
   // sitting on them at the left (FT style), and values only where the eye needs them: peak and trough.
-  const W = 688, H = 220, T = 24, B = 24
+  const W = 688, H = h, T = 22, B = 24, L = 40
   const series = kind === 'cumulative'
     ? months.reduce((acc: { lo: number; hi: number }[], m, i) => { const p = acc[i - 1] || { lo: 0, hi: 0 }; acc.push({ lo: p.lo + m.lo, hi: p.hi + m.hi }); return acc }, [])
     : months
@@ -110,22 +111,22 @@ function Chart({ months, kind }: { months: { lo: number; hi: number }[]; kind: C
   const mag = Math.pow(10, Math.floor(Math.log10(raw)))
   const step = [1, 2, 2.5, 5, 10].map(x => x * mag).find(x => x >= raw) || raw
   const top = step * 4
-  const ch = H - T - B, cw = W / 12
+  const ch = H - T - B, cw = (W - L) / 12
   const y = (v: number) => T + ch - (v / top) * ch
   const ticks = [1, 2, 3, 4].map(i => i * step)
   const k$ = (v: number) => '$' + (v >= 100000 ? Math.round(v / 1000) : (Math.round(v / 100) / 10).toFixed(1)) + 'K'
-  const cx = (i: number) => i * cw + cw / 2
+  const cx = (i: number) => L + i * cw + cw / 2
   let pk = 0, tr = 0
   series.forEach((m, i) => { if (m.hi > series[pk].hi) pk = i; if (m.hi < series[tr].hi) tr = i })
   const grid = (
     <g>
       {ticks.map(v => (
         <g key={v}>
-          <line x1={0} x2={W} y1={y(v)} y2={y(v)} style={{ stroke: C.grid }} strokeWidth={1} shapeRendering="crispEdges" />
-          <text x={0} y={y(v) - 5} fontSize={10.5} style={{ fill: C.muted }} fontFamily={SANS}>{'$' + (v >= 1000 ? (v / 1000) + 'K' : v)}</text>
+          <line x1={L - 4} x2={W} y1={y(v)} y2={y(v)} style={{ stroke: C.grid }} strokeWidth={1} shapeRendering="crispEdges" />
+          <text x={0} y={y(v) + 4} fontSize={10.5} style={{ fill: C.muted }} fontFamily={SANS}>{'$' + (v >= 1000 ? (v / 1000) + 'K' : v)}</text>
         </g>
       ))}
-      <line x1={0} x2={W} y1={y(0)} y2={y(0)} style={{ stroke: C.ink }} strokeWidth={1.25} shapeRendering="crispEdges" />
+      <line x1={L - 4} x2={W} y1={y(0)} y2={y(0)} style={{ stroke: C.ink }} strokeWidth={1.25} shapeRendering="crispEdges" />
     </g>
   )
   const axis = MONTHS.map((m, i) => <text key={m} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={10.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.06em">{m.toUpperCase()}</text>)
@@ -133,7 +134,7 @@ function Chart({ months, kind }: { months: { lo: number; hi: number }[]; kind: C
   if (kind === 'bars') {
     const bw = 30
     return (
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Monthly gross rental income, low and high end">
+      <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Monthly gross rental income, low and high end">
         {grid}
         {months.map((m, i) => (
           <g key={i}>
@@ -151,7 +152,7 @@ function Chart({ months, kind }: { months: { lo: number; hi: number }[]; kind: C
   const band = series.map((m, i) => (i ? 'L' : 'M') + cx(i) + ' ' + y(m.hi)).join(' ') + ' ' + series.slice().reverse().map((m, j) => 'L' + cx(11 - j) + ' ' + y(m.lo)).join(' ') + ' Z'
   const ends = kind === 'cumulative' ? [11] : [pk, tr]
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={kind === 'cumulative' ? 'Running total of gross rental income through the year' : 'Monthly gross rental income range'}>
+    <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={kind === 'cumulative' ? 'Running total of gross rental income through the year' : 'Monthly gross rental income range'}>
       {grid}
       <path d={band} style={{ fill: C.navy, opacity: 0.16 }} />
       <path d={line('lo')} style={{ fill: 'none', stroke: C.navy, opacity: 0.55 }} strokeWidth={1.5} />
@@ -183,6 +184,30 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   // A PAGE THAT NO LONGER FITS (2026-11-11). Every word is editable and a page is a fixed letter
   // sheet, so a long edit would be silently clipped in print. Editors see which pages are too full.
   const [overfull, setOverfull] = useState<string[]>([])
+  // FIT THE CHART TO ITS PAGE (audit 2026-11-11). A floor-plan page with a long comparable table used to
+  // squeeze the chart: the browser shrank its height and, keeping the proportions, its width too, so it
+  // printed narrow and off-centre. Now the chart always runs the full width and is drawn only as tall as
+  // the page has room for (never under CHART_MIN). Text in the chart stays the same size.
+  const [chartH, setChartH] = useState<Record<string, number>>({})
+  useEffect(() => { setChartH({}) }, [doc])
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const next: Record<string, number> = {}
+      document.querySelectorAll('.mz-page[data-k^="plan-"]').forEach(el => {
+        const k = String((el as HTMLElement).dataset.k)
+        const body = el.querySelector('.mz-body') as HTMLElement | null, foot = el.querySelector('.mz-foot') as HTMLElement | null
+        const svg = el.querySelector('svg.mz-chart-svg') as SVGElement | null
+        const last = body?.lastElementChild as HTMLElement | null
+        if (!body || !foot || !svg || !last) return
+        const over = last.getBoundingClientRect().bottom - foot.getBoundingClientRect().top + 6
+        const cur = chartH[k] || CHART_H
+        const unit = svg.getBoundingClientRect().width / 688
+        if (over > 0 && cur > CHART_MIN && unit > 0) next[k] = Math.max(CHART_MIN, Math.floor(cur - over / unit))
+      })
+      if (Object.keys(next).length) setChartH(h => ({ ...h, ...next }))
+    }, 120)
+    return () => clearTimeout(id)
+  })
   useEffect(() => {
     if (!canEdit) return
     const id = setTimeout(() => {
@@ -300,7 +325,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     return kd && !vd ? { fig: s.k, lab: s.v, figP: 'k', labP: 'v', i: s.i } : { fig: s.v, lab: s.k, figP: 'v', labP: 'k', i: s.i }
   })
   const ops = rows(c.ops && c.ops.rows).slice(0, 6)
-  const terms = rows(c.terms && c.terms.rows).slice(0, 6)
+  const terms = rows(c.terms && c.terms.rows).slice(0, 6).map(r => r.k === 'Labour' ? { ...r, k: 'Labor' } : r)
   // The sales team rule (lib/sales-copy SALES_TEAM_EXCLUDE), and the presenter always on the page.
   let team: { p: Any; i: number }[] = ((c.team && c.team.people) || []).map((p: Any, i: number) => ({ p: { ...p, photo: photoFor(p) }, i }))
     .filter((x: Any) => x.p && String(x.p.name || '').trim() && SALES_TEAM_EXCLUDE.indexOf(String(x.p.name).trim().toLowerCase()) < 0)
@@ -323,10 +348,15 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const showGlance = !!(cma && S && S.glance && cma.plans.length && on('cma-glance'))
   const showPage = (k: string) => !hideMag[k]
 
+  const aud = audienceOf(c.audience)
   const D = {
-    coverDek: cma ? `A residence in ${area || 'Miami'}, and what it can return.` : String(hero.headline || 'How we manage revenue, tools and team around the success of your property.'),
+    coverDek: cma ? (aud === 'owner' ? `Your residence in ${area || 'Miami'}, and what it can return.` : aud === 'agents' ? `Every floor plan, and what it can return.` : `A residence in ${area || 'Miami'}, and what it can return.`) : String(hero.headline || 'How we manage revenue, tools and team around the success of your property.'),
     note: cma
-      ? `${building ? short(building) + ' is' : 'This building is'} one of the most anticipated openings in ${area || 'Miami'}, and every buyer will ask the same first question: what will it earn? This package answers it for every floor plan, from one comparable set, so a buyer sees a range before they make an offer. It also shows who we are, how we run a home, and the technology behind it.`
+      ? (aud === 'owner'
+        ? `This is what a home at ${short(building) || 'your building'} could earn, built from comparable homes we run nearby, and how we would run it for you: the team, the standard and the technology behind it.`
+        : aud === 'agents'
+          ? `Every buyer asks the same first question: what will it earn? This package answers it for every floor plan${building ? ' at ' + short(building) : ''}, from one comparable set, so you can share a range with your clients before they make an offer. It also shows who we are and how we run a home.`
+          : `Every buyer${building ? ' at ' + short(building) : ''} asks the same first question: what will it earn? This package answers it for every floor plan, from one comparable set, so a buyer sees a range before they make an offer. It also shows who we are, how we run a home, and the technology behind it.`)
       : 'Thank you for your time. This is how we would run your property: the revenue, the tools and the team around it, and what happens from the day you sign.',
     aboutHead: 'Stay-managed homes earn *20% more* than the market.',
     aboutDek: 'Full-service short-term rental management for owners across Miami and South Florida. One local team, priced every night, listed everywhere guests book.',
@@ -335,12 +365,12 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     manageHead: 'How we run a home',
     manageDek: 'Our own team, our own standard, on every stay.',
     techHead: 'Priced every day. Listed everywhere. *Reported every month.*',
-    techDek: (['One system', 'Two systems', 'Three systems', 'Four systems', 'Five systems', 'Six systems'][Math.min(6, Math.max(1, tools.slice(0, 5).length)) - 1]) + ' working together, so pricing, distribution, housekeeping and reporting run on data rather than guesswork.',
-    workTitle: showPartner ? 'For the sales team, and the buyers they bring' : 'For buyers who ask for options',
+    techDek: (tools.slice(0, 5).length > 1 ? (['', '', 'Two', 'Three', 'Four', 'Five'][tools.slice(0, 5).length] + ' systems working together, so') : 'One system, so') + ' pricing, distribution, housekeeping and reporting run on data rather than guesswork.',
+    workTitle: showPartner ? (aud === 'agents' ? 'For agents, and the buyers they bring' : 'For the sales team, and the buyers they bring') : aud === 'owner' ? 'If you are weighing your options' : 'For buyers who ask for options',
     numbersTitle: plans.length > 1 ? `${['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve'][plans.length] || plans.length} floor plans. *One question, answered.*` : 'What a home at ' + (short(building) || 'this building') + ' could earn',
     glanceHead: 'At a glance',
     marketHead: `${area || 'The market'}, *by the night.*`,
-    glanceDek: 'Estimated gross rental revenue once fully ramped. Each line runs from the low end of the year to the high end.',
+    glanceDek: 'Estimated gross rental revenue in a full year, once the listing is established. Each line runs from the low end of the year to the high end.',
     backTitle: 'Book a call *to learn more.*',
     backDek: cma ? `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through these projections, the terms, and how we would run a home${building ? ' at ' + short(building) : ''}.` : `A short call${presenterFirst ? ' with ' + presenterFirst : ''} to walk through the numbers, the terms and the onboarding, and answer every question before you decide.`,
   }
@@ -409,7 +439,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   )
 
   const compsTable = (list: PacketComp[], us?: React.ReactNode, withBasis?: boolean) => (
-    <table className="mz-table">
+    <table className={'mz-table' + (list.length > 4 ? ' mz-dense' : '')}>
       <thead><tr><th>Comparable</th><th>Market</th>{withBasis ? <th>Basis</th> : null}<th className="r">Gross a year</th><th className="r">Nightly</th><th className="r">Occupancy</th></tr></thead>
       <tbody>
         {list.map(x => { const ci = cma ? cma.comps.findIndex(z => z.id === x.id) : -1; return (
@@ -482,7 +512,14 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             </div>
             {stats.length ? (
               <div className="mz-stats" style={{ gridTemplateColumns: `repeat(${stats.length}, 1fr)` }}>
-                {stats.map(st => <div key={st.i}><b className={st.fig.length > 9 ? 'long' : ''}><E v={st.fig} p={`overview.stats.${st.i}.${st.figP}`} /></b><span><E v={st.lab} p={`overview.stats.${st.i}.${st.labP}`} /></span></div>)}
+                {stats.map(st => {
+                  // A list of places is not a figure (audit 2026-11-11): "Miami · Fort Lauderdale · Pompano · Palm Beach"
+                  // wrapped to four lines. Print the count large and the places as the label; the text stays editable as stored.
+                  const places = !(canEdit && editText) && !/\d/.test(st.fig) && st.fig.split(/\s*·\s*/).filter(Boolean).length > 1 ? st.fig.split(/\s*·\s*/).filter(Boolean) : null
+                  return places
+                    ? <div key={st.i}><b>{places.length}</b><span>{st.lab}: {places.join(', ')}</span></div>
+                    : <div key={st.i}><b className={st.fig.length > 9 ? 'long' : ''}><E v={st.fig} p={`overview.stats.${st.i}.${st.figP}`} /></b><span><E v={st.lab} p={`overview.stats.${st.i}.${st.labP}`} /></span></div>
+                })}
               </div>
             ) : null}
           </div>
@@ -660,7 +697,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
               <div><dt>Rental rules</dt><dd><E v={p.rules} p={`cma.plans.${pi}.rules`} /></dd></div>
             </dl>
             <div className="mz-hero">
-              <span>Could earn in a year, once fully ramped</span>
+              <span>Could earn in a year, once established</span>
               <b>{money(n.lo)}<i>–</i>{money(n.hi)}</b>
               <small>Gross rental revenue, before channel fees and the management fee</small>
             </div>
@@ -669,7 +706,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
               {kicker(chart === 'cumulative' ? 'The year, as it adds up' : 'Through the year')}
               <p className="mz-legend"><i className="lo" /> Low end <i className="hi" /> High end</p>
             </div>
-            <Chart months={n.months} kind={chart} />
+            <Chart months={n.months} kind={chart} h={chartH['plan-' + p.id]} />
             <p className="mz-source">Seasonal shape from Miami market pricing data.</p>
             <div className="mz-comps">
               {kicker('Against the comparable set')}
@@ -980,6 +1017,7 @@ const CSS = `
 .mz-small{font:italic 400 12px/17px ${SERIF};color:${C.muted}}
 .mz-caption{position:absolute;left:24px;bottom:20px;margin:0;font:italic 400 12px ${SERIF};color:rgba(255,255,255,.9);text-shadow:0 1px 8px rgba(0,0,0,.45)}
 .mz-caption-top{position:static;align-self:flex-end}
+.mz-body>svg,.mz-body svg[role=img]{flex:none}
 .mz-source{font:italic 400 11.5px/1.5 ${SERIF};color:${C.muted};margin:8px 0 0}
 
 /* cover */
@@ -1097,12 +1135,13 @@ const CSS = `
 .mz-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:24px;border-top:1px solid ${C.ink}}
 .mz-col-item{padding:11px 0;border-bottom:1px solid ${C.grid}}
 .mz-col-item b{font:400 18px ${SERIF};color:${C.ink}}.mz-col-item p{font:400 13px/1.42 ${SERIF};margin:4px 0 0}
-.mz-comps{margin-top:32px}
+.mz-comps{margin-top:22px}
 .mz-table{width:100%;border-collapse:collapse;font:400 11px ${SANS};color:${C.body}}
 .mz-table th{font:600 10px ${SANS};letter-spacing:.12em;text-transform:uppercase;color:${C.muted};text-align:left;padding:0 14px 8px 12px;border-bottom:1.25px solid ${C.ink};vertical-align:bottom}
 .mz-table td{padding:5px 12px 5px 12px;height:32px;border-bottom:1px solid ${C.grid};vertical-align:middle;line-height:1.35;font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
 .mz-table td:first-child{white-space:normal;width:44%}
 .mz-table th:first-child,.mz-table td:first-child{padding-left:12px}
+.mz-table.mz-dense td{height:26px;padding-top:3px;padding-bottom:3px}
 .mz-table td b{font-weight:600;color:${C.ink}}
 .mz-table .r{text-align:right}
 .mz-table th:last-child,.mz-table td:last-child{padding-right:0}
@@ -1143,7 +1182,7 @@ const CSS = `
 .mz-facts>div{padding:12px 16px;border-left:1px solid ${C.grid}}.mz-facts>div:first-child{border-left:0;padding-left:0}
 .mz-facts dt{font:600 10px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted}}
 .mz-facts dd{margin:6px 0 0;font:400 17px ${SERIF};color:${C.ink};font-variant-numeric:lining-nums}
-.mz-hero{margin-top:28px}
+.mz-hero{margin-top:22px}
 .mz-hero span{display:block;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.sandText}}
 .mz-hero b{display:block;font:300 62px/1 ${SERIF};color:${C.ink};letter-spacing:-.025em;margin-top:12px;font-variant-numeric:lining-nums;white-space:nowrap}
 .mz-hero b i{font-style:normal;margin:0 .12em;color:${C.muted}}
@@ -1153,7 +1192,7 @@ const CSS = `
 .mz-row3 dt{font:600 10px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted}}
 .mz-row3 dd{margin:8px 0 0;font:400 24px ${SERIF};color:${C.ink};white-space:nowrap;font-variant-numeric:lining-nums;letter-spacing:-.01em}
 .mz-row3 small{display:block;margin-top:4px;font:italic 400 12px ${SERIF};color:${C.muted}}
-.mz-chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-top:32px}
+.mz-chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-top:24px}
 .mz-chart-head .mz-kicker{margin-bottom:12px}
 .mz-legend{display:flex;align-items:center;gap:7px;font:600 10px ${SANS};letter-spacing:.12em;text-transform:uppercase;color:${C.muted};margin:0}
 .mz-legend i{display:inline-block;width:12px;height:8px;background:${C.navy}}
