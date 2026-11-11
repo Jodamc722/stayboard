@@ -31,17 +31,26 @@ import {
 type Any = any
 
 // ── Themes ────────────────────────────────────────────────────────────────────────────────────────
-export type MagTheme = { label: string; ink: string; body: string; muted: string; navy: string; sand: string; sandSoft: string; warm: string; rule: string; glow: string; desk: string; display?: string; displayUrl?: string }
+export type MagTheme = { label: string; ink: string; body: string; muted: string; navy: string; sand: string; sandSoft: string; warm: string; rule: string; glow: string; desk: string; display?: string; displayUrl?: string
+  /** Atelier-style themes: the label face, the display size factor, the page paper and the cover layout. */
+  sans?: string; ds?: number; paper?: string; cover?: 'inset' | 'full' }
 export const MAG_THEMES: Record<string, MagTheme> = {
+  // ATELIER, the default (Jon, 2026-11-11: "crisp… clean design… world class professional magazine").
+  // Quiet luxury: warm paper, Cormorant Garamond display at generous sizes, Jost labels tracked wide,
+  // warm charcoal instead of navy, a photograph inset on the cover with the title set beneath it.
+  atelier: { label: 'Atelier', ink: '#1C1A17', body: '#3B3731', muted: '#7A7164', navy: '#262320', sand: '#9C8058', sandSoft: '#ECE4D6', warm: '#EFE9DE', rule: '#D9D0C1', glow: '#D8C29C', desk: '#E2DCD1', display: 'Cormorant Garamond', sans: 'Jost', ds: 1.14, paper: '#F6F2EA', cover: 'inset' },
   classic: { label: 'Classic navy', ink: '#0F1640', body: '#3A4055', muted: '#7D8296', navy: '#111A4A', sand: '#A88B5A', sandSoft: '#F2ECE1', warm: '#F9F6F0', rule: '#E2DDD2', glow: '#E8D6B0', desk: '#E6E2DA' },
   coastal: { label: 'Coastal', ink: '#0D2B33', body: '#33474C', muted: '#788B90', navy: '#0E4A57', sand: '#C07A50', sandSoft: '#F6E8DD', warm: '#F3F7F6', rule: '#D9E4E3', glow: '#F2C9A8', desk: '#DFE8E7' },
   noir: { label: 'Noir and gold', ink: '#111111', body: '#3A3A3A', muted: '#86837E', navy: '#141414', sand: '#A3854B', sandSoft: '#F1EBDF', warm: '#F7F5F0', rule: '#E2DED6', glow: '#DCC28A', desk: '#E4E1DB' },
   ivory: { label: 'Ivory and olive', ink: '#1F241C', body: '#43493E', muted: '#868A7D', navy: '#2F3A28', sand: '#9A7B4F', sandSoft: '#EFE9DC', warm: '#F8F5EE', rule: '#E2DDD0', glow: '#E3D3AE', desk: '#E5E1D6' },
 }
-const C = { ink: 'var(--mz-ink)', body: 'var(--mz-body)', muted: 'var(--mz-muted)', navy: 'var(--mz-navy)', sand: 'var(--mz-sand)', sandText: 'var(--mz-sandtext)', sandSoft: 'var(--mz-sandsoft)', warm: 'var(--mz-warm)', rule: 'var(--mz-rule)', grid: 'var(--mz-grid)', glow: 'var(--mz-glow)', desk: 'var(--mz-desk)', paper: '#FFFFFF' }
+const C = { ink: 'var(--mz-ink)', body: 'var(--mz-body)', muted: 'var(--mz-muted)', navy: 'var(--mz-navy)', sand: 'var(--mz-sand)', sandText: 'var(--mz-sandtext)', sandSoft: 'var(--mz-sandsoft)', warm: 'var(--mz-warm)', rule: 'var(--mz-rule)', grid: 'var(--mz-grid)', glow: 'var(--mz-glow)', desk: 'var(--mz-desk)', paper: 'var(--mz-paper)' }
 const SERIF_DEFAULT = '"Newsreader", "Iowan Old Style", "Baskerville", Georgia, serif'
 const SERIF = 'var(--mz-display)'
-const SANS = '"Inter", system-ui, -apple-system, "Segoe UI", sans-serif'
+/** Reading text stays Newsreader in every theme: a display face is too fine at 13px in print. */
+const TEXT = SERIF_DEFAULT
+const SANS_DEFAULT = '"Inter", system-ui, -apple-system, "Segoe UI", sans-serif'
+const SANS = 'var(--mz-sans)'
 const MARK = '"Josefin Sans", "Futura", "Avenir Next", system-ui, sans-serif'
 /** Mix two #rrggbb colours: t=0 is a, t=1 is b. */
 const mixHex = (a: string, b: string, t: number) => {
@@ -57,9 +66,10 @@ const themeVars = (t: MagTheme): React.CSSProperties => ({
   ['--mz-ink' as Any]: t.ink, ['--mz-body' as Any]: t.body, ['--mz-muted' as Any]: t.muted, ['--mz-navy' as Any]: t.navy,
   ['--mz-sand' as Any]: t.sand, ['--mz-sandsoft' as Any]: t.sandSoft, ['--mz-warm' as Any]: t.warm, ['--mz-rule' as Any]: t.rule,
   ['--mz-glow' as Any]: t.glow, ['--mz-desk' as Any]: t.desk, ['--mz-display' as Any]: t.display ? `"${t.display}", ${SERIF_DEFAULT}` : SERIF_DEFAULT,
+  ['--mz-sans' as Any]: t.sans ? `"${t.sans}", ${SANS_DEFAULT}` : SANS_DEFAULT, ['--mz-ds' as Any]: String(t.ds || 1), ['--mz-paper' as Any]: t.paper || '#FFFFFF',
 })
-export type ChartKind = 'bars' | 'band' | 'cumulative'
-const CHARTS: [ChartKind, string][] = [['bars', 'Bars'], ['band', 'Range band'], ['cumulative', 'Running total']]
+export type ChartKind = 'line' | 'bars' | 'band' | 'cumulative'
+const CHARTS: [ChartKind, string][] = [['line', 'Fine line'], ['bars', 'Bars'], ['band', 'Range band'], ['cumulative', 'Running total']]
 const PAGES: [string, string][] = [['about', 'Who we are'], ['team', 'The team and terms'], ['manage', 'How we manage'], ['tech', 'Our technology']]
 // PHOTO LOOKS (Jon, 2026-11-11: "filters for the photo like blur, enhance, modify"). Drawn with CSS
 // filters on a layer behind the page's own shading, so the words never blur with the picture. These
@@ -97,12 +107,12 @@ function setPath(obj: Any, path: string, val: Any) {
 }
 
 // ── Charts ────────────────────────────────────────────────────────────────────────────────────────
-const CHART_H = 190, CHART_MIN = 120
+const CHART_H = 210, CHART_MIN = 100
 function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number }) {
   // Information-design audit (2026-11-11): one column per month, not paired bars — solid to the low
   // end, lighter from low to high, so it reads "at least X, up to Y". Four gridlines, axis labels
   // sitting on them at the left (FT style), and values only where the eye needs them: peak and trough.
-  const W = 688, H = h, T = 22, B = 24, L = 40
+  const W = 688, H = h, T = 22, B = kind === 'line' ? 44 : 24, L = 40
   const series = kind === 'cumulative'
     ? months.reduce((acc: { lo: number; hi: number }[], m, i) => { const p = acc[i - 1] || { lo: 0, hi: 0 }; acc.push({ lo: p.lo + m.lo, hi: p.hi + m.hi }); return acc }, [])
     : months
@@ -149,6 +159,36 @@ function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number
     )
   }
   const line = (k: 'lo' | 'hi') => series.map((m, i) => (i ? 'L' : 'M') + cx(i) + ' ' + y(m[k])).join(' ')
+  if (kind === 'line') {
+    // THE FINE LINE (Atelier): the high end as one smooth ink line, the low end dotted beneath it, and
+    // two notes in the margin voice: the peak month and the quiet one. No fill, no boxes.
+    const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+    const smooth = (k: 'lo' | 'hi') => {
+      const p = series.map((m, i) => [cx(i), y(m[k])] as [number, number])
+      let d = `M${p[0][0]},${p[0][1]}`
+      for (let i = 0; i < p.length - 1; i++) {
+        const a = p[i - 1] || p[i], b = p[i], c2 = p[i + 1], e = p[i + 2] || c2
+        d += ` C${(b[0] + (c2[0] - a[0]) / 6).toFixed(1)},${(b[1] + (c2[1] - a[1]) / 6).toFixed(1)} ${(c2[0] - (e[0] - b[0]) / 6).toFixed(1)},${(c2[1] - (e[1] - b[1]) / 6).toFixed(1)} ${c2[0]},${c2[1]}`
+      }
+      return d
+    }
+    const note = (i: number, text: string, below?: boolean) => {
+      const anchor = i >= 9 ? 'end' : i <= 2 ? 'start' : 'middle'
+      const dx = anchor === 'end' ? -8 : anchor === 'start' ? 8 : 0
+      return <text x={cx(i) + dx} y={below ? y(series[i].lo) + 20 : y(series[i].hi) - 12} textAnchor={anchor} fontSize={15} fontStyle="italic" style={{ fill: below ? C.muted : C.ink }} fontFamily={SERIF}>{text}</text>
+    }
+    return (
+      <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Monthly gross rental income, low and high end">
+        {ticks.map(v => <g key={v}><line x1={L - 4} x2={W} y1={y(v)} y2={y(v)} style={{ stroke: C.grid, opacity: 0.55 }} strokeWidth={0.75} shapeRendering="crispEdges" /><text x={0} y={y(v) + 4} fontSize={9.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.06em">{'$' + (v >= 1000 ? (v / 1000) + 'K' : v)}</text></g>)}
+        <path d={smooth('lo')} style={{ fill: 'none', stroke: C.muted }} strokeWidth={1} strokeDasharray="2 3" />
+        <path d={smooth('hi')} style={{ fill: 'none', stroke: C.ink }} strokeWidth={1.3} />
+        {series.map((m, i) => <circle key={i} cx={cx(i)} cy={y(m.hi)} r={i === pk || i === tr ? 3.6 : 1.7} style={{ fill: C.ink }} />)}
+        {note(pk, `${MONTH[pk]}, up to ${k$(series[pk].hi)}`)}
+        {tr !== pk ? note(tr, `${MONTH[tr]}, the quiet month`, true) : null}
+        {MONTHS.map((m, i) => <text key={m} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={9.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.2em">{m.toUpperCase()}</text>)}
+      </svg>
+    )
+  }
   const band = series.map((m, i) => (i ? 'L' : 'M') + cx(i) + ' ' + y(m.hi)).join(' ') + ' ' + series.slice().reverse().map((m, j) => 'L' + cx(11 - j) + ' ' + y(m.lo)).join(' ') + ' Z'
   const ends = kind === 'cumulative' ? [11] : [pk, tr]
   return (
@@ -267,9 +307,9 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const mag: Any = c.magazine || {}
   const copy: Any = mag.copy || {}
   const custom: MagTheme | null = mag.custom && mag.custom.navy ? mag.custom : null
-  const styleKey = mag.style === 'custom' && custom ? 'custom' : MAG_THEMES[mag.style] ? mag.style : 'classic'
-  const theme: MagTheme = styleKey === 'custom' && custom ? custom : MAG_THEMES[styleKey]
-  const chart: ChartKind = (['bars', 'band', 'cumulative'] as ChartKind[]).includes(mag.chart) ? mag.chart : 'bars'
+  const styleKey = mag.style === 'custom' && custom ? 'custom' : MAG_THEMES[mag.style] ? mag.style : 'atelier'
+  const theme: MagTheme = styleKey === 'custom' && custom ? { ...MAG_THEMES.atelier, ...custom } : MAG_THEMES[styleKey]
+  const chart: ChartKind = (['line', 'bars', 'band', 'cumulative'] as ChartKind[]).includes(mag.chart) ? mag.chart : 'line'
   // NO UNIT PRICES (Jon, 2026-11-11: "noticed cost of units, remove that, don't need that"). The
   // starting price, and the gross yield worked from it, no longer print anywhere in the package.
   const showYield = false
@@ -428,7 +468,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   )
   const opener = (key: string, _num: string, kick: string, titleKey: 'workTitle' | 'numbersTitle', slot: string) => (
     <section key={key} className="mz-page">
-      <div className="mz-opener mz-ph" style={ph(slot, 'linear-gradient(180deg, rgba(6,10,30,.30) 0%, rgba(6,10,30,0) 28%, rgba(6,10,30,.08) 52%, rgba(6,10,30,.84) 100%)')}>
+      <div className="mz-opener mz-ph" style={ph(slot, 'linear-gradient(180deg, rgba(22,19,16,.30) 0%, rgba(22,19,16,0) 28%, rgba(22,19,16,.08) 52%, rgba(22,19,16,.84) 100%)')}>
         <p className="mz-caption mz-caption-top">A Stay-managed home</p>
         <div>
           {kicker(kick, true)}
@@ -459,8 +499,31 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
 
   const render = (s: Spec): React.ReactNode => {
     switch (true) {
+      case s.key === 'cover' && theme.cover === 'inset': return (
+        // THE INSET COVER (Atelier): the photograph framed on paper, the name set beneath it.
+        <section key="cover" className="mz-page mz-icover">
+          <div className="mz-icover-mast">
+            <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />
+            <span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span>
+          </div>
+          <div className="mz-icover-photo mz-ph" style={ph('cover', '', 'center 45%')} />
+          <div className="mz-icover-main">
+            {brandLogo ? <img src={brandLogo} alt="" className="mz-icover-brand" /> : null}
+            <p className="mz-icover-kick">{cma ? <E v={area} p="cma.area" ph="Area" /> : area || 'South Florida'}{' · Miami'}</p>
+            <h1 className="mz-icover-title">
+              {canEdit && editText ? <E v={building} p={buildingPath} ph="Building" /> : <>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</>}
+            </h1>
+            <i className="mz-icover-rule" />
+            <p className="mz-icover-dek"><CT k="coverDek" /></p>
+          </div>
+          <div className="mz-icover-foot">
+            <span>{prospect || (canEdit && editText) || (cma && AUDIENCES[audienceOf(c.audience)].forDefault) ? <>Prepared for {prospect || (canEdit && editText) ? <E v={prospect} p="meta.prospect" ph="Who it is for" /> : AUDIENCES[audienceOf(c.audience)].forDefault}</> : 'Stay Hospitality'}</span>
+            <span>{monthYear}</span>
+          </div>
+        </section>
+      )
       case s.key === 'cover': return (
-        <section key="cover" className="mz-page mz-cover mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(6,10,30,.66) 0%, rgba(6,10,30,.10) 26%, rgba(6,10,30,.04) 50%, rgba(6,10,30,.86) 100%)', 'center 40%')}>
+        <section key="cover" className="mz-page mz-cover mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(22,19,16,.66) 0%, rgba(22,19,16,.10) 26%, rgba(22,19,16,.04) 50%, rgba(22,19,16,.86) 100%)', 'center 40%')}>
           <div className="mz-mast">
             <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
             <div className="mz-mast-r"><span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span><span>{monthYear}</span></div>
@@ -498,7 +561,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       ), { section: 'Contents' })
       case s.key === 'about': return (
         <section key="about" className="mz-page">
-          <div className="mz-about-photo mz-ph" style={ph('about', 'linear-gradient(180deg, rgba(6,10,30,.05) 30%, rgba(6,10,30,.78) 100%)')}>
+          <div className="mz-about-photo mz-ph" style={ph('about', 'linear-gradient(180deg, rgba(22,19,16,.05) 30%, rgba(22,19,16,.78) 100%)')}>
             <header className="mz-run mz-run-dark"><span className="mz-run-mark">STAY</span><span>Who we are</span><span>{short(building)}</span></header>
             <div className="mz-about-head">
               {kicker('Stay Hospitality', true)}
@@ -692,10 +755,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             {canEdit ? <button type="button" className="mz-adjust" onClick={() => { setTuneId(p.id); setDrawer('proj') }}>Adjust projection</button> : null}
             {kicker((short(building) ? short(building) + ' · ' : '') + 'Rental projection')}
             <h2 className="mz-h mz-plan-name"><E v={p.name} p={`cma.plans.${pi}.name`} /></h2>
-            <dl className="mz-facts">
-              <div><dt>Interior</dt><dd><E v={p.sf} p={`cma.plans.${pi}.sf`} /></dd></div>
-              <div><dt>Rental rules</dt><dd><E v={p.rules} p={`cma.plans.${pi}.rules`} /></dd></div>
-            </dl>
+            <p className="mz-plan-sub"><E v={p.sf} p={`cma.plans.${pi}.sf`} ph="Size" /><span> · </span><E v={p.rules} p={`cma.plans.${pi}.rules`} ph="Rental rules" /></p>
             <div className="mz-hero">
               <span>Could earn in a year, once established</span>
               <b>{money(n.lo)}<i>–</i>{money(n.hi)}</b>
@@ -704,7 +764,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             <dl className="mz-row3">{row3.map(([l, v, sm], i) => <div key={i}><dt>{l}</dt><dd>{v}</dd><small>{sm}</small></div>)}</dl>
             <div className="mz-chart-head">
               {kicker(chart === 'cumulative' ? 'The year, as it adds up' : 'Through the year')}
-              <p className="mz-legend"><i className="lo" /> Low end <i className="hi" /> High end</p>
+              {chart === 'line' ? <p className="mz-legend mz-legend-line"><i className="hi" /> High end <i className="lo" /> Low end</p> : <p className="mz-legend"><i className="lo" /> Low end <i className="hi" /> High end</p>}
             </div>
             <Chart months={n.months} kind={chart} h={chartH['plan-' + p.id]} />
             <p className="mz-source">Seasonal shape from Miami market pricing data.</p>
@@ -719,7 +779,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         ), { section: 'Rental projection' })
       }
       case s.key === 'back': return (
-        <section key="back" className="mz-page mz-backcover mz-ph" style={ph('back', 'linear-gradient(180deg, rgba(6,10,30,.55) 0%, rgba(6,10,30,.80) 45%, rgba(6,10,30,.95) 100%)')}>
+        <section key="back" className="mz-page mz-backcover mz-ph" style={ph('back', 'linear-gradient(180deg, rgba(22,19,16,.55) 0%, rgba(22,19,16,.80) 45%, rgba(22,19,16,.95) 100%)')}>
           <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
           <div className="mz-back-main">
             {kicker('Next step', true)}
@@ -954,7 +1014,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
 
   return (
     <div className={'mz-root' + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Josefin+Sans:wght@300;400&family=Inter:wght@400;500;600;700&display=swap" />
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Jost:wght@300;400;500;600&family=Josefin+Sans:wght@300;400&family=Inter:wght@400;500;600;700&display=swap" />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <nav className="mz-bar-top">
@@ -977,7 +1037,8 @@ const CSS = `
 /* THE TYPE SYSTEM (editorial audit, 2026-11-11). One serif with optical sizes for display, figures and
    reading text; Inter only for labels, tables and chart axes; nothing below 10px. Spacing on one scale:
    8, 12, 20, 32, 48, 72. Margins 72px; a 672px live area. */
-.mz-root{background:${C.desk};min-height:100vh;padding:80px 16px 64px;font-family:${SERIF};color:${C.body};-webkit-print-color-adjust:exact;print-color-adjust:exact;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;font-optical-sizing:auto}
+.mz-root{background:${C.desk};min-height:100vh;padding:80px 16px 64px;font-family:${SERIF};color:${C.body};-webkit-print-color-adjust:exact;print-color-adjust:exact;text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased;font-optical-sizing:auto;font-variant-numeric:lining-nums;font-feature-settings:'lnum' 1}
+.mz-root svg text{font-variant-numeric:lining-nums;font-feature-settings:'lnum' 1}
 .mz-root *{box-sizing:border-box}
 .mz-with-drawer{padding-right:min(500px,100vw)}
 .mz-bar-top{position:fixed;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px max(16px,env(safe-area-inset-left));background:${C.navy};color:#fff;font-family:${SANS}}
@@ -1000,7 +1061,7 @@ const CSS = `
 .mz-run-mark.mz-on-dark,.mz-run-dark .mz-run-mark{color:#fff}
 .mz-run-dark{color:rgba(255,255,255,.82);border-color:rgba(255,255,255,.3)}
 .mz-foot{display:flex;justify-content:space-between;align-items:baseline;margin:auto 72px 44px;padding-top:12px;border-top:1px solid ${C.grid};font:500 10px ${SANS};letter-spacing:.18em;text-transform:uppercase;color:${C.muted}}
-.mz-folio{font:400 15px ${SERIF};letter-spacing:.04em;color:${C.ink}}
+.mz-folio{font:400 15px ${TEXT};letter-spacing:.04em;color:${C.ink}}
 
 /* type */
 .mz-kicker{font:600 10px ${SANS};letter-spacing:.22em;text-transform:uppercase;color:${C.sandText};margin:0 0 16px;display:flex;align-items:center;gap:12px}
@@ -1008,17 +1069,17 @@ const CSS = `
 .mz-kicker.mz-on-dark{color:${C.glow}}
 .mz-h{font-family:${SERIF};font-weight:300;color:${C.ink};margin:0;text-wrap:balance}
 .mz-h em,.mz-cover-title em,.mz-back-title em,.mz-opener-title em{font-style:italic;font-weight:300}
-.mz-display{font-size:60px;line-height:1;letter-spacing:-.02em}
-.mz-h1{font-size:48px;line-height:1.04;letter-spacing:-.015em}
+.mz-display{font-size:calc(60px * var(--mz-ds));line-height:1;letter-spacing:-.02em}
+.mz-h1{font-size:calc(48px * var(--mz-ds));line-height:1.04;letter-spacing:-.015em}
 .mz-on-dark{color:#fff}
-.mz-lead{font:300 20px/1.45 ${SERIF};color:${C.body};margin:20px 0 0;max-width:30em}
+.mz-lead{font:300 calc(20px * var(--mz-ds))/1.45 ${SERIF};color:${C.body};margin:20px 0 0;max-width:30em}
 .mz-lead-s{font-size:19px}
 .mz-lead-xs{font-size:16.5px;line-height:1.5;max-width:36em}
-.mz-small{font:italic 400 12px/17px ${SERIF};color:${C.muted}}
-.mz-caption{position:absolute;left:24px;bottom:20px;margin:0;font:italic 400 12px ${SERIF};color:rgba(255,255,255,.9);text-shadow:0 1px 8px rgba(0,0,0,.45)}
+.mz-small{font:italic 400 12px/17px ${TEXT};color:${C.muted}}
+.mz-caption{position:absolute;left:24px;bottom:20px;margin:0;font:italic 400 12px ${TEXT};color:rgba(255,255,255,.9);text-shadow:0 1px 8px rgba(0,0,0,.45)}
 .mz-caption-top{position:static;align-self:flex-end}
 .mz-body>svg,.mz-body svg[role=img]{flex:none}
-.mz-source{font:italic 400 11.5px/1.5 ${SERIF};color:${C.muted};margin:8px 0 0}
+.mz-source{font:italic 400 11.5px/1.5 ${TEXT};color:${C.muted};margin:8px 0 0}
 
 /* cover */
 .mz-cover{background-size:cover;background-position:center 40%;color:#fff;padding:52px 72px 60px;justify-content:space-between}
@@ -1026,9 +1087,23 @@ const CSS = `
 .mz-logo{width:150px;filter:brightness(0) invert(1)}
 .mz-mast-r{display:flex;flex-direction:column;align-items:flex-end;gap:6px;font:500 10px ${SANS};letter-spacing:.24em;text-transform:uppercase;color:rgba(255,255,255,.92)}
 .mz-brandlogo{max-width:180px;max-height:56px;object-fit:contain;filter:brightness(0) invert(1);margin-bottom:24px;display:block}
-.mz-cover-title{font-family:${SERIF};font-weight:300;font-size:120px;line-height:.9;letter-spacing:-.03em;margin:4px 0 0;text-wrap:balance}
+.mz-cover-title{font-family:${SERIF};font-weight:300;font-size:calc(120px * var(--mz-ds));line-height:.9;letter-spacing:-.03em;margin:4px 0 0;text-wrap:balance}
 .mz-cover-title em{display:block}
-.mz-cover-dek{font:300 22px/1.4 ${SERIF};max-width:22em;color:rgba(255,255,255,.94);margin:24px 0 0}
+/* inset cover (Atelier) */
+.mz-icover{background:${C.paper};padding:56px 88px 52px;color:${C.ink}}
+.mz-icover-mast{display:flex;justify-content:space-between;align-items:center}
+.mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
+.mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
+.mz-icover-photo{margin-top:36px;height:488px;flex:none}
+.mz-icover-main{text-align:center;margin-top:40px}
+.mz-icover-brand{max-width:150px;max-height:44px;object-fit:contain;filter:brightness(0);opacity:.85;display:block;margin:0 auto 18px}
+.mz-icover-kick{font:400 10px ${SANS};letter-spacing:.36em;text-transform:uppercase;color:${C.muted};margin:0 0 16px}
+.mz-icover-title{font:300 calc(80px * var(--mz-ds))/.92 ${SERIF};letter-spacing:-.01em;margin:0;color:${C.ink};text-wrap:balance}
+.mz-icover-title em{display:block;font-style:italic;font-weight:300}
+.mz-icover-rule{display:block;width:40px;height:1px;background:${C.ink};margin:26px auto 22px}
+.mz-icover-dek{font:italic 300 calc(19px * var(--mz-ds))/1.4 ${SERIF};color:${C.body};margin:0 auto;max-width:26em}
+.mz-icover-foot{margin-top:auto;display:flex;justify-content:space-between;font:400 9.5px ${SANS};letter-spacing:.3em;text-transform:uppercase;color:${C.muted}}
+.mz-cover-dek{font:300 calc(22px * var(--mz-ds))/1.4 ${SERIF};max-width:22em;color:rgba(255,255,255,.94);margin:24px 0 0}
 .mz-cover-for{font:500 10px ${SANS};letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.82);margin:32px 0 0;padding-top:16px;border-top:1px solid rgba(255,255,255,.45)}
 
 /* contents */
@@ -1037,14 +1112,14 @@ const CSS = `
 .mz-contents-r{display:flex;flex-direction:column;padding-bottom:32px}
 .mz-toc{list-style:none;padding:0;margin:32px 0 0;border-top:1px solid ${C.ink}}
 .mz-toc li{display:flex;gap:20px;align-items:baseline;padding:24px 0;border-bottom:1px solid ${C.grid}}
-.mz-toc-n{font:300 48px/1 ${SERIF};color:${C.sand};min-width:62px;letter-spacing:-.02em}
-.mz-toc b{display:block;font:400 24px ${SERIF};color:${C.ink}}
-.mz-toc li div span{display:block;font:400 14px/1.45 ${SERIF};color:${C.muted};margin-top:6px}
+.mz-toc-n{font:300 calc(48px * var(--mz-ds))/1 ${SERIF};color:${C.sand};min-width:62px;letter-spacing:-.02em}
+.mz-toc b{display:block;font:400 calc(24px * var(--mz-ds)) ${SERIF};color:${C.ink}}
+.mz-toc li div span{display:block;font:400 14px/1.45 ${TEXT};color:${C.muted};margin-top:6px}
 .mz-note{margin-top:48px}
-.mz-note-text{font:italic 300 16px/1.6 ${SERIF};color:${C.body}}
+.mz-note-text{font:italic 300 16px/1.6 ${TEXT};color:${C.body}}
 .mz-sign{display:flex;gap:14px;align-items:center;margin-top:20px}
 .mz-sign img{width:56px;height:56px;border-radius:999px;object-fit:cover;object-position:50% 22%;filter:grayscale(1) contrast(1.06)}
-.mz-sign b{display:block;font:400 18px ${SERIF};color:${C.ink}}
+.mz-sign b{display:block;font:400 calc(18px * var(--mz-ds)) ${SERIF};color:${C.ink}}
 .mz-sign span{display:block;font:600 10px ${SANS};letter-spacing:.18em;text-transform:uppercase;color:${C.muted};margin-top:4px}
 
 /* who we are */
@@ -1056,7 +1131,7 @@ const CSS = `
 .mz-about-note{margin:0}
 .mz-stats{display:grid;margin-top:32px;border-top:1px solid ${C.ink}}
 .mz-stats>div{padding:20px 20px 0;border-left:1px solid ${C.grid}}.mz-stats>div:first-child{border-left:0;padding-left:0}
-.mz-stats b{display:block;font:300 48px/1 ${SERIF};color:${C.ink};letter-spacing:-.02em;font-variant-numeric:lining-nums}
+.mz-stats b{display:block;font:300 calc(48px * var(--mz-ds))/1 ${SERIF};color:${C.ink};letter-spacing:-.02em;font-variant-numeric:lining-nums}
 .mz-stats b.long{font-size:22px;line-height:1.2;letter-spacing:0}
 .mz-stats span{display:block;margin-top:12px;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.muted}}
 
@@ -1067,14 +1142,14 @@ const CSS = `
 /* One treatment for every portrait: the same circle, the same crop on the face, the same tone, so
    headshots shot against a restaurant, a grey wall and a white wall read as one matched set. */
 .mz-team img,.mz-team .mz-initials{width:144px;height:144px;border-radius:999px;object-fit:cover;object-position:50% 22%;display:block;filter:grayscale(1) contrast(1.06) brightness(1.03);box-shadow:0 0 0 1px ${C.grid},0 0 0 7px ${C.warm},0 0 0 8px ${C.grid}}
-.mz-initials{display:grid;place-items:center;background:${C.navy};color:${C.glow};font:300 40px ${SERIF}}
+.mz-initials{display:grid;place-items:center;background:${C.navy};color:${C.glow};font:300 calc(40px * var(--mz-ds)) ${SERIF}}
 .mz-team figcaption{margin-top:20px}
-.mz-team b{display:block;font:400 20px ${SERIF};color:${C.ink}}
+.mz-team b{display:block;font:400 calc(20px * var(--mz-ds)) ${SERIF};color:${C.ink}}
 .mz-team figcaption span{display:block;margin-top:6px;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.sandText}}
 .mz-terms-wrap{margin-top:56px}
 .mz-terms{margin:0;display:grid;grid-template-columns:1fr 1fr;gap:0 40px;border-top:1px solid ${C.ink}}
 .mz-terms>div{padding:16px 0;border-bottom:1px solid ${C.grid}}
-.mz-terms dt{font:400 20px/1.25 ${SERIF};color:${C.ink}}.mz-terms dd{margin:6px 0 0;font:400 14px/1.5 ${SERIF}}
+.mz-terms dt{font:400 calc(20px * var(--mz-ds))/1.25 ${SERIF};color:${C.ink}}.mz-terms dd{margin:6px 0 0;font:400 14px/1.5 ${TEXT}}
 
 /* how we manage */
 .mz-split-page{display:grid;grid-template-columns:304px 1fr;flex-direction:row}
@@ -1084,57 +1159,57 @@ const CSS = `
 .mz-split-body{padding:40px 64px 0 48px;display:flex;flex-direction:column}
 .mz-practice{list-style:none;padding:0;margin:32px 0 0;border-top:1px solid ${C.ink}}
 .mz-practice li{display:grid;grid-template-columns:44px 1fr;gap:4px;padding:18px 0;border-bottom:1px solid ${C.grid}}
-.mz-practice li>span{font:300 22px ${SERIF};color:${C.sand}}
-.mz-practice b{display:block;font:400 20px/1.25 ${SERIF};color:${C.ink}}
-.mz-practice p{font:400 14px/1.5 ${SERIF};margin:6px 0 0}
+.mz-practice li>span{font:300 calc(22px * var(--mz-ds)) ${SERIF};color:${C.sand}}
+.mz-practice b{display:block;font:400 calc(20px * var(--mz-ds))/1.25 ${SERIF};color:${C.ink}}
+.mz-practice p{font:400 14px/1.5 ${TEXT};margin:6px 0 0}
 .mz-foot-tight{margin:auto 64px 44px 48px}
 
 /* technology */
 .mz-tools{margin-top:32px;border-top:1px solid ${C.ink}}
-.mz-tool{display:grid;grid-template-columns:200px 1fr;gap:32px;padding:18px 0;border-bottom:1px solid ${C.grid};align-items:baseline}
-.mz-tool-l b{display:block;font:400 26px ${SERIF};color:${C.ink};letter-spacing:-.01em}
+.mz-tool{display:grid;grid-template-columns:200px 1fr;gap:32px;padding:13px 0;border-bottom:1px solid ${C.grid};align-items:baseline}
+.mz-tool-l b{display:block;font:400 calc(26px * var(--mz-ds)) ${SERIF};color:${C.ink};letter-spacing:-.01em}
 .mz-tool-l span{display:block;margin-top:6px;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.sandText}}
-.mz-tool p{font:400 14.5px/1.5 ${SERIF};margin:0}
+.mz-tool p{font:400 14.5px/1.5 ${TEXT};margin:0}
 .mz-channels{margin-top:32px}
-.mz-channels>p:not(.mz-kicker){font:300 22px/1.5 ${SERIF};color:${C.ink};margin:0}
+.mz-channels>p:not(.mz-kicker){font:300 calc(22px * var(--mz-ds))/1.5 ${SERIF};color:${C.ink};margin:0}
 .mz-channels i{font-style:normal;color:${C.sand};margin:0 10px}
 .mz-plus{color:${C.muted}}
 
 /* openers */
 .mz-opener{flex:1;background-size:cover;background-position:center;color:#fff;padding:52px 72px 72px;display:flex;flex-direction:column;justify-content:space-between}
-.mz-opener-title{font-family:${SERIF};font-weight:300;font-size:64px;line-height:1;letter-spacing:-.02em;margin:0;max-width:10em;text-wrap:balance}
+.mz-opener-title{font-family:${SERIF};font-weight:300;font-size:calc(64px * var(--mz-ds));line-height:1;letter-spacing:-.02em;margin:0;max-width:10em;text-wrap:balance}
 
 /* partner */
 .mz-partner{display:grid;grid-template-columns:1fr 232px;gap:40px}
 .mz-cards{margin-top:32px;border-top:1px solid ${C.ink}}
-.mz-cards>div{padding:16px 0;border-bottom:1px solid ${C.grid}}
-.mz-cards b{font:400 20px/1.25 ${SERIF};color:${C.ink}}.mz-cards p{font:400 14px/1.5 ${SERIF};margin:6px 0 0}
+.mz-cards>div{padding:12px 0;border-bottom:1px solid ${C.grid}}
+.mz-cards b{font:400 calc(20px * var(--mz-ds))/1.25 ${SERIF};color:${C.ink}}.mz-cards p{font:400 14px/1.5 ${TEXT};margin:6px 0 0}
 .mz-fees{background:${C.navy};color:#fff;padding:32px 28px;display:flex;flex-direction:column;align-self:start;margin-top:20px}
 .mz-fees .mz-kicker{margin:0 0 8px}
 .mz-fee{padding:16px 0;border-bottom:1px solid rgba(255,255,255,.2)}
-.mz-fee b{display:block;font:300 44px/1 ${SERIF};letter-spacing:-.02em}
+.mz-fee b{display:block;font:300 calc(44px * var(--mz-ds))/1 ${SERIF};letter-spacing:-.02em}
 .mz-fee>span{display:block;margin-top:8px;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.78)}
-.mz-fees>p:not(.mz-kicker){font:italic 400 13px/1.5 ${SERIF};color:rgba(255,255,255,.85);margin:20px 0 0}
+.mz-fees>p:not(.mz-kicker){font:italic 400 13px/1.5 ${TEXT};color:rgba(255,255,255,.85);margin:20px 0 0}
 .mz-steps{list-style:none;padding:0;margin:0;display:grid;gap:24px;align-items:start}
 .mz-steps-4{grid-template-columns:repeat(4,1fr)}.mz-steps-3{grid-template-columns:repeat(3,1fr)}
 .mz-steps li{border-top:1px solid ${C.ink};padding-top:12px}
-.mz-steps li>span{font:300 30px ${SERIF};color:${C.sand}}
-.mz-steps b{display:block;font:400 18px/1.25 ${SERIF};color:${C.ink};margin-top:8px}
-.mz-steps-4 b{min-height:46px}
+.mz-steps li>span{font:300 calc(24px * var(--mz-ds))/1 ${SERIF};color:${C.sand}}
+.mz-steps b{display:block;font:400 calc(17px * var(--mz-ds))/1.2 ${SERIF};color:${C.ink};margin-top:6px}
+.mz-steps-4 b{min-height:0}
 .mz-qa>div:last-child:nth-child(odd){grid-column:1/-1}
-.mz-steps p{font:400 13.5px/1.45 ${SERIF};margin:6px 0 0}
-.mz-partner+.mz-kicker{margin-top:48px}.mz-qa+.mz-kicker{margin-top:24px}
+.mz-steps p{font:400 13px/1.42 ${TEXT};margin:5px 0 0}
+.mz-partner+.mz-kicker{margin-top:30px}.mz-qa+.mz-kicker{margin-top:20px}
 
 /* second option */
-.mz-qa{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:24px;border-top:1px solid ${C.ink}}
-.mz-qa>div{padding:10px 0;border-bottom:1px solid ${C.grid}}
-.mz-q{font:italic 400 17px ${SERIF};color:${C.ink};margin:0}
-.mz-a{font:400 13px/1.42 ${SERIF};margin:4px 0 0}
+.mz-qa{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:18px;border-top:1px solid ${C.ink}}
+.mz-qa>div{padding:8px 0;border-bottom:1px solid ${C.grid}}
+.mz-q{font:italic 400 calc(17px * var(--mz-ds)) ${SERIF};color:${C.ink};margin:0}
+.mz-a{font:400 13px/1.42 ${TEXT};margin:4px 0 0}
 
 /* market */
 .mz-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 40px;margin-top:24px;border-top:1px solid ${C.ink}}
 .mz-col-item{padding:11px 0;border-bottom:1px solid ${C.grid}}
-.mz-col-item b{font:400 18px ${SERIF};color:${C.ink}}.mz-col-item p{font:400 13px/1.42 ${SERIF};margin:4px 0 0}
+.mz-col-item b{font:400 calc(18px * var(--mz-ds)) ${SERIF};color:${C.ink}}.mz-col-item p{font:400 13px/1.42 ${TEXT};margin:4px 0 0}
 .mz-comps{margin-top:22px}
 .mz-table{width:100%;border-collapse:collapse;font:400 11px ${SANS};color:${C.body}}
 .mz-table th{font:600 10px ${SANS};letter-spacing:.12em;text-transform:uppercase;color:${C.muted};text-align:left;padding:0 14px 8px 12px;border-bottom:1.25px solid ${C.ink};vertical-align:bottom}
@@ -1164,58 +1239,61 @@ const CSS = `
 .mz-gl:not(.with-yield) .mz-gl-gridlayer{right:176px}
 .mz-gl-gridlayer s{position:absolute;top:0;bottom:0;width:1px;background:${C.grid}}
 .mz-gl-row{position:relative;padding:10px 0;border-bottom:1px solid ${C.grid}}
-.mz-gl-name b{display:block;font:400 18px ${SERIF};color:${C.ink};white-space:nowrap}
-.mz-gl-name span{display:block;font:400 11.5px/1.35 ${SERIF};color:${C.muted};white-space:nowrap}
+.mz-gl-name b{display:block;font:400 calc(18px * var(--mz-ds)) ${SERIF};color:${C.ink};white-space:nowrap}
+.mz-gl-name span{display:block;font:400 11.5px/1.35 ${TEXT};color:${C.muted};white-space:nowrap}
 .mz-gl-track{position:relative;height:24px}
 .mz-gl-track i{position:absolute;top:10.5px;height:3px;background:${C.navy}}
 .mz-gl-track em{position:absolute;top:7px;width:10px;height:10px;margin-left:-5px;border-radius:999px;background:${C.navy}}
 .mz-gl-v{text-align:right}
-.mz-gl-v b{display:block;font:400 16px ${SERIF};color:${C.ink};font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
-.mz-gl-v span{display:block;font:400 12px ${SERIF};color:${C.muted};margin-top:2px;white-space:nowrap}
-.mz-gl-y{text-align:right;font:400 14px ${SERIF};color:${C.ink};font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.mz-gl-v b{display:block;font:400 16px ${TEXT};color:${C.ink};font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
+.mz-gl-v span{display:block;font:400 12px ${TEXT};color:${C.muted};margin-top:2px;white-space:nowrap}
+.mz-gl-y{text-align:right;font:400 14px ${TEXT};color:${C.ink};font-variant-numeric:tabular-nums lining-nums;white-space:nowrap}
 .mz-read{margin-top:24px}
-.mz-read p{font:italic 400 13px/1.55 ${SERIF};color:${C.muted};margin:0;max-width:46em}
+.mz-read p{font:italic 400 13px/1.55 ${TEXT};color:${C.muted};margin:0;max-width:46em}
 
 /* floor plan */
-.mz-plan-name{font-size:40px;line-height:1.05;letter-spacing:-.01em}
+.mz-plan-name{font-size:calc(40px * var(--mz-ds));line-height:1.05;letter-spacing:-.01em}
+.mz-plan-sub{font:italic 300 calc(18px * var(--mz-ds))/1.4 ${SERIF};color:${C.muted};margin:8px 0 0;padding-bottom:18px;border-bottom:1px solid ${C.grid}}
+.mz-plan-sub .mz-ed{display:inline}
 .mz-facts{margin:20px 0 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));border-top:1px solid ${C.ink};border-bottom:1px solid ${C.grid}}
 .mz-facts>div{padding:12px 16px;border-left:1px solid ${C.grid}}.mz-facts>div:first-child{border-left:0;padding-left:0}
 .mz-facts dt{font:600 10px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted}}
-.mz-facts dd{margin:6px 0 0;font:400 17px ${SERIF};color:${C.ink};font-variant-numeric:lining-nums}
+.mz-facts dd{margin:6px 0 0;font:400 calc(17px * var(--mz-ds)) ${SERIF};color:${C.ink};font-variant-numeric:lining-nums}
 .mz-hero{margin-top:22px}
 .mz-hero span{display:block;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.sandText}}
-.mz-hero b{display:block;font:300 62px/1 ${SERIF};color:${C.ink};letter-spacing:-.025em;margin-top:12px;font-variant-numeric:lining-nums;white-space:nowrap}
+.mz-hero b{display:block;font:300 calc(62px * var(--mz-ds))/1 ${SERIF};color:${C.ink};letter-spacing:-.025em;margin-top:12px;font-variant-numeric:lining-nums;white-space:nowrap}
 .mz-hero b i{font-style:normal;margin:0 .12em;color:${C.muted}}
-.mz-hero small{display:block;margin-top:10px;font:italic 400 13px ${SERIF};color:${C.muted}}
+.mz-hero small{display:block;margin-top:10px;font:italic 400 13px ${TEXT};color:${C.muted}}
 .mz-row3{margin:20px 0 0;display:grid;grid-template-columns:repeat(3,1fr);gap:0 20px}
 .mz-row3>div{border-top:1px solid ${C.ink};padding-top:12px}
 .mz-row3 dt{font:600 10px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted}}
-.mz-row3 dd{margin:8px 0 0;font:400 24px ${SERIF};color:${C.ink};white-space:nowrap;font-variant-numeric:lining-nums;letter-spacing:-.01em}
-.mz-row3 small{display:block;margin-top:4px;font:italic 400 12px ${SERIF};color:${C.muted}}
+.mz-row3 dd{margin:8px 0 0;font:400 calc(24px * var(--mz-ds)) ${SERIF};color:${C.ink};white-space:nowrap;font-variant-numeric:lining-nums;letter-spacing:-.01em}
+.mz-row3 small{display:block;margin-top:4px;font:italic 400 12px ${TEXT};color:${C.muted}}
 .mz-chart-head{display:flex;justify-content:space-between;align-items:baseline;margin-top:24px}
 .mz-chart-head .mz-kicker{margin-bottom:12px}
 .mz-legend{display:flex;align-items:center;gap:7px;font:600 10px ${SANS};letter-spacing:.12em;text-transform:uppercase;color:${C.muted};margin:0}
 .mz-legend i{display:inline-block;width:12px;height:8px;background:${C.navy}}
+.mz-legend-line i{width:18px;height:0;background:none;border-top:1.3px solid ${C.ink}}.mz-legend-line i.lo{border-top:1px dotted ${C.muted}}.mz-legend-line i.hi{opacity:1}
 .mz-legend i.lo{opacity:1}.mz-legend i.hi{opacity:.3;margin-left:10px}
 .mz-plan-comps,.mz-comps{margin-top:28px}
-.mz-how{font:italic 400 12.5px/1.5 ${SERIF};color:${C.muted};margin:12px 0 0}
-.mz-how>b{font:italic 500 13px ${SERIF};color:${C.ink}}
+.mz-how{font:italic 400 12.5px/1.5 ${TEXT};color:${C.muted};margin:12px 0 0}
+.mz-how>b{font:italic 500 13px ${TEXT};color:${C.ink}}
 .mz-how div.mz-ed{display:inline}
 
 /* back cover */
 .mz-backcover{background-size:cover;background-position:center;color:#fff;padding:56px 72px 0;justify-content:space-between}
 .mz-back-main{display:flex;flex-direction:column;margin-top:auto;padding-bottom:48px}
-.mz-back-title{font-family:${SERIF};font-weight:300;font-size:72px;line-height:1;letter-spacing:-.025em;margin:0;max-width:9em;text-wrap:balance}
+.mz-back-title{font-family:${SERIF};font-weight:300;font-size:calc(72px * var(--mz-ds));line-height:1;letter-spacing:-.025em;margin:0;max-width:9em;text-wrap:balance}
 .mz-back-title em{color:${C.glow}}
-.mz-back-dek{font:300 20px/1.5 ${SERIF};color:rgba(255,255,255,.92);max-width:26em;margin:24px 0 0}
+.mz-back-dek{font:300 calc(20px * var(--mz-ds))/1.5 ${SERIF};color:rgba(255,255,255,.92);max-width:26em;margin:24px 0 0}
 .mz-contact{display:flex;gap:24px;align-items:center;margin-top:40px;padding-top:28px;border-top:1px solid rgba(255,255,255,.4)}
 .mz-contact img,.mz-initials-l{width:112px;height:112px;border-radius:999px;object-fit:cover;object-position:50% 22%;flex:none;box-shadow:0 0 0 1px rgba(255,255,255,.4),0 0 0 7px rgba(255,255,255,.08)}
-.mz-initials-l{display:grid;font-size:30px}
-.mz-contact b{display:block;font:400 28px ${SERIF}}
-.mz-contact div>span{display:block;font:400 15px ${SERIF};color:rgba(255,255,255,.92);margin-top:4px}
+.mz-initials-l{display:grid;font-size:calc(30px * var(--mz-ds))}
+.mz-contact b{display:block;font:400 calc(28px * var(--mz-ds)) ${SERIF}}
+.mz-contact div>span{display:block;font:400 15px ${TEXT};color:rgba(255,255,255,.92);margin-top:4px}
 .mz-contact .mz-contact-role{font:600 10px ${SANS};letter-spacing:.18em;text-transform:uppercase;color:${C.glow};margin:6px 0 10px}
 .mz-sel{user-select:all}
-.mz-fine{margin:0 -72px;padding:20px 72px 36px;background:rgba(6,10,30,.88);font:400 10.5px/1.55 ${SANS};color:rgba(255,255,255,.82)}
+.mz-fine{margin:0 -72px;padding:20px 72px 36px;background:rgba(22,19,16,.88);font:400 10.5px/1.55 ${SANS};color:rgba(255,255,255,.82)}
 
 /* editing */
 .mz-overfull{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:6;margin:0;font:600 11.5px ${SANS};background:#B4232F;color:#fff;border-radius:999px;padding:6px 12px;white-space:nowrap}
@@ -1231,7 +1309,7 @@ div.mz-ed{display:block}
 .mz-drawer{position:fixed;top:56px;right:0;bottom:0;z-index:30;width:min(480px,100vw);background:#fff;box-shadow:-18px 0 50px rgba(10,14,40,.18);padding:16px 20px 24px;overflow-y:auto;font-family:${SANS};color:#0F1640}
 .mz-drawer-head{display:flex;justify-content:space-between;align-items:center}
 .mz-drawer-head b{font:400 22px Newsreader, Georgia, serif}
-.mz-drawer-head button{border:0;background:none;font-size:24px;line-height:1;color:#80859A;cursor:pointer}
+.mz-drawer-head button{border:0;background:none;font-size:calc(24px * var(--mz-ds));line-height:1;color:#80859A;cursor:pointer}
 .mz-seg{display:grid;grid-template-columns:repeat(4,1fr);background:#F1F0EC;border-radius:10px;padding:3px;margin-top:12px}
 .mz-seg button{font:600 11.5px ${SANS};border:0;background:none;border-radius:8px;padding:7px 2px;color:#4b5068;cursor:pointer}
 .mz-seg button.on{background:#fff;color:#0F1640;box-shadow:0 1px 3px rgba(0,0,0,.1)}
@@ -1310,8 +1388,8 @@ div.mz-ed{display:block}
   .mz-page{height:auto;min-height:0;width:100%}
   .mz-body{padding:24px 20px 0}.mz-run,.mz-foot{margin-left:20px;margin-right:20px}
   .mz-cover,.mz-backcover,.mz-opener{min-height:86vh;padding:28px 20px}
-  .mz-cover-title{font-size:64px}.mz-opener-title{font-size:42px}.mz-hero b{font-size:40px;white-space:normal}.mz-back-title{font-size:48px}
-  .mz-display{font-size:40px}.mz-h1,.mz-plan-name{font-size:34px}
+  .mz-cover-title{font-size:calc(64px * var(--mz-ds))}.mz-opener-title{font-size:calc(42px * var(--mz-ds))}.mz-hero b{font-size:calc(40px * var(--mz-ds));white-space:normal}.mz-back-title{font-size:calc(48px * var(--mz-ds))}
+  .mz-display{font-size:calc(40px * var(--mz-ds))}.mz-h1,.mz-plan-name{font-size:calc(34px * var(--mz-ds))}
   .mz-about-photo{height:440px}.mz-about-head{padding:0 20px 28px}
   .mz-split-page{display:flex;flex-direction:column}.mz-split-photo{height:280px}.mz-run-tight,.mz-split-body,.mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
   .mz-about-grid,.mz-partner,.mz-team-3,.mz-team-4,.mz-terms,.mz-qa,.mz-cols,.mz-steps-4,.mz-steps-3,.mz-contents,.mz-row3,.mz-tool{grid-template-columns:1fr}
@@ -1321,7 +1399,7 @@ div.mz-ed{display:block}
   .mz-stats,.mz-facts{grid-template-columns:1fr 1fr}
   .mz-table{display:block;overflow-x:auto}
   .mz-glance-head{display:none}.mz-glance-row,.mz-glance.with-yield .mz-glance-row{grid-template-columns:1fr;gap:6px}.mz-glance-v,.mz-glance-y{text-align:left}
-  .mz-earn-main b{font-size:36px;white-space:normal}
+  .mz-earn-main b{font-size:calc(36px * var(--mz-ds));white-space:normal}
   .mz-adjust{top:12px;right:12px}
 }
 @page{size:letter;margin:0}
