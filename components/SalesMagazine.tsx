@@ -35,6 +35,10 @@ export type MagTheme = { label: string; ink: string; body: string; muted: string
   /** Atelier-style themes: the label face, the display size factor, the page paper and the cover layout. */
   sans?: string; ds?: number; paper?: string; cover?: 'inset' | 'full' }
 export const MAG_THEMES: Record<string, MagTheme> = {
+  // STAY MODERN, the standard (Jon, 2026-11-11: "standard should be modern, following our look and
+  // feel"). Lighthouse's own identity: Instrument Serif headlines over Geist, near-black ink, Stay's
+  // bronze, a clean white page and a full-bleed photograph on the cover.
+  stay: { label: 'Stay Modern', ink: '#101114', body: '#3A3B40', muted: '#727379', navy: '#14161B', sand: '#8C6D3A', sandSoft: '#F1ECE3', warm: '#F7F7F5', rule: '#E4E2DD', glow: '#D9BE8C', desk: '#E9E8E4', display: 'Instrument Serif', sans: 'Geist', ds: 1.06, paper: '#FFFFFF', cover: 'full' },
   // ATELIER, the default (Jon, 2026-11-11: "crisp… clean design… world class professional magazine").
   // Quiet luxury: warm paper, Cormorant Garamond display at generous sizes, Jost labels tracked wide,
   // warm charcoal instead of navy, a photograph inset on the cover with the title set beneath it.
@@ -42,11 +46,33 @@ export const MAG_THEMES: Record<string, MagTheme> = {
   classic: { label: 'Classic navy', ink: '#0F1640', body: '#3A4055', muted: '#7D8296', navy: '#111A4A', sand: '#A88B5A', sandSoft: '#F2ECE1', warm: '#F9F6F0', rule: '#E2DDD2', glow: '#E8D6B0', desk: '#E6E2DA' },
   coastal: { label: 'Coastal', ink: '#0D2B33', body: '#33474C', muted: '#788B90', navy: '#0E4A57', sand: '#C07A50', sandSoft: '#F6E8DD', warm: '#F3F7F6', rule: '#D9E4E3', glow: '#F2C9A8', desk: '#DFE8E7' },
   noir: { label: 'Noir and gold', ink: '#111111', body: '#3A3A3A', muted: '#86837E', navy: '#141414', sand: '#A3854B', sandSoft: '#F1EBDF', warm: '#F7F5F0', rule: '#E2DED6', glow: '#DCC28A', desk: '#E4E1DB' },
+  // A WIDE RANGE OF STYLES (Jon, 2026-11-11: "enhanced, and a wide range of colour styles"). Each is a
+  // complete look: palette, a display face and a label face, the page paper and the cover layout.
+  midnight: { label: 'Midnight and champagne', ink: '#0F1B2D', body: '#3A4558', muted: '#76808F', navy: '#0F1B2D', sand: '#A88A4E', sandSoft: '#F3EEE4', warm: '#F6F4EF', rule: '#E2DED5', glow: '#E3CB97', desk: '#E3E1DB', display: 'Playfair Display', sans: 'Inter', paper: '#FFFFFF', cover: 'full' },
+  emerald: { label: 'Emerald', ink: '#0E241C', body: '#33463F', muted: '#6F817A', navy: '#0F4C3A', sand: '#A6844F', sandSoft: '#F1ECE1', warm: '#F4F6F3', rule: '#DCE2DE', glow: '#DCC089', desk: '#E2E7E3', display: 'Playfair Display', sans: 'Inter', paper: '#FFFFFF', cover: 'full' },
+  slate: { label: 'Slate', ink: '#1B222C', body: '#3C4552', muted: '#75808D', navy: '#2A3442', sand: '#4F6F8F', sandSoft: '#E7EDF3', warm: '#F3F5F7', rule: '#DDE2E8', glow: '#A9C1D9', desk: '#E2E6EB', display: 'DM Serif Display', sans: 'Inter', paper: '#FFFFFF', cover: 'full' },
+  miami: { label: 'Miami', ink: '#1C2A33', body: '#3E4C55', muted: '#748089', navy: '#155E68', sand: '#C9603F', sandSoft: '#FBEAE3', warm: '#F2F8F8', rule: '#D9E7E8', glow: '#F6B7A2', desk: '#E1ECEC', display: 'Bodoni Moda', sans: 'Jost', paper: '#FFFFFF', cover: 'full' },
+  terracotta: { label: 'Terracotta', ink: '#2B1D17', body: '#4A3A32', muted: '#84746A', navy: '#5A2E1F', sand: '#A9492A', sandSoft: '#F5E6DC', warm: '#FAF3EC', rule: '#E8DCD0', glow: '#EDB592', desk: '#EDE4DA', display: 'Fraunces', sans: 'Inter', paper: '#FFFCF8', cover: 'inset' },
+  sage: { label: 'Sage', ink: '#1F2A22', body: '#3E4A41', muted: '#78827A', navy: '#33473A', sand: '#6F7F52', sandSoft: '#EDF0E6', warm: '#F4F5F0', rule: '#DCE0D5', glow: '#C9D6B0', desk: '#E4E7DF', display: 'Cormorant Garamond', sans: 'Jost', ds: 1.12, paper: '#FBFBF8', cover: 'inset' },
+  blush: { label: 'Blush', ink: '#2D2024', body: '#4B3E42', muted: '#87797D', navy: '#4A2F37', sand: '#A65D69', sandSoft: '#F7E9EA', warm: '#FBF5F4', rule: '#ECDFDF', glow: '#E8B9BF', desk: '#EFE6E5', display: 'Cormorant Garamond', sans: 'Jost', ds: 1.12, paper: '#FFFDFC', cover: 'inset' },
+  mono: { label: 'Monochrome', ink: '#111111', body: '#383838', muted: '#737373', navy: '#111111', sand: '#5E5E5E', sandSoft: '#EFEFEF', warm: '#F5F5F5', rule: '#E2E2E2', glow: '#D4D4D4', desk: '#E6E6E6', display: 'Instrument Serif', sans: 'Inter', ds: 1.06, paper: '#FFFFFF', cover: 'full' },
   ivory: { label: 'Ivory and olive', ink: '#1F241C', body: '#43493E', muted: '#868A7D', navy: '#2F3A28', sand: '#9A7B4F', sandSoft: '#EFE9DC', warm: '#F8F5EE', rule: '#E2DDD0', glow: '#E3D3AE', desk: '#E5E1D6' },
 }
 const C = { ink: 'var(--mz-ink)', body: 'var(--mz-body)', muted: 'var(--mz-muted)', navy: 'var(--mz-navy)', sand: 'var(--mz-sand)', sandText: 'var(--mz-sandtext)', sandSoft: 'var(--mz-sandsoft)', warm: 'var(--mz-warm)', rule: 'var(--mz-rule)', grid: 'var(--mz-grid)', glow: 'var(--mz-glow)', desk: 'var(--mz-desk)', paper: 'var(--mz-paper)' }
 const SERIF_DEFAULT = '"Newsreader", "Iowan Old Style", "Baskerville", Georgia, serif'
 const SERIF = 'var(--mz-display)'
+/** Google Fonts for the faces a look uses (all of them while the style picker is open, for its previews). */
+const FONT_SPEC: Record<string, string> = {
+  'Cormorant Garamond': 'Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400', 'Jost': 'Jost:wght@300;400;500;600',
+  'Instrument Serif': 'Instrument+Serif:ital@0;1', 'Geist': 'Geist:wght@300;400;500;600', 'Playfair Display': 'Playfair+Display:ital,wght@0,400;0,500;1,400',
+  'Fraunces': 'Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300', 'DM Serif Display': 'DM+Serif+Display:ital@0;1',
+  'Bodoni Moda': 'Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;1,6..96,400',
+}
+function fontHref(faces: (string | undefined)[]): string {
+  const base = ['Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400', 'Josefin+Sans:wght@300;400', 'Inter:wght@400;500;600;700']
+  const extra = Array.from(new Set(faces.filter(Boolean) as string[])).filter(f => f !== 'Newsreader' && f !== 'Inter').map(f => FONT_SPEC[f] || encodeURIComponent(f).replace(/%20/g, '+'))
+  return 'https://fonts.googleapis.com/css2?' + base.concat(extra).map(f => 'family=' + f).join('&') + '&display=swap'
+}
 /** Reading text stays Newsreader in every theme: a display face is too fine at 13px in print. */
 const TEXT = SERIF_DEFAULT
 const SANS_DEFAULT = '"Inter", system-ui, -apple-system, "Segoe UI", sans-serif'
@@ -214,7 +240,7 @@ function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number
 }
 
 // ── The magazine ──────────────────────────────────────────────────────────────────────────────────
-export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: boolean }) {
+export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canEdit?: boolean; onePager?: boolean }) {
   const original: Any = report.content || {}
   const [doc, setDoc] = useState<Any>(() => structuredClone(original))
   const [touched, setTouched] = useState<string[]>([])
@@ -335,8 +361,8 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const mag: Any = c.magazine || {}
   const copy: Any = mag.copy || {}
   const custom: MagTheme | null = mag.custom && mag.custom.navy ? mag.custom : null
-  const styleKey = mag.style === 'custom' && custom ? 'custom' : MAG_THEMES[mag.style] ? mag.style : 'atelier'
-  const theme: MagTheme = styleKey === 'custom' && custom ? { ...MAG_THEMES.atelier, ...custom } : MAG_THEMES[styleKey]
+  const styleKey = mag.style === 'custom' && custom ? 'custom' : MAG_THEMES[mag.style] ? mag.style : 'stay'
+  const theme: MagTheme = styleKey === 'custom' && custom ? { ...MAG_THEMES.stay, ...custom } : MAG_THEMES[styleKey]
   const chart: ChartKind = (['line', 'bars', 'band', 'cumulative'] as ChartKind[]).includes(mag.chart) ? mag.chart : 'line'
   // NO UNIT PRICES (Jon, 2026-11-11: "noticed cost of units, remove that, don't need that"). The
   // starting price, and the gross yield worked from it, no longer print anywhere in the package.
@@ -462,6 +488,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   add({ key: 'cover', kind: 'cover', render: () => null })
   // Off unless switched on (Jon, 2026-11-11: "table of contents — remove").
   if (mag.showContents) add({ key: 'contents', kind: 'page', section: 'Contents', render: () => null })
+  const format: 'full' | 'brochure' | 'onepage' = onePager ? 'onepage' : (['brochure', 'onepage'].includes(mag.format) ? mag.format : 'full')
   const parts = {
     who: () => {
       if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
@@ -490,7 +517,20 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Rental comparison', render: () => null })
     },
   }
-  for (const k of AUDIENCES[aud].order) parts[k]()
+  // THE TYPE OF MAGAZINE (Jon, 2026-11-11: "have the option to change the type of magazine we want").
+  //   full     — every section (the default)
+  //   brochure — the short version: cover, who we are, the floor plans at a glance (or an owner's own
+  //              projection), the page that audience needs most (agents: the partner program; an owner:
+  //              the terms), and the close
+  //   onepage  — the one-pager (see onePage)
+  if (format === 'brochure' && cma) {
+    if (showPage('about')) add({ key: 'about', kind: 'page', section: 'Who we are', render: () => null })
+    if (aud === 'building' && showPage('manage') && ops.length) add({ key: 'manage', kind: 'page', section: 'How we manage', render: () => null })
+    if (aud === 'agents' && showPartner) add({ key: 'partner', kind: 'page', section: 'Agent partner program', render: () => null })
+    if (aud === 'owner' && plans.length <= 2) for (const p of plans) add({ key: 'plan-' + p.id, kind: 'page', section: 'Your projection', render: () => null })
+    else if (cma.plans.length) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
+    if (aud === 'owner' && showSecond) add({ key: 'second', kind: 'page', section: 'Terms', render: () => null })
+  } else for (const k of AUDIENCES[aud].order) parts[k]()
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
   specs.forEach((s, i) => { folioOf[s.key] = i + 1 })
@@ -547,6 +587,49 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     </table>
   )
 
+  // THE ONE-PAGER (Jon, 2026-11-11: "also have a 1 pager too"). The package on one letter page, for a
+  // lobby stack, an email attachment or a quick leave-behind: the building, every unit type's yearly
+  // range with its month and night, three reasons, and the person to call. Same theme, audience and
+  // numbers as the magazine (?view=onepage on the same link).
+  const onePage = (): React.ReactNode => {
+    const rows = plans.map(p => ({ p, n: planNumbers(cma!, p) }))
+    const fee = terms.find(r => /fee/i.test(r.k))?.v || '15% of rental revenue'
+    const points: [string, string][] = aud === 'agents'
+      ? [[cma!.partner.fees.length > 1 ? cma!.partner.fees[0][0] + '–' + cma!.partner.fees[cma!.partner.fees.length - 1][0] : (cma!.partner.fees[0]?.[0] || ''), 'Referral fee per unit, by size, in writing'], ['48 hours', 'A projection for any unit you show or list'], ['40+ platforms', 'One calendar, priced every night']]
+      : [[fee.replace(/ of rental revenue/i, ''), 'Of rental revenue. No setup or monthly fees'], ['40+ platforms', 'One calendar, priced every night'], ['24/7', 'Our own local CCS team on every stay']]
+    return (
+      <section key="onepage" className="mz-page mz-one">
+        <div className="mz-one-top">
+          <div className="mz-lockup"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />{brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}</div>
+          <span>{AUDIENCES[aud].mast} · {monthYear}</span>
+        </div>
+        <div className="mz-one-photo mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(22,19,16,0) 40%, rgba(22,19,16,.72) 100%)', 'center 45%')}>
+          <div><p className="mz-kicker mz-on-dark">{area || 'Miami'}{' · Miami'}</p><h1>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</h1></div>
+        </div>
+        <div className="mz-one-body">
+          <p className="mz-one-dek"><CT k="coverDek" /></p>
+          <table className="mz-one-table">
+            <thead><tr><th>Unit type</th><th className="r">Gross a year</th><th className="r">A month</th><th className="r">A night</th>{showNet ? <th className="r">Owner keeps, est.</th> : null}</tr></thead>
+            <tbody>{rows.map(({ p, n }) => (
+              <tr key={p.id}><td><b>{p.name}</b><span>{p.sf}</span></td><td className="r"><b>{dash(n.lo, n.hi)}</b></td><td className="r">{dash(n.monthLo, n.monthHi)}</td><td className="r">{n.nightlyLo ? dash(n.nightlyLo, n.nightlyHi) : '—'}</td>{showNet ? <td className="r">{dash(netOf(n.lo), netOf(n.hi))}</td> : null}</tr>
+            ))}</tbody>
+          </table>
+          <p className="mz-one-note"><CT k="heroNote" />. Estimates for an established listing; projections, not guarantees.</p>
+          <div className="mz-one-points">{points.map(([b, t], i) => <div key={i}><b>{b}</b><span>{t}</span></div>)}</div>
+          <div className="mz-one-foot">
+            <div className="mz-one-cta"><p className="mz-kicker">Next step</p><h2><CT k="backTitle" /></h2></div>
+            {card.name ? (
+              <div className="mz-one-card">
+                {card.photo ? <img src={card.photo} alt="" /> : <span className="mz-initials">{initials(card.name)}</span>}
+                <div><b>{card.name}</b><span>{card.role}</span><span className="mz-sel">{card.phone}</span><span className="mz-sel">{card.email}</span></div>
+              </div>
+            ) : null}
+          </div>
+          <p className="mz-one-fine">{String(cma!.disclaimer || '').split('. ').slice(0, 2).join('. ').replace(/\.?$/, '.')} Stay Hospitality · stay-hospitality.com</p>
+        </div>
+      </section>
+    )
+  }
   const render = (s: Spec): React.ReactNode => {
     switch (true) {
       case s.key === 'cover' && theme.cover === 'inset': return (
@@ -557,7 +640,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           <div className="mz-icover-mast">
             <div className="mz-lockup">
               <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />
-              {brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}
+              {brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" title="Remove the building’s logo" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}
             </div>
             <span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span>
           </div>
@@ -579,11 +662,10 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       case s.key === 'cover': return (
         <section key="cover" className="mz-page mz-cover mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(22,19,16,.66) 0%, rgba(22,19,16,.10) 26%, rgba(22,19,16,.04) 50%, rgba(22,19,16,.86) 100%)', 'center 40%')}>
           <div className="mz-mast">
-            <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
+            <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" title="Remove the building’s logo" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}</div>
             <div className="mz-mast-r"><span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span><span>{monthYear}</span></div>
           </div>
           <div className="mz-cover-main">
-            {brandLogo ? <img src={brandLogo} alt="" className="mz-brandlogo" /> : null}
             {kicker(<>{cma ? <E v={area} p="cma.area" ph="Area" /> : area || 'South Florida'}{' · Miami'}</>, true)}
             <h1 className="mz-cover-title">
               {canEdit && editText ? <E v={building} p={buildingPath} ph="Building" /> : <>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</>}
@@ -834,7 +916,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       }
       case s.key === 'back': return (
         <section key="back" className="mz-page mz-backcover mz-ph" style={ph('back', 'linear-gradient(180deg, rgba(22,19,16,.55) 0%, rgba(22,19,16,.80) 45%, rgba(22,19,16,.95) 100%)')}>
-          <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}</div>
+          <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" title="Remove the building’s logo" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}</div>
           <div className="mz-back-main">
             {kicker('Next step', true)}
             <h2 className="mz-back-title"><CT k="backTitle" /></h2>
@@ -940,6 +1022,12 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         <div>
           {cma ? (
             <>
+              <p className="mz-form-h">Type of magazine</p>
+              <div className="mz-aud mz-format">
+                {([['full', 'Full magazine', 'Every section: who we are, how we run a home, the technology, working together, the market and one page per floor plan'], ['brochure', 'Brochure', 'About six pages: the cover, who we are, the floor plans at a glance, the page this reader needs most, and the close'], ['onepage', 'One-pager', 'Everything on one letter page: every unit type’s range, three reasons and who to call']] as const).map(([k, l, h]) => (
+                  <button key={k} type="button" className={format === k ? 'on' : ''} onClick={() => { if (onePager && k !== 'onepage') { window.location.href = keynote + '?view=magazine'; return } setMag({ format: k }) }}><b>{l}</b><span>{h}</span></button>
+                ))}
+              </div>
               <p className="mz-form-h">Who it is for</p>
               <div className="mz-aud">
                 {(Object.keys(AUDIENCES) as Audience[]).map(k => (
@@ -1041,16 +1129,29 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           <p className="mz-form-h">Themes</p>
           <div className="mz-swatches">
             {[...Object.entries(MAG_THEMES), ...(custom ? [['custom', custom] as [string, MagTheme]] : [])].map(([k, t]) => (
-              <button key={k} type="button" className={styleKey === k ? 'on' : ''} onClick={() => setMag({ style: k })}>
-                <span><i style={{ background: t.navy }} /><i style={{ background: t.sand }} /><i style={{ background: t.warm, border: '1px solid ' + t.rule }} /></span>
-                <em style={{ fontFamily: t.display ? `"${t.display}", serif` : 'Newsreader, serif' }}>{t.label}</em>
+              <button key={k} type="button" className={styleKey === k ? 'on' : ''} onClick={() => setMag({ style: k })} title={t.label + (k === 'stay' ? ' (the standard)' : '')}>
+                <div className="mz-sw-page" style={{ background: t.paper || '#fff' }}>
+                  <div className="mz-sw-band" style={{ background: t.navy }}><b style={{ background: t.sand }} /></div>
+                  <p style={{ fontFamily: `"${t.display || 'Newsreader'}", serif`, color: t.ink }}>Aa <i style={{ color: t.sand }}>Rider</i></p>
+                  <span style={{ background: t.warm, borderColor: t.rule }} />
+                </div>
+                <em>{t.label}{k === 'stay' ? <small> · standard</small> : null}</em>
               </button>
             ))}
           </div>
           <p className="mz-form-h">Fine-tune colours</p>
           <div className="mz-colors">{color('navy', 'Primary')}{color('sand', 'Accent')}{color('ink', 'Headlines')}{color('warm', 'Tint pages')}</div>
           {custom?.display ? <p className="mz-drawer-note">Headlines in {custom.display}, from the building’s site.</p> : null}
-          {brandLogo ? <label className="mz-toggle"><input type="checkbox" checked onChange={() => setMag({ brandLogo: '' })} /> The building’s logo on the cover</label> : null}
+          {/* THE BUILDING'S LOGO (Jon, 2026-11-11: "need to be able to remove their logos"): shown beside
+              Stay's on the cover and the close; remove it, or put in the right one. */}
+          <p className="mz-form-h">Building logo</p>
+          <div className="mz-logo-ctl">
+            {brandLogo ? <span className="mz-logo-prev"><img src={brandLogo} alt="" /></span> : <span className="mz-logo-none">No building logo. Stay’s logo shows alone.</span>}
+            {brandLogo ? <button type="button" onClick={() => setMag({ brandLogo: '' })}>Remove logo</button> : null}
+          </div>
+          <input className="mz-logo-url" placeholder={brandLogo ? 'Replace: paste a logo image link' : 'Add one: paste a logo image link'} defaultValue="" key={brandLogo}
+            onKeyDown={e => { if (e.key === 'Enter') { const v = (e.target as HTMLInputElement).value.trim(); if (/^https?:\/\/|^\//.test(v)) setMag({ brandLogo: v }) } }}
+            onBlur={e => { const v = e.target.value.trim(); if (/^https?:\/\/|^\//.test(v)) setMag({ brandLogo: v }) }} />
           <p className="mz-form-h">Chart on each floor plan</p>
           <div className="mz-drawer-tabs">{CHARTS.map(([k, l]) => <button key={k} type="button" className={chart === k ? 'on' : ''} onClick={() => setMag({ chart: k })}>{l}</button>)}</div>
           <p className="mz-form-h">Data</p>
@@ -1075,7 +1176,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
 
   return (
     <div className={'mz-root' + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Jost:wght@300;400;500;600&family=Josefin+Sans:wght@300;400&family=Inter:wght@400;500;600;700&display=swap" />
+      <link rel="stylesheet" href={fontHref(drawer === 'style' ? Object.values(MAG_THEMES).flatMap(x => [x.display, x.sans]).concat([theme.display, theme.sans]) : [theme.display, theme.sans])} />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <style dangerouslySetInnerHTML={{ __html: Object.entries(fit).map(([k, l]) => {
@@ -1085,7 +1186,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       }).join('') }} />
       <nav className="mz-bar-top">
         <span className="mz-run-mark mz-on-dark">STAY</span>
-        <span className="mz-switch"><b>Magazine</b><a href={keynote}>Keynote</a></span>
+        <span className="mz-switch">{format === 'onepage' ? <><a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Magazine</a><b>One page</b></> : <><b>{format === 'brochure' ? 'Brochure' : 'Magazine'}</b>{cma ? <a href={keynote + '?view=onepage'}>One page</a> : null}</>}<a href={keynote}>Keynote</a></span>
         <span className="mz-bar-r">
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
@@ -1094,7 +1195,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         </span>
       </nav>
       {drawerEl}
-      {specs.map(render)}
+      {format === 'onepage' && cma ? onePage() : specs.map(render)}
     </div>
   )
 }
@@ -1160,7 +1261,41 @@ const CSS = `
 .mz-icover-mast{display:flex;justify-content:space-between;align-items:center}
 .mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
 .mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
-.mz-lockup{display:flex;align-items:center;gap:18px}.mz-lockup i{width:1px;height:34px;background:${C.ink};opacity:.35}
+.mz-lockup{display:flex;align-items:center;gap:18px}
+/* the one-pager */
+.mz-one{background:${C.paper};color:${C.ink}}
+.mz-one-top{display:flex;justify-content:space-between;align-items:center;padding:36px 56px 20px}
+.mz-one-top>span{font:500 9.5px ${SANS};letter-spacing:.3em;text-transform:uppercase;color:${C.muted}}
+.mz-one-photo{height:250px;flex:none;margin:0 56px;display:flex;align-items:flex-end;padding:0 28px 22px;color:#fff}
+.mz-one-photo h1{font:300 calc(50px * var(--mz-ds))/1 ${SERIF};margin:6px 0 0;letter-spacing:-.01em}.mz-one-photo h1 em{font-style:italic}
+.mz-one-body{padding:22px 56px 0;display:flex;flex-direction:column;flex:1;min-height:0}
+.mz-one-dek{font:italic 300 calc(19px * var(--mz-ds))/1.35 ${SERIF};color:${C.body};margin:0 0 16px}
+.mz-one-table{width:100%;border-collapse:collapse;font:400 12px ${SANS};color:${C.body}}
+.mz-one-table th{font:600 9.5px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted};text-align:left;padding:0 10px 7px 0;border-bottom:1.25px solid ${C.ink}}
+.mz-one-table td{padding:6px 10px 6px 0;border-bottom:1px solid ${C.grid};vertical-align:middle;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums}
+.mz-one-table td:first-child{white-space:normal}.mz-one-table td b{font-weight:600;color:${C.ink}}
+.mz-one-table td span{display:block;font-size:10.5px;color:${C.muted};margin-top:1px}
+.mz-one-table .r{text-align:right}.mz-one-table th:last-child,.mz-one-table td:last-child{padding-right:0}
+.mz-one-note{font:italic 400 11px/1.45 ${TEXT};color:${C.muted};margin:8px 0 0}
+.mz-one-points{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:20px}
+.mz-one-points>div{border-top:1px solid ${C.ink};padding-top:10px}
+.mz-one-points b{display:block;font:300 calc(26px * var(--mz-ds))/1.05 ${SERIF};color:${C.ink}}
+.mz-one-points span{display:block;margin-top:5px;font:400 11.5px/1.4 ${SANS};color:${C.body}}
+.mz-one-foot{margin-top:auto;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:end;border-top:1px solid ${C.grid};padding-top:18px}
+.mz-one-cta h2{font:300 calc(30px * var(--mz-ds))/1.05 ${SERIF};margin:0;color:${C.ink}}.mz-one-cta h2 em{font-style:italic;color:${C.sandText}}
+.mz-one-card{display:flex;gap:12px;align-items:center}.mz-one-card img{width:58px;height:58px;border-radius:999px;object-fit:cover;filter:grayscale(1)}
+.mz-one-card div{display:flex;flex-direction:column;font:400 11.5px/1.45 ${SANS};color:${C.body}}.mz-one-card b{font:400 calc(18px * var(--mz-ds)) ${SERIF};color:${C.ink}}
+.mz-one-fine{font:400 8.5px/1.45 ${SANS};color:${C.muted};margin:14px 0 30px}
+.mz-lockup-wrap{position:relative;display:inline-flex}
+.mz-logo-x{position:absolute;top:-10px;right:-12px;width:20px;height:20px;border-radius:999px;border:0;background:#C0392B;color:#fff;font:600 13px/20px "Inter",sans-serif;cursor:pointer;opacity:0;transition:opacity .15s}
+.mz-lockup-wrap:hover .mz-logo-x{opacity:1}
+@media print{.mz-logo-x{display:none}}
+.mz-logo-ctl{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.mz-logo-prev{display:inline-flex;align-items:center;justify-content:center;height:44px;min-width:90px;padding:6px 10px;border:1px solid #E3DED3;border-radius:8px;background:#fff}
+.mz-logo-prev img{max-height:32px;max-width:140px;object-fit:contain}
+.mz-logo-none{font:400 12px "Inter",sans-serif;color:#80859A}
+.mz-logo-ctl button{font:600 12px "Inter",sans-serif;border:1px solid #E3DED3;background:#fff;color:#B03A2E;border-radius:8px;padding:6px 10px;cursor:pointer}
+.mz-logo-url{width:100%;font:500 12.5px "Inter",sans-serif;border:1px solid #E3DED3;border-radius:8px;padding:7px 9px;color:#0F1640;background:#fff}.mz-lockup i{width:1px;height:34px;background:${C.ink};opacity:.35}
 .mz-lockup-b{max-width:130px;max-height:38px;object-fit:contain;filter:brightness(0);opacity:.82}
 .mz-lockup-dark i{background:#fff}.mz-lockup-dark .mz-lockup-b{filter:brightness(0) invert(1);opacity:.9}
 .mz-icover-photo{margin-top:36px;height:488px;flex:none}
@@ -1399,9 +1534,14 @@ div.mz-ed{display:block}
 .mz-comp{padding:12px;border:1px solid #E3DED3;border-radius:12px}
 .mz-remove{display:block;font:600 11.5px ${SANS};color:#B4232F;background:none;border:0;text-align:left;padding:8px 0 0;cursor:pointer}
 .mz-add{margin-top:12px;font:600 12.5px ${SANS};border:1px dashed #B59A6A;background:#FAF7F1;color:#0F1640;border-radius:10px;padding:9px;width:100%;cursor:pointer}
-.mz-swatches{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.mz-swatches button{display:flex;align-items:center;gap:12px;font:600 12.5px ${SANS};color:#0F1640;background:#fff;border:1px solid #E3DED3;border-radius:10px;padding:10px 12px;cursor:pointer;text-align:left}
-.mz-swatches button em{font-style:normal;font-size:15px;font-weight:400}
+.mz-swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.mz-sw-page{border-radius:6px;border:1px solid rgba(0,0,0,.08);overflow:hidden;width:100%;aspect-ratio:4/3;display:flex;flex-direction:column}
+.mz-sw-band{height:38%;position:relative}.mz-sw-band b{position:absolute;left:8px;bottom:6px;width:16px;height:2px}
+.mz-sw-page p{margin:5px 8px 0;font-size:17px;line-height:1}.mz-sw-page p i{font-style:italic}
+.mz-sw-page span{margin:auto 8px 7px;height:7px;border-radius:2px;border:1px solid}
+.mz-swatches em small{font-weight:400;color:#80859A;font-size:11px}
+.mz-swatches button{display:flex;flex-direction:column;align-items:stretch;gap:6px;font:600 12px "Inter",sans-serif;color:#0F1640;background:#fff;border:1px solid #E3DED3;border-radius:10px;padding:7px;cursor:pointer;text-align:left}
+.mz-swatches button em{font-style:normal;font-size:12px;font-weight:600}
 .mz-swatches button.on{border-color:#0F1640;box-shadow:0 0 0 1px #0F1640}
 .mz-swatches span{display:flex}.mz-swatches i{width:20px;height:20px;border-radius:999px;margin-right:-5px;border:2px solid #fff}
 .mz-colors{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}

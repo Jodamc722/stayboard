@@ -48,6 +48,7 @@ export default async function PublicReportPage({ params, searchParams }: { param
   // THE MAGAZINE (Jon, 2026-11-11): the same sales deck laid out as letter pages to print, leave at a
   // building or read on a phone. Same row, same link, ?view=magazine. The team gets the projection builder.
   if (String((rep.content as any)?.meta?.kind || '') === 'sales' && searchParams?.view === 'magazine') return <SalesMagazine report={rep} canEdit={!!user || unlocked} />
+  if (String((rep.content as any)?.meta?.kind || '') === 'sales' && searchParams?.view === 'onepage') return <SalesMagazine report={rep} canEdit={!!user || unlocked} onePager />
   // Section photography for the owner review, resolved from the report's own listings rather than
   // stored on it — see lib/report-gallery. A failure here costs the pictures, never the report.
   // Section photography and the per-unit table, both derived from the report row rather than
