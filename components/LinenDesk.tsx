@@ -18,7 +18,7 @@ import { Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/c
 import {
   LINEN_GROUPS, LINEN_PER, LINEN_TIERS, LIMITS, MANUAL_LIMITS, DEFAULT_LINEN_STANDARD, normLinenStandard, linenNeeds, linenTotals, linenCsv, linenText, sortSizes,
   linenQuoteAllTiers, vendorOrder, quoteText, manualUnits, fmtUsd, tierOf, linenGap, LINEN_COUNT_LIMITS, pillowsOn, atPar, PAR_CHOICES,
-  linenTally, linenPropertyName, linenFileName,
+  linenTally, linenPropertyName, linenFileName, withReorderPars,
   type LinenCount, type LinenGap, type LinenTally,
   type LinenStandard, type LinenItem, type LinenGroup, type LinenPer, type LinenDeskUnit, type BedsSource, type LinenTotals, type LinenTier, type TierOption,
   type LinenVendor, type LinenQuote, type VendorOrder, type LinenQuoteChoice, type ManualUnitInput,
@@ -142,7 +142,16 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
   // PAR BUTTONS on the Calculator and Quote (Jon, 2026-11-05): count at another par for a quick look —
   // page only, the saved par levels are untouched. null = the standard's own par.
   const [viewPar, setViewPar] = useState<number | null>(null)
-  const calcStd = useMemo(() => (viewPar === null ? draft : atPar(draft, viewPar)), [draft, viewPar])
+  // REORDER PAR per item (Jon, 2026-11-11: "this is just where we can do a reorder par not anything else"):
+  // item id → par for this order only. Page-local, never saved; the documents get it with the request.
+  const [reorder, setReorder] = useState<Record<string, number>>({})
+  const reorderBase = useMemo(() => (viewPar === null ? draft : atPar(draft, viewPar)), [draft, viewPar])
+  const calcStd = useMemo(() => withReorderPars(draft, viewPar, reorder), [draft, viewPar, reorder])
+  const reorderCtl: Reorder = {
+    base: reorderBase, overrides: reorder, viewPar,
+    onPar: (id, par) => setReorder(m => { const n = { ...m }; if (par === null) delete n[id]; else n[id] = par; return n }),
+    onResetAll: () => setReorder({}),
+  }
   // Leaving with unsaved edits to the standard asks first (the browser's own prompt).
   useEffect(() => {
     if (!dirty) return
@@ -151,20 +160,6 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
     return () => window.removeEventListener('beforeunload', h)
   }, [dirty])
 
-  // PAR ON THE CALCULATOR (Jon, 2026-11-11: "want to be able to edit par on an item, on the calculator
-  // page"): an item's par typed there goes into this same draft, and "Save pars" saves it the same way.
-  const [parBusy, setParBusy] = useState(false)
-  const [parMsg, setParMsg] = useState<{ text: string; bad?: boolean } | null>(null)
-  const setItemPar = (id: string, par: number | null) => { setParMsg(null); setDraft(s => ({ ...s, items: s.items.map(i => i.id === id ? { ...i, par } : i) })) }
-  const saveFromCalc = async () => {
-    const why = unsaveable(draft)
-    if (why) { setParMsg({ text: why + ' (on Par levels)', bad: true }); return }
-    setParBusy(true); setParMsg(null)
-    const r = await putStandard(draft)
-    if (r.ok) { setSaved(r.standard); setDraft(r.standard); setEdited(true); setParMsg({ text: 'Pars saved — every unit, quote and export uses them now.' }) }
-    else setParMsg({ text: r.error, bad: true })
-    setParBusy(false)
-  }
   const pick = (ids: string[]) => { setPicked(ids); store.set(PICK_KEY, JSON.stringify(ids)) }
   const [quoteOpened, setQuoteOpened] = useState(false)
   useEffect(() => { if (view === 'quote') setQuoteOpened(true) }, [view])
@@ -216,10 +211,10 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
           {view !== 'standard' && <ParPicker value={viewPar ?? draft.par} standardPar={draft.par} onChange={p => setViewPar(p === draft.par ? null : p)} onEditPars={() => go('standard')}
             note={viewPar === null ? 'Counting at the standard par' : `Counting at par ${viewPar} for this view only — the saved par is ${draft.par}`} />}
           {view === 'calculator' && <CalculatorView standard={calcStd} dirty={dirty}
-              parEdit={{ canEdit: canStd, onPar: setItemPar, onSave: saveFromCalc, onUndo: () => { setDraft(saved); setParMsg(null) }, busy: parBusy, msg: parMsg, capped: viewPar, std: draft }} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
+              reorder={reorderCtl} units={units} setUnits={setUnits} partial={partial} picked={picked} pick={pick} canBeds={canBeds} tier={tier} setTier={setTier} inventory={inventory} setInventory={setInventory} />}
           {/* The Quote view stays mounted once opened, so what was typed (and Bill to) survives a tab switch. */}
           <div hidden={view !== 'quote'}>
-            {(view === 'quote' || quoteOpened) && <QuoteView standard={calcStd} dirty={dirty} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
+            {(view === 'quote' || quoteOpened) && <QuoteView standard={calcStd} dirty={dirty} reorder={reorderCtl} tier={tier} setTier={setTier} prefill={prefill} missing={!!initialUnit && !prefill}
                 quotes={quotes} canChoose={canBeds} onChosen={(code, q) => setQuotes(m => { const n = { ...m }; if (q) n[code] = q; else delete n[code]; return n })} />}
           </div>
         </>}
@@ -442,7 +437,7 @@ function VendorOrderCard({ order }: { order: VendorOrder }) {
 }
 
 /** The documents: owner invoice (PDF), vendor order (PDF / CSV), and the copy-as-text. */
-function DocActions({ tier, tierLabel, property, units, dirty, onCopy, copyLabel, priced = 1 }: { tier: LinenTier; tierLabel: string; property: string; units: ManualUnitInput[]; dirty: boolean; onCopy: () => Promise<boolean>; copyLabel: string; priced?: number }) {
+function DocActions({ tier, tierLabel, property, units, dirty, onCopy, copyLabel, priced = 1, reorder }: { tier: LinenTier; tierLabel: string; property: string; units: ManualUnitInput[]; dirty: boolean; onCopy: () => Promise<boolean>; copyLabel: string; priced?: number; reorder?: Reorder }) {
   const [busy, setBusy] = useState<string>('')
   const [msg, setMsg] = useState('')
   const [billTo, setBillTo] = useState('')
@@ -453,7 +448,7 @@ function DocActions({ tier, tierLabel, property, units, dirty, onCopy, copyLabel
   const run = async (doc: 'invoice' | 'order' | 'order-csv') => {
     setBusy(doc); setMsg('')
     try {
-      const r = await fetch('/api/onboard/linens/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc, tier, units, billTo: billTo.trim() || undefined, property }) })
+      const r = await fetch('/api/onboard/linens/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc, tier, units, billTo: billTo.trim() || undefined, property, par: reorder?.viewPar ?? undefined, pars: reorder && Object.keys(reorder.overrides).length ? reorder.overrides : undefined }) })
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || j.message || 'Could not build the document') }
       const blob = await r.blob()
       // Named here the way the server names it: "<Property> - Linen order (Mid) - <YYYY-MM-DD>.pdf".
@@ -780,21 +775,37 @@ function ParTable({ draft, setDraft, canEdit }: { draft: LinenStandard; setDraft
 }
 
 /** An item's par as − value +: its own par (violet) or the standard's. ±1 on the buttons; halves by typing. Read-only → text. */
-function ParStepper({ it, std, canEdit, onPar, compact = false }: { it: LinenItem; std: LinenStandard; canEdit: boolean; onPar: (par: number | null) => void; compact?: boolean }) {
+function ParStepper({ it, std, canEdit, onPar }: { it: LinenItem; std: LinenStandard; canEdit: boolean; onPar: (par: number | null) => void }) {
   const ownPar = typeof it.par === 'number'
   const par = ownPar ? (it.par as number) : std.par
   const tip = ownPar ? `${it.name}: its own par ${par} (the standard is ${std.par})` : `${it.name}: the standard par (${std.par})`
   if (!canEdit) return <span className={'tabular-nums text-[12px] ' + (ownPar ? 'text-violet-700 font-semibold' : 'text-muted')} title={tip + ' — changing it needs full access on Linens'}>par {par}</span>
-  const btn = 'rounded-md text-muted hover:text-ink hover:bg-app disabled:opacity-30 ' + (compact ? 'p-0.5' : 'p-1')
+  const btn = 'rounded-md p-1 text-muted hover:text-ink hover:bg-app disabled:opacity-30'
   return (
     <span className="inline-flex items-center gap-0.5" title={tip}>
-      {compact && <span className="text-[10.5px] uppercase tracking-wider text-muted font-semibold mr-0.5">par</span>}
       <button type="button" onClick={() => onPar(clampPar(par - 1))} disabled={par <= 0} title="One set less" aria-label={`Lower the par for ${it.name}`} className={btn}><Minus size={12} /></button>
       <input type="number" inputMode="decimal" min={0} max={LIMITS.num} step={0.5} value={par} aria-label={`Par for ${it.name}`}
         onChange={e => { const n = toNum(e.target.value); onPar(n === null ? null : clampPar(n)) }}
         title={tip + ' — type a half (e.g. 2.5) if you need one'}
-        className={NUM + (compact ? ' w-11 py-0.5 px-1' : ' w-14 py-1 px-1.5') + ' text-center' + (ownPar ? ' border-violet-300 bg-violet-50 font-semibold' : '')} />
+        className={NUM + ' w-14 py-1 px-1.5 text-center' + (ownPar ? ' border-violet-300 bg-violet-50 font-semibold' : '')} />
       <button type="button" onClick={() => onPar(clampPar(par + 1))} disabled={par >= LIMITS.num} title="One set more" aria-label={`Raise the par for ${it.name}`} className={btn}><Plus size={12} /></button>
+    </span>
+  )
+}
+
+/** A reorder par as − value + (anyone can change it — it saves nothing). ±1 on the buttons; halves by typing. */
+function ReorderPar({ name, value, start, changed, onPar }: { name: string; value: number; start: number; changed: boolean; onPar: (par: number | null) => void }) {
+  const tip = changed ? `${name}: par ${value} for this reorder (the par level is ${start}) — not saved` : `${name}: par ${value} — change it for this reorder only`
+  const btn = 'rounded-md p-0.5 text-muted hover:text-ink hover:bg-app disabled:opacity-30'
+  return (
+    <span className="inline-flex items-center gap-0.5" title={tip}>
+      <span className="text-[10.5px] uppercase tracking-wider text-muted font-semibold mr-0.5">par</span>
+      <button type="button" onClick={() => onPar(clampPar(value - 1))} disabled={value <= 0} title="One set less, this reorder only" aria-label={`Lower the reorder par for ${name}`} className={btn}><Minus size={12} /></button>
+      <input type="number" inputMode="decimal" min={0} max={LIMITS.num} step={0.5} value={value} aria-label={`Reorder par for ${name}`}
+        onChange={e => { const n = toNum(e.target.value); onPar(n === null ? null : clampPar(n)) }}
+        title={tip + ' — type a half (e.g. 2.5) if you need one'}
+        className={NUM + ' w-11 py-0.5 px-1 text-center' + (changed ? ' border-violet-300 bg-violet-50 font-semibold' : '')} />
+      <button type="button" onClick={() => onPar(clampPar(value + 1))} disabled={value >= LIMITS.num} title="One set more, this reorder only" aria-label={`Raise the reorder par for ${name}`} className={btn}><Plus size={12} /></button>
     </span>
   )
 }
@@ -983,14 +994,17 @@ function VendorsCard({ vendors, canEdit, onChange }: { vendors: LinenVendor[]; c
 // ── CALCULATOR ────────────────────────────────────────────────────────────────────────────────────
 const shapeOf = (u: LinenDeskUnit): ManualUnitInput => ({ name: u.name, bedrooms: u.bedrooms, bathrooms: u.bathrooms, guests: u.guests, kitchens: u.kitchens, beds: u.beds })
 
-type ParEdit = {
-  canEdit: boolean; onPar: (itemId: string, par: number | null) => void; onSave: () => void; onUndo: () => void
-  busy: boolean; msg: { text: string; bad?: boolean } | null; capped: number | null
-  std: LinenStandard   // the draft standard (not the capped view) — the par shown and edited per item
+/** The reorder pars of the Calculator / Quote: page-local, never saved. */
+type Reorder = {
+  base: LinenStandard                       // the standard at the view par — each item's starting reorder par
+  overrides: Record<string, number>         // item id → reorder par for this order
+  viewPar: number | null
+  onPar: (itemId: string, par: number | null) => void   // null = back to the starting value
+  onResetAll: () => void
 }
 
-function CalculatorView({ standard, dirty, parEdit, units, setUnits, partial, picked, pick, canBeds, tier, setTier, inventory, setInventory }: {
-  standard: LinenStandard; dirty: boolean; parEdit: ParEdit; units: LinenDeskUnit[]; setUnits: (f: (u: LinenDeskUnit[]) => LinenDeskUnit[]) => void; partial: boolean
+function CalculatorView({ standard, dirty, reorder, units, setUnits, partial, picked, pick, canBeds, tier, setTier, inventory, setInventory }: {
+  standard: LinenStandard; dirty: boolean; reorder: Reorder; units: LinenDeskUnit[]; setUnits: (f: (u: LinenDeskUnit[]) => LinenDeskUnit[]) => void; partial: boolean
   picked: string[]; pick: (ids: string[]) => void; canBeds: boolean; tier: LinenTier; setTier: (t: LinenTier) => void
   inventory: Record<string, LinenCount>; setInventory: (f: (m: Record<string, LinenCount>) => Record<string, LinenCount>) => void
 }) {
@@ -1076,18 +1090,8 @@ function CalculatorView({ standard, dirty, parEdit, units, setUnits, partial, pi
 
       {!chosen.length ? <LeanEmpty>Pick units above to size the order.</LeanEmpty> : (
         <>
-          {(dirty || parEdit.msg) && (
-            <div className="sticky bottom-0 z-10 mb-2 flex items-center gap-2 flex-wrap rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12.5px]">
-              {dirty && <span className="font-semibold text-amber-900" title="Par changes (here or on Par levels) not saved yet — the counts on this page already use them; the documents wait for a save">Unsaved par changes</span>}
-              {dirty && parEdit.canEdit && <button onClick={parEdit.onSave} disabled={parEdit.busy} title="Save the par levels for everyone — the same Save as on Par levels (it saves every unsaved change to the standard)" className={PRIMARY + ' min-h-[30px]'}>
-                {parEdit.busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save pars</button>}
-              {dirty && parEdit.canEdit && <button onClick={parEdit.onUndo} disabled={parEdit.busy} title="Throw away every unsaved change to the standard" className={GHOST + ' min-h-[30px]'}>Undo</button>}
-              {dirty && !parEdit.canEdit && <span className="text-amber-900">Saving pars needs full access on Linens.</span>}
-              {parEdit.msg && <span className={'font-semibold ' + (parEdit.msg.bad ? 'text-rose-600' : 'text-emerald-700')}>{parEdit.msg.text}</span>}
-            </div>
-          )}
           <NeededList totals={totals} title={title} property={property} bedsBySize={tally.bedsBySize} std={standard}
-            par={parEdit} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
+            reorder={reorder} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
           <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
             <h2 className={EYEBROW}>Selected <span className="tabular-nums">{chosen.length}</span></h2>
             <span className="text-[12px] text-muted tabular-nums" title="Totals across the selected units">{bedroomsText(tally)} · {plural(tally.bathrooms, 'bath')} · {plural(tally.kitchens, 'kitchen')}{tally.kitchensAssumed ? ' (some assumed)' : ''} · sleeps {tallyNum(tally.guests)} · {bedsTallyText(tally, standard.bedSizes)}</span>
@@ -1116,7 +1120,7 @@ function CalculatorView({ standard, dirty, parEdit, units, setUnits, partial, pi
           <TierCards quotes={allTiers} value={tier} onChange={setTier} />
           <TotalsCard totals={totals} label={standard.tierLabels[tier]} onCsv={download} onCopy={copy} copied={copied} />
           <VendorOrderCard order={order} />
-          <DocActions tier={tier} tierLabel={standard.tierLabels[tier]} property={property} units={shapes} dirty={dirty} priced={allTiers[tier].priced} copyLabel="Copy the owner quote for this tier as text"
+          <DocActions tier={tier} tierLabel={standard.tierLabels[tier]} property={property} units={shapes} dirty={dirty} reorder={reorder} priced={allTiers[tier].priced} copyLabel="Copy the owner quote for this tier as text"
             onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(allTiers[tier], title)); return true } catch { return false } }} />
           </PricingFold>
         </>
@@ -1442,22 +1446,28 @@ function sectioned<T extends { group: string; size?: string }>(rows: T[]): { key
   return Array.from(m.values()).sort((a, b) => a.order - b.order || a.label.localeCompare(b.label))
 }
 
-function NeededList({ totals, title, resetKey, property, bedsBySize, std, par }: {
+function NeededList({ totals, title, resetKey, property, bedsBySize, std, reorder }: {
   totals: LinenTotals; title: string; resetKey: string; property: string
-  bedsBySize: Record<string, number>; std: LinenStandard; par?: ParEdit
+  bedsBySize: Record<string, number>; std: LinenStandard; reorder?: Reorder
 }) {
   const [edits, setEdits] = useState<Record<string, number>>({})
   const [extra, setExtra] = useState<NeedLine[]>([])
   const [copied, setCopied] = useState(false)
   useEffect(() => { setEdits({}); setExtra([]) }, [resetKey])
   const base: NeedLine[] = totals.rows.map(r => ({ key: r.key, itemId: r.itemId, group: r.group, name: r.name, size: r.size || '', qty: r.qty, base: r.qty }))
-  const parStd = par ? par.std : std
-  const itemById = useMemo(() => new Map(parStd.items.map(i => [i.id, i] as const)), [parStd])
-  // A par change re-counts that item's lines, so a typed-over quantity on them would hide it — drop those overrides.
+  // Each item's STARTING reorder par: its par on the standard at the view par (own par, else the standard's).
+  const startById = useMemo(() => {
+    const m = new Map<string, { name: string; rotates: boolean; start: number }>()
+    if (reorder) for (const i of reorder.base.items) m.set(i.id, { name: i.name, rotates: i.rotates, start: typeof i.par === 'number' ? i.par : reorder.base.par })
+    return m
+  }, [reorder])
+  const overridden = reorder ? Object.keys(reorder.overrides).filter(id => startById.get(id)?.rotates).length : 0
+  // A reorder par re-counts that item's lines, so a typed-over quantity on them would hide it — drop those.
   const changePar = (itemId: string, p: number | null) => {
-    if (!par) return
+    if (!reorder) return
     setEdits(e => { const n: Record<string, number> = {}; for (const [k, v] of Object.entries(e)) if (!base.some(b => b.key === k && b.itemId === itemId)) n[k] = v; return n })
-    par.onPar(itemId, p)
+    const start = startById.get(itemId)?.start
+    reorder.onPar(itemId, p === null || p === start ? null : p)
   }
   // Which beds a bed section is for. A sofa bed's linen is bought as the sofa-bed size (Queen), so it sits in that section.
   const sofaKey = Object.keys(bedsBySize).find(k => k.toLowerCase() === 'sofa bed')
@@ -1506,9 +1516,10 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, par }:
         </span>
       </div>
 
-      {par && <p className="px-3 sm:px-4 pt-2 text-[12px] text-muted">
-        <b className="text-violet-700">Par</b> (− value +) changes the saved standard for every unit — it needs Save pars. <b className="text-ink">Qty</b> boxes change this export only.
-        {par.capped !== null && <span className="text-amber-800"> Counting at par {par.capped} for this view — no item counts above it.</span>}
+      {reorder && <p className="px-3 sm:px-4 pt-2 text-[12px] text-muted flex items-center gap-x-2 gap-y-1 flex-wrap">
+        <span><b className="text-violet-700">Par</b> here is for this reorder only — it doesn't change the par levels. <b className="text-ink">Qty</b> boxes change this export only.</span>
+        {overridden > 0 && <button type="button" onClick={() => { setEdits({}); reorder.onResetAll() }} title="Put every item back to its starting par for this order"
+          className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink"><RotateCcw size={11} /> Reset all ({overridden})</button>}
       </p>}
       {/* One card per linen type: King bed, Queen bed, …, Standard pillows, Bath, Kitchen, Other. */}
       <div className="p-2 sm:p-3 grid gap-2 sm:gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -1535,14 +1546,15 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, par }:
                       ) : (
                         <span className="flex-1 min-w-[7rem] text-[13.5px] text-ink truncate" title={l.name + (l.size ? ' — ' + l.size : '')}>{l.name}</span>
                       )}
-                      {par && !isExtra && (() => {
-                        const it = itemById.get(l.itemId)
+                      {reorder && !isExtra && (() => {
+                        const it = startById.get(l.itemId)
                         if (!it) return null
                         if (!it.rotates) return <span className="text-[11px] text-muted whitespace-nowrap" title="Does not rotate — one set is bought, par does not apply">1 set</span>
+                        const own = l.itemId in reorder.overrides
                         return (
                           <span className="inline-flex items-center gap-0.5">
-                            <ParStepper it={it} std={parStd} canEdit={par.canEdit} onPar={p => changePar(it.id, p)} compact />
-                            {par.canEdit && typeof it.par === 'number' && <button type="button" onClick={() => changePar(it.id, null)} title={`Use standard par (${parStd.par}) — drop this item's own par`} aria-label="Use standard par"
+                            <ReorderPar name={it.name} value={own ? reorder.overrides[l.itemId] : it.start} start={it.start} changed={own} onPar={p => changePar(l.itemId, p)} />
+                            {own && <button type="button" onClick={() => changePar(l.itemId, null)} title={`Back to par ${it.start} for this order`} aria-label="Back to the starting par"
                               className="rounded-md p-0.5 text-muted hover:text-ink hover:bg-app"><RotateCcw size={11} /></button>}
                           </span>
                         )
@@ -1562,7 +1574,7 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, par }:
       </div>
       <div className="px-3 sm:px-4 py-2 border-t border-line flex items-center gap-2 flex-wrap">
         <button onClick={addLine} title="Add a line that is not on the par levels" className="text-[12.5px] font-bold text-brand-700 hover:underline inline-flex items-center gap-1"><Plus size={13} /> Add a line</button>
-        <span className="text-[12px] text-muted">Qty changes and added lines are for this export only — the par levels stay as they are{par ? ' (change par with the − / + on a line, then Save pars)' : ''}.</span>
+        <span className="text-[12px] text-muted">Qty changes and added lines are for this export only — the par levels stay as they are{reorder ? '; par on a line is for this reorder only' : ''}.</span>
       </div>
     </section>
   )
@@ -1584,8 +1596,8 @@ function PricingFold({ children }: { children: React.ReactNode }) {
 type Draft = { name: string; bedrooms: number; bathrooms: number; guests: number; kitchens: number; beds: Record<string, number>; copies: number }
 const BLANK: Draft = { name: '', bedrooms: 1, bathrooms: 1, guests: 2, kitchens: 1, beds: { Queen: 1 }, copies: 1 }
 
-function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, canChoose, onChosen }: {
-  standard: LinenStandard; dirty: boolean; tier: LinenTier; setTier: (t: LinenTier) => void
+function QuoteView({ standard, dirty, reorder, tier, setTier, prefill, missing, quotes, canChoose, onChosen }: {
+  standard: LinenStandard; dirty: boolean; reorder: Reorder; tier: LinenTier; setTier: (t: LinenTier) => void
   prefill: LinenDeskUnit | null; missing: boolean
   quotes: Record<string, LinenQuoteChoice>; canChoose: boolean; onChosen: (code: string, q: LinenQuoteChoice | null) => void
 }) {
@@ -1658,7 +1670,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
         <TallyBar t={tally} sizeOrder={standard.bedSizes} className="mt-2.5" />
       </section>
 
-      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} property={property} bedsBySize={tally.bedsBySize} std={standard} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
+      <NeededList totals={needTotals} title={'Linens needed — ' + label + (d.copies > 1 ? ' ×' + d.copies : '')} property={property} bedsBySize={tally.bedsBySize} std={standard} reorder={reorder} resetKey={JSON.stringify(input) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
       <PricingFold>
       <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
         <h2 className={EYEBROW}>Tiers</h2>
@@ -1674,7 +1686,7 @@ function QuoteView({ standard, dirty, tier, setTier, prefill, missing, quotes, c
       <TierCards quotes={all} value={tier} onChange={setTier} chosen={chosen} />
       <QuoteCard q={all[tier]} />
       <VendorOrderCard order={order} />
-      <DocActions tier={tier} tierLabel={standard.tierLabels[tier]} property={property} units={[input]} dirty={dirty} priced={all[tier].priced} copyLabel="Copy this tier's quote as text — for an email or a message to the owner"
+      <DocActions tier={tier} tierLabel={standard.tierLabels[tier]} property={property} units={[input]} dirty={dirty} reorder={reorder} priced={all[tier].priced} copyLabel="Copy this tier's quote as text — for an email or a message to the owner"
         onCopy={async () => { try { await navigator.clipboard.writeText(quoteText(all[tier], label + (d.copies > 1 ? ' ×' + d.copies : ''))); return true } catch { return false } }} />
       </PricingFold>
     </div>

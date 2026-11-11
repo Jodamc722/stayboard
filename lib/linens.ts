@@ -735,6 +735,33 @@ export function atPar(standard: LinenStandard, par: number): LinenStandard {
   }
 }
 
+/** Reorder pars as sent by the page: item id → par (0..999, halves), anything else dropped. */
+export function normReorderPars(raw: any): Record<string, number> {
+  const out: Record<string, number> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  let n = 0
+  for (const [k, v] of Object.entries(raw)) {
+    const x = Number(v)
+    if (!k || k.length > LIMITS.id || !Number.isFinite(x) || x < 0) continue
+    out[k] = Math.min(LIMITS.num, Math.round(x * 2) / 2)
+    if (++n >= LIMITS.items) break
+  }
+  return out
+}
+
+/**
+ * REORDER PAR (Jon, 2026-11-11: "no par are set this is just where we can do a reorder par"). The
+ * standard as the Calculator / Quote count it for one order: the view's par (the top par buttons, via
+ * atPar) and then any per-item reorder par on top. Never saved — the page and the documents route both
+ * call this, so the downloads match the screen.
+ */
+export function withReorderPars(standard: LinenStandard, viewPar?: number | null, pars?: Record<string, number> | null): LinenStandard {
+  const base = typeof viewPar === 'number' && Number.isFinite(viewPar) ? atPar(standard, viewPar) : standard
+  const p = normReorderPars(pars)
+  if (!Object.keys(p).length) return base
+  return { ...base, items: base.items.map(i => (i.rotates && i.id in p ? { ...i, par: p[i.id] } : i)) }
+}
+
 /** Pillows stocked on one bed of a size: the standard's Pillows item (its per-size count, else its qty). */
 export function pillowsOn(standard: LinenStandard, size: string): number {
   const p = standard.items.find(i => i.id === 'pillows') || standard.items.find(i => /^pillows?$/i.test(i.name.trim()))

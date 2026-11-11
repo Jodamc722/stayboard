@@ -5,6 +5,8 @@
 //   { doc: 'invoice',   tier, units, billTo? }  → the owner's invoice, a DRAFT, as a PDF
 //   { doc: 'order',     tier, units }           → the vendor order / quantity sheet as a PDF, a page per vendor
 //   { doc: 'order-csv', tier, units }           → the same vendor order as CSV
+//   + par?, pars? (any doc)                     → the page's reorder pars for this order only: the view par and
+//                                                  { itemId: par } overrides (lib withReorderPars) — never saved
 //   + property? (any doc)                         → the download is named "<property> - Linen order (Mid) - <YYYY-MM-DD>.pdf"
 //                                                  (Jon, 2026-11-11); blank → "Linen quote". Date in Eastern time.
 //
@@ -23,7 +25,7 @@ import { requireLevel, type Gate } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { getSetting } from '@/lib/app-settings'
 import { buildQuotePdf } from '@/lib/order-pdf'
-import { LINEN_STANDARD_KEY, MANUAL_LIMITS, normLinenStandard, isLinenTier, manualUnits, linenQuote, vendorOrder, vendorOrderCsv, linenFileName, type LinenTier } from '@/lib/linens'
+import { LINEN_STANDARD_KEY, MANUAL_LIMITS, normLinenStandard, isLinenTier, manualUnits, linenQuote, vendorOrder, vendorOrderCsv, linenFileName, withReorderPars, type LinenTier } from '@/lib/linens'
 import { linenInvoiceDoc, linenOrderDoc, linenDraftNo } from '@/lib/linen-docs'
 
 export const dynamic = 'force-dynamic'
@@ -69,7 +71,8 @@ export async function POST(req: NextRequest) {
     const { units, requested, labels } = manualUnits(body.units)
     if (requested > MANUAL_LIMITS.units) return fail(`At most ${MANUAL_LIMITS.units} units on one document — that asks for ${requested}.`, 400)
 
-    const standard = normLinenStandard(await getSetting<any>(LINEN_STANDARD_KEY, null))
+    const viewPar = typeof body.par === 'number' && Number.isFinite(body.par) ? body.par : null
+    const standard = withReorderPars(normLinenStandard(await getSetting<any>(LINEN_STANDARD_KEY, null)), viewPar, body.pars)
     const { ymd, label: dateLabel } = today()
     // "<Property> - <what> (<tier>) - <date>.<ext>": an ASCII filename= for old browsers, the real name in filename*.
     const property = str(body.property, 100) || 'Linen quote'
