@@ -7,6 +7,8 @@
 // The words and numbers come from content.cma (lib/sales-cma) and are edited on the Sales tab; the
 // math is planNumbers, the same function the magazine prints from.
 import React from 'react'
+import { createPortal } from 'react-dom'
+import { ProjectionTuner } from '@/components/ProjectionTuner'
 import {
   planNumbers, upliftLine, adjustLine, range, money, kMoney, compGross, pctRange, MONTHS,
   type SalesCma, type PacketPlan,
@@ -39,19 +41,23 @@ export function MonthBars({ months, lo, hi, ink, muted, w = 560, h = 190 }: { mo
   )
 }
 
-export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: boolean; prospect: string; serif: string }): CmaSlide[] {
+/** ed: the deck's own edit-in-place field, so every word on these slides edits like the rest of the deck.
+ *  onTune: opens the projection builder for a floor plan. Both come from ReportView; absent = read-only. */
+export type CmaDeps = { Slide: SlideFn; t: Any; edit: boolean; prospect: string; serif: string; ed?: (v: string, path: string, multiline?: boolean) => React.ReactNode; onTune?: (planId: string) => void; tunerFor?: (planId: string) => React.ReactNode }
+export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
   const { Slide, t, edit, serif } = d
+  const T = (v: string, path: string, ml?: boolean): React.ReactNode => (d.ed && edit ? d.ed(v, path, ml) : v)
   const out: CmaSlide[] = []
   const S = cma.sections
   const where = [cma.building, cma.area].filter(Boolean).join(' · ')
   const eyebrow = (x: string, dark?: boolean) => (
     <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.accent, margin: 0 }}>{x}</p>
   )
-  const title = (x: string, dark?: boolean, size = 38) => (
+  const title = (x: React.ReactNode, dark?: boolean, size = 38) => (
     <h2 style={{ fontFamily: serif, fontWeight: 400, fontSize: size, lineHeight: 1.08, letterSpacing: '-0.015em', color: dark ? '#fff' : t.ink, margin: '10px 0 0', textWrap: 'balance' as Any }}>{x}</h2>
   )
   const note = edit ? (
-    <p className="sb-noprint" style={{ position: 'absolute', right: 18, bottom: 12, fontSize: 11, color: t.muted, background: t.chip, padding: '3px 8px', borderRadius: 6 }}>Edit these numbers on the Sales tab → Floor plans &amp; comps</p>
+    <p className="sb-noprint" style={{ position: 'absolute', right: 18, bottom: 12, fontSize: 11, color: t.muted, background: t.chip, padding: '3px 8px', borderRadius: 6 }}>Words edit here; projections and comps in the Magazine builder or on the Sales tab</p>
   ) : null
   const cell: React.CSSProperties = { padding: '9px 10px', borderTop: '1px solid ' + t.rule, fontSize: 13, color: t.body, verticalAlign: 'top' }
   const th: React.CSSProperties = { padding: '0 10px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, textAlign: 'left' }
@@ -65,12 +71,12 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
           <div style={{ minWidth: 0 }}>
             {eyebrow('For sales teams and agents')}
             {title('Agent partner program')}
-            <p style={{ fontSize: 15, lineHeight: 1.55, color: t.body, margin: '14px 0 0', maxWidth: '58ch' }}>{P.lead}</p>
+            <p style={{ fontSize: 15, lineHeight: 1.55, color: t.body, margin: '14px 0 0', maxWidth: '58ch' }}>{T(P.lead, 'cma.partner.lead', true)}</p>
             <div style={{ display: 'grid', gap: 12, marginTop: 22 }}>
               {P.cards.map(([k, v], i) => (
                 <div key={i} style={{ background: t.chip, borderRadius: 14, padding: '14px 18px' }}>
-                  <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{k}</p>
-                  <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '4px 0 0' }}>{v}</p>
+                  <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{T(k, `cma.partner.cards.${i}.0`)}</p>
+                  <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '4px 0 0' }}>{T(v, `cma.partner.cards.${i}.1`, true)}</p>
                 </div>
               ))}
             </div>
@@ -80,12 +86,12 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
             <div style={{ display: 'grid', gap: 14, marginTop: 22 }}>
               {P.fees.map(([amt, what], i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: 12, paddingBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.14)' }}>
-                  <span style={{ fontFamily: serif, fontSize: 40, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{amt}</span>
-                  <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.78)' }}>{what}</span>
+                  <span style={{ fontFamily: serif, fontSize: 40, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{T(amt, `cma.partner.fees.${i}.0`)}</span>
+                  <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.78)' }}>{T(what, `cma.partner.fees.${i}.1`)}</span>
                 </div>
               ))}
             </div>
-            <p style={{ marginTop: 'auto', fontSize: 13, lineHeight: 1.5, color: 'rgba(255,255,255,0.8)' }}>{P.feeNote}</p>
+            <p style={{ marginTop: 'auto', fontSize: 13, lineHeight: 1.5, color: 'rgba(255,255,255,0.8)' }}>{T(P.feeNote, 'cma.partner.feeNote', true)}</p>
           </div>
           {note}
         </div>
@@ -100,8 +106,8 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
             {P.steps.map(([k, v], i) => (
               <div key={i} style={{ borderTop: '3px solid ' + t.accent, paddingTop: 16 }}>
                 <span style={{ fontFamily: serif, fontSize: 34, color: t.accent, lineHeight: 1 }}>{i + 1}</span>
-                <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, margin: '12px 0 0' }}>{k}</p>
-                <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '6px 0 0' }}>{v}</p>
+                <p style={{ fontSize: 16, fontWeight: 600, color: t.ink, margin: '12px 0 0' }}>{T(k, `cma.partner.steps.${i}.0`)}</p>
+                <p style={{ fontSize: 13, lineHeight: 1.5, color: t.body, margin: '6px 0 0' }}>{T(v, `cma.partner.steps.${i}.1`, true)}</p>
               </div>
             ))}
           </div>
@@ -109,7 +115,7 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
             <div style={{ marginTop: 'auto', background: t.chip, borderRadius: 14, padding: '16px 20px' }}>
               <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.muted, margin: 0 }}>{cma.building ? 'At ' + cma.building : 'For your buyers'}</p>
               <ul style={{ margin: '8px 0 0', paddingLeft: 18, display: 'grid', gap: 4 }}>
-                {P.here.map((x, i) => <li key={i} style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45 }}>{x}</li>)}
+                {P.here.map((x, i) => <li key={i} style={{ fontSize: 13.5, color: t.body, lineHeight: 1.45 }}>{T(x, `cma.partner.here.${i}`, true)}</li>)}
               </ul>
             </div>
           ) : null}
@@ -128,14 +134,14 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
           <div>
             {eyebrow('For buyers who ask for options')}
             {title(cma.building ? 'Stay as a second option at ' + cma.building.replace(/ Residences$/, '') : 'Stay as a second option', false, 34)}
-            <p style={{ fontSize: 14, lineHeight: 1.55, color: t.body, margin: '14px 0 0' }}>{Q.choose}</p>
+            <p style={{ fontSize: 14, lineHeight: 1.55, color: t.body, margin: '14px 0 0' }}>{T(Q.choose, 'cma.second.choose', true)}</p>
           </div>
           <table style={{ width: '100%', borderCollapse: 'collapse', alignSelf: 'start' }}>
             <tbody>
               {Q.qa.map(([q, a], i) => (
                 <tr key={i}>
-                  <td style={{ ...cell, width: 170, fontWeight: 600, color: t.ink, fontSize: 13.5 }}>{q}</td>
-                  <td style={{ ...cell, fontSize: 13 }}>{a}</td>
+                  <td style={{ ...cell, width: 170, fontWeight: 600, color: t.ink, fontSize: 13.5 }}>{T(q, `cma.second.qa.${i}.0`)}</td>
+                  <td style={{ ...cell, fontSize: 13 }}>{T(a, `cma.second.qa.${i}.1`, true)}</td>
                 </tr>
               ))}
             </tbody>
@@ -153,8 +159,8 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
             {Q.steps.map(([k, v], i) => (
               <div key={i} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 16, padding: '20px 22px' }}>
                 <span style={{ fontFamily: serif, fontSize: 30, color: '#fff', lineHeight: 1 }}>{i + 1}</span>
-                <p style={{ fontSize: 17, fontWeight: 600, color: '#fff', margin: '12px 0 0' }}>{k}</p>
-                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.78)', margin: '6px 0 0' }}>{v}</p>
+                <p style={{ fontSize: 17, fontWeight: 600, color: '#fff', margin: '12px 0 0' }}>{T(k, `cma.second.steps.${i}.0`)}</p>
+                <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.78)', margin: '6px 0 0' }}>{T(v, `cma.second.steps.${i}.1`, true)}</p>
               </div>
             ))}
           </div>
@@ -162,7 +168,7 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
             <div style={{ marginTop: 'auto' }}>
               <p style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.55)', margin: 0 }}>What we would ask of the sales team</p>
               <ul style={{ margin: '8px 0 0', paddingLeft: 18, display: 'grid', gap: 4 }}>
-                {Q.ask.map((x, i) => <li key={i} style={{ fontSize: 14, color: 'rgba(255,255,255,0.86)', lineHeight: 1.45 }}>{x}</li>)}
+                {Q.ask.map((x, i) => <li key={i} style={{ fontSize: 14, color: 'rgba(255,255,255,0.86)', lineHeight: 1.45 }}>{T(x, `cma.second.ask.${i}`, true)}</li>)}
               </ul>
             </div>
           ) : null}
@@ -173,17 +179,17 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
 
   // ── Market and the comparable set ─────────────────────────────────────────────────────────────
   if (S.market) {
-    const bullets = cma.market.bullets.filter(([, v]) => v.trim())
+    const bullets = cma.market.bullets.map(([k, v], oi) => [k, v, oi] as [string, string, number]).filter(([, v]) => v.trim() || edit)
     if (bullets.length || edit) out.push({ key: 'cma-market', node: (
       <Slide nav="The market" pad={48} warn={edit}>
         <div style={{ position: 'relative', height: '100%' }}>
           {eyebrow(where || 'The market')}
           {title((cma.area || 'The') + ' rental market')}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(' + (bullets.length > 4 ? 3 : 2) + ', 1fr)', gap: '18px 26px', marginTop: 26 }}>
-            {bullets.map(([k, v], i) => (
+            {bullets.map(([k, v, oi], i) => (
               <div key={i} style={{ borderTop: '1px solid ' + t.rule, paddingTop: 12 }}>
-                <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{k.replace(/\.$/, '')}</p>
-                <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, margin: '5px 0 0' }}>{v}</p>
+                <p style={{ fontSize: 15, fontWeight: 600, color: t.ink, margin: 0 }}>{T(k.replace(/\.$/, ''), `cma.market.bullets.${oi}.0`)}</p>
+                <p style={{ fontSize: 12.5, lineHeight: 1.5, color: t.body, margin: '5px 0 0' }}>{T(v, `cma.market.bullets.${oi}.1`, true)}</p>
               </div>
             ))}
           </div>
@@ -199,11 +205,11 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
           <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 24 }}>
             <thead><tr><th style={th}>Comparable</th><th style={th}>Market</th><th style={th}>Basis</th><th style={th}>Gross per year</th><th style={th}>Nightly</th><th style={th}>Occupancy</th></tr></thead>
             <tbody>
-              {cma.comps.map(c => (
+              {cma.comps.map((c, ci) => (
                 <tr key={c.id}>
-                  <td style={{ ...cell, fontWeight: 600, color: t.ink }}>{c.name}</td>
-                  <td style={cell}>{c.market}</td>
-                  <td style={cell}>{c.basis}</td>
+                  <td style={{ ...cell, fontWeight: 600, color: t.ink }}>{T(c.name, `cma.comps.${ci}.name`)}</td>
+                  <td style={cell}>{T(c.market, `cma.comps.${ci}.market`)}</td>
+                  <td style={cell}>{T(c.basis, `cma.comps.${ci}.basis`)}</td>
                   <td style={{ ...cell, fontVariantNumeric: 'tabular-nums' }}>{compGross(c)}</td>
                   <td style={{ ...cell, fontVariantNumeric: 'tabular-nums' }}>{money(c.nightlyLo)} to {money(c.nightlyHi)}</td>
                   <td style={cell}>{pctRange(c.occLo, c.occHi)}</td>
@@ -255,8 +261,10 @@ export function cmaSlides(cma: SalesCma, d: { Slide: SlideFn; t: Any; edit: bool
   return out
 }
 
-function planSlide(cma: SalesCma, p: PacketPlan, d: { Slide: SlideFn; t: Any; edit: boolean; serif: string }, h: Any) {
+function planSlide(cma: SalesCma, p: PacketPlan, d: CmaDeps, h: Any) {
   const { Slide, t, edit, serif } = d
+  const pi = cma.plans.findIndex(x => x.id === p.id)
+  const T = (v: string, path: string, ml?: boolean): React.ReactNode => (d.ed && edit ? d.ed(v, path, ml) : v)
   const n = planNumbers(cma, p)
   const comps = p.compIds.map(id => cma.comps.find(c => c.id === id)).filter(Boolean) as SalesCma['comps']
   const stat = (label: string, value: string, sub: string, dark?: boolean) => (
@@ -271,7 +279,7 @@ function planSlide(cma: SalesCma, p: PacketPlan, d: { Slide: SlideFn; t: Any; ed
       <div style={{ position: 'relative', height: '100%', display: 'grid', gridTemplateColumns: '400px minmax(0,1fr)', gap: 30 }}>
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {h.eyebrow((h.where ? h.where + ' · ' : '') + 'Rental comparison')}
-          {h.title(p.name, false, 40)}
+          {h.title(T(p.name, `cma.plans.${pi}.name`) as Any, false, 40)}
           <p style={{ fontSize: 12.5, color: t.muted, margin: '8px 0 0' }}>{[p.sf, p.price ? 'from ' + p.price : '', p.rules].filter(Boolean).join('  ·  ')}</p>
           <div style={{ display: 'grid', gap: 10, marginTop: 18 }}>
             {stat('Per year', range(n.lo, n.hi), 'Gross rental revenue')}
@@ -300,10 +308,32 @@ function planSlide(cma: SalesCma, p: PacketPlan, d: { Slide: SlideFn; t: Any; ed
               </tr>
             </tbody>
           </table>
-          <p style={{ fontSize: 10.5, lineHeight: 1.45, color: t.muted, margin: '8px 0 0' }}><b style={{ color: t.body }}>How we got there:</b> {p.how} {n.manual ? 'Range set by hand.' : upliftLine(cma)} {adjustLine(cma, p)}</p>
+          <p style={{ fontSize: 10.5, lineHeight: 1.45, color: t.muted, margin: '8px 0 0' }}><b style={{ color: t.body }}>How we got there:</b> {T(p.how, `cma.plans.${pi}.how`, true)} {n.manual ? 'Range set by hand.' : upliftLine(cma)} {adjustLine(cma, p)}</p>
         </div>
+        {edit && d.tunerFor ? d.tunerFor(p.id) : null}
+        {edit && d.onTune ? <button type="button" className="sb-noprint" onClick={() => d.onTune!(p.id)} style={{ position: 'absolute', top: 0, right: 0, fontSize: 12, fontWeight: 600, background: t.band, color: '#fff', border: 0, borderRadius: 999, padding: '6px 12px', cursor: 'pointer' }}>Adjust projection</button> : null}
         {h.note}
       </div>
     </Slide>
+  )
+}
+
+/** The projection builder over the keynote: a panel on the right, outside the scaled slide (a portal). */
+export function CmaTuneModal({ cma, planId, onChange, onClose }: { cma: SalesCma; planId: string; onChange: (p: PacketPlan) => void; onClose: () => void }) {
+  const plan = cma.plans.find(x => x.id === planId)
+  if (!plan || typeof document === 'undefined') return null
+  return createPortal(
+    <div className="sb-noprint" style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(10,14,40,.28)' }} onClick={onClose}>
+      <aside onClick={e => e.stopPropagation()} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(480px,100vw)', background: '#fff', boxShadow: '-18px 0 50px rgba(10,14,40,.2)', padding: '18px 20px 24px', overflowY: 'auto', fontFamily: 'Inter, system-ui, sans-serif', color: '#0F1640' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <b style={{ fontFamily: 'Newsreader, Georgia, serif', fontWeight: 400, fontSize: 24 }}>Projection builder</b>
+          <button type="button" onClick={onClose} aria-label="Close" style={{ border: 0, background: 'none', fontSize: 24, color: '#80859A', cursor: 'pointer' }}>×</button>
+        </div>
+        <h3 style={{ fontFamily: 'Newsreader, Georgia, serif', fontWeight: 300, fontSize: 28, margin: '14px 0 10px' }}>{plan.name}</h3>
+        <ProjectionTuner cma={cma} plan={plan} onChange={onChange} />
+        <p style={{ fontSize: 12, color: '#80859A', marginTop: 16 }}>Changes save with the deck, and the magazine shows the same numbers.</p>
+      </aside>
+    </div>,
+    document.body,
   )
 }

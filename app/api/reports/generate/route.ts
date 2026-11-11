@@ -318,6 +318,8 @@ export async function POST(req: NextRequest) {
       ;(contentS as any).cma = cmaPick === 'rider' ? riderTemplate() : blankCma(str(intake?.building) || scopeLabel, str(body?.market) || String(marketS || ''))
       // A building package is one photograph-led cover: the Miami skyline when no photo was chosen.
       if (cmaPick === 'rider' && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = '/deck-img/miami-skyline.jpg'
+      // A building package already carries the projections, so the close asks for a call (Jon, 2026-11-11).
+      if ((contentS as any).close) (contentS as any).close.headline = 'Book a call to learn more'
     }
     // OUR HOMES AGAINST THE MARKET (lib/sales-edge). Measured now so the deck arrives carrying it;
     // a market with no published benchmark, or where we do not win, simply has no rows.

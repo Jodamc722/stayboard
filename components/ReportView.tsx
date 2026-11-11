@@ -37,7 +37,7 @@ import { CLOSE_ROWS, CLOSE_ROWS_RETIRED, EDGE_HEADLINE, EDGE_SUBTITLE, EDGE_BODY
 import { AMENITY_VOCAB, groupAmenities } from '@/lib/amenity-catalog'
 import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, seasonBodyStale } from '@/lib/season-shape'
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
-import { cmaSlides } from '@/components/SalesCmaSlides'
+import { cmaSlides, CmaTuneModal } from '@/components/SalesCmaSlides'
 import { normalizeCma } from '@/lib/sales-cma'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
@@ -1547,6 +1547,8 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
 
   // ---------- present mode (full-screen slideshow) ----------
   const [present, setPresent] = useState(false)
+  // Which floor plan's projection builder is open over the keynote (components/SalesCmaSlides).
+  const [cmaTune, setCmaTune] = useState<string | null>(null)
   // PRESENTER NOTES (Jon, 2026-09-21): a drawer only the presenter sees, on every slide, where
   // notes typed during the call land. They are stored on the deck (content.notes.recap) and
   // shown on the last slide as the recap, so the owner leaves with the record.
@@ -8134,7 +8136,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // comparable set, every floor plan at a glance, one comparison per floor plan. They live
           // on content.cma, are edited on the Sales tab, and print the same numbers the magazine does.
           if (isSales) { const cmaC = normalizeCma((c as Any).cma)
-            if (cmaC) for (const sl of cmaSlides(cmaC, { Slide: Slide as Any, t, edit, prospect: String((c.meta || {}).prospect || ''), serif: SERIF }))
+            if (cmaC) for (const sl of cmaSlides(cmaC, {
+              Slide: Slide as Any, t, edit, prospect: String((c.meta || {}).prospect || ''), serif: SERIF,
+              // Every word on the building slides edits in place like the rest of the deck, and each
+              // floor plan opens the projection builder (Jon, 2026-11-11: full customization in both).
+              ed: (v: string, path: string, ml?: boolean) => <Ed v={v} set={x => patch(path, x)} edit={edit} multiline={ml} />,
+              onTune: (id: string) => setCmaTune(id),
+              tunerFor: (id: string) => cmaTune === id ? <CmaTuneModal cma={cmaC} planId={id} onClose={() => setCmaTune(null)}
+                onChange={np => mutate((d: Any) => { const cc = normalizeCma(d.cma); if (cc) { cc.plans = cc.plans.map(x => x.id === np.id ? np : x); d.cma = cc } })} /> : null,
+            }))
               if (!isHidden(sl.key)) slides.push({ key: sl.key, node: sl.node })
           }
 
