@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
 import { hasEditCookie } from '@/lib/edit-access'
 import nextDynamic from 'next/dynamic'
+import { reword } from '@/lib/sales-reword'
 import { reportGallery } from '@/lib/report-gallery'
 import { reportByListingForEngine } from '@/lib/report-listings-v2'
 import { reportRecommendations } from '@/lib/report-recommendations'
@@ -39,6 +40,8 @@ export default async function PublicReportPage({ params, searchParams }: { param
   // those strings in its content; they render as URLs here, so the deck shows its photos whether
   // or not the row has been rewritten yet.
   if (rep.content && typeof rep.content === 'object') rep.content = picsAsUrls(rep.content)
+  // Sales decks made before the wording pass read with the new default sentences (lib/sales-reword).
+  if (String((rep.content as any)?.meta?.kind || '') === 'sales') rep.content = reword(rep.content)
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const unlocked = hasEditCookie()

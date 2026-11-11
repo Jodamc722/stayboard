@@ -249,7 +249,7 @@ export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
               ))}
             </tbody>
           </table>
-          <p style={{ fontSize: 11, color: t.muted, margin: '10px 0 0', maxWidth: '110ch' }}>Gross rental revenue once fully ramped, before channel fees and the management fee. {upliftLine(cma)}</p>
+          <p style={{ fontSize: 11, color: t.muted, margin: '10px 0 0', maxWidth: '110ch' }}>Gross rental revenue once the listing is established, before channel fees and the management fee. {upliftLine(cma)}</p>
           {note}
         </div>
       </Slide>

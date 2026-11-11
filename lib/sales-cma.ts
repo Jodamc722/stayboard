@@ -275,21 +275,21 @@ export function riderTemplate(): SalesCma {
       lead: 'The evidence behind each floor-plan comparison in this package.',
       bullets: [
         ['Supply.', 'NoMad Wynwood opened in May 2026 with 329 units and allows short-term rentals. The Rider adds 152 furnished residences. Guests will compare the two buildings on nightly rate and reviews, so how well each unit is run decides who gets the booking.'],
-        ['Competition is real.', 'New Wynwood units compete hard on rate, and units that pushed price at the March and April peak gave back bookings into summer. The owners who do best fill the calendar first and raise rates only where demand supports it.'],
-        ['What wins.', 'Occupancy-first pricing, daily rate changes, a fast and clean turnover, and fast answers to guests. Review scores follow operations, and reviews drive the next booking.'],
-        ['Event dates.', 'Art Basel week and New Year’s Eve carry a large premium to the base rate. A unit live and reviewed before then is positioned for it.'],
-        ['New-build advantage.', 'A brand-new building opens with new furnishings, fresh photos and launch-period demand, and has no aging inventory to discount.'],
+        ['Competition is real.', 'New Wynwood units compete hard on rate, and units that priced too high at the March and April peak lost bookings into the summer. The owners who do best fill the calendar first and raise rates only where demand supports it.'],
+        ['What wins.', 'Pricing for occupancy first, daily rate changes, fast and spotless turnovers, and quick replies to guests. Good operations earn good reviews, and reviews win the next booking.'],
+        ['Event dates.', 'Art Basel week and New Year’s Eve command a large premium over the base rate. A unit that is live and reviewed before then is ready to capture it.'],
+        ['New-build advantage.', 'A brand-new building opens with new furnishings, fresh photos and launch-period demand, with nothing worn or dated to discount.'],
         ['Rental rules.', 'Short-term rentals are allowed, with optional management by the building’s program or a third party. Owners choose.'],
       ],
     },
     comps: [
-      { id: NOMAD_S, name: 'NoMad Wynwood studio', market: 'Wynwood, opened May 2026', basis: 'Stay projection, fully ramped', grossText: '$46,400 avg, $55,000 high', lo: 46000, hi: 55000, nightlyLo: 177, nightlyHi: 212, occLo: 70, occHi: 75 },
-      { id: NOMAD_1, name: 'NoMad Wynwood one-bedroom', market: 'Wynwood, opened May 2026', basis: 'Stay projection, fully ramped', lo: 54900, hi: 60800, nightlyLo: 215, nightlyHi: 222, occLo: 70, occHi: 75 },
-      { id: BRICK_S, name: 'Furnished new-build studio', market: 'Brickell, delivered', basis: 'Stay projection, fully ramped', lo: 54900, hi: 67700, nightlyLo: 212, nightlyHi: 235, occLo: 77, occHi: 85 },
-      { id: BRICK_1, name: 'Furnished new-build one-bedroom', market: 'Brickell, delivered', basis: 'Stay projection, fully ramped', lo: 64600, hi: 79600, nightlyLo: 249, nightlyHi: 276, occLo: 77, occHi: 85 },
-      { id: BRICK_2, name: 'Furnished new-build two-bedroom (947 SF)', market: 'Brickell, delivered', basis: 'Stay projection, fully ramped', lo: 96500, hi: 103400, nightlyLo: 344, nightlyHi: 357, occLo: 78, occHi: 80 },
+      { id: NOMAD_S, name: 'NoMad Wynwood studio', market: 'Wynwood, opened May 2026', basis: 'Stay projection, established listing', grossText: '$46,400 avg, $55,000 high', lo: 46000, hi: 55000, nightlyLo: 177, nightlyHi: 212, occLo: 70, occHi: 75 },
+      { id: NOMAD_1, name: 'NoMad Wynwood one-bedroom', market: 'Wynwood, opened May 2026', basis: 'Stay projection, established listing', lo: 54900, hi: 60800, nightlyLo: 215, nightlyHi: 222, occLo: 70, occHi: 75 },
+      { id: BRICK_S, name: 'Furnished new-build studio', market: 'Brickell, delivered', basis: 'Stay projection, established listing', lo: 54900, hi: 67700, nightlyLo: 212, nightlyHi: 235, occLo: 77, occHi: 85 },
+      { id: BRICK_1, name: 'Furnished new-build one-bedroom', market: 'Brickell, delivered', basis: 'Stay projection, established listing', lo: 64600, hi: 79600, nightlyLo: 249, nightlyHi: 276, occLo: 77, occHi: 85 },
+      { id: BRICK_2, name: 'Furnished new-build two-bedroom (947 SF)', market: 'Brickell, delivered', basis: 'Stay projection, established listing', lo: 96500, hi: 103400, nightlyLo: 344, nightlyHi: 357, occLo: 78, occHi: 80 },
     ],
-    uplift: { lo: 15, hi: 20, why: 'because The Rider is a brand-new building delivering in 2027, opening with new furnishings, no aging inventory and launch-period demand.' },
+    uplift: { lo: 15, hi: 20, why: 'because The Rider is a brand-new building delivering in 2027, opening with new furnishings, nothing dated and launch-period demand.' },
     plans: [
       plan('studio', 'Studio', '391 to 599 SF', '$593,900', [NOMAD_S, BRICK_S], NOMAD_S, 1, 0, 1, 'Direct comparison: Stay’s NoMad Wynwood studio projection. No scaling.'),
       plan('1bed', '1 Bed', '693 to 807 SF', '$764,900', [NOMAD_1, BRICK_1], NOMAD_1, 1, 0, 1, 'Direct comparison: Stay’s NoMad Wynwood one-bedroom projection. No scaling.'),
@@ -300,7 +300,7 @@ export function riderTemplate(): SalesCma {
       plan('3bed', '3 Bed (Lockout)', '1,441 to 1,612 SF', '$1,835,900', [NOMAD_1, BRICK_2], NOMAD_1, 2, 0, 1, 'One-bedroom comparison scaled 2.0x. There is no delivered Wynwood comparison at this size, so this is the least certain range.'),
       plan('3suite', '3 Studio Suites (Lockout)', '1,125 to 1,235 SF', '$1,512,900', [NOMAD_S, BRICK_S], NOMAD_S, 3, 15, 3, 'Three studios rented separately: 3 x the studio comparison, less 15% for shared turnover and one entry. Nightly rate shown per suite.'),
     ],
-    disclaimer: 'Estimates for a fully ramped, furnished unit once the building is operating (delivery expected second half of 2027). Projections, not guarantees. Comparable figures are Stay projections for fully ramped units; The Rider has no operating history yet. Figures are gross rental revenue, before channel fees and Stay’s 15% management fee. No setup or monthly fees. Guests pay cleaning and taxes.',
+    disclaimer: 'Estimates for a furnished unit with an established listing, once the building is operating (delivery expected second half of 2027). Projections, not guarantees. Comparable figures are Stay projections for established units; The Rider has no operating history yet. Figures are gross rental revenue, before channel fees and Stay’s 15% management fee. No setup or monthly fees. Guests pay cleaning and taxes.',
   }
 }
 
@@ -313,7 +313,7 @@ export function blankCma(building = '', area = ''): SalesCma {
     market: { lead: t.market.lead, bullets: [['Supply.', ''], ['Competition.', ''], ['What wins.', t.market.bullets[2][1]], ['Event dates.', t.market.bullets[3][1]], ['Rental rules.', '']] },
     comps: [], plans: [],
     uplift: { lo: 15, hi: 20, why: 'because a brand-new building opens with new furnishings, no aging inventory and launch-period demand.' },
-    disclaimer: 'Estimates for a fully ramped, furnished unit. Projections, not guarantees. Figures are gross rental revenue, before channel fees and Stay’s 15% management fee. No setup or monthly fees. Guests pay cleaning and taxes.',
+    disclaimer: 'Estimates for a furnished unit with an established listing. Projections, not guarantees. Figures are gross rental revenue, before channel fees and Stay’s 15% management fee. No setup or monthly fees. Guests pay cleaning and taxes.',
   }
 }
 

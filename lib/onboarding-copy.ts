@@ -830,7 +830,7 @@ export function houseLogo(stored: unknown, name: unknown): string {
 export const PACER_LOGO = '/api/public/vendor-logo/pacer'
 
 export const STACK_CHANNELS: { k: string; v: string }[] = [
-  { k: 'Slack', v: 'Housekeeping, maintenance, guest care and management in one room, in real time, in two languages. A problem at your property reaches whoever can fix it in seconds.' },
+  { k: 'Slack', v: 'Housekeeping, maintenance, guest care and management on one channel, in real time, in two languages. A problem at your property goes straight to the person who can fix it.' },
   { k: 'Email & messaging', v: 'Guest messages from every channel land in one inbox, answered around the clock. Your statement, owner report and anything needing approval arrive the same way: written and timestamped.' },
 ]
 
