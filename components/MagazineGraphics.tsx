@@ -110,30 +110,29 @@ export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; 
   )
 }
 
-/** One calendar, every platform: the listing at the centre, the channels around it. */
+/** One calendar, every platform: the home at the centre, the channels in two columns around it. */
 export function ChannelHub({ channels, count }: { channels: string[]; count: string }) {
   const list = channels.slice(0, 8)
-  const W = 672, H = 180, cx = 118, cy = H / 2
-  const right = 300
-  const rowH = (H - 20) / Math.max(1, list.length)
+  const W = 672, H = 132, cx = 70, cy = H / 2, r = 58
+  const cols = [236, 456], rows = Math.ceil(list.length / 2)
+  const rowH = (H - 12) / Math.max(1, rows)
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={'One calendar, live on ' + count + ' platforms'}>
       {list.map((c, i) => {
-        const y = 10 + rowH * i + rowH / 2
+        const col = i < rows ? 0 : 1, row = col ? i - rows : i
+        const x = cols[col], y = 6 + rowH * row + rowH / 2
         return (
           <g key={c}>
-            <path d={`M${cx + 58},${cy} C${cx + 130},${cy} ${right - 80},${y} ${right - 8},${y}`} style={{ fill: 'none', stroke: V.rule }} strokeWidth={1.25} />
-            <circle cx={right - 4} cy={y} r={3} style={{ fill: V.sand }} />
-            <text x={right + 8} y={y + 5} fontFamily={SERIF} fontSize={16} style={{ fill: V.ink }}>{c}</text>
+            <path d={`M${cx + r},${cy} C${cx + r + 60},${cy} ${x - 70},${y} ${x - 8},${y}`} style={{ fill: 'none', stroke: V.rule }} strokeWidth={1.1} />
+            <circle cx={x - 4} cy={y} r={3} style={{ fill: V.sand }} />
+            <text x={x + 8} y={y + 5} fontFamily={SERIF} fontSize={16} style={{ fill: V.ink }}>{c}</text>
           </g>
         )
       })}
-      <circle cx={cx} cy={cy} r={58} style={{ fill: V.navy }} />
-      <circle cx={cx} cy={cy} r={66} style={{ fill: 'none', stroke: V.navy, opacity: 0.25 }} />
-      <text x={cx} y={cy - 6} textAnchor="middle" fontFamily={SERIF} fontSize={17} style={{ fill: '#fff' }}>One calendar</text>
-      <text x={cx} y={cy + 14} textAnchor="middle" fontFamily={SANS} fontSize={9} fontWeight={600} letterSpacing="1.5" style={{ fill: V.glow }}>YOUR HOME</text>
-      <text x={W} y={H - 10} textAnchor="end" fontFamily={SERIF} fontSize={30} fontWeight={300} style={{ fill: V.ink }}>{count}</text>
-      <text x={W} y={H - 46} textAnchor="end" fontFamily={SANS} fontSize={9.5} fontWeight={600} letterSpacing="1.6" style={{ fill: V.muted }}>PLATFORMS IN ALL</text>
+      <circle cx={cx} cy={cy} r={r} style={{ fill: V.navy }} />
+      <text x={cx} y={cy - 8} textAnchor="middle" fontFamily={SERIF} fontSize={15} style={{ fill: '#fff' }}>One calendar</text>
+      <text x={cx} y={cy + 16} textAnchor="middle" fontFamily={SERIF} fontSize={20} style={{ fill: V.glow }}>{count}</text>
+      <text x={cx} y={cy + 30} textAnchor="middle" fontFamily={SANS} fontSize={8} fontWeight={600} letterSpacing="1.4" style={{ fill: '#fff', opacity: 0.7 }}>PLATFORMS</text>
     </svg>
   )
 }
