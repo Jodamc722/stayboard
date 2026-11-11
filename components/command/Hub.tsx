@@ -25,7 +25,7 @@
 // (/api/projects/mine — the Leadership board since 2026-11-06), the listing fixes (/api/listing-health?slim=1) and the week (/api/command/scoreboard).
 import { cloneElement, createContext, isValidElement, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp, StickyNote, Circle, CheckCircle2, Wrench, Users, Wallet } from 'lucide-react'
+import { Loader2, Check, ExternalLink, UserPlus, Star, Phone, X, Sparkles, ClipboardCheck, ListChecks, MessageSquare, FileText, ChevronDown, ChevronUp, StickyNote, Circle, CheckCircle2, Wrench, Users, Wallet, Plus } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
 import { signalLabel } from '@/lib/checklist-shared'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
@@ -624,12 +624,11 @@ function ChecklistRow({ r, canTick, onTicked, lane }: { r: CkRow; canTick: boole
 const NOW_WINDOW_MIN = 120
 const BAND_START: Record<string, number> = { morning: 0, midday: 11 * 60, afternoon: 14 * 60, evening: 17 * 60 }
 function ChecklistStrip({ ck, onTicked }: { ck: Ck | undefined; onTicked: () => void }) {
-  const [open, setOpen] = useState(false)
+  // Open, the whole day, always (2026-11-10: "tabs open, not collapsible").
+  const [open, setOpen] = useState(true)
   const head = (txt: ReactNode, right?: ReactNode, toggle?: boolean) => (
     <h2 className="px-1 mb-1.5 text-[11px] font-bold uppercase tracking-wider text-ink flex items-center gap-2 flex-wrap">
-      {toggle
-        ? <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={open ? 'Show only what is pending now' : 'Show the whole day'}><ListChecks size={13} className="text-brand-600" /> Checklist {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</button>
-        : <><ListChecks size={13} className="text-brand-600" /> Checklist</>}
+      <><ListChecks size={13} className="text-brand-600" /> Checklist</>{void toggle}{void setOpen}
       <span className="normal-case tracking-normal font-medium text-muted">— {txt}</span>
       <span className="ml-auto inline-flex items-center gap-2">{right}<Link href="/checklist" prefetch={false} className="text-[11px] font-semibold text-brand-700 hover:underline">Checklist →</Link></span>
     </h2>
@@ -682,6 +681,28 @@ function OptimizeRow({ o, lane }: { o: OptimizeDue; lane?: string }) {
       tags={o.days == null ? <Tag tone="amber" title="No optimization on record">never optimized</Tag> : <Tag tone="slate" title={'Last optimized ' + o.lastOptimized}>{months} months ago</Tag>}
       meta={(o.building ? o.building + ' · ' : '') + 'optimize every 6 months — copy, photos, hero'}
       actions={<Link href={'/listings/' + encodeURIComponent(o.id)} prefetch={false} className={DARK} title="Open the listing — Recreate, photo order, hero"><Sparkles size={12} /> Optimize</Link>} />
+  )
+}
+
+/** Add a task for yourself, right in the section (2026-11-10: "the bottom section needs to be fully functional"). */
+function AddMine({ onAdded }: { onAdded: () => void }) {
+  const [draft, setDraft] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const add = async () => {
+    const title = draft.trim(); if (!title) return
+    setBusy(true); setErr('')
+    try { await post(MINE_URL, { title }); setDraft(''); onAdded() } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy(false)
+  }
+  return (
+    <div className="px-3 py-1.5 min-h-[44px] flex items-center gap-2">
+      <Plus size={13} className="text-muted shrink-0" />
+      <input value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add() }} disabled={busy}
+        placeholder="Add a task for yourself — it lands on the Leadership board" aria-label="Add a task for yourself" className="flex-1 min-w-0 bg-transparent text-[13px] py-1 focus:outline-none placeholder:text-muted/70" />
+      {draft.trim() && <button onClick={add} disabled={busy} className={DARK}>{busy ? <Loader2 size={12} className="animate-spin" /> : 'Add'}</button>}
+      {err && <span className="text-[11.5px] text-rose-700">{err}</span>}
+    </div>
   )
 }
 
@@ -983,8 +1004,10 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
   for (const a of fixes) items.push({ key: 'fix:' + a.listingId + a.key, area: 'admin', sub: 'Fixes', score: a.severity === 'critical' ? 40 : a.severity === 'high' ? 30 : 20, node: <FixRow a={a} /> })
 
   // NOW: the top of everything, across areas — but only rows that clear the bar.
-  const nowAll = items.filter(i => i.score >= NOW_MIN).sort((a, b) => b.score - a.score)
-  const now = nowOpen ? nowAll : nowAll.slice(0, NOW_MAX)
+  // Decisions stay in Needs you; Now is the work (2026-11-10).
+  const nowAll = items.filter(i => i.score >= NOW_MIN && i.sub !== 'Needs you').sort((a, b) => b.score - a.score)
+  // Everything that clears the bar is drawn (2026-11-10: "open, not collapsible").
+  const now = nowAll
   // What Now is actually drawing right now. In focus mode Now is not rendered at all, so nothing
   // is held back from the lane.
   const shownInNow = new Set(now.map(i => i.key))
@@ -1041,23 +1064,22 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
       <section>
         <h2 className="px-1 mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink flex items-center gap-2">
-          <button onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="inline-flex items-center gap-1.5 hover:text-brand-700" title={nowOpen ? 'Back to the top six' : 'Open the whole list'}>Now {nowAll.length ? <span className="tabular-nums text-muted whitespace-nowrap">{nowOpen ? nowAll.length : now.length + (nowAll.length > now.length ? ' of ' + nowAll.length : '')}</span> : null} {nowAll.length > NOW_MAX ? (nowOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />) : null}</button>
+          <span className="inline-flex items-center gap-1.5">Now {nowAll.length ? <span className="tabular-nums text-muted">{nowAll.length}</span> : null}</span>
           <span className="normal-case tracking-normal font-medium text-muted">— {now.length ? 'the next two hours, most money on the line first' : 'nothing urgent — the sections below have the rest'}</span>
         </h2>
         {now.length > 0 && <div className={LIST}>
           {now.map(i => <div key={'now:' + i.key}>{withLane(i)}</div>)}
-          {nowAll.length > NOW_MAX && <button type="button" onClick={() => setNowOpen(o => !o)} aria-expanded={nowOpen} className="w-full text-left px-3.5 min-h-[36px] text-[12px] font-semibold text-muted hover:text-ink">{nowOpen ? 'Show the top ' + NOW_MAX : (nowAll.length - NOW_MAX) + ' more'}</button>}
         </div>}
       </section>
 
       <div className="grid gap-5 lg:grid-cols-2 items-start">
         <div className="space-y-5 min-w-0">
-          <Section id="turn" label="Turnovers & inspections" Icon={ListChecks} items={sec(['Cleans', 'Inspections'])} hide={shownInNow} href="/schedule" hrefLabel="Schedule" empty="every clean and inspection is covered" right={laneStat('ops')} />
+          <Section id="turn" label="Turnovers & inspections" Icon={ListChecks} tabs={['Cleans', 'Inspections']} items={sec(['Cleans', 'Inspections'])} hide={shownInNow} href="/schedule" hrefLabel="Schedule" empty="every clean and inspection is covered" right={laneStat('ops')} />
           <div id="lane-arrivals" className="scroll-mt-4"><ArrivalsLane /></div>
-          <Section id="maint" label="Maintenance & glitches" Icon={Wrench} items={sec(['Tasks', 'Glitches'])} hide={shownInNow} href="/glitches" hrefLabel="Glitches" empty="nothing open" />
+          <Section id="maint" label="Maintenance & glitches" Icon={Wrench} tabs={['Tasks', 'Glitches']} items={sec(['Tasks', 'Glitches'])} hide={shownInNow} href="/glitches" hrefLabel="Glitches" empty="nothing open" />
         </div>
         <div className="space-y-5 min-w-0">
-          <Section id="guests" label="Guests" Icon={MessageSquare} items={sec(['Inbox', 'Reviews'])} hide={shownInNow} href="/inbox" hrefLabel="Inbox" empty="nobody is waiting" right={laneStat('guests')} />
+          <Section id="guests" label="Guests" Icon={MessageSquare} tabs={['Inbox', 'Reviews']} items={sec(['Inbox', 'Reviews'])} hide={shownInNow} href="/inbox" hrefLabel="Inbox" empty="nobody is waiting" right={laneStat('guests')} />
           <Section id="team" label="Team" Icon={Users} items={sec(['Team'])} hide={shownInNow} href="/schedule" hrefLabel="Schedule" empty="nobody on the field team today" top={teamRows.length ? <TeamWhereStrip rows={teamRows} /> : null} />
           <section id="lane-unpaid" className="scroll-mt-4 min-w-0">
             <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
@@ -1072,7 +1094,7 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
           </section>
           <div className="space-y-2">
             <ChecklistStrip ck={ck} onTicked={reloadCk} />
-            <Section id="admin" label="Yours, optimize & fixes" Icon={FileText} items={sec(['Yours', 'Optimize', 'Fixes'])} hide={shownInNow} href="/leadership" hrefLabel="Leadership board" empty="nothing on your desk" right={laneStat('admin')} />
+            <Section id="admin" label="Yours, optimize & fixes" Icon={FileText} tabs={['Yours', 'Optimize', 'Fixes']} top={<AddMine onAdded={reloadMine} />} items={sec(['Yours', 'Optimize', 'Fixes'])} hide={shownInNow} href="/leadership" hrefLabel="Leadership board" empty="nothing on your desk" right={laneStat('admin')} />
           </div>
         </div>
       </div>
@@ -1083,46 +1105,48 @@ export function CommandHub({ d, live, roster, fixRows, claims, links, approvals,
 
 /** A FIXED SECTION ON TODAY (2026-11-10). Holds its place when empty; its own sub-filters; the
  *  first rows, then "N more"; and a line for the rows lifted into Now. */
-function Section({ id, label, Icon, items, hide, href, hrefLabel, empty, right, top }: {
+function Section({ id, label, Icon, items, hide, href, hrefLabel, empty, right, top, tabs }: {
   id: string; label: string; Icon: any; items: HubItem[]; hide: Set<string>; href: string; hrefLabel: string; empty: string; right?: ReactNode; top?: ReactNode
+  /** The section's tabs in order — always drawn, the first one selected (Jon, 2026-11-10: "open with tab selected"). */
+  tabs?: string[]
 }) {
-  const [sub, setSub] = useState<string | null>(null)
-  const [all, setAll] = useState(false)
   const subs = useMemo(() => {
     const n: Record<string, number> = {}
     for (const it of items) n[it.sub] = (n[it.sub] || 0) + 1
-    return Object.keys(n).sort((a, b) => SUB_ORDER.indexOf(a) - SUB_ORDER.indexOf(b)).map(k => ({ key: k, n: n[k] }))
-  }, [items])
-  const pick = sub && subs.some(s => s.key === sub) ? sub : null
-  const base = pick ? items.filter(i => i.sub === pick) : items
+    const keys = tabs && tabs.length ? tabs : Object.keys(n).sort((a, b) => SUB_ORDER.indexOf(a) - SUB_ORDER.indexOf(b))
+    return keys.map(k => ({ key: k, n: n[k] || 0 }))
+  }, [items, tabs])
+  const [sub, setSub] = useState<string | null>(null)
+  // TABS, OPEN, NOTHING FOLDED (2026-11-10): a tab is always selected — the first, unless one was picked —
+  // and every row of it is drawn; no "N more", no collapse.
+  const pick = sub && subs.some(s => s.key === sub) ? sub : (subs.find(s => s.n > 0) || subs[0] || { key: null as any }).key
+  const base = subs.length > 1 && pick ? items.filter(i => i.sub === pick) : items
   const upTop = base.filter(i => hide.has(i.key)).length
   const list = base.filter(i => !hide.has(i.key)).sort((a, b) => b.score - a.score)
-  const shown = all ? list : list.slice(0, LANE_ROWS)
-  const more = list.length - shown.length
   return (
     <section id={'lane-' + id} className="scroll-mt-4 min-w-0">
       <div className="px-1 mb-1.5 flex items-center gap-2 flex-wrap">
         <span className="text-[11px] font-bold uppercase tracking-wider text-ink inline-flex items-center gap-1.5"><Icon size={13} className="text-brand-600" /> {label}</span>
         {items.length ? <span className="text-[11px] font-bold tabular-nums text-muted">{items.length}</span> : <span className="text-[11px] text-muted">— {empty}</span>}
-        {subs.length > 1 && (
-          <span className="inline-flex items-center gap-1 flex-wrap" role="group" aria-label={label + ' filters'}>
-            <button onClick={() => setSub(null)} aria-pressed={!pick} className={'lh-tab text-[11px] font-semibold px-2 py-0.5 rounded-full border ' + (!pick ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>All</button>
-            {subs.map(s => <button key={s.key} onClick={() => setSub(pick === s.key ? null : s.key)} aria-pressed={pick === s.key}
-              className={'lh-tab text-[11px] font-semibold px-2 py-0.5 rounded-full border tabular-nums ' + (pick === s.key ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{s.key} {s.n}</button>)}
-          </span>
-        )}
         <Link href={href} prefetch={false} className="ml-auto text-[11px] font-semibold text-brand-700 hover:underline">{hrefLabel} →</Link>
       </div>
       {right ? <div className="px-1 -mt-0.5 mb-1.5">{right}</div> : null}
-      {(top || list.length > 0 || upTop > 0) && (
-        <div className={LIST}>
-          {top}
-          {upTop > 0 && <p className="px-3 py-2 text-[11.5px] text-muted">{upTop} more {upTop === 1 ? 'is' : 'are'} up in Now ↑</p>}
-          {shown.map(i => <div key={i.key}>{i.node}</div>)}
-          {more > 0 && <button onClick={() => setAll(true)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-brand-700 hover:bg-app inline-flex items-center gap-1"><ChevronDown size={13} /> {more} more</button>}
-          {all && list.length > LANE_ROWS && <button onClick={() => setAll(false)} className="w-full text-left px-3 py-2 text-[12px] font-semibold text-muted hover:bg-app inline-flex items-center gap-1"><ChevronUp size={13} /> Show fewer</button>}
+      {subs.length > 1 && (
+        <div className="lh-tabs-strip mb-1.5 inline-flex rounded-xl border border-line overflow-hidden text-[12px] max-w-full overflow-x-auto bg-white" role="tablist" aria-label={label}>
+          {subs.map(s => (
+            <button key={s.key} role="tab" aria-selected={pick === s.key} onClick={() => setSub(s.key)}
+              className={'lh-tab px-3 py-1.5 font-semibold border-l border-line first:border-l-0 whitespace-nowrap tabular-nums ' + (pick === s.key ? 'lh-tab-on bg-ink text-white' : 'text-muted hover:text-ink')}>
+              {s.key} <span className="opacity-70">{s.n}</span>
+            </button>
+          ))}
         </div>
       )}
+      <div className={LIST}>
+        {top}
+        {upTop > 0 && <p className="px-3 py-2 text-[11.5px] text-muted">{upTop} more {upTop === 1 ? 'is' : 'are'} up in Now ↑</p>}
+        {list.map(i => <div key={i.key}>{i.node}</div>)}
+        {!top && !list.length && !upTop && <p className="px-3 py-3 text-[12px] text-muted">{subs.length > 1 && pick ? 'No ' + String(pick).toLowerCase() + ' right now.' : 'Nothing here right now — ' + empty + '.'}</p>}
+      </div>
     </section>
   )
 }

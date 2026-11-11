@@ -267,7 +267,9 @@ function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big
 export function DayKpis({ d, live, roster, can, onChanged }: {
   d: CommandDay; live: NextItem[]; roster: Roster[]; can: { assign: boolean; plan: boolean; calls: boolean; glitchApprove?: boolean }; onChanged: () => void
 }) {
-  const [open, setOpen] = useState<Key | null>(null)
+  // TABS, NOT DRAWERS (Jon, 2026-11-10: "I like tabs open not collapsible … and open with tab selected").
+  // Departure cleans is selected when the page opens; a tile switches the list, it never closes it.
+  const [open, setOpen] = useState<Key | null>('cleans')
   const [moreOpen, setMoreOpen] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const callsQ = useCachedFetch<DayCalls & { error?: string }>(CALLS_URL, { ttl: 120_000 })
@@ -566,8 +568,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const nudgePeople = new Set(shown.filter(i => i.taskId && i.who && i.state !== 'done').map(i => i.who)).size
   const toggle = (k: Key) => {
     // The Unpaid tile points at the list already on the page (under the checklist) rather than opening a second copy.
-    if (k === 'unpaid') { const el = document.getElementById('unpaid-today'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return } }
-    setOpen(o => (o === k ? null : k)); setFilter('all')
+    setOpen(k); setFilter('all')
   }
   const headline = tile ? (tile.key === 'team' ? teamRead.length + ' field team · ' + shCount('on') + ' on shift · ' + shCount('out') + ' clocked out · ' + tmCount('at') + ' in a unit' : tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? tile.done + ' of ' + tile.needed + ' checks done' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
 
@@ -718,7 +719,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
                 <NudgeBtn taskIds={nudgeIds} label={'Message the team · ' + nudgePeople} className={DARK} title={'One Slack message per person, listing their open ' + (open === 'cleans' ? 'cleans' : open === 'insp' ? 'inspections' : 'jobs') + ' in view — posted in the building’s channel tagging them, or a DM when the building has no channel'} />
               )}
               {open === 'team' ? <Link href="/schedule" className="text-[11px] font-semibold text-brand-700 hover:underline">Schedule →</Link> : open === 'checks' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'blocked' ? <Link href="/blocked" className="text-[11px] font-semibold text-brand-700 hover:underline">Blocked units →</Link> : open === 'channels' ? <Link href="/channels" className="text-[11px] font-semibold text-brand-700 hover:underline">Channels →</Link> : open === 'reviews' ? <Link href="/reviews" className="text-[11px] font-semibold text-brand-700 hover:underline">Reviews →</Link> : open === 'notices' ? <Link href="/reservation-emails" className="text-[11px] font-semibold text-brand-700 hover:underline">Front-desk notices →</Link> : open === 'glitches' ? <Link href="/glitches" className="text-[11px] font-semibold text-brand-700 hover:underline">Glitch board →</Link> : open === 'claims' ? <Link href="/claims" className="text-[11px] font-semibold text-brand-700 hover:underline">Claims →</Link> : open === 'lostfound' ? <span className="inline-flex items-center gap-3"><Link href="/lost-found?new=1" prefetch={false} className="text-[11px] font-semibold text-white bg-brand-700 hover:bg-brand-800 rounded-md px-2 py-0.5">+ Log a find</Link><Link href="/lost-found" className="text-[11px] font-semibold text-brand-700 hover:underline">Lost &amp; Found →</Link></span> : open === 'unpaid' ? <Link href="/reservations/unpaid" className="text-[11px] font-semibold text-brand-700 hover:underline">Unpaid board →</Link> : open === 'welcome' || open === 'recovery' ? <Link href="/welcome-calls" className="text-[11px] font-semibold text-brand-700 hover:underline">Calls desk →</Link> : open === 'maint' ? <Link href="/maintenance" className="text-[11px] font-semibold text-brand-700 hover:underline">Maintenance →</Link> : <Link href="/plan" className="text-[11px] font-semibold text-brand-700 hover:underline">Today board →</Link>}
-              <button onClick={() => setOpen(null)} className="text-muted hover:text-ink" aria-label="Close the list" title="Close"><ChevronUp size={15} /></button>
+
             </span>
           </div>
           {open === 'team' && <div className={LIST + ' mb-2'}><TeamWhereStrip rows={fieldRows} /></div>}
