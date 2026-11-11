@@ -4,13 +4,17 @@ import { notFound } from 'next/navigation'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase-server'
 import { hasEditCookie } from '@/lib/edit-access'
-import { ReportView } from '@/components/ReportView'
+import nextDynamic from 'next/dynamic'
 import { reportGallery } from '@/lib/report-gallery'
 import { reportByListingForEngine } from '@/lib/report-listings-v2'
 import { reportRecommendations } from '@/lib/report-recommendations'
 import { reportDelta } from '@/lib/report-delta'
 import { picsAsUrls } from '@/lib/pic-url'
-import { SalesMagazine } from '@/components/SalesMagazine'
+// SPLIT, SO A MAGAZINE READER NEVER DOWNLOADS THE DECK EDITOR (2026-11-11 performance pass). Both are
+// client components; importing them statically put ReportView (the whole keynote and its editor, about
+// 700 KB of script) into the bundle of every magazine page. Loaded on demand, each view ships only itself.
+const ReportView = nextDynamic(() => import('@/components/ReportView').then(m => m.ReportView))
+const SalesMagazine = nextDynamic(() => import('@/components/SalesMagazine').then(m => m.SalesMagazine))
 
 export const dynamic = 'force-dynamic'
 
