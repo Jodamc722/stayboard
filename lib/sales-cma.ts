@@ -256,13 +256,13 @@ export function riderTemplate(): SalesCma {
         ['What will I see each month?', 'An owner portal with the live calendar, pricing and occupancy, plus a monthly P&L statement and payout for your unit, with every booking and fee itemized.'],
         ['Can I use my unit?', 'Yes. Block your own dates anytime, with no blackout restrictions.'],
         ['How do I get out?', 'A 90-day exit. We earn your business every month.'],
-        ['How is the unit priced?', 'Every day, by demand, events and the competitors in the building, and listed on 30+ platforms plus our direct booking site.'],
+        ['How is the unit priced?', 'Every day, by demand, events and the competitors in the building, and listed on 40+ platforms plus our direct booking site.'],
         ['What is your track record?', '500+ units managed across South Florida, 1,000,000+ guests hosted, 99.7% guest satisfaction, 10+ years in Miami, including 30+ units at the Elser.'],
       ],
       steps: [
         ['At contract.', 'We send the buyer a projection for their floor plan within 48 hours.'],
         ['Before delivery.', 'We confirm the building’s rental rules and registration, agree on terms in writing, and plan furnishing, photos and listing build.'],
-        ['At opening.', 'Listings go live across 30+ platforms with pricing set for the opening window, and the owner portal is ready.'],
+        ['At opening.', 'Listings go live across 40+ platforms with pricing set for the opening window, and the owner portal is ready.'],
       ],
       ask: [
         'When a buyer asks for options, please mention Stay and send them our way. We will send you the projection and keep you in the loop.',
@@ -321,7 +321,11 @@ export function normalizeCma(p: any): SalesCma | null {
   const t = riderTemplate()
   // Jon, 2026-11-11: "we do not pick up at 2am — just say 24/7 CCS team". Decks saved with the old
   // line are corrected as they are read, so no deck already out there keeps it.
-  if (p.second && Array.isArray(p.second.qa)) p = { ...p, second: { ...p.second, qa: p.second.qa.map((r: any) => Array.isArray(r) ? [r[0], String(r[1] || '').replace(/ with a local 24\/7 guest team on every check-in and every 2 a\.m\. issue\./, ' with a local 24/7 CCS team on every check-in.')] : r) } }
+  // Jon, 2026-11-11: 40+ platforms, not 30+. Same treatment for the steps.
+  const fix = (x: string) => String(x || '').replace(/ with a local 24\/7 guest team on every check-in and every 2 a\.m\. issue\./, ' with a local 24/7 CCS team on every check-in.').replace(/\b30\+ platforms\b/g, '40+ platforms')
+  if (p.second) p = { ...p, second: { ...p.second,
+    qa: Array.isArray(p.second.qa) ? p.second.qa.map((r: any) => Array.isArray(r) ? [r[0], fix(r[1])] : r) : p.second.qa,
+    steps: Array.isArray(p.second.steps) ? p.second.steps.map((r: any) => Array.isArray(r) ? [r[0], fix(r[1])] : r) : p.second.steps } }
   return {
     ...t, ...p,
     sections: { ...t.sections, ...(p.sections || {}) },

@@ -548,7 +548,7 @@ export const AI_NOTE: CopyPair = {
 // we run whole hotels, not just scattered condos — and closes on the operational claim that
 // matters most, which is that the people doing the work are ours.
 export const OVERVIEW_BODY_2 =
-  'Stay Hospitality is a lifestyle hospitality brand built on unique experiences and genuine personal relationships. We manage 450+ units across Miami, Fort Lauderdale, Pompano and Palm Beach, from single condos to entire residence buildings and hotels.\n\n' +
+  'Stay Hospitality is a lifestyle hospitality brand built on unique experiences and genuine personal relationships. We manage 500+ units across Miami, Fort Lauderdale, Pompano and Palm Beach, from single condos to entire residence buildings and hotels.\n\n' +
   'Hotel standards are simply how we work. Housekeeping, maintenance and guest care are in-house, on our own payroll.'
 
 // UNITS AND PROPERTIES ARE TWO DIFFERENT COUNTS, AND BOTH ARE TRUE (Jon, 2026-09-23: "Should say
@@ -571,7 +571,8 @@ export const IN_BUSINESS_SINCE = ''
 // the one-pager says ten years, and deriving 2016 from it would invent a precision nobody gave us
 // — and a founding year is exactly the sentence an owner repeats back.
 export const COMPANY_STATS_2: { k: string; v: string }[] = [
-  { k: 'Units managed', v: '450' },
+  // Jon, 2026-11-11: "500 units is fine" — the figure on every deck and the Rider package.
+  { k: 'Units managed', v: '500+' },
   { k: 'Guests hosted', v: '1,000,000+' },
   { k: 'Guest satisfaction', v: '4.6 / 5' },
   { k: 'Years in business', v: '10' },

@@ -18,6 +18,7 @@
 // Inter for reading text at 12.5/20 and for small caps labels. Hairlines, not boxes.
 import React, { useEffect, useState } from 'react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
+import { StayTimeline, YearWave, ChannelHub } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
@@ -232,6 +233,8 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const mgmtPct = Number.isFinite(+mag.mgmtPct) ? +mag.mgmtPct : 15
   const netOf = (g: number) => Math.round(g * (1 - channelPct / 100) * (1 - mgmtPct / 100) / 100) * 100
   const hideMag: Record<string, boolean> = mag.hide || {}
+  // Custom graphics in place of photographs (Jon, 2026-11-11); each can be switched back to a photo.
+  const gfx = (k: 'manage' | 'numbers' | 'tech') => !((mag.graphics || {})[k] === false)
 
   const meta: Any = c.meta || {}
   const hero: Any = c.hero || {}
@@ -269,7 +272,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const tools: Any[] = ((c.stack && Array.isArray(c.stack.tools) && c.stack.tools.length ? c.stack.tools : STACK_TOOLS) as Any[]).filter((t: Any) => t && t.name)
   const toolsPath = c.stack && Array.isArray(c.stack.tools) && c.stack.tools.length ? 'stack.tools' : ''
   const channels: string[] = (c.channels && Array.isArray(c.channels.primary) && c.channels.primary.length ? c.channels.primary : ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia', 'Homes & Villas by Marriott', 'Stay direct']).slice(0, 8)
-  const channelCount = String((c.channels && c.channels.count) || '30+')
+  const channelCount = String((c.channels && c.channels.count) || '40+')
   const hidden: string[] = Array.isArray(c.omit) ? c.omit : []
   const on = (k: string) => hidden.indexOf(k) < 0
   const keynote = '/r/' + report.code
@@ -479,7 +482,9 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       case s.key === 'manage': return (
         <section key="manage" data-k="manage" className="mz-page mz-split-page">
           {canEdit && overfull.includes('manage') ? <p className="mz-overfull">This page is too full to print. Shorten a passage or hide a section.</p> : null}
-          <div className="mz-split-photo" style={{ backgroundImage: `url(${photo('manage')})` }}><p className="mz-caption">A Stay-managed home</p></div>
+          {gfx('manage')
+            ? <div className="mz-split-photo"><StayTimeline steps={ops} /></div>
+            : <div className="mz-split-photo" style={{ backgroundImage: `url(${photo('manage')})` }}><p className="mz-caption">A Stay-managed home</p></div>}
           <div className="mz-split-text">
             <header className="mz-run mz-run-tight"><span className="mz-run-mark">STAY</span><span>How we manage</span><span>{short(building)}</span></header>
             <div className="mz-split-body">
@@ -512,11 +517,14 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           </div>
           <div className="mz-channels">
             {kicker('Where your home is listed')}
-            <p>{channels.map((ch, i) => <React.Fragment key={i}>{i ? <i>·</i> : null}<span>{ch}</span></React.Fragment>)}<i>·</i><span className="mz-plus">{channelCount} platforms in all</span></p>
+            {gfx('tech') ? <ChannelHub channels={channels} count={channelCount} /> : <p>{channels.map((ch, i) => <React.Fragment key={i}>{i ? <i>·</i> : null}<span>{ch}</span></React.Fragment>)}<i>·</i><span className="mz-plus">{channelCount} platforms in all</span></p>}
           </div>
         </>
       ), { section: 'Our technology' })
       case s.key === 'op-work': return opener('op-work', '02', 'Working together', 'workTitle', photo('work'))
+      case s.key === 'op-num' && gfx('numbers'): return (
+        <section key="op-num" className="mz-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
+      )
       case s.key === 'op-num': return opener('op-num', specs.some(x => x.key === 'op-work') ? '03' : '02', 'The numbers', 'numbersTitle', photo('numbers'))
       case s.key === 'partner' && !!cma: return frame('partner', (
         <>
@@ -751,6 +759,10 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           {cma ? ([['partner', 'Agent partner program'], ['second', 'Stay as a second option'], ['market', 'Market and comparables'], ['glance', 'Floor plans at a glance'], ['plans', 'One page per floor plan']] as [keyof SalesCma['sections'], string][]).map(([k, l]) => (
             <label key={k} className="mz-toggle"><input type="checkbox" checked={!!cma.sections[k]} onChange={e => setCma({ ...cma, sections: { ...cma.sections, [k]: e.target.checked } })} /> {l}</label>
           )) : null}
+          <p className="mz-form-h">Graphics</p>
+          {([['manage', 'How we manage: the stay timeline'], ['numbers', 'The numbers: the Miami year'], ['tech', 'Our technology: the platform diagram']] as ['manage' | 'numbers' | 'tech', string][]).map(([k, l]) => (
+            <label key={k} className="mz-toggle"><input type="checkbox" checked={gfx(k)} onChange={e => setMag({ graphics: { ...(mag.graphics || {}), [k]: e.target.checked } })} /> {l}</label>
+          ))}
           <p className="mz-form-h">Photos</p>
           {PHOTO_SLOTS.map(([slot, label]) => (
             <div key={slot} className="mz-slot">

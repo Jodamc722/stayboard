@@ -288,7 +288,7 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     team: { ...base.team, subtitle: 'The people who would be on your property.' },
     // A HEADLINE IS THE TAKEAWAY, NOT THE TOPIC (2026-10-27 sales audit). "Overview of Stay
     // Hospitality" tells a reader what the slide is about; this tells them what to believe.
-    overview: { ...(base as any).overview, headline: 'Ten years. 450 listings. One standard.' },
+    overview: { ...(base as any).overview, headline: 'Ten years. 500+ listings. One standard.' },
 
     contact: { headline: CONTACT_HEADLINE, subtitle: CONTACT_SUBTITLE, body: CONTACT_BODY, card },
     ops: { headline: OPS_HEADLINE, subtitle: OPS_SUBTITLE, body: OPS_BODY, rows: OPS_ROWS, note: OPS_NOTE, photo: pic(2) },
@@ -316,7 +316,8 @@ export function buildSalesContent(t: OnboardingTemplate, i: SalesInput): SalesCo
     terms: {
       headline: TERMS_HEADLINE, subtitle: TERMS_SUBTITLE,
       // The measured fee wins over the template — see the generator for why.
-      rows: termRows(i.feePct != null && i.feePct > 0 ? i.feePct : t.mgmtPct, t.laborRate, t.approvalLimit),
+      // Jon, 2026-11-11: a sales deck quotes 15% — the figure on every page of the building packages.
+      rows: termRows(15, t.laborRate, t.approvalLimit),
       note: TERMS_NOTE,
     },
     proof: { headline: PROOF_HEADLINE, subtitle: PROOF_SUBTITLE, body: PROOF_BODY, note: PROOF_NOTE, scope: '', window: '', names: false, rows: [] },
