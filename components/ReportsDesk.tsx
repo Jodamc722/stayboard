@@ -5,6 +5,7 @@
 // gone to the owner, and whether they opened it — and shares the owner link in one tap.
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X, Share2, Check, Send, Search, RefreshCw, Building2, BookOpen } from 'lucide-react'
+import { AUDIENCES, type Audience } from '@/lib/sales-audience'
 import { SalesCmaEditor } from '@/components/SalesCmaEditor'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
@@ -156,7 +157,19 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
   // the unit has no history yet, which is why we are having the call.
   const [kind, setKind] = useState<DocKind>(scope === 'sales' ? 'sales' : 'review')
   // The building pages a new sales deck starts with (lib/sales-cma): none, The Rider example, or empty.
-  const [cmaPick, setCmaPick] = useState<'' | 'rider' | 'blank'>('')
+  // '' none · 'blank' · 'rider' · 'lib:<id>' a copy of a building in the projections library (lib/sales-library).
+  const [cmaPick, setCmaPick] = useState<string>('')
+  const [libBuildings, setLibBuildings] = useState<{ id: string; name: string; area: string; plans: number }[]>([])
+  // Who the deck is for (lib/sales-audience): one owner, buyers and agents, or a building's sales team.
+  const [audience, setAudience] = useState<Audience>('owner')
+  useEffect(() => {
+    if (!salesOnly) return
+    fetch('/api/sales/buildings', { cache: 'no-store' }).then(r => r.json()).then(d => { if (d?.ok) setLibBuildings(d.buildings) }).catch(() => {})
+    // "New deck" on a library building (components/SalesLibrary) lands here.
+    const on = (e: Event) => { const d = (e as CustomEvent).detail || {}; if (d.id) { setCmaPick('lib:' + d.id); setIntake(p => ({ ...p, building: p.building || d.name || '' })); if (audience === 'owner') setAudience('building') } }
+    window.addEventListener('sales:start-from', on)
+    return () => window.removeEventListener('sales:start-from', on)
+  }, [salesOnly])
   const [cmaFor, setCmaFor] = useState<ReportRow | null>(null)
   const [ownerName, setOwnerName] = useState('')
   /** Who is presenting the sales deck. Seeds the contact card; the photo is added on the slide. */
@@ -392,6 +405,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
           intake: kind === 'sales' ? intake : undefined,
           market: kind === 'sales' ? (intake.market || undefined) : undefined,
           cma: kind === 'sales' && cmaPick ? cmaPick : undefined,
+          audience: kind === 'sales' ? audience : undefined,
           // Review-only attachments. The statement picker is not on screen for the other three
           // document types, so nothing it holds may ride along with them.
           pacingUrl: kind === 'review' && pacing ? pacing.url : undefined,
@@ -507,7 +521,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
         )}
         {salesOnly && !showNew && (
           <button title="A deck for The Rider Residences sales team: every floor plan, the comps, the partner program and Stay as a second option, as a magazine and as keynote slides"
-            onClick={() => { setShowNew(true); setMade(null); setKind('sales'); setCmaPick('rider'); setOwnerName('The Rider sales team'); setIv('building', 'The Rider Residences'); setIv('address', 'Wynwood, Miami'); if (!presenter) setPresenter('Nick Carline') }}
+            onClick={() => { setShowNew(true); setMade(null); setKind('sales'); setCmaPick('lib:rider'); setAudience('building'); setOwnerName('The Rider sales team'); setIv('building', 'The Rider Residences'); setIv('address', 'Wynwood, Miami'); if (!presenter) setPresenter('Nick Carline') }}
             className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white text-ink text-[12.5px] font-semibold px-3 py-1.5 hover:bg-app">
             <Sparkles size={14} /> The Rider example
           </button>
@@ -788,12 +802,19 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
                     </select>
                   </label>
                   <label className="block">
-                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Building pages</span>
-                    <select value={cmaPick} onChange={e => setCmaPick(e.target.value as '' | 'rider' | 'blank')} title="Rental comparisons for every floor plan, the comparable set, the agent partner program and Stay as a second option. Edit them after with Floor plans & comps."
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Who it is for</span>
+                    <select value={audience} onChange={e => setAudience(e.target.value as Audience)} title={AUDIENCES[audience].hint}
                       className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink">
-                      <option value="">None — a proposal</option>
-                      <option value="blank">Floor plans and comps (fill in after)</option>
-                      <option value="rider">Start from The Rider example</option>
+                      {(Object.keys(AUDIENCES) as Audience[]).map(k => <option key={k} value={k}>{AUDIENCES[k].label}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Projections from</span>
+                    <select value={cmaPick} onChange={e => { const v = e.target.value; setCmaPick(v); const b = libBuildings.find(x => 'lib:' + x.id === v); if (b && !iv('building')) setIv('building', b.name) }} title="A copy of a building's comps and floor-plan projections from the library below. Tune it for this deck without changing the library."
+                      className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink">
+                      <option value="">None, a proposal only</option>
+                      {libBuildings.length ? <optgroup label="Projections library">{libBuildings.map(b => <option key={b.id} value={'lib:' + b.id}>{b.name}{b.area ? ' · ' + b.area : ''} ({b.plans} plans)</option>)}</optgroup> : null}
+                      <option value="blank">Empty floor plans and comps</option>
                     </select>
                   </label>
                   {/* THE PROPERTY IS OPTIONAL ON THIS ONE (2026-10-27). A prospect's unit is

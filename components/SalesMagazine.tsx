@@ -22,6 +22,7 @@ import { StayTimeline, YearWave, ChannelHub } from '@/components/MagazineGraphic
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
+import { AUDIENCES, audienceOf, type Audience } from '@/lib/sales-audience'
 import {
   normalizeCma, planNumbers, range, money, compGross, pctRange, fmtDate, MONTHS, adjustLine, newId,
   type SalesCma, type PacketPlan, type PacketComp,
@@ -173,6 +174,11 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const [saving, setSaving] = useState('')
   const [brandUrl, setBrandUrl] = useState('')
   const [brandMsg, setBrandMsg] = useState('')
+  // Photo search in our own library (/api/sales/photos), and which page a picked result goes to.
+  const [photoQ, setPhotoQ] = useState('')
+  const [photoHits, setPhotoHits] = useState<Any[] | null>(null)
+  const [photoBusy, setPhotoBusy] = useState(false)
+  const [pickFor, setPickFor] = useState('cover')
   const dirty = touched.length > 0
   // A PAGE THAT NO LONGER FITS (2026-11-11). Every word is editable and a page is a fixed letter
   // sheet, so a long edit would be silently clipped in print. Editors see which pages are too full.
@@ -239,7 +245,9 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const styleKey = mag.style === 'custom' && custom ? 'custom' : MAG_THEMES[mag.style] ? mag.style : 'classic'
   const theme: MagTheme = styleKey === 'custom' && custom ? custom : MAG_THEMES[styleKey]
   const chart: ChartKind = (['bars', 'band', 'cumulative'] as ChartKind[]).includes(mag.chart) ? mag.chart : 'bars'
-  const showYield = mag.yield !== false
+  // NO UNIT PRICES (Jon, 2026-11-11: "noticed cost of units, remove that, don't need that"). The
+  // starting price, and the gross yield worked from it, no longer print anywhere in the package.
+  const showYield = false
   const showNet = !!mag.net
   const channelPct = Number.isFinite(+mag.channelPct) ? +mag.channelPct : 15
   const mgmtPct = Number.isFinite(+mag.mgmtPct) ? +mag.mgmtPct : 15
@@ -425,7 +433,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         <section key="cover" className="mz-page mz-cover mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(6,10,30,.66) 0%, rgba(6,10,30,.10) 26%, rgba(6,10,30,.04) 50%, rgba(6,10,30,.86) 100%)', 'center 40%')}>
           <div className="mz-mast">
             <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
-            <div className="mz-mast-r"><span>{cma ? 'The Building Package' : 'Management Proposal'}</span><span>{monthYear}</span></div>
+            <div className="mz-mast-r"><span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span><span>{monthYear}</span></div>
           </div>
           <div className="mz-cover-main">
             {brandLogo ? <img src={brandLogo} alt="" className="mz-brandlogo" /> : null}
@@ -434,7 +442,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
               {canEdit && editText ? <E v={building} p={buildingPath} ph="Building" /> : <>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</>}
             </h1>
             <p className="mz-cover-dek"><CT k="coverDek" /></p>
-            {prospect || (canEdit && editText) ? <p className="mz-cover-for">Prepared for <E v={prospect} p="meta.prospect" ph="Who it is for" /> · {date}</p> : null}
+            {prospect || (canEdit && editText) || (cma && AUDIENCES[audienceOf(c.audience)].forDefault) ? <p className="mz-cover-for">Prepared for {prospect || (canEdit && editText) ? <E v={prospect} p="meta.prospect" ph="Who it is for" /> : AUDIENCES[audienceOf(c.audience)].forDefault} · {date}</p> : null}
           </div>
         </section>
       )
@@ -616,7 +624,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
                 <div className="mz-gl-gridlayer">{ticks.map(v => <s key={v} style={{ left: pos(v) }} />)}</div>
                 {nums.map(({ p, n }) => { const pr = priceOf(p.price); return (
                   <div key={p.id} className="mz-gl-row">
-                    <div className="mz-gl-name"><b>{p.name}</b><span>{p.sf}{p.price ? ' · from ' + p.price : ''}</span></div>
+                    <div className="mz-gl-name"><b>{p.name}</b><span>{p.sf}</span></div>
                     <div className="mz-gl-track"><i style={{ left: pos(n.lo), width: 'calc(' + pos(n.hi - n.lo) + ')' }} /><em style={{ left: pos(n.lo) }} /><em style={{ left: pos(n.hi) }} /></div>
                     <div className="mz-gl-v"><b>{dash(n.lo, n.hi)}</b><span>{dash(n.monthLo, n.monthHi)} a month</span></div>
                     {showYield ? <div className="mz-gl-y">{pr ? (Math.round(n.lo / pr * 1000) / 10).toFixed(1) + '–' + pct1(n.hi / pr) : '—'}</div> : null}
@@ -636,7 +644,6 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         const p = cma!.plans.find(x => 'plan-' + x.id === s.key)!
         const pi = cma!.plans.findIndex(x => x.id === p.id)
         const n = planNumbers(cma!, p)
-        const pr = priceOf(p.price)
         const comps = p.compIds.map(id => cma!.comps.find(x => x.id === id)).filter(Boolean) as PacketComp[]
         const row3: [string, string, string][] = [
           ['Per month, on average', dash(n.monthLo, n.monthHi), 'the year divided by twelve'],
@@ -650,8 +657,6 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             <h2 className="mz-h mz-plan-name"><E v={p.name} p={`cma.plans.${pi}.name`} /></h2>
             <dl className="mz-facts">
               <div><dt>Interior</dt><dd><E v={p.sf} p={`cma.plans.${pi}.sf`} /></dd></div>
-              <div><dt>Starting price</dt><dd><E v={p.price || (canEdit && editText ? '' : '—')} p={`cma.plans.${pi}.price`} ph="Price" /></dd></div>
-              {showYield && pr ? <div><dt>Gross yield</dt><dd>{(Math.round(n.lo / pr * 1000) / 10).toFixed(1)}–{pct1(n.hi / pr)}</dd></div> : null}
               <div><dt>Rental rules</dt><dd><E v={p.rules} p={`cma.plans.${pi}.rules`} /></dd></div>
             </dl>
             <div className="mz-hero">
@@ -782,6 +787,19 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
 
       {drawer === 'pages' && (
         <div>
+          {cma ? (
+            <>
+              <p className="mz-form-h">Who it is for</p>
+              <div className="mz-aud">
+                {(Object.keys(AUDIENCES) as Audience[]).map(k => (
+                  <button key={k} type="button" className={audienceOf(c.audience) === k ? 'on' : ''} title={AUDIENCES[k].hint}
+                    onClick={() => { setDoc((d: Any) => { const m = normalizeCma(d.cma); return { ...d, audience: k, cma: m ? { ...m, sections: { ...m.sections, ...AUDIENCES[k].sections } } : d.cma } }); touch('audience'); touch('cma'); setSaving('') }}>
+                    <b>{AUDIENCES[k].label}</b><span>{AUDIENCES[k].hint}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
           <p className="mz-form-h">Pages</p>
           <label className="mz-toggle"><input type="checkbox" checked={!!mag.showContents} onChange={e => setMag({ showContents: e.target.checked })} /> Contents and a note from the presenter</label>
           {PAGES.map(([k, l]) => <label key={k} className="mz-toggle"><input type="checkbox" checked={!hideMag[k]} onChange={e => setMag({ hide: { ...hideMag, [k]: !e.target.checked } })} /> {l}</label>)}
@@ -793,6 +811,28 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
             <label key={k} className="mz-toggle"><input type="checkbox" checked={gfx(k)} onChange={e => setMag({ graphics: { ...(mag.graphics || {}), [k]: e.target.checked } })} /> {l}</label>
           ))}
           <p className="mz-form-h">Photos</p>
+          <div className="mz-psearch">
+            <form onSubmit={async e => { e.preventDefault(); const q = photoQ.trim(); if (!q) return; setPhotoBusy(true); try { const d = await fetch('/api/sales/photos?q=' + encodeURIComponent(q)).then(r => r.json()); setPhotoHits(d?.ok ? d.hits : []) } catch { setPhotoHits([]) } setPhotoBusy(false) }}>
+              <input value={photoQ} onChange={e => setPhotoQ(e.target.value)} placeholder="Search our photos: elser pool, 17 west view, brickell kitchen" />
+              <button type="submit" disabled={photoBusy}>{photoBusy ? 'Searching…' : 'Search'}</button>
+            </form>
+            {photoHits ? (
+              <>
+                <div className="mz-psearch-to">
+                  <span>{photoHits.length ? photoHits.length + (photoHits.length === 60 ? '+' : '') + ' photos · click one to use it on' : 'No photos match. Try fewer words, or a building and a room.'}</span>
+                  {photoHits.length ? <select value={pickFor} onChange={e => setPickFor(e.target.value)}>{PHOTO_SLOTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select> : null}
+                </div>
+                <div className="mz-psearch-grid">
+                  {photoHits.map((h: Any) => (
+                    <button key={h.url} type="button" className={photo(pickFor) === h.url ? 'on' : ''} title={[h.building, h.unit, h.caption].filter(Boolean).join(' · ')}
+                      onClick={() => setMag({ photos: { ...(mag.photos || {}), [pickFor]: h.url }, photoRights: { ...(mag.photoRights || {}), [h.url]: { rights: 'own', ...((mag.photoRights || {})[h.url] || {}) } } })}>
+                      <i style={{ backgroundImage: `url("${h.thumb || h.url}")` }} /><span>{h.building}{h.unit ? ' · ' + h.unit : ''}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
+          </div>
           {unconfirmed.length ? <p className="mz-rights-warn">{unconfirmed.length === 1 ? 'One photo in this package has' : unconfirmed.length + ' photos in this package have'} no confirmed source. Confirm we have the rights before sending: a filter changes how a photo looks, not who owns it.</p> : null}
           {PHOTO_SLOTS.map(([slot, label]) => (
             <div key={slot} className="mz-slot">
@@ -856,7 +896,6 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           <p className="mz-form-h">Chart on each floor plan</p>
           <div className="mz-drawer-tabs">{CHARTS.map(([k, l]) => <button key={k} type="button" className={chart === k ? 'on' : ''} onClick={() => setMag({ chart: k })}>{l}</button>)}</div>
           <p className="mz-form-h">Data</p>
-          <label className="mz-toggle"><input type="checkbox" checked={showYield} onChange={e => setMag({ yield: e.target.checked })} /> Gross yield on the starting price</label>
           <label className="mz-toggle"><input type="checkbox" checked={showNet} onChange={e => setMag({ net: e.target.checked })} /> What the owner keeps (estimate)</label>
           {showNet ? (
             <div className="mz-form">
@@ -1184,6 +1223,21 @@ div.mz-ed{display:block}
 .mz-color input{width:44px;height:30px;border:1px solid #E3DED3;border-radius:8px;padding:2px;background:#fff;cursor:pointer}
 .mz-brand{display:flex;gap:8px}.mz-brand button{flex:none;font:600 12.5px ${SANS};background:#111A4A;color:#fff;border:0;border-radius:8px;padding:0 14px;cursor:pointer}
 .mz-slot{padding:10px 0;border-bottom:1px solid #EEE9DF}
+.mz-aud{display:grid;gap:6px;margin-bottom:6px}
+.mz-aud button{display:flex;flex-direction:column;gap:2px;text-align:left;border:1px solid #E3DED3;border-radius:10px;background:#fff;padding:8px 10px;cursor:pointer;color:#0F1640}
+.mz-aud button b{font:600 12.5px ${SANS}}.mz-aud button span{font:400 11.5px/1.35 ${SANS};color:#5A6080}
+.mz-aud button.on{border-color:#111A4A;box-shadow:inset 0 0 0 1px #111A4A;background:#F4F6FC}
+.mz-psearch{margin:0 0 10px}
+.mz-psearch form{display:flex;gap:6px}
+.mz-psearch input{flex:1;min-width:0;font:500 13px ${SANS};color:#0F1640;border:1px solid #E3DED3;border-radius:8px;padding:7px 9px;background:#fff}
+.mz-psearch form button{font:600 12px ${SANS};border:0;border-radius:8px;background:#111A4A;color:#fff;padding:0 12px;cursor:pointer}
+.mz-psearch-to{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 6px;font:500 11.5px ${SANS};color:#5A6080}
+.mz-psearch-to select{font:500 12px ${SANS};border:1px solid #E3DED3;border-radius:8px;padding:4px 6px;background:#fff;color:#0F1640}
+.mz-psearch-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;max-height:300px;overflow-y:auto}
+.mz-psearch-grid button{display:flex;flex-direction:column;gap:2px;background:none;border:0;padding:0;cursor:pointer;text-align:left;min-width:0}
+.mz-psearch-grid i{display:block;aspect-ratio:4/3;border-radius:6px;background-size:cover;background-position:center;border:2px solid transparent}
+.mz-psearch-grid button.on i{border-color:#111A4A}
+.mz-psearch-grid span{font:500 9.5px ${SANS};color:#5A6080;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mz-ph{position:relative;isolation:isolate;overflow:hidden;background:none}
 .mz-ph::before{content:"";position:absolute;inset:var(--pi,0);background:var(--ph) var(--pp,center)/cover no-repeat;filter:var(--pf,none);transform:var(--pt,none);z-index:-2;pointer-events:none}
 .mz-ph::after{content:"";position:absolute;inset:0;background:var(--pg,none);z-index:-1;pointer-events:none}

@@ -28,6 +28,8 @@ import { projectionSectionFor } from '@/lib/projections'
 import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type ListingCard, type KV } from '@/lib/onboarding-report'
 import { buildSalesContent } from '@/lib/sales-deck'
 import { riderTemplate, blankCma } from '@/lib/sales-cma'
+import { getBuilding } from '@/lib/sales-library'
+import { AUDIENCES, type Audience } from '@/lib/sales-audience'
 import { measureEdge } from '@/lib/sales-edge'
 import { proofListings, proofRows, monthLabel as proofMonth, effectiveFee, completedMonths, ownersForListings } from '@/lib/sales-proof'
 import { marketIntel } from '@/lib/sales-market'
@@ -313,11 +315,21 @@ export async function POST(req: NextRequest) {
     // THE BUILDING PAGES (Jon, 2026-11-11). body.cma 'rider' starts the deck with The Rider example
     // (comps, every floor plan, partner program, second option); 'blank' starts them empty for this
     // building; nothing leaves a plain proposal. Edited afterwards on the Sales tab.
-    const cmaPick = str(body?.cma)
-    if (cmaPick === 'rider' || cmaPick === 'blank') {
-      ;(contentS as any).cma = cmaPick === 'rider' ? riderTemplate() : blankCma(str(intake?.building) || scopeLabel, str(body?.market) || String(marketS || ''))
+    // 'lib:<id>' starts from a copy of that building in the projections library (lib/sales-library),
+    // so the deck can be tuned for this owner without touching the library.
+    let cmaPick = str(body?.cma)
+    const libEntry = cmaPick.startsWith('lib:') ? await getBuilding(cmaPick.slice(4)) : null
+    // The Rider example still works if its library entry was removed.
+    if (!libEntry && cmaPick === 'lib:rider') cmaPick = 'rider'
+    // WHO IT IS FOR (lib/sales-audience): one owner, buyers and agents, or a building's sales team.
+    const audience: Audience = (AUDIENCES as any)[str(body?.audience)] ? (str(body?.audience) as Audience) : 'owner'
+    ;(contentS as any).audience = audience
+    if (cmaPick === 'rider' || cmaPick === 'blank' || libEntry) {
+      ;(contentS as any).cma = libEntry ? { ...structuredClone(libEntry.cma), libraryId: libEntry.id } : cmaPick === 'rider' ? riderTemplate() : blankCma(str(intake?.building) || scopeLabel, str(body?.market) || String(marketS || ''))
+      ;(contentS as any).cma.sections = { ...(contentS as any).cma.sections, ...AUDIENCES[audience].sections }
+      if (libEntry?.website) (contentS as any).magazine = { ...((contentS as any).magazine || {}), brandSource: libEntry.website }
       // A building package is one photograph-led cover: the Miami skyline when no photo was chosen.
-      if (cmaPick === 'rider' && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = '/deck-img/miami-skyline.jpg'
+      if ((cmaPick === 'rider' || libEntry) && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = '/deck-img/miami-skyline.jpg'
       // A building package already carries the projections, so the close asks for a call (Jon, 2026-11-11).
       if ((contentS as any).close) (contentS as any).close.headline = 'Book a call to learn more'
     }

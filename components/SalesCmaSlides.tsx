@@ -237,7 +237,7 @@ export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
             <tbody>
               {nums.map(({ p, n }) => (
                 <tr key={p.id}>
-                  <td style={{ ...cell, padding: '6px 10px' }}><span style={{ fontWeight: 600, color: t.ink }}>{p.name}</span> <span style={{ fontSize: 11, color: t.muted }}>{p.sf}{p.price ? ' · from ' + p.price : ''}</span></td>
+                  <td style={{ ...cell, padding: '6px 10px' }}><span style={{ fontWeight: 600, color: t.ink }}>{p.name}</span> <span style={{ fontSize: 11, color: t.muted }}>{p.sf}</span></td>
                   <td style={{ ...cell, padding: '6px 10px' }}>
                     <div style={{ position: 'relative', height: 10, background: t.chip, borderRadius: 99 }}>
                       <div style={{ position: 'absolute', left: (n.lo / max * 100) + '%', width: Math.max(2, (n.hi - n.lo) / max * 100) + '%', top: 0, bottom: 0, background: t.accent, borderRadius: 99 }} />
@@ -280,7 +280,7 @@ function planSlide(cma: SalesCma, p: PacketPlan, d: CmaDeps, h: Any) {
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           {h.eyebrow((h.where ? h.where + ' · ' : '') + 'Rental comparison')}
           {h.title(T(p.name, `cma.plans.${pi}.name`) as Any, false, 40)}
-          <p style={{ fontSize: 12.5, color: t.muted, margin: '8px 0 0' }}>{[p.sf, p.price ? 'from ' + p.price : '', p.rules].filter(Boolean).join('  ·  ')}</p>
+          <p style={{ fontSize: 12.5, color: t.muted, margin: '8px 0 0' }}>{[p.sf, p.rules].filter(Boolean).join('  ·  ')}</p>
           <div style={{ display: 'grid', gap: 10, marginTop: 18 }}>
             {stat('Per year', range(n.lo, n.hi), 'Gross rental revenue')}
             {stat('Per month, on average', range(n.monthLo, n.monthHi), 'Gross rental revenue', true)}
