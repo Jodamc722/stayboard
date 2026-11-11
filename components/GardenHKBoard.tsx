@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowDownRight, ArrowUpRight, BedDouble, Check, Loader2, Moon, Play, RefreshCw, User, X } from 'lucide-react'
 import { Tag, LeanPick, type Tone } from '@/components/lean'
+import { GardenAssign } from '@/components/GardenAssign'
 
 const j = async (url: string, init?: RequestInit) => { const r = await fetch(url, { cache: 'no-store', ...init }); return r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` })) }
 const send = (url: string, body: any, method = 'PATCH') => j(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -45,6 +46,7 @@ export function GardenHKBoard({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [who, setWho] = useState('')
+  const [mode, setMode] = useState<'board' | 'assign'>('board')
 
   const load = useCallback(async () => {
     const r = await j('/api/garden/frontdesk')
@@ -116,10 +118,12 @@ export function GardenHKBoard({ canEdit }: { canEdit: boolean }) {
         <h1 className="text-[20px] font-semibold text-ink">Rooms &amp; cleans</h1>
         <span className="text-[12px] text-muted">{d.summary.rooms} rooms · {d.summary.occupiedRooms} occupied tonight · tasks {tDone}/{tLive} done</span>
         <span className="flex-1" />
+        <LeanPick<'board' | 'assign'> size="sm" value={mode} onPick={setMode} options={[{ v: 'board', label: 'Board' }, { v: 'assign', label: <>Assign cleaners <span className="opacity-60 tabular-nums">{rooms.filter(r => r.tasks.some(t => (t.kind === 'clean' || t.kind === 'stayover') && t.status !== 'cancelled' && !t.assigned_to)).length}</span></> }]} />
         <span className="text-[11px] text-muted">Cloudbeds {d.syncs?.housekeeping?.at ? 'synced ' + clock(d.syncs.housekeeping.at) : ''}</span>
         <button onClick={load} className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-line bg-white" title="Refresh"><RefreshCw size={14} /></button>
       </div>
 
+      {mode === 'assign' ? <GardenAssign rooms={rooms} date={d.date} canEdit={canEdit} onChanged={load} /> : <>
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 mb-3">
         <Stat k="first" label="Clean first" sub="arrival today, not ready" tone={counts.first ? 'text-rose-700' : 'text-emerald-700'} />
         <Stat k="checkouts" label="Checkouts" sub="departing, to turn" tone="text-amber-700" />
@@ -195,6 +199,8 @@ export function GardenHKBoard({ canEdit }: { canEdit: boolean }) {
           ))}
         </div>
       )}
+
+      </>}
 
       {sel ? (
         <div className="fixed inset-0 z-50 flex justify-end bg-black/20" onClick={() => setOpen(null)}>

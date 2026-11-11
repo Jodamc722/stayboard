@@ -59,6 +59,36 @@ export async function POST(req: NextRequest) {
     if (rows.length) { const { error } = await db.from('garden_shifts').insert(rows); if (error) return NextResponse.json({ error: error.message }, { status: 500 }) }
     return NextResponse.json({ ok: true, copied: rows.length })
   }
+  // BUILD THE WEEK (Jon, 2026-11-11: "build weekly schedule"). Each day gets the people it needs per
+  // role (housekeepers from that day's checkouts + stayovers, a front desk, maintenance when there is
+  // work), drawn from the roster: whoever has the fewest shifts so far this week, never twice in a
+  // day, at most five days a week. Shifts already there are kept; the role's usual hours.
+  if (op === 'build_week') {
+    const from = String(b?.from || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return NextResponse.json({ error: 'from required' }, { status: 400 })
+    const HOURS: Record<string, [string, string]> = { housekeeping: ['09:00', '17:00'], frontdesk: ['07:00', '15:00'], maintenance: ['08:00', '16:00'], manager: ['09:00', '17:00'] }
+    const MAX_DAYS = Number(b?.maxDays) > 0 ? Math.min(7, Number(b.maxDays)) : 5
+    const wk = await weekSchedule(from, 7)
+    const staff = (wk.staff || []) as any[]
+    const count: Record<string, number> = {}
+    for (const d of wk.days as any[]) for (const x of d.shifts) count[x.staff_id] = (count[x.staff_id] || 0) + 1
+    const rows: any[] = [], short: string[] = []
+    for (const d of wk.days as any[]) {
+      const onDay = new Set<string>(d.shifts.map((x: any) => x.staff_id))
+      for (const role of ['housekeeping', 'frontdesk', 'maintenance'] as const) {
+        let need = Math.max(0, (d.suggest.need[role] || 0) - d.shifts.filter((x: any) => x.role === role).length)
+        const pool = staff.filter(s => s.role === role && !onDay.has(s.id) && (count[s.id] || 0) < MAX_DAYS).sort((a, b) => (count[a.id] || 0) - (count[b.id] || 0) || String(a.name).localeCompare(String(b.name)))
+        for (const p of pool) {
+          if (need <= 0) break
+          rows.push({ date: d.date, staff_id: p.id, role, start_time: HOURS[role][0], end_time: HOURS[role][1], rooms: [], source: 'suggested', created_by: gate.access.email || null })
+          onDay.add(p.id); count[p.id] = (count[p.id] || 0) + 1; need--
+        }
+        if (need > 0) short.push(`${d.date} ${role} short ${need}`)
+      }
+    }
+    if (rows.length) { const { error } = await db.from('garden_shifts').insert(rows); if (error) return NextResponse.json({ error: error.message }, { status: 500 }) }
+    return NextResponse.json({ ok: true, added: rows.length, short })
+  }
   if (op === 'split') { if (!/^\d{4}-\d{2}-\d{2}$/.test(String(b?.date))) return NextResponse.json({ error: 'date required' }, { status: 400 }); return NextResponse.json({ ok: true, ...(await splitRooms(String(b.date))) }) }
   return NextResponse.json({ error: 'unknown op' }, { status: 400 })
 }
