@@ -240,7 +240,7 @@ function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number
 }
 
 // ── The magazine ──────────────────────────────────────────────────────────────────────────────────
-export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: boolean }) {
+export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canEdit?: boolean; onePager?: boolean }) {
   const original: Any = report.content || {}
   const [doc, setDoc] = useState<Any>(() => structuredClone(original))
   const [touched, setTouched] = useState<string[]>([])
@@ -573,6 +573,49 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
     </table>
   )
 
+  // THE ONE-PAGER (Jon, 2026-11-11: "also have a 1 pager too"). The package on one letter page, for a
+  // lobby stack, an email attachment or a quick leave-behind: the building, every unit type's yearly
+  // range with its month and night, three reasons, and the person to call. Same theme, audience and
+  // numbers as the magazine (?view=onepage on the same link).
+  const onePage = (): React.ReactNode => {
+    const rows = plans.map(p => ({ p, n: planNumbers(cma!, p) }))
+    const fee = terms.find(r => /fee/i.test(r.k))?.v || '15% of rental revenue'
+    const points: [string, string][] = aud === 'agents'
+      ? [[cma!.partner.fees.length > 1 ? cma!.partner.fees[0][0] + '–' + cma!.partner.fees[cma!.partner.fees.length - 1][0] : (cma!.partner.fees[0]?.[0] || ''), 'Referral fee per unit, by size, in writing'], ['48 hours', 'A projection for any unit you show or list'], ['40+ platforms', 'One calendar, priced every night']]
+      : [[fee.replace(/ of rental revenue/i, ''), 'Of rental revenue. No setup or monthly fees'], ['40+ platforms', 'One calendar, priced every night'], ['24/7', 'Our own local CCS team on every stay']]
+    return (
+      <section key="onepage" className="mz-page mz-one">
+        <div className="mz-one-top">
+          <div className="mz-lockup"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-icover-logo" />{brandLogo ? <><i /><span className="mz-lockup-wrap"><img src={brandLogo} alt={building} className="mz-lockup-b" />{canEdit ? <button type="button" className="mz-logo-x" aria-label="Remove the building’s logo" onClick={() => setMag({ brandLogo: '' })}>×</button> : null}</span></> : null}</div>
+          <span>{AUDIENCES[aud].mast} · {monthYear}</span>
+        </div>
+        <div className="mz-one-photo mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(22,19,16,0) 40%, rgba(22,19,16,.72) 100%)', 'center 45%')}>
+          <div><p className="mz-kicker mz-on-dark">{area || 'Miami'}{' · Miami'}</p><h1>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</h1></div>
+        </div>
+        <div className="mz-one-body">
+          <p className="mz-one-dek"><CT k="coverDek" /></p>
+          <table className="mz-one-table">
+            <thead><tr><th>Unit type</th><th className="r">Gross a year</th><th className="r">A month</th><th className="r">A night</th>{showNet ? <th className="r">Owner keeps, est.</th> : null}</tr></thead>
+            <tbody>{rows.map(({ p, n }) => (
+              <tr key={p.id}><td><b>{p.name}</b><span>{p.sf}</span></td><td className="r"><b>{dash(n.lo, n.hi)}</b></td><td className="r">{dash(n.monthLo, n.monthHi)}</td><td className="r">{n.nightlyLo ? dash(n.nightlyLo, n.nightlyHi) : '—'}</td>{showNet ? <td className="r">{dash(netOf(n.lo), netOf(n.hi))}</td> : null}</tr>
+            ))}</tbody>
+          </table>
+          <p className="mz-one-note"><CT k="heroNote" />. Estimates for an established listing; projections, not guarantees.</p>
+          <div className="mz-one-points">{points.map(([b, t], i) => <div key={i}><b>{b}</b><span>{t}</span></div>)}</div>
+          <div className="mz-one-foot">
+            <div className="mz-one-cta"><p className="mz-kicker">Next step</p><h2><CT k="backTitle" /></h2></div>
+            {card.name ? (
+              <div className="mz-one-card">
+                {card.photo ? <img src={card.photo} alt="" /> : <span className="mz-initials">{initials(card.name)}</span>}
+                <div><b>{card.name}</b><span>{card.role}</span><span className="mz-sel">{card.phone}</span><span className="mz-sel">{card.email}</span></div>
+              </div>
+            ) : null}
+          </div>
+          <p className="mz-one-fine">{String(cma!.disclaimer || '').split('. ').slice(0, 2).join('. ').replace(/\.?$/, '.')} Stay Hospitality · stay-hospitality.com</p>
+        </div>
+      </section>
+    )
+  }
   const render = (s: Spec): React.ReactNode => {
     switch (true) {
       case s.key === 'cover' && theme.cover === 'inset': return (
@@ -1123,7 +1166,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       }).join('') }} />
       <nav className="mz-bar-top">
         <span className="mz-run-mark mz-on-dark">STAY</span>
-        <span className="mz-switch"><b>Magazine</b><a href={keynote}>Keynote</a></span>
+        <span className="mz-switch">{onePager ? <><a href={keynote + '?view=magazine'}>Magazine</a><b>One page</b></> : <><b>Magazine</b>{cma ? <a href={keynote + '?view=onepage'}>One page</a> : null}</>}<a href={keynote}>Keynote</a></span>
         <span className="mz-bar-r">
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
@@ -1132,7 +1175,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
         </span>
       </nav>
       {drawerEl}
-      {specs.map(render)}
+      {onePager && cma ? onePage() : specs.map(render)}
     </div>
   )
 }
@@ -1199,6 +1242,30 @@ const CSS = `
 .mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
 .mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
 .mz-lockup{display:flex;align-items:center;gap:18px}
+/* the one-pager */
+.mz-one{background:${C.paper};color:${C.ink}}
+.mz-one-top{display:flex;justify-content:space-between;align-items:center;padding:36px 56px 20px}
+.mz-one-top>span{font:500 9.5px ${SANS};letter-spacing:.3em;text-transform:uppercase;color:${C.muted}}
+.mz-one-photo{height:250px;flex:none;margin:0 56px;display:flex;align-items:flex-end;padding:0 28px 22px;color:#fff}
+.mz-one-photo h1{font:300 calc(50px * var(--mz-ds))/1 ${SERIF};margin:6px 0 0;letter-spacing:-.01em}.mz-one-photo h1 em{font-style:italic}
+.mz-one-body{padding:22px 56px 0;display:flex;flex-direction:column;flex:1;min-height:0}
+.mz-one-dek{font:italic 300 calc(19px * var(--mz-ds))/1.35 ${SERIF};color:${C.body};margin:0 0 16px}
+.mz-one-table{width:100%;border-collapse:collapse;font:400 12px ${SANS};color:${C.body}}
+.mz-one-table th{font:600 9.5px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted};text-align:left;padding:0 10px 7px 0;border-bottom:1.25px solid ${C.ink}}
+.mz-one-table td{padding:6px 10px 6px 0;border-bottom:1px solid ${C.grid};vertical-align:middle;white-space:nowrap;font-variant-numeric:tabular-nums lining-nums}
+.mz-one-table td:first-child{white-space:normal}.mz-one-table td b{font-weight:600;color:${C.ink}}
+.mz-one-table td span{display:block;font-size:10.5px;color:${C.muted};margin-top:1px}
+.mz-one-table .r{text-align:right}.mz-one-table th:last-child,.mz-one-table td:last-child{padding-right:0}
+.mz-one-note{font:italic 400 11px/1.45 ${TEXT};color:${C.muted};margin:8px 0 0}
+.mz-one-points{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:20px}
+.mz-one-points>div{border-top:1px solid ${C.ink};padding-top:10px}
+.mz-one-points b{display:block;font:300 calc(26px * var(--mz-ds))/1.05 ${SERIF};color:${C.ink}}
+.mz-one-points span{display:block;margin-top:5px;font:400 11.5px/1.4 ${SANS};color:${C.body}}
+.mz-one-foot{margin-top:auto;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:end;border-top:1px solid ${C.grid};padding-top:18px}
+.mz-one-cta h2{font:300 calc(30px * var(--mz-ds))/1.05 ${SERIF};margin:0;color:${C.ink}}.mz-one-cta h2 em{font-style:italic;color:${C.sandText}}
+.mz-one-card{display:flex;gap:12px;align-items:center}.mz-one-card img{width:58px;height:58px;border-radius:999px;object-fit:cover;filter:grayscale(1)}
+.mz-one-card div{display:flex;flex-direction:column;font:400 11.5px/1.45 ${SANS};color:${C.body}}.mz-one-card b{font:400 calc(18px * var(--mz-ds)) ${SERIF};color:${C.ink}}
+.mz-one-fine{font:400 8.5px/1.45 ${SANS};color:${C.muted};margin:14px 0 30px}
 .mz-lockup-wrap{position:relative;display:inline-flex}
 .mz-logo-x{position:absolute;top:-10px;right:-12px;width:20px;height:20px;border-radius:999px;border:0;background:#C0392B;color:#fff;font:600 13px/20px "Inter",sans-serif;cursor:pointer;opacity:0;transition:opacity .15s}
 .mz-lockup-wrap:hover .mz-logo-x{opacity:1}
