@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Plus, Trash2, X, Check, BookOpen, Presentation, Wand2, SlidersHorizontal } from 'lucide-react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
+import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import {
   normalizeCma, riderTemplate, blankCma, planNumbers, range, money, suggestHow, newId,
   type SalesCma, type PacketComp, type PacketPlan,
@@ -147,6 +148,9 @@ export function SalesCmaEditor({ report, library, onClose, onSaved }: { report?:
       {/* Comparables */}
       <div>
         <div className="flex items-center gap-2 mb-1.5"><h3 className="text-[13px] font-bold text-ink">Comparable set</h3><span className="text-[12px] text-muted">Low and high are the gross per year the ranges are built from.</span></div>
+        <details className="mb-2"><summary className="cursor-pointer text-[12.5px] font-semibold text-ink">Add comparables from the Projections library, or a custom one</summary>
+          <div className="mt-2 max-w-[560px]"><LibraryCompPicker exclude={library?.id || undefined} onAdd={add => set(c => attachComps(c, add))} /></div>
+        </details>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] text-[12px]">
             <thead><tr className="text-left text-muted">{['Comparable', 'Market', 'Basis', 'Gross shown as (optional)', 'Low $', 'High $', 'Nightly low', 'Nightly high', 'Occ. low %', 'Occ. high %', ''].map(h => <th key={h} className="px-1 pb-1 font-semibold">{h}</th>)}</tr></thead>

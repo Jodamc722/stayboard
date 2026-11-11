@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X, Share2, Check, Send, Search, RefreshCw, Building2, BookOpen } from 'lucide-react'
 import { AUDIENCES, type Audience } from '@/lib/sales-audience'
+import { LibraryCompPicker } from '@/components/LibraryCompPicker'
 import { SalesCmaEditor } from '@/components/SalesCmaEditor'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Tip } from '@/components/lean'
 
@@ -165,6 +166,9 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
   // The unit types of the chosen library building, and which of them go in the deck (all by default).
   const [libPlans, setLibPlans] = useState<{ id: string; name: string; sf: string }[]>([])
   const [planPick, setPlanPick] = useState<string[]>([])
+  // Comparables picked from the library or typed in, added to the deck's comparable set (lib/sales-comps).
+  const [extraComps, setExtraComps] = useState<any[]>([])
+  const [compsOpen, setCompsOpen] = useState(false)
   useEffect(() => {
     if (!cmaPick.startsWith('lib:')) { setLibPlans([]); setPlanPick([]); return }
     let live = true
@@ -424,6 +428,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
           market: kind === 'sales' ? (intake.market || undefined) : undefined,
           cma: kind === 'sales' && cmaPick ? cmaPick : undefined,
           audience: kind === 'sales' ? audience : undefined,
+          extraComps: kind === 'sales' && cmaPick && extraComps.length ? extraComps : undefined,
           planIds: kind === 'sales' && cmaPick.startsWith('lib:') && planPick.length && planPick.length < libPlans.length ? planPick : undefined,
           // Review-only attachments. The statement picker is not on screen for the other three
           // document types, so nothing it holds may ride along with them.
@@ -836,6 +841,17 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
                       <option value="blank">Empty floor plans and comps</option>
                     </select>
                   </label>
+                  {cmaPick && (
+                    <div className="basis-full rounded-xl border border-line bg-white p-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Comparables</span>
+                        <span className="text-[12px] text-muted">{extraComps.length ? extraComps.length + ' added: ' + extraComps.map(c => c.name).join(', ') : 'Add comparables from the Projections library, or your own.'}</span>
+                        {extraComps.length > 0 && <button type="button" onClick={() => setExtraComps([])} className="text-[11.5px] text-muted hover:underline">Clear</button>}
+                        <button type="button" onClick={() => setCompsOpen(o => !o)} className="ml-auto rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink hover:bg-app">{compsOpen ? 'Done' : 'Add comparables'}</button>
+                      </div>
+                      {compsOpen && <div className="mt-2"><LibraryCompPicker exclude={cmaPick.startsWith('lib:') ? cmaPick.slice(4) : undefined} onAdd={add => setExtraComps(x => [...x, ...add])} /></div>}
+                    </div>
+                  )}
                   {libPlans.length > 0 && (
                     <div className="basis-full">
                       <div className="flex items-center gap-2 flex-wrap">

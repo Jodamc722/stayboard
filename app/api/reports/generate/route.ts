@@ -29,6 +29,7 @@ import { getOnboardingTemplate, buildOnboardingContent, listingCardFrom, type Li
 import { buildSalesContent } from '@/lib/sales-deck'
 import { riderTemplate, blankCma } from '@/lib/sales-cma'
 import { getBuilding } from '@/lib/sales-library'
+import { attachComps } from '@/lib/sales-comps'
 import { AUDIENCES, type Audience } from '@/lib/sales-audience'
 import { measureEdge } from '@/lib/sales-edge'
 import { proofListings, proofRows, monthLabel as proofMonth, effectiveFee, completedMonths, ownersForListings } from '@/lib/sales-proof'
@@ -329,6 +330,12 @@ export async function POST(req: NextRequest) {
       const pickPlans = Array.isArray(body?.planIds) ? (body.planIds as any[]).map(String) : []
       ;(contentS as any).cma = libEntry ? { ...structuredClone(libEntry.cma), plans: pickPlans.length ? libEntry.cma.plans.filter(p => pickPlans.includes(p.id)) : libEntry.cma.plans, libraryId: libEntry.id } : cmaPick === 'rider' ? riderTemplate() : blankCma(str(intake?.building) || scopeLabel, str(body?.market) || String(marketS || ''))
       ;(contentS as any).cma.sections = { ...(contentS as any).cma.sections, ...AUDIENCES[audience].sections }
+      // Comparables picked on the new-deck form, from the library or typed in (body.extraComps).
+      const extra = (Array.isArray(body?.extraComps) ? body.extraComps : []).filter((c: any) => c && String(c.name || '').trim() && Number(c.lo) > 0).slice(0, 20).map((c: any) => ({
+        id: String(c.id || Math.random().toString(36).slice(2, 9)), name: String(c.name).slice(0, 80), market: String(c.market || '').slice(0, 60), basis: String(c.basis || '').slice(0, 60),
+        lo: Number(c.lo) || 0, hi: Number(c.hi) || Number(c.lo) || 0, nightlyLo: Number(c.nightlyLo) || 0, nightlyHi: Number(c.nightlyHi) || 0, occLo: Number(c.occLo) || 0, occHi: Number(c.occHi) || 0,
+      }))
+      if (extra.length) (contentS as any).cma = attachComps((contentS as any).cma, extra)
       if (libEntry?.website) (contentS as any).magazine = { ...((contentS as any).magazine || {}), brandSource: libEntry.website }
       // A building package is one photograph-led cover: the Miami skyline when no photo was chosen.
       if ((cmaPick === 'rider' || libEntry) && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = libEntry?.photo || '/deck-img/miami-skyline.jpg'

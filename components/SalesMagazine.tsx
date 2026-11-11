@@ -18,6 +18,7 @@
 // Inter for reading text at 12.5/20 and for small caps labels. Hairlines, not boxes.
 import React, { useEffect, useState } from 'react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
+import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { StayTimeline, YearWave, ChannelHub } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
@@ -596,7 +597,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
     const fee = terms.find(r => /fee/i.test(r.k))?.v || '15% of rental revenue'
     const points: [string, string][] = aud === 'agents'
       ? [[cma!.partner.fees.length > 1 ? cma!.partner.fees[0][0] + '–' + cma!.partner.fees[cma!.partner.fees.length - 1][0] : (cma!.partner.fees[0]?.[0] || ''), 'Referral fee per unit, by size, in writing'], ['48 hours', 'A projection for any unit you show or list'], ['40+ platforms', 'One calendar, priced every night']]
-      : [[fee.replace(/ of rental revenue/i, ''), 'Of rental revenue. No setup or monthly fees'], ['40+ platforms', 'One calendar, priced every night'], ['24/7', 'Our own local CCS team on every stay']]
+      : [[fee.replace(/ of rental revenue/i, ''), 'Of rental revenue. No setup or monthly fees'], ['40+ platforms', 'One calendar, priced every night'], ['24/7', 'A local team and 24/7 guest support on every stay']]
     return (
       <section key="onepage" className="mz-page mz-one">
         <div className="mz-one-top">
@@ -998,6 +999,10 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
 
       {drawer === 'comps' && (cma ? (
         <>
+          <p className="mz-form-h">From the projections library</p>
+          <LibraryCompPicker compact onAdd={add => setCma(attachComps(cma, add))} />
+          <p className="mz-drawer-note">Library comparables land on the floor plans with the same bedroom count; tick or untick them per floor plan under Projections.</p>
+          <p className="mz-form-h">In this deck</p>
           {cma.comps.map((x, i) => (
             <div key={x.id} className="mz-form mz-comp">
               <label className="wide"><span>Comparable</span><input defaultValue={x.name} onBlur={e => setComp(i, { name: e.target.value })} /></label>
