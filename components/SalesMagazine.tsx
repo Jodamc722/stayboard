@@ -35,6 +35,10 @@ export type MagTheme = { label: string; ink: string; body: string; muted: string
   /** Atelier-style themes: the label face, the display size factor, the page paper and the cover layout. */
   sans?: string; ds?: number; paper?: string; cover?: 'inset' | 'full' }
 export const MAG_THEMES: Record<string, MagTheme> = {
+  // STAY MODERN, the standard (Jon, 2026-11-11: "standard should be modern, following our look and
+  // feel"). Lighthouse's own identity: Instrument Serif headlines over Geist, near-black ink, Stay's
+  // bronze, a clean white page and a full-bleed photograph on the cover.
+  stay: { label: 'Stay Modern', ink: '#101114', body: '#3A3B40', muted: '#727379', navy: '#14161B', sand: '#8C6D3A', sandSoft: '#F1ECE3', warm: '#F7F7F5', rule: '#E4E2DD', glow: '#D9BE8C', desk: '#E9E8E4', display: 'Instrument Serif', sans: 'Geist', ds: 1.06, paper: '#FFFFFF', cover: 'full' },
   // ATELIER, the default (Jon, 2026-11-11: "crisp… clean design… world class professional magazine").
   // Quiet luxury: warm paper, Cormorant Garamond display at generous sizes, Jost labels tracked wide,
   // warm charcoal instead of navy, a photograph inset on the cover with the title set beneath it.
@@ -42,11 +46,33 @@ export const MAG_THEMES: Record<string, MagTheme> = {
   classic: { label: 'Classic navy', ink: '#0F1640', body: '#3A4055', muted: '#7D8296', navy: '#111A4A', sand: '#A88B5A', sandSoft: '#F2ECE1', warm: '#F9F6F0', rule: '#E2DDD2', glow: '#E8D6B0', desk: '#E6E2DA' },
   coastal: { label: 'Coastal', ink: '#0D2B33', body: '#33474C', muted: '#788B90', navy: '#0E4A57', sand: '#C07A50', sandSoft: '#F6E8DD', warm: '#F3F7F6', rule: '#D9E4E3', glow: '#F2C9A8', desk: '#DFE8E7' },
   noir: { label: 'Noir and gold', ink: '#111111', body: '#3A3A3A', muted: '#86837E', navy: '#141414', sand: '#A3854B', sandSoft: '#F1EBDF', warm: '#F7F5F0', rule: '#E2DED6', glow: '#DCC28A', desk: '#E4E1DB' },
+  // A WIDE RANGE OF STYLES (Jon, 2026-11-11: "enhanced, and a wide range of colour styles"). Each is a
+  // complete look: palette, a display face and a label face, the page paper and the cover layout.
+  midnight: { label: 'Midnight and champagne', ink: '#0F1B2D', body: '#3A4558', muted: '#76808F', navy: '#0F1B2D', sand: '#A88A4E', sandSoft: '#F3EEE4', warm: '#F6F4EF', rule: '#E2DED5', glow: '#E3CB97', desk: '#E3E1DB', display: 'Playfair Display', sans: 'Inter', paper: '#FFFFFF', cover: 'full' },
+  emerald: { label: 'Emerald', ink: '#0E241C', body: '#33463F', muted: '#6F817A', navy: '#0F4C3A', sand: '#A6844F', sandSoft: '#F1ECE1', warm: '#F4F6F3', rule: '#DCE2DE', glow: '#DCC089', desk: '#E2E7E3', display: 'Playfair Display', sans: 'Inter', paper: '#FFFFFF', cover: 'full' },
+  slate: { label: 'Slate', ink: '#1B222C', body: '#3C4552', muted: '#75808D', navy: '#2A3442', sand: '#4F6F8F', sandSoft: '#E7EDF3', warm: '#F3F5F7', rule: '#DDE2E8', glow: '#A9C1D9', desk: '#E2E6EB', display: 'DM Serif Display', sans: 'Inter', paper: '#FFFFFF', cover: 'full' },
+  miami: { label: 'Miami', ink: '#1C2A33', body: '#3E4C55', muted: '#748089', navy: '#155E68', sand: '#C9603F', sandSoft: '#FBEAE3', warm: '#F2F8F8', rule: '#D9E7E8', glow: '#F6B7A2', desk: '#E1ECEC', display: 'Bodoni Moda', sans: 'Jost', paper: '#FFFFFF', cover: 'full' },
+  terracotta: { label: 'Terracotta', ink: '#2B1D17', body: '#4A3A32', muted: '#84746A', navy: '#5A2E1F', sand: '#A9492A', sandSoft: '#F5E6DC', warm: '#FAF3EC', rule: '#E8DCD0', glow: '#EDB592', desk: '#EDE4DA', display: 'Fraunces', sans: 'Inter', paper: '#FFFCF8', cover: 'inset' },
+  sage: { label: 'Sage', ink: '#1F2A22', body: '#3E4A41', muted: '#78827A', navy: '#33473A', sand: '#6F7F52', sandSoft: '#EDF0E6', warm: '#F4F5F0', rule: '#DCE0D5', glow: '#C9D6B0', desk: '#E4E7DF', display: 'Cormorant Garamond', sans: 'Jost', ds: 1.12, paper: '#FBFBF8', cover: 'inset' },
+  blush: { label: 'Blush', ink: '#2D2024', body: '#4B3E42', muted: '#87797D', navy: '#4A2F37', sand: '#A65D69', sandSoft: '#F7E9EA', warm: '#FBF5F4', rule: '#ECDFDF', glow: '#E8B9BF', desk: '#EFE6E5', display: 'Cormorant Garamond', sans: 'Jost', ds: 1.12, paper: '#FFFDFC', cover: 'inset' },
+  mono: { label: 'Monochrome', ink: '#111111', body: '#383838', muted: '#737373', navy: '#111111', sand: '#5E5E5E', sandSoft: '#EFEFEF', warm: '#F5F5F5', rule: '#E2E2E2', glow: '#D4D4D4', desk: '#E6E6E6', display: 'Instrument Serif', sans: 'Inter', ds: 1.06, paper: '#FFFFFF', cover: 'full' },
   ivory: { label: 'Ivory and olive', ink: '#1F241C', body: '#43493E', muted: '#868A7D', navy: '#2F3A28', sand: '#9A7B4F', sandSoft: '#EFE9DC', warm: '#F8F5EE', rule: '#E2DDD0', glow: '#E3D3AE', desk: '#E5E1D6' },
 }
 const C = { ink: 'var(--mz-ink)', body: 'var(--mz-body)', muted: 'var(--mz-muted)', navy: 'var(--mz-navy)', sand: 'var(--mz-sand)', sandText: 'var(--mz-sandtext)', sandSoft: 'var(--mz-sandsoft)', warm: 'var(--mz-warm)', rule: 'var(--mz-rule)', grid: 'var(--mz-grid)', glow: 'var(--mz-glow)', desk: 'var(--mz-desk)', paper: 'var(--mz-paper)' }
 const SERIF_DEFAULT = '"Newsreader", "Iowan Old Style", "Baskerville", Georgia, serif'
 const SERIF = 'var(--mz-display)'
+/** Google Fonts for the faces a look uses (all of them while the style picker is open, for its previews). */
+const FONT_SPEC: Record<string, string> = {
+  'Cormorant Garamond': 'Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400', 'Jost': 'Jost:wght@300;400;500;600',
+  'Instrument Serif': 'Instrument+Serif:ital@0;1', 'Geist': 'Geist:wght@300;400;500;600', 'Playfair Display': 'Playfair+Display:ital,wght@0,400;0,500;1,400',
+  'Fraunces': 'Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300', 'DM Serif Display': 'DM+Serif+Display:ital@0;1',
+  'Bodoni Moda': 'Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;1,6..96,400',
+}
+function fontHref(faces: (string | undefined)[]): string {
+  const base = ['Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400', 'Josefin+Sans:wght@300;400', 'Inter:wght@400;500;600;700']
+  const extra = Array.from(new Set(faces.filter(Boolean) as string[])).filter(f => f !== 'Newsreader' && f !== 'Inter').map(f => FONT_SPEC[f] || encodeURIComponent(f).replace(/%20/g, '+'))
+  return 'https://fonts.googleapis.com/css2?' + base.concat(extra).map(f => 'family=' + f).join('&') + '&display=swap'
+}
 /** Reading text stays Newsreader in every theme: a display face is too fine at 13px in print. */
 const TEXT = SERIF_DEFAULT
 const SANS_DEFAULT = '"Inter", system-ui, -apple-system, "Segoe UI", sans-serif'
@@ -335,8 +361,8 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
   const mag: Any = c.magazine || {}
   const copy: Any = mag.copy || {}
   const custom: MagTheme | null = mag.custom && mag.custom.navy ? mag.custom : null
-  const styleKey = mag.style === 'custom' && custom ? 'custom' : MAG_THEMES[mag.style] ? mag.style : 'atelier'
-  const theme: MagTheme = styleKey === 'custom' && custom ? { ...MAG_THEMES.atelier, ...custom } : MAG_THEMES[styleKey]
+  const styleKey = mag.style === 'custom' && custom ? 'custom' : MAG_THEMES[mag.style] ? mag.style : 'stay'
+  const theme: MagTheme = styleKey === 'custom' && custom ? { ...MAG_THEMES.stay, ...custom } : MAG_THEMES[styleKey]
   const chart: ChartKind = (['line', 'bars', 'band', 'cumulative'] as ChartKind[]).includes(mag.chart) ? mag.chart : 'line'
   // NO UNIT PRICES (Jon, 2026-11-11: "noticed cost of units, remove that, don't need that"). The
   // starting price, and the gross yield worked from it, no longer print anywhere in the package.
@@ -579,11 +605,10 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
       case s.key === 'cover': return (
         <section key="cover" className="mz-page mz-cover mz-ph" style={ph('cover', 'linear-gradient(180deg, rgba(22,19,16,.66) 0%, rgba(22,19,16,.10) 26%, rgba(22,19,16,.04) 50%, rgba(22,19,16,.86) 100%)', 'center 40%')}>
           <div className="mz-mast">
-            <img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />
+            <div className="mz-lockup mz-lockup-dark"><img src="/stay-logo.png" alt="Stay Hospitality" className="mz-logo" />{brandLogo ? <><i /><img src={brandLogo} alt={building} className="mz-lockup-b" /></> : null}</div>
             <div className="mz-mast-r"><span>{cma ? AUDIENCES[audienceOf(c.audience)].mast : 'Management Proposal'}</span><span>{monthYear}</span></div>
           </div>
           <div className="mz-cover-main">
-            {brandLogo ? <img src={brandLogo} alt="" className="mz-brandlogo" /> : null}
             {kicker(<>{cma ? <E v={area} p="cma.area" ph="Area" /> : area || 'South Florida'}{' · Miami'}</>, true)}
             <h1 className="mz-cover-title">
               {canEdit && editText ? <E v={building} p={buildingPath} ph="Building" /> : <>{short(building) || 'Stay Hospitality'}{/residences$/i.test(building) ? <em> Residences</em> : null}</>}
@@ -1041,9 +1066,13 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
           <p className="mz-form-h">Themes</p>
           <div className="mz-swatches">
             {[...Object.entries(MAG_THEMES), ...(custom ? [['custom', custom] as [string, MagTheme]] : [])].map(([k, t]) => (
-              <button key={k} type="button" className={styleKey === k ? 'on' : ''} onClick={() => setMag({ style: k })}>
-                <span><i style={{ background: t.navy }} /><i style={{ background: t.sand }} /><i style={{ background: t.warm, border: '1px solid ' + t.rule }} /></span>
-                <em style={{ fontFamily: t.display ? `"${t.display}", serif` : 'Newsreader, serif' }}>{t.label}</em>
+              <button key={k} type="button" className={styleKey === k ? 'on' : ''} onClick={() => setMag({ style: k })} title={t.label + (k === 'stay' ? ' (the standard)' : '')}>
+                <div className="mz-sw-page" style={{ background: t.paper || '#fff' }}>
+                  <div className="mz-sw-band" style={{ background: t.navy }}><b style={{ background: t.sand }} /></div>
+                  <p style={{ fontFamily: `"${t.display || 'Newsreader'}", serif`, color: t.ink }}>Aa <i style={{ color: t.sand }}>Rider</i></p>
+                  <span style={{ background: t.warm, borderColor: t.rule }} />
+                </div>
+                <em>{t.label}{k === 'stay' ? <small> · standard</small> : null}</em>
               </button>
             ))}
           </div>
@@ -1075,7 +1104,7 @@ export function SalesMagazine({ report, canEdit }: { report: Any; canEdit?: bool
 
   return (
     <div className={'mz-root' + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Jost:wght@300;400;500;600&family=Josefin+Sans:wght@300;400&family=Inter:wght@400;500;600;700&display=swap" />
+      <link rel="stylesheet" href={fontHref(drawer === 'style' ? Object.values(MAG_THEMES).flatMap(x => [x.display, x.sans]).concat([theme.display, theme.sans]) : [theme.display, theme.sans])} />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <style dangerouslySetInnerHTML={{ __html: Object.entries(fit).map(([k, l]) => {
@@ -1399,9 +1428,14 @@ div.mz-ed{display:block}
 .mz-comp{padding:12px;border:1px solid #E3DED3;border-radius:12px}
 .mz-remove{display:block;font:600 11.5px ${SANS};color:#B4232F;background:none;border:0;text-align:left;padding:8px 0 0;cursor:pointer}
 .mz-add{margin-top:12px;font:600 12.5px ${SANS};border:1px dashed #B59A6A;background:#FAF7F1;color:#0F1640;border-radius:10px;padding:9px;width:100%;cursor:pointer}
-.mz-swatches{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.mz-swatches button{display:flex;align-items:center;gap:12px;font:600 12.5px ${SANS};color:#0F1640;background:#fff;border:1px solid #E3DED3;border-radius:10px;padding:10px 12px;cursor:pointer;text-align:left}
-.mz-swatches button em{font-style:normal;font-size:15px;font-weight:400}
+.mz-swatches{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.mz-sw-page{border-radius:6px;border:1px solid rgba(0,0,0,.08);overflow:hidden;width:100%;aspect-ratio:4/3;display:flex;flex-direction:column}
+.mz-sw-band{height:38%;position:relative}.mz-sw-band b{position:absolute;left:8px;bottom:6px;width:16px;height:2px}
+.mz-sw-page p{margin:5px 8px 0;font-size:17px;line-height:1}.mz-sw-page p i{font-style:italic}
+.mz-sw-page span{margin:auto 8px 7px;height:7px;border-radius:2px;border:1px solid}
+.mz-swatches em small{font-weight:400;color:#80859A;font-size:11px}
+.mz-swatches button{display:flex;flex-direction:column;align-items:stretch;gap:6px;font:600 12px "Inter",sans-serif;color:#0F1640;background:#fff;border:1px solid #E3DED3;border-radius:10px;padding:7px;cursor:pointer;text-align:left}
+.mz-swatches button em{font-style:normal;font-size:12px;font-weight:600}
 .mz-swatches button.on{border-color:#0F1640;box-shadow:0 0 0 1px #0F1640}
 .mz-swatches span{display:flex}.mz-swatches i{width:20px;height:20px;border-radius:999px;margin-right:-5px;border:2px solid #fff}
 .mz-colors{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
