@@ -116,28 +116,20 @@ export const DESKS: Desk[] = [
     ],
   },
   {
-    // MARKETING (Jon, 2026-11-10: "ad studio should be under marketing section, we should also add
-    // emails, direct booking stats etc"). Bringing guests back and filling the direct site: the
-    // direct-booking numbers, ads, the email list, guest profiles and the photo library.
-    key: 'marketing', label: 'Marketing',
-    blurb: 'Direct bookings and their numbers, Ad Studio, the guest email list, guest profiles and the photo library.',
-    views: [
-      { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made, vs the period before and last year; the partner share link' },
-      { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform' },
-      { to: '/contacts', label: 'Email list', hint: 'Past guests as a mailing list: filters, export, Mailchimp' },
-      { to: '/guests', label: 'Guests', hint: 'Guest directory and profiles (VIP, tags, notes)' },
-      { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP' },
-    ],
-  },
-  {
-    // SALES (Jon, 2026-11-11): its own tab, separate from Owners. The sales decks are owner reports
-    // of the sales kind, so they keep the deck editor, the link, PDF and PowerPoint; each one opens
-    // as keynote slides or as a magazine, and a building package adds the floor plans and comps.
-    key: 'sales', label: 'Sales',
-    blurb: 'Sales decks and building packages for owners, developers and realtor groups: keynote slides, a printable magazine and one link to share.',
+    // SALES & MARKETING (Jon, 2026-11-11: "move Ad Studio to the sales and marketing section"). One
+    // section for winning owners and filling the calendar: sales decks and the projections library,
+    // Ad Studio, the direct-booking numbers, the guest email list, guest profiles and the photo library.
+    // (Marketing was its own section from 2026-11-10; Sales from 2026-11-11.)
+    key: 'sales', label: 'Sales & Marketing',
+    blurb: 'Sales decks and building packages, the projections library, Ad Studio, direct bookings, the guest email list, guest profiles and the photo library.',
     views: [
       { to: '/sales', label: 'Sales decks', hint: 'Proposals and building packages: floor-plan rental comparisons, comps, the agent partner program; keynote and magazine from one link' },
       { to: '/sales/projections', label: 'Projections library', hint: 'Every building’s floor plans and rental projections, edited in one place; new decks start from them' },
+      { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform' },
+      { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made, vs the period before and last year; the partner share link' },
+      { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP' },
+      { to: '/contacts', label: 'Email list', hint: 'Past guests as a mailing list: filters, export, Mailchimp', more: true },
+      { to: '/guests', label: 'Guests', hint: 'Guest directory and profiles (VIP, tags, notes)', more: true },
     ],
   },
   {
@@ -151,7 +143,6 @@ export const DESKS: Desk[] = [
       // Catalog (Jon, 2026-10-27): the default onboarding catalog and one per property — approved replacement lists with links.
       { to: '/catalogs', match: ['/catalog'], label: 'Catalog', hint: 'Approved furniture and amenity catalogs per property, with the links to buy from; build one from a listing’s photos', more: true },
       { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks (sales decks are on the Sales tab)' },
-      // Ad Studio (Jon, 2026-11-02): AI-written video ads — brief, script, voice, timeline, export.
       { to: '/projections', label: 'Projections', hint: 'Next season’s owner revenue model behind the projection decks', more: true },
     ],
     also: ['/ffe'],
