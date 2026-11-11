@@ -958,11 +958,11 @@ const CSS = `
 
 /* technology */
 .mz-tools{margin-top:32px;border-top:1px solid ${C.ink}}
-.mz-tool{display:grid;grid-template-columns:200px 1fr;gap:32px;padding:24px 0;border-bottom:1px solid ${C.grid};align-items:baseline}
+.mz-tool{display:grid;grid-template-columns:200px 1fr;gap:32px;padding:18px 0;border-bottom:1px solid ${C.grid};align-items:baseline}
 .mz-tool-l b{display:block;font:400 26px ${SERIF};color:${C.ink};letter-spacing:-.01em}
 .mz-tool-l span{display:block;margin-top:6px;font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.sandText}}
-.mz-tool p{font:400 15px/1.55 ${SERIF};margin:0}
-.mz-channels{margin-top:48px}
+.mz-tool p{font:400 14.5px/1.5 ${SERIF};margin:0}
+.mz-channels{margin-top:32px}
 .mz-channels>p:not(.mz-kicker){font:300 22px/1.5 ${SERIF};color:${C.ink};margin:0}
 .mz-channels i{font-style:normal;color:${C.sand};margin:0 10px}
 .mz-plus{color:${C.muted}}

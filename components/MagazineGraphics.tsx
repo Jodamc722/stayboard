@@ -49,8 +49,8 @@ export function StayTimeline({ steps, title = 'One stay, start to finish' }: { s
           <g key={i}>
             <circle cx={58} cy={y} r={15} style={{ fill: V.navy, stroke: V.glow }} strokeWidth={1.25} />
             <text x={58} y={y + 4.5} textAnchor="middle" fontFamily={SERIF} fontSize={13} style={{ fill: V.glow }}>{String(i + 1).padStart(2, '0')}</text>
-            <text x={88} y={y - 2} fontFamily={SERIF} fontSize={18} style={{ fill: '#fff' }}>{s.k.length > 26 ? s.k.slice(0, 25) + '…' : s.k}</text>
-            <text x={88} y={y + 16} fontFamily={SANS} fontSize={9.5} fontWeight={600} letterSpacing="1.6" style={{ fill: '#fff', opacity: 0.55 }}>{['THE NIGHT BEFORE', 'ON DEPARTURE', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'IN SECONDS'][i] || ''}</text>
+            {(() => { const w = s.k.split(' '); const lines: string[] = ['']; for (const x of w) { if ((lines[lines.length - 1] + ' ' + x).trim().length > 20) lines.push(x); else lines[lines.length - 1] = (lines[lines.length - 1] + ' ' + x).trim() } return lines.slice(0, 2).map((l, j) => <text key={j} x={88} y={y - 2 + j * 21 - (lines.length > 1 ? 10 : 0)} fontFamily={SERIF} fontSize={18} style={{ fill: '#fff' }}>{l}</text>) })()}
+            <text x={88} y={y + 18 + (s.k.length > 20 ? 11 : 0)} fontFamily={SANS} fontSize={9.5} fontWeight={600} letterSpacing="1.6" style={{ fill: '#fff', opacity: 0.55 }}>{['THE NIGHT BEFORE', 'ON DEPARTURE', 'BEFORE ARRIVAL', 'AS IT HAPPENS', 'AROUND THE CLOCK', 'IN SECONDS'][i] || ''}</text>
           </g>
         )
       })}
@@ -63,7 +63,7 @@ export function StayTimeline({ steps, title = 'One stay, start to finish' }: { s
 export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; title: React.ReactNode; kicker: string }) {
   const W = 816, H = 1056, base = 820, amp = 330, x0 = 0, x1 = W
   const max = Math.max(...shape)
-  const xs = (i: number) => x0 + (i + 0.5) * ((x1 - x0) / 12)
+  const xs = (i: number) => 40 + (i + 0.5) * ((W - 80) / 12)
   const pts: [number, number][] = shape.map((v, i) => [xs(i), base - (v / max) * amp])
   const wave = smooth([[x0, base - (shape[0] / max) * amp * 0.9], ...pts, [x1, base - (shape[11] / max) * amp * 0.95]])
   const echo = (k: number, o: number) => smooth([[x0, base - (shape[0] / max) * amp * 0.9 * k + o], ...pts.map(([x, y]) => [x, base - (base - y) * k + o] as [number, number]), [x1, base - (shape[11] / max) * amp * 0.95 * k + o]])
@@ -71,15 +71,16 @@ export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; 
   const sorted = shape.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0])
   const second = sorted.find(([, i]) => Math.abs(i - pk) > 2)?.[1] ?? 2
   const low = shape.indexOf(Math.min(...shape))
-  const mark = (i: number, label: string, sub: string) => {
+  const mark = (i: number, label: string, sub: string, below?: boolean) => {
     const [x, y] = pts[i]
     const right = x < W / 2
+    const ty = below ? y + 70 : y - 64
     return (
       <g>
-        <line x1={x} x2={x} y1={y} y2={y - 64} style={{ stroke: '#fff', opacity: 0.6 }} strokeWidth={1} />
+        <line x1={x} x2={x} y1={y} y2={below ? y + 52 : y - 64} style={{ stroke: '#fff', opacity: 0.6 }} strokeWidth={1} />
         <circle cx={x} cy={y} r={5} style={{ fill: '#fff' }} />
-        <text x={right ? x + 10 : x - 10} y={y - 64} textAnchor={right ? 'start' : 'end'} fontFamily={SERIF} fontSize={19} style={{ fill: '#fff' }}>{label}</text>
-        <text x={right ? x + 10 : x - 10} y={y - 46} textAnchor={right ? 'start' : 'end'} fontFamily={SANS} fontSize={9.5} fontWeight={600} letterSpacing="1.6" style={{ fill: V.glow }}>{sub}</text>
+        <text x={right ? x + 10 : x - 10} y={ty} textAnchor={right ? 'start' : 'end'} fontFamily={SERIF} fontSize={19} style={{ fill: '#fff' }}>{label}</text>
+        <text x={right ? x + 10 : x - 10} y={ty + 18} textAnchor={right ? 'start' : 'end'} fontFamily={SANS} fontSize={9.5} fontWeight={600} letterSpacing="1.6" style={{ fill: V.glow }}>{sub}</text>
       </g>
     )
   }
@@ -88,8 +89,7 @@ export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; 
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" height="100%" preserveAspectRatio="none" style={{ position: 'absolute', inset: 0 }} aria-hidden>
         <rect width={W} height={H} style={{ fill: V.navy }} />
         {[0.55, 0.72, 0.86].map((k, i) => <path key={i} d={echo(k, -40 - i * 26)} style={{ fill: 'none', stroke: V.glow, opacity: 0.12 + i * 0.05 }} strokeWidth={1} />)}
-        <path d={wave + ` L${x1},${H} L${x0},${H} Z`} style={{ fill: V.sand, opacity: 0.22 }} />
-        <path d={echo(1, 26) + ` L${x1},${H} L${x0},${H} Z`} style={{ fill: V.navy, opacity: 0.55 }} />
+        <path d={wave + ` L${x1},${H} L${x0},${H} Z`} style={{ fill: '#fff', opacity: 0.06 }} />
         <path d={wave} style={{ fill: 'none', stroke: V.glow }} strokeWidth={2} />
         {MONTHS.map((m, i) => (
           <g key={m}>
@@ -99,11 +99,11 @@ export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; 
         ))}
         {mark(pk, pk === 11 ? 'Art Basel and New Year' : 'The peak', 'THE HIGHEST MONTH')}
         {mark(second, 'Winter season', 'THE SECOND PEAK')}
-        {mark(low, 'The quiet weeks', 'PRICED FOR OCCUPANCY')}
+        {mark(low, 'The quiet weeks', 'PRICED FOR OCCUPANCY', true)}
       </svg>
       <div style={{ position: 'absolute', left: 72, right: 72, top: 64 }}>
         <p className="mz-kicker mz-on-dark">{kicker}</p>
-        <h2 className="mz-opener-title">{title}</h2>
+        <h2 className="mz-opener-title" style={{ color: '#fff' }}>{title}</h2>
         <p style={{ font: `300 18px/1.5 ${SERIF}`, color: 'rgba(255,255,255,.82)', maxWidth: '26em', margin: '20px 0 0' }}>The shape of a Miami year, from the seasonal curve behind every projection in this package.</p>
       </div>
     </div>
@@ -113,7 +113,7 @@ export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; 
 /** One calendar, every platform: the listing at the centre, the channels around it. */
 export function ChannelHub({ channels, count }: { channels: string[]; count: string }) {
   const list = channels.slice(0, 8)
-  const W = 672, H = 210, cx = 128, cy = H / 2
+  const W = 672, H = 180, cx = 118, cy = H / 2
   const right = 300
   const rowH = (H - 20) / Math.max(1, list.length)
   return (
