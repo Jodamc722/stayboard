@@ -35,7 +35,7 @@ export function GardenAssign({ rooms, date, canEdit, onChanged }: { rooms: Room[
     const t = r.tasks.filter(x => (x.kind === 'clean' || x.kind === 'stayover') && x.status !== 'cancelled')
     if (!t.length) return []
     const main = t.find(x => x.kind === 'clean') || t[0]
-    return [{ id: r.id, name: r.name, kind: main.kind as Work['kind'], status: t.every(x => x.status === 'done') ? 'done' : t.some(x => x.status === 'in_progress') ? 'in_progress' : 'open', who: t.find(x => x.assigned_to)?.assigned_to || r.housekeeper || null, // Lighthouse's assignment, else Cloudbeds' own arriving: r.arriving, dnd: r.dnd, condition: r.condition }]
+    return [{ id: r.id, name: r.name, kind: main.kind as Work['kind'], status: t.every(x => x.status === 'done') ? 'done' : t.some(x => x.status === 'in_progress') ? 'in_progress' : 'open', who: t.find(x => x.assigned_to)?.assigned_to || r.housekeeper || null, arriving: r.arriving, dnd: r.dnd, condition: r.condition }]
   }).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })), [rooms])
 
   const people = useMemo(() => {
