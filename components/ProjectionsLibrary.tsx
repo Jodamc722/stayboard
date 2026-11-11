@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Plus, Search, Upload, Sparkles, Trash2, SlidersHorizontal, Image as ImageIcon, Check, X, Copy, Settings2, Globe, FileUp, PenLine } from 'lucide-react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
 import { SalesCmaEditor } from '@/components/SalesCmaEditor'
+import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { normalizeCma, blankCma, planNumbers, newId, money, type SalesCma, type PacketPlan, type PacketComp } from '@/lib/sales-cma'
 
 type Any = any
@@ -481,6 +482,9 @@ export function ProjectionsLibrary() {
                   )}
                   <button type="button" onClick={() => { if (dirty || !entry.id) { setMsg('Save first, then open the full editor.'); return } setAdvanced(a => !a) }} className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[12.5px] font-semibold text-ink hover:bg-app"><Settings2 size={13} /> {advanced ? 'Close the full editor' : 'Comps, uplift and wording'}</button>
                 </div>
+                <details className="mb-3"><summary className="cursor-pointer text-[12.5px] font-semibold text-ink">Pick comparables from other buildings, or add a custom one</summary>
+                  <div className="mt-2 max-w-[600px]"><LibraryCompPicker exclude={entry.id || undefined} onAdd={add => { setCma(c => attachComps(c, add)); setMsg(add.length + ' comparable' + (add.length === 1 ? '' : 's') + ' added. Save to keep them.') }} /></div>
+                </details>
                 {entry.cma.comps.length ? (
                   <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-[12.5px]">
                     <thead><tr className="text-left text-[10.5px] uppercase tracking-[0.14em] text-muted"><th className="py-1.5 pr-3 font-semibold">Comparable</th><th className="pr-3 font-semibold">Market</th><th className="pr-3 font-semibold text-right">Gross a year</th><th className="pr-3 font-semibold text-right">Nightly</th><th className="pr-3 font-semibold text-right">Occupancy</th><th className="w-8"></th></tr></thead>

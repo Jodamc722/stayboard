@@ -53,7 +53,7 @@ export const OPS_ROWS: KV[] = [
   { k: 'The clean', v: 'Every check-out is cleaned to our standard checklist and photographed as it goes. Same-day turnovers are flagged and done first.' },
   { k: 'The inspection', v: 'A supervisor walks the home with a set checklist before every arrival. Not a glance from the doorway.' },
   { k: 'Maintenance', v: 'Anything we find becomes a tracked job with a person responsible and a deadline. Preventive maintenance runs on a schedule, not only when something breaks.' },
-  { k: 'Guest care', v: 'Our 24/7 CCS team answers every guest message from one inbox. If a guest cannot get in, it is our emergency, not theirs.' },
+  { k: 'Guest care', v: 'Our local team and 24/7 guest support answer every guest message from one inbox. If a guest cannot get in, it is our emergency, not theirs.' },
   { k: 'Escalation', v: 'Our 24/7 guest care team, our local team on the ground and a list of trusted vendors make sure guest issues are resolved quickly.' },
 ]
 export const OPS_NOTE =

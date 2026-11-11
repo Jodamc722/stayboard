@@ -18,6 +18,8 @@
 // Inter for reading text at 12.5/20 and for small caps labels. Hairlines, not boxes.
 import React, { useEffect, useState } from 'react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
+import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
+import { MagazineFlipbook } from '@/components/MagazineFlipbook'
 import { StayTimeline, YearWave, ChannelHub } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
@@ -245,6 +247,9 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   const [doc, setDoc] = useState<Any>(() => structuredClone(original))
   const [touched, setTouched] = useState<string[]>([])
   const [editText, setEditText] = useState(false)
+  // The page-turning digital magazine for whoever opens the link; the team builds in the scroll view.
+  // ?scroll=1 opens the scroll view for anyone.
+  const [flip, setFlip] = useState<boolean>(() => !canEdit && !(typeof window !== 'undefined' && /[?&]scroll=1/.test(window.location.search)))
   const [drawer, setDrawer] = useState<null | 'proj' | 'comps' | 'pages' | 'style'>(null)
   const [tuneId, setTuneId] = useState<string | null>(null)
   const [saving, setSaving] = useState('')
@@ -596,7 +601,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
     const fee = terms.find(r => /fee/i.test(r.k))?.v || '15% of rental revenue'
     const points: [string, string][] = aud === 'agents'
       ? [[cma!.partner.fees.length > 1 ? cma!.partner.fees[0][0] + '–' + cma!.partner.fees[cma!.partner.fees.length - 1][0] : (cma!.partner.fees[0]?.[0] || ''), 'Referral fee per unit, by size, in writing'], ['48 hours', 'A projection for any unit you show or list'], ['40+ platforms', 'One calendar, priced every night']]
-      : [[fee.replace(/ of rental revenue/i, ''), 'Of rental revenue. No setup or monthly fees'], ['40+ platforms', 'One calendar, priced every night'], ['24/7', 'Our own local CCS team on every stay']]
+      : [[fee.replace(/ of rental revenue/i, ''), 'Of rental revenue. No setup or monthly fees'], ['40+ platforms', 'One calendar, priced every night'], ['24/7', 'A local team and 24/7 guest support on every stay']]
     return (
       <section key="onepage" className="mz-page mz-one">
         <div className="mz-one-top">
@@ -998,6 +1003,10 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
 
       {drawer === 'comps' && (cma ? (
         <>
+          <p className="mz-form-h">From the projections library</p>
+          <LibraryCompPicker compact onAdd={add => setCma(attachComps(cma, add))} />
+          <p className="mz-drawer-note">Library comparables land on the floor plans with the same bedroom count; tick or untick them per floor plan under Projections.</p>
+          <p className="mz-form-h">In this deck</p>
           {cma.comps.map((x, i) => (
             <div key={x.id} className="mz-form mz-comp">
               <label className="wide"><span>Comparable</span><input defaultValue={x.name} onBlur={e => setComp(i, { name: e.target.value })} /></label>
@@ -1175,7 +1184,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   ) : null
 
   return (
-    <div className={'mz-root' + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
+    <div className={'mz-root' + (flip && !editText && format !== 'onepage' ? ' mz-flipping' : '') + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
       <link rel="stylesheet" href={fontHref(drawer === 'style' ? Object.values(MAG_THEMES).flatMap(x => [x.display, x.sans]).concat([theme.display, theme.sans]) : [theme.display, theme.sans])} />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -1191,11 +1200,12 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
           {dirty ? <button type="button" onClick={save}>Save changes</button> : saving ? <span className="mz-saved">{saving}</span> : null}
-          <button type="button" onClick={() => window.print()}>Print or save PDF</button>
+          {format !== 'onepage' ? <button type="button" className={'mz-ghost' + (flip ? ' on' : '')} onClick={() => { setFlip(f => !f); if (!flip) setEditText(false) }}>{flip ? 'Scroll view' : 'Page view'}</button> : null}
+          <button type="button" onClick={() => { if (flip) { setFlip(false); setTimeout(() => window.print(), 450) } else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
         </span>
       </nav>
       {drawerEl}
-      {format === 'onepage' && cma ? onePage() : specs.map(render)}
+      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} top={80} /> : specs.map(render)}
     </div>
   )
 }
@@ -1593,23 +1603,27 @@ div.mz-ed{display:block}
 .mz-drawer-foot p{flex-basis:100%;font-size:11px;color:#80859A;margin:2px 0 0}
 
 @media screen and (max-width:760px){
-  .mz-with-drawer{padding-right:16px}
-  .mz-page{height:auto;min-height:0;width:100%}
-  .mz-body{padding:24px 20px 0}.mz-run,.mz-foot{margin-left:20px;margin-right:20px}
-  .mz-cover,.mz-backcover,.mz-opener{min-height:86vh;padding:28px 20px}
-  .mz-cover-title{font-size:calc(64px * var(--mz-ds))}.mz-opener-title{font-size:calc(42px * var(--mz-ds))}.mz-hero b{font-size:calc(40px * var(--mz-ds));white-space:normal}.mz-back-title{font-size:calc(48px * var(--mz-ds))}
-  .mz-display{font-size:calc(40px * var(--mz-ds))}.mz-h1,.mz-plan-name{font-size:calc(34px * var(--mz-ds))}
-  .mz-about-photo{height:440px}.mz-about-head{padding:0 20px 28px}
-  .mz-split-page{display:flex;flex-direction:column}.mz-split-photo{height:280px}.mz-run-tight,.mz-split-body,.mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
-  .mz-about-grid,.mz-partner,.mz-team-3,.mz-team-4,.mz-terms,.mz-qa,.mz-cols,.mz-steps-4,.mz-steps-3,.mz-contents,.mz-row3,.mz-tool{grid-template-columns:1fr}
-  .mz-contents{margin:0}.mz-contents-photo{margin:0}
-  .mz-gl-head{display:none}.mz-gl-gridlayer{display:none}.mz-gl-row,.mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-gl-v,.mz-gl-y{text-align:left}
-  .mz-contents-photo{min-height:240px}
-  .mz-stats,.mz-facts{grid-template-columns:1fr 1fr}
-  .mz-table{display:block;overflow-x:auto}
-  .mz-glance-head{display:none}.mz-glance-row,.mz-glance.with-yield .mz-glance-row{grid-template-columns:1fr;gap:6px}.mz-glance-v,.mz-glance-y{text-align:left}
-  .mz-earn-main b{font-size:calc(36px * var(--mz-ds));white-space:normal}
-  .mz-adjust{top:12px;right:12px}
+  .mz-bar-top{padding:8px 10px;gap:6px}.mz-bar-top>.mz-run-mark{display:none}
+  .mz-bar-r{flex-wrap:nowrap;gap:6px}.mz-bar-top button{padding:6px 10px;font-size:11.5px;white-space:nowrap}
+  .mz-switch a,.mz-switch b{padding:5px 8px;font-size:11.5px}
+  .mz-wide{display:none}
+.mz-root:not(.mz-flipping) .mz-with-drawer{padding-right:16px}
+.mz-root:not(.mz-flipping) .mz-page{height:auto;min-height:0;width:100%}
+.mz-root:not(.mz-flipping) .mz-body{padding:24px 20px 0}.mz-root:not(.mz-flipping) .mz-run,.mz-root:not(.mz-flipping) .mz-foot{margin-left:20px;margin-right:20px}
+.mz-root:not(.mz-flipping) .mz-cover,.mz-root:not(.mz-flipping) .mz-backcover,.mz-root:not(.mz-flipping) .mz-opener{min-height:86vh;padding:28px 20px}
+.mz-root:not(.mz-flipping) .mz-cover-title{font-size:calc(64px * var(--mz-ds))}.mz-root:not(.mz-flipping) .mz-opener-title{font-size:calc(42px * var(--mz-ds))}.mz-root:not(.mz-flipping) .mz-hero b{font-size:calc(40px * var(--mz-ds));white-space:normal}.mz-root:not(.mz-flipping) .mz-back-title{font-size:calc(48px * var(--mz-ds))}
+.mz-root:not(.mz-flipping) .mz-display{font-size:calc(40px * var(--mz-ds))}.mz-root:not(.mz-flipping) .mz-h1,.mz-root:not(.mz-flipping) .mz-plan-name{font-size:calc(34px * var(--mz-ds))}
+.mz-root:not(.mz-flipping) .mz-about-photo{height:440px}.mz-root:not(.mz-flipping) .mz-about-head{padding:0 20px 28px}
+.mz-root:not(.mz-flipping) .mz-split-page{display:flex;flex-direction:column}.mz-root:not(.mz-flipping) .mz-split-photo{height:280px}.mz-root:not(.mz-flipping) .mz-run-tight,.mz-root:not(.mz-flipping) .mz-split-body,.mz-root:not(.mz-flipping) .mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
+.mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool{grid-template-columns:1fr}
+.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
+.mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
+.mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
+.mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr}
+.mz-root:not(.mz-flipping) .mz-table{display:block;overflow-x:auto}
+.mz-root:not(.mz-flipping) .mz-glance-head{display:none}.mz-root:not(.mz-flipping) .mz-glance-row,.mz-root:not(.mz-flipping) .mz-glance.with-yield .mz-glance-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-glance-v,.mz-root:not(.mz-flipping) .mz-glance-y{text-align:left}
+.mz-root:not(.mz-flipping) .mz-earn-main b{font-size:calc(36px * var(--mz-ds));white-space:normal}
+.mz-root:not(.mz-flipping) .mz-adjust{top:12px;right:12px}
 }
 @page{size:letter;margin:0}
 @media print{

@@ -254,7 +254,7 @@ export function riderTemplate(): SalesCma {
       choose: 'The Rider allows short-term rentals, with optional management through the building’s program or by a third party. A buyer is free to pick the manager that fits how they want to own. Stay works with the building’s rules, access and registration requirements, and with the sales team, from contract to opening day.',
       qa: [
         ['What does it cost?', '15% of rental revenue after channel fees. No setup fees, no monthly fees. Guests pay the cleaning fee.'],
-        ['Who is on the ground?', 'Our own housekeeping, maintenance and inspection teams, with a local 24/7 CCS team on every check-in.'],
+        ['Who is on the ground?', 'Our own housekeeping, maintenance and inspection teams: a local team on the ground and 24/7 guest support on every stay.'],
         ['What will I see each month?', 'An owner portal with the live calendar, pricing and occupancy, plus a monthly P&L statement and payout for your unit, with every booking and fee itemized.'],
         ['Can I use my unit?', 'Yes. Block your own dates anytime, with no blackout restrictions.'],
         ['How do I get out?', 'A 90-day exit. We earn your business every month.'],
@@ -324,7 +324,7 @@ export function normalizeCma(p: any): SalesCma | null {
   // Jon, 2026-11-11: "we do not pick up at 2am — just say 24/7 CCS team". Decks saved with the old
   // line are corrected as they are read, so no deck already out there keeps it.
   // Jon, 2026-11-11: 40+ platforms, not 30+. Same treatment for the steps.
-  const fix = (x: string) => String(x || '').replace(/ with a local 24\/7 guest team on every check-in and every 2 a\.m\. issue\./, ' with a local 24/7 CCS team on every check-in.').replace(/\b30\+ platforms\b/g, '40+ platforms').replace(/\bthis packet\b/g, 'this package').replace(/earn on rate where demand supports it/g, 'raise rates only where demand supports it')
+  const fix = (x: string) => String(x || '').replace(/ with a local 24\/7 guest team on every check-in and every 2 a\.m\. issue\./, ' with a local 24/7 CCS team on every check-in.').replace(/, with a local 24\/7 CCS team on every check-in\./, ': a local team on the ground and 24/7 guest support on every stay.').replace(/\b30\+ platforms\b/g, '40+ platforms').replace(/\bthis packet\b/g, 'this package').replace(/earn on rate where demand supports it/g, 'raise rates only where demand supports it')
   if (p.partner && Array.isArray(p.partner.here)) p = { ...p, partner: { ...p.partner, here: p.partner.here.map((x: any) => typeof x === 'string' ? fix(x) : x) } }
   if (p.market) p = { ...p, market: { ...p.market, lead: fix(p.market.lead), bullets: Array.isArray(p.market.bullets) ? p.market.bullets.map((r: any) => Array.isArray(r) ? [r[0], fix(r[1])] : r) : p.market.bullets } }
   if (p.second) p = { ...p, second: { ...p.second,
