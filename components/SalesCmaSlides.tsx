@@ -8,7 +8,7 @@
 // math is planNumbers, the same function the magazine prints from.
 import React from 'react'
 import {
-  planNumbers, upliftLine, range, money, kMoney, compGross, pctRange, MONTHS,
+  planNumbers, upliftLine, adjustLine, range, money, kMoney, compGross, pctRange, MONTHS,
   type SalesCma, type PacketPlan,
 } from '@/lib/sales-cma'
 
@@ -300,7 +300,7 @@ function planSlide(cma: SalesCma, p: PacketPlan, d: { Slide: SlideFn; t: Any; ed
               </tr>
             </tbody>
           </table>
-          <p style={{ fontSize: 10.5, lineHeight: 1.45, color: t.muted, margin: '8px 0 0' }}><b style={{ color: t.body }}>How we got there:</b> {p.how} {n.manual ? 'Range set by hand.' : upliftLine(cma)}</p>
+          <p style={{ fontSize: 10.5, lineHeight: 1.45, color: t.muted, margin: '8px 0 0' }}><b style={{ color: t.body }}>How we got there:</b> {p.how} {n.manual ? 'Range set by hand.' : upliftLine(cma)} {adjustLine(cma, p)}</p>
         </div>
         {h.note}
       </div>

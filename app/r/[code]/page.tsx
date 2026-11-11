@@ -38,6 +38,9 @@ export default async function PublicReportPage({ params, searchParams }: { param
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const unlocked = hasEditCookie()
+  // THE MAGAZINE (Jon, 2026-11-11): the same sales deck laid out as letter pages to print, leave at a
+  // building or read on a phone. Same row, same link, ?view=magazine. The team gets the projection builder.
+  if (String((rep.content as any)?.meta?.kind || '') === 'sales' && searchParams?.view === 'magazine') return <SalesMagazine report={rep} canEdit={!!user || unlocked} />
   // Section photography for the owner review, resolved from the report's own listings rather than
   // stored on it — see lib/report-gallery. A failure here costs the pictures, never the report.
   // Section photography and the per-unit table, both derived from the report row rather than
@@ -54,9 +57,6 @@ export default async function PublicReportPage({ params, searchParams }: { param
   // that slide was printing one night of performance per unit under a season forecast.
   const docKind = String((rep.content as any)?.meta?.kind || '')
   const isDeckDoc = docKind === 'onboarding' || docKind === 'sales'
-  // THE MAGAZINE (Jon, 2026-11-11): the same sales deck laid out as letter pages to print, leave at a
-  // building or read on a phone. Same row, same link, ?view=magazine. It reads no review tables.
-  if (docKind === 'sales' && searchParams?.view === 'magazine') return <SalesMagazine report={rep} />
   const isReview = !isDeckDoc && docKind !== 'projection'
   const [gallery, listingTable, recs, delta] = await Promise.all([
     reportGallery(rep).catch(() => [] as string[]),

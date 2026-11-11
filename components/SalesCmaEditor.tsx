@@ -5,7 +5,8 @@
 // will print it. Saving writes content.cma on the deck's own owner_reports row — re-read just before
 // the write so an edit made in the deck meanwhile is not lost.
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, Plus, Trash2, X, Check, BookOpen, Presentation, Wand2 } from 'lucide-react'
+import { Loader2, Plus, Trash2, X, Check, BookOpen, Presentation, Wand2, SlidersHorizontal } from 'lucide-react'
+import { ProjectionTuner } from '@/components/ProjectionTuner'
 import {
   normalizeCma, riderTemplate, blankCma, planNumbers, range, money, suggestHow, newId,
   type SalesCma, type PacketComp, type PacketPlan,
@@ -27,6 +28,7 @@ export function SalesCmaEditor({ report, onClose }: { report: { id: string; code
   const [msg, setMsg] = useState('')
   const [dirty, setDirty] = useState(false)
   const [wordOpen, setWordOpen] = useState(false)
+  const [tune, setTune] = useState<string | null>(null)
 
   useEffect(() => {
     let live = true
@@ -129,6 +131,11 @@ export function SalesCmaEditor({ report, onClose }: { report: { id: string; code
 
       {/* Floor plans */}
       <div>
+        <div className="flex items-center gap-3 flex-wrap mb-2 rounded-xl bg-app px-3 py-2">
+          <span className={lab}>Scale every floor plan</span>
+          <input type="range" min={-30} max={30} step={1} value={cma.adjust || 0} onChange={e => set(c => ({ ...c, adjust: Number(e.target.value) }))} className="flex-1 min-w-[140px] accent-ink" aria-label="Scale every floor plan" />
+          <b className="text-[13px] text-ink tabular-nums w-12 text-right">{(cma.adjust || 0) > 0 ? '+' : ''}{cma.adjust || 0}%</b>
+        </div>
         <div className="flex items-center gap-2 mb-1.5"><h3 className="text-[13px] font-bold text-ink">Floor plans</h3><span className="text-[12px] text-muted">Range = comparable × scale × (1 − lockout %) × uplift. Type a range to set it by hand.</span></div>
         <div className="space-y-2.5">
           {cma.plans.map((p, i) => { const n = nums[i]; return (
@@ -168,11 +175,13 @@ export function SalesCmaEditor({ report, onClose }: { report: { id: string; code
                 <span><b className="text-ink">{range(n.monthLo, n.monthHi)}</b> <span className="text-muted">a month</span></span>
                 <span><b className="text-ink">{money(n.nightlyLo)}–{money(n.nightlyHi)}</b> <span className="text-muted">a night{p.suites > 1 ? ' per suite' : ''}</span></span>
                 <span><span className="text-muted">peak</span> <b className="text-ink">{money(n.peak)}</b> <span className="text-muted">{n.peakMonth}</span></span>
+                <button type="button" onClick={() => setTune(tune === p.id ? null : p.id)} className={'inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[12px] font-semibold ' + (tune === p.id ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink')}><SlidersHorizontal size={12} /> Adjust projection{p.adjust ? ` (${p.adjust > 0 ? '+' : ''}${p.adjust}%)` : ''}{p.season ? ' · months' : ''}</button>
                 <span className="ml-auto inline-flex items-center gap-1.5 text-muted">Set by hand
                   <input className={inp + ' w-24'} placeholder="low" inputMode="decimal" value={p.override?.lo || ''} onChange={e => plan(i, { override: { lo: num(e.target.value), hi: p.override?.hi || 0 } })} />
                   <input className={inp + ' w-24'} placeholder="high" inputMode="decimal" value={p.override?.hi || ''} onChange={e => plan(i, { override: { lo: p.override?.lo || 0, hi: num(e.target.value) } })} />
                 </span>
               </div>
+              {tune === p.id && <div className="rounded-xl border border-line p-3"><ProjectionTuner cma={cma} plan={p} onChange={np => set(c => ({ ...c, plans: c.plans.map(x => x.id === np.id ? np : x) }))} /></div>}
             </div>
           ) })}
         </div>

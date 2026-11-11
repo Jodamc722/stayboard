@@ -58,6 +58,10 @@ export type PacketPlan = {
   how: string
   /** Set by hand instead of calculated. */
   override?: { lo: number; hi: number } | null
+  /** The sales team's scale on this plan, percent (+8 = 8% higher). Applied after the math. */
+  adjust?: number
+  /** This plan's own month shape (12 relative weights). Null = the building's, else Miami's. */
+  season?: number[] | null
 }
 
 export type SalesCma = {
@@ -84,6 +88,10 @@ export type SalesCma = {
   uplift: { lo: number; hi: number; why: string }
   plans: PacketPlan[]
   disclaimer: string
+  /** Scale on every floor plan at once, percent. */
+  adjust?: number
+  /** The building's month shape (12 weights) when it differs from Miami's. */
+  season?: number[] | null
 }
 /** Older name, kept so the math reads the same everywhere. */
 export type Packet = SalesCma
@@ -99,15 +107,43 @@ export type PlanNumbers = {
 
 const r100 = (n: number) => Math.round(n / 100) * 100
 
-export function planNumbers(p: SalesCma, plan: PacketPlan): PlanNumbers {
+/** A month shape as shares of the year: 12 positive weights, normalised. Anything else = Miami's. */
+export function shapeOf(w?: number[] | null): number[] {
+  if (!Array.isArray(w) || w.length !== 12 || w.some(x => !(x >= 0))) return SEASON
+  const t = w.reduce((a, b) => a + b, 0)
+  return t > 0 ? w.map(x => x / t) : SEASON
+}
+
+/** The range before any scale: the math, or the numbers set by hand. */
+function baseRange(p: SalesCma, plan: PacketPlan) {
   const base = p.comps.find(c => c.id === plan.baseId) || p.comps[0]
   const k = (plan.scale || 1) * (1 - (plan.less || 0) / 100)
   const manual = !!(plan.override && plan.override.lo > 0 && plan.override.hi > 0)
-  const lo = manual ? plan.override!.lo : r100((base?.lo || 0) * k * (1 + p.uplift.lo / 100))
-  const hi = manual ? plan.override!.hi : r100((base?.hi || 0) * k * (1 + p.uplift.hi / 100))
+  return {
+    manual,
+    lo: manual ? plan.override!.lo : (base?.lo || 0) * k * (1 + p.uplift.lo / 100),
+    hi: manual ? plan.override!.hi : (base?.hi || 0) * k * (1 + p.uplift.hi / 100),
+  }
+}
+
+export function planNumbers(p: SalesCma, plan: PacketPlan): PlanNumbers {
+  const b = baseRange(p, plan)
+  const f = (1 + (p.adjust || 0) / 100) * (1 + (plan.adjust || 0) / 100)
+  const manual = b.manual
+  const lo = r100(b.lo * f)
+  const hi = r100(b.hi * f)
   const suites = Math.max(1, plan.suites || 1)
   const nightly = (g: number, occ: number) => occ > 0 ? Math.round(g / (365 * occ / 100) / suites) : 0
-  const months = SEASON.map(s => ({ lo: Math.round(lo * s), hi: Math.round(hi * s) }))
+  const shape = shapeOf(plan.season || p.season)
+  const months = shape.map(s => ({ lo: Math.round(lo * s), hi: Math.round(hi * s) }))
+  // THE CHART ADDS UP TO THE PAGE (Jon, 2026-11-11: "make sure the data and the charts align if we
+  // customize them"). Each month is rounded on its own, so the twelve could miss the year by a few
+  // dollars; the remainder goes to the largest month, so they always sum to exactly the year printed.
+  for (const k of ['lo', 'hi'] as const) {
+    const total = k === 'lo' ? lo : hi
+    const diff = total - months.reduce((a, m) => a + m[k], 0)
+    if (diff) { let big = 0; months.forEach((m, i) => { if (m[k] > months[big][k]) big = i }); months[big][k] += diff }
+  }
   let pi = 0
   months.forEach((m, i) => { if (m.hi > months[pi].hi) pi = i })
   return {
@@ -117,6 +153,45 @@ export function planNumbers(p: SalesCma, plan: PacketPlan): PlanNumbers {
     peak: r100(months[pi].hi), peakMonth: MONTHS[pi],
     months, manual,
   }
+}
+
+/**
+ * THE MONTH EDIT (Jon, 2026-11-11: "a projection builder where you can scale the projections on the
+ * page and adjust the months easily"). Sets one month's HIGH-end figure and returns the plan to save.
+ *   keepYear true  → the month takes its share from the other eleven; the year does not move.
+ *   keepYear false → the year becomes the sum of the months; the low end follows in proportion.
+ * Either way the plan keeps its own shape from then on.
+ */
+export function setMonth(p: SalesCma, plan: PacketPlan, i: number, value: number, keepYear: boolean): PacketPlan {
+  const n = planNumbers(p, plan)
+  const v = Math.max(0, Math.round(value))
+  const hiMonths = n.months.map(m => m.hi)
+  if (keepYear) {
+    const rest = hiMonths.reduce((a, b, j) => a + (j === i ? 0 : b), 0)
+    const room = Math.max(0, n.hi - v)
+    const next = hiMonths.map((m, j) => j === i ? Math.min(v, n.hi) : rest > 0 ? m * room / rest : room / 11)
+    return { ...plan, season: next.map(x => Math.round(x)) }
+  }
+  hiMonths[i] = v
+  const year = hiMonths.reduce((a, b) => a + b, 0)
+  if (year <= 0) return plan
+  const ratio = n.hi > 0 ? year / n.hi : 1
+  // The new year IS the number now. The plan's own scale is folded into it (and cleared), and the
+  // all-plans scale is divided back out because planNumbers will apply it again.
+  const g = 1 + (p.adjust || 0) / 100 || 1
+  return { ...plan, season: hiMonths, adjust: 0, override: { lo: Math.round(n.lo * ratio / g), hi: Math.round(year / g) } }
+}
+
+/** Back to the calculation: no scale, Miami's shape, nothing set by hand. */
+export const resetPlan = (plan: PacketPlan): PacketPlan => ({ ...plan, adjust: 0, season: null, override: null })
+
+/** The line a page adds when the sales team scaled a range, so a buyer is never shown an edit as math. */
+export function adjustLine(p: SalesCma, plan: PacketPlan): string {
+  const a = (p.adjust || 0), b = (plan.adjust || 0)
+  const parts: string[] = []
+  if (a) parts.push(`${a > 0 ? '+' : ''}${a}% across the building`)
+  if (b) parts.push(`${b > 0 ? '+' : ''}${b}% for this floor plan`)
+  return parts.length ? `Adjusted by Stay's sales team: ${parts.join(' and ')}.` : ''
 }
 
 export const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
