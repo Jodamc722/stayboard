@@ -214,7 +214,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             <div className="ft-actions">
               <button type="button" onClick={pdf}><Download size={15} /> Download PDF</button>
               {tel ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call {first || 'us'}</a> : null}
-              {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short + (where ? ' · ' + where : ''))}><Mail size={15} /> Email {first || 'us'}</a> : null}
+              {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short)}><Mail size={15} /> Email {first || 'us'}</a> : null}
             </div>
           </div>
         )}
@@ -224,7 +224,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       {full ? (
         <div className="ft-print" aria-hidden>
           <img src="/stay-logo.png" alt="Stay Hospitality" style={{ height: 34 }} />
-          <h1>{meta.short}{where ? ' · ' + where : ''}</h1>
+          <h1>{meta.short}</h1>
           {headline}
           {quote}
           <p className="ft-fine">{contact?.name ? contact.name + (contact.role ? ', ' + contact.role : '') + ' · ' : ''}{[contact?.phone, contact?.email].filter(Boolean).join(' · ')}{contact?.name ? ' · ' : ''}Stay Hospitality · stay-hospitality.com</p>

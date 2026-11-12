@@ -755,7 +755,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
             <h2 className="mz-h mz-h1">{em(m.title)}</h2>
             <p className="mz-lead mz-lead-s">{m.dek}</p>
             {flip && phone ? (
-              <div className="mz-tool-live"><FreeTool tool={k} embedded refCode={report.code} where={short(building) || building} area={area} contact={{ name: card.name, role: card.role, phone: card.phone, email: card.email, photo: card.photo }} /></div>
+              <div className="mz-tool-live"><FreeTool tool={k} embedded refCode={report.code} where={short(building) || building} contact={{ name: STAY_CONTACT.person?.name, role: STAY_CONTACT.person?.role, phone: STAY_CONTACT.person?.phone, email: STAY_CONTACT.person?.email }} /></div>
             ) : (
               <div className="mz-tool">
                 <div>

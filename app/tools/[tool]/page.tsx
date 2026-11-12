@@ -1,6 +1,6 @@
 // ONE FREE TOOL ON ITS OWN LINK (Jon, 2026-11-12: "shareable links… email gated before it allows them
-// to download the quote"). Public. ?d=<deck code> credits the lead to the deck it was opened from, and
-// the page then names that deck's building and presenter.
+// to download the quote"). Public. ?d=<deck code> credits the lead to the deck it was opened from;
+// nothing of the deck shows on the page.
 import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import { isToolKey, toolKeyOf, TOOL_META, type ToolKey } from '@/lib/free-tools'
@@ -36,7 +36,9 @@ export default async function ToolPage({ params, searchParams }: { params: { too
   const m = TOOL_META[tool]
   const deck = searchParams.d ? await deckOf(String(searchParams.d)) : null
   const p = STAY_CONTACT.person
-  const card = deck?.card && String(deck.card.name || '').trim() ? deck.card : p
+  // NO DECK BRANDING ON THE TOOL (Jon, 2026-11-12: "the inventory link should not include any branding
+  // from the sales deck"). ?d= only credits the lead to the deck, server-side; the page is Stay's own.
+  const card = p
   const contact = { name: String(card?.name || ''), role: String(card?.role || ''), phone: String(card?.phone || p?.phone || ''), email: String(card?.email || p?.email || ''), photo: String(card?.photo || '') }
   const emph = (x: string) => x.split(/(\*[^*]+\*)/).map((s, i) => s.startsWith('*') && s.endsWith('*') ? <em key={i}>{s.slice(1, -1)}</em> : s)
   return (
@@ -45,12 +47,11 @@ export default async function ToolPage({ params, searchParams }: { params: { too
       <div style={{ maxWidth: 1020, margin: '0 auto' }}>
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
           <a href="/tools"><img src="/stay-logo.png" alt="Stay Hospitality" style={{ height: 32 }} /></a>
-          {deck?.where ? <span style={{ font: '600 10.5px Inter, sans-serif', letterSpacing: '.16em', textTransform: 'uppercase', color: '#6B6C72' }}>{deck.where}</span> : null}
         </header>
         <p style={{ font: '600 10.5px Inter, sans-serif', letterSpacing: '.18em', textTransform: 'uppercase', color: '#8C6D3A', margin: '40px 0 0' }}>{m.kicker}</p>
         <h1 style={{ font: '400 clamp(38px, 6vw, 60px)/1.02 "Instrument Serif", Georgia, serif', margin: '10px 0 12px', letterSpacing: '-0.01em' }}>{emph(m.title)}</h1>
         <p style={{ fontSize: 16, lineHeight: 1.55, color: '#3A3B40', maxWidth: '56ch', margin: '0 0 28px' }}>{m.dek}</p>
-        <FreeTool tool={tool} refCode={searchParams.d ? String(searchParams.d).slice(0, 40) : undefined} where={deck?.where} area={deck?.area} contact={contact} />
+        <FreeTool tool={tool} refCode={searchParams.d ? String(searchParams.d).slice(0, 40) : undefined} where={deck?.where} contact={contact} />
         <p style={{ fontSize: 12, color: '#86878C', marginTop: 40 }}>Stay Hospitality · Short-term rental management across Miami-Dade and Broward · stay-hospitality.com</p>
       </div>
     </main>
