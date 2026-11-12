@@ -101,7 +101,12 @@ function PhoneReader({ pages, labels, names, contact, title }: { pages: React.Re
     <div className="mz-reader" onPointerDown={onDown} onPointerUp={onUp}>
       <style>{FLIP_CSS}</style>
       <i className="mz-r-prog" style={{ transform: `scaleX(${prog})` }} />
+      {/* EACH PAGE READS AS A PAGE (Jon, 2026-11-12: "the digital version you scan on the QR code needs to
+          delineate the pages better"): a page tab with its number and section, the page itself as a sheet
+          with an edge and a shadow on a darker desk, and an end mark before the Next card. */}
+      <div className="mz-r-tab"><b>{String(cur + 1).padStart(2, '0')}</b><span>of {String(pages.length).padStart(2, '0')}</span><em>{label}</em></div>
       <div key={cur} className={'mz-r-page mz-r-turn ' + (dir > 0 ? 'fwd' : 'back') + (cur === 0 ? ' mz-r-cover' : '')}>{pages[cur]}</div>
+      {cur < pages.length - 1 ? <p className="mz-r-end">End of page {cur + 1}</p> : null}
       <div className="mz-r-next">
         {cur < pages.length - 1 ? <button type="button" onClick={() => go(cur + 1)}><span>Next</span><b>{names[cur + 1] || labels[cur + 1] || (cur + 1 === pages.length - 1 ? 'Next step' : 'Page ' + (cur + 2))}</b><ChevronRight size={18} /></button>
           : contact && (contact.phone || contact.email) ? <button type="button" onClick={() => setSheet('contact')}><span>Next step</span><b>{first ? 'Talk to ' + first : 'Talk to us'}</b><ChevronRight size={18} /></button> : null}
@@ -150,7 +155,7 @@ const FLIP_CSS = `
 .mz-pv-arrow{width:56px;height:56px;border-radius:99px;border:1px solid rgba(0,0,0,.12);background:#fff;color:#101114;display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgba(20,18,15,.12);flex:none}
 .mz-pv-arrow:disabled{opacity:.3;cursor:default}
 .mz-r-turn{animation:.32s cubic-bezier(.2,.8,.2,1) both}.mz-r-turn.fwd{animation-name:mzPvFwd}.mz-r-turn.back{animation-name:mzPvBack}
-.mz-r-next{padding:18px 16px 8px;background:var(--mz-paper,#fff)}
+.mz-r-next{padding:6px 10px 8px}
 .mz-r-next button{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;text-align:left;border:1px solid var(--mz-rule,#E4E2DD);background:#fff;border-radius:14px;padding:14px 16px;cursor:pointer;color:var(--mz-ink,#101114)}
 .mz-r-next span{font:600 10px "Inter",sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--mz-glow,#8C6D3A)}
 .mz-r-next b{font:400 20px var(--mz-display,Georgia,serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -160,11 +165,17 @@ const FLIP_CSS = `
 .mz-r-talk{width:48px;padding:0!important;justify-content:center}
 .mz-r-talk img{width:44px!important;height:44px!important}
 .mz-r-talk svg{margin-left:0!important}
-.mz-reader{overflow-x:clip;padding-bottom:96px;background:var(--mz-paper,#fff);min-height:calc(100svh - 44px);box-sizing:border-box;margin:-36px -16px -64px}
+.mz-reader{overflow-x:clip;padding-bottom:96px;background:#E6E3DC;min-height:calc(100svh - 44px);box-sizing:border-box;margin:-36px -16px -64px}
 .mz-r-prog{position:fixed;left:0;right:0;top:44px;height:3px;background:var(--mz-glow,#8C6D3A);transform-origin:left center;z-index:40;pointer-events:none}
+.mz-r-page{margin:0 10px;border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(0,0,0,.04),0 10px 28px rgba(20,18,15,.16);background:var(--mz-paper,#fff)}
 .mz-r-page>.mz-page{margin:0!important;box-shadow:none!important;border-radius:0!important;width:100%!important;max-width:none!important}
+.mz-r-tab{display:flex;align-items:baseline;gap:6px;padding:14px 16px 8px;font-family:"Inter",system-ui,sans-serif;color:#6B6C72}
+.mz-r-tab b{font:400 22px var(--mz-display,Georgia,serif);color:#101114;font-variant-numeric:lining-nums}
+.mz-r-tab span{font-size:11px;letter-spacing:.08em}
+.mz-r-tab em{margin-left:auto;font:600 10px "Inter",sans-serif;font-style:normal;letter-spacing:.16em;text-transform:uppercase;color:var(--mz-glow,#8C6D3A);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mz-r-end{margin:12px 0 4px;text-align:center;font:600 9.5px "Inter",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#9A9BA0}
 .mz-r-page+.mz-r-page>.mz-page:not(.mz-dark):not(.mz-opener):not(.mz-backcover){border-top:1px solid var(--mz-rule,#e4e2dd)}
-.mz-r-cover>.mz-page{min-height:calc(100svh - 44px)!important;padding-bottom:104px!important;display:flex;flex-direction:column;justify-content:flex-end}
+.mz-r-cover>.mz-page{min-height:calc(100svh - 130px)!important;padding-bottom:104px!important;display:flex;flex-direction:column;justify-content:flex-end}
 .mz-r-page .mz-opener,.mz-r-page .mz-backcover{min-height:88svh!important}
 .mz-r-dock{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;z-index:45;font-family:"Inter",system-ui,sans-serif}
 .mz-r-dock button{display:flex;align-items:center;gap:8px;border:0;border-radius:999px;height:48px;padding:0 16px;font:600 13.5px "Inter",system-ui,sans-serif;box-shadow:0 10px 30px rgba(10,11,14,.22);cursor:pointer}
