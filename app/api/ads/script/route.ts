@@ -23,6 +23,7 @@ import { isCollagePhoto } from '@/lib/collage'
 import { eventByKey, eventAsked, eventBrief, EVENT_REPLY, shapeEventScenes, whenShortOf, type EventRawScene } from '@/lib/ad-event'
 import { searchStock, type StockHit } from '@/lib/ad-stock'
 import { shapeOfFormat } from '@/lib/ad-image-prompt'
+import { adPhotoScore, photoText } from '@/lib/ad-photo-pick'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 180
@@ -68,20 +69,21 @@ async function bestPhoto(hits: any[], subj: { word: string; any: RegExp } | null
   const portrait = /^9:16$|^4:5$/.test(String(opts.format || ''))
   const landscape = String(opts.format || '') === '16:9'
   const cands = hits.filter(h => { const u = h.view || h.url; if (!u || used.has(u) || seen.has(u)) return false; if ((h.width || 1200) < 900) return false; seen.add(u); return true })
+  const askedWeak = !!subj && /bathroom/.test(subj.word)
   const score = (h: any) => {
-    const cap = String(h.caption || '')
-    let sc = subj && subj.any.test(cap) ? 1000 : 0
-    sc += Math.min(400, (h.width || 1200) / 10)
-    const w = h.width || 0, ht = h.height || 0
-    if (w && ht) { const r = ht / w; if (portrait) sc += r >= 1 ? 260 : r >= 0.75 ? 120 : 0; else if (landscape) sc += r <= 0.8 ? 200 : r <= 1 ? 80 : -120 }
+    const cap = photoText(h)
+    // the photo analysis decides first: faults, duplicates and details are out; what the photo IS, its quality
+    let sc = adPhotoScore(h, subj, { hero: opts.opener, portrait, landscape, askedWeak })
+    if (!Number.isFinite(sc)) return sc
     if (opts.opener) sc += OPENER.test(cap) ? 350 : -150
     if (WEAK.test(cap) && !(subj && subj.any.test(cap))) sc -= 700
-    if (opts.usedCores && cap && opts.usedCores.has(core(cap))) sc -= 500
+    if (opts.usedCores && h.caption && opts.usedCores.has(core(String(h.caption)))) sc -= 500
     // LOCATION (Jon, 2026-11-04): a Fort Lauderdale event shows our Fort Lauderdale listings, Miami shows Miami.
     if (opts.place && opts.place.length) sc += inBuildings(String(h.building || ''), opts.place) ? 900 : -600
     return sc
   }
-  cands.sort((a, b) => score(b) - score(a))
+  const scored = cands.map(h => ({ h, s: score(h) })).filter(x => Number.isFinite(x.s)).sort((a, b) => b.s - a.s)
+  cands.length = 0; cands.push(...scored.map(x => x.h))
   let skipped = 0
   for (const h of cands.slice(0, 16)) {
     const u = h.view || h.url
@@ -154,7 +156,7 @@ export async function POST(req: NextRequest) {
         slots.push({ scene: i, k, subj, cands: pools.flat() })
       }
     }
-    const good = (sl: Slot) => sl.subj ? sl.cands.filter(h => sl.subj!.any.test(String(h.caption || ''))).length : sl.cands.length
+    const good = (sl: Slot) => sl.subj ? sl.cands.filter(h => sl.subj!.any.test(photoText(h))).length : sl.cands.length
     const order = slots.map((sl, idx) => ({ idx, n: good(sl) })).sort((a, b) => a.n - b.n || a.idx - b.idx)
     const picks: Record<string, string> = {}
     for (const { idx } of order) {

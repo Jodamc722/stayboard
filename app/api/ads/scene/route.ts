@@ -8,6 +8,7 @@ import { normalize, scenePrompt, propertiesLine } from '@/lib/ad-studio'
 import { tidyHead } from '@/lib/ad-engine'
 import { searchPhotos } from '@/lib/photo-library'
 import { withoutCollages } from '@/lib/collage'
+import { adPhotoScore, photoText } from '@/lib/ad-photo-pick'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -48,7 +49,9 @@ export async function POST(req: NextRequest) {
         // photos that show what the scene says first, never one the ad already uses, never a collage
         const words = [j?.head, j?.sub, j?.vo, ask].join(' ').toLowerCase()
         const usedElsewhere = new Set(p.scenes.filter((_, k) => k !== i).flatMap(x => x.photos))
-        const ranked = hits.map(h => ({ u: h.view || h.url, s: String(h.caption || '').toLowerCase().split(/[^a-z]+/).filter(w => w.length > 3 && words.includes(w)).length })).filter((x, k, a) => a.findIndex(y => y.u === x.u) === k && !usedElsewhere.has(x.u)).sort((a, b) => b.s - a.s).map(x => x.u)
+        const portrait = /^9:16$|^4:5$/.test(p.format), landscape = p.format === '16:9'
+        const ranked = hits.map(h => ({ u: h.view || h.url, s: adPhotoScore(h, null, { hero: i === 0, portrait, landscape }) + 400 * photoText(h).toLowerCase().split(/[^a-z]+/).filter(w => w.length > 3 && words.includes(w)).length }))
+          .filter((x, k, a) => Number.isFinite(x.s) && a.findIndex(y => y.u === x.u) === k && !usedElsewhere.has(x.u)).sort((a, b) => b.s - a.s).map(x => x.u)
         const got = (await withoutCollages(ranked.slice(0, 12))).slice(0, want)
         if (got.length) photos = got
       } catch { /* keep the old photos */ }
