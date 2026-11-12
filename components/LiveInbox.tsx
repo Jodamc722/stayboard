@@ -59,7 +59,9 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
     // A hidden tab keeps reading our own copy only when this person asked to be alerted (desktop alerts need it).
     if (typeof document !== 'undefined' && document.visibilityState !== 'visible' && !(alertsRef.current && !pull)) return
     const mine = ++asked.current
-    setBusy(true)
+    // Only a real Guesty pull shows "pulling…" — the 10-second re-reads of our own copy are silent, so the header
+    // does not blink all day.
+    if (pull) setBusy(true)
     try {
       const qs = [pull ? '' : 'pull=0', ver.current ? 'v=' + encodeURIComponent(ver.current) : ''].filter(Boolean).join('&')
       const r = await fetch('/api/messages/live' + (qs ? '?' + qs : ''), { cache: 'no-store' })
@@ -96,7 +98,7 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
       setData({ items: j.items, unitById: j.unitById, waiting: j.waiting, lastResponderById: j.lastResponderById, now: j.now, header: j.header, state: j.state || {} })
       if (pull) setErr(j.pull?.error ? 'Guesty: ' + j.pull.error : '')
     } catch (e: any) { if (mine === asked.current) setErr(String(e?.message || e)) }
-    finally { if (mine === asked.current) setBusy(false) }
+    finally { setBusy(b => (mine === asked.current ? false : b)) }
   }, [])
   const changed = useCallback(() => { refresh(false) }, [refresh])
 
@@ -125,12 +127,14 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
 
   useEffect(() => {
     // First live pull straight away: the server render read our copy; this asks Guesty.
-    refresh()
     const instant = !!inst?.connected
+    // With instant on, our copy is already Guesty's (pushed within seconds): opening or returning to the page reads
+    // it — fast — and leaves Guesty itself to the 2-minute safety pull. Before `inst` is known, read ours first too.
+    refresh(inst === null || instant ? false : true)
     const t = setInterval(() => { refresh() }, instant ? PULL_INSTANT_MS : POLL_MS)
     // With instant on (or alerts on), our own copy is re-read often — it is where Guesty's pushes land.
     const l = instant || inst?.alerts ? setInterval(() => { refresh(false) }, instant ? LOCAL_MS : POLL_MS) : null
-    const onVis = () => { if (document.visibilityState === 'visible') refresh() }
+    const onVis = () => { if (document.visibilityState === 'visible') refresh(!instant) }
     document.addEventListener('visibilitychange', onVis)
     return () => { clearInterval(t); if (l) clearInterval(l); document.removeEventListener('visibilitychange', onVis) }
   }, [refresh, inst?.connected, inst?.alerts])

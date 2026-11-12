@@ -20,14 +20,14 @@
 //   j / k next and previous · r reply · e no reply needed · s snooze 3h · m mine · t task · / search
 // The open thread still asks Guesty every 20 seconds, but an unchanged thread now answers in one
 // line (?sig=) instead of resending and redrawing every message.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import Link from 'next/link'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useSearchParams } from 'next/navigation'
 import { ArrowLeft, ExternalLink, Loader2, MessageSquare, Phone, CalendarDays, Moon, BadgeDollarSign, Inbox as InboxIcon, CheckCheck, AlarmClock, UserCheck, UserPlus, ClipboardList, AlertTriangle, RotateCcw, Keyboard } from 'lucide-react'
 import { MessagesInbox, itemKey, itemMarkTime, type InboxItem, type WaitInfo } from '@/components/MessagesInbox'
 import { MessageThread } from '@/components/MessageThread'
 import { PhoneThread } from '@/components/PhoneThread'
-import { StayPanel } from '@/components/StayPanel'
+import { StayPanel, prefetchStay360 } from '@/components/StayPanel'
 import { Tag } from '@/components/lean'
 import { openAddTask } from '@/components/AddTaskSheet'
 import { effectiveState, type InboxStateMap, type ThreadState } from '@/lib/inbox-queue'
@@ -45,6 +45,14 @@ const ACT = 'inline-flex shrink-0 whitespace-nowrap items-center justify-center 
 const ACT_PLAIN = ACT + 'border-line bg-white text-ink hover:bg-app'
 const SNOOZES: [SnoozeChoice, string][] = [['1h', '1 hour'], ['3h', '3 hours'], ['evening', 'This evening'], ['tomorrow', 'Tomorrow 8am']]
 
+// Threads read this session, newest last (at most 40) — what makes opening one instant.
+const threadCache = new Map<string, { thread: Thread; at: number }>()
+const warming = new Set<string>()
+function remember(key: string, thread: Thread) {
+  threadCache.delete(key); threadCache.set(key, { thread, at: Date.now() })
+  if (threadCache.size > 40) { const first = threadCache.keys().next().value; if (first) threadCache.delete(first) }
+}
+
 export function UnifiedInbox(props: {
   items: InboxItem[]; unitById: Record<string, string>; waiting: Record<string, WaitInfo>; lastResponderById: Record<string, string>; now: number; moved?: Set<string>
   /** What people did to threads — handled, snoozed, whose it is. Shared; arrives with every refresh of the list. */
@@ -54,7 +62,6 @@ export function UnifiedInbox(props: {
   /** Something changed that the list should reflect now (a reply went out, a thread was marked): re-read it. */
   onChanged?: () => void
 }) {
-  const router = useRouter()
   const sp = useSearchParams()
   const open = sp.get('open') || ''
   const [thread, setThread] = useState<Thread | null>(null)
@@ -67,8 +74,12 @@ export function UnifiedInbox(props: {
   const select = useCallback((key: string) => {
     const u = new URLSearchParams(Array.from(sp.entries()))
     if (key) u.set('open', key); else u.delete('open')
-    router.replace('/inbox' + (u.toString() ? '?' + u.toString() : ''), { scroll: false })
-  }, [router, sp])
+    // NO SERVER ROUND TRIP (2026-11-12, Jon: "fast and clean… not loady"). router.replace re-rendered the whole
+    // page on the server — the full inbox rebuilt, ~0.8 s — before the thread even began to load. The open
+    // thread only lives in the URL for links and reloads, so the address is changed in place (Next 14.1+ keeps
+    // useSearchParams in step with history.replaceState).
+    window.history.replaceState(window.history.state, '', '/inbox' + (u.toString() ? '?' + u.toString() : ''))
+  }, [sp])
 
   // On a wide screen, start on the first thread waiting on us — the inbox should open on the work.
   useEffect(() => {
@@ -92,6 +103,7 @@ export function UnifiedInbox(props: {
     const q = !guesty ? 'phone=' + encodeURIComponent(key.slice(2)) : 'id=' + encodeURIComponent(key.slice(2)) + (live ? '&live=1' : '') + (quiet && sigRef.current ? '&sig=' + encodeURIComponent(sigRef.current) : '')
     if (!quiet) { setLoading(true); setErr('') }
     return fetch('/api/messages/thread?' + q, { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (j?.ok && !j.unchanged && j.thread) remember(key, j.thread as Thread)
       if (openRef.current !== key) return
       if (j?.ok) {
         // Nothing new since the copy on screen: keep it — no re-render of the messages, no scroll jump.
@@ -103,11 +115,43 @@ export function UnifiedInbox(props: {
   }, [])
   const openRef = useRef(open)
   openRef.current = open
+
+  // WARM AHEAD. Hovering a row reads its thread (our copy, no Guesty call) and its booking, so the click is instant;
+  // when the page settles, the top of the queue is read the same way.
+  const warm = useCallback((key: string) => {
+    if (!key || threadCache.has(key) || warming.has(key)) return
+    warming.add(key)
+    const q = key.startsWith('p:') ? 'phone=' + encodeURIComponent(key.slice(2)) : 'id=' + encodeURIComponent(key.slice(2))
+    fetch('/api/messages/thread?' + q, { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (j?.ok && j.thread) { remember(key, j.thread as Thread); prefetchStay360((j.thread as any).reservationId) }
+    }).catch(() => null).finally(() => warming.delete(key))
+  }, [])
+  const hoverT = useRef<any>(null)
+  const onListHover = useCallback((e: ReactMouseEvent) => {
+    const row = (e.target as HTMLElement).closest?.('[data-inbox-row]')
+    const key = row?.getAttribute('data-inbox-row') || ''
+    clearTimeout(hoverT.current)
+    if (key && key !== openRef.current) hoverT.current = setTimeout(() => warm(key), 90)
+  }, [warm])
+  useEffect(() => {
+    const t = setTimeout(() => { order.current.slice(0, 6).forEach((k, i) => setTimeout(() => warm(k), i * 250)) }, 1500)
+    return () => clearTimeout(t)
+  }, [warm])
   useEffect(() => {
     sigRef.current = ''
     if (!open) { setThread(null); return }
-    setThread(null); setLiveAt(null); setLiveErr('')
-    loadThread(open, false, false).then(() => loadThread(open, true, true))
+    setLiveAt(null); setLiveErr(''); setErr('')
+    // INSTANT OPEN: a thread already read (hovered, prefetched or opened before) draws at once from memory and is
+    // brought up to date quietly; only a thread never seen shows "Opening…".
+    const hit = threadCache.get(open)
+    if (hit) {
+      setThread(hit.thread); setLoading(false)
+      sigRef.current = open.startsWith('p:') ? '' : String((hit.thread as GuestyThread).sig || '')
+      loadThread(open, true, true)
+    } else {
+      setThread(null)
+      loadThread(open, false, false).then(() => loadThread(open, true, true))
+    }
     const t = setInterval(() => { if (document.visibilityState === 'visible') loadThread(open, true, true) }, 20_000)
     return () => clearInterval(t)
   }, [open, loadThread])
@@ -222,8 +266,8 @@ export function UnifiedInbox(props: {
     <div className="grid gap-3 lg:grid-cols-[minmax(320px,380px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(340px,400px)_minmax(0,1fr)_minmax(300px,340px)] items-start">
       {/* LEFT — the list. On a phone it hides while a thread is open. */}
       <aside className={'min-w-0 lg:sticky lg:top-3 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1 ' + (open ? 'hidden lg:block' : '')}>
-        <MessagesInbox items={props.items} unitById={props.unitById} waiting={props.waiting} lastResponderById={props.lastResponderById} now={props.now}
-          onOpen={select} selected={open} embedded moved={props.moved} state={state} me={myEmail} onOrder={onOrder} />
+        <div onMouseOver={onListHover}><MessagesInbox items={props.items} unitById={props.unitById} waiting={props.waiting} lastResponderById={props.lastResponderById} now={props.now}
+          onOpen={select} selected={open} embedded moved={props.moved} state={state} me={myEmail} onOrder={onOrder} /></div>
       </aside>
 
       {/* MIDDLE — the thread. */}

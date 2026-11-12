@@ -21,6 +21,8 @@ function load360(id: string, force = false): Promise<any> {
   cache[id] = { at: Date.now(), p }
   return p
 }
+/** Warm the cache before the booking pane asks (the inbox does this on hover). */
+export function prefetchStay360(id: string | null | undefined) { if (id) load360(id).catch(() => null) }
 export function useStay360(id: string | null | undefined) {
   const [stay, setStay] = useState<Stay | null>(null)
   const [err, setErr] = useState('')
