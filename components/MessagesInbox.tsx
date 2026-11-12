@@ -24,7 +24,7 @@
 // again; a thread someone took, or was handed, says whose it is.
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { MessageSquare, PhoneCall, PhoneMissed, Voicemail } from 'lucide-react'
+import { MessageSquare, PhoneCall, PhoneMissed, SlidersHorizontal, Voicemail } from 'lucide-react'
 import type { PhoneThreadSummary } from '@/lib/phone-threads'
 import { LeanTabs, LeanEmpty, Pill, Tag } from '@/components/lean'
 import { SentimentBoard, moodUi, type SentimentRow, type SentimentSummary } from '@/components/SentimentBoard'
@@ -101,6 +101,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   const [src, setSrc] = useState<'messages' | 'texts' | 'calls' | 'all'>('messages')
   const [q, setQ] = useState('')
   const [mineOnly, setMineOnly] = useState(false)
+  const [showRefine, setShowRefine] = useState(false)
   const [refine, setRefine] = useState<Record<Facet, string[]>>({ stage: [], channel: [], who: [], flag: [] })
   // The chips you left on come back on your next visit (this device only).
   useEffect(() => { try { const v = JSON.parse(localStorage.getItem(FILTER_KEY) || 'null'); if (v && typeof v === 'object') setRefine({ stage: v.stage || [], channel: v.channel || [], who: v.who || [], flag: v.flag || [] }) } catch { /* fine */ } }, [])
@@ -218,13 +219,12 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
           { key: 'inbox', label: 'All', n: liveItems.length },
           { key: 'parked', label: 'Snoozed', n: parkedItems.length },
           { key: 'archived', label: 'Archived', n: archivedItems.length },
-          { key: 'sentiment', label: 'Sentiment', n: flagged },
         ]}
         value={tab} onChange={setTab}
         right={s && ((s.sensitive || 0) + (s.frustrated || 0) > 0 || s.awaitingNegative > 0) ? (
-          <Pill tone="rose" onClick={() => setTab('sentiment')}
-            title={`Guests who complained (Sensitive in Guesty) and guests hitting friction (Frustrated)${s.awaitingNegative ? ` · ${s.awaitingNegative} negative and awaiting your reply` : ''}`}>
-            {[s.sensitive ? `${s.sensitive} sensitive` : '', s.frustrated ? `${s.frustrated} frustrated` : '', s.awaitingNegative ? `${s.awaitingNegative} waiting` : ''].filter(Boolean).join(' · ')}
+          <Pill tone="rose" onClick={() => setTab(t => (t === 'sentiment' ? 'reply' : 'sentiment'))}
+            title={[s.sensitive ? `${s.sensitive} sensitive` : '', s.frustrated ? `${s.frustrated} frustrated` : '', s.awaitingNegative ? `${s.awaitingNegative} negative and waiting on us` : ''].filter(Boolean).join(' · ') + ' — guests who complained (Sensitive in Guesty) or are hitting friction (Frustrated). Click for the sentiment board' + (tab === 'sentiment' ? ' (click again to go back)' : '')}>
+            {tab === 'sentiment' ? '← Back' : `😟 ${(s.sensitive || 0) + (s.frustrated || 0)} upset`}
           </Pill>
         ) : null}
       />
@@ -239,22 +239,28 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
             <button key={k} onClick={() => setSrc(k)} className={chip(src === k)}>{label} <span className="opacity-60 tabular-nums">{n}</span></button>
           )) : null}
           {tab === 'reply' && lateN > 0 ? <Tag tone="rose" title={'Past their reply-by time — ' + SLA_RULE}>{lateN} past the hour</Tag> : null}
-          <input id="inbox-search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search guest, unit, words…" aria-label="Search the inbox"
-            className="ml-auto h-9 w-full sm:w-56 rounded-lg border border-line bg-white px-2.5 text-[16px] sm:text-[12.5px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
+          <span className="ml-auto flex items-center gap-1.5 w-full sm:w-auto">
+            <input id="inbox-search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search guest, unit, words…" aria-label="Search the inbox"
+              className="h-9 flex-1 sm:flex-none sm:w-48 rounded-lg border border-line bg-white px-2.5 text-[16px] sm:text-[12.5px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
+            <button onClick={() => setShowRefine(v => !v)} aria-expanded={showRefine} title="Filter by stay, channel, who has it, unhappy, late or unread"
+              className={'h-9 px-2.5 rounded-lg border text-[12px] font-semibold inline-flex items-center gap-1 shrink-0 ' + (refineN ? 'border-brand-600 bg-brand-600 text-white' : 'border-line bg-white text-ink hover:bg-app')}>
+              <SlidersHorizontal size={13} /> {refineN ? refineN : 'Filter'}
+            </button>
+          </span>
         </div>
       )}
 
-      {tab !== 'sentiment' && (
+      {tab !== 'sentiment' && (showRefine || refineN > 0) && (
         <div className="flex items-center gap-1 flex-wrap mb-2" aria-label="Refine the list">
           {([['stage', STAGES], ['who', WHO], ['flag', FLAGS]] as [Facet, [string, string, string][]][]).map(([f, opts]) => (
             <span key={f} className="inline-flex items-center gap-1 flex-wrap">
-              {opts.map(([k, label, tip]) => { const n = countFor(f, k), on = refine[f].indexOf(k) >= 0; return (n > 0 || on) ? (
+              {opts.map(([k, label, tip]) => { const n = countFor(f, k), on = refine[f].indexOf(k) >= 0; return ((showRefine && n > 0) || on) ? (
                 <button key={k} onClick={() => toggle(f, k)} aria-pressed={on} title={tip} className={refChip(on)}>{label} <span className="opacity-60 tabular-nums">{n}</span></button>
               ) : null })}
-              <span aria-hidden className="w-px h-4 bg-line mx-0.5" />
+              {showRefine && <span aria-hidden className="w-px h-4 bg-line mx-0.5" />}
             </span>
           ))}
-          {channelsHere.length > 1 && channelsHere.map(c => { const n = countFor('channel', c), on = refine.channel.indexOf(c) >= 0; return (n === 0 && !on) ? null : (
+          {channelsHere.length > 1 && channelsHere.map(c => { const n = countFor('channel', c), on = refine.channel.indexOf(c) >= 0; return (!on && (!showRefine || n === 0)) ? null : (
             <button key={c} onClick={() => toggle('channel', c)} aria-pressed={on} title={'Only ' + c + ' threads'} className={refChip(on)}>{c} <span className="opacity-60 tabular-nums">{n}</span></button>
           ) })}
           {refineN > 0 && <button onClick={clearRefine} className="h-7 px-2 text-[11.5px] font-semibold text-brand-700 hover:underline" title="Show everything in this tab again">Clear {refineN}</button>}

@@ -17,6 +17,7 @@ import { MessageThread } from '@/components/MessageThread'
 import { PhoneThread } from '@/components/PhoneThread'
 import { InboxStayCard } from '@/components/InboxStayCard'
 import { ThreadSummaryCard } from '@/components/ThreadSummaryCard'
+import { InboxPropertyCard } from '@/components/InboxPropertyCard'
 import { effectiveState, markTime, type InboxStateMap } from '@/lib/inbox-queue'
 import type { GuestyThread, PhoneThreadData } from '@/lib/message-thread'
 
@@ -204,6 +205,7 @@ export function InboxFloater() {
           {tErr && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-800">{tErr}</p>}
           {!thread && !tErr && <p className="px-2 py-6 text-[12.5px] text-muted inline-flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Opening…</p>}
           {thread && st.pane === 'booking' && <ThreadSummaryCard conversationId={thread.conversationId || ''} version={String((thread as any).sig || (thread as any).events?.length || '')} />}
+          {thread && st.pane === 'booking' && <InboxPropertyCard listingId={(thread as any).listingId || (thread as any).reservation?.listing_id || null} canSend={false} />}
           {thread && st.pane === 'booking' && thread.reservationId && <InboxStayCard reservationId={thread.reservationId} canCodes={!!thread.canReply} />}
           {thread && st.pane === 'booking' && !thread.reservationId && <p className="px-2 py-6 text-[12.5px] text-muted">No reservation is linked to this thread.</p>}
           {thread && st.pane === 'thread' && thread.kind === 'guesty' && (

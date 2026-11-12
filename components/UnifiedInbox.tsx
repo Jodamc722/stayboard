@@ -31,6 +31,7 @@ import { PhoneThread } from '@/components/PhoneThread'
 import { prefetchStay360 } from '@/components/StayPanel'
 import { InboxStayCard, prefetchStayExtras } from '@/components/InboxStayCard'
 import { ThreadSummaryCard } from '@/components/ThreadSummaryCard'
+import { InboxPropertyCard, prefetchProperty } from '@/components/InboxPropertyCard'
 import { Tag } from '@/components/lean'
 import { openAddTask } from '@/components/AddTaskSheet'
 import { effectiveState, type InboxStateMap, type ThreadState } from '@/lib/inbox-queue'
@@ -46,6 +47,9 @@ const money = (n?: number | null, cur?: string | null) => n == null ? null : new
 
 const ACT = 'inline-flex shrink-0 whitespace-nowrap items-center justify-center gap-1.5 min-h-[36px] px-2.5 rounded-lg border text-[12px] font-semibold disabled:opacity-50 '
 const ACT_PLAIN = ACT + 'border-line bg-white text-ink hover:bg-app'
+// Secondary actions are icons that say what they do on hover (the lean rule) — one row, not two.
+const ACT_ICON = ACT + 'border-line bg-white text-ink hover:bg-app w-9 px-0'
+const ICON_LINK = 'h-7 w-7 rounded-lg inline-flex items-center justify-center text-muted hover:text-ink hover:bg-app'
 const SNOOZES: [SnoozeChoice, string][] = [['1h', '1 hour'], ['3h', '3 hours'], ['evening', 'This evening'], ['tomorrow', 'Tomorrow 8am']]
 
 // Threads read this session, newest last (at most 40) — what makes opening one instant.
@@ -126,7 +130,7 @@ export function UnifiedInbox(props: {
   const [fit, setFit] = useState<string | undefined>(undefined)
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 1024px)')
-    const on = () => setFit(mq.matches ? 'calc(100vh - 15.5rem)' : undefined)
+    const on = () => setFit(mq.matches ? 'calc(100vh - 12.5rem)' : undefined)
     on(); mq.addEventListener('change', on)
     return () => mq.removeEventListener('change', on)
   }, [])
@@ -138,7 +142,7 @@ export function UnifiedInbox(props: {
     warming.add(key)
     const q = key.startsWith('p:') ? 'phone=' + encodeURIComponent(key.slice(2)) : 'id=' + encodeURIComponent(key.slice(2))
     fetch('/api/messages/thread?' + q, { cache: 'no-store' }).then(r => r.json()).then(j => {
-      if (j?.ok && j.thread) { remember(key, j.thread as Thread); prefetchStay360((j.thread as any).reservationId); prefetchStayExtras((j.thread as any).reservationId) }
+      if (j?.ok && j.thread) { remember(key, j.thread as Thread); prefetchStay360((j.thread as any).reservationId); prefetchStayExtras((j.thread as any).reservationId); prefetchProperty((j.thread as any).listingId || (j.thread as any).reservation?.listing_id) }
     }).catch(() => null).finally(() => warming.delete(key))
   }, [])
   const hoverT = useRef<any>(null)
@@ -307,25 +311,25 @@ export function UnifiedInbox(props: {
             {thread && canAct && (
               <div className="relative">
                 {/* One row that scrolls sideways on a phone; wraps on a desk. */}
-                <div className="flex items-center gap-1.5 overflow-x-auto lg:overflow-visible lg:flex-wrap -mx-1 px-1 pb-0.5">
+                <div className="flex items-center gap-1 overflow-x-auto -mx-1 px-1 pb-0.5">
                   <button onClick={() => select('')} className={ACT_PLAIN + ' lg:hidden'} aria-label="Back to all conversations"><ArrowLeft size={15} /> Inbox</button>
                   {cur.archived
-                    ? <button onClick={() => act('unarchive')} disabled={!!acting} className={ACT_PLAIN} title="Bring this thread back into the lists (a)"><ArchiveRestore size={13} /> Unarchive</button>
+                    ? <button onClick={() => act('unarchive')} disabled={!!acting} className={ACT_ICON} title="Unarchive — bring this thread back into the lists (a)" aria-label="Unarchive"><ArchiveRestore size={15} /></button>
                     : cur.done
                     ? <button onClick={() => act('reopen')} disabled={!!acting} className={ACT_PLAIN} title="Put this thread back in Needs reply (e)"><RotateCcw size={13} /> Back to the queue</button>
-                    : <button onClick={() => act('done')} disabled={!!acting} className={ACT + 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'} title={(waitingNow ? 'The guest’s last message needs no answer' : 'Mark this thread handled') + ' — it leaves Needs reply for everyone and comes back if the guest writes again (e)'}><CheckCheck size={13} /> No reply needed</button>}
+                    : <button onClick={() => act('done')} disabled={!!acting} className={ACT + 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'} title={(waitingNow ? 'The guest’s last message needs no answer' : 'Mark this thread handled') + ' — it leaves Needs reply for everyone and comes back if the guest writes again (e)'}><CheckCheck size={13} /> Done</button>}
                   {cur.snoozed
-                    ? <button onClick={() => act('unsnooze')} disabled={!!acting} className={ACT_PLAIN} title="Wake this thread now (s)"><AlarmClock size={13} /> Snoozed — wake</button>
-                    : <button onClick={() => setMenu(m => (m === 'snooze' ? '' : 'snooze'))} disabled={!!acting || cur.done} aria-expanded={menu === 'snooze'} className={ACT_PLAIN} title="Hide it from Needs reply for a while — it comes back sooner if the guest writes again (s = 3 hours)"><AlarmClock size={13} /> Snooze</button>}
+                    ? <button onClick={() => act('unsnooze')} disabled={!!acting} className={ACT + 'border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100'} title="Snoozed — wake this thread now (s)"><AlarmClock size={13} /> Wake</button>
+                    : <button onClick={() => setMenu(m => (m === 'snooze' ? '' : 'snooze'))} disabled={!!acting || cur.done} aria-expanded={menu === 'snooze'} className={ACT_ICON} title="Snooze — hide it from Needs reply for a while; it comes back sooner if the guest writes again (s = 3 hours)" aria-label="Snooze"><AlarmClock size={15} /></button>}
                   {mine
                     ? <button onClick={() => act('unassign')} disabled={!!acting} className={ACT + 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100'} title="You have this thread — tap to let it go (m)"><UserCheck size={13} /> Mine</button>
                     : <button onClick={() => act('assign')} disabled={!!acting} className={ACT_PLAIN} title={(cur.assignee ? 'With ' + cur.assigneeName + ' — take it yourself' : 'Take this thread, so the desk can see it is yours') + ' (m)'}><UserCheck size={13} /> {cur.assignee ? 'With ' + cur.assigneeName.split(' ')[0] : 'Take it'}</button>}
-                  {!cur.archived && <button onClick={() => act('archive')} disabled={!!acting} className={ACT_PLAIN} title="Archive — out of every list (Archived tab keeps it) until the guest writes again (a)"><Archive size={13} /> Archive</button>}
-                  <button onClick={openHand} disabled={!!acting} aria-expanded={menu === 'hand'} className={ACT_PLAIN} title="Hand this thread to a teammate — they get a line in their Messages with a link to it"><UserPlus size={13} /> Hand to…</button>
-                  <button onClick={newTask} className={ACT_PLAIN} title="Start a field task on this unit — you choose the type and who before it is created (t)"><ClipboardList size={13} /> Task</button>
-                  <Link href={glitchHref} className={ACT_PLAIN} title="File a glitch for this stay — opens a new card with the booking and unit filled in"><AlertTriangle size={13} /> Glitch</Link>
-                  <button onClick={() => popOut(open)} className={ACT_PLAIN + ' hidden lg:inline-flex'} title="Pop this thread out — it floats over every page, so you can look things up and keep replying"><PictureInPicture2 size={13} /> Pop out</button>
-                  <button onClick={() => setMenu(m => (m === 'keys' ? '' : 'keys'))} aria-expanded={menu === 'keys'} className={ACT_PLAIN + ' hidden lg:inline-flex ml-auto'} title="Keyboard shortcuts (?)"><Keyboard size={13} /></button>
+                  {!cur.archived && <button onClick={() => act('archive')} disabled={!!acting} className={ACT_ICON} title="Archive — out of every list (Archived tab keeps it) until the guest writes again (a)" aria-label="Archive"><Archive size={15} /></button>}
+                  <button onClick={openHand} disabled={!!acting} aria-expanded={menu === 'hand'} className={ACT_ICON} title="Hand to a teammate — they get a line in their Messages with a link to it" aria-label="Hand to a teammate"><UserPlus size={15} /></button>
+                  <button onClick={newTask} className={ACT_ICON} title="New task — a field task on this unit; you choose the type and who before it is created (t)" aria-label="New task"><ClipboardList size={15} /></button>
+                  <Link href={glitchHref} className={ACT_ICON} title="File a glitch for this stay — opens a new card with the booking and unit filled in" aria-label="File a glitch"><AlertTriangle size={15} /></Link>
+                  <button onClick={() => popOut(open)} className={ACT_ICON + ' hidden lg:inline-flex'} title="Pop out — the thread floats over every page, so you can look things up and keep replying" aria-label="Pop out"><PictureInPicture2 size={15} /></button>
+                  <button onClick={() => setMenu(m => (m === 'keys' ? '' : 'keys'))} aria-expanded={menu === 'keys'} className={ACT_ICON + ' hidden lg:inline-flex ml-auto'} title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts"><Keyboard size={15} /></button>
                 </div>
                 {menu === 'snooze' && (
                   <div className="mt-1.5 flex items-center gap-1.5 flex-wrap rounded-xl border border-line bg-white p-2">
@@ -353,7 +357,7 @@ export function UnifiedInbox(props: {
             )}
 
             {thread && thread.kind === 'guesty' && (
-              <p className={'text-[11px] text-muted -mb-1 items-center gap-1.5 ' + (liveErr ? 'flex' : 'hidden sm:flex')} title="This thread is re-read from Guesty every 20 seconds while it is open">
+              <p className={'text-[11px] text-muted -mb-1 items-center gap-1.5 ' + (liveErr ? 'flex' : 'hidden')} title="This thread is re-read from Guesty every 20 seconds while it is open">
                 <span className={'inline-block w-1.5 h-1.5 rounded-full ' + (liveErr ? 'bg-amber-500' : liveAt ? 'bg-emerald-500' : 'bg-slate-300')} />
                 {liveErr ? 'Showing our copy — Guesty did not answer (' + liveErr + ')' : liveAt ? 'Live from Guesty · ' + new Date(liveAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'America/New_York' }) : 'Our copy · asking Guesty…'}
               </p>
@@ -393,36 +397,39 @@ function BookingPane({ thread, item }: { thread: Thread; item: InboxItem | null 
   return (
     <div className="space-y-3">
       <ThreadSummaryCard conversationId={convId} version={thread.kind === 'guesty' ? String((thread as any).sig || '') : String((thread as any).events?.length || 0)} />
-      <section className="rounded-2xl border border-line bg-white p-4">
-        <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">Booking</p>
-        <h3 className="mt-1 text-[16px] font-bold text-ink leading-tight">{thread.guest}</h3>
-        <p className="text-[12.5px] text-muted">{unitName || (thread.unit ? 'Unit ' + thread.unit : 'No unit matched')}</p>
-        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+      {/* THE BOOKING, ONE CARD (2026-11-12 "make it a little bit simple"): who, where, when, money, how to reach them. */}
+      <section className="rounded-2xl border border-line bg-white p-3">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-[15px] font-bold text-ink leading-tight truncate">{thread.guest}</h3>
+            <p className="text-[12px] text-muted truncate">{unitName || (thread.unit ? 'Unit ' + thread.unit : 'No unit matched')}</p>
+          </div>
+          <span className="inline-flex gap-0.5 shrink-0">
+            {r?.id && <Link href={'/reservations/' + encodeURIComponent(r.id)} className={ICON_LINK} title="Open the reservation" aria-label="Open the reservation"><CalendarDays size={14} /></Link>}
+            {thread.kind === 'guesty' && <a href={thread.guestyUrl} target="_blank" rel="noreferrer" className={ICON_LINK} title="Open in Guesty" aria-label="Open in Guesty"><ExternalLink size={14} /></a>}
+            <Link href={thread.kind === 'guesty' ? '/inbox/' + thread.conversationId : '/inbox/phone/' + thread.number} className={ICON_LINK} title="Open the thread on its own page" aria-label="Full page"><MessageSquare size={14} /></Link>
+          </span>
+        </div>
+        <div className="mt-1.5 flex items-center gap-1 flex-wrap">
           {thread.kind === 'guesty' && thread.channel && <Tag>{thread.channel}</Tag>}
           {thread.kind === 'phone' && <Tag><Phone size={10} className="inline -mt-px mr-0.5" />Talkroute</Tag>}
-          {r?.source && !(thread.kind === 'guesty' && thread.channel === r.source) && <Tag>{String(r.source).replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking')}</Tag>}
           {r?.status && <Tag tone={stTone as any}>{String(r.status).replace(/_/g, ' ')}</Tag>}
           {item && item.kind === 'guesty' && (item.c.unread_count || 0) > 0 && <Tag tone="brand">{item.c.unread_count} unread</Tag>}
         </div>
         {r ? (
-          <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[12.5px]">
-            <Fact icon={<CalendarDays size={12} />} label="Check-in" value={fmtDay(r.check_in)} />
-            <Fact icon={<CalendarDays size={12} />} label="Check-out" value={fmtDay(r.check_out)} />
-            <Fact icon={<Moon size={12} />} label="Nights" value={r.nights != null ? String(r.nights) : '—'} />
-            {r.money_total != null && <Fact icon={<BadgeDollarSign size={12} />} label="Total" value={money(r.money_total, r.money_currency) || '—'} sub={r.money_balance ? 'balance ' + money(r.money_balance, r.money_currency) : 'paid'} />}
-          </dl>
-        ) : <p className="mt-3 text-[12.5px] text-muted">No reservation is linked to this thread yet.</p>}
-        <div className="mt-3 flex items-center gap-x-3 gap-y-1 flex-wrap text-[12.5px]">
-          {phone && <a href={'tel:' + String(phone).replace(/[^\d+]/g, '')} className="text-brand-700 font-semibold hover:underline inline-flex items-center gap-1"><Phone size={12} /> {phoneFmt(phone)}</a>}
-          {email && <a href={'mailto:' + email} className="text-brand-700 font-semibold hover:underline truncate">{email}</a>}
-        </div>
-        <div className="mt-3 flex items-center gap-1.5 flex-wrap">
-          {r?.id && <Link href={'/reservations/' + encodeURIComponent(r.id)} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1">Reservation</Link>}
-          {thread.kind === 'guesty' && <a href={thread.guestyUrl} target="_blank" rel="noreferrer" className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1">Guesty <ExternalLink size={11} /></a>}
-          {thread.kind === 'guesty' ? <Link href={'/inbox/' + thread.conversationId} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><MessageSquare size={11} /> Full page</Link>
-            : <Link href={'/inbox/phone/' + thread.number} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink hover:bg-app inline-flex items-center gap-1"><Phone size={11} /> Full page</Link>}
-        </div>
+          <p className="mt-2 text-[13px] font-semibold text-ink">
+            {fmtDay(r.check_in)} → {fmtDay(r.check_out)}{r.nights != null ? <span className="text-muted font-normal"> · {r.nights} night{r.nights === 1 ? '' : 's'}</span> : null}
+            {r.money_total != null && <span className="text-muted font-normal"> · {money(r.money_total, r.money_currency)} {r.money_balance ? <span className="text-rose-700">({money(r.money_balance, r.money_currency)} due)</span> : 'paid'}</span>}
+          </p>
+        ) : <p className="mt-2 text-[12.5px] text-muted">No reservation is linked to this thread yet.</p>}
+        {(phone || email) && (
+          <div className="mt-1 flex items-center gap-x-3 gap-y-0.5 flex-wrap text-[12px]">
+            {phone && <a href={'tel:' + String(phone).replace(/[^\d+]/g, '')} className="text-brand-700 font-semibold hover:underline inline-flex items-center gap-1"><Phone size={11} /> {phoneFmt(phone)}</a>}
+            {email && <a href={'mailto:' + email} className="text-brand-700 hover:underline truncate max-w-full">{email}</a>}
+          </div>
+        )}
       </section>
+      <InboxPropertyCard listingId={(thread as any).listingId || (r as any)?.listing_id || null} canSend={!!thread.canReply} />
       {/* The whole stay: issues, calls, prior stays, reviews — the same panel the full page shows. */}
       {thread.reservationId && <InboxStayCard reservationId={thread.reservationId} canCodes={!!thread.canReply} />}
     </div>

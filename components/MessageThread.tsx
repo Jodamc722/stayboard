@@ -528,6 +528,20 @@ function ReplyBox({ conversationId, guest, channel, checkIn, signOff, lastGuestT
     setText(v)
     try { if (v.trim()) sessionStorage.setItem(draftKey(conversationId), v); else sessionStorage.removeItem(draftKey(conversationId)) } catch { /* private mode */ }
   }
+  // "Add to reply" from the property card (Wi-Fi, address, parking…): appended on its own line, box focused.
+  const textRef = useRef(text)
+  textRef.current = text
+  useEffect(() => {
+    const on = (e: Event) => {
+      const add = String((e as CustomEvent).detail?.text || '').trim()
+      if (!add) return
+      const cur = textRef.current
+      change(cur.trim() ? cur.replace(/\s+$/, '') + '\n' + add : add)
+      setTimeout(() => { const el = box.current; if (el) { el.focus(); el.selectionStart = el.selectionEnd = el.value.length } }, 0)
+    }
+    window.addEventListener('lh:reply-insert', on)
+    return () => window.removeEventListener('lh:reply-insert', on)
+  }, [conversationId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const today = etDay(Date.now())
   const warnings = useMemo(() => {

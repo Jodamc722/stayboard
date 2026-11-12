@@ -3,7 +3,7 @@
 // pop-up, and an SMS composer that sends through Talkroute (needs edit on Messages and a texting
 // plan on the number — Talkroute's own refusal is shown verbatim when it says no).
 import { useStickToBottom } from '@/components/useStickToBottom'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { CalendarDays, X, User, Phone, DollarSign, Home, BedDouble, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Voicemail, Send, Loader2, MessageSquare, Play } from 'lucide-react'
 
@@ -33,6 +33,12 @@ export function PhoneThread({ number, display, guest, unit, events: initial, res
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const scroller = useStickToBottom(events.length)
+  // "Add to reply" from the property card lands in this text box too.
+  useEffect(() => {
+    const on = (e: Event) => { const add = String((e as CustomEvent).detail?.text || '').trim(); if (add) setText(cur => (cur.trim() ? cur.replace(/\s+$/, '') + '\n' + add : add)) }
+    window.addEventListener('lh:reply-insert', on)
+    return () => window.removeEventListener('lh:reply-insert', on)
+  }, [])
   const canText = connected && (!!conversationId || !!fromNumber)
 
   async function send() {

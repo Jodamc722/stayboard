@@ -143,22 +143,17 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
   return (
     <>
       <LeanHead title="Inbox">
-        <Pill tone={h.reply.tone} title={h.reply.title}>{h.reply.label}</Pill>
-        <Pill tone={h.within1h.tone} title={h.within1h.title}>{h.within1h.label}</Pill>
-        <Pill tone={h.waiting.tone} title={h.waiting.title}>{h.waiting.label}</Pill>
-        <Pill tone={h.unread.tone} title={h.unread.title}>{h.unread.label}</Pill>
-        <button onClick={() => { refresh() }} title={(err ? err + ' · ' : '') + h.threadsTitle + ' · pulled from Guesty every 30 seconds while this page is open — click to pull now'}
+        {/* One number up top (2026-11-12 "make it simple"): who is waiting. Reply time and the 1-hour rate sit in its hover. */}
+        <Pill tone={h.waiting.tone} title={h.waiting.title + ' · ' + h.reply.label + ' median reply (' + h.reply.title + ') · ' + h.within1h.label + ' (' + h.within1h.title + ')'}>{h.waiting.label}</Pill>
+        <button onClick={() => { refresh() }} title={(err ? err + ' · ' : '') + h.threadsTitle + (inst?.connected ? ' · instant: Guesty tells Lighthouse the moment a guest writes' : ' · pulled from Guesty every 30 seconds while this page is open') + ' — click to pull now'}
           className={'inline-flex items-center gap-1.5 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border ' + (err ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800')}>
           <span className="relative inline-flex w-2 h-2">
             {!err && <span className={'absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 ' + (busy ? 'animate-ping' : '')} />}
             <span className={'relative inline-flex rounded-full w-2 h-2 ' + (err ? 'bg-amber-500' : 'bg-emerald-500')} />
           </span>
-          {err ? 'Live paused' : 'Live'} · {busy ? 'pulling…' : <Ago iso={h.syncedAt} />}
+          {err ? 'Live paused' : inst?.connected ? '⚡ Live' : 'Live'} · {busy ? 'pulling…' : <Ago iso={h.syncedAt} />}
         </button>
-        {inst?.connected ? (
-          <span title={'Instant: Guesty tells Lighthouse the moment a guest writes' + (inst.signed ? ' (signed)' : '') + (inst.lastEventAt ? ' · last message event ' + new Date(inst.lastEventAt).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ' · waiting for the first message')}
-            className="inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border border-violet-200 bg-violet-50 text-violet-800">⚡ Instant</span>
-        ) : inst?.canConnect ? (
+        {inst?.connected ? null : inst?.canConnect ? (
           <button onClick={connectInstant} disabled={instBusy} title="Messages arrive in seconds instead of every 30 seconds while the page is open — adds a message webhook to Guesty"
             className="inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border border-line bg-white text-ink hover:bg-app disabled:opacity-50">⚡ Turn on instant</button>
         ) : null}
@@ -166,7 +161,7 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
           <button onClick={toggleAlerts} disabled={instBusy} aria-pressed={inst.alerts}
             title={inst.alerts ? 'You are alerted to every new guest message (bell + desktop). Click to stop — you will still hear about threads you took.' : 'Alert me to every new guest message — in the bell and on this computer. Threads you took always alert you.'}
             className={'inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border disabled:opacity-50 ' + (inst.alerts ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-line bg-white text-muted hover:text-ink')}>
-            {inst.alerts ? '🔔 Alerts on' : '🔕 Alert me'}
+            {inst.alerts ? '🔔' : '🔕'}
           </button>
         ) : null}
         <SyncNowButton />
