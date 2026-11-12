@@ -19,6 +19,7 @@
 // A deck made from a building keeps its own copy (lib/sales-library).
 import { ProjCalcSettingsPanel } from '@/components/ProjCalcSettings'
 import { TeamCalcPages } from '@/components/TeamCalcPages'
+import { ProjectionFiles } from '@/components/ProjectionFiles'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Plus, Search, Upload, Sparkles, Trash2, SlidersHorizontal, Image as ImageIcon, Check, X, Copy, Settings2, Globe, FileUp, PenLine } from 'lucide-react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
@@ -27,7 +28,7 @@ import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { normalizeCma, blankCma, planNumbers, newId, money, type SalesCma, type PacketPlan, type PacketComp } from '@/lib/sales-cma'
 
 type Any = any
-type Row = { id: string; name: string; area: string; photo?: string; plans: number; comps: number; range: [number, number] | null; updatedAt: string; updatedBy?: string | null }
+type Row = { id: string; name: string; area: string; photo?: string; plans: number; comps: number; range: [number, number] | null; updatedAt: string; updatedBy?: string | null; planRange?: [number, number] | null; types?: string[]; pending?: number; files?: number; calc?: boolean }
 type Entry = { id: string | null; name: string; area: string; address?: string; website?: string; note?: string; photo?: string; calc?: boolean; cma: SalesCma }
 type ReadPlan = { name: string; sf?: string; beds?: number | null; lo?: number | null; hi?: number | null; months?: number[] | null; nightlyLo?: number | null; nightlyHi?: number | null; occLo?: number | null; occHi?: number | null; note?: string }
 type ReadComp = { name: string; market?: string; basis?: string; lo?: number | null; hi?: number | null; nightlyLo?: number | null; nightlyHi?: number | null; occLo?: number | null; occHi?: number | null }
@@ -110,7 +111,6 @@ export function ProjectionsLibrary() {
 
   const loadList = () => fetch('/api/sales/buildings', { cache: 'no-store' }).then(r => r.json()).then(d => { if (d?.ok) setRows(d.buildings) }).catch(() => setRows([]))
   useEffect(() => { loadList() }, [])
-  useEffect(() => { if (rows && rows.length && sel == null && !entry) open(rows[0].id) }, [rows])
 
   async function open(id: string) {
     // Unsaved edits are not dropped silently: the first click warns, a second click on the same building leaves.
@@ -277,38 +277,60 @@ export function ProjectionsLibrary() {
         <a href="/sales" className="rounded-xl border border-line bg-white px-3.5 py-2 text-[13px] font-semibold text-ink hover:bg-app">Sales decks</a>
       </header>
 
-      <TeamCalcPages />
-      <ProjCalcSettingsPanel />
-
-      <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
-        <aside className="space-y-3 lg:sticky lg:top-4 self-start">
-          <form onSubmit={e => { e.preventDefault(); create(newName) }} className="rounded-2xl border border-line bg-white p-3 space-y-2">
-            <p className={lab}>New projection</p>
-            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Building name" className="w-full rounded-xl border border-line px-3 py-2 text-[13px] text-ink" />
-            <button type="submit" className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Plus size={14} /> Create</button>
-          </form>
-          <label className="flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2">
-            <Search size={14} className="text-muted" />
-            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a building" className="w-full min-w-0 text-[13px] text-ink bg-transparent outline-none" />
-          </label>
-          {!rows ? <p className="text-[13px] text-muted py-6 text-center"><Loader2 size={14} className="inline animate-spin" /></p> : (
-            <ul className="space-y-2">
-              {shown.map(r => (
-                <li key={r.id}>
-                  <button type="button" onClick={() => open(r.id)} className={'w-full text-left rounded-2xl border overflow-hidden transition ' + (sel === r.id ? 'border-ink ring-1 ring-ink bg-white' : 'border-line bg-white hover:border-ink/40')}>
-                    <div className="h-20 bg-app bg-cover bg-center" style={r.photo ? { backgroundImage: `url("${r.photo}")` } : undefined} />
-                    <div className="px-3 py-2.5">
-                      <p className={SERIF + ' text-[19px] leading-tight text-ink'}>{r.name}</p>
-                      <p className="text-[11.5px] text-muted mt-0.5">{[r.area, r.plans + ' unit type' + (r.plans === 1 ? '' : 's')].filter(Boolean).join(' · ')}</p>
-                    </div>
-                  </button>
-                </li>
-              ))}
-              {!shown.length && <li className="text-[13px] text-muted px-1">No building matches.</li>}
-            </ul>
-          )}
-        </aside>
-
+      {!entry && !loading ? (
+        <div className="space-y-6">
+          {/* THE LIST OF PROPERTIES (Jon, 2026-11-12: "more a list of properties; click into one and it opens to the
+              room types and more data") */}
+          <section className="rounded-3xl border border-line bg-white">
+            <div className="flex flex-wrap items-center gap-2 p-4 border-b border-line">
+              <h2 className={SERIF + ' text-[26px] leading-none text-ink mr-auto'}>Properties <span className="text-muted text-[16px]">{rows ? rows.length : ''}</span></h2>
+              <label className="flex items-center gap-2 rounded-xl border border-line bg-white px-3 py-2 w-full sm:w-64">
+                <Search size={14} className="text-muted" />
+                <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find a property" className="w-full min-w-0 text-[13px] text-ink bg-transparent outline-none" />
+              </label>
+              <form onSubmit={e => { e.preventDefault(); create(newName) }} className="flex gap-2 w-full sm:w-auto">
+                <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="New property name" className="min-w-0 flex-1 sm:w-48 rounded-xl border border-line px-3 py-2 text-[13px] text-ink" />
+                <button type="submit" className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Plus size={14} /> Add</button>
+              </form>
+            </div>
+            {!rows ? <p className="text-[13px] text-muted py-10 text-center"><Loader2 size={14} className="inline animate-spin" /></p> : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[820px] text-[13px]">
+                  <thead><tr className="text-left text-[10.5px] uppercase tracking-[0.14em] text-muted border-b border-line">
+                    <th className="py-2.5 pl-4 pr-3 font-semibold">Property</th><th className="pr-3 font-semibold">Unit types</th><th className="pr-3 font-semibold text-right">Projected a year</th><th className="pr-3 font-semibold text-right">Comps</th><th className="pr-3 font-semibold text-right">Files</th><th className="pr-3 font-semibold">Calculator</th><th className="pr-4 font-semibold text-right">Updated</th>
+                  </tr></thead>
+                  <tbody>
+                    {shown.map(r => (
+                      <tr key={r.id} onClick={() => open(r.id)} className="border-b border-line last:border-0 cursor-pointer hover:bg-app">
+                        <td className="py-2.5 pl-4 pr-3">
+                          <div className="flex items-center gap-3">
+                            <span className="w-12 h-9 rounded-lg bg-app bg-cover bg-center shrink-0" style={r.photo ? { backgroundImage: `url("${r.photo}")` } : undefined} />
+                            <span className="min-w-0"><span className={SERIF + ' block text-[18px] leading-tight text-ink'}>{r.name}</span><span className="block text-[11.5px] text-muted">{r.area || '—'}</span></span>
+                          </div>
+                        </td>
+                        <td className="pr-3 text-muted max-w-[260px]"><span className="text-ink font-semibold">{r.plans}</span>{r.types?.length ? <span className="block truncate text-[11.5px]">{r.types.join(' · ')}</span> : null}{r.pending ? <span className="block text-[11px] text-amber-700">{r.pending} awaiting approval</span> : null}</td>
+                        <td className="pr-3 text-right tabular-nums text-ink">{r.planRange ? dash(r.planRange[0], r.planRange[1]) : <span className="text-muted">—</span>}</td>
+                        <td className="pr-3 text-right tabular-nums">{r.comps || <span className="text-muted">—</span>}</td>
+                        <td className="pr-3 text-right tabular-nums">{r.files || <span className="text-muted">—</span>}</td>
+                        <td className="pr-3">{r.calc === false ? <span className="text-[11.5px] text-muted">Off</span> : <span className="text-[11.5px] text-emerald-700 font-semibold">On</span>}</td>
+                        <td className="pr-4 text-right text-[11.5px] text-muted whitespace-nowrap">{r.updatedAt ? new Date(r.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''}</td>
+                      </tr>
+                    ))}
+                    {!shown.length && <tr><td colSpan={7} className="text-[13px] text-muted px-4 py-6">No property matches.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+          <ProjectionFiles buildings={(rows || []).map(r => ({ id: r.id, name: r.name }))} onChanged={loadList} />
+          <TeamCalcPages />
+          <ProjCalcSettingsPanel />
+        </div>
+      ) : (
+      <div>
+        <button type="button" onClick={() => { if (dirty && leaving.current !== '__list') { leaving.current = '__list'; setMsg('This property has unsaved changes. Save them, or click All properties again to leave without saving.'); return } leaving.current = null; setEntry(null); setSel(null); setDirty(false); setMsg(''); loadList() }}
+          className="mb-4 inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink hover:bg-app">← All properties</button>
+        {msg && !entry ? <p className="text-[13px] text-ink mb-3">{msg}</p> : null}
         <main className="min-w-0">
           {loading ? <p className="text-[13px] text-muted py-16 text-center"><Loader2 size={16} className="inline animate-spin" /></p>
           : !entry ? <p className="text-[14px] text-muted py-16 text-center">Choose a building, or create a new projection.</p>
@@ -495,7 +517,10 @@ export function ProjectionsLibrary() {
                 )}
               </section>
 
-              {/* 3 · Comparables */}
+              {/* 3 · Its files: kept, opened again, built from (Jon, 2026-11-12: "an upload section… build and reference it all") */}
+              {entry.id ? <ProjectionFiles buildingId={entry.id} buildings={(rows || []).map(r => ({ id: r.id, name: r.name }))} onBuild={f => runRead('file', f)} onChanged={loadList} title="Files for this property" />
+                : <p className="text-[12.5px] text-muted">Save the property to keep files with it.</p>}
+              {/* 4 · Comparables */}
               <section className="rounded-2xl border border-line bg-white p-4 sm:p-5">
                 <div className="flex flex-wrap items-end gap-2 mb-3">
                   <div className="mr-auto">
@@ -529,6 +554,7 @@ export function ProjectionsLibrary() {
           )}
         </main>
       </div>
+      )}
     </div>
   )
 }

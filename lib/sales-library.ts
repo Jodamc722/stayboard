@@ -11,7 +11,7 @@
 // seeded the first time the library is read empty.
 import 'server-only'
 import { getSetting, getSettingFresh, setSetting } from './app-settings'
-import { normalizeCma, riderTemplate, blankCma, newId, type SalesCma, type PacketPlan } from './sales-cma'
+import { normalizeCma, riderTemplate, blankCma, newId, planNumbers, type SalesCma, type PacketPlan } from './sales-cma'
 import { PROJECTIONS_SEED_2026_11_12, type SeedBuilding } from './sales-library-seed'
 
 export const SALES_LIBRARY_KEY = 'sales_buildings'
@@ -19,7 +19,9 @@ export type LibraryBuilding = { id: string; name: string; area: string; website?
   /** False keeps the whole building out of the public projections calculator. Blank = in. */
   calc?: boolean }
 /** The list view: no comps or plans, just enough to choose from. */
-export type LibrarySummary = Omit<LibraryBuilding, 'cma'> & { plans: number; comps: number; range: [number, number] | null }
+export type LibrarySummary = Omit<LibraryBuilding, 'cma'> & { plans: number; comps: number; range: [number, number] | null
+  /** The unit types' own yearly range, their names, and how many wait for approval (the list of buildings). */
+  planRange?: [number, number] | null; types?: string[]; pending?: number; files?: number }
 
 function clean(list: any): LibraryBuilding[] {
   return (Array.isArray(list) ? list : []).map((e: any) => {
@@ -75,7 +77,10 @@ export async function readLibrary(fresh = false): Promise<LibraryBuilding[]> {
 export function summarize(e: LibraryBuilding): LibrarySummary {
   const { cma, ...rest } = e
   const lows = cma.comps.map(c => c.lo).filter(n => n > 0), highs = cma.comps.map(c => c.hi).filter(n => n > 0)
-  return { ...rest, plans: cma.plans.length, comps: cma.comps.length, range: lows.length && highs.length ? [Math.min(...lows), Math.max(...highs)] : null }
+  const pn = cma.plans.map(p => planNumbers(cma, p)).filter(n => n.lo > 0)
+  return { ...rest, plans: cma.plans.length, comps: cma.comps.length, range: lows.length && highs.length ? [Math.min(...lows), Math.max(...highs)] : null,
+    planRange: pn.length ? [Math.min(...pn.map(n => n.lo)), Math.max(...pn.map(n => n.hi))] : null,
+    types: Array.from(new Set(cma.plans.map(p => p.name.split(' · ')[0]))).slice(0, 12), pending: cma.plans.filter(p => p.status === 'pending').length }
 }
 
 export async function getBuilding(id: string): Promise<LibraryBuilding | null> {
