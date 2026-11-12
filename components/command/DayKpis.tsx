@@ -24,7 +24,7 @@
 // disagree. Nothing here completes a Breezeway task; a call is logged the way the Calls desk logs it.
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
-import { ExternalLink, UserPlus, Loader2, Phone, PhoneCall, PhoneOff, ChevronUp, ChevronDown, Eye, Send } from 'lucide-react'
+import { ExternalLink, UserPlus, Loader2, Phone, PhoneCall, PhoneOff, Eye, Send } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import type { CommandDay, NextItem, TaskRow } from '@/lib/command-day'
@@ -270,7 +270,6 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   // TABS, NOT DRAWERS (Jon, 2026-11-10: "I like tabs open not collapsible … and open with tab selected").
   // Departure cleans is selected when the page opens; a tile switches the list, it never closes it.
   const [open, setOpen] = useState<Key | null>('cleans')
-  const [moreOpen, setMoreOpen] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const callsQ = useCachedFetch<DayCalls & { error?: string }>(CALLS_URL, { ttl: 120_000 })
   const calls = callsQ.data && callsQ.data.ok ? callsQ.data : null
@@ -674,7 +673,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
         </div>
       ) : null}
       <div id="day-kpis-tiles" className={'space-y-2' + (view === 'plan' ? ' hidden' : '')}>
-        {/* SIX UP FRONT, THE REST ONE TAP AWAY (Jon, 2026-11-10, Today revamp: "15 tiles before the work").
+        {/* SIX UP FRONT, THEN THE REST — ALL SHOWN (2026-11-12; was under More since 2026-11-10's "15 tiles before the work").
             The six streams that run the day stay; the others (who's working, recovery calls, notices,
             guest checks, reviews, lost & found, claims, blocked units, channels) sit under More —
             same tiles, same lists, and an open one keeps More open. */}
@@ -682,25 +681,12 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
           const tileOf = (x: typeof tiles[number]) => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} noPct={x.key === 'glitches' || x.key === 'claims' || x.key === 'blocked' || x.key === 'team'} />
           const main = PRIMARY.map(k => tiles.find(x => x.key === k)).filter(Boolean) as typeof tiles
           const rest = tiles.filter(x => PRIMARY.indexOf(x.key) < 0)
-          const restOpen = moreOpen || (!!open && PRIMARY.indexOf(open as Key) < 0)
+          // EVERY TILE, ALWAYS (Jon, 2026-11-12: "I want to see all the tabs, not have to open or collapse").
+          // The six that run the day lead; the rest follow in their groups — nothing behind a More.
           return (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">{main.map(tileOf)}</div>
-              {rest.length > 0 && (
-                <button onClick={() => setMoreOpen(o => !o)} aria-expanded={restOpen} className="mt-2 px-1 text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
-                  {restOpen ? 'Fewer' : 'More'} · {rest.length} other {rest.length === 1 ? 'count' : 'counts'}{restOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                </button>
-              )}
-              {restOpen && GROUPS.map(g => {
-                const mine = rest.filter(x => g.keys.includes(x.key))
-                if (!mine.length) return null
-                return (
-                  <div key={g.label}>
-                    <p className="px-1 mb-1.5 mt-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-muted">{g.label}</p>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">{mine.map(tileOf)}</div>
-                  </div>
-                )
-              })}
+              {/* One grid, 15 tiles — the six that run the day first, then housekeeping, guests and office in that order. */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">{main.concat(GROUPS.flatMap(g => rest.filter(x => g.keys.includes(x.key))), rest.filter(x => !GROUPS.some(g => g.keys.includes(x.key)))).map(tileOf)}</div>
             </>
           )
         })()}
