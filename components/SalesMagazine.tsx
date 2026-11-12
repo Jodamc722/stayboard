@@ -773,7 +773,7 @@ export function SalesMagazine({ report, canEdit: canEdit0, onePager, digital, re
                   <a className="mz-tool-go" href={url} target="_blank" rel="noreferrer">
                     <span className="mz-kicker">Free · two minutes</span>
                     <b>{k === 'income' ? 'See what your home could earn' : 'Get your supply and linen list'}</b>
-                    <i>Open the {m.short.toLowerCase()} →</i>
+                    <i>Click here to open the {m.short.toLowerCase()} →</i>
                   </a>
                 ) : (
                 <div className="mz-tool-qr">
@@ -941,7 +941,7 @@ export function SalesMagazine({ report, canEdit: canEdit0, onePager, digital, re
                 <p className="mz-kicker">Free for any owner</p>
                 {(['income', 'inventory'] as ToolKey[]).map(tk => (
                   <a key={tk} href={(process.env.NEXT_PUBLIC_SITE_URL || '') + '/tools/' + tk + '?d=' + encodeURIComponent(report.code)} target="_blank" rel="noreferrer">
-                    <b>{tk === 'income' ? 'What could your home earn?' : 'Everything a rental needs'}</b><span>{TOOL_META[tk].short} →</span>
+                    <b>{tk === 'income' ? 'What could your home earn?' : 'Everything a rental needs'}</b><span>Click here →</span>
                   </a>
                 ))}
               </div>
