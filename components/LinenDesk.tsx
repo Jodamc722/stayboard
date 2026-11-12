@@ -1453,15 +1453,36 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, reorde
   const [edits, setEdits] = useState<Record<string, number>>({})
   const [extra, setExtra] = useState<NeedLine[]>([])
   const [copied, setCopied] = useState(false)
-  useEffect(() => { setEdits({}); setExtra([]) }, [resetKey])
-  const base: NeedLine[] = totals.rows.map(r => ({ key: r.key, itemId: r.itemId, group: r.group, name: r.name, size: r.size || '', qty: r.qty, base: r.qty }))
+  // SETS ON EVERY LINE (Jon, 2026-11-12: "adjust the counts by par individual level"). Items that do not
+  // rotate (pillows, protectors, pool towels, throws) were a fixed "1 set" — now they take a par too, held
+  // here for this list only: 2 = two sets of that item. Rotating items keep the reorder par above.
+  const [sets, setSets] = useState<Record<string, number>>({})
+  // THE NAME ON THE FILE (Jon, 2026-11-12: "need it to download with name"). Starts as the unit or
+  // property; editable; the download is "<name> - Linen list - <date>".
+  const defaultName = property && property !== 'Linen quote' && property !== 'Linens' ? property : ''
+  const [fileName, setFileName] = useState(defaultName)
+  const [nameNeeded, setNameNeeded] = useState(false)
+  const [busyFmt, setBusyFmt] = useState<'' | 'pdf' | 'xlsx'>('')
+  const [dlErr, setDlErr] = useState('')
+  useEffect(() => { setFileName(defaultName); setNameNeeded(false) }, [defaultName])
+  useEffect(() => { setEdits({}); setExtra([]); setSets({}) }, [resetKey])
   // Each item's STARTING reorder par: its par on the standard at the view par (own par, else the standard's).
   const startById = useMemo(() => {
     const m = new Map<string, { name: string; rotates: boolean; start: number }>()
     if (reorder) for (const i of reorder.base.items) m.set(i.id, { name: i.name, rotates: i.rotates, start: typeof i.par === 'number' ? i.par : reorder.base.par })
     return m
   }, [reorder])
-  const overridden = reorder ? Object.keys(reorder.overrides).filter(id => startById.get(id)?.rotates).length : 0
+  const setsOf = (itemId: string) => (itemId in sets ? sets[itemId] : 1)
+  const base: NeedLine[] = totals.rows.map(r => {
+    const fixed = startById.get(r.itemId) && !startById.get(r.itemId)!.rotates
+    const q = fixed ? Math.ceil(r.qty * setsOf(r.itemId) - 1e-9) : r.qty
+    return { key: r.key, itemId: r.itemId, group: r.group, name: r.name, size: r.size || '', qty: q, base: q }
+  })
+  const overridden = (reorder ? Object.keys(reorder.overrides).filter(id => startById.get(id)?.rotates).length : 0) + Object.keys(sets).length
+  const changeSets = (itemId: string, p: number | null) => {
+    setEdits(e => { const n: Record<string, number> = {}; for (const [k, v] of Object.entries(e)) if (!totals.rows.some(b => b.key === k && b.itemId === itemId)) n[k] = v; return n })
+    setSets(m => { const n = { ...m }; if (p === null || p === 1) delete n[itemId]; else n[itemId] = p; return n })
+  }
   // A reorder par re-counts that item's lines, so a typed-over quantity on them would hide it — drop those.
   const changePar = (itemId: string, p: number | null) => {
     if (!reorder) return
@@ -1489,7 +1510,29 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, reorde
   const addLine = () => setExtra(x => [...x, { key: 'extra-' + Date.now() + '-' + x.length, itemId: '', group: 'Other', name: '', size: '', qty: 1, base: null }])
   const sections = sectioned(lines)
   const outSections = sectioned(out)
-  const csv = () => ['Section,Item,Size,Qty', ...outSections.flatMap(sec => sec.rows.map(l => [sec.label, l.name.trim(), l.size.trim(), l.qty].map(csvSafe).join(',')))].join('\n') + '\n'
+  // THE FILE'S LAYOUT (Jon, 2026-11-12: "item, then bed size"): grouped by type — Bedding, Bath, Kitchen,
+  // Other — and within Bedding each item once per bed size, in the par-level order (Fitted sheet King,
+  // Fitted sheet Queen, Flat sheet King, …). The page keeps its by-bed cards; the file reads as a list.
+  const itemOrder = new Map(std.items.map((i, n) => [i.id, n]))
+  const sizeRank = (sz: string) => { if (!sz) return 99; if (sz === 'Standard') return 90; const i = BED_ORDER.findIndex(b => b.toLowerCase() === sz.toLowerCase()); return i < 0 ? 50 : i }
+  const parLabel = (l: NeedLine): string => {
+    const it = startById.get(l.itemId)
+    if (!it) return ''
+    if (!it.rotates) { const n = setsOf(l.itemId); return n2(n) + (n === 1 ? ' set' : ' sets') }
+    return n2(reorder && l.itemId in reorder.overrides ? reorder.overrides[l.itemId] : it.start)
+  }
+  const fileSections = () => {
+    const groups = new Map<string, NeedLine[]>()
+    for (const l of out) { const g = l.base === null ? 'Other' : l.group === 'Bed' ? 'Bedding' : l.group; groups.set(g, [...(groups.get(g) || []), l]) }
+    const rank = (g: string) => (g === 'Bedding' ? 0 : g === 'Other' ? 99 : 1 + Math.max(0, LINEN_GROUPS.indexOf(g as LinenGroup)))
+    return Array.from(groups.entries()).sort((a, b) => rank(a[0]) - rank(b[0])).map(([label, rows]) => ({
+      label,
+      rows: rows.slice().sort((a, b) => (itemOrder.get(a.itemId) ?? 999) - (itemOrder.get(b.itemId) ?? 999) || a.name.localeCompare(b.name) || sizeRank(a.size) - sizeRank(b.size))
+        .map(l => ({ item: l.name.trim(), size: l.size.trim(), par: parLabel(l), qty: l.qty })),
+    }))
+  }
+  const bedsLine = Object.entries(bedsBySize).filter(([, n]) => n > 0).map(([k, n]) => n + ' ' + k).join(', ')
+  const csv = () => ['Item,Bed size,Par,Qty', ...fileSections().flatMap(sec => sec.rows.map(r => [r.item, r.size, r.par, r.qty].map(csvSafe).join(',')))].join('\n') + '\n'
   const text = () => {
     const o: string[] = [title]
     for (const sec of outSections) {
@@ -1499,7 +1542,23 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, reorde
     o.push('', `Total: ${pieces.toLocaleString('en-US')} pieces`)
     return o.join('\n') + '\n'
   }
-  const download = () => saveBlob(new Blob([csv()], { type: 'text/csv;charset=utf-8' }), linenFileName(property, 'Linen needed', 'csv'))
+  const download = async (format: 'pdf' | 'xlsx' | 'csv') => {
+    const name = fileName.trim()
+    if (!name) { setNameNeeded(true); setDlErr('Name the list first — it goes on the file.'); return }
+    setDlErr('')
+    if (format === 'csv') { saveBlob(new Blob([csv()], { type: 'text/csv;charset=utf-8' }), linenFileName(name, 'Linen list', 'csv')); return }
+    setBusyFmt(format)
+    try {
+      const r = await fetch('/api/onboard/linens/list', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        format, name, subtitle: 'Prepared by Stay Hospitality',
+        meta: bedsLine ? [{ label: 'Beds', value: bedsLine }] : [],
+        sections: fileSections(),
+      }) })
+      if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || 'Could not build the file') }
+      saveBlob(await r.blob(), linenFileName(name, 'Linen list', format))
+    } catch (e: any) { setDlErr(String(e?.message || e)) }
+    setBusyFmt('')
+  }
   const copy = async () => { try { await navigator.clipboard.writeText(text()); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard blocked — the CSV still works */ } }
 
   return (
@@ -1511,14 +1570,22 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, reorde
         {changed > 0 && <Tag tone="amber" title="Quantities you typed over or lines you added — for this export only; the par levels are not changed">{changed} edited for this export</Tag>}
         <span className="ml-auto flex items-center gap-1.5 flex-wrap">
           {changed > 0 && <button onClick={() => { setEdits({}); setExtra([]) }} title="Put every quantity back and drop added lines" className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1"><RotateCcw size={12} /> Reset</button>}
-          <button onClick={download} disabled={!out.length} title="Download this list as a spreadsheet (CSV) — exactly what is on the page, by section" className={PRIMARY}><Download size={13} /> Download list</button>
+          <input value={fileName} onChange={e => { setFileName(e.target.value.slice(0, 100)); if (e.target.value.trim()) { setNameNeeded(false); setDlErr('') } }} placeholder="Name on the file (unit or property)"
+            title="The download is named for this — e.g. Salato 302 - Linen list - 2026-11-12" aria-label="Name on the file"
+            className={INPUT + ' py-1.5 w-full sm:w-52' + (nameNeeded ? ' border-rose-400 bg-rose-50' : '')} />
+          <button onClick={() => download('xlsx')} disabled={!out.length || !!busyFmt} title="Download as a formatted Excel sheet — Item, Bed size, Par, Qty, by type, with totals" className={PRIMARY}>
+            {busyFmt === 'xlsx' ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />} Excel</button>
+          <button onClick={() => download('pdf')} disabled={!out.length || !!busyFmt} title="Download as a clean PDF to print or send — Item, Bed size, Par, Qty, by type, with totals" className={GHOST}>
+            {busyFmt === 'pdf' ? <Loader2 size={13} className="animate-spin" /> : <FileText size={13} />} PDF</button>
+          <button onClick={() => download('csv')} disabled={!out.length} title="Plain spreadsheet (CSV): Item, Bed size, Par, Qty" className={GHOST}>CSV</button>
           <button onClick={copy} disabled={!out.length} title="Copy this list as text, by section, for an email or a message" className={GHOST}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}</button>
         </span>
+        {dlErr && <span className="w-full text-right text-[12.5px] text-rose-600 font-semibold">{dlErr}</span>}
       </div>
 
       {reorder && <p className="px-3 sm:px-4 pt-2 text-[12px] text-muted flex items-center gap-x-2 gap-y-1 flex-wrap">
         <span><b className="text-violet-700">Par</b> here is for this reorder only — it doesn't change the par levels. <b className="text-ink">Qty</b> boxes change this export only.</span>
-        {overridden > 0 && <button type="button" onClick={() => { setEdits({}); reorder.onResetAll() }} title="Put every item back to its starting par for this order"
+        {overridden > 0 && <button type="button" onClick={() => { setEdits({}); setSets({}); reorder.onResetAll() }} title="Put every item back to its starting par for this order"
           className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink"><RotateCcw size={11} /> Reset all ({overridden})</button>}
       </p>}
       {/* One card per linen type: King bed, Queen bed, …, Standard pillows, Bath, Kitchen, Other. */}
@@ -1549,7 +1616,16 @@ function NeededList({ totals, title, resetKey, property, bedsBySize, std, reorde
                       {reorder && !isExtra && (() => {
                         const it = startById.get(l.itemId)
                         if (!it) return null
-                        if (!it.rotates) return <span className="text-[11px] text-muted whitespace-nowrap" title="Does not rotate — one set is bought, par does not apply">1 set</span>
+                        if (!it.rotates) {
+                          const ownSets = l.itemId in sets
+                          return (
+                            <span className="inline-flex items-center gap-0.5">
+                              <ReorderPar name={it.name} value={setsOf(l.itemId)} start={1} changed={ownSets} onPar={p => changeSets(l.itemId, p)} />
+                              {ownSets && <button type="button" onClick={() => changeSets(l.itemId, null)} title="Back to one set" aria-label="Back to one set"
+                                className="rounded-md p-0.5 text-muted hover:text-ink hover:bg-app"><RotateCcw size={11} /></button>}
+                            </span>
+                          )
+                        }
                         const own = l.itemId in reorder.overrides
                         return (
                           <span className="inline-flex items-center gap-0.5">
