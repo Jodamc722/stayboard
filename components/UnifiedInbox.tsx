@@ -30,6 +30,7 @@ import { MessageThread } from '@/components/MessageThread'
 import { PhoneThread } from '@/components/PhoneThread'
 import { prefetchStay360 } from '@/components/StayPanel'
 import { InboxStayCard, prefetchStayExtras } from '@/components/InboxStayCard'
+import { ThreadSummaryCard } from '@/components/ThreadSummaryCard'
 import { Tag } from '@/components/lean'
 import { openAddTask } from '@/components/AddTaskSheet'
 import { effectiveState, type InboxStateMap, type ThreadState } from '@/lib/inbox-queue'
@@ -121,6 +122,14 @@ export function UnifiedInbox(props: {
   }, [])
   const openRef = useRef(open)
   openRef.current = open
+  // On a desk the thread gets the screen's height, so its messages scroll inside it and it opens at the newest one.
+  const [fit, setFit] = useState<string | undefined>(undefined)
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)')
+    const on = () => setFit(mq.matches ? 'calc(100vh - 15.5rem)' : undefined)
+    on(); mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
 
   // WARM AHEAD. Hovering a row reads its thread (our copy, no Guesty call) and its booking, so the click is instant;
   // when the page settles, the top of the queue is read the same way.
@@ -352,11 +361,11 @@ export function UnifiedInbox(props: {
             {thread && thread.kind === 'guesty' && (
               <MessageThread key={thread.conversationId} conversationId={thread.conversationId} channel={thread.channel} guest={thread.guest} unit={thread.unit}
                 initialMessages={thread.messages as any} reservation={thread.reservation as any} guestyUrl={thread.guestyUrl} canReply={thread.canReply}
-                signOff={thread.signOff} door={thread.door} listingId={thread.listingId} listingName={thread.listingName} onSent={onChanged} />
+                signOff={thread.signOff} door={thread.door} listingId={thread.listingId} listingName={thread.listingName} onSent={onChanged} fit={fit} />
             )}
             {thread && thread.kind === 'phone' && (
               <PhoneThread key={thread.number} number={thread.number} display={thread.display} guest={thread.guest} unit={thread.unit} events={thread.events as any}
-                reservation={thread.reservation as any} conversationId={thread.conversationId} fromNumber={thread.fromNumber} connected={thread.connected} />
+                reservation={thread.reservation as any} conversationId={thread.conversationId} fromNumber={thread.fromNumber} connected={thread.connected} fit={fit} />
             )}
             {/* On screens without a third column the booking sits under the thread. */}
             <div className="2xl:hidden">{thread && <BookingPane thread={thread} item={selectedItem} />}</div>
@@ -380,8 +389,10 @@ function BookingPane({ thread, item }: { thread: Thread; item: InboxItem | null 
   const st = String(r?.status || '').toLowerCase()
   const stTone = /cancel/.test(st) ? 'rose' : /confirm|reserved/.test(st) ? 'emerald' : /inquir/.test(st) ? 'slate' : 'sky'
   const unitName = thread.kind === 'guesty' ? (thread.listingName || r?.listing_name || '') : (r?.listing_name || '')
+  const convId = thread.kind === 'guesty' ? thread.conversationId : (thread.conversationId || '')
   return (
     <div className="space-y-3">
+      <ThreadSummaryCard conversationId={convId} version={thread.kind === 'guesty' ? String((thread as any).sig || '') : String((thread as any).events?.length || 0)} />
       <section className="rounded-2xl border border-line bg-white p-4">
         <p className="text-[10.5px] font-bold uppercase tracking-wider text-muted">Booking</p>
         <h3 className="mt-1 text-[16px] font-bold text-ink leading-tight">{thread.guest}</h3>

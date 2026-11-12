@@ -15,6 +15,7 @@
 //   · saved replies, and translate both ways (read the guest in English; put the reply in theirs);
 //   · the header says where the guest is in their stay and what we know about the door code;
 //   · any guest message can become a task in one tap.
+import { useStickToBottom } from '@/components/useStickToBottom'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { plainText, isMachineName } from '@/lib/message-text'
 import Link from 'next/link'
@@ -55,7 +56,7 @@ const shortDate = (iso: string | null) => { if (!iso) return ''; const d = new D
 const FOREIGN = /[áéíóúñãõçêôâàèùïü¿¡]|\b(hola|gracias|buenos|buenas|por favor|necesito|tenemos|estamos|llegamos|llegada|salida|habitaci[oó]n|cu[aá]ndo|d[oó]nde|puede[ns]?|quiero|obrigad[oa]|ol[aá]|bom dia|boa (tarde|noite)|voc[eê]|chegada|bonjour|bonsoir|merci|nous|s['’]il vous|arriv[ée]e|danke|bitte|guten|grazie|buongiorno)\b/i
 const looksForeign = (t: string) => FOREIGN.test(t)
 
-export function MessageThread({ conversationId, channel, guest, unit, initialMessages, reservation, guestyUrl, canReply, signOff, door, listingId, listingName, onSent }: {
+export function MessageThread({ conversationId, channel, guest, unit, initialMessages, reservation, guestyUrl, canReply, signOff, door, listingId, listingName, onSent, fit }: {
   conversationId: string; channel: string; guest: string; unit: string; initialMessages: Msg[]; reservation: Reservation; guestyUrl: string; canReply: boolean
   /** The sign-off this home's replies carry when it has its own hosts (Boynton: "Vanessa & Taylor"). */
   signOff?: string | null
@@ -65,6 +66,8 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
   listingName?: string | null
   /** A reply went out: the list beside the thread can drop it from Needs reply now. */
   onSent?: () => void
+  /** A fixed height (CSS) — the inbox pane and the floater pass one so the messages scroll inside and open at the end. */
+  fit?: string
 }) {
   const [showRes, setShowRes] = useState(false)
   const [sent, setSent] = useState<Msg[]>([])
@@ -75,8 +78,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
   const pending = sent.filter(x => !initialMessages.some(m => m.sender !== 'guest' && norm(m.body) === norm(x.body)))
   const messages = initialMessages.concat(pending)
   // Open at the newest message, like any inbox.
-  const scroller = useRef<HTMLDivElement | null>(null)
-  useEffect(() => { const el = scroller.current; if (el) el.scrollTop = el.scrollHeight }, [messages.length])
+  const scroller = useStickToBottom(messages.length + (hideAuto ? 0.5 : 0))
   const counts = { guest: messages.filter(m => m.sender === 'guest').length, team: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && !isAuto(m)).length, auto: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && isAuto(m)).length }
   const stay = reservation && reservation.check_in ? `${fmtShort(reservation.check_in)} → ${fmtShort(reservation.check_out)}${reservation.nights != null ? ' · ' + reservation.nights + ' nights' : ''}` : ''
   // WHERE THE GUEST IS IN THEIR STAY — the first thing to know before answering.
@@ -106,7 +108,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
        Below sm the card is capped to what you can actually see (dvh, so Safari's URL bar is not
        counted as viewport) and the message list becomes the scroller. From sm up nothing is
        capped, so the desktop card is exactly as before. */
-    <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col max-h-[calc(100dvh-11rem)] sm:max-h-none" style={{ minHeight: '55vh' }}>
+    <div className={'bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col ' + (fit ? '' : 'max-h-[calc(100dvh-11rem)] sm:max-h-none')} style={fit ? { height: fit, minHeight: 360 } : { minHeight: '55vh' }}>
       {/* Thread header */}
       <div className="px-3 sm:px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-x-2 gap-y-1 min-w-0 flex-wrap">

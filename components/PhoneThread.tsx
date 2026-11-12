@@ -2,6 +2,7 @@
 // The phone thread for one guest number: texts, voicemails and calls in one timeline, a reservation
 // pop-up, and an SMS composer that sends through Talkroute (needs edit on Messages and a texting
 // plan on the number — Talkroute's own refusal is shown verbatim when it says no).
+import { useStickToBottom } from '@/components/useStickToBottom'
 import { useState } from 'react'
 import Link from 'next/link'
 import { CalendarDays, X, User, Phone, DollarSign, Home, BedDouble, PhoneCall, PhoneIncoming, PhoneMissed, PhoneOutgoing, Voicemail, Send, Loader2, MessageSquare, Play } from 'lucide-react'
@@ -21,14 +22,17 @@ const fmtDay = (s?: string | null) => { if (!s) return '—'; const d = new Date
 const dur = (sec: number) => sec >= 60 ? `${Math.floor(sec / 60)}m ${sec % 60}s` : `${sec}s`
 const MATCH: Record<string, string> = { welcome: 'Welcome call', post_checkout: 'Post-checkout call', stay: 'During the stay' }
 
-export function PhoneThread({ number, display, guest, unit, events: initial, reservation, conversationId, fromNumber, connected }: {
+export function PhoneThread({ number, display, guest, unit, events: initial, reservation, conversationId, fromNumber, connected, fit }: {
   number: string; display: string; guest: string; unit: string; events: Ev[]; reservation: Reservation; conversationId: string; fromNumber: string; connected: boolean
+  /** A fixed height (CSS) so the events scroll inside and open at the newest. */
+  fit?: string
 }) {
   const [showRes, setShowRes] = useState(false)
   const [events, setEvents] = useState<Ev[]>(initial)
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const scroller = useStickToBottom(events.length)
   const canText = connected && (!!conversationId || !!fromNumber)
 
   async function send() {
@@ -44,7 +48,7 @@ export function PhoneThread({ number, display, guest, unit, events: initial, res
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col max-h-[calc(100dvh-11rem)] sm:max-h-none" style={{ minHeight: '55vh' }}>
+    <div className={'bg-white rounded-2xl border border-line shadow-soft overflow-hidden flex flex-col ' + (fit ? '' : 'max-h-[calc(100dvh-11rem)] sm:max-h-none')} style={fit ? { height: fit, minHeight: 320 } : { minHeight: '55vh' }}>
       <div className="px-3 sm:px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span className="font-semibold text-ink truncate">{guest || display}</span>
@@ -60,7 +64,7 @@ export function PhoneThread({ number, display, guest, unit, events: initial, res
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3">
+      <div ref={scroller} className="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3">
         {events.length === 0 ? (
           <p className="text-center text-muted py-8 text-sm">Nothing from this number yet.</p>
         ) : events.map(e => {

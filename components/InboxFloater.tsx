@@ -16,6 +16,7 @@ import { Tag } from '@/components/lean'
 import { MessageThread } from '@/components/MessageThread'
 import { PhoneThread } from '@/components/PhoneThread'
 import { InboxStayCard } from '@/components/InboxStayCard'
+import { ThreadSummaryCard } from '@/components/ThreadSummaryCard'
 import { effectiveState, markTime, type InboxStateMap } from '@/lib/inbox-queue'
 import type { GuestyThread, PhoneThreadData } from '@/lib/message-thread'
 
@@ -25,6 +26,8 @@ type List = { items: Item[]; unitById: Record<string, string>; waiting: Record<s
 type Saved = { open: boolean; key: string; view: 'reply' | 'unread' | 'all'; pane: 'thread' | 'booking' }
 const KEY = 'lh:float:inbox'
 const EVT = 'lh:float:inbox'
+/** The thread fills the panel under its header, so it scrolls inside and opens at the newest message. */
+const FIT = 'calc(min(760px, 100vh - 2rem) - 4.4rem)'
 
 /** Open the floating inbox on one thread ('g:<conversation id>' | 'p:<digits>') — the "Pop out" button. */
 export function popOut(key: string) {
@@ -200,16 +203,17 @@ export function InboxFloater() {
         <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
           {tErr && <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-800">{tErr}</p>}
           {!thread && !tErr && <p className="px-2 py-6 text-[12.5px] text-muted inline-flex items-center gap-1.5"><Loader2 size={12} className="animate-spin" /> Opening…</p>}
+          {thread && st.pane === 'booking' && <ThreadSummaryCard conversationId={thread.conversationId || ''} version={String((thread as any).sig || (thread as any).events?.length || '')} />}
           {thread && st.pane === 'booking' && thread.reservationId && <InboxStayCard reservationId={thread.reservationId} canCodes={!!thread.canReply} />}
           {thread && st.pane === 'booking' && !thread.reservationId && <p className="px-2 py-6 text-[12.5px] text-muted">No reservation is linked to this thread.</p>}
           {thread && st.pane === 'thread' && thread.kind === 'guesty' && (
             <MessageThread key={thread.conversationId} conversationId={thread.conversationId} channel={thread.channel} guest={thread.guest} unit={thread.unit}
               initialMessages={thread.messages as any} reservation={thread.reservation as any} guestyUrl={thread.guestyUrl} canReply={thread.canReply}
-              signOff={thread.signOff} door={thread.door} listingId={thread.listingId} listingName={thread.listingName} />
+              signOff={thread.signOff} door={thread.door} listingId={thread.listingId} listingName={thread.listingName} fit={FIT} />
           )}
           {thread && st.pane === 'thread' && thread.kind === 'phone' && (
             <PhoneThread key={thread.number} number={thread.number} display={thread.display} guest={thread.guest} unit={thread.unit} events={thread.events as any}
-              reservation={thread.reservation as any} conversationId={thread.conversationId} fromNumber={thread.fromNumber} connected={thread.connected} />
+              reservation={thread.reservation as any} conversationId={thread.conversationId} fromNumber={thread.fromNumber} connected={thread.connected} fit={FIT} />
           )}
         </div>
       )}
