@@ -2,7 +2,7 @@
 // "WHAT'S GOING ON" — the top of the booking pane (lib/thread-summary, /api/messages/summary). Read in five seconds
 // before the thread: where it stands, what matters, and the next step. Re-asked when the thread changes (the server
 // answers from its cache when nothing new was said).
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Loader2, RefreshCw, Sparkles } from 'lucide-react'
 import { Tag } from '@/components/lean'
 
@@ -18,16 +18,22 @@ export function ThreadSummaryCard({ conversationId, version }: { conversationId:
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [none, setNone] = useState(false)
+  // Only the answer for the thread on screen may land: a slow summary of the PREVIOUS thread arriving after you
+  // moved on once painted the wrong guest's story over this one.
+  const current = useRef(conversationId)
+  current.current = conversationId
   const load = (refresh: boolean) => {
-    if (!conversationId) return
+    const c = conversationId
+    if (!c) return
     setBusy(true); setErr('')
-    fetch('/api/messages/summary?c=' + encodeURIComponent(conversationId) + (refresh ? '&refresh=1' : ''), { cache: 'no-store' })
+    fetch('/api/messages/summary?c=' + encodeURIComponent(c) + (refresh ? '&refresh=1' : ''), { cache: 'no-store' })
       .then(r => r.json()).then(j => {
+        if (current.current !== c) return
         if (j?.summary) setS(j.summary); else if (j?.ok) setNone(true)
         if (!j?.ok) setErr(j?.error || 'Could not write the summary.')
-      }).catch(() => setErr('Could not reach Lighthouse.')).finally(() => setBusy(false))
+      }).catch(() => { if (current.current === c) setErr('Could not reach Lighthouse.') }).finally(() => { if (current.current === c) setBusy(false) })
   }
-  useEffect(() => { setS(null); setNone(false); setErr('') }, [conversationId])
+  useEffect(() => { setS(null); setNone(false); setErr(''); setBusy(false) }, [conversationId])
   useEffect(() => { load(false) }, [conversationId, version]) // eslint-disable-line react-hooks/exhaustive-deps
   if (!conversationId) return null
   const st = s ? STATUS[s.status] : null

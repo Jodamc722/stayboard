@@ -254,7 +254,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
               <span aria-hidden className="w-px h-4 bg-line mx-0.5" />
             </span>
           ))}
-          {channelsHere.length > 1 && channelsHere.map(c => { const n = countFor('channel', c), on = refine.channel.indexOf(c) >= 0; return (
+          {channelsHere.length > 1 && channelsHere.map(c => { const n = countFor('channel', c), on = refine.channel.indexOf(c) >= 0; return (n === 0 && !on) ? null : (
             <button key={c} onClick={() => toggle('channel', c)} aria-pressed={on} title={'Only ' + c + ' threads'} className={refChip(on)}>{c} <span className="opacity-60 tabular-nums">{n}</span></button>
           ) })}
           {refineN > 0 && <button onClick={clearRefine} className="h-7 px-2 text-[11.5px] font-semibold text-brand-700 hover:underline" title="Show everything in this tab again">Clear {refineN}</button>}
