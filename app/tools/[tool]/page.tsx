@@ -2,8 +2,8 @@
 // to download the quote"). Public. ?d=<deck code> credits the lead to the deck it was opened from, and
 // the page then names that deck's building and presenter.
 import type { Metadata } from 'next'
-import { notFound } from 'next/navigation'
-import { isToolKey, TOOL_META, type ToolKey } from '@/lib/free-tools'
+import { notFound, redirect } from 'next/navigation'
+import { isToolKey, toolKeyOf, TOOL_META, type ToolKey } from '@/lib/free-tools'
 import { FreeTool } from '@/components/FreeTool'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -11,8 +11,9 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 export const dynamic = 'force-dynamic'
 
 export async function generateMetadata({ params }: { params: { tool: string } }): Promise<Metadata> {
-  if (!isToolKey(params.tool)) return {}
-  const m = TOOL_META[params.tool as ToolKey]
+  const k = toolKeyOf(params.tool)
+  if (!k) return {}
+  const m = TOOL_META[k]
   return { title: m.short + ' (free) | Stay Hospitality', description: m.dek, openGraph: { title: m.title.replace(/\*/g, ''), description: m.dek, siteName: 'Stay Hospitality' } }
 }
 
@@ -28,6 +29,8 @@ async function deckOf(code: string): Promise<{ where: string; area: string; card
 }
 
 export default async function ToolPage({ params, searchParams }: { params: { tool: string }; searchParams: { d?: string } }) {
+  // The linen calculator is part of the supply calculator now; its old links land there.
+  if (params.tool === 'linen') redirect('/tools/inventory' + (searchParams.d ? '?d=' + encodeURIComponent(String(searchParams.d)) : ''))
   if (!isToolKey(params.tool)) notFound()
   const tool = params.tool as ToolKey
   const m = TOOL_META[tool]

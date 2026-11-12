@@ -22,7 +22,7 @@ import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { MagazineFlipbook } from '@/components/MagazineFlipbook'
 import { FreeTool } from '@/components/FreeTool'
 import { DeckShare } from '@/components/DeckShare'
-import { TOOL_KEYS, TOOL_META, isToolKey, type ToolKey } from '@/lib/free-tools'
+import { TOOL_KEYS, TOOL_META, isToolKey, toolKeyOf, type ToolKey } from '@/lib/free-tools'
 import { StayTimeline, YearWave, ChannelHub, YearChart, QrCode } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
@@ -468,7 +468,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
     if (aud === 'owner' && showSecond) add({ key: 'second', kind: 'page', section: 'Terms', render: () => null })
   } else for (const k of AUDIENCES[aud].order) parts[k]()
   // FREE TOOLS (Jon, 2026-11-12): optional calculator pages before the close, chosen in the builder.
-  const toolsOn: ToolKey[] = (Array.isArray(mag.tools) ? mag.tools : []).filter(isToolKey)
+  const toolsOn: ToolKey[] = Array.from(new Set((Array.isArray(mag.tools) ? mag.tools : []).map(toolKeyOf).filter(Boolean) as ToolKey[]))
   for (const k of toolsOn) add({ key: 'tool-' + k, kind: 'page', section: 'Free tools', render: () => null })
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
@@ -696,7 +696,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         <section key="manage" data-k="manage" className="mz-page mz-split-page">
           {canEdit && overfull.includes('manage') ? <p className="mz-overfull">This page is too full to print. Shorten a passage or hide a section.</p> : null}
           {gfx('manage')
-            ? <div className="mz-split-photo"><StayTimeline steps={ops} title={T('timelineTitle')} note={T('timelineNote')} tags={String(copy.timelineTags || '').split('|').map((x: string) => x.trim())} /></div>
+            ? <div className="mz-split-photo mz-split-gfx"><StayTimeline steps={ops} title={T('timelineTitle')} note={T('timelineNote')} tags={String(copy.timelineTags || '').split('|').map((x: string) => x.trim())} /></div>
             : <div className="mz-split-photo mz-ph" style={ph('manage')}><p className="mz-caption">A Stay-managed home</p></div>}
           <div className="mz-split-text">
             <header className="mz-run mz-run-tight"><span className="mz-run-mark">STAY</span><span>How we manage</span><span>{short(building)}</span></header>
@@ -730,7 +730,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
           </div>
           <div className="mz-channels">
             {kicker(<CT k="kListed" />)}
-            {gfx('tech') ? <ChannelHub channels={channels} count={channelCount} /> : <p>{channels.map((ch, i) => <React.Fragment key={i}>{i ? <i>·</i> : null}<span>{ch}</span></React.Fragment>)}<i>·</i><span className="mz-plus">{channelCount} platforms in all</span></p>}
+            {gfx('tech') && !phone ? <ChannelHub channels={channels} count={channelCount} /> : <p>{channels.map((ch, i) => <React.Fragment key={i}>{i ? <i>·</i> : null}<span>{ch}</span></React.Fragment>)}<i>·</i><span className="mz-plus">{channelCount} platforms in all</span></p>}
           </div>
         </>
       ), { section: 'Our technology' })
@@ -747,8 +747,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         const em = (x: string) => x.split(/(\*[^*]+\*)/).map((t, i) => t.startsWith('*') && t.endsWith('*') ? <em key={i}>{t.slice(1, -1)}</em> : t)
         const gets: Record<ToolKey, string[]> = {
           income: ['A yearly and monthly range for your home', 'Nightly rate, occupancy and the month-by-month pattern', 'What you would keep, self-managed or with a manager'],
-          inventory: ['Every item a guest expects, counted for your home', 'Grouped into the sets things are bought in', 'Must-have, recommended and optional, marked'],
-          linen: ['Every sheet, towel and pillow by bed size', 'Three sets in rotation: on the bed, in the wash, on the shelf', 'Grouped by bed, bath and kitchen'],
+          inventory: ['Every item a guest expects, sized to your beds, baths and kitchen appliances', 'Grouped into the sets things are bought in, must-have to optional', 'The linen at par: every sheet, towel and pillow by bed size'],
         }
         return frame(s.key, (
           <>
@@ -776,12 +775,12 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
               // A drawing of the tool itself: the questions it asks, and the answer held back until an email.
               <div className="mz-tool-demo" aria-hidden>
                 <div className="mz-tool-demo-in">
-                  {({ income: [['Neighborhood', area || 'Brickell'], ['Bedrooms', '1'], ['Bathrooms', '1']], inventory: [['Bedrooms', '2'], ['Bathrooms', '2'], ['Sleeps', '6'], ['Kitchen', 'Full']], linen: [['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Sleeps', '6']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
+                  {({ income: [['Neighborhood', area || 'Brickell'], ['Bedrooms', '1'], ['Bathrooms', '1']], inventory: [['Bedrooms', '2'], ['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Kitchen', 'Yes']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
                     <div key={l}><span>{l}</span><i>−</i><b>{v}</b><i>+</i></div>
                   ))}
                 </div>
                 <div className="mz-tool-demo-out">
-                  <p className="mz-kicker">{k === 'income' ? 'Could earn in a year' : k === 'inventory' ? 'What this home needs' : 'Linen at par'}</p>
+                  <p className="mz-kicker">{k === 'income' ? 'Could earn in a year' : 'What this home needs'}</p>
                   <p className="mz-tool-blur">{k === 'income' ? '$00,000 – $00,000' : '000 pieces'}</p>
                   <span className="mz-tool-lock">Full quote unlocks with an email · PDF download</span>
                 </div>
@@ -1202,7 +1201,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         </span>
       </nav>
       {drawerEl}
-      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} top={80} title={short(building) || building || undefined} contact={{ name: String(card.name || ''), role: String(card.role || ''), phone: String(card.phone || ''), email: String(card.email || ''), photo: String(card.photo || '') }} /> : specs.map(render)}
+      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} names={specs.map(s => s.key.startsWith('plan-') ? (plans.find(p => 'plan-' + p.id === s.key)?.name || s.section || '') : s.key.startsWith('tool-') && isToolKey(s.key.slice(5)) ? TOOL_META[s.key.slice(5) as ToolKey].short : s.key === 'back' ? 'Next step' : s.section || '')} top={80} title={short(building) || building || undefined} contact={{ name: String(card.name || ''), role: String(card.role || ''), phone: String(card.phone || ''), email: String(card.email || ''), photo: String(card.photo || '') }} /> : specs.map(render)}
     </div>
   )
 }
@@ -1651,7 +1650,13 @@ div.mz-ed{display:block}
 .mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-wave-page{min-height:86svh;position:relative;overflow:hidden}.mz-root:not(.mz-flipping) .mz-wave-page>div{position:absolute!important;inset:0}.mz-root:not(.mz-flipping) .mz-wave-page>div>div{left:20px!important;right:20px!important;top:36px!important}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
 .mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
-.mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr}
+.mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr!important}
+.mz-root:not(.mz-flipping) .mz-split-gfx{display:none}
+.mz-root:not(.mz-flipping) .mz-channels p{display:flex;flex-wrap:wrap;gap:4px 8px;white-space:normal}.mz-root:not(.mz-flipping) .mz-channels p span{white-space:nowrap}
+.mz-root:not(.mz-flipping) .mz-fine{margin:24px -20px 0;padding:18px 20px 28px}
+.mz-root:not(.mz-flipping) .mz-backcover .mz-back-main{margin-top:44px}
+.mz-root:not(.mz-flipping) .mz-chart-head{flex-wrap:wrap;gap:4px 12px}.mz-root:not(.mz-flipping) .mz-legend{white-space:nowrap;font-size:9px}
+.mz-root:has(.mz-reader){background:${C.paper}}
 .mz-root:not(.mz-flipping) .mz-table,.mz-root:not(.mz-flipping) .mz-table tbody{display:block}.mz-root:not(.mz-flipping) .mz-table thead{display:none}
 .mz-root:not(.mz-flipping) .mz-table tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px 12px;padding:12px 10px;border-bottom:1px solid ${C.grid}}
 .mz-root:not(.mz-flipping) .mz-table td{display:block;height:auto;padding:0!important;border:0!important;background:none!important;white-space:normal;text-align:left;width:auto!important;font-size:13px;box-shadow:none!important}

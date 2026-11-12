@@ -13,7 +13,7 @@ import { ChevronLeft, ChevronRight, List, Phone, Mail, X, MessageSquare } from '
 const PW = 816, PH = 1056, TURN_MS = 760
 
 export type FlipContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
-export function MagazineFlipbook({ pages, labels, top = 56, contact, title }: { pages: React.ReactNode[]; labels?: string[]; top?: number; contact?: FlipContact; title?: string }) {
+export function MagazineFlipbook({ pages, labels, names, top = 56, contact, title }: { pages: React.ReactNode[]; labels?: string[]; names?: string[]; top?: number; contact?: FlipContact; title?: string }) {
   const [vw, setVw] = useState(1200), [vh, setVh] = useState(800)
   useEffect(() => {
     const on = () => { setVw(window.innerWidth); setVh(window.innerHeight) }
@@ -22,7 +22,7 @@ export function MagazineFlipbook({ pages, labels, top = 56, contact, title }: { 
   // ONE PAGE AT A TIME, EVERYWHERE (Jon, 2026-11-12: "should be standard, one page at a time with a page
   // next"). A phone gets the readable page (PhoneReader); anything wider gets the printed page, whole,
   // scaled to the window, with Previous and Next beside it.
-  if (vw < 760) return <PhoneReader pages={pages} labels={labels || []} contact={contact} title={title} />
+  if (vw < 760) return <PhoneReader pages={pages} labels={labels || []} names={names || labels || []} contact={contact} title={title} />
   return <PageViewer pages={pages} labels={labels || []} vw={vw} vh={vh} top={top} />
 }
 
@@ -72,7 +72,7 @@ function PageViewer({ pages, labels, vw, vh, top }: { pages: React.ReactNode[]; 
   )
 }
 
-function PhoneReader({ pages, labels, contact, title }: { pages: React.ReactNode[]; labels: string[]; contact?: FlipContact; title?: string }) {
+function PhoneReader({ pages, labels, names, contact, title }: { pages: React.ReactNode[]; labels: string[]; names: string[]; contact?: FlipContact; title?: string }) {
   // ONE PAGE AT A TIME ON A PHONE TOO (Jon, 2026-11-12): the readable page fills the screen, scrolls
   // within itself when it is long, and Next / Previous (or a swipe) turns to the next page.
   const { at: cur, dir, go } = useTurner(pages.length)
@@ -93,7 +93,7 @@ function PhoneReader({ pages, labels, contact, title }: { pages: React.ReactNode
   const toc = labels.map((l, i) => ({ l: i === 0 ? 'Cover' : (l || (i === pages.length - 1 ? 'Contact' : '')), i }))
     .filter((x, j, a) => x.l && (j === 0 || a.findIndex(y => y.l === x.l) === j))
   const jump = (i: number) => { setSheet(null); go(i) }
-  const label = cur === 0 ? (title || 'Cover') : (labels[cur] || (cur === pages.length - 1 ? 'Contact' : ''))
+  const label = cur === 0 ? (title || 'Cover') : (names[cur] || labels[cur] || (cur === pages.length - 1 ? 'Contact' : ''))
   const atEnd = cur >= pages.length - 1
   const first = (contact?.name || '').split(' ')[0]
   const tel = (contact?.phone || '').replace(/[^\d+]/g, '')
@@ -103,7 +103,7 @@ function PhoneReader({ pages, labels, contact, title }: { pages: React.ReactNode
       <i className="mz-r-prog" style={{ transform: `scaleX(${prog})` }} />
       <div key={cur} className={'mz-r-page mz-r-turn ' + (dir > 0 ? 'fwd' : 'back') + (cur === 0 ? ' mz-r-cover' : '')}>{pages[cur]}</div>
       <div className="mz-r-next">
-        {cur < pages.length - 1 ? <button type="button" onClick={() => go(cur + 1)}><span>Next</span><b>{labels[cur + 1] && labels[cur + 1] !== labels[cur] ? labels[cur + 1] : cur + 1 === pages.length - 1 ? 'Contact' : 'Page ' + (cur + 2)}</b><ChevronRight size={18} /></button>
+        {cur < pages.length - 1 ? <button type="button" onClick={() => go(cur + 1)}><span>Next</span><b>{names[cur + 1] || labels[cur + 1] || (cur + 1 === pages.length - 1 ? 'Next step' : 'Page ' + (cur + 2))}</b><ChevronRight size={18} /></button>
           : contact && (contact.phone || contact.email) ? <button type="button" onClick={() => setSheet('contact')}><span>Next step</span><b>{first ? 'Talk to ' + first : 'Talk to us'}</b><ChevronRight size={18} /></button> : null}
       </div>
       <div className={'mz-r-dock' + (sheet ? ' up' : '')}>

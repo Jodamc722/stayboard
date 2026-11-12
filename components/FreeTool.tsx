@@ -9,15 +9,14 @@
 // inside a magazine and Stay's own look on its own page.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, Lock, Download, Phone, Mail, Check } from 'lucide-react'
-import { TOOL_META, INCOME_AREAS, BED_SIZES_PUBLIC, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary, type LinenFull, type LinenSummaryOut } from '@/lib/free-tools'
+import { TOOL_META, INCOME_AREAS, BED_SIZES_PUBLIC, APPLIANCE_KEYS, APPLIANCE_LABEL, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary } from '@/lib/free-tools'
 
 type Any = any
 export type ToolContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
 
 const DEFAULTS: Record<ToolKey, Any> = {
   income: { area: '', bedrooms: 1, bathrooms: 1, managed: false },
-  inventory: { bedrooms: 2, bathrooms: 2, guests: 6, kitchen: 'full' },
-  linen: { beds: { King: 1, Queen: 1 }, bathrooms: 2, guests: 6, kitchen: true, sleeper: false },
+  inventory: { bedrooms: 2, bathrooms: 2, guests: 6, beds: { King: 1, Queen: 1 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true } },
 }
 const emph = (x: string) => x.split(/(\*[^*]+\*)/).map((s, i) => s.startsWith('*') && s.endsWith('*') ? <em key={i}>{s.slice(1, -1)}</em> : s)
 const beds = (n: number) => (n === 0 ? 'Studio' : n + (n === 1 ? ' bedroom' : ' bedrooms'))
@@ -101,20 +100,21 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={5} step={0.5} />
       <Seg label="Run by" value={inp.managed ? 'm' : 's'} set={v => set('managed', v === 'm')} opts={[['s', 'Myself'], ['m', 'A manager']]} />
     </>
-  ) : tool === 'inventory' ? (
+  ) : (
     <>
       <Stepper label="Bedrooms" value={inp.bedrooms} set={v => set('bedrooms', v)} min={0} max={6} show={v => (v === 0 ? 'Studio' : String(v))} />
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={6} step={0.5} />
       <Stepper label="Sleeps" value={inp.guests} set={v => set('guests', v)} min={1} max={16} />
-      <Seg label="Kitchen" value={inp.kitchen} set={v => set('kitchen', v)} opts={[['full', 'Full'], ['kitchenette', 'Kitchenette'], ['none', 'None']]} />
-    </>
-  ) : (
-    <>
-      {BED_SIZES_PUBLIC.map(s => <Stepper key={s} label={s + ' beds'} value={inp.beds[s] || 0} set={v => set('beds', { ...inp.beds, [s]: v })} min={0} max={6} />)}
-      <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={6} step={0.5} />
-      <Stepper label="Sleeps" value={inp.guests} set={v => set('guests', v)} min={1} max={16} />
+      <p className="ft-sub">Beds, by size</p>
+      {BED_SIZES_PUBLIC.map(x => <Stepper key={x} label={x} value={inp.beds[x] || 0} set={v => set('beds', { ...inp.beds, [x]: v })} min={0} max={6} />)}
       <Seg label="Sofa bed" value={inp.sleeper ? 'y' : 'n'} set={v => set('sleeper', v === 'y')} opts={[['n', 'No'], ['y', 'Yes']]} />
       <Seg label="Kitchen" value={inp.kitchen ? 'y' : 'n'} set={v => set('kitchen', v === 'y')} opts={[['y', 'Yes'], ['n', 'No']]} />
+      {inp.kitchen ? (
+        <div className="ft-apps">
+          <span className="ft-lab">Appliances in the kitchen</span>
+          <div>{APPLIANCE_KEYS.map(k => <button key={k} type="button" className={inp.appliances[k] ? 'on' : ''} onClick={() => set('appliances', { ...inp.appliances, [k]: !inp.appliances[k] })}>{inp.appliances[k] ? <Check size={13} /> : null}{APPLIANCE_LABEL[k]}</button>)}</div>
+        </div>
+      ) : null}
     </>
   )
 
@@ -131,22 +131,12 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         </div>
       )
     }
-    if (tool === 'inventory') {
-      const s = summary as InventorySummary
-      return (
-        <div className="ft-head">
-          <p className="ft-lab">What this home needs</p>
-          <p className="ft-big">{s.pieces.toLocaleString()} <small>pieces</small></p>
-          <p className="ft-note">{s.items} items in {s.groups.length} sets: {s.must} must-have, {s.recommended} recommended{s.suggested ? ', ' + s.suggested + ' optional' : ''}.</p>
-        </div>
-      )
-    }
-    const s = summary as LinenSummaryOut
+    const s = summary as InventorySummary
     return (
       <div className="ft-head">
-        <p className="ft-lab">Linen at par, {s.par} sets in rotation</p>
-        <p className="ft-big">{s.pieces.toLocaleString()} <small>pieces</small></p>
-        <p className="ft-note">{s.groups.map(g => g.pieces + ' ' + g.group.toLowerCase()).join(' · ')}</p>
+        <p className="ft-lab">What this home needs</p>
+        <p className="ft-big">{(s.pieces + s.linenPieces).toLocaleString()} <small>pieces</small></p>
+        <p className="ft-note">{s.items} supply items in {s.groups.length} sets ({s.pieces} pieces), plus {s.linenPieces} pieces of linen at a par of {s.par}.</p>
       </div>
     )
   }, [summary, tool, contact?.name])
@@ -168,8 +158,9 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         <p className="ft-fine">Gross rental revenue for an established listing. “You keep” takes off typical booking-site fees ({f.channelPct}%){f.mgmtPct ? <> and a {f.mgmtPct}% management fee</> : <>; self-managed, so no management fee, but cleaning, supplies and your time are yours</>}. Built from {f.basis} comparable home{f.basis === 1 ? '' : 's'} in Stay Hospitality’s South Florida data. Estimates, not guarantees.</p>
       </>
     )
-  })() : tool === 'inventory' ? (() => {
+  })() : (() => {
     const f = full as InventoryFull
+    const lg = Array.from(new Set(f.linen.map(r => r.group)))
     return (
       <>
         <p className="ft-note">{f.describe}</p>
@@ -179,21 +170,14 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             <ul>{f.rows.filter(r => r.group === g.group).map((r, i) => <li key={i}><span>{r.name}</span><em className={'t-' + r.tier}>{TIER_LABEL[r.tier]}</em><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
-      </>
-    )
-  })() : (() => {
-    const f = full as LinenFull
-    const groups = Array.from(new Set(f.rows.map(r => r.group)))
-    return (
-      <>
+        <p className="ft-sub ft-mt">Linen at par</p>
         <p className="ft-note">{f.parText}</p>
-        {groups.map(g => (
+        {lg.map(g => (
           <div key={g} className="ft-group">
-            <p className="ft-lab">{g}</p>
-            <ul>{f.rows.filter(r => r.group === g).map((r, i) => <li key={i}><span>{r.name}{r.size ? <small> · {r.size}</small> : null}</span><b>{r.qty}</b></li>)}</ul>
+            <p className="ft-lab">Linen · {g}</p>
+            <ul>{f.linen.filter(r => r.group === g).map((r, i) => <li key={i}><span>{r.name}{r.size ? <small> · {r.size}</small> : null}</span><em /><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
-        
       </>
     )
   })()
@@ -264,6 +248,11 @@ const FT_CSS = `
 .ft-seg{display:inline-flex;background:var(--ft-soft);border-radius:99px;padding:3px}
 .ft-seg button{width:auto!important;height:30px!important;border:0!important;padding:0 12px;background:transparent!important;font:600 12.5px "Inter",sans-serif;color:var(--ft-muted)!important}
 .ft-seg button.on{background:#fff!important;color:var(--ft-ink)!important;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.ft-sub{margin:14px 0 0;font:400 20px var(--ft-display);color:var(--ft-ink)}
+.ft-apps{padding:12px 0;border-bottom:1px solid var(--ft-rule)}
+.ft-apps>div{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ft-apps button{display:inline-flex;align-items:center;gap:4px;height:34px;padding:0 12px;border-radius:99px;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-muted);font:600 12.5px "Inter",sans-serif;cursor:pointer}
+.ft-apps button.on{background:var(--ft-navy);border-color:var(--ft-navy);color:#fff}
 .ft-lab{font:600 10px "Inter",sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--ft-muted);margin:0}
 .ft-card{background:#fff;border:1px solid var(--ft-rule);border-radius:16px;padding:22px 22px 18px;align-self:start;min-width:0}
 .ft-head .ft-lab{color:var(--ft-acc)}

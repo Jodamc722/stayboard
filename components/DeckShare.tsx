@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { X } from 'lucide-react'
 
 type Any = any
-export type ShareWhat = 'digital' | 'print' | 'onepage' | 'keynote' | 'tool-income' | 'tool-inventory' | 'tool-linen'
+export type ShareWhat = 'digital' | 'print' | 'onepage' | 'keynote' | 'tool-income' | 'tool-inventory'
 
 export function DeckShare({ code, building, prospect, presenter, dek, onePager = true, onClose }: { code: string; building: string; prospect?: string; presenter?: string; dek?: string; onePager?: boolean; onClose: () => void }) {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
@@ -19,8 +19,7 @@ export function DeckShare({ code, building, prospect, presenter, dek, onePager =
     ...(onePager ? [{ k: 'onepage' as ShareWhat, label: 'One-pager', hint: 'Every unit type on a single page', url: deck + '?view=onepage', noun: 'a one-page summary' }] : []),
     { k: 'keynote', label: 'Keynote', hint: 'The presentation slides', url: deck, noun: 'the presentation' },
     { k: 'tool-income', label: 'Rental income calculator', hint: 'Free tool, credited to this deck', url: origin + '/tools/income?d=' + code, noun: 'a free calculator for what a home could earn' },
-    { k: 'tool-inventory', label: 'Inventory calculator', hint: 'Free tool, credited to this deck', url: origin + '/tools/inventory?d=' + code, noun: 'a free checklist of everything a rental needs' },
-    { k: 'tool-linen', label: 'Linen calculator', hint: 'Free tool, credited to this deck', url: origin + '/tools/linen?d=' + code, noun: 'a free linen calculator' },
+    { k: 'tool-inventory', label: 'Rental supply calculator', hint: 'Free tool, supplies and linen, credited to this deck', url: origin + '/tools/inventory?d=' + code, noun: 'a free checklist of everything a rental needs, linen included' },
   ]
   const [what, setWhat] = useState<ShareWhat>('digital')
   const opt = OPTS.find(o => o.k === what) || OPTS[0]
