@@ -62,6 +62,22 @@ export type PacketPlan = {
   adjust?: number
   /** This plan's own month shape (12 relative weights). Null = the building's, else Miami's. */
   season?: number[] | null
+  // THE TEAM'S RECORD OF A PROJECTION (Jon, 2026-11-12, the projections folder): never printed on a deck.
+  /** The units this projection was made for ("3706", "4310"). */
+  units?: string[]
+  /** Who it was prepared for, and when ("Oct 2026"). Internal. */
+  preparedFor?: string[]
+  prepared?: string
+  /** The nightly rate as the projection stated it (low, high), kept beside the one worked out from gross. */
+  adr?: number[]
+  /** Internal notes: approvals, caveats, where the numbers came from. */
+  notes?: string
+  /** The projection's own files (the PDF on Drive). */
+  files?: { name: string; url: string }[]
+  /** approved · pending (not approved yet) · caveat (use with care). Blank = approved. */
+  status?: 'approved' | 'pending' | 'caveat'
+  /** False keeps it out of the public projections calculator. Blank = in. */
+  public?: boolean
 }
 
 export type SalesCma = {
