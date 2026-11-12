@@ -68,7 +68,7 @@ function BuildingSearch({ value, onPick, onType }: { value: Any; onPick: (h: Any
   )
 }
 
-export function FreeTool({ tool, refCode, where, area, contact, embedded }: { tool: ToolKey; refCode?: string; where?: string; area?: string; contact?: ToolContact; embedded?: boolean }) {
+export function FreeTool({ tool, refCode, where, area, contact, embedded, team }: { tool: ToolKey; refCode?: string; where?: string; area?: string; contact?: ToolContact; embedded?: boolean; team?: { onCreated?: () => void } }) {
   const meta = TOOL_META[tool]
   const [inp, setInp] = useState<Any>(() => ({ ...DEFAULTS[tool], ...(tool === 'income' && area ? { area } : {}) }))
   const [summary, setSummary] = useState<Any>(null)
@@ -107,13 +107,39 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       const d = await r.json().catch(() => null)
       if (!d?.ok || !d.full) { setErr(d?.error || 'That did not go through. Try again.'); return }
       unlocked.current = { email: form.email, name: form.name, phone: form.phone }
+      try { sessionStorage.setItem('stay-tool-who', JSON.stringify(unlocked.current)) } catch { /* */ }
       setFull(d.full); setSummary(d.summary); setGate(false)
+      // THE PROJECTION OPENS ON ITS OWN PAGE (Jon, 2026-11-12), where the numbers have room and it downloads.
+      if (tool === 'income' && d.report) { openReport(d.report); return }
       // Straight to the download (Jon, 2026-11-12: "should just be a download").
       fullRef.current = d.full
       if (tool === 'income') { /* the projection shows on the page; the PDF is a button under it */ }
       else if (fmt === 'xlsx') xlsx(form.email); else pdf(d.full)
     } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
   }
+  function openReport(code: string) {
+    try { sessionStorage.setItem('stay-tool-inp', JSON.stringify(inp)) } catch { /* */ }
+    const url = '/r/' + code
+    if (embedded) window.open(url, '_blank', 'noopener'); else window.location.assign(url)
+  }
+  // After a change on the form: a fresh page for the new answer.
+  async function reopen() {
+    const u = unlocked.current; if (!u) return
+    setBusy(true); setErr('')
+    try {
+      const d = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, input: inp, ref: refCode, where, ...u, refresh: true, makeReport: true }) }).then(r => r.json())
+      if (d?.report) openReport(d.report); else setErr('That did not go through. Try again.')
+    } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
+  }
+  // Back from the projection page ("Change the details"): the form and the unlock are as they were.
+  useEffect(() => {
+    if (tool !== 'income') return
+    try {
+      const who = JSON.parse(sessionStorage.getItem('stay-tool-who') || 'null'); if (who && who.email) unlocked.current = who
+      const saved = JSON.parse(sessionStorage.getItem('stay-tool-inp') || 'null'); if (saved && typeof saved === 'object') setInp((p: Any) => ({ ...p, ...saved }))
+    } catch { /* */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // THE EXCEL CHECKLIST (supply calculator only): counts, a Bought and an In-the-home tick column, notes.
   async function xlsx(email = unlocked.current?.email || '') {
     try {
@@ -262,7 +288,22 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       <div className="ft-inputs">{inputs}</div>
       <div className="ft-card">
         {tool === 'income' && full ? null : headline}
-        {!full ? (
+        {team && tool === 'income' ? (
+          // THE TEAM'S WAY IN (Sales → Projections library): no email gate; it saves a page to edit and send.
+          <div className="ft-gate">
+            <p className="ft-lab">Who is it for</p>
+            <input placeholder="Owner's name (optional)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            <button type="button" disabled={busy || !summary?.found} onClick={async () => {
+              setBusy(true); setErr('')
+              try {
+                const d = await fetch('/api/sales/calc-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: inp, preparedFor: form.name }) }).then(r => r.json())
+                if (d?.ok && d.code) { window.open('/r/' + d.code, '_blank', 'noopener'); team.onCreated?.() } else setErr(d?.error || 'That did not go through. Try again.')
+              } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
+            }}>{busy ? 'Building…' : 'Create the projection page →'}</button>
+            {err ? <p className="ft-err">{err}</p> : null}
+            <p className="ft-fine">It opens in a new tab. Change the look, the title, any figure and the note right on the page, then send the link or the PDF.</p>
+          </div>
+        ) : !full ? (
           gate ? (
             <form className="ft-gate" onSubmit={unlock}>
               <p className="ft-lab">{tool === 'income' ? 'Your email, to see it' : 'Your email, to download'}</p>
@@ -284,11 +325,17 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
           )
         ) : (
           <div className="ft-quote">
-            <p className="ft-ok"><Check size={15} /> {tool === 'income' ? 'Here is your projection. Change the details above and it updates.' : 'Your download has started. Change the details above and download again any time.'}</p>
+            {tool === 'income' && (full as IncomeFull).found ? (<>
+              <p className="ft-ok"><Check size={15} /> Your projection is ready. Change any detail and open it again.</p>
+              <button type="button" className="ft-cta" disabled={busy} onClick={reopen}>{busy ? 'Opening…' : 'Open my projection →'}</button>
+              {err ? <p className="ft-err">{err}</p> : null}
+            </>) : (<>
+            <p className="ft-ok"><Check size={15} /> {tool === 'income' ? 'Thank you.' : 'Your download has started. Change the details above and download again any time.'}</p>
             {quote}
+            </>)}
             <div className="ft-actions">
               {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
-              <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>
+              {tool === 'income' ? null : <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>}
               {tel && !contact?.name ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call us</a> : null}
             </div>
             {contact?.name ? (

@@ -8,6 +8,8 @@ import { runTool, summaryOf } from '@/lib/free-tools-server'
 import { addLead, EMAIL_RE } from '@/lib/need-list-leads'
 import { notify } from '@/lib/notify'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
+import { createCalcReport } from '@/lib/calc-report-server'
+import type { IncomeInput } from '@/lib/free-tools'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,12 +45,19 @@ export async function POST(req: NextRequest) {
   // The percentages behind an estimate stay with the team (Jon, 2026-11-12: "the percentage increase
   // should not show… it should just increase"): the public answer carries the adjusted range only.
   const out: any = tool === 'income' ? { ...full, adjustments: [], adjTotal: 0, baseLo: 0, baseHi: 0 } : full
-  if (b?.refresh) return NextResponse.json({ ok: true, summary, full: out }, { headers: NO_STORE })
+  // THE PROJECTION PAGE (Jon, 2026-11-12: "once the projection is generated it should open to a new page"):
+  // the unlock, and every "Open my projection" after a change, saves a page at /r/<code> for this answer.
+  const page = async () => {
+    if (tool !== 'income' || !(full as IncomeFull).found) return null
+    const r = await createCalcReport({ input: input as IncomeInput, full: full as IncomeFull, source: 'public' }).catch(() => null)
+    return r && r.ok ? r.code : null
+  }
+  if (b?.refresh) return NextResponse.json({ ok: true, summary, full: out, ...(b?.makeReport ? { report: await page() } : {}) }, { headers: NO_STORE })
   const saved = await addLead({ email, name: b?.name, phone: b?.phone, homes: TOOL_META[tool].short + ': ' + homes, units: 1, source: ['Free tool', TOOL_META[tool].short, where, ref ? '/r/' + ref : ''].filter(Boolean).join(' · ') })
   if (!saved.ok) return NextResponse.json(saved, { status: 400, headers: NO_STORE })
   try {
     const nick = STAY_CONTACT.person?.email
     if (nick) await notify([nick], { kind: 'tool_lead', title: `New lead: ${String(b?.name || email).slice(0, 60)} used the ${TOOL_META[tool].short.toLowerCase()}`, body: homes + (where ? ' · from ' + where : ''), link: '/sales' })
   } catch { /* the lead is saved; the bell is a courtesy */ }
-  return NextResponse.json({ ok: true, summary, full: out }, { headers: NO_STORE })
+  return NextResponse.json({ ok: true, summary, full: out, report: await page() }, { headers: NO_STORE })
 }
