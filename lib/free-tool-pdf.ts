@@ -139,13 +139,11 @@ export async function toolPdf(opts: { tool: 'income' | 'inventory'; full: Income
         font('helvetica', 'bold', 6.3); color(INK); doc.text('$' + (m.hi / 1000).toFixed(1) + 'K', x + w / 2, y + ch - hh - 4, { align: 'center' })
       })
       y += ch + 30
-      const adj = (f as any).adjustments as { label: string; pct: number }[] | undefined
-      if (adj && adj.length) { section('What moved the number'); zebra = false; adj.forEach(a => item(a.label, '', (a.pct > 0 ? '+' : '') + a.pct + '%', false)) }
       const comps = (f as any).comps as { name: string; market: string; gross: string; nightly: string; occ: string }[] | undefined
       if (comps && comps.length) { section('The comparables behind it'); zebra = false; comps.forEach(c => item(c.name, '', c.gross, false, [c.market, c.nightly, c.occ].filter(Boolean).join('  ·  '))) }
       const places = f.places || []
       if (places.length) { section('Nearby', f.beachMi != null ? 'about ' + (f.beachMi < 0.95 ? f.beachMi.toFixed(1) : Math.round(f.beachMi)) + ' mi to the beach' : ''); zebra = false; places.forEach(p => item(p.name, p.kind, p.mi + ' mi', false)) }
-      para('From ' + f.basisLabel + ': ' + f.basis + ' comparable home' + (f.basis === 1 ? '' : 's') + ' in Stay Hospitality’s South Florida projections, then adjusted as listed. “You keep” takes off booking-site fees (' + f.channelPct + '%)' + (f.mgmtPct ? ' and a ' + f.mgmtPct + '% management fee.' : '; self-managed, so no management fee, but cleaning, supplies and your time are yours.'), 8.5, MUTE, 'italic')
+      para('From ' + f.basisLabel + ': ' + f.basis + ' comparable home' + (f.basis === 1 ? '' : 's') + ' in Stay Hospitality’s South Florida projections, adjusted for the details given. “You keep” takes off booking-site fees (' + f.channelPct + '%)' + (f.mgmtPct ? ' and a ' + f.mgmtPct + '% management fee.' : '; self-managed, so no management fee, but cleaning, supplies and your time are yours.'), 8.5, MUTE, 'italic')
     }
     panel('This is an estimate', opts.estimateNote || 'For a more granular estimate built for your exact unit, reach out to ' + (opts.contact?.name || 'our team') + '.')
   } else {

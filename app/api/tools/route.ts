@@ -40,12 +40,15 @@ export async function POST(req: NextRequest) {
   const homes = tool === 'income' ? [ii.building, ii.address, (ii.bedrooms === 0 ? 'Studio' : ii.bedrooms + ' BR'), ii.sqft ? ii.sqft + ' SF' : '', ii.view !== 'none' ? ii.view + ' view' : ''].filter(Boolean).join(' · ')
     : (full as InventoryFull).describe
   // A change after unlocking recomputes the same lead's quote; it is not a new lead and no new bell.
-  if (b?.refresh) return NextResponse.json({ ok: true, summary, full }, { headers: NO_STORE })
+  // The percentages behind an estimate stay with the team (Jon, 2026-11-12: "the percentage increase
+  // should not show… it should just increase"): the public answer carries the adjusted range only.
+  const out: any = tool === 'income' ? { ...full, adjustments: [], adjTotal: 0, baseLo: 0, baseHi: 0 } : full
+  if (b?.refresh) return NextResponse.json({ ok: true, summary, full: out }, { headers: NO_STORE })
   const saved = await addLead({ email, name: b?.name, phone: b?.phone, homes: TOOL_META[tool].short + ': ' + homes, units: 1, source: ['Free tool', TOOL_META[tool].short, where, ref ? '/r/' + ref : ''].filter(Boolean).join(' · ') })
   if (!saved.ok) return NextResponse.json(saved, { status: 400, headers: NO_STORE })
   try {
     const nick = STAY_CONTACT.person?.email
     if (nick) await notify([nick], { kind: 'tool_lead', title: `New lead: ${String(b?.name || email).slice(0, 60)} used the ${TOOL_META[tool].short.toLowerCase()}`, body: homes + (where ? ' · from ' + where : ''), link: '/sales' })
   } catch { /* the lead is saved; the bell is a courtesy */ }
-  return NextResponse.json({ ok: true, summary, full }, { headers: NO_STORE })
+  return NextResponse.json({ ok: true, summary, full: out }, { headers: NO_STORE })
 }
