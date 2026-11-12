@@ -9,13 +9,14 @@
 import React from 'react'
 import { createPortal } from 'react-dom'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
+import { YearChart, StayTimelineWide, YearWaveWide, mzVars } from '@/components/MagazineGraphics'
 import {
   planNumbers, upliftLine, adjustLine, range, money, kMoney, compGross, pctRange, MONTHS,
   type SalesCma, type PacketPlan,
 } from '@/lib/sales-cma'
 
 type Any = any
-type SlideFn = (p: { nav?: string; children: React.ReactNode; pad?: number; warn?: boolean; ground?: string }) => React.ReactElement
+type SlideFn = (p: { nav?: string; children: React.ReactNode; pad?: number; bleed?: boolean; warn?: boolean; ground?: string }) => React.ReactElement
 export type CmaSlide = { key: string; node: React.ReactNode }
 
 /** Monthly bars, low and high, for one floor plan. Pure SVG so it prints and exports. */
@@ -43,24 +44,70 @@ export function MonthBars({ months, lo, hi, ink, muted, w = 560, h = 190 }: { mo
 
 /** ed: the deck's own edit-in-place field, so every word on these slides edits like the rest of the deck.
  *  onTune: opens the projection builder for a floor plan. Both come from ReportView; absent = read-only. */
-export type CmaDeps = { Slide: SlideFn; t: Any; edit: boolean; prospect: string; serif: string; ed?: (v: string, path: string, multiline?: boolean) => React.ReactNode; onTune?: (planId: string) => void; tunerFor?: (planId: string) => React.ReactNode }
+export type CmaDeps = { Slide: SlideFn; t: Any; edit: boolean; prospect: string; serif: string;
+  /** The magazine's story for the keynote (Jon, 2026-11-12): how a stay runs, the opener photo, who it is for. */
+  ops?: { k: string; v: string }[]; tags?: string[]; photo?: string; audience?: 'owner' | 'agents' | 'building'; workTitle?: string; numbersTitle?: string; ed?: (v: string, path: string, multiline?: boolean) => React.ReactNode; onTune?: (planId: string) => void; tunerFor?: (planId: string) => React.ReactNode }
 export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
   const { Slide, t, edit, serif } = d
   const T = (v: string, path: string, ml?: boolean): React.ReactNode => (d.ed && edit ? d.ed(v, path, ml) : v)
   const out: CmaSlide[] = []
   const S = cma.sections
+  const emph = (x: string) => x.split(/(\*[^*]+\*)/).map((seg, i) => seg.startsWith('*') && seg.endsWith('*') ? <em key={i} style={{ fontStyle: 'italic' }}>{seg.slice(1, -1)}</em> : seg)
   const where = [cma.building, cma.area].filter(Boolean).join(' · ')
   const eyebrow = (x: string, dark?: boolean) => (
     <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.accent, margin: 0 }}>{x}</p>
   )
   const title = (x: React.ReactNode, dark?: boolean, size = 38) => (
-    <h2 style={{ fontFamily: serif, fontWeight: 400, fontSize: size, lineHeight: 1.08, letterSpacing: '-0.015em', color: dark ? '#fff' : t.ink, margin: '10px 0 0', textWrap: 'balance' as Any }}>{x}</h2>
+    <h2 style={{ fontFamily: serif, fontWeight: 400, fontSize: size, lineHeight: 1.08, letterSpacing: '-0.015em', color: dark ? '#fff' : t.ink, margin: '10px 0 0', textWrap: 'balance' as Any }}>{typeof x === 'string' ? emph(x) : x}</h2>
   )
   const note = edit ? (
     <p className="sb-noprint" style={{ position: 'absolute', right: 18, bottom: 12, fontSize: 11, color: t.muted, background: t.chip, padding: '3px 8px', borderRadius: 6 }}>Words edit here; projections and comps in the Magazine builder or on the Sales tab</p>
   ) : null
   const cell: React.CSSProperties = { padding: '9px 10px', borderTop: '1px solid ' + t.rule, fontSize: 13, color: t.body, verticalAlign: 'top' }
   const th: React.CSSProperties = { padding: '0 10px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase', color: t.muted, textAlign: 'left' }
+
+  const vars = mzVars(t, serif)
+  const aud = d.audience || 'building'
+
+  // ── How a stay runs: the magazine's timeline, across a dark slide ───────────────────────────────
+  const ops = (d.ops || []).filter(o => o.k.trim()).slice(0, 6)
+  if (ops.length >= 3) out.push({ key: 'cma-run', node: (
+    <Slide nav="How we run a home" pad={52} warn={edit} ground={t.band}>
+      <div style={{ ...vars, position: 'relative', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {eyebrow('How we run a home', true)}
+        {title('One stay, *start to finish.*', true, 44)}
+        <p style={{ fontFamily: serif, fontSize: 17, fontStyle: 'italic', color: 'rgba(255,255,255,.72)', margin: '10px 0 0' }}>Our own team, our own standard, on every stay.</p>
+        <div style={{ marginTop: 'auto', marginBottom: 'auto', paddingTop: 30 }}><StayTimelineWide steps={ops} tags={d.tags} /></div>
+      </div>
+    </Slide>
+  ) })
+
+  // ── Working together: a full-bleed photo opener, like the magazine's ───────────────────────────
+  if ((S.partner || S.second) && d.photo) out.push({ key: 'cma-work', node: (
+    <Slide nav="Working together" bleed warn={edit} ground={t.band}>
+      <div style={{ position: 'relative', width: '100%', height: '100%', backgroundImage: `url("${d.photo}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(10,11,14,0) 35%, rgba(10,11,14,.78) 100%)' }} />
+        <div style={{ position: 'absolute', left: 64, right: 64, bottom: 56 }}>
+          {eyebrow('Working together', true)}
+          {title(d.workTitle || 'For the sales team, and the buyers they bring', true, 50)}
+        </div>
+      </div>
+    </Slide>
+  ) })
+
+  // ── The numbers: the Miami year as a landscape ──────────────────────────────────────────────────
+  if (S.plans || S.glance || S.market) out.push({ key: 'cma-num', node: (
+    <Slide nav="The numbers" bleed warn={edit} ground={t.band}>
+      <div style={{ ...vars, position: 'relative', width: '100%', height: '100%' }}>
+        <YearWaveWide />
+        <div style={{ position: 'absolute', left: 64, top: 64, width: 330 }}>
+          {eyebrow('The numbers', true)}
+          {title(d.numbersTitle || (cma.plans.length > 1 ? cma.plans.length + ' floor plans. *What each could earn.*' : 'What it *could earn.*'), true, 46)}
+          <p style={{ fontFamily: serif, fontSize: 17, lineHeight: 1.45, color: 'rgba(255,255,255,.8)', margin: '18px 0 0' }}>How demand moves through a Miami year: the same seasonal pattern behind every projection here.</p>
+        </div>
+      </div>
+    </Slide>
+  ) })
 
   // ── Agent partner program ─────────────────────────────────────────────────────────────────────
   if (S.partner) {
@@ -231,7 +278,7 @@ export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
       <Slide nav="Floor plans at a glance" pad={48} warn={edit}>
         <div style={{ position: 'relative', height: '100%' }}>
           {eyebrow(where || 'Floor plans')}
-          {title('Every floor plan at a glance', false, 34)}
+          {title('Every floor plan, *at a glance*', false, 36)}
           <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 18 }}>
             <thead><tr><th style={th}>Floor plan</th><th style={{ ...th, width: '34%' }}>Gross per year</th><th style={{ ...th, textAlign: 'right' }}>Per year</th><th style={{ ...th, textAlign: 'right' }}>Per month</th></tr></thead>
             <tbody>
@@ -239,8 +286,11 @@ export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
                 <tr key={p.id}>
                   <td style={{ ...cell, padding: '6px 10px' }}><span style={{ fontWeight: 600, color: t.ink }}>{p.name}</span> <span style={{ fontSize: 11, color: t.muted }}>{p.sf}</span></td>
                   <td style={{ ...cell, padding: '6px 10px' }}>
-                    <div style={{ position: 'relative', height: 10, background: t.chip, borderRadius: 99 }}>
-                      <div style={{ position: 'absolute', left: (n.lo / max * 100) + '%', width: Math.max(2, (n.hi - n.lo) / max * 100) + '%', top: 0, bottom: 0, background: t.accent, borderRadius: 99 }} />
+                    <div style={{ position: 'relative', height: 12 }}>
+                      <div style={{ position: 'absolute', left: 0, right: 0, top: 5.5, height: 1, background: t.rule }} />
+                      <div style={{ position: 'absolute', left: (n.lo / max * 100) + '%', width: Math.max(1, (n.hi - n.lo) / max * 100) + '%', top: 5, height: 2, background: t.ink }} />
+                      <div style={{ position: 'absolute', left: `calc(${n.lo / max * 100}% - 4px)`, top: 2, width: 8, height: 8, borderRadius: 99, background: t.ink }} />
+                      <div style={{ position: 'absolute', left: `calc(${n.hi / max * 100}% - 4px)`, top: 2, width: 8, height: 8, borderRadius: 99, background: t.ink }} />
                     </div>
                   </td>
                   <td style={{ ...cell, padding: '6px 10px', textAlign: 'right', fontWeight: 600, color: t.ink, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{range(n.lo, n.hi)}</td>
@@ -262,53 +312,70 @@ export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
 }
 
 function planSlide(cma: SalesCma, p: PacketPlan, d: CmaDeps, h: Any) {
+  // THE PLAN SLIDE, IN THE MAGAZINE'S LOOK (Jon, 2026-11-12): one big figure in the display face,
+  // three quiet figures under a hairline, the fine-line year, and the comparable set it rests on.
   const { Slide, t, edit, serif } = d
   const pi = cma.plans.findIndex(x => x.id === p.id)
   const T = (v: string, path: string, ml?: boolean): React.ReactNode => (d.ed && edit ? d.ed(v, path, ml) : v)
   const n = planNumbers(cma, p)
   const comps = p.compIds.map(id => cma.comps.find(c => c.id === id)).filter(Boolean) as SalesCma['comps']
-  const stat = (label: string, value: string, sub: string, dark?: boolean) => (
-    <div style={{ background: dark ? t.band : t.chip, color: dark ? '#fff' : t.ink, borderRadius: 14, padding: '14px 18px' }}>
-      <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: dark ? 'rgba(255,255,255,0.6)' : t.muted, margin: 0 }}>{label}</p>
-      <p style={{ fontFamily: serif, fontSize: 26, lineHeight: 1.1, margin: '6px 0 0', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{value}</p>
-      <p style={{ fontSize: 11.5, color: dark ? 'rgba(255,255,255,0.7)' : t.muted, margin: '3px 0 0' }}>{sub}</p>
+  const dash = (a: number, b: number) => a === b ? money(a) : money(a) + ' – ' + money(b)
+  const lab: React.CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.muted, margin: 0 }
+  const fig = (label: string, value: string, sub: string) => (
+    <div style={{ minWidth: 0 }}>
+      <p style={lab}>{label}</p>
+      <p style={{ fontFamily: serif, fontSize: 19, lineHeight: 1.1, color: t.ink, margin: '6px 0 0', fontVariantNumeric: 'lining-nums tabular-nums', whiteSpace: 'nowrap' }}>{value}</p>
+      <p style={{ fontSize: 10.5, fontStyle: 'italic', fontFamily: serif, color: t.muted, margin: '3px 0 0' }}>{sub}</p>
     </div>
   )
+  const td: React.CSSProperties = { padding: '6px 8px', borderTop: '1px solid ' + t.rule, fontSize: 11.5, color: t.body, verticalAlign: 'top', fontVariantNumeric: 'tabular-nums' }
+  const us: React.CSSProperties = { ...td, color: t.ink, fontWeight: 700, background: t.chip, borderTop: '1px solid ' + t.ink }
   return (
-    <Slide nav={p.name} pad={44} warn={edit}>
-      <div style={{ position: 'relative', height: '100%', display: 'grid', gridTemplateColumns: '400px minmax(0,1fr)', gap: 30 }}>
+    <Slide nav={p.name} pad={48} warn={edit}>
+      <div style={{ ...mzVars(t, serif), position: 'relative', height: '100%', display: 'grid', gridTemplateColumns: '420px minmax(0,1fr)', gap: 40 }}>
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {h.eyebrow((h.where ? h.where + ' · ' : '') + 'Rental comparison')}
-          {h.title(T(p.name, `cma.plans.${pi}.name`) as Any, false, 40)}
-          <p style={{ fontSize: 12.5, color: t.muted, margin: '8px 0 0' }}>{[p.sf, p.rules].filter(Boolean).join('  ·  ')}</p>
-          <div style={{ display: 'grid', gap: 10, marginTop: 18 }}>
-            {stat('Per year', range(n.lo, n.hi), 'Gross rental revenue')}
-            {stat('Per month, on average', range(n.monthLo, n.monthHi), 'Gross rental revenue', true)}
-            {stat('Peak month', 'up to ' + money(n.peak), n.peakMonth + ', high end')}
+          {h.eyebrow((h.where ? h.where + ' · ' : '') + 'Rental projection')}
+          {h.title(T(p.name, `cma.plans.${pi}.name`) as Any, false, 46)}
+          <p style={{ fontFamily: serif, fontStyle: 'italic', fontSize: 14, color: t.muted, margin: '8px 0 0' }}>{[p.sf, p.rules].filter(Boolean).join(' · ')}</p>
+          <div style={{ marginTop: 'auto' }}>
+            <p style={lab}>Could earn in a year, once established</p>
+            <p style={{ fontFamily: serif, fontSize: 42, lineHeight: 1.02, letterSpacing: '-0.01em', color: t.ink, margin: '10px 0 0', fontVariantNumeric: 'lining-nums', whiteSpace: 'nowrap' }}>{dash(n.lo, n.hi)}</p>
+            <p style={{ fontFamily: serif, fontStyle: 'italic', fontSize: 12.5, color: t.muted, margin: '6px 0 0' }}>Gross rental revenue, before channel fees and the management fee</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr 0.9fr', gap: 14, marginTop: 22, paddingTop: 16, borderTop: '1px solid ' + t.ink }}>
+              {fig('Per month', kMoney(n.monthLo) + '–' + kMoney(n.monthHi).replace('$', ''), 'on average')}
+              {fig('Peak month', 'up to ' + kMoney(n.peak), n.peakMonth + ', high end')}
+              {fig('Nightly', money(n.nightlyLo) + '–' + money(n.nightlyHi).slice(1), pctRange(p.occLo, p.occHi) + ' occupancy')}
+            </div>
           </div>
         </div>
         <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <MonthBars months={n.months} lo={t.accent + '88'} hi={t.band} ink={t.ink} muted={t.muted} w={600} h={200} />
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 10 }}>
-            <thead><tr><th style={h.th}>Comparable</th><th style={h.th}>Gross per year</th><th style={h.th}>Nightly</th><th style={h.th}>Occ.</th></tr></thead>
-            <tbody>
-              {comps.map(c => (
-                <tr key={c.id}>
-                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12 }}>{c.name}<div style={{ fontSize: 10.5, color: t.muted }}>{c.market}</div></td>
-                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>{compGross(c)}</td>
-                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{money(c.nightlyLo)}–{money(c.nightlyHi)}</td>
-                  <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap' }}>{pctRange(c.occLo, c.occHi)}</td>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+            <p style={lab}>Through the year</p>
+            <p style={{ ...lab, letterSpacing: '0.12em' }}><span style={{ color: t.ink }}>—</span> High end &nbsp; <span>┄</span> Low end</p>
+          </div>
+          <div style={{ marginTop: 8 }}><YearChart months={n.months} kind="line" h={290} /></div>
+          {comps.length ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 'auto' }}>
+              <thead><tr><th style={h.th}>Against the comparable set</th><th style={h.th}>Gross a year</th><th style={h.th}>Nightly</th><th style={h.th}>Occ.</th></tr></thead>
+              <tbody>
+                {comps.slice(0, 4).map(c => (
+                  <tr key={c.id}>
+                    <td style={td}>{c.name}<span style={{ color: t.muted }}>{c.market ? ' · ' + c.market : ''}</span></td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{compGross(c)}</td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{money(c.nightlyLo)}–{money(c.nightlyHi).slice(1)}</td>
+                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{pctRange(c.occLo, c.occHi)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td style={us}>{(cma.building ? cma.building.replace(/ Residences$/, '') + ' ' : '') + p.name}</td>
+                  <td style={{ ...us, whiteSpace: 'nowrap' }}>{range(n.lo, n.hi).replace(' to ', '–')}</td>
+                  <td style={{ ...us, whiteSpace: 'nowrap' }}>{money(n.nightlyLo)}–{money(n.nightlyHi).slice(1)}{p.suites > 1 ? ' /suite' : ''}</td>
+                  <td style={{ ...us, whiteSpace: 'nowrap' }}>{pctRange(p.occLo, p.occHi)}</td>
                 </tr>
-              ))}
-              <tr>
-                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip }}>{(cma.building ? cma.building.replace(/ Residences$/, '') + ' ' : '') + p.name}</td>
-                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip, fontVariantNumeric: 'tabular-nums' }}>{range(n.lo, n.hi)}</td>
-                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip, whiteSpace: 'nowrap' }}>{money(n.nightlyLo)}–{money(n.nightlyHi)}{p.suites > 1 ? ' /suite' : ''}</td>
-                <td style={{ ...h.cell, padding: '6px 10px', fontSize: 12, fontWeight: 700, color: t.ink, background: t.chip, whiteSpace: 'nowrap' }}>{pctRange(p.occLo, p.occHi)}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p style={{ fontSize: 10.5, lineHeight: 1.45, color: t.muted, margin: '8px 0 0' }}><b style={{ color: t.body }}>How we got there:</b> {T(p.how, `cma.plans.${pi}.how`, true)} {n.manual ? 'Range set by hand.' : upliftLine(cma)} {adjustLine(cma, p)}</p>
+              </tbody>
+            </table>
+          ) : <div style={{ marginTop: 'auto' }} />}
+          <p style={{ fontFamily: serif, fontStyle: 'italic', fontSize: 11, lineHeight: 1.45, color: t.muted, margin: '8px 0 0' }}><b style={{ fontStyle: 'normal', color: t.body }}>How we got there.</b> {T(p.how, `cma.plans.${pi}.how`, true)} {n.manual ? 'Range set by hand.' : upliftLine(cma)} {adjustLine(cma, p)}</p>
         </div>
         {edit && d.tunerFor ? d.tunerFor(p.id) : null}
         {edit && d.onTune ? <button type="button" className="sb-noprint" onClick={() => d.onTune!(p.id)} style={{ position: 'absolute', top: 0, right: 0, fontSize: 12, fontWeight: 600, background: t.band, color: '#fff', border: 0, borderRadius: 999, padding: '6px 12px', cursor: 'pointer' }}>Adjust projection</button> : null}

@@ -8,11 +8,12 @@
 //   • scaled to fit the window, so a spread is always whole
 // Pages are the magazine's own <section className="mz-page"> elements, rendered once each.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, List, Phone, Mail, X, MessageSquare } from 'lucide-react'
 
 const PW = 816, PH = 1056, TURN_MS = 760
 
-export function MagazineFlipbook({ pages, labels, top = 56 }: { pages: React.ReactNode[]; labels?: string[]; top?: number }) {
+export type FlipContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
+export function MagazineFlipbook({ pages, labels, top = 56, contact, title }: { pages: React.ReactNode[]; labels?: string[]; top?: number; contact?: FlipContact; title?: string }) {
   const [vw, setVw] = useState(1200), [vh, setVh] = useState(800)
   useEffect(() => {
     const on = () => { setVw(window.innerWidth); setVh(window.innerHeight) }
@@ -73,20 +74,11 @@ export function MagazineFlipbook({ pages, labels, top = 56 }: { pages: React.Rea
   const label = (labels || [])[R ?? L ?? 0] || ''
   const pageNo = (i: number | null) => (i == null ? '' : String(i + 1))
 
-  // ON A PHONE (Jon, 2026-11-11: "that will look too small on a phone"): one page at a time in the
-  // magazine's phone layout, full width and readable, scrolled within; swipe or the arrows turn it.
-  useEffect(() => { if (phone) window.scrollTo({ top: 0 }) }, [at, phone])
-  if (phone) return (
-    <div className="mz-flip mz-flip-phone" onPointerDown={onDown} onPointerUp={onUp}>
-      <style>{FLIP_CSS}</style>
-      <div className="mz-phone-page" key={at}>{pages[R ?? 0]}</div>
-      <div className="mz-flip-bar mz-flip-bar-fixed">
-        <button type="button" onClick={() => go(at - 1)} disabled={at === 0} aria-label="Previous page"><ChevronLeft size={18} /></button>
-        <span className="mz-flip-where"><b>{pageNo(R)}</b> of {pages.length}</span>
-        <button type="button" onClick={() => go(at + 1)} disabled={at >= spreads.length - 1} aria-label="Next page"><ChevronRight size={18} /></button>
-      </div>
-    </div>
-  )
+  // ON A PHONE (Jon, 2026-11-12: "needs to work as a shareable link we can share directly with owners,
+  // designed for phones"): not a shrunken page, a reader. Every page full width, edge to edge, scrolled
+  // like an article; a progress line; the section you are in; a contents sheet; and a way to reach the
+  // presenter from anywhere in it.
+  if (phone) return <PhoneReader pages={pages} labels={labels || []} contact={contact} title={title} />
   return (
     <div className="mz-flip" onPointerDown={onDown} onPointerUp={onUp}>
       <style>{FLIP_CSS}</style>
@@ -123,7 +115,101 @@ export function MagazineFlipbook({ pages, labels, top = 56 }: { pages: React.Rea
   )
 }
 
+function PhoneReader({ pages, labels, contact, title }: { pages: React.ReactNode[]; labels: string[]; contact?: FlipContact; title?: string }) {
+  const refs = useRef<(HTMLDivElement | null)[]>([])
+  const [cur, setCur] = useState(0)
+  const [prog, setProg] = useState(0)
+  const [sheet, setSheet] = useState<null | 'contents' | 'contact'>(null)
+  useEffect(() => {
+    const on = () => {
+      const h = document.documentElement
+      const max = Math.max(1, h.scrollHeight - window.innerHeight)
+      setProg(Math.min(1, Math.max(0, window.scrollY / max)))
+      const mid = window.innerHeight * 0.4
+      let c = 0
+      refs.current.forEach((el, i) => { if (el && el.getBoundingClientRect().top <= mid) c = i })
+      setCur(c)
+    }
+    on(); window.addEventListener('scroll', on, { passive: true }); window.addEventListener('resize', on)
+    return () => { window.removeEventListener('scroll', on); window.removeEventListener('resize', on) }
+  }, [pages.length])
+  // The contents: the first page of each section, in order.
+  const toc = labels.map((l, i) => ({ l: i === 0 ? 'Cover' : (l || (i === pages.length - 1 ? 'Contact' : '')), i }))
+    .filter((x, j, a) => x.l && (j === 0 || a.findIndex(y => y.l === x.l) === j))
+  const jump = (i: number) => { setSheet(null); const el = refs.current[i]; if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 52, behavior: 'smooth' }) }
+  const label = cur === 0 ? (title || 'Cover') : (labels[cur] || (cur === pages.length - 1 ? 'Contact' : ''))
+  const atEnd = cur >= pages.length - 1
+  const first = (contact?.name || '').split(' ')[0]
+  const tel = (contact?.phone || '').replace(/[^\d+]/g, '')
+  return (
+    <div className="mz-reader">
+      <style>{FLIP_CSS}</style>
+      <i className="mz-r-prog" style={{ transform: `scaleX(${prog})` }} />
+      {pages.map((p, i) => <div key={i} ref={el => { refs.current[i] = el }} className={'mz-r-page' + (i === 0 ? ' mz-r-cover' : '')}>{p}</div>)}
+      <div className={'mz-r-dock' + (sheet ? ' up' : '')}>
+        <button type="button" className="mz-r-where" onClick={() => setSheet(s => s === 'contents' ? null : 'contents')} aria-label="Contents">
+          <List size={16} /><span>{label}</span><em>{cur + 1}/{pages.length}</em>
+        </button>
+        {contact && (contact.phone || contact.email) ? (
+          <button type="button" className={'mz-r-talk' + (atEnd ? ' hot' : '')} onClick={() => setSheet(s => s === 'contact' ? null : 'contact')}>
+            {contact.photo ? <img src={contact.photo} alt="" /> : <MessageSquare size={15} />}<span>{first ? 'Talk to ' + first : 'Talk to us'}</span>
+          </button>
+        ) : null}
+      </div>
+      {sheet ? <div className="mz-r-scrim" onClick={() => setSheet(null)} /> : null}
+      {sheet === 'contents' ? (
+        <div className="mz-r-sheet" role="dialog" aria-label="Contents">
+          <header><b>Contents</b><button type="button" onClick={() => setSheet(null)} aria-label="Close"><X size={18} /></button></header>
+          <ol>{toc.map(x => <li key={x.i}><button type="button" className={x.i <= cur && (toc.find(y => y.i > x.i)?.i ?? 1e9) > cur ? 'on' : ''} onClick={() => jump(x.i)}><span>{x.l}</span><em>{x.i + 1}</em></button></li>)}</ol>
+        </div>
+      ) : null}
+      {sheet === 'contact' && contact ? (
+        <div className="mz-r-sheet" role="dialog" aria-label="Contact">
+          <header><b>{contact.name || 'Stay Hospitality'}</b><button type="button" onClick={() => setSheet(null)} aria-label="Close"><X size={18} /></button></header>
+          {contact.role ? <p className="mz-r-role">{contact.role}</p> : null}
+          <div className="mz-r-acts">
+            {tel ? <a href={'tel:' + tel}><Phone size={16} /><span>Call</span><small>{contact.phone}</small></a> : null}
+            {tel ? <a href={'sms:' + tel}><MessageSquare size={16} /><span>Text</span><small>{contact.phone}</small></a> : null}
+            {contact.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent((title || 'Stay Hospitality') + ' · a question')}><Mail size={16} /><span>Email</span><small>{contact.email}</small></a> : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 const FLIP_CSS = `
+.mz-reader{padding-bottom:96px;background:var(--mz-paper,#fff);margin:-36px -16px -64px}
+.mz-r-prog{position:fixed;left:0;right:0;top:44px;height:3px;background:var(--mz-glow,#8C6D3A);transform-origin:left center;z-index:40;pointer-events:none}
+.mz-r-page>.mz-page{margin:0!important;box-shadow:none!important;border-radius:0!important;width:100%!important;max-width:none!important}
+.mz-r-page+.mz-r-page>.mz-page:not(.mz-dark):not(.mz-opener):not(.mz-backcover){border-top:1px solid var(--mz-rule,#e4e2dd)}
+.mz-r-cover>.mz-page{min-height:calc(100svh - 44px)!important;display:flex;flex-direction:column;justify-content:flex-end}
+.mz-r-page .mz-opener,.mz-r-page .mz-backcover{min-height:88svh!important}
+.mz-r-dock{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;z-index:45;font-family:"Inter",system-ui,sans-serif}
+.mz-r-dock button{display:flex;align-items:center;gap:8px;border:0;border-radius:999px;height:48px;padding:0 16px;font:600 13.5px "Inter",system-ui,sans-serif;box-shadow:0 10px 30px rgba(10,11,14,.22);cursor:pointer}
+.mz-r-where{flex:1;min-width:0;background:rgba(255,255,255,.96);color:#101114;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.mz-r-where span{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mz-r-where em{font-style:normal;font-weight:500;color:#6B6C72;font-variant-numeric:tabular-nums}
+.mz-r-talk{background:var(--mz-navy,#14161B);color:#fff;padding:0 16px 0 6px!important}
+.mz-r-talk img{width:36px;height:36px;border-radius:99px;object-fit:cover}
+.mz-r-talk svg{margin-left:10px}
+.mz-r-talk.hot{background:var(--mz-glow,#8C6D3A)}
+.mz-r-scrim{position:fixed;inset:0;background:rgba(10,11,14,.36);z-index:46;animation:mzFade .2s ease-out}
+.mz-r-sheet{position:fixed;left:0;right:0;bottom:0;z-index:47;background:#fff;color:#101114;border-radius:20px 20px 0 0;padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));max-height:76svh;overflow-y:auto;font-family:"Inter",system-ui,sans-serif;animation:mzSheet .26s cubic-bezier(.2,.8,.2,1)}
+.mz-r-sheet header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.mz-r-sheet header b{font:400 24px/1.2 var(--mz-display,Georgia,serif)}
+.mz-r-sheet header button{border:0;background:#F3F2EF;border-radius:99px;width:34px;height:34px;display:grid;place-items:center;color:#101114}
+.mz-r-sheet ol{list-style:none;margin:0;padding:0}
+.mz-r-sheet li button{display:flex;width:100%;justify-content:space-between;align-items:baseline;border:0;background:none;padding:14px 0;border-bottom:1px solid #EEECE7;font:400 19px var(--mz-display,Georgia,serif);color:#101114;text-align:left}
+.mz-r-sheet li button em{font:500 12px "Inter",sans-serif;color:#86878C;font-style:normal}
+.mz-r-sheet li button.on{color:var(--mz-glow,#8C6D3A)}
+.mz-r-role{margin:0 0 12px;color:#6B6C72;font-size:13px}
+.mz-r-acts{display:grid;gap:8px}
+.mz-r-acts a{display:grid;grid-template-columns:22px auto 1fr;align-items:center;gap:10px;padding:15px 16px;border-radius:14px;background:#F3F2EF;color:#101114;text-decoration:none;font-weight:600;font-size:15px}
+.mz-r-acts a small{justify-self:end;font-weight:400;color:#6B6C72;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@keyframes mzSheet{from{transform:translateY(100%)}to{transform:none}}
+@keyframes mzFade{from{opacity:0}to{opacity:1}}
+
 .mz-flip{min-height:calc(100vh - 150px);display:flex;flex-direction:column;align-items:center;touch-action:pan-y;user-select:none}
 .mz-book{position:relative;perspective:3200px}
 .mz-book-in{position:absolute;left:0;top:0;transform-origin:top left;transform-style:preserve-3d}

@@ -20,7 +20,7 @@ import React, { useEffect, useState } from 'react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
 import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { MagazineFlipbook } from '@/components/MagazineFlipbook'
-import { StayTimeline, YearWave, ChannelHub } from '@/components/MagazineGraphics'
+import { StayTimeline, YearWave, ChannelHub, YearChart, QrCode } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
@@ -96,7 +96,8 @@ const themeVars = (t: MagTheme): React.CSSProperties => ({
   ['--mz-glow' as Any]: t.glow, ['--mz-desk' as Any]: t.desk, ['--mz-display' as Any]: t.display ? `"${t.display}", ${SERIF_DEFAULT}` : SERIF_DEFAULT,
   ['--mz-sans' as Any]: t.sans ? `"${t.sans}", ${SANS_DEFAULT}` : SANS_DEFAULT, ['--mz-ds' as Any]: String(t.ds || 1), ['--mz-paper' as Any]: t.paper || '#FFFFFF',
 })
-export type ChartKind = 'line' | 'bars' | 'band' | 'cumulative'
+export type { ChartKind } from '@/components/MagazineGraphics'
+import type { ChartKind } from '@/components/MagazineGraphics'
 const CHARTS: [ChartKind, string][] = [['line', 'Fine line'], ['bars', 'Bars'], ['band', 'Range band'], ['cumulative', 'Running total']]
 const PAGES: [string, string][] = [['about', 'Who we are'], ['team', 'The team and terms'], ['manage', 'How we manage'], ['tech', 'Our technology']]
 // PHOTO LOOKS (Jon, 2026-11-11: "filters for the photo like blur, enhance, modify"). Drawn with CSS
@@ -145,101 +146,7 @@ function overOf(el: Element): number | null {
   const page = el.getBoundingClientRect(), f = foot.getBoundingClientRect()
   return Math.max(last.getBoundingClientRect().bottom - f.top + 4, f.bottom + 24 - page.bottom)
 }
-function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number }) {
-  // Information-design audit (2026-11-11): one column per month, not paired bars — solid to the low
-  // end, lighter from low to high, so it reads "at least X, up to Y". Four gridlines, axis labels
-  // sitting on them at the left (FT style), and values only where the eye needs them: peak and trough.
-  const W = 688, H = h, T = 22, B = kind === 'line' ? 44 : 24, L = 40
-  const series = kind === 'cumulative'
-    ? months.reduce((acc: { lo: number; hi: number }[], m, i) => { const p = acc[i - 1] || { lo: 0, hi: 0 }; acc.push({ lo: p.lo + m.lo, hi: p.hi + m.hi }); return acc }, [])
-    : months
-  const max = Math.max(1, ...series.map(m => m.hi))
-  const raw = max / 4
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)))
-  const step = [1, 2, 2.5, 5, 10].map(x => x * mag).find(x => x >= raw) || raw
-  const top = step * 4
-  const ch = H - T - B, cw = (W - L) / 12
-  const y = (v: number) => T + ch - (v / top) * ch
-  const ticks = [1, 2, 3, 4].map(i => i * step)
-  const k$ = (v: number) => '$' + (v >= 100000 ? Math.round(v / 1000) : (Math.round(v / 100) / 10).toFixed(1)) + 'K'
-  const cx = (i: number) => L + i * cw + cw / 2
-  let pk = 0, tr = 0
-  series.forEach((m, i) => { if (m.hi > series[pk].hi) pk = i; if (m.hi < series[tr].hi) tr = i })
-  const grid = (
-    <g>
-      {ticks.map(v => (
-        <g key={v}>
-          <line x1={L - 4} x2={W} y1={y(v)} y2={y(v)} style={{ stroke: C.grid }} strokeWidth={1} shapeRendering="crispEdges" />
-          <text x={0} y={y(v) + 4} fontSize={10.5} style={{ fill: C.muted }} fontFamily={SANS}>{'$' + (v >= 1000 ? (v / 1000) + 'K' : v)}</text>
-        </g>
-      ))}
-      <line x1={L - 4} x2={W} y1={y(0)} y2={y(0)} style={{ stroke: C.ink }} strokeWidth={1.25} shapeRendering="crispEdges" />
-    </g>
-  )
-  const axis = MONTHS.map((m, i) => <text key={m} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={10.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.06em">{m.toUpperCase()}</text>)
-  const label = (i: number, text: string) => <text x={cx(i)} y={y(series[i].hi) - 7} textAnchor="middle" fontSize={11} fontWeight={600} style={{ fill: C.ink }} fontFamily={SANS}>{text}</text>
-  if (kind === 'bars') {
-    const bw = 30
-    return (
-      <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Monthly gross rental income, low and high end">
-        {grid}
-        {months.map((m, i) => (
-          <g key={i}>
-            <rect x={cx(i) - bw / 2} y={y(m.lo)} width={bw} height={y(0) - y(m.lo)} style={{ fill: C.navy }} />
-            <rect x={cx(i) - bw / 2} y={y(m.hi)} width={bw} height={y(m.lo) - y(m.hi)} style={{ fill: C.navy, opacity: 0.3 }} />
-          </g>
-        ))}
-        {label(pk, k$(months[pk].lo) + '–' + k$(months[pk].hi))}
-        {tr !== pk ? label(tr, k$(months[tr].lo) + '–' + k$(months[tr].hi)) : null}
-        {axis}
-      </svg>
-    )
-  }
-  const line = (k: 'lo' | 'hi') => series.map((m, i) => (i ? 'L' : 'M') + cx(i) + ' ' + y(m[k])).join(' ')
-  if (kind === 'line') {
-    // THE FINE LINE (Atelier): the high end as one smooth ink line, the low end dotted beneath it, and
-    // two notes in the margin voice: the peak month and the quiet one. No fill, no boxes.
-    const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-    const smooth = (k: 'lo' | 'hi') => {
-      const p = series.map((m, i) => [cx(i), y(m[k])] as [number, number])
-      let d = `M${p[0][0]},${p[0][1]}`
-      for (let i = 0; i < p.length - 1; i++) {
-        const a = p[i - 1] || p[i], b = p[i], c2 = p[i + 1], e = p[i + 2] || c2
-        d += ` C${(b[0] + (c2[0] - a[0]) / 6).toFixed(1)},${(b[1] + (c2[1] - a[1]) / 6).toFixed(1)} ${(c2[0] - (e[0] - b[0]) / 6).toFixed(1)},${(c2[1] - (e[1] - b[1]) / 6).toFixed(1)} ${c2[0]},${c2[1]}`
-      }
-      return d
-    }
-    const note = (i: number, text: string, below?: boolean) => {
-      const anchor = i >= 9 ? 'end' : i <= 2 ? 'start' : 'middle'
-      const dx = anchor === 'end' ? -8 : anchor === 'start' ? 8 : 0
-      return <text x={cx(i) + dx} y={below ? y(series[i].lo) + 20 : y(series[i].hi) - 12} textAnchor={anchor} fontSize={15} fontStyle="italic" style={{ fill: below ? C.muted : C.ink }} fontFamily={SERIF}>{text}</text>
-    }
-    return (
-      <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Monthly gross rental income, low and high end">
-        {ticks.map(v => <g key={v}><line x1={L - 4} x2={W} y1={y(v)} y2={y(v)} style={{ stroke: C.grid, opacity: 0.55 }} strokeWidth={0.75} shapeRendering="crispEdges" /><text x={0} y={y(v) + 4} fontSize={9.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.06em">{'$' + (v >= 1000 ? (v / 1000) + 'K' : v)}</text></g>)}
-        <path d={smooth('lo')} style={{ fill: 'none', stroke: C.muted }} strokeWidth={1} strokeDasharray="2 3" />
-        <path d={smooth('hi')} style={{ fill: 'none', stroke: C.ink }} strokeWidth={1.3} />
-        {series.map((m, i) => <circle key={i} cx={cx(i)} cy={y(m.hi)} r={i === pk || i === tr ? 3.6 : 1.7} style={{ fill: C.ink }} />)}
-        {note(pk, `${MONTH[pk]}, up to ${k$(series[pk].hi)}`)}
-        {tr !== pk ? note(tr, `${MONTH[tr]}, the quiet month`, true) : null}
-        {MONTHS.map((m, i) => <text key={m} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={9.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.2em">{m.toUpperCase()}</text>)}
-      </svg>
-    )
-  }
-  const band = series.map((m, i) => (i ? 'L' : 'M') + cx(i) + ' ' + y(m.hi)).join(' ') + ' ' + series.slice().reverse().map((m, j) => 'L' + cx(11 - j) + ' ' + y(m.lo)).join(' ') + ' Z'
-  const ends = kind === 'cumulative' ? [11] : [pk, tr]
-  return (
-    <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={kind === 'cumulative' ? 'Running total of gross rental income through the year' : 'Monthly gross rental income range'}>
-      {grid}
-      <path d={band} style={{ fill: C.navy, opacity: 0.16 }} />
-      <path d={line('lo')} style={{ fill: 'none', stroke: C.navy, opacity: 0.55 }} strokeWidth={1.5} />
-      <path d={line('hi')} style={{ fill: 'none', stroke: C.navy }} strokeWidth={2.25} />
-      {series.map((m, i) => <circle key={i} cx={cx(i)} cy={y(m.hi)} r={ends.includes(i) ? 4 : 2.5} style={{ fill: C.navy }} />)}
-      {ends.filter((v, i, a) => a.indexOf(v) === i).map(i => <g key={i}>{label(i, k$(series[i].lo) + '–' + k$(series[i].hi))}</g>)}
-      {axis}
-    </svg>
-  )
-}
+const Chart = (p: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number; w?: number }) => <YearChart {...p} h={p.h ?? CHART_H} />
 
 // ── The magazine ──────────────────────────────────────────────────────────────────────────────────
 export function SalesMagazine({ report, canEdit, onePager, digital }: { report: Any; canEdit?: boolean; onePager?: boolean; digital?: boolean }) {
@@ -288,6 +195,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
   // deck says. Only a page that still overflows at the last step is flagged to the editor.
   const [fit, setFit] = useState<Record<string, number>>({})
   useEffect(() => {
+    if (phone) return
     const id = setTimeout(() => {
       const next: Record<string, number> = {}
       document.querySelectorAll('.mz-page[data-k]').forEach(el => {
@@ -303,6 +211,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
     return () => clearTimeout(id)
   })
   useEffect(() => {
+    if (phone) return
     const id = setTimeout(() => {
       const next: Record<string, number> = {}
       document.querySelectorAll('.mz-page[data-k^="plan-"]').forEach(el => {
@@ -448,6 +357,15 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
   const hidden: string[] = Array.isArray(c.omit) ? c.omit : []
   const on = (k: string) => hidden.indexOf(k) < 0
   const keynote = '/r/' + report.code
+  // THE PRINTED PIECE POINTS TO THE DIGITAL ONE (Jon, 2026-11-12): a QR code on the back cover and the
+  // one-pager opens this same deck's digital magazine on a phone. The public address, never a preview's.
+  const digitalUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + keynote + '?view=digital'
+  const qrTile = (cls: string) => flip ? null : (
+    <div className={'mz-qr ' + cls}>
+      <QrCode text={digitalUrl} size={cls === 'mz-qr-one' ? 62 : 84} label="Scan to read the digital magazine" />
+      <div><b>{cls === 'mz-qr-one' ? 'Scan to read' : 'Read it on your phone'}</b><span>Scan for the digital magazine: every page, the latest numbers, and a direct line to {(card.name || 'our team').split(' ')[0]}.</span></div>
+    </div>
+  )
   const presenterFirst = String(card.name || '').split(/\s+/)[0] || ''
 
   const S = cma ? cma.sections : null
@@ -590,12 +508,12 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
       <tbody>
         {list.map(x => { const ci = cma ? cma.comps.findIndex(z => z.id === x.id) : -1; return (
           <tr key={x.id}>
-            <td><b><E v={x.name} p={`cma.comps.${ci}.name`} /></b></td>
-            <td><E v={x.market} p={`cma.comps.${ci}.market`} /></td>
-            {withBasis ? <td><E v={x.basis} p={`cma.comps.${ci}.basis`} /></td> : null}
-            <td className="r">{canEdit && editText ? <E v={compGross(x)} p={`cma.comps.${ci}.grossText`} /> : (x.grossText?.trim() ? x.grossText : dash(x.lo, x.hi))}</td>
-            <td className="r">{dash(x.nightlyLo, x.nightlyHi)}</td>
-            <td className="r">{pctRange(x.occLo, x.occHi).replace(' to ', '–')}</td>
+            <td className="w"><b><E v={x.name} p={`cma.comps.${ci}.name`} /></b></td>
+            <td className="w m"><E v={x.market} p={`cma.comps.${ci}.market`} /></td>
+            {withBasis ? <td className="w m"><E v={x.basis} p={`cma.comps.${ci}.basis`} /></td> : null}
+            <td className="r" data-l="A year">{canEdit && editText ? <E v={compGross(x)} p={`cma.comps.${ci}.grossText`} /> : (x.grossText?.trim() ? x.grossText : dash(x.lo, x.hi))}</td>
+            <td className="r" data-l="Nightly">{dash(x.nightlyLo, x.nightlyHi)}</td>
+            <td className="r" data-l="Occupancy">{pctRange(x.occLo, x.occHi).replace(' to ', '–')}</td>
           </tr>
         ) })}
         {us}
@@ -640,6 +558,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
                 <div><b>{card.name}</b><span>{card.role}</span><span className="mz-sel">{card.phone}</span><span className="mz-sel">{card.email}</span></div>
               </div>
             ) : null}
+            {qrTile('mz-qr-one')}
           </div>
           <p className="mz-one-fine">{String(cma!.disclaimer || '').split('. ').slice(0, 2).join('. ').replace(/\.?$/, '.')} Stay Hospitality · stay-hospitality.com</p>
         </div>
@@ -918,12 +837,12 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
               {kicker(chart === 'cumulative' ? 'The year, as it adds up' : <CT k="kChart" />)}
               {chart === 'line' ? <p className="mz-legend mz-legend-line"><i className="hi" /> High end <i className="lo" /> Low end</p> : <p className="mz-legend"><i className="lo" /> Low end <i className="hi" /> High end</p>}
             </div>
-            <Chart months={n.months} kind={chart} h={chartH['plan-' + p.id]} />
+            <Chart months={n.months} kind={chart} h={phone ? 230 : chartH['plan-' + p.id]} w={phone ? 380 : undefined} />
             <p className="mz-source"><CT k="chartSource" /></p>
             <div className="mz-comps">
               {kicker(<CT k="kComps" />)}
               {compsTable(comps, (
-                <tr className="mz-us"><td><b>{(short(building) ? short(building) + ' ' : '') + p.name}</b></td><td>{area ? area + ', new build' : 'New build'}</td><td className="r"><b>{dash(n.lo, n.hi)}</b></td><td className="r"><b>{dash(n.nightlyLo, n.nightlyHi)}</b></td><td className="r"><b>{pctRange(p.occLo, p.occHi).replace(' to ', '–')}</b></td></tr>
+                <tr className="mz-us"><td className="w"><b>{(short(building) ? short(building) + ' ' : '') + p.name}</b></td><td className="w m">{area ? area + ', new build' : 'New build'}</td><td className="r" data-l="A year"><b>{dash(n.lo, n.hi)}</b></td><td className="r" data-l="Nightly"><b>{dash(n.nightlyLo, n.nightlyHi)}</b></td><td className="r" data-l="Occupancy"><b>{pctRange(p.occLo, p.occHi).replace(' to ', '–')}</b></td></tr>
               ))}
               <p className="mz-how"><b>How we got there.</b> <E v={p.how} p={`cma.plans.${pi}.how`} block /> {n.manual ? 'The range was set by hand.' : `Ranges are then raised ${cma!.uplift.lo}% at the low end and ${cma!.uplift.hi}% at the high end, ${cma!.uplift.why}`} {adjustLine(cma!, p)}{showNet ? ` Owner estimate after ${channelPct}% channel fees and a ${mgmtPct}% management fee.` : ''}</p>
             </div>
@@ -948,6 +867,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
                 </div>
               </div>
             ) : null}
+            {qrTile('mz-qr-back')}
           </div>
           <p className="mz-fine">{cma ? <E v={cma.disclaimer} p="cma.disclaimer" block /> : 'Projections are estimates, not guarantees. Management terms are set in the written agreement.'}<br />Stay Hospitality · stay-hospitality.com{credits.length ? <><br />Photography: {credits.join(' · ')}</> : null}</p>
         </section>
@@ -1199,12 +1119,12 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
       <link rel="stylesheet" href={fontHref(drawer === 'style' ? Object.values(MAG_THEMES).flatMap(x => [x.display, x.sans]).concat([theme.display, theme.sans]) : [theme.display, theme.sans])} />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <style dangerouslySetInnerHTML={{ __html: Object.entries(fit).map(([k, l]) => {
+      <style dangerouslySetInnerHTML={{ __html: phone ? '' : Object.entries(fit).map(([k, l]) => {
         const f = [1, 0.93, 0.87, 0.81][l] || 1, z = [1, 0.95, 0.9, 0.85][l] || 1
         const sel = `.mz-page[data-k="${k.replace(/"/g, '')}"]`
         return `${sel}{--mz-ds:${((theme.ds || 1) * f).toFixed(3)}}${sel} .mz-body,${sel} .mz-split-body{padding-top:${Math.round(40 * f)}px}${sel} .mz-practice,${sel} .mz-how,${sel} .mz-table,${sel} .mz-qa,${sel} .mz-cards,${sel} .mz-steps,${sel} .mz-cols,${sel} .mz-tools,${sel} .mz-terms,${sel} .mz-lead,${sel} .mz-row3,${sel} .mz-partner,${sel} .mz-gl{zoom:${z}}`
       }).join('') }} />
-      <nav className="mz-bar-top">
+      <nav className={'mz-bar-top' + (flip && phone && !canEdit ? ' mz-bar-reader' : '')}>
         <span className="mz-run-mark mz-on-dark">STAY</span>
         <span className="mz-switch">
           {format === 'onepage' ? <a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Print</a> : flip ? <a href={keynote + '?view=magazine'}>Print</a> : <b>{format === 'brochure' ? 'Print · brochure' : 'Print'}</b>}
@@ -1241,7 +1161,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         </span>
       </nav>
       {drawerEl}
-      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} top={80} /> : specs.map(render)}
+      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} top={80} title={short(building) || building || undefined} contact={{ name: String(card.name || ''), role: String(card.role || ''), phone: String(card.phone || ''), email: String(card.email || ''), photo: String(card.photo || '') }} /> : specs.map(render)}
     </div>
   )
 }
@@ -1335,7 +1255,7 @@ const CSS = `
 .mz-one-points>div{border-top:1px solid ${C.ink};padding-top:10px}
 .mz-one-points b{display:block;font:300 calc(26px * var(--mz-ds))/1.05 ${SERIF};color:${C.ink}}
 .mz-one-points span{display:block;margin-top:5px;font:400 11.5px/1.4 ${SANS};color:${C.body}}
-.mz-one-foot{margin-top:auto;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:end;border-top:1px solid ${C.grid};padding-top:18px}
+.mz-one-foot{margin-top:auto;display:grid;grid-template-columns:1fr auto auto;gap:24px;align-items:end;border-top:1px solid ${C.grid};padding-top:18px}
 .mz-one-cta h2{font:300 calc(30px * var(--mz-ds))/1.05 ${SERIF};margin:0;color:${C.ink}}.mz-one-cta h2 em{font-style:italic;color:${C.sandText}}
 .mz-one-card{display:flex;gap:12px;align-items:center}.mz-one-card img{width:58px;height:58px;border-radius:999px;object-fit:cover;filter:grayscale(1)}
 .mz-one-card div{display:flex;flex-direction:column;font:400 11.5px/1.45 ${SANS};color:${C.body}}.mz-one-card b{font:400 calc(18px * var(--mz-ds)) ${SERIF};color:${C.ink}}
@@ -1544,6 +1464,13 @@ const CSS = `
 .mz-back-title{font-family:${SERIF};font-weight:300;font-size:calc(72px * var(--mz-ds));line-height:1;letter-spacing:-.025em;margin:0;max-width:9em;text-wrap:balance}
 .mz-back-title em{color:${C.glow}}
 .mz-back-dek{font:300 calc(20px * var(--mz-ds))/1.5 ${SERIF};color:rgba(255,255,255,.92);max-width:26em;margin:24px 0 0}
+.mz-qr{display:flex;align-items:center;gap:16px}
+.mz-qr>svg{flex:none;border-radius:6px}
+.mz-qr b{display:block;font:600 11px ${SANS};letter-spacing:.14em;text-transform:uppercase;margin-bottom:5px}
+.mz-qr span{display:block;font:400 12.5px/1.45 ${TEXT}}
+.mz-qr-back{margin-top:26px;padding:12px 18px 12px 12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);border-radius:12px;max-width:430px}
+.mz-qr-back b{color:${C.glow}}.mz-qr-back span{color:rgba(255,255,255,.82)}
+.mz-qr-one{gap:8px;flex-direction:column;align-items:center;text-align:center}.mz-qr-one b{font-size:8px;letter-spacing:.12em;color:${C.muted};margin:0}.mz-qr-one span{display:none}
 .mz-contact{display:flex;gap:24px;align-items:center;margin-top:40px;padding-top:28px;border-top:1px solid rgba(255,255,255,.4)}
 .mz-contact img,.mz-initials-l{width:112px;height:112px;border-radius:999px;object-fit:cover;object-position:50% 22%;flex:none;box-shadow:0 0 0 1px rgba(255,255,255,.4),0 0 0 7px rgba(255,255,255,.08)}
 .mz-initials-l{display:grid;font-size:calc(30px * var(--mz-ds))}
@@ -1648,6 +1575,7 @@ div.mz-ed{display:block}
 
 @media screen and (max-width:760px){
   .mz-bar-top{padding:8px 10px;gap:6px}.mz-bar-top>.mz-run-mark{display:none}
+  .mz-bar-reader{padding:8px max(16px,env(safe-area-inset-left))}.mz-bar-reader>.mz-run-mark{display:inline!important}.mz-bar-reader .mz-switch{display:none}
   .mz-bar-r{flex-wrap:nowrap;gap:6px}.mz-bar-top button{padding:6px 10px;font-size:11.5px;white-space:nowrap}
   .mz-switch a,.mz-switch b{padding:5px 8px;font-size:11.5px}
   .mz-wide{display:none}
@@ -1664,7 +1592,12 @@ div.mz-ed{display:block}
 .mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
 .mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr}
-.mz-root:not(.mz-flipping) .mz-table{display:block;overflow-x:auto}
+.mz-root:not(.mz-flipping) .mz-table,.mz-root:not(.mz-flipping) .mz-table tbody{display:block}.mz-root:not(.mz-flipping) .mz-table thead{display:none}
+.mz-root:not(.mz-flipping) .mz-table tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px 12px;padding:12px 10px;border-bottom:1px solid ${C.grid}}
+.mz-root:not(.mz-flipping) .mz-table td{display:block;height:auto;padding:0!important;border:0!important;background:none!important;white-space:normal;text-align:left;width:auto!important;font-size:13px;box-shadow:none!important}
+.mz-root:not(.mz-flipping) .mz-table td.w{grid-column:1/-1}.mz-root:not(.mz-flipping) .mz-table td.m{color:${C.muted};font-size:12px;margin-bottom:6px}
+.mz-root:not(.mz-flipping) .mz-table td[data-l]::before{content:attr(data-l);display:block;font:600 9px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted};margin-bottom:2px}
+.mz-root:not(.mz-flipping) .mz-table tr.mz-us{background:${C.sandSoft};border-top:1.25px solid ${C.ink};border-bottom:1.25px solid ${C.ink};box-shadow:inset 3px 0 0 ${C.sand}}
 .mz-root:not(.mz-flipping) .mz-glance-head{display:none}.mz-root:not(.mz-flipping) .mz-glance-row,.mz-root:not(.mz-flipping) .mz-glance.with-yield .mz-glance-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-glance-v,.mz-root:not(.mz-flipping) .mz-glance-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-earn-main b{font-size:calc(36px * var(--mz-ds));white-space:normal}
 .mz-root:not(.mz-flipping) .mz-adjust{top:12px;right:12px}

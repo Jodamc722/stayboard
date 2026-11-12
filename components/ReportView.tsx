@@ -39,6 +39,7 @@ import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, season
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
 import { cmaSlides, CmaTuneModal } from '@/components/SalesCmaSlides'
 import { normalizeCma } from '@/lib/sales-cma'
+import { AUDIENCES, audienceOf } from '@/lib/sales-audience'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
 import { useViewTracking } from '@/components/useViewTracking'
@@ -8194,7 +8195,14 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
           // on content.cma, are edited on the Sales tab, and print the same numbers the magazine does.
           if (isSales) { const cmaC = normalizeCma((c as Any).cma)
             if (cmaC) for (const sl of cmaSlides(cmaC, {
-              Slide: Slide as Any, t, edit, prospect: String((c.meta || {}).prospect || ''), serif: SERIF,
+              Slide: Slide as Any, t, edit, prospect: String((c.meta || {}).prospect || ''), serif: fontPair.display || SERIF,
+              // The magazine's story, drawn for 16:9 (Jon, 2026-11-12): the same timeline, opener photo and titles.
+              ops: (((sec('ops') as Any).rows || []) as Any[]).map((r: Any) => ({ k: String(r?.k || ''), v: String(r?.v || '') })).filter(r => r.k.trim() && r.v.trim()),
+              tags: String((((c as Any).magazine || {}).copy || {}).timelineTags || '').split('|').map((x: string) => x.trim()).filter(Boolean),
+              photo: String(((((c as Any).magazine || {}).photos || {}) as Any)['op-work'] || '') || ((Array.isArray((c as Any).photoPool) ? (c as Any).photoPool : []) as string[])[1] || String(((c as Any).hero || {}).heroImage || ''),
+              audience: audienceOf((c as Any).audience),
+              workTitle: AUDIENCES[audienceOf((c as Any).audience)].workTitle,
+              numbersTitle: String((((c as Any).magazine || {}).copy || {}).numbersTitle || '') || undefined,
               // Every word on the building slides edits in place like the rest of the deck, and each
               // floor plan opens the projection builder (Jon, 2026-11-11: full customization in both).
               ed: (v: string, path: string, ml?: boolean) => <Ed v={v} set={x => patch(path, x)} edit={edit} multiline={ml} />,
@@ -8532,6 +8540,30 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               .map((sl, ix) => ({ sl, ix }))
               .sort((a, b) => rank(a.sl.key) - rank(b.sl.key) || a.ix - b.ix)
               .map(x => x.sl)
+            // A DECK WITH BUILDING PAGES TELLS THE MAGAZINE'S STORY (Jon, 2026-11-12: "the keynote should
+            // flow similar"). Cover, then the three parts in the order this reader needs them (lib/sales-
+            // audience: an owner sees their numbers first, an agent the program, a building the operator),
+            // then the terms and the close. Anything not named keeps its house place inside its part.
+            if (normalizeCma((c as Any).cma)) {
+              const aud = audienceOf((c as Any).audience)
+              const part: Record<string, string[]> = {
+                who: ['property', 'overview', 'edge', 'proof', 'returns', 'experience', 'team', 'cma-run', 'ops', 'maxrev', 'stack', 'lighthouse', 'guesty', 'statement'],
+                work: ['cma-work', 'cma-partner', 'cma-partner-steps', 'cma-second', 'cma-second-steps'],
+                num: aud === 'owner'
+                  ? ['cma-num', 'cma-plan-*', 'cma-glance', 'cma-market', 'cma-comps', 'market', 'plan', 'comps']
+                  : ['cma-num', 'cma-market', 'cma-comps', 'cma-glance', 'cma-plan-*', 'market', 'plan', 'comps'],
+              }
+              const story = ['welcome', 'contact', ...AUDIENCES[aud].order.flatMap(k => part[k])]
+              const tail = ['terms', 'onbsteps', 'close']
+              const r2 = (k: string) => {
+                const ix = story.findIndex(x => x === k || (x.endsWith('*') && k.startsWith(x.slice(0, -1))))
+                if (ix >= 0) return ix
+                const tx = tail.indexOf(k)
+                if (tx >= 0) return 1000 + tx
+                return k.startsWith('custom:') ? 900 : story.indexOf('statement') + 0.5   // the rest of "who we are"
+              }
+              slides = slides.map((sl, ix) => ({ sl, ix })).sort((a, b) => r2(a.sl.key) - r2(b.sl.key) || a.ix - b.ix).map(x => x.sl)
+            }
           }
           // THE ORDER THE PRESENTER CHOSE (Nick, 2026-10-28: "drag slides into any order… lead
           // with the slides that matter most to a given audience"). content.order is the list of
