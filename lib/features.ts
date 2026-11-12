@@ -252,7 +252,7 @@ export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt'
 // it and the build fails claiming a page is unregistered.
 export const OPEN_PREFIXES = [
   // /api/ WITH the slash: a bare /api also matched the /api-keys page and skipped its role gate.
-  '/login', '/auth', '/api/', '/g/', '/day/', '/guide/', '/r/', '/audit/', '/walk/',
+  '/login', '/auth', '/api/', '/g/', '/day/', '/guide/', '/r/', '/m/', '/audit/', '/walk/',
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
   '/salato/share', '/salato/verify', '/verify/', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',

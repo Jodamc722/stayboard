@@ -152,7 +152,11 @@ function overOf(el: Element): number | null {
 const Chart = (p: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number; w?: number }) => <YearChart {...p} h={p.h ?? CHART_H} />
 
 // ── The magazine ──────────────────────────────────────────────────────────────────────────────────
-export function SalesMagazine({ report, canEdit, onePager, digital }: { report: Any; canEdit?: boolean; onePager?: boolean; digital?: boolean }) {
+export function SalesMagazine({ report, canEdit: canEdit0, onePager, digital, reader }: { report: Any; canEdit?: boolean; onePager?: boolean; digital?: boolean; reader?: boolean }) {
+  // THE OWNER'S LINK (Jon, 2026-11-12: "when you share the digital one with owners it needs to be a link for just
+  // that guidebook"): /m/<code> is the digital magazine and nothing else: no print, keynote or one-pager switch,
+  // no share, builder or edit, whoever opens it.
+  const canEdit = reader ? false : canEdit0
   const original: Any = report.content || {}
   const [doc, setDoc] = useState<Any>(() => structuredClone(original))
   const [touched, setTouched] = useState<string[]>([])
@@ -361,7 +365,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
   const keynote = '/r/' + report.code
   // THE PRINTED PIECE POINTS TO THE DIGITAL ONE (Jon, 2026-11-12): a QR code on the back cover and the
   // one-pager opens this same deck's digital magazine on a phone. The public address, never a preview's.
-  const digitalUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + keynote + '?view=digital'
+  const digitalUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + '/m/' + report.code
   const qrTile = (cls: string) => flip ? null : (
     <div className={'mz-qr ' + cls}>
       <QrCode text={digitalUrl} size={cls === 'mz-qr-one' ? 62 : 84} label="Scan to read the digital magazine" />
@@ -762,13 +766,22 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
                   <p className="mz-kicker">Free for any owner</p>
                   <ol className="mz-tool-list">{gets[k].map((g, i) => <li key={i}><span>{String(i + 1).padStart(2, '0')}</span>{g}</li>)}</ol>
                   <p className="mz-small">Enter the home’s details and see the headline straight away. Leave an email to unlock the full quote and download it as a PDF.</p>
-                  {!flip ? null : <a className="mz-tool-btn" href={url} target="_blank" rel="noreferrer">Open the calculator</a>}
                 </div>
+                {flip ? (
+                  // ON A SCREEN, A BUTTON (Jon, 2026-11-12: "a QR code does not make sense, more of a click here that
+                  // actually links to the tools"). The printed page keeps the code.
+                  <a className="mz-tool-go" href={url} target="_blank" rel="noreferrer">
+                    <span className="mz-kicker">Free · two minutes</span>
+                    <b>{k === 'income' ? 'See what your home could earn' : 'Get your supply and linen list'}</b>
+                    <i>Open the {m.short.toLowerCase()} →</i>
+                  </a>
+                ) : (
                 <div className="mz-tool-qr">
                   <QrCode text={url} size={150} label={'Scan to open the ' + m.short.toLowerCase()} />
                   <b>Scan to try it</b>
                   <span className="mz-sel">{url.replace(/^https?:\/\//, '').replace(/\?.*$/, '').replace('/tools/', '/tools/\u200b')}</span>
                 </div>
+                )}
               </div>
             )}
             {flip && phone ? null : (
@@ -923,6 +936,16 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
               </div>
             ) : null}
             {qrTile('mz-qr-back')}
+            {flip ? (
+              <div className="mz-back-tools">
+                <p className="mz-kicker">Free for any owner</p>
+                {(['income', 'inventory'] as ToolKey[]).map(tk => (
+                  <a key={tk} href={(process.env.NEXT_PUBLIC_SITE_URL || '') + '/tools/' + tk + '?d=' + encodeURIComponent(report.code)} target="_blank" rel="noreferrer">
+                    <b>{tk === 'income' ? 'What could your home earn?' : 'Everything a rental needs'}</b><span>{TOOL_META[tk].short} →</span>
+                  </a>
+                ))}
+              </div>
+            ) : null}
           </div>
           <p className="mz-fine">{cma ? <E v={cma.disclaimer} p="cma.disclaimer" block /> : 'Projections are estimates, not guarantees. Management terms are set in the written agreement.'}<br />Stay Hospitality · stay-hospitality.com{credits.length ? <><br />Photography: {credits.join(' · ')}</> : null}</p>
         </section>
@@ -1181,6 +1204,16 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         const sel = `.mz-page[data-k="${k.replace(/"/g, '')}"]`
         return `${sel}{--mz-ds:${((theme.ds || 1) * f).toFixed(3)}}${sel} .mz-body,${sel} .mz-split-body{padding-top:${Math.round(40 * f)}px}${sel} .mz-practice,${sel} .mz-how,${sel} .mz-table,${sel} .mz-qa,${sel} .mz-cards,${sel} .mz-steps,${sel} .mz-cols,${sel} .mz-tools,${sel} .mz-terms,${sel} .mz-lead,${sel} .mz-row3,${sel} .mz-partner,${sel} .mz-gl{zoom:${z}}`
       }).join('') }} />
+      {reader ? (
+        <nav className={'mz-bar-top mz-bar-owner' + (phone ? ' mz-bar-reader' : '')}>
+          <span className="mz-run-mark mz-on-dark">STAY</span>
+          <span className="mz-owner-t">{short(building) || building || 'Stay Hospitality'}</span>
+          <span className="mz-bar-r">
+            {card.phone ? <a className="mz-ghost" href={'tel:' + String(card.phone).replace(/[^\d+]/g, '')}>Call {(card.name || 'us').split(' ')[0]}</a> : null}
+            {card.email ? <a className="mz-ghost mz-wide" href={'mailto:' + card.email}>Email</a> : null}
+          </span>
+        </nav>
+      ) : (
       <nav className={'mz-bar-top' + (flip && phone && !canEdit ? ' mz-bar-reader' : '')}>
         <span className="mz-run-mark mz-on-dark">STAY</span>
         <span className="mz-switch">
@@ -1200,6 +1233,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
           <button type="button" onClick={() => { if (flip) window.location.href = keynote + '?view=magazine&print=1'; else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
         </span>
       </nav>
+      )}
       {drawerEl}
       {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} names={specs.map(s => s.key.startsWith('plan-') ? (plans.find(p => 'plan-' + p.id === s.key)?.name || s.section || '') : s.key.startsWith('tool-') && isToolKey(s.key.slice(5)) ? TOOL_META[s.key.slice(5) as ToolKey].short : s.key === 'back' ? 'Next step' : s.section || '')} top={80} title={short(building) || building || undefined} contact={{ name: String(card.name || ''), role: String(card.role || ''), phone: String(card.phone || ''), email: String(card.email || ''), photo: String(card.photo || '') }} /> : specs.map(render)}
     </div>
@@ -1207,6 +1241,20 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
 }
 
 const CSS = `
+.mz-bar-owner{justify-content:flex-start;gap:14px}
+.mz-owner-t{font:600 12.5px Inter,sans-serif;color:rgba(255,255,255,.85);letter-spacing:.02em;margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mz-bar-owner a.mz-ghost{display:inline-flex;align-items:center;height:30px;padding:0 14px;border-radius:99px;border:1px solid rgba(255,255,255,.35);background:transparent;color:#fff;font:600 12px Inter,sans-serif;text-decoration:none}.mz-bar-owner a.mz-ghost:hover{background:rgba(255,255,255,.12)}
+.mz-tool-go{display:flex;flex-direction:column;gap:8px;padding:24px 22px;border-radius:16px;background:var(--mz-navy,#14161B);color:#fff;text-decoration:none;transition:transform .15s}
+.mz-tool-go:hover{transform:translateY(-2px)}
+.mz-tool-go .mz-kicker{color:var(--mz-glow,#D4B47C);margin:0}
+.mz-tool-go b{font:400 26px/1.1 var(--mz-display,"Instrument Serif",Georgia,serif);color:#fff}
+.mz-tool-go i{font:600 13px Inter,sans-serif;font-style:normal;color:#fff;opacity:.9;margin-top:6px}
+.mz-back-tools{margin-top:22px;display:grid;gap:8px;max-width:420px}
+.mz-back-tools .mz-kicker{color:rgba(255,255,255,.7);margin:0 0 2px}
+.mz-back-tools a{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:12px 16px;border-radius:12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:#fff;text-decoration:none}
+.mz-back-tools a:hover{background:rgba(255,255,255,.18)}
+.mz-back-tools b{font:400 19px/1.2 var(--mz-display,"Instrument Serif",Georgia,serif)}
+.mz-back-tools span{font:600 11.5px Inter,sans-serif;white-space:nowrap;opacity:.85}
 /* THE TYPE SYSTEM (editorial audit, 2026-11-11). One serif with optical sizes for display, figures and
    reading text; Inter only for labels, tables and chart axes; nothing below 10px. Spacing on one scale:
    8, 12, 20, 32, 48, 72. Margins 72px; a 672px live area. */
