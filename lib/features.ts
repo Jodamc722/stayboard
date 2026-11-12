@@ -256,6 +256,9 @@ export const OPEN_PREFIXES = [
   '/field/', '/approve/', '/new-order', '/vendor/', '/delivery', '/owner-orders',
   '/salato/share', '/salato/verify', '/verify/', '/report/', '/favicon', '/project/', '/share/',
   '/order/', '/orders-live',
+  // FREE TOOLS (Jon, 2026-11-12). /tools/income, /tools/inventory and /tools/linen are the free
+  // calculators an owner or agent can run, email gated before the full quote (app/api/tools).
+  '/tools',
   // OWNER JOB LINKS (Jon, 2026-10-07). /job/<token> shows an owner one job with its photos and charge.
   '/job/',
   // WALK REPORTS (Jon, 2026-11-02, the Eden exterior walk). /walks/<code> is the copy of a finished

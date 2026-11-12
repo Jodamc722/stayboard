@@ -20,7 +20,9 @@ import React, { useEffect, useState } from 'react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
 import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { MagazineFlipbook } from '@/components/MagazineFlipbook'
-import { StayTimeline, YearWave, ChannelHub } from '@/components/MagazineGraphics'
+import { FreeTool } from '@/components/FreeTool'
+import { TOOL_KEYS, TOOL_META, isToolKey, type ToolKey } from '@/lib/free-tools'
+import { StayTimeline, YearWave, ChannelHub, YearChart, QrCode } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
@@ -96,7 +98,8 @@ const themeVars = (t: MagTheme): React.CSSProperties => ({
   ['--mz-glow' as Any]: t.glow, ['--mz-desk' as Any]: t.desk, ['--mz-display' as Any]: t.display ? `"${t.display}", ${SERIF_DEFAULT}` : SERIF_DEFAULT,
   ['--mz-sans' as Any]: t.sans ? `"${t.sans}", ${SANS_DEFAULT}` : SANS_DEFAULT, ['--mz-ds' as Any]: String(t.ds || 1), ['--mz-paper' as Any]: t.paper || '#FFFFFF',
 })
-export type ChartKind = 'line' | 'bars' | 'band' | 'cumulative'
+export type { ChartKind } from '@/components/MagazineGraphics'
+import type { ChartKind } from '@/components/MagazineGraphics'
 const CHARTS: [ChartKind, string][] = [['line', 'Fine line'], ['bars', 'Bars'], ['band', 'Range band'], ['cumulative', 'Running total']]
 const PAGES: [string, string][] = [['about', 'Who we are'], ['team', 'The team and terms'], ['manage', 'How we manage'], ['tech', 'Our technology']]
 // PHOTO LOOKS (Jon, 2026-11-11: "filters for the photo like blur, enhance, modify"). Drawn with CSS
@@ -145,111 +148,28 @@ function overOf(el: Element): number | null {
   const page = el.getBoundingClientRect(), f = foot.getBoundingClientRect()
   return Math.max(last.getBoundingClientRect().bottom - f.top + 4, f.bottom + 24 - page.bottom)
 }
-function Chart({ months, kind, h = CHART_H }: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number }) {
-  // Information-design audit (2026-11-11): one column per month, not paired bars — solid to the low
-  // end, lighter from low to high, so it reads "at least X, up to Y". Four gridlines, axis labels
-  // sitting on them at the left (FT style), and values only where the eye needs them: peak and trough.
-  const W = 688, H = h, T = 22, B = kind === 'line' ? 44 : 24, L = 40
-  const series = kind === 'cumulative'
-    ? months.reduce((acc: { lo: number; hi: number }[], m, i) => { const p = acc[i - 1] || { lo: 0, hi: 0 }; acc.push({ lo: p.lo + m.lo, hi: p.hi + m.hi }); return acc }, [])
-    : months
-  const max = Math.max(1, ...series.map(m => m.hi))
-  const raw = max / 4
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)))
-  const step = [1, 2, 2.5, 5, 10].map(x => x * mag).find(x => x >= raw) || raw
-  const top = step * 4
-  const ch = H - T - B, cw = (W - L) / 12
-  const y = (v: number) => T + ch - (v / top) * ch
-  const ticks = [1, 2, 3, 4].map(i => i * step)
-  const k$ = (v: number) => '$' + (v >= 100000 ? Math.round(v / 1000) : (Math.round(v / 100) / 10).toFixed(1)) + 'K'
-  const cx = (i: number) => L + i * cw + cw / 2
-  let pk = 0, tr = 0
-  series.forEach((m, i) => { if (m.hi > series[pk].hi) pk = i; if (m.hi < series[tr].hi) tr = i })
-  const grid = (
-    <g>
-      {ticks.map(v => (
-        <g key={v}>
-          <line x1={L - 4} x2={W} y1={y(v)} y2={y(v)} style={{ stroke: C.grid }} strokeWidth={1} shapeRendering="crispEdges" />
-          <text x={0} y={y(v) + 4} fontSize={10.5} style={{ fill: C.muted }} fontFamily={SANS}>{'$' + (v >= 1000 ? (v / 1000) + 'K' : v)}</text>
-        </g>
-      ))}
-      <line x1={L - 4} x2={W} y1={y(0)} y2={y(0)} style={{ stroke: C.ink }} strokeWidth={1.25} shapeRendering="crispEdges" />
-    </g>
-  )
-  const axis = MONTHS.map((m, i) => <text key={m} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={10.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.06em">{m.toUpperCase()}</text>)
-  const label = (i: number, text: string) => <text x={cx(i)} y={y(series[i].hi) - 7} textAnchor="middle" fontSize={11} fontWeight={600} style={{ fill: C.ink }} fontFamily={SANS}>{text}</text>
-  if (kind === 'bars') {
-    const bw = 30
-    return (
-      <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Monthly gross rental income, low and high end">
-        {grid}
-        {months.map((m, i) => (
-          <g key={i}>
-            <rect x={cx(i) - bw / 2} y={y(m.lo)} width={bw} height={y(0) - y(m.lo)} style={{ fill: C.navy }} />
-            <rect x={cx(i) - bw / 2} y={y(m.hi)} width={bw} height={y(m.lo) - y(m.hi)} style={{ fill: C.navy, opacity: 0.3 }} />
-          </g>
-        ))}
-        {label(pk, k$(months[pk].lo) + '–' + k$(months[pk].hi))}
-        {tr !== pk ? label(tr, k$(months[tr].lo) + '–' + k$(months[tr].hi)) : null}
-        {axis}
-      </svg>
-    )
-  }
-  const line = (k: 'lo' | 'hi') => series.map((m, i) => (i ? 'L' : 'M') + cx(i) + ' ' + y(m[k])).join(' ')
-  if (kind === 'line') {
-    // THE FINE LINE (Atelier): the high end as one smooth ink line, the low end dotted beneath it, and
-    // two notes in the margin voice: the peak month and the quiet one. No fill, no boxes.
-    const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-    const smooth = (k: 'lo' | 'hi') => {
-      const p = series.map((m, i) => [cx(i), y(m[k])] as [number, number])
-      let d = `M${p[0][0]},${p[0][1]}`
-      for (let i = 0; i < p.length - 1; i++) {
-        const a = p[i - 1] || p[i], b = p[i], c2 = p[i + 1], e = p[i + 2] || c2
-        d += ` C${(b[0] + (c2[0] - a[0]) / 6).toFixed(1)},${(b[1] + (c2[1] - a[1]) / 6).toFixed(1)} ${(c2[0] - (e[0] - b[0]) / 6).toFixed(1)},${(c2[1] - (e[1] - b[1]) / 6).toFixed(1)} ${c2[0]},${c2[1]}`
-      }
-      return d
-    }
-    const note = (i: number, text: string, below?: boolean) => {
-      const anchor = i >= 9 ? 'end' : i <= 2 ? 'start' : 'middle'
-      const dx = anchor === 'end' ? -8 : anchor === 'start' ? 8 : 0
-      return <text x={cx(i) + dx} y={below ? y(series[i].lo) + 20 : y(series[i].hi) - 12} textAnchor={anchor} fontSize={15} fontStyle="italic" style={{ fill: below ? C.muted : C.ink }} fontFamily={SERIF}>{text}</text>
-    }
-    return (
-      <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Monthly gross rental income, low and high end">
-        {ticks.map(v => <g key={v}><line x1={L - 4} x2={W} y1={y(v)} y2={y(v)} style={{ stroke: C.grid, opacity: 0.55 }} strokeWidth={0.75} shapeRendering="crispEdges" /><text x={0} y={y(v) + 4} fontSize={9.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.06em">{'$' + (v >= 1000 ? (v / 1000) + 'K' : v)}</text></g>)}
-        <path d={smooth('lo')} style={{ fill: 'none', stroke: C.muted }} strokeWidth={1} strokeDasharray="2 3" />
-        <path d={smooth('hi')} style={{ fill: 'none', stroke: C.ink }} strokeWidth={1.3} />
-        {series.map((m, i) => <circle key={i} cx={cx(i)} cy={y(m.hi)} r={i === pk || i === tr ? 3.6 : 1.7} style={{ fill: C.ink }} />)}
-        {note(pk, `${MONTH[pk]}, up to ${k$(series[pk].hi)}`)}
-        {tr !== pk ? note(tr, `${MONTH[tr]}, the quiet month`, true) : null}
-        {MONTHS.map((m, i) => <text key={m} x={cx(i)} y={H - 6} textAnchor="middle" fontSize={9.5} style={{ fill: C.muted }} fontFamily={SANS} letterSpacing="0.2em">{m.toUpperCase()}</text>)}
-      </svg>
-    )
-  }
-  const band = series.map((m, i) => (i ? 'L' : 'M') + cx(i) + ' ' + y(m.hi)).join(' ') + ' ' + series.slice().reverse().map((m, j) => 'L' + cx(11 - j) + ' ' + y(m.lo)).join(' ') + ' Z'
-  const ends = kind === 'cumulative' ? [11] : [pk, tr]
-  return (
-    <svg className="mz-chart-svg" viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={kind === 'cumulative' ? 'Running total of gross rental income through the year' : 'Monthly gross rental income range'}>
-      {grid}
-      <path d={band} style={{ fill: C.navy, opacity: 0.16 }} />
-      <path d={line('lo')} style={{ fill: 'none', stroke: C.navy, opacity: 0.55 }} strokeWidth={1.5} />
-      <path d={line('hi')} style={{ fill: 'none', stroke: C.navy }} strokeWidth={2.25} />
-      {series.map((m, i) => <circle key={i} cx={cx(i)} cy={y(m.hi)} r={ends.includes(i) ? 4 : 2.5} style={{ fill: C.navy }} />)}
-      {ends.filter((v, i, a) => a.indexOf(v) === i).map(i => <g key={i}>{label(i, k$(series[i].lo) + '–' + k$(series[i].hi))}</g>)}
-      {axis}
-    </svg>
-  )
-}
+const Chart = (p: { months: { lo: number; hi: number }[]; kind: ChartKind; h?: number; w?: number }) => <YearChart {...p} h={p.h ?? CHART_H} />
 
 // ── The magazine ──────────────────────────────────────────────────────────────────────────────────
-export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canEdit?: boolean; onePager?: boolean }) {
+export function SalesMagazine({ report, canEdit, onePager, digital }: { report: Any; canEdit?: boolean; onePager?: boolean; digital?: boolean }) {
   const original: Any = report.content || {}
   const [doc, setDoc] = useState<Any>(() => structuredClone(original))
   const [touched, setTouched] = useState<string[]>([])
   const [editText, setEditText] = useState(false)
   // The page-turning digital magazine for whoever opens the link; the team builds in the scroll view.
   // ?scroll=1 opens the scroll view for anyone.
-  const [flip, setFlip] = useState<boolean>(() => !canEdit && !(typeof window !== 'undefined' && /[?&]scroll=1/.test(window.location.search)))
+  // A phone keeps the stacked phone layout in page view too (see MagazineFlipbook); only a wider screen binds fixed pages.
+  const [phone, setPhone] = useState(false)
+  useEffect(() => { const on = () => setPhone(window.innerWidth < 760); on(); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on) }, [])
+  // TWO VERSIONS, TWO LINKS (Jon, 2026-11-11: "that should be the shareable link, not the standard… the
+  // print version is one version, [digital] is another"). ?view=magazine is the print version — every
+  // page laid out for print and PDF, where the team builds; ?view=digital is the page-turning magazine
+  // that gets shared.
+  const flip = !!digital
+  const [copied, setCopied] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
+  // Print from the digital version opens the print version and prints it (?print=1).
+  useEffect(() => { if (!digital && /[?&]print=1/.test(window.location.search)) { const id = setTimeout(() => window.print(), 1400); return () => clearTimeout(id) } }, [digital])
   const [drawer, setDrawer] = useState<null | 'proj' | 'comps' | 'pages' | 'style'>(null)
   const [tuneId, setTuneId] = useState<string | null>(null)
   const [saving, setSaving] = useState('')
@@ -277,6 +197,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   // deck says. Only a page that still overflows at the last step is flagged to the editor.
   const [fit, setFit] = useState<Record<string, number>>({})
   useEffect(() => {
+    if (phone) return
     const id = setTimeout(() => {
       const next: Record<string, number> = {}
       document.querySelectorAll('.mz-page[data-k]').forEach(el => {
@@ -292,6 +213,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
     return () => clearTimeout(id)
   })
   useEffect(() => {
+    if (phone) return
     const id = setTimeout(() => {
       const next: Record<string, number> = {}
       document.querySelectorAll('.mz-page[data-k^="plan-"]').forEach(el => {
@@ -437,6 +359,15 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   const hidden: string[] = Array.isArray(c.omit) ? c.omit : []
   const on = (k: string) => hidden.indexOf(k) < 0
   const keynote = '/r/' + report.code
+  // THE PRINTED PIECE POINTS TO THE DIGITAL ONE (Jon, 2026-11-12): a QR code on the back cover and the
+  // one-pager opens this same deck's digital magazine on a phone. The public address, never a preview's.
+  const digitalUrl = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + keynote + '?view=digital'
+  const qrTile = (cls: string) => flip ? null : (
+    <div className={'mz-qr ' + cls}>
+      <QrCode text={digitalUrl} size={cls === 'mz-qr-one' ? 62 : 84} label="Scan to read the digital magazine" />
+      <div><b>{cls === 'mz-qr-one' ? 'Scan to read' : 'Read it on your phone'}</b><span>Scan for the digital magazine: every page, the latest numbers, and a direct line to {(card.name || 'our team').split(' ')[0]}.</span></div>
+    </div>
+  )
   const presenterFirst = String(card.name || '').split(/\s+/)[0] || ''
 
   const S = cma ? cma.sections : null
@@ -536,6 +467,9 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
     else if (cma.plans.length) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
     if (aud === 'owner' && showSecond) add({ key: 'second', kind: 'page', section: 'Terms', render: () => null })
   } else for (const k of AUDIENCES[aud].order) parts[k]()
+  // FREE TOOLS (Jon, 2026-11-12): optional calculator pages before the close, chosen in the builder.
+  const toolsOn: ToolKey[] = (Array.isArray(mag.tools) ? mag.tools : []).filter(isToolKey)
+  for (const k of toolsOn) add({ key: 'tool-' + k, kind: 'page', section: 'Free tools', render: () => null })
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
   specs.forEach((s, i) => { folioOf[s.key] = i + 1 })
@@ -579,12 +513,12 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
       <tbody>
         {list.map(x => { const ci = cma ? cma.comps.findIndex(z => z.id === x.id) : -1; return (
           <tr key={x.id}>
-            <td><b><E v={x.name} p={`cma.comps.${ci}.name`} /></b></td>
-            <td><E v={x.market} p={`cma.comps.${ci}.market`} /></td>
-            {withBasis ? <td><E v={x.basis} p={`cma.comps.${ci}.basis`} /></td> : null}
-            <td className="r">{canEdit && editText ? <E v={compGross(x)} p={`cma.comps.${ci}.grossText`} /> : (x.grossText?.trim() ? x.grossText : dash(x.lo, x.hi))}</td>
-            <td className="r">{dash(x.nightlyLo, x.nightlyHi)}</td>
-            <td className="r">{pctRange(x.occLo, x.occHi).replace(' to ', '–')}</td>
+            <td className="w"><b><E v={x.name} p={`cma.comps.${ci}.name`} /></b></td>
+            <td className="w m"><E v={x.market} p={`cma.comps.${ci}.market`} /></td>
+            {withBasis ? <td className="w m"><E v={x.basis} p={`cma.comps.${ci}.basis`} /></td> : null}
+            <td className="r" data-l="A year">{canEdit && editText ? <E v={compGross(x)} p={`cma.comps.${ci}.grossText`} /> : (x.grossText?.trim() ? x.grossText : dash(x.lo, x.hi))}</td>
+            <td className="r" data-l="Nightly">{dash(x.nightlyLo, x.nightlyHi)}</td>
+            <td className="r" data-l="Occupancy">{pctRange(x.occLo, x.occHi).replace(' to ', '–')}</td>
           </tr>
         ) })}
         {us}
@@ -629,6 +563,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
                 <div><b>{card.name}</b><span>{card.role}</span><span className="mz-sel">{card.phone}</span><span className="mz-sel">{card.email}</span></div>
               </div>
             ) : null}
+            {qrTile('mz-qr-one')}
           </div>
           <p className="mz-one-fine">{String(cma!.disclaimer || '').split('. ').slice(0, 2).join('. ').replace(/\.?$/, '.')} Stay Hospitality · stay-hospitality.com</p>
         </div>
@@ -804,6 +739,57 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
         <section key="op-num" className="mz-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
       )
       case s.key === 'op-num': return opener('op-num', specs.some(x => x.key === 'op-work') ? '03' : '02', 'The numbers', 'numbersTitle', 'numbers')
+      case s.key.startsWith('tool-') && isToolKey(s.key.slice(5)): {
+        // A FREE TOOL PAGE. On the phone reader the calculator runs right on the page; in print and on a
+        // wide screen the page shows what it gives and a QR code / button to the tool's own link.
+        const k = s.key.slice(5) as ToolKey, m = TOOL_META[k]
+        const url = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + '/tools/' + k + '?d=' + encodeURIComponent(report.code)
+        const em = (x: string) => x.split(/(\*[^*]+\*)/).map((t, i) => t.startsWith('*') && t.endsWith('*') ? <em key={i}>{t.slice(1, -1)}</em> : t)
+        const gets: Record<ToolKey, string[]> = {
+          income: ['A yearly and monthly range for your home', 'Nightly rate, occupancy and the month-by-month pattern', 'What you would keep, self-managed or with a manager'],
+          inventory: ['Every item a guest expects, counted for your home', 'Grouped into the sets things are bought in', 'Must-have, recommended and optional, marked'],
+          linen: ['Every sheet, towel and pillow by bed size', 'Three sets in rotation: on the bed, in the wash, on the shelf', 'Grouped by bed, bath and kitchen'],
+        }
+        return frame(s.key, (
+          <>
+            {kicker(m.kicker)}
+            <h2 className="mz-h mz-h1">{em(m.title)}</h2>
+            <p className="mz-lead mz-lead-s">{m.dek}</p>
+            {flip && phone ? (
+              <div className="mz-tool-live"><FreeTool tool={k} embedded refCode={report.code} where={short(building) || building} area={area} contact={{ name: card.name, role: card.role, phone: card.phone, email: card.email, photo: card.photo }} /></div>
+            ) : (
+              <div className="mz-tool">
+                <div>
+                  <p className="mz-kicker">Free for any owner</p>
+                  <ol className="mz-tool-list">{gets[k].map((g, i) => <li key={i}><span>{String(i + 1).padStart(2, '0')}</span>{g}</li>)}</ol>
+                  <p className="mz-small">Enter the home’s details and see the headline straight away. Leave an email to unlock the full quote and download it as a PDF.</p>
+                  {!flip ? null : <a className="mz-tool-btn" href={url} target="_blank" rel="noreferrer">Open the calculator</a>}
+                </div>
+                <div className="mz-tool-qr">
+                  <QrCode text={url} size={150} label={'Scan to open the ' + m.short.toLowerCase()} />
+                  <b>Scan to try it</b>
+                  <span className="mz-sel">{url.replace(/^https?:\/\//, '').replace(/\?.*$/, '').replace('/tools/', '/tools/\u200b')}</span>
+                </div>
+              </div>
+            )}
+            {flip && phone ? null : (
+              // A drawing of the tool itself: the questions it asks, and the answer held back until an email.
+              <div className="mz-tool-demo" aria-hidden>
+                <div className="mz-tool-demo-in">
+                  {({ income: [['Neighborhood', area || 'Brickell'], ['Bedrooms', '1'], ['Bathrooms', '1']], inventory: [['Bedrooms', '2'], ['Bathrooms', '2'], ['Sleeps', '6'], ['Kitchen', 'Full']], linen: [['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Sleeps', '6']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
+                    <div key={l}><span>{l}</span><i>−</i><b>{v}</b><i>+</i></div>
+                  ))}
+                </div>
+                <div className="mz-tool-demo-out">
+                  <p className="mz-kicker">{k === 'income' ? 'Could earn in a year' : k === 'inventory' ? 'What this home needs' : 'Linen at par'}</p>
+                  <p className="mz-tool-blur">{k === 'income' ? '$00,000 – $00,000' : '000 pieces'}</p>
+                  <span className="mz-tool-lock">Full quote unlocks with an email · PDF download</span>
+                </div>
+              </div>
+            )}
+          </>
+        ), { section: 'Free tools' })
+      }
       case s.key === 'partner' && !!cma: return frame('partner', (
         <>
           {kicker('For sales teams and agents')}
@@ -907,12 +893,12 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
               {kicker(chart === 'cumulative' ? 'The year, as it adds up' : <CT k="kChart" />)}
               {chart === 'line' ? <p className="mz-legend mz-legend-line"><i className="hi" /> High end <i className="lo" /> Low end</p> : <p className="mz-legend"><i className="lo" /> Low end <i className="hi" /> High end</p>}
             </div>
-            <Chart months={n.months} kind={chart} h={chartH['plan-' + p.id]} />
+            <Chart months={n.months} kind={chart} h={phone ? 230 : chartH['plan-' + p.id]} w={phone ? 380 : undefined} />
             <p className="mz-source"><CT k="chartSource" /></p>
             <div className="mz-comps">
               {kicker(<CT k="kComps" />)}
               {compsTable(comps, (
-                <tr className="mz-us"><td><b>{(short(building) ? short(building) + ' ' : '') + p.name}</b></td><td>{area ? area + ', new build' : 'New build'}</td><td className="r"><b>{dash(n.lo, n.hi)}</b></td><td className="r"><b>{dash(n.nightlyLo, n.nightlyHi)}</b></td><td className="r"><b>{pctRange(p.occLo, p.occHi).replace(' to ', '–')}</b></td></tr>
+                <tr className="mz-us"><td className="w"><b>{(short(building) ? short(building) + ' ' : '') + p.name}</b></td><td className="w m">{area ? area + ', new build' : 'New build'}</td><td className="r" data-l="A year"><b>{dash(n.lo, n.hi)}</b></td><td className="r" data-l="Nightly"><b>{dash(n.nightlyLo, n.nightlyHi)}</b></td><td className="r" data-l="Occupancy"><b>{pctRange(p.occLo, p.occHi).replace(' to ', '–')}</b></td></tr>
               ))}
               <p className="mz-how"><b>How we got there.</b> <E v={p.how} p={`cma.plans.${pi}.how`} block /> {n.manual ? 'The range was set by hand.' : `Ranges are then raised ${cma!.uplift.lo}% at the low end and ${cma!.uplift.hi}% at the high end, ${cma!.uplift.why}`} {adjustLine(cma!, p)}{showNet ? ` Owner estimate after ${channelPct}% channel fees and a ${mgmtPct}% management fee.` : ''}</p>
             </div>
@@ -937,6 +923,7 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
                 </div>
               </div>
             ) : null}
+            {qrTile('mz-qr-back')}
           </div>
           <p className="mz-fine">{cma ? <E v={cma.disclaimer} p="cma.disclaimer" block /> : 'Projections are estimates, not guarantees. Management terms are set in the written agreement.'}<br />Stay Hospitality · stay-hospitality.com{credits.length ? <><br />Photography: {credits.join(' · ')}</> : null}</p>
         </section>
@@ -1054,6 +1041,8 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
           {cma ? ([['partner', 'Agent partner program'], ['second', 'Stay as a second option'], ['market', 'Market and comparables'], ['glance', 'Floor plans at a glance'], ['plans', 'One page per floor plan']] as [keyof SalesCma['sections'], string][]).map(([k, l]) => (
             <label key={k} className="mz-toggle"><input type="checkbox" checked={!!cma.sections[k]} onChange={e => setCma({ ...cma, sections: { ...cma.sections, [k]: e.target.checked } })} /> {l}</label>
           )) : null}
+          <p className="mz-form-h">Free tools</p>
+          {TOOL_KEYS.map(k => <label key={k} className="mz-toggle"><input type="checkbox" checked={toolsOn.includes(k)} onChange={e => setMag({ tools: e.target.checked ? [...toolsOn, k] : toolsOn.filter(x => x !== k) })} /> {TOOL_META[k].short}: a free page, email gated before the full quote</label>)}
           <p className="mz-form-h">Graphics</p>
           {([['manage', 'How we manage: the stay timeline'], ['numbers', 'The numbers: the Miami year'], ['tech', 'Our technology: the platform diagram']] as ['manage' | 'numbers' | 'tech', string][]).map(([k, l]) => (
             <label key={k} className="mz-toggle"><input type="checkbox" checked={gfx(k)} onChange={e => setMag({ graphics: { ...(mag.graphics || {}), [k]: e.target.checked } })} /> {l}</label>
@@ -1184,28 +1173,53 @@ export function SalesMagazine({ report, canEdit, onePager }: { report: Any; canE
   ) : null
 
   return (
-    <div className={'mz-root' + (flip && !editText && format !== 'onepage' ? ' mz-flipping' : '') + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
+    <div className={'mz-root' + (flip && !editText && format !== 'onepage' && !phone ? ' mz-flipping' : '') + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
       <link rel="stylesheet" href={fontHref(drawer === 'style' ? Object.values(MAG_THEMES).flatMap(x => [x.display, x.sans]).concat([theme.display, theme.sans]) : [theme.display, theme.sans])} />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
-      <style dangerouslySetInnerHTML={{ __html: Object.entries(fit).map(([k, l]) => {
+      <style dangerouslySetInnerHTML={{ __html: phone ? '' : Object.entries(fit).map(([k, l]) => {
         const f = [1, 0.93, 0.87, 0.81][l] || 1, z = [1, 0.95, 0.9, 0.85][l] || 1
         const sel = `.mz-page[data-k="${k.replace(/"/g, '')}"]`
         return `${sel}{--mz-ds:${((theme.ds || 1) * f).toFixed(3)}}${sel} .mz-body,${sel} .mz-split-body{padding-top:${Math.round(40 * f)}px}${sel} .mz-practice,${sel} .mz-how,${sel} .mz-table,${sel} .mz-qa,${sel} .mz-cards,${sel} .mz-steps,${sel} .mz-cols,${sel} .mz-tools,${sel} .mz-terms,${sel} .mz-lead,${sel} .mz-row3,${sel} .mz-partner,${sel} .mz-gl{zoom:${z}}`
       }).join('') }} />
-      <nav className="mz-bar-top">
+      <nav className={'mz-bar-top' + (flip && phone && !canEdit ? ' mz-bar-reader' : '')}>
         <span className="mz-run-mark mz-on-dark">STAY</span>
-        <span className="mz-switch">{format === 'onepage' ? <><a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Magazine</a><b>One page</b></> : <><b>{format === 'brochure' ? 'Brochure' : 'Magazine'}</b>{cma ? <a href={keynote + '?view=onepage'}>One page</a> : null}</>}<a href={keynote}>Keynote</a></span>
+        <span className="mz-switch">
+          {format === 'onepage' ? <a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Print</a> : flip ? <a href={keynote + '?view=magazine'}>Print</a> : <b>{format === 'brochure' ? 'Print · brochure' : 'Print'}</b>}
+          {format === 'onepage' ? <a href={keynote + '?view=digital'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }); window.location.href = keynote + '?view=digital' } }}>Digital</a> : flip ? <b>Digital</b> : <a href={keynote + '?view=digital'}>Digital</a>}
+          {cma ? (format === 'onepage' ? <b>One page</b> : <a href={keynote + '?view=onepage'}>One page</a>) : null}
+          <a href={keynote}>Keynote</a>
+        </span>
         <span className="mz-bar-r">
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
           {dirty ? <button type="button" onClick={save}>Save changes</button> : saving ? <span className="mz-saved">{saving}</span> : null}
-          {format !== 'onepage' ? <button type="button" className={'mz-ghost' + (flip ? ' on' : '')} onClick={() => { setFlip(f => !f); if (!flip) setEditText(false) }}>{flip ? 'Scroll view' : 'Page view'}</button> : null}
-          <button type="button" onClick={() => { if (flip) { setFlip(false); setTimeout(() => window.print(), 450) } else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
+          <span className="mz-share-wrap">
+            <button type="button" className={'mz-ghost' + (shareOpen ? ' on' : '')} onClick={() => setShareOpen(o => !o)}>Share</button>
+            {shareOpen ? (() => {
+              const u = (typeof window !== 'undefined' ? window.location.origin : '') + keynote + '?view=digital'
+              const subject = (short(building) || 'Stay Hospitality') + ' · Stay Hospitality'
+              const body = (cma ? T('coverDek').replace(/\*/g, '') + '\n\n' : '') + u
+              return (
+                <div className="mz-share">
+                  <p>The digital magazine, to send</p>
+                  <input readOnly value={u} onFocus={e => e.target.select()} />
+                  <div>
+                    <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(u) } catch { /* the box above is selectable */ } setCopied(true); setTimeout(() => setCopied(false), 1800) }}>{copied ? 'Copied' : 'Copy link'}</button>
+                    <a href={'sms:?&body=' + encodeURIComponent(body)}>Text</a>
+                    <a href={'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body)}>Email</a>
+                    {typeof navigator !== 'undefined' && (navigator as Any).share ? <button type="button" onClick={() => (navigator as Any).share({ title: subject, text: body.replace(u, '').trim(), url: u }).catch(() => {})}>More…</button> : null}
+                  </div>
+                  <small>Opens without a sign-in. Pasted into a text or an email, it shows the building’s photo and name.</small>
+                </div>
+              )
+            })() : null}
+          </span>
+          <button type="button" onClick={() => { if (flip) window.location.href = keynote + '?view=magazine&print=1'; else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
         </span>
       </nav>
       {drawerEl}
-      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} top={80} /> : specs.map(render)}
+      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} top={80} title={short(building) || building || undefined} contact={{ name: String(card.name || ''), role: String(card.role || ''), phone: String(card.phone || ''), email: String(card.email || ''), photo: String(card.photo || '') }} /> : specs.map(render)}
     </div>
   )
 }
@@ -1272,6 +1286,14 @@ const CSS = `
 .mz-icover-mast span{font:400 9.5px ${SANS};letter-spacing:.34em;text-transform:uppercase;color:${C.muted}}
 .mz-icover-logo{width:108px;filter:brightness(0);opacity:.88}
 .mz-lockup{display:flex;align-items:center;gap:18px}
+.mz-share-wrap{position:relative}
+.mz-share{position:absolute;right:0;top:calc(100% + 10px);width:320px;background:#fff;color:#1C1A17;border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.25);padding:14px;z-index:30;font:400 12.5px "Inter",sans-serif}
+.mz-share p{margin:0 0 8px;font-weight:600}
+.mz-share input{width:100%;font:500 12px "Inter",sans-serif;border:1px solid #E3DED3;border-radius:8px;padding:7px 9px;color:#1C1A17;background:#F7F7F5}
+.mz-share div{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.mz-share div button,.mz-share div a{font:600 12px "Inter",sans-serif;border:1px solid #E3DED3;border-radius:999px;padding:6px 12px;background:#fff;color:#1C1A17;text-decoration:none;cursor:pointer}
+.mz-share div button:first-child{background:#1C1A17;color:#fff;border-color:#1C1A17}
+.mz-share small{display:block;margin-top:8px;color:#7A7164;line-height:1.4}
 /* the one-pager */
 .mz-one{background:${C.paper};color:${C.ink}}
 .mz-one-top{display:flex;justify-content:space-between;align-items:center;padding:36px 56px 20px}
@@ -1291,7 +1313,7 @@ const CSS = `
 .mz-one-points>div{border-top:1px solid ${C.ink};padding-top:10px}
 .mz-one-points b{display:block;font:300 calc(26px * var(--mz-ds))/1.05 ${SERIF};color:${C.ink}}
 .mz-one-points span{display:block;margin-top:5px;font:400 11.5px/1.4 ${SANS};color:${C.body}}
-.mz-one-foot{margin-top:auto;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:end;border-top:1px solid ${C.grid};padding-top:18px}
+.mz-one-foot{margin-top:auto;display:grid;grid-template-columns:1fr auto auto;gap:24px;align-items:end;border-top:1px solid ${C.grid};padding-top:18px}
 .mz-one-cta h2{font:300 calc(30px * var(--mz-ds))/1.05 ${SERIF};margin:0;color:${C.ink}}.mz-one-cta h2 em{font-style:italic;color:${C.sandText}}
 .mz-one-card{display:flex;gap:12px;align-items:center}.mz-one-card img{width:58px;height:58px;border-radius:999px;object-fit:cover;filter:grayscale(1)}
 .mz-one-card div{display:flex;flex-direction:column;font:400 11.5px/1.45 ${SANS};color:${C.body}}.mz-one-card b{font:400 calc(18px * var(--mz-ds)) ${SERIF};color:${C.ink}}
@@ -1500,6 +1522,32 @@ const CSS = `
 .mz-back-title{font-family:${SERIF};font-weight:300;font-size:calc(72px * var(--mz-ds));line-height:1;letter-spacing:-.025em;margin:0;max-width:9em;text-wrap:balance}
 .mz-back-title em{color:${C.glow}}
 .mz-back-dek{font:300 calc(20px * var(--mz-ds))/1.5 ${SERIF};color:rgba(255,255,255,.92);max-width:26em;margin:24px 0 0}
+.mz-tool{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:40px;margin-top:34px;align-items:start}
+.mz-tool-list{list-style:none;margin:12px 0 18px;padding:0}
+.mz-tool-list li{display:grid;grid-template-columns:40px 1fr;gap:8px;padding:12px 0;border-top:1px solid ${C.grid};font:400 calc(19px * var(--mz-ds))/1.3 ${SERIF};color:${C.ink}}
+.mz-tool-list li span{font:600 11px ${SANS};letter-spacing:.12em;color:${C.sand};padding-top:5px}
+.mz-tool-btn{display:inline-flex;margin-top:14px;padding:10px 18px;border-radius:999px;background:${C.navy};color:#fff;font:600 13px ${SANS};text-decoration:none}
+.mz-tool-qr{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px;border:1px solid ${C.grid};border-radius:14px;background:#fff;text-align:center}
+.mz-tool-qr b{font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.ink}}
+.mz-tool-qr span{font:400 11px ${SANS};color:${C.muted}}
+.mz-tool-live{margin-top:20px}
+.mz-tool-demo{margin-top:36px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid ${C.grid};border-radius:16px;overflow:hidden;background:#fff}
+.mz-tool-demo-in{padding:18px 22px;display:grid;gap:0}
+.mz-tool-demo-in div{display:grid;grid-template-columns:1fr 26px 70px 26px;align-items:center;padding:9px 0;border-bottom:1px solid ${C.grid};font:400 12px ${SANS};color:${C.muted}}
+.mz-tool-demo-in div:last-child{border-bottom:0}
+.mz-tool-demo-in i{font-style:normal;width:22px;height:22px;border:1px solid ${C.grid};border-radius:99px;display:grid;place-items:center;color:${C.ink};font-size:12px}
+.mz-tool-demo-in b{text-align:center;font:400 18px ${SERIF};color:${C.ink}}
+.mz-tool-demo-out{background:${C.navy};color:#fff;padding:22px 24px;display:flex;flex-direction:column;justify-content:center}
+.mz-tool-demo-out .mz-kicker{color:${C.glow}}
+.mz-tool-blur{font:400 calc(34px * var(--mz-ds)) ${SERIF};margin:10px 0 12px;filter:blur(7px);opacity:.9;user-select:none}
+.mz-tool-lock{font:600 10.5px ${SANS};letter-spacing:.08em;color:rgba(255,255,255,.75)}
+.mz-qr{display:flex;align-items:center;gap:16px}
+.mz-qr>svg{flex:none;border-radius:6px}
+.mz-qr b{display:block;font:600 11px ${SANS};letter-spacing:.14em;text-transform:uppercase;margin-bottom:5px}
+.mz-qr span{display:block;font:400 12.5px/1.45 ${TEXT}}
+.mz-qr-back{margin-top:26px;padding:12px 18px 12px 12px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);border-radius:12px;max-width:430px}
+.mz-qr-back b{color:${C.glow}}.mz-qr-back span{color:rgba(255,255,255,.82)}
+.mz-qr-one{gap:8px;flex-direction:column;align-items:center;text-align:center}.mz-qr-one b{font-size:8px;letter-spacing:.12em;color:${C.muted};margin:0}.mz-qr-one span{display:none}
 .mz-contact{display:flex;gap:24px;align-items:center;margin-top:40px;padding-top:28px;border-top:1px solid rgba(255,255,255,.4)}
 .mz-contact img,.mz-initials-l{width:112px;height:112px;border-radius:999px;object-fit:cover;object-position:50% 22%;flex:none;box-shadow:0 0 0 1px rgba(255,255,255,.4),0 0 0 7px rgba(255,255,255,.08)}
 .mz-initials-l{display:grid;font-size:calc(30px * var(--mz-ds))}
@@ -1604,6 +1652,7 @@ div.mz-ed{display:block}
 
 @media screen and (max-width:760px){
   .mz-bar-top{padding:8px 10px;gap:6px}.mz-bar-top>.mz-run-mark{display:none}
+  .mz-bar-reader{padding:8px max(16px,env(safe-area-inset-left))}.mz-bar-reader>.mz-run-mark{display:inline!important}.mz-bar-reader .mz-switch{display:none}
   .mz-bar-r{flex-wrap:nowrap;gap:6px}.mz-bar-top button{padding:6px 10px;font-size:11.5px;white-space:nowrap}
   .mz-switch a,.mz-switch b{padding:5px 8px;font-size:11.5px}
   .mz-wide{display:none}
@@ -1615,12 +1664,17 @@ div.mz-ed{display:block}
 .mz-root:not(.mz-flipping) .mz-display{font-size:calc(40px * var(--mz-ds))}.mz-root:not(.mz-flipping) .mz-h1,.mz-root:not(.mz-flipping) .mz-plan-name{font-size:calc(34px * var(--mz-ds))}
 .mz-root:not(.mz-flipping) .mz-about-photo{height:440px}.mz-root:not(.mz-flipping) .mz-about-head{padding:0 20px 28px}
 .mz-root:not(.mz-flipping) .mz-split-page{display:flex;flex-direction:column}.mz-root:not(.mz-flipping) .mz-split-photo{height:280px}.mz-root:not(.mz-flipping) .mz-run-tight,.mz-root:not(.mz-flipping) .mz-split-body,.mz-root:not(.mz-flipping) .mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
-.mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool{grid-template-columns:1fr}
-.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
+.mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}
+.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
 .mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
 .mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr}
-.mz-root:not(.mz-flipping) .mz-table{display:block;overflow-x:auto}
+.mz-root:not(.mz-flipping) .mz-table,.mz-root:not(.mz-flipping) .mz-table tbody{display:block}.mz-root:not(.mz-flipping) .mz-table thead{display:none}
+.mz-root:not(.mz-flipping) .mz-table tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px 12px;padding:12px 10px;border-bottom:1px solid ${C.grid}}
+.mz-root:not(.mz-flipping) .mz-table td{display:block;height:auto;padding:0!important;border:0!important;background:none!important;white-space:normal;text-align:left;width:auto!important;font-size:13px;box-shadow:none!important}
+.mz-root:not(.mz-flipping) .mz-table td.w{grid-column:1/-1}.mz-root:not(.mz-flipping) .mz-table td.m{color:${C.muted};font-size:12px;margin-bottom:6px}
+.mz-root:not(.mz-flipping) .mz-table td[data-l]::before{content:attr(data-l);display:block;font:600 9px ${SANS};letter-spacing:.14em;text-transform:uppercase;color:${C.muted};margin-bottom:2px}
+.mz-root:not(.mz-flipping) .mz-table tr.mz-us{background:${C.sandSoft};border-top:1.25px solid ${C.ink};border-bottom:1.25px solid ${C.ink};box-shadow:inset 3px 0 0 ${C.sand}}
 .mz-root:not(.mz-flipping) .mz-glance-head{display:none}.mz-root:not(.mz-flipping) .mz-glance-row,.mz-root:not(.mz-flipping) .mz-glance.with-yield .mz-glance-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-glance-v,.mz-root:not(.mz-flipping) .mz-glance-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-earn-main b{font-size:calc(36px * var(--mz-ds));white-space:normal}
 .mz-root:not(.mz-flipping) .mz-adjust{top:12px;right:12px}
