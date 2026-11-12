@@ -14,7 +14,7 @@ export function DeckShare({ code, building, prospect, presenter, dek, onePager =
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   const deck = origin + '/r/' + code
   const OPTS: { k: ShareWhat; label: string; hint: string; url: string; noun: string }[] = [
-    { k: 'digital', label: 'Digital magazine', hint: 'Best for an owner on a phone or laptop', url: deck + '?view=digital', noun: 'our digital magazine' },
+    { k: 'digital', label: 'Digital magazine', hint: 'Best for an owner on a phone or laptop: just the magazine, nothing else', url: origin + '/m/' + code, noun: 'our digital magazine' },
     { k: 'print', label: 'Print version', hint: 'The full magazine, ready to print or save as a PDF', url: deck + '?view=magazine', noun: 'the full magazine (print it or save it as a PDF)' },
     ...(onePager ? [{ k: 'onepage' as ShareWhat, label: 'One-pager', hint: 'Every unit type on a single page', url: deck + '?view=onepage', noun: 'a one-page summary' }] : []),
     { k: 'keynote', label: 'Keynote', hint: 'The presentation slides', url: deck, noun: 'the presentation' },

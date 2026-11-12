@@ -16,6 +16,8 @@ import { picsAsUrls } from '@/lib/pic-url'
 // 700 KB of script) into the bundle of every magazine page. Loaded on demand, each view ships only itself.
 const ReportView = nextDynamic(() => import('@/components/ReportView').then(m => m.ReportView))
 const SalesMagazine = nextDynamic(() => import('@/components/SalesMagazine').then(m => m.SalesMagazine))
+const CalcReportPage = nextDynamic(() => import('@/components/CalcReportPage').then(m => m.CalcReportPage))
+import { publicContent } from '@/lib/calc-report'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,6 +44,11 @@ export async function generateMetadata({ params }: { params: { code: string } })
       : `What a residence at ${building} could earn, and who would run it. The building package from Stay Hospitality.`
     return { ...base, title, description, openGraph: { title, description, images: [{ url: image, width: 1200, height: 800 }], type: 'article', siteName: 'Stay Hospitality' }, twitter: { card: 'summary_large_image', title, description, images: [image] } }
   }
+  if (String(ct?.meta?.kind || '') === 'calc') {
+    const t = String(rep.title || 'Rental projection') + ' · Stay Hospitality'
+    const description = 'What this home could earn as a short-term rental, from Stay Hospitality’s South Florida projections.'
+    return { ...base, title: t, description, openGraph: { title: t, description, type: 'article', siteName: 'Stay Hospitality' } }
+  }
   const title = rep.title || ((rep.scope_label || 'Owner') + ' — Owner Review')
   return { ...base, title, description: 'Owner performance review prepared by Stay Hospitality.' }
 }
@@ -61,6 +68,11 @@ export default async function PublicReportPage({ params, searchParams }: { param
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const unlocked = hasEditCookie()
+  // THE PROJECTION PAGE (lib/calc-report): its own layout. The team edits it in place; everyone else reads it.
+  if (String((rep.content as any)?.meta?.kind || '') === 'calc') {
+    const team = !!user
+    return <CalcReportPage code={rep.code} initial={team ? rep.content : publicContent(rep.content)} canEdit={team} createdAt={rep.created_at} />
+  }
   // THE MAGAZINE (Jon, 2026-11-11): the same sales deck laid out as letter pages to print, leave at a
   // building or read on a phone. Same row, same link, ?view=magazine. The team gets the projection builder.
   if (String((rep.content as any)?.meta?.kind || '') === 'sales' && searchParams?.view === 'magazine') return <SalesMagazine report={rep} canEdit={!!user || unlocked} />

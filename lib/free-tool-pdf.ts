@@ -12,7 +12,7 @@ const ACC: RGB = [140, 109, 58], RULE: RGB = [228, 226, 221], SOFT: RGB = [247, 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const TIER: Record<string, string> = { must: 'Must-have', recommended: 'Recommended', suggested: 'Optional' }
 
-export type PdfContact = { name?: string; role?: string; phone?: string; email?: string }
+export type PdfContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
 
 async function dataUrl(src: string): Promise<string | null> {
   try {
@@ -145,7 +145,7 @@ export async function toolPdf(opts: { tool: 'income' | 'inventory'; full: Income
       if (places.length) { section('Nearby', f.beachMi != null ? 'about ' + (f.beachMi < 0.95 ? f.beachMi.toFixed(1) : Math.round(f.beachMi)) + ' mi to the beach' : ''); zebra = false; places.forEach(p => item(p.name, p.kind, p.mi + ' mi', false)) }
       para('From ' + f.basisLabel + ': ' + f.basis + ' comparable home' + (f.basis === 1 ? '' : 's') + ' in Stay Hospitality’s South Florida projections, adjusted for the details given. “You keep” takes off booking-site fees (' + f.channelPct + '%)' + (f.mgmtPct ? ' and a ' + f.mgmtPct + '% management fee.' : '; self-managed, so no management fee, but cleaning, supplies and your time are yours.'), 8.5, MUTE, 'italic')
     }
-    panel('This is an estimate', opts.estimateNote || 'For a more granular estimate built for your exact unit, reach out to ' + (opts.contact?.name || 'our team') + '.')
+    panel('This is an estimate', opts.estimateNote || 'This is an estimate, based on comparable homes and the details you entered. For a detailed projection of your specific unit, contact ' + (opts.contact?.name || 'our team') + '.')
   } else {
     const f = opts.full as InventoryFull
     para(f.describe, 10, MUTE)
@@ -169,6 +169,28 @@ export async function toolPdf(opts: { tool: 'income' | 'inventory'; full: Income
       y += 6
     }
     panel('Notes', PARTNER_NOTE + ' Counts are a starting point for a home of this size.')
+  }
+
+  // ── who to talk to: Nick's photo, name, phone and email (Jon, 2026-11-12) ──
+  const c0 = opts.contact
+  if (c0 && c0.name) {
+    pageBreak(100)
+    const ph = c0.photo ? await dataUrl(c0.photo) : null
+    fill(SOFT); doc.roundedRect(M, y, W - M * 2, 88, 8, 8, 'F')
+    let tx = M + 18
+    if (ph) {
+      // a round headshot: the image, then a soft ring (jsPDF has no clip in every build, so the photo is square-cropped and ringed)
+      doc.addImage(ph, 'JPEG', M + 16, y + 16, 56, 56)
+      draw(SOFT); doc.setLineWidth(12.5); doc.circle(M + 44, y + 44, 34.2, 'S')
+      tx = M + 90
+    }
+    caps('Talk to ' + c0.name.split(' ')[0], tx, y + 27)
+    font('times', 'normal', 16); color(INK); doc.text(c0.name + (c0.role ? ',' : ''), tx, y + 46)
+    if (c0.role) { const nw = doc.getTextWidth(c0.name + ', '); font('helvetica', 'normal', 9.5); color(MUTE); doc.text(c0.role, tx + nw, y + 46) }
+    font('helvetica', 'bold', 10); color(INK)
+    const line = [c0.phone, c0.email].filter(Boolean).join('     ')
+    fitSize(line, 'helvetica', 'bold', 10, W - M - tx - 18, 7); doc.text(line, tx, y + 65)
+    y += 102
   }
 
   // ── footer on every page ──

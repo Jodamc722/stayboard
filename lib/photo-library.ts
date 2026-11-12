@@ -20,6 +20,7 @@ import { unitLabel } from './unit-label'
 import { isJunkCaption } from './photo-order'
 import { safeName } from './zip-stream'
 import { haystack, matchQuery, queryWords, analysisWords, type Haystack } from './photo-search'
+import { slimAnalysis, type AdPhotoAnalysis } from './ad-photo-pick'
 
 export const PHOTO_LIBRARY_CACHE_TAG = 'photo-library'
 const str = (v: any) => (v == null ? '' : String(v)).trim()
@@ -185,8 +186,8 @@ export const zipFileName = (label: string) => safeName(label, 'photos') + ' phot
 // it, or what the photo analysis saw (room, category, subject, selling points). "pool" also finds
 // swimming and jacuzzi; "view" finds skyline and ocean (lib/photo-search has the rules and tests).
 // So "elser pool" is Elser's pool shots across every Elser unit, in one grid, ready to pick.
-export type PhotoHit = LibPhoto & { listingId: string; unit: string; building: string; market: string; active: boolean; why: string[] }
-type CorpusRow = { p: LibPhoto; unit: LibUnit; h: Haystack }
+export type PhotoHit = LibPhoto & { listingId: string; unit: string; building: string; market: string; active: boolean; why: string[]; an?: AdPhotoAnalysis }
+type CorpusRow = { p: LibPhoto; unit: LibUnit; h: Haystack; an?: AdPhotoAnalysis }
 type Corpus = { at: number; rows: CorpusRow[] }
 // Module-level memo, not unstable_cache: the corpus (every photo with its words) is a few MB, well
 // over the 2 MB a cache entry may hold, and it is only ever read in one place.
@@ -203,7 +204,7 @@ async function loadCorpus(): Promise<Corpus> {
         const photos = picsOf(l.pics)
         const u = unitOf(l, photos)
         const idx = l.pidx && typeof l.pidx === 'object' ? l.pidx : {}
-        for (const p of photos) rows.push({ p, unit: u, h: haystack([u.name, u.building], [p.caption].concat(analysisWords(idx[p.id]))) })
+        for (const p of photos) rows.push({ p, unit: u, h: haystack([u.name, u.building], [p.caption].concat(analysisWords(idx[p.id]))), an: slimAnalysis(idx[p.id]) })
       }
       corpus = { at: Date.now(), rows }
       return corpus
@@ -221,7 +222,7 @@ export async function searchPhotos(q: string, limit = 160): Promise<PhotoSearch>
   const all: PhotoHit[] = []
   for (const r of c.rows) {
     const why = matchQuery(r.h, ws)
-    if (why) all.push({ ...r.p, listingId: r.unit.id, unit: r.unit.name, building: r.unit.building, market: r.unit.market, active: r.unit.active, why })
+    if (why) all.push({ ...r.p, listingId: r.unit.id, unit: r.unit.name, building: r.unit.building, market: r.unit.market, active: r.unit.active, why, ...(r.an ? { an: r.an } : {}) })
   }
   // Active units first, then by property and unit; a unit's own photo order is kept (stable sort).
   all.sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || a.building.localeCompare(b.building, undefined, { numeric: true }) || a.unit.localeCompare(b.unit, undefined, { numeric: true }))

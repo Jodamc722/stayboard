@@ -23,6 +23,7 @@ import { isCollagePhoto } from '@/lib/collage'
 import { eventByKey, eventAsked, eventBrief, EVENT_REPLY, shapeEventScenes, whenShortOf, type EventRawScene } from '@/lib/ad-event'
 import { searchStock, type StockHit } from '@/lib/ad-stock'
 import { shapeOfFormat } from '@/lib/ad-image-prompt'
+import { adPhotoScore, photoText } from '@/lib/ad-photo-pick'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 180
@@ -68,20 +69,21 @@ async function bestPhoto(hits: any[], subj: { word: string; any: RegExp } | null
   const portrait = /^9:16$|^4:5$/.test(String(opts.format || ''))
   const landscape = String(opts.format || '') === '16:9'
   const cands = hits.filter(h => { const u = h.view || h.url; if (!u || used.has(u) || seen.has(u)) return false; if ((h.width || 1200) < 900) return false; seen.add(u); return true })
+  const askedWeak = !!subj && /bathroom/.test(subj.word)
   const score = (h: any) => {
-    const cap = String(h.caption || '')
-    let sc = subj && subj.any.test(cap) ? 1000 : 0
-    sc += Math.min(400, (h.width || 1200) / 10)
-    const w = h.width || 0, ht = h.height || 0
-    if (w && ht) { const r = ht / w; if (portrait) sc += r >= 1 ? 260 : r >= 0.75 ? 120 : 0; else if (landscape) sc += r <= 0.8 ? 200 : r <= 1 ? 80 : -120 }
+    const cap = photoText(h)
+    // the photo analysis decides first: faults, duplicates and details are out; what the photo IS, its quality
+    let sc = adPhotoScore(h, subj, { hero: opts.opener, portrait, landscape, askedWeak })
+    if (!Number.isFinite(sc)) return sc
     if (opts.opener) sc += OPENER.test(cap) ? 350 : -150
     if (WEAK.test(cap) && !(subj && subj.any.test(cap))) sc -= 700
-    if (opts.usedCores && cap && opts.usedCores.has(core(cap))) sc -= 500
+    if (opts.usedCores && h.caption && opts.usedCores.has(core(String(h.caption)))) sc -= 500
     // LOCATION (Jon, 2026-11-04): a Fort Lauderdale event shows our Fort Lauderdale listings, Miami shows Miami.
     if (opts.place && opts.place.length) sc += inBuildings(String(h.building || ''), opts.place) ? 900 : -600
     return sc
   }
-  cands.sort((a, b) => score(b) - score(a))
+  const scored = cands.map(h => ({ h, s: score(h) })).filter(x => Number.isFinite(x.s)).sort((a, b) => b.s - a.s)
+  cands.length = 0; cands.push(...scored.map(x => x.h))
   let skipped = 0
   for (const h of cands.slice(0, 16)) {
     const u = h.view || h.url
@@ -130,7 +132,7 @@ export async function POST(req: NextRequest) {
     const used = new Set<string>()
     const usedCores = new Set<string>()
     const fmt = String(b?.format || '16:9')
-    const scenes: { id: string; kind: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string; act?: string; src?: string; imgPrompt?: string; aiPending?: boolean }[] = []
+    const scenes: { id: string; kind: string; sig?: string; eyebrow?: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string; act?: string; src?: string; imgPrompt?: string; aiPending?: boolean }[] = []
     // Pass 1: every slot's candidate list (subject-matched first). Pass 2: slots with the fewest good
     // candidates choose first, so a scene that needs "the pool" is not left with the pool already taken.
     type Slot = { scene: number; k: number; subj: ReturnType<typeof subjectOf>; cands: any[] }
@@ -139,11 +141,12 @@ export async function POST(req: NextRequest) {
       const s = raw[i]
       const q = String(s?.photoQuery || '').trim().slice(0, 60)
       // event ad: only BOOK YOUR STAY takes our library photos — the event and the things to do get stock / AI below
-      const want = ev && s?.act !== 'book' ? 0 : s?.kind === 'wall' ? 4 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
+      const want = ev && s?.act !== 'book' ? 0 : s?.layout === 'gallery' ? 3 : s?.kind === 'wall' ? 4 : s?.kind === 'cards' && s?.layout !== 'list' ? 3 : s?.kind === 'contact' ? 0 : 1
       const place = q.split(/\s+/)[0] || ''
       const items: string[] = Array.isArray(s?.items) ? s.items.map((x: any) => String(x || '')) : []
       const texts = s?.kind === 'cards' ? items.slice(0, 3).map(x => x + ' ' + q) : Array.from({ length: want }, () => [s?.head, s?.sub, s?.vo, q, items.join(' ')].join(' '))
       scenes.push({ id: 's' + (i + 1), kind: s?.kind, badge: i === raw.findIndex((x: any) => x?.badge) ? s?.badge : '', vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos: [], photoQuery: q,
+        ...(s?.layout ? { sig: s.layout } : {}), ...(s?.eyebrow ? { eyebrow: String(s.eyebrow) } : {}),
         ...(ev ? { act: s.act, src: s.source, ...(s.act !== 'book' && s.imagePrompt ? { imgPrompt: s.imagePrompt } : {}), ...(s.source === 'ai' ? { aiPending: true } : {}) } : {}) })
       for (let k = 0; k < want; k++) {
         const subj = subjectOf(texts[k] || '')
@@ -153,7 +156,7 @@ export async function POST(req: NextRequest) {
         slots.push({ scene: i, k, subj, cands: pools.flat() })
       }
     }
-    const good = (sl: Slot) => sl.subj ? sl.cands.filter(h => sl.subj!.any.test(String(h.caption || ''))).length : sl.cands.length
+    const good = (sl: Slot) => sl.subj ? sl.cands.filter(h => sl.subj!.any.test(photoText(h))).length : sl.cands.length
     const order = slots.map((sl, idx) => ({ idx, n: good(sl) })).sort((a, b) => a.n - b.n || a.idx - b.idx)
     const picks: Record<string, string> = {}
     for (const { idx } of order) {

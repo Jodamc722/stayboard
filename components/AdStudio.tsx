@@ -26,7 +26,7 @@ import { defaultImagePrompt, stockQueryOf, shapeOfFormat, IMAGE_COST_HINT, EVENT
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
-  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, DEFAULT_LOOK, TRANSITION_META, TR_DIRECTIONAL, trMeta, type TrDir, type TrLen, PRO_KINDS, PRO_DIM_OF, type SceneCustom, CU_SIZE, CU_FONTS, CU_SHADES, CU_GRADES, CU_ZOOMS, hasCustom, polishAd, timeline, drawFrame, sceneAt, voiceSig, riskyWords, newSceneId,
+  FORMATS, FORMAT_LABEL, VOICES, MUSIC, LOOKS, GOALS, PLATFORMS, VIBES, FX, fxMeta, fxOpts, FX_POS_LABEL, FX_COLOR_LABEL, type FxOpts, platformOf, IDEAS, auditAd, auditScore, HOUSE_FACTS, GUEST_FACTS, type AuditIssue, TRANSITIONS, type AdTransition, STYLE_OPTIONS, STYLE_DEFAULT, type AdStyle, TEXT_ANIMS, CAMS, SWATCHES, type AdTextAnim, type AdCam, VOICE_DEFAULTS, KINDS, LEAD, TEMPLATES, STORIES, type AdStory, type AdKindOf, FLYER_SIZES, LOOKS_FEATURED, DEFAULT_LOOK, TRANSITION_META, TR_DIRECTIONAL, trMeta, type TrDir, type TrLen, PRO_KINDS, PRO_DIM_OF, type SceneCustom, CU_SIZE, CU_FONTS, CU_SHADES, CU_GRADES, CU_ZOOMS, hasCustom, polishAd, timeline, drawFrame, sceneAt, TOOL_LINK, SIG_LAYOUTS, voiceSig, riskyWords, newSceneId,
 } from '@/lib/ad-engine'
 import { GIFEncoder, quantize, applyPalette } from 'gifenc'
 
@@ -1227,7 +1227,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
         const fresh = cache[s.q].filter(u => used.indexOf(u) < 0)
         photos = (fresh.length >= s.n ? fresh : cache[s.q]).slice(0, s.n)
       }
-      scenes.push({ id: 's' + (i + 1), kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items.slice(), photos, dur: s.dur || null })
+      scenes.push({ id: 's' + (i + 1), kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items.slice(), photos, dur: s.dur || null, ...(s.qr ? { qr: s.qr, qrLabel: s.qrLabel } : {}), ...(s.sig ? { sig: s.sig } : {}), ...(s.eyebrow ? { eyebrow: s.eyebrow } : {}) })
     }
     setBusy('')
     { const d0 = pRef.current || p; finishBuild({ ...d0, name: d0.name === 'Untitled ad' ? tp.name : d0.name, format: d0.goal ? d0.format : tp.format, audience: tp.audience, scenes }) }
@@ -2039,6 +2039,22 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               ) : null}
               <div style={{ order: isSpoken ? 2 : 0 }}>
               <Fold id="words" title="Words & layout" folded={!!folded['words']} onToggle={toggleFold}>
+              {/* SIGNATURE LAYOUT (2026-11-12): pick how this scene is drawn, or leave it to the content. */}
+              {p.look === 'signature' ? (<>
+                <Label>Layout</Label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  <Btn small on={!sc.sig} disabled={!canEdit} onClick={() => setScene(sel, { sig: undefined })} title="Picked from what the scene holds">Auto</Btn>
+                  {SIG_LAYOUTS.map(l => <Btn key={l.key} small on={sc.sig === l.key} disabled={!canEdit} title={l.hint} onClick={() => setScene(sel, { sig: l.key })}>{l.label}</Btn>)}
+                </div>
+                {PRO_KINDS.indexOf(sc.kind) < 0 ? (<>
+                  <Label>Eyebrow (small line above the headline)</Label>
+                  <input value={sc.eyebrow || ''} disabled={!canEdit} maxLength={80} onChange={e => setScene(sel, { eyebrow: e.target.value })} placeholder="e.g. 17WEST · Miami" style={{ ...field, padding: '6px 9px' }} />
+                </>) : null}
+                {['list', 'numbers', 'end'].includes(sc.sig || '') && PRO_KINDS.indexOf(sc.kind) < 0 ? (<>
+                  <Label>{sc.sig === 'numbers' ? 'Figures · one per line, number|label' : sc.sig === 'end' ? 'Button text (first line)' : 'Rows · one per line, title|detail'}</Label>
+                  <textarea rows={Math.min(6, Math.max(2, sc.items.length + 1))} value={sc.items.join('\n')} disabled={!canEdit} onChange={e => setScene(sel, { items: e.target.value.split('\n') })} style={{ ...field, fontSize: 12.5 }} />
+                </>) : null}
+              </>) : null}
               {sc.kind === 'poster' ? (<>
                 <Label>Poster style</Label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -2053,6 +2069,20 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               </>) : null}
               <Label>{sc.kind === 'poster' ? 'Kicker (top line)' : 'Badge (sticker)'}</Label>
               <input value={sc.badge || ''} disabled={!canEdit} maxLength={22} onChange={e => setScene(sel, { badge: e.target.value })} placeholder="Optional, e.g. Oceanfront · Book direct · Rooftop pool" style={{ ...field, padding: '6px 9px' }} />
+              {/* QR CODE ON THE SCENE (Jon, 2026-11-12): one of the free tools, the digital magazine, or any link. */}
+              <Label>QR code</Label>
+              <select value={!sc.qr ? '' : [TOOL_LINK('income'), TOOL_LINK('inventory'), TOOL_LINK('')].includes(sc.qr) ? sc.qr : 'custom'} disabled={!canEdit}
+                onChange={e => { const v = e.target.value; setScene(sel, v === '' ? { qr: '', qrLabel: '' } : v === 'custom' ? { qr: sc.qr && ![TOOL_LINK('income'), TOOL_LINK('inventory'), TOOL_LINK('')].includes(sc.qr) ? sc.qr : 'https://', qrLabel: sc.qrLabel || 'Scan to learn more' } : { qr: v, qrLabel: v === TOOL_LINK('income') ? 'Scan for a free projection' : v === TOOL_LINK('inventory') ? 'Scan for the free checklist' : 'Scan for the free tools' }) }} style={{ ...field, padding: '6px 9px' }}>
+                <option value="">None</option>
+                <option value={TOOL_LINK('income')}>Projections calculator</option>
+                <option value={TOOL_LINK('inventory')}>Supply and linen checklist</option>
+                <option value={TOOL_LINK('')}>Both free tools</option>
+                <option value="custom">Another link…</option>
+              </select>
+              {sc.qr ? (<>
+                {![TOOL_LINK('income'), TOOL_LINK('inventory'), TOOL_LINK('')].includes(sc.qr) ? <input value={sc.qr} disabled={!canEdit} onChange={e => setScene(sel, { qr: e.target.value.trim() })} placeholder="https://…" style={{ ...field, padding: '6px 9px', marginTop: 6 }} /> : null}
+                <input value={sc.qrLabel || ''} disabled={!canEdit} maxLength={34} onChange={e => setScene(sel, { qrLabel: e.target.value })} placeholder="Line under the code, e.g. Scan for a free projection" style={{ ...field, padding: '6px 9px', marginTop: 6 }} />
+              </>) : null}
 
               {!isFlyer ? (<>
               <Label>Voice line</Label>

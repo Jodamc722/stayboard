@@ -4,7 +4,7 @@
 // Nick Carline, business development. Jon, 2026-11-10: "the call is more for book a call (sales, Nick),
 // not our CCS team", so the call to action is a sales call with Nick, not the support line. Isomorphic.
 export type NeedContact = { company: string; tagline: string; email: string; phone: string; web: string; webUrl: string
-  person: { name: string; role: string; phone: string; email: string } | null }
+  person: { name: string; role: string; phone: string; email: string; photo?: string } | null }
 
 export const STAY_CONTACT: NeedContact = {
   company: 'Stay Hospitality',
@@ -13,7 +13,7 @@ export const STAY_CONTACT: NeedContact = {
   phone: '(954) 526-8998',
   web: 'stay-hospitality.com',
   webUrl: 'https://stay-hospitality.com',
-  person: { name: 'Nick Carline', role: 'Business Development', phone: '(651) 200-8283', email: 'nicholas@stay-hospitality.com' },
+  person: { name: 'Nick Carline', role: 'Business Development', phone: '(651) 200-8283', email: 'nicholas@stay-hospitality.com', photo: '/deck-img/nick-carline.jpg' },
 }
 export const contactLine = (c: NeedContact = STAY_CONTACT) =>
   [c.person ? `Want help managing your rental in South Florida? Call ${c.person.name}` : '', c.person?.phone || c.phone, c.person?.email || c.email, c.web].filter(Boolean).join('  ·  ')

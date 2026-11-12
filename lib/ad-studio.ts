@@ -126,6 +126,8 @@ export function normalize(p: any): AdProject {
     cam: (CAMS.some(x => x.key === s?.cam) ? s.cam : 'auto') as AdCam,
     badge: String(s?.badge || '').slice(0, 22),
     ...(s?.eyebrow ? { eyebrow: String(s.eyebrow).slice(0, 80) } : {}),
+    ...(['hero', 'list', 'numbers', 'gallery', 'quote', 'end'].indexOf(s?.sig) >= 0 ? { sig: s.sig } : {}),
+    ...(typeof s?.qr === 'string' && /^https?:\/\//.test(s.qr) ? { qr: s.qr.slice(0, 300), qrLabel: String(s?.qrLabel || '').slice(0, 34) } : {}),
     ...([0, 1, 2].indexOf(Number(s?.dim)) >= 0 && s?.dim !== null && s?.dim !== undefined && s?.dim !== '' ? { dim: Number(s.dim) } : {}),
     ...(cleanCustom(s?.cu) ? { cu: cleanCustom(s?.cu) } : {}),
     vo: String(s?.vo || '').slice(0, 600),
@@ -306,7 +308,22 @@ CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a 
 - Headlines are copywriting, not labels: sensory, specific, short. Write them in sentence case (not Title Case). Gold (**…**) the one word that carries the idea — never a filler word like "The", "Your" or "Book". Use the "sub" for a place line (e.g. "Singer Island · Florida") on cinematic scenes.
 - Prefer photos with a single strong subject: the view, the pool at golden hour, a styled bedroom. Ask for them with specific photoQuery words.
 
-SCENE KINDS YOU CAN USE:
+THE LOOK — SIGNATURE (Jon, 2026-11-12: "world class"). The ad is drawn in the house Signature look: film-graded
+photos, a large serif headline set line by line, small tracked labels, one clean wipe between scenes. Give EVERY scene
+a "layout", one of:
+- "hero": one photo, full screen, the headline over it. The default; use it for the hook and for mood.
+- "list": a photo above two to four numbered rows ("items": "Title|short detail"). For how something works or what is included.
+- "numbers": one to three figures that count up ("items": "40+|Booking platforms"). ONLY numbers that are in the facts.
+- "gallery": a montage, two to four photos cut full screen on the beat, the headline on the last. For energy after the hook.
+- "quote": a real line from a guest or owner, only when the brief gives one ("sub" = who said it).
+- "end": the last scene: the headline, "items"[0] the button text, "sub" a place or detail line.
+And an "eyebrow" (2 to 4 words, a place or theme: "17WEST · Miami", "Private balconies", "Free for owners") on hero, gallery
+and list scenes. Write headlines like a luxury hotel's campaign, not a real-estate flyer: concrete, sensory, confident, no
+exclamation marks, no "your South Florida stay", no "experience", "luxury", "unforgettable", "paradise" or "nestled".
+Break the headline into two short lines with \n where it reads best, and gold (**…**) the second line's key words.
+Six to eight scenes for 30 seconds; three to four seconds each; never two "list" or two "numbers" scenes in a row.
+
+SCENE KINDS YOU CAN USE (the layout decides how it is drawn; still set a kind):
 ${kinds}
 
 PHOTOS: for each scene that shows photos, give "photoQuery": two or three words to search our photo library, e.g. "17west pool", "elser view", "arya rooftop", "ocean view", "bedroom", "kitchen", "balcony". Leave it empty for the contact kind.
@@ -317,7 +334,7 @@ AUDIENCE: ${input.audience || 'property owners'}
 FORMAT: ${input.format}${input.current && input.current.scenes.length ? `\n\nTHE CURRENT DRAFT (improve it; keep what works):\n${JSON.stringify(input.current.scenes.map(s => ({ kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items })))}` : ''}
 
 Reply with ONLY a JSON object, no prose:
-{"name": "a short name for this ad", "scenes": [{"kind": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
+{"name": "a short name for this ad", "scenes": [{"kind": "...", "layout": "hero|list|numbers|gallery|quote|end", "eyebrow": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
 }
 
 

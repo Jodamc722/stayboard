@@ -68,7 +68,7 @@ function BuildingSearch({ value, onPick, onType }: { value: Any; onPick: (h: Any
   )
 }
 
-export function FreeTool({ tool, refCode, where, area, contact, embedded }: { tool: ToolKey; refCode?: string; where?: string; area?: string; contact?: ToolContact; embedded?: boolean }) {
+export function FreeTool({ tool, refCode, where, area, contact, embedded, team }: { tool: ToolKey; refCode?: string; where?: string; area?: string; contact?: ToolContact; embedded?: boolean; team?: { onCreated?: () => void } }) {
   const meta = TOOL_META[tool]
   const [inp, setInp] = useState<Any>(() => ({ ...DEFAULTS[tool], ...(tool === 'income' && area ? { area } : {}) }))
   const [summary, setSummary] = useState<Any>(null)
@@ -107,13 +107,39 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       const d = await r.json().catch(() => null)
       if (!d?.ok || !d.full) { setErr(d?.error || 'That did not go through. Try again.'); return }
       unlocked.current = { email: form.email, name: form.name, phone: form.phone }
+      try { sessionStorage.setItem('stay-tool-who', JSON.stringify(unlocked.current)) } catch { /* */ }
       setFull(d.full); setSummary(d.summary); setGate(false)
+      // THE PROJECTION OPENS ON ITS OWN PAGE (Jon, 2026-11-12), where the numbers have room and it downloads.
+      if (tool === 'income' && d.report) { openReport(d.report); return }
       // Straight to the download (Jon, 2026-11-12: "should just be a download").
       fullRef.current = d.full
       if (tool === 'income') { /* the projection shows on the page; the PDF is a button under it */ }
       else if (fmt === 'xlsx') xlsx(form.email); else pdf(d.full)
     } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
   }
+  function openReport(code: string) {
+    try { sessionStorage.setItem('stay-tool-inp', JSON.stringify(inp)) } catch { /* */ }
+    const url = '/r/' + code
+    if (embedded) window.open(url, '_blank', 'noopener'); else window.location.assign(url)
+  }
+  // After a change on the form: a fresh page for the new answer.
+  async function reopen() {
+    const u = unlocked.current; if (!u) return
+    setBusy(true); setErr('')
+    try {
+      const d = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, input: inp, ref: refCode, where, ...u, refresh: true, makeReport: true }) }).then(r => r.json())
+      if (d?.report) openReport(d.report); else setErr('That did not go through. Try again.')
+    } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
+  }
+  // Back from the projection page ("Change the details"): the form and the unlock are as they were.
+  useEffect(() => {
+    if (tool !== 'income') return
+    try {
+      const who = JSON.parse(sessionStorage.getItem('stay-tool-who') || 'null'); if (who && who.email) unlocked.current = who
+      const saved = JSON.parse(sessionStorage.getItem('stay-tool-inp') || 'null'); if (saved && typeof saved === 'object') setInp((p: Any) => ({ ...p, ...saved }))
+    } catch { /* */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // THE EXCEL CHECKLIST (supply calculator only): counts, a Bought and an In-the-home tick column, notes.
   async function xlsx(email = unlocked.current?.email || '') {
     try {
@@ -142,10 +168,10 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       <div className="ft-field"><span className="ft-lab">Address</span><input value={inp.address} placeholder="Street address, city" onChange={e => setInp((p: Any) => ({ ...p, address: e.target.value, lat: undefined, lng: undefined }))} autoComplete="street-address" /></div>
       <Stepper label="Bedrooms" value={inp.bedrooms} set={v => set('bedrooms', v)} min={0} max={5} show={v => (v === 0 ? 'Studio' : String(v))} />
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={5} step={0.5} />
-      <div className="ft-field"><span className="ft-lab">Square feet</span><input inputMode="numeric" value={inp.sqft || ''} placeholder="e.g. 850" onChange={e => set('sqft', Number(e.target.value.replace(/\D/g, '')) || 0)} /></div>
+      <div className="ft-field ft-half"><span className="ft-lab">Square feet</span><input inputMode="numeric" value={inp.sqft || ''} placeholder="e.g. 850" onChange={e => set('sqft', Number(e.target.value.replace(/\D/g, '')) || 0)} /></div>
       <Seg label="Kitchen" value={inp.kitchen} set={v => set('kitchen', v)} opts={[['full', 'Full'], ['kitchenette', 'Kitchenette'], ['none', 'None']]} />
       <Seg label="Balcony" value={inp.balcony ? 'y' : 'n'} set={v => set('balcony', v === 'y')} opts={[['n', 'No'], ['y', 'Yes']]} />
-      <div className="ft-field"><span className="ft-lab">View</span>
+      <div className="ft-field ft-half"><span className="ft-lab">View</span>
         <select value={inp.view} onChange={e => set('view', e.target.value)}>{(opts?.views || [{ key: 'none', label: 'No particular view' }, { key: 'city', label: 'City view' }, { key: 'water', label: 'Bay or water view' }, { key: 'ocean', label: 'Ocean view' }, { key: 'beachfront', label: 'Beachfront' }]).map((v: Any) => <option key={v.key} value={v.key}>{v.label}</option>)}</select>
       </div>
       {opts?.amenities?.length ? (
@@ -234,15 +260,13 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
     const lg = Array.from(new Set(f.linen.map(r => r.group)))
     return (
       <>
-        <p className="ft-note">{f.describe}</p>
         {f.groups.map(g => (
           <div key={g.group} className="ft-group">
             <p className="ft-lab">{g.group}</p>
             <ul>{f.rows.filter(r => r.group === g.group).map((r, i) => <li key={i}><span>{r.name}</span><em className={'t-' + r.tier}>{TIER_LABEL[r.tier]}</em><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
-        <p className="ft-sub ft-mt">Linen at par</p>
-        <p className="ft-note">{f.parText}</p>
+        <div className="ft-group ft-linen-intro"><p className="ft-sub">Linen at par</p><p className="ft-note">{f.parText}</p></div>
         {lg.map(g => (
           <div key={g} className="ft-group">
             <p className="ft-lab">Linen · {g}</p>
@@ -262,7 +286,29 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       <div className="ft-inputs">{inputs}</div>
       <div className="ft-card">
         {tool === 'income' && full ? null : headline}
-        {!full ? (
+        {team && tool === 'income' ? (
+          // THE TEAM'S WAY IN (Sales → Projections library): no email gate; it saves a page to edit and send.
+          <div className="ft-gate">
+            <p className="ft-lab">The owner (optional)</p>
+            <div className="ft-two">
+              <input placeholder="Owner's name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <input placeholder="Unit (e.g. 2401)" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} />
+            </div>
+            <div className="ft-two">
+              <input type="email" placeholder="Owner's email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+              <input placeholder="Owner's phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} inputMode="tel" />
+            </div>
+            <button type="button" disabled={busy || !summary?.found} onClick={async () => {
+              setBusy(true); setErr('')
+              try {
+                const d = await fetch('/api/sales/calc-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: inp, owner: { name: form.name, email: form.email, phone: form.phone, unit: form.website } }) }).then(r => r.json())
+                if (d?.ok && d.code) { window.open('/r/' + d.code, '_blank', 'noopener'); team.onCreated?.() } else setErr(d?.error || 'That did not go through. Try again.')
+              } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
+            }}>{busy ? 'Building…' : 'Create the projection page →'}</button>
+            {err ? <p className="ft-err">{err}</p> : null}
+            <p className="ft-fine">It opens in a new tab. Change the look, the title, any figure and the note right on the page, then send the link or the PDF.</p>
+          </div>
+        ) : !full ? (
           gate ? (
             <form className="ft-gate" onSubmit={unlock}>
               <p className="ft-lab">{tool === 'income' ? 'Your email, to see it' : 'Your email, to download'}</p>
@@ -283,19 +329,53 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             <button type="button" className="ft-cta" onClick={() => setGate(true)}><Download size={15} /> {tool === 'income' ? 'See my projection, free' : 'Download the full list, free'}</button>
           )
         ) : (
-          <div className="ft-quote">
-            <p className="ft-ok"><Check size={15} /> {tool === 'income' ? 'Here is your projection. Change the details above and it updates.' : 'Your download has started. Change the details above and download again any time.'}</p>
-            {quote}
+          <div className={'ft-quote' + (tool === 'income' ? ' ft-quote-top' : '')}>
+            {tool === 'income' && (full as IncomeFull).found ? (<>
+              <p className="ft-ok"><Check size={15} /> Your projection is ready. Change any detail and open it again.</p>
+              <button type="button" className="ft-cta" disabled={busy} onClick={reopen}>{busy ? 'Opening…' : 'Open my projection →'}</button>
+              {err ? <p className="ft-err">{err}</p> : null}
+            </>) : (<>
+            <p className="ft-ok"><Check size={15} /> {tool === 'income' ? 'Thank you.' : 'Your download has started. Change the details and download again any time. The full list is below.'}</p>
+            {tool === 'income' ? quote : null}
+            </>)}
             <div className="ft-actions">
               {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
-              <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>
-              {tel ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call {first || 'us'}</a> : null}
-              {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short)}><Mail size={15} /> Email {first || 'us'}</a> : null}
+              {tool === 'income' ? null : <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>}
+              {tel && !contact?.name ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call us</a> : null}
             </div>
+            {contact?.name ? (
+              <div className="ft-who">
+                {contact.photo ? <img src={contact.photo} alt={contact.name} width={64} height={64} /> : null}
+                <div>
+                  <p className="ft-lab">Talk to {first}</p>
+                  <p className="ft-who-n">{contact.name}{contact.role ? <span>, {contact.role}</span> : null}</p>
+                  <p className="ft-who-c">
+                    {contact.phone ? <a href={'tel:' + tel}><Phone size={13} /> {contact.phone}</a> : null}
+                    {contact.email ? <a href={'mailto:' + contact.email}><Mail size={13} /> {contact.email}</a> : null}
+                  </p>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
         {!full && !gate ? <p className="ft-fine">{tool === 'income' ? 'Leave your email to see ' + meta.unlock + ', with the comparables behind it, and download it as a PDF.' : 'Download ' + meta.unlock + ', as a PDF.'}</p> : null}
       </div>
+      {tool === 'inventory' && full ? (
+        // THE LIST, FULL WIDTH (Jon, 2026-11-12: "on a computer it needs to look different than on a phone"):
+        // on a computer the sets sit side by side in columns; on a phone they stack.
+        <section className="ft-full">
+          <div className="ft-full-head">
+            <div><p className="ft-lab">Your list</p><p className="ft-sub">{(full as InventoryFull).describe}</p></div>
+            <dl className="ft-stats">
+              <div><dt>Everything</dt><dd>{((full as InventoryFull).pieces + (full as InventoryFull).linenPieces).toLocaleString()}</dd></div>
+              <div><dt>Supply items</dt><dd>{(full as InventoryFull).items}</dd></div>
+              <div><dt>Must-have</dt><dd>{(full as InventoryFull).must}</dd></div>
+              <div><dt>Linen pieces</dt><dd>{(full as InventoryFull).linenPieces}</dd></div>
+            </dl>
+          </div>
+          <div className="ft-cols">{quote}</div>
+        </section>
+      ) : null}
     </div>
   )
 }
@@ -305,6 +385,24 @@ const FT_CSS = `
   display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr);gap:28px;font-family:"Inter",system-ui,sans-serif;color:var(--ft-body)}
 .ft em{font-style:italic}
 .ft-inputs{display:grid;gap:2px;align-content:start}
+.ft-full{grid-column:1/-1;background:#fff;border:1px solid var(--ft-rule);border-radius:16px;padding:24px clamp(16px,3vw,32px) 22px;min-width:0}
+.ft-full-head{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--ft-rule)}
+.ft-full-head .ft-sub{margin:4px 0 0}
+.ft-stats{display:grid;grid-template-columns:repeat(4,auto);gap:14px 28px;margin:0}
+.ft-stats dt{font:600 10px "Inter",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ft-muted)}
+.ft-stats dd{margin:2px 0 0;font:400 30px/1 var(--ft-display);color:var(--ft-ink);font-variant-numeric:lining-nums}
+.ft-cols{columns:3 300px;column-gap:36px;margin-top:6px}
+.ft-cols .ft-group{break-inside:avoid;margin-top:18px}
+.ft-cols .ft-notes{break-inside:avoid;column-span:all}
+.ft-linen-intro .ft-sub{margin:0}
+@media (min-width:1000px){
+  .ft{grid-template-columns:minmax(0,1.25fr) minmax(0,0.75fr);gap:36px}
+  .ft:not(.ft-embedded) .ft-card{position:sticky;top:20px}
+  .ft-inputs{grid-template-columns:1fr 1fr;column-gap:28px}
+  .ft-inputs>*{grid-column:1/-1}
+  .ft-inputs>.ft-step,.ft-inputs>.ft-half{grid-column:auto}
+}
+@media (max-width:760px){.ft-stats{grid-template-columns:repeat(2,auto)}.ft-full{padding:18px 16px}}
 .ft-step{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--ft-rule)}
 .ft-step>div{display:flex;align-items:center;gap:10px}
 .ft-step button{width:34px;height:34px;border-radius:99px;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-ink);display:grid;place-items:center;cursor:pointer}
@@ -325,7 +423,7 @@ const FT_CSS = `
 .ft-hint{margin:0;font-size:12px;color:#2F6B47}
 .ft-acc{color:var(--ft-acc)}
 .ft-group li b.neg{color:#A1332B}
-.ft-comp span{display:flex;flex-direction:column}.ft-comp b{white-space:nowrap;font-size:15px!important}.ft-cline{display:block;color:var(--ft-muted);font-size:11.5px;margin-top:2px}
+.ft-group li.ft-comp{grid-template-columns:minmax(0,1fr) auto}.ft-comp em{display:none}.ft-comp span{display:flex;flex-direction:column;min-width:0}.ft-comp b{white-space:nowrap;font-size:15px!important}.ft-cline{display:block;color:var(--ft-muted);font-size:11.5px;margin-top:2px}
 .ft-fmt{margin:4px 0 2px;align-self:flex-start;justify-self:start}
 .ft-notes{margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
 .ft-notes p{margin:0;font:400 14px/1.5 "Inter",sans-serif;color:var(--ft-ink)}
@@ -349,6 +447,7 @@ const FT_CSS = `
 .ft-err{color:#A1332B;font-size:13px;margin:0}
 .ft-fine{font:400 11.5px/1.5 "Inter",sans-serif;color:var(--ft-muted);margin:12px 0 0}
 .ft-quote{margin-top:16px;padding-top:14px;border-top:1px solid var(--ft-rule)}
+.ft-quote-top{margin-top:0;padding-top:0;border-top:0}
 .ft-ok{display:flex;gap:6px;align-items:center;font:600 12.5px "Inter",sans-serif;color:#2F6B47;margin:0 0 12px}
 .ft-figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px;margin:0}
 .ft-figs dt{font:600 9.5px "Inter",sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ft-muted)}
@@ -367,6 +466,15 @@ const FT_CSS = `
 .ft-group li em{font:600 9.5px "Inter",sans-serif;font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--ft-muted)}
 .ft-group li em.t-must{color:var(--ft-acc)}
 .ft-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.ft-who{display:flex;gap:14px;align-items:center;margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
+.ft-who img{width:64px;height:64px;border-radius:50%;object-fit:cover;flex:0 0 64px}
+.ft-who>div{min-width:0}
+.ft-who p{margin:0}
+.ft-who .ft-lab{margin-bottom:2px;color:var(--ft-acc)}
+.ft-who-n{font:600 16px/1.3 "Inter",sans-serif;color:var(--ft-ink)}
+.ft-who-n span{font-weight:400;color:var(--ft-body)}
+.ft-who-c{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:4px!important}
+.ft-who-c a{display:inline-flex;align-items:center;gap:5px;font:500 14px "Inter",sans-serif;color:var(--ft-ink);text-decoration:none;white-space:nowrap}
 .ft-actions button,.ft-actions a{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 16px;border-radius:99px;font:600 13px "Inter",sans-serif;text-decoration:none;cursor:pointer;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-ink)}
 .ft-actions button{background:var(--ft-navy);color:#fff;border-color:var(--ft-navy)}
 @media (max-width:760px){.ft{grid-template-columns:1fr;gap:16px}.ft-big{font-size:36px}.ft-card{padding:18px 16px}}

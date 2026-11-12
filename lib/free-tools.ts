@@ -57,7 +57,7 @@ export type LinenInput = { beds: Record<string, number>; bathrooms: number; gues
 // projection can be built and what it will rest on.
 export type IncomeSummary = { found: boolean; area: string; bedrooms: number; basis: number; basisLabel: string; lo?: number; hi?: number; monthLo?: number; monthHi?: number }
 export type IncomeFull = IncomeSummary & { lo: number; hi: number; monthLo: number; monthHi: number; nightlyLo: number; nightlyHi: number; occLo: number; occHi: number; months: { lo: number; hi: number }[]; netLo: number; netHi: number; mgmtPct: number; channelPct: number; sources: string[]
-  baseLo: number; baseHi: number; adjustments: { label: string; pct: number }[]; adjTotal: number
+  baseLo: number; baseHi: number; adjustments: { label: string; pct: number; occ?: number; note?: string }[]; adjTotal: number; adjAdr?: number; adjOcc?: number
   comps: { name: string; market: string; gross: string; nightly: string; occ: string }[]
   places: { name: string; kind: string; mi: number }[]; beachMi: number | null; address: string; note: string }
 

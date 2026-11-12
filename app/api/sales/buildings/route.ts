@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { readLibrary, getBuilding, saveBuilding, deleteBuilding, summarize } from '@/lib/sales-library'
+import { fileCounts } from '@/lib/projection-files'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +19,8 @@ export async function GET(req: NextRequest) {
     return e ? NextResponse.json({ ok: true, building: e }) : NextResponse.json({ ok: false, error: 'Not in the library.' }, { status: 404 })
   }
   const list = await readLibrary()
-  return NextResponse.json({ ok: true, buildings: list.map(summarize).sort((a, b) => a.name.localeCompare(b.name)) })
+  const files = await fileCounts().catch(() => ({} as Record<string, number>))
+  return NextResponse.json({ ok: true, buildings: list.map(summarize).map(s => ({ ...s, files: files[s.id] || 0 })).sort((a, b) => a.name.localeCompare(b.name)), unfiled: files[''] || 0 })
 }
 
 export async function POST(req: NextRequest) {

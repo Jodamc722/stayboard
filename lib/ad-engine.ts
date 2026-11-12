@@ -15,6 +15,19 @@
 //  - The STAY mark is gold in video, transparent, no chip. The end card is Nick's card.
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
+import qrcode from 'qrcode-generator'
+import { drawSignatureFrame } from './ad-signature'
+
+/** The Signature look's layouts (lib/ad-signature). */
+export type SigLayoutKey = 'hero' | 'list' | 'numbers' | 'gallery' | 'quote' | 'end'
+export const SIG_LAYOUTS: { key: SigLayoutKey; label: string; hint: string }[] = [
+  { key: 'hero', label: 'Hero', hint: 'One photo, full screen, headline set over it' },
+  { key: 'list', label: 'List', hint: 'Photo above, up to four numbered rows below' },
+  { key: 'numbers', label: 'Numbers', hint: 'Up to three figures that count up (rows like 40+|Booking platforms)' },
+  { key: 'gallery', label: 'Montage', hint: 'Up to four photos, quick full-screen cuts, headline on the last' },
+  { key: 'quote', label: 'Quote', hint: 'A guest or owner line in large serif, who said it under' },
+  { key: 'end', label: 'End card', hint: 'Logo, headline, button, QR code' },
+]
 export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'timeline' | 'team' | 'quote' | 'poster' | 'contact' | 'cta'
   | 'beats' | 'tiles' | 'grid' | 'calendar' | 'dates' | 'hub' | 'beforeafter' | 'tilegrid' | 'livefeed' | 'roles' | 'curve' | 'triad'
 /** Jon, 2026-11-02: "need more style … a wide range of edits, range of styles and looks". */
@@ -140,6 +153,12 @@ export type AdScene = {
   imgPrompt?: string
   /** Planned as an AI image but not generated yet — the photo shown is a stock stand-in. */
   aiPending?: boolean
+  /** A QR code on the scene (Jon, 2026-11-12: "add the QR codes … for the free estimators"): the link it
+   *  opens and the line under it. Drawn as a white tile, crisp at any export size. */
+  qr?: string
+  qrLabel?: string
+  /** Signature look: which of its six layouts draws this scene ('' / missing = picked from the content). */
+  sig?: SigLayoutKey
 }
 export type AdAct = 'event' | 'todo' | 'book'
 export type AdImgSource = 'ai' | 'stock' | 'ours'
@@ -620,9 +639,10 @@ type Palette = { serif?: boolean; light?: boolean; def?: LookDef; /** the Book b
 // play with it during holiday season or be able to select it, but need to default it"). Stay black is what every
 // new ad starts in and what "Default look" puts back; gold lives on as a look you pick (Navy & gold, Black & gold,
 // Holiday, Champagne).
-export const DEFAULT_LOOK = 'house'
-export const LOOKS_FEATURED = ['house', 'housewhite', 'pure', 'editorial', 'ivory', 'stay', 'holiday', 'xmasred', 'winter']
+export const DEFAULT_LOOK = 'signature'
+export const LOOKS_FEATURED = ['signature', 'house', 'housewhite', 'pure', 'editorial', 'ivory', 'stay', 'holiday', 'xmasred', 'winter']
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
+  { key: 'signature', label: 'Signature', blurb: 'The premium look — film-graded photos, serif type set line by line, one clean wipe', c: { def: { font: 'elegant', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#D4B47C', ink: '#F7F2E9', mut: '#B8B0A4', navy: '#0E0F11', navy2: '#16181B', deep: '#000000', tint: '0,0,0', glass: 'rgba(0,0,0,0.58)', line: 'rgba(255,255,255,0.2)', green: '#9BE3B5' } },
   { key: 'house', label: 'Stay black', blurb: 'The house look — black, white type, the Stay logo', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#FFFFFF', ink: '#FFFFFF', mut: '#B4B4B4', navy: '#0A0A0A', navy2: '#1B1B1B', deep: '#000000', tint: '0,0,0', glass: 'rgba(0,0,0,0.58)', line: 'rgba(255,255,255,0.24)', green: '#9BE3B5' } },
   { key: 'housewhite', label: 'Stay white', blurb: 'White, black type, black logo, the website’s navy — like stay-hospitality.com', c: { light: true, def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'black', wash: 'none' }, gold: '#0A175F', ink: '#0B0B0B', mut: '#55565E', navy: '#FFFFFF', navy2: '#FFFFFF', deep: '#EEEEEE', tint: '255,255,255', glass: 'rgba(255,255,255,0.88)', line: 'rgba(0,0,0,0.12)', green: '#1F9D55' } },
   { key: 'stay', label: 'Navy & gold', blurb: 'Navy with gold — holidays and special pieces', c: { def: { logo: 'gold' }, gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
@@ -3047,7 +3067,25 @@ function drawSceneFx(ctx: CanvasRenderingContext2D, p: AdProject, i: number, loc
 }
 
 /** The whole frame at time t: scene (with a crossfade from the previous one), the mark, captions. */
+const _qr = new Map<string, boolean[][]>()
+/** A QR code's modules as a grid of booleans (cached per link). */
+export function qrModules(text: string): boolean[][] {
+  const hit = _qr.get(text); if (hit) return hit
+  const q = qrcode(0, 'M'); q.addData(text); q.make()
+  const n = q.getModuleCount(), g: boolean[][] = []
+  for (let r = 0; r < n; r++) { const row: boolean[] = []; for (let c = 0; c < n; c++) row.push(q.isDark(r, c)); g.push(row) }
+  if (_qr.size > 50) _qr.clear()
+  _qr.set(text, g); return g
+}
+function drawQrCode(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number) {
+  const g = qrModules(text), n = g.length, m = size / n
+  ctx.fillStyle = '#14110B'
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (g[r][c]) ctx.fillRect(Math.floor(x + c * m), Math.floor(y + r * m), Math.ceil(m), Math.ceil(m))
+}
+
 export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timeline, t: number, A: AdAssets) {
+  // SIGNATURE (2026-11-12): the premium look has its own layouts, motion and finish (lib/ad-signature).
+  if (p.look === 'signature') return drawSignatureFrame(ctx, p, tl, t, A)
   const W = ctx.canvas.width, H = ctx.canvas.height
   const u = Math.min(W, H) / 1080
   C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
@@ -3186,6 +3224,31 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
       ctx.restore()
     }
   }
+  // QR: a white tile with the code and a line under it. On an end card it sits centred low; anywhere
+  // else in the corner opposite the badge, clear of the platform's safe zones and the captions.
+  if (sc.qr && sc.qr.trim()) {
+    const qa = appear(local, 0.6, 0.45)
+    if (qa > 0) {
+      const portrait = H > W * 1.1, PFq = platformOf(p)
+      const end = sc.kind === 'cta' || sc.kind === 'contact'
+      const S = Math.min(W, H) * (end && portrait ? 0.34 : 0.22)
+      const label = (sc.qrLabel || 'Scan to try it free').toUpperCase().slice(0, 34)
+      // A quiet zone of about four modules round the code, so phone cameras read it.
+      const padT = S * 0.13, lh = 54 * u, tw = S + padT * 2, th = S + padT * 2 + lh
+      const capH = p.captions ? (portrait ? 250 : 150) * u : 0
+      const x = end && portrait ? (W - tw) / 2 : W - tw - Math.max(56 * u, W * PFq.safe.right + 24 * u)
+      const y = H - th - Math.max(56 * u, H * PFq.safe.bottom + 24 * u) - (end && portrait ? 0 : capH)
+      ctx.save(); ctx.globalAlpha *= qa
+      ctx.translate(x + tw / 2, y + th / 2); const z = 0.85 + 0.15 * qa; ctx.scale(z, z); ctx.translate(-(x + tw / 2), -(y + th / 2))
+      ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 30 * u
+      rr(ctx, x, y, tw, th, 22 * u); ctx.fillStyle = '#FFFFFF'; ctx.fill(); ctx.shadowBlur = 0
+      drawQrCode(ctx, sc.qr.trim(), x + padT, y + padT, S)
+      ctx.font = fnt(800, 24 * u, A.body); ctx.fillStyle = '#14110B'; ctx.textBaseline = 'middle'
+      const lw0 = ctx.measureText(label).width
+      ctx.fillText(label, x + (tw - Math.min(lw0, tw - 20 * u)) / 2, y + padT + S + lh / 2, tw - 20 * u)
+      ctx.restore()
+    }
+  }
   if (A.logo && sc.kind !== 'contact' && sc.kind !== 'cta') {
     const lw = 150 * u, lh = lw * (A.logo.naturalHeight || 106) / (A.logo.naturalWidth || 222)
     const PF2 = platformOf(p)
@@ -3239,7 +3302,8 @@ Seasons and events worth a trip: Art Basel (December), New Year's Eve, the Fort 
 Rules: never promise a price, a discount, a "best rate" or availability. The call to action is to book at stay-hospitality.com — never "call us" or "text us".`
 
 export type AdTemplate = { key: string; label: string; blurb: string; audience: AdAudience; format: AdFormat; name: string; scenes: (Omit<AdScene, 'id' | 'photos'> & { q?: string; n?: number })[] }
-/** Ready-made ads: pick one and it fills itself with photos from the library — no AI needed. */
+/** The public address of a free tool ('' = the list of tools), for the QR codes on the tool ads. */
+export const TOOL_LINK = (k: string) => (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + '/tools' + (k ? '/' + k : '')
 export type AdStory = AdTemplate & { length: string; who: string }
 /** Longer owner-facing stories (Jon, 2026-11-03: "full Stay Hospitality story, what we can share with owners as we onboard,
  *  welcome video, what the first 90 days looks like, team intro, our story"). Every fact is from HOUSE_FACTS / the house
@@ -3291,7 +3355,28 @@ export const STORIES: AdStory[] = [
   ] },
 ]
 
+/** Ready-made ads: pick one and it fills itself with photos from the library — no AI needed. */
 export const TEMPLATES: AdTemplate[] = [
+  // THE FREE OWNER TOOLS (Jon, 2026-11-12: "add the QR codes and create video content for the free linen and
+  // inventory estimator, also the revenue estimator"). Each ends on a card with the tool's QR code; the
+  // tools are free for any owner, whether or not they work with Stay, so the ads say so and promise nothing more.
+  { key: 'tool-projection', label: 'Free tool · Projections calculator', blurb: '9:16 reel: what could your rental earn, how it works, scan the QR', audience: 'owners', format: '9:16', name: 'Free projections calculator', scenes: [
+    { kind: 'kinetic', vo: 'What could your South Florida rental earn? Find out, free.', eyebrow: 'Free for owners', head: 'What could your\nrental **earn?**', sub: '', items: [], q: 'living room', n: 1 },
+    { kind: 'checks', vo: 'Search your building, then add the bedrooms, the size, the view and the amenities.', head: 'Tell it about **your home**', sub: '', items: ['Search your building|The address fills itself in', 'Bedrooms, size and view|Kitchen, balcony and amenities', 'Where it is|How far to the beach, what is nearby'], q: 'balcony', n: 1 },
+    { kind: 'cards', vo: 'You get a yearly range, the month-by-month pattern, and the comparable homes behind it.', head: '', sub: '', items: ['A yearly range|Gross, once the listing is established', 'Month by month|The South Florida season', 'Real comparables|From the projections we build'], q: 'ocean view', n: 3 },
+    { kind: 'cta', vo: 'Scan the code. It is free, with no account needed.', head: 'Scan for your\n**projection.**', sub: 'Free for any owner · no account needed', items: ['Try the free calculator'], q: 'pool', n: 1, qr: TOOL_LINK('income'), qrLabel: 'Scan for a free projection' },
+  ] },
+  { key: 'tool-supplies', label: 'Free tool · Supply and linen checklist', blurb: '9:16 reel: everything a rental needs, linen at par, Excel checklist, scan the QR', audience: 'owners', format: '9:16', name: 'Free rental supply checklist', scenes: [
+    { kind: 'kinetic', vo: 'Setting up a rental? Here is everything it needs, counted for you.', eyebrow: 'Free for owners', head: 'Everything your\nrental **needs.**', sub: '', items: [], q: 'kitchen', n: 1 },
+    { kind: 'checks', vo: 'Add the bedrooms, the beds by size, the baths, and what is in the kitchen.', head: 'Describe **your home**', sub: '', items: ['Beds by size|King, queen, full, twin, sofa bed', 'The kitchen|Only the appliances it has', 'Every bathroom|Towels, mats and dispensers'], q: 'bedroom', n: 1 },
+    { kind: 'cards', vo: 'Every item counted, the linen at par, and an Excel checklist to tick off as you go.', head: '', sub: '', items: ['Every item counted|Must-have, recommended, optional', 'Linen at par|Three sets in rotation', 'Excel checklist|Bought · in the home'], q: 'bathroom', n: 3 },
+    { kind: 'cta', vo: 'Scan the code. It is free, for any owner.', head: 'Scan for your\n**checklist.**', sub: 'Free for any owner · download as Excel or PDF', items: ['Get the free checklist'], q: 'living room', n: 1, qr: TOOL_LINK('inventory'), qrLabel: 'Scan for the free checklist' },
+  ] },
+  { key: 'tool-both', label: 'Free tool · Both owner tools', blurb: '4:5 feed ad: the projection calculator and the supply checklist, one QR to both', audience: 'owners', format: '4:5', name: 'Free tools for rental owners', scenes: [
+    { kind: 'title', vo: 'Two free tools for South Florida rental owners.', eyebrow: 'Free for owners', head: 'Free tools for\n**rental owners.**', sub: 'From Stay Hospitality', items: [], q: 'exterior', n: 1 },
+    { kind: 'cards', vo: 'See what your home could earn, and get everything it needs, counted, with the linen at par.', head: '', sub: '', items: ['Projections calculator|What your home could earn', 'Supply checklist|Every item and the linen, counted'], q: 'view', n: 2 },
+    { kind: 'cta', vo: 'Scan the code to try both. Free, no account needed.', head: 'Try them\n**free.**', sub: 'For any owner, whether or not you work with us', items: ['Scan to try both tools'], q: 'pool', n: 1, qr: TOOL_LINK(''), qrLabel: 'Scan for the free tools' },
+  ] },
   { key: 'owner-earn', label: 'Owners · Why Stay', blurb: '30s owner ad: hook, buildings, how, Lighthouse, results, Nick', audience: 'owners', format: '16:9', name: 'Why owners choose Stay', scenes: [
     { kind: 'title', vo: 'More revenue. A lower fee. One complete team. This is Stay Hospitality.', head: 'More **revenue.**\nLower **fee.**\nOne complete **team.**', sub: '', items: [], q: 'exterior', n: 1 },
     { kind: 'wall', vo: '', head: '', sub: '', items: [], q: 'pool', n: 9 },
