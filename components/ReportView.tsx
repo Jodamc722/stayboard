@@ -39,6 +39,7 @@ import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, season
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
 import { cmaSlides, CmaTuneModal } from '@/components/SalesCmaSlides'
 import { normalizeCma } from '@/lib/sales-cma'
+import { DeckShare } from '@/components/DeckShare'
 import { AUDIENCES, audienceOf } from '@/lib/sales-audience'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
 import OwnerPortalDemo from '@/components/OwnerPortalDemo'
@@ -1471,6 +1472,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   const [copied, setCopied] = useState(false)
   // A sales deck wears Atelier unless someone picked another look for it (capri was only ever the default).
   const isSalesKind = String(((initial.content || {}).meta || {}).kind || '') === 'sales'
+  const [shareAny, setShareAny] = useState(false)
   const [themeKey, setThemeKey] = useState<string>(isSalesKind && (!initial.theme || initial.theme === 'capri') ? 'stayModern' : THEMES[initial.theme] ? initial.theme : 'capri')
   // ── style overrides (content.style): custom accent + font pairing (2026-08-17) ──
   // The accent override is merged into the theme object itself, so every downstream consumer —
@@ -3019,9 +3021,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               <Eye size={12} /> Views
             </button>
           ) : null}
+          {isSalesKind ? (
+            // SHARE ANY VERSION (Jon, 2026-11-12): digital, print, one-pager, keynote or a free tool, with an editable message.
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <button onClick={() => setShareAny(o => !o)} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
+                <LinkIcon size={12} /> Share
+              </button>
+              {shareAny ? <DeckShare code={initial.code} building={String(initial.scope_label || '').replace(/ Residences$/, '')} prospect={String(((initial.content || {}).meta || {}).prospect || '')}
+                presenter={(() => { const cd: Any = (((initial.content || {}) as Any).contact || {}).card || {}; return [cd.name, cd.phone].filter(Boolean).join(' · ') })()}
+                onePager={!!((initial.content || {}) as Any).cma} onClose={() => setShareAny(false)} /> : null}
+            </span>
+          ) : (
           <button onClick={copyLink} className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-semibold" style={{ background: t.card, border: '1px solid ' + t.toolbarBorder }}>
             {copied ? <Check size={12} /> : <LinkIcon size={12} />} {copied ? 'Copied' : 'Copy share link'}
           </button>
+          )}
           {/* LOCK IN AS THE STANDARD (Jon, 2026-09-24). Two clicks, because it rewrites the template
               every future deck is generated from. Saves this deck first so what is locked in is
               what is on screen. */}

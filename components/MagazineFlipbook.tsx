@@ -19,140 +19,102 @@ export function MagazineFlipbook({ pages, labels, top = 56, contact, title }: { 
     const on = () => { setVw(window.innerWidth); setVh(window.innerHeight) }
     on(); window.addEventListener('resize', on); return () => window.removeEventListener('resize', on)
   }, [])
-  // phone (<760): the readable stacked page; tablet (<1100): one bound page at a time; wider: spreads.
-  const phone = vw < 760
-  const single = vw < 1100
-  // Spreads: [left, right] page indexes. The cover sits alone on the right, like a closed book's front.
-  const spreads = useMemo(() => {
-    const n = pages.length
-    if (single) return pages.map((_, i) => [null, i] as [number | null, number | null])
-    const out: [number | null, number | null][] = [[null, 0]]
-    for (let i = 1; i < n; i += 2) out.push([i, i + 1 < n ? i + 1 : null])
-    return out
-  }, [pages.length, single])
-  const [at, setAt] = useState(0)
-  const [turn, setTurn] = useState<null | { dir: 1 | -1; to: number }>(null)
-  useEffect(() => { setAt(a => Math.min(a, spreads.length - 1)) }, [spreads.length])
+  // ONE PAGE AT A TIME, EVERYWHERE (Jon, 2026-11-12: "should be standard, one page at a time with a page
+  // next"). A phone gets the readable page (PhoneReader); anything wider gets the printed page, whole,
+  // scaled to the window, with Previous and Next beside it.
+  if (vw < 760) return <PhoneReader pages={pages} labels={labels || []} contact={contact} title={title} />
+  return <PageViewer pages={pages} labels={labels || []} vw={vw} vh={vh} top={top} />
+}
 
-  const go = useCallback((to: number) => {
-    if (turn || to < 0 || to >= spreads.length || to === at) return
-    if (Math.abs(to - at) > 1 || single) { setAt(to); return }
-    setTurn({ dir: to > at ? 1 : -1, to })
-  }, [turn, spreads.length, at, single])
+function useTurner(n: number) {
+  const [at, setAt] = useState(0)
+  const [dir, setDir] = useState<1 | -1>(1)
+  const go = useCallback((to: number) => { if (to < 0 || to >= n) return; setDir(to >= at ? 1 : -1); setAt(to) }, [n, at])
+  useEffect(() => { setAt(a => Math.min(a, Math.max(0, n - 1))) }, [n])
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t && (t.isContentEditable || /INPUT|TEXTAREA|SELECT/.test(t.tagName))) return
-      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(at + 1) }
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); go(at + 1) }
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(at - 1) }
       if (e.key === 'Home') go(0)
-      if (e.key === 'End') go(spreads.length - 1)
+      if (e.key === 'End') go(n - 1)
     }
     window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k)
-  }, [go, at, spreads.length])
+  }, [go, at, n])
+  return { at, dir, go }
+}
 
-  // Swipe
+function PageViewer({ pages, labels, vw, vh, top }: { pages: React.ReactNode[]; labels: string[]; vw: number; vh: number; top: number }) {
+  const { at, dir, go } = useTurner(pages.length)
   const sx = useRef<number | null>(null)
-  const onDown = (e: React.PointerEvent) => { sx.current = e.clientX }
-  const onUp = (e: React.PointerEvent) => {
-    if (sx.current == null) return
-    const dx = e.clientX - sx.current; sx.current = null
-    if (Math.abs(dx) > 50) go(at + (dx < 0 ? 1 : -1))
-  }
-
-  const bookW = single ? PW : PW * 2
-  const availH = Math.max(320, vh - top - 96), availW = Math.max(300, vw - (single ? 24 : 120))
-  const scale = Math.min(availW / bookW, availH / PH, 1.15)
-  const [L, R] = spreads[at] || [null, null]
-  const next = turn ? spreads[turn.to] : null
-  const page = (i: number | null) => (i == null ? null : <div className="mz-leaf-page">{pages[i]}</div>)
-
-  // What shows under the turning leaf: going forward, this spread's left and the next spread's right;
-  // going back, the previous spread's left and this spread's right.
-  const leftBase = turn ? (turn.dir === 1 ? L : next![0]) : L
-  const rightBase = turn ? (turn.dir === 1 ? next![1] : R) : R
-  const label = (labels || [])[R ?? L ?? 0] || ''
-  const pageNo = (i: number | null) => (i == null ? '' : String(i + 1))
-
-  // ON A PHONE (Jon, 2026-11-12: "needs to work as a shareable link we can share directly with owners,
-  // designed for phones"): not a shrunken page, a reader. Every page full width, edge to edge, scrolled
-  // like an article; a progress line; the section you are in; a contents sheet; and a way to reach the
-  // presenter from anywhere in it.
-  if (phone) return <PhoneReader pages={pages} labels={labels || []} contact={contact} title={title} />
+  const scale = Math.min((vh - top - 92) / PH, (vw - 200) / PW, 1.2)
+  const label = at === 0 ? 'Cover' : labels[at] || (at === pages.length - 1 ? 'Contact' : '')
   return (
-    <div className="mz-flip" onPointerDown={onDown} onPointerUp={onUp}>
+    <div className="mz-flip" onPointerDown={e => { sx.current = e.clientX }} onPointerUp={e => { if (sx.current == null) return; const dx = e.clientX - sx.current; sx.current = null; if (Math.abs(dx) > 60 && e.pointerType !== 'mouse') go(at + (dx < 0 ? 1 : -1)) }}>
       <style>{FLIP_CSS}</style>
-      <div className="mz-book" style={{ width: bookW * scale, height: PH * scale }}>
-        <div className="mz-book-in" style={{ width: bookW, height: PH, transform: `scale(${scale})` }}>
-          {single ? (
-            <div className="mz-slot mz-slot-r" style={{ left: 0 }} key={at}><div className="mz-phone-page">{page(R)}</div></div>
-          ) : (
-            <>
-              <div className={'mz-slot mz-slot-l' + (leftBase == null ? ' empty' : '')} style={{ left: 0 }}>{page(leftBase)}</div>
-              <div className={'mz-slot mz-slot-r' + (rightBase == null ? ' empty' : '')} style={{ left: PW }}>{page(rightBase)}</div>
-              {turn && (
-                <div className={'mz-turn ' + (turn.dir === 1 ? 'fwd' : 'back')} style={{ left: turn.dir === 1 ? PW : 0, animationDuration: TURN_MS + 'ms' }}
-                  onAnimationEnd={() => { setAt(turn.to); setTurn(null) }}>
-                  <div className="mz-face front">{page(turn.dir === 1 ? R : L)}<i className="mz-shade" /></div>
-                  <div className="mz-face back">{page(turn.dir === 1 ? next![0] : next![1])}<i className="mz-shade" /></div>
-                </div>
-              )}
-              {turn || (leftBase != null && rightBase != null) ? <i className="mz-spine" /> : null}
-            </>
-          )}
+      <div className="mz-pv">
+        <button type="button" className="mz-pv-arrow" onClick={() => go(at - 1)} disabled={at === 0} aria-label="Previous page"><ChevronLeft size={26} /></button>
+        <div className="mz-pv-page" style={{ width: PW * scale, height: PH * scale }}>
+          <div key={at} className={'mz-pv-in ' + (dir > 0 ? 'fwd' : 'back')} style={{ width: PW, height: PH, transform: `scale(${scale})` }}>
+            <div className="mz-leaf-page">{pages[at]}</div>
+          </div>
         </div>
-        {/* Click either half to turn. */}
-        <button type="button" aria-label="Previous page" className="mz-hit l" onClick={() => go(at - 1)} disabled={at === 0} />
-        <button type="button" aria-label="Next page" className="mz-hit r" onClick={() => go(at + 1)} disabled={at >= spreads.length - 1} />
+        <button type="button" className="mz-pv-arrow" onClick={() => go(at + 1)} disabled={at >= pages.length - 1} aria-label="Next page"><ChevronRight size={26} /></button>
       </div>
       <div className="mz-flip-bar">
         <button type="button" onClick={() => go(at - 1)} disabled={at === 0} aria-label="Previous"><ChevronLeft size={18} /></button>
-        <span className="mz-flip-where"><b>{single ? pageNo(R) : [pageNo(L), pageNo(R)].filter(Boolean).join('–')}</b> of {pages.length}{label ? <em> · {label}</em> : null}</span>
-        <input type="range" min={0} max={spreads.length - 1} value={at} onChange={e => go(Number(e.target.value))} aria-label="Go to page" />
-        <button type="button" onClick={() => go(at + 1)} disabled={at >= spreads.length - 1} aria-label="Next"><ChevronRight size={18} /></button>
+        <span className="mz-flip-where"><b>{at + 1}</b> of {pages.length}{label ? <em> · {label}</em> : null}</span>
+        <input type="range" min={0} max={pages.length - 1} value={at} onChange={e => go(Number(e.target.value))} aria-label="Go to page" />
+        <button type="button" onClick={() => go(at + 1)} disabled={at >= pages.length - 1} aria-label="Next"><ChevronRight size={18} /></button>
       </div>
     </div>
   )
 }
 
 function PhoneReader({ pages, labels, contact, title }: { pages: React.ReactNode[]; labels: string[]; contact?: FlipContact; title?: string }) {
-  const refs = useRef<(HTMLDivElement | null)[]>([])
-  const [cur, setCur] = useState(0)
-  const [prog, setProg] = useState(0)
+  // ONE PAGE AT A TIME ON A PHONE TOO (Jon, 2026-11-12): the readable page fills the screen, scrolls
+  // within itself when it is long, and Next / Previous (or a swipe) turns to the next page.
+  const { at: cur, dir, go } = useTurner(pages.length)
+  const prog = (cur + 1) / Math.max(1, pages.length)
   const [sheet, setSheet] = useState<null | 'contents' | 'contact'>(null)
-  useEffect(() => {
-    const on = () => {
-      const h = document.documentElement
-      const max = Math.max(1, h.scrollHeight - window.innerHeight)
-      setProg(Math.min(1, Math.max(0, window.scrollY / max)))
-      const mid = window.innerHeight * 0.4
-      let c = 0
-      refs.current.forEach((el, i) => { if (el && el.getBoundingClientRect().top <= mid) c = i })
-      setCur(c)
-    }
-    on(); window.addEventListener('scroll', on, { passive: true }); window.addEventListener('resize', on)
-    return () => { window.removeEventListener('scroll', on); window.removeEventListener('resize', on) }
-  }, [pages.length])
+  useEffect(() => { window.scrollTo({ top: 0 }) }, [cur])
+  const sx = useRef<{ x: number; y: number } | null>(null)
+  const onDown = (e: React.PointerEvent) => { sx.current = { x: e.clientX, y: e.clientY } }
+  const onUp = (e: React.PointerEvent) => {
+    const s0 = sx.current; sx.current = null
+    if (!s0) return
+    const dx = e.clientX - s0.x, dy = e.clientY - s0.y
+    const t = e.target as HTMLElement
+    if (t && t.closest && t.closest('input,select,textarea,button,a,.ft')) return
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) go(cur + (dx < 0 ? 1 : -1))
+  }
   // The contents: the first page of each section, in order.
   const toc = labels.map((l, i) => ({ l: i === 0 ? 'Cover' : (l || (i === pages.length - 1 ? 'Contact' : '')), i }))
     .filter((x, j, a) => x.l && (j === 0 || a.findIndex(y => y.l === x.l) === j))
-  const jump = (i: number) => { setSheet(null); const el = refs.current[i]; if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 52, behavior: 'smooth' }) }
+  const jump = (i: number) => { setSheet(null); go(i) }
   const label = cur === 0 ? (title || 'Cover') : (labels[cur] || (cur === pages.length - 1 ? 'Contact' : ''))
   const atEnd = cur >= pages.length - 1
   const first = (contact?.name || '').split(' ')[0]
   const tel = (contact?.phone || '').replace(/[^\d+]/g, '')
   return (
-    <div className="mz-reader">
+    <div className="mz-reader" onPointerDown={onDown} onPointerUp={onUp}>
       <style>{FLIP_CSS}</style>
       <i className="mz-r-prog" style={{ transform: `scaleX(${prog})` }} />
-      {pages.map((p, i) => <div key={i} ref={el => { refs.current[i] = el }} className={'mz-r-page' + (i === 0 ? ' mz-r-cover' : '')}>{p}</div>)}
+      <div key={cur} className={'mz-r-page mz-r-turn ' + (dir > 0 ? 'fwd' : 'back') + (cur === 0 ? ' mz-r-cover' : '')}>{pages[cur]}</div>
+      <div className="mz-r-next">
+        {cur < pages.length - 1 ? <button type="button" onClick={() => go(cur + 1)}><span>Next</span><b>{labels[cur + 1] && labels[cur + 1] !== labels[cur] ? labels[cur + 1] : cur + 1 === pages.length - 1 ? 'Contact' : 'Page ' + (cur + 2)}</b><ChevronRight size={18} /></button>
+          : contact && (contact.phone || contact.email) ? <button type="button" onClick={() => setSheet('contact')}><span>Next step</span><b>{first ? 'Talk to ' + first : 'Talk to us'}</b><ChevronRight size={18} /></button> : null}
+      </div>
       <div className={'mz-r-dock' + (sheet ? ' up' : '')}>
+        <button type="button" className="mz-r-arrow" onClick={() => go(cur - 1)} disabled={cur === 0} aria-label="Previous page"><ChevronLeft size={20} /></button>
         <button type="button" className="mz-r-where" onClick={() => setSheet(s => s === 'contents' ? null : 'contents')} aria-label="Contents">
           <List size={16} /><span>{label}</span><em>{cur + 1}/{pages.length}</em>
         </button>
+        <button type="button" className="mz-r-arrow mz-r-arrow-next" onClick={() => go(cur + 1)} disabled={cur >= pages.length - 1} aria-label="Next page"><ChevronRight size={20} /></button>
         {contact && (contact.phone || contact.email) ? (
-          <button type="button" className={'mz-r-talk' + (atEnd ? ' hot' : '')} onClick={() => setSheet(s => s === 'contact' ? null : 'contact')}>
-            {contact.photo ? <img src={contact.photo} alt="" /> : <MessageSquare size={15} />}<span>{first ? 'Talk to ' + first : 'Talk to us'}</span>
+          <button type="button" className={'mz-r-talk' + (atEnd ? ' hot' : '')} onClick={() => setSheet(s => s === 'contact' ? null : 'contact')} aria-label={first ? 'Talk to ' + first : 'Talk to us'}>
+            {contact.photo ? <img src={contact.photo} alt="" /> : <MessageSquare size={17} />}
           </button>
         ) : null}
       </div>
@@ -179,18 +141,37 @@ function PhoneReader({ pages, labels, contact, title }: { pages: React.ReactNode
 }
 
 const FLIP_CSS = `
-.mz-reader{padding-bottom:96px;background:var(--mz-paper,#fff);margin:-36px -16px -64px}
+.mz-pv{display:flex;align-items:center;gap:22px;margin-top:4px}
+.mz-pv-page{position:relative;box-shadow:0 22px 60px rgba(20,18,15,.22);background:#fff;overflow:hidden}
+.mz-pv-in{position:absolute;left:0;top:0;transform-origin:top left;animation:.38s cubic-bezier(.2,.8,.2,1) both}
+.mz-pv-in.fwd{animation-name:mzPvFwd}.mz-pv-in.back{animation-name:mzPvBack}
+@keyframes mzPvFwd{from{opacity:0;translate:36px 0}to{opacity:1;translate:0 0}}
+@keyframes mzPvBack{from{opacity:0;translate:-36px 0}to{opacity:1;translate:0 0}}
+.mz-pv-arrow{width:56px;height:56px;border-radius:99px;border:1px solid rgba(0,0,0,.12);background:#fff;color:#101114;display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgba(20,18,15,.12);flex:none}
+.mz-pv-arrow:disabled{opacity:.3;cursor:default}
+.mz-r-turn{animation:.32s cubic-bezier(.2,.8,.2,1) both}.mz-r-turn.fwd{animation-name:mzPvFwd}.mz-r-turn.back{animation-name:mzPvBack}
+.mz-r-next{padding:18px 16px 8px;background:var(--mz-paper,#fff)}
+.mz-r-next button{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;text-align:left;border:1px solid var(--mz-rule,#E4E2DD);background:#fff;border-radius:14px;padding:14px 16px;cursor:pointer;color:var(--mz-ink,#101114)}
+.mz-r-next span{font:600 10px "Inter",sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--mz-glow,#8C6D3A)}
+.mz-r-next b{font:400 20px var(--mz-display,Georgia,serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mz-r-arrow{width:48px;flex:none;padding:0!important;justify-content:center;background:rgba(255,255,255,.96);color:#101114}
+.mz-r-arrow:disabled{opacity:.45}
+.mz-r-arrow-next{background:var(--mz-navy,#14161B)!important;color:#fff!important}
+.mz-r-talk{width:48px;padding:0!important;justify-content:center}
+.mz-r-talk img{width:44px!important;height:44px!important}
+.mz-r-talk svg{margin-left:0!important}
+.mz-reader{overflow-x:clip;padding-bottom:96px;background:var(--mz-paper,#fff);min-height:calc(100svh - 44px);box-sizing:border-box;margin:-36px -16px -64px}
 .mz-r-prog{position:fixed;left:0;right:0;top:44px;height:3px;background:var(--mz-glow,#8C6D3A);transform-origin:left center;z-index:40;pointer-events:none}
 .mz-r-page>.mz-page{margin:0!important;box-shadow:none!important;border-radius:0!important;width:100%!important;max-width:none!important}
 .mz-r-page+.mz-r-page>.mz-page:not(.mz-dark):not(.mz-opener):not(.mz-backcover){border-top:1px solid var(--mz-rule,#e4e2dd)}
-.mz-r-cover>.mz-page{min-height:calc(100svh - 44px)!important;display:flex;flex-direction:column;justify-content:flex-end}
+.mz-r-cover>.mz-page{min-height:calc(100svh - 44px)!important;padding-bottom:104px!important;display:flex;flex-direction:column;justify-content:flex-end}
 .mz-r-page .mz-opener,.mz-r-page .mz-backcover{min-height:88svh!important}
 .mz-r-dock{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;z-index:45;font-family:"Inter",system-ui,sans-serif}
 .mz-r-dock button{display:flex;align-items:center;gap:8px;border:0;border-radius:999px;height:48px;padding:0 16px;font:600 13.5px "Inter",system-ui,sans-serif;box-shadow:0 10px 30px rgba(10,11,14,.22);cursor:pointer}
 .mz-r-where{flex:1;min-width:0;background:rgba(255,255,255,.96);color:#101114;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
 .mz-r-where span{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mz-r-where em{font-style:normal;font-weight:500;color:#6B6C72;font-variant-numeric:tabular-nums}
-.mz-r-talk{background:var(--mz-navy,#14161B);color:#fff;padding:0 16px 0 6px!important}
+.mz-r-talk{background:var(--mz-navy,#14161B);color:#fff}
 .mz-r-talk img{width:36px;height:36px;border-radius:99px;object-fit:cover}
 .mz-r-talk svg{margin-left:10px}
 .mz-r-talk.hot{background:var(--mz-glow,#8C6D3A)}

@@ -21,6 +21,7 @@ import { ProjectionTuner } from '@/components/ProjectionTuner'
 import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { MagazineFlipbook } from '@/components/MagazineFlipbook'
 import { FreeTool } from '@/components/FreeTool'
+import { DeckShare } from '@/components/DeckShare'
 import { TOOL_KEYS, TOOL_META, isToolKey, type ToolKey } from '@/lib/free-tools'
 import { StayTimeline, YearWave, ChannelHub, YearChart, QrCode } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
@@ -166,7 +167,6 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
   // page laid out for print and PDF, where the team builds; ?view=digital is the page-turning magazine
   // that gets shared.
   const flip = !!digital
-  const [copied, setCopied] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   // Print from the digital version opens the print version and prints it (?print=1).
   useEffect(() => { if (!digital && /[?&]print=1/.test(window.location.search)) { const id = setTimeout(() => window.print(), 1400); return () => clearTimeout(id) } }, [digital])
@@ -736,7 +736,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
       ), { section: 'Our technology' })
       case s.key === 'op-work': return opener('op-work', '02', 'Working together', 'workTitle', 'work')
       case s.key === 'op-num' && gfx('numbers'): return (
-        <section key="op-num" className="mz-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
+        <section key="op-num" data-k="op-num" className="mz-page mz-wave-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
       )
       case s.key === 'op-num': return opener('op-num', specs.some(x => x.key === 'op-work') ? '03' : '02', 'The numbers', 'numbersTitle', 'numbers')
       case s.key.startsWith('tool-') && isToolKey(s.key.slice(5)): {
@@ -1196,24 +1196,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
           {dirty ? <button type="button" onClick={save}>Save changes</button> : saving ? <span className="mz-saved">{saving}</span> : null}
           <span className="mz-share-wrap">
             <button type="button" className={'mz-ghost' + (shareOpen ? ' on' : '')} onClick={() => setShareOpen(o => !o)}>Share</button>
-            {shareOpen ? (() => {
-              const u = (typeof window !== 'undefined' ? window.location.origin : '') + keynote + '?view=digital'
-              const subject = (short(building) || 'Stay Hospitality') + ' · Stay Hospitality'
-              const body = (cma ? T('coverDek').replace(/\*/g, '') + '\n\n' : '') + u
-              return (
-                <div className="mz-share">
-                  <p>The digital magazine, to send</p>
-                  <input readOnly value={u} onFocus={e => e.target.select()} />
-                  <div>
-                    <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(u) } catch { /* the box above is selectable */ } setCopied(true); setTimeout(() => setCopied(false), 1800) }}>{copied ? 'Copied' : 'Copy link'}</button>
-                    <a href={'sms:?&body=' + encodeURIComponent(body)}>Text</a>
-                    <a href={'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body)}>Email</a>
-                    {typeof navigator !== 'undefined' && (navigator as Any).share ? <button type="button" onClick={() => (navigator as Any).share({ title: subject, text: body.replace(u, '').trim(), url: u }).catch(() => {})}>More…</button> : null}
-                  </div>
-                  <small>Opens without a sign-in. Pasted into a text or an email, it shows the building’s photo and name.</small>
-                </div>
-              )
-            })() : null}
+            {shareOpen ? <DeckShare code={report.code} building={short(building) || building} prospect={prospect} presenter={[card.name, card.phone].filter(Boolean).join(' · ')} dek={cma ? T('coverDek') : ''} onePager={!!cma} onClose={() => setShareOpen(false)} /> : null}
           </span>
           <button type="button" onClick={() => { if (flip) window.location.href = keynote + '?view=magazine&print=1'; else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
         </span>
@@ -1665,7 +1648,7 @@ div.mz-ed{display:block}
 .mz-root:not(.mz-flipping) .mz-about-photo{height:440px}.mz-root:not(.mz-flipping) .mz-about-head{padding:0 20px 28px}
 .mz-root:not(.mz-flipping) .mz-split-page{display:flex;flex-direction:column}.mz-root:not(.mz-flipping) .mz-split-photo{height:280px}.mz-root:not(.mz-flipping) .mz-run-tight,.mz-root:not(.mz-flipping) .mz-split-body,.mz-root:not(.mz-flipping) .mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
 .mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}
-.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
+.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-wave-page{min-height:86svh;position:relative;overflow:hidden}.mz-root:not(.mz-flipping) .mz-wave-page>div{position:absolute!important;inset:0}.mz-root:not(.mz-flipping) .mz-wave-page>div>div{left:20px!important;right:20px!important;top:36px!important}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
 .mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
 .mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr}
