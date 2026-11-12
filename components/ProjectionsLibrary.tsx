@@ -27,7 +27,7 @@ import { normalizeCma, blankCma, planNumbers, newId, money, type SalesCma, type 
 
 type Any = any
 type Row = { id: string; name: string; area: string; photo?: string; plans: number; comps: number; range: [number, number] | null; updatedAt: string; updatedBy?: string | null }
-type Entry = { id: string | null; name: string; area: string; address?: string; website?: string; note?: string; photo?: string; cma: SalesCma }
+type Entry = { id: string | null; name: string; area: string; address?: string; website?: string; note?: string; photo?: string; calc?: boolean; cma: SalesCma }
 type ReadPlan = { name: string; sf?: string; beds?: number | null; lo?: number | null; hi?: number | null; months?: number[] | null; nightlyLo?: number | null; nightlyHi?: number | null; occLo?: number | null; occHi?: number | null; note?: string }
 type ReadComp = { name: string; market?: string; basis?: string; lo?: number | null; hi?: number | null; nightlyLo?: number | null; nightlyHi?: number | null; occLo?: number | null; occHi?: number | null }
 type Read = { building?: string; area?: string; address?: string; website?: string; plans: ReadPlan[]; comps: ReadComp[]; summary: string; source: string }
@@ -119,7 +119,7 @@ export function ProjectionsLibrary() {
     try {
       const d = await fetch('/api/sales/buildings?id=' + encodeURIComponent(id), { cache: 'no-store' }).then(r => r.json())
       const b = d?.building
-      if (b) setEntry({ id: b.id, name: b.name, area: b.area, address: b.address, website: b.website, note: b.note, photo: b.photo, cma: normalizeCma(b.cma)! })
+      if (b) setEntry({ id: b.id, name: b.name, area: b.area, address: b.address, website: b.website, note: b.note, photo: b.photo, calc: b.calc !== false, cma: normalizeCma(b.cma)! })
       setDirty(false)
     } catch { setMsg('Could not open that building.') }
     setLoading(false)
@@ -141,7 +141,7 @@ export function ProjectionsLibrary() {
     if (!entry) return
     setBusy(true); setMsg('')
     try {
-      const body = { id: entry.id || undefined, name: entry.name, area: entry.area, address: entry.address || '', website: entry.website || '', note: entry.note || '', photo: entry.photo || '', cma: { ...entry.cma, building: entry.name, area: entry.area } }
+      const body = { id: entry.id || undefined, name: entry.name, area: entry.area, address: entry.address || '', website: entry.website || '', note: entry.note || '', photo: entry.photo || '', calc: entry.calc !== false, cma: { ...entry.cma, building: entry.name, area: entry.area } }
       const r = await fetch('/api/sales/buildings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => null)
       if (!r.ok || !d?.ok) throw new Error(d?.error || 'Save failed')
@@ -344,6 +344,7 @@ export function ProjectionsLibrary() {
                     <div className="flex gap-2"><input value={entry.website || ''} onChange={e => patch({ website: e.target.value })} placeholder="theriderresidences.com" className={field} />
                       <button type="button" disabled={!!reading || !entry.website?.trim()} onClick={() => runRead('website', entry.website!.trim())} className="mt-1 shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-line px-3 text-[12.5px] font-semibold text-ink hover:bg-app disabled:opacity-40"><Globe size={13} /> Scan</button></div></div>
                   <label className="block sm:col-span-2"><span className={lab}>Notes for the team</span><input value={entry.note || ''} onChange={e => patch({ note: e.target.value })} placeholder="Delivery 2027 · developer contact · rental rules" className={field} /></label>
+                  <label className="sm:col-span-2 inline-flex items-center gap-2 text-[12.5px] text-ink"><input type="checkbox" checked={entry.calc !== false} onChange={e => patch({ calc: e.target.checked })} /> Use this building in the public projections calculator <span className="text-muted">(unit types marked not approved or not public stay out either way)</span></label>
                 </div>
                 <div className="px-4 sm:px-5 pb-4 flex flex-wrap items-center gap-2">
                   <button type="button" onClick={save} disabled={busy || !dirty} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold disabled:opacity-40">{busy ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />} {dirty ? 'Save' : 'Saved'}</button>
@@ -436,6 +437,28 @@ export function ProjectionsLibrary() {
                               <YearInput lo={0} hi={0} onSet={(lo, hi) => setPlan(i, { override: { lo, hi }, baseId: 'none' })} />
                             </div>
                           )}
+                          {/* THE PROJECTION'S RECORD (Jon, 2026-11-12, the projections folder): approval, units, who it
+                              was for, notes and its PDF. Internal: none of this prints on a deck. */}
+                          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                            <select value={p.status || 'approved'} onChange={e => setPlan(i, { status: e.target.value as any, ...(e.target.value === 'pending' ? { public: false } : {}) })} aria-label="Status"
+                              className={'rounded-full px-2 py-0.5 font-semibold border ' + (p.status === 'pending' ? 'bg-amber-50 text-amber-800 border-amber-200' : p.status === 'caveat' ? 'bg-rose-50 text-rose-800 border-rose-200' : 'bg-emerald-50 text-emerald-800 border-emerald-200')}>
+                              <option value="approved">Approved</option><option value="pending">Not approved yet</option><option value="caveat">Use with care</option>
+                            </select>
+                            <label className="inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-muted" title="Feeds the public projections calculator">
+                              <input type="checkbox" checked={p.public !== false && p.status !== 'pending'} disabled={p.status === 'pending'} onChange={e => setPlan(i, { public: e.target.checked })} /> Public calculator
+                            </label>
+                            {p.adr && p.adr.length ? <span className="rounded-full bg-app px-2 py-0.5 text-muted">ADR ${p.adr[0]}{p.adr[1] && p.adr[1] !== p.adr[0] ? '–' + p.adr[1] : ''}</span> : null}
+                          </div>
+                          {(p.units?.length || p.preparedFor?.length || p.notes || p.files?.length) ? (
+                            <details className="text-[11.5px] text-muted">
+                              <summary className="cursor-pointer">{[p.units?.length ? 'Units ' + p.units.join(', ') : '', p.prepared].filter(Boolean).join(' · ') || 'Details'}</summary>
+                              <div className="mt-1.5 space-y-1">
+                                {p.preparedFor?.length ? <p><span className="text-ink">Prepared for</span> {p.preparedFor.join('; ')}</p> : null}
+                                <textarea value={p.notes || ''} onChange={e => setPlan(i, { notes: e.target.value })} rows={2} placeholder="Internal notes" className="w-full rounded-lg border border-line px-2 py-1 text-[11.5px] text-ink" />
+                                {p.files?.map((f, j) => <a key={j} href={f.url} target="_blank" rel="noreferrer" className="block text-ink underline truncate">{f.name}</a>)}
+                              </div>
+                            </details>
+                          ) : null}
                           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                             <button type="button" onClick={() => setTune(tune === p.id ? null : p.id)} className={'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] font-semibold ' + (tune === p.id ? 'bg-ink text-white' : 'border border-line text-ink hover:bg-app')}><SlidersHorizontal size={12} /> {tune === p.id ? 'Done' : 'Adjust'}</button>
                             <button type="button" disabled={!!reading} onClick={() => { unitFor.current = p.id; unitFile.current?.click() }} title={'Upload a sheet or deck for ' + p.name + ' alone'} className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-[12px] font-semibold text-ink hover:bg-app disabled:opacity-40"><Upload size={12} /> Upload</button>

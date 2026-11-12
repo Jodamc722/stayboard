@@ -26,12 +26,17 @@ async function income(inp: IncomeInput, light = false): Promise<IncomeFull> {
   const asComp = (name: string, market: string, lo: number, hi: number, nlo: number, nhi: number, olo: number, ohi: number) =>
     ({ name, market, gross: lo === hi || !hi ? money0(lo) : money0(lo) + '–' + money0(hi).slice(1), nightly: nlo ? money0(nlo) + '–' + money0(nhi || nlo).slice(1) + ' a night' : '', occ: olo ? olo + (ohi && ohi !== olo ? '–' + ohi : '') + '% occupied' : '' })
   const pts: Pt[] = [], own: Pt[] = []
+  // Only what the team has cleared for the public: a building switched off (calc: false) and a projection
+  // marked not public (pending approval, a caveat) never feed the calculator. Unit numbers stay internal.
+  const bare = (name: string) => name.split(' · ')[0]
   for (const b of lib) {
+    if (b.calc === false) continue
     for (const p of b.cma.plans) {
+      if (p.public === false || p.status === 'pending') continue
       if (bedKey(p.name) !== want) continue
       const n = planNumbers(b.cma, p)
       if (!(n.lo > 0)) continue
-      const pt: Pt = { lo: n.lo, hi: n.hi, nlo: n.nightlyLo, nhi: n.nightlyHi, olo: p.occLo, ohi: p.occHi, area: b.area || b.cma.area || '', src: b.name, sf: sqftOf(p.sf), comp: asComp(b.name + ' ' + p.name, b.area || '', n.lo, n.hi, n.nightlyLo, n.nightlyHi, p.occLo, p.occHi) }
+      const pt: Pt = { lo: n.lo, hi: n.hi, nlo: n.nightlyLo, nhi: n.nightlyHi, olo: p.occLo, ohi: p.occHi, area: b.area || b.cma.area || '', src: b.name, sf: sqftOf(p.sf), comp: asComp(b.name + ' ' + bare(p.name), b.area || '', n.lo, n.hi, n.nightlyLo, n.nightlyHi, p.occLo, p.occHi) }
       pts.push(pt)
       if (inp.libId && b.id === inp.libId) own.push(pt)
     }
