@@ -21,7 +21,8 @@ import { ProjectionTuner } from '@/components/ProjectionTuner'
 import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { MagazineFlipbook } from '@/components/MagazineFlipbook'
 import { FreeTool } from '@/components/FreeTool'
-import { TOOL_KEYS, TOOL_META, isToolKey, type ToolKey } from '@/lib/free-tools'
+import { DeckShare } from '@/components/DeckShare'
+import { TOOL_KEYS, TOOL_META, isToolKey, toolKeyOf, type ToolKey } from '@/lib/free-tools'
 import { StayTimeline, YearWave, ChannelHub, YearChart, QrCode } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
@@ -166,7 +167,6 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
   // page laid out for print and PDF, where the team builds; ?view=digital is the page-turning magazine
   // that gets shared.
   const flip = !!digital
-  const [copied, setCopied] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   // Print from the digital version opens the print version and prints it (?print=1).
   useEffect(() => { if (!digital && /[?&]print=1/.test(window.location.search)) { const id = setTimeout(() => window.print(), 1400); return () => clearTimeout(id) } }, [digital])
@@ -468,7 +468,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
     if (aud === 'owner' && showSecond) add({ key: 'second', kind: 'page', section: 'Terms', render: () => null })
   } else for (const k of AUDIENCES[aud].order) parts[k]()
   // FREE TOOLS (Jon, 2026-11-12): optional calculator pages before the close, chosen in the builder.
-  const toolsOn: ToolKey[] = (Array.isArray(mag.tools) ? mag.tools : []).filter(isToolKey)
+  const toolsOn: ToolKey[] = Array.from(new Set((Array.isArray(mag.tools) ? mag.tools : []).map(toolKeyOf).filter(Boolean) as ToolKey[]))
   for (const k of toolsOn) add({ key: 'tool-' + k, kind: 'page', section: 'Free tools', render: () => null })
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
@@ -696,7 +696,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         <section key="manage" data-k="manage" className="mz-page mz-split-page">
           {canEdit && overfull.includes('manage') ? <p className="mz-overfull">This page is too full to print. Shorten a passage or hide a section.</p> : null}
           {gfx('manage')
-            ? <div className="mz-split-photo"><StayTimeline steps={ops} title={T('timelineTitle')} note={T('timelineNote')} tags={String(copy.timelineTags || '').split('|').map((x: string) => x.trim())} /></div>
+            ? <div className="mz-split-photo mz-split-gfx"><StayTimeline steps={ops} title={T('timelineTitle')} note={T('timelineNote')} tags={String(copy.timelineTags || '').split('|').map((x: string) => x.trim())} /></div>
             : <div className="mz-split-photo mz-ph" style={ph('manage')}><p className="mz-caption">A Stay-managed home</p></div>}
           <div className="mz-split-text">
             <header className="mz-run mz-run-tight"><span className="mz-run-mark">STAY</span><span>How we manage</span><span>{short(building)}</span></header>
@@ -736,7 +736,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
       ), { section: 'Our technology' })
       case s.key === 'op-work': return opener('op-work', '02', 'Working together', 'workTitle', 'work')
       case s.key === 'op-num' && gfx('numbers'): return (
-        <section key="op-num" className="mz-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
+        <section key="op-num" data-k="op-num" className="mz-page mz-wave-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
       )
       case s.key === 'op-num': return opener('op-num', specs.some(x => x.key === 'op-work') ? '03' : '02', 'The numbers', 'numbersTitle', 'numbers')
       case s.key.startsWith('tool-') && isToolKey(s.key.slice(5)): {
@@ -747,8 +747,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         const em = (x: string) => x.split(/(\*[^*]+\*)/).map((t, i) => t.startsWith('*') && t.endsWith('*') ? <em key={i}>{t.slice(1, -1)}</em> : t)
         const gets: Record<ToolKey, string[]> = {
           income: ['A yearly and monthly range for your home', 'Nightly rate, occupancy and the month-by-month pattern', 'What you would keep, self-managed or with a manager'],
-          inventory: ['Every item a guest expects, counted for your home', 'Grouped into the sets things are bought in', 'Must-have, recommended and optional, marked'],
-          linen: ['Every sheet, towel and pillow by bed size', 'Three sets in rotation: on the bed, in the wash, on the shelf', 'Grouped by bed, bath and kitchen'],
+          inventory: ['Every item a guest expects, sized to your beds, baths and kitchen appliances', 'Grouped into the sets things are bought in, must-have to optional', 'The linen at par: every sheet, towel and pillow by bed size'],
         }
         return frame(s.key, (
           <>
@@ -756,9 +755,9 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
             <h2 className="mz-h mz-h1">{em(m.title)}</h2>
             <p className="mz-lead mz-lead-s">{m.dek}</p>
             {flip && phone ? (
-              <div className="mz-tool-live"><FreeTool tool={k} embedded refCode={report.code} where={short(building) || building} area={area} contact={{ name: card.name, role: card.role, phone: card.phone, email: card.email, photo: card.photo }} /></div>
+              <div className="mz-tool-live"><FreeTool tool={k} embedded refCode={report.code} where={short(building) || building} contact={{ name: STAY_CONTACT.person?.name, role: STAY_CONTACT.person?.role, phone: STAY_CONTACT.person?.phone, email: STAY_CONTACT.person?.email }} /></div>
             ) : (
-              <div className="mz-tool">
+              <div className="mz-ftool">
                 <div>
                   <p className="mz-kicker">Free for any owner</p>
                   <ol className="mz-tool-list">{gets[k].map((g, i) => <li key={i}><span>{String(i + 1).padStart(2, '0')}</span>{g}</li>)}</ol>
@@ -776,12 +775,12 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
               // A drawing of the tool itself: the questions it asks, and the answer held back until an email.
               <div className="mz-tool-demo" aria-hidden>
                 <div className="mz-tool-demo-in">
-                  {({ income: [['Neighborhood', area || 'Brickell'], ['Bedrooms', '1'], ['Bathrooms', '1']], inventory: [['Bedrooms', '2'], ['Bathrooms', '2'], ['Sleeps', '6'], ['Kitchen', 'Full']], linen: [['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Sleeps', '6']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
+                  {({ income: [['Neighborhood', area || 'Brickell'], ['Bedrooms', '1'], ['Bathrooms', '1']], inventory: [['Bedrooms', '2'], ['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Kitchen', 'Yes']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
                     <div key={l}><span>{l}</span><i>−</i><b>{v}</b><i>+</i></div>
                   ))}
                 </div>
                 <div className="mz-tool-demo-out">
-                  <p className="mz-kicker">{k === 'income' ? 'Could earn in a year' : k === 'inventory' ? 'What this home needs' : 'Linen at par'}</p>
+                  <p className="mz-kicker">{k === 'income' ? 'Could earn in a year' : 'What this home needs'}</p>
                   <p className="mz-tool-blur">{k === 'income' ? '$00,000 – $00,000' : '000 pieces'}</p>
                   <span className="mz-tool-lock">Full quote unlocks with an email · PDF download</span>
                 </div>
@@ -1196,30 +1195,13 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
           {dirty ? <button type="button" onClick={save}>Save changes</button> : saving ? <span className="mz-saved">{saving}</span> : null}
           <span className="mz-share-wrap">
             <button type="button" className={'mz-ghost' + (shareOpen ? ' on' : '')} onClick={() => setShareOpen(o => !o)}>Share</button>
-            {shareOpen ? (() => {
-              const u = (typeof window !== 'undefined' ? window.location.origin : '') + keynote + '?view=digital'
-              const subject = (short(building) || 'Stay Hospitality') + ' · Stay Hospitality'
-              const body = (cma ? T('coverDek').replace(/\*/g, '') + '\n\n' : '') + u
-              return (
-                <div className="mz-share">
-                  <p>The digital magazine, to send</p>
-                  <input readOnly value={u} onFocus={e => e.target.select()} />
-                  <div>
-                    <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(u) } catch { /* the box above is selectable */ } setCopied(true); setTimeout(() => setCopied(false), 1800) }}>{copied ? 'Copied' : 'Copy link'}</button>
-                    <a href={'sms:?&body=' + encodeURIComponent(body)}>Text</a>
-                    <a href={'mailto:?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body)}>Email</a>
-                    {typeof navigator !== 'undefined' && (navigator as Any).share ? <button type="button" onClick={() => (navigator as Any).share({ title: subject, text: body.replace(u, '').trim(), url: u }).catch(() => {})}>More…</button> : null}
-                  </div>
-                  <small>Opens without a sign-in. Pasted into a text or an email, it shows the building’s photo and name.</small>
-                </div>
-              )
-            })() : null}
+            {shareOpen ? <DeckShare code={report.code} building={short(building) || building} prospect={prospect} presenter={[card.name, card.phone].filter(Boolean).join(' · ')} dek={cma ? T('coverDek') : ''} onePager={!!cma} onClose={() => setShareOpen(false)} /> : null}
           </span>
           <button type="button" onClick={() => { if (flip) window.location.href = keynote + '?view=magazine&print=1'; else window.print() }}><span className="mz-wide">Print or save </span>PDF</button>
         </span>
       </nav>
       {drawerEl}
-      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} top={80} title={short(building) || building || undefined} contact={{ name: String(card.name || ''), role: String(card.role || ''), phone: String(card.phone || ''), email: String(card.email || ''), photo: String(card.photo || '') }} /> : specs.map(render)}
+      {format === 'onepage' && cma ? onePage() : flip && !editText ? <MagazineFlipbook pages={specs.map(render)} labels={specs.map(s => s.section || '')} names={specs.map(s => s.key.startsWith('plan-') ? (plans.find(p => 'plan-' + p.id === s.key)?.name || s.section || '') : s.key.startsWith('tool-') && isToolKey(s.key.slice(5)) ? TOOL_META[s.key.slice(5) as ToolKey].short : s.key === 'back' ? 'Next step' : s.section || '')} top={80} title={short(building) || building || undefined} contact={{ name: String(card.name || ''), role: String(card.role || ''), phone: String(card.phone || ''), email: String(card.email || ''), photo: String(card.photo || '') }} /> : specs.map(render)}
     </div>
   )
 }
@@ -1522,7 +1504,7 @@ const CSS = `
 .mz-back-title{font-family:${SERIF};font-weight:300;font-size:calc(72px * var(--mz-ds));line-height:1;letter-spacing:-.025em;margin:0;max-width:9em;text-wrap:balance}
 .mz-back-title em{color:${C.glow}}
 .mz-back-dek{font:300 calc(20px * var(--mz-ds))/1.5 ${SERIF};color:rgba(255,255,255,.92);max-width:26em;margin:24px 0 0}
-.mz-tool{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:40px;margin-top:34px;align-items:start}
+.mz-ftool{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:40px;margin-top:34px;align-items:start}
 .mz-tool-list{list-style:none;margin:12px 0 18px;padding:0}
 .mz-tool-list li{display:grid;grid-template-columns:40px 1fr;gap:8px;padding:12px 0;border-top:1px solid ${C.grid};font:400 calc(19px * var(--mz-ds))/1.3 ${SERIF};color:${C.ink}}
 .mz-tool-list li span{font:600 11px ${SANS};letter-spacing:.12em;color:${C.sand};padding-top:5px}
@@ -1665,10 +1647,16 @@ div.mz-ed{display:block}
 .mz-root:not(.mz-flipping) .mz-about-photo{height:440px}.mz-root:not(.mz-flipping) .mz-about-head{padding:0 20px 28px}
 .mz-root:not(.mz-flipping) .mz-split-page{display:flex;flex-direction:column}.mz-root:not(.mz-flipping) .mz-split-photo{height:280px}.mz-root:not(.mz-flipping) .mz-run-tight,.mz-root:not(.mz-flipping) .mz-split-body,.mz-root:not(.mz-flipping) .mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
 .mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}
-.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
+.mz-root:not(.mz-flipping) .mz-ftool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-wave-page{min-height:86svh;position:relative;overflow:hidden}.mz-root:not(.mz-flipping) .mz-wave-page>div{position:absolute!important;inset:0}.mz-root:not(.mz-flipping) .mz-wave-page>div>div{left:20px!important;right:20px!important;top:36px!important}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
 .mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
-.mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr}
+.mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr!important}
+.mz-root:not(.mz-flipping) .mz-split-gfx{display:none}
+.mz-root:not(.mz-flipping) .mz-channels p{display:flex;flex-wrap:wrap;gap:4px 8px;white-space:normal}.mz-root:not(.mz-flipping) .mz-channels p span{white-space:nowrap}
+.mz-root:not(.mz-flipping) .mz-fine{margin:24px -20px 0;padding:18px 20px 28px}
+.mz-root:not(.mz-flipping) .mz-backcover .mz-back-main{margin-top:44px}
+.mz-root:not(.mz-flipping) .mz-chart-head{flex-wrap:wrap;gap:4px 12px}.mz-root:not(.mz-flipping) .mz-legend{white-space:nowrap;font-size:9px}
+.mz-root:has(.mz-reader){background:${C.paper}}
 .mz-root:not(.mz-flipping) .mz-table,.mz-root:not(.mz-flipping) .mz-table tbody{display:block}.mz-root:not(.mz-flipping) .mz-table thead{display:none}
 .mz-root:not(.mz-flipping) .mz-table tr{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px 12px;padding:12px 10px;border-bottom:1px solid ${C.grid}}
 .mz-root:not(.mz-flipping) .mz-table td{display:block;height:auto;padding:0!important;border:0!important;background:none!important;white-space:normal;text-align:left;width:auto!important;font-size:13px;box-shadow:none!important}

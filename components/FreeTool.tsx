@@ -9,15 +9,14 @@
 // inside a magazine and Stay's own look on its own page.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, Lock, Download, Phone, Mail, Check } from 'lucide-react'
-import { TOOL_META, INCOME_AREAS, BED_SIZES_PUBLIC, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary, type LinenFull, type LinenSummaryOut } from '@/lib/free-tools'
+import { TOOL_META, PARTNER_NOTE, INCOME_AREAS, BED_SIZES_PUBLIC, APPLIANCE_KEYS, APPLIANCE_LABEL, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary } from '@/lib/free-tools'
 
 type Any = any
 export type ToolContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
 
 const DEFAULTS: Record<ToolKey, Any> = {
   income: { area: '', bedrooms: 1, bathrooms: 1, managed: false },
-  inventory: { bedrooms: 2, bathrooms: 2, guests: 6, kitchen: 'full' },
-  linen: { beds: { King: 1, Queen: 1 }, bathrooms: 2, guests: 6, kitchen: true, sleeper: false },
+  inventory: { bedrooms: 2, bathrooms: 2, guests: 6, beds: { King: 1, Queen: 1 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true } },
 }
 const emph = (x: string) => x.split(/(\*[^*]+\*)/).map((s, i) => s.startsWith('*') && s.endsWith('*') ? <em key={i}>{s.slice(1, -1)}</em> : s)
 const beds = (n: number) => (n === 0 ? 'Studio' : n + (n === 1 ? ' bedroom' : ' bedrooms'))
@@ -49,10 +48,13 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
   const [inp, setInp] = useState<Any>(() => ({ ...DEFAULTS[tool], ...(tool === 'income' && area ? { area } : {}) }))
   const [summary, setSummary] = useState<Any>(null)
   const [full, setFull] = useState<Any>(null)
+  const fullRef = useRef<Any>(null)
+  useEffect(() => { fullRef.current = full }, [full])
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState({ email: '', name: '', phone: '', website: '' })
   const [err, setErr] = useState('')
   const [gate, setGate] = useState(false)
+  const [fmt, setFmt] = useState<'pdf' | 'xlsx'>(tool === 'inventory' ? 'xlsx' : 'pdf')
   const unlocked = useRef<{ email: string; name: string; phone: string } | null>(null)
   const set = (k: string, v: Any) => setInp((p: Any) => ({ ...p, [k]: v }))
   const key = JSON.stringify(inp)
@@ -79,13 +81,76 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       if (!d?.ok || !d.full) { setErr(d?.error || 'That did not go through. Try again.'); return }
       unlocked.current = { email: form.email, name: form.name, phone: form.phone }
       setFull(d.full); setSummary(d.summary); setGate(false)
+      // Straight to the download (Jon, 2026-11-12: "should just be a download").
+      fullRef.current = d.full
+      if (fmt === 'xlsx' && tool === 'inventory') xlsx(form.email); else pdf(d.full)
     } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
   }
-  function pdf() {
-    document.body.classList.add('ft-printing')
-    const done = () => { document.body.classList.remove('ft-printing'); window.removeEventListener('afterprint', done) }
-    window.addEventListener('afterprint', done)
-    setTimeout(() => { window.print(); setTimeout(done, 1500) }, 50)
+  // THE EXCEL CHECKLIST (supply calculator only): counts, a Bought and an In-the-home tick column, notes.
+  async function xlsx(email = unlocked.current?.email || '') {
+    try {
+      const r = await fetch('/api/tools/xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: inp, email }) })
+      if (!r.ok) { setErr('The download did not start. Try again.'); return }
+      const blob = await r.blob(), url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = 'rental-supply-checklist.xlsx'; document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+    } catch { setErr('The download did not start. Try again.') }
+  }
+  // A REAL PDF FILE, DOWNLOADED (Jon, 2026-11-12: "should just be a download"), built with jsPDF from the
+  // unlocked quote: no print dialog, so it works the same on a phone.
+  async function pdf(f: Any = fullRef.current) {
+    if (!f) return
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+      const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 48
+      let y = M
+      const ink = [16, 17, 20] as const, mute = [107, 108, 114] as const, acc = [140, 109, 58] as const
+      const ensure = (h: number) => { if (y + h > H - M - 30) { doc.addPage(); y = M } }
+      try {
+        const img = await fetch('/stay-logo.png').then(r => r.blob()).then(b => new Promise<string>(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(b) }))
+        doc.addImage(img, 'PNG', M, y, 74, 30); y += 48
+      } catch { doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text('STAY HOSPITALITY', M, y + 12); y += 32 }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...acc); doc.text(meta.kicker.toUpperCase(), M, y); y += 20
+      doc.setFont('times', 'normal'); doc.setFontSize(26); doc.setTextColor(...ink); doc.text(meta.short, M, y); y += 22
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...mute)
+      const line = (t: string, size = 10, color: readonly number[] = mute, font: [string, string] = ['helvetica', 'normal']) => {
+        doc.setFont(font[0], font[1]); doc.setFontSize(size); doc.setTextColor(color[0], color[1], color[2])
+        const ls = doc.splitTextToSize(t, W - M * 2); ensure(ls.length * size * 1.3); doc.text(ls, M, y); y += ls.length * size * 1.3 + 4
+      }
+      const row = (a: string, b: string, bold = false) => {
+        ensure(18); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(10); doc.setTextColor(...ink)
+        doc.text(doc.splitTextToSize(a, W - M * 2 - 80)[0], M, y); doc.text(b, W - M, y, { align: 'right' })
+        doc.setDrawColor(228, 226, 221); doc.line(M, y + 6, W - M, y + 6); y += 18
+      }
+      const head = (t: string) => { ensure(36); y += 10; doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...acc); doc.text(t.toUpperCase(), M, y); y += 14 }
+      if (tool === 'income') {
+        const g = f as IncomeFull
+        if (!g.found) line('We will email you a projection built for your home within 48 hours.', 12, ink)
+        else {
+          line('Could earn in a year, ' + g.area, 9, acc, ['helvetica', 'bold'])
+          line(money0(g.lo) + ' – ' + money0(g.hi), 28, ink, ['times', 'normal'])
+          head('The figures'); row('Per month, average', money0(g.monthLo) + ' – ' + money0(g.monthHi)); row('Nightly rate', money0(g.nightlyLo) + ' – ' + money0(g.nightlyHi)); row('Occupancy', g.occLo + '–' + g.occHi + '%'); row('You keep, est.', money0(g.netLo) + ' – ' + money0(g.netHi))
+          head('Through the year'); g.months.forEach((m, i) => row(['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][i], money0(m.lo) + ' – ' + money0(m.hi)))
+          y += 6; line('Gross rental revenue for an established listing. “You keep” takes off typical booking-site fees (' + g.channelPct + '%)' + (g.mgmtPct ? ' and a ' + g.mgmtPct + '% management fee' : ', self-managed') + '. Built from ' + g.basis + ' comparable homes in Stay Hospitality’s South Florida data. Estimates, not guarantees.', 8.5)
+        }
+      } else {
+        const g = f as InventoryFull
+        line(g.describe, 10, mute)
+        line((g.pieces + g.linenPieces).toLocaleString() + ' pieces: ' + g.items + ' supply items (' + g.pieces + ' pieces) and ' + g.linenPieces + ' pieces of linen at a par of ' + g.par + '.', 11, ink)
+        for (const gr of g.groups) { head(gr.group); g.rows.filter(r => r.group === gr.group).forEach(r => row(r.name + (r.tier !== 'must' ? '  (' + TIER_LABEL[r.tier].toLowerCase() + ')' : ''), String(r.qty))) }
+        head('Linen at par'); line(g.parText, 9)
+        for (const gr of Array.from(new Set(g.linen.map(r => r.group)))) { head('Linen · ' + gr); g.linen.filter(r => r.group === gr).forEach(r => row(r.name + (r.size ? ' · ' + r.size : ''), String(r.qty))) }
+        head('Notes'); line(PARTNER_NOTE, 10, ink)
+      }
+      const pages = doc.getNumberOfPages()
+      for (let i = 1; i <= pages; i++) {
+        doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mute)
+        doc.text([contact?.name, contact?.phone, contact?.email].filter(Boolean).join('  ·  ') + '   ·   Stay Hospitality · stay-hospitality.com', M, H - 28)
+        doc.text(i + ' / ' + pages, W - M, H - 28, { align: 'right' })
+      }
+      doc.save(meta.short.replace(/\s+/g, '-').toLowerCase() + '.pdf')
+    } catch { setErr('The download did not start. Try again.') }
   }
 
   const inputs = tool === 'income' ? (
@@ -101,20 +166,21 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={5} step={0.5} />
       <Seg label="Run by" value={inp.managed ? 'm' : 's'} set={v => set('managed', v === 'm')} opts={[['s', 'Myself'], ['m', 'A manager']]} />
     </>
-  ) : tool === 'inventory' ? (
+  ) : (
     <>
       <Stepper label="Bedrooms" value={inp.bedrooms} set={v => set('bedrooms', v)} min={0} max={6} show={v => (v === 0 ? 'Studio' : String(v))} />
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={6} step={0.5} />
       <Stepper label="Sleeps" value={inp.guests} set={v => set('guests', v)} min={1} max={16} />
-      <Seg label="Kitchen" value={inp.kitchen} set={v => set('kitchen', v)} opts={[['full', 'Full'], ['kitchenette', 'Kitchenette'], ['none', 'None']]} />
-    </>
-  ) : (
-    <>
-      {BED_SIZES_PUBLIC.map(s => <Stepper key={s} label={s + ' beds'} value={inp.beds[s] || 0} set={v => set('beds', { ...inp.beds, [s]: v })} min={0} max={6} />)}
-      <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={6} step={0.5} />
-      <Stepper label="Sleeps" value={inp.guests} set={v => set('guests', v)} min={1} max={16} />
+      <p className="ft-sub">Beds, by size</p>
+      {BED_SIZES_PUBLIC.map(x => <Stepper key={x} label={x} value={inp.beds[x] || 0} set={v => set('beds', { ...inp.beds, [x]: v })} min={0} max={6} />)}
       <Seg label="Sofa bed" value={inp.sleeper ? 'y' : 'n'} set={v => set('sleeper', v === 'y')} opts={[['n', 'No'], ['y', 'Yes']]} />
       <Seg label="Kitchen" value={inp.kitchen ? 'y' : 'n'} set={v => set('kitchen', v === 'y')} opts={[['y', 'Yes'], ['n', 'No']]} />
+      {inp.kitchen ? (
+        <div className="ft-apps">
+          <span className="ft-lab">Appliances in the kitchen</span>
+          <div>{APPLIANCE_KEYS.map(k => <button key={k} type="button" className={inp.appliances[k] ? 'on' : ''} onClick={() => set('appliances', { ...inp.appliances, [k]: !inp.appliances[k] })}>{inp.appliances[k] ? <Check size={13} /> : null}{APPLIANCE_LABEL[k]}</button>)}</div>
+        </div>
+      ) : null}
     </>
   )
 
@@ -131,22 +197,12 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         </div>
       )
     }
-    if (tool === 'inventory') {
-      const s = summary as InventorySummary
-      return (
-        <div className="ft-head">
-          <p className="ft-lab">What this home needs</p>
-          <p className="ft-big">{s.pieces.toLocaleString()} <small>pieces</small></p>
-          <p className="ft-note">{s.items} items in {s.groups.length} sets: {s.must} must-have, {s.recommended} recommended{s.suggested ? ', ' + s.suggested + ' optional' : ''}.</p>
-        </div>
-      )
-    }
-    const s = summary as LinenSummaryOut
+    const s = summary as InventorySummary
     return (
       <div className="ft-head">
-        <p className="ft-lab">Linen at par, {s.par} sets in rotation</p>
-        <p className="ft-big">{s.pieces.toLocaleString()} <small>pieces</small></p>
-        <p className="ft-note">{s.groups.map(g => g.pieces + ' ' + g.group.toLowerCase()).join(' · ')}</p>
+        <p className="ft-lab">What this home needs</p>
+        <p className="ft-big">{(s.pieces + s.linenPieces).toLocaleString()} <small>pieces</small></p>
+        <p className="ft-note">{s.items} supply items in {s.groups.length} sets ({s.pieces} pieces), plus {s.linenPieces} pieces of linen at a par of {s.par}.</p>
       </div>
     )
   }, [summary, tool, contact?.name])
@@ -168,8 +224,9 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         <p className="ft-fine">Gross rental revenue for an established listing. “You keep” takes off typical booking-site fees ({f.channelPct}%){f.mgmtPct ? <> and a {f.mgmtPct}% management fee</> : <>; self-managed, so no management fee, but cleaning, supplies and your time are yours</>}. Built from {f.basis} comparable home{f.basis === 1 ? '' : 's'} in Stay Hospitality’s South Florida data. Estimates, not guarantees.</p>
       </>
     )
-  })() : tool === 'inventory' ? (() => {
+  })() : (() => {
     const f = full as InventoryFull
+    const lg = Array.from(new Set(f.linen.map(r => r.group)))
     return (
       <>
         <p className="ft-note">{f.describe}</p>
@@ -179,21 +236,15 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             <ul>{f.rows.filter(r => r.group === g.group).map((r, i) => <li key={i}><span>{r.name}</span><em className={'t-' + r.tier}>{TIER_LABEL[r.tier]}</em><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
-      </>
-    )
-  })() : (() => {
-    const f = full as LinenFull
-    const groups = Array.from(new Set(f.rows.map(r => r.group)))
-    return (
-      <>
+        <p className="ft-sub ft-mt">Linen at par</p>
         <p className="ft-note">{f.parText}</p>
-        {groups.map(g => (
+        {lg.map(g => (
           <div key={g} className="ft-group">
-            <p className="ft-lab">{g}</p>
-            <ul>{f.rows.filter(r => r.group === g).map((r, i) => <li key={i}><span>{r.name}{r.size ? <small> · {r.size}</small> : null}</span><b>{r.qty}</b></li>)}</ul>
+            <p className="ft-lab">Linen · {g}</p>
+            <ul>{f.linen.filter(r => r.group === g).map((r, i) => <li key={i}><span>{r.name}{r.size ? <small> · {r.size}</small> : null}</span><em /><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
-        
+        <div className="ft-notes"><p className="ft-lab">Notes</p><p>{PARTNER_NOTE}</p></div>
       </>
     )
   })()
@@ -209,43 +260,37 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         {!full ? (
           gate ? (
             <form className="ft-gate" onSubmit={unlock}>
-              <p className="ft-lab">Where should we send it?</p>
+              <p className="ft-lab">Your email, to download</p>
               <input type="email" required placeholder="Email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} autoComplete="email" />
               <div className="ft-two">
                 <input placeholder="Name (optional)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoComplete="name" />
                 <input placeholder="Phone (optional)" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} autoComplete="tel" inputMode="tel" />
               </div>
               <input className="ft-hp" tabIndex={-1} autoComplete="off" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} aria-hidden />
-              <button type="submit" disabled={busy}>{busy ? 'Unlocking…' : 'Unlock the full quote'}</button>
+              {tool === 'inventory' ? (
+                <div className="ft-seg ft-fmt">{([['xlsx', 'Excel checklist'], ['pdf', 'PDF']] as ['xlsx' | 'pdf', string][]).map(([k, l]) => <button key={k} type="button" className={fmt === k ? 'on' : ''} onClick={() => setFmt(k)}>{l}</button>)}</div>
+              ) : null}
+              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : fmt === 'xlsx' && tool === 'inventory' ? 'Download the Excel checklist' : 'Download the PDF'}</button>
               {err ? <p className="ft-err">{err}</p> : null}
-              <p className="ft-fine">We email you a copy. No spam, never shared, and no obligation to work with us.</p>
+              <p className="ft-fine">It downloads right away. No spam, never shared, and no obligation to work with us.</p>
             </form>
           ) : (
-            <button type="button" className="ft-cta" onClick={() => setGate(true)}><Lock size={15} /> Get the full quote, free</button>
+            <button type="button" className="ft-cta" onClick={() => setGate(true)}><Download size={15} /> Download the full list, free</button>
           )
         ) : (
           <div className="ft-quote">
-            <p className="ft-ok"><Check size={15} /> Unlocked. This quote updates as you change the details above.</p>
+            <p className="ft-ok"><Check size={15} /> Your download has started. Change the details above and download again any time.</p>
             {quote}
             <div className="ft-actions">
-              <button type="button" onClick={pdf}><Download size={15} /> Download PDF</button>
+              {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
+              <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>
               {tel ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call {first || 'us'}</a> : null}
-              {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short + (where ? ' · ' + where : ''))}><Mail size={15} /> Email {first || 'us'}</a> : null}
+              {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short)}><Mail size={15} /> Email {first || 'us'}</a> : null}
             </div>
           </div>
         )}
-        {!full && !gate ? <p className="ft-fine">Unlock {meta.unlock}, and download it as a PDF.</p> : null}
+        {!full && !gate ? <p className="ft-fine">Download {meta.unlock}, as a PDF.</p> : null}
       </div>
-      {/* What prints: the quote alone, branded (see pdf()). */}
-      {full ? (
-        <div className="ft-print" aria-hidden>
-          <img src="/stay-logo.png" alt="Stay Hospitality" style={{ height: 34 }} />
-          <h1>{meta.short}{where ? ' · ' + where : ''}</h1>
-          {headline}
-          {quote}
-          <p className="ft-fine">{contact?.name ? contact.name + (contact.role ? ', ' + contact.role : '') + ' · ' : ''}{[contact?.phone, contact?.email].filter(Boolean).join(' · ')}{contact?.name ? ' · ' : ''}Stay Hospitality · stay-hospitality.com</p>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -264,6 +309,15 @@ const FT_CSS = `
 .ft-seg{display:inline-flex;background:var(--ft-soft);border-radius:99px;padding:3px}
 .ft-seg button{width:auto!important;height:30px!important;border:0!important;padding:0 12px;background:transparent!important;font:600 12.5px "Inter",sans-serif;color:var(--ft-muted)!important}
 .ft-seg button.on{background:#fff!important;color:var(--ft-ink)!important;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.ft-sub{margin:14px 0 0;font:400 20px var(--ft-display);color:var(--ft-ink)}
+.ft-fmt{margin:4px 0 2px;align-self:flex-start;justify-self:start}
+.ft-notes{margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
+.ft-notes p{margin:0;font:400 14px/1.5 "Inter",sans-serif;color:var(--ft-ink)}
+.ft-notes .ft-lab{margin-bottom:6px;color:var(--ft-acc)}
+.ft-apps{padding:12px 0;border-bottom:1px solid var(--ft-rule)}
+.ft-apps>div{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ft-apps button{display:inline-flex;align-items:center;gap:4px;height:34px;padding:0 12px;border-radius:99px;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-muted);font:600 12.5px "Inter",sans-serif;cursor:pointer}
+.ft-apps button.on{background:var(--ft-navy);border-color:var(--ft-navy);color:#fff}
 .ft-lab{font:600 10px "Inter",sans-serif;letter-spacing:.16em;text-transform:uppercase;color:var(--ft-muted);margin:0}
 .ft-card{background:#fff;border:1px solid var(--ft-rule);border-radius:16px;padding:22px 22px 18px;align-self:start;min-width:0}
 .ft-head .ft-lab{color:var(--ft-acc)}
@@ -299,14 +353,6 @@ const FT_CSS = `
 .ft-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
 .ft-actions button,.ft-actions a{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 16px;border-radius:99px;font:600 13px "Inter",sans-serif;text-decoration:none;cursor:pointer;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-ink)}
 .ft-actions button{background:var(--ft-navy);color:#fff;border-color:var(--ft-navy)}
-.ft-print{display:none}
 @media (max-width:760px){.ft{grid-template-columns:1fr;gap:16px}.ft-big{font-size:36px}.ft-card{padding:18px 16px}}
 .ft-embedded .ft-card{box-shadow:none}
-@media print{
-  body.ft-printing *{visibility:hidden!important}
-  body.ft-printing .ft-print,body.ft-printing .ft-print *{visibility:visible!important}
-  body.ft-printing .ft-print{display:block!important;position:absolute;left:0;top:0;width:100%;padding:24px 32px;font-family:"Inter",sans-serif;color:#101114}
-  body.ft-printing .ft-print h1{font:400 30px "Instrument Serif",Georgia,serif;margin:18px 0 6px}
-  body.ft-printing .ft-print .ft-group li{break-inside:avoid}
-}
 `
