@@ -44,7 +44,7 @@ export default async function ToolPage({ params, searchParams }: { params: { too
   return (
     <main style={{ minHeight: '100vh', background: '#F7F7F5', fontFamily: 'Inter, system-ui, sans-serif', color: '#101114', padding: '28px max(18px, env(safe-area-inset-left)) 60px' }}>
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" />
-      <div style={{ maxWidth: 1020, margin: '0 auto' }}>
+      <div style={{ maxWidth: 1180, margin: '0 auto' }}>
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
           <a href="/tools"><img src="/stay-logo.png" alt="Stay Hospitality" style={{ height: 32 }} /></a>
         </header>

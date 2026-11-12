@@ -168,10 +168,10 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
       <div className="ft-field"><span className="ft-lab">Address</span><input value={inp.address} placeholder="Street address, city" onChange={e => setInp((p: Any) => ({ ...p, address: e.target.value, lat: undefined, lng: undefined }))} autoComplete="street-address" /></div>
       <Stepper label="Bedrooms" value={inp.bedrooms} set={v => set('bedrooms', v)} min={0} max={5} show={v => (v === 0 ? 'Studio' : String(v))} />
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={5} step={0.5} />
-      <div className="ft-field"><span className="ft-lab">Square feet</span><input inputMode="numeric" value={inp.sqft || ''} placeholder="e.g. 850" onChange={e => set('sqft', Number(e.target.value.replace(/\D/g, '')) || 0)} /></div>
+      <div className="ft-field ft-half"><span className="ft-lab">Square feet</span><input inputMode="numeric" value={inp.sqft || ''} placeholder="e.g. 850" onChange={e => set('sqft', Number(e.target.value.replace(/\D/g, '')) || 0)} /></div>
       <Seg label="Kitchen" value={inp.kitchen} set={v => set('kitchen', v)} opts={[['full', 'Full'], ['kitchenette', 'Kitchenette'], ['none', 'None']]} />
       <Seg label="Balcony" value={inp.balcony ? 'y' : 'n'} set={v => set('balcony', v === 'y')} opts={[['n', 'No'], ['y', 'Yes']]} />
-      <div className="ft-field"><span className="ft-lab">View</span>
+      <div className="ft-field ft-half"><span className="ft-lab">View</span>
         <select value={inp.view} onChange={e => set('view', e.target.value)}>{(opts?.views || [{ key: 'none', label: 'No particular view' }, { key: 'city', label: 'City view' }, { key: 'water', label: 'Bay or water view' }, { key: 'ocean', label: 'Ocean view' }, { key: 'beachfront', label: 'Beachfront' }]).map((v: Any) => <option key={v.key} value={v.key}>{v.label}</option>)}</select>
       </div>
       {opts?.amenities?.length ? (
@@ -260,15 +260,13 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
     const lg = Array.from(new Set(f.linen.map(r => r.group)))
     return (
       <>
-        <p className="ft-note">{f.describe}</p>
         {f.groups.map(g => (
           <div key={g.group} className="ft-group">
             <p className="ft-lab">{g.group}</p>
             <ul>{f.rows.filter(r => r.group === g.group).map((r, i) => <li key={i}><span>{r.name}</span><em className={'t-' + r.tier}>{TIER_LABEL[r.tier]}</em><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
-        <p className="ft-sub ft-mt">Linen at par</p>
-        <p className="ft-note">{f.parText}</p>
+        <div className="ft-group ft-linen-intro"><p className="ft-sub">Linen at par</p><p className="ft-note">{f.parText}</p></div>
         {lg.map(g => (
           <div key={g} className="ft-group">
             <p className="ft-lab">Linen · {g}</p>
@@ -331,14 +329,14 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
             <button type="button" className="ft-cta" onClick={() => setGate(true)}><Download size={15} /> {tool === 'income' ? 'See my projection, free' : 'Download the full list, free'}</button>
           )
         ) : (
-          <div className="ft-quote">
+          <div className={'ft-quote' + (tool === 'income' ? ' ft-quote-top' : '')}>
             {tool === 'income' && (full as IncomeFull).found ? (<>
               <p className="ft-ok"><Check size={15} /> Your projection is ready. Change any detail and open it again.</p>
               <button type="button" className="ft-cta" disabled={busy} onClick={reopen}>{busy ? 'Opening…' : 'Open my projection →'}</button>
               {err ? <p className="ft-err">{err}</p> : null}
             </>) : (<>
-            <p className="ft-ok"><Check size={15} /> {tool === 'income' ? 'Thank you.' : 'Your download has started. Change the details above and download again any time.'}</p>
-            {quote}
+            <p className="ft-ok"><Check size={15} /> {tool === 'income' ? 'Thank you.' : 'Your download has started. Change the details and download again any time. The full list is below.'}</p>
+            {tool === 'income' ? quote : null}
             </>)}
             <div className="ft-actions">
               {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
@@ -362,6 +360,22 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
         )}
         {!full && !gate ? <p className="ft-fine">{tool === 'income' ? 'Leave your email to see ' + meta.unlock + ', with the comparables behind it, and download it as a PDF.' : 'Download ' + meta.unlock + ', as a PDF.'}</p> : null}
       </div>
+      {tool === 'inventory' && full ? (
+        // THE LIST, FULL WIDTH (Jon, 2026-11-12: "on a computer it needs to look different than on a phone"):
+        // on a computer the sets sit side by side in columns; on a phone they stack.
+        <section className="ft-full">
+          <div className="ft-full-head">
+            <div><p className="ft-lab">Your list</p><p className="ft-sub">{(full as InventoryFull).describe}</p></div>
+            <dl className="ft-stats">
+              <div><dt>Everything</dt><dd>{((full as InventoryFull).pieces + (full as InventoryFull).linenPieces).toLocaleString()}</dd></div>
+              <div><dt>Supply items</dt><dd>{(full as InventoryFull).items}</dd></div>
+              <div><dt>Must-have</dt><dd>{(full as InventoryFull).must}</dd></div>
+              <div><dt>Linen pieces</dt><dd>{(full as InventoryFull).linenPieces}</dd></div>
+            </dl>
+          </div>
+          <div className="ft-cols">{quote}</div>
+        </section>
+      ) : null}
     </div>
   )
 }
@@ -371,6 +385,24 @@ const FT_CSS = `
   display:grid;grid-template-columns:minmax(0,0.9fr) minmax(0,1.1fr);gap:28px;font-family:"Inter",system-ui,sans-serif;color:var(--ft-body)}
 .ft em{font-style:italic}
 .ft-inputs{display:grid;gap:2px;align-content:start}
+.ft-full{grid-column:1/-1;background:#fff;border:1px solid var(--ft-rule);border-radius:16px;padding:24px clamp(16px,3vw,32px) 22px;min-width:0}
+.ft-full-head{display:flex;flex-wrap:wrap;gap:16px 32px;align-items:flex-end;justify-content:space-between;padding-bottom:16px;border-bottom:1px solid var(--ft-rule)}
+.ft-full-head .ft-sub{margin:4px 0 0}
+.ft-stats{display:grid;grid-template-columns:repeat(4,auto);gap:14px 28px;margin:0}
+.ft-stats dt{font:600 10px "Inter",sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ft-muted)}
+.ft-stats dd{margin:2px 0 0;font:400 30px/1 var(--ft-display);color:var(--ft-ink);font-variant-numeric:lining-nums}
+.ft-cols{columns:3 300px;column-gap:36px;margin-top:6px}
+.ft-cols .ft-group{break-inside:avoid;margin-top:18px}
+.ft-cols .ft-notes{break-inside:avoid;column-span:all}
+.ft-linen-intro .ft-sub{margin:0}
+@media (min-width:1000px){
+  .ft{grid-template-columns:minmax(0,1.25fr) minmax(0,0.75fr);gap:36px}
+  .ft:not(.ft-embedded) .ft-card{position:sticky;top:20px}
+  .ft-inputs{grid-template-columns:1fr 1fr;column-gap:28px}
+  .ft-inputs>*{grid-column:1/-1}
+  .ft-inputs>.ft-step,.ft-inputs>.ft-half{grid-column:auto}
+}
+@media (max-width:760px){.ft-stats{grid-template-columns:repeat(2,auto)}.ft-full{padding:18px 16px}}
 .ft-step{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--ft-rule)}
 .ft-step>div{display:flex;align-items:center;gap:10px}
 .ft-step button{width:34px;height:34px;border-radius:99px;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-ink);display:grid;place-items:center;cursor:pointer}
@@ -415,6 +447,7 @@ const FT_CSS = `
 .ft-err{color:#A1332B;font-size:13px;margin:0}
 .ft-fine{font:400 11.5px/1.5 "Inter",sans-serif;color:var(--ft-muted);margin:12px 0 0}
 .ft-quote{margin-top:16px;padding-top:14px;border-top:1px solid var(--ft-rule)}
+.ft-quote-top{margin-top:0;padding-top:0;border-top:0}
 .ft-ok{display:flex;gap:6px;align-items:center;font:600 12.5px "Inter",sans-serif;color:#2F6B47;margin:0 0 12px}
 .ft-figs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px;margin:0}
 .ft-figs dt{font:600 9.5px "Inter",sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ft-muted)}
