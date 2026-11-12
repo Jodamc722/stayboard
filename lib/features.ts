@@ -112,6 +112,9 @@ export const FEATURES: Feature[] = [
   // /onboarding/linens is gated by this key. Its level follows Onboarding unless a role sets it
   // (LEVEL_FALLBACK), so nobody who has Linens today loses it.
   { key: 'linens',        label: 'Linens',            path: '/onboarding/linens', group: 'Owners' },
+  // OWNER ONBOARDING, FROM SCRATCH (Jon, 2026-11-12): one link per owner — the home, a supplies check, a
+  // timeline and the team's report. /join/<code> is the owner's side and stays public (OPEN_PREFIXES).
+  { key: 'owner-onboarding', label: 'Owner onboarding', path: '/owner-onboarding', group: 'Owners' },
   // THE ADMIN DESK (Jon, 2026-10-26): the administrator's own page — listings not for sale or not
   // connected per channel, offline in Guesty, reply owed, optimization and photo work, blocked units,
   // the per-listing board and the review report. View reads it; edit may rebuild its cache.
@@ -284,6 +287,7 @@ export const OPEN_PREFIXES = [
   // ONBOARDING INVENTORY (Jon, 2026-09-02). /onboard/<code> is a capability link like /walk and
   // /audit: the code resolves to one onboarding unit, the API checks it on every call.
   '/onboard/',
+  '/join/',
   // FIELD BOARDS (Jon, 2026-08-25). /board/<code> is a share link like any other: the code is the
   // capability and the board carries its own passcode, checked server-side in
   // /api/public/field-board. Open here so a cleaner with no Lighthouse account can open the link
@@ -381,7 +385,7 @@ export type RoleDef = {
 // part of an existing area: nobody should have to touch every role to see them).
 // leadership → projects (2026-11-06): the Leadership board REPLACED Projects, so whoever could see
 // Projects sees the board until a role says otherwise.
-const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects' }
+const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects', 'owner-onboarding': 'onboarding' }
 export function roleLevel(role: RoleDef | null | undefined, featureKey: string): Level {
   if (!role || !role.perms || typeof role.perms !== 'object') return 'off'
   const explicit = role.perms[featureKey] ?? (LEVEL_FALLBACK[featureKey] ? role.perms[LEVEL_FALLBACK[featureKey]] : null)
