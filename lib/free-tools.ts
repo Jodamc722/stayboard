@@ -11,11 +11,14 @@
 //               required and consumables are not on an owner's list (Jon's catalog rules), and linen
 //               has its own tool, so all three are left out.
 //   linen     — the pieces at par for these beds and baths, from the linen standard. Quantities only
-//               (Jon, 2026-11-12: "linen is just quantity"): Stay selects and supplies linen for the
-//               homes it manages, so no prices, tiers, vendors or SKUs.
+//               (Jon, 2026-11-12: "linen is just quantity"): no prices, tiers, vendors or SKUs.
 //
 // The same inputs give a SUMMARY to anyone (the headline numbers) and the FULL QUOTE only after an
-// email is left (app/api/tools). Types are shared with the page; the arithmetic runs on the server so
+// email is left (app/api/tools).
+//
+// AN OFFERING, NOT A PITCH (Jon, 2026-11-12: "this tool is for owners, even if they don't want to use
+// us"): every result stands on its own for an owner who self-manages or uses someone else. The words are
+// neutral, the net can be worked out self-managed, and Stay appears only as the source and a contact. Types are shared with the page; the arithmetic runs on the server so
 // the full list never ships to a browser that has not unlocked it.
 
 export type ToolKey = 'income' | 'inventory' | 'linen'
@@ -25,8 +28,8 @@ export const isToolKey = (v: any): v is ToolKey => TOOL_KEYS.includes(v)
 export const TOOL_META: Record<ToolKey, { title: string; short: string; kicker: string; dek: string; unlock: string }> = {
   income: {
     title: 'What could your home *earn?*', short: 'Rental income calculator', kicker: 'Free tool · Rental income',
-    dek: 'Bedrooms and neighborhood in, a yearly and monthly range out, from projections Stay has built for homes like yours.',
-    unlock: 'the month-by-month projection, nightly rate and occupancy, and what you would keep after fees',
+    dek: 'Bedrooms and neighborhood in, a yearly and monthly range out, from short-term rental figures for homes like yours across South Florida.',
+    unlock: 'the month-by-month pattern, nightly rate and occupancy, and what you would keep after fees',
   },
   inventory: {
     title: 'Everything a rental *needs.*', short: 'Inventory calculator', kicker: 'Free tool · Inventory',
@@ -40,7 +43,7 @@ export const TOOL_META: Record<ToolKey, { title: string; short: string; kicker: 
   },
 }
 
-export type IncomeInput = { area?: string; bedrooms: number; bathrooms?: number }
+export type IncomeInput = { area?: string; bedrooms: number; bathrooms?: number; managed: boolean }
 export type InventoryInput = { bedrooms: number; bathrooms: number; guests: number; kitchen: 'full' | 'kitchenette' | 'none'; balcony: boolean; washer: boolean; sleeper: boolean }
 export type LinenInput = { beds: Record<string, number>; bathrooms: number; guests: number; kitchen: boolean; sleeper: boolean }
 
@@ -66,7 +69,7 @@ const clampN = (v: any, lo: number, hi: number, d: number) => { const x = Number
 /** Untrusted input, cleaned to the shape each tool expects. */
 export function cleanInput(tool: ToolKey, raw: any): ToolInput {
   const r = raw && typeof raw === 'object' ? raw : {}
-  if (tool === 'income') return { area: String(r.area || '').slice(0, 60), bedrooms: clampN(r.bedrooms, 0, 6, 1), bathrooms: clampN(r.bathrooms, 1, 6, 1) }
+  if (tool === 'income') return { area: String(r.area || '').slice(0, 60), bedrooms: clampN(r.bedrooms, 0, 6, 1), bathrooms: clampN(r.bathrooms, 1, 6, 1), managed: r.managed === true }
   if (tool === 'inventory') return {
     bedrooms: clampN(r.bedrooms, 0, 6, 1), bathrooms: clampN(r.bathrooms, 1, 6, 1), guests: clampN(r.guests, 1, 16, 4),
     kitchen: r.kitchen === 'kitchenette' || r.kitchen === 'none' ? r.kitchen : 'full', balcony: !!r.balcony, washer: r.washer !== false, sleeper: !!r.sleeper,

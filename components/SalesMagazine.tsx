@@ -746,7 +746,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         const url = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + '/tools/' + k + '?d=' + encodeURIComponent(report.code)
         const em = (x: string) => x.split(/(\*[^*]+\*)/).map((t, i) => t.startsWith('*') && t.endsWith('*') ? <em key={i}>{t.slice(1, -1)}</em> : t)
         const gets: Record<ToolKey, string[]> = {
-          income: ['A yearly and monthly range for your home', 'Nightly rate, occupancy and the month-by-month pattern', 'What you would keep after channel and management fees'],
+          income: ['A yearly and monthly range for your home', 'Nightly rate, occupancy and the month-by-month pattern', 'What you would keep, self-managed or with a manager'],
           inventory: ['Every item a guest expects, counted for your home', 'Grouped into the sets things are bought in', 'Must-have, recommended and optional, marked'],
           linen: ['Every sheet, towel and pillow by bed size', 'Three sets in rotation: on the bed, in the wash, on the shelf', 'Grouped by bed, bath and kitchen'],
         }
@@ -760,7 +760,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
             ) : (
               <div className="mz-tool">
                 <div>
-                  <p className="mz-kicker">What you get, free</p>
+                  <p className="mz-kicker">Free for any owner</p>
                   <ol className="mz-tool-list">{gets[k].map((g, i) => <li key={i}><span>{String(i + 1).padStart(2, '0')}</span>{g}</li>)}</ol>
                   <p className="mz-small">Enter the home’s details and see the headline straight away. Leave an email to unlock the full quote and download it as a PDF.</p>
                   {!flip ? null : <a className="mz-tool-btn" href={url} target="_blank" rel="noreferrer">Open the calculator</a>}

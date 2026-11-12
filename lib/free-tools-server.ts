@@ -35,10 +35,12 @@ async function income(inp: IncomeInput): Promise<IncomeFull> {
   // The neighborhood's own figures when there are any; Stay's South Florida set otherwise.
   const local = inp.area ? pts.filter(p => norm(p.area).includes(norm(inp.area!)) || norm(inp.area!).includes(norm(p.area))) : []
   const use = local.length ? local : pts
-  const base: IncomeFull = { found: false, area: local.length ? inp.area! : 'South Florida', bedrooms: inp.bedrooms, lo: 0, hi: 0, monthLo: 0, monthHi: 0, basis: 0, nightlyLo: 0, nightlyHi: 0, occLo: 0, occHi: 0, months: [], netLo: 0, netHi: 0, mgmtPct: MGMT, channelPct: CHANNEL, sources: [] }
+  const base: IncomeFull = { found: false, area: local.length ? inp.area! : 'South Florida', bedrooms: inp.bedrooms, lo: 0, hi: 0, monthLo: 0, monthHi: 0, basis: 0, nightlyLo: 0, nightlyHi: 0, occLo: 0, occHi: 0, months: [], netLo: 0, netHi: 0, mgmtPct: inp.managed ? MGMT : 0, channelPct: CHANNEL, sources: [] }
   if (!use.length) return base
   const lo = r100(med(use.map(p => p.lo))), hi = Math.max(lo, r100(med(use.map(p => p.hi))))
-  const net = (g: number) => r100(g * (1 - CHANNEL / 100) * (1 - MGMT / 100))
+  // Self-managed unless the owner says they would use a manager: the net is theirs either way.
+  const mg = inp.managed ? MGMT : 0
+  const net = (g: number) => r100(g * (1 - CHANNEL / 100) * (1 - mg / 100))
   return {
     ...base, found: true, lo, hi, monthLo: r100(lo / 12), monthHi: r100(hi / 12), basis: use.length,
     nightlyLo: Math.round(med(use.map(p => p.nlo).filter(Boolean))), nightlyHi: Math.round(med(use.map(p => p.nhi).filter(Boolean))),

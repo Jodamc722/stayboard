@@ -15,7 +15,7 @@ type Any = any
 export type ToolContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
 
 const DEFAULTS: Record<ToolKey, Any> = {
-  income: { area: '', bedrooms: 1, bathrooms: 1 },
+  income: { area: '', bedrooms: 1, bathrooms: 1, managed: false },
   inventory: { bedrooms: 2, bathrooms: 2, guests: 6, kitchen: 'full' },
   linen: { beds: { King: 1, Queen: 1 }, bathrooms: 2, guests: 6, kitchen: true, sleeper: false },
 }
@@ -99,6 +99,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       </div>
       <Stepper label="Bedrooms" value={inp.bedrooms} set={v => set('bedrooms', v)} min={0} max={5} show={v => (v === 0 ? 'Studio' : String(v))} />
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={5} step={0.5} />
+      <Seg label="Run by" value={inp.managed ? 'm' : 's'} set={v => set('managed', v === 'm')} opts={[['s', 'Myself'], ['m', 'A manager']]} />
     </>
   ) : tool === 'inventory' ? (
     <>
@@ -121,12 +122,12 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
     if (!summary) return <p className="ft-wait">Working it out…</p>
     if (tool === 'income') {
       const s = summary as IncomeSummary
-      if (!s.found) return <div className="ft-head"><p className="ft-lab">A custom projection</p><p className="ft-note">We have not published figures for a {beds(s.bedrooms).toLowerCase()} home here yet. Leave your email and {contact?.name?.split(' ')[0] || 'our team'} will send one built for your home.</p></div>
+      if (!s.found) return <div className="ft-head"><p className="ft-lab">A custom projection</p><p className="ft-note">We do not have enough figures for a {beds(s.bedrooms).toLowerCase()} home here yet. Leave your email and we will send a projection built for your home, free.</p></div>
       return (
         <div className="ft-head">
           <p className="ft-lab">Could earn in a year, {s.area}</p>
           <p className="ft-big">{money0(s.lo)} <i>–</i> {money0(s.hi)}</p>
-          <p className="ft-note">About {money0(s.monthLo)} to {money0(s.monthHi)} a month, gross, once the listing is established. From {s.basis} Stay projection{s.basis === 1 ? '' : 's'} for {beds(s.bedrooms).toLowerCase()} homes.</p>
+          <p className="ft-note">About {money0(s.monthLo)} to {money0(s.monthHi)} a month, gross, once the listing is established. Based on {s.basis} comparable {beds(s.bedrooms).toLowerCase()} home{s.basis === 1 ? '' : 's'}.</p>
         </div>
       )
     }
@@ -152,7 +153,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
 
   const quote = !full ? null : tool === 'income' ? (() => {
     const f = full as IncomeFull
-    if (!f.found) return <p className="ft-note">Thank you. {contact?.name?.split(' ')[0] || 'Our team'} will send a projection for your home within 48 hours.</p>
+    if (!f.found) return <p className="ft-note">Thank you. We will email you a projection for your home within 48 hours, free and with no obligation.</p>
     const mx = Math.max(1, ...f.months.map(m => m.hi))
     return (
       <>
@@ -164,7 +165,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         </dl>
         <p className="ft-lab ft-mt">Through the year, high end</p>
         <div className="ft-bars">{f.months.map((m, i) => <span key={i} title={money0(m.lo) + '–' + money0(m.hi)}><i style={{ height: (m.hi / mx * 100) + '%' }}><b style={{ height: (m.lo / m.hi * 100) + '%' }} /></i><em>{'JFMAMJJASOND'[i]}</em></span>)}</div>
-        <p className="ft-fine">Gross rental revenue for an established listing, before channel fees ({f.channelPct}%) and Stay’s management fee ({f.mgmtPct}%); “you keep” takes both off. Built from {f.basis} Stay projection{f.basis === 1 ? '' : 's'} and comparables. Estimates, not guarantees; every home is priced on its own.</p>
+        <p className="ft-fine">Gross rental revenue for an established listing. “You keep” takes off typical booking-site fees ({f.channelPct}%){f.mgmtPct ? <> and a {f.mgmtPct}% management fee</> : <>; self-managed, so no management fee, but cleaning, supplies and your time are yours</>}. Built from {f.basis} comparable home{f.basis === 1 ? '' : 's'} in Stay Hospitality’s South Florida data. Estimates, not guarantees.</p>
       </>
     )
   })() : tool === 'inventory' ? (() => {
@@ -192,7 +193,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             <ul>{f.rows.filter(r => r.group === g).map((r, i) => <li key={i}><span>{r.name}{r.size ? <small> · {r.size}</small> : null}</span><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
-        <p className="ft-fine">For the homes we manage, Stay selects and supplies the linen to this standard.</p>
+        
       </>
     )
   })()
@@ -217,7 +218,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
               <input className="ft-hp" tabIndex={-1} autoComplete="off" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} aria-hidden />
               <button type="submit" disabled={busy}>{busy ? 'Unlocking…' : 'Unlock the full quote'}</button>
               {err ? <p className="ft-err">{err}</p> : null}
-              <p className="ft-fine">We use it to send this quote and to follow up once. No spam, and we never share it.</p>
+              <p className="ft-fine">We email you a copy. No spam, never shared, and no obligation to work with us.</p>
             </form>
           ) : (
             <button type="button" className="ft-cta" onClick={() => setGate(true)}><Lock size={15} /> Get the full quote, free</button>
@@ -228,7 +229,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             {quote}
             <div className="ft-actions">
               <button type="button" onClick={pdf}><Download size={15} /> Download PDF</button>
-              {tel ? <a href={'tel:' + tel}><Phone size={15} /> Call {first || 'us'}</a> : null}
+              {tel ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call {first || 'us'}</a> : null}
               {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short + (where ? ' · ' + where : ''))}><Mail size={15} /> Email {first || 'us'}</a> : null}
             </div>
           </div>
