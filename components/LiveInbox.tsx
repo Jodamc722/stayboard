@@ -15,6 +15,12 @@ import { itemKey } from '@/components/MessagesInbox'
 import type { InboxData } from '@/lib/inbox-data'
 
 const POLL_MS = 30_000
+// INSTANT (2026-11-12, lib/guesty-webhooks): when Guesty tells us about every message the moment it lands, the
+// page only needs to re-read OUR copy — every 10 seconds, cheap — and asks Guesty itself every 2 minutes as a
+// safety net.
+const LOCAL_MS = 10_000
+const PULL_INSTANT_MS = 120_000
+type Instant = { connected: boolean; alerts: boolean; canConnect: boolean; lastEventAt: string | null; signed: boolean }
 
 const ago = (iso: string | null, now: number) => {
   if (!iso) return 'never'
@@ -50,7 +56,8 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
 
   /** `pull: false` re-reads our own copy only — after a reply or a mark, where Guesty has nothing new to say. */
   const refresh = useCallback(async (pull: boolean = true) => {
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+    // A hidden tab keeps reading our own copy only when this person asked to be alerted (desktop alerts need it).
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible' && !(alertsRef.current && !pull)) return
     const mine = ++asked.current
     setBusy(true)
     try {
@@ -75,6 +82,17 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
         seen.current[k] = it.at
       }
       if (fresh.size) { setMoved(fresh); setTimeout(() => setMoved(new Set()), 8000) }
+      // DESKTOP ALERT: a guest's new message, when this person turned alerts on and is not looking at the inbox.
+      if (fresh.size && alertsRef.current && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted' && (document.visibilityState !== 'visible' || !document.hasFocus())) {
+        for (const it of j.items as InboxData['items']) {
+          const k = itemKey(it)
+          if (!fresh.has(k) || it.kind !== 'guesty' || it.c.last?.who !== 'guest') continue
+          try {
+            const n = new Notification((it.c.guest_name || 'A guest') + ' wrote', { body: String(it.c.last?.text || it.c.last_message_preview || '').slice(0, 180), tag: k })
+            n.onclick = () => { window.focus(); const u = new URL(window.location.href); u.searchParams.set('open', k); window.location.href = u.toString() }
+          } catch { /* a browser that refuses is fine */ }
+        }
+      }
       setData({ items: j.items, unitById: j.unitById, waiting: j.waiting, lastResponderById: j.lastResponderById, now: j.now, header: j.header, state: j.state || {} })
       if (pull) setErr(j.pull?.error ? 'Guesty: ' + j.pull.error : '')
     } catch (e: any) { if (mine === asked.current) setErr(String(e?.message || e)) }
@@ -82,14 +100,40 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
   }, [])
   const changed = useCallback(() => { refresh(false) }, [refresh])
 
+  // Instant messages + my alerts (lib/guesty-webhooks, /api/messages/instant).
+  const [inst, setInst] = useState<Instant | null>(null)
+  const alertsRef = useRef(false)
+  const [instBusy, setInstBusy] = useState(false)
+  useEffect(() => {
+    fetch('/api/messages/instant', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) { setInst(j); alertsRef.current = !!j.alerts } }).catch(() => {})
+  }, [])
+  const toggleAlerts = async () => {
+    if (!inst || instBusy) return
+    const on = !inst.alerts
+    if (on && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') { try { await Notification.requestPermission() } catch { /* fine */ } }
+    setInstBusy(true)
+    try { const j = await (await fetch('/api/messages/instant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'alerts', on }) })).json(); if (j?.ok) { setInst({ ...inst, alerts: on }); alertsRef.current = on } else setErr(j?.error || 'Could not save.') }
+    finally { setInstBusy(false) }
+  }
+  const connectInstant = async () => {
+    if (!inst || instBusy) return
+    if (!confirm('Turn on instant messages?\n\nThis adds one webhook to the Guesty account so Guesty tells Lighthouse the moment a guest writes (new message and message-sent events only). It can be turned off here at any time.')) return
+    setInstBusy(true)
+    try { const j = await (await fetch('/api/messages/instant', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'connect' }) })).json(); if (j?.ok) setInst({ ...inst, connected: true, signed: !!j.signed }); else setErr(j?.error || 'Guesty did not take the subscription.') }
+    finally { setInstBusy(false) }
+  }
+
   useEffect(() => {
     // First live pull straight away: the server render read our copy; this asks Guesty.
     refresh()
-    const t = setInterval(() => { refresh() }, POLL_MS)
+    const instant = !!inst?.connected
+    const t = setInterval(() => { refresh() }, instant ? PULL_INSTANT_MS : POLL_MS)
+    // With instant on (or alerts on), our own copy is re-read often — it is where Guesty's pushes land.
+    const l = instant || inst?.alerts ? setInterval(() => { refresh(false) }, instant ? LOCAL_MS : POLL_MS) : null
     const onVis = () => { if (document.visibilityState === 'visible') refresh() }
     document.addEventListener('visibilitychange', onVis)
-    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
-  }, [refresh])
+    return () => { clearInterval(t); if (l) clearInterval(l); document.removeEventListener('visibilitychange', onVis) }
+  }, [refresh, inst?.connected, inst?.alerts])
 
   const h = data.header
   return (
@@ -107,6 +151,20 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
           </span>
           {err ? 'Live paused' : 'Live'} · {busy ? 'pulling…' : <Ago iso={h.syncedAt} />}
         </button>
+        {inst?.connected ? (
+          <span title={'Instant: Guesty tells Lighthouse the moment a guest writes' + (inst.signed ? ' (signed)' : '') + (inst.lastEventAt ? ' · last message event ' + new Date(inst.lastEventAt).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ' · waiting for the first message')}
+            className="inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border border-violet-200 bg-violet-50 text-violet-800">⚡ Instant</span>
+        ) : inst?.canConnect ? (
+          <button onClick={connectInstant} disabled={instBusy} title="Messages arrive in seconds instead of every 30 seconds while the page is open — adds a message webhook to Guesty"
+            className="inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border border-line bg-white text-ink hover:bg-app disabled:opacity-50">⚡ Turn on instant</button>
+        ) : null}
+        {inst ? (
+          <button onClick={toggleAlerts} disabled={instBusy} aria-pressed={inst.alerts}
+            title={inst.alerts ? 'You are alerted to every new guest message (bell + desktop). Click to stop — you will still hear about threads you took.' : 'Alert me to every new guest message — in the bell and on this computer. Threads you took always alert you.'}
+            className={'inline-flex items-center gap-1 text-[11.5px] font-semibold rounded-full px-2 py-0.5 border disabled:opacity-50 ' + (inst.alerts ? 'border-brand-200 bg-brand-50 text-brand-700' : 'border-line bg-white text-muted hover:text-ink')}>
+            {inst.alerts ? '🔔 Alerts on' : '🔕 Alert me'}
+          </button>
+        ) : null}
         <SyncNowButton />
       </LeanHead>
       {/* useSearchParams in UnifiedInbox needs a Suspense boundary. */}

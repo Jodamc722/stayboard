@@ -67,7 +67,7 @@ export async function loadGuestyThread(id: string, access: Access): Promise<Gues
   // recent — including the message being answered. Newest-first, then turned back into reading order.
   const [{ data: convo }, { data: newest }] = await Promise.all([
     sb.from('guesty_conversations').select('id, reservation_id, listing_id, guest_name, channel, raw').eq('id', id).maybeSingle(),
-    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at, module, is_automated').eq('conversation_id', id).order('sent_at', { ascending: false }).limit(500),
+    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at, module, is_automated, attachments').eq('conversation_id', id).order('sent_at', { ascending: false }).limit(500),
   ])
   if (!convo) return null
   const msgs: any[] = ((newest ?? []) as any[]).slice().reverse()

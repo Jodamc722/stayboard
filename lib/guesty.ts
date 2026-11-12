@@ -941,6 +941,22 @@ function mapReview(v: any) {
 /** A plain authenticated GET against the Open API, for admin diagnostics (e.g. what a booking's guest
  *  verification looks like on the live record). Throws on a non-2xx like every other call here. */
 export async function guestyGet<T = any>(path: string): Promise<T> { return api<T>(path) }
+/** A write to Guesty with a JSON body (POST unless told otherwise). Throws "Guesty <path> <status>: <body>" on a refusal. */
+export async function guestyWrite<T = any>(path: string, body?: any, method: 'POST' | 'PUT' | 'DELETE' = 'POST'): Promise<T> {
+  return api<T>(path, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+}
+
+/** One conversation, re-read from Guesty and stored — what an instant message event refreshes. */
+export async function syncConversationById(conversationId: string): Promise<boolean> {
+  const data = await api<any>(`/communication/conversations/${encodeURIComponent(conversationId)}`)
+  const c = data?.data ?? data
+  if (!c || typeof c !== 'object') return false
+  const row = mapConversation(c)
+  if (!row.id) return false
+  const { error } = await supabaseAdmin().from('guesty_conversations').upsert([row], { onConflict: 'id' })
+  if (error) throw new Error(`upsert conversation ${conversationId}: ${error.message}`)
+  return true
+}
 
 export function guestyConfigured(): boolean {
   return !!(process.env.GUESTY_CLIENT_ID && process.env.GUESTY_CLIENT_SECRET)

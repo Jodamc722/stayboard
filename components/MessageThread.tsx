@@ -18,13 +18,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { plainText, isMachineName } from '@/lib/message-text'
 import Link from 'next/link'
-import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, Sparkles, Send, Loader2, Languages, BookmarkPlus, ClipboardList, AlertTriangle, KeyRound, Undo2, Trash2 } from 'lucide-react'
+import { CalendarDays, X, ExternalLink, User, Phone, DollarSign, Home, BedDouble, Sparkles, Send, Loader2, Languages, BookmarkPlus, ClipboardList, AlertTriangle, KeyRound, Undo2, Trash2, CheckCircle2, XCircle, Paperclip, FileText } from 'lucide-react'
 import { checkReply, type ReplyWarning } from '@/lib/reply-guard'
 import { etDay, stayPhase, type StayPhase } from '@/lib/inbox-queue'
 import { fillSavedReply, type SavedReply } from '@/lib/saved-replies'
 import { openAddTask } from '@/components/AddTaskSheet'
 
-type Msg = { id: string; sender: string; sender_name?: string | null; body: string | null; sent_at: string | null; module?: string | null; is_automated?: boolean | null }
+type Msg = { id: string; sender: string; sender_name?: string | null; body: string | null; sent_at: string | null; module?: string | null; is_automated?: boolean | null; attachments?: any[] | null }
 type Reservation = {
   id: string; guest_name?: string | null; guest_phone?: string | null; listing_name?: string | null
   check_in?: string | null; check_out?: string | null; nights?: number | null; status?: string | null
@@ -129,6 +129,11 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
         </div>
       </div>
 
+      {/* INQUIRIES AND BOOKING REQUESTS (2026-11-12): pre-approve, accept or decline without leaving the thread. */}
+      {reservation && canReply && /^(inquiry|reserved)$/i.test(String(reservation.status || '')) ? (
+        <BookingAnswer reservationId={reservation.id} status={String(reservation.status)} source={String(reservation.source || channel || '')} guest={guest} stay={stay} />
+      ) : null}
+
       {/* WHO SAID WHAT (2026-09-30). A legend with the counts, and a switch to hide the templates. */}
       <div className="px-3 sm:px-5 py-1.5 border-b border-line bg-app/30 flex items-center gap-3 flex-wrap text-[11px]">
         <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-sky-500" /> {guest.split(' ')[0] || 'Guest'} (guest) · {counts.guest}</span>
@@ -147,7 +152,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
           return (
             <div key={m.id}>
               {newDay ? <div className="flex items-center gap-2 my-2"><div className="flex-1 h-px bg-line" /><span className="text-[10.5px] font-semibold text-muted uppercase tracking-wider">{day}</span><div className="flex-1 h-px bg-line" /></div> : null}
-              <Bubble m={m} guest={guest} onTask={m.sender === 'guest' ? taskFor : undefined} />
+              <Bubble m={m} guest={guest} conversationId={conversationId} onTask={m.sender === 'guest' ? taskFor : undefined} />
             </div>
           )
         })}
@@ -243,7 +248,7 @@ async function readJson(res: Response): Promise<any> {
   try { return await res.json() } catch { return { ok: false, error: res.status >= 500 ? `The server did not answer properly (${res.status}).` : `Unexpected answer (${res.status}).` } }
 }
 
-const Bubble = memo(function Bubble({ m, guest, onTask }: { m: Msg; guest: string; onTask?: (text: string) => void }) {
+const Bubble = memo(function Bubble({ m, guest, conversationId, onTask }: { m: Msg; guest: string; conversationId: string; onTask?: (text: string) => void }) {
   const [open, setOpen] = useState(false)
   // RAW (Jon, 2026-10-06: "more real raw data"): the post exactly as Guesty returned it, on demand.
   const [raw, setRaw] = useState<any>(null)
@@ -294,7 +299,8 @@ const Bubble = memo(function Bubble({ m, guest, onTask }: { m: Msg; guest: strin
           {local ? <span className="opacity-80" title="Sent from Lighthouse; replaced by Guesty's own copy on the next live read">· sent — waiting for Guesty&apos;s copy</span>
             : <button onClick={showRaw} className="opacity-60 hover:opacity-100 font-mono" title="Show this post exactly as Guesty returned it">{rawOpen ? 'hide raw' : 'raw'}</button>}
         </div>
-        <div className="whitespace-pre-wrap leading-relaxed break-words">{body}</div>
+        {body ? <div className="whitespace-pre-wrap leading-relaxed break-words">{body}</div> : null}
+        <Attachments list={m.attachments} conversationId={conversationId} light={!g && !auto} />
         {long ? <button onClick={() => setOpen(o => !o)} className={`mt-0.5 text-[11px] font-semibold ${meta} hover:underline`}>{open ? 'Show less' : 'Show all'}</button> : null}
         {tr ? <div className="mt-1.5 pt-1.5 border-t border-sky-200 whitespace-pre-wrap leading-relaxed break-words text-ink/90"><span className="block text-[10.5px] font-bold uppercase tracking-wider text-sky-800/70">In {tr.language}</span>{tr.text}</div> : null}
         {trErr ? <div className="mt-1 text-[11.5px] text-rose-700">{trErr}</div> : null}
@@ -319,6 +325,115 @@ const Bubble = memo(function Bubble({ m, guest, onTask }: { m: Msg; guest: strin
     </div>
   )
 })
+
+/**
+ * ANSWER AN INQUIRY OR A BOOKING REQUEST (lib/guesty-requests). Reads the booking's live status first — our copy can
+ * be minutes old — and offers only what Guesty will take: pre-approve an Airbnb inquiry, accept or decline a request.
+ * Every answer asks once more in the bar itself (they reach the guest and cannot be taken back). A special offer or a
+ * Vrbo quote has no API, so those are a labelled link to the booking in Guesty.
+ */
+function BookingAnswer({ reservationId, status, source, guest, stay }: { reservationId: string; status: string; source: string; guest: string; stay: string }) {
+  const [live, setLive] = useState<{ status: string; source: string; can: { preapprove: boolean; approve: boolean; decline: boolean }; inGuesty: string[]; reasons: { key: string; label: string }[] } | null>(null)
+  const [loadErr, setLoadErr] = useState('')
+  const [ask, setAsk] = useState<'' | 'preapprove' | 'approve' | 'decline'>('')
+  const [reason, setReason] = useState('')
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState('')
+  const [err, setErr] = useState('')
+  const first = (guest || 'the guest').split(' ')[0]
+  useEffect(() => {
+    let off = false
+    fetch('/api/messages/booking?reservationId=' + encodeURIComponent(reservationId), { cache: 'no-store' }).then(readJson)
+      .then(j => { if (off) return; if (j?.ok) setLive(j); else setLoadErr(j?.error || 'Could not read the booking from Guesty.') })
+      .catch(() => { if (!off) setLoadErr('Could not reach Lighthouse.') })
+    return () => { off = true }
+  }, [reservationId])
+  const go = async () => {
+    if (!ask || busy) return
+    if (ask === 'decline' && /airbnb/i.test(live?.source || source) && !reason) { setErr('Pick a reason — Airbnb needs one to decline.'); return }
+    setBusy(true); setErr('')
+    try {
+      const j = await readJson(await fetch('/api/messages/booking', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reservationId, action: ask, reason, message: msg }) }))
+      if (!j?.ok) setErr(j?.error || 'Guesty did not take it.')
+      else { setDone((ask === 'preapprove' ? 'Pre-approval sent' : ask === 'approve' ? 'Request accepted' : 'Request declined') + ' — Guesty now shows “' + (j.status || '…') + '”. The channel can take a minute to catch up.'); setAsk('') }
+    } catch { setErr('Could not reach Lighthouse — nothing was sent.') } finally { setBusy(false) }
+  }
+  const inquiry = /^inquiry$/i.test(live?.status || status)
+  const guestyLink = 'https://app.guesty.com/reservations/' + reservationId + '/summary'
+  const B = 'inline-flex items-center gap-1.5 min-h-[32px] text-[12px] font-semibold px-2.5 rounded-lg disabled:opacity-50'
+  return (
+    <div className="px-3 sm:px-5 py-2 border-b border-amber-200 bg-amber-50/70 text-[12px]">
+      <div className="flex items-center gap-2 flex-wrap">
+        <b className="text-amber-900">{inquiry ? 'Inquiry' : 'Booking request'} — waiting on us</b>
+        {stay ? <span className="text-amber-900/70">{stay}</span> : null}
+        {!live && !loadErr ? <span className="text-muted inline-flex items-center gap-1"><Loader2 size={11} className="animate-spin" /> checking Guesty…</span> : null}
+        {loadErr ? <span className="text-rose-700">{loadErr}</span> : null}
+        {live && !done ? <span className="ml-auto flex items-center gap-1.5 flex-wrap">
+          {live.can.preapprove ? <button onClick={() => { setAsk('preapprove'); setErr('') }} className={B + ' bg-emerald-600 text-white hover:bg-emerald-700'} title={'Lets ' + first + ' book these dates instantly at the listed price'}><CheckCircle2 size={13} /> Pre-approve</button> : null}
+          {live.can.approve ? <button onClick={() => { setAsk('approve'); setErr('') }} className={B + ' bg-emerald-600 text-white hover:bg-emerald-700'} title={'Confirms ' + first + '’s booking'}><CheckCircle2 size={13} /> Accept</button> : null}
+          {live.can.decline ? <button onClick={() => { setAsk('decline'); setErr('') }} className={B + ' border border-rose-200 bg-white text-rose-700 hover:bg-rose-50'} title="Turn the request down, with a reason"><XCircle size={13} /> Decline…</button> : null}
+          {live.inGuesty.map(x => <a key={x} href={guestyLink} target="_blank" rel="noopener noreferrer" className={B + ' border border-line bg-white text-ink hover:bg-app'} title={x + ' has no API — this opens the booking in Guesty'}><ExternalLink size={12} /> {x} in Guesty</a>)}
+          {!live.can.preapprove && !live.can.approve && !live.can.decline && !live.inGuesty.length ? <span className="text-muted">Guesty shows “{live.status}” — nothing to answer here.</span> : null}
+        </span> : null}
+      </div>
+      {ask ? (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-white p-2.5">
+          <p className="text-ink">{ask === 'preapprove' ? <>Pre-approve <b>{first}</b>? They can then book {stay || 'these dates'} instantly at the listed price.</> : ask === 'approve' ? <>Accept <b>{first}</b>’s request for {stay || 'these dates'}? The booking is confirmed on the channel.</> : <>Decline <b>{first}</b>’s request. They are told on the channel.</>}</p>
+          {ask === 'decline' && live ? (<>
+            <div className="mt-2 flex flex-wrap gap-1">{live.reasons.map(r => <button key={r.key} onClick={() => setReason(r.key)} className={'min-h-[30px] px-2 rounded-md border text-[11.5px] font-semibold ' + (reason === r.key ? 'bg-rose-600 text-white border-rose-600' : 'bg-white border-line text-ink hover:bg-app')}>{r.label}</button>)}</div>
+            <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={2} placeholder={'A short note to ' + first + ' (optional) — e.g. “Thank you for asking — those dates don’t work for this home, but we would love to host you another time.”'} className="mt-2 w-full rounded-lg border border-line px-2.5 py-1.5 text-[12.5px]" />
+          </>) : null}
+          <div className="mt-2 flex items-center gap-2">
+            <button onClick={go} disabled={busy} className={B + ' ' + (ask === 'decline' ? 'bg-rose-600 hover:bg-rose-700' : 'bg-emerald-600 hover:bg-emerald-700') + ' text-white'}>{busy ? <Loader2 size={12} className="animate-spin" /> : null}{ask === 'preapprove' ? 'Yes, pre-approve' : ask === 'approve' ? 'Yes, accept' : 'Decline request'}</button>
+            <button onClick={() => { setAsk(''); setErr('') }} disabled={busy} className={B + ' text-muted hover:text-ink'}>Cancel</button>
+          </div>
+        </div>
+      ) : null}
+      {err ? <p className="mt-1.5 text-rose-700">{err}</p> : null}
+      {done ? <p className="mt-1.5 text-emerald-800 inline-flex items-center gap-1"><CheckCircle2 size={12} /> {done}</p> : null}
+    </div>
+  )
+}
+
+/**
+ * THE PHOTOS AND FILES ON A MESSAGE (2026-11-12). Guesty keeps them private; each tile goes through
+ * /api/messages/attachment, which mints a short-lived link per view. Images show as thumbnails that open full
+ * size; anything else is a labelled file chip.
+ */
+type Att = { key: string; name: string; image: boolean }
+function readAttachments(list: any[] | null | undefined): Att[] {
+  if (!Array.isArray(list)) return []
+  const out: Att[] = []
+  for (const a of list) {
+    const key = typeof a === 'string' ? a : String(a?.attachmentURL || a?.attachmentUrl || a?.url || a?.key || a?.path || '')
+    if (!key) continue
+    const file = String((typeof a === 'object' && (a?.name || a?.fileName || a?.filename)) || key.split('?')[0].split('/').pop() || 'file')
+    const type = String((typeof a === 'object' && (a?.contentType || a?.mimeType || a?.type)) || '')
+    out.push({ key, name: decodeURIComponent(file).slice(0, 80), image: /^image\//i.test(type) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file) })
+  }
+  return out
+}
+function Attachments({ list, conversationId, light }: { list?: any[] | null; conversationId: string; light: boolean }) {
+  const atts = readAttachments(list)
+  if (!atts.length) return null
+  const href = (a: Att) => '/api/messages/attachment?c=' + encodeURIComponent(conversationId) + '&k=' + encodeURIComponent(a.key)
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-1.5">
+      {atts.map(a => a.image ? (
+        <a key={a.key} href={href(a)} target="_blank" rel="noopener noreferrer" title={'Open ' + a.name + ' full size'} className="block rounded-lg overflow-hidden border border-black/10 bg-white">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={href(a)} alt={a.name} loading="lazy" className="block h-32 w-auto max-w-[220px] object-cover" />
+        </a>
+      ) : (
+        <a key={a.key} href={href(a)} target="_blank" rel="noopener noreferrer" title={'Open ' + a.name}
+          className={'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-semibold ' + (light ? 'bg-white/15 text-white hover:bg-white/25' : 'bg-white border border-line text-ink hover:bg-app')}>
+          {/\.pdf$/i.test(a.name) ? <FileText size={12} /> : <Paperclip size={12} />} {a.name}
+        </a>
+      ))}
+    </div>
+  )
+}
 
 /** What we know about the unit's door code — verified, failing, or never checked. Never the code. */
 function DoorChip({ door }: { door: NonNullable<Door> }) {
