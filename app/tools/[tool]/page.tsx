@@ -39,7 +39,7 @@ export default async function ToolPage({ params, searchParams }: { params: { too
   // NO DECK BRANDING ON THE TOOL (Jon, 2026-11-12: "the inventory link should not include any branding
   // from the sales deck"). ?d= only credits the lead to the deck, server-side; the page is Stay's own.
   const card = p
-  const contact = { name: String(card?.name || ''), role: String(card?.role || ''), phone: String(card?.phone || p?.phone || ''), email: String(card?.email || p?.email || ''), photo: String(card?.photo || '') }
+  const contact = { name: String(card?.name || ''), role: String(card?.role || ''), phone: String(card?.phone || p?.phone || ''), email: String(card?.email || p?.email || '') }
   const emph = (x: string) => x.split(/(\*[^*]+\*)/).map((s, i) => s.startsWith('*') && s.endsWith('*') ? <em key={i}>{s.slice(1, -1)}</em> : s)
   return (
     <main style={{ minHeight: '100vh', background: '#F7F7F5', fontFamily: 'Inter, system-ui, sans-serif', color: '#101114', padding: '28px max(18px, env(safe-area-inset-left)) 60px' }}>

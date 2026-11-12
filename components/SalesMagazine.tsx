@@ -730,7 +730,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
           </div>
           <div className="mz-channels">
             {kicker(<CT k="kListed" />)}
-            {gfx('tech') && !phone ? <ChannelHub channels={channels} count={channelCount} /> : <p>{channels.map((ch, i) => <React.Fragment key={i}>{i ? <i>·</i> : null}<span>{ch}</span></React.Fragment>)}<i>·</i><span className="mz-plus">{channelCount} platforms in all</span></p>}
+            {gfx('tech') ? <ChannelHub channels={channels} count={channelCount} /> : <p>{channels.map((ch, i) => <React.Fragment key={i}>{i ? <i>·</i> : null}<span>{ch}</span></React.Fragment>)}<i>·</i><span className="mz-plus">{channelCount} platforms in all</span></p>}
           </div>
         </>
       ), { section: 'Our technology' })
@@ -757,7 +757,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
             {flip && phone ? (
               <div className="mz-tool-live"><FreeTool tool={k} embedded refCode={report.code} where={short(building) || building} contact={{ name: STAY_CONTACT.person?.name, role: STAY_CONTACT.person?.role, phone: STAY_CONTACT.person?.phone, email: STAY_CONTACT.person?.email }} /></div>
             ) : (
-              <div className="mz-tool">
+              <div className="mz-ftool">
                 <div>
                   <p className="mz-kicker">Free for any owner</p>
                   <ol className="mz-tool-list">{gets[k].map((g, i) => <li key={i}><span>{String(i + 1).padStart(2, '0')}</span>{g}</li>)}</ol>
@@ -1504,7 +1504,7 @@ const CSS = `
 .mz-back-title{font-family:${SERIF};font-weight:300;font-size:calc(72px * var(--mz-ds));line-height:1;letter-spacing:-.025em;margin:0;max-width:9em;text-wrap:balance}
 .mz-back-title em{color:${C.glow}}
 .mz-back-dek{font:300 calc(20px * var(--mz-ds))/1.5 ${SERIF};color:rgba(255,255,255,.92);max-width:26em;margin:24px 0 0}
-.mz-tool{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:40px;margin-top:34px;align-items:start}
+.mz-ftool{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:40px;margin-top:34px;align-items:start}
 .mz-tool-list{list-style:none;margin:12px 0 18px;padding:0}
 .mz-tool-list li{display:grid;grid-template-columns:40px 1fr;gap:8px;padding:12px 0;border-top:1px solid ${C.grid};font:400 calc(19px * var(--mz-ds))/1.3 ${SERIF};color:${C.ink}}
 .mz-tool-list li span{font:600 11px ${SANS};letter-spacing:.12em;color:${C.sand};padding-top:5px}
@@ -1647,7 +1647,7 @@ div.mz-ed{display:block}
 .mz-root:not(.mz-flipping) .mz-about-photo{height:440px}.mz-root:not(.mz-flipping) .mz-about-head{padding:0 20px 28px}
 .mz-root:not(.mz-flipping) .mz-split-page{display:flex;flex-direction:column}.mz-root:not(.mz-flipping) .mz-split-photo{height:280px}.mz-root:not(.mz-flipping) .mz-run-tight,.mz-root:not(.mz-flipping) .mz-split-body,.mz-root:not(.mz-flipping) .mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
 .mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}
-.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-wave-page{min-height:86svh;position:relative;overflow:hidden}.mz-root:not(.mz-flipping) .mz-wave-page>div{position:absolute!important;inset:0}.mz-root:not(.mz-flipping) .mz-wave-page>div>div{left:20px!important;right:20px!important;top:36px!important}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
+.mz-root:not(.mz-flipping) .mz-ftool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-wave-page{min-height:86svh;position:relative;overflow:hidden}.mz-root:not(.mz-flipping) .mz-wave-page>div{position:absolute!important;inset:0}.mz-root:not(.mz-flipping) .mz-wave-page>div>div{left:20px!important;right:20px!important;top:36px!important}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
 .mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
 .mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr!important}

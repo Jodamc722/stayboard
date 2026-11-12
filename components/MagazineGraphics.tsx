@@ -112,32 +112,31 @@ export function YearWave({ shape = SEASON, title, kicker }: { shape?: number[]; 
   )
 }
 
-/** One calendar, every platform: the home at the centre, the channels in two columns around it. */
+/** One calendar, every platform (Jon, 2026-11-12: "make this cleaner and ensure no overwrite"): the
+ *  calendar as a badge, a single rule, and the platforms in two even columns. Drawn in HTML rather
+ *  than SVG so it flows with the page, wraps on a phone and can never spill into the footer. */
 export function ChannelHub({ channels, count }: { channels: string[]; count: string }) {
   const list = channels.slice(0, 8)
-  const W = 672, H = 132, cx = 70, cy = H / 2, r = 58
-  const cols = [236, 456], rows = Math.ceil(list.length / 2)
-  const rowH = (H - 12) / Math.max(1, rows)
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={'One calendar, live on ' + count + ' platforms'}>
-      {list.map((c, i) => {
-        const col = i < rows ? 0 : 1, row = col ? i - rows : i
-        const x = cols[col], y = 6 + rowH * row + rowH / 2
-        return (
-          <g key={c}>
-            <path d={`M${cx + r},${cy} C${cx + r + 60},${cy} ${x - 70},${y} ${x - 8},${y}`} style={{ fill: 'none', stroke: V.rule }} strokeWidth={1.1} />
-            <circle cx={x - 4} cy={y} r={3} style={{ fill: V.sand }} />
-            <text x={x + 8} y={y + 5} fontFamily={SERIF} fontSize={16} style={{ fill: V.ink }}>{c}</text>
-          </g>
-        )
-      })}
-      <circle cx={cx} cy={cy} r={r} style={{ fill: V.navy }} />
-      <text x={cx} y={cy - 8} textAnchor="middle" fontFamily={SERIF} fontSize={15} style={{ fill: '#fff' }}>One calendar</text>
-      <text x={cx} y={cy + 16} textAnchor="middle" fontFamily={SERIF} fontSize={20} style={{ fill: V.glow }}>{count}</text>
-      <text x={cx} y={cy + 30} textAnchor="middle" fontFamily={SANS} fontSize={8} fontWeight={600} letterSpacing="1.4" style={{ fill: '#fff', opacity: 0.7 }}>PLATFORMS</text>
-    </svg>
+    <div className="mz-hub" role="img" aria-label={'One calendar, live on ' + count + ' platforms'}>
+      <style>{HUB_CSS}</style>
+      <div className="mz-hub-badge"><b>{count}</b><span>platforms</span><em>One calendar</em></div>
+      <ul>{list.map(c => <li key={c}><i />{c}</li>)}<li className="mz-hub-more"><i />and more, all from one calendar</li></ul>
+    </div>
   )
 }
+const HUB_CSS = `
+.mz-hub{display:grid;grid-template-columns:auto minmax(0,1fr);gap:28px;align-items:center;margin-top:14px}
+.mz-hub-badge{width:108px;height:108px;border-radius:999px;background:${V.navy};color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.mz-hub-badge b{font:400 30px/1 ${SERIF};color:${V.glow};font-variant-numeric:lining-nums}
+.mz-hub-badge span{font:600 8.5px ${SANS};letter-spacing:.16em;text-transform:uppercase;margin-top:4px;opacity:.75}
+.mz-hub-badge em{font:400 12px ${SERIF};font-style:italic;margin-top:6px;opacity:.85}
+.mz-hub ul{list-style:none;margin:0;padding:0 0 0 24px;border-left:1px solid ${V.rule};display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 22px}
+.mz-hub li{display:flex;align-items:center;gap:9px;font:400 calc(16px * var(--mz-ds, 1)) ${SERIF};color:${V.ink};min-width:0}
+.mz-hub li i{flex:none;width:5px;height:5px;border-radius:99px;background:${V.sand}}
+.mz-hub li.mz-hub-more{grid-column:1/-1;font-style:italic;color:${V.muted};font-size:calc(13px * var(--mz-ds, 1))}
+@media (max-width:520px){.mz-hub{grid-template-columns:1fr;gap:16px}.mz-hub ul{padding-left:0;border-left:0}}
+`
 
 // ── The year, month by month (moved here from SalesMagazine so the keynote draws the same chart) ──
 export type ChartKind = 'line' | 'bars' | 'band' | 'cumulative'
