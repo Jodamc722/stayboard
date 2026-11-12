@@ -130,7 +130,7 @@ export async function POST(req: NextRequest) {
     const used = new Set<string>()
     const usedCores = new Set<string>()
     const fmt = String(b?.format || '16:9')
-    const scenes: { id: string; kind: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string; act?: string; src?: string; imgPrompt?: string; aiPending?: boolean }[] = []
+    const scenes: { id: string; kind: string; sig?: string; eyebrow?: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string; act?: string; src?: string; imgPrompt?: string; aiPending?: boolean }[] = []
     // Pass 1: every slot's candidate list (subject-matched first). Pass 2: slots with the fewest good
     // candidates choose first, so a scene that needs "the pool" is not left with the pool already taken.
     type Slot = { scene: number; k: number; subj: ReturnType<typeof subjectOf>; cands: any[] }
@@ -139,11 +139,12 @@ export async function POST(req: NextRequest) {
       const s = raw[i]
       const q = String(s?.photoQuery || '').trim().slice(0, 60)
       // event ad: only BOOK YOUR STAY takes our library photos — the event and the things to do get stock / AI below
-      const want = ev && s?.act !== 'book' ? 0 : s?.kind === 'wall' ? 4 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
+      const want = ev && s?.act !== 'book' ? 0 : s?.layout === 'gallery' ? 3 : s?.kind === 'wall' ? 4 : s?.kind === 'cards' && s?.layout !== 'list' ? 3 : s?.kind === 'contact' ? 0 : 1
       const place = q.split(/\s+/)[0] || ''
       const items: string[] = Array.isArray(s?.items) ? s.items.map((x: any) => String(x || '')) : []
       const texts = s?.kind === 'cards' ? items.slice(0, 3).map(x => x + ' ' + q) : Array.from({ length: want }, () => [s?.head, s?.sub, s?.vo, q, items.join(' ')].join(' '))
       scenes.push({ id: 's' + (i + 1), kind: s?.kind, badge: i === raw.findIndex((x: any) => x?.badge) ? s?.badge : '', vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos: [], photoQuery: q,
+        ...(s?.layout ? { sig: s.layout } : {}), ...(s?.eyebrow ? { eyebrow: String(s.eyebrow) } : {}),
         ...(ev ? { act: s.act, src: s.source, ...(s.act !== 'book' && s.imagePrompt ? { imgPrompt: s.imagePrompt } : {}), ...(s.source === 'ai' ? { aiPending: true } : {}) } : {}) })
       for (let k = 0; k < want; k++) {
         const subj = subjectOf(texts[k] || '')

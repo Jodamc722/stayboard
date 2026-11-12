@@ -22,15 +22,17 @@ type Env = { W: number; H: number; u: number; port: boolean; M: number; top: num
 
 // ── the scene's content decides its layout ───────────────────────────────────────────────────────
 export type SigLayout = 'hero' | 'list' | 'numbers' | 'gallery' | 'quote' | 'end'
+const SIG_KEYS: SigLayout[] = ['hero', 'list', 'numbers', 'gallery', 'quote', 'end']
 const NUMERIC = /^\s*[$€£]?\d[\d,.]*\s*(%|\+|x|k|m|★)?\s*\|/i
 export function layoutOf(sc: AdScene): SigLayout {
+  if (sc.sig && SIG_KEYS.indexOf(sc.sig) >= 0) return sc.sig   // the writer's or the editor's choice
   const k = sc.kind
   if (k === 'cta' || k === 'contact') return 'end'
   if (k === 'quote') return 'quote'
   const items = (sc.items || []).filter(x => x && x.trim())
   if (k === 'stats' || k === 'curve' || (items.length && items.every(x => NUMERIC.test(x)))) return items.length ? 'numbers' : 'hero'
   if (items.length && !(k === 'poster' || k === 'event')) return 'list'
-  if ((k === 'wall' || k === 'grid' || k === 'tilegrid' || k === 'polaroid' || k === 'tiles') || sc.photos.filter(Boolean).length >= 3) return 'gallery'
+  if ((k === 'wall' || k === 'grid' || k === 'tilegrid' || k === 'polaroid' || k === 'tiles') || sc.photos.filter(Boolean).length >= 2) return 'gallery'
   return 'hero'
 }
 
@@ -278,26 +280,27 @@ function numbers(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: n
 }
 
 function gallery(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: number, get: Get) {
+  // A MONTAGE: quick full-screen cuts through the scene's photos (one image on screen at a time — never a grid
+  // or a collage), each pushing in, the headline set over the last one.
   const { W, H, u, M, port } = e
   ctx.fillStyle = NIGHT; ctx.fillRect(0, 0, W, H)
-  const ph = sc.photos.filter(Boolean).slice(0, 3)
-  const n = Math.max(1, ph.length), gap = 10 * u
-  for (let k = 0; k < n; k++) {
-    const r = outExpo((local - k * 0.16) / 1.0)
-    if (r <= 0) continue
-    const img = get(ph[k])
-    if (port) { const bh = (H - gap * (n - 1)) / n, y = k * (bh + gap); ctx.save(); ctx.beginPath(); ctx.rect(0, y, W * r, bh); ctx.clip(); photo(ctx, img, 0, y, W, bh, local, dur, i + k, 0.8); ctx.restore() }
-    else { const bw = (W - gap * (n - 1)) / n, x = k * (bw + gap); ctx.save(); ctx.beginPath(); ctx.rect(x, H * (1 - r), bw, H * r); ctx.clip(); photo(ctx, img, x, 0, bw, H, local, dur, i + k, 0.8); ctx.restore() }
-  }
-  shade(ctx, 0, H * 0.5, H, W, 0, 0.85)
+  const ph = sc.photos.filter(Boolean).slice(0, 4)
+  const n = Math.max(1, ph.length)
+  // the early cuts are quick; the last photo holds for the headline
+  const hold = n > 1 ? Math.max(0.55, (dur * 0.45) / (n - 1)) : dur
+  const k = Math.min(n - 1, Math.floor(Math.max(0, local) / hold)), lk = Math.max(0, local) - k * hold
+  photo(ctx, get(ph[k] || ''), 0, 0, W, H, lk, k === n - 1 ? dur - k * hold : hold, i + k, 1.4)
+  // a quick flash of white on each cut, the way an editor cuts on the beat
+  if (k > 0 && lk < 0.12) { ctx.fillStyle = `rgba(255,250,240,${0.18 * (1 - lk / 0.12)})`; ctx.fillRect(0, 0, W, H) }
   const head = sc.head || strip(sc.vo)
-  if (head) {
+  if (head && k === n - 1) {
+    shade(ctx, 0, H * 0.32, H, W, 0, 0.94)
     const maxW = W - 2 * M
-    const size = fit(ctx, head, maxW, (port ? 120 : 110) * u, 3, s => `600 ${s}px ${e.serif}`)
-    const hh = setLines(ctx, e, head, 0, 0, maxW, size, { font: e.serif, weight: 600, local, measureOnly: true })
+    const size = fit(ctx, head, maxW, (port ? 130 : 116) * u, 3, s2 => `600 ${s2}px ${e.serif}`)
+    const hh = setLines(ctx, e, head, 0, 0, maxW, size, { font: e.serif, weight: 600, local: lk, measureOnly: true })
     const y0 = H - e.bot - hh
-    label(ctx, e, sc.eyebrow || pad2(i + 1), M, y0 - 30 * u, 22 * u, local, 0.45, { color: GOLD, weight: 700 })
-    setLines(ctx, e, head, M, y0, maxW, size, { font: e.serif, weight: 600, local, delay: 0.5 })
+    label(ctx, e, sc.eyebrow || pad2(i + 1), M, y0 - 30 * u, 22 * u, lk, 0.05, { color: GOLD, weight: 700 })
+    setLines(ctx, e, head, M, y0, maxW, size, { font: e.serif, weight: 600, local: lk, delay: 0.1 })
   }
 }
 

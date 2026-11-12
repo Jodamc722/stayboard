@@ -18,6 +18,16 @@
 import qrcode from 'qrcode-generator'
 import { drawSignatureFrame } from './ad-signature'
 
+/** The Signature look's layouts (lib/ad-signature). */
+export type SigLayoutKey = 'hero' | 'list' | 'numbers' | 'gallery' | 'quote' | 'end'
+export const SIG_LAYOUTS: { key: SigLayoutKey; label: string; hint: string }[] = [
+  { key: 'hero', label: 'Hero', hint: 'One photo, full screen, headline set over it' },
+  { key: 'list', label: 'List', hint: 'Photo above, up to four numbered rows below' },
+  { key: 'numbers', label: 'Numbers', hint: 'Up to three figures that count up (rows like 40+|Booking platforms)' },
+  { key: 'gallery', label: 'Montage', hint: 'Up to four photos, quick full-screen cuts, headline on the last' },
+  { key: 'quote', label: 'Quote', hint: 'A guest or owner line in large serif, who said it under' },
+  { key: 'end', label: 'End card', hint: 'Logo, headline, button, QR code' },
+]
 export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'timeline' | 'team' | 'quote' | 'poster' | 'contact' | 'cta'
   | 'beats' | 'tiles' | 'grid' | 'calendar' | 'dates' | 'hub' | 'beforeafter' | 'tilegrid' | 'livefeed' | 'roles' | 'curve' | 'triad'
 /** Jon, 2026-11-02: "need more style … a wide range of edits, range of styles and looks". */
@@ -147,6 +157,8 @@ export type AdScene = {
    *  opens and the line under it. Drawn as a white tile, crisp at any export size. */
   qr?: string
   qrLabel?: string
+  /** Signature look: which of its six layouts draws this scene ('' / missing = picked from the content). */
+  sig?: SigLayoutKey
 }
 export type AdAct = 'event' | 'todo' | 'book'
 export type AdImgSource = 'ai' | 'stock' | 'ours'
@@ -3349,19 +3361,19 @@ export const TEMPLATES: AdTemplate[] = [
   // inventory estimator, also the revenue estimator"). Each ends on a card with the tool's QR code; the
   // tools are free for any owner, whether or not they work with Stay, so the ads say so and promise nothing more.
   { key: 'tool-projection', label: 'Free tool · Projections calculator', blurb: '9:16 reel: what could your rental earn, how it works, scan the QR', audience: 'owners', format: '9:16', name: 'Free projections calculator', scenes: [
-    { kind: 'kinetic', vo: 'What could your South Florida rental earn? Find out, free.', head: 'What could your\nrental **earn?**', sub: '', items: [], q: 'living room', n: 1 },
+    { kind: 'kinetic', vo: 'What could your South Florida rental earn? Find out, free.', eyebrow: 'Free for owners', head: 'What could your\nrental **earn?**', sub: '', items: [], q: 'living room', n: 1 },
     { kind: 'checks', vo: 'Search your building, then add the bedrooms, the size, the view and the amenities.', head: 'Tell it about **your home**', sub: '', items: ['Search your building|The address fills itself in', 'Bedrooms, size and view|Kitchen, balcony and amenities', 'Where it is|How far to the beach, what is nearby'], q: 'balcony', n: 1 },
     { kind: 'cards', vo: 'You get a yearly range, the month-by-month pattern, and the comparable homes behind it.', head: '', sub: '', items: ['A yearly range|Gross, once the listing is established', 'Month by month|The South Florida season', 'Real comparables|From the projections we build'], q: 'ocean view', n: 3 },
     { kind: 'cta', vo: 'Scan the code. It is free, with no account needed.', head: 'Scan for your\n**projection.**', sub: 'Free for any owner · no account needed', items: ['Try the free calculator'], q: 'pool', n: 1, qr: TOOL_LINK('income'), qrLabel: 'Scan for a free projection' },
   ] },
   { key: 'tool-supplies', label: 'Free tool · Supply and linen checklist', blurb: '9:16 reel: everything a rental needs, linen at par, Excel checklist, scan the QR', audience: 'owners', format: '9:16', name: 'Free rental supply checklist', scenes: [
-    { kind: 'kinetic', vo: 'Setting up a rental? Here is everything it needs, counted for you.', head: 'Everything your\nrental **needs.**', sub: '', items: [], q: 'kitchen', n: 1 },
+    { kind: 'kinetic', vo: 'Setting up a rental? Here is everything it needs, counted for you.', eyebrow: 'Free for owners', head: 'Everything your\nrental **needs.**', sub: '', items: [], q: 'kitchen', n: 1 },
     { kind: 'checks', vo: 'Add the bedrooms, the beds by size, the baths, and what is in the kitchen.', head: 'Describe **your home**', sub: '', items: ['Beds by size|King, queen, full, twin, sofa bed', 'The kitchen|Only the appliances it has', 'Every bathroom|Towels, mats and dispensers'], q: 'bedroom', n: 1 },
     { kind: 'cards', vo: 'Every item counted, the linen at par, and an Excel checklist to tick off as you go.', head: '', sub: '', items: ['Every item counted|Must-have, recommended, optional', 'Linen at par|Three sets in rotation', 'Excel checklist|Bought · in the home'], q: 'bathroom', n: 3 },
     { kind: 'cta', vo: 'Scan the code. It is free, for any owner.', head: 'Scan for your\n**checklist.**', sub: 'Free for any owner · download as Excel or PDF', items: ['Get the free checklist'], q: 'living room', n: 1, qr: TOOL_LINK('inventory'), qrLabel: 'Scan for the free checklist' },
   ] },
   { key: 'tool-both', label: 'Free tool · Both owner tools', blurb: '4:5 feed ad: the projection calculator and the supply checklist, one QR to both', audience: 'owners', format: '4:5', name: 'Free tools for rental owners', scenes: [
-    { kind: 'title', vo: 'Two free tools for South Florida rental owners.', head: 'Free tools for\n**rental owners.**', sub: 'From Stay Hospitality', items: [], q: 'exterior', n: 1 },
+    { kind: 'title', vo: 'Two free tools for South Florida rental owners.', eyebrow: 'Free for owners', head: 'Free tools for\n**rental owners.**', sub: 'From Stay Hospitality', items: [], q: 'exterior', n: 1 },
     { kind: 'cards', vo: 'See what your home could earn, and get everything it needs, counted, with the linen at par.', head: '', sub: '', items: ['Projections calculator|What your home could earn', 'Supply checklist|Every item and the linen, counted'], q: 'view', n: 2 },
     { kind: 'cta', vo: 'Scan the code to try both. Free, no account needed.', head: 'Try them\n**free.**', sub: 'For any owner, whether or not you work with us', items: ['Scan to try both tools'], q: 'pool', n: 1, qr: TOOL_LINK(''), qrLabel: 'Scan for the free tools' },
   ] },
