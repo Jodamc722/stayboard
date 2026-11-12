@@ -16,6 +16,7 @@
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
 import qrcode from 'qrcode-generator'
+import { drawSignatureFrame } from './ad-signature'
 
 export type AdKind = 'title' | 'cinema' | 'kinetic' | 'reveal' | 'mask' | 'panel' | 'ticker' | 'callouts' | 'polaroid' | 'event' | 'photo' | 'stats' | 'wall' | 'cards' | 'feed' | 'checks' | 'rise' | 'timeline' | 'team' | 'quote' | 'poster' | 'contact' | 'cta'
   | 'beats' | 'tiles' | 'grid' | 'calendar' | 'dates' | 'hub' | 'beforeafter' | 'tilegrid' | 'livefeed' | 'roles' | 'curve' | 'triad'
@@ -626,9 +627,10 @@ type Palette = { serif?: boolean; light?: boolean; def?: LookDef; /** the Book b
 // play with it during holiday season or be able to select it, but need to default it"). Stay black is what every
 // new ad starts in and what "Default look" puts back; gold lives on as a look you pick (Navy & gold, Black & gold,
 // Holiday, Champagne).
-export const DEFAULT_LOOK = 'house'
-export const LOOKS_FEATURED = ['house', 'housewhite', 'pure', 'editorial', 'ivory', 'stay', 'holiday', 'xmasred', 'winter']
+export const DEFAULT_LOOK = 'signature'
+export const LOOKS_FEATURED = ['signature', 'house', 'housewhite', 'pure', 'editorial', 'ivory', 'stay', 'holiday', 'xmasred', 'winter']
 export const LOOKS: { key: string; label: string; blurb: string; c: Palette }[] = [
+  { key: 'signature', label: 'Signature', blurb: 'The premium look — film-graded photos, serif type set line by line, one clean wipe', c: { def: { font: 'elegant', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#D4B47C', ink: '#F7F2E9', mut: '#B8B0A4', navy: '#0E0F11', navy2: '#16181B', deep: '#000000', tint: '0,0,0', glass: 'rgba(0,0,0,0.58)', line: 'rgba(255,255,255,0.2)', green: '#9BE3B5' } },
   { key: 'house', label: 'Stay black', blurb: 'The house look — black, white type, the Stay logo', c: { def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'white', wash: 'neutral' }, gold: '#FFFFFF', ink: '#FFFFFF', mut: '#B4B4B4', navy: '#0A0A0A', navy2: '#1B1B1B', deep: '#000000', tint: '0,0,0', glass: 'rgba(0,0,0,0.58)', line: 'rgba(255,255,255,0.24)', green: '#9BE3B5' } },
   { key: 'housewhite', label: 'Stay white', blurb: 'White, black type, black logo, the website’s navy — like stay-hospitality.com', c: { light: true, def: { font: 'sans', grade: 'natural', finish: 'clean', logo: 'black', wash: 'none' }, gold: '#0A175F', ink: '#0B0B0B', mut: '#55565E', navy: '#FFFFFF', navy2: '#FFFFFF', deep: '#EEEEEE', tint: '255,255,255', glass: 'rgba(255,255,255,0.88)', line: 'rgba(0,0,0,0.12)', green: '#1F9D55' } },
   { key: 'stay', label: 'Navy & gold', blurb: 'Navy with gold — holidays and special pieces', c: { def: { logo: 'gold' }, gold: '#D2B077', ink: '#F2EEE6', mut: '#A9B8C6', navy: '#0D2131', navy2: '#132E44', deep: '#091827', tint: '6,18,30', glass: 'rgba(10,26,40,0.62)', line: 'rgba(255,255,255,0.18)', green: '#4CC488' } },
@@ -3070,6 +3072,8 @@ function drawQrCode(ctx: CanvasRenderingContext2D, text: string, x: number, y: n
 }
 
 export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timeline, t: number, A: AdAssets) {
+  // SIGNATURE (2026-11-12): the premium look has its own layouts, motion and finish (lib/ad-signature).
+  if (p.look === 'signature') return drawSignatureFrame(ctx, p, tl, t, A)
   const W = ctx.canvas.width, H = ctx.canvas.height
   const u = Math.min(W, H) / 1080
   C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c
