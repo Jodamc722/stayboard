@@ -48,6 +48,8 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
   const [inp, setInp] = useState<Any>(() => ({ ...DEFAULTS[tool], ...(tool === 'income' && area ? { area } : {}) }))
   const [summary, setSummary] = useState<Any>(null)
   const [full, setFull] = useState<Any>(null)
+  const fullRef = useRef<Any>(null)
+  useEffect(() => { fullRef.current = full }, [full])
   const [busy, setBusy] = useState(false)
   const [form, setForm] = useState({ email: '', name: '', phone: '', website: '' })
   const [err, setErr] = useState('')
@@ -78,13 +80,64 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       if (!d?.ok || !d.full) { setErr(d?.error || 'That did not go through. Try again.'); return }
       unlocked.current = { email: form.email, name: form.name, phone: form.phone }
       setFull(d.full); setSummary(d.summary); setGate(false)
+      // Straight to the download (Jon, 2026-11-12: "should just be a download").
+      fullRef.current = d.full; pdf(d.full)
     } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
   }
-  function pdf() {
-    document.body.classList.add('ft-printing')
-    const done = () => { document.body.classList.remove('ft-printing'); window.removeEventListener('afterprint', done) }
-    window.addEventListener('afterprint', done)
-    setTimeout(() => { window.print(); setTimeout(done, 1500) }, 50)
+  // A REAL PDF FILE, DOWNLOADED (Jon, 2026-11-12: "should just be a download"), built with jsPDF from the
+  // unlocked quote: no print dialog, so it works the same on a phone.
+  async function pdf(f: Any = fullRef.current) {
+    if (!f) return
+    try {
+      const { jsPDF } = await import('jspdf')
+      const doc = new jsPDF({ unit: 'pt', format: 'letter' })
+      const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 48
+      let y = M
+      const ink = [16, 17, 20] as const, mute = [107, 108, 114] as const, acc = [140, 109, 58] as const
+      const ensure = (h: number) => { if (y + h > H - M - 30) { doc.addPage(); y = M } }
+      try {
+        const img = await fetch('/stay-logo.png').then(r => r.blob()).then(b => new Promise<string>(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(b) }))
+        doc.addImage(img, 'PNG', M, y, 74, 30); y += 48
+      } catch { doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text('STAY HOSPITALITY', M, y + 12); y += 32 }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...acc); doc.text(meta.kicker.toUpperCase(), M, y); y += 20
+      doc.setFont('times', 'normal'); doc.setFontSize(26); doc.setTextColor(...ink); doc.text(meta.short, M, y); y += 22
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...mute)
+      const line = (t: string, size = 10, color: readonly number[] = mute, font: [string, string] = ['helvetica', 'normal']) => {
+        doc.setFont(font[0], font[1]); doc.setFontSize(size); doc.setTextColor(color[0], color[1], color[2])
+        const ls = doc.splitTextToSize(t, W - M * 2); ensure(ls.length * size * 1.3); doc.text(ls, M, y); y += ls.length * size * 1.3 + 4
+      }
+      const row = (a: string, b: string, bold = false) => {
+        ensure(18); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(10); doc.setTextColor(...ink)
+        doc.text(doc.splitTextToSize(a, W - M * 2 - 80)[0], M, y); doc.text(b, W - M, y, { align: 'right' })
+        doc.setDrawColor(228, 226, 221); doc.line(M, y + 6, W - M, y + 6); y += 18
+      }
+      const head = (t: string) => { ensure(36); y += 10; doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...acc); doc.text(t.toUpperCase(), M, y); y += 14 }
+      if (tool === 'income') {
+        const g = f as IncomeFull
+        if (!g.found) line('We will email you a projection built for your home within 48 hours.', 12, ink)
+        else {
+          line('Could earn in a year, ' + g.area, 9, acc, ['helvetica', 'bold'])
+          line(money0(g.lo) + ' – ' + money0(g.hi), 28, ink, ['times', 'normal'])
+          head('The figures'); row('Per month, average', money0(g.monthLo) + ' – ' + money0(g.monthHi)); row('Nightly rate', money0(g.nightlyLo) + ' – ' + money0(g.nightlyHi)); row('Occupancy', g.occLo + '–' + g.occHi + '%'); row('You keep, est.', money0(g.netLo) + ' – ' + money0(g.netHi))
+          head('Through the year'); g.months.forEach((m, i) => row(['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][i], money0(m.lo) + ' – ' + money0(m.hi)))
+          y += 6; line('Gross rental revenue for an established listing. “You keep” takes off typical booking-site fees (' + g.channelPct + '%)' + (g.mgmtPct ? ' and a ' + g.mgmtPct + '% management fee' : ', self-managed') + '. Built from ' + g.basis + ' comparable homes in Stay Hospitality’s South Florida data. Estimates, not guarantees.', 8.5)
+        }
+      } else {
+        const g = f as InventoryFull
+        line(g.describe, 10, mute)
+        line((g.pieces + g.linenPieces).toLocaleString() + ' pieces: ' + g.items + ' supply items (' + g.pieces + ' pieces) and ' + g.linenPieces + ' pieces of linen at a par of ' + g.par + '.', 11, ink)
+        for (const gr of g.groups) { head(gr.group); g.rows.filter(r => r.group === gr.group).forEach(r => row(r.name + (r.tier !== 'must' ? '  (' + TIER_LABEL[r.tier].toLowerCase() + ')' : ''), String(r.qty))) }
+        head('Linen at par'); line(g.parText, 9)
+        for (const gr of Array.from(new Set(g.linen.map(r => r.group)))) { head('Linen · ' + gr); g.linen.filter(r => r.group === gr).forEach(r => row(r.name + (r.size ? ' · ' + r.size : ''), String(r.qty))) }
+      }
+      const pages = doc.getNumberOfPages()
+      for (let i = 1; i <= pages; i++) {
+        doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mute)
+        doc.text([contact?.name, contact?.phone, contact?.email].filter(Boolean).join('  ·  ') + '   ·   Stay Hospitality · stay-hospitality.com', M, H - 28)
+        doc.text(i + ' / ' + pages, W - M, H - 28, { align: 'right' })
+      }
+      doc.save(meta.short.replace(/\s+/g, '-').toLowerCase() + '.pdf')
+    } catch { setErr('The download did not start. Try again.') }
   }
 
   const inputs = tool === 'income' ? (
@@ -193,43 +246,33 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         {!full ? (
           gate ? (
             <form className="ft-gate" onSubmit={unlock}>
-              <p className="ft-lab">Where should we send it?</p>
+              <p className="ft-lab">Your email, to download</p>
               <input type="email" required placeholder="Email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} autoComplete="email" />
               <div className="ft-two">
                 <input placeholder="Name (optional)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoComplete="name" />
                 <input placeholder="Phone (optional)" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} autoComplete="tel" inputMode="tel" />
               </div>
               <input className="ft-hp" tabIndex={-1} autoComplete="off" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} aria-hidden />
-              <button type="submit" disabled={busy}>{busy ? 'Unlocking…' : 'Unlock the full quote'}</button>
+              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : 'Download the PDF'}</button>
               {err ? <p className="ft-err">{err}</p> : null}
-              <p className="ft-fine">We email you a copy. No spam, never shared, and no obligation to work with us.</p>
+              <p className="ft-fine">The PDF downloads right away. No spam, never shared, and no obligation to work with us.</p>
             </form>
           ) : (
-            <button type="button" className="ft-cta" onClick={() => setGate(true)}><Lock size={15} /> Get the full quote, free</button>
+            <button type="button" className="ft-cta" onClick={() => setGate(true)}><Download size={15} /> Download the full list, free</button>
           )
         ) : (
           <div className="ft-quote">
-            <p className="ft-ok"><Check size={15} /> Unlocked. This quote updates as you change the details above.</p>
+            <p className="ft-ok"><Check size={15} /> Your PDF is downloading. Change the details above and download again any time.</p>
             {quote}
             <div className="ft-actions">
-              <button type="button" onClick={pdf}><Download size={15} /> Download PDF</button>
+              <button type="button" onClick={() => pdf()}><Download size={15} /> Download PDF</button>
               {tel ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call {first || 'us'}</a> : null}
               {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short)}><Mail size={15} /> Email {first || 'us'}</a> : null}
             </div>
           </div>
         )}
-        {!full && !gate ? <p className="ft-fine">Unlock {meta.unlock}, and download it as a PDF.</p> : null}
+        {!full && !gate ? <p className="ft-fine">Download {meta.unlock}, as a PDF.</p> : null}
       </div>
-      {/* What prints: the quote alone, branded (see pdf()). */}
-      {full ? (
-        <div className="ft-print" aria-hidden>
-          <img src="/stay-logo.png" alt="Stay Hospitality" style={{ height: 34 }} />
-          <h1>{meta.short}</h1>
-          {headline}
-          {quote}
-          <p className="ft-fine">{contact?.name ? contact.name + (contact.role ? ', ' + contact.role : '') + ' · ' : ''}{[contact?.phone, contact?.email].filter(Boolean).join(' · ')}{contact?.name ? ' · ' : ''}Stay Hospitality · stay-hospitality.com</p>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -288,14 +331,6 @@ const FT_CSS = `
 .ft-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
 .ft-actions button,.ft-actions a{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 16px;border-radius:99px;font:600 13px "Inter",sans-serif;text-decoration:none;cursor:pointer;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-ink)}
 .ft-actions button{background:var(--ft-navy);color:#fff;border-color:var(--ft-navy)}
-.ft-print{display:none}
 @media (max-width:760px){.ft{grid-template-columns:1fr;gap:16px}.ft-big{font-size:36px}.ft-card{padding:18px 16px}}
 .ft-embedded .ft-card{box-shadow:none}
-@media print{
-  body.ft-printing *{visibility:hidden!important}
-  body.ft-printing .ft-print,body.ft-printing .ft-print *{visibility:visible!important}
-  body.ft-printing .ft-print{display:block!important;position:absolute;left:0;top:0;width:100%;padding:24px 32px;font-family:"Inter",sans-serif;color:#101114}
-  body.ft-printing .ft-print h1{font:400 30px "Instrument Serif",Georgia,serif;margin:18px 0 6px}
-  body.ft-printing .ft-print .ft-group li{break-inside:avoid}
-}
 `
