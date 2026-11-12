@@ -148,8 +148,8 @@ const towel = (low: number, mid: number, lux: number): Hints => [`Cotton blend, 
  * "1 PAR" sheet (2026-11-05): bed linen by bed size (fitted 1, flat 2, pillows / protectors / cases
  * 4 on a King, Queen or Full, mattress protector, duvet insert and cover 1 each); hand towels 4,
  * bath mat 1 and makeup towels 2 PER BATHROOM; washcloths 2, bath towels 2 and pool towels 1 PER
- * GUEST; kitchen towels 2 per unit. Rotation: sheets, cases and towels at the par (3); the duvet
- * cover and duvet insert 2; pillow protectors 2; the mattress protector "1 extra per bed, never 3
+ * GUEST; kitchen towels 2 per unit. Rotation: sheets, cases, towels and the duvet cover at the par (3)
+ * (Jon, 2026-11-12: "duvet cover should be 3 par"); the duvet insert 2; pillow protectors 2; the mattress protector "1 extra per bed, never 3
  * par" = 2; pillows are the bed's pillows + 1 extra per bed (2 on a sofa bed), not multiplied.
  * Dish cloths, oven mitts, pot holders and the extra blanket are not on his sheet: kept, switched off.
  */
@@ -171,7 +171,7 @@ export const DEFAULT_LINEN_STANDARD: LinenStandard = {
     { id: 'fitted-sheet', name: 'Fitted sheet', group: 'Bed', per: 'bed', qty: 1, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'flat-sheet', name: 'Flat sheet', group: 'Bed', per: 'bed', qty: 2, rotates: true, tiers: tiersOf(12, SHEETING) },
     { id: 'duvet-insert', name: 'Duvet insert', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, tiers: tiersOf(1, ['Poly fill, lightweight', 'Down-alternative, all-season', 'Hotel down-alternative, baffle-box']) },
-    { id: 'duvet-cover', name: 'Duvet cover', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 2, tiers: tiersOf(6, ['Poly-cotton, white', 'T-300 cotton percale, white', 'T-400+ cotton sateen, white']) },
+    { id: 'duvet-cover', name: 'Duvet cover', group: 'Bed', per: 'bed', qty: 1, rotates: true, par: 3, tiers: tiersOf(6, ['Poly-cotton, white', 'T-300 cotton percale, white', 'T-400+ cotton sateen, white']) },
     // Bath
     { id: 'bath-towels', name: 'Bath towels', group: 'Bath', per: 'guest', qty: 2, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
     { id: 'hand-towels', name: 'Hand towels', group: 'Bath', per: 'bathroom', qty: 4, rotates: true, tiers: tiersOf(12, towel(450, 550, 650)) },
@@ -350,6 +350,12 @@ export function normLinenStandard(raw: any): LinenStandard {
   }
   const at = text(src.updatedAt, 40); if (at && !Number.isNaN(Date.parse(at))) out.updatedAt = at
   const by = text(src.updatedBy, LIMITS.who); if (by) out.updatedBy = by
+  // DUVET COVER AT PAR 3 (Jon, 2026-11-12: "duvet cover should be 3 par"). A standard saved before this
+  // change still carries 2 on the duvet cover; it is read as 3. Saved again after today, whatever is
+  // typed on Onboarding → Linens wins.
+  if (!at || Date.parse(at) < Date.parse('2026-11-12T16:00:00Z')) {
+    for (const it of out.items) if (it.id === 'duvet-cover' && (it.par === 2 || it.par == null)) it.par = 3
+  }
   return out
 }
 
