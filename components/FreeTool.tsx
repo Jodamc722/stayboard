@@ -289,9 +289,21 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             <div className="ft-actions">
               {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
               <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>
-              {tel ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call {first || 'us'}</a> : null}
-              {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short)}><Mail size={15} /> Email {first || 'us'}</a> : null}
+              {tel && !contact?.name ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call us</a> : null}
             </div>
+            {contact?.name ? (
+              <div className="ft-who">
+                {contact.photo ? <img src={contact.photo} alt={contact.name} width={64} height={64} /> : null}
+                <div>
+                  <p className="ft-lab">Talk to {first}</p>
+                  <p className="ft-who-n">{contact.name}{contact.role ? <span>, {contact.role}</span> : null}</p>
+                  <p className="ft-who-c">
+                    {contact.phone ? <a href={'tel:' + tel}><Phone size={13} /> {contact.phone}</a> : null}
+                    {contact.email ? <a href={'mailto:' + contact.email}><Mail size={13} /> {contact.email}</a> : null}
+                  </p>
+                </div>
+              </div>
+            ) : null}
           </div>
         )}
         {!full && !gate ? <p className="ft-fine">{tool === 'income' ? 'Leave your email to see ' + meta.unlock + ', with the comparables behind it, and download it as a PDF.' : 'Download ' + meta.unlock + ', as a PDF.'}</p> : null}
@@ -325,7 +337,7 @@ const FT_CSS = `
 .ft-hint{margin:0;font-size:12px;color:#2F6B47}
 .ft-acc{color:var(--ft-acc)}
 .ft-group li b.neg{color:#A1332B}
-.ft-comp span{display:flex;flex-direction:column}.ft-comp b{white-space:nowrap;font-size:15px!important}.ft-cline{display:block;color:var(--ft-muted);font-size:11.5px;margin-top:2px}
+.ft-group li.ft-comp{grid-template-columns:minmax(0,1fr) auto}.ft-comp em{display:none}.ft-comp span{display:flex;flex-direction:column;min-width:0}.ft-comp b{white-space:nowrap;font-size:15px!important}.ft-cline{display:block;color:var(--ft-muted);font-size:11.5px;margin-top:2px}
 .ft-fmt{margin:4px 0 2px;align-self:flex-start;justify-self:start}
 .ft-notes{margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
 .ft-notes p{margin:0;font:400 14px/1.5 "Inter",sans-serif;color:var(--ft-ink)}
@@ -367,6 +379,15 @@ const FT_CSS = `
 .ft-group li em{font:600 9.5px "Inter",sans-serif;font-style:normal;letter-spacing:.06em;text-transform:uppercase;color:var(--ft-muted)}
 .ft-group li em.t-must{color:var(--ft-acc)}
 .ft-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.ft-who{display:flex;gap:14px;align-items:center;margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
+.ft-who img{width:64px;height:64px;border-radius:50%;object-fit:cover;flex:0 0 64px}
+.ft-who>div{min-width:0}
+.ft-who p{margin:0}
+.ft-who .ft-lab{margin-bottom:2px;color:var(--ft-acc)}
+.ft-who-n{font:600 16px/1.3 "Inter",sans-serif;color:var(--ft-ink)}
+.ft-who-n span{font-weight:400;color:var(--ft-body)}
+.ft-who-c{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:4px!important}
+.ft-who-c a{display:inline-flex;align-items:center;gap:5px;font:500 14px "Inter",sans-serif;color:var(--ft-ink);text-decoration:none;white-space:nowrap}
 .ft-actions button,.ft-actions a{display:inline-flex;align-items:center;gap:6px;height:42px;padding:0 16px;border-radius:99px;font:600 13px "Inter",sans-serif;text-decoration:none;cursor:pointer;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-ink)}
 .ft-actions button{background:var(--ft-navy);color:#fff;border-color:var(--ft-navy)}
 @media (max-width:760px){.ft{grid-template-columns:1fr;gap:16px}.ft-big{font-size:36px}.ft-card{padding:18px 16px}}

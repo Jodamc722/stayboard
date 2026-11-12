@@ -50,7 +50,7 @@ export const DEFAULT_PROJ_CALC: ProjCalcSettings = {
   sqftPer10: 2,
   sqftCap: 10,
   cap: 35,
-  note: 'This is an estimate. For a more granular estimate built for your exact unit, reach out to Nick Carline.',
+  note: 'This is an estimate, based on comparable homes and the details you entered. For a detailed projection of your specific unit, covering its layout, finishes and booking calendar, contact Nick Carline.',
 }
 
 const num = (v: any, lo: number, hi: number, d: number) => { const x = Number(v); return Number.isFinite(x) ? Math.max(lo, Math.min(hi, x)) : d }
@@ -72,7 +72,8 @@ export function normProjCalc(raw: any): ProjCalcSettings {
   return {
     view, viewLabel, kitchen, balcony: num(r.balcony, -30, 50, D.balcony), amenities, beach,
     sqftPer10: num(r.sqftPer10, 0, 20, D.sqftPer10), sqftCap: num(r.sqftCap, 0, 50, D.sqftCap), cap: num(r.cap, 0, 100, D.cap),
-    note: txt(r.note, 300, D.note), updatedAt: r.updatedAt ? String(r.updatedAt) : undefined, updatedBy: r.updatedBy ? String(r.updatedBy) : undefined,
+    // the first wording (2026-11-12) was reworded the same day; a saved copy of it takes the new one
+    note: /more granular estimate/i.test(String(r.note || '')) ? D.note : txt(r.note, 300, D.note), updatedAt: r.updatedAt ? String(r.updatedAt) : undefined, updatedBy: r.updatedBy ? String(r.updatedBy) : undefined,
   }
 }
 
