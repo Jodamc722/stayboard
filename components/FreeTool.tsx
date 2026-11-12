@@ -204,20 +204,13 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       <>
         <p className="ft-lab ft-acc">Could earn in a year{f.area ? ', ' + f.area : ''}</p>
         <p className="ft-big">{money0(f.lo)} <i>–</i> {money0(f.hi)}</p>
-        <p className="ft-note">Gross rental revenue once the listing is established. From {f.basisLabel}.</p>
+        <p className="ft-note">Gross rental revenue once the listing is established. From {f.basisLabel}, adjusted for the details you gave.</p>
         <dl className="ft-figs ft-mt">
           <div><dt>Per month, average</dt><dd>{money0(f.monthLo)}–{money0(f.monthHi).slice(1)}</dd></div>
           <div><dt>Nightly rate</dt><dd>{money0(f.nightlyLo)}–{money0(f.nightlyHi).slice(1)}</dd></div>
           <div><dt>Occupancy</dt><dd>{f.occLo}–{f.occHi}%</dd></div>
           <div><dt>You keep, est.</dt><dd>{money0(f.netLo)}–{money0(f.netHi).slice(1)}</dd></div>
         </dl>
-        {f.adjustments.length ? (
-          <div className="ft-group">
-            <p className="ft-lab">What moved the number</p>
-            <ul>{f.adjustments.map((x, i) => <li key={i}><span>{x.label}</span><em /><b className={x.pct < 0 ? 'neg' : ''}>{x.pct > 0 ? '+' : ''}{x.pct}%</b></li>)}</ul>
-            <p className="ft-fine">Starting from {money0(f.baseLo)} to {money0(f.baseHi)}; together {f.adjTotal > 0 ? '+' : ''}{Math.round(f.adjTotal * 10) / 10}%.</p>
-          </div>
-        ) : null}
         <p className="ft-lab ft-mt">Through the year</p>
         <div className="ft-bars">{f.months.map((m, i) => <span key={i} title={money0(m.lo) + '–' + money0(m.hi)}><i style={{ height: (m.hi / mx * 100) + '%' }}><b style={{ height: (m.lo / m.hi * 100) + '%' }} /></i><em>{'JFMAMJJASOND'[i]}</em></span>)}</div>
         {f.comps.length ? (

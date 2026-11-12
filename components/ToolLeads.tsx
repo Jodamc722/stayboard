@@ -12,7 +12,22 @@ export function ToolLeads() {
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState('')
   useEffect(() => { fetch('/api/tools/leads', { cache: 'no-store' }).then(r => r.json()).then(d => setLeads(d?.ok ? d.leads : [])).catch(() => setLeads([])) }, [])
-  const copy = async (k: string) => { const u = window.location.origin + '/tools/' + k; try { await navigator.clipboard.writeText(u) } catch { /* shown below */ } setCopied(k); setTimeout(() => setCopied(''), 1600) }
+  // THE LINK, SHOWN AND COPIED FOR REAL (Jon, 2026-11-12: "when I copy the link it does not open when
+  // pasted"). The full address is on screen to select; Copy tries the clipboard, falls back to selecting
+  // and copying the box, and only says Copied when one of them worked.
+  const [origin, setOrigin] = useState('')
+  useEffect(() => { setOrigin(window.location.origin) }, [])
+  const linkOf = (k: string) => (origin || 'https://lighthouse-stay.vercel.app') + '/tools/' + k
+  const copy = async (k: string) => {
+    const u = linkOf(k)
+    let ok = false
+    try { await navigator.clipboard.writeText(u); ok = true } catch { /* fall back below */ }
+    if (!ok) {
+      const el = document.getElementById('tool-link-' + k) as HTMLInputElement | null
+      if (el) { el.focus(); el.select(); try { ok = document.execCommand('copy') } catch { ok = false } }
+    }
+    setCopied(ok ? k : 'fail:' + k); setTimeout(() => setCopied(''), 2200)
+  }
   return (
     <div className="rounded-2xl border border-line bg-white">
       <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-app rounded-2xl">
@@ -21,14 +36,16 @@ export function ToolLeads() {
       </button>
       {open && (
         <div className="px-4 pb-4 space-y-3">
-          <div className="flex flex-wrap gap-2">
+          <div className="grid gap-2">
             {TOOL_KEYS.map(k => (
-              <span key={k} className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-[12px]">
-                <a href={'/tools/' + k} target="_blank" rel="noreferrer" className="font-semibold text-ink hover:underline">{TOOL_META[k].short}</a>
-                <button type="button" onClick={() => copy(k)} title="Copy the link" className="text-muted hover:text-ink">{copied === k ? <Check size={13} /> : <Copy size={13} />}</button>
-              </span>
+              <div key={k} className="flex flex-wrap items-center gap-2">
+                <span className="text-[12.5px] font-semibold text-ink w-48 shrink-0">{TOOL_META[k].short}</span>
+                <input id={'tool-link-' + k} readOnly value={linkOf(k)} onFocus={e => e.target.select()} className="min-w-0 flex-1 rounded-lg border border-line bg-app px-2 py-1.5 text-[12.5px] text-ink" />
+                <button type="button" onClick={() => copy(k)} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink">{copied === k ? <><Check size={13} /> Copied</> : copied === 'fail:' + k ? 'Select and copy the box' : <><Copy size={13} /> Copy</>}</button>
+                <a href={'/tools/' + k} target="_blank" rel="noreferrer" className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold text-ink">Open</a>
+              </div>
             ))}
-            <span className="text-[12px] text-muted self-center">Add them to a deck under Magazine → Builder → Free tools.</span>
+            <span className="text-[12px] text-muted">Anyone can open these without signing in. Add them to a deck under Magazine → Builder → Free tools.</span>
           </div>
           {!leads ? null : !leads.length ? <p className="text-[12.5px] text-muted">No leads yet. Each email left on a calculator shows here and in your notifications.</p> : (
             <div className="overflow-x-auto">
