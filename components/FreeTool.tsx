@@ -9,7 +9,7 @@
 // inside a magazine and Stay's own look on its own page.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, Lock, Download, Phone, Mail, Check } from 'lucide-react'
-import { TOOL_META, INCOME_AREAS, BED_SIZES_PUBLIC, APPLIANCE_KEYS, APPLIANCE_LABEL, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary } from '@/lib/free-tools'
+import { TOOL_META, PARTNER_NOTE, INCOME_AREAS, BED_SIZES_PUBLIC, APPLIANCE_KEYS, APPLIANCE_LABEL, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary } from '@/lib/free-tools'
 
 type Any = any
 export type ToolContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
@@ -54,6 +54,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
   const [form, setForm] = useState({ email: '', name: '', phone: '', website: '' })
   const [err, setErr] = useState('')
   const [gate, setGate] = useState(false)
+  const [fmt, setFmt] = useState<'pdf' | 'xlsx'>(tool === 'inventory' ? 'xlsx' : 'pdf')
   const unlocked = useRef<{ email: string; name: string; phone: string } | null>(null)
   const set = (k: string, v: Any) => setInp((p: Any) => ({ ...p, [k]: v }))
   const key = JSON.stringify(inp)
@@ -81,8 +82,19 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       unlocked.current = { email: form.email, name: form.name, phone: form.phone }
       setFull(d.full); setSummary(d.summary); setGate(false)
       // Straight to the download (Jon, 2026-11-12: "should just be a download").
-      fullRef.current = d.full; pdf(d.full)
+      fullRef.current = d.full
+      if (fmt === 'xlsx' && tool === 'inventory') xlsx(form.email); else pdf(d.full)
     } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
+  }
+  // THE EXCEL CHECKLIST (supply calculator only): counts, a Bought and an In-the-home tick column, notes.
+  async function xlsx(email = unlocked.current?.email || '') {
+    try {
+      const r = await fetch('/api/tools/xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: inp, email }) })
+      if (!r.ok) { setErr('The download did not start. Try again.'); return }
+      const blob = await r.blob(), url = URL.createObjectURL(blob)
+      const a = document.createElement('a'); a.href = url; a.download = 'rental-supply-checklist.xlsx'; document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+    } catch { setErr('The download did not start. Try again.') }
   }
   // A REAL PDF FILE, DOWNLOADED (Jon, 2026-11-12: "should just be a download"), built with jsPDF from the
   // unlocked quote: no print dialog, so it works the same on a phone.
@@ -129,6 +141,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
         for (const gr of g.groups) { head(gr.group); g.rows.filter(r => r.group === gr.group).forEach(r => row(r.name + (r.tier !== 'must' ? '  (' + TIER_LABEL[r.tier].toLowerCase() + ')' : ''), String(r.qty))) }
         head('Linen at par'); line(g.parText, 9)
         for (const gr of Array.from(new Set(g.linen.map(r => r.group)))) { head('Linen · ' + gr); g.linen.filter(r => r.group === gr).forEach(r => row(r.name + (r.size ? ' · ' + r.size : ''), String(r.qty))) }
+        head('Notes'); line(PARTNER_NOTE, 10, ink)
       }
       const pages = doc.getNumberOfPages()
       for (let i = 1; i <= pages; i++) {
@@ -231,6 +244,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             <ul>{f.linen.filter(r => r.group === g).map((r, i) => <li key={i}><span>{r.name}{r.size ? <small> · {r.size}</small> : null}</span><em /><b>{r.qty}</b></li>)}</ul>
           </div>
         ))}
+        <div className="ft-notes"><p className="ft-lab">Notes</p><p>{PARTNER_NOTE}</p></div>
       </>
     )
   })()
@@ -253,19 +267,23 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
                 <input placeholder="Phone (optional)" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} autoComplete="tel" inputMode="tel" />
               </div>
               <input className="ft-hp" tabIndex={-1} autoComplete="off" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} aria-hidden />
-              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : 'Download the PDF'}</button>
+              {tool === 'inventory' ? (
+                <div className="ft-seg ft-fmt">{([['xlsx', 'Excel checklist'], ['pdf', 'PDF']] as ['xlsx' | 'pdf', string][]).map(([k, l]) => <button key={k} type="button" className={fmt === k ? 'on' : ''} onClick={() => setFmt(k)}>{l}</button>)}</div>
+              ) : null}
+              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : fmt === 'xlsx' && tool === 'inventory' ? 'Download the Excel checklist' : 'Download the PDF'}</button>
               {err ? <p className="ft-err">{err}</p> : null}
-              <p className="ft-fine">The PDF downloads right away. No spam, never shared, and no obligation to work with us.</p>
+              <p className="ft-fine">It downloads right away. No spam, never shared, and no obligation to work with us.</p>
             </form>
           ) : (
             <button type="button" className="ft-cta" onClick={() => setGate(true)}><Download size={15} /> Download the full list, free</button>
           )
         ) : (
           <div className="ft-quote">
-            <p className="ft-ok"><Check size={15} /> Your PDF is downloading. Change the details above and download again any time.</p>
+            <p className="ft-ok"><Check size={15} /> Your download has started. Change the details above and download again any time.</p>
             {quote}
             <div className="ft-actions">
-              <button type="button" onClick={() => pdf()}><Download size={15} /> Download PDF</button>
+              {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
+              <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>
               {tel ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call {first || 'us'}</a> : null}
               {contact?.email ? <a href={'mailto:' + contact.email + '?subject=' + encodeURIComponent(meta.short)}><Mail size={15} /> Email {first || 'us'}</a> : null}
             </div>
@@ -292,6 +310,10 @@ const FT_CSS = `
 .ft-seg button{width:auto!important;height:30px!important;border:0!important;padding:0 12px;background:transparent!important;font:600 12.5px "Inter",sans-serif;color:var(--ft-muted)!important}
 .ft-seg button.on{background:#fff!important;color:var(--ft-ink)!important;box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .ft-sub{margin:14px 0 0;font:400 20px var(--ft-display);color:var(--ft-ink)}
+.ft-fmt{margin:4px 0 2px;align-self:flex-start;justify-self:start}
+.ft-notes{margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
+.ft-notes p{margin:0;font:400 14px/1.5 "Inter",sans-serif;color:var(--ft-ink)}
+.ft-notes .ft-lab{margin-bottom:6px;color:var(--ft-acc)}
 .ft-apps{padding:12px 0;border-bottom:1px solid var(--ft-rule)}
 .ft-apps>div{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .ft-apps button{display:inline-flex;align-items:center;gap:4px;height:34px;padding:0 12px;border-radius:99px;border:1px solid var(--ft-rule);background:#fff;color:var(--ft-muted);font:600 12.5px "Inter",sans-serif;cursor:pointer}

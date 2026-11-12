@@ -81,4 +81,8 @@ export function cleanInput(tool: ToolKey, raw: any): ToolInput {
   return { bedrooms: clampN(r.bedrooms, 0, 6, 1), bathrooms: clampN(r.bathrooms, 1, 6, 1), guests: clampN(r.guests, 1, 16, 4), beds, sleeper: !!r.sleeper, kitchen, appliances }
 }
 
+// THE PARTNER NOTE (Jon, 2026-11-12: "have a notes: if we partner together we can put this list together
+// with actual items etc. and get this set up"). On the page, the PDF and the Excel.
+export const PARTNER_NOTE = 'If we partner together, Stay puts this list together with the actual items, sourced and delivered, and gets your home set up and guest-ready.'
+
 export const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
