@@ -31,7 +31,7 @@ export const toolKeyOf = (v: any): ToolKey | null => (v === 'linen' ? 'inventory
 
 export const TOOL_META: Record<ToolKey, { title: string; short: string; kicker: string; dek: string; unlock: string }> = {
   income: {
-    title: 'What could your home *earn?*', short: 'Rental income calculator', kicker: 'Free tool · Rental income',
+    title: 'What could your home *earn?*', short: 'Projections calculator', kicker: 'Free tool · Rental projection',
     dek: 'Bedrooms and neighborhood in, a yearly and monthly range out, from short-term rental figures for homes like yours across South Florida.',
     unlock: 'the month-by-month pattern, nightly rate and occupancy, and what you would keep after fees',
   },
@@ -42,15 +42,24 @@ export const TOOL_META: Record<ToolKey, { title: string; short: string; kicker: 
   },
 }
 
-export type IncomeInput = { area?: string; bedrooms: number; bathrooms?: number; managed: boolean }
+// THE PROJECTIONS CALCULATOR (Jon, 2026-11-12): the building (from the Projections library or our own
+// buildings, which fills the address), the address, and the home itself; adjustments in lib/projection-calc.
+export type IncomeInput = { building?: string; libId?: string; address?: string; area?: string; lat?: number; lng?: number
+  bedrooms: number; bathrooms?: number; sqft: number; kitchen: 'full' | 'kitchenette' | 'none'; balcony: boolean
+  view: 'none' | 'city' | 'water' | 'ocean' | 'beachfront'; amenities: string[]; managed: boolean }
 export const APPLIANCE_KEYS = ['stove', 'oven', 'microwave', 'fridge', 'dishwasher'] as const
 export type ApplianceKey = typeof APPLIANCE_KEYS[number]
 export const APPLIANCE_LABEL: Record<ApplianceKey, string> = { stove: 'Stove / cooktop', oven: 'Oven', microwave: 'Microwave', fridge: 'Refrigerator', dishwasher: 'Dishwasher' }
 export type InventoryInput = { bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<ApplianceKey, boolean> }
 export type LinenInput = { beds: Record<string, number>; bathrooms: number; guests: number; kitchen: boolean; sleeper: boolean }
 
-export type IncomeSummary = { found: boolean; area: string; bedrooms: number; lo: number; hi: number; monthLo: number; monthHi: number; basis: number }
-export type IncomeFull = IncomeSummary & { nightlyLo: number; nightlyHi: number; occLo: number; occHi: number; months: { lo: number; hi: number }[]; netLo: number; netHi: number; mgmtPct: number; channelPct: number; sources: string[] }
+// Before the email there are no numbers at all (Jon: "should not just give it to them"): only whether a
+// projection can be built and what it will rest on.
+export type IncomeSummary = { found: boolean; area: string; bedrooms: number; basis: number; basisLabel: string; lo?: number; hi?: number; monthLo?: number; monthHi?: number }
+export type IncomeFull = IncomeSummary & { lo: number; hi: number; monthLo: number; monthHi: number; nightlyLo: number; nightlyHi: number; occLo: number; occHi: number; months: { lo: number; hi: number }[]; netLo: number; netHi: number; mgmtPct: number; channelPct: number; sources: string[]
+  baseLo: number; baseHi: number; adjustments: { label: string; pct: number }[]; adjTotal: number
+  comps: { name: string; market: string; gross: string; nightly: string; occ: string }[]
+  places: { name: string; kind: string; mi: number }[]; beachMi: number | null; address: string; note: string }
 
 export type InvRow = { name: string; qty: number; size?: string; group: string; tier: 'must' | 'recommended' | 'suggested' }
 export type InventorySummary = { items: number; pieces: number; must: number; recommended: number; suggested: number; groups: { group: string; items: number }[]; linenPieces: number; par: number }
@@ -71,7 +80,19 @@ const clampN = (v: any, lo: number, hi: number, d: number) => { const x = Number
 /** Untrusted input, cleaned to the shape each tool expects. */
 export function cleanInput(tool: ToolKey, raw: any): ToolInput {
   const r = raw && typeof raw === 'object' ? raw : {}
-  if (tool === 'income') return { area: String(r.area || '').slice(0, 60), bedrooms: clampN(r.bedrooms, 0, 6, 1), bathrooms: clampN(r.bathrooms, 1, 6, 1), managed: r.managed === true }
+  if (tool === 'income') {
+    const str = (v: any, n: number) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '')
+    const lat = Number(r.lat), lng = Number(r.lng)
+    return {
+      building: str(r.building, 80), libId: str(r.libId, 40), address: str(r.address, 160), area: str(r.area, 60),
+      ...(Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) > 1 ? { lat, lng } : {}),
+      bedrooms: clampN(r.bedrooms, 0, 6, 1), bathrooms: clampN(r.bathrooms, 1, 6, 1), sqft: Math.max(0, Math.min(10000, Math.round(Number(r.sqft) || 0))),
+      kitchen: r.kitchen === 'kitchenette' || r.kitchen === 'none' ? r.kitchen : 'full', balcony: !!r.balcony,
+      view: ['city', 'water', 'ocean', 'beachfront'].includes(r.view) ? r.view : 'none',
+      amenities: (Array.isArray(r.amenities) ? r.amenities : []).map((x: any) => str(x, 40)).filter(Boolean).slice(0, 30),
+      managed: r.managed === true,
+    }
+  }
   const beds: Record<string, number> = {}
   for (const x of BED_SIZES_PUBLIC) { const n = clampN(r.beds && r.beds[x], 0, 8, 0); if (n) beds[x] = Math.round(n) }
   if (!Object.keys(beds).length) beds.Queen = 1

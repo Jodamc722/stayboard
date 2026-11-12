@@ -5,6 +5,9 @@ import { getSetting } from './app-settings'
 import { readLibrary } from './sales-library'
 import { planNumbers, SEASON } from './sales-cma'
 import { bedKey } from './sales-comps'
+import { normProjCalc, adjustmentsFor, sqftOf, PROJ_CALC_KEY } from './projection-calc'
+import { geocode, nearby } from './projection-places'
+import { money0 } from './free-tools'
 import { needList, NEED_ROOMS } from './need-list'
 import { describeSize, type KitSize } from './starter-kit'
 import { normLinenStandard, linenQuote, parSentence, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
@@ -16,37 +19,59 @@ const r100 = (n: number) => Math.round(n / 100) * 100
 const norm = (s: string) => String(s || '').toLowerCase().replace(/[^a-z]/g, '')
 
 // ── income ───────────────────────────────────────────────────────────────────────────────────────
-async function income(inp: IncomeInput): Promise<IncomeFull> {
+async function income(inp: IncomeInput, light = false): Promise<IncomeFull> {
   const lib = await readLibrary().catch(() => [])
   const want = inp.bedrooms === 0 ? 'studio' : String(inp.bedrooms)
-  type Pt = { lo: number; hi: number; nlo: number; nhi: number; olo: number; ohi: number; area: string; src: string }
-  const pts: Pt[] = []
+  type Pt = { lo: number; hi: number; nlo: number; nhi: number; olo: number; ohi: number; area: string; src: string; sf: number | null; comp?: { name: string; market: string; gross: string; nightly: string; occ: string } }
+  const asComp = (name: string, market: string, lo: number, hi: number, nlo: number, nhi: number, olo: number, ohi: number) =>
+    ({ name, market, gross: lo === hi || !hi ? money0(lo) : money0(lo) + '–' + money0(hi).slice(1), nightly: nlo ? money0(nlo) + '–' + money0(nhi || nlo).slice(1) + ' a night' : '', occ: olo ? olo + (ohi && ohi !== olo ? '–' + ohi : '') + '% occupied' : '' })
+  const pts: Pt[] = [], own: Pt[] = []
   for (const b of lib) {
     for (const p of b.cma.plans) {
       if (bedKey(p.name) !== want) continue
       const n = planNumbers(b.cma, p)
-      if (n.lo > 0) pts.push({ lo: n.lo, hi: n.hi, nlo: n.nightlyLo, nhi: n.nightlyHi, olo: p.occLo, ohi: p.occHi, area: b.area || b.cma.area || '', src: b.name })
+      if (!(n.lo > 0)) continue
+      const pt: Pt = { lo: n.lo, hi: n.hi, nlo: n.nightlyLo, nhi: n.nightlyHi, olo: p.occLo, ohi: p.occHi, area: b.area || b.cma.area || '', src: b.name, sf: sqftOf(p.sf), comp: asComp(b.name + ' ' + p.name, b.area || '', n.lo, n.hi, n.nightlyLo, n.nightlyHi, p.occLo, p.occHi) }
+      pts.push(pt)
+      if (inp.libId && b.id === inp.libId) own.push(pt)
     }
     for (const c of b.cma.comps) {
       if (bedKey(c.name) !== want || !(c.lo > 0)) continue
-      pts.push({ lo: c.lo, hi: c.hi || c.lo, nlo: c.nightlyLo, nhi: c.nightlyHi, olo: c.occLo, ohi: c.occHi, area: String(c.market || '').split(',')[0], src: 'Comparable' })
+      pts.push({ lo: c.lo, hi: c.hi || c.lo, nlo: c.nightlyLo, nhi: c.nightlyHi, olo: c.occLo, ohi: c.occHi, area: String(c.market || '').split(',')[0], src: 'Comparable', sf: sqftOf(c.name), comp: asComp(c.name, c.market || '', c.lo, c.hi || c.lo, c.nightlyLo, c.nightlyHi, c.occLo, c.occHi) })
     }
   }
-  // The neighborhood's own figures when there are any; Stay's South Florida set otherwise.
-  const local = inp.area ? pts.filter(p => norm(p.area).includes(norm(inp.area!)) || norm(inp.area!).includes(norm(p.area))) : []
-  const use = local.length ? local : pts
-  const base: IncomeFull = { found: false, area: local.length ? inp.area! : 'South Florida', bedrooms: inp.bedrooms, lo: 0, hi: 0, monthLo: 0, monthHi: 0, basis: 0, nightlyLo: 0, nightlyHi: 0, occLo: 0, occHi: 0, months: [], netLo: 0, netHi: 0, mgmtPct: inp.managed ? MGMT : 0, channelPct: CHANNEL, sources: [] }
-  if (!use.length) return base
-  const lo = r100(med(use.map(p => p.lo))), hi = Math.max(lo, r100(med(use.map(p => p.hi))))
-  // Self-managed unless the owner says they would use a manager: the net is theirs either way.
+  // Where it is: coordinates from the building we manage, else the address, geocoded; then the beach and
+  // the nearest attractions from the curated list.
+  let lat = inp.lat, lng = inp.lng, area = inp.area || ''
+  // light: the pre-email check only says whether a projection can be built, so it never geocodes.
+  if (!light && (lat == null || lng == null) && inp.address) { const g = await geocode(inp.address); if (g) { lat = g.lat; lng = g.lng; area = area || g.area } }
+  const near = lat != null && lng != null ? nearby(lat, lng) : { beachMi: null, places: [] }
+  // The base, most specific first: this building's own projections (the actuals we hold), then the
+  // neighborhood's plans and comparables, then South Florida.
+  const norm2 = (x: string) => norm(x).replace(/miami$/, '')
+  const local = area ? pts.filter(p => p.area && (norm2(p.area).includes(norm2(area)) || norm2(area).includes(norm2(p.area)))) : []
+  const use = own.length ? own : local.length ? local : pts
+  const basisLabel = own.length ? (inp.building || 'this building') + '’s own projections' : local.length ? 'homes like it in ' + area : 'homes like it across South Florida'
   const mg = inp.managed ? MGMT : 0
+  const settings = normProjCalc(await getSetting<any>(PROJ_CALC_KEY, null))
+  const base: IncomeFull = { found: false, area: own.length ? (inp.building || area) : local.length ? area : 'South Florida', bedrooms: inp.bedrooms, basis: 0, basisLabel, lo: 0, hi: 0, monthLo: 0, monthHi: 0, nightlyLo: 0, nightlyHi: 0, occLo: 0, occHi: 0, months: [], netLo: 0, netHi: 0, mgmtPct: mg, channelPct: CHANNEL, sources: [],
+    baseLo: 0, baseHi: 0, adjustments: [], adjTotal: 0, comps: [], places: near.places, beachMi: near.beachMi, address: inp.address || '', note: settings.note }
+  if (!use.length) return base
+  const baseLo = r100(med(use.map(p => p.lo))), baseHi = Math.max(baseLo, r100(med(use.map(p => p.hi))))
+  const sfs = use.map(p => p.sf).filter((x): x is number => !!x)
+  const adj = adjustmentsFor(settings, { view: inp.view, kitchen: inp.kitchen, balcony: inp.balcony, amenities: inp.amenities, sqft: inp.sqft, beachMi: near.beachMi, typicalSqft: sfs.length ? med(sfs) : null })
+  const f = 1 + adj.total / 100
+  const lo = r100(baseLo * f), hi = Math.max(lo, r100(baseHi * f))
   const net = (g: number) => r100(g * (1 - CHANNEL / 100) * (1 - mg / 100))
+  const nlo = Math.round(med(use.map(p => p.nlo).filter(Boolean)) * f), nhi = Math.round(med(use.map(p => p.nhi).filter(Boolean)) * f)
+  // The comparables shown in the report: this building's projections first, then the nearest set.
+  const comps = Array.from(new Map([...own, ...(local.length ? local : []), ...pts].filter(p => p.comp).map(p => [p.comp!.name, p.comp!])).values()).slice(0, 5)
   return {
-    ...base, found: true, lo, hi, monthLo: r100(lo / 12), monthHi: r100(hi / 12), basis: use.length,
-    nightlyLo: Math.round(med(use.map(p => p.nlo).filter(Boolean))), nightlyHi: Math.round(med(use.map(p => p.nhi).filter(Boolean))),
+    ...base, found: true, lo, hi, monthLo: r100(lo / 12), monthHi: r100(hi / 12), basis: use.length, baseLo, baseHi,
+    nightlyLo: nlo, nightlyHi: Math.max(nlo, nhi),
     occLo: Math.round(med(use.map(p => p.olo).filter(Boolean))), occHi: Math.round(med(use.map(p => p.ohi).filter(Boolean))),
     months: SEASON.map(s => ({ lo: r100(lo * s), hi: r100(hi * s) })), netLo: net(lo), netHi: net(hi),
-    sources: Array.from(new Set(use.map(p => p.src))).slice(0, 6),
+    sources: Array.from(new Set(use.map(p => p.src))).slice(0, 6), adjustments: adj.list, adjTotal: adj.total, comps,
   }
 }
 
@@ -76,14 +101,14 @@ async function inventory(inp: InventoryInput): Promise<InventoryFull> {
   }
 }
 
-export async function runTool(tool: ToolKey, inp: ToolInput): Promise<ToolFull> {
-  if (tool === 'income') return income(inp as IncomeInput)
+export async function runTool(tool: ToolKey, inp: ToolInput, opts: { light?: boolean } = {}): Promise<ToolFull> {
+  if (tool === 'income') return income(inp as IncomeInput, !!opts.light)
   return inventory(inp as InventoryInput)
 }
 
 /** What anyone sees before leaving an email: the headline, never the list. */
 export function summaryOf(tool: ToolKey, full: ToolFull): ToolSummary {
-  if (tool === 'income') { const f = full as IncomeFull; return { found: f.found, area: f.area, bedrooms: f.bedrooms, lo: f.lo, hi: f.hi, monthLo: f.monthLo, monthHi: f.monthHi, basis: f.basis } }
+  if (tool === 'income') { const f = full as IncomeFull; return { found: f.found, area: f.area, bedrooms: f.bedrooms, basis: f.basis, basisLabel: f.basisLabel } }
   const f = full as InventoryFull
   return { items: f.items, pieces: f.pieces, must: f.must, recommended: f.recommended, suggested: f.suggested, groups: f.groups, linenPieces: f.linenPieces, par: f.par }
 }

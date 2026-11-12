@@ -17,6 +17,7 @@
 //      building's unit types can be added here as comparables.
 // Everything read from a file or a website is shown for review first; nothing is saved until Save.
 // A deck made from a building keeps its own copy (lib/sales-library).
+import { ProjCalcSettingsPanel } from '@/components/ProjCalcSettings'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Plus, Search, Upload, Sparkles, Trash2, SlidersHorizontal, Image as ImageIcon, Check, X, Copy, Settings2, Globe, FileUp, PenLine } from 'lucide-react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
@@ -274,6 +275,8 @@ export function ProjectionsLibrary() {
         </div>
         <a href="/sales" className="rounded-xl border border-line bg-white px-3.5 py-2 text-[13px] font-semibold text-ink hover:bg-app">Sales decks</a>
       </header>
+
+      <ProjCalcSettingsPanel />
 
       <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
         <aside className="space-y-3 lg:sticky lg:top-4 self-start">

@@ -27,17 +27,20 @@ export async function POST(req: NextRequest) {
   const tool = toolKeyOf(b?.tool)
   if (!tool) return NextResponse.json({ ok: false, error: 'Unknown tool.' }, { status: 400, headers: NO_STORE })
   const input = cleanInput(tool, b?.input)
-  const full = await runTool(tool, input)
-  const summary = summaryOf(tool, full)
   const email = String(b?.email || '').trim().toLowerCase()
+  const full = await runTool(tool, input, { light: !email })
+  const summary = summaryOf(tool, full)
   if (!email) return NextResponse.json({ ok: true, summary }, { headers: NO_STORE })
   if (b?.website) return NextResponse.json({ ok: true, summary }, { headers: NO_STORE })   // a filled honeypot is a bot
   if (!EMAIL_RE.test(email)) return NextResponse.json({ ok: false, error: 'Enter a valid email address.' }, { status: 400, headers: NO_STORE })
 
   const ref = String(b?.ref || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40)
   const where = String(b?.where || '').replace(/\s+/g, ' ').slice(0, 80)
-  const homes = tool === 'income' ? `${(full as IncomeFull).bedrooms === 0 ? 'Studio' : (full as IncomeFull).bedrooms + ' BR'}${(input as any).area ? ' · ' + (input as any).area : ''}`
+  const ii: any = input
+  const homes = tool === 'income' ? [ii.building, ii.address, (ii.bedrooms === 0 ? 'Studio' : ii.bedrooms + ' BR'), ii.sqft ? ii.sqft + ' SF' : '', ii.view !== 'none' ? ii.view + ' view' : ''].filter(Boolean).join(' · ')
     : (full as InventoryFull).describe
+  // A change after unlocking recomputes the same lead's quote; it is not a new lead and no new bell.
+  if (b?.refresh) return NextResponse.json({ ok: true, summary, full }, { headers: NO_STORE })
   const saved = await addLead({ email, name: b?.name, phone: b?.phone, homes: TOOL_META[tool].short + ': ' + homes, units: 1, source: ['Free tool', TOOL_META[tool].short, where, ref ? '/r/' + ref : ''].filter(Boolean).join(' · ') })
   if (!saved.ok) return NextResponse.json(saved, { status: 400, headers: NO_STORE })
   try {

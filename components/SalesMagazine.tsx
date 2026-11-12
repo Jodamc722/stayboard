@@ -746,7 +746,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         const url = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + '/tools/' + k + '?d=' + encodeURIComponent(report.code)
         const em = (x: string) => x.split(/(\*[^*]+\*)/).map((t, i) => t.startsWith('*') && t.endsWith('*') ? <em key={i}>{t.slice(1, -1)}</em> : t)
         const gets: Record<ToolKey, string[]> = {
-          income: ['A yearly and monthly range for your home', 'Nightly rate, occupancy and the month-by-month pattern', 'What you would keep, self-managed or with a manager'],
+          income: ['A yearly and monthly projection, from this building’s own figures when we hold them', 'Adjusted for size, view, kitchen, balcony, amenities and the beach', 'The comparables behind it, and what you would keep'],
           inventory: ['Every item a guest expects, sized to your beds, baths and kitchen appliances', 'Grouped into the sets things are bought in, must-have to optional', 'The linen at par: every sheet, towel and pillow by bed size'],
         }
         return frame(s.key, (
@@ -775,7 +775,7 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
               // A drawing of the tool itself: the questions it asks, and the answer held back until an email.
               <div className="mz-tool-demo" aria-hidden>
                 <div className="mz-tool-demo-in">
-                  {({ income: [['Neighborhood', area || 'Brickell'], ['Bedrooms', '1'], ['Bathrooms', '1']], inventory: [['Bedrooms', '2'], ['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Kitchen', 'Yes']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
+                  {({ income: [['Building', short(building) || 'Search a building'], ['Bedrooms', '1'], ['Square feet', '850'], ['View', 'Ocean']], inventory: [['Bedrooms', '2'], ['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Kitchen', 'Yes']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
                     <div key={l}><span>{l}</span><i>−</i><b>{v}</b><i>+</i></div>
                   ))}
                 </div>
