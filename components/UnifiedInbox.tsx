@@ -63,7 +63,11 @@ export function UnifiedInbox(props: {
   onChanged?: () => void
 }) {
   const sp = useSearchParams()
-  const open = sp.get('open') || ''
+  // The open thread is held here and mirrored into the URL (for links and reloads) — the page does not wait on the
+  // router to learn which thread was clicked. A real navigation (a link, an alert) still wins.
+  const urlOpen = sp.get('open') || ''
+  const [open, setOpen] = useState(urlOpen)
+  useEffect(() => { setOpen(urlOpen) }, [urlOpen])
   const [thread, setThread] = useState<Thread | null>(null)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
@@ -72,14 +76,14 @@ export function UnifiedInbox(props: {
   const onOrder = useCallback((keys: string[]) => { order.current = keys }, [])
 
   const select = useCallback((key: string) => {
-    const u = new URLSearchParams(Array.from(sp.entries()))
-    if (key) u.set('open', key); else u.delete('open')
     // NO SERVER ROUND TRIP (2026-11-12, Jon: "fast and clean… not loady"). router.replace re-rendered the whole
     // page on the server — the full inbox rebuilt, ~0.8 s — before the thread even began to load. The open
-    // thread only lives in the URL for links and reloads, so the address is changed in place (Next 14.1+ keeps
-    // useSearchParams in step with history.replaceState).
-    window.history.replaceState(window.history.state, '', '/inbox' + (u.toString() ? '?' + u.toString() : ''))
-  }, [sp])
+    // thread is held in this component and only mirrored into the URL, for links and reloads.
+    setOpen(key)
+    const qs = new URLSearchParams(window.location.search)
+    if (key) qs.set('open', key); else qs.delete('open')
+    window.history.replaceState(window.history.state, '', '/inbox' + (qs.toString() ? '?' + qs.toString() : ''))
+  }, [])
 
   // On a wide screen, start on the first thread waiting on us — the inbox should open on the work.
   useEffect(() => {
