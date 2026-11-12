@@ -51,7 +51,15 @@ const CHANNEL_LABELS: Record<string, string> = {
 }
 const SLA_RULE = 'a reply is due within 1h of a message sent 8am–10pm ET or on the guest’s arrival day; overnight messages are due by 8am'
 
-type TabKey = 'reply' | 'inbox' | 'parked' | 'sentiment'
+type TabKey = 'reply' | 'unread' | 'inbox' | 'parked' | 'archived' | 'sentiment'
+
+// REFINE (Jon, 2026-11-12: "world class filters — unread, not responded to, archive"). Chips that narrow whichever
+// list is open. Inside a group a chip widens (Airbnb OR VRBO); across groups they narrow (Airbnb AND here now).
+type Facet = 'stage' | 'channel' | 'who' | 'flag'
+const STAGES: [string, string, string][] = [['here', 'Here now', 'In-house, arriving or leaving today'], ['soon', 'Next 2 days', 'Arriving within two days'], ['later', 'Later', 'Future stays'], ['inquiry', 'Inquiries', 'Inquiries and booking requests'], ['past', 'Past / none', 'Checked out, cancelled, or no booking']]
+const WHO: [string, string, string][] = [['mine', 'Mine', 'Threads you took or were handed'], ['open', 'Unassigned', 'Nobody has taken it']]
+const FLAGS: [string, string, string][] = [['unhappy', 'Unhappy', 'Sentiment scan or Guesty says the guest is unhappy'], ['late', 'Late', 'Past its reply-by time'], ['unread', 'Unread', 'Unread in Guesty']]
+const FILTER_KEY = 'lh:inbox:refine'
 
 /** How a row identifies itself to the unified inbox: 'g:<conversation id>' or 'p:<digits>'. */
 export const itemKey = (it: InboxItem) => it.kind === 'phone' ? 'p:' + it.t.number : 'g:' + it.c.id
@@ -93,6 +101,16 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   const [src, setSrc] = useState<'messages' | 'texts' | 'calls' | 'all'>('messages')
   const [q, setQ] = useState('')
   const [mineOnly, setMineOnly] = useState(false)
+  const [refine, setRefine] = useState<Record<Facet, string[]>>({ stage: [], channel: [], who: [], flag: [] })
+  // The chips you left on come back on your next visit (this device only).
+  useEffect(() => { try { const v = JSON.parse(localStorage.getItem(FILTER_KEY) || 'null'); if (v && typeof v === 'object') setRefine({ stage: v.stage || [], channel: v.channel || [], who: v.who || [], flag: v.flag || [] }) } catch { /* fine */ } }, [])
+  const toggle = (f: Facet, k: string) => setRefine(r => {
+    const on = r[f].indexOf(k) >= 0
+    const next = { ...r, [f]: on ? r[f].filter(x => x !== k) : r[f].concat(k) }
+    try { localStorage.setItem(FILTER_KEY, JSON.stringify(next)) } catch { /* fine */ }
+    return next
+  })
+  const clearRefine = () => { const z = { stage: [], channel: [], who: [], flag: [] }; setRefine(z); try { localStorage.removeItem(FILTER_KEY) } catch { /* fine */ } }
   const [sent, setSent] = useState<{ rows: SentimentRow[]; summary: SentimentSummary | null }>({ rows: [], summary: null })
   // The clock the reply-by tags read. It starts at the server's render time, so the first client
   // render matches the server's HTML exactly, then ticks each minute so a tab left open turns from
@@ -107,7 +125,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   }, [sent.rows])
 
   // THE QUEUE. Every waiting thread, split into the ones to work (ordered) and the ones parked.
-  const { replyItems, parkedItems, tierOf, lateN } = useMemo(() => {
+  const { replyItems, parkedItems, archivedItems, liveItems, tierOf, lateN } = useMemo(() => {
     const today = etDay(now)
     const st = state || {}
     const needsReply = (it: InboxItem) => it.kind === 'phone' ? it.t.awaiting : !!waiting[it.c.id]
@@ -124,9 +142,13 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
     }
     const work: { it: InboxItem; k: QueueKey }[] = []
     const parked: InboxItem[] = []
+    const archived: InboxItem[] = []
+    const live: InboxItem[] = []
     for (const it of items) {
-      if (!needsReply(it)) continue
       const e = effectiveState(st[itemKey(it)], itemMarkTime(it, waiting), now)
+      if (e.archived) { archived.push(it); continue }
+      live.push(it)
+      if (!needsReply(it)) continue
       if (e.done || e.snoozed) parked.push(it); else work.push({ it, k: keyOf(it) })
     }
     work.sort((a, b) => compareQueue(a.k, b.k))
@@ -136,8 +158,10 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
       tiers[itemKey(x.it)] = x.k.tier
       if (x.it.kind === 'guesty') { const d = waiting[x.it.c.id]?.due; if (d && Date.parse(d) <= now) late++ }
     }
-    return { replyItems: work.map(x => x.it), parkedItems: parked, tierOf: tiers, lateN: late }
+    return { replyItems: work.map(x => x.it), parkedItems: parked, archivedItems: archived, liveItems: live, tierOf: tiers, lateN: late }
   }, [items, waiting, state, sentById, now])
+  const isUnread = (it: InboxItem) => it.kind === 'guesty' ? (it.c.unread_count || 0) > 0 : !!it.t.unread
+  const unreadItems = liveItems.filter(isUnread)
 
   const flagged = sent.rows.filter(r => isUnhappy(r)).length
   const s = sent.summary
@@ -152,12 +176,37 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
   const isMine = (it: InboxItem) => !!myEmail && String((state || {})[itemKey(it)]?.assignee || '').toLowerCase() === myEmail
   const mineN = replyItems.filter(isMine).length
   // Needs reply keeps every source: a missed call from a guest is as much "waiting on us" as a message.
-  const shown = (tab === 'reply' ? (mineOnly ? replyItems.filter(isMine) : replyItems) : tab === 'parked' ? parkedItems : items.filter(inSrc)).filter(matches)
+  // The facets of one row, as the chips name them.
+  const today = etDay(now)
+  const stageOf = (it: InboxItem) => {
+    if (it.kind === 'phone') return 'past'
+    const p = stayPhase(it.c.stay, today)
+    return p === 'arriving' || p === 'inhouse' || p === 'departing' ? 'here' : p === 'soon' ? 'soon' : p === 'future' ? 'later' : p === 'inquiry' ? 'inquiry' : 'past'
+  }
+  const channelOf = (it: InboxItem) => it.kind === 'phone' ? 'Phone' : (CHANNEL_LABELS[String(it.c.channel || '').toLowerCase()] || 'Other')
+  const isLate = (it: InboxItem) => { if (it.kind !== 'guesty') return false; const d = waiting[it.c.id]?.due; return !!d && Date.parse(d) <= now }
+  const assigneeOf = (it: InboxItem) => String((state || {})[itemKey(it)]?.assignee || '')
+  const has = (f: Facet, it: InboxItem): boolean => {
+    const on = refine[f]
+    if (!on.length) return true
+    if (f === 'stage') return on.indexOf(stageOf(it)) >= 0
+    if (f === 'channel') return on.indexOf(channelOf(it)) >= 0
+    if (f === 'who') return (on.indexOf('mine') >= 0 && isMine(it)) || (on.indexOf('open') >= 0 && !assigneeOf(it))
+    return (on.indexOf('unhappy') >= 0 && it.kind === 'guesty' && isUnhappy(sentById[it.c.id])) || (on.indexOf('late') >= 0 && isLate(it)) || (on.indexOf('unread') >= 0 && isUnread(it))
+  }
+  const passes = (it: InboxItem, skip?: Facet) => (['stage', 'channel', 'who', 'flag'] as Facet[]).every(f => f === skip || has(f, it))
+  const base = (tab === 'reply' ? (mineOnly ? replyItems.filter(isMine) : replyItems) : tab === 'unread' ? unreadItems : tab === 'parked' ? parkedItems : tab === 'archived' ? archivedItems : liveItems.filter(inSrc)).filter(matches)
+  const shown = base.filter(it => passes(it))
+  const refineN = refine.stage.length + refine.channel.length + refine.who.length + refine.flag.length
+  // Each chip's count is what you would see if you tapped it: every OTHER group applied, this one alone.
+  const countFor = (f: Facet, k: string) => base.filter(it => passes(it, f) && (f === 'stage' ? stageOf(it) === k : f === 'channel' ? channelOf(it) === k : f === 'who' ? (k === 'mine' ? isMine(it) : !assigneeOf(it)) : k === 'unhappy' ? it.kind === 'guesty' && isUnhappy(sentById[it.c.id]) : k === 'late' ? isLate(it) : isUnread(it))).length
+  const channelsHere = Array.from(new Set(base.map(channelOf))).sort()
 
   // Tell the pane beside us what is on screen, in order, so j / k step through exactly these rows.
   const orderSig = tab === 'sentiment' ? '' : shown.map(itemKey).join('|')
   useEffect(() => { if (onOrder) onOrder(orderSig ? orderSig.split('|') : []) }, [orderSig, onOrder])
 
+  const refChip = (on: boolean) => 'h-7 px-2 rounded-full border text-[11.5px] font-semibold transition-colors ' + (on ? 'bg-brand-600 text-white border-brand-600' : 'bg-white border-line text-muted hover:text-ink hover:border-ink/30')
   const chip = (on: boolean) => 'lh-tab h-9 px-2.5 rounded-lg border text-[12px] font-semibold ' + (on ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')
 
   return (
@@ -165,8 +214,10 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
       <LeanTabs<TabKey>
         tabs={[
           { key: 'reply', label: 'Needs reply', n: replyItems.length },
-          { key: 'inbox', label: 'All', n: items.length },
+          { key: 'unread', label: 'Unread', n: unreadItems.length },
+          { key: 'inbox', label: 'All', n: liveItems.length },
           { key: 'parked', label: 'Snoozed', n: parkedItems.length },
+          { key: 'archived', label: 'Archived', n: archivedItems.length },
           { key: 'sentiment', label: 'Sentiment', n: flagged },
         ]}
         value={tab} onChange={setTab}
@@ -187,12 +238,6 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
           {tab === 'inbox' ? ([['messages', 'Guest messages', counts.messages], ['texts', 'Texts & voicemails', counts.texts], ['calls', 'Calls', counts.calls], ['all', 'Everything', items.length]] as const).map(([k, label, n]) => (
             <button key={k} onClick={() => setSrc(k)} className={chip(src === k)}>{label} <span className="opacity-60 tabular-nums">{n}</span></button>
           )) : null}
-          {tab === 'reply' && myEmail ? (
-            <>
-              <button onClick={() => setMineOnly(false)} className={chip(!mineOnly)}>Everyone’s <span className="opacity-60 tabular-nums">{replyItems.length}</span></button>
-              <button onClick={() => setMineOnly(true)} className={chip(mineOnly)} title="Threads you took or were handed">Mine <span className="opacity-60 tabular-nums">{mineN}</span></button>
-            </>
-          ) : null}
           {tab === 'reply' && lateN > 0 ? <Tag tone="rose" title={'Past their reply-by time — ' + SLA_RULE}>{lateN} past the hour</Tag> : null}
           <input id="inbox-search" value={q} onChange={e => setQ(e.target.value)} placeholder="Search guest, unit, words…" aria-label="Search the inbox"
             className="ml-auto h-9 w-full sm:w-56 rounded-lg border border-line bg-white px-2.5 text-[16px] sm:text-[12.5px] focus:outline-none focus:ring-2 focus:ring-brand-200" />
@@ -200,8 +245,25 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
       )}
 
       {tab !== 'sentiment' && (
+        <div className="flex items-center gap-1 flex-wrap mb-2" aria-label="Refine the list">
+          {([['stage', STAGES], ['who', WHO], ['flag', FLAGS]] as [Facet, [string, string, string][]][]).map(([f, opts]) => (
+            <span key={f} className="inline-flex items-center gap-1 flex-wrap">
+              {opts.map(([k, label, tip]) => { const n = countFor(f, k), on = refine[f].indexOf(k) >= 0; return (n > 0 || on) ? (
+                <button key={k} onClick={() => toggle(f, k)} aria-pressed={on} title={tip} className={refChip(on)}>{label} <span className="opacity-60 tabular-nums">{n}</span></button>
+              ) : null })}
+              <span aria-hidden className="w-px h-4 bg-line mx-0.5" />
+            </span>
+          ))}
+          {channelsHere.length > 1 && channelsHere.map(c => { const n = countFor('channel', c), on = refine.channel.indexOf(c) >= 0; return (
+            <button key={c} onClick={() => toggle('channel', c)} aria-pressed={on} title={'Only ' + c + ' threads'} className={refChip(on)}>{c} <span className="opacity-60 tabular-nums">{n}</span></button>
+          ) })}
+          {refineN > 0 && <button onClick={clearRefine} className="h-7 px-2 text-[11.5px] font-semibold text-brand-700 hover:underline" title="Show everything in this tab again">Clear {refineN}</button>}
+        </div>
+      )}
+
+      {tab !== 'sentiment' && (
         shown.length === 0 ? (
-          <LeanEmpty>{items.length === 0 ? <>No conversations cached yet — hit <strong>Sync now</strong>.</> : needle ? 'Nothing matches that search.' : tab === 'reply' ? (mineOnly ? 'Nothing of yours is waiting.' : 'Nobody is waiting on a reply.') : tab === 'parked' ? 'Nothing is snoozed or marked handled.' : 'Nothing here.'}</LeanEmpty>
+          <LeanEmpty>{items.length === 0 ? <>No conversations cached yet — hit <strong>Sync now</strong>.</> : needle ? 'Nothing matches that search.' : tab === 'reply' ? (mineOnly ? 'Nothing of yours is waiting.' : 'Nobody is waiting on a reply.') : tab === 'parked' ? 'Nothing is snoozed or marked handled.' : tab === 'archived' ? 'Nothing archived. Archive a thread from its action row (a) — it comes back if the guest writes again.' : tab === 'unread' ? 'All read.' : 'Nothing here.'}{refineN > 0 && shown.length === 0 && base.length > 0 ? <> · <button onClick={clearRefine} className="font-semibold text-brand-700 hover:underline">clear the filters</button></> : null}</LeanEmpty>
         ) : (
           <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
             {shown.map((it, i) => {

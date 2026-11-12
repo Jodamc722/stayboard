@@ -28,7 +28,10 @@ export type ThreadState = {
   /** Whose thread it is (email) and the name to show. */
   assignee?: string | null
   assigneeName?: string | null
-  /** Last change — entries untouched for two weeks are dropped. */
+  /** ARCHIVED (2026-11-12): out of every list but Archived until the guest writes again — the thread's mark time. */
+  archived?: string | null
+  archivedBy?: string | null
+  /** Last change — entries untouched for two weeks are dropped (archived ones keep 60 days). */
   at: string
 }
 export type InboxStateMap = Record<string, ThreadState>
@@ -45,16 +48,18 @@ export function markTime(itemAt: string | null | undefined, lastGuest?: string |
 }
 
 /** Is this thread handled / snoozed RIGHT NOW, given its markTime? */
-export function effectiveState(st: ThreadState | undefined | null, itemAt: string, now: number): { done: boolean; snoozed: boolean; snoozeUntil: string | null; assignee: string; assigneeName: string } {
-  const none = { done: false, snoozed: false, snoozeUntil: null as string | null, assignee: '', assigneeName: '' }
+export function effectiveState(st: ThreadState | undefined | null, itemAt: string, now: number): { done: boolean; snoozed: boolean; archived: boolean; snoozeUntil: string | null; assignee: string; assigneeName: string } {
+  const none = { done: false, snoozed: false, archived: false, snoozeUntil: null as string | null, assignee: '', assigneeName: '' }
   if (!st) return none
   const at = ms(itemAt)
   // A thread with no readable time cannot have moved: the mark holds.
   const notMovedSince = (mark: string | null | undefined) => { const m = ms(mark); return Number.isFinite(m) && (!Number.isFinite(at) || at <= m) }
-  const done = !!st.done && notMovedSince(st.done)
+  // Archived is handled too: it leaves Needs reply as well as the lists.
+  const archived = !!st.archived && notMovedSince(st.archived)
+  const done = archived || (!!st.done && notMovedSince(st.done))
   const until = ms(st.snoozeUntil)
   const snoozed = !done && Number.isFinite(until) && until > now && notMovedSince(st.snoozeAt)
-  return { done, snoozed, snoozeUntil: snoozed ? String(st.snoozeUntil) : null, assignee: String(st.assignee || ''), assigneeName: String(st.assigneeName || st.assignee || '') }
+  return { done, snoozed, archived, snoozeUntil: snoozed ? String(st.snoozeUntil) : null, assignee: String(st.assignee || ''), assigneeName: String(st.assigneeName || st.assignee || '') }
 }
 
 /** Where a guest is in their stay — what the row's tag says and what the queue ranks on. */

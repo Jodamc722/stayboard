@@ -21,6 +21,19 @@ export async function GET(req: NextRequest) {
   const pull = req.nextUrl.searchParams.get('pull') === '0' ? null : await pullInboxLive({ budgetMs: 15_000 }).catch((e: any) => ({ pulledAt: null, fresh: false, changed: [], threads: 0, error: String(e?.message || e) }))
   try {
     const data = await loadInbox()
+    // ?count=1 — the floating inbox's badge: how many threads wait on us and how many are unread, nothing else.
+    if (req.nextUrl.searchParams.get('count') === '1') {
+      const { effectiveState, markTime } = await import('@/lib/inbox-queue')
+      let reply = 0, unread = 0
+      for (const it of data.items as any[]) {
+        const key = it.kind === 'phone' ? 'p:' + it.t.number : 'g:' + it.c.id
+        const e = effectiveState((data.state as any)[key], it.kind === 'phone' ? markTime(it.at) : markTime(it.at, (data.waiting as any)[it.c.id]?.lastGuest), Date.now())
+        if (e.archived) continue
+        if ((it.kind === 'phone' ? it.t.awaiting : !!(data.waiting as any)[it.c.id]) && !e.done && !e.snoozed) reply++
+        if (it.kind === 'phone' ? it.t.unread : (it.c.unread_count || 0) > 0) unread++
+      }
+      return NextResponse.json({ ok: true, reply, unread })
+    }
     // A fingerprint of everything the list draws. The clock and the header pills are left out: they
     // move on their own and always travel.
     const v = createHash('sha1').update(JSON.stringify([data.items, data.unitById, data.waiting, data.lastResponderById, data.state])).digest('hex').slice(0, 16)

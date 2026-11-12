@@ -23,11 +23,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { ArrowLeft, ExternalLink, Loader2, MessageSquare, Phone, CalendarDays, Moon, BadgeDollarSign, Inbox as InboxIcon, CheckCheck, AlarmClock, UserCheck, UserPlus, ClipboardList, AlertTriangle, RotateCcw, Keyboard } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Loader2, MessageSquare, Phone, CalendarDays, Moon, BadgeDollarSign, Inbox as InboxIcon, CheckCheck, AlarmClock, UserCheck, UserPlus, ClipboardList, AlertTriangle, RotateCcw, Keyboard, Archive, ArchiveRestore, PictureInPicture2 } from 'lucide-react'
+import { popOut } from '@/components/InboxFloater'
 import { MessagesInbox, itemKey, itemMarkTime, type InboxItem, type WaitInfo } from '@/components/MessagesInbox'
 import { MessageThread } from '@/components/MessageThread'
 import { PhoneThread } from '@/components/PhoneThread'
-import { StayPanel, prefetchStay360 } from '@/components/StayPanel'
+import { prefetchStay360 } from '@/components/StayPanel'
+import { InboxStayCard, prefetchStayExtras } from '@/components/InboxStayCard'
 import { Tag } from '@/components/lean'
 import { openAddTask } from '@/components/AddTaskSheet'
 import { effectiveState, type InboxStateMap, type ThreadState } from '@/lib/inbox-queue'
@@ -127,7 +129,7 @@ export function UnifiedInbox(props: {
     warming.add(key)
     const q = key.startsWith('p:') ? 'phone=' + encodeURIComponent(key.slice(2)) : 'id=' + encodeURIComponent(key.slice(2))
     fetch('/api/messages/thread?' + q, { cache: 'no-store' }).then(r => r.json()).then(j => {
-      if (j?.ok && j.thread) { remember(key, j.thread as Thread); prefetchStay360((j.thread as any).reservationId) }
+      if (j?.ok && j.thread) { remember(key, j.thread as Thread); prefetchStay360((j.thread as any).reservationId); prefetchStayExtras((j.thread as any).reservationId) }
     }).catch(() => null).finally(() => warming.delete(key))
   }, [])
   const hoverT = useRef<any>(null)
@@ -191,14 +193,14 @@ export function UnifiedInbox(props: {
   const canAct = !!thread && thread.canReply
   const onChanged = props.onChanged
 
-  const act = useCallback(async (op: 'done' | 'reopen' | 'snooze' | 'unsnooze' | 'assign' | 'unassign', extra: { choice?: SnoozeChoice; email?: string; name?: string } = {}) => {
+  const act = useCallback(async (op: 'done' | 'reopen' | 'snooze' | 'unsnooze' | 'assign' | 'unassign' | 'archive' | 'unarchive', extra: { choice?: SnoozeChoice; email?: string; name?: string } = {}) => {
     const key = openRef.current
     if (!key || acting) return
     setActing(op); setActErr(''); setMenu('')
     // Where to go once this one leaves the queue: the row under it.
     const keys = order.current
     const i = keys.indexOf(key)
-    const after = (op === 'done' || op === 'snooze') && i >= 0 ? (keys[i + 1] || keys[i - 1] || '') : ''
+    const after = (op === 'done' || op === 'snooze' || op === 'archive') && i >= 0 ? (keys[i + 1] || keys[i - 1] || '') : ''
     try {
       const res = await fetch('/api/messages/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, at: itemAt, op, guest: thread ? thread.guest : '', ...extra }) })
       const j: any = await res.json().catch(() => ({}))
@@ -249,10 +251,11 @@ export function UnifiedInbox(props: {
       else if (k === 's') act(cur.snoozed ? 'unsnooze' : 'snooze', { choice: '3h' })
       else if (k === 'm') act(mine ? 'unassign' : 'assign')
       else if (k === 't') newTask()
+      else if (k === 'a') act(cur.archived ? 'unarchive' : 'archive')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [step, act, newTask, canAct, cur.done, cur.snoozed, mine])
+  }, [step, act, newTask, canAct, cur.done, cur.snoozed, cur.archived, mine])
 
   // "Glitch" opens the Glitches page on a NEW card for this stay (?new=1&reservation=<id>&unit=<listing id>,
   // read by the Glitches page since 2026-11-10). With no booking and no listing it just opens Glitches.
@@ -297,7 +300,9 @@ export function UnifiedInbox(props: {
                 {/* One row that scrolls sideways on a phone; wraps on a desk. */}
                 <div className="flex items-center gap-1.5 overflow-x-auto lg:overflow-visible lg:flex-wrap -mx-1 px-1 pb-0.5">
                   <button onClick={() => select('')} className={ACT_PLAIN + ' lg:hidden'} aria-label="Back to all conversations"><ArrowLeft size={15} /> Inbox</button>
-                  {cur.done
+                  {cur.archived
+                    ? <button onClick={() => act('unarchive')} disabled={!!acting} className={ACT_PLAIN} title="Bring this thread back into the lists (a)"><ArchiveRestore size={13} /> Unarchive</button>
+                    : cur.done
                     ? <button onClick={() => act('reopen')} disabled={!!acting} className={ACT_PLAIN} title="Put this thread back in Needs reply (e)"><RotateCcw size={13} /> Back to the queue</button>
                     : <button onClick={() => act('done')} disabled={!!acting} className={ACT + 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'} title={(waitingNow ? 'The guest’s last message needs no answer' : 'Mark this thread handled') + ' — it leaves Needs reply for everyone and comes back if the guest writes again (e)'}><CheckCheck size={13} /> No reply needed</button>}
                   {cur.snoozed
@@ -306,9 +311,11 @@ export function UnifiedInbox(props: {
                   {mine
                     ? <button onClick={() => act('unassign')} disabled={!!acting} className={ACT + 'border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100'} title="You have this thread — tap to let it go (m)"><UserCheck size={13} /> Mine</button>
                     : <button onClick={() => act('assign')} disabled={!!acting} className={ACT_PLAIN} title={(cur.assignee ? 'With ' + cur.assigneeName + ' — take it yourself' : 'Take this thread, so the desk can see it is yours') + ' (m)'}><UserCheck size={13} /> {cur.assignee ? 'With ' + cur.assigneeName.split(' ')[0] : 'Take it'}</button>}
+                  {!cur.archived && <button onClick={() => act('archive')} disabled={!!acting} className={ACT_PLAIN} title="Archive — out of every list (Archived tab keeps it) until the guest writes again (a)"><Archive size={13} /> Archive</button>}
                   <button onClick={openHand} disabled={!!acting} aria-expanded={menu === 'hand'} className={ACT_PLAIN} title="Hand this thread to a teammate — they get a line in their Messages with a link to it"><UserPlus size={13} /> Hand to…</button>
                   <button onClick={newTask} className={ACT_PLAIN} title="Start a field task on this unit — you choose the type and who before it is created (t)"><ClipboardList size={13} /> Task</button>
                   <Link href={glitchHref} className={ACT_PLAIN} title="File a glitch for this stay — opens a new card with the booking and unit filled in"><AlertTriangle size={13} /> Glitch</Link>
+                  <button onClick={() => popOut(open)} className={ACT_PLAIN + ' hidden lg:inline-flex'} title="Pop this thread out — it floats over every page, so you can look things up and keep replying"><PictureInPicture2 size={13} /> Pop out</button>
                   <button onClick={() => setMenu(m => (m === 'keys' ? '' : 'keys'))} aria-expanded={menu === 'keys'} className={ACT_PLAIN + ' hidden lg:inline-flex ml-auto'} title="Keyboard shortcuts (?)"><Keyboard size={13} /></button>
                 </div>
                 {menu === 'snooze' && (
@@ -326,7 +333,7 @@ export function UnifiedInbox(props: {
                 )}
                 {menu === 'keys' && (
                   <div className="mt-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[12px] text-ink/80 grid grid-cols-2 gap-x-4 gap-y-0.5 max-w-md">
-                    {[['j / k', 'next / previous thread'], ['r', 'reply'], ['Ctrl/⌘ + Enter', 'send'], ['e', 'no reply needed'], ['s', 'snooze 3 hours'], ['m', 'mine'], ['t', 'new task'], ['/', 'search'], ['Esc', 'leave the box']].map(([k, what]) => (
+                    {[['j / k', 'next / previous thread'], ['r', 'reply'], ['Ctrl/⌘ + Enter', 'send'], ['e', 'no reply needed'], ['s', 'snooze 3 hours'], ['m', 'mine'], ['t', 'new task'], ['a', 'archive'], ['/', 'search'], ['Esc', 'leave the box']].map(([k, what]) => (
                       <div key={k} className="flex items-center gap-2"><kbd className="font-mono text-[11px] rounded border border-line bg-app px-1.5 py-0.5">{k}</kbd><span>{what}</span></div>
                     ))}
                   </div>
@@ -406,7 +413,7 @@ function BookingPane({ thread, item }: { thread: Thread; item: InboxItem | null 
         </div>
       </section>
       {/* The whole stay: issues, calls, prior stays, reviews — the same panel the full page shows. */}
-      {thread.reservationId && <StayPanel reservationId={thread.reservationId} hide={['messages']} />}
+      {thread.reservationId && <InboxStayCard reservationId={thread.reservationId} canCodes={!!thread.canReply} />}
     </div>
   )
 }

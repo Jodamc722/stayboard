@@ -88,7 +88,7 @@ export type DoorCheck = {
   note: string
 }
 
-function doorCodeOf(raw: any): string | null {
+export function doorCodeOf(raw: any): string | null {
   const cf = Array.isArray(raw?.customFields) ? raw.customFields : []
   for (const c of cf) {
     const id = String(c?.fieldId?._id || c?.fieldId?.id || c?.fieldId || '')
@@ -117,14 +117,14 @@ function doorCodeOf(raw: any): string | null {
 // it in", it is "the codes have been wiped and nothing works right now". So for these two there is
 // NO falling back to the listing code, ever. Empty means missing, and missing is said out loud —
 // which is the rule this file already held for every other kind of missing code.
-const RES_CODE_FIELD = '693adec2ab73940025856e56'
+export const RES_CODE_FIELD = '693adec2ab73940025856e56'
 const RESERVATION_CODE_SYSTEM = /salato|botanica/i
 
-function onReservationSystem(unit: any, building: any, address?: any): boolean {
+export function onReservationSystem(unit: any, building: any, address?: any): boolean {
   return RESERVATION_CODE_SYSTEM.test(`${unit || ''} ${building || ''} ${address || ''}`)
 }
 
-function cfById(raw: any, fieldId: string): string | null {
+export function cfById(raw: any, fieldId: string): string | null {
   const arr = Array.isArray(raw?.customFields) ? raw.customFields : []
   for (const c of arr) {
     const fid = typeof c?.fieldId === 'object' ? (c?.fieldId?._id || c?.fieldId?.id) : c?.fieldId

@@ -16,7 +16,8 @@ import type { InboxStateMap, ThreadState } from './inbox-queue'
 
 const KEY = 'inbox_thread_state'
 const KEEP_MS = 14 * 86400_000
-const MAX_ENTRIES = 600
+const ARCHIVE_KEEP_MS = 60 * 86400_000
+const MAX_ENTRIES = 1500
 
 type Stored = { threads?: InboxStateMap }
 
@@ -24,8 +25,8 @@ function prune(map: InboxStateMap, now: number): InboxStateMap {
   const live = Object.keys(map).filter(k => {
     const s = map[k]
     const t = Date.parse(String(s?.at || ''))
-    if (!Number.isFinite(t) || now - t > KEEP_MS) return false
-    return !!(s.done || s.snoozeUntil || s.assignee)
+    if (!Number.isFinite(t) || now - t > (s.archived ? ARCHIVE_KEEP_MS : KEEP_MS)) return false
+    return !!(s.done || s.snoozeUntil || s.assignee || s.archived)
   })
   // Newest first, so the cap drops the oldest marks.
   live.sort((a, b) => String(map[b].at).localeCompare(String(map[a].at)))

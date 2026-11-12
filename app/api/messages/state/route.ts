@@ -8,6 +8,8 @@
 //         'assign'    { email?, name? } — no email means "mine"; handing to someone else drops a
 //                     line in their Messages with a link to the thread
 //         'unassign'
+//         'archive'   out of every list but Archived until the guest writes again (2026-11-12)
+//         'unarchive'
 // `key` is the list's own ('g:<conversation id>' | 'p:<digits>'); `at` is the thread's newest
 // message time as the list showed it. Nothing here reaches a guest or Guesty: these are our own
 // working marks. Edit on Messages, the same bar as replying.
@@ -56,11 +58,13 @@ export async function POST(req: NextRequest) {
     handTo = email && email !== me ? { email, name: str(b?.name).trim() || email.split('@')[0] } : { email: me, name: myName }
   }
   if (op === 'snooze' && CHOICES.indexOf(str(b?.choice) as Choice) < 0) return NextResponse.json({ ok: false, error: 'Snooze until when?' }, { status: 400 })
-  if (['done', 'reopen', 'snooze', 'unsnooze', 'assign', 'unassign'].indexOf(op) < 0) return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 })
+  if (['done', 'reopen', 'snooze', 'unsnooze', 'assign', 'unassign', 'archive', 'unarchive'].indexOf(op) < 0) return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 })
 
   const r = await updateThreadState(key, me, cur => {
     if (op === 'done') return { ...cur, done: seenAt, doneBy: myName, snoozeUntil: null, snoozeAt: null, snoozeBy: null }
-    if (op === 'reopen') return { ...cur, done: null, doneBy: null }
+    if (op === 'reopen') return { ...cur, done: null, doneBy: null, archived: null, archivedBy: null }
+    if (op === 'archive') return { ...cur, archived: seenAt, archivedBy: myName, snoozeUntil: null, snoozeAt: null, snoozeBy: null }
+    if (op === 'unarchive') return { ...cur, archived: null, archivedBy: null }
     if (op === 'snooze') return { ...cur, snoozeUntil: snoozeUntil(str(b?.choice) as Choice, Date.now()), snoozeAt: seenAt, snoozeBy: myName, done: null, doneBy: null }
     if (op === 'unsnooze') return { ...cur, snoozeUntil: null, snoozeAt: null, snoozeBy: null }
     if (op === 'assign' && handTo) return { ...cur, assignee: handTo.email, assigneeName: handTo.name }

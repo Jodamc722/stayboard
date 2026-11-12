@@ -11,6 +11,7 @@ import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY } from '@/lib/nav'
 import { DESKS, deskForPath, type DeskView } from '@/lib/desks'
 import { EveFloat } from '@/components/EveFloat'
+import { InboxFloater } from '@/components/InboxFloater'
 import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
 import { BUSINESSES, businessForPath, businessDef, GARDEN_NAV, GARDEN_SECTIONS, GARDEN_ICON, LAST_VR_PATH_KEY, type BusinessKey } from '@/lib/business'
 import { AdamFloat } from '@/components/AdamFloat'
@@ -592,6 +593,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         {/* Eve rides along on every page (Jon, 2026-08-19: floating icon, not a page). Same
             role gate the old sidebar entry used — a role with eve 'off' never sees the bubble. */}
         {business === 'garden' ? <AdamFloat /> : (canSee('/eve') && <EveFloat />)}
+        {/* THE FLOATING INBOX (Jon, 2026-11-12) — answer guests from any page. Messages access only. */}
+        {business !== 'garden' && canSee('/inbox') && <InboxFloater />}
         {/* HANDOFF ALERTS (Jon, 2026-10-07): a small floater, top right of every page — the bell, and a card for anything you still have to confirm. */}
         {business !== 'garden' && <HandoffFloater />}
         <MentionPopups />
