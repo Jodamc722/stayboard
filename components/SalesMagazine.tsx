@@ -20,6 +20,8 @@ import React, { useEffect, useState } from 'react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
 import { LibraryCompPicker, attachComps } from '@/components/LibraryCompPicker'
 import { MagazineFlipbook } from '@/components/MagazineFlipbook'
+import { FreeTool } from '@/components/FreeTool'
+import { TOOL_KEYS, TOOL_META, isToolKey, type ToolKey } from '@/lib/free-tools'
 import { StayTimeline, YearWave, ChannelHub, YearChart, QrCode } from '@/components/MagazineGraphics'
 import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
@@ -465,6 +467,9 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
     else if (cma.plans.length) add({ key: 'glance', kind: 'page', section: 'Every floor plan', tone: 'warm', render: () => null })
     if (aud === 'owner' && showSecond) add({ key: 'second', kind: 'page', section: 'Terms', render: () => null })
   } else for (const k of AUDIENCES[aud].order) parts[k]()
+  // FREE TOOLS (Jon, 2026-11-12): optional calculator pages before the close, chosen in the builder.
+  const toolsOn: ToolKey[] = (Array.isArray(mag.tools) ? mag.tools : []).filter(isToolKey)
+  for (const k of toolsOn) add({ key: 'tool-' + k, kind: 'page', section: 'Free tools', render: () => null })
   add({ key: 'back', kind: 'back', render: () => null })
   const folioOf: Record<string, number> = {}
   specs.forEach((s, i) => { folioOf[s.key] = i + 1 })
@@ -734,6 +739,57 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
         <section key="op-num" className="mz-page"><YearWave kicker="The numbers" title={<CT k="numbersTitle" />} /></section>
       )
       case s.key === 'op-num': return opener('op-num', specs.some(x => x.key === 'op-work') ? '03' : '02', 'The numbers', 'numbersTitle', 'numbers')
+      case s.key.startsWith('tool-') && isToolKey(s.key.slice(5)): {
+        // A FREE TOOL PAGE. On the phone reader the calculator runs right on the page; in print and on a
+        // wide screen the page shows what it gives and a QR code / button to the tool's own link.
+        const k = s.key.slice(5) as ToolKey, m = TOOL_META[k]
+        const url = (process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app').replace(/\/$/, '') + '/tools/' + k + '?d=' + encodeURIComponent(report.code)
+        const em = (x: string) => x.split(/(\*[^*]+\*)/).map((t, i) => t.startsWith('*') && t.endsWith('*') ? <em key={i}>{t.slice(1, -1)}</em> : t)
+        const gets: Record<ToolKey, string[]> = {
+          income: ['A yearly and monthly range for your home', 'Nightly rate, occupancy and the month-by-month pattern', 'What you would keep after channel and management fees'],
+          inventory: ['Every item a guest expects, counted for your home', 'Grouped into the sets things are bought in', 'Must-have, recommended and optional, marked'],
+          linen: ['Every sheet, towel and pillow by bed size', 'Three sets in rotation: on the bed, in the wash, on the shelf', 'Grouped by bed, bath and kitchen'],
+        }
+        return frame(s.key, (
+          <>
+            {kicker(m.kicker)}
+            <h2 className="mz-h mz-h1">{em(m.title)}</h2>
+            <p className="mz-lead mz-lead-s">{m.dek}</p>
+            {flip && phone ? (
+              <div className="mz-tool-live"><FreeTool tool={k} embedded refCode={report.code} where={short(building) || building} area={area} contact={{ name: card.name, role: card.role, phone: card.phone, email: card.email, photo: card.photo }} /></div>
+            ) : (
+              <div className="mz-tool">
+                <div>
+                  <p className="mz-kicker">What you get, free</p>
+                  <ol className="mz-tool-list">{gets[k].map((g, i) => <li key={i}><span>{String(i + 1).padStart(2, '0')}</span>{g}</li>)}</ol>
+                  <p className="mz-small">Enter the home’s details and see the headline straight away. Leave an email to unlock the full quote and download it as a PDF.</p>
+                  {!flip ? null : <a className="mz-tool-btn" href={url} target="_blank" rel="noreferrer">Open the calculator</a>}
+                </div>
+                <div className="mz-tool-qr">
+                  <QrCode text={url} size={150} label={'Scan to open the ' + m.short.toLowerCase()} />
+                  <b>Scan to try it</b>
+                  <span className="mz-sel">{url.replace(/^https?:\/\//, '').replace(/\?.*$/, '').replace('/tools/', '/tools/\u200b')}</span>
+                </div>
+              </div>
+            )}
+            {flip && phone ? null : (
+              // A drawing of the tool itself: the questions it asks, and the answer held back until an email.
+              <div className="mz-tool-demo" aria-hidden>
+                <div className="mz-tool-demo-in">
+                  {({ income: [['Neighborhood', area || 'Brickell'], ['Bedrooms', '1'], ['Bathrooms', '1']], inventory: [['Bedrooms', '2'], ['Bathrooms', '2'], ['Sleeps', '6'], ['Kitchen', 'Full']], linen: [['King beds', '1'], ['Queen beds', '1'], ['Bathrooms', '2'], ['Sleeps', '6']] } as Record<ToolKey, [string, string][]>)[k].map(([l, v]) => (
+                    <div key={l}><span>{l}</span><i>−</i><b>{v}</b><i>+</i></div>
+                  ))}
+                </div>
+                <div className="mz-tool-demo-out">
+                  <p className="mz-kicker">{k === 'income' ? 'Could earn in a year' : k === 'inventory' ? 'What this home needs' : 'Linen at par'}</p>
+                  <p className="mz-tool-blur">{k === 'income' ? '$00,000 – $00,000' : '000 pieces'}</p>
+                  <span className="mz-tool-lock">Full quote unlocks with an email · PDF download</span>
+                </div>
+              </div>
+            )}
+          </>
+        ), { section: 'Free tools' })
+      }
       case s.key === 'partner' && !!cma: return frame('partner', (
         <>
           {kicker('For sales teams and agents')}
@@ -985,6 +1041,8 @@ export function SalesMagazine({ report, canEdit, onePager, digital }: { report: 
           {cma ? ([['partner', 'Agent partner program'], ['second', 'Stay as a second option'], ['market', 'Market and comparables'], ['glance', 'Floor plans at a glance'], ['plans', 'One page per floor plan']] as [keyof SalesCma['sections'], string][]).map(([k, l]) => (
             <label key={k} className="mz-toggle"><input type="checkbox" checked={!!cma.sections[k]} onChange={e => setCma({ ...cma, sections: { ...cma.sections, [k]: e.target.checked } })} /> {l}</label>
           )) : null}
+          <p className="mz-form-h">Free tools</p>
+          {TOOL_KEYS.map(k => <label key={k} className="mz-toggle"><input type="checkbox" checked={toolsOn.includes(k)} onChange={e => setMag({ tools: e.target.checked ? [...toolsOn, k] : toolsOn.filter(x => x !== k) })} /> {TOOL_META[k].short}: a free page, email gated before the full quote</label>)}
           <p className="mz-form-h">Graphics</p>
           {([['manage', 'How we manage: the stay timeline'], ['numbers', 'The numbers: the Miami year'], ['tech', 'Our technology: the platform diagram']] as ['manage' | 'numbers' | 'tech', string][]).map(([k, l]) => (
             <label key={k} className="mz-toggle"><input type="checkbox" checked={gfx(k)} onChange={e => setMag({ graphics: { ...(mag.graphics || {}), [k]: e.target.checked } })} /> {l}</label>
@@ -1464,6 +1522,25 @@ const CSS = `
 .mz-back-title{font-family:${SERIF};font-weight:300;font-size:calc(72px * var(--mz-ds));line-height:1;letter-spacing:-.025em;margin:0;max-width:9em;text-wrap:balance}
 .mz-back-title em{color:${C.glow}}
 .mz-back-dek{font:300 calc(20px * var(--mz-ds))/1.5 ${SERIF};color:rgba(255,255,255,.92);max-width:26em;margin:24px 0 0}
+.mz-tool{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:40px;margin-top:34px;align-items:start}
+.mz-tool-list{list-style:none;margin:12px 0 18px;padding:0}
+.mz-tool-list li{display:grid;grid-template-columns:40px 1fr;gap:8px;padding:12px 0;border-top:1px solid ${C.grid};font:400 calc(19px * var(--mz-ds))/1.3 ${SERIF};color:${C.ink}}
+.mz-tool-list li span{font:600 11px ${SANS};letter-spacing:.12em;color:${C.sand};padding-top:5px}
+.mz-tool-btn{display:inline-flex;margin-top:14px;padding:10px 18px;border-radius:999px;background:${C.navy};color:#fff;font:600 13px ${SANS};text-decoration:none}
+.mz-tool-qr{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px;border:1px solid ${C.grid};border-radius:14px;background:#fff;text-align:center}
+.mz-tool-qr b{font:600 10px ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${C.ink}}
+.mz-tool-qr span{font:400 11px ${SANS};color:${C.muted}}
+.mz-tool-live{margin-top:20px}
+.mz-tool-demo{margin-top:36px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border:1px solid ${C.grid};border-radius:16px;overflow:hidden;background:#fff}
+.mz-tool-demo-in{padding:18px 22px;display:grid;gap:0}
+.mz-tool-demo-in div{display:grid;grid-template-columns:1fr 26px 70px 26px;align-items:center;padding:9px 0;border-bottom:1px solid ${C.grid};font:400 12px ${SANS};color:${C.muted}}
+.mz-tool-demo-in div:last-child{border-bottom:0}
+.mz-tool-demo-in i{font-style:normal;width:22px;height:22px;border:1px solid ${C.grid};border-radius:99px;display:grid;place-items:center;color:${C.ink};font-size:12px}
+.mz-tool-demo-in b{text-align:center;font:400 18px ${SERIF};color:${C.ink}}
+.mz-tool-demo-out{background:${C.navy};color:#fff;padding:22px 24px;display:flex;flex-direction:column;justify-content:center}
+.mz-tool-demo-out .mz-kicker{color:${C.glow}}
+.mz-tool-blur{font:400 calc(34px * var(--mz-ds)) ${SERIF};margin:10px 0 12px;filter:blur(7px);opacity:.9;user-select:none}
+.mz-tool-lock{font:600 10.5px ${SANS};letter-spacing:.08em;color:rgba(255,255,255,.75)}
 .mz-qr{display:flex;align-items:center;gap:16px}
 .mz-qr>svg{flex:none;border-radius:6px}
 .mz-qr b{display:block;font:600 11px ${SANS};letter-spacing:.14em;text-transform:uppercase;margin-bottom:5px}
@@ -1587,8 +1664,8 @@ div.mz-ed{display:block}
 .mz-root:not(.mz-flipping) .mz-display{font-size:calc(40px * var(--mz-ds))}.mz-root:not(.mz-flipping) .mz-h1,.mz-root:not(.mz-flipping) .mz-plan-name{font-size:calc(34px * var(--mz-ds))}
 .mz-root:not(.mz-flipping) .mz-about-photo{height:440px}.mz-root:not(.mz-flipping) .mz-about-head{padding:0 20px 28px}
 .mz-root:not(.mz-flipping) .mz-split-page{display:flex;flex-direction:column}.mz-root:not(.mz-flipping) .mz-split-photo{height:280px}.mz-root:not(.mz-flipping) .mz-run-tight,.mz-root:not(.mz-flipping) .mz-split-body,.mz-root:not(.mz-flipping) .mz-foot-tight{margin-left:20px;margin-right:20px;padding-left:0;padding-right:0}
-.mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool{grid-template-columns:1fr}
-.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
+.mz-root:not(.mz-flipping) .mz-about-grid,.mz-root:not(.mz-flipping) .mz-partner,.mz-root:not(.mz-flipping) .mz-team-3,.mz-root:not(.mz-flipping) .mz-team-4,.mz-root:not(.mz-flipping) .mz-terms,.mz-root:not(.mz-flipping) .mz-qa,.mz-root:not(.mz-flipping) .mz-cols,.mz-root:not(.mz-flipping) .mz-steps-4,.mz-root:not(.mz-flipping) .mz-steps-3,.mz-root:not(.mz-flipping) .mz-contents,.mz-root:not(.mz-flipping) .mz-row3,.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}
+.mz-root:not(.mz-flipping) .mz-tool,.mz-root:not(.mz-flipping) .mz-tool-demo{grid-template-columns:1fr}.mz-root:not(.mz-flipping) .mz-contents{margin:0}.mz-root:not(.mz-flipping) .mz-contents-photo{margin:0}
 .mz-root:not(.mz-flipping) .mz-gl-head{display:none}.mz-root:not(.mz-flipping) .mz-gl-gridlayer{display:none}.mz-root:not(.mz-flipping) .mz-gl-row,.mz-root:not(.mz-flipping) .mz-gl.with-yield .mz-gl-row{grid-template-columns:1fr;gap:6px}.mz-root:not(.mz-flipping) .mz-gl-v,.mz-root:not(.mz-flipping) .mz-gl-y{text-align:left}
 .mz-root:not(.mz-flipping) .mz-contents-photo{min-height:240px}
 .mz-root:not(.mz-flipping) .mz-stats,.mz-root:not(.mz-flipping) .mz-facts{grid-template-columns:1fr 1fr}

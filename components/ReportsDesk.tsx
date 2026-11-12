@@ -3,6 +3,7 @@
 // (pick an owner / units / a building, a period → see what the report will carry → generate →
 // open the share page). Each row answers three things at a glance: what it is, whether it has
 // gone to the owner, and whether they opened it — and shares the owner link in one tap.
+import { ToolLeads } from '@/components/ToolLeads'
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X, Share2, Check, Send, Search, RefreshCw, Building2, BookOpen } from 'lucide-react'
 import { AUDIENCES, type Audience } from '@/lib/sales-audience'
@@ -551,6 +552,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
           </button>
         )}
       </LeanHead>
+      {salesOnly ? <ToolLeads /> : null}
       {made && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center gap-3 flex-wrap">
           <p className="text-[13px] text-amber-900 flex-1 min-w-[14rem]">{made.note}</p>
