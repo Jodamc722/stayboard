@@ -24,7 +24,8 @@ export async function POST(req: NextRequest) {
   const input = cleanInput('income', b?.input) as IncomeInput
   const full = await runTool('income', input) as IncomeFull
   if (!full.found) return NextResponse.json({ ok: false, error: 'There are not enough projections or comparables for this home yet. Add the building to the Projections library first.' }, { status: 400 })
-  const r = await createCalcReport({ input, full, source: 'team', by: g.access.email || null, preparedFor: String(b?.preparedFor || ''), title: String(b?.title || '') })
+  const ow = b?.owner || {}
+  const r = await createCalcReport({ input, full, source: 'team', by: g.access.email || null, preparedFor: String(ow.name || b?.preparedFor || ''), title: String(b?.title || ''), owner: { name: String(ow.name || ''), email: String(ow.email || ''), phone: String(ow.phone || ''), unit: String(ow.unit || '') } })
   return r.ok ? NextResponse.json({ ok: true, code: r.code }) : NextResponse.json(r, { status: 500 })
 }
 

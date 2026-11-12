@@ -44,12 +44,12 @@ export async function POST(req: NextRequest) {
   // A change after unlocking recomputes the same lead's quote; it is not a new lead and no new bell.
   // The percentages behind an estimate stay with the team (Jon, 2026-11-12: "the percentage increase
   // should not show… it should just increase"): the public answer carries the adjusted range only.
-  const out: any = tool === 'income' ? { ...full, adjustments: [], adjTotal: 0, baseLo: 0, baseHi: 0 } : full
+  const out: any = tool === 'income' ? { ...full, adjustments: [], adjTotal: 0, adjAdr: 0, adjOcc: 0, baseLo: 0, baseHi: 0 } : full
   // THE PROJECTION PAGE (Jon, 2026-11-12: "once the projection is generated it should open to a new page"):
   // the unlock, and every "Open my projection" after a change, saves a page at /r/<code> for this answer.
   const page = async () => {
     if (tool !== 'income' || !(full as IncomeFull).found) return null
-    const r = await createCalcReport({ input: input as IncomeInput, full: full as IncomeFull, source: 'public' }).catch(() => null)
+    const r = await createCalcReport({ input: input as IncomeInput, full: full as IncomeFull, source: 'public', owner: { name: String(b?.name || '').trim(), email, phone: String(b?.phone || '').trim() } }).catch(() => null)
     return r && r.ok ? r.code : null
   }
   if (b?.refresh) return NextResponse.json({ ok: true, summary, full: out, ...(b?.makeReport ? { report: await page() } : {}) }, { headers: NO_STORE })

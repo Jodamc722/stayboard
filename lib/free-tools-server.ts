@@ -64,19 +64,22 @@ async function income(inp: IncomeInput, light = false): Promise<IncomeFull> {
   if (!use.length) return base
   const baseLo = r100(med(use.map(p => p.lo))), baseHi = Math.max(baseLo, r100(med(use.map(p => p.hi))))
   const sfs = use.map(p => p.sf).filter((x): x is number => !!x)
-  const adj = adjustmentsFor(settings, { view: inp.view, kitchen: inp.kitchen, balcony: inp.balcony, amenities: inp.amenities, sqft: inp.sqft, beachMi: near.beachMi, typicalSqft: sfs.length ? med(sfs) : null })
-  const f = 1 + adj.total / 100
+  const oLo0 = med(use.map(p => p.olo).filter(Boolean)), oHi0 = med(use.map(p => p.ohi).filter(Boolean))
+  const baseOcc = oLo0 && oHi0 ? (oLo0 + oHi0) / 2 : 70
+  const adj = adjustmentsFor(settings, { view: inp.view, kitchen: inp.kitchen, balcony: inp.balcony, amenities: inp.amenities, sqft: inp.sqft, beachMi: near.beachMi, typicalSqft: sfs.length ? med(sfs) : null, baseOcc, basis: own.length ? 'own' : local.length ? 'local' : 'all' })
+  // revenue moves by the rate and the occupancy together; the nightly rate by the rate alone
+  const f = adj.factor
   const lo = r100(baseLo * f), hi = Math.max(lo, r100(baseHi * f))
   const net = (g: number) => r100(g * (1 - CHANNEL / 100) * (1 - mg / 100))
-  const nlo = Math.round(med(use.map(p => p.nlo).filter(Boolean)) * f), nhi = Math.round(med(use.map(p => p.nhi).filter(Boolean)) * f)
+  const nlo = Math.round(med(use.map(p => p.nlo).filter(Boolean)) * adj.adrFactor), nhi = Math.round(med(use.map(p => p.nhi).filter(Boolean)) * adj.adrFactor)
   // The comparables shown in the report: this building's projections first, then the nearest set.
   const comps = Array.from(new Map([...own, ...(local.length ? local : []), ...pts].filter(p => p.comp).map(p => [p.comp!.name, p.comp!])).values()).slice(0, 5)
   return {
     ...base, found: true, lo, hi, monthLo: r100(lo / 12), monthHi: r100(hi / 12), basis: use.length, baseLo, baseHi,
     nightlyLo: nlo, nightlyHi: Math.max(nlo, nhi),
-    occLo: Math.round(med(use.map(p => p.olo).filter(Boolean))), occHi: Math.round(med(use.map(p => p.ohi).filter(Boolean))),
+    occLo: oLo0 ? Math.round(Math.min(settings.occMax, oLo0 + adj.occ)) : 0, occHi: oHi0 ? Math.round(Math.min(settings.occMax, oHi0 + adj.occ)) : 0,
     months: SEASON.map(s => ({ lo: r100(lo * s), hi: r100(hi * s) })), netLo: net(lo), netHi: net(hi),
-    sources: Array.from(new Set(use.map(p => p.src))).slice(0, 6), adjustments: adj.list, adjTotal: adj.total, comps,
+    sources: Array.from(new Set(use.map(p => p.src))).slice(0, 6), adjustments: adj.list, adjTotal: adj.total, adjAdr: adj.adr, adjOcc: adj.occ, comps,
   }
 }
 

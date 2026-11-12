@@ -3,10 +3,10 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { makeCode } from './owner-report'
 import { STAY_CONTACT } from './need-list-contact'
-import { DEFAULT_SHOW, type CalcContent } from './calc-report'
+import { DEFAULT_SHOW, type CalcContent, type CalcOwner } from './calc-report'
 import type { IncomeFull, IncomeInput } from './free-tools'
 
-export async function createCalcReport(o: { input: IncomeInput; full: IncomeFull; source: 'public' | 'team'; by?: string | null; preparedFor?: string; title?: string }): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
+export async function createCalcReport(o: { input: IncomeInput; full: IncomeFull; source: 'public' | 'team'; by?: string | null; preparedFor?: string; title?: string; owner?: Partial<CalcOwner> }): Promise<{ ok: true; code: string } | { ok: false; error: string }> {
   const p = STAY_CONTACT.person
   const today = new Date().toISOString().slice(0, 10)
   const name = o.input.building || o.full.area || 'Your home'
@@ -14,13 +14,14 @@ export async function createCalcReport(o: { input: IncomeInput; full: IncomeFull
     meta: { kind: 'calc', v: 1, source: o.source },
     look: 'ivory',
     title: (o.title || '').trim() || (o.input.building ? o.input.building + ' rental projection' : 'Your rental projection'),
-    preparedFor: (o.preparedFor || '').slice(0, 120),
+    preparedFor: (o.preparedFor || o.owner?.name || '').slice(0, 120),
+    owner: { name: String(o.owner?.name || o.preparedFor || '').slice(0, 120), email: String(o.owner?.email || '').slice(0, 160), phone: String(o.owner?.phone || '').slice(0, 40), unit: String(o.owner?.unit || '').slice(0, 40) },
     notes: '',
     show: { ...DEFAULT_SHOW, net: o.source === 'public' },
     input: o.input,
-    full: { ...o.full, adjustments: [], adjTotal: 0, baseLo: 0, baseHi: 0 },
+    full: { ...o.full, adjustments: [], adjTotal: 0, adjAdr: 0, adjOcc: 0, baseLo: 0, baseHi: 0 },
     contact: p ? { name: p.name, role: p.role, phone: p.phone, email: p.email, photo: p.photo } : {},
-    team: { adjustments: o.full.adjustments || [], adjTotal: o.full.adjTotal || 0, baseLo: o.full.baseLo || 0, baseHi: o.full.baseHi || 0 },
+    team: { adjustments: o.full.adjustments || [], adjTotal: o.full.adjTotal || 0, baseLo: o.full.baseLo || 0, baseHi: o.full.baseHi || 0, adjAdr: o.full.adjAdr, adjOcc: o.full.adjOcc },
   }
   const code = makeCode()
   const { error } = await supabaseAdmin().from('owner_reports').insert({

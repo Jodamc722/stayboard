@@ -18,7 +18,7 @@ export function CalcReportPage({ code, initial, canEdit, createdAt }: { code: st
   const [saving, setSaving] = useState<'' | 'saving' | 'saved' | 'error'>('')
   const [copied, setCopied] = useState(false)
   const f = c.full as IncomeFull
-  const home = describeHome(c.input)
+  const home = [c.owner?.unit ? 'Unit ' + c.owner.unit : '', describeHome(c.input)].filter(Boolean).join(' · ')
   const where = [c.input.address, f.area && !(c.input.address || '').includes(f.area) ? f.area : ''].filter(Boolean).join(' · ')
   const date = new Date(createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   const mx = Math.max(1, ...f.months.map(m => m.hi))
@@ -63,7 +63,7 @@ export function CalcReportPage({ code, initial, canEdit, createdAt }: { code: st
       <header className="cr-head">
         <div className="cr-wrap">
           <div className="cr-top"><img src={c.look === 'navy' ? '/stay-logo-white.png' : '/stay-logo.png'} alt="Stay Hospitality" /><span>{date}</span></div>
-          <p className="cr-kick">{editing ? <input className="cr-in" defaultValue={c.preparedFor} placeholder="Prepared for (name)" onBlur={e => e.target.value !== c.preparedFor && save({ preparedFor: e.target.value })} /> : c.preparedFor ? 'Prepared for ' + c.preparedFor : 'Rental projection'}</p>
+          <p className="cr-kick">{c.preparedFor ? 'Prepared for ' + c.preparedFor : 'Rental projection'}</p>
           <h1>{editing ? <input className="cr-in cr-in-h" defaultValue={c.title} onBlur={e => e.target.value !== c.title && save({ title: e.target.value })} /> : c.title}</h1>
           {where || home ? <p className="cr-sub">{[where, home].filter(Boolean).join('  ·  ')}</p> : null}
         </div>
@@ -76,7 +76,7 @@ export function CalcReportPage({ code, initial, canEdit, createdAt }: { code: st
           <p className="cr-note">Gross rental revenue once the listing is established. From {f.basisLabel}, adjusted for the home’s size, view, kitchen, balcony, amenities and distance to the beach.</p>
           {canEdit && initial.team && initial.team.adjustments.length ? (
             <details className="cr-team"><summary>For the team: how the calculator adjusted it (never shown to the owner)</summary>
-              <p>Base {range(initial.team.baseLo, initial.team.baseHi)} · {initial.team.adjustments.map(a => a.label + ' ' + (a.pct > 0 ? '+' : '') + a.pct + '%').join(' · ')} · total {initial.team.adjTotal > 0 ? '+' : ''}{initial.team.adjTotal}%</p>
+              <p>Base {range(initial.team.baseLo, initial.team.baseHi)}. Each factor counts less than the one before it (no stacking).</p><ul>{initial.team.adjustments.map((a, i) => <li key={i}>{a.label}: {[a.pct ? 'rate ' + (a.pct > 0 ? '+' : '') + a.pct + '%' : '', a.occ ? 'occupancy ' + (a.occ > 0 ? '+' : '') + a.occ + ' pts' : ''].filter(Boolean).join(', ')}{a.note ? ' (' + a.note + ')' : ''}</li>)}</ul><p>Together: rate {(initial.team.adjAdr || 0) > 0 ? '+' : ''}{initial.team.adjAdr ?? 0}%, occupancy {(initial.team.adjOcc || 0) > 0 ? '+' : ''}{initial.team.adjOcc ?? 0} pts, revenue {initial.team.adjTotal > 0 ? '+' : ''}{initial.team.adjTotal}%</p>
             </details>
           ) : null}
         </section>
@@ -121,6 +121,16 @@ export function CalcReportPage({ code, initial, canEdit, createdAt }: { code: st
           {c.show.net ? <p className="cr-fine">“You keep” takes off typical booking-site fees ({f.channelPct}%){f.mgmtPct ? <> and a {f.mgmtPct}% management fee</> : <>; self-managed, so no management fee, but cleaning, supplies and your time are yours</>}. Distances are straight-line.</p> : null}
         </section>
 
+        {editing ? (
+          <section className="cr-owner">
+            <p className="cr-lab">The owner <span>(name and unit show on the page; email and phone stay with the team)</span></p>
+            <div>
+              {([['name', 'Name'], ['unit', 'Unit'], ['email', 'Email'], ['phone', 'Phone']] as [keyof NonNullable<CalcContent['owner']>, string][]).map(([k, l]) => (
+                <label key={k}><span>{l}</span><input className="cr-in" defaultValue={(c.owner || ({} as Any))[k] || (k === 'name' ? c.preparedFor : '')} onBlur={e => { const cur = (c.owner || ({} as Any))[k] || (k === 'name' ? c.preparedFor : ''); if (e.target.value !== cur) save({ owner: { ...(c.owner || { name: c.preparedFor, email: '', phone: '', unit: '' }), [k]: e.target.value } }) }} /></label>
+              ))}
+            </div>
+          </section>
+        ) : null}
         {editing ? (
           <section className="cr-show">
             <p className="cr-lab">Show on the page</p>
@@ -212,6 +222,7 @@ const CSS = `
 .cr-notes{margin-top:40px;background:var(--soft);border-radius:16px;padding:20px 22px}
 .cr-notes p{margin:0}
 .cr-own{margin-top:10px!important;color:var(--ink)}
+.cr-owner{margin-top:16px;background:var(--card);border:1px dashed var(--acc);border-radius:14px;padding:14px 16px}.cr-owner .cr-lab span{text-transform:none;letter-spacing:0;font-weight:400;color:var(--mut)}.cr-owner>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.cr-owner label{display:grid;gap:4px;font-size:12px;color:var(--mut)}.cr-owner .cr-in{background:var(--soft);color:var(--ink)}@media (max-width:520px){.cr-owner>div{grid-template-columns:1fr}}
 .cr-show{margin-top:16px;display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center}
 .cr-show .cr-lab{margin:0;width:100%}
 .cr-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}

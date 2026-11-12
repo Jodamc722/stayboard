@@ -291,12 +291,19 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
         {team && tool === 'income' ? (
           // THE TEAM'S WAY IN (Sales → Projections library): no email gate; it saves a page to edit and send.
           <div className="ft-gate">
-            <p className="ft-lab">Who is it for</p>
-            <input placeholder="Owner's name (optional)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            <p className="ft-lab">The owner (optional)</p>
+            <div className="ft-two">
+              <input placeholder="Owner's name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <input placeholder="Unit (e.g. 2401)" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} />
+            </div>
+            <div className="ft-two">
+              <input type="email" placeholder="Owner's email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+              <input placeholder="Owner's phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} inputMode="tel" />
+            </div>
             <button type="button" disabled={busy || !summary?.found} onClick={async () => {
               setBusy(true); setErr('')
               try {
-                const d = await fetch('/api/sales/calc-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: inp, preparedFor: form.name }) }).then(r => r.json())
+                const d = await fetch('/api/sales/calc-report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: inp, owner: { name: form.name, email: form.email, phone: form.phone, unit: form.website } }) }).then(r => r.json())
                 if (d?.ok && d.code) { window.open('/r/' + d.code, '_blank', 'noopener'); team.onCreated?.() } else setErr(d?.error || 'That did not go through. Try again.')
               } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
             }}>{busy ? 'Building…' : 'Create the projection page →'}</button>

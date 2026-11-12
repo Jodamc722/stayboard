@@ -15,19 +15,22 @@ export const CALC_LOOKS: { key: CalcLook; label: string }[] = [
   { key: 'ivory', label: 'Ivory' }, { key: 'navy', label: 'Navy' }, { key: 'minimal', label: 'Minimal' },
 ]
 export type CalcShow = { months: boolean; comps: boolean; nearby: boolean; net: boolean }
+export type CalcOwner = { name: string; email: string; phone: string; unit: string }
 export type CalcContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
 export type CalcContent = {
   meta: { kind: 'calc'; v: 1; source: 'public' | 'team' }
   look: CalcLook
   title: string
   preparedFor: string
+  /** The owner it is for (Jon, 2026-11-12: "add the owner name etc. to the projections"). Name and unit show on the page. */
+  owner?: CalcOwner
   notes: string
   show: CalcShow
   input: IncomeInput
   full: IncomeFull
   contact: CalcContact
   /** The calculator's adjustments, for the team's eyes only (stripped before a public render). */
-  team?: { adjustments: { label: string; pct: number }[]; adjTotal: number; baseLo: number; baseHi: number }
+  team?: { adjustments: { label: string; pct: number; occ?: number; note?: string }[]; adjTotal: number; baseLo: number; baseHi: number; adjAdr?: number; adjOcc?: number }
 }
 
 export const DEFAULT_SHOW: CalcShow = { months: true, comps: true, nearby: true, net: true }
@@ -41,7 +44,7 @@ export function describeHome(i: IncomeInput): string {
 export function publicContent(c: CalcContent): CalcContent {
   const { team, ...rest } = c
   void team
-  return { ...rest, full: { ...c.full, adjustments: [], adjTotal: 0, baseLo: 0, baseHi: 0 } }
+  return { ...rest, ...(c.owner ? { owner: { name: c.owner.name, unit: c.owner.unit, email: '', phone: '' } } : {}), full: { ...c.full, adjustments: [], adjTotal: 0, adjAdr: 0, adjOcc: 0, baseLo: 0, baseHi: 0 } }
 }
 
 const num = (v: any, d: number) => { const x = Number(v); return Number.isFinite(x) && x >= 0 && x < 1e8 ? Math.round(x) : d }
@@ -61,7 +64,13 @@ export function applyEdits(c: CalcContent, e: any): CalcContent {
   return {
     ...c,
     look: CALC_LOOKS.some(l => l.key === e.look) ? e.look : c.look,
-    title: txt(e.title, 120, c.title), preparedFor: txt(e.preparedFor, 120, c.preparedFor), notes: txt(e.notes, 1500, c.notes),
+    title: txt(e.title, 120, c.title), notes: txt(e.notes, 1500, c.notes),
+    ...(() => {
+      const o0 = c.owner || { name: c.preparedFor || '', email: '', phone: '', unit: '' }
+      const o = e.owner && typeof e.owner === 'object' ? { name: txt(e.owner.name, 120, o0.name), email: txt(e.owner.email, 160, o0.email), phone: txt(e.owner.phone, 40, o0.phone), unit: txt(e.owner.unit, 40, o0.unit) } : o0
+      const pf = typeof e.preparedFor === 'string' ? e.preparedFor.slice(0, 120) : e.owner ? o.name : c.preparedFor
+      return { owner: { ...o, name: typeof e.preparedFor === 'string' ? pf : o.name }, preparedFor: pf }
+    })(),
     show: e.show && typeof e.show === 'object' ? { months: e.show.months !== false, comps: e.show.comps !== false, nearby: e.show.nearby !== false, net: e.show.net !== false } : c.show,
     full: f,
   }
