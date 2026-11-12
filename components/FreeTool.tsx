@@ -9,13 +9,13 @@
 // inside a magazine and Stay's own look on its own page.
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, Lock, Download, Phone, Mail, Check } from 'lucide-react'
-import { TOOL_META, PARTNER_NOTE, INCOME_AREAS, BED_SIZES_PUBLIC, APPLIANCE_KEYS, APPLIANCE_LABEL, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary } from '@/lib/free-tools'
+import { TOOL_META, PARTNER_NOTE, BED_SIZES_PUBLIC, APPLIANCE_KEYS, APPLIANCE_LABEL, money0, type ToolKey, type IncomeFull, type IncomeSummary, type InventoryFull, type InventorySummary } from '@/lib/free-tools'
 
 type Any = any
 export type ToolContact = { name?: string; role?: string; phone?: string; email?: string; photo?: string }
 
 const DEFAULTS: Record<ToolKey, Any> = {
-  income: { area: '', bedrooms: 1, bathrooms: 1, managed: false },
+  income: { building: '', libId: '', address: '', area: '', bedrooms: 1, bathrooms: 1, sqft: 0, kitchen: 'full', balcony: false, view: 'none', amenities: [], managed: false },
   inventory: { bedrooms: 2, bathrooms: 2, guests: 6, beds: { King: 1, Queen: 1 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true } },
 }
 const emph = (x: string) => x.split(/(\*[^*]+\*)/).map((s, i) => s.startsWith('*') && s.endsWith('*') ? <em key={i}>{s.slice(1, -1)}</em> : s)
@@ -43,6 +43,31 @@ function Seg<T extends string>({ label, value, set, opts }: { label: string; val
   )
 }
 
+function BuildingSearch({ value, onPick, onType }: { value: Any; onPick: (h: Any) => void; onType: (v: string) => void }) {
+  const [hits, setHits] = useState<Any[]>([])
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    const q = String(value.building || '')
+    if (q.length < 2 || value.libId || value.lat != null) { setHits([]); return }
+    const id = setTimeout(() => fetch('/api/tools/buildings?q=' + encodeURIComponent(q)).then(r => r.json()).then(d => { setHits(d?.buildings || []); setOpen(true) }).catch(() => {}), 220)
+    return () => clearTimeout(id)
+  }, [value.building, value.libId, value.lat])
+  return (
+    <div className="ft-field ft-search">
+      <span className="ft-lab">Building</span>
+      <input value={value.building} placeholder="Search a building, e.g. Elser" onChange={e => onType(e.target.value)} onFocus={() => hits.length && setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 180)} autoComplete="off" />
+      {open && hits.length ? (
+        <ul className="ft-hits">{hits.map(h => (
+          <li key={h.key}><button type="button" onMouseDown={e => e.preventDefault()} onClick={() => { onPick(h); setOpen(false) }}>
+            <b>{h.name}</b><span>{[h.address, h.area].filter(Boolean).join(' · ') || 'Address not on file'}</span>{h.projections ? <em>Our projections</em> : null}
+          </button></li>
+        ))}</ul>
+      ) : null}
+      {value.libId ? <p className="ft-hint">We hold projections for this building; the estimate starts from them.</p> : null}
+    </div>
+  )
+}
+
 export function FreeTool({ tool, refCode, where, area, contact, embedded }: { tool: ToolKey; refCode?: string; where?: string; area?: string; contact?: ToolContact; embedded?: boolean }) {
   const meta = TOOL_META[tool]
   const [inp, setInp] = useState<Any>(() => ({ ...DEFAULTS[tool], ...(tool === 'income' && area ? { area } : {}) }))
@@ -57,6 +82,8 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
   const [fmt, setFmt] = useState<'pdf' | 'xlsx'>(tool === 'inventory' ? 'xlsx' : 'pdf')
   const unlocked = useRef<{ email: string; name: string; phone: string } | null>(null)
   const set = (k: string, v: Any) => setInp((p: Any) => ({ ...p, [k]: v }))
+  const [opts, setOpts] = useState<Any>(null)
+  useEffect(() => { if (tool === 'income') fetch('/api/tools/options').then(r => r.json()).then(d => d?.ok && setOpts(d)).catch(() => {}) }, [tool])
   const key = JSON.stringify(inp)
 
   // The headline follows every change; once unlocked, the full quote follows too.
@@ -64,7 +91,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
     const id = setTimeout(async () => {
       try {
         const u = unlocked.current
-        const r = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, input: inp, ref: refCode, where, ...(u || {}) }) })
+        const r = await fetch('/api/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool, input: inp, ref: refCode, where, ...(u || {}), ...(u ? { refresh: true } : {}) }) })
         const d = await r.json()
         if (d?.ok) { setSummary(d.summary); if (d.full) setFull(d.full) }
       } catch { /* the last good numbers stay */ }
@@ -83,7 +110,8 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       setFull(d.full); setSummary(d.summary); setGate(false)
       // Straight to the download (Jon, 2026-11-12: "should just be a download").
       fullRef.current = d.full
-      if (fmt === 'xlsx' && tool === 'inventory') xlsx(form.email); else pdf(d.full)
+      if (tool === 'income') { /* the projection shows on the page; the PDF is a button under it */ }
+      else if (fmt === 'xlsx') xlsx(form.email); else pdf(d.full)
     } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
   }
   // THE EXCEL CHECKLIST (supply calculator only): counts, a Bought and an In-the-home tick column, notes.
@@ -96,74 +124,36 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       setTimeout(() => URL.revokeObjectURL(url), 4000)
     } catch { setErr('The download did not start. Try again.') }
   }
-  // A REAL PDF FILE, DOWNLOADED (Jon, 2026-11-12: "should just be a download"), built with jsPDF from the
-  // unlocked quote: no print dialog, so it works the same on a phone.
+  // A REAL PDF FILE, DOWNLOADED (Jon, 2026-11-12: "should just be a download"; "looks bad" → the designed
+  // layout in lib/free-tool-pdf). No print dialog, so it works the same on a phone.
   async function pdf(f: Any = fullRef.current) {
     if (!f) return
     try {
-      const { jsPDF } = await import('jspdf')
-      const doc = new jsPDF({ unit: 'pt', format: 'letter' })
-      const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 48
-      let y = M
-      const ink = [16, 17, 20] as const, mute = [107, 108, 114] as const, acc = [140, 109, 58] as const
-      const ensure = (h: number) => { if (y + h > H - M - 30) { doc.addPage(); y = M } }
-      try {
-        const img = await fetch('/stay-logo.png').then(r => r.blob()).then(b => new Promise<string>(res => { const fr = new FileReader(); fr.onload = () => res(String(fr.result)); fr.readAsDataURL(b) }))
-        doc.addImage(img, 'PNG', M, y, 74, 30); y += 48
-      } catch { doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text('STAY HOSPITALITY', M, y + 12); y += 32 }
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...acc); doc.text(meta.kicker.toUpperCase(), M, y); y += 20
-      doc.setFont('times', 'normal'); doc.setFontSize(26); doc.setTextColor(...ink); doc.text(meta.short, M, y); y += 22
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(...mute)
-      const line = (t: string, size = 10, color: readonly number[] = mute, font: [string, string] = ['helvetica', 'normal']) => {
-        doc.setFont(font[0], font[1]); doc.setFontSize(size); doc.setTextColor(color[0], color[1], color[2])
-        const ls = doc.splitTextToSize(t, W - M * 2); ensure(ls.length * size * 1.3); doc.text(ls, M, y); y += ls.length * size * 1.3 + 4
-      }
-      const row = (a: string, b: string, bold = false) => {
-        ensure(18); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(10); doc.setTextColor(...ink)
-        doc.text(doc.splitTextToSize(a, W - M * 2 - 80)[0], M, y); doc.text(b, W - M, y, { align: 'right' })
-        doc.setDrawColor(228, 226, 221); doc.line(M, y + 6, W - M, y + 6); y += 18
-      }
-      const head = (t: string) => { ensure(36); y += 10; doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(...acc); doc.text(t.toUpperCase(), M, y); y += 14 }
-      if (tool === 'income') {
-        const g = f as IncomeFull
-        if (!g.found) line('We will email you a projection built for your home within 48 hours.', 12, ink)
-        else {
-          line('Could earn in a year, ' + g.area, 9, acc, ['helvetica', 'bold'])
-          line(money0(g.lo) + ' – ' + money0(g.hi), 28, ink, ['times', 'normal'])
-          head('The figures'); row('Per month, average', money0(g.monthLo) + ' – ' + money0(g.monthHi)); row('Nightly rate', money0(g.nightlyLo) + ' – ' + money0(g.nightlyHi)); row('Occupancy', g.occLo + '–' + g.occHi + '%'); row('You keep, est.', money0(g.netLo) + ' – ' + money0(g.netHi))
-          head('Through the year'); g.months.forEach((m, i) => row(['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][i], money0(m.lo) + ' – ' + money0(m.hi)))
-          y += 6; line('Gross rental revenue for an established listing. “You keep” takes off typical booking-site fees (' + g.channelPct + '%)' + (g.mgmtPct ? ' and a ' + g.mgmtPct + '% management fee' : ', self-managed') + '. Built from ' + g.basis + ' comparable homes in Stay Hospitality’s South Florida data. Estimates, not guarantees.', 8.5)
-        }
-      } else {
-        const g = f as InventoryFull
-        line(g.describe, 10, mute)
-        line((g.pieces + g.linenPieces).toLocaleString() + ' pieces: ' + g.items + ' supply items (' + g.pieces + ' pieces) and ' + g.linenPieces + ' pieces of linen at a par of ' + g.par + '.', 11, ink)
-        for (const gr of g.groups) { head(gr.group); g.rows.filter(r => r.group === gr.group).forEach(r => row(r.name + (r.tier !== 'must' ? '  (' + TIER_LABEL[r.tier].toLowerCase() + ')' : ''), String(r.qty))) }
-        head('Linen at par'); line(g.parText, 9)
-        for (const gr of Array.from(new Set(g.linen.map(r => r.group)))) { head('Linen · ' + gr); g.linen.filter(r => r.group === gr).forEach(r => row(r.name + (r.size ? ' · ' + r.size : ''), String(r.qty))) }
-        head('Notes'); line(PARTNER_NOTE, 10, ink)
-      }
-      const pages = doc.getNumberOfPages()
-      for (let i = 1; i <= pages; i++) {
-        doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...mute)
-        doc.text([contact?.name, contact?.phone, contact?.email].filter(Boolean).join('  ·  ') + '   ·   Stay Hospitality · stay-hospitality.com', M, H - 28)
-        doc.text(i + ' / ' + pages, W - M, H - 28, { align: 'right' })
-      }
-      doc.save(meta.short.replace(/\s+/g, '-').toLowerCase() + '.pdf')
+      const { toolPdf } = await import('@/lib/free-tool-pdf')
+      await toolPdf({ tool, full: f, title: tool === 'income' ? 'Your rental projection' : 'Everything your rental needs', kicker: meta.short, contact: contact || undefined, estimateNote: tool === 'income' ? (f as Any).note : undefined, subtitle: tool === 'income' ? [inp.building, inp.address].filter(Boolean).join(' · ') : undefined,
+        file: (tool === 'income' ? 'rental-projection' : 'rental-supply-list') + '.pdf' })
     } catch { setErr('The download did not start. Try again.') }
   }
 
   const inputs = tool === 'income' ? (
     <>
-      <div className="ft-step">
-        <span className="ft-lab">Neighborhood</span>
-        <select value={inp.area} onChange={e => set('area', e.target.value)}>
-          <option value="">South Florida, any</option>
-          {Array.from(new Set([area, ...INCOME_AREAS].filter(Boolean) as string[])).map(a => <option key={a} value={a}>{a}</option>)}
-        </select>
-      </div>
+      <BuildingSearch value={inp} onPick={h => setInp((p: Any) => ({ ...p, building: h.name, libId: h.libId || '', address: h.address || p.address, area: h.area || p.area, lat: h.lat ?? undefined, lng: h.lng ?? undefined }))}
+        onType={v => setInp((p: Any) => ({ ...p, building: v, libId: '', lat: undefined, lng: undefined }))} />
+      <div className="ft-field"><span className="ft-lab">Address</span><input value={inp.address} placeholder="Street address, city" onChange={e => setInp((p: Any) => ({ ...p, address: e.target.value, lat: undefined, lng: undefined }))} autoComplete="street-address" /></div>
       <Stepper label="Bedrooms" value={inp.bedrooms} set={v => set('bedrooms', v)} min={0} max={5} show={v => (v === 0 ? 'Studio' : String(v))} />
       <Stepper label="Bathrooms" value={inp.bathrooms} set={v => set('bathrooms', v)} min={1} max={5} step={0.5} />
+      <div className="ft-field"><span className="ft-lab">Square feet</span><input inputMode="numeric" value={inp.sqft || ''} placeholder="e.g. 850" onChange={e => set('sqft', Number(e.target.value.replace(/\D/g, '')) || 0)} /></div>
+      <Seg label="Kitchen" value={inp.kitchen} set={v => set('kitchen', v)} opts={[['full', 'Full'], ['kitchenette', 'Kitchenette'], ['none', 'None']]} />
+      <Seg label="Balcony" value={inp.balcony ? 'y' : 'n'} set={v => set('balcony', v === 'y')} opts={[['n', 'No'], ['y', 'Yes']]} />
+      <div className="ft-field"><span className="ft-lab">View</span>
+        <select value={inp.view} onChange={e => set('view', e.target.value)}>{(opts?.views || [{ key: 'none', label: 'No particular view' }, { key: 'city', label: 'City view' }, { key: 'water', label: 'Bay or water view' }, { key: 'ocean', label: 'Ocean view' }, { key: 'beachfront', label: 'Beachfront' }]).map((v: Any) => <option key={v.key} value={v.key}>{v.label}</option>)}</select>
+      </div>
+      {opts?.amenities?.length ? (
+        <div className="ft-apps">
+          <span className="ft-lab">Amenities</span>
+          <div>{opts.amenities.map((am: Any) => { const on = inp.amenities.includes(am.key); return <button key={am.key} type="button" className={on ? 'on' : ''} onClick={() => set('amenities', on ? inp.amenities.filter((x: string) => x !== am.key) : [...inp.amenities, am.key])}>{on ? <Check size={13} /> : null}{am.label}</button> })}</div>
+        </div>
+      ) : null}
       <Seg label="Run by" value={inp.managed ? 'm' : 's'} set={v => set('managed', v === 'm')} opts={[['s', 'Myself'], ['m', 'A manager']]} />
     </>
   ) : (
@@ -188,12 +178,11 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
     if (!summary) return <p className="ft-wait">Working it out…</p>
     if (tool === 'income') {
       const s = summary as IncomeSummary
-      if (!s.found) return <div className="ft-head"><p className="ft-lab">A custom projection</p><p className="ft-note">We do not have enough figures for a {beds(s.bedrooms).toLowerCase()} home here yet. Leave your email and we will send a projection built for your home, free.</p></div>
+      // No numbers before the email (Jon: "should not just give it to them, gated once they fill out the info").
       return (
         <div className="ft-head">
-          <p className="ft-lab">Could earn in a year, {s.area}</p>
-          <p className="ft-big">{money0(s.lo)} <i>–</i> {money0(s.hi)}</p>
-          <p className="ft-note">About {money0(s.monthLo)} to {money0(s.monthHi)} a month, gross, once the listing is established. Based on {s.basis} comparable {beds(s.bedrooms).toLowerCase()} home{s.basis === 1 ? '' : 's'}.</p>
+          <p className="ft-lab">Your projection is ready to build</p>
+          <p className="ft-note">{s.found ? <>From {s.basisLabel}, adjusted for the size, view, kitchen, balcony, amenities and how far the home is from the beach.</> : <>We do not have enough figures for this home yet. Leave your email and we will build a projection for it, free.</>}</p>
         </div>
       )
     }
@@ -209,19 +198,42 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
 
   const quote = !full ? null : tool === 'income' ? (() => {
     const f = full as IncomeFull
-    if (!f.found) return <p className="ft-note">Thank you. We will email you a projection for your home within 48 hours, free and with no obligation.</p>
+    if (!f.found) return <><p className="ft-note">Thank you. We will email you a projection built for your home within 48 hours, free and with no obligation.</p><div className="ft-notes"><p className="ft-lab">This is an estimate</p><p>{f.note}</p></div></>
     const mx = Math.max(1, ...f.months.map(m => m.hi))
     return (
       <>
-        <dl className="ft-figs">
+        <p className="ft-lab ft-acc">Could earn in a year{f.area ? ', ' + f.area : ''}</p>
+        <p className="ft-big">{money0(f.lo)} <i>–</i> {money0(f.hi)}</p>
+        <p className="ft-note">Gross rental revenue once the listing is established. From {f.basisLabel}.</p>
+        <dl className="ft-figs ft-mt">
           <div><dt>Per month, average</dt><dd>{money0(f.monthLo)}–{money0(f.monthHi).slice(1)}</dd></div>
           <div><dt>Nightly rate</dt><dd>{money0(f.nightlyLo)}–{money0(f.nightlyHi).slice(1)}</dd></div>
           <div><dt>Occupancy</dt><dd>{f.occLo}–{f.occHi}%</dd></div>
           <div><dt>You keep, est.</dt><dd>{money0(f.netLo)}–{money0(f.netHi).slice(1)}</dd></div>
         </dl>
-        <p className="ft-lab ft-mt">Through the year, high end</p>
+        {f.adjustments.length ? (
+          <div className="ft-group">
+            <p className="ft-lab">What moved the number</p>
+            <ul>{f.adjustments.map((x, i) => <li key={i}><span>{x.label}</span><em /><b className={x.pct < 0 ? 'neg' : ''}>{x.pct > 0 ? '+' : ''}{x.pct}%</b></li>)}</ul>
+            <p className="ft-fine">Starting from {money0(f.baseLo)} to {money0(f.baseHi)}; together {f.adjTotal > 0 ? '+' : ''}{Math.round(f.adjTotal * 10) / 10}%.</p>
+          </div>
+        ) : null}
+        <p className="ft-lab ft-mt">Through the year</p>
         <div className="ft-bars">{f.months.map((m, i) => <span key={i} title={money0(m.lo) + '–' + money0(m.hi)}><i style={{ height: (m.hi / mx * 100) + '%' }}><b style={{ height: (m.lo / m.hi * 100) + '%' }} /></i><em>{'JFMAMJJASOND'[i]}</em></span>)}</div>
-        <p className="ft-fine">Gross rental revenue for an established listing. “You keep” takes off typical booking-site fees ({f.channelPct}%){f.mgmtPct ? <> and a {f.mgmtPct}% management fee</> : <>; self-managed, so no management fee, but cleaning, supplies and your time are yours</>}. Built from {f.basis} comparable home{f.basis === 1 ? '' : 's'} in Stay Hospitality’s South Florida data. Estimates, not guarantees.</p>
+        {f.comps.length ? (
+          <div className="ft-group">
+            <p className="ft-lab">The comparables behind it</p>
+            <ul>{f.comps.map((c, i) => <li key={i} className="ft-comp"><span>{c.name}<small className="ft-cline">{[c.market, c.nightly, c.occ].filter(Boolean).join(' · ')}</small></span><em /><b>{c.gross}</b></li>)}</ul>
+          </div>
+        ) : null}
+        {f.places.length ? (
+          <div className="ft-group">
+            <p className="ft-lab">Nearby{f.beachMi != null ? `, about ${f.beachMi < 0.95 ? f.beachMi.toFixed(1) : Math.round(f.beachMi)} mi to the beach` : ''}</p>
+            <ul>{f.places.map((x, i) => <li key={i}><span>{x.name}</span><em>{x.kind}</em><b>{x.mi} mi</b></li>)}</ul>
+          </div>
+        ) : null}
+        <p className="ft-fine">“You keep” takes off typical booking-site fees ({f.channelPct}%){f.mgmtPct ? <> and a {f.mgmtPct}% management fee</> : <>; self-managed, so no management fee, but cleaning, supplies and your time are yours</>}. Distances are straight-line.</p>
+        <div className="ft-notes"><p className="ft-lab">This is an estimate</p><p>{f.note}</p></div>
       </>
     )
   })() : (() => {
@@ -256,11 +268,11 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
       <style>{FT_CSS}</style>
       <div className="ft-inputs">{inputs}</div>
       <div className="ft-card">
-        {headline}
+        {tool === 'income' && full ? null : headline}
         {!full ? (
           gate ? (
             <form className="ft-gate" onSubmit={unlock}>
-              <p className="ft-lab">Your email, to download</p>
+              <p className="ft-lab">{tool === 'income' ? 'Your email, to see it' : 'Your email, to download'}</p>
               <input type="email" required placeholder="Email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} autoComplete="email" />
               <div className="ft-two">
                 <input placeholder="Name (optional)" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoComplete="name" />
@@ -270,16 +282,16 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
               {tool === 'inventory' ? (
                 <div className="ft-seg ft-fmt">{([['xlsx', 'Excel checklist'], ['pdf', 'PDF']] as ['xlsx' | 'pdf', string][]).map(([k, l]) => <button key={k} type="button" className={fmt === k ? 'on' : ''} onClick={() => setFmt(k)}>{l}</button>)}</div>
               ) : null}
-              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : fmt === 'xlsx' && tool === 'inventory' ? 'Download the Excel checklist' : 'Download the PDF'}</button>
+              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : tool === 'income' ? 'See my projection' : fmt === 'xlsx' ? 'Download the Excel checklist' : 'Download the PDF'}</button>
               {err ? <p className="ft-err">{err}</p> : null}
-              <p className="ft-fine">It downloads right away. No spam, never shared, and no obligation to work with us.</p>
+              <p className="ft-fine">{tool === 'income' ? 'It shows right here, with a PDF to keep.' : 'It downloads right away.'} No spam, never shared, and no obligation to work with us.</p>
             </form>
           ) : (
-            <button type="button" className="ft-cta" onClick={() => setGate(true)}><Download size={15} /> Download the full list, free</button>
+            <button type="button" className="ft-cta" onClick={() => setGate(true)}><Download size={15} /> {tool === 'income' ? 'See my projection, free' : 'Download the full list, free'}</button>
           )
         ) : (
           <div className="ft-quote">
-            <p className="ft-ok"><Check size={15} /> Your download has started. Change the details above and download again any time.</p>
+            <p className="ft-ok"><Check size={15} /> {tool === 'income' ? 'Here is your projection. Change the details above and it updates.' : 'Your download has started. Change the details above and download again any time.'}</p>
             {quote}
             <div className="ft-actions">
               {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
@@ -289,7 +301,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded }: { to
             </div>
           </div>
         )}
-        {!full && !gate ? <p className="ft-fine">Download {meta.unlock}, as a PDF.</p> : null}
+        {!full && !gate ? <p className="ft-fine">{tool === 'income' ? 'Leave your email to see ' + meta.unlock + ', with the comparables behind it, and download it as a PDF.' : 'Download ' + meta.unlock + ', as a PDF.'}</p> : null}
       </div>
     </div>
   )
@@ -310,6 +322,17 @@ const FT_CSS = `
 .ft-seg button{width:auto!important;height:30px!important;border:0!important;padding:0 12px;background:transparent!important;font:600 12.5px "Inter",sans-serif;color:var(--ft-muted)!important}
 .ft-seg button.on{background:#fff!important;color:var(--ft-ink)!important;box-shadow:0 1px 3px rgba(0,0,0,.12)}
 .ft-sub{margin:14px 0 0;font:400 20px var(--ft-display);color:var(--ft-ink)}
+.ft-field{display:grid;gap:6px;padding:11px 0;border-bottom:1px solid var(--ft-rule);position:relative}
+.ft-field input,.ft-field select{font:500 15px "Inter",sans-serif;border:1px solid var(--ft-rule);border-radius:10px;padding:10px 12px;background:#fff;color:var(--ft-ink);width:100%;box-sizing:border-box;min-width:0}
+.ft-hits{position:absolute;left:0;right:0;top:100%;z-index:20;list-style:none;margin:4px 0 0;padding:4px;background:#fff;border:1px solid var(--ft-rule);border-radius:12px;box-shadow:0 14px 34px rgba(20,18,15,.16);max-height:300px;overflow-y:auto}
+.ft-hits button{display:grid;grid-template-columns:1fr auto;gap:2px 8px;width:100%;text-align:left;border:0;background:none;padding:9px 10px;border-radius:8px;cursor:pointer;color:var(--ft-ink)}
+.ft-hits button:hover{background:var(--ft-soft)}
+.ft-hits b{font:600 14px "Inter",sans-serif}.ft-hits span{grid-column:1;font-size:12px;color:var(--ft-muted)}
+.ft-hits em{grid-row:1/3;grid-column:2;align-self:center;font:600 9.5px "Inter",sans-serif;font-style:normal;letter-spacing:.08em;text-transform:uppercase;color:var(--ft-acc)}
+.ft-hint{margin:0;font-size:12px;color:#2F6B47}
+.ft-acc{color:var(--ft-acc)}
+.ft-group li b.neg{color:#A1332B}
+.ft-comp span{display:flex;flex-direction:column}.ft-comp b{white-space:nowrap;font-size:15px!important}.ft-cline{display:block;color:var(--ft-muted);font-size:11.5px;margin-top:2px}
 .ft-fmt{margin:4px 0 2px;align-self:flex-start;justify-self:start}
 .ft-notes{margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
 .ft-notes p{margin:0;font:400 14px/1.5 "Inter",sans-serif;color:var(--ft-ink)}

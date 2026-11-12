@@ -18,7 +18,7 @@ export function DeckShare({ code, building, prospect, presenter, dek, onePager =
     { k: 'print', label: 'Print version', hint: 'The full magazine, ready to print or save as a PDF', url: deck + '?view=magazine', noun: 'the full magazine (print it or save it as a PDF)' },
     ...(onePager ? [{ k: 'onepage' as ShareWhat, label: 'One-pager', hint: 'Every unit type on a single page', url: deck + '?view=onepage', noun: 'a one-page summary' }] : []),
     { k: 'keynote', label: 'Keynote', hint: 'The presentation slides', url: deck, noun: 'the presentation' },
-    { k: 'tool-income', label: 'Rental income calculator', hint: 'Free tool, credited to this deck', url: origin + '/tools/income?d=' + code, noun: 'a free calculator for what a home could earn' },
+    { k: 'tool-income', label: 'Projections calculator', hint: 'Free tool, credited to this deck', url: origin + '/tools/income?d=' + code, noun: 'a free calculator for what a home could earn' },
     { k: 'tool-inventory', label: 'Rental supply calculator', hint: 'Free tool, supplies and linen, credited to this deck', url: origin + '/tools/inventory?d=' + code, noun: 'a free checklist of everything a rental needs, linen included' },
   ]
   const [what, setWhat] = useState<ShareWhat>('digital')
