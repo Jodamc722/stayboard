@@ -259,7 +259,7 @@ export function ReservationEmailsAdmin({ isOwner }: { isOwner: boolean }) {
                         {previewing && previewFor === p.id ? <Loader2 size={13} className="animate-spin" /> : <Eye size={13} />} Preview with a real booking
                       </button>
                       {problems.length > 0 && <span className="text-[12px] text-amber-700">{problems.join(' · ')}</span>}
-                      {!(props.some(d => d.id === p.id && ['elser', 'salato', 'amrit', 'nomad', 'district225'].includes(d.id))) && (
+                      {!(props.some(d => d.id === p.id && ['elser', 'salato', 'amrit', 'nomad', 'eleven', 'district225'].includes(d.id))) && (
                         <button onClick={() => setProps(list => list.filter(x => x.id !== p.id))} disabled={!isOwner}
                           className="ml-auto text-muted hover:text-rose-600 disabled:opacity-30" title="Remove this building"><Trash2 size={14} /></button>
                       )}

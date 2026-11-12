@@ -21,7 +21,7 @@ import { draftGmail, draftStatus, deleteDraft, foundInSent, listGmailDrafts, ins
 import { getToken as getGuestyToken } from './guesty'
 import { writeCustomFields, readCustomFields, fieldIdOf } from './guesty-custom-fields'
 import { getTaskAutomation, type TaskAutomationCfg } from './auto-inspections'
-import { formPdfBase64 } from './building-form'
+import { formPdfBase64, formKind } from './building-form'
 // ONE SYSTEM, TWO SESSIONS' PARTS (2026-08-19). A parallel session built the support-draft WATCH:
 // every 20 minutes (and on board load) it checks Gmail for drafts that left the Drafts folder and
 // marks those notices sent — locally AND in Guesty. This engine therefore only DRAFTS (with the
@@ -371,7 +371,8 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
       // what Guesty says live → 4:00 PM, the arrival hour the desk has always written by hand on
       // these forms. A guest count is never invented: if it is genuinely unknown the draft carries
       // a red line telling the desk to write it in before sending.
-      const stdEta = p.attachPdf ? '4:00 PM' : ''   // Jon, 2026-08-20: "put 4pm" — the hour the desk writes by hand
+      const fKind = p.attachPdf ? formKind(p.id) : null
+      const stdEta = p.attachPdf && fKind !== 'eleven' ? '4:00 PM' : ''   // Jon, 2026-08-20: "put 4pm" — the hour the desk writes by hand
       const n: any = {
         ...n0,
         eta: str(n0.eta) || live?.eta || stdEta || null,
@@ -379,8 +380,13 @@ export async function runNoticeDrafts(opts: { dryRun?: boolean } = {}): Promise<
         children: (n0 as any).children ?? live?.children ?? null,
       }
       const missingOnForm: string[] = []
-      if (p.attachPdf && n.adults == null) missingOnForm.push('number of guests')
-      if (p.attachPdf && !str(n.eta)) missingOnForm.push('ETA')
+      // What a form cannot go out without depends on the form: E11EVEN's Tenant Authorization
+      // Form asks for the tenant's phone and has no ETA or guest-count line at all.
+      if (fKind === 'eleven') { if (!str(n.guest_phone)) missingOnForm.push('tenant contact phone number') }
+      else {
+        if (p.attachPdf && n.adults == null) missingOnForm.push('number of guests')
+        if (p.attachPdf && !str(n.eta)) missingOnForm.push('ETA')
+      }
       const enrich: Record<string, any> = {}
       if (!str(n0.eta) && n.eta && n.eta !== stdEta) enrich.eta = n.eta
       if ((n0 as any).adults == null && n.adults != null) enrich.adults = n.adults

@@ -59,8 +59,13 @@ export const AGENT = {
 
 /** Everything a subject or body template may reference, for one notice. */
 export function tokensForNotice(p: PropertyEmail, n: Notice, extra?: { shareLink?: string }): TokenValues {
+  // First / last for desks that want them on separate lines (E11EVEN). The first word is the
+  // first name and everything after it the last, so "Maria de la Cruz" keeps her whole surname.
+  const nameParts = String(n.guest_name || '').trim().split(/\s+/).filter(Boolean)
   return {
     guest_name: n.guest_name || '',
+    guest_first_name: nameParts[0] || '',
+    guest_last_name: nameParts.slice(1).join(' '),
     unit_no: n.unit_no || '',
     arrival_date: prettyDate(n.arrival_date),
     departure_date: prettyDate(n.departure_date),

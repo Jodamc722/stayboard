@@ -51,7 +51,7 @@ export const RESERVATION_EMAILS_KEY = 'reservation_emails'
 
 // Every token a subject or body may use. Shown in the admin card so nobody has to guess.
 export const EMAIL_TOKENS = [
-  'guest_name', 'unit_no', 'arrival_date', 'departure_date', 'eta', 'nights',
+  'guest_name', 'guest_first_name', 'guest_last_name', 'unit_no', 'arrival_date', 'departure_date', 'eta', 'nights',
   'guest_phone', 'guest_email', 'adults', 'children', 'pets', 'pet_breed',
   'confirmation_code', 'property_name', 'share_link',
   'agent_name', 'agent_phone', 'agent_email',
@@ -96,6 +96,21 @@ export const STANDARD_BODY = [
   'Thank you,', 'Stay Hospitality',
 ].join('\n')
 
+// E11EVEN's desk dictates its own format (Jon, 2026-11-12): the subject is
+// "Unit # - Name of Guest - Start Date - End Date" and the body is these six labelled lines, with
+// the signed Tenant Authorization Form attached (lib/eleven-pdf).
+export const ELEVEN_SUBJECT = '{{unit_no}} - {{guest_name}} - {{arrival_date}} - {{departure_date}}'
+export const ELEVEN_BODY = [
+  'Unit #: {{unit_no}}',
+  'Guest First Name: {{guest_first_name}}',
+  'Guest Last Name: {{guest_last_name}}',
+  'Guest Phone number: {{guest_phone}}',
+  'Start Date: {{arrival_date}}',
+  'End Date: {{departure_date}}',
+  '',
+  'Attachment: Signed Tenant Authorization Form',
+].join('\n')
+
 const STAY_CC = 'jon@stay-hospitality.com,micaela@stay-hospitality.com,ryan@stay-hospitality.com,karla.stayhospitality@gmail.com'
 
 // Shipped defaults. Elser is seeded LIVE from the values the building already receives, so the
@@ -135,6 +150,17 @@ export const DEFAULT_PROPERTIES: PropertyEmail[] = [
     subject: DEFAULT_SUBJECT, body: STANDARD_BODY,
     leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: true, attachPdf: true, folder: 'Nomad/Reservations', extraLines: '',
     docName: 'Guest Check-In Acknowledgment Form - {{guest_name}} - {{unit_no}}',
+  },
+  {
+    // E11EVEN Club Hotel & Residences (Jon, 2026-11-12). Ships ON so notices file and forms build,
+    // but with no recipient: nothing drafts to the building until its desk address is typed in
+    // Settings — a default never guesses who to write to.
+    id: 'eleven', name: 'E11EVEN', enabled: true,
+    match: ['e11even', '11even', 'eleven'],
+    to: '', cc: STAY_CC,
+    subject: ELEVEN_SUBJECT, body: ELEVEN_BODY,
+    leadHours: 2, timing: 'on-booking', autoCreate: true, autoBuildForm: true, attachPdf: true, folder: 'E11EVEN/Reservations', extraLines: '',
+    docName: 'Tenant Authorization Form - {{guest_name}} - {{unit_no}}',
   },
   {
     id: 'district225', name: 'District 225', enabled: false,
