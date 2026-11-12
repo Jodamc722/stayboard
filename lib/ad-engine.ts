@@ -130,7 +130,19 @@ export type AdScene = {
   dim?: number
   /** This scene's own styling on top of the look (Jon, 2026-11-10: "more custom designs"). Missing = the look's. */
   cu?: SceneCustom
+  /** EVENT AD (Jon, 2026-11-12: "Event, things to do, and then hit them with book your Stay now"): which act the
+   *  scene belongs to — 'event' (the vibe of the event), 'todo' (things to do nearby), 'book' (our listings + CTA). */
+  act?: AdAct
+  /** Where the scene's picture comes from: 'ai' (generated for us), 'stock' (licensed), 'ours' (our listing photos).
+   *  A 'book' scene is always 'ours'. */
+  src?: AdImgSource
+  /** The AI image description for this scene (generic — no names, logos or real people; lib/ad-image-prompt). */
+  imgPrompt?: string
+  /** Planned as an AI image but not generated yet — the photo shown is a stock stand-in. */
+  aiPending?: boolean
 }
+export type AdAct = 'event' | 'todo' | 'book'
+export type AdImgSource = 'ai' | 'stock' | 'ours'
 /** Per-scene custom design: every field optional, each one overrides the ad's look for this scene only. */
 export type SceneCustom = {
   /** Headline size against the design's own. */

@@ -21,6 +21,8 @@ import { momentPost, momentFlyer, momentAngles, type PresetScene, type Angle } f
 import AdScript from './AdScript'
 import { buildingsIn, inBuildings, byPlace, type AreaKey } from '@/lib/ad-places'
 import { type Moment, MOMENTS } from '@/lib/marketing-calendar'
+import { ACT_LABEL, ACT_COLOR, eventByKey } from '@/lib/ad-event'
+import { defaultImagePrompt, stockQueryOf, shapeOfFormat, IMAGE_COST_HINT, EVENT_NAME_NOTE, AI_KEY_MISSING } from '@/lib/ad-image-prompt'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type AdProject, type AdScene, type AdKind, type AdFormat, type AdAssets, type AdAudience, type AdTemplate,
@@ -223,8 +225,17 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   const [keepCopy, setKeepCopy] = useState(true)
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
-  // Where photos come from: our library, or licensed stock (Jon, 2026-11-04).
-  const [photoSrc, setPhotoSrc] = useState<'library' | 'stock' | 'video'>('library')
+  // Where photos come from: our library, or licensed stock (Jon, 2026-11-04) — or generated (2026-11-12).
+  const [photoSrc, setPhotoSrc] = useState<'library' | 'stock' | 'video' | 'ai'>('library')
+  // AI IMAGES (2026-11-12, Jon: "more imagery generations to highlight the events"): the Generate tab's prompt, how
+  // many to make, the last results (up to 4), a note (no key / budget / refused), the key-missing state, the batch.
+  const [aiPrompt, setAiPrompt] = useState('')
+  const [aiN, setAiN] = useState<1 | 2 | 4>(2)
+  const [aiHits, setAiHits] = useState<Hit[]>([])
+  const [aiNote, setAiNote] = useState('')
+  const [aiOff, setAiOff] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiBatch, setAiBatch] = useState('')
   const [stockNote, setStockNote] = useState('')
   const [searching, setSearching] = useState(false)
   const [exportPct, setExportPct] = useState<number | null>(null)
@@ -332,6 +343,22 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** The areas this build is set in: the moment being started, else the open ad's. */
   const whereNow = (): AreaKey[] => { const mk = seed.current?.fresh ? seed.current?.patch?.moment : pRef.current?.moment; return mk ? (MOMENTS.find(m => m.key === mk)?.where || []) : [] }
   const goalOf = (k: string) => GOALS.find(g => g.key === k)
+  /** EVENT AD (2026-11-12): the calendar event an ad is built as three acts for — an ad that already has acts, or a
+   *  build started from an event with the Event goal. Undefined = an ordinary ad (the writer may still spot "event ad"). */
+  const eventKeyOf = (x: AdProject | null | undefined): string | undefined => (x && x.moment && eventByKey(x.moment) && (x.scenes.some(y => y.act) || x.goal === 'event') ? x.moment : undefined)
+  /** A rewritten event ad keeps the AI pictures already made (they cost money): the n-th scene of an act takes the
+   *  n-th old scene's generated image. Book scenes are left to the writer's own photo pick. */
+  const keepAi = (old: AdProject, next: AdScene[]): AdScene[] => next.map((x, i) => {
+    if (!x.act || x.act === 'book') return x
+    const k = next.slice(0, i).filter(y => y.act === x.act).length
+    const o = old.scenes.filter(y => y.act === x.act)[k]
+    return o && o.src === 'ai' && !o.aiPending && o.photos.length ? { ...x, photos: o.photos.slice(), src: 'ai' as const, aiPending: false, imgPrompt: o.imgPrompt } : x
+  })
+  const eventNow = (): string | undefined => {
+    const sd = seed.current
+    if (sd?.fresh) { const mk = sd.patch?.moment; return mk && sd.goal === 'event' && eventByKey(mk) ? mk : undefined }
+    return eventKeyOf(pRef.current)
+  }
   /** Brief extras the chooser adds: goal, music vibe and look, in words the planner and writer use. */
   const seedLines = () => [goalOf(st.goal)?.brief || '', st.why.trim() ? 'What we are trying to accomplish: ' + st.why.trim() + '.' : '', 'Audience: ' + AUD[st.audience].brief + (st.who.trim() ? ', specifically ' + st.who.trim() : '') + '.', st.vibe.trim() ? 'Music vibe: ' + st.vibe.trim() + '.' : st.music ? 'Music vibe: ' + (MUSIC.find(m => m.key === st.music)?.mood || '') + '.' : '', 'Visual style: ' + (LOOKS.find(l => l.key === st.look)?.blurb || '') + '.'].filter(Boolean).join(' ')
   /** After an ad is built from the chooser: generate the described music vibe with ElevenLabs. */
@@ -485,11 +512,11 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!p) return
     setBusy(change_ ? 'adask' : rewrite ? 'rewrite' : 'write'); setErr('')
     const prompt = change_ ? (brief ? brief + '\n\n' : '') + 'CHANGE REQUESTED FOR THE WHOLE AD (keep everything else): ' + change_ : brief
-    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds, audience: AUD[p.audience].brief, format: p.format, current: rewrite ? p : null, where: whereOf(p) }) }).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds, audience: AUD[p.audience].brief, format: p.format, current: rewrite ? p : null, where: whereOf(p), eventKey: eventKeyOf(p) }) }).then(x => x.json()).catch(() => null)
     setBusy('')
     if (!r?.ok) { setErr(r?.error || 'The writer did not answer. Try again.'); return }
     if (r.warnings?.length) setErr('Fact check: ' + r.warnings.join(' · '))
-    { const d0 = pRef.current || p; finishBuild({ ...d0, prompt: brief, name: d0.name === 'Untitled ad' && r.name ? r.name : d0.name, scenes: r.scenes }) }
+    { const d0 = pRef.current || p; finishBuild({ ...d0, prompt: brief, name: d0.name === 'Untitled ad' && r.name ? r.name : d0.name, scenes: eventKeyOf(d0) ? keepAi(d0, r.scenes) : r.scenes }) }
     setSel(0); setT(1.6); setUndo(null)
     if (change_) setAdAsk('')
   }
@@ -535,7 +562,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   /** Ask the writer for scenes. */
   const writeScenes = async (prompt: string, set: Plan['settings'], current?: AdProject | null): Promise<{ name: string; scenes: AdScene[] } | null> => {
     setErr('')
-    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null, where: whereNow() }) }).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, seconds: set.seconds, audience: AUD[set.audience].brief, format: set.format, current: current || null, where: whereNow(), eventKey: eventNow() }) }).then(x => x.json()).catch(() => null)
     if (!r?.ok || !r.scenes?.length) { setErr(r?.error || 'The writer did not answer. Try again.'); return null }
     if (r.warnings?.length) setErr('Fact check: ' + r.warnings.join(' · '))
     return { name: r.name || '', scenes: r.scenes }
@@ -1208,12 +1235,15 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
   }
 
   // ── photos ────────────────────────────────────────────────────────────
-  const search = async () => {
-    if (!q.trim()) return
+  /** `over` runs a search for given words / source right away (the AI fallback uses it before state has caught up). */
+  const search = async (over?: { q?: string; src?: 'library' | 'stock' }) => {
+    const qq = String(over?.q ?? q).trim()
+    const src = over?.src ?? photoSrc
+    if (!qq) return
     setSearching(true)
-    if (photoSrc === 'stock') {
+    if (src === 'stock') {
       const shape = p ? (p.format === '9:16' || p.format === '4:5' || p.format === 'letter' ? 'portrait' : p.format === '1:1' ? 'square' : 'landscape') : ''
-      const r = await fetch('/api/ads/stock?q=' + encodeURIComponent(q.trim()) + '&shape=' + shape).then(x => x.json()).catch(() => null)
+      const r = await fetch('/api/ads/stock?q=' + encodeURIComponent(qq) + '&shape=' + shape).then(x => x.json()).catch(() => null)
       setSearching(false)
       const list: Hit[] = r?.ok ? (r.hits || []).map((h: any) => ({ url: h.url, view: h.view, thumb: h.thumb, caption: h.caption, unit: h.source, building: '', width: h.width, source: h.source, license: h.license, credit: h.credit })) : []
       setHits(list)
@@ -1221,7 +1251,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       return
     }
     setStockNote('')
-    const r = await fetch('/api/photos/library?search=' + encodeURIComponent(q.trim())).then(x => x.json()).catch(() => null)
+    const r = await fetch('/api/photos/library?search=' + encodeURIComponent(qq)).then(x => x.json()).catch(() => null)
     setSearching(false)
     const list: Hit[] = r?.ok ? (r.hits || []).filter((h: Hit) => !COLLAGE.test(String(h.caption || ''))).slice(0, 60) : []
     setHits(list)
@@ -1232,6 +1262,76 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     }
     if (!r?.ok) setErr(r?.error || 'Photo search failed.')
   }
+
+  // ── AI images (2026-11-12) ─────────────────────────────────────────────
+  // Jon: "we should have more imagery generations to highlight the events … and highlight book with us". The Generate
+  // tab makes pictures for the event and the things to do (app/api/ads/image, OpenAI gpt-image-1, medium); the Book
+  // scenes keep our real listing photos. No key → the note says so and the scene's stock search runs instead.
+  /** The calendar moment the open ad is for, if any. */
+  const momentOf = (x: AdProject | null | undefined): Moment | null => (x && x.moment ? MOMENTS.find(m => m.key === x.moment) || null : null)
+  /** Which event scene this is (0 = the opener) — the calendar's vibe list is in that order. */
+  const eventIdx = (x: AdProject, i: number) => x.scenes.slice(0, i).filter(y => y.act === 'event').length
+  const aiFallback = (msg: string, i: number) => {
+    const cur = pRef.current, s0 = cur?.scenes[i]
+    setAiNote(msg + ' — showing stock photos for this scene instead.')
+    if (!s0 || s0.act === 'book') return
+    const qq = stockQueryOf(s0, momentOf(cur))
+    setQ(qq); setPhotoSrc('stock'); setHits([]); search({ q: qq, src: 'stock' })
+  }
+  const genAi = async () => {
+    const cur = pRef.current
+    if (!cur || !canEdit || aiBusy) return
+    const prompt = aiPrompt.trim()
+    if (prompt.length < 8) { setAiNote('Describe the picture first — the place, the light, the mood.'); return }
+    setAiBusy(true); setAiNote('')
+    const r = await fetch('/api/ads/image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, shape: shapeOfFormat(cur.format), n: aiN, sceneIndex: sel }) }).then(x => x.json()).catch(() => null)
+    setAiBusy(false)
+    if (r?.noKey) { setAiOff(true); aiFallback(String(r.error || AI_KEY_MISSING), sel); return }
+    if (!r?.ok) { setAiNote(String(r?.error || 'The image did not come back. Try again, or use Stock.')); return }
+    const got: Hit[] = (r.images || []).map((h: any) => ({ url: h.url, view: h.view, thumb: h.thumb, caption: h.caption, unit: 'ai', building: '', width: h.width, source: 'ai', license: h.license, credit: h.credit }))
+    setAiHits(prev => got.concat(prev).slice(0, 4))
+    setAiNote('Made ' + got.length + (typeof r.costUsd === 'number' ? ' · about $' + r.costUsd.toFixed(2) + (r.estimated ? ' (estimate)' : '') : '') + ' — click one to use it.')
+  }
+  /** Use an AI result in the open scene. It replaces a stock stand-in; otherwise it is added like any photo. */
+  const pickAi = (h: Hit) => {
+    const s0 = pRef.current?.scenes[sel]
+    if (!s0 || !canEdit) return
+    const u = h.view || h.url
+    if (s0.photos.indexOf(u) >= 0) { setScene(sel, { photos: s0.photos.filter(x => x !== u) }); return }
+    setScene(sel, { photos: s0.aiPending ? [u] : s0.photos.concat([u]).slice(0, 12), src: 'ai', aiPending: false, imgPrompt: aiPrompt.trim() || s0.imgPrompt })
+  }
+  /** One tap: an AI image for every scene that is waiting for one (the event ad's acts 1 and 2), one per scene. */
+  const genAllAi = async () => {
+    const cur = pRef.current
+    if (!cur || !canEdit || aiBatch || aiBusy) return
+    const m = momentOf(cur)
+    const todo = cur.scenes.map((x, i) => ({ x, i })).filter(o => o.x.aiPending && o.x.act !== 'book')
+    if (!todo.length) return
+    setAiNote('')
+    let done = 0
+    for (const { x, i } of todo) {
+      setAiBatch((done + 1) + ' of ' + todo.length)
+      const prompt = defaultImagePrompt(x, m, eventIdx(cur, i))
+      const r = await fetch('/api/ads/image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, shape: shapeOfFormat(cur.format), n: 1, sceneIndex: i }) }).then(y => y.json()).catch(() => null)
+      if (r?.noKey) { setAiOff(true); setAiNote(String(r.error || AI_KEY_MISSING) + ' — the stock stand-ins stay in place, nothing else changes.'); break }
+      if (!r?.ok) { setAiNote(String(r?.error || 'An image did not come back.') + ' — ' + done + ' of ' + todo.length + ' made; the rest keep their stock stand-in.'); break }
+      const u = String(r.images?.[0]?.view || '')
+      if (u) { const id = x.id; change(d => ({ ...d, scenes: d.scenes.map(y => (y.id === id ? { ...y, photos: [u], src: 'ai' as const, aiPending: false, imgPrompt: prompt } : y)) })); done++ }
+    }
+    setAiBatch('')
+  }
+  // The Generate box follows the open scene: prefilled from it (the event's vibe, the place, or its words).
+  useEffect(() => {
+    if (photoSrc !== 'ai') return
+    const cur = pRef.current, s0 = cur?.scenes[sel]
+    if (!cur || !s0) return
+    setAiPrompt(defaultImagePrompt(s0, momentOf(cur), eventIdx(cur, sel))); setAiHits([])
+  }, [sel, photoSrc, p?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  // A Book scene is always our own photos — the Stock and Generate tabs step aside there.
+  useEffect(() => {
+    const s0 = pRef.current?.scenes[sel]
+    if (s0?.act === 'book' && (photoSrc === 'stock' || photoSrc === 'ai')) { setPhotoSrc('library'); setHits([]); setStockNote('') }
+  }, [sel, p?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Quick delete from the front door (Jon, 2026-11-04: "need a quick delete"). */
   const quickDelete = async (id: string) => {
@@ -1332,6 +1432,25 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const owners = m.audience === 'owners'
     startPatch.current = { kind: 'video', moment: m.key, platform: 'reel' }
     setSt(x => ({ ...x, mode: 'describe', prompt: m.brief, vibe: '', look: m.look, music: m.music || '', format: '9:16', audience: owners ? 'owners' : 'guests', goal: owners ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings' }))
+  }
+  /** "Make the event ad" (Jon, 2026-11-12: "Like Event, things to do, and then hit them with book your Stay now"): a
+   *  9:16 guest video in three acts, written for the event straight from the calendar card. Acts 1 and 2 come with stock
+   *  stand-ins and an AI image planned for each; act 3 is our own listings in the event's area. */
+  const startEventAd = async (m: Moment) => {
+    if (!canEdit || busy) return
+    const cur = await newAd(); if (!cur) return
+    setBusy('write'); setErr(''); setAiNote(''); setAiOff(false)
+    const fmt: AdFormat = '9:16'
+    const r = await fetch('/api/ads/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: m.brief, seconds: 30, audience: AUD.guests.brief, format: fmt, current: null, where: m.where || [], eventKey: m.key }) }).then(x => x.json()).catch(() => null)
+    setBusy('')
+    if (!r?.ok || !r.scenes?.length) { setErr(r?.error || 'The event ad did not come back. Try again.'); setHome(false); return }
+    const d0 = pRef.current || cur
+    const plat = PLATFORMS.find(x => x.key === 'reel' && x.format === fmt)?.key || PLATFORMS.find(x => x.format === fmt)?.key || d0.platform
+    finishBuild({ ...d0, kind: 'video', name: m.name + ' · event ad', prompt: m.brief, moment: m.key, platform: plat, format: fmt, audience: 'guests', goal: 'event', look: m.look, music: m.music || d0.music, scenes: r.scenes })
+    if (r.warnings?.length) setErr((r.warnings.some((w: string) => /writer did not answer/.test(w)) ? 'The ad is ready — ' : 'Fact check: ') + r.warnings.join(' · '))
+    setBrief(m.brief); setStarting(false); setPlan(null); setDraft(null); setHome(false); setTab('scene'); setSel(0); setT(1.6); setUndo(null)
+    resetHist()
+    try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
   const startStory = () => openStart('story')
   const makeKind = (k: AdKindOf) => { if (k === 'flyer') startFlyer(); else if (k === 'post') startPost(); else if (k === 'story') startStory(); else startVideoFor() }
@@ -1473,7 +1592,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
 
       {home ? (
         <StudioHome rows={list} canEdit={canEdit} canDelete={canDelete} busy={busy} display={display} last={lastId}
-          onMake={makeKind} onMoment={makeMoment} onOpen={id => open(id)} onDelete={quickDelete} onDeleteMany={quickDeleteMany} onDuplicate={quickDuplicate}
+          onMake={makeKind} onMoment={makeMoment} onEventAd={startEventAd} onOpen={id => open(id)} onDelete={quickDelete} onDeleteMany={quickDeleteMany} onDuplicate={quickDuplicate}
           library={lib} onEditVideo={editLibraryVideo} onWatch={v => setWatch(v as LibVideo)} onDeleteVideo={v => delVideo(v as LibVideo)} onUploadVideo={uploadVideo} />
       ) : null}
       <div style={{ display: home ? 'none' : flow ? 'block' : 'grid', gridTemplateColumns: 'minmax(0,1fr) clamp(330px, 27vw, 420px)', gridTemplateRows: 'minmax(0, 1fr)', ...(editing ? { flex: 1, minHeight: 0 } : { minHeight: full ? 'calc(100vh - 210px)' : 560 }) }}>
@@ -1720,7 +1839,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   return (
                     <div key={x.id + k} style={{ background: UI.panel2, border: '1px solid ' + UI.line, borderLeft: '4px solid ' + KIND_COLOR[x.kind], borderRadius: 9, padding: '9px 11px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: UI.mut }}>Scene {k + 1} · {KINDS.find(q => q.kind === x.kind)?.label}</span>
+                        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', color: UI.mut }}>Scene {k + 1}{x.act ? <span style={{ color: ACT_COLOR[x.act] }}> · {ACT_LABEL[x.act]}</span> : null} · {KINDS.find(q => q.kind === x.kind)?.label}</span>
                         <span style={{ marginLeft: 'auto', display: 'flex', gap: 3 }}>
                           <Btn small disabled={k === 0} onClick={() => { const a = draft.scenes.slice(); [a[k - 1], a[k]] = [a[k], a[k - 1]]; setDraft({ ...draft, scenes: a }) }}>↑</Btn>
                           <Btn small disabled={k === draft.scenes.length - 1} onClick={() => { const a = draft.scenes.slice(); [a[k + 1], a[k]] = [a[k], a[k + 1]]; setDraft({ ...draft, scenes: a }) }}>↓</Btn>
@@ -2002,7 +2121,27 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               </Fold>
               </div>
               <div style={{ order: 1 }}>
-              <Fold id="photos" title="Photos" folded={!!folded['photos']} onToggle={toggleFold}>
+              <Fold id="photos" title={'Photos' + (sc.act ? ' · ' + ACT_LABEL[sc.act] : '')} folded={!!folded['photos']} onToggle={toggleFold}>
+              {(() => {
+                // EVENT AD (2026-11-12): which act this scene is in, where its picture comes from, and — while scenes are
+                // still waiting for their AI image — one button to make them all.
+                const waiting = p.scenes.filter(x => x.aiPending && x.act !== 'book').length
+                return (<>
+                  {sc.act ? (
+                    <p style={{ fontSize: 11.5, color: UI.mut, margin: '6px 0 0', lineHeight: 1.45 }}>
+                      <span style={{ fontWeight: 800, color: ACT_COLOR[sc.act] }}>{ACT_LABEL[sc.act]}</span>
+                      {' · '}{sc.act === 'book' ? 'our own listing photos, always' : sc.aiPending ? 'AI image planned — a stock stand-in for now' : sc.src === 'ai' ? 'AI-generated for Stay Hospitality' : sc.src === 'stock' ? 'licensed stock' : 'our photos'}
+                    </p>
+                  ) : null}
+                  {canEdit && waiting ? (
+                    <div style={{ ...card, marginTop: 8, borderColor: 'rgba(210,176,119,0.45)' }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, margin: 0 }}>{waiting} scene{waiting === 1 ? ' is' : 's are'} set for an AI image</p>
+                      <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 6px', lineHeight: 1.45 }}>The event and the things to do, made for this ad — the Book scenes keep our own photos. {IMAGE_COST_HINT[0].toUpperCase() + IMAGE_COST_HINT.slice(1)}.</p>
+                      <Btn small tone="gold" disabled={!!aiBatch || aiBusy || aiOff} onClick={genAllAi} title="One AI image per waiting scene, replacing its stock stand-in">{aiBatch ? 'Generating ' + aiBatch + '…' : aiOff ? 'AI images are off' : 'Generate ' + (waiting === 1 ? 'it' : 'all ' + waiting)}</Btn>
+                    </div>
+                  ) : null}
+                </>)
+              })()}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginTop: 4 }}>
                 {sc.photos.map((u, k) => (
                   <div key={u + k} style={{ position: 'relative', aspectRatio: '4/3', borderRadius: 6, overflow: 'hidden', background: UI.panel2 }}>
@@ -2019,12 +2158,41 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               </div>
               {canEdit ? (
                 <>
-                  <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                    <Btn small on={photoSrc === 'library'} onClick={() => { setPhotoSrc('library'); setHits([]); setStockNote('') }} title="Our own photos — every property, every unit">Our library</Btn>
-                    <Btn small on={photoSrc === 'stock'} onClick={() => { setPhotoSrc('stock'); setHits([]) }} title="Licensed stock photos we may use in marketing (Pexels, Unsplash, public domain)">Stock photos</Btn>
+                  <div style={{ display: 'flex', gap: 4, marginTop: 8, flexWrap: 'wrap' }}>
+                    <Btn small on={photoSrc === 'library'} onClick={() => { setPhotoSrc('library'); setHits([]); setStockNote('') }} title="Our own photos — every property, every unit">Our photos</Btn>
+                    <Btn small on={photoSrc === 'stock'} disabled={sc.act === 'book'} onClick={() => { setPhotoSrc('stock'); setHits([]) }} title={sc.act === 'book' ? 'Book scenes always show our own listings' : 'Licensed stock photos we may use in marketing (Pexels, Unsplash, public domain)'}>Stock</Btn>
+                    <Btn small on={photoSrc === 'ai'} disabled={sc.act === 'book'} onClick={() => { setPhotoSrc('ai'); setHits([]); setStockNote('') }} title={sc.act === 'book' ? 'Book scenes always show our own listings' : 'A photo made for this scene by AI — no logos, no real people, no text'}>Generate (AI)</Btn>
                     {!isFlyer ? <Btn small on={photoSrc === 'video'} onClick={() => { setPhotoSrc('video'); setHits([]); setStockNote('') }} title="A clip from Finished videos, playing behind this scene">Video clips</Btn> : null}
                   </div>
-                  {photoSrc === 'video' ? (
+                  {sc.act === 'book' ? <p style={{ fontSize: 11, color: UI.mut, margin: '6px 0 0', lineHeight: 1.45 }}>Book your Stay shows our real listings{momentOf(p)?.where?.length ? ' in ' + buildingsIn(momentOf(p)?.where || []).slice(0, 5).join(', ') : ''} — stock and AI pictures stay in the first two acts.</p> : null}
+                  {photoSrc === 'ai' ? (
+                    <div style={{ marginTop: 8 }}>
+                      <textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} rows={3} style={{ ...field, fontSize: 12 }}
+                        placeholder="Describe the picture: the place, the light, the mood — e.g. a rooftop lounge at dusk over a glittering skyline" />
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+                        <span style={{ fontSize: 11, color: UI.mut }}>Make</span>
+                        {([1, 2, 4] as const).map(n => <Btn key={n} small on={aiN === n} onClick={() => setAiN(n)}>{n}</Btn>)}
+                        <Btn small tone="blue" disabled={aiBusy || !!aiBatch || aiOff} onClick={genAi} title={'OpenAI image, medium quality — ' + IMAGE_COST_HINT}>{aiBusy ? 'Generating… up to a minute' : aiHits.length ? 'Regenerate' : 'Generate'}</Btn>
+                        <Btn small disabled={aiBusy} onClick={() => { const cur = pRef.current; if (cur && sc) setAiPrompt(defaultImagePrompt({ ...sc, imgPrompt: '' }, momentOf(cur), eventIdx(cur, sel))) }} title="Back to the prompt written for this scene">Reset</Btn>
+                      </div>
+                      <p style={{ fontSize: 10.5, color: UI.mut, margin: '5px 0 0', lineHeight: 1.45 }}>{IMAGE_COST_HINT[0].toUpperCase() + IMAGE_COST_HINT.slice(1)}. Photoreal, Miami light — never logos, text, real people or real artworks. {EVENT_NAME_NOTE}</p>
+                      {aiNote ? <p style={{ fontSize: 11, color: UI.gold, margin: '6px 0 0', lineHeight: 1.45 }}>{aiNote}</p> : null}
+                      {aiHits.length ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 5, marginTop: 8 }}>
+                          {aiHits.map(h => {
+                            const on = sc.photos.indexOf(h.view || h.url) >= 0
+                            return (
+                              <button key={h.url} type="button" title={(h.license || '') + (h.caption ? ' · ' + h.caption : '')} onClick={() => pickAi(h)}
+                                style={{ padding: 0, border: '2px solid ' + (on ? UI.gold : 'transparent'), borderRadius: 6, overflow: 'hidden', aspectRatio: '3/4', cursor: 'pointer', background: UI.panel2 }}>
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={h.thumb || h.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : photoSrc === 'video' ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 8, maxHeight: 280, overflowY: 'auto' }}>
                       {lib.map(v => (
                         <div key={v.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, padding: 5 }}>
@@ -2038,15 +2206,16 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   ) : (<>
                   <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                     <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') search() }} placeholder={photoSrc === 'stock' ? 'e.g. christmas lights palm trees · miami skyline night · art gallery' : 'Search the library: 17west pool'} style={{ ...field, padding: '6px 9px' }} />
-                    <Btn small onClick={search}>{searching ? '…' : 'Find'}</Btn>
+                    <Btn small onClick={() => search()}>{searching ? '…' : 'Find'}</Btn>
                   </div>
                   {stockNote ? <p style={{ fontSize: 11, color: UI.gold, margin: '6px 0 0', lineHeight: 1.45 }}>{stockNote}</p> : null}
+                  {photoSrc === 'stock' && aiOff && aiNote ? <p style={{ fontSize: 11, color: UI.gold, margin: '6px 0 0', lineHeight: 1.45 }}>{aiNote}</p> : null}
                   {hits.length ? (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 5, marginTop: 8, maxHeight: 260, overflowY: 'auto' }}>
                       {hits.map(h => {
                         const on = sc.photos.indexOf(h.view || h.url) >= 0 || sc.photos.indexOf(h.url) >= 0
                         return (
-                          <button key={h.url} title={(h.source ? h.source + ' · ' + (h.license || '') + (h.credit ? ' · ' + h.credit : '') : h.unit) + (h.caption ? ' · ' + h.caption : '')} onClick={() => { const u = h.view || h.url; setScene(sel, { photos: on ? sc.photos.filter(x => x !== u && x !== h.url) : sc.photos.concat([u]).slice(0, 12) }) }}
+                          <button key={h.url} title={(h.source ? h.source + ' · ' + (h.license || '') + (h.credit ? ' · ' + h.credit : '') : h.unit) + (h.caption ? ' · ' + h.caption : '')} onClick={() => { const u = h.view || h.url; setScene(sel, on ? { photos: sc.photos.filter(x => x !== u && x !== h.url) } : { photos: (sc.aiPending ? [] : sc.photos).concat([u]).slice(0, 12), ...(sc.act === 'book' ? {} : { src: (photoSrc === 'stock' ? 'stock' : 'ours') as 'stock' | 'ours' }), ...(sc.aiPending ? { aiPending: false } : {}) }) }}
                             style={{ padding: 0, border: '2px solid ' + (on ? UI.gold : 'transparent'), borderRadius: 6, overflow: 'hidden', aspectRatio: '4/3', cursor: 'pointer', background: UI.panel2 }}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={h.thumb || h.url} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
@@ -2466,7 +2635,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
                   onClick={e => { if (e.shiftKey || e.metaKey || e.ctrlKey) { togglePick(i); return } pick(i) }} title={(s.head || s.vo || KINDS.find(k => k.kind === s.kind)?.label || '').replace(/\*\*/g, '') + ' · shift / ⌘-click to select several'}
                   style={{ position: 'absolute', left: pct(tl.starts[i]) + '%', width: `calc(${pct(tl.durs[i])}% - 3px)`, top: 0, bottom: 0, borderRadius: 7, cursor: 'pointer', overflow: 'hidden',
                     background: (s.photos[0] && !s.photos[0].startsWith('video:') ? `linear-gradient(rgba(10,14,20,${i === sel ? 0.35 : 0.6}), rgba(10,14,20,${i === sel ? 0.55 : 0.8})), url(${proxied(s.photos[0])}) center/cover` : KIND_COLOR[s.kind] + (i === sel ? '' : '55')), border: '2px solid ' + (picked.indexOf(s.id) >= 0 ? UI.gold : i === sel ? '#fff' : 'transparent'), boxShadow: 'inset 4px 0 0 ' + KIND_COLOR[s.kind], padding: '4px 6px 4px 9px', color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>
-                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{picked.indexOf(s.id) >= 0 ? '✓ ' : ''}{i + 1} · {KINDS.find(k => k.kind === s.kind)?.label}{s.sfx ? ' · 🔊' : ''}{(s.fx || []).length ? ' · ✦' : ''}{hasCustom(s) ? ' · 🎨' : ''}</span>
+                  <span style={{ display: 'block', fontSize: 10, fontWeight: 800, letterSpacing: '0.04em' }}>{picked.indexOf(s.id) >= 0 ? '✓ ' : ''}{i + 1} · {s.act ? <span style={{ color: ACT_COLOR[s.act] }}>{ACT_LABEL[s.act]} · </span> : null}{KINDS.find(k => k.kind === s.kind)?.label}{s.aiPending ? ' · AI…' : s.src === 'ai' ? ' · AI' : ''}{s.sfx ? ' · 🔊' : ''}{(s.fx || []).length ? ' · ✦' : ''}{hasCustom(s) ? ' · 🎨' : ''}</span>
                   <span style={{ display: 'block', fontSize: 10.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(s.head || s.vo).replace(/\*\*/g, '').replace(/\n/g, ' ')}</span>
                   {canEdit && p.scenes.length > 1 ? (
                     <button type="button" onClick={e => { e.stopPropagation(); delSceneAt(i) }} title="Delete this scene"

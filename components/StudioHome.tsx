@@ -28,7 +28,7 @@ export const KIND_META: Record<AdKindOf, { label: string; plural: string; blurb:
 const H2 = ({ children, display }: { children: React.ReactNode; display: string }) => <p style={{ fontFamily: display, fontWeight: 800, fontSize: 20, margin: 0 }}>{children}</p>
 const ghost: React.CSSProperties = { fontSize: 11.5, fontWeight: 700, padding: '4px 9px', borderRadius: 8, border: '1px solid ' + UI.line, background: 'transparent', color: UI.mut, cursor: 'pointer', whiteSpace: 'nowrap' }
 
-export default function StudioHome({ rows, canEdit, canDelete, busy, display, last, onMake, onMoment, onOpen, onDelete, onDeleteMany, onDuplicate, library = [], onEditVideo, onWatch, onDeleteVideo, onUploadVideo }: {
+export default function StudioHome({ rows, canEdit, canDelete, busy, display, last, onMake, onMoment, onEventAd, onOpen, onDelete, onDeleteMany, onDuplicate, library = [], onEditVideo, onWatch, onDeleteVideo, onUploadVideo }: {
   rows: HomeRow[]; canEdit: boolean; canDelete: boolean; busy: string; display: string
   /** id of the piece opened last on this computer */ last?: string
   /** The Videos library: the built-in sales videos and every kept export. */
@@ -40,6 +40,8 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
   onUploadVideo?: (f: File) => void
   onMake: (kind: AdKindOf) => void
   onMoment: (m: Moment, kind: AdKindOf) => void
+  /** EVENT AD (2026-11-12): the three-act ad for a calendar event — the event · things to do · book your Stay. */
+  onEventAd?: (m: Moment) => void
   onOpen: (id: string) => void
   onDelete: (id: string) => void
   onDeleteMany: (ids: string[]) => void
@@ -125,6 +127,12 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
                       {KIND_META[k].label}
                     </button>
                   ))}
+                  {onEventAd && m.event && m.audience !== 'owners' ? (
+                    <button type="button" disabled={!!busy} onClick={() => onEventAd(m)} title="A 3-act video: the event (AI or stock images) · things to do nearby · book your Stay with our own listing photos"
+                      style={{ fontSize: 11.5, fontWeight: 800, padding: '5px 9px', borderRadius: 8, border: '1px solid ' + UI.gold, background: 'rgba(210,176,119,0.14)', color: UI.gold, cursor: 'pointer' }}>
+                      ✦ Make the event ad
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>

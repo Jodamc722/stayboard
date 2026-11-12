@@ -39,7 +39,9 @@ export async function POST(req: NextRequest) {
     const old = p.scenes[i]
     let photos = old.photos
     const q = String(j?.photoQuery || '').trim().slice(0, 60)
-    if (q) {
+    // An event ad's first two acts keep their AI / stock picture — a rewrite there must not pull in our listing photos
+    // (2026-11-12). Book scenes and ordinary ads search the library as before.
+    if (q && old.act !== 'event' && old.act !== 'todo') {
       const want = j?.kind === 'wall' ? 4 : j?.kind === 'cards' ? 3 : 1
       try {
         const hits = (await searchPhotos(q, 60)).hits.filter(h => h.active && !/collage|grid|mosaic|side[- ]by[- ]side|split view|multiple (photos|images|views)|before.{0,4}after|floor ?plan/i.test(String(h.caption || '')))

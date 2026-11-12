@@ -5,6 +5,13 @@
 // FACTS ONLY. The prompt (lib/ad-studio scriptPrompt) carries the house facts and Jon's standing copy
 // rules from the October sales videos — no invented numbers, no fee or revenue percentage, the words
 // the voice mispronounces kept out of spoken lines.
+//
+// EVENT ADS (2026-11-12, Jon: "Like Event, things to do, and then hit them with book your Stay now"). With
+// { eventKey } (a calendar event — "Make the event ad") or a brief that asks for an "event ad" about one, the writer is
+// told the three acts (lib/ad-event eventBrief) and its answer is forced into them (shapeEventScenes): THE EVENT and
+// THINGS TO DO scenes get a stock stand-in now and carry an AI image description (src 'ai', aiPending) for the editor
+// to generate; BOOK YOUR STAY scenes always use OUR listing photos from the event's area. If the writer is unavailable
+// the calendar's own words build the same three acts, so the button never comes back empty.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { askJson } from '@/lib/ad-json'
@@ -13,6 +20,9 @@ import { scriptPrompt, normalize, propertiesLine } from '@/lib/ad-studio'
 import { searchPhotos } from '@/lib/photo-library'
 import { areasIn, buildingsIn, inBuildings, AREA_LABEL, AREAS, type AreaKey } from '@/lib/ad-places'
 import { isCollagePhoto } from '@/lib/collage'
+import { eventByKey, eventAsked, eventBrief, EVENT_REPLY, shapeEventScenes, whenShortOf, type EventRawScene } from '@/lib/ad-event'
+import { searchStock, type StockHit } from '@/lib/ad-stock'
+import { shapeOfFormat } from '@/lib/ad-image-prompt'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 180
@@ -92,20 +102,25 @@ export async function POST(req: NextRequest) {
   const seconds = Math.max(10, Math.min(120, Number(b?.seconds) || 30))
   // Where the ad is set: given by the studio (a calendar moment), else read from the brief.
   const areas: AreaKey[] = (Array.isArray(b?.where) ? b.where : []).filter((x: any) => AREAS.some(a => a.key === x))
-  const where = areas.length ? areas : areasIn(String(b?.prompt || ''))
+  const ev = eventByKey(typeof b?.eventKey === 'string' ? b.eventKey : '') || eventAsked(String(b?.prompt || ''))
+  const where: AreaKey[] = areas.length ? areas : ev && ev.where && ev.where.length ? ev.where : areasIn(String(b?.prompt || ''))
   const placeSet = buildingsIn(where)
   const placeLine = where.length ? `\nWHERE THIS AD IS SET: ${where.map(k => AREA_LABEL[k]).join(' and ')}. Feature ONLY our properties there: ${placeSet.join(', ')}. Every photoQuery starts with one of those property names; never show a property from another area.` : ''
   const prompt = scriptPrompt({
-    prompt: String(b?.prompt || '').slice(0, 8000) + placeLine, seconds, format: String(b?.format || '16:9'),
-    audience: String(b?.audience || 'property owners').slice(0, 80),
+    prompt: String(b?.prompt || '').slice(0, 8000) + placeLine + (ev ? '\n\n' + eventBrief(ev, where) : ''), seconds, format: String(b?.format || '16:9'),
+    // an event ad sells the stay to guests, whatever the studio sent
+    audience: ev ? 'travellers choosing where to stay in South Florida' : String(b?.audience || 'property owners').slice(0, 80),
     current: b?.current ? normalize(b.current) : null,
     props: await propertiesLine(),
-  })
+  }) + (ev ? '\n' + EVENT_REPLY : '')
   try {
     const ans = await askJson(key, prompt, { maxTokens: 5000, temperature: 0.6 })
-    if (!ans.ok) return NextResponse.json({ ok: false, error: ans.error }, { status: 502 })
-    const j: any = ans.json
-    const raw: any[] = Array.isArray(j?.scenes) ? j.scenes.slice(0, 20) : []
+    const pre: string[] = []
+    let j: any
+    if (ans.ok) j = ans.json
+    else if (ev) { j = { name: ev.name + ' · event ad', scenes: [] }; pre.push('The writer did not answer (' + ans.error.slice(0, 120) + ') — built the event ad from the calendar\'s own words; rewrite it once the writer is back') }
+    else return NextResponse.json({ ok: false, error: ans.error }, { status: 502 })
+    const raw: any[] = ev ? shapeEventScenes(Array.isArray(j?.scenes) ? j.scenes.slice(0, 20) : [], ev, where) : Array.isArray(j?.scenes) ? j.scenes.slice(0, 20) : []
     // PHOTOS THAT MATCH THE WORDS (Jon, 2026-11-03: "photos need to match the descriptions", "sometimes
     // using the same photo", "don't like collage photos"). Each scene's subject (pool, bedroom, view …) is
     // read from what the scene SAYS; its photo must show that subject (by caption), be of the property the
@@ -115,7 +130,7 @@ export async function POST(req: NextRequest) {
     const used = new Set<string>()
     const usedCores = new Set<string>()
     const fmt = String(b?.format || '16:9')
-    const scenes: { id: string; kind: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string }[] = []
+    const scenes: { id: string; kind: string; badge: string; vo: string; head: string; sub: string; items: string[]; photos: string[]; photoQuery: string; act?: string; src?: string; imgPrompt?: string; aiPending?: boolean }[] = []
     // Pass 1: every slot's candidate list (subject-matched first). Pass 2: slots with the fewest good
     // candidates choose first, so a scene that needs "the pool" is not left with the pool already taken.
     type Slot = { scene: number; k: number; subj: ReturnType<typeof subjectOf>; cands: any[] }
@@ -123,11 +138,13 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < raw.length; i++) {
       const s = raw[i]
       const q = String(s?.photoQuery || '').trim().slice(0, 60)
-      const want = s?.kind === 'wall' ? 4 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
+      // event ad: only BOOK YOUR STAY takes our library photos — the event and the things to do get stock / AI below
+      const want = ev && s?.act !== 'book' ? 0 : s?.kind === 'wall' ? 4 : s?.kind === 'cards' ? 3 : s?.kind === 'contact' ? 0 : 1
       const place = q.split(/\s+/)[0] || ''
       const items: string[] = Array.isArray(s?.items) ? s.items.map((x: any) => String(x || '')) : []
       const texts = s?.kind === 'cards' ? items.slice(0, 3).map(x => x + ' ' + q) : Array.from({ length: want }, () => [s?.head, s?.sub, s?.vo, q, items.join(' ')].join(' '))
-      scenes.push({ id: 's' + (i + 1), kind: s?.kind, badge: i === raw.findIndex((x: any) => x?.badge) ? s?.badge : '', vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos: [], photoQuery: q })
+      scenes.push({ id: 's' + (i + 1), kind: s?.kind, badge: i === raw.findIndex((x: any) => x?.badge) ? s?.badge : '', vo: s?.vo, head: s?.head, sub: s?.sub, items: s?.items, photos: [], photoQuery: q,
+        ...(ev ? { act: s.act, src: s.source, ...(s.act !== 'book' && s.imagePrompt ? { imgPrompt: s.imagePrompt } : {}), ...(s.source === 'ai' ? { aiPending: true } : {}) } : {}) })
       for (let k = 0; k < want; k++) {
         const subj = subjectOf(texts[k] || '')
         const pools = [subj && place ? await search(place + ' ' + subj.word) : [], q ? await search(q) : [], place ? await search(place) : []]
@@ -148,16 +165,31 @@ export async function POST(req: NextRequest) {
     scenes.forEach(x => { x.photos = x.photos.filter(Boolean) })
     const everything = Object.values(searches).flat()
     for (const x of scenes) {
-      if (x.photos.length || x.kind === 'contact') continue
+      if (x.photos.length || x.kind === 'contact' || (ev && x.act !== 'book')) continue
       const u = await bestPhoto(everything, subjectOf([x.head, x.sub, x.vo].join(' ')), used, 0, { format: fmt, usedCores, place: placeSet })
       if (u) { x.photos = [u]; used.add(u) }
+    }
+    // EVENT AD, acts 1 and 2: a licensed stock photo for each scene now (a stand-in where an AI image is planned —
+    // the editor's "Generate the AI images" replaces it), never the same one twice.
+    if (ev) {
+      const shape = shapeOfFormat(fmt)
+      const stock: Record<string, StockHit[]> = {}
+      const usedStock = new Set<string>()
+      for (let i = 0; i < scenes.length; i++) {
+        const x = scenes[i], r0 = raw[i] as EventRawScene
+        if (x.act === 'book') continue
+        const qy = String(r0?.stockQuery || ev.vibeStock || ev.photo || 'miami').slice(0, 60)
+        if (!stock[qy]) { try { stock[qy] = (await searchStock(qy, shape)).hits } catch { stock[qy] = [] } }
+        const h = stock[qy].find(hh => !usedStock.has(hh.view))
+        if (h) { x.photos = [h.view]; usedStock.add(h.view) }
+      }
     }
     const norm = normalize({ id: 'x', scenes })
     // FACT GUARD: a number the facts (or the brief) do not contain never reaches the ad. Numbers in rows are
     // dropped with their row; numbers in a line or headline come back as a warning to check.
-    const allowed = new Set(numbersIn([HOUSE_FACTS, GUEST_FACTS, String(b?.prompt || ''), '1M 1000000 651 200 8283 01 02 03'].join(' ')))
+    const allowed = new Set(numbersIn([HOUSE_FACTS, GUEST_FACTS, String(b?.prompt || ''), '1M 1000000 651 200 8283 01 02 03', ev ? [ev.brief, ev.sub, ev.headline, whenShortOf(ev)].join(' ') : ''].join(' ')))
     const bad = (t: string) => numbersIn(t).filter(n => !allowed.has(n))
-    const warnings: string[] = []
+    const warnings: string[] = pre.slice()
     norm.scenes = norm.scenes.map(x => ({ ...x, head: tidyHead(x.head) }))
     norm.scenes = norm.scenes.map((x, k) => {
       const items = x.items.filter(r => !bad(r).length)
@@ -167,8 +199,8 @@ export async function POST(req: NextRequest) {
       return { ...x, items }
     })
     // a contact card in a guest ad is the wrong end card — the writer is told, this is the backstop
-    if (/guest/i.test(String(b?.audience || ''))) norm.scenes = norm.scenes.map(s => (s.kind === 'contact' ? { ...s, kind: 'cta' as const, items: s.items.length ? s.items : ['Book at stay-hospitality.com'] } : s))
-    return NextResponse.json({ ok: true, name: String(j?.name || '').slice(0, 120), scenes: norm.scenes, queries: scenes.map(s => s.photoQuery), warnings, where })
+    if (ev || /guest/i.test(String(b?.audience || ''))) norm.scenes = norm.scenes.map(s => (s.kind === 'contact' ? { ...s, kind: 'cta' as const, items: s.items.length ? s.items : ['Book at stay-hospitality.com'] } : s))
+    return NextResponse.json({ ok: true, name: String(j?.name || '').slice(0, 120), scenes: norm.scenes, queries: scenes.map(s => s.photoQuery), warnings, where, event: ev ? ev.key : null })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

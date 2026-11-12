@@ -145,6 +145,11 @@ export function normalize(p: any): AdProject {
       ...(typeof v?.variant === 'string' ? { variant: v.variant.slice(0, 12) } : {}),
       ...(['on', 'off'].indexOf(v?.blink) >= 0 ? { blink: v.blink } : {}),
     }])) : undefined,
+    // EVENT AD (2026-11-12): the act, where the picture comes from, the AI image description.
+    ...(['event', 'todo', 'book'].indexOf(s?.act) >= 0 ? { act: s.act } : {}),
+    ...(s?.act === 'book' ? { src: 'ours' as const } : ['ai', 'stock', 'ours'].indexOf(s?.src) >= 0 ? { src: s.src } : {}),
+    ...(typeof s?.imgPrompt === 'string' && s.imgPrompt.trim() ? { imgPrompt: s.imgPrompt.slice(0, 1500) } : {}),
+    ...(s?.aiPending === true ? { aiPending: true } : {}),
   })) : []
   const c = p?.contact || {}
   return {
@@ -343,6 +348,35 @@ export async function listLibrary(): Promise<LibVideo[]> {
   const mine: LibVideo[] = real.map(r => ({ key: 'lib:' + r.path, name: String(r.name || 'Video'), url: signed[r.path] || '', thumb: r.thumbPath ? signed[r.thumbPath] || '' : '', dur: Number(r.dur || 0), format: String(r.format || ''), builtin: false, createdAt: String(r.createdAt || ''), by: String(r.by || ''), path: r.path }))
   const built: LibVideo[] = BUILTIN_VIDEOS.map(v => ({ key: v.key, name: v.name, url: v.file, thumb: v.thumb, dur: v.dur, format: v.format, builtin: true, createdAt: '2026-11-02', by: 'Sales videos' }))
   return mine.concat(built)
+}
+
+// ───────────────────────── AI images (2026-11-12) ─────────────────────────
+// Jon: "we should have more imagery generations to highlight the events". A generated image is kept in the same
+// private bucket as everything else in Ad Studio, under ai/<yyyymm>/<id>.<ext>, with a .json beside it (the prompt
+// we sent, who made it, the estimated cost). The editor never sees a signed URL — those expire and a saved ad would
+// lose its pictures — it gets /api/ads/image?path=…, a same-origin URL that streams the file (and so also draws on
+// the export canvas without CORS trouble).
+export const AI_IMAGE_PATH = /^ai\/\d{6}\/[a-z0-9]{6,40}\.(jpg|png|webp)$/
+export async function saveAiImage(bytes: Buffer, ext: 'jpg' | 'png' | 'webp', meta: Record<string, unknown>): Promise<string> {
+  await ensureBucket()
+  const now = new Date()
+  const ym = now.getUTCFullYear().toString() + String(now.getUTCMonth() + 1).padStart(2, '0')
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+  const path = `ai/${ym}/${id}.${ext}`
+  const sb = supabaseAdmin().storage.from(BUCKET)
+  const ct = ext === 'jpg' ? 'image/jpeg' : 'image/' + ext
+  const { error } = await sb.upload(path, bytes, { contentType: ct, upsert: false })
+  if (error) throw new Error('save image: ' + error.message)
+  // provenance beside it — best-effort, never fails the image
+  try { await sb.upload(path.replace(/\.[a-z]+$/, '.json'), JSON.stringify({ ...meta, path, at: now.toISOString() }), { contentType: 'application/json', upsert: true }) } catch { /* fine */ }
+  return path
+}
+export async function readAiImage(path: string): Promise<{ bytes: ArrayBuffer; type: string } | null> {
+  if (!AI_IMAGE_PATH.test(path)) return null
+  const { data, error } = await supabaseAdmin().storage.from(BUCKET).download(path)
+  if (error || !data) return null
+  const ext = path.split('.').pop() || 'jpg'
+  return { bytes: await data.arrayBuffer(), type: ext === 'jpg' ? 'image/jpeg' : 'image/' + ext }
 }
 
 /** A signed upload the browser PUTs the file to directly (a video is past what a route may carry). */
