@@ -2,6 +2,7 @@
 // every call. GET → what the owner sees (no team notes) and the item list; PATCH { home?, marks?, ownerNotes?,
 // submit? } → saves as they go. The timeline moves on its own: the home saved → "Your home" done; submitted →
 // "Supplies check" done, and the team is told.
+import { syncFaq } from '@/lib/owner-onboard-faq'
 import { NextRequest, NextResponse } from 'next/server'
 import { readRecord, saveRecord, itemsFor as allItems, ownerItems, cleanMore } from '@/lib/owner-onboard-server'
 const itemsFor = async (r: any) => ownerItems(await allItems(r))
@@ -98,6 +99,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     const h = await sendHandoff(r, origin).catch((e: any) => ({ ok: false, error: String(e?.message || e), to: [] as string[], cc: [] as string[] }))
     r.handoff = { at: new Date().toISOString(), to: h.to, cc: h.cc, ...(h.ok ? {} : { error: String(h.error || 'not sent').slice(0, 200) }) }
   }
+  // APPROVED ITEMS FEED THE UNIT'S FAQ (when the unit is already attached to its listing; otherwise on attach).
+  if (reviewed === 'approved' && r.attach.listingId) await syncFaq(r, 'owner-onboarding').catch(() => null)
   const w = await saveRecord(r, 'owner:' + (r.custom.ownerEmail || r.code))
   if (!w.ok) return NextResponse.json(w, { status: 500, headers: NO_STORE })
   if (reviewed) {

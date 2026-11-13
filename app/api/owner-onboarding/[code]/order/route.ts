@@ -3,11 +3,13 @@
 //   POST { action: 'save', lines, note } → the team's edits
 //   POST { action: 'send' }           → shows it on the owner's page for review and emails them a sign-in link to it
 //   POST { action: 'unsend' }         → back to a draft
+//   POST { action: 'faq' }            → adds what is approved (and the Wi-Fi, parking, laundry) to the attached listing's FAQ
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { readRecord, saveRecord, buildOrder, cleanOrderLines } from '@/lib/owner-onboard-server'
 import { emailMagicLink } from '@/lib/owner-onboard-auth'
 import { teamView, unitsOf } from '@/lib/owner-onboard'
+import { syncFaq } from '@/lib/owner-onboard-faq'
 
 export const dynamic = 'force-dynamic'
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
@@ -28,6 +30,10 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
     else note = 'It is on the owner’s page. There is no owner email, so send them the link yourself.'
   } else if (b.action === 'unsend' && r.order) {
     r.order = { ...r.order, status: 'draft' }
+  } else if (b.action === 'faq') {
+    const f = await syncFaq(r, g.access.email || null)
+    if (!f.ok) return NextResponse.json({ ok: false, error: f.error }, { status: 400 })
+    note = f.added ? `${f.added} ${f.added === 1 ? 'entry' : 'entries'} added to the unit’s FAQ.` : 'The FAQ already has everything.'
   } else return NextResponse.json({ ok: false, error: 'Nothing to do.' }, { status: 400 })
   await saveRecord(r, g.access.email || null)
   return NextResponse.json({ ok: true, note, record: teamView(r) })

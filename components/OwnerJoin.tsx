@@ -223,8 +223,10 @@ export function OwnerJoin({ code }: { code: string }) {
               </>) : null}
             </div>
             <div className="oj-sec">
-              <p className="oj-sec-h"><em>4</em> Laundry, parking and access</p>
+              <p className="oj-sec-h"><em>4</em> Wi-Fi, laundry, parking and access</p>
               <div className="oj-form">
+                <label className="oj-f"><span>Wi-Fi network name</span><input value={home.wifiName || ''} onChange={e => setHome({ ...home, wifiName: e.target.value })} placeholder="e.g. Elser2401" autoCapitalize="off" autoCorrect="off" spellCheck={false} /></label>
+                <label className="oj-f"><span>Wi-Fi password</span><input value={home.wifiPass || ''} onChange={e => setHome({ ...home, wifiPass: e.target.value })} placeholder="Exactly as guests type it" autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="off" /></label>
                 <Seg label="Washer and dryer in the unit" value={home.washer ? 'y' : 'n'} set={v => setHome({ ...home, washer: v === 'y' })} opts={[['n', 'No'], ['y', 'Yes']]} />
                 <label className="oj-f oj-wide"><span>Parking (optional)</span><input value={home.parking} onChange={e => setHome({ ...home, parking: e.target.value })} placeholder="e.g. one assigned space, P2 #114" /></label>
                 <label className="oj-f oj-wide"><span>Access (optional)</span><input value={home.access} onChange={e => setHome({ ...home, access: e.target.value })} placeholder="e.g. front desk holds the key; building app" /></label>
