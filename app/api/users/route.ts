@@ -6,7 +6,7 @@
 // tolerantly so the page still works before the migration runs.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireAdmin as requireAdminGate, isSuperadmin } from '@/lib/access'
+import { requireAdmin as requireAdminGate, isSuperadmin , hideUsers } from '@/lib/access'
 import { normWorkspace, FEATURES, LEVELS, isExtraPerm, extraPermChoices } from '@/lib/features'
 import { logAdmin } from '@/lib/activity'
 
@@ -86,7 +86,7 @@ export async function GET() {
   } catch { /* ignore */ }
   // Business units (migration 118): hotel-only logins are managed on the hotel's Team & access,
   // not here. Rows without the column (pre-118) are VR by definition.
-  const users = (data || []).filter((u: any) => !Array.isArray(u.businesses) || u.businesses.includes('vr')).map((u: any) => ({ ...u, last_sign_in_at: lastSignIn[clean(u.email)] || null }))
+  const users = hideUsers((data || []).filter((u: any) => !Array.isArray(u.businesses) || u.businesses.includes('vr'))).map((u: any) => ({ ...u, last_sign_in_at: lastSignIn[clean(u.email)] || null }))
   return NextResponse.json({ users })
 }
 

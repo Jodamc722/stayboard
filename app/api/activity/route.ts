@@ -11,7 +11,7 @@
 // with data nobody on earth could open. A permission check against a permission that does not
 // exist does not fail safe — it fails silent, which is worse.
 import { NextRequest, NextResponse } from 'next/server'
-import { getAccess } from '@/lib/access'
+import { getAccess , hideUsers } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { logActivity } from '@/lib/activity'
 
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
       const missing = /relation .*user_activity.* does not exist|could not find the table/i.test(error.message)
       return NextResponse.json({ ok: false, needsMigration: missing, error: error.message, rows: [] })
     }
-    const rows = (data || []) as any[]
+    const rows = hideUsers((data || []) as any[])
     // THE FEED IS ONLY THE NEWEST 1,000 ROWS — on a busy week, a few hours. When it was cut off, the
     // user picker and the totals are worked out over the WHOLE window instead of from those rows
     // (2026-09-29: the picker listed only whoever was active in the last few hours, and the counts
@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
     if (capped && !email) {
       // Anyone on the allowlist missing from the feed: one indexed one-row probe each (email, at).
       const { data: people } = await db.from('app_users').select('email')
-      const extra = Array.from(new Set(((people || []) as any[]).map(p => String(p.email || '').trim().toLowerCase())))
+      const extra = Array.from(new Set(hideUsers((people || []) as any[]).map(p => String(p.email || '').trim().toLowerCase())))
         .filter(e => !!e && feedUsers.indexOf(e) < 0)
       const probes = await Promise.all(extra.map(e => db.from('user_activity').select('id').eq('email', e).gte('at', since).limit(1)))
       users = feedUsers.concat(extra.filter((_, i) => (((probes[i] as any).data || []) as any[]).length > 0))
