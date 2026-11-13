@@ -191,7 +191,7 @@ function normReservation(r: any): CbReservation {
  * axis per call, so this asks twice (check-in window, check-out window) and de-dupes — a stay that
  * spans the whole window is caught by either edge or by `modifiedSince` on the incremental run.
  */
-export async function getReservations(opts: { from: string; to: string; modifiedSince?: string; pageSize?: number }): Promise<CbReservation[]> {
+export async function getReservations(opts: { from: string; to: string; modifiedSince?: string; status?: string; pageSize?: number }): Promise<CbReservation[]> {
   const size = Math.min(100, opts.pageSize || 100)
   const seen = new Map<string, CbReservation>()
   const pull = async (params: Record<string, string | number | undefined>) => {
@@ -204,7 +204,8 @@ export async function getReservations(opts: { from: string; to: string; modified
       if (rows.length < size) break
     }
   }
-  if (opts.modifiedSince) await pull({ modifiedSince: opts.modifiedSince })
+  if (opts.status) await pull({ status: opts.status })
+  else if (opts.modifiedSince) await pull({ modifiedSince: opts.modifiedSince })
   else {
     await pull({ checkInFrom: opts.from, checkInTo: opts.to })
     await pull({ checkOutFrom: opts.from, checkOutTo: opts.to })

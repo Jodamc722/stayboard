@@ -62,6 +62,10 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
       if (data?.last_sync_at) since = new Date(new Date(data.last_sync_at).getTime() - 10 * 60000).toISOString().slice(0, 19).replace('T', ' ')
     }
     const list = since ? [...await getReservations({ from, to, modifiedSince: since }), ...await getReservations({ from, to })] : await getReservations({ from, to })
+    // EVERYONE IN HOUSE, WHATEVER THE DATES (audit 2026-11-13): the two date windows miss a long stay
+    // that arrived more than 14 days ago and leaves more than 60 days out, so its room read vacant
+    // and it got no stayover cleans. Cloudbeds can be asked for the in-house list directly.
+    try { list.push(...await getReservations({ from, to, status: 'checked_in' })) } catch { /* the windows still stand */ }
     const byId = new Map(list.map(r => [r.id, r]))
     // What changed, for the triggers (garden_events): new bookings, cancellations, check-in/out.
     const ids = Array.from(byId.keys())
@@ -101,18 +105,25 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
   // 3) Housekeeping status → garden_rooms
   try {
     const hk = await getHousekeeping()
-    const { data: cur } = await db.from('garden_rooms').select('id,hk_status,name')
+    let { data: cur } = await db.from('garden_rooms').select('id,hk_status,name,occupied,housekeeper,hk_comments,dnd,refused_service,frontdesk_status,blocked') as any
+    if (!cur) cur = (await db.from('garden_rooms').select('id,hk_status,name')).data as any
     const curBy: Record<string, any> = {}; for (const c of ((cur || []) as any[])) curBy[c.id] = c
     let detail = true   // migration 170's columns; until it is run, only the base fields are written
+    // CLOUDBEDS TURNS EVERY OCCUPIED ROOM DIRTY BY ITSELF — at check-in and again around 2 AM (its
+    // housekeeping guide). That is a reminder, not a room to turn, so "a room turns dirty" fires only
+    // for a vacant room; and a room whose row did not change is not written again (310 writes a run).
+    const same = (c: any, h: any) => c && 'housekeeper' in c && c.hk_status === h.condition && (c.occupied ?? null) === (h.occupied ?? null) && (c.housekeeper ?? null) === (h.housekeeper ?? null) && (c.hk_comments ?? null) === (h.comments ?? null) && !!c.dnd === !!h.dnd && !!c.refused_service === !!h.refused && (c.frontdesk_status ?? null) === (h.frontdeskStatus ?? null) && !!c.blocked === !!h.blocked
+    const turnedDirty = (h: any) => h.condition === 'dirty' && h.occupied !== true && curBy[h.roomId] && curBy[h.roomId].hk_status !== 'dirty'
     for (const h of hk) {
+      if (same(curBy[h.roomId], h)) continue
       const base = { hk_status: h.condition, occupied: h.occupied, hk_updated_at: new Date().toISOString() }
       if (detail) {
         const { error } = await db.from('garden_rooms').update({ ...base, housekeeper: h.housekeeper, housekeeper_id: h.housekeeperId, hk_comments: h.comments, dnd: h.dnd, refused_service: h.refused, frontdesk_status: h.frontdeskStatus, blocked: h.blocked }).eq('id', h.roomId)
         if (error && /column|schema cache/i.test(error.message)) detail = false
-        else if (!error) { if (h.condition === 'dirty' && curBy[h.roomId] && curBy[h.roomId].hk_status !== 'dirty') await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name }); continue }
+        else if (!error) { if (turnedDirty(h)) await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name }); continue }
       }
       await db.from('garden_rooms').update(base).eq('id', h.roomId)
-      if (h.condition === 'dirty' && curBy[h.roomId] && curBy[h.roomId].hk_status !== 'dirty') await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name })
+      if (turnedDirty(h)) await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name })
     }
     out.housekeeping = hk.length
     await mark('housekeeping', { count: hk.length })

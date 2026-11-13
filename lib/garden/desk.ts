@@ -14,7 +14,7 @@ export async function gardenStatus(): Promise<GardenStatus> {
   const db = supabaseAdmin(), cfg = cloudbedsConfig()
   const [{ data: st }, rooms, res] = await Promise.all([
     db.from('garden_sync_status').select('*'),
-    db.from('garden_rooms').select('id', { count: 'exact', head: true }),
+    db.from('garden_rooms').select('id', { count: 'exact', head: true }).or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false'),
     db.from('garden_reservations').select('id', { count: 'exact', head: true }),
   ])
   const byE: Record<string, any> = {}
@@ -31,7 +31,7 @@ export async function gardenToday() {
   const t0 = todayET(0), t2 = addDays(t0, 2)
   const [{ data: res }, { data: rooms }, { data: tasks }, { data: calls }, { data: vers }] = await Promise.all([
     db.from('garden_reservations').select('id,status,guest_name,guest_phone,check_in,check_out,nights,adults,children,room_names,source,balance').in('status', [...LIVE, 'checked_out']).or(`check_in.eq.${t0},check_out.eq.${t0},and(check_in.lt.${t0},check_out.gt.${t0}),and(check_in.gt.${t0},check_in.lte.${t2})`),
-    db.from('garden_rooms').select('id,name,room_type,status,hk_status,occupied').order('name'),
+    db.from('garden_rooms').select('id,name,room_type,status,hk_status,occupied').or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false').order('name'),
     db.from('garden_tasks').select('*').eq('date', t0).order('kind'),
     db.from('garden_calls').select('reservation_id,kind,outcome,called_at').gte('called_at', new Date(Date.now() - 14 * 86400000).toISOString()),
     db.from('garden_verifications').select('reservation_id,kind,status'),
@@ -62,7 +62,7 @@ export async function gardenRooms() {
   const db = supabaseAdmin()
   const t0 = todayET(0), t1 = addDays(t0, 1)
   const [{ data: rooms }, { data: res }, { data: tasks }] = await Promise.all([
-    db.from('garden_rooms').select('*').order('name'),
+    db.from('garden_rooms').select('*').or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false').order('name'),
     db.from('garden_reservations').select('id,status,guest_name,check_in,check_out,room_ids').in('status', LIVE).lte('check_in', addDays(t0, 7)).gte('check_out', t0),
     db.from('garden_tasks').select('*').in('date', [t0, t1]).neq('status', 'cancelled').order('date'),
   ])
@@ -104,7 +104,7 @@ export async function gardenReport(from: string, to: string) {
   const db = supabaseAdmin()
   const days = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1)
   const [roomsQ, { data: res }, { data: tasks }, { data: calls }, { data: vers }] = await Promise.all([
-    db.from('garden_rooms').select('id', { count: 'exact', head: true }),
+    db.from('garden_rooms').select('id', { count: 'exact', head: true }).or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false'),
     db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,source,room_ids').neq('status', 'canceled').lte('check_in', to).gte('check_out', from),
     db.from('garden_tasks').select('kind,status,date,finished_at').gte('date', from).lte('date', to),
     db.from('garden_calls').select('kind,outcome,called_at').gte('called_at', from + 'T00:00:00Z').lte('called_at', to + 'T23:59:59Z'),

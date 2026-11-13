@@ -183,8 +183,10 @@ export async function gardenFrontDesk() {
   })
 
   const live = T.filter(t => t.status !== 'cancelled')
-  const hk = { clean: 0, dirty: 0, inspected: 0, unknown: 0, oos: 0 }
-  for (const r of rooms) { if (r.oos) hk.oos++; const c = r.condition as keyof typeof hk; if (c === 'clean' || c === 'dirty' || c === 'inspected') hk[c]++; else hk.unknown++ }
+  // dirtyVacant = rooms to turn. Cloudbeds marks every occupied room dirty by itself (check-in, 2 AM),
+  // so the plain dirty count is mostly guests in their rooms, not work.
+  const hk = { clean: 0, dirty: 0, inspected: 0, unknown: 0, oos: 0, dirtyVacant: 0, dirtyOccupied: 0 }
+  for (const r of rooms) { if (r.oos) hk.oos++; const c = r.condition as keyof typeof hk; if (c === 'clean' || c === 'dirty' || c === 'inspected') hk[c]++; else hk.unknown++; if (c === 'dirty' && !r.oos) { if (r.stay && !r.departing) hk.dirtyOccupied++; else hk.dirtyVacant++ } }
 
   // Completions per housekeeper — from the room assignment (Cloudbeds) and the task assignee (ours).
   const perHk: Record<string, { name: string; rooms: number; clean: number; dirty: number; tasks: number; done: number }> = {}

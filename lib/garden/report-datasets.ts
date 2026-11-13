@@ -47,7 +47,9 @@ async function pull(from: string, to: string): Promise<{ res: Res[]; rooms: any[
   const db = supabaseAdmin()
   const [{ data: res }, { data: rooms }, gyRes, gyUnits] = await Promise.all([
     db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,balance,source,room_ids,room_names,guest_name,booked_at').in('status', LIVE).lte('check_in', to).gte('check_out', from).limit(5000),
-    db.from('garden_rooms').select('id,name,room_type,status'),
+    // Physical rooms only: Cloudbeds' virtual (linked / combined) rooms are half the list and are not
+    // inventory — counting them halved occupancy and RevPAR in the owner report (audit 2026-11-13).
+    db.from('garden_rooms').select('id,name,room_type,status').or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false'),
     botanicaGuestyReservations(from, to).catch(() => []),
     botanicaListings().catch(() => []),
   ])
