@@ -27,6 +27,7 @@ const CSS = `
 .ow li.done b{color:var(--ok)}.ow li.short b{color:var(--bad)}
 .ow-qty{display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .ow-qty button{width:42px;height:42px;border-radius:999px;border:1px solid var(--rule);background:#fff;font:600 20px/1 Inter,sans-serif;color:var(--ink);cursor:pointer}
+.ow-qty button.all{width:auto;padding:0 12px;font:600 13px Inter,sans-serif;color:var(--mut)}.ow-qty button.all.y{background:var(--ok);border-color:var(--ok);color:#fff}
 .ow-qty input{width:54px;height:42px;text-align:center;border:1px solid var(--rule);border-radius:10px;font:600 17px Inter,sans-serif;color:var(--ink);background:#fff;padding:0}
 .ow-yn{display:flex;gap:6px;flex:0 0 auto}
 .ow-yn button{min-width:58px;height:42px;border-radius:999px;border:1px solid var(--rule);background:#fff;font:600 14px Inter,sans-serif;color:var(--mut);cursor:pointer}
@@ -65,7 +66,7 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
         <img src="/stay-logo.png" alt="Stay Hospitality" />
         <p className="ow-k">Walkthrough{d.place ? ' · ' + d.place : ''}</p>
         <h1>Count what is in the home</h1>
-        <p>For each item, enter how many are actually there. For single items, tap Yes or No. It saves as you go, so you can stop and come back from the same link.</p>
+        <p>For each item, enter how many are actually there, or tap All when the full number is there. For single items, tap Yes or No. It saves as you go, so you can stop and come back from the same link.</p>
         {d.stock ? <p className="ow-mut">The owner says {d.stock === 'full' ? 'the home is fully stocked' : 'nothing has been bought yet'}. The grey note under each item is what the owner told us.</p> : null}
         {d.doneAt ? <div className="ow-card"><p className="ow-ok" style={{ margin: 0 }}>✓ Walkthrough finished {new Date(d.doneAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. You can still correct a count below.</p></div> : null}
         <div className="ow-card"><label className="ow-f"><span>Your name</span><input value={by} onChange={e => setBy(e.target.value)} onBlur={() => flush()} placeholder="Who is doing the walkthrough" autoComplete="name" /></label></div>
@@ -82,6 +83,7 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
                     <button type="button" aria-label={'One fewer ' + i.name} onClick={() => set(i.key, (has ? n : 0) - 1)}>−</button>
                     <input inputMode="numeric" aria-label={'How many ' + i.name} value={has ? String(n) : ''} placeholder="?" onChange={e => { const v = e.target.value.replace(/\D/g, ''); if (v !== '') set(i.key, Number(v)) }} />
                     <button type="button" aria-label={'One more ' + i.name} onClick={() => set(i.key, (has ? n : 0) + 1)}>+</button>
+                    <button type="button" className={'all' + (has && n >= i.qty ? ' y' : '')} aria-label={'All ' + i.qty + ' ' + i.name + ' are there'} onClick={() => set(i.key, i.qty)}>All</button>
                   </div>
                 ) : (
                   <div className="ow-yn">

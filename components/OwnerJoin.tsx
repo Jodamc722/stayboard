@@ -146,6 +146,7 @@ export function OwnerJoin({ code }: { code: string }) {
   }
   function mark(k: string, v: OOMark) {
     setMarks(m => ({ ...m, [k]: v })); pending.current[k] = v
+    if (v === '' && k in cnts) { setCnts(c => { const x = { ...c }; delete x[k]; return x }); (pendingC.current as Any)[k] = null }
     flushSoon()
   }
   const flags = rec?.custom || {}
@@ -312,7 +313,7 @@ export function OwnerJoin({ code }: { code: string }) {
           <section>
             <p className="oj-kick">Step {tabs.indexOf('supplies') + 1}</p>
             <h1>What does the home <em>already have?</em></h1>
-            <p className="oj-p">Everything a rental this size needs. Start with the quick answer if one fits, then adjust any item: enter how many you have, or tap <b>Have</b> or <b>Need</b>. It saves as you go.</p>
+            <p className="oj-p">Everything a rental this size needs. Start with the quick answer if one fits, then adjust any item. Tap <b>Have</b> if it is there or <b>Need</b> if it is not. You do not need a perfect count: Have means you have enough, and you can type the number if you want to be exact. It saves as you go.</p>
             {!items.length ? <p className="oj-p">Fill in the home first, then the list appears here.</p> : (<>
               {unitCount > 1 ? <div className="oj-units">{Array.from({ length: unitCount }, (_, i) => { const l = items.find(x => (x.unit || 0) === i)?.unitLabel || 'Unit ' + (i + 1); const left = items.filter(x => (x.unit || 0) === i && !marks[x.key]).length; return <button key={i} type="button" className={i === su ? 'on' : ''} onClick={() => setSu(i)}>{l}{left ? <small> · {left} to check</small> : <small> · done</small>}</button> })}</div> : null}
               <div className="oj-quick">
@@ -333,12 +334,14 @@ export function OwnerJoin({ code }: { code: string }) {
                       <ul>{list.map(i => (
                         <li key={i.key} className={'oj-m-' + (marks[i.key] || '')}>
                           <span>{i.name}{i.size ? <small> · {i.size}</small> : null}<em>×{i.qty}</em></span>
+                          {/* YES IS ENOUGH (Jon, 2026-11-13: "they can mark yes if they hit the number, they don't need a perfect count…
+                              they can edit the number or click yes and it assumes they have the number"). Have = all of them,
+                              Need = none; the number is there for anyone who wants to be exact. Our walkthrough checks it. */}
                           {i.qty > 1 ? (() => { const n = typeof cnts[i.key] === 'number' ? cnts[i.key] : marks[i.key] === 'have' ? i.qty : marks[i.key] === 'need' ? 0 : null; return (
-                            <div className="oj-qty" title={'How many are there, of the ' + i.qty + ' this home needs'}>
-                              <button type="button" aria-label={'One fewer ' + i.name} onClick={() => count(i.key, i.qty, (n ?? 0) - 1)} disabled={!n}>−</button>
-                              <input inputMode="numeric" aria-label={'How many ' + i.name + ' are there'} value={n == null ? '' : String(n)} placeholder="?" onChange={e => { const v = e.target.value.replace(/\D/g, ''); if (v !== '') count(i.key, i.qty, Number(v)) }} />
-                              <button type="button" aria-label={'One more ' + i.name} onClick={() => count(i.key, i.qty, (n ?? 0) + 1)}>+</button>
-                              <small>of {i.qty}</small>
+                            <div className="oj-hn">
+                              <label className="oj-qty" title={'Optional: exactly how many are there, of the ' + i.qty + ' this home needs'}><input inputMode="numeric" aria-label={'How many ' + i.name + ' are there'} value={n == null ? '' : String(n)} placeholder="#" onChange={e => { const v = e.target.value.replace(/\D/g, ''); if (v !== '') count(i.key, i.qty, Number(v)) }} /><small>of {i.qty}</small></label>
+                              <button type="button" className={marks[i.key] === 'have' ? 'on have' : ''} onClick={() => (marks[i.key] === 'have' ? mark(i.key, '') : count(i.key, i.qty, i.qty))}>Have</button>
+                              <button type="button" className={marks[i.key] === 'need' ? 'on need' : ''} onClick={() => (marks[i.key] === 'need' && !n ? mark(i.key, '') : count(i.key, i.qty, 0))}>Need</button>
                             </div>) })() : (
                           <div className="oj-hn">
                             <button type="button" className={marks[i.key] === 'have' ? 'on have' : ''} onClick={() => mark(i.key, marks[i.key] === 'have' ? '' : 'have')}>Have</button>
@@ -572,10 +575,9 @@ const CSS = `
 .oj-quick-b button b{font:600 14.5px Inter,sans-serif}.oj-quick-b button small{font:400 12.5px Inter,sans-serif;color:var(--mut)}
 .oj-quick-b button.on{border-color:var(--ink);background:var(--soft)}.oj-quick-b button:disabled{opacity:.6}
 @media (max-width:520px){.oj-quick-b{grid-template-columns:1fr}}
-.oj-qty{display:flex;align-items:center;gap:4px;flex:0 0 auto}
-.oj-qty button{width:32px;height:32px;border-radius:99px;border:1px solid var(--rule);background:#fff;color:var(--ink);font:600 16px/1 Inter,sans-serif;cursor:pointer}.oj-qty button:disabled{opacity:.35;cursor:default}
-.oj-qty input{width:44px;height:32px;text-align:center;border:1px solid var(--rule);border-radius:8px;font:600 14px Inter,sans-serif;color:var(--ink);background:#fff;padding:0}
-.oj-qty small{font:500 12px Inter,sans-serif;color:var(--mut);min-width:34px}
+.oj-qty{display:flex;align-items:center;gap:4px;flex:0 0 auto;margin-right:4px}
+.oj-qty input{width:40px;height:32px;text-align:center;border:1px solid var(--rule);border-radius:8px;font:600 13.5px Inter,sans-serif;color:var(--ink);background:#fff;padding:0}
+.oj-qty small{font:500 11.5px Inter,sans-serif;color:var(--mut);white-space:nowrap}
 .oj-hn{display:flex;gap:4px;flex:0 0 auto}
 .oj-hn button{height:32px;padding:0 12px;border-radius:99px;border:1px solid var(--rule);background:#fff;color:var(--mut);font:600 12.5px Inter,sans-serif;cursor:pointer}
 .oj-hn button.have{background:var(--ok);border-color:var(--ok);color:#fff}
