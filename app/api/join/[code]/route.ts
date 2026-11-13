@@ -3,7 +3,8 @@
 // submit? } → saves as they go. The timeline moves on its own: the home saved → "Your home" done; submitted →
 // "Supplies check" done, and the team is told.
 import { NextRequest, NextResponse } from 'next/server'
-import { readRecord, saveRecord, itemsFor } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, itemsFor as allItems, ownerItems, cleanMore } from '@/lib/owner-onboard-server'
+const itemsFor = async (r: any) => ownerItems(await allItems(r))
 import { cleanHome, ownerView, routingOk, OO_TAX_CLASS, type OOPayout } from '@/lib/owner-onboard'
 import { encryptSecret, maskHint, vaultKeyReady } from '@/lib/vault'
 import { sendHandoff } from '@/lib/owner-onboard-mail'
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
   const r = await readRecord(params.code)
   if (!r || r.archived) return NextResponse.json({ ok: false, error: 'This onboarding link is not active. Ask your Stay Hospitality contact for a new one.' }, { status: 404, headers: NO_STORE })
   if (!(await signedIn(req, r))) return locked(r)
-  const items = r.home ? await itemsFor(r.home, { supplies: r.custom.askSupplies, linen: r.custom.askLinen }) : []
+  const items = await itemsFor(r)
   return NextResponse.json({ ok: true, record: ownerView(r), items }, { headers: NO_STORE })
 }
 
@@ -43,6 +44,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   const today = new Date().toISOString().slice(0, 10)
   if (b.home) {
     r.home = cleanHome(b.home)
+    if (Array.isArray(b.more)) r.more = cleanMore(b.more)
     if (step('details').status !== 'done') { step('details').status = 'done'; step('details').date = today }
     if (step('supplies').status === 'todo') step('supplies').status = 'doing'
   }
@@ -96,6 +98,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
       await notify(who, { kind: 'owner_onboarding', title: `${r.custom.ownerName || 'An owner'} finished the onboarding form`, body: [r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · ') || 'Their home details and supplies check are in.', link: '/owner-onboarding/' + r.code })
     } catch { /* saved; the bell is a courtesy */ }
   }
-  const items = r.home ? await itemsFor(r.home, { supplies: r.custom.askSupplies, linen: r.custom.askLinen }) : []
+  const items = await itemsFor(r)
   return NextResponse.json({ ok: true, record: ownerView(r), items }, { headers: NO_STORE })
 }

@@ -26,7 +26,12 @@ export function OwnerJoin({ code }: { code: string }) {
   const [items, setItems] = useState<OOItem[]>([])
   const [err, setErr] = useState('')
   const [tab, setTab] = useState<Tab>('welcome')
-  const [home, setHome] = useState<OOHome>(DEFAULT_HOME)
+  // SEVERAL UNITS (Jon, 2026-11-13): one form per unit; the first is the link's home, the rest are "more".
+  const [homes, setHomes] = useState<OOHome[]>([DEFAULT_HOME])
+  const [ui, setUi] = useState(0)          // the unit being edited
+  const [su, setSu] = useState(0)          // the unit whose supplies show
+  const home = homes[Math.min(ui, homes.length - 1)]
+  const setHome = (h: OOHome) => setHomes(hs => hs.map((x, i) => (i === Math.min(ui, hs.length - 1) ? h : x)))
   const [marks, setMarks] = useState<Record<string, OOMark>>({})
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
@@ -35,7 +40,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const pending = useRef<Record<string, OOMark>>({})
   const timer = useRef<any>(null)
 
-  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); if (d.record.home) setHome(d.record.home); setNotes(d.record.ownerNotes || '') }
+  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); if (d.record.home) setHomes([d.record.home, ...(d.record.more || [])]); setNotes(d.record.ownerNotes || '') }
   // SIGN-IN (lib/owner-onboard-auth): an emailed magic link signs in once; then a password.
   const [gate, setGate] = useState<Any>(null)        // { hasPassword, emailHint, firstName } when locked
   const [needPw, setNeedPw] = useState(false)       // signed in by link, no password yet
@@ -78,7 +83,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const next = () => go(tabs[Math.min(tabs.length - 1, tabs.indexOf(tab) + 1)])
   const back = () => go(tabs[Math.max(0, tabs.indexOf(tab) - 1)])
 
-  async function saveHome() { setBusy(true); setMsg(''); try { apply(await patch({ home })); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
+  async function saveHome() { setBusy(true); setMsg(''); try { apply(await patch({ home: homes[0], more: homes.slice(1) })); setSu(0); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
   async function finishSupplies() { setBusy(true); setMsg(''); try { clearTimeout(timer.current); const m = pending.current; pending.current = {}; apply(await patch({ marks: m, ownerNotes: notes, submit: flags.askPayout === false })); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
   async function savePayout(e: React.FormEvent) {
     e.preventDefault(); setMsg('')
@@ -95,7 +100,9 @@ export function OwnerJoin({ code }: { code: string }) {
     try { const d = await patch({ payout: pay, submit: true }); apply(d); setPay((p: Any) => ({ ...p, w9: { ...p.w9, tin: '' }, ach: { ...p.ach, routing: '', account: '', routing2: '', account2: '' } })); go('timeline') } catch (e2: Any) { setMsg(e2.message) } finally { setBusy(false) }
   }
 
-  const groups = useMemo(() => Array.from(new Set(items.map(i => i.group))), [items])
+  const unitCount = Math.max(1, ...items.map(i => (i.unit || 0) + 1))
+  const shown = useMemo(() => items.filter(i => (i.unit || 0) === Math.min(su, unitCount - 1)), [items, su, unitCount])
+  const groups = useMemo(() => Array.from(new Set(shown.map(i => i.group))), [shown])
   const counts = { have: items.filter(i => marks[i.key] === 'have').length, need: items.filter(i => marks[i.key] === 'need').length }
   const c = flags.contact || {}
   const first = (flags.ownerName || '').split(' ')[0]
@@ -174,25 +181,51 @@ export function OwnerJoin({ code }: { code: string }) {
         {tab === 'home' ? (
           <section>
             <p className="oj-kick">Step {tabs.indexOf('home') + 1}</p>
-            <h1>Tell us about <em>the home.</em></h1>
-            <p className="oj-p">This builds the list of everything the home needs, sized to its beds, baths and kitchen.</p>
-            <div className="oj-form">
-              <label className="oj-f oj-wide"><span>Address</span><input value={home.address} onChange={e => setHome({ ...home, address: e.target.value })} placeholder="Street, city" autoComplete="street-address" /></label>
-              <label className="oj-f"><span>Unit</span><input value={home.unit} onChange={e => setHome({ ...home, unit: e.target.value })} placeholder="e.g. 2401" /></label>
-              <label className="oj-f"><span>Square feet</span><input inputMode="numeric" value={home.sqft || ''} onChange={e => setHome({ ...home, sqft: Number(e.target.value.replace(/\D/g, '')) || 0 })} placeholder="e.g. 850" /></label>
-              <Step label="Bedrooms" value={home.bedrooms} set={v => setHome({ ...home, bedrooms: v })} min={0} max={10} show={v => (v === 0 ? 'Studio' : String(v))} />
-              <Step label="Bathrooms" value={home.bathrooms} set={v => setHome({ ...home, bathrooms: v })} min={1} max={10} step={0.5} />
-              <Step label="Sleeps" value={home.guests} set={v => setHome({ ...home, guests: v })} min={1} max={24} />
-              <Seg label="Sofa bed" value={home.sleeper ? 'y' : 'n'} set={v => setHome({ ...home, sleeper: v === 'y' })} opts={[['n', 'No'], ['y', 'Yes']]} />
-              <p className="oj-sub oj-wide">Beds, by size</p>
-              {OO_BEDS.map(b => <Step key={b} label={b} value={home.beds[b] || 0} set={v => setHome({ ...home, beds: { ...home.beds, [b]: v } })} min={0} max={8} />)}
-              <Seg label="Kitchen" value={home.kitchen ? 'y' : 'n'} set={v => setHome({ ...home, kitchen: v === 'y' })} opts={[['y', 'Yes'], ['n', 'No']]} />
-              <Seg label="Washer and dryer" value={home.washer ? 'y' : 'n'} set={v => setHome({ ...home, washer: v === 'y' })} opts={[['n', 'No'], ['y', 'Yes']]} />
-              {home.kitchen ? (
-                <div className="oj-apps oj-wide"><span>Appliances in the kitchen</span><div>{OO_APPLIANCES.map(a => <button key={a} type="button" className={home.appliances[a] ? 'on' : ''} onClick={() => setHome({ ...home, appliances: { ...home.appliances, [a]: !home.appliances[a] } })}>{home.appliances[a] ? <Check size={13} /> : null}{OO_APPLIANCE_LABEL[a]}</button>)}</div></div>
-              ) : null}
-              <label className="oj-f oj-wide"><span>Parking (optional)</span><input value={home.parking} onChange={e => setHome({ ...home, parking: e.target.value })} placeholder="e.g. one assigned space, P2 #114" /></label>
-              <label className="oj-f oj-wide"><span>Access (optional)</span><input value={home.access} onChange={e => setHome({ ...home, access: e.target.value })} placeholder="e.g. front desk holds the key; building app" /></label>
+            <h1>Tell us about <em>{homes.length > 1 ? 'each unit.' : 'the home.'}</em></h1>
+            <p className="oj-p">This builds the list of everything the home needs, sized to its beds, baths and kitchen. More than one unit with us? Add each one.</p>
+            <div className="oj-units">
+              {homes.map((h, i) => <button key={i} type="button" className={i === ui ? 'on' : ''} onClick={() => setUi(i)}>{h.unit ? 'Unit ' + h.unit : 'Unit ' + (i + 1)}</button>)}
+              <button type="button" className="add" onClick={() => { setHomes(hs => [...hs, { ...DEFAULT_HOME, address: hs[0].address, uid: Math.random().toString(36).slice(2, 8) }]); setUi(homes.length) }}><Plus size={13} /> Add another unit</button>
+              {ui > 0 ? <button type="button" className="rm" onClick={() => { setHomes(hs => hs.filter((_, i) => i !== ui)); setUi(ui - 1) }}>Remove this unit</button> : null}
+            </div>
+            <div className="oj-sec">
+              <p className="oj-sec-h"><em>1</em> The basics</p>
+              <div className="oj-form">
+                <label className="oj-f oj-wide"><span>Address</span><input value={home.address} onChange={e => setHome({ ...home, address: e.target.value })} placeholder="Street, city" autoComplete="street-address" /></label>
+                <label className="oj-f"><span>Unit</span><input value={home.unit} onChange={e => setHome({ ...home, unit: e.target.value })} placeholder="e.g. 2401" /></label>
+                <label className="oj-f"><span>Square feet</span><input inputMode="numeric" value={home.sqft || ''} onChange={e => setHome({ ...home, sqft: Number(e.target.value.replace(/\D/g, '')) || 0 })} placeholder="e.g. 850" /></label>
+                <Step label="Bedrooms" value={home.bedrooms} set={v => setHome({ ...home, bedrooms: v })} min={0} max={10} show={v => (v === 0 ? 'Studio' : String(v))} />
+                <Step label="Bathrooms" value={home.bathrooms} set={v => setHome({ ...home, bathrooms: v })} min={1} max={10} step={0.5} />
+                <Step label="Sleeps" value={home.guests} set={v => setHome({ ...home, guests: v })} min={1} max={24} />
+              </div>
+            </div>
+            <div className="oj-sec">
+              <p className="oj-sec-h"><em>2</em> Beds <small>how many of each size</small></p>
+              <div className="oj-form">
+                {OO_BEDS.map(b => <Step key={b} label={b} value={home.beds[b] || 0} set={v => setHome({ ...home, beds: { ...home.beds, [b]: v } })} min={0} max={8} />)}
+                <Seg label="Sofa bed" value={home.sleeper ? 'y' : 'n'} set={v => setHome({ ...home, sleeper: v === 'y' })} opts={[['n', 'No'], ['y', 'Yes']]} />
+              </div>
+              {!OO_BEDS.some(b => home.beds[b]) ? <p className="oj-warn">Add at least one bed so we can size the linen.</p> : null}
+            </div>
+            <div className="oj-sec oj-kitchen">
+              <p className="oj-sec-h"><em>3</em> Kitchen <small>this sets the cookware and dish list</small></p>
+              <div className="oj-bigchoice">
+                <button type="button" className={home.kitchen ? 'on' : ''} onClick={() => setHome({ ...home, kitchen: true })}><b>Yes, it has a kitchen</b><span>Full kitchen or kitchenette</span></button>
+                <button type="button" className={!home.kitchen ? 'on' : ''} onClick={() => setHome({ ...home, kitchen: false })}><b>No kitchen</b><span>We skip the kitchen items</span></button>
+              </div>
+              {home.kitchen ? (<>
+                <p className="oj-q">Which appliances does it have? <small>Tap each one it has</small></p>
+                <div className="oj-appgrid">{OO_APPLIANCES.map(a => <button key={a} type="button" className={home.appliances[a] ? 'on' : ''} onClick={() => setHome({ ...home, appliances: { ...home.appliances, [a]: !home.appliances[a] } })}><i>{home.appliances[a] ? <Check size={14} /> : null}</i>{OO_APPLIANCE_LABEL[a]}</button>)}</div>
+                <p className="oj-small">{OO_APPLIANCES.filter(a => home.appliances[a]).length} of {OO_APPLIANCES.length} selected. Leave one off and we leave out what goes with it (no oven, no baking sheets).</p>
+              </>) : null}
+            </div>
+            <div className="oj-sec">
+              <p className="oj-sec-h"><em>4</em> Laundry, parking and access</p>
+              <div className="oj-form">
+                <Seg label="Washer and dryer in the unit" value={home.washer ? 'y' : 'n'} set={v => setHome({ ...home, washer: v === 'y' })} opts={[['n', 'No'], ['y', 'Yes']]} />
+                <label className="oj-f oj-wide"><span>Parking (optional)</span><input value={home.parking} onChange={e => setHome({ ...home, parking: e.target.value })} placeholder="e.g. one assigned space, P2 #114" /></label>
+                <label className="oj-f oj-wide"><span>Access (optional)</span><input value={home.access} onChange={e => setHome({ ...home, access: e.target.value })} placeholder="e.g. front desk holds the key; building app" /></label>
+              </div>
             </div>
             {msg ? <p className="oj-err">{msg}</p> : null}
             <div className="oj-nav"><button type="button" className="oj-ghost" onClick={back}><ChevronLeft size={16} /> Back</button><button type="button" className="oj-cta" disabled={busy} onClick={saveHome}>{busy ? 'Saving…' : 'Save and continue'} <ChevronRight size={16} /></button></div>
@@ -205,10 +238,11 @@ export function OwnerJoin({ code }: { code: string }) {
             <h1>What does the home <em>already have?</em></h1>
             <p className="oj-p">Everything a rental this size needs. Tick <b>Have</b> for what is there and <b>Need</b> for what is missing; we will go through what to buy together. It saves as you tick.</p>
             {!items.length ? <p className="oj-p">Fill in the home first, then the list appears here.</p> : (<>
+              {unitCount > 1 ? <div className="oj-units">{Array.from({ length: unitCount }, (_, i) => { const l = items.find(x => (x.unit || 0) === i)?.unitLabel || 'Unit ' + (i + 1); const left = items.filter(x => (x.unit || 0) === i && !marks[x.key]).length; return <button key={i} type="button" className={i === su ? 'on' : ''} onClick={() => setSu(i)}>{l}{left ? <small> · {left} to check</small> : <small> · done</small>}</button> })}</div> : null}
               <div className="oj-tally"><span><b>{counts.have}</b> have</span><span><b>{counts.need}</b> need</span><span><b>{items.length - counts.have - counts.need}</b> to check</span></div>
               <div className="oj-cols">
                 {groups.map(g => {
-                  const list = items.filter(i => i.group === g)
+                  const list = shown.filter(i => i.group === g)
                   return (
                     <div key={g} className="oj-group">
                       <div className="oj-g-head"><p className="oj-lab">{g}</p><button type="button" onClick={() => list.forEach(i => mark(i.key, 'have'))}>All have</button></div>
@@ -276,6 +310,20 @@ export function OwnerJoin({ code }: { code: string }) {
               <p className="oj-kick">{rec.submittedAt ? 'Thank you' : 'Your onboarding'}</p>
               <h1>{rec.submittedAt ? <>You’re all set <em>for now.</em></> : <>Where things <em>stand.</em></>}</h1>
               <p className="oj-p">{rec.submittedAt ? 'We have what we need to start. Next come the photos and your listing. Once the photos are done, we will set up a call to walk you through the listing and the pricing strategy. This page shows each step as it happens.' : 'Each step, and where it stands.'}</p>
+              {flags.askPayout !== false ? (
+                <div className="oj-card oj-docs">
+                  <p className="oj-lab">Your W-9 and payout account</p>
+                  {rec.payout ? (<>
+                    <p className="oj-ok"><Check size={15} /> On file since {new Date(rec.payout.sign.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
+                    <p className="oj-small">{rec.payout.w9.tinType === 'ein' ? 'EIN' : 'SSN'} {rec.payout.w9.tinHint} · {rec.payout.ach.bank} {rec.payout.ach.accountType} {rec.payout.ach.accountHint}</p>
+                    <div className="oj-docbtns">
+                      <a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=w9'}>Download my W-9</a>
+                      <a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=ach'}>Download my ACH form</a>
+                      <button type="button" className="oj-ghost" onClick={() => go('payout')}>Update</button>
+                    </div>
+                  </>) : <><p className="oj-p">Not sent yet. We need these to pay you and for your tax form.</p><button type="button" className="oj-cta" onClick={() => go('payout')}>Fill in my W-9 and bank details <Lock size={15} /></button></>}
+                </div>
+              ) : null}
               {counts.need ? <p className="oj-p">You marked <b>{counts.need}</b> item{counts.need === 1 ? '' : 's'} the home still needs. We will go through them with you before anything is bought.</p> : null}
             </div>
             <aside className="oj-card">{timeline}</aside>
@@ -342,6 +390,25 @@ const CSS = `
 .oj-f>span{font:600 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
 .oj-f input,.oj-f select,.oj-f textarea{width:100%;font:500 15px Inter,sans-serif;color:var(--ink);border:1px solid var(--rule);border-radius:10px;padding:11px 12px;background:#fff}
 .oj-auth{max-width:520px;padding-top:36px;padding-bottom:60px}.oj-auth .oj-logo{margin-bottom:36px}.oj-authcard{margin-top:16px;display:grid;gap:12px}.oj-authcard .oj-f{border-bottom:0;padding:0}.oj-authcard .oj-cta,.oj-authcard .oj-ghost{justify-self:start}
+.oj-sec{margin-top:18px}
+.oj-sec-h{display:flex;align-items:center;gap:10px;font:400 24px "Instrument Serif",Georgia,serif;color:var(--ink);margin:0 0 8px}
+.oj-sec-h em{font:600 13px Inter,sans-serif;font-style:normal;width:26px;height:26px;border-radius:50%;background:var(--navy);color:#fff;display:grid;place-items:center;flex:0 0 26px}
+.oj-sec-h small{font:400 13px Inter,sans-serif;color:var(--mut)}
+.oj-sec .oj-form{margin-top:0}
+.oj-kitchen{background:#fff;border:2px solid var(--acc);border-radius:18px;padding:16px 18px 14px}
+.oj-bigchoice{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.oj-bigchoice button{text-align:left;padding:14px 16px;border-radius:14px;border:2px solid var(--rule);background:#fff;cursor:pointer;display:grid;gap:2px}
+.oj-bigchoice button b{font:600 15px Inter,sans-serif;color:var(--ink)}.oj-bigchoice button span{font-size:12.5px;color:var(--mut)}
+.oj-bigchoice button.on{border-color:var(--navy);background:var(--soft)}
+.oj-q{font:600 15px Inter,sans-serif;color:var(--ink);margin:16px 0 8px}.oj-q small{font-weight:400;color:var(--mut);margin-left:6px}
+.oj-appgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.oj-appgrid button{display:flex;align-items:center;gap:10px;padding:13px 14px;border-radius:12px;border:2px solid var(--rule);background:#fff;color:var(--ink);font:600 14px Inter,sans-serif;cursor:pointer;text-align:left}
+.oj-appgrid button i{flex:0 0 22px;height:22px;border-radius:6px;border:2px solid var(--rule);display:grid;place-items:center;color:#fff}
+.oj-appgrid button.on{border-color:var(--ok);background:#F1F8F3}.oj-appgrid button.on i{background:var(--ok);border-color:var(--ok)}
+.oj-warn{color:#B4532A;font-weight:600;font-size:13px;margin:8px 0 0}
+@media (max-width:520px){.oj-bigchoice{grid-template-columns:1fr}}
+.oj-docs{margin:6px 0 16px}.oj-docbtns{display:flex;flex-wrap:wrap;gap:8px}.oj-docbtns .oj-ghost{height:40px;text-decoration:none;font-size:13px}
+.oj-units{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 4px}.oj-units button{height:36px;padding:0 14px;border-radius:99px;border:1px solid var(--rule);background:#fff;color:var(--ink);font:600 13px Inter,sans-serif;cursor:pointer;display:inline-flex;align-items:center;gap:4px}.oj-units button.on{background:var(--navy);border-color:var(--navy);color:#fff}.oj-units button.add{border-style:dashed;color:var(--acc)}.oj-units button.rm{border:0;background:none;color:var(--bad);font-weight:500}.oj-units small{font-weight:400;opacity:.8}
 .oj-match{display:inline-flex;align-items:center;gap:4px;color:var(--ok);font-weight:600;font-size:12px}
 .oj-apps{padding:12px 0;border-bottom:1px solid var(--rule)}
 .oj-apps>span{font:600 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}

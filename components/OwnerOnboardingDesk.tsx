@@ -226,14 +226,14 @@ export function OwnerOnboardingDesk() {
         </div>
         {!links ? <p className="py-10 text-center text-muted"><Loader2 size={15} className="inline animate-spin" /></p> : !shown.length ? <p className="p-5 text-[13px] text-muted">No owner links yet. Make the first with “New owner link”.</p> : (
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-[13px]">
-            <thead><tr className="text-left text-[10.5px] uppercase tracking-[0.14em] text-muted border-b border-line"><th className="py-2.5 pl-4 pr-3 font-semibold">Owner</th><th className="pr-3 font-semibold">Property · unit</th><th className="pr-3 font-semibold">Stage</th><th className="pr-3 font-semibold text-right">Have</th><th className="pr-3 font-semibold text-right">Need</th><th className="pr-3 font-semibold">Form</th><th className="pr-4 font-semibold text-right">Updated</th></tr></thead>
+            <thead><tr className="text-left text-[10.5px] uppercase tracking-[0.14em] text-muted border-b border-line"><th className="py-2.5 pl-4 pr-3 font-semibold">Owner</th><th className="pr-3 font-semibold">Property · unit</th><th className="pr-3 font-semibold">Where it stands</th><th className="pr-3 font-semibold text-right">Need</th><th className="pr-3 font-semibold">Paperwork</th><th className="pr-4 font-semibold text-right">Updated</th></tr></thead>
             <tbody>{shown.map(l => (
               <tr key={l.code} onClick={() => { window.location.href = '/owner-onboarding/' + l.code }} className="border-b border-line last:border-0 cursor-pointer hover:bg-app">
                 <td className="py-2.5 pl-4 pr-3 font-semibold text-ink">{l.ownerName || '—'}{l.archived ? <span className="ml-1 text-[11px] text-muted">(archived)</span> : null}</td>
-                <td className="pr-3 text-ink">{[l.property, l.unitLabel].filter(Boolean).join(' · ') || <span className="text-muted">—</span>}{l.listingId ? <span className="ml-1 text-[10.5px] text-emerald-700 font-semibold">GUESTY</span> : null}</td>
-                <td className="pr-3"><span className="rounded-full bg-app px-2 py-0.5 text-[12px] text-ink">{l.stage}</span></td>
-                <td className="pr-3 text-right tabular-nums">{l.have || '—'}</td><td className="pr-3 text-right tabular-nums">{l.need || '—'}</td>
-                <td className="pr-3">{l.submitted ? <span className="text-emerald-700 text-[12px] font-semibold">Submitted</span> : <span className="text-muted text-[12px]">Open</span>}</td>
+                <td className="pr-3 text-ink">{[l.property, l.unitLabel].filter(Boolean).join(' · ') || <span className="text-muted">—</span>}{(l.units || 0) > 1 ? <span className="ml-1 text-[11px] text-muted">{l.units} units</span> : null}{l.listingId ? <span className="ml-1 text-[10.5px] text-emerald-700 font-semibold">GUESTY</span> : null}</td>
+                <td className="pr-3"><span className="flex items-center gap-1" title={OO_STEPS.map((s, i) => s.label + ': ' + ({ d: 'done', g: 'in progress', t: 'to do' } as Any)[(l.steps || '')[i] || 't']).join('\n')}>{OO_STEPS.map((s, i) => { const c = (l.steps || '')[i] || 't'; return <i key={s.key} className={'inline-block w-4 h-1.5 rounded-full ' + (c === 'd' ? 'bg-emerald-600' : c === 'g' ? 'bg-[#8C6D3A]' : 'bg-line')} /> })}</span><span className="block text-[12px] text-ink mt-1">{l.stage}{l.callAt ? <span className="text-muted"> · call {new Date(l.callAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span> : null}</span></td>
+                <td className="pr-3 text-right tabular-nums">{l.need || '—'}</td>
+                <td className="pr-3 text-[12px]">{[l.agreement ? 'Agreement' : '', l.paperwork ? 'W-9 + ACH' : '', l.linen === 'sent' ? 'Linen sent' : l.linen === 'approved' ? 'Linen approved' : ''].filter(Boolean).join(' · ') || <span className="text-muted">None yet</span>}</td>
                 <td className="pr-4 text-right text-[12px] text-muted whitespace-nowrap">{new Date(l.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
               </tr>
             ))}</tbody>
@@ -249,15 +249,17 @@ function HandoffSettings() {
   const [s, setS] = useState<Any>(null)
   const [open, setOpen] = useState(false)
   const [msg, setMsg] = useState('')
-  useEffect(() => { if (open && !s) fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => d?.ok && setS({ to: d.settings.to.join(', '), cc: d.settings.cc.join(', '), replyTo: d.settings.replyTo })).catch(() => {}) }, [open, s])
+  useEffect(() => { if (open && !s) fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => d?.ok && setS({ to: d.settings.to.join(', '), cc: d.settings.cc.join(', '), replyTo: d.settings.replyTo, vendorTo: (d.settings.vendorTo || []).join(', '), vendorCc: (d.settings.vendorCc || []).join(', ') })).catch(() => {}) }, [open, s])
   return (
     <section className="mt-6 rounded-2xl border border-line bg-white">
-      <button type="button" onClick={() => setOpen(o => !o)} className="w-full text-left px-4 py-3 text-[13.5px] font-semibold text-ink">Handoff to accounting {open ? '▾' : '▸'} <span className="font-normal text-muted text-[12.5px]">· who gets the email when an owner’s paperwork is in</span></button>
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full text-left px-4 py-3 text-[13.5px] font-semibold text-ink">Handoff and vendor emails {open ? '▾' : '▸'} <span className="font-normal text-muted text-[12.5px]">· who gets the paperwork handoff and the linen quote</span></button>
       {open && s ? (
         <div className="px-4 pb-4 grid gap-3 sm:grid-cols-3">
           <label className="block"><span className={lab}>To</span><input value={s.to} onChange={e => setS({ ...s, to: e.target.value })} className={field} /></label>
           <label className="block"><span className={lab}>Copy</span><input value={s.cc} onChange={e => setS({ ...s, cc: e.target.value })} className={field} /></label>
-          <label className="block"><span className={lab}>Replies go to</span><input value={s.replyTo} onChange={e => setS({ ...s, replyTo: e.target.value })} className={field} /></label>
+          <label className="block"><span className={lab}>Sent from (a connected Google mailbox)</span><input value={s.replyTo} onChange={e => setS({ ...s, replyTo: e.target.value })} className={field} /></label>
+          <label className="block sm:col-span-2"><span className={lab}>Linen vendor (the quote goes to)</span><input value={s.vendorTo} onChange={e => setS({ ...s, vendorTo: e.target.value })} placeholder="orders@vendor.com" className={field} /></label>
+          <label className="block"><span className={lab}>Linen quote: copy</span><input value={s.vendorCc} onChange={e => setS({ ...s, vendorCc: e.target.value })} className={field} /></label>
           <div className="sm:col-span-3 flex items-center gap-3"><button type="button" onClick={async () => { const d = await fetch('/api/owner-onboarding/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).then(r => r.json()).catch(() => null); setMsg(d?.ok ? 'Saved.' : 'Could not save (full access needed).') }} className="rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save</button><span className="text-[12.5px] text-muted">{msg}</span></div>
         </div>
       ) : null}
@@ -273,6 +275,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState('')
   const [editHome, setEditHome] = useState(false)
+  const [eu, setEu] = useState(0)
+  async function linen(action: string) { setBusy('linen'); const d = await fetch(`/api/owner-onboarding/${code}/linen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); setMsg(d?.ok ? (action === 'send' ? 'Sent to the vendor.' : 'Saved.') : (d?.error || 'Not saved.')); setBusy('') }
   const agree = useRef<HTMLInputElement>(null)
   const apply = (d: Any) => { setRec(d.record); setItems(d.items || []) }
   const load = () => fetch('/api/owner-onboarding/' + code, { cache: 'no-store' }).then(r => r.json()).then(d => (d?.ok ? apply(d) : setErr(d?.error || 'Not found.'))).catch(() => setErr('Could not load.'))
@@ -286,7 +290,14 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   if (err) return <p className="p-8 text-muted">{err}</p>
   if (!rec) return <p className="p-8 text-center text-muted"><Loader2 size={16} className="inline animate-spin" /></p>
   const h: OOHome | null = rec.home
-  const need = items.filter(i => rec.marks[i.key] === 'need'), have = items.filter(i => rec.marks[i.key] === 'have'), open = items.filter(i => !rec.marks[i.key])
+  const units: OOHome[] = h ? [h, ...(rec.more || [])] : []
+  const uLabel = (i: number) => (units[i]?.unit ? 'Unit ' + units[i].unit : 'Unit ' + (i + 1))
+  const sup = items.filter(i => !i.linen), lin = items.filter(i => i.linen)
+  const need = sup.filter(i => rec.marks[i.key] === 'need'), have = sup.filter(i => rec.marks[i.key] === 'have'), open = sup.filter(i => !rec.marks[i.key])
+  // one line per item across the units: the total, and what each unit needs
+  const roll = (list: OOItem[]) => { const m = new Map<string, { name: string; size?: string; total: number; per: Record<number, number> }>(); for (const i of list) { const k = i.name + '|' + (i.size || ''); const e = m.get(k) || { name: i.name, size: i.size, total: 0, per: {} }; e.total += i.qty; e.per[i.unit] = (e.per[i.unit] || 0) + i.qty; m.set(k, e) } return Array.from(m.values()) }
+  const needRoll = roll(need), linRoll = roll(lin)
+  const saveUnits = (list: OOHome[]) => patch({ home: list[0], more: list.slice(1) })
   const photosDone = rec.steps.find((s: Any) => s.key === 'photos')?.status === 'done'
   const setStep = (k: string, status: OOStepStatus) => patch({ steps: rec.steps.map((s: Any) => (s.key === k ? { ...s, status, date: status === 'done' ? (s.date || new Date().toISOString().slice(0, 10)) : s.date } : s)) })
 
@@ -311,33 +322,59 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="space-y-6 min-w-0">
-          {/* the home */}
+          {/* the units */}
           <section className={card}>
-            <div className="flex items-center gap-2 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">The home</h2><button type="button" onClick={() => setEditHome(e => !e)} className="oo-noprint text-[12.5px] font-semibold text-ink">{editHome ? 'Close' : h ? 'Edit' : 'Fill it in for them'}</button></div>
-            {editHome ? <><HomeEditor home={h || DEFAULT_HOME} set={nh => setRec({ ...rec, home: nh })} /><button type="button" onClick={() => { patch({ home: rec.home || DEFAULT_HOME }); setEditHome(false) }} className="mt-3 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save the home</button></>
-              : h ? (
-                <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 text-[13.5px]">
-                  {([['Address', h.address], ['Unit', h.unit], ['Size', h.sqft ? h.sqft.toLocaleString() + ' SF' : '—'], ['Bedrooms', h.bedrooms === 0 ? 'Studio' : String(h.bedrooms)], ['Bathrooms', String(h.bathrooms)], ['Sleeps', String(h.guests)], ['Beds', Object.entries(h.beds).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') + (h.sleeper ? ', sofa bed' : '') || '—'], ['Kitchen', h.kitchen ? OO_APPLIANCES.filter(a => h.appliances[a]).map(a => OO_APPLIANCE_LABEL[a]).join(', ') || 'Yes' : 'None'], ['Washer and dryer', h.washer ? 'Yes' : 'No'], ['Parking', h.parking || '—'], ['Access', h.access || '—']] as [string, string][]).map(([k, v]) => <div key={k} className={k === 'Address' || k === 'Kitchen' || k === 'Access' ? 'col-span-2' : ''}><dt className={lab}>{k}</dt><dd className="text-ink mt-0.5">{v || '—'}</dd></div>)}
-                </dl>
-              ) : <p className="text-[13px] text-muted">The owner has not filled in the home yet.</p>}
+            <div className="flex items-center gap-2 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{units.length > 1 ? units.length + ' units' : 'The home'}</h2>
+              <button type="button" onClick={() => { const list = [...units, { ...DEFAULT_HOME, address: units[0]?.address || '' }]; setRec({ ...rec, home: list[0], more: list.slice(1) }); setEditHome(true); setEu(list.length - 1) }} className="oo-noprint text-[12.5px] font-semibold text-ink">+ Add a unit</button></div>
+            {!units.length ? <p className="text-[13px] text-muted">The owner has not filled in the home yet. Use “Add a unit” to fill it in for them.</p> : units.map((u, i) => (
+              <div key={i} className={'py-3 ' + (i ? 'border-t border-line' : '')}>
+                <div className="flex items-center gap-2 mb-2"><p className="text-[14px] font-semibold text-ink mr-auto">{uLabel(i)}</p>
+                  <button type="button" onClick={() => { setEu(i); setEditHome(e => (eu === i ? !e : true)) }} className="oo-noprint text-[12.5px] font-semibold text-ink">{editHome && eu === i ? 'Close' : 'Edit'}</button>
+                  {i > 0 ? <button type="button" onClick={() => saveUnits(units.filter((_, j) => j !== i))} className="oo-noprint text-[12.5px] text-muted hover:text-red-700">Remove</button> : null}</div>
+                {editHome && eu === i ? <><HomeEditor home={u} set={nh => { const list = units.map((x, j) => (j === i ? nh : x)); setRec({ ...rec, home: list[0], more: list.slice(1) }) }} /><button type="button" onClick={() => { saveUnits(units); setEditHome(false) }} className="mt-3 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save</button></> : (
+                  <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 text-[13.5px]">
+                    {([['Address', u.address], ['Size', u.sqft ? u.sqft.toLocaleString() + ' SF' : '—'], ['Bedrooms', u.bedrooms === 0 ? 'Studio' : String(u.bedrooms)], ['Bathrooms', String(u.bathrooms)], ['Sleeps', String(u.guests)], ['Beds', Object.entries(u.beds).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') + (u.sleeper ? ', sofa bed' : '') || '—'], ['Kitchen', u.kitchen ? OO_APPLIANCES.filter(a => u.appliances[a]).map(a => OO_APPLIANCE_LABEL[a]).join(', ') || 'Yes, no appliances ticked' : 'None'], ['Washer and dryer', u.washer ? 'Yes' : 'No'], ['Parking', u.parking || '—'], ['Access', u.access || '—']] as [string, string][]).map(([k, v]) => <div key={k} className={k === 'Address' || k === 'Kitchen' || k === 'Access' || k === 'Beds' ? 'col-span-2' : ''}><dt className={lab}>{k}</dt><dd className="text-ink mt-0.5">{v || '—'}</dd></div>)}
+                  </dl>
+                )}
+              </div>
+            ))}
           </section>
 
-          {/* the supplies */}
+          {/* the supplies: everything to buy, and what each unit needs */}
           <section className={card}>
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Supplies and linen</h2><span className="text-[13px]"><b className="text-ink">{have.length}</b> have · <b className="text-[#B4532A]">{need.length}</b> need · <b className="text-ink">{open.length}</b> not checked</span></div>
-            {!items.length ? <p className="text-[13px] text-muted">The list appears once the home is filled in.</p> : (<>
-              {need.length ? (
-                <div className="rounded-xl bg-[#FBF1EC] p-3 mb-4"><p className={lab + ' text-[#B4532A]'}>To buy · what the owner marked Need</p>
-                  <ul className="mt-2 columns-1 sm:columns-2 gap-6 text-[13px]">{need.map(i => <li key={i.key} className="flex justify-between gap-3 py-1 break-inside-avoid border-b border-[#F0DCD2]"><span className="text-ink">{i.name}{i.size ? <span className="text-muted"> · {i.size}</span> : null}</span><b className="tabular-nums">{i.qty}</b></li>)}</ul>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Supplies</h2><span className="text-[13px]"><b className="text-ink">{have.length}</b> have · <b className="text-[#B4532A]">{need.length}</b> need · <b className="text-ink">{open.length}</b> not checked</span></div>
+            {!sup.length ? <p className="text-[13px] text-muted">The list appears once the home is filled in.</p> : (<>
+              {needRoll.length ? (
+                <div className="rounded-xl bg-[#FBF1EC] p-3 mb-4"><p className={lab + ' text-[#B4532A]'}>To buy{units.length > 1 ? ' · all ' + units.length + ' units' : ''} · what the owner marked Need</p>
+                  <div className="overflow-x-auto"><table className="w-full text-[13px] mt-2"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted"><th className="py-1 font-semibold">Item</th>{units.length > 1 ? units.map((_, i) => <th key={i} className="py-1 px-2 text-right font-semibold whitespace-nowrap">{uLabel(i)}</th>) : null}<th className="py-1 text-right font-semibold">Total</th></tr></thead>
+                    <tbody>{needRoll.map(e => <tr key={e.name + e.size} className="border-t border-[#F0DCD2]"><td className="py-1 text-ink">{e.name}{e.size ? <span className="text-muted"> · {e.size}</span> : null}</td>{units.length > 1 ? units.map((_, i) => <td key={i} className="py-1 px-2 text-right tabular-nums">{e.per[i] || ''}</td>) : null}<td className="py-1 text-right tabular-nums font-semibold">{e.total}</td></tr>)}</tbody></table></div>
                 </div>
               ) : null}
-              <details><summary className="cursor-pointer text-[13px] font-semibold text-ink">The whole list, by set</summary>
-                <div className="mt-3 columns-1 md:columns-2 gap-6">{groups.map(g => (
-                  <div key={g} className="break-inside-avoid mb-4"><p className={lab}>{g}</p><ul className="text-[12.5px]">{items.filter(i => i.group === g).map(i => <li key={i.key} className="flex justify-between gap-2 py-1 border-b border-line"><span className="text-ink">{i.name}{i.size ? ' · ' + i.size : ''} <span className="text-muted">×{i.qty}</span></span><span className={rec.marks[i.key] === 'have' ? 'text-emerald-700 font-semibold' : rec.marks[i.key] === 'need' ? 'text-[#B4532A] font-semibold' : 'text-muted'}>{rec.marks[i.key] === 'have' ? 'Have' : rec.marks[i.key] === 'need' ? 'Need' : '—'}</span></li>)}</ul></div>
-                ))}</div>
-              </details>
+              {units.map((_, ui) => { const mine = sup.filter(i => i.unit === ui); const gs = Array.from(new Set(mine.map(i => i.group))); return (
+                <details key={ui} className="mb-1"><summary className="cursor-pointer text-[13px] font-semibold text-ink py-1">{units.length > 1 ? uLabel(ui) + ': the whole list' : 'The whole list, by set'} <span className="font-normal text-muted">· {mine.filter(i => rec.marks[i.key] === 'need').length} need, {mine.filter(i => !rec.marks[i.key]).length} not checked</span></summary>
+                  <div className="mt-3 columns-1 md:columns-2 gap-6">{gs.map(g => (
+                    <div key={g} className="break-inside-avoid mb-4"><p className={lab}>{g}</p><ul className="text-[12.5px]">{mine.filter(i => i.group === g).map(i => <li key={i.key} className="flex justify-between gap-2 py-1 border-b border-line"><span className="text-ink">{i.name} <span className="text-muted">×{i.qty}</span></span><span className={rec.marks[i.key] === 'have' ? 'text-emerald-700 font-semibold' : rec.marks[i.key] === 'need' ? 'text-[#B4532A] font-semibold' : 'text-muted'}>{rec.marks[i.key] === 'have' ? 'Have' : rec.marks[i.key] === 'need' ? 'Need' : '—'}</span></li>)}</ul></div>
+                  ))}</div>
+                </details>) })}
             </>)}
             {rec.ownerNotes ? <div className="mt-4 rounded-xl bg-app p-3"><p className={lab}>The owner’s note</p><p className="text-[13.5px] text-ink mt-1 whitespace-pre-wrap">{rec.ownerNotes}</p></div> : null}
+          </section>
+
+          {/* THE LINEN, ours to specify (Jon, 2026-11-13): counts at par, per unit and in all; approve, then send to the vendor */}
+          <section className={card}>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Linen at par</h2><span className="text-[13px]"><b className="text-ink">{lin.reduce((a, i) => a + i.qty, 0)}</b> pieces{units.length > 1 ? ' across ' + units.length + ' units' : ''}</span></div>
+            <p className="text-[12.5px] text-muted mb-3">For the team only: the owner’s page never lists linen. From the linen standard and each unit’s beds and baths.</p>
+            {!lin.length ? <p className="text-[13px] text-muted">The counts appear once the home is filled in.</p> : (<>
+              <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="font-semibold">Size</th>{units.length > 1 ? units.map((_, i) => <th key={i} className="px-2 text-right font-semibold whitespace-nowrap">{uLabel(i)}</th>) : null}<th className="text-right font-semibold">Total</th></tr></thead>
+                <tbody>{linRoll.map(e => <tr key={e.name + e.size} className="border-b border-line"><td className="py-1.5 text-ink">{e.name}</td><td className="text-muted">{e.size || ''}</td>{units.length > 1 ? units.map((_, i) => <td key={i} className="px-2 text-right tabular-nums">{e.per[i] || ''}</td>) : null}<td className="text-right tabular-nums font-semibold">{e.total}</td></tr>)}</tbody></table></div>
+              <div className="oo-noprint mt-3 flex flex-wrap items-center gap-2">
+                {!rec.linen?.approvedAt ? <button type="button" onClick={() => linen('approve')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Check size={13} /> Approve the linen quote</button>
+                  : <><span className="text-[12.5px] text-emerald-700 font-semibold"><Check size={13} className="inline" /> Approved {new Date(rec.linen.approvedAt).toLocaleDateString()} by {String(rec.linen.approvedBy || '').split('@')[0]}</span>
+                    <button type="button" disabled={busy === 'linen'} onClick={() => linen('send')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'linen' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {rec.linen.sentAt ? 'Send to the vendor again' : 'Send to the vendor'}</button>
+                    <button type="button" onClick={() => linen('unapprove')} className="text-[12.5px] text-muted underline">Undo approval</button></>}
+                <span className="text-[12.5px] text-muted basis-full">{rec.linen?.error ? 'Not sent: ' + rec.linen.error : rec.linen?.sentAt ? 'Sent ' + new Date(rec.linen.sentAt).toLocaleString() + ' to ' + (rec.linen.sentTo || []).join(', ') : 'Approving unlocks “Send to the vendor”: the quantities go to the linen vendor, copying the team.'}</span>
+              </div>
+            </>)}
           </section>
 
           {/* paperwork */}
@@ -388,7 +425,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           <section className={card}>
             <h2 className="font-serif text-[22px] leading-none text-ink mb-1">Onboarding call</h2>
             <p className="text-[12.5px] text-muted mb-3">{photosDone ? 'Photos are done: schedule the call to walk the owner through the listing and the pricing strategy.' : 'Schedule it once the listing photos are done. The owner sees it on their timeline.'}</p>
-            <CallForm call={rec.call} onSave={c => patch({ call: c }, 'Call saved. The owner sees it on their timeline.')} />
+            <CallForm code={code} call={rec.call} ownerEmail={rec.custom.ownerEmail} onRec={setRec} onSave={c => patch({ call: c }, 'Call saved. The owner sees it on their timeline.')} />
           </section>
 
           {/* attach + who */}
@@ -410,14 +447,40 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   )
 }
 
-function CallForm({ call, onSave }: { call: Any; onSave: (c: Any) => void }) {
-  const [c, setC] = useState(call || { at: '', link: '', note: '' })
+function CallForm({ code, call, ownerEmail, onSave, onRec }: { code: string; call: Any; ownerEmail: string; onSave: (c: Any) => void; onRec: (r: Any) => void }) {
+  const [day, setDay] = useState(call?.at ? String(call.at).slice(0, 10) : '')
+  const [time, setTime] = useState(call?.at ? String(call.at).slice(11, 16) : '10:00')
+  const [minutes, setMinutes] = useState(call?.minutes || 30)
+  const [note, setNote] = useState(call?.note || '')
+  const [link, setLink] = useState(call?.link || '')
+  const [cal, setCal] = useState<Any>(null)
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
+  // MY CALENDAR THAT DAY (Jon, 2026-11-13: "attach my calendar"): the signed-in teammate's busy times
+  useEffect(() => { if (!day) { setCal(null); return } let on = true; fetch(`/api/owner-onboarding/${code}/call?day=` + day).then(r => r.json()).then(d => on && setCal(d)).catch(() => {}); return () => { on = false } }, [day, code])
+  async function meet() {
+    setBusy(true); setMsg('')
+    const d = await fetch(`/api/owner-onboarding/${code}/call`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ day, time, minutes, agenda: note }) }).then(r => r.json()).catch(() => null)
+    setBusy(false)
+    if (d?.ok) { onRec(d.record); setLink(d.record.call.link || ''); setMsg('On your calendar with a Google Meet link' + (ownerEmail ? '; the owner is invited.' : '.')) } else setMsg(d?.error || 'Could not create the meeting.')
+  }
   return (
     <div className="space-y-2">
-      <label className="block"><span className={lab}>When</span><input type="datetime-local" value={c.at ? c.at.slice(0, 16) : ''} onChange={e => setC({ ...c, at: e.target.value })} className={field} /></label>
-      <label className="block"><span className={lab}>Meeting link (optional)</span><input value={c.link} onChange={e => setC({ ...c, link: e.target.value })} placeholder="https://meet.google.com/…" className={field} /></label>
-      <label className="block"><span className={lab}>Agenda (optional)</span><input value={c.note} onChange={e => setC({ ...c, note: e.target.value })} placeholder="Listing walkthrough · pricing strategy · calendar" className={field} /></label>
-      <button type="button" onClick={() => onSave(c)} className="rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save the call</button>
+      <div className="grid grid-cols-3 gap-2">
+        <label className="block col-span-3 sm:col-span-1"><span className={lab}>Date</span><input type="date" value={day} onChange={e => setDay(e.target.value)} className={field} /></label>
+        <label className="block"><span className={lab}>Time (ET)</span><input type="time" step={900} value={time} onChange={e => setTime(e.target.value)} className={field} /></label>
+        <label className="block"><span className={lab}>Length</span><select value={minutes} onChange={e => setMinutes(Number(e.target.value))} className={field}><option value={30}>30 min</option><option value={45}>45 min</option><option value={60}>60 min</option></select></label>
+      </div>
+      {day && cal ? <p className="text-[12.5px] text-muted rounded-xl bg-app px-3 py-2">{cal.ok ? (cal.busy.length ? <>Your calendar that day is busy: <b className="text-ink">{cal.busy.map((b: Any) => b.from + '–' + b.to).join(', ')}</b></> : 'Your calendar is open that day.') : <>Calendar not connected: {String(cal.error || '').startsWith('Connect Google') ? <a className="underline font-semibold text-ink" href={'/api/google/auth?mailbox=' + encodeURIComponent(cal.host || '')}>connect Google Calendar</a> : cal.error}</>}</p> : null}
+      <label className="block"><span className={lab}>Agenda (optional)</span><input value={note} onChange={e => setNote(e.target.value)} placeholder="Listing walkthrough · pricing strategy · calendar" className={field} /></label>
+      <div className="flex flex-wrap gap-2 items-center">
+        <button type="button" disabled={!day || !time || busy} onClick={meet} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin" /> : null} {call?.eventId ? 'Move the meeting' : 'Create the Google Meet and invite'}</button>
+        {call?.eventUrl ? <a href={call.eventUrl} target="_blank" rel="noreferrer" className="text-[12.5px] font-semibold text-ink underline">Open in Calendar</a> : null}
+      </div>
+      {msg ? <p className="text-[12.5px] text-ink">{msg}</p> : null}
+      <details><summary className="cursor-pointer text-[12px] text-muted">Or set it by hand (no calendar event)</summary>
+        <label className="block mt-2"><span className={lab}>Meeting link</span><input value={link} onChange={e => setLink(e.target.value)} placeholder="https://meet.google.com/…" className={field} /></label>
+        <button type="button" disabled={!day} onClick={() => onSave({ at: day + 'T' + time, link, note, minutes })} className="mt-2 rounded-xl border border-line px-4 py-2 text-[13px] font-semibold text-ink disabled:opacity-50">Save without a calendar event</button>
+      </details>
     </div>
   )
 }

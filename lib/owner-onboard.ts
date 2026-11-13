@@ -16,9 +16,12 @@ export const OO_APPLIANCES = ['stove', 'oven', 'microwave', 'fridge', 'dishwashe
 export type OOAppliance = typeof OO_APPLIANCES[number]
 export const OO_APPLIANCE_LABEL: Record<OOAppliance, string> = { stove: 'Stove / cooktop', oven: 'Oven', microwave: 'Microwave', fridge: 'Refrigerator', dishwasher: 'Dishwasher' }
 
-export type OOHome = { address: string; unit: string; sqft: number; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<OOAppliance, boolean>; washer: boolean; parking: string; access: string }
+/** One home. An owner with several units has one of these per unit (Jon, 2026-11-13); `uid` keys a later unit's ticks. */
+export type OOHome = { uid?: string; address: string; unit: string; sqft: number; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<OOAppliance, boolean>; washer: boolean; parking: string; access: string }
 export type OOMark = 'have' | 'need' | ''
-export type OOItem = { key: string; name: string; group: string; qty: number; tier: 'must' | 'recommended' | 'optional'; linen?: boolean; size?: string }
+export type OOItem = { key: string; name: string; group: string; qty: number; tier: 'must' | 'recommended' | 'optional'; linen?: boolean; size?: string
+  /** Which unit it is for (0 = the first), and that unit's label. */
+  unit: number; unitLabel: string }
 
 export type OOStepKey = 'details' | 'supplies' | 'paperwork' | 'photos' | 'listing' | 'guesty' | 'call' | 'live'
 export type OOStepStatus = 'todo' | 'doing' | 'done'
@@ -68,7 +71,7 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string)
   }
 }
 export type OOAttach = { property: string; listingId: string; unitLabel: string }
-export type OOCall = { at: string; link: string; note: string }
+export type OOCall = { at: string; link: string; note: string; minutes?: number; eventId?: string; eventUrl?: string; host?: string }
 /** THE W-9 AND ACH (Jon, 2026-11-12: "ACH and W-9 forms the owner can fill out in an encrypted format"). The
  *  tax ID and the bank numbers are encrypted on the server the moment they arrive (lib/vault, AES-256-GCM);
  *  only the last four digits are ever shown. The filled forms are made on request, for the team, signed in. */
@@ -87,6 +90,8 @@ export type OORecord = {
   code: string; createdAt: string; createdBy: string; updatedAt: string
   custom: OOCustom; attach: OOAttach
   home: OOHome | null
+  /** The owner's other units, after the first (Jon, 2026-11-13: "if they have multiple units we should be able to add"). */
+  more?: OOHome[]
   marks: Record<string, OOMark>
   ownerNotes: string
   teamNotes: string
@@ -96,14 +101,18 @@ export type OORecord = {
   payout?: OOPayout | null
   agreement?: OOFile | null
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
+  /** The linen order (Jon, 2026-11-13): approved by the team, then sent to the vendor. */
+  linen?: { approvedAt?: string; approvedBy?: string; sentAt?: string; sentTo?: string[]; error?: string } | null
   /** The owner's sign-in (lib/owner-onboard-auth): a password hash and one-time email links. Never leaves the server. */
   auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string } | null
   archived?: boolean
 }
 /** What the list of links shows. */
-export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean }
+export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
+  /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
+  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; callAt?: string; linen?: 'approved' | 'sent' | '' }
 
-export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 1, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '' }
+export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '' }
 
 export function freshSteps(): OOStep[] { return OO_STEPS.map(s => ({ key: s.key, status: s.key === 'details' ? 'doing' : 'todo', date: '', note: '' })) }
 export const stepLabel = (k: OOStepKey) => OO_STEPS.find(s => s.key === k)?.label || k
@@ -115,13 +124,16 @@ export function stageOf(r: Pick<OORecord, 'steps'>): string {
 
 const n = (v: any, lo: number, hi: number, d: number) => { const x = Number(v); return Number.isFinite(x) ? Math.max(lo, Math.min(hi, Math.round(x * 2) / 2)) : d }
 const t = (v: any, max: number) => (typeof v === 'string' ? v.slice(0, max) : '')
+/** Every unit on a link, the first one first. */
+export const unitsOf = (r: { home: OOHome | null; more?: OOHome[] }): OOHome[] => (r.home ? [r.home, ...(r.more || [])] : [])
+export const unitName = (h: OOHome, i: number) => (h.unit ? 'Unit ' + h.unit : 'Unit ' + (i + 1))
 export function cleanHome(v: any): OOHome {
   const D = DEFAULT_HOME, r = v && typeof v === 'object' ? v : {}
   const beds: Record<string, number> = {}
   for (const b of OO_BEDS) beds[b] = Math.round(n(r.beds?.[b], 0, 12, D.beds[b] || 0))
   const appliances = {} as Record<OOAppliance, boolean>
   for (const a of OO_APPLIANCES) appliances[a] = r.appliances ? !!r.appliances[a] : D.appliances[a]
-  return { address: t(r.address, 200), unit: t(r.unit, 40), sqft: Math.round(n(r.sqft, 0, 20000, 0)), bedrooms: Math.round(n(r.bedrooms, 0, 12, D.bedrooms)), bathrooms: n(r.bathrooms, 0, 12, D.bathrooms), guests: Math.round(n(r.guests, 1, 30, D.guests)),
+  return { ...(typeof r.uid === 'string' && /^[a-z0-9]{4,12}$/.test(r.uid) ? { uid: r.uid } : {}), address: t(r.address, 200), unit: t(r.unit, 40), sqft: Math.round(n(r.sqft, 0, 20000, 0)), bedrooms: Math.round(n(r.bedrooms, 0, 12, D.bedrooms)), bathrooms: n(r.bathrooms, 0, 12, D.bathrooms), guests: Math.round(n(r.guests, 1, 30, D.guests)),
     beds, sleeper: !!r.sleeper, kitchen: r.kitchen !== false, appliances, washer: !!r.washer, parking: t(r.parking, 200), access: t(r.access, 300) }
 }
 

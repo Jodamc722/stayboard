@@ -15,7 +15,8 @@ import { recordEmail, sourceFromSubject } from './automation-runs'
 // One refresh per mailbox per ~45 minutes, not one per call: the sent-sweep asks Gmail once per
 // unsent notice, and each ask was refreshing the token first (2026-10-02).
 const TOKENS = new Map<string, { token: string; until: number }>()
-async function accessTokenFor(email: string): Promise<{ token?: string; error?: string }> {
+/** A Google access token for a connected mailbox (also used by the calendar: lib/owner-onboard-calendar). */
+export async function accessTokenFor(email: string): Promise<{ token?: string; error?: string }> {
   const clientId = process.env.GOOGLE_CLIENT_ID
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET
   if (!clientId || !clientSecret) return { error: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set' }

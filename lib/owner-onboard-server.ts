@@ -6,7 +6,7 @@ import { getSettingFresh, setSetting, getSetting } from './app-settings'
 import { needList, NEED_ROOMS } from './need-list'
 import type { KitSize } from './starter-kit'
 import { normLinenStandard, linenQuote, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
-import { OO_PREFIX, OO_INDEX, cleanHome, DEFAULT_GM, DEFAULT_SALES, freshSteps, stageOf, type OORecord, type OOIndexRow, type OOItem, type OOHome, type OOCustom } from './owner-onboard'
+import { OO_PREFIX, OO_INDEX, cleanHome, unitsOf, unitName, DEFAULT_GM, DEFAULT_SALES, freshSteps, stageOf, type OORecord, type OOIndexRow, type OOItem, type OOHome, type OOCustom } from './owner-onboard'
 
 const newCode = () => { const c: any = (globalThis as any).crypto; return String(c?.randomUUID ? c.randomUUID() : Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 14) }
 export const validCode = (code: string) => /^[0-9a-f]{10,32}$/i.test(String(code || ''))
@@ -17,32 +17,44 @@ export async function readRecord(code: string): Promise<OORecord | null> {
   return r && r.code === code ? (r as OORecord) : null
 }
 
-/** Every item this home needs, supplies then linen, each with a stable key for the owner's tick. */
-export async function itemsFor(h: OOHome, o: { supplies: boolean; linen: boolean }): Promise<OOItem[]> {
+/** Everything one home needs: supplies, then the linen at par. Keys are stable; a later unit's carry its uid. */
+async function itemsForHome(h: OOHome, i: number, o: { supplies: boolean }): Promise<OOItem[]> {
   const out: OOItem[] = []
+  const pre = i === 0 ? '' : 'u' + (h.uid || i) + '|'
+  const label = unitName(h, i)
   if (o.supplies) {
     const z: KitSize = { bedrooms: Math.max(1, h.bedrooms), bathrooms: Math.max(1, Math.ceil(h.bathrooms)), guests: h.guests, kitchen: h.kitchen, appliances: { ...h.appliances } }
     const order = NEED_ROOMS as readonly string[]
-    const rows = needList(z).map(l => ({ key: 's:' + l.item.key, name: l.item.name, group: l.item.room, qty: l.count, tier: (l.tier === 'optional' ? 'optional' : l.tier) as OOItem['tier'] }))
+    const rows = needList(z).map(l => ({ key: pre + 's:' + l.item.key, name: l.item.name, group: l.item.room, qty: l.count, tier: (l.tier === 'optional' ? 'optional' : l.tier) as OOItem['tier'], unit: i, unitLabel: label }))
     rows.sort((x, y) => order.indexOf(x.group) - order.indexOf(y.group))
     out.push(...rows)
   }
-  if (o.linen) {
-    const standard = normLinenStandard(await getSetting<any>(LINEN_STANDARD_KEY, null))
-    const beds: Record<string, number> = {}
-    for (const [k, v] of Object.entries(h.beds)) { if (!v) continue; if (k === 'Bunk') beds.Twin = (beds.Twin || 0) + v * 2; else beds[k] = (beds[k] || 0) + v }
-    if (h.sleeper) beds[SOFA_BED] = (beds[SOFA_BED] || 0) + 1
-    const unit: LinenUnit = { id: 'owner', name: 'Home', bedrooms: Math.max(1, h.bedrooms), bathrooms: h.bathrooms, guests: h.guests, kitchens: h.kitchen ? 1 : 0, beds, bedsSource: 'manual' }
-    for (const r of linenQuote(standard, [unit], 'mid').rows) out.push({ key: 'l:' + r.name + (r.size ? '|' + r.size : ''), name: r.name, size: r.size || undefined, group: 'Linen · ' + r.group, qty: r.qty, tier: 'must', linen: true })
-  }
+  // THE LINEN IS OURS TO SPECIFY (Jon, 2026-11-13: "the linen count is something that should show on our
+  // backend"): always counted, at par, for the team; the owner's page never lists it.
+  const standard = normLinenStandard(await getSetting<any>(LINEN_STANDARD_KEY, null))
+  const beds: Record<string, number> = {}
+  for (const [k, v] of Object.entries(h.beds)) { if (!v) continue; if (k === 'Bunk') beds.Twin = (beds.Twin || 0) + v * 2; else beds[k] = (beds[k] || 0) + v }
+  if (h.sleeper) beds[SOFA_BED] = (beds[SOFA_BED] || 0) + 1
+  const unit: LinenUnit = { id: 'owner', name: 'Home', bedrooms: Math.max(1, h.bedrooms), bathrooms: h.bathrooms, guests: h.guests, kitchens: h.kitchen ? 1 : 0, beds, bedsSource: 'manual' }
+  for (const r of linenQuote(standard, [unit], 'mid').rows) out.push({ key: pre + 'l:' + r.name + (r.size ? '|' + r.size : ''), name: r.name, size: r.size || undefined, group: r.group, qty: r.qty, tier: 'must', linen: true, unit: i, unitLabel: label })
   return out
 }
+/** Every unit's items on a link. */
+export async function itemsFor(r: OORecord): Promise<OOItem[]> {
+  const out: OOItem[] = []
+  const units = unitsOf(r)
+  for (let i = 0; i < units.length; i++) out.push(...(await itemsForHome(units[i], i, { supplies: r.custom.askSupplies })))
+  return out
+}
+/** What the owner ticks: the supplies, never the linen. */
+export const ownerItems = (items: OOItem[]) => items.filter(i => !i.linen)
 
 function indexRow(r: OORecord, items: OOItem[] | null): OOIndexRow {
-  const keys = items ? new Set(items.map(i => i.key)) : null
+  const keys = items ? new Set(items.filter(i => !i.linen).map(i => i.key)) : null
   const marks = Object.entries(r.marks).filter(([k]) => !keys || keys.has(k))
   return { code: r.code, ownerName: r.custom.ownerName, property: r.attach.property, unitLabel: r.attach.unitLabel, listingId: r.attach.listingId, createdAt: r.createdAt, updatedAt: r.updatedAt, createdBy: r.createdBy,
-    stage: stageOf(r), submitted: !!r.submittedAt, have: marks.filter(([, m]) => m === 'have').length, need: marks.filter(([, m]) => m === 'need').length, ...(r.archived ? { archived: true } : {}) }
+    stage: stageOf(r), submitted: !!r.submittedAt, have: marks.filter(([, m]) => m === 'have').length, need: marks.filter(([, m]) => m === 'need').length,
+    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', ...(r.archived ? { archived: true } : {}) }
 }
 async function writeIndex(row: OOIndexRow, by: string | null) {
   const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])
@@ -58,11 +70,15 @@ export async function saveRecord(r: OORecord, by: string | null): Promise<{ ok: 
   r.updatedAt = new Date().toISOString()
   const w = await setSetting(OO_PREFIX + r.code, r, by)
   if (!w.ok) return w
-  const items = r.home ? await itemsFor(r.home, { supplies: r.custom.askSupplies, linen: r.custom.askLinen }).catch(() => null) : null
+  const items = r.home ? await itemsFor(r).catch(() => null) : null
   await writeIndex(indexRow(r, items), by).catch(() => null)
   return { ok: true }
 }
 
+/** The owner's other units: up to 30, each with a stable id for its ticks. */
+export function cleanMore(v: any): OOHome[] {
+  return (Array.isArray(v) ? v : []).slice(0, 30).map(x => { const h = cleanHome(x); return { ...h, uid: h.uid || Math.random().toString(36).slice(2, 8) } })
+}
 const str = (v: any, n: number, d = '') => (typeof v === 'string' ? v.trim().slice(0, n) : d)
 const person = (v: any, d: OOCustom['gm']) => ({ name: str(v?.name, 80, d.name), role: str(v?.role, 80, d.role), phone: str(v?.phone, 40, d.phone), email: str(v?.email, 120, d.email), photo: str(v?.photo, 300, d.photo) })
 export function cleanCustom(v: any, prev?: OOCustom): OOCustom {
@@ -87,7 +103,7 @@ export async function createRecord(v: any, by: string): Promise<OORecord> {
     custom: cleanCustom(v?.custom),
     attach: { property: str(v?.attach?.property, 120), listingId: str(v?.attach?.listingId, 60), unitLabel: str(v?.attach?.unitLabel, 60) },
     // the team can start the home for the owner (Jon: "Nick can fill out some of the information")
-    home: v?.home ? cleanHome(v.home) : null,
+    home: v?.home ? cleanHome(v.home) : null, more: cleanMore(v?.more),
     marks: {}, ownerNotes: '', teamNotes: str(v?.teamNotes, 4000), steps: freshSteps(), call: { at: '', link: '', note: '' }, submittedAt: '',
   }
   const w = await saveRecord(r, by)
