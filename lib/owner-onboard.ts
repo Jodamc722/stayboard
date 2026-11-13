@@ -89,7 +89,9 @@ export type OOPayout = {
  *  goal is for that to be reviewed"). Built by the team from Stay's own catalog (the real products, prices and
  *  links), edited, then sent to the owner, who reviews it line by line and approves or asks for changes. */
 export type OOOrderLine = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[] }   // qty per unit, in unit order
-export type OOOrder = { lines: OOOrderLine[]; status: 'draft' | 'sent' | 'approved' | 'changes'; builtAt: string; sentAt?: string; note?: string
+/** How the list was worked out from the owner's supplies answers (team only). */
+export type OOOrderBasis = { marked: number; leftOff: string[]; partial: string[]; uncovered: string[] }
+export type OOOrder = { basis?: OOOrderBasis; lines: OOOrderLine[]; status: 'draft' | 'sent' | 'approved' | 'changes'; builtAt: string; sentAt?: string; note?: string
   review?: { at: string; name: string; skip: string[]; note: string } }
 export const orderTotal = (o: OOOrder, skip: string[] = []) => o.lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (l.price || 0) * l.qty.reduce((x, y) => x + y, 0), 0)
 export type OOFile = { path: string; name: string; size: number; at: string; by: string }
@@ -165,7 +167,7 @@ export function ownerView(r: OORecord) {
   const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, ...rest } = r
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
-  return { ...rest, order: order && order.status !== 'draft' ? order : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
+  return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
 export function teamView(r: OORecord) { const { auth, ...rest } = r; return { ...rest, payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '' } } }

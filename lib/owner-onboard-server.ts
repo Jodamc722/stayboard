@@ -5,7 +5,8 @@ import 'server-only'
 import { getSettingFresh, setSetting, getSetting } from './app-settings'
 import { supabaseAdmin } from './supabase-admin'
 import { needList, NEED_ROOMS } from './need-list'
-import { itemsFor as kitItemsFor, lineFor, type KitSize, type KitSelection } from './starter-kit'
+import { itemsFor as kitItemsFor, lineFor, KIT_ITEMS, type KitSize, type KitSelection } from './starter-kit'
+const KIT_ITEMS_ORDER = () => KIT_ITEMS.map(k => k.key)
 import { normLinenStandard, linenQuote, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
 import type { OOOrder, OOOrderLine } from './owner-onboard'
 import { OO_PREFIX, OO_INDEX, cleanHome, unitsOf, unitName, DEFAULT_GM, DEFAULT_SALES, freshSteps, stageOf, type OORecord, type OOIndexRow, type OOItem, type OOHome, type OOCustom } from './owner-onboard'
@@ -117,21 +118,57 @@ export async function createRecord(v: any, by: string): Promise<OORecord> {
   return r
 }
 
-/** A first order list from Stay's own catalog (the starter kit: real products, prices and links), sized per unit. */
+// WHICH CHECKLIST PIECES EACH CATALOG PRODUCT COVERS. The owner ticks pieces ("dinner plates", "stock pot": lib/need-list);
+// we buy products ("Dinnerware set", "Pots & pans set": lib/starter-kit). This is the bridge between the two.
+const KIT_COVERS: Record<string, string[]> = {
+  coffee: ['coffee-maker'], toaster: ['toaster'], kettle: ['kettle'], blender: ['blender'],
+  pots: ['fry-large', 'fry-small', 'saucepans', 'stock-pot'], utensils: ['spatulas', 'wooden-spoons', 'slotted-spoon', 'ladle', 'tongs', 'whisk'],
+  knives: ['chef-knife', 'bread-knife', 'paring-knife', 'steak-knives', 'shears', 'knife-block'], boards: ['cutting-boards'], mitts: ['oven-mitts'],
+  baking: ['sheet-pans', 'muffin-tin'], bowls: ['mixing-bowls'], measure: ['measuring-cups'], casserole: ['baking-dish'], holder: ['utensil-holder'],
+  flatware: ['forks', 'salad-forks', 'table-knives', 'spoons', 'teaspoons'], dinner: ['dinner-plates', 'side-plates', 'bowls'],
+  tall: ['tall-glasses'], wine: ['wine-glasses'], mugs: ['mugs'], short: ['short-glasses'], cocktail: ['cocktail-glasses'], shot: ['shot-glasses'],
+  ktrash: ['kitchen-trash'], towel: ['paper-towel-holder'], rack: ['dish-rack'], vacuum: ['vacuum'], broom: ['broom'], mop: ['mop'],
+  plunger: ['plunger', 'toilet-brush'], btrash: ['bath-trash'], aid: ['first-aid'], hangers: ['hangers'], iron: ['iron'], board: ['ironing-board'],
+  dryer: ['hair-dryer'], luggage: ['luggage-rack'], pnp: ['pack-n-play'], cards: ['playing-cards'], uno: ['uno'],
+  chess: ['board-games'], backgammon: ['board-games'], jenga: ['board-games'], monopoly: ['board-games'],
+}
+
+/** The order list, from Stay's own catalog (the starter kit: real products, prices and links), sized per unit AND
+ *  BASED ON WHAT THE OWNER TICKED (Jon, 2026-11-13: "the order list should be based on the items selected"):
+ *    - every piece a product covers is marked "have"  → the product is left off for that unit
+ *    - any piece it covers is marked "need"           → it is on the list (an optional product too)
+ *    - nothing ticked for it                          → the catalog's own rule (must-haves and recommended)
+ *  `basis` tells the team what was left off, which sets the owner only partly has, and what they need that the
+ *  catalog does not sell (so it can be added by hand). */
 export function buildOrder(r: OORecord): OOOrder {
   const units = unitsOf(r)
   const blank: KitSelection = { inc: {}, qty: {}, own: {}, pick: {}, self: {}, have: {} } as any
   const by = new Map<string, OOOrderLine>()
+  const leftOff: string[] = [], partial: string[] = [], uncovered: string[] = []
+  const covered = new Set(Object.values(KIT_COVERS).flat())
+  let marked = 0
   units.forEach((h, i) => {
     const z: KitSize = { bedrooms: Math.max(1, h.bedrooms), bathrooms: Math.max(1, Math.ceil(h.bathrooms)), guests: h.guests, kitchen: h.kitchen, appliances: { ...h.appliances } }
+    const pre = (i === 0 ? '' : 'u' + (h.uid || i) + '|') + 's:'
+    const tag = units.length > 1 ? ' (' + unitName(h, i) + ')' : ''
+    const pieces = new Map(needList(z).map(l => [l.item.key, l.item.name] as [string, string]))
+    const mark = (k: string) => (r.custom.askSupplies ? r.marks[pre + k] || '' : '')
+    pieces.forEach((name, k) => { const m = mark(k); if (m) marked++; if (m === 'need' && !covered.has(k)) uncovered.push(name + tag) })
     for (const it of kitItemsFor(z)) {
       const l = lineFor(it, z, blank)
-      if (!l.included || !(l.qty > 0)) continue
+      if (!(l.qty > 0)) continue
+      const ps = (KIT_COVERS[it.key] || []).filter(k => pieces.has(k))
+      const have = ps.filter(k => mark(k) === 'have'), need = ps.filter(k => mark(k) === 'need')
+      if (ps.length && have.length === ps.length) { leftOff.push(it.name + tag); continue }
+      if (!need.length && !l.included) continue
+      if (have.length && ps.length > 1) partial.push(`${it.name}${tag}: has ${have.map(k => pieces.get(k)).join(', ')}; still on the list for ${ps.filter(k => !have.includes(k)).map(k => pieces.get(k)).join(', ')}`)
       const e = by.get(it.key) || { key: it.key, category: it.category, name: it.name, detail: String(l.detail || it.detail || '').slice(0, 200), url: l.url || '', price: l.price ?? null, qty: units.map(() => 0) }
       e.qty[i] = l.qty; by.set(it.key, e)
     }
   })
-  return { lines: Array.from(by.values()), status: 'draft', builtAt: new Date().toISOString() }
+  const order = KIT_ITEMS_ORDER()
+  const lines = Array.from(by.values()).sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))
+  return { lines, status: 'draft', builtAt: new Date().toISOString(), basis: { marked, leftOff, partial: partial.slice(0, 40), uncovered: uncovered.slice(0, 60) } }
 }
 export function cleanOrderLines(v: any, units: number): OOOrderLine[] {
   return (Array.isArray(v) ? v : []).slice(0, 300).map((l: any, i: number) => ({
