@@ -82,6 +82,20 @@ export type OOAuth = { pass?: { salt: string; hash: string }; tokens: { h: strin
 export type OOCoOwner = { id: string; name: string; email: string; phone: string; auth?: OOAuth | null }
 /** Every owner on a link, the first one as id 'p'. */
 export const ownersOf = (r: Pick<OORecord, 'custom' | 'owners'>) => [{ id: 'p', name: r.custom.ownerName, email: r.custom.ownerEmail, phone: r.custom.ownerPhone }, ...(r.owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone }))]
+export type OODecision = 'no-buy' | 'owner'
+export const OO_DECISIONS: { key: OODecision; label: string }[] = [{ key: 'no-buy', label: 'Owner does not want to purchase' }, { key: 'owner', label: 'Owner will supply it' }]
+/** ONE ITEM, RECONCILED: what the home needs, what the owner says is there, what the walkthrough found, and what is
+ *  left to buy. The walkthrough wins over the owner's answer; a team decision not to buy makes it zero. */
+export type OOStock = { need: number; owner: number | null; walk: number | null; onHand: number | null; toBuy: number; decision: OODecision | '' }
+export function stockOf(r: Pick<OORecord, 'marks' | 'counts' | 'walk' | 'decisions'>, item: { key: string; qty: number }): OOStock {
+  const m = r.marks?.[item.key], c = r.counts?.[item.key]
+  const owner = typeof c === 'number' ? c : m === 'have' ? item.qty : m === 'need' ? 0 : null
+  const w = r.walk?.counts?.[item.key]
+  const walk = typeof w === 'number' ? w : null
+  const onHand = walk ?? owner
+  const decision = r.decisions?.[item.key] || ''
+  return { need: item.qty, owner, walk, onHand, toBuy: decision ? 0 : Math.max(0, item.qty - (onHand ?? 0)), decision }
+}
 export type OOAttach = { property: string; listingId: string; unitLabel: string }
 export type OOCall = { at: string; link: string; note: string; minutes?: number; eventId?: string; eventUrl?: string; host?: string }
 /** THE W-9 AND ACH (Jon, 2026-11-12: "ACH and W-9 forms the owner can fill out in an encrypted format"). The
@@ -104,7 +118,7 @@ export type OOPayout = {
  *  links), edited, then sent to the owner, who reviews it line by line and approves or asks for changes. */
 export type OOOrderLine = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[] }   // qty per unit, in unit order
 /** How the list was worked out from the owner's supplies answers (team only). */
-export type OOOrderBasis = { marked: number; leftOff: string[]; partial: string[]; uncovered: string[] }
+export type OOOrderBasis = { marked: number; leftOff: string[]; partial: string[]; uncovered: string[]; /** pieces partly there, by count */ short?: string[]; /** pieces the team decided not to buy */ declined?: string[]; /** built after the walkthrough was finished */ walked?: boolean }
 export type OOOrder = { basis?: OOOrderBasis; lines: OOOrderLine[]; status: 'draft' | 'sent' | 'approved' | 'changes'; builtAt: string; sentAt?: string; note?: string
   review?: { at: string; name: string; skip: string[]; note: string } }
 export const orderTotal = (o: OOOrder, skip: string[] = []) => o.lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (l.price || 0) * l.qty.reduce((x, y) => x + y, 0), 0)
@@ -126,6 +140,18 @@ export type OORecord = {
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
   /** The linen order (Jon, 2026-11-13): approved by the team, then sent to the vendor. */
   order?: OOOrder | null
+  // THE INVENTORY, CHECKED (Jon, 2026-11-13: "an option on the owner inventory section: have not ordered any inventory /
+  // fully stocked… this would then trigger need to inspect the unit, which we need to do either way… a link for our team
+  // to mark yes or no so we can get the actual count… on the admin side mark it owner does not want to purchase… then
+  // we can generate the order list").
+  /** How many of an item the owner says is there (items needed in more than one). A plain Have/Need stays in `marks`. */
+  counts?: Record<string, number>
+  /** The owner's one-tap answer for the whole home: nothing bought yet, or fully stocked. */
+  stock?: 'none' | 'full' | ''
+  /** The team's walkthrough of the unit: what is really there. `key` opens the walkthrough link without a login. */
+  walk?: { key: string; counts: Record<string, number>; note?: string; by?: string; sentAt?: string; sentTo?: string[]; startedAt?: string; doneAt?: string } | null
+  /** The team's call on an item that is short: not buying it. */
+  decisions?: Record<string, OODecision>
   /** Every download of the filled W-9 or ACH form: who, which, when (newest first, last 200). */
   payoutLog?: { at: string; by: string; doc: 'w9' | 'ach' }[]
   /** When this onboarding last fed the attached listing's FAQ, and how many entries it has added. */
@@ -145,7 +171,7 @@ export type OORecord = {
 /** What the list of links shows. */
 export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
-  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** every owner's email on the link */ emails?: string[]; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | '' }
+  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** every owner's email on the link */ emails?: string[]; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | ''; /** the unit walkthrough: needed once supplies are in, then sent, then done */ walk?: 'needed' | 'sent' | 'done' | '' }
 
 export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '', wifiName: '', wifiPass: '' }
 
@@ -182,14 +208,14 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, ...rest } = r
-  void owners
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, ...rest } = r
+  void owners; void walk; void decisions
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
-export function teamView(r: OORecord) { const { auth, owners, ...rest } = r; const acc = (a?: OOAuth | null) => ({ hasPassword: !!a?.pass, invitedAt: a?.invitedAt || '', activatedAt: a?.activatedAt || '', lastSeenAt: a?.lastSeenAt || '' }); return { ...rest, owners: (owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone, access: acc(o.auth) })), payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' } } }
+export function teamView(r: OORecord) { const { auth, owners, ...rest } = r; /* the walkthrough key stays: the team copies its link */ const acc = (a?: OOAuth | null) => ({ hasPassword: !!a?.pass, invitedAt: a?.invitedAt || '', activatedAt: a?.activatedAt || '', lastSeenAt: a?.lastSeenAt || '' }); return { ...rest, owners: (owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone, access: acc(o.auth) })), payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' } } }
 
 /** A US bank routing number: nine digits with a valid checksum. */
 export function routingOk(v: string): boolean {
