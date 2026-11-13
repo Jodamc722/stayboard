@@ -331,6 +331,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   const [rec, setRec] = useState<Any>(null)
   const [items, setItems] = useState<OOItem[]>([])
   const [linEdit, setLinEdit] = useState<Any>(null)
+  const [canDelete, setCanDelete] = useState(false); const [delAsk, setDelAsk] = useState(false)
+  async function remove() { setBusy('del'); const d = await fetch('/api/owner-onboarding/' + code, { method: 'DELETE' }).then(r => r.json()).catch(() => null); if (d?.ok) { window.location.href = '/owner-onboarding'; return } setBusy(''); setMsg(d?.message || d?.error || 'Not deleted.') }
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState('')
@@ -338,7 +340,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   const [eu, setEu] = useState(0)
   async function linen(action: string, extra: Any = {}) { setBusy('linen'); const d = await fetch(`/api/owner-onboarding/${code}/linen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...extra }) }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); if (Array.isArray(d?.items)) setItems(d.items); if (d?.ok && (action === 'save' || action === 'reset')) setLinEdit(null); setMsg(d?.ok ? (action === 'send' ? 'Sent to the vendor.' : 'Saved.') : (d?.error || 'Not saved.')); setBusy('') }
   const agree = useRef<HTMLInputElement>(null)
-  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []) }
+  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setCanDelete(!!d.canDelete) }
   const load = () => fetch('/api/owner-onboarding/' + code, { cache: 'no-store' }).then(r => r.json()).then(d => (d?.ok ? apply(d) : setErr(d?.error || 'Not found.'))).catch(() => setErr('Could not load.'))
   useEffect(() => { load() }, [code])
   async function patch(body: Any, note = 'Saved.') {
@@ -520,6 +522,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           </section>
 
           <button type="button" onClick={() => patch({ archived: !rec.archived }, rec.archived ? 'Restored.' : 'Archived: the owner link no longer opens.')} className="oo-noprint inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-muted hover:text-ink"><Archive size={13} /> {rec.archived ? 'Restore this link' : 'Archive this link'}</button>
+          {canDelete ? (delAsk ? <div className="oo-noprint rounded-xl border border-red-200 bg-red-50 p-3 text-[12.5px] text-ink"><p><b>Delete this onboarding for good?</b> The owner’s answers, the W-9 and ACH details, the agreement, the order list and the linen quote are removed, and the owner’s link stops working. This cannot be undone.</p><div className="flex items-center gap-3 mt-2"><button type="button" disabled={busy === 'del'} onClick={remove} className="rounded-lg bg-red-700 text-white px-3 py-1.5 font-semibold disabled:opacity-50">{busy === 'del' ? 'Deleting…' : 'Yes, delete it'}</button><button type="button" onClick={() => setDelAsk(false)} className="underline text-muted">Keep it</button></div></div>
+            : <button type="button" onClick={() => setDelAsk(true)} className="oo-noprint inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-red-700">Delete this onboarding</button>) : null}
         </div>
       </div>
     </div>

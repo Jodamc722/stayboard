@@ -3,8 +3,8 @@
 // the home itself, archive.
 import { syncFaq } from '@/lib/owner-onboard-faq'
 import { NextRequest, NextResponse } from 'next/server'
-import { requireLevel } from '@/lib/access'
-import { readRecord, saveRecord, itemsFor, cleanCustom, cleanMore } from '@/lib/owner-onboard-server'
+import { requireLevel, requireAdmin, isSuperadmin } from '@/lib/access'
+import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore } from '@/lib/owner-onboard-server'
 import { cleanHome, OO_STEPS, teamView, type OOStep } from '@/lib/owner-onboard'
 
 export const dynamic = 'force-dynamic'
@@ -14,7 +14,7 @@ export async function GET(_: NextRequest, { params }: { params: { code: string }
   const r = await readRecord(params.code)
   if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
   const items = await itemsFor(r)
-  return NextResponse.json({ ok: true, record: teamView(r), items })
+  return NextResponse.json({ ok: true, record: teamView(r), items, canDelete: isSuperadmin(g.access.email) })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { code: string } }) {
@@ -43,5 +43,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   const w = await saveRecord(r, g.access.email || null)
   if (!w.ok) return NextResponse.json(w, { status: 500 })
   const items = await itemsFor(r)
-  return NextResponse.json({ ok: true, record: teamView(r), items })
+  return NextResponse.json({ ok: true, record: teamView(r), items, canDelete: isSuperadmin(g.access.email) })
+}
+
+// DELETE: for good, and only the GM (Jon, 2026-11-13: "need to be able to delete. only GM - me"). Everyone else archives.
+export async function DELETE(_: NextRequest, { params }: { params: { code: string } }) {
+  const g = await requireAdmin('owner'); if (!g.ok) return g.res
+  const d = await deleteRecord(params.code, g.access.email || null)
+  return NextResponse.json(d, { status: d.ok ? 200 : 500 })
 }

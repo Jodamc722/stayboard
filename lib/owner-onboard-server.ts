@@ -3,6 +3,7 @@
 // one owner's saves never rewrite another's.
 import 'server-only'
 import { getSettingFresh, setSetting, getSetting } from './app-settings'
+import { supabaseAdmin } from './supabase-admin'
 import { needList, NEED_ROOMS } from './need-list'
 import { itemsFor as kitItemsFor, lineFor, type KitSize, type KitSelection } from './starter-kit'
 import { normLinenStandard, linenQuote, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
@@ -144,4 +145,19 @@ export function cleanOrderLines(v: any, units: number): OOOrderLine[] {
 export function cleanLinenRows(v: any, units: number): { name: string; size: string; qty: number[] }[] {
   return (Array.isArray(v) ? v : []).slice(0, 120).map((l: any) => ({ name: String(l?.name || '').trim().slice(0, 80), size: String(l?.size || '').trim().slice(0, 30),
     qty: Array.from({ length: Math.max(1, units) }, (_, u) => Math.max(0, Math.min(9999, Math.round(Number(l?.qty?.[u]) || 0)))) })).filter(l => l.name && l.qty.some(q => q > 0))
+}
+
+/** Deletes one onboarding for good (Jon, 2026-11-13: "need to be able to delete. only GM - me"): the record with
+ *  its encrypted W-9/ACH details, its place in the list, and its uploaded agreement. The caller checks who is asking.
+ *  FAQ entries already added to a listing stay: they belong to the listing now. */
+export async function deleteRecord(code: string, by: string | null): Promise<{ ok: boolean; error?: string }> {
+  if (!validCode(code)) return { ok: false, error: 'No such onboarding link.' }
+  const db = supabaseAdmin()
+  const del = await db.from('app_settings').delete().eq('key', OO_PREFIX + code)
+  if (del.error) return { ok: false, error: del.error.message }
+  await getSettingFresh<any>(OO_PREFIX + code, null).catch(() => null)   // drop the cached copy
+  const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])
+  await setSetting(OO_INDEX, (Array.isArray(idx) ? idx : []).filter(x => x && x.code !== code), by)
+  try { const ls = await db.storage.from('owner-onboarding').list(code, { limit: 100 }); const paths = (ls.data || []).map(f => code + '/' + f.name); if (paths.length) await db.storage.from('owner-onboarding').remove(paths) } catch { /* the record is gone; a stray file is not reachable without it */ }
+  return { ok: true }
 }
