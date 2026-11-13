@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
     + '?client_id=' + encodeURIComponent(clientId)
     + '&redirect_uri=' + encodeURIComponent(redirect)
     + '&response_type=code'
-    + '&scope=' + encodeURIComponent('openid email https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.compose' + (wantRead ? ' ' + GOOGLE_READ_SCOPES.join(' ') : ''))
+    + '&scope=' + encodeURIComponent('openid email https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.freebusy' + (wantRead ? ' ' + GOOGLE_READ_SCOPES.join(' ') : ''))
     + '&access_type=offline'
     + '&prompt=consent'
   if (wantRead) url += '&include_granted_scopes=true'
