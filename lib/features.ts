@@ -114,7 +114,7 @@ export const FEATURES: Feature[] = [
   { key: 'linens',        label: 'Linens',            path: '/onboarding/linens', group: 'Owners' },
   // OWNER ONBOARDING, FROM SCRATCH (Jon, 2026-11-12): one link per owner — the home, a supplies check, a
   // timeline and the team's report. /join/<code> is the owner's side and stays public (OPEN_PREFIXES).
-  { key: 'owner-onboarding', label: 'Owner onboarding', path: '/owner-onboarding', group: 'Owners' },
+  { key: 'owner-onboarding', label: 'Owner onboarding', path: '/owner-onboarding', group: 'Sales & Marketing' },
   // THE ADMIN DESK (Jon, 2026-10-26): the administrator's own page — listings not for sale or not
   // connected per channel, offline in Guesty, reply owed, optimization and photo work, blocked units,
   // the per-listing board and the review report. View reads it; edit may rebuild its cache.
@@ -385,7 +385,7 @@ export type RoleDef = {
 // part of an existing area: nobody should have to touch every role to see them).
 // leadership → projects (2026-11-06): the Leadership board REPLACED Projects, so whoever could see
 // Projects sees the board until a role says otherwise.
-const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects', 'owner-onboarding': 'onboarding' }
+const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects', 'owner-onboarding': 'sales' }
 export function roleLevel(role: RoleDef | null | undefined, featureKey: string): Level {
   if (!role || !role.perms || typeof role.perms !== 'object') return 'off'
   const explicit = role.perms[featureKey] ?? (LEVEL_FALLBACK[featureKey] ? role.perms[LEVEL_FALLBACK[featureKey]] : null)
