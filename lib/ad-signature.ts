@@ -9,7 +9,7 @@
 // Every scene kind maps onto one of the six, so any ad (written, templated or revamped) can wear it.
 // Client-safe; drawn by drawFrame when the project's look is 'signature'.
 import type { AdProject, AdAssets, Timeline, AdScene } from './ad-engine'
-import { qrModules, sceneAt, captionText } from './ad-engine'
+import { qrModules, sceneAt, captionText, drawLookMark } from './ad-engine'
 import { MOMENTS, CURRENT_OWNER_MOMENTS } from './marketing-calendar'
 
 const INK = '#F7F2E9', MUT = 'rgba(247,242,233,0.72)', GOLD = '#D4B47C', NIGHT = '#0E0F11', NIGHT2 = '#16181B'
@@ -20,7 +20,9 @@ const outCubic = (x: number) => 1 - Math.pow(1 - clamp(x), 3)
 
 type Ctx = CanvasRenderingContext2D
 type Env = { W: number; H: number; u: number; port: boolean; tall: boolean; M: number; top: number; bot: number; ui: number; cap: number; serif: string; sans: string; A: AdAssets; p: AdProject; t: number
-  accent: string; night: string; night2: string; ink: string; mut: string; onAccent: string }
+  accent: string; night: string; night2: string; ink: string; mut: string; onAccent: string
+  /** Christmas: a string of bulbs along the top of the frame and round the button (Jon, 2026-11-13: "I did not mind the Christmas designs, the lights"). */
+  lights: boolean; dress: SigDress; btn: string; onBtn: string }
 
 // ── the scene's content decides its layout ───────────────────────────────────────────────────────
 export type SigLayout = 'hero' | 'list' | 'numbers' | 'cards' | 'gallery' | 'quote' | 'end'
@@ -40,7 +42,7 @@ export function layoutOf(sc: AdScene): SigLayout {
   if (k === 'cta' || k === 'contact') return 'end'
   if (k === 'quote') return 'quote'
   const items = (sc.items || []).filter(x => x && x.trim())
-  if (k === 'stats' || k === 'curve' || (items.length && items.every(x => NUMERIC.test(x)))) return items.length ? 'numbers' : 'hero'
+  if (items.length && items.every(x => NUMERIC.test(x))) return 'numbers'
   if (k === 'cards' && items.length >= 2 && sc.photos.filter(Boolean).length >= 2) return 'cards'
   if (items.length && !(k === 'poster' || k === 'event')) return 'list'
   if ((k === 'wall' || k === 'grid' || k === 'tilegrid' || k === 'polaroid' || k === 'tiles') || sc.photos.filter(Boolean).length >= 2) return 'gallery'
@@ -243,22 +245,32 @@ function hero(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: numb
   const head = sc.head || strip(sc.vo)
   const center = !img
   const maxW = center ? W - 2 * M : port ? W - 2 * M : W * 0.62
-  const size = fit(ctx, head, maxW, (e.tall ? 172 : port ? 150 : 150) * u, port ? 4 : 3, serifF(e))
+  const size = fit(ctx, head, maxW, (e.tall ? 172 : port ? 132 : 150) * u, port ? 4 : 3, serifF(e))
   const hh = setLines(ctx, e, head, 0, 0, maxW, size, { font: e.serif, weight: 600, local, measureOnly: true })
   const sub = sc.sub && bare(sc.sub) !== bare(sc.eyebrow || '') ? sc.sub : ''
   const subSize = (port ? 38 : 34) * u
   const subH = sub ? para(ctx, e, sub, 0, 0, maxW * 0.92, subSize, 0, 0, { measureOnly: true, maxLines: 2 }) + 30 * u : 0
-  const tag = sameWords(sc.eyebrow || '', head) ? '' : (sc.eyebrow || '')
+  // A poster (the photo posts, an event card) carries a date line and sometimes a button in its rows.
+  const isPoster = sc.kind === 'poster' || sc.kind === 'event'
+  const when = isPoster ? strip((sc.items || [])[0] || '') : ''
+  const btn0 = sc.kind === 'poster' ? strip((sc.items || [])[1] || '') : ''
+  const btn = btn0 && !sameWords(btn0, head + ' ' + sub) ? btn0 : ''
+  const tag0 = sameWords(sc.eyebrow || '', head) ? '' : (sc.eyebrow || '')
+  const tag = tag0 || (when && !sameWords(when, head + ' ' + sub) ? when : '')
   const ebH = tag ? (port ? 26 : 24) * u + 34 * u : 0
-  const blockH = ebH + hh + subH
+  const btnH = btn ? 46 * u + 92 * u : 0
+  const blockH = ebH + hh + subH + btnH
   const y0 = center ? (H - blockH) / 2 : H - e.bot - blockH
   const x0 = center ? M : M
   // a second, local shadow under the words themselves: a bright pool or a white wall never eats the headline
   if (img) shade(ctx, 0, y0 - 300 * u, y0 + blockH * 0.5, W, 0, 0.5)
+  // a tall block of words (a long headline on a feed post) needs the whole photo quieter, not just its foot
+  if (img && y0 < H * 0.5) { ctx.fillStyle = `rgba(8,8,9,${clamp((H * 0.5 - y0) / (H * 0.3)) * 0.38})`; ctx.fillRect(0, 0, W, y0 + blockH * 0.5) }
   if (img) { ctx.fillStyle = 'rgba(8,8,9,0.5)'; ctx.fillRect(0, y0 + blockH * 0.5, W, H - (y0 + blockH * 0.5)) }
   if (tag) eyebrowRow(ctx, e, tag, x0, y0, local, 0.05, center, maxW)
   setLines(ctx, e, head, x0, y0 + ebH, maxW, size, { font: e.serif, weight: 600, local, delay: 0.14, align: center ? 'center' : 'left' })
   if (sub) para(ctx, e, sub, x0, y0 + ebH + hh + 30 * u, center ? maxW : maxW * 0.92, subSize, local, 0.8, { align: center ? 'center' : 'left', maxLines: 2 })
+  if (btn) pill(ctx, e, btn, center ? W / 2 : x0, y0 + ebH + hh + subH + 46 * u, local, 1.0, !center, maxW)
 }
 
 function glow(ctx: Ctx, e: Env, local: number) {
@@ -270,8 +282,11 @@ function glow(ctx: Ctx, e: Env, local: number) {
 function list(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: number, get: Get) {
   const { W, H, u, M, port } = e
   const img = get(sc.photos[0] || '')
-  const items = (sc.items || []).filter(x => x && x.trim()).slice(0, 4)
-  const n = Math.max(1, items.length)
+  const all = (sc.items || []).filter(x => x && x.trim())
+  // more than four short rows (the channels, the six things we handle) set in two columns rather than being cut
+  const cols = all.length > 4 && all.every(r => !split(r)[1]) ? 2 : 1
+  const items = all.slice(0, cols === 2 ? 8 : 4)
+  const n = Math.max(1, Math.ceil(items.length / cols))
   const head = sc.head.trim()
   const tag = sameWords(sc.eyebrow || '', head) ? '' : (sc.eyebrow || '')
   ctx.fillStyle = e.night; ctx.fillRect(0, 0, W, H); glow(ctx, e, local)
@@ -305,10 +320,13 @@ function list(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: numb
   if (head) { setLines(ctx, e, head, tx, y, tw, hS, { font: e.serif, weight: 600, local, delay: 0.22 }); y += hH }
   const plain = items.every(r => !split(r)[1])   // rows with no second line carry bigger type
   const tS = clamp(rowH * (plain ? 0.36 : 0.29), 34 * u, (port ? (plain ? 58 : 50) : (plain ? 52 : 46)) * u), dS = tS * 0.72
-  const numW = 84 * u
+  const numW = (cols === 2 ? 62 : 84) * u
+  const gapC = 44 * u, tw0 = tw, tx0 = tx
   items.forEach((row, k) => {
     const [t1, t2] = split(row)
-    const d = 0.5 + k * 0.2, ry = y + k * rowH
+    const col = cols === 2 ? k % 2 : 0, r = cols === 2 ? Math.floor(k / 2) : k
+    const tw = (tw0 - gapC * (cols - 1)) / cols, tx = tx0 + col * (tw + gapC)
+    const d = 0.5 + r * 0.2 + col * 0.08, ry = y + r * rowH
     rule(ctx, tx, ry, tw, local, d - 0.1, 'rgba(247,242,233,0.2)', 1.5 * u, 0.9)
     const mid = ry + rowH / 2
     const blockH = tS * 1.1 + (t2 ? dS * 1.5 : 0)
@@ -456,16 +474,19 @@ function quote(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: num
   if (who) { rule(ctx, x, y0 + size * 0.7 + hh + 50 * u, 60 * u, local, 0.9, e.accent); label(ctx, e, strip(who), x + 84 * u, y0 + size * 0.7 + hh + 60 * u, 24 * u, local, 1.0, { color: e.mut }) }
 }
 
-function pill(ctx: Ctx, e: Env, text: string, cx: number, y: number, local: number, delay: number, left = false): number {
+function pill(ctx: Ctx, e: Env, text: string, cx: number, y: number, local: number, delay: number, left = false, maxW = 0): number {
   const { u } = e
   const a = outCubic((local - delay) / 0.6); const bh = 92 * u
   if (a <= 0) return bh
-  ctx.save(); ctx.globalAlpha *= a; const fs = 28 * u
-  ctx.font = `700 ${fs}px ${e.sans}`; try { (ctx as any).letterSpacing = fs * 0.16 + 'px' } catch { /* */ }
-  const s = strip(text).toUpperCase(), tw = ctx.measureText(s).width, bw = tw + 96 * u, bx = left ? cx : cx - bw / 2, by = y + (1 - a) * 14 * u
-  rr(ctx, bx, by, bw, bh, bh / 2); ctx.fillStyle = e.accent; ctx.fill()
-  ctx.fillStyle = e.onAccent; ctx.textBaseline = 'middle'; ctx.fillText(s, bx + 48 * u + fs * 0.08, by + bh / 2 + 1 * u)
+  ctx.save(); ctx.globalAlpha *= a; let fs = 28 * u
+  const s = strip(text).toUpperCase(); let tw = 0
+  for (let k = 0; k < 14; k++) { ctx.font = `700 ${fs}px ${e.sans}`; try { (ctx as any).letterSpacing = fs * 0.16 + 'px' } catch { /* */ } tw = ctx.measureText(s).width; if (!maxW || tw + 96 * u <= maxW) break; fs *= 0.94 }
+  const bw = tw + 96 * u, bx = left ? cx : cx - bw / 2, by = y + (1 - a) * 14 * u
+  rr(ctx, bx, by, bw, bh, bh / 2); ctx.fillStyle = e.btn; ctx.fill()
+  ctx.fillStyle = e.onBtn; ctx.textBaseline = 'middle'; ctx.fillText(s, bx + 48 * u + fs * 0.08, by + bh / 2 + 1 * u)
+  try { (ctx as any).letterSpacing = '0px' } catch { /* */ }
   ctx.restore()
+  if (e.lights && a > 0.6) lightsRound(ctx, e, bx, by, bw, bh, clamp((a - 0.6) / 0.4))
   return bh
 }
 
@@ -473,7 +494,7 @@ function endCard(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: n
   const { W, H, u, M, port, A, p } = e
   const img = get(sc.photos[0] || '')
   ctx.fillStyle = e.night; ctx.fillRect(0, 0, W, H)
-  if (img) { ctx.save(); ctx.globalAlpha *= 0.34; photo(ctx, img, 0, 0, W, H, local, dur + 4, i, 0.6); ctx.restore(); shade(ctx, 0, 0, H, W, 0.3, 0.8) } else glow(ctx, e, local)
+  if (img) { ctx.save(); ctx.globalAlpha *= 0.4; photo(ctx, img, 0, 0, W, H, local, dur + 4, i, 0.6); ctx.restore(); shade(ctx, 0, 0, H, W, 0.1, 0.55); glow(ctx, e, local) } else glow(ctx, e, local)
   const qr = (sc.qr || '').trim()
   const logo = (A.logos && A.logos.white) || A.logo
   const lgAspect = logo ? ((logo as any).naturalHeight || 106) / ((logo as any).naturalWidth || 222) : 0
@@ -497,7 +518,7 @@ function endCard(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: n
       const cx = W * 0.27, cy = H / 2
       portrait(ctx, e, face, cx, cy, R, local, 0.1)
       const x = W * 0.46; let y = (H - stack) / 2
-      if (logo) { const a = outCubic(local / 0.8); ctx.save(); ctx.globalAlpha *= a; ctx.drawImage(logo as any, x, y, lgW, lgH); ctx.restore() }
+      if (logo) { const a = outCubic(local / 0.8); ctx.save(); ctx.globalAlpha *= a; mark(ctx, e, logo, x, y, lgW, lgH); ctx.restore() }
       y += lgH + 50 * u
       setLines(ctx, e, head, x, y, colW, size, { font: e.serif, weight: 600, local, delay: 0.25 }); y += hh + 44 * u
       const a1 = outCubic((local - 0.7) / 0.6)
@@ -513,7 +534,7 @@ function endCard(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: n
     }
     const total = R * 2 + 56 * u + stack
     let y = Math.max(e.top, (H - e.bot * 0.6 - total) / 2 + e.top * 0.2)
-    if (logo) { const a = outCubic(local / 0.8); ctx.save(); ctx.globalAlpha *= a; ctx.drawImage(logo as any, (W - lgW) / 2, y, lgW, lgH); ctx.restore() }
+    if (logo) { const a = outCubic(local / 0.8); ctx.save(); ctx.globalAlpha *= a; mark(ctx, e, logo, (W - lgW) / 2, y, lgW, lgH); ctx.restore() }
     y += lgH + 50 * u
     portrait(ctx, e, face, W / 2, y + R, R, local, 0.15); y += R * 2 + 56 * u
     setLines(ctx, e, head, M, y, colW, size, { font: e.serif, weight: 600, local, delay: 0.3, align: 'center' }); y += hh + 44 * u
@@ -545,7 +566,7 @@ function endCard(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: n
   const blocks = [lgH + 80 * u, hh, cta ? 60 * u + 92 * u : 0, sub ? 44 * u + subS * 1.4 : 0, qr ? qS + 110 * u : 0]
   const total = blocks.reduce((x, b) => x + b, 0)
   let y = Math.max(e.top, (H - total) / 2)
-  if (logo) { const a = outCubic(local / 0.8); ctx.save(); ctx.globalAlpha *= a; ctx.drawImage(logo as any, (W - lgW) / 2, y + (1 - a) * 14 * u, lgW, lgH); ctx.restore() }
+  if (logo) { const a = outCubic(local / 0.8); ctx.save(); ctx.globalAlpha *= a; mark(ctx, e, logo, (W - lgW) / 2, y + (1 - a) * 14 * u, lgW, lgH); ctx.restore() }
   y += blocks[0]
   setLines(ctx, e, head, M, y, maxW, size, { font: e.serif, weight: 600, local, delay: 0.25, align: 'center' })
   y += hh
@@ -601,32 +622,183 @@ function drawSig(ctx: Ctx, e0: Env, i: number, local0: number, dur: number) {
   else hero(ctx, e, sc, i, local, dur, get)
 }
 
+// ── Christmas lights: one string along the top of the frame, bulbs round the button ───────────────
+const BULBS = ['#FFDB8E', '#E4574F', '#FFDB8E', '#46AD74', '#FFDB8E', '#F2B445']
+function bulbAt(ctx: Ctx, x: number, y: number, r: number, c: string, on: number, glowR: number) {
+  ctx.save(); ctx.globalCompositeOperation = 'screen'
+  const g = ctx.createRadialGradient(x, y, 0, x, y, glowR); g.addColorStop(0, rgba(c, 0.55 * on)); g.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = g; ctx.fillRect(x - glowR, y - glowR, glowR * 2, glowR * 2); ctx.restore()
+  ctx.save(); ctx.globalAlpha *= 0.55 + 0.45 * on; ctx.fillStyle = c; ctx.beginPath(); ctx.ellipse(x, y, r * 0.72, r, 0, 0, Math.PI * 2); ctx.fill()
+  ctx.globalAlpha *= 0.7; ctx.fillStyle = '#FFFFFF'; ctx.beginPath(); ctx.ellipse(x - r * 0.2, y - r * 0.3, r * 0.2, r * 0.32, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore()
+}
+function stringLights(ctx: Ctx, e: Env) {
+  const { W, u, t } = e
+  const swags = e.port ? 3 : 5, per = e.port ? 4 : 4, y0 = -10 * u, sag = (e.port ? 78 : 66) * u
+  const yAt = (f: number) => y0 + sag * Math.sin(((f * swags) % 1) * Math.PI)
+  ctx.save(); ctx.strokeStyle = 'rgba(12,14,12,0.9)'; ctx.lineWidth = 2.6 * u; ctx.lineJoin = 'round'; ctx.beginPath()
+  for (let k = 0; k <= 160; k++) { const f = Math.min(0.9999, k / 160), x = (k / 160) * W; if (k) ctx.lineTo(x, yAt(f)); else ctx.moveTo(x, yAt(f)) }
+  ctx.stroke(); ctx.restore()
+  const n = swags * per
+  for (let k = 0; k < n; k++) {
+    const f = (k + 0.5) / n, x = f * W, yw = yAt(f)
+    const on = 0.62 + 0.38 * Math.sin(t * 2.2 + k * 1.9)
+    ctx.fillStyle = 'rgba(16,18,16,0.95)'; ctx.fillRect(x - 3.4 * u, yw - 1 * u, 6.8 * u, 9 * u)
+    bulbAt(ctx, x, yw + 17 * u, 10.5 * u, BULBS[k % BULBS.length], on, 58 * u)
+  }
+}
+function lightsRound(ctx: Ctx, e: Env, x: number, y: number, w: number, h: number, a: number) {
+  const { u, t } = e
+  const pad = 15 * u, r = h / 2 + pad, straight = Math.max(0, w - h), per = 2 * straight + 2 * Math.PI * r
+  const n = Math.max(10, Math.round(per / (56 * u)))
+  ctx.save(); ctx.globalAlpha *= a
+  for (let k = 0; k < n; k++) {
+    let d = (k / n) * per, px = 0, py = 0
+    const cxL = x + h / 2, cxR = x + w - h / 2, cy = y + h / 2
+    if (d < straight) { px = cxL + d; py = cy - r }
+    else if ((d -= straight) < Math.PI * r) { const an = -Math.PI / 2 + d / r; px = cxR + Math.cos(an) * r; py = cy + Math.sin(an) * r }
+    else if ((d -= Math.PI * r) < straight) { px = cxR - d; py = cy + r }
+    else { d -= straight; const an = Math.PI / 2 + d / r; px = cxL + Math.cos(an) * r; py = cy + Math.sin(an) * r }
+    bulbAt(ctx, px, py, 5.6 * u, BULBS[k % BULBS.length], 0.6 + 0.4 * Math.sin(t * 3 - k * 1.2), 26 * u)
+  }
+  ctx.restore()
+}
+// ── the season's own atmosphere (Jon, 2026-11-13: "should look amazing, festive and cool") ────────
+// One quiet layer per season, drawn over the frame: snow with the Christmas lights, drifting leaves for Thanksgiving,
+// champagne sparkle for New Year's Eve, hearts for Valentine's, fireworks for the Fourth, bats for Halloween, a neon
+// edge for festival weeks. Sparse and soft on purpose — it dresses the photo, it never competes with the words.
+export type SigDress = 'none' | 'xmas' | 'leaves' | 'sparkle' | 'hearts' | 'fireworks' | 'bats' | 'neon'
+const hsh = (n: number, k: number) => { const x = Math.sin(n * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x) }
+const wrap1 = (x: number) => ((x % 1) + 1) % 1
+function festive(ctx: Ctx, e: Env) {
+  const { W, H, u, t } = e, d = e.dress
+  if (d === 'none') return
+  ctx.save()
+  if (d === 'xmas') {
+    for (let n = 0; n < 56; n++) {
+      const z = hsh(n, 1), r = (1.6 + 5.2 * z * z) * u
+      const y = wrap1(hsh(n, 2) + t * (0.03 + 0.055 * z)) * (H + 40 * u) - 20 * u
+      const x = wrap1(hsh(n, 3) + 0.025 * Math.sin(t * 0.7 + n)) * W
+      const al = 0.22 + 0.5 * hsh(n, 4)
+      if (z > 0.72) { const g = ctx.createRadialGradient(x, y, 0, x, y, r * 2.2); g.addColorStop(0, `rgba(255,255,255,${al * 0.75})`); g.addColorStop(1, 'rgba(255,255,255,0)'); ctx.fillStyle = g; ctx.fillRect(x - r * 2.2, y - r * 2.2, r * 4.4, r * 4.4) }
+      else { ctx.fillStyle = `rgba(255,255,255,${al})`; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill() }
+    }
+  } else if (d === 'leaves') {
+    const cols = ['#C8541E', '#E08A3C', '#9C3B19', '#D9A441', '#B5462A']
+    for (let n = 0; n < 11; n++) {
+      const z = hsh(n, 1), r = (15 + 17 * z) * u
+      const y = wrap1(hsh(n, 2) + t * (0.035 + 0.04 * z)) * (H + 120 * u) - 60 * u
+      const x = wrap1(hsh(n, 3) + t * 0.012 + 0.04 * Math.sin(t * 0.9 + n * 2)) * W
+      ctx.save(); ctx.translate(x, y); ctx.rotate(n + t * (0.5 + z) * (n % 2 ? 1 : -1) * 0.6); ctx.scale(1, 0.55 + 0.45 * Math.abs(Math.sin(t * 0.8 + n)))
+      ctx.globalAlpha = 0.55 + 0.4 * z; ctx.fillStyle = cols[n % cols.length]
+      ctx.beginPath(); ctx.moveTo(0, -r); ctx.quadraticCurveTo(r * 0.95, -r * 0.2, 0, r); ctx.quadraticCurveTo(-r * 0.95, -r * 0.2, 0, -r); ctx.fill()
+      ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 1.2 * u; ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(0, r * 1.25); ctx.stroke(); ctx.restore()
+    }
+  } else if (d === 'sparkle') {
+    ctx.globalCompositeOperation = 'screen'
+    for (let n = 0; n < 16; n++) {
+      const z = hsh(n, 1), r = (18 + 60 * z) * u, x = hsh(n, 3) * W, y = H - wrap1(hsh(n, 2) + t * (0.02 + 0.03 * z)) * (H + 200 * u) + 100 * u
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, rgba(e.accent, 0.16)); g.addColorStop(0.7, rgba(e.accent, 0.07)); g.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2)
+    }
+    for (let n = 0; n < 30; n++) {
+      const tw = Math.pow(0.5 + 0.5 * Math.sin(t * (1.6 + 2 * hsh(n, 5)) + n * 2.3), 3), r = (5 + 15 * hsh(n, 1)) * u * (0.4 + 0.6 * tw), x = hsh(n, 6) * W, y = hsh(n, 7) * H * 0.8
+      ctx.globalAlpha = 0.9 * tw; ctx.fillStyle = n % 3 ? e.accent : '#FFFFFF'
+      ctx.beginPath(); ctx.moveTo(x, y - r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.quadraticCurveTo(x, y, x, y + r); ctx.quadraticCurveTo(x, y, x - r, y); ctx.quadraticCurveTo(x, y, x, y - r); ctx.fill()
+    }
+  } else if (d === 'hearts') {
+    for (let n = 0; n < 10; n++) {
+      const z = hsh(n, 1), r = (11 + 15 * z) * u * (1 + 0.06 * Math.sin(t * 3 + n))
+      const y = H - wrap1(hsh(n, 2) + t * (0.03 + 0.035 * z)) * (H + 120 * u) + 60 * u, x = wrap1(hsh(n, 3) + 0.03 * Math.sin(t * 0.8 + n * 1.7)) * W
+      ctx.globalAlpha = 0.3 + 0.4 * z; ctx.fillStyle = n % 2 ? '#FF8FA8' : e.accent
+      ctx.beginPath(); ctx.moveTo(x, y + r); ctx.bezierCurveTo(x - r * 1.3, y, x - r * 0.6, y - r, x, y - r * 0.3); ctx.bezierCurveTo(x + r * 0.6, y - r, x + r * 1.3, y, x, y + r); ctx.fill()
+    }
+  } else if (d === 'fireworks') {
+    ctx.globalCompositeOperation = 'screen'
+    const cols = ['#FFFFFF', '#FF5A6A', '#7FB2FF']
+    for (let b = 0; b < 3; b++) {
+      const T = 2.8, ph = (t + b * 0.93) / T, cyc = Math.floor(ph), q = ph - cyc
+      const cx = (0.16 + 0.68 * hsh(cyc * 3 + b, 1)) * W, cy = (0.07 + 0.22 * hsh(cyc * 3 + b, 2)) * H, R = (150 + 110 * hsh(cyc + b, 3)) * u
+      const grow = 1 - Math.pow(1 - q, 3), fade = clamp(1 - q * 1.05)
+      for (let k = 0; k < 26; k++) {
+        const an = (k / 26) * Math.PI * 2 + b, rr2 = R * grow * (0.75 + 0.25 * hsh(k, b + 4))
+        const x = cx + Math.cos(an) * rr2, y = cy + Math.sin(an) * rr2 + 60 * u * q * q
+        ctx.globalAlpha = fade * (0.5 + 0.5 * hsh(k, 9)); ctx.fillStyle = cols[(b + (k % 2)) % 3]
+        ctx.beginPath(); ctx.arc(x, y, (2.2 + 2.4 * (1 - q)) * u, 0, Math.PI * 2); ctx.fill()
+        ctx.globalAlpha *= 0.35; ctx.beginPath(); ctx.arc(cx + Math.cos(an) * rr2 * 0.86, cy + Math.sin(an) * rr2 * 0.86 + 50 * u * q * q, 1.8 * u, 0, Math.PI * 2); ctx.fill()
+      }
+    }
+  } else if (d === 'bats') {
+    for (let n = 0; n < 5; n++) {
+      const z = hsh(n, 1), r = (15 + 15 * z) * u, x = wrap1(hsh(n, 2) + t * (0.03 + 0.04 * z) * (n % 2 ? 1 : -1)) * (W + 200 * u) - 100 * u
+      const y = (0.06 + 0.24 * hsh(n, 3)) * H + 16 * u * Math.sin(t * 1.6 + n * 2), fl = 0.55 + 0.45 * Math.sin(t * 10 + n * 2)
+      ctx.globalAlpha = 0.75; ctx.fillStyle = n % 2 ? '#0B090E' : e.accent; ctx.beginPath()
+      ctx.moveTo(x, y); ctx.quadraticCurveTo(x - r * 0.5, y - r * 0.6 * fl, x - r * 1.4, y - r * 0.2 * fl); ctx.quadraticCurveTo(x - r * 0.9, y + r * 0.1, x - r * 0.6, y + r * 0.35)
+      ctx.quadraticCurveTo(x - r * 0.25, y + r * 0.1, x, y + r * 0.3); ctx.quadraticCurveTo(x + r * 0.25, y + r * 0.1, x + r * 0.6, y + r * 0.35)
+      ctx.quadraticCurveTo(x + r * 0.9, y + r * 0.1, x + r * 1.4, y - r * 0.2 * fl); ctx.quadraticCurveTo(x + r * 0.5, y - r * 0.6 * fl, x, y); ctx.fill()
+    }
+  } else if (d === 'neon') {
+    const pulse = 0.6 + 0.4 * Math.sin(t * 2.4), ins = 26 * u
+    ctx.globalCompositeOperation = 'screen'
+    for (let b = 0; b < 2; b++) {
+      const x0 = W * (0.5 + 0.55 * Math.sin(t * 0.35 + b * 2.4)), g = ctx.createLinearGradient(x0 - 260 * u, 0, x0 + 260 * u, 0)
+      g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.5, rgba(b ? '#5FE0FF' : e.accent, 0.1)); g.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.save(); ctx.translate(W / 2, H / 2); ctx.rotate(b ? 0.35 : -0.35); ctx.translate(-W / 2, -H / 2); ctx.fillStyle = g; ctx.fillRect(-W, -H, W * 3, H * 3); ctx.restore()
+    }
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.shadowColor = e.accent; ctx.shadowBlur = (22 + 16 * pulse) * u; ctx.strokeStyle = rgba(e.accent, 0.55 + 0.35 * pulse); ctx.lineWidth = 3 * u
+    rr(ctx, ins, ins, W - 2 * ins, H - 2 * ins, 26 * u); ctx.stroke()
+  }
+  ctx.restore()
+}
+const toneKey = (p: AdProject) => (p.look && p.look !== 'signature' && SIG_TONES[p.look] && SIG_LOOKS.indexOf(p.look) >= 0) ? p.look : (p.tone || (p.moment ? (MOMENTS.find(m => m.key === p.moment)?.look || '') : ''))
+/** The season wears its dress unless the ad says Plain (Whole ad → Logo dress); any ad can ask for the lights. */
+function dressOf(p: AdProject): SigDress {
+  const d = (p.style || ({} as any)).dress || 'auto'
+  if (d === 'none') return 'none'
+  if (d === 'lights' || d === 'xmas' || d === 'snow') return 'xmas'
+  if (d === 'sparkle' || d === 'leaves' || d === 'hearts' || d === 'bats') return d
+  if (d === 'stars') return 'fireworks'
+  if (d === 'glow') return 'neon'
+  return (SIG_TONES[toneKey(p)] || ({} as any)).dress || 'none'
+}
+/** The seasonal and event looks are colourways of Signature now: picking one keeps the option, in the new design. */
+export const SIG_LOOKS = ['holiday', 'xmasred', 'winter', 'harvest', 'champagne', 'rose', 'miami', 'festival', 'usa', 'spooky', 'nautical', 'sand', 'editorial', 'midnight']
+export function wearsSignature(p: Pick<AdProject, 'look' | 'kind'>): boolean { return p.look === 'signature' || (SIG_LOOKS.indexOf(p.look || '') >= 0 && p.kind !== 'story') }
+
+/** The mark as the season dresses it (Jon, 2026-11-13: "I like the Stay logos with different designs"). */
+function mark(ctx: Ctx, e: Env, logo: any, x: number, y: number, w: number, h: number) {
+  const key = toneKey(e.p), d = (e.p.style || ({} as any)).dress || 'auto'
+  if (d === 'none' || (!key && d === 'auto')) { ctx.drawImage(logo, x, y, w, h); return }
+  drawLookMark(ctx, logo, x, y, w, h, e.t, key, d === 'auto' ? undefined : d)
+}
+
 // ── tone: the season or the event colours the accent and the dark — nothing else changes ─────────
 /** Signature worn for a calendar moment. Keyed by the moment's old look, so every moment already has one. */
-export const SIG_TONES: Record<string, { accent: string; night: string; night2: string }> = {
-  holiday: { accent: '#E3C27A', night: '#0B1711', night2: '#13251B' },      // evergreen and warm gold
-  xmasred: { accent: '#EBCB7A', night: '#1A0A0C', night2: '#2A1114' },
-  winter: { accent: '#E8D9C0', night: '#0E1114', night2: '#171C21' },
-  harvest: { accent: '#E39A56', night: '#17100B', night2: '#241810' },      // burnt orange on deep brown
-  champagne: { accent: '#F0D8A0', night: '#12100B', night2: '#1D1910' },
-  rose: { accent: '#F2B6C2', night: '#170C10', night2: '#241319' },
-  miami: { accent: '#FF8FB8', night: '#110B1A', night2: '#1B1229' },
-  sand: { accent: '#E6B98C', night: '#14110D', night2: '#201B15' },
-  editorial: { accent: '#E9D8B4', night: '#0C1512', night2: '#15231E' },
-  usa: { accent: '#FF7A86', night: '#0A1020', night2: '#111A33' },
-  spooky: { accent: '#FF9A45', night: '#0D0B10', night2: '#17131C' },
+export const SIG_TONES: Record<string, { accent: string; night: string; night2: string; btn?: string; dress?: SigDress }> = {
+  holiday: { accent: '#E9C46A', night: '#0A2419', night2: '#12382A', btn: '#C8102E', dress: 'xmas' },     // evergreen, warm gold, a red button
+  xmasred: { accent: '#F2C94C', night: '#3A070E', night2: '#5A0F1A', btn: '#1E6B43', dress: 'xmas' },     // cranberry, gold, an evergreen button
+  winter: { accent: '#EADBC2', night: '#0D1B2A', night2: '#16293D', btn: '#B3121F', dress: 'xmas' },      // a winter-night blue, a cranberry button
+  harvest: { accent: '#E8944A', night: '#26130A', night2: '#3A1E12', dress: 'leaves' },                   // burnt orange on deep brown
+  champagne: { accent: '#F3D9A0', night: '#17110A', night2: '#2A1E0E', dress: 'sparkle' },
+  rose: { accent: '#FFB3C1', night: '#2E0A16', night2: '#4A1020', dress: 'hearts' },
+  miami: { accent: '#FF6FAE', night: '#150A26', night2: '#26113F', dress: 'neon' },
+  festival: { accent: '#C8FF3D', night: '#0D0524', night2: '#1D0B4A', dress: 'neon' },
+  usa: { accent: '#FF6B78', night: '#0A1638', night2: '#122457', btn: '#C8102E', dress: 'fireworks' },
+  spooky: { accent: '#FF8A2A', night: '#100A18', night2: '#1E1229', dress: 'bats' },
+  nautical: { accent: '#FF6B5E', night: '#0A1A33', night2: '#12294D' },
+  sand: { accent: '#E6B98C', night: '#1A140E', night2: '#2A2117' },
+  editorial: { accent: '#E9D8B4', night: '#0C1A15', night2: '#152A22' },
   midnight: { accent: '#D2B077', night: '#070F1F', night2: '#0E1A33' },
   stay: { accent: '#D2B077', night: '#0B1722', night2: '#122434' },         // navy & gold — the sales films
 }
 const hex = (c: string) => { const m = /^#?([0-9a-f]{6})$/i.exec(String(c || '').trim()); return m ? [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)] : null }
 const rgba = (c: string, a: number) => { const h = hex(c); return h ? `rgba(${h[0]},${h[1]},${h[2]},${a})` : c }
 const lum = (c: string) => { const h = hex(c); return h ? (0.299 * h[0] + 0.587 * h[1] + 0.114 * h[2]) / 255 : 0.7 }
-function toneOf(p: AdProject): { accent: string; night: string; night2: string } {
-  const key = p.tone || (p.moment ? (MOMENTS.find(m => m.key === p.moment)?.look || '') : '')
+function toneOf(p: AdProject): { accent: string; night: string; night2: string; btn?: string } {
+  const key = toneKey(p)
   const t = SIG_TONES[key] || { accent: GOLD, night: NIGHT, night2: NIGHT2 }
   const st = p.style || ({} as any)
   // a colour picked by hand (Whole ad → Colours) wins over the season's
-  return { accent: hex(st.accent || '') ? st.accent! : t.accent, night: hex(st.base || '') && lum(st.base!) < 0.35 ? st.base! : t.night, night2: t.night2 }
+  return { accent: hex(st.accent || '') ? st.accent! : t.accent, night: hex(st.base || '') && lum(st.base!) < 0.35 ? st.base! : t.night, night2: t.night2, btn: hex(st.accent || '') ? undefined : t.btn }
 }
 
 /** Where the platform's buttons and captions sit, so type never lands under them. */
@@ -635,7 +807,8 @@ function frameEnv(ctx: Ctx, p: AdProject, t: number, A: AdAssets): Env {
   // Reels / Stories / Shorts / TikTok cover the top and the bottom of a 9:16 frame; the feed shapes are clean edge to edge.
   const top = (tall ? 250 : port ? 190 : 170) * u, ui = (tall ? 330 : port ? 110 : 100) * u, cap = (tall ? 170 : 130) * u
   const tn = toneOf(p)
-  return { W, H, u, port, tall, M: (port ? 84 : 110) * u, top, ui, cap, bot: ui, serif: A.elegant || A.serif || 'Georgia, serif', sans: A.body, A, p, t,
+  const dress = dressOf(p), lights = dress === 'xmas', btn = tn.btn || tn.accent
+  return { W, H, u, port, tall, lights, dress, btn, onBtn: lum(btn) > 0.55 ? '#111111' : '#FFFFFF', M: (port ? 84 : 110) * u, top: top + (lights && !tall ? 70 * u : 0), ui, cap, bot: ui, serif: A.elegant || A.serif || 'Georgia, serif', sans: A.body, A, p, t,
     accent: tn.accent, night: tn.night, night2: tn.night2, ink: INK, mut: MUT, onAccent: lum(tn.accent) > 0.55 ? '#111111' : '#FFFFFF' }
 }
 
@@ -665,10 +838,12 @@ export function drawSignatureFrame(ctx: Ctx, p: AdProject, tl: Timeline, t: numb
   } else drawSig(ctx, e, i, local, dur)
   vignette(ctx, e, 0.34)
   grain(ctx, e)
+  festive(ctx, e)
+  if (e.lights) stringLights(ctx, e)
   // the mark, small and quiet, top left (never on the end card, which carries its own)
   const sc = p.scenes[i]
   const logo = (A.logos && A.logos.white) || A.logo
-  if (logo && layoutOf(sc) !== 'end') { const lw = (e.tall ? 150 : 132) * u, lh = lw * ((logo as any).naturalHeight || 106) / ((logo as any).naturalWidth || 222); ctx.save(); ctx.globalAlpha *= 0.95; ctx.drawImage(logo as any, e.M, (e.tall ? 150 : e.port ? 70 : 64) * u, lw, lh); ctx.restore() }
+  if (logo && layoutOf(sc) !== 'end') { const lw = (e.tall ? 150 : 132) * u, lh = lw * ((logo as any).naturalHeight || 106) / ((logo as any).naturalWidth || 222); ctx.save(); ctx.globalAlpha *= 0.95; mark(ctx, e, logo, e.M, (e.tall ? 150 : (e.port ? 70 : 64) + (e.lights ? 78 : 0)) * u, lw, lh); ctx.restore() }
   // captions: the spoken line, clean, no box (most people watch muted) — only where it adds to the screen
   if (captionOn(p, sc)) {
     const a = clamp(local / 0.3) * clamp((dur - local) / 0.3)

@@ -16,7 +16,7 @@
 //  - Words the voice says wrong are respelled for the voice only (SPOKEN below), never on screen.
 
 import qrcode from 'qrcode-generator'
-import { drawSignatureFrame } from './ad-signature'
+import { drawSignatureFrame, wearsSignature } from './ad-signature'
 import { CURRENT_OWNER_MOMENTS } from './marketing-calendar'
 
 /** The Signature look's layouts (lib/ad-signature). */
@@ -822,6 +822,13 @@ function drawMark(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: numbe
       ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = s; ctx.beginPath(); ctx.moveTo(0, -r); ctx.lineTo(0, r * 1.3); ctx.stroke(); ctx.restore()
     })
   }
+}
+/** The Stay mark dressed for a look (its tint, its lights / snow / sparkle…) — for renderers outside this file (Signature). */
+export function drawLookMark(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number, t: number, lookKey: string, dress?: LogoDress) {
+  const L = LOOKS.find(l => l.key === lookKey)
+  const d0 = DRESS, t0 = LOGO_TINT, c0 = C
+  DRESS = dress || L?.c.def?.dress || 'none'; LOGO_TINT = L?.c.def?.logoTint || ''; if (L) C = L.c
+  try { drawMark(ctx, img, x, y, w, h, t) } finally { DRESS = d0; LOGO_TINT = t0; C = c0 }
 }
 /** Bulbs all the way round a pill-shaped button, chasing — the Book now button dressed for Christmas. */
 function lightsAround(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, t: number, u: number) {
@@ -3094,7 +3101,7 @@ function drawQrCode(ctx: CanvasRenderingContext2D, text: string, x: number, y: n
 
 export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timeline, t: number, A: AdAssets) {
   // SIGNATURE (2026-11-12): the premium look has its own layouts, motion and finish (lib/ad-signature).
-  if (p.look === 'signature') return drawSignatureFrame(ctx, p, tl, t, A)
+  if (wearsSignature(p)) return drawSignatureFrame(ctx, p, tl, t, A)
   const W = ctx.canvas.width, H = ctx.canvas.height
   const u = Math.min(W, H) / 1080
   C = (LOOKS.find(l => l.key === p.look) || LOOKS[0]).c

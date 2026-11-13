@@ -304,24 +304,30 @@ function angles(m: Moment, when: string): Angle[] | null {
         flyer: poster('Art Basel is **the week owners wait for.**', 'We make sure your unit is priced for it, months ahead', 'Priced daily · 40+ channels · in-house team', NICK, 'gallery', 'aerial', F) },
     ]
     // ─────────────────────────────── OWNERS: YEAR-END THANK-YOU ───────────────────────────────
-    case 'owners-thanks': return [
-      { key: 'thanks', name: 'Thank you for a great year', pitch: 'Warm, festive, from every team', post: [
-        poster('Thank you for **a great year.**', 'From everyone at Stay Hospitality', 'Happy holidays', '', 'dark', 'building exterior night', ['snow']),
-        { kind: 'roles', head: 'From **every team**', sub: 'Behind every stay at your property', items: ['Revenue', 'Guest care', 'Housekeeping', 'Maintenance'], q: 'living room', dur: 3.8, fx: ['snow'], tr: 'leak' },
-        { kind: 'tiles', head: 'A year **together**', sub: 'Miami · Fort Lauderdale · Pompano · Palm Beach', items: ['1,000,000+|guests hosted', '4.6|guest rating', '450+|listings', '10|years'], q: 'pool', dur: 3.8, fx: ['snow'], tr: 'crosszoom' },
-        book('Here’s to **2027.**', 'Happy holidays from all of us', 'ocean view balcony', ['snow'], 'Happy holidays')],
-        flyer: poster('Thank you for **a great year.**', 'From everyone at Stay Hospitality', 'Happy holidays', 'Here’s to 2027', 'dark', 'building exterior night', ['snow']) },
+    // A THANK-YOU IS A YEAR IN REVIEW, NOT A BRAG (Jon, 2026-11-13: "Hey, we built a big business for you. It's stupid …
+    // talk about things we're implementing, Lighthouse, a year in review, the market, our expectation, new initiatives,
+    // listing optimizations, revamps"). No company-size numbers, no sales card: these owners are already with us.
+    case 'owners-thanks': {
+      const close = (head: string, sub: string, q: string): PresetScene => ({ kind: 'cta', head, sub, items: [], q, dur: 3.8, tr: 'fade' })
+      return [
+      { key: 'review', name: 'Your year in review', pitch: 'Thank you, then what we put in place for their listing this year', post: [
+        poster('Thank you for **2026.**', 'A look at what we put in place for your listing', 'Year in review', '', 'dark', 'building exterior night'),
+        { kind: 'checks', head: 'This year, **for your listing**', sub: '', items: ['Lighthouse|Our own platform, now running every stay', 'Listings rebuilt|Photos, copy and amenities, every three months', 'Every clean checked|Photo-checked before the next arrival', 'Guests verified|ID and deposit checks before arrival'], q: 'living room', dur: 4.6, tr: 'crosszoom' },
+        { kind: 'timeline', head: 'The season **ahead**', sub: '', items: ['Dec|The season opens', 'Feb|The boat shows', 'Mar|The peak of the year', 'May|Formula 1 Miami'], q: 'pool', dur: 4.4, tr: 'push' },
+        close('Here’s to **2027.**', 'Thank you, from all of us at Stay', 'ocean view balcony')],
+        flyer: poster('Thank you for **2026.**', 'Lighthouse live · every listing rebuilt · the season already priced', 'Year in review', '', 'dark', 'building exterior night') },
       { key: 'trust', name: 'Your trust', pitch: 'Personal — one line that means it', post: [
-        { kind: 'kinetic', head: 'Thank **you.**', sub: '', items: [], q: 'balcony view', dur: 2.8, fx: ['snow'] },
-        { kind: 'quote', head: 'Your trust is the best thing **we manage.**', sub: 'Everyone at Stay Hospitality', items: [], q: 'living room', dur: 4.2, fx: ['snow'], tr: 'leak' },
-        book('Happy **holidays.**', 'See you in 2027', 'pool', ['snow'], 'From all of us at Stay')],
-        flyer: poster('Your trust is the best thing **we manage.**', 'Thank you, and happy holidays', 'Happy holidays', 'From all of us at Stay', 'gallery', 'living room', ['snow']) },
-      { key: 'ahead', name: 'What’s ahead in 2027', pitch: 'Thank them, then show the calendar we are pricing', post: [
-        { kind: 'cinema', head: 'Thank you **for 2026.**', sub: 'Stay Hospitality', items: [], q: 'building exterior night', dur: 3.6, fx: ['snow'] },
-        { kind: 'timeline', head: 'Already pricing **2027**', sub: '', items: ['Jan|Every listing refreshed', 'Feb|The boat shows', 'Mar|Ultra and the Miami Open', 'May|Formula 1 Miami'], q: 'living room', dur: 4.6, fx: ['snow'], tr: 'crosszoom' },
-        nick('pool')],
-        flyer: poster('Thank you for 2026. **2027 is already priced.**', 'The big dates are set months ahead', 'Happy holidays', NICK, 'band', 'building exterior night', ['snow']) },
-    ]
+        { kind: 'kinetic', head: 'Thank **you.**', sub: '', items: [], q: 'balcony view', dur: 2.8 },
+        { kind: 'quote', head: 'Your trust is the best thing **we manage.**', sub: 'Everyone at Stay Hospitality', items: [], q: 'living room', dur: 4.2, tr: 'leak' },
+        close('Happy **holidays.**', 'See you in 2027', 'pool')],
+        flyer: poster('Your trust is the best thing **we manage.**', 'Thank you, and happy holidays', 'From all of us at Stay', '', 'gallery', 'living room') },
+      { key: 'ahead', name: 'What’s ahead in 2027', pitch: 'Thank them, then show the season we are already pricing', post: [
+        { kind: 'cinema', head: 'Thank you **for 2026.**', sub: 'Stay Hospitality', items: [], q: 'building exterior night', dur: 3.6 },
+        { kind: 'timeline', head: 'Already pricing **2027**', sub: '', items: ['Jan|Every listing refreshed', 'Feb|The boat shows', 'Mar|The peak of the season', 'May|Formula 1 Miami'], q: 'living room', dur: 4.6, tr: 'crosszoom' },
+        { kind: 'checks', head: 'What’s **next**', sub: '', items: ['Lighthouse|More of the day watched, start to finish', 'Listings|The next three-month rebuild', 'Big dates|Priced months ahead, reviewed every day'], q: 'bedroom', dur: 4.2, tr: 'push' },
+        close('Here’s to **2027.**', 'Thank you, from all of us at Stay', 'pool')],
+        flyer: poster('Thank you for 2026. **2027 is already priced.**', 'The big dates are set months ahead', 'From all of us at Stay', '', 'band', 'building exterior night') },
+    ] }
     // ─────────────────────────────── OWNERS: NEW YEAR, NEW LISTING ───────────────────────────────
     case 'new-year-owners': return [
       { key: 'photos', name: 'New year, new photos', pitch: 'The quarterly refresh, shown', post: [

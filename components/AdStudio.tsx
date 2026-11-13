@@ -14,6 +14,7 @@
 // box that rewrites just that scene (with Undo); the whole ad takes a change request too; a Sounds tab
 // generates music and sound effects with ElevenLabs and keeps them as a playlist; any scene can carry
 // a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
+import { wearsSignature } from '@/lib/ad-signature'
 import StudioHome, { KIND_META } from './StudioHome'
 import AdDesignPicker from './AdDesignPicker'
 import { TransitionPicker, GraphicsPicker } from './AdFxPickers'
@@ -1412,7 +1413,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       ? await fromPreset([angle ? { ...angle.flyer, dur: 6 } : momentFlyer(m, whenShort(m))], m)
       : [{ id: 's1', kind: 'poster', vo: '', head: 'Your South Florida **stay.**', sub: 'Pool mornings, city nights, a real apartment to come back to', items: ['', 'Book at stay-hospitality.com'], photos: await libPhotos('exterior', 1, [], []), dur: 6 }]
     setBusy('')
-    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + (angle ? ' · ' + angle.name : '') + ' · photo post' : 'New photo post', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    change(d => ({ ...d, kind: 'flyer', name: m ? m.name + (angle ? ' · ' + angle.name : '') + ' · photo post' : 'New photo post', format: '4:5', platform: 'feed', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: DEFAULT_LOOK, tone: undefined, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(5.5); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
@@ -1431,7 +1432,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       ]
     }
     setBusy('')
-    change(d => ({ ...d, kind: 'post', name: m ? m.name + (angle ? ' · ' + angle.name : '') + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: m?.look || DEFAULT_LOOK, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
+    change(d => ({ ...d, kind: 'post', name: m ? m.name + (angle ? ' · ' + angle.name : '') + ' · post' : 'New animated post', format: '9:16', platform: 'story', audience: guests ? 'guests' : 'owners', goal: guests ? 'bookings' : 'owners', look: DEFAULT_LOOK, tone: undefined, moment: m?.key, captions: false, music: m?.music || d.music, scenes }))
     resetHist(); setStarting(false); setPlan(null); setDraft(null); setShowAudit(false); setTab('scene')
     setSel(0); setT(1.6); setHome(false); try { window.scrollTo(0, 0) } catch { /* fine */ }
   }
@@ -2051,7 +2052,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
               <div style={{ order: isSpoken ? 2 : 0 }}>
               <Fold id="words" title="Words & layout" folded={!!folded['words']} onToggle={toggleFold}>
               {/* SIGNATURE LAYOUT (2026-11-12): pick how this scene is drawn, or leave it to the content. */}
-              {p.look === 'signature' ? (<>
+              {wearsSignature(p) ? (<>
                 <Label>Layout</Label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   <Btn small on={!sc.sig} disabled={!canEdit} onClick={() => setScene(sel, { sig: undefined })} title="Picked from what the scene holds">Auto</Btn>
