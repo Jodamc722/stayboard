@@ -55,25 +55,30 @@ async function income(inp: IncomeInput, light = false): Promise<IncomeFull> {
   // neighborhood's plans and comparables, then South Florida.
   const norm2 = (x: string) => norm(x).replace(/miami$/, '')
   const local = area ? pts.filter(p => p.area && (norm2(p.area).includes(norm2(area)) || norm2(area).includes(norm2(p.area)))) : []
-  const use = own.length ? own : local.length ? local : pts
-  const basisLabel = own.length ? (inp.building || 'this building') + '’s own projections' : local.length ? 'homes like it in ' + area : 'homes like it across South Florida'
+  // AUDIT 2026-11-12: one or two neighbourhood points are not a market. Fewer than three local comparables and
+  // the base widens to every home with this bedroom count (the building's own projections always stand).
+  const localOk = local.length >= 3
+  const use = own.length ? own : localOk ? local : pts
+  const basisLabel = own.length ? (inp.building || 'this building') + '’s own projections' : localOk ? 'homes like it in ' + area : 'homes like it across South Florida'
   const mg = inp.managed ? MGMT : 0
   const settings = normProjCalc(await getSetting<any>(PROJ_CALC_KEY, null))
-  const base: IncomeFull = { found: false, area: own.length ? (inp.building || area) : local.length ? area : 'South Florida', bedrooms: inp.bedrooms, basis: 0, basisLabel, lo: 0, hi: 0, monthLo: 0, monthHi: 0, nightlyLo: 0, nightlyHi: 0, occLo: 0, occHi: 0, months: [], netLo: 0, netHi: 0, mgmtPct: mg, channelPct: CHANNEL, sources: [],
+  const base: IncomeFull = { found: false, area: own.length ? (inp.building || area) : localOk ? area : 'South Florida', bedrooms: inp.bedrooms, basis: 0, basisLabel, lo: 0, hi: 0, monthLo: 0, monthHi: 0, nightlyLo: 0, nightlyHi: 0, occLo: 0, occHi: 0, months: [], netLo: 0, netHi: 0, mgmtPct: mg, channelPct: CHANNEL, sources: [],
     baseLo: 0, baseHi: 0, adjustments: [], adjTotal: 0, comps: [], places: near.places, beachMi: near.beachMi, address: inp.address || '', note: settings.note }
   if (!use.length) return base
   const baseLo = r100(med(use.map(p => p.lo))), baseHi = Math.max(baseLo, r100(med(use.map(p => p.hi))))
   const sfs = use.map(p => p.sf).filter((x): x is number => !!x)
   const oLo0 = med(use.map(p => p.olo).filter(Boolean)), oHi0 = med(use.map(p => p.ohi).filter(Boolean))
   const baseOcc = oLo0 && oHi0 ? (oLo0 + oHi0) / 2 : 70
-  const adj = adjustmentsFor(settings, { view: inp.view, kitchen: inp.kitchen, balcony: inp.balcony, amenities: inp.amenities, sqft: inp.sqft, beachMi: near.beachMi, typicalSqft: sfs.length ? med(sfs) : null, baseOcc, basis: own.length ? 'own' : local.length ? 'local' : 'all' })
+  const adj = adjustmentsFor(settings, { view: inp.view, kitchen: inp.kitchen, balcony: inp.balcony, amenities: inp.amenities, sqft: inp.sqft, beachMi: near.beachMi, typicalSqft: sfs.length ? med(sfs) : null, baseOcc, basis: own.length ? 'own' : localOk ? 'local' : 'all' })
   // revenue moves by the rate and the occupancy together; the nightly rate by the rate alone
   const f = adj.factor
-  const lo = r100(baseLo * f), hi = Math.max(lo, r100(baseHi * f))
+  // A thin base (fewer than three comparables in all) is shown as a wider range, never as false precision.
+  const thin = !own.length && use.length < 3 ? 0.1 : 0
+  const lo = r100(baseLo * f * (1 - thin)), hi = Math.max(lo, r100(baseHi * f * (1 + thin)))
   const net = (g: number) => r100(g * (1 - CHANNEL / 100) * (1 - mg / 100))
   const nlo = Math.round(med(use.map(p => p.nlo).filter(Boolean)) * adj.adrFactor), nhi = Math.round(med(use.map(p => p.nhi).filter(Boolean)) * adj.adrFactor)
   // The comparables shown in the report: this building's projections first, then the nearest set.
-  const comps = Array.from(new Map([...own, ...(local.length ? local : []), ...pts].filter(p => p.comp).map(p => [p.comp!.name, p.comp!])).values()).slice(0, 5)
+  const comps = Array.from(new Map([...own, ...local, ...pts].filter(p => p.comp).map(p => [p.comp!.name, p.comp!])).values()).slice(0, 5)
   return {
     ...base, found: true, lo, hi, monthLo: r100(lo / 12), monthHi: r100(hi / 12), basis: use.length, baseLo, baseHi,
     nightlyLo: nlo, nightlyHi: Math.max(nlo, nhi),
