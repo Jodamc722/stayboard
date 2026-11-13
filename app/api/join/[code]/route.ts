@@ -65,6 +65,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   // THE W-9 AND ACH: checked, then the tax ID and bank numbers are encrypted before anything is saved.
   let firstPayout = false
   if (b.payout) {
+    // A PASSWORD FIRST (Jon, 2026-11-13): tax and bank details are only taken on a link the owner has locked with their own password.
+    if (!r.auth?.pass) return NextResponse.json({ ok: false, need: 'password', error: 'Create your password first, so only you can open this page.' }, { status: 403, headers: NO_STORE })
     if (!vaultKeyReady()) return NextResponse.json({ ok: false, error: 'Secure storage is not set up yet. Please tell your Stay Hospitality contact.' }, { status: 503, headers: NO_STORE })
     const w = b.payout.w9 || {}, a = b.payout.ach || {}, sg = b.payout.sign || {}
     const s = (v: any, n: number) => String(v || '').trim().slice(0, n)

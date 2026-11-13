@@ -6,6 +6,45 @@ import { Check, Minus, Plus, Lock, Phone, Mail, ChevronRight, ChevronLeft } from
 import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
 
 type Any = any
+/** The two forms, filling in as the owner types (Jon, 2026-11-13: "ACH and W9 forms should show them as they fill
+ *  our info on the side"). Drawn in the browser from what is on screen: nothing here is sent anywhere. */
+function PayoutPreview({ pay, rec }: { pay: Any; rec: Any }) {
+  const L = ({ n, v, ph }: { n: string; v: string; ph?: string }) => <div className="oj-pl"><i>{n}</i><u className={v ? '' : 'empty'}>{v || ph || ''}</u></div>
+  const digits = (v: string) => String(v || '').replace(/\D/g, '')
+  const boxes = (v: string, groups: number[], hint?: string) => { const d = digits(v); let k = 0; const last4 = !d && hint ? digits(hint).slice(-4) : ''; const total = groups.reduce((a, b) => a + b, 0)
+    return <div className="oj-boxes">{groups.map((g, gi) => <span key={gi} style={{ display: 'contents' }}>{gi ? <s>-</s> : null}{Array.from({ length: g }, () => { const i = k++; const ch = d ? d[i] || '' : last4 && i >= total - 4 ? last4[i - (total - 4)] : last4 ? '•' : ''; return <b key={i}>{ch}</b> })}</span>)}</div> }
+  const cls = OO_TAX_CLASS.map(t => ({ ...t, on: pay.w9.taxClass === t.key }))
+  const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const sig = pay.sign.agree ? pay.sign.name : ''
+  return (
+    <aside className="oj-prev" aria-label="Preview of your W-9 and ACH forms">
+      <p><b>Your forms, as you type.</b> This is what we will have on file. Check it before you sign.</p>
+      <div className="oj-paper">
+        <header><b>W-9<small>Form (Rev. March 2024)</small></b><span>Request for Taxpayer Identification Number and Certification</span></header>
+        <L n="1  Name of entity/individual, as shown on your tax return" v={pay.w9.name} ph="Your name" />
+        <L n="2  Business name/disregarded entity name, if different from above" v={pay.w9.business} />
+        <div className="oj-pl"><i>3a  Federal tax classification</i><div className="oj-pcks">{cls.map(t => <span key={t.key}><em>{t.on ? 'X' : ''}</em>{t.label}{t.on && t.key === 'llc' && pay.w9.llcCode ? ' (' + pay.w9.llcCode + ')' : ''}{t.on && t.key === 'other' && pay.w9.other ? ': ' + pay.w9.other : ''}</span>)}</div></div>
+        <L n="5  Address (number, street, and apt. or suite no.)" v={pay.w9.address} ph="Mailing address" />
+        <L n="6  City, state, and ZIP code" v={pay.w9.cityStateZip} ph="City, state, ZIP" />
+        <div className="oj-ph">Part I · Taxpayer Identification Number (TIN)</div>
+        <div className="oj-pl"><i>{pay.w9.tinType === 'ein' ? 'Employer identification number' : 'Social security number'}</i>{boxes(pay.w9.tin, pay.w9.tinType === 'ein' ? [2, 7] : [3, 2, 4], rec.payout?.w9?.tinHint)}</div>
+        <div className="oj-ph">Part II · Certification</div>
+        <div className="oj-psig"><L n="Signature of U.S. person" v={sig} ph="Sign below" /><L n="Date" v={sig ? today : ''} /></div>
+      </div>
+      <div className="oj-paper">
+        <header><b style={{ fontSize: 15 }}>ACH</b><span>Direct deposit authorization · Stay Hospitality owner payouts</span></header>
+        <L n="Account holder" v={pay.ach.holder} ph="Name on the account" />
+        <L n="Bank" v={pay.ach.bank} ph="Bank name" />
+        <div className="oj-pl"><i>Account type</i><div className="oj-pcks"><span><em>{pay.ach.accountType === 'checking' ? 'X' : ''}</em>Checking</span><span><em>{pay.ach.accountType === 'savings' ? 'X' : ''}</em>Savings</span></div></div>
+        <div className="oj-pl"><i>Routing number (9 digits)</i>{boxes(pay.ach.routing, [9], rec.payout?.ach?.routingHint)}</div>
+        <L n="Account number" v={digits(pay.ach.account) || (rec.payout?.ach?.accountHint ? 'On file: ' + rec.payout.ach.accountHint : '')} ph="Account number" />
+        <div className="oj-psig"><L n="Authorized signature" v={sig} ph="Sign below" /><L n="Date" v={sig ? today : ''} /></div>
+        <p className="oj-pfine">I authorize Stay Hospitality to deposit owner payouts to this account, and to correct any deposit made in error.</p>
+      </div>
+    </aside>
+  )
+}
+
 type Tab = 'welcome' | 'home' | 'supplies' | 'order' | 'payout' | 'timeline'
 
 function Step({ label, value, set, min, max, step = 1, show }: { label: string; value: number; set: (v: number) => void; min: number; max: number; step?: number; show?: (v: number) => string }) {
@@ -133,7 +172,7 @@ export function OwnerJoin({ code }: { code: string }) {
     <p className="oj-kick">One quick step</p>
     <h1>Create <em>your password.</em></h1>
     <p className="oj-p">So only you can come back to this page. You will use it with this same link.</p>
-    <form className="oj-card oj-authcard" onSubmit={async e => { e.preventDefault(); if (pw.length < 8) { setMsg('Use at least 8 characters.'); return } if (pw !== pw2) { setMsg('The two passwords do not match.'); return } setBusy(true); setMsg(''); const a = await auth({ setPassword: pw }); setBusy(false); if (a?.ok) { setNeedPw(false); setPw(''); setPw2('') } else setMsg(a?.error || 'That did not save.') }}>
+    <form className="oj-card oj-authcard" onSubmit={async e => { e.preventDefault(); if (pw.length < 8) { setMsg('Use at least 8 characters.'); return } if (pw !== pw2) { setMsg('The two passwords do not match.'); return } setBusy(true); setMsg(''); const a = await auth({ setPassword: pw }); setBusy(false); if (a?.ok) { setNeedPw(false); setPw(''); setPw2(''); setRec((r: Any) => (r ? { ...r, hasPassword: true } : r)) } else setMsg(a?.error || 'That did not save.') }}>
       <label className="oj-f"><span>Password (8 or more characters)</span><input type="password" autoComplete="new-password" required value={pw} onChange={e => setPw(e.target.value)} autoFocus /></label>
       <label className="oj-f"><span>Type it again</span><input type="password" autoComplete="new-password" required value={pw2} onChange={e => setPw2(e.target.value)} /></label>
       {msg ? <p className="oj-err">{msg}</p> : null}
@@ -304,12 +343,21 @@ export function OwnerJoin({ code }: { code: string }) {
           )
         })() : null}
 
-        {tab === 'payout' ? (
+        {tab === 'payout' && !rec.hasPassword ? (
+          <section>
+            <p className="oj-kick">Step {tabs.indexOf('payout') + 1}</p>
+            <h1>Payouts <em>and tax.</em></h1>
+            <div className="oj-card oj-authcard"><p className="oj-p" style={{ margin: 0 }}><Lock size={15} /> Before we take your tax ID and bank details, create a password for this page. After that, only you can open it.</p><button type="button" className="oj-cta" onClick={() => { setMsg(''); setNeedPw(true) }}>Create my password <Lock size={15} /></button></div>
+            <div className="oj-nav"><button type="button" className="oj-ghost" onClick={back}><ChevronLeft size={16} /> Back</button></div>
+          </section>
+        ) : null}
+        {tab === 'payout' && rec.hasPassword ? (
           <form onSubmit={savePayout}>
             <p className="oj-kick">Step {tabs.indexOf('payout') + 1}</p>
             <h1>Payouts <em>and tax.</em></h1>
             <p className="oj-p oj-lock"><Lock size={15} /> Your tax ID and bank numbers are encrypted the moment you send them, and only the last four digits are ever shown again. We use them for your W-9 and to pay you.</p>
             {rec.payout ? <p className="oj-ok"><Check size={15} /> Received {new Date(rec.payout.sign.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}. Leave the numbers blank to keep the ones on file.</p> : null}
+            <div className="oj-payside">
             <div className="oj-pay">
               <fieldset><legend>W-9 · tax details</legend>
                 <label className="oj-f"><span>Name (as shown on your tax return)</span><input required value={pay.w9.name} onChange={e => setPay({ ...pay, w9: { ...pay.w9, name: e.target.value } })} autoComplete="name" /></label>
@@ -331,6 +379,8 @@ export function OwnerJoin({ code }: { code: string }) {
                 <label className="oj-f"><span>Account number{rec.payout ? ' (on file: ' + rec.payout.ach.accountHint + ')' : ''}</span><input inputMode="numeric" autoComplete="off" value={pay.ach.account} onChange={e => setPay({ ...pay, ach: { ...pay.ach, account: e.target.value } })} /></label>
                 <label className="oj-f"><span>Confirm account number</span><input inputMode="numeric" autoComplete="off" onPaste={e => e.preventDefault()} value={pay.ach.account2} onChange={e => setPay({ ...pay, ach: { ...pay.ach, account2: e.target.value } })} placeholder="Type it again" />{pay.ach.account2 && pay.ach.account.replace(/\D/g, '') === pay.ach.account2.replace(/\D/g, '') ? <small className="oj-match"><Check size={12} /> Matches</small> : null}</label>
               </fieldset>
+            </div>
+            <PayoutPreview pay={pay} rec={rec} />
             </div>
             <fieldset className="oj-sign"><legend>Sign</legend>
               <p className="oj-small">Under penalties of perjury, I certify the W-9 statements: the number shown is my correct taxpayer identification number; I am not subject to backup withholding (unless I have been notified otherwise); I am a U.S. citizen or other U.S. person; and any FATCA code entered is correct. I also authorize Stay Hospitality to deposit my owner payouts into the account above until I cancel this in writing.</p>
@@ -471,7 +521,26 @@ const CSS = `
 .oj-hn button.have{background:var(--ok);border-color:var(--ok);color:#fff}
 .oj-hn button.need{background:#B4532A;border-color:#B4532A;color:#fff}
 .oj-mt{margin-top:8px}
-.oj-pay{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}
+.oj-payside{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px;align-items:start;margin-top:14px}
+.oj-pay{display:grid;grid-template-columns:1fr;gap:18px;min-width:0}
+.oj-prev{position:sticky;top:76px;display:grid;gap:14px;min-width:0}
+.oj-prev>p{margin:0;font-size:12.5px;color:var(--mut)}
+.oj-paper{background:#fff;color:#111;border:1px solid #cfcabd;box-shadow:0 10px 30px -18px rgba(0,0,0,.35);padding:16px 16px 14px;font:400 11px/1.35 Arial,Helvetica,sans-serif;min-width:0;overflow:hidden}
+.oj-paper header{display:flex;gap:10px;align-items:flex-end;border-bottom:2px solid #111;padding-bottom:6px;margin-bottom:2px}
+.oj-paper header b{font:700 20px/1 Arial,Helvetica,sans-serif;white-space:nowrap}.oj-paper header small{display:block;font-size:8.5px;font-weight:400}
+.oj-paper header span{font-weight:700;font-size:11.5px;line-height:1.2}
+.oj-pl{border-bottom:1px solid #111;padding:3px 0 4px;min-height:34px}.oj-pl i{display:block;font-style:normal;font-size:8.5px;color:#444}
+.oj-pl u{display:block;text-decoration:none;font:400 14px/1.3 "Courier New",Courier,monospace;color:#0b2a6b;min-height:18px;overflow-wrap:anywhere}
+.oj-pl u.empty{color:#b9b4a6}
+.oj-pcks{display:flex;flex-wrap:wrap;gap:3px 12px;font-size:9.5px;padding-top:2px}.oj-pcks span{display:inline-flex;align-items:center;gap:4px}
+.oj-pcks em{width:10px;height:10px;border:1px solid #111;display:inline-grid;place-items:center;font:700 10px/1 Arial;font-style:normal;color:#0b2a6b}
+.oj-ph{background:#111;color:#fff;font-weight:700;font-size:10px;padding:2px 6px;margin-top:8px}
+.oj-boxes{display:flex;align-items:center;gap:2px;padding:6px 0 2px;flex-wrap:nowrap}
+.oj-boxes b{width:19px;height:24px;border:1px solid #111;display:grid;place-items:center;font:400 14px "Courier New",Courier,monospace;color:#0b2a6b;flex:0 1 19px;min-width:0}
+.oj-boxes s{text-decoration:none;width:7px;text-align:center;font-weight:700}
+.oj-psig{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;margin-top:8px}.oj-psig u{font:italic 400 19px/1.1 "Instrument Serif",Georgia,serif}
+.oj-pfine{font-size:8.5px;color:#444;margin:6px 0 0}
+@media (max-width:900px){.oj-payside{grid-template-columns:1fr}.oj-prev{position:static}}
 .oj fieldset{border:1px solid var(--rule);border-radius:16px;background:#fff;padding:10px 18px 14px;margin:0;min-width:0}
 .oj legend{font:600 11px Inter,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--acc);padding:0 6px}
 .oj-sign{margin-top:18px!important}
