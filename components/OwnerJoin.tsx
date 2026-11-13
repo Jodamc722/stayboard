@@ -31,7 +31,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
-  const [pay, setPay] = useState<Any>({ w9: { name: '', business: '', taxClass: 'individual', llcCode: '', other: '', address: '', cityStateZip: '', tinType: 'ssn', tin: '' }, ach: { holder: '', bank: '', accountType: 'checking', routing: '', account: '' }, sign: { name: '', agree: false } })
+  const [pay, setPay] = useState<Any>({ w9: { name: '', business: '', taxClass: 'individual', llcCode: '', other: '', address: '', cityStateZip: '', tinType: 'ssn', tin: '' }, ach: { holder: '', bank: '', accountType: 'checking', routing: '', account: '', routing2: '', account2: '' }, sign: { name: '', agree: false } })
   const pending = useRef<Record<string, OOMark>>({})
   const timer = useRef<any>(null)
 
@@ -70,9 +70,14 @@ export function OwnerJoin({ code }: { code: string }) {
     const tin = pay.w9.tin.replace(/\D/g, ''), rt = pay.ach.routing.replace(/\D/g, ''), ac = pay.ach.account.replace(/\D/g, '')
     const have = !!rec?.payout
     if (!(have && !tin) && tin.length !== 9) { setMsg('The SSN or EIN must be 9 digits.'); return }
-    if (!(have && !rt && !ac) && !routingOk(rt)) { setMsg('That routing number is not valid. It is the 9 digits at the bottom left of a check.'); return }
+    if (!(have && !rt && !ac)) {
+      if (rt.length !== 9) { setMsg('The routing number should be 9 digits. It is the first number at the bottom left of a check.'); return }
+      if (!routingOk(rt)) { setMsg('That routing number does not match any US bank (banks build a check digit into it, and this one fails it). Please check it against a check or your bank’s app.'); return }
+      if (rt !== String(pay.ach.routing2 || '').replace(/\D/g, '')) { setMsg('The two routing numbers do not match. Please re-enter them.'); return }
+      if (ac !== String(pay.ach.account2 || '').replace(/\D/g, '')) { setMsg('The two account numbers do not match. Please re-enter them.'); return }
+    }
     setBusy(true)
-    try { const d = await patch({ payout: pay, submit: true }); apply(d); setPay((p: Any) => ({ ...p, w9: { ...p.w9, tin: '' }, ach: { ...p.ach, routing: '', account: '' } })); go('timeline') } catch (e2: Any) { setMsg(e2.message) } finally { setBusy(false) }
+    try { const d = await patch({ payout: pay, submit: true }); apply(d); setPay((p: Any) => ({ ...p, w9: { ...p.w9, tin: '' }, ach: { ...p.ach, routing: '', account: '', routing2: '', account2: '' } })); go('timeline') } catch (e2: Any) { setMsg(e2.message) } finally { setBusy(false) }
   }
 
   const groups = useMemo(() => Array.from(new Set(items.map(i => i.group))), [items])
@@ -205,7 +210,9 @@ export function OwnerJoin({ code }: { code: string }) {
                 <label className="oj-f"><span>Bank</span><input required value={pay.ach.bank} onChange={e => setPay({ ...pay, ach: { ...pay.ach, bank: e.target.value } })} placeholder="e.g. Chase" /></label>
                 <Seg label="Account type" value={pay.ach.accountType} set={v => setPay({ ...pay, ach: { ...pay.ach, accountType: v } })} opts={[['checking', 'Checking'], ['savings', 'Savings']]} />
                 <label className="oj-f"><span>Routing number{rec.payout ? ' (on file: ' + rec.payout.ach.routingHint + ')' : ''}</span><input inputMode="numeric" autoComplete="off" value={pay.ach.routing} onChange={e => setPay({ ...pay, ach: { ...pay.ach, routing: e.target.value } })} placeholder="9 digits" /></label>
+                <label className="oj-f"><span>Confirm routing number</span><input inputMode="numeric" autoComplete="off" onPaste={e => e.preventDefault()} value={pay.ach.routing2} onChange={e => setPay({ ...pay, ach: { ...pay.ach, routing2: e.target.value } })} placeholder="Type it again" />{pay.ach.routing2 && pay.ach.routing.replace(/\D/g, '') === pay.ach.routing2.replace(/\D/g, '') && routingOk(pay.ach.routing) ? <small className="oj-match"><Check size={12} /> Matches</small> : null}</label>
                 <label className="oj-f"><span>Account number{rec.payout ? ' (on file: ' + rec.payout.ach.accountHint + ')' : ''}</span><input inputMode="numeric" autoComplete="off" value={pay.ach.account} onChange={e => setPay({ ...pay, ach: { ...pay.ach, account: e.target.value } })} /></label>
+                <label className="oj-f"><span>Confirm account number</span><input inputMode="numeric" autoComplete="off" onPaste={e => e.preventDefault()} value={pay.ach.account2} onChange={e => setPay({ ...pay, ach: { ...pay.ach, account2: e.target.value } })} placeholder="Type it again" />{pay.ach.account2 && pay.ach.account.replace(/\D/g, '') === pay.ach.account2.replace(/\D/g, '') ? <small className="oj-match"><Check size={12} /> Matches</small> : null}</label>
               </fieldset>
             </div>
             <fieldset className="oj-sign"><legend>Sign</legend>
@@ -289,6 +296,7 @@ const CSS = `
 .oj-f{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid var(--rule);min-width:0}
 .oj-f>span{font:600 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
 .oj-f input,.oj-f select,.oj-f textarea{width:100%;font:500 15px Inter,sans-serif;color:var(--ink);border:1px solid var(--rule);border-radius:10px;padding:11px 12px;background:#fff}
+.oj-match{display:inline-flex;align-items:center;gap:4px;color:var(--ok);font-weight:600;font-size:12px}
 .oj-apps{padding:12px 0;border-bottom:1px solid var(--rule)}
 .oj-apps>span{font:600 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
 .oj-apps>div{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}

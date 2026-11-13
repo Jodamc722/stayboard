@@ -47,7 +47,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     const tin = String(w.tin || '').replace(/\D/g, ''), routing = String(a.routing || '').replace(/\D/g, ''), account = String(a.account || '').replace(/\D/g, '')
     const keepTin = !tin && r.payout?.w9.tinEnc, keepBank = !routing && !account && r.payout?.ach.routingEnc
     const bad = !s(w.name, 120) ? 'Enter the name as shown on your tax return.' : !keepTin && tin.length !== 9 ? 'The SSN or EIN must be 9 digits.' : !s(w.address, 200) || !s(w.cityStateZip, 120) ? 'Enter the address for the W-9.'
-      : !keepBank && !routingOk(routing) ? 'That routing number is not valid. It is the 9 digits at the bottom left of a check.' : !keepBank && (account.length < 4 || account.length > 17) ? 'The account number should be 4 to 17 digits.'
+      : !keepBank && !routingOk(routing) ? 'That routing number does not match any US bank. Please check it against a check or your bank’s app.' : !keepBank && (routing !== String(a.routing2 || '').replace(/\D/g, '') || account !== String(a.account2 || '').replace(/\D/g, '')) ? 'The routing or account number does not match its confirmation. Please re-enter them.' : !keepBank && (account.length < 4 || account.length > 17) ? 'The account number should be 4 to 17 digits.'
       : !s(a.holder, 120) || !s(a.bank, 120) ? 'Enter the account holder and the bank.' : !s(sg.name, 120) || !sg.agree ? 'Type your full name and confirm, to sign.' : ''
     if (bad) return NextResponse.json({ ok: false, error: bad }, { status: 400, headers: NO_STORE })
     const prev = r.payout
