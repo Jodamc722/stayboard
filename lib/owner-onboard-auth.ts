@@ -10,6 +10,7 @@ import 'server-only'
 import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
 import type { OORecord, OOAuth } from './owner-onboard'
+import { gmOf } from './owner-onboard'
 import { stayEmail, escHtml } from './email-layout'
 import { readOOSettings, sendOnboardingMail } from './owner-onboard-mail'
 
@@ -101,7 +102,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const token = newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7, id)
   const link = origin.replace(/\/$/, '') + '/join/' + r.code + '?k=' + token
   const first = (who.name || '').split(' ')[0] || 'there'
-  const gm = r.custom.gm, home = [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
+  const gm = gmOf(r.custom.gm), home = [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const site = origin.replace(/\/$/, '')
   const portal = site.replace(/^https?:\/\//, '') + '/portal'
   const gmFirst = (gm.name || '').split(' ')[0] || 'our team'
@@ -119,7 +120,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     paragraphs: [`Hi ${escHtml(first)},`, `Thank you for trusting us with your home${at}. I am ${escHtml(gm.name)}${gm.role ? ', ' + escHtml(gm.role) : ''}, and my team and I will take it from signed agreement to its first booking.`, 'Your owner portal is where it all happens. In about ten minutes you can:'],
     list: ['Tell us about the home', 'Confirm what is already in it, so we only order what is missing', 'Send your W-9 and payout details securely'],
     lead: ['After that, the portal shows every step, from photography and your listing to your onboarding call and going live, so you always know where things stand.'],
-    cta: 'Set up my owner portal', after: [`If you have a question at any point, reply to this email or call me directly. I look forward to working with you.`],
+    cta: 'Set up my owner portal', after: [`If you have a question at any point, reply to this email or call me directly${gm.phone ? ' at ' + escHtml(gm.phone) : ''}. I look forward to working with you.`],
     note: 'Your tax ID and bank details are encrypted the moment you send them, and we will never ask for them by email.',
   } : {
     eyebrow: 'Owner portal', heading: 'Sign in to your owner portal',
@@ -134,7 +135,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     cta: { label: copy.cta, url: link },
     ctaNote: kind === 'signin' ? `You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with your email and password.` : `This button signs you in once and works for 7 days. You will create a password on your first visit, and after that you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.`,
     note: copy.note, after: copy.after,
-    sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email },
+    sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email, photo: gm.photo ? (gm.photo.startsWith('/') ? site + gm.photo : gm.photo) : undefined },
   })
   const res = await sendOnboardingMail({ to: [to], subject: kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') authOf(r, id).invitedAt = new Date().toISOString()

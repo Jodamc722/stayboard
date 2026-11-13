@@ -4,7 +4,7 @@
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Minus, Plus, Lock, Phone, Mail, ChevronRight, ChevronLeft } from 'lucide-react'
-import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
+import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, gmOf, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
 
 type Any = any
 /** The two forms, filling in as the owner types (Jon, 2026-11-13: "ACH and W9 forms should show them as they fill
@@ -108,7 +108,10 @@ export function OwnerJoin({ code }: { code: string }) {
       if (d.viewer !== 'team' && !d.record.hasPassword) setNeedPw(true)
       const r = d.record
       if (r.order) { setSkip(r.order.review?.skip || []); setONote(r.order.review?.note || '') }
-      setTab(r.order && r.order.status === 'sent' ? 'order' : r.submittedAt ? 'timeline' : r.home ? (r.custom.askSupplies || r.custom.askLinen ? 'supplies' : 'payout') : 'welcome')
+      // OPEN ON THE WELCOME PAGE, THEN MOVE THROUGH (Jon, 2026-11-13: "make sure it opens to the home page then move
+      // through"). It used to jump to Supplies whenever the home was already filled in, which is every link the team
+      // pre-fills. Only two things skip the welcome: an order list waiting for review, and a finished form.
+      setTab(r.order && r.order.status === 'sent' ? 'order' : r.submittedAt ? 'timeline' : 'welcome')
       if (r.payout) setPay((p: Any) => ({ ...p, w9: { ...p.w9, ...r.payout.w9, tin: '' }, ach: { ...p.ach, ...r.payout.ach, routing: '', account: '' }, sign: { name: r.payout.sign.name, agree: true } }))
     }
     go()
@@ -154,7 +157,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const shown = useMemo(() => items.filter(i => (i.unit || 0) === Math.min(su, unitCount - 1)), [items, su, unitCount])
   const groups = useMemo(() => Array.from(new Set(shown.map(i => i.group))), [shown])
   const counts = { have: items.filter(i => marks[i.key] === 'have').length, need: items.filter(i => marks[i.key] === 'need').length }
-  const c = flags.contact || {}
+  const c = gmOf(flags.contact || {})
   const first = (flags.ownerName || '').split(' ')[0]
 
   const shell = (inner: React.ReactNode) => <main className="oj"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" /><style>{CSS}</style><div className="oj-wrap oj-auth"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" />{inner}</div></main>
@@ -223,7 +226,8 @@ export function OwnerJoin({ code }: { code: string }) {
               <p className="oj-kick">Welcome to Stay Hospitality</p>
               <h1>{first ? <>Hi {first}, <em>let’s get started.</em></> : <>Let’s get your home <em>started.</em></>}</h1>
               <p className="oj-p">{flags.greeting || 'This page walks you through everything we need before your home goes live. It takes about ten minutes, saves as you go, and you can come back to it any time from this link.'}</p>
-              <button type="button" className="oj-cta" onClick={next}>Start <ChevronRight size={16} /></button>
+              {rec.home ? <p className="oj-p">We have already filled in what we know about your home. Please check each step and correct anything that is not right.</p> : null}
+              <button type="button" className="oj-cta" onClick={next}>{rec.home ? 'Review and continue' : 'Start'} <ChevronRight size={16} /></button>
             </div>
             <aside className="oj-card"><p className="oj-lab">What happens next</p>{timeline}</aside>
           </section>

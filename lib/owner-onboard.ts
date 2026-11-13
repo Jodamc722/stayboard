@@ -48,12 +48,16 @@ export type OOCustom = {
   gm: OOPerson
   askHome: boolean; askSupplies: boolean; askLinen: boolean; askPayout: boolean
 }
-export const DEFAULT_GM: OOPerson = { name: 'Jon McGill', role: 'General Manager', phone: '', email: 'jon@stay-hospitality.com', photo: '' }
+// The GM's direct line is the one already on the owner decks (lib/onboarding-report team). The photo is shown in the
+// welcome email and on the owner's page once there is one at this path.
+export const DEFAULT_GM: OOPerson = { name: 'Jon McGill', role: 'General Manager', phone: '(954) 391-2116', email: 'jon@stay-hospitality.com', photo: '' }
+/** A link's GM card, with anything it was saved without (phone, photo) filled from today's default for the same person. */
+export const gmOf = (gm: OOPerson): OOPerson => (gm?.email && gm.email.toLowerCase() === DEFAULT_GM.email ? { ...gm, phone: gm.phone || DEFAULT_GM.phone, photo: gm.photo || DEFAULT_GM.photo } : gm)
 export const DEFAULT_SALES: OOPerson = { name: 'Nick Carline', role: 'Business Development', phone: '(651) 200-8283', email: 'nicholas@stay-hospitality.com', photo: '/deck-img/nick-carline.jpg' }
 
 /** The introductory email that carries the link, from sales (introducing the GM) or from the GM. */
 export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string): { subject: string; body: string } {
-  const c = r.custom, gm = c.gm, sa = c.sales
+  const c = r.custom, gm = gmOf(c.gm), sa = c.sales
   const first = (c.ownerName || '').trim().split(/\s+/)[0] || 'there'
   const home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const gmFirst = gm.name.split(' ')[0] || 'our General Manager'
