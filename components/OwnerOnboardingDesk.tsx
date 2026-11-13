@@ -4,6 +4,7 @@
 //                          introductory email, what to ask, optionally the home started for them, the agreement)
 //   OwnerOnboardingReport — /owner-onboarding/<code>: the report the team works from: the home, what it has and
 //                          needs, the timeline, the onboarding call, the paperwork and the handoff to accounting.
+import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive } from 'lucide-react'
@@ -33,6 +34,36 @@ async function uploadAgreement(code: string, f: File) {
   await putFile(s.signedUrl, f)
   const m = await fetch(`/api/owner-onboarding/${code}/agreement`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ meta: { path: s.path, name: f.name, size: f.size } }) }).then(r => r.json())
   if (!m?.ok) throw new Error(m?.error || 'Could not save the agreement.')
+}
+
+// ── SMART REMINDERS (lib/owner-onboard-remind): what the owner will be nudged about and when, with pause and send-now ──
+function Reminders({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
+  const [busy, setBusy] = useState(''); const [msg, setMsg] = useState('')
+  const st = remindState(rec)
+  const log: Any[] = (rec.remind?.log || []).slice().reverse()
+  async function act(body: Any, tag: string) {
+    setBusy(tag); setMsg('')
+    const d = await fetch(`/api/owner-onboarding/${rec.code}/remind`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()).catch(() => null)
+    setBusy(''); if (d?.record) onRec(d.record); setMsg(d?.ok ? (d.note || '') : (d?.error || 'Not saved.'))
+  }
+  const day = (n: number) => new Date(n).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  const who = (id: string) => (id === 'p' ? rec.custom.ownerName : (rec.owners || []).find((o: Any) => o.id === id)?.name) || 'the owner'
+  return (
+    <div className="mt-4 rounded-xl bg-app p-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1"><p className={lab + ' mr-auto'}>Automatic reminders</p>
+        <button type="button" disabled={!!busy} onClick={() => act({ action: rec.remind?.paused ? 'resume' : 'pause' }, 'pause')} className="oo-noprint text-[12.5px] font-semibold text-ink underline">{rec.remind?.paused ? 'Turn reminders back on' : 'Pause reminders'}</button></div>
+      {!st.on ? <p className="text-[13px] text-ink mt-1">{st.why}</p> : !st.plans.length ? <p className="text-[13px] text-ink mt-1">{st.escalate.length ? 'Three reminders have gone unanswered. A call will probably do more than another email.' : st.why}</p> : (
+        <ul className="mt-1 space-y-1.5">{st.plans.map(p => (
+          <li key={p.owner} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink">
+            <span className="mr-auto"><b>{REMIND_LABEL[p.kind]}</b> · reminder {p.n} of 3 to {p.name || p.email} {p.due ? <span className="text-[#B4532A] font-semibold">goes out on the next weekday morning</span> : <>on or after <b>{day(p.dueAt)}</b></>}</span>
+            <button type="button" disabled={!!busy} onClick={() => act({ action: 'send', owner: p.owner }, 's' + p.owner)} className="oo-noprint rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold text-ink disabled:opacity-50">{busy === 's' + p.owner ? 'Sending…' : 'Send it now'}</button>
+          </li>))}</ul>
+      )}
+      <p className="text-[11.5px] text-muted mt-2">One thing at a time: the first step still waiting on the owner. Up to three reminders per step, spaced further apart, at 10am Eastern on weekdays, and never two within two days. After the third, you are told so someone can call.</p>
+      {log.length ? <details className="mt-1 text-[11.5px] text-muted"><summary className="cursor-pointer font-semibold text-ink">Sent so far ({log.length})</summary><ul className="mt-1 space-y-0.5">{log.slice(0, 30).map((l, i) => <li key={i}>{l.kind === 'escalate' ? 'Team told: no answer after three reminders (' + (REMIND_LABEL[l.about as keyof typeof REMIND_LABEL] || '').toLowerCase() + ')' : REMIND_LABEL[l.kind as keyof typeof REMIND_LABEL]} · {who(l.owner)} · {new Date(l.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</li>)}</ul></details> : null}
+      {msg ? <p className="text-[12.5px] text-ink mt-1">{msg}</p> : null}
+    </div>
+  )
 }
 
 // ── THE OWNERS AND THEIR PORTAL ACCOUNTS (Jon, 2026-11-13: "option for multiple owners… each will need portal passcode
@@ -78,6 +109,7 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
         </div>
       ) : rows.length < 6 ? <button type="button" onClick={() => setAdd({ name: '', email: '', phone: '' })} className="oo-noprint mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink"><Plus size={13} /> Add another owner</button> : null}
       {msg ? <p className="text-[12.5px] text-ink mt-2">{msg}</p> : null}
+      <Reminders rec={rec} onRec={onRec} />
       {rows.length > 1 ? <p className="text-[11.5px] text-muted mt-2">Every owner sees the home, the supplies, the order list and the timeline. The W-9 and bank forms can only be downloaded by the owner who sent them.</p> : null}
     </section>
   )
