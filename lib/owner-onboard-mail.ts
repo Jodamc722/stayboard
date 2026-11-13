@@ -73,6 +73,7 @@ export async function sendLinenToVendor(r: OORecord, items: OOItem[]): Promise<{
 <p>Please quote the linen below for <b>${esc(where || 'a new home')}</b>${units.length > 1 ? ' (' + units.length + ' units)' : ''}. Quantities are at par.</p>
 <table style="border-collapse:collapse;font-size:13px"><tr><th align="left" style="${td}">Item</th><th align="left" style="${td}">Size</th>${units.length > 1 ? units.map(u => `<th align="right" style="${td}">${esc(label(u))}</th>`).join('') : ''}<th align="right" style="${td}">Total</th></tr>
 ${keys.map(k => { const [n, z] = k.split('|'); const per = units.map(u => qty(k, u)); return `<tr><td style="${td}">${esc(n)}</td><td style="${td}">${esc(z)}</td>${units.length > 1 ? per.map(q => `<td align="right" style="${td}">${q || ''}</td>`).join('') : ''}<td align="right" style="${td}"><b>${per.reduce((a, b) => a + b, 0)}</b></td></tr>` }).join('')}</table>
+${r.linen?.note ? `<p>${esc(r.linen.note).replace(/\n/g, '<br>')}</p>` : ''}
 <p>Please reply with pricing and lead time. Thank you,<br>Jon McGill<br>Stay Hospitality</p></div>`
   const subject = `Linen quote request · ${where || r.custom.ownerName || 'new home'}`
   if (s.replyTo) { const g = await sendGmail({ fromEmail: s.replyTo, to: s.vendorTo, cc: s.vendorCc, subject, html, source: 'owner-onboarding' }).catch(() => ({ ok: false })); if (g.ok) return { ok: true, to: s.vendorTo, cc: s.vendorCc } }

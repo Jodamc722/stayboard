@@ -112,7 +112,11 @@ export type OORecord = {
   order?: OOOrder | null
   /** When this onboarding last fed the attached listing's FAQ, and how many entries it has added. */
   faq?: { at: string; listingId: string; added: number }
-  linen?: { approvedAt?: string; approvedBy?: string; sentAt?: string; sentTo?: string[]; error?: string } | null
+  linen?: { approvedAt?: string; approvedBy?: string; sentAt?: string; sentTo?: string[]; error?: string
+    /** The team's own lines (Jon, 2026-11-13: "should be able to edit the linen quote"): when set, these replace the counts from the linen standard. qty is per unit. */
+    rows?: { name: string; size: string; qty: number[] }[]; editedAt?: string; editedBy?: string
+    /** A note that goes to the vendor with the quote request. */
+    note?: string } | null
   /** The owner's sign-in (lib/owner-onboard-auth): a password hash and one-time email links. Never leaves the server. */
   auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string } | null
   archived?: boolean

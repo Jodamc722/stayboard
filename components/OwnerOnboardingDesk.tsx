@@ -330,12 +330,13 @@ function HandoffSettings() {
 export function OwnerOnboardingReport({ code }: { code: string }) {
   const [rec, setRec] = useState<Any>(null)
   const [items, setItems] = useState<OOItem[]>([])
+  const [linEdit, setLinEdit] = useState<Any>(null)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState('')
   const [editHome, setEditHome] = useState(false)
   const [eu, setEu] = useState(0)
-  async function linen(action: string) { setBusy('linen'); const d = await fetch(`/api/owner-onboarding/${code}/linen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); setMsg(d?.ok ? (action === 'send' ? 'Sent to the vendor.' : 'Saved.') : (d?.error || 'Not saved.')); setBusy('') }
+  async function linen(action: string, extra: Any = {}) { setBusy('linen'); const d = await fetch(`/api/owner-onboarding/${code}/linen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...extra }) }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); if (Array.isArray(d?.items)) setItems(d.items); if (d?.ok && (action === 'save' || action === 'reset')) setLinEdit(null); setMsg(d?.ok ? (action === 'send' ? 'Sent to the vendor.' : 'Saved.') : (d?.error || 'Not saved.')); setBusy('') }
   const agree = useRef<HTMLInputElement>(null)
   const apply = (d: Any) => { setRec(d.record); setItems(d.items || []) }
   const load = () => fetch('/api/owner-onboarding/' + code, { cache: 'no-store' }).then(r => r.json()).then(d => (d?.ok ? apply(d) : setErr(d?.error || 'Not found.'))).catch(() => setErr('Could not load.'))
@@ -424,8 +425,22 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           {/* THE LINEN, ours to specify (Jon, 2026-11-13): counts at par, per unit and in all; approve, then send to the vendor */}
           <section className={card}>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Linen at par</h2><span className="text-[13px]"><b className="text-ink">{lin.reduce((a, i) => a + i.qty, 0)}</b> pieces{units.length > 1 ? ' across ' + units.length + ' units' : ''}</span></div>
-            <p className="text-[12.5px] text-muted mb-3">For the team only: the owner’s page never lists linen. From the linen standard and each unit’s beds and baths.</p>
-            {!lin.length ? <p className="text-[13px] text-muted">The counts appear once the home is filled in.</p> : (<>
+            <p className="text-[12.5px] text-muted mb-3">For the team only: the owner’s page never lists linen. {rec.linen?.rows ? <b className="text-ink">Edited by {String(rec.linen.editedBy || 'the team').split('@')[0]}{rec.linen.editedAt ? ' on ' + new Date(rec.linen.editedAt).toLocaleDateString() : ''}; it no longer follows the home’s beds and baths.</b> : 'From the linen standard and each unit’s beds and baths.'}</p>
+            {linEdit ? (<div className="oo-noprint">
+              <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="font-semibold">Size</th>{units.map((_, i) => <th key={i} className="px-1 text-right font-semibold whitespace-nowrap">{units.length > 1 ? uLabel(i) : 'Qty'}</th>)}<th /></tr></thead>
+                <tbody>{linEdit.rows.map((l: Any, k: number) => { const set = (p: Any) => setLinEdit({ ...linEdit, rows: linEdit.rows.map((x: Any, j: number) => (j === k ? { ...x, ...p } : x)) }); return (
+                  <tr key={k} className="border-b border-line"><td className="py-1 pr-1"><input value={l.name} onChange={e => set({ name: e.target.value })} placeholder="Item" className="w-full rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink" /></td>
+                    <td className="pr-1"><input value={l.size} onChange={e => set({ size: e.target.value })} placeholder="Size" className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink" /></td>
+                    {units.map((_, i) => <td key={i} className="px-1 text-right"><input inputMode="numeric" value={String(l.qty[i] ?? 0)} onChange={e => set({ qty: units.map((__, u) => (u === i ? Number(e.target.value.replace(/\D/g, '')) || 0 : l.qty[u] || 0)) })} className="w-14 rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink text-right" /></td>)}
+                    <td className="pl-1"><button type="button" title="Remove" onClick={() => setLinEdit({ ...linEdit, rows: linEdit.rows.filter((_: Any, j: number) => j !== k) })} className="text-muted hover:text-red-700">×</button></td></tr>) })}</tbody></table></div>
+              <button type="button" onClick={() => setLinEdit({ ...linEdit, rows: [...linEdit.rows, { name: '', size: '', qty: units.map(() => 1) }] })} className="mt-2 text-[12.5px] font-semibold text-ink">+ Add a line</button>
+              <label className="block mt-3"><span className={lab}>Note to the vendor (goes in the quote request)</span><textarea rows={2} value={linEdit.note} onChange={e => setLinEdit({ ...linEdit, note: e.target.value })} className={field} placeholder="e.g. white only, 300 thread count; deliver to the front desk" /></label>
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <button type="button" disabled={busy === 'linen'} onClick={() => linen('save', linEdit)} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'linen' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save the quote</button>
+                <button type="button" onClick={() => setLinEdit(null)} className="text-[12.5px] text-muted underline">Cancel</button>
+                {rec.linen?.approvedAt ? <span className="text-[12.5px] text-muted">Saving clears the approval, so the edited quote is approved again before it is sent.</span> : null}
+              </div>
+            </div>) : !lin.length ? <p className="text-[13px] text-muted">The counts appear once the home is filled in.</p> : (<>
               <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="font-semibold">Size</th>{units.length > 1 ? units.map((_, i) => <th key={i} className="px-2 text-right font-semibold whitespace-nowrap">{uLabel(i)}</th>) : null}<th className="text-right font-semibold">Total</th></tr></thead>
                 <tbody>{linRoll.map(e => <tr key={e.name + e.size} className="border-b border-line"><td className="py-1.5 text-ink">{e.name}</td><td className="text-muted">{e.size || ''}</td>{units.length > 1 ? units.map((_, i) => <td key={i} className="px-2 text-right tabular-nums">{e.per[i] || ''}</td>) : null}<td className="text-right tabular-nums font-semibold">{e.total}</td></tr>)}</tbody></table></div>
               <div className="oo-noprint mt-3 flex flex-wrap items-center gap-2">
@@ -433,6 +448,9 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
                   : <><span className="text-[12.5px] text-emerald-700 font-semibold"><Check size={13} className="inline" /> Approved {new Date(rec.linen.approvedAt).toLocaleDateString()} by {String(rec.linen.approvedBy || '').split('@')[0]}</span>
                     <button type="button" disabled={busy === 'linen'} onClick={() => linen('send')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'linen' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {rec.linen.sentAt ? 'Send to the vendor again' : 'Send to the vendor'}</button>
                     <button type="button" onClick={() => linen('unapprove')} className="text-[12.5px] text-muted underline">Undo approval</button></>}
+                <button type="button" onClick={() => setLinEdit({ rows: linRoll.map(e => ({ name: e.name, size: e.size || '', qty: units.map((_, i) => e.per[i] || 0) })), note: rec.linen?.note || '' })} className="rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink">Edit the quote</button>
+                {rec.linen?.rows ? <button type="button" onClick={() => linen('reset')} className="text-[12.5px] text-muted underline">Back to the linen standard</button> : null}
+                {rec.linen?.note ? <span className="text-[12.5px] text-ink basis-full">Note to the vendor: {rec.linen.note}</span> : null}
                 <span className="text-[12.5px] text-muted basis-full">{rec.linen?.error ? 'Not sent: ' + rec.linen.error : rec.linen?.sentAt ? 'Sent ' + new Date(rec.linen.sentAt).toLocaleString() + ' to ' + (rec.linen.sentTo || []).join(', ') : 'Approving unlocks “Send to the vendor”: the quantities go to the linen vendor, copying the team.'}</span>
               </div>
             </>)}

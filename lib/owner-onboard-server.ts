@@ -19,7 +19,7 @@ export async function readRecord(code: string): Promise<OORecord | null> {
 }
 
 /** Everything one home needs: supplies, then the linen at par. Keys are stable; a later unit's carry its uid. */
-async function itemsForHome(h: OOHome, i: number, o: { supplies: boolean }): Promise<OOItem[]> {
+async function itemsForHome(h: OOHome, i: number, o: { supplies: boolean; linen: boolean }): Promise<OOItem[]> {
   const out: OOItem[] = []
   const pre = i === 0 ? '' : 'u' + (h.uid || i) + '|'
   const label = unitName(h, i)
@@ -32,6 +32,7 @@ async function itemsForHome(h: OOHome, i: number, o: { supplies: boolean }): Pro
   }
   // THE LINEN IS OURS TO SPECIFY (Jon, 2026-11-13: "the linen count is something that should show on our
   // backend"): always counted, at par, for the team; the owner's page never lists it.
+  if (!o.linen) return out
   const standard = normLinenStandard(await getSetting<any>(LINEN_STANDARD_KEY, null))
   const beds: Record<string, number> = {}
   for (const [k, v] of Object.entries(h.beds)) { if (!v) continue; if (k === 'Bunk') beds.Twin = (beds.Twin || 0) + v * 2; else beds[k] = (beds[k] || 0) + v }
@@ -44,7 +45,10 @@ async function itemsForHome(h: OOHome, i: number, o: { supplies: boolean }): Pro
 export async function itemsFor(r: OORecord): Promise<OOItem[]> {
   const out: OOItem[] = []
   const units = unitsOf(r)
-  for (let i = 0; i < units.length; i++) out.push(...(await itemsForHome(units[i], i, { supplies: r.custom.askSupplies })))
+  const rows = r.linen?.rows
+  for (let i = 0; i < units.length; i++) out.push(...(await itemsForHome(units[i], i, { supplies: r.custom.askSupplies, linen: !rows })))
+  // the team edited the linen quote: their lines stand in for the standard's counts
+  if (rows) rows.forEach((l, k) => units.forEach((h, i) => { const q = l.qty[i] || 0; if (q > 0) out.push({ key: 'le:' + k + ':' + i, name: l.name, size: l.size || undefined, group: 'Linen', qty: q, tier: 'must', linen: true, unit: i, unitLabel: unitName(h, i) }) }))
   return out
 }
 /** What the owner ticks: the supplies, never the linen. */
@@ -134,4 +138,10 @@ export function cleanOrderLines(v: any, units: number): OOOrderLine[] {
     url: /^https?:\/\//.test(String(l?.url || '')) ? String(l.url).slice(0, 500) : '', price: Number.isFinite(Number(l?.price)) && l?.price !== null && l?.price !== '' ? Math.max(0, Math.round(Number(l.price) * 100) / 100) : null,
     qty: Array.from({ length: Math.max(1, units) }, (_, u) => Math.max(0, Math.min(999, Math.round(Number(l?.qty?.[u]) || 0)))),
   })).filter(l => l.name)
+}
+
+/** The team's edited linen lines, cleaned: a name, an optional size, a quantity per unit. */
+export function cleanLinenRows(v: any, units: number): { name: string; size: string; qty: number[] }[] {
+  return (Array.isArray(v) ? v : []).slice(0, 120).map((l: any) => ({ name: String(l?.name || '').trim().slice(0, 80), size: String(l?.size || '').trim().slice(0, 30),
+    qty: Array.from({ length: Math.max(1, units) }, (_, u) => Math.max(0, Math.min(9999, Math.round(Number(l?.qty?.[u]) || 0)))) })).filter(l => l.name && l.qty.some(q => q > 0))
 }
