@@ -59,7 +59,7 @@ function Reminders({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
             <button type="button" disabled={!!busy} onClick={() => act({ action: 'send', owner: p.owner }, 's' + p.owner)} className="oo-noprint rounded-lg border border-line bg-white px-2.5 py-1 text-[12px] font-semibold text-ink disabled:opacity-50">{busy === 's' + p.owner ? 'Sending…' : 'Send it now'}</button>
           </li>))}</ul>
       )}
-      <p className="text-[11.5px] text-muted mt-2">One thing at a time: the first step still waiting on the owner. Up to three reminders per step, spaced further apart, at 10am Eastern on weekdays, and never two within two days. After the third, you are told so someone can call.</p>
+      <p className="text-[11.5px] text-muted mt-2">Only two things are chased by email: getting into the portal, then the W-9 and bank details. Up to three reminders each, spaced further apart, at 10am Eastern on weekdays, and never two within two days. After the third, you are told so someone can call.</p>
       {log.length ? <details className="mt-1 text-[11.5px] text-muted"><summary className="cursor-pointer font-semibold text-ink">Sent so far ({log.length})</summary><ul className="mt-1 space-y-0.5">{log.slice(0, 30).map((l, i) => <li key={i}>{l.kind === 'escalate' ? 'Team told: no answer after three reminders (' + (REMIND_LABEL[l.about as keyof typeof REMIND_LABEL] || '').toLowerCase() + ')' : REMIND_LABEL[l.kind as keyof typeof REMIND_LABEL]} · {who(l.owner)} · {new Date(l.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</li>)}</ul></details> : null}
       {msg ? <p className="text-[12.5px] text-ink mt-1">{msg}</p> : null}
     </div>
