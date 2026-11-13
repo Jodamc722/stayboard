@@ -3,12 +3,10 @@
 // (/api/cron/owner-onboarding-reminders) and the report both read this, so what the team sees is what will happen.
 //
 // THE RULES
-//   · An owner is reminded about ONE thing: the first step that is still theirs to do.
+//   · An owner is reminded about two things only (Jon, 2026-11-13), one at a time:
 //       start      invited, but has not opened the portal and created a password
-//       home       signed in, but the home is not filled in
-//       supplies   the supplies list is untouched
-//       paperwork  the W-9 and bank details are missing
-//       order      the order list was sent for review and has no answer
+//       paperwork  in the portal, but the W-9 and bank details are missing
+//     ('home', 'supplies' and 'order' remain as names only so older log lines still read; nothing sends them.)
 //   · Each step gets at most three reminders, spaced further apart each time, counted from the last thing that
 //     happened (the invite, their last visit, the day the order list was sent, the last reminder).
 //   · Never two reminders to the same owner within two days, whatever they are about.
@@ -31,13 +29,11 @@ export type RemindState = { on: boolean; why: string; plans: RemindPlan[]; escal
 type Acct = { id: string; name: string; email: string; auth?: OOAuth | null }
 const accts = (r: OORecord): Acct[] => [{ id: 'p', name: r.custom.ownerName, email: r.custom.ownerEmail, auth: r.auth }, ...(r.owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, auth: o.auth }))]
 
-/** The first step that is still the owner's to do, for an owner who is already in the portal. */
+/** What an owner already in the portal is reminded about. ONLY THE PAPERWORK (Jon, 2026-11-13: "only reminder for W-9
+ *  and ACH and getting access to their portal"): the home, the supplies check and the order list are chased by the
+ *  team, not by automatic email. */
 export function ownerTask(r: OORecord): Exclude<RemindKind, 'start'> | null {
-  if (r.custom.askHome !== false && !r.home) return 'home'
-  if (r.custom.askSupplies && !r.submittedAt && !r.stock && !Object.values(r.marks || {}).some(Boolean)) return 'supplies'
-  if (r.custom.askPayout !== false && !r.payout) return 'paperwork'
-  if (r.order?.status === 'sent') return 'order'
-  return null
+  return r.custom.askPayout !== false && !r.payout ? 'paperwork' : null
 }
 
 export function remindState(r: OORecord, now = Date.now()): RemindState {

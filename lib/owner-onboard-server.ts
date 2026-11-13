@@ -112,6 +112,8 @@ export async function createRecord(v: any, by: string): Promise<OORecord> {
     attach: { property: str(v?.attach?.property, 120), listingId: str(v?.attach?.listingId, 60), unitLabel: str(v?.attach?.unitLabel, 60) },
     // the team can start the home for the owner (Jon: "Nick can fill out some of the information")
     home: v?.home ? cleanHome(v.home) : null, more: cleanMore(v?.more),
+    // more than one owner from the start (Jon, 2026-11-13: "option to create multiple owners for one property")
+    owners: cleanOwners(v?.owners, []),
     marks: {}, ownerNotes: '', teamNotes: str(v?.teamNotes, 4000), steps: freshSteps(), call: { at: '', link: '', note: '' }, submittedAt: '',
   }
   const w = await saveRecord(r, by)
