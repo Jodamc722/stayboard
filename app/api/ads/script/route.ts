@@ -202,7 +202,14 @@ export async function POST(req: NextRequest) {
       return { ...x, items }
     })
     // a contact card in a guest ad is the wrong end card — the writer is told, this is the backstop
-    if (ev || /guest/i.test(String(b?.audience || ''))) norm.scenes = norm.scenes.map(s => (s.kind === 'contact' ? { ...s, kind: 'cta' as const, items: s.items.length ? s.items : ['Book at stay-hospitality.com'] } : s))
+    if (ev || /guest/i.test(String(b?.audience || ''))) {
+      norm.scenes = norm.scenes.map(s => (s.kind === 'contact' ? { ...s, kind: 'cta' as const, items: s.items.length ? s.items : ['Book at stay-hospitality.com'] } : s))
+      // …and a guest is never told to call anyone: a sentence with Nick, a phone number or "call" comes out of the spoken line
+      const sales = /\b(nick|call|phone|text us|651[\s.-]?200)\b/i
+      norm.scenes = norm.scenes.map(s => (sales.test(s.vo) ? { ...s, vo: s.vo.split(/(?<=[.!?])\s+/).filter(x => !sales.test(x)).join(' ').trim() } : s))
+    }
+    // an eyebrow that only repeats its headline, or names a listing type instead of a place, says nothing
+    norm.scenes = norm.scenes.map(s => { const eb = String(s.eyebrow || ''); if (!eb) return s; const hw = new Set(s.head.replace(/\*\*/g, '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2)); const ew = eb.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2); const cleaned = eb.replace(/^\s*full\s*·\s*/i, ''); return ew.length && ew.every(w => hw.has(w)) ? { ...s, eyebrow: '' } : cleaned !== eb ? { ...s, eyebrow: cleaned } : s })
     return NextResponse.json({ ok: true, name: String(j?.name || '').slice(0, 120), scenes: norm.scenes, queries: scenes.map(s => s.photoQuery), warnings, where, event: ev ? ev.key : null })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })

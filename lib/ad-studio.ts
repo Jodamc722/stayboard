@@ -126,7 +126,7 @@ export function normalize(p: any): AdProject {
     cam: (CAMS.some(x => x.key === s?.cam) ? s.cam : 'auto') as AdCam,
     badge: String(s?.badge || '').slice(0, 22),
     ...(s?.eyebrow ? { eyebrow: String(s.eyebrow).slice(0, 80) } : {}),
-    ...(['hero', 'list', 'numbers', 'gallery', 'quote', 'end'].indexOf(s?.sig) >= 0 ? { sig: s.sig } : {}),
+    ...(['hero', 'list', 'numbers', 'cards', 'gallery', 'quote', 'end'].indexOf(s?.sig) >= 0 ? { sig: s.sig } : {}),
     ...(typeof s?.qr === 'string' && /^https?:\/\//.test(s.qr) ? { qr: s.qr.slice(0, 300), qrLabel: String(s?.qrLabel || '').slice(0, 34) } : {}),
     ...([0, 1, 2].indexOf(Number(s?.dim)) >= 0 && s?.dim !== null && s?.dim !== undefined && s?.dim !== '' ? { dim: Number(s.dim) } : {}),
     ...(cleanCustom(s?.cu) ? { cu: cleanCustom(s?.cu) } : {}),
@@ -161,6 +161,7 @@ export function normalize(p: any): AdProject {
     format: (['16:9', '9:16', '1:1', '4:5', 'letter'].indexOf(p?.format) >= 0 ? p.format : '16:9'),
     kind: (['video', 'flyer', 'post', 'story'].indexOf(p?.kind) >= 0 ? p.kind : 'video'),
     moment: typeof p?.moment === 'string' ? p.moment.slice(0, 40) : undefined,
+    ...(typeof p?.tone === 'string' && /^[a-z]{2,16}$/.test(p.tone) ? { tone: p.tone } : {}),
     audience: (['owners', 'partners', 'guests'].indexOf(p?.audience) >= 0 ? p.audience : 'owners'),
     look: /^[a-z]{2,12}$/.test(String(p?.look || '')) ? String(p.look) : 'house',
     style: (() => {
@@ -259,7 +260,7 @@ export async function propertiesLine(): Promise<string> {
   try {
     const { libraryIndex } = await import('@/lib/photo-library')
     const idx = await libraryIndex()
-    const text = idx.buildings.filter(b => b.photos > 0).map(b => `${b.name} (${b.market}${b.units.length > 1 ? ', ' + b.units.length + ' units' : ''})`).join('; ')
+    const text = idx.buildings.filter(b => b.photos > 0 && !/^(full|unit|listing|other|unknown|n\/?a)$/i.test(String(b.name || '').trim()) && String(b.name || '').trim().length > 2).map(b => `${b.name} (${b.market}${b.units.length > 1 ? ', ' + b.units.length + ' units' : ''})`).join('; ')
     propsCache = { at: Date.now(), text }
     return text
   } catch { return propsCache?.text || '' }
@@ -280,7 +281,7 @@ export function scriptPrompt(input: { prompt: string; seconds: number; format: s
 - Say "listings", not "homes", for the portfolio count. Say "40+ channels".
 - Results: "owners who switch to Stay earn more" — no number. The fee is "lower" — no number.
 - Lighthouse spots issues and automates work; it does not produce the owner report.
-- End on a contact scene (kind "contact") whose line asks them to book a call with Nick and reads his number 651-200-8283.`
+- An ad for owners who are NOT yet with us ends on a contact scene (kind "contact") whose line asks them to book a call with Nick and reads his number 651-200-8283. A message to CURRENT owners never does (see THE STORY).`
   return `You write short video ads for Stay Hospitality and lay them out as scenes for an ad editor. They run on Instagram, Facebook and the web.
 
 THE FACTS YOU MAY USE (never invent others — no new numbers, percentages, fees, prices, timelines or guarantees):
@@ -291,6 +292,14 @@ ${rules}
 - NEVER put the words "Salato" or "Pompano Beach" in a spoken line (the voice mispronounces them). They may appear on screen.
 - On-screen headlines ("head") are short (2 to 8 words). Mark one or two key words with **double stars** (they take the accent colour). Use \\n to break lines.
 - A music-only beat is allowed: a scene with an empty "vo" (good for a montage right after the opening).
+
+THE STORY COMES FIRST (Jon, 2026-11-13: "the script and the wording… that's not the proper story"):
+- Before any scene, decide: who is watching, what they already know about us, what THEY want, and the one thing they should think when it ends. Write to that. The ad is about them and what they get, never about how big we are.
+- OUR SIZE IS NOT A STORY. Company-size figures (years in business, guests hosted, listing and property counts, markets, the rating) are proof for strangers only: at most ONE scene of them, late, in an ad for people who do not know us — and NONE in a message to people who already work with us. Never open on them, never build the ad around them.
+- Be concrete about what we DO: each middle scene is one specific thing and what it means for the viewer — Lighthouse catching a recurring issue before a guest does; a listing rebuilt and refreshed every three months, photos first; a revenue manager repricing every day; the big dates priced months ahead; the season ahead (December to March, March the peak).
+- The arc: a hook in their world → two to four concrete things (what we did, what we are putting in place) → what is next or why now → the close. A year-in-review or thank-you runs: thank you → what we put in place this year → what it changed for their listing → the season and the year ahead → new initiatives → thank you again.
+- If the brief says the viewer is a CURRENT owner or partner: do not sell, do not ask for a call, do not use the "contact" kind; end on a warm "end" scene (kind "cta") signed by the team, with an empty "items" list.
+- If the brief gives specifics (an initiative, a result, a date), use them in its words; where it gives none, stay with the facts above rather than padding with adjectives.
 
 CREATIVE DIRECTION (Jon: "better, nicer and very creative" — and "never use a collage photo ever"):
 - Make it feel like a premium travel/brand film, not slides. Vary the scene kinds; never use the same kind twice in a row.
@@ -313,14 +322,15 @@ photos, a large serif headline set line by line, small tracked labels, one clean
 a "layout", one of:
 - "hero": one photo, full screen, the headline over it. The default; use it for the hook and for mood.
 - "list": a photo above two to four numbered rows ("items": "Title|short detail"). For how something works or what is included.
-- "numbers": one to three figures that count up ("items": "40+|Booking platforms"). ONLY numbers that are in the facts.
+- "numbers": one to three figures that count up ("items": "40+|Booking platforms"). ONLY numbers that are in the facts, only when the figure IS the point of the scene, and at most once in an ad.
+- "cards": two or three photo cards, each one thing we do with its own picture ("items": "Title|short detail", kind "cards"). Owner and partner ads only.
 - "gallery": a montage, two to four photos cut full screen on the beat, the headline on the last. For energy after the hook.
 - "quote": a real line from a guest or owner, only when the brief gives one ("sub" = who said it).
 - "end": the last scene: the headline, "items"[0] the button text, "sub" a place or detail line.
 And an "eyebrow" (2 to 4 words, a place or theme: "17WEST · Miami", "Private balconies", "Free for owners") on hero, gallery
 and list scenes. Write headlines like a luxury hotel's campaign, not a real-estate flyer: concrete, sensory, confident, no
 exclamation marks, no "your South Florida stay", no "experience", "luxury", "unforgettable", "paradise" or "nestled".
-Break the headline into two short lines with \n where it reads best, and gold (**…**) the second line's key words.
+Break the headline into two short lines with \n where it reads best, and gold (**…**) the second line's key words. The second line continues the sentence, so it starts lower-case. An "eyebrow" never repeats words from its headline.
 Six to eight scenes for 30 seconds; three to four seconds each; never two "list" or two "numbers" scenes in a row.
 
 SCENE KINDS YOU CAN USE (the layout decides how it is drawn; still set a kind):
@@ -334,7 +344,7 @@ AUDIENCE: ${input.audience || 'property owners'}
 FORMAT: ${input.format}${input.current && input.current.scenes.length ? `\n\nTHE CURRENT DRAFT (improve it; keep what works):\n${JSON.stringify(input.current.scenes.map(s => ({ kind: s.kind, vo: s.vo, head: s.head, sub: s.sub, items: s.items })))}` : ''}
 
 Reply with ONLY a JSON object, no prose:
-{"name": "a short name for this ad", "scenes": [{"kind": "...", "layout": "hero|list|numbers|gallery|quote|end", "eyebrow": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
+{"name": "a short name for this ad", "scenes": [{"kind": "...", "layout": "hero|list|numbers|cards|gallery|quote|end", "eyebrow": "...", "badge": "", "vo": "...", "head": "...", "sub": "...", "items": ["..."], "photoQuery": "..."}]}`
 }
 
 

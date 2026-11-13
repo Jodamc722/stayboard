@@ -1431,7 +1431,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!m) return
     const owners = m.audience === 'owners'
     startPatch.current = { kind: 'video', moment: m.key, platform: 'reel' }
-    setSt(x => ({ ...x, mode: 'describe', prompt: m.brief, vibe: '', look: m.look, music: m.music || '', format: '9:16', audience: owners ? 'owners' : 'guests', goal: owners ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings' }))
+    setSt(x => ({ ...x, mode: 'describe', prompt: m.brief, vibe: '', look: DEFAULT_LOOK, music: m.music || '', format: '9:16', audience: owners ? 'owners' : 'guests', goal: owners ? 'owners' : m.key === 'basel' || m.key === 'ultra' || m.key === 'f1' || m.key.includes('boat') ? 'event' : 'bookings' }))
   }
   /** "Make the event ad" (Jon, 2026-11-12: "Like Event, things to do, and then hit them with book your Stay now"): a
    *  9:16 guest video in three acts, written for the event straight from the calendar card. Acts 1 and 2 come with stock
@@ -1446,7 +1446,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     if (!r?.ok || !r.scenes?.length) { setErr(r?.error || 'The event ad did not come back. Try again.'); setHome(false); return }
     const d0 = pRef.current || cur
     const plat = PLATFORMS.find(x => x.key === 'reel' && x.format === fmt)?.key || PLATFORMS.find(x => x.format === fmt)?.key || d0.platform
-    finishBuild({ ...d0, kind: 'video', name: m.name + ' · event ad', prompt: m.brief, moment: m.key, platform: plat, format: fmt, audience: 'guests', goal: 'event', look: m.look, music: m.music || d0.music, scenes: r.scenes })
+    finishBuild({ ...d0, kind: 'video', name: m.name + ' · event ad', prompt: m.brief, moment: m.key, platform: plat, format: fmt, audience: 'guests', goal: 'event', look: DEFAULT_LOOK, music: m.music || d0.music, scenes: r.scenes })
     if (r.warnings?.length) setErr((r.warnings.some((w: string) => /writer did not answer/.test(w)) ? 'The ad is ready — ' : 'Fact check: ') + r.warnings.join(' · '))
     setBrief(m.brief); setStarting(false); setPlan(null); setDraft(null); setHome(false); setTab('scene'); setSel(0); setT(1.6); setUndo(null)
     resetHist()

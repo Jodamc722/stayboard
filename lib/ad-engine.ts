@@ -17,13 +17,15 @@
 
 import qrcode from 'qrcode-generator'
 import { drawSignatureFrame } from './ad-signature'
+import { CURRENT_OWNER_MOMENTS } from './marketing-calendar'
 
 /** The Signature look's layouts (lib/ad-signature). */
-export type SigLayoutKey = 'hero' | 'list' | 'numbers' | 'gallery' | 'quote' | 'end'
+export type SigLayoutKey = 'hero' | 'list' | 'numbers' | 'cards' | 'gallery' | 'quote' | 'end'
 export const SIG_LAYOUTS: { key: SigLayoutKey; label: string; hint: string }[] = [
   { key: 'hero', label: 'Hero', hint: 'One photo, full screen, headline set over it' },
   { key: 'list', label: 'List', hint: 'Photo above, up to four numbered rows below' },
   { key: 'numbers', label: 'Numbers', hint: 'Up to three figures that count up (rows like 40+|Booking platforms)' },
+  { key: 'cards', label: 'Photo cards', hint: 'Two or three cards, each its own photo, title and line (rows like Title|detail; one photo per row)' },
   { key: 'gallery', label: 'Montage', hint: 'Up to four photos, quick full-screen cuts, headline on the last' },
   { key: 'quote', label: 'Quote', hint: 'A guest or owner line in large serif, who said it under' },
   { key: 'end', label: 'End card', hint: 'Logo, headline, button, QR code' },
@@ -240,6 +242,8 @@ export type AdProject = {
   kind?: AdKindOf
   /** The calendar moment it was made for (marketing-calendar key), if any. */
   moment?: string
+  /** Signature look: the season's colours (a key of SIG_TONES in lib/ad-signature). Without it the moment decides. */
+  tone?: string
   /** Team workflow: draft → review → approved, with notes for whoever picks it up next. */
   status?: 'draft' | 'review' | 'approved'
   notes?: string
@@ -385,6 +389,8 @@ export function captionText(vo: string): string {
 /** Headline tidy (the writer is not reliable about it): each line starts with a capital, and the gold
  *  emphasis sits on a word that carries meaning — never "the", "your", "book" and the like. */
 const FILLER = new Set(['the', 'your', 'our', 'a', 'an', 'book', 'stay', 'here', 'this', 'it', 'my', 'we', 'you', 'and', 'to', 'in', 'of', 'for', 'with', 'at', 'on', 'is', 'are', 'be', 'all', 'more', 'right', 'now', 'designed', 'made', 'just', 'every', 'one', 'that', 'its', "it's"])
+/** A message to owners who are already with us (a calendar moment says so): it thanks and informs, it does not sell. */
+export const toCurrentOwners = (p: { moment?: string }) => !!p.moment && CURRENT_OWNER_MOMENTS.indexOf(p.moment) >= 0
 export function tidyHead(h: string): string {
   let s = String(h || '')
   // move gold off a filler word onto the strongest word in the headline
@@ -399,8 +405,9 @@ export function tidyHead(h: string): string {
   }
   // names keep their capitals
   s = s.replace(/\b(lighthouse|miami|florida|botanica|elser|amrit|nick|stay hospitality|fort lauderdale|palm beach|singer island|art basel)\b/gi, w => w.split(' ').map(x => x[0].toUpperCase() + x.slice(1).toLowerCase()).join(' '))
-  // capital at the start of every line (also inside a leading **)
-  return s.split('\n').map(line => line.replace(/^(\s*(?:\*\*)?\s*)([a-z])/, (_m, a: string, b: string) => a + b.toUpperCase())).join('\n')
+  // a capital opens the headline — and a new line only when it starts a new sentence ("Priced\nevery day", not "Priced\nEvery day")
+  const lines = s.split('\n')
+  return lines.map((line, k) => (k === 0 || /[.!?:]\s*(\*\*)?\s*$/.test(lines[k - 1]) ? line.replace(/^(\s*(?:\*\*)?\s*)([a-z])/, (_m, a: string, b: string) => a + b.toUpperCase()) : line)).join('\n')
 }
 /** THE AD AUDIT — the checks an ad expert runs before anything ships (Jon, 2026-11-03: "as an ad expert,
  *  audit this"). Deterministic; the AI review on top of it lives in /api/ads/audit. Each issue can carry a
@@ -421,7 +428,7 @@ export function auditAd(p: AdProject, tl: Timeline, facts: string): AuditIssue[]
   if (!first.photos.length && ['stats', 'contact'].indexOf(first.kind) < 0) out.push({ sev: 'high', scene: 0, code: 'hook-photo', msg: 'The first scene has no photo — the strongest image belongs here.' })
   const last = sc[n - 1]
   if (guests && last.kind !== 'cta') out.push({ sev: 'high', scene: n - 1, code: 'cta', msg: 'A guest ad must end on the Book now card.', fix: { label: 'Make it the Book now card', scene: { kind: 'cta', items: ['Book at stay-hospitality.com'] } } })
-  if (!guests && last.kind !== 'contact') out.push({ sev: 'high', scene: n - 1, code: 'contact', msg: 'An owner or partner ad must end on Nick’s contact card.', fix: { label: 'Make it the contact card', scene: { kind: 'contact' } } })
+  if (!guests && !toCurrentOwners(p) && last.kind !== 'contact') out.push({ sev: 'high', scene: n - 1, code: 'contact', msg: 'An owner or partner ad must end on Nick’s contact card.', fix: { label: 'Make it the contact card', scene: { kind: 'contact' } } })
   if (tl.durs[n - 1] < 3.2) out.push({ sev: 'med', scene: n - 1, code: 'end-short', msg: `The end card holds ${tl.durs[n - 1].toFixed(1)} s — too short to read the call to action.`, fix: tl.voiced ? undefined : { label: 'Hold it 4.5 s', scene: { dur: 4.5 } } })
   if (!p.captions) out.push({ sev: 'med', code: 'captions', msg: 'Captions are off — most feed viewers watch muted.', fix: { label: 'Turn captions on', project: { captions: true } } })
   if (p.music === 'none') out.push({ sev: 'low', code: 'music', msg: 'No music. Even a quiet bed lifts watch time.', fix: { label: 'Use Werq', project: { music: 'werq' } } })
@@ -474,7 +481,7 @@ export function polishAd(p0: AdProject): { project: AdProject; changes: string[]
       if (last.kind === 'contact') { last.kind = 'cta'; last.items = ['Book at stay-hospitality.com']; ch.push('Guest ad: the end card is now Book at stay-hospitality.com') }
       else { sc.push({ id: 'end' + sc.length, kind: 'cta', vo: '', head: 'Your South Florida **stay.**', sub: '', items: ['Book at stay-hospitality.com'], photos: (sc[0].photos || []).slice(0, 1), tr: 'fade' }); ch.push('Added the Book now end card') }
     }
-    if (!guests && last.kind !== 'contact') { sc.push({ id: 'end' + sc.length, kind: 'contact', vo: '', head: 'Book a **call.**', sub: '', items: [], photos: [], tr: 'fade' }); ch.push('Added Nick’s contact card as the end card') }
+    if (!guests && !toCurrentOwners(p) && last.kind !== 'contact') { sc.push({ id: 'end' + sc.length, kind: 'contact', vo: '', head: 'Book a **call.**', sub: '', items: [], photos: [], tr: 'fade' }); ch.push('Added Nick’s contact card as the end card') }
     if (!p.captions) { p.captions = true; ch.push('Captions on — most people watch muted') }
     if (p.music === 'none') { p.music = 'werq'; ch.push('Added a music bed (Werq)') }
   }
@@ -3289,6 +3296,8 @@ Distribution: 40+ channels (Airbnb, Vrbo, Booking.com, Expedia, Marriott, Bluegr
 Listings: built to convert (best photos first, copy that sells), refreshed every three months; underperformers are caught and fixed.
 Technology: Guesty (reservations and channels), PriceLabs (pricing data), Breezeway (every task, photo-checked) and Lighthouse — our own AI platform built in-house. Lighthouse optimizes listings, builds guest guidebooks, spots recurring issues before guests do, turns problems into tasks automatically, monitors reviews and messages, checks guest ID and deposits, translates Spanish and English for the team, and schedules turnovers. Lighthouse does NOT produce the owner report.
 Operations: one complete in-house team — housekeeping, maintenance, inspections and guest care (the Customer Care Team).
+Season: demand is strongest December through March, and March is the peak month (say "peak season", never promise a result).
+This year's work for owners (use for year-in-review and what's-next stories): Lighthouse built in-house and now running across the portfolio; every listing rebuilt and refreshed on a three-month cycle (photos first, copy, amenities audited on every channel); guest ID and deposit checks before arrival; every clean photo-checked; big dates priced months ahead.
 Results: owners who switch to Stay earn more, on a lower management fee, with full transparency every month. Never state a revenue percentage or a fee percentage.
 Contact: Nick Carline, Business Development, 651-200-8283, nicholas@stay-hospitality.com.`
 
