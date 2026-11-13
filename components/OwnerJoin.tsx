@@ -84,6 +84,7 @@ export function OwnerJoin({ code }: { code: string }) {
 
   const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); if (d.record.home) setHomes([d.record.home, ...(d.record.more || [])]); setNotes(d.record.ownerNotes || '') }
   // SIGN-IN (lib/owner-onboard-auth): an emailed magic link signs in once; then a password.
+  const [viewer, setViewer] = useState<'owner' | 'team'>('owner')
   const [gate, setGate] = useState<Any>(null)        // { hasPassword, emailHint, firstName } when locked
   const [needPw, setNeedPw] = useState(false)       // signed in by link, no password yet
   const [pw, setPw] = useState(''); const [pw2, setPw2] = useState(''); const [sent, setSent] = useState(false)
@@ -100,6 +101,9 @@ export function OwnerJoin({ code }: { code: string }) {
       if (!d?.ok) { setErr(d?.error || 'This link is not active.'); return }
       setGate(null)
       apply(d)
+      setViewer(d.viewer === 'team' ? 'team' : 'owner')
+      // THE FIRST VISIT CREATES THE ACCOUNT: an owner with no password yet makes one before anything else
+      if (d.viewer !== 'team' && !d.record.hasPassword) setNeedPw(true)
       const r = d.record
       if (r.order) { setSkip(r.order.review?.skip || []); setONote(r.order.review?.note || '') }
       setTab(r.order && r.order.status === 'sent' ? 'order' : r.submittedAt ? 'timeline' : r.home ? (r.custom.askSupplies || r.custom.askLinen ? 'supplies' : 'payout') : 'welcome')
@@ -171,9 +175,9 @@ export function OwnerJoin({ code }: { code: string }) {
     </div>
   </>)
   if (rec && (needPw)) return shell(<>
-    <p className="oj-kick">One quick step</p>
+    <p className="oj-kick">Welcome to your owner portal</p>
     <h1>Create <em>your password.</em></h1>
-    <p className="oj-p">So only you can come back to this page. You will use it with this same link.</p>
+    <p className="oj-p">This sets up your owner account. From now on you sign in with your email and this password, from this link or at <b>{typeof window !== 'undefined' ? window.location.host : ''}/portal</b>.</p>
     <form className="oj-card oj-authcard" onSubmit={async e => { e.preventDefault(); if (pw.length < 8) { setMsg('Use at least 8 characters.'); return } if (pw !== pw2) { setMsg('The two passwords do not match.'); return } setBusy(true); setMsg(''); const a = await auth({ setPassword: pw }); setBusy(false); if (a?.ok) { setNeedPw(false); setPw(''); setPw2(''); setRec((r: Any) => (r ? { ...r, hasPassword: true } : r)) } else setMsg(a?.error || 'That did not save.') }}>
       <label className="oj-f"><span>Password (8 or more characters)</span><input type="password" autoComplete="new-password" required value={pw} onChange={e => setPw(e.target.value)} autoFocus /></label>
       <label className="oj-f"><span>Type it again</span><input type="password" autoComplete="new-password" required value={pw2} onChange={e => setPw2(e.target.value)} /></label>
@@ -205,7 +209,7 @@ export function OwnerJoin({ code }: { code: string }) {
     <main className="oj">
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" />
       <style>{CSS}</style>
-      <header className="oj-top"><div className="oj-wrap oj-top-in"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" /><span>{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : ''].filter(Boolean).join(' · ') || 'Owner onboarding'}</span></div>
+      <header className="oj-top"><div className="oj-wrap oj-top-in"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" /><span>{viewer === 'team' ? 'Team preview · ' : ''}{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : ''].filter(Boolean).join(' · ') || 'Owner portal'}{viewer === 'owner' && rec.hasPassword ? <button type="button" className="oj-out" onClick={async () => { await auth({ signOut: 1 }); window.location.href = '/portal' }}>Sign out</button> : null}</span></div>
         <div className="oj-wrap"><nav className="oj-tabs">{tabs.map((t, i) => <button key={t} type="button" className={(t === tab ? 'on ' : '') + (tabs.indexOf(tab) > i ? 'past' : '')} onClick={() => go(t)}><em>{i + 1}</em>{({ welcome: 'Welcome', home: 'Your home', supplies: 'Supplies', order: 'Order list', payout: 'Payouts and tax', timeline: 'Timeline' } as Record<Tab, string>)[t]}</button>)}</nav></div>
       </header>
 
@@ -441,6 +445,7 @@ const CSS = `
 .oj-wrap{max-width:1040px;margin:0 auto;padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}
 .oj-top{background:#fff;border-bottom:1px solid var(--rule);position:sticky;top:0;z-index:10}
 .oj-top-in{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:12px;padding-bottom:8px}
+.oj-out{margin-left:10px;background:none;border:0;padding:0;font:600 12.5px Inter,sans-serif;color:var(--ink);text-decoration:underline;cursor:pointer}
 .oj-top-in span{font:600 12.5px Inter,sans-serif;color:var(--mut);text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .oj-logo{height:26px}
 .oj-tabs{display:flex;gap:4px;overflow-x:auto;padding-bottom:10px;scrollbar-width:none}

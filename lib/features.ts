@@ -249,7 +249,7 @@ export function extraPermChoices(key: string): string[] | null {
 // next.config.mjs) fails the build if a page route is not covered by FEATURES or one of these
 // lists — so every new tab is a forced, conscious decision about user settings before it ships.
 // Public/share routes (no login). Mirrors middleware.ts isOpenPath — middleware imports from here.
-export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt', '/book']
+export const OPEN_EXACT = ['/no-access', '/day', '/manifest.json', '/robots.txt', '/book', '/portal']
 // NOTE: no apostrophes anywhere in this array. scripts/check-tabs.mjs parses it as text by
 // matching single-quoted strings, so one stray apostrophe in a comment swallows every entry after
 // it and the build fails claiming a page is unregistered.

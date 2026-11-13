@@ -32,7 +32,12 @@ export function sessionCookie(r: OORecord) {
 export function setPassword(r: OORecord, pw: string) {
   const a = blank(r), salt = crypto.randomBytes(16).toString('hex')
   a.pass = { salt, hash: crypto.scryptSync(pw, salt, 64).toString('hex') }
+  if (!a.activatedAt) a.activatedAt = new Date().toISOString()
+  a.lastSeenAt = new Date().toISOString()
 }
+/** The owner just signed in. The caller saves the record. */
+export function seen(r: OORecord) { blank(r).lastSeenAt = new Date().toISOString() }
+export function clearedCookie(r: OORecord) { return { ...sessionCookie(r), value: '', maxAge: 0 } }
 export function checkPassword(r: OORecord, pw: string): boolean {
   const p = r.auth?.pass; if (!p) return false
   const h = crypto.scryptSync(pw, p.salt, 64)
@@ -73,11 +78,11 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const gm = r.custom.gm, home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#111;line-height:1.55;max-width:520px">
 <p>Hi ${esc(first)},</p>
-<p>${kind === 'order' ? `Your order list${home ? ' for ' + esc(home) : ''} is ready to review: the items we would buy to set the home up, with quantities and prices. Please look it over, tell us about anything you already have, and approve it.` : kind === 'invite' ? `Here is your private onboarding link for Stay Hospitality${home ? ' (' + esc(home) + ')' : ''}. Open it to get started; you will be asked to create a password so only you can come back to it.` : 'Here is a new sign-in link for your Stay Hospitality onboarding.'}</p>
-<p><a href="${esc(link)}" style="display:inline-block;background:#14161B;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:bold">${kind === 'order' ? 'Review my order list' : kind === 'invite' ? 'Open my onboarding' : 'Sign in'}</a></p>
+<p>${kind === 'order' ? `Your order list${home ? ' for ' + esc(home) : ''} is ready to review: the items we would buy to set the home up, with quantities and prices. Please look it over, tell us about anything you already have, and approve it.` : kind === 'invite' ? `Welcome to Stay Hospitality. Your owner portal${home ? ' for ' + esc(home) + '' : ''} is ready: it is where you tell us about the home, send your paperwork securely, review your order list and follow every step until you are live. Open it below and create your password. After that you can sign in any time at ${esc(origin.replace(/\/$/, ''))}/portal with this email address and your password.` : 'Here is a new sign-in link for your Stay Hospitality onboarding.'}</p>
+<p><a href="${esc(link)}" style="display:inline-block;background:#14161B;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:bold">${kind === 'order' ? 'Review my order list' : kind === 'invite' ? 'Open my owner portal' : 'Sign in'}</a></p>
 <p style="color:#666;font-size:13px">This link signs you in once and works for ${kind === 'signin' ? '30 minutes' : '7 days'}. If the button does not work, paste this into your browser:<br>${esc(link)}</p>
 <p>${esc(gm.name)}${gm.role ? ', ' + esc(gm.role) : ''}<br>Stay Hospitality${gm.phone ? '<br>' + esc(gm.phone) : ''}</p></div>`
-  const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'order' ? 'Your order list is ready to review · Stay Hospitality' : kind === 'invite' ? 'Your Stay Hospitality onboarding link' : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'order' ? 'Your order list is ready to review · Stay Hospitality' : kind === 'invite' ? 'Your Stay Hospitality owner portal' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') blank(r).invitedAt = new Date().toISOString()
   return { ok: res.ok, error: res.error }
 }

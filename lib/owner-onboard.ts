@@ -122,13 +122,15 @@ export type OORecord = {
     /** A note that goes to the vendor with the quote request. */
     note?: string } | null
   /** The owner's sign-in (lib/owner-onboard-auth): a password hash and one-time email links. Never leaves the server. */
-  auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string } | null
+  auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string
+    /** The owner account: when they created their password, and when they last signed in. */
+    activatedAt?: string; lastSeenAt?: string } | null
   archived?: boolean
 }
 /** What the list of links shows. */
 export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
-  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; callAt?: string; linen?: 'approved' | 'sent' | '' }
+  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; callAt?: string; linen?: 'approved' | 'sent' | '' }
 
 export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '', wifiName: '', wifiPass: '' }
 
@@ -170,7 +172,7 @@ export function ownerView(r: OORecord) {
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
-export function teamView(r: OORecord) { const { auth, ...rest } = r; return { ...rest, payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '' } } }
+export function teamView(r: OORecord) { const { auth, ...rest } = r; return { ...rest, payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' } } }
 
 /** A US bank routing number: nine digits with a valid checksum. */
 export function routingOk(v: string): boolean {
