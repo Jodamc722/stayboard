@@ -9,10 +9,9 @@
 import 'server-only'
 import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
-import { sendResendEmail } from './resend-send'
 import type { OORecord } from './owner-onboard'
 import { stayEmail, escHtml } from './email-layout'
-import { readOOSettings } from './owner-onboard-mail'
+import { readOOSettings, sendOnboardingMail } from './owner-onboard-mail'
 
 const secret = () => process.env.VAULT_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.RESEND_API_KEY || 'stay-owner-onboarding'
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
@@ -112,7 +111,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     note: copy.note, after: copy.after,
     sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email },
   })
-  const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendOnboardingMail({ to: [to], subject: kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') blank(r).invitedAt = new Date().toISOString()
   // THE TEAM'S COPY (Jon, 2026-11-13: "cc Bernadette, Bethany, Roberto and Karla on all onboarding emails"). They are
   // not put on the owner's own email: its button signs whoever clicks it in AS THE OWNER, tax and bank forms included.
@@ -121,7 +120,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     try {
       const st = await readOOSettings()
       const team = st.teamCc.filter(e => e !== to.toLowerCase())
-      if (team.length) await sendResendEmail({ to: team, replyTo: gm.email || undefined,
+      if (team.length) await sendOnboardingMail({ to: team,
         subject: `[Team copy] ${kind === 'invite' ? 'Portal invite sent to' : 'Order list sent to'} ${r.custom.ownerName || 'the owner'}${home ? ' · ' + home : ''}`,
         html: stayEmail({ origin: site, preheader: 'A copy for the team of what the owner was just sent.', eyebrow: 'Team copy · owner onboarding',
           heading: kind === 'invite' ? `${r.custom.ownerName || 'The owner'} was invited to the owner portal` : `${r.custom.ownerName || 'The owner'} was sent the order list`,

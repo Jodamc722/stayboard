@@ -27,6 +27,21 @@ export async function readOOSettings(): Promise<OOSettings> {
 export async function saveOOSettings(v: any, by: string | null) { const s = { to: emails(v?.to), cc: emails(v?.cc), replyTo: emails([v?.replyTo])[0] || '', vendorTo: emails(v?.vendorTo), vendorCc: emails(v?.vendorCc), teamCc: emails(v?.teamCc) }; await setSetting(OO_SETTINGS, s, by); return readOOSettings() }
 
 const esc = (s: string) => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c])
+/** ONE WAY OUT FOR EVERY ONBOARDING EMAIL: from the connected Google mailbox first (the handoff always went this way),
+ *  then the app's own sender. The owner's invite used only the app's sender, which is not set up on production
+ *  ("RESEND_API_KEY not set", found sending Jon a test on 2026-11-13), so no invite could ever go out. */
+export async function sendOnboardingMail(m: { to: string[]; cc?: string[]; subject: string; html: string }): Promise<{ ok: boolean; error?: string }> {
+  const s = await readOOSettings()
+  let gErr = ''
+  if (s.replyTo) {
+    const g: { ok: boolean; error?: string } = await sendGmail({ fromEmail: s.replyTo, to: m.to, cc: m.cc, subject: m.subject, html: m.html, source: 'owner-onboarding' }).catch((e: any) => ({ ok: false, error: String(e?.message || e) }))
+    if (g.ok) return { ok: true }
+    gErr = g.error || ''
+  }
+  const res = await sendResendEmail({ to: m.to, cc: m.cc, replyTo: s.replyTo, subject: m.subject, html: m.html })
+  return res.ok ? { ok: true } : { ok: false, error: gErr ? `Could not send from ${s.replyTo} (${gErr.slice(0, 140)}), and the backup sender is not set up.` : res.error }
+}
+
 /** `cc` plus the team copied on everything, without repeats and without anyone already in `to`. */
 export const withTeam = (cc: string[], team: string[], to: string[]) => Array.from(new Set([...cc, ...team])).filter(e => !to.includes(e)).slice(0, 14)
 export async function sendHandoff(r: OORecord, origin: string): Promise<{ ok: boolean; error?: string; to: string[]; cc: string[] }> {
