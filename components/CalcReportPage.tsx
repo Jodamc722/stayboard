@@ -94,7 +94,7 @@ export function CalcReportPage({ code, initial, canEdit, createdAt }: { code: st
             <div className="cr-bars">{f.months.map((m, i) => (
               <div key={i} className="cr-bar1"><span className="cr-v">{'$' + Math.round(m.hi / 1000) + 'k'}</span><i style={{ height: (m.hi / mx * 100) + '%' }}><b style={{ height: (m.lo / Math.max(1, m.hi) * 100) + '%' }} /></i><em>{M[i]}</em></div>
             ))}</div>
-            <p className="cr-fine">Darker is the low end of the range, lighter the high end. South Florida earns most from December to April.</p>
+            <p className="cr-fine">Darker is the low end of the range, lighter the high end. South Florida is strong from December to April, and March is usually the peak.</p>
           </section>
         ) : null}
 
