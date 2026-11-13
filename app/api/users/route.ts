@@ -6,7 +6,7 @@
 // tolerantly so the page still works before the migration runs.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireAdmin as requireAdminGate, isSuperadmin , hideUsers } from '@/lib/access'
+import { requireAdmin as requireAdminGate, isSuperadmin , hideUsers , isRoot } from '@/lib/access'
 import { normWorkspace, FEATURES, LEVELS, isExtraPerm, extraPermChoices } from '@/lib/features'
 import { logAdmin } from '@/lib/activity'
 
@@ -95,6 +95,7 @@ export async function POST(req: NextRequest) {
   if (error) return error
   const body = await req.json().catch(() => ({} as any))
   const email = clean(body?.email)
+  if (isRoot(email)) return NextResponse.json({ error: 'This account is protected and cannot be changed.' }, { status: 403 })
   const role = body?.role === 'admin' ? 'admin' : 'member'
   const password = typeof body?.password === 'string' ? body.password : ''
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return NextResponse.json({ error: 'A valid email is required.' }, { status: 400 })
@@ -178,6 +179,7 @@ export async function PATCH(req: NextRequest) {
   const body = await req.json().catch(() => ({} as any))
   const email = clean(body?.email)
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
+  if (isRoot(email)) return NextResponse.json({ error: 'This account is protected and cannot be changed.' }, { status: 403 })
   const password = typeof body?.password === 'string' ? body.password : ''
   if (password && password.length < 8) return NextResponse.json({ error: 'Password must be at least 8 characters.' }, { status: 400 })
   const isOwnerCall = isSuperadmin(access.email)
@@ -314,6 +316,7 @@ export async function DELETE(req: NextRequest) {
   const email = clean(body?.email)
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 })
   if (email === access.email) return NextResponse.json({ error: 'You cannot delete your own account.' }, { status: 400 })
+  if (isRoot(email)) return NextResponse.json({ error: 'This account is protected and cannot be deleted.' }, { status: 403 })
   if (email === OWNER) return NextResponse.json({ error: 'The owner account cannot be deleted.' }, { status: 400 })
   if (!isSuperadmin(access.email) && await isPrivilegedTarget(email)) return NextResponse.json({ error: 'Only the owner can remove an admin.' }, { status: 403 })
   const sb = supabaseAdmin()

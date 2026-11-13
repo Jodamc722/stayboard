@@ -37,6 +37,15 @@ const SUPERADMIN = SUPERADMINS[0]   // the owner's primary login (unchanged refe
 // HIDDEN: never shown anywhere a person could see them — not in the user list, the directory, or the activity log.
 // A hidden superadmin leaves no trace in the team's view of who exists or what they did (Jon, 2026-11-13).
 const HIDDEN_EMAILS = ['jodamc722@gmail.com']
+// SUPER SUPER ADMIN / ROOT (Jon, 2026-11-13: "only jodamc722@gmail.com has super super admin and can never be removed
+// ever"). The ultimate owner: full access that no account — not even the other superadmin — can ever disable, delete,
+// demote or overwrite. It is hardcoded here, so it exists whether or not any database row does, and the user-management
+// API refuses every write that targets it.
+const ROOT = 'jodamc722@gmail.com'
+/** The one account that can never be removed, demoted or disabled by anyone. */
+export function isRoot(email: string | null | undefined): boolean {
+  return String(email || '').toLowerCase().trim() === ROOT
+}
 /** Should this email be scrubbed from every list and log a person could read? */
 export function isHidden(email: string | null | undefined): boolean {
   return HIDDEN_EMAILS.includes(String(email || '').toLowerCase().trim())
