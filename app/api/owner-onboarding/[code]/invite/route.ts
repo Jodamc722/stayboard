@@ -10,7 +10,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   const g = await requireLevel('owner-onboarding', 'edit'); if (!g.ok) return g.res
   const r = await readRecord(params.code)
   if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
-  const s = await emailMagicLink(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, 'invite')
+  const b = await req.json().catch(() => ({} as any))
+  const s = await emailMagicLink(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, 'invite', typeof b?.owner === 'string' && b.owner ? b.owner : 'p').catch((e: any) => ({ ok: false, error: String(e?.message || e) }))
   await saveRecord(r, g.access.email || null)
   return NextResponse.json({ ok: s.ok, error: s.error, record: teamView(r) }, { status: s.ok ? 200 : 502 })
 }

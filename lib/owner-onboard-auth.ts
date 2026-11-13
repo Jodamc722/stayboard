@@ -9,60 +9,84 @@
 import 'server-only'
 import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
-import type { OORecord } from './owner-onboard'
+import type { OORecord, OOAuth } from './owner-onboard'
 import { stayEmail, escHtml } from './email-layout'
 import { readOOSettings, sendOnboardingMail } from './owner-onboard-mail'
 
 const secret = () => process.env.VAULT_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.RESEND_API_KEY || 'stay-owner-onboarding'
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
 const cookieName = (code: string) => 'oj_' + code
-const sessionValue = (r: OORecord) => crypto.createHmac('sha256', secret()).update(r.code + ':' + (r.auth?.ver || 1)).digest('hex')
-const blank = (r: OORecord) => (r.auth = r.auth || { tokens: [], sent: [], ver: 1 })
+// SEVERAL OWNERS, EACH WITH THEIR OWN ACCOUNT (Jon, 2026-11-13). An account is one owner on the link: the first owner
+// ('p', kept in custom + auth) or one added later (owners[]). Each has its own invite, password and session; the
+// session cookie names the account it belongs to, so removing an owner ends their access at once.
+type Acct = { id: string; name: string; email: string; auth: OOAuth | null | undefined }
+export function accounts(r: OORecord): Acct[] {
+  return [{ id: 'p', name: r.custom.ownerName, email: r.custom.ownerEmail, auth: r.auth }, ...(r.owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, auth: o.auth }))]
+}
+export const account = (r: OORecord, id: string) => accounts(r).find(a => a.id === id) || null
+/** The account's sign-in record, created if it has none yet. */
+function authOf(r: OORecord, id: string): OOAuth {
+  const mk = (): OOAuth => ({ tokens: [], sent: [], ver: 1 })
+  if (id === 'p') return (r.auth = r.auth || mk())
+  const o = (r.owners || []).find(x => x.id === id)
+  if (!o) throw new Error('No such owner on this link.')
+  return (o.auth = o.auth || mk())
+}
+const sig = (r: OORecord, id: string) => crypto.createHmac('sha256', secret()).update(r.code + ':' + id + ':' + (r.auth?.ver || 1)).digest('hex')
+const legacySig = (r: OORecord) => crypto.createHmac('sha256', secret()).update(r.code + ':' + (r.auth?.ver || 1)).digest('hex')
+const same = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
-/** Does this link need a sign-in at all? Only once it has an owner email or a password. */
-export const isProtected = (r: OORecord) => !!(r.auth?.pass || r.custom.ownerEmail)
-export function signedIn(req: NextRequest, r: OORecord): boolean {
-  if (!isProtected(r)) return true
+/** Does this link need a sign-in at all? Only once an owner on it has an email or a password. */
+export const isProtected = (r: OORecord) => accounts(r).some(a => !!(a.auth?.pass || a.email))
+/** Which owner is signed in on this browser ('p' = the first), or null. An unprotected link is the first owner's. */
+export function whoSignedIn(req: NextRequest, r: OORecord): string | null {
+  if (!isProtected(r)) return 'p'
   const c = req.cookies.get(cookieName(r.code))?.value || ''
-  const want = sessionValue(r)
-  return c.length === want.length && crypto.timingSafeEqual(Buffer.from(c), Buffer.from(want))
+  if (!c) return null
+  const dot = c.indexOf('.')
+  if (dot < 0) return same(c, legacySig(r)) ? 'p' : null          // sessions from before owners had their own accounts
+  const id = c.slice(0, dot)
+  return account(r, id) && same(c.slice(dot + 1), sig(r, id)) ? id : null
 }
-export function sessionCookie(r: OORecord) {
-  return { name: cookieName(r.code), value: sessionValue(r), httpOnly: true, secure: true, sameSite: 'lax' as const, path: '/', maxAge: 60 * 60 * 24 * 60 }
+export const signedIn = (req: NextRequest, r: OORecord): boolean => whoSignedIn(req, r) !== null
+export function sessionCookie(r: OORecord, id = 'p') {
+  return { name: cookieName(r.code), value: id + '.' + sig(r, id), httpOnly: true, secure: true, sameSite: 'lax' as const, path: '/', maxAge: 60 * 60 * 24 * 60 }
 }
-export function setPassword(r: OORecord, pw: string) {
-  const a = blank(r), salt = crypto.randomBytes(16).toString('hex')
+export function clearedCookie(r: OORecord) { return { ...sessionCookie(r), value: '', maxAge: 0 } }
+export function setPassword(r: OORecord, pw: string, id = 'p') {
+  const a = authOf(r, id), salt = crypto.randomBytes(16).toString('hex')
   a.pass = { salt, hash: crypto.scryptSync(pw, salt, 64).toString('hex') }
   if (!a.activatedAt) a.activatedAt = new Date().toISOString()
   a.lastSeenAt = new Date().toISOString()
 }
 /** The owner just signed in. The caller saves the record. */
-export function seen(r: OORecord) { blank(r).lastSeenAt = new Date().toISOString() }
-export function clearedCookie(r: OORecord) { return { ...sessionCookie(r), value: '', maxAge: 0 } }
-export function checkPassword(r: OORecord, pw: string): boolean {
-  const p = r.auth?.pass; if (!p) return false
-  const h = crypto.scryptSync(pw, p.salt, 64)
-  const want = Buffer.from(p.hash, 'hex')
-  return h.length === want.length && crypto.timingSafeEqual(h, want)
+export function seen(r: OORecord, id = 'p') { authOf(r, id).lastSeenAt = new Date().toISOString() }
+const passOk = (a: OOAuth | null | undefined, pw: string) => { const p = a?.pass; if (!p) return false; const h = crypto.scryptSync(pw, p.salt, 64), want = Buffer.from(p.hash, 'hex'); return h.length === want.length && crypto.timingSafeEqual(h, want) }
+/** Whose password is this? With an email, only that owner's is tried; without one (a single-owner link), anyone's. */
+export function matchPassword(r: OORecord, pw: string, email?: string): string | null {
+  const e = String(email || '').trim().toLowerCase()
+  for (const a of accounts(r)) { if (e && a.email.trim().toLowerCase() !== e) continue; if (passOk(a.auth, pw)) return a.id }
+  return null
 }
-/** A new one-time link token; the caller saves the record. */
-export function newToken(r: OORecord, minutes: number): string {
-  const a = blank(r), t = crypto.randomBytes(24).toString('hex'), now = Date.now()
+/** A new one-time link token for one owner; the caller saves the record. */
+export function newToken(r: OORecord, minutes: number, id = 'p'): string {
+  const a = authOf(r, id), t = crypto.randomBytes(24).toString('hex'), now = Date.now()
   a.tokens = [...a.tokens.filter(x => x.exp > now).slice(-4), { h: sha(t), exp: now + minutes * 60_000 }]
   return t
 }
-/** Spend a token: true once, then never again. The caller saves the record. */
-export function useToken(r: OORecord, t: string): boolean {
-  const a = r.auth; if (!a || !t) return false
+/** Spend a token: returns whose it was, once, then never again. The caller saves the record. */
+export function useToken(r: OORecord, t: string): string | null {
+  if (!t) return null
   const h = sha(t), now = Date.now()
-  const i = a.tokens.findIndex(x => x.h === h && x.exp > now)
-  if (i < 0) return false
-  a.tokens.splice(i, 1)
-  return true
+  for (const a of accounts(r)) {
+    const i = a.auth ? a.auth.tokens.findIndex(x => x.h === h && x.exp > now) : -1
+    if (i >= 0) { a.auth!.tokens.splice(i, 1); return a.id }
+  }
+  return null
 }
 /** No more than three emailed links an hour per owner. */
-export function canSend(r: OORecord): boolean {
-  const a = blank(r), now = Date.now()
+export function canSend(r: OORecord, id = 'p'): boolean {
+  const a = authOf(r, id), now = Date.now()
   a.sent = a.sent.filter(t => now - t < 3_600_000)
   if (a.sent.length >= 3) return false
   a.sent.push(now); return true
@@ -70,12 +94,13 @@ export function canSend(r: OORecord): boolean {
 export const emailHint = (e: string) => { const [u, d] = String(e || '').split('@'); return u && d ? u.slice(0, 2) + '•••@' + d : '' }
 
 const esc = (s: string) => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c])
-export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin' | 'order'): Promise<{ ok: boolean; error?: string }> {
-  const to = r.custom.ownerEmail
-  if (!to) return { ok: false, error: 'There is no owner email on this link.' }
-  const token = newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7)
+export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin' | 'order', id = 'p'): Promise<{ ok: boolean; error?: string }> {
+  const who = account(r, id)
+  const to = who?.email || ''
+  if (!who || !to) return { ok: false, error: 'There is no email for this owner.' }
+  const token = newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7, id)
   const link = origin.replace(/\/$/, '') + '/join/' + r.code + '?k=' + token
-  const first = (r.custom.ownerName || '').split(' ')[0] || 'there'
+  const first = (who.name || '').split(' ')[0] || 'there'
   const gm = r.custom.gm, home = [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const site = origin.replace(/\/$/, '')
   const portal = site.replace(/^https?:\/\//, '') + '/portal'
@@ -112,7 +137,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email },
   })
   const res = await sendOnboardingMail({ to: [to], subject: kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
-  if (res.ok && kind === 'invite') blank(r).invitedAt = new Date().toISOString()
+  if (res.ok && kind === 'invite') authOf(r, id).invitedAt = new Date().toISOString()
   // THE TEAM'S COPY (Jon, 2026-11-13: "cc Bernadette, Bethany, Roberto and Karla on all onboarding emails"). They are
   // not put on the owner's own email: its button signs whoever clicks it in AS THE OWNER, tax and bank forms included.
   // So the team gets the same message without that button, and a link to the onboarding in Lighthouse instead.
@@ -121,10 +146,10 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
       const st = await readOOSettings()
       const team = st.teamCc.filter(e => e !== to.toLowerCase())
       if (team.length) await sendOnboardingMail({ to: team,
-        subject: `[Team copy] ${kind === 'invite' ? 'Portal invite sent to' : 'Order list sent to'} ${r.custom.ownerName || 'the owner'}${home ? ' · ' + home : ''}`,
+        subject: `[Team copy] ${kind === 'invite' ? 'Portal invite sent to' : 'Order list sent to'} ${who.name || 'the owner'}${home ? ' · ' + home : ''}`,
         html: stayEmail({ origin: site, preheader: 'A copy for the team of what the owner was just sent.', eyebrow: 'Team copy · owner onboarding',
-          heading: kind === 'invite' ? `${r.custom.ownerName || 'The owner'} was invited to the owner portal` : `${r.custom.ownerName || 'The owner'} was sent the order list`,
-          paragraphs: [`This is a copy of what <b>${escHtml(r.custom.ownerName || 'the owner')}</b> (${escHtml(to)}) was just sent${home ? ' for <b>' + escHtml(home) + '</b>' : ''}. The owner’s private sign-in button is left out of this copy, because it would sign the reader in as the owner.`, '<b>What the owner received:</b>', ...copy.paragraphs.slice(1)],
+          heading: kind === 'invite' ? `${who.name || 'The owner'} was invited to the owner portal` : `${who.name || 'The owner'} was sent the order list`,
+          paragraphs: [`This is a copy of what <b>${escHtml(who.name || 'the owner')}</b> (${escHtml(to)}) was just sent${home ? ' for <b>' + escHtml(home) + '</b>' : ''}. The owner’s private sign-in button is left out of this copy, because it would sign the reader in as the owner.`, '<b>What the owner received:</b>', ...copy.paragraphs.slice(1)],
           list: copy.list, lead: copy.lead, cta: { label: 'Open the onboarding in Lighthouse', url: site + '/owner-onboarding/' + r.code },
           sign: { name: gm.name, role: gm.role, email: gm.email }, footer: 'Sent by Lighthouse for Stay Hospitality · Owner onboarding' }) })
     } catch { /* the owner's email went; the team copy is a courtesy */ }

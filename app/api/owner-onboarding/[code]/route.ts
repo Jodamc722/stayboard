@@ -5,7 +5,7 @@ import { syncFaq } from '@/lib/owner-onboard-faq'
 import { NextRequest, NextResponse } from 'next/server'
 import { pinHomes } from '@/lib/geo'
 import { requireLevel, requireAdmin, isSuperadmin } from '@/lib/access'
-import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore, cleanOwners } from '@/lib/owner-onboard-server'
 import { cleanHome, OO_STEPS, teamView, type OOStep } from '@/lib/owner-onboard'
 
 export const dynamic = 'force-dynamic'
@@ -24,6 +24,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
   const b = await req.json().catch(() => ({} as any))
   if (b.custom) r.custom = cleanCustom(b.custom, r.custom)
+  if (Array.isArray(b.owners)) r.owners = cleanOwners(b.owners, r.owners)
   const hadListing = r.attach.listingId
   if (b.attach) r.attach = { property: String(b.attach.property ?? r.attach.property).slice(0, 120), listingId: String(b.attach.listingId ?? r.attach.listingId).slice(0, 60), unitLabel: String(b.attach.unitLabel ?? r.attach.unitLabel).slice(0, 60) }
   if (b.home) r.home = cleanHome(b.home)

@@ -35,18 +35,50 @@ async function uploadAgreement(code: string, f: File) {
   if (!m?.ok) throw new Error(m?.error || 'Could not save the agreement.')
 }
 
-// ── email the owner their private link (a magic link; they then create a password) ──
+// ── THE OWNERS AND THEIR PORTAL ACCOUNTS (Jon, 2026-11-13: "option for multiple owners… each will need portal passcode
+//    and access"): every owner on the link has their own invite, password and sign-in ──
 function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
-  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
-  const acc = rec.ownerAccess || {}
+  const [busy, setBusy] = useState(''); const [msg, setMsg] = useState('')
+  const [add, setAdd] = useState<Any>(null)
+  const co: Any[] = rec.owners || []
+  const rows: Any[] = [{ id: 'p', name: rec.custom.ownerName, email: rec.custom.ownerEmail, phone: rec.custom.ownerPhone, access: rec.ownerAccess || {} }, ...co]
+  const host = typeof window !== 'undefined' ? window.location.host : ''
+  async function invite(o: Any) {
+    setBusy('i' + o.id); setMsg('')
+    const d = await fetch(`/api/owner-onboarding/${rec.code}/invite`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owner: o.id }) }).then(r => r.json()).catch(() => null)
+    setBusy(''); if (d?.record) onRec(d.record); setMsg(d?.ok ? 'Invite sent to ' + o.email + '.' : 'Not sent: ' + (d?.error || 'try again'))
+  }
+  async function saveOwners(list: Any[], note: string) {
+    setBusy('s'); setMsg('')
+    const d = await fetch('/api/owner-onboarding/' + rec.code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ owners: list.map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone })) }) }).then(r => r.json()).catch(() => null)
+    setBusy(''); if (d?.record) { onRec(d.record); setAdd(null) } setMsg(d?.ok ? note : (d?.error || 'Not saved.'))
+  }
+  const chip = (a: Any) => <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold whitespace-nowrap ' + (a.hasPassword ? 'bg-emerald-50 text-emerald-800' : a.invitedAt ? 'bg-amber-50 text-amber-800' : 'bg-app text-muted')}>{a.hasPassword ? 'Active owner user' : a.invitedAt ? 'Invited, not set up yet' : 'Not invited'}</span>
   return (
     <section className={card}>
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">The owner’s portal account <Lock size={14} className="inline" /></h2><span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (acc.hasPassword ? 'bg-emerald-50 text-emerald-800' : acc.invitedAt ? 'bg-amber-50 text-amber-800' : 'bg-app text-muted')}>{acc.hasPassword ? 'Active owner user' : acc.invitedAt ? 'Invited, not set up yet' : 'Not invited'}</span></div>
-      <p className="text-[12.5px] text-muted mb-3">Send the invite: the owner clicks the link, creates a password, and from then on signs in as an owner user with their email and password, from the link or at <b className="text-ink">{typeof window !== 'undefined' ? window.location.host : ''}/portal</b>. An owner account opens only their own page, never the rest of Lighthouse.{acc.activatedAt ? ' Account created ' + new Date(acc.activatedAt).toLocaleDateString() + '.' : ''}{acc.lastSeenAt ? ' Last signed in ' + new Date(acc.lastSeenAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + '.' : ''}</p>
-      <div className="flex flex-wrap items-center gap-3">
-        <button type="button" disabled={busy || !rec.custom.ownerEmail} onClick={async () => { setBusy(true); setMsg(''); const d = await fetch(`/api/owner-onboarding/${rec.code}/invite`, { method: 'POST' }).then(r => r.json()).catch(() => null); setBusy(false); if (d?.record) onRec(d.record); setMsg(d?.ok ? 'Sent to ' + rec.custom.ownerEmail + '.' : 'Not sent: ' + (d?.error || 'try again')) }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {acc.invitedAt ? 'Email the link again' : 'Email the owner their link'}</button>
-        <span className="text-[12.5px] text-muted">{msg || (!rec.custom.ownerEmail ? 'Add the owner’s email first (without one, the link stays open to anyone who has it).' : [acc.invitedAt ? 'Sent ' + new Date(acc.invitedAt).toLocaleDateString() : 'Not sent yet', acc.hasPassword ? 'password created' : 'no password yet'].join(' · '))}</span>
-      </div>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{rows.length > 1 ? 'The owners’ portal accounts' : 'The owner’s portal account'} <Lock size={14} className="inline" /></h2></div>
+      <p className="text-[12.5px] text-muted mb-3">Each owner gets their own invite: they click the link, create their own password, and from then on sign in with their email and password, from the link or at <b className="text-ink">{host}/portal</b>. An owner account opens only this onboarding, never the rest of Lighthouse.</p>
+      <ul className="divide-y divide-line border-y border-line">
+        {rows.map((o, i) => { const a = o.access || {}; return (
+          <li key={o.id} className="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <div className="mr-auto min-w-0"><p className="text-[13.5px] font-semibold text-ink truncate">{o.name || (i === 0 ? 'Owner' : 'Owner ' + (i + 1))}{i === 0 && rows.length > 1 ? <span className="font-normal text-muted"> · first owner</span> : null}</p>
+              <p className="text-[12px] text-muted truncate">{o.email || 'No email yet'}{a.activatedAt ? ' · account created ' + new Date(a.activatedAt).toLocaleDateString() : ''}{a.lastSeenAt ? ' · last signed in ' + new Date(a.lastSeenAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}</p></div>
+            {chip(a)}
+            <button type="button" disabled={!!busy || !o.email} onClick={() => invite(o)} className="oo-noprint inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">{busy === 'i' + o.id ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} {a.invitedAt ? 'Send again' : 'Send invite'}</button>
+            {i > 0 ? <button type="button" disabled={!!busy} onClick={() => saveOwners(co.filter(x => x.id !== o.id), (o.name || 'That owner') + ' was removed. Their access has ended.')} className="oo-noprint text-[12.5px] text-muted hover:text-red-700">Remove</button> : null}
+          </li>) })}
+      </ul>
+      {!rec.custom.ownerEmail ? <p className="text-[12.5px] text-muted mt-2">Add the first owner’s email (Owner details) to invite them. Without any email on the link, it stays open to anyone who has it.</p> : null}
+      {add ? (
+        <div className="oo-noprint mt-3 grid gap-2 sm:grid-cols-3">
+          <label className="block"><span className={lab}>Name</span><input value={add.name} onChange={e => setAdd({ ...add, name: e.target.value })} className={field} autoFocus /></label>
+          <label className="block"><span className={lab}>Email</span><input type="email" value={add.email} onChange={e => setAdd({ ...add, email: e.target.value })} className={field} /></label>
+          <label className="block"><span className={lab}>Phone (optional)</span><input value={add.phone} onChange={e => setAdd({ ...add, phone: e.target.value })} className={field} /></label>
+          <div className="sm:col-span-3 flex items-center gap-3"><button type="button" disabled={!!busy || !add.name.trim() || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(add.email.trim())} onClick={() => saveOwners([...co, add], add.name.trim() + ' was added. Send their invite when you are ready.')} className="rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-40">Add this owner</button><button type="button" onClick={() => setAdd(null)} className="text-[12.5px] text-muted underline">Cancel</button></div>
+        </div>
+      ) : rows.length < 6 ? <button type="button" onClick={() => setAdd({ name: '', email: '', phone: '' })} className="oo-noprint mt-3 inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink"><Plus size={13} /> Add another owner</button> : null}
+      {msg ? <p className="text-[12.5px] text-ink mt-2">{msg}</p> : null}
+      {rows.length > 1 ? <p className="text-[11.5px] text-muted mt-2">Every owner sees the home, the supplies, the order list and the timeline. The W-9 and bank forms can only be downloaded by the owner who sent them.</p> : null}
     </section>
   )
 }
@@ -497,7 +529,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
                   <p className="text-[11.5px] text-muted">Signed by {rec.payout.sign.name}, {new Date(rec.payout.sign.at).toLocaleDateString()}</p>
                   <div className="oo-noprint flex flex-wrap gap-2 mt-2"><a href={`/api/owner-onboarding/${code}/forms?doc=w9`} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold"><Download size={12} /> W-9</a><a href={`/api/owner-onboarding/${code}/forms?doc=ach`} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold"><Download size={12} /> ACH form</a></div>
                   <p className="text-[11px] text-muted mt-1">Filled on download, for full access only. Never emailed.</p>
-                  {rec.payoutLog?.length ? <details className="mt-2 text-[11.5px] text-muted"><summary className="cursor-pointer font-semibold text-ink">Download log ({rec.payoutLog.length})</summary><ul className="mt-1 space-y-0.5">{rec.payoutLog.slice(0, 30).map((l: Any, i: number) => <li key={i}>{l.doc === 'ach' ? 'ACH form' : 'W-9'} · {l.by === 'owner' ? 'the owner' : String(l.by).split('@')[0]} · {new Date(l.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</li>)}</ul></details> : <p className="text-[11px] text-muted">No downloads yet. Each one is logged.</p>}
+                  {rec.payoutLog?.length ? <details className="mt-2 text-[11.5px] text-muted"><summary className="cursor-pointer font-semibold text-ink">Download log ({rec.payoutLog.length})</summary><ul className="mt-1 space-y-0.5">{rec.payoutLog.slice(0, 30).map((l: Any, i: number) => <li key={i}>{l.doc === 'ach' ? 'ACH form' : 'W-9'} · {String(l.by).startsWith('owner') ? (String(l.by).slice(7) || 'the owner') : String(l.by).split('@')[0]} · {new Date(l.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</li>)}</ul></details> : <p className="text-[11px] text-muted">No downloads yet. Each one is logged.</p>}
                 </>) : <p className="text-[13px] text-muted mt-1">{rec.custom.askPayout === false ? 'Not asked on this link.' : 'Not sent yet.'}</p>}
               </div>
               <div className="rounded-xl border border-line p-3">

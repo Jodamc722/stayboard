@@ -11,7 +11,7 @@ import { cleanHome, ownerView, routingOk, OO_TAX_CLASS, type OOPayout } from '@/
 import { encryptSecret, maskHint, vaultKeyReady } from '@/lib/vault'
 import { sendHandoff } from '@/lib/owner-onboard-mail'
 import { notify } from '@/lib/notify'
-import { signedIn as ownerSignedIn, emailHint, isProtected } from '@/lib/owner-onboard-auth'
+import { signedIn as ownerSignedIn, whoSignedIn, account as acctOf, accounts, emailHint, isProtected } from '@/lib/owner-onboard-auth'
 import { requireLevel } from '@/lib/access'
 
 /** The owner signed in, or a teammate looking at the owner's view (Owner onboarding access). */
@@ -21,7 +21,7 @@ async function signedIn(req: NextRequest, r: any): Promise<boolean> {
 }
 
 /** What a locked link may say: who it greets, whether a password exists, where a sign-in link would go. */
-const locked = (r: any) => NextResponse.json({ ok: false, need: 'signin', hasPassword: !!r.auth?.pass, emailHint: emailHint(r.custom.ownerEmail), firstName: String(r.custom.ownerName || '').split(' ')[0] }, { status: 401, headers: { 'Cache-Control': 'no-store' } })
+const locked = (r: any) => NextResponse.json({ ok: false, need: 'signin', multi: accounts(r).length > 1, hasPassword: accounts(r).some(a => !!a.auth?.pass), emailHint: emailHint(r.custom.ownerEmail), firstName: String(r.custom.ownerName || '').split(' ')[0] }, { status: 401, headers: { 'Cache-Control': 'no-store' } })
 
 export const dynamic = 'force-dynamic'
 const NO_STORE = { 'Cache-Control': 'no-store' }
@@ -38,7 +38,11 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
   let team = false
   try { team = (await requireLevel('owner-onboarding', 'view')).ok } catch { /* not a teammate */ }
   const viewer = team && !(isProtected(r) && ownerSignedIn(req, r)) ? 'team' : 'owner'
-  return NextResponse.json({ ok: true, record: ownerView(r), items, viewer }, { headers: NO_STORE })
+  // WHICH OWNER: each owner on the link has their own account; the page is told whose it is and whether THEY have a
+  // password yet. Only the owner who sent the tax and bank forms can download their own copies.
+  const id = whoSignedIn(req, r) || 'p', me = acctOf(r, id)
+  const rec = { ...ownerView(r), hasPassword: !!me?.auth?.pass, me: { id, name: me?.name || '' }, coOwners: accounts(r).filter(a => a.id !== id).map(a => a.name).filter(Boolean), payoutMine: !r.payout || (r.payout.by || 'p') === id }
+  return NextResponse.json({ ok: true, record: rec, items, viewer }, { headers: NO_STORE })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { code: string } }) {
@@ -48,6 +52,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (!(await signedIn(req, r))) return locked(r)
   const b = await req.json().catch(() => ({} as any))
   const step = (k: string) => r.steps.find(s => s.key === k)!
+  const meId = whoSignedIn(req, r) || 'p'
   const today = new Date().toISOString().slice(0, 10)
   if (b.home) {
     r.home = cleanHome(b.home)
@@ -66,14 +71,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (b.orderReview && r.order && r.order.status !== 'draft') {
     const keys = new Set(r.order.lines.map(l => l.key))
     const skip = (Array.isArray(b.orderReview.skip) ? b.orderReview.skip : []).map((k: any) => String(k)).filter((k: string) => keys.has(k)).slice(0, 300)
-    r.order = { ...r.order, status: b.orderReview.approve ? 'approved' : 'changes', review: { at: new Date().toISOString(), name: String(b.orderReview.name || r.custom.ownerName || '').slice(0, 120), skip, note: String(b.orderReview.note || '').slice(0, 2000) } }
+    r.order = { ...r.order, status: b.orderReview.approve ? 'approved' : 'changes', review: { at: new Date().toISOString(), name: String(b.orderReview.name || acctOf(r, meId)?.name || r.custom.ownerName || '').slice(0, 120), skip, note: String(b.orderReview.note || '').slice(0, 2000) } }
     reviewed = r.order.status
   }
   // THE W-9 AND ACH: checked, then the tax ID and bank numbers are encrypted before anything is saved.
   let firstPayout = false
   if (b.payout) {
     // A PASSWORD FIRST (Jon, 2026-11-13): tax and bank details are only taken on a link the owner has locked with their own password.
-    if (!r.auth?.pass) return NextResponse.json({ ok: false, need: 'password', error: 'Create your password first, so only you can open this page.' }, { status: 403, headers: NO_STORE })
+    if (!acctOf(r, meId)?.auth?.pass) return NextResponse.json({ ok: false, need: 'password', error: 'Create your password first, so only you can open this page.' }, { status: 403, headers: NO_STORE })
     if (!vaultKeyReady()) return NextResponse.json({ ok: false, error: 'Secure storage is not set up yet. Please tell your Stay Hospitality contact.' }, { status: 503, headers: NO_STORE })
     const w = b.payout.w9 || {}, a = b.payout.ach || {}, sg = b.payout.sign || {}
     const s = (v: any, n: number) => String(v || '').trim().slice(0, n)
@@ -91,6 +96,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
         routingEnc: keepBank ? prev!.ach.routingEnc : encryptSecret(routing), routingHint: keepBank ? prev!.ach.routingHint : maskHint(routing),
         accountEnc: keepBank ? prev!.ach.accountEnc : encryptSecret(account), accountHint: keepBank ? prev!.ach.accountHint : maskHint(account) },
       sign: { name: s(sg.name, 120), at: new Date().toISOString(), ip: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim().slice(0, 60) },
+      by: meId,
     }
     firstPayout = !r.payout
     r.payout = p
