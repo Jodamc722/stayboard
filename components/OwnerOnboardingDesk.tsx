@@ -122,7 +122,9 @@ function IntroEmail({ rec }: { rec: Any }) {
   const [from, setFrom] = useState<'sales' | 'gm'>(rec.custom.from || 'sales')
   const e = introEmail({ ...rec, custom: { ...rec.custom, from } }, ownerLink(rec.code))
   const to = rec.custom.ownerEmail || ''
-  const cc = from === 'sales' ? rec.custom.gm.email : ''
+  const [team, setTeam] = useState<string[]>([])
+  useEffect(() => { fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => setTeam(d?.settings?.teamCc || [])).catch(() => {}) }, [])
+  const cc = Array.from(new Set([from === 'sales' ? rec.custom.gm.email : '', ...team].filter(Boolean))).join(', ')
   return (
     <section className={card}>
       <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -131,7 +133,8 @@ function IntroEmail({ rec }: { rec: Any }) {
           {(['sales', 'gm'] as const).map(k => <button key={k} type="button" onClick={() => setFrom(k)} className={'rounded-full px-3 py-1 ' + (from === k ? 'bg-white text-ink shadow-sm' : 'text-muted')}>From {k === 'sales' ? (rec.custom.sales.name.split(' ')[0] || 'sales') : (rec.custom.gm.name.split(' ')[0] || 'the GM')}</button>)}
         </div>
       </div>
-      <p className={lab}>To</p><p className="text-[13.5px] text-ink">{to || <span className="text-muted">Add the owner’s email above</span>}{cc ? <span className="text-muted"> · cc {cc}</span> : null}</p>
+      <p className={lab}>To</p><p className="text-[13.5px] text-ink">{to || <span className="text-muted">Add the owner’s email above</span>}</p>
+      {cc ? <><p className={lab + ' mt-3'}>Cc</p><div className="flex flex-wrap items-center gap-2"><p className="text-[13px] text-ink mr-auto break-all">{cc}</p><CopyBtn text={cc} label="Copy cc" small /></div></> : null}
       <p className={lab + ' mt-3'}>Subject</p>
       <div className="flex flex-wrap items-center gap-2"><p className="text-[14px] font-semibold text-ink mr-auto">{e.subject}</p><CopyBtn text={e.subject} label="Copy subject" small /></div>
       <p className={lab + ' mt-3'}>Message</p>
@@ -321,7 +324,7 @@ function HandoffSettings() {
   const [s, setS] = useState<Any>(null)
   const [open, setOpen] = useState(false)
   const [msg, setMsg] = useState('')
-  useEffect(() => { if (open && !s) fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => d?.ok && setS({ to: d.settings.to.join(', '), cc: d.settings.cc.join(', '), replyTo: d.settings.replyTo, vendorTo: (d.settings.vendorTo || []).join(', '), vendorCc: (d.settings.vendorCc || []).join(', ') })).catch(() => {}) }, [open, s])
+  useEffect(() => { if (open && !s) fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => d?.ok && setS({ to: d.settings.to.join(', '), cc: d.settings.cc.join(', '), replyTo: d.settings.replyTo, vendorTo: (d.settings.vendorTo || []).join(', '), vendorCc: (d.settings.vendorCc || []).join(', '), teamCc: (d.settings.teamCc || []).join(', ') })).catch(() => {}) }, [open, s])
   return (
     <section className="mt-6 rounded-2xl border border-line bg-white">
       <button type="button" onClick={() => setOpen(o => !o)} className="w-full text-left px-4 py-3 text-[13.5px] font-semibold text-ink">Handoff and vendor emails {open ? '▾' : '▸'} <span className="font-normal text-muted text-[12.5px]">· who gets the paperwork handoff and the linen quote</span></button>
@@ -330,6 +333,7 @@ function HandoffSettings() {
           <label className="block"><span className={lab}>To</span><input value={s.to} onChange={e => setS({ ...s, to: e.target.value })} className={field} /></label>
           <label className="block"><span className={lab}>Copy</span><input value={s.cc} onChange={e => setS({ ...s, cc: e.target.value })} className={field} /></label>
           <label className="block"><span className={lab}>Sent from (a connected Google mailbox)</span><input value={s.replyTo} onChange={e => setS({ ...s, replyTo: e.target.value })} className={field} /></label>
+          <label className="block sm:col-span-3"><span className={lab}>Copied on every onboarding email</span><input value={s.teamCc} onChange={e => setS({ ...s, teamCc: e.target.value })} className={field} /><span className="block text-[11.5px] text-muted mt-1">The handoff, the linen quote, and a team copy of the owner’s invite and order list. The team copy leaves out the owner’s private sign-in button.</span></label>
           <label className="block sm:col-span-2"><span className={lab}>Linen vendor (the quote goes to)</span><input value={s.vendorTo} onChange={e => setS({ ...s, vendorTo: e.target.value })} placeholder="orders@vendor.com" className={field} /></label>
           <label className="block"><span className={lab}>Linen quote: copy</span><input value={s.vendorCc} onChange={e => setS({ ...s, vendorCc: e.target.value })} className={field} /></label>
           <div className="sm:col-span-3 flex items-center gap-3"><button type="button" onClick={async () => { const d = await fetch('/api/owner-onboarding/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).then(r => r.json()).catch(() => null); setMsg(d?.ok ? 'Saved.' : 'Could not save (full access needed).') }} className="rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save</button><span className="text-[12.5px] text-muted">{msg}</span></div>

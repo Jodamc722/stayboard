@@ -12,6 +12,7 @@ import type { NextRequest } from 'next/server'
 import { sendResendEmail } from './resend-send'
 import type { OORecord } from './owner-onboard'
 import { stayEmail, escHtml } from './email-layout'
+import { readOOSettings } from './owner-onboard-mail'
 
 const secret = () => process.env.VAULT_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.RESEND_API_KEY || 'stay-owner-onboarding'
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
@@ -79,31 +80,55 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const gm = r.custom.gm, home = [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const site = origin.replace(/\/$/, '')
   const portal = site.replace(/^https?:\/\//, '') + '/portal'
-  const copy = kind === 'order' ? {
-    eyebrow: 'For your review', heading: 'Your order list is ready',
-    pre: 'The items we would buy to set your home up, with quantities and prices.',
-    paragraphs: [`Hi ${escHtml(first)},`, `Your order list${home ? ' for <b>' + escHtml(home) + '</b>' : ''} is ready. It shows each item we would buy to set the home up, with the quantity and the price.`, 'Please look it over, tell us about anything you already have, and approve it so we can place the order.'],
-    cta: 'Review my order list',
+  const gmFirst = (gm.name || '').split(' ')[0] || 'our team'
+  const at = home ? ' at <b>' + escHtml(home) + '</b>' : ''
+  const copy: { eyebrow: string; heading: string; pre: string; paragraphs: string[]; list?: string[]; lead?: string[]; cta: string; after: string[]; note: string } = kind === 'order' ? {
+    eyebrow: 'For your review', heading: 'Your order list is ready for review',
+    pre: 'The items your home needs to be guest-ready, with quantities and prices.',
+    paragraphs: [`Hi ${escHtml(first)},`, `We have put together the list of items needed to get your home${at} guest-ready, based on what you told us is already there. Each item shows the quantity and the price, with a link to the exact product.`],
+    list: ['Review the list', 'Mark anything you already own, and we will take it off', 'Approve it when you are happy, or tell us what to change'], lead: ['We will place the order as soon as you approve. Linen is quoted separately and is not on this list.'],
+    cta: 'Review and approve', after: ['If you have any questions about an item, reply to this email.'],
+    note: 'This link is private to you. Please do not forward it.',
   } : kind === 'invite' ? {
-    eyebrow: 'Welcome', heading: 'Your owner portal is ready',
-    pre: 'Create your password and start your onboarding with Stay Hospitality.',
-    paragraphs: [`Hi ${escHtml(first)},`, `Welcome to Stay Hospitality. Your owner portal${home ? ' for <b>' + escHtml(home) + '</b>' : ''} is ready.`, 'It is where you tell us about the home, send your tax and payout details securely, review your order list, and follow each step until you are live and taking bookings.', 'Open it below and create your password. It takes about ten minutes, and it saves as you go.'],
-    cta: 'Open my owner portal',
+    eyebrow: 'Welcome', heading: 'Welcome to Stay Hospitality',
+    pre: 'Set up your owner portal: about ten minutes, and it saves as you go.',
+    paragraphs: [`Hi ${escHtml(first)},`, `Thank you for trusting us with your home${at}. I am ${escHtml(gm.name)}${gm.role ? ', ' + escHtml(gm.role) : ''}, and my team and I will take it from signed agreement to its first booking.`, 'Your owner portal is where it all happens. In about ten minutes you can:'],
+    list: ['Tell us about the home', 'Confirm what is already in it, so we only order what is missing', 'Send your W-9 and payout details securely'],
+    lead: ['After that, the portal shows every step, from photography and your listing to your onboarding call and going live, so you always know where things stand.'],
+    cta: 'Set up my owner portal', after: [`If you have a question at any point, reply to this email or call me directly. I look forward to working with you.`],
+    note: 'Your tax ID and bank details are encrypted the moment you send them, and we will never ask for them by email.',
   } : {
-    eyebrow: 'Owner portal', heading: 'Your sign-in link',
-    pre: 'A one-time link to sign in to your Stay Hospitality owner portal.',
-    paragraphs: [`Hi ${escHtml(first)},`, 'Here is the sign-in link you asked for. It opens your owner portal on this device.'],
-    cta: 'Sign in',
+    eyebrow: 'Owner portal', heading: 'Sign in to your owner portal',
+    pre: 'Your one-time sign-in link. It works for the next 30 minutes.',
+    paragraphs: [`Hi ${escHtml(first)},`, 'Use the button below to sign in to your owner portal. The link works once, for the next 30 minutes.'],
+    cta: 'Sign in', after: [],
+    note: 'Did not ask for this? You can safely ignore this email. Nobody can sign in without the link.',
   }
+  void gmFirst
   const html = stayEmail({
-    origin: site, preheader: copy.pre, eyebrow: copy.eyebrow, heading: copy.heading, paragraphs: copy.paragraphs,
+    origin: site, preheader: copy.pre, eyebrow: copy.eyebrow, heading: copy.heading, paragraphs: copy.paragraphs, list: copy.list, lead: copy.lead,
     cta: { label: copy.cta, url: link },
-    ctaNote: `This link signs you in once and works for ${kind === 'signin' ? '30 minutes' : '7 days'}. After you create your password you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with this email address.`,
-    note: kind === 'signin' ? 'If you did not ask for this link, you can ignore this email. Nobody can sign in without it.' : 'Your tax ID and bank details are encrypted the moment you send them. We will never ask for them by email.',
-    after: kind === 'signin' ? [] : ['If anything is unclear, reply to this email and it comes straight to me.'],
+    ctaNote: kind === 'signin' ? `You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with your email and password.` : `This button signs you in once and works for 7 days. You will create a password on your first visit, and after that you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.`,
+    note: copy.note, after: copy.after,
     sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email },
   })
-  const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'order' ? 'Your order list is ready to review · Stay Hospitality' : kind === 'invite' ? 'Your Stay Hospitality owner portal' : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') blank(r).invitedAt = new Date().toISOString()
+  // THE TEAM'S COPY (Jon, 2026-11-13: "cc Bernadette, Bethany, Roberto and Karla on all onboarding emails"). They are
+  // not put on the owner's own email: its button signs whoever clicks it in AS THE OWNER, tax and bank forms included.
+  // So the team gets the same message without that button, and a link to the onboarding in Lighthouse instead.
+  if (res.ok && kind !== 'signin') {
+    try {
+      const st = await readOOSettings()
+      const team = st.teamCc.filter(e => e !== to.toLowerCase())
+      if (team.length) await sendResendEmail({ to: team, replyTo: gm.email || undefined,
+        subject: `[Team copy] ${kind === 'invite' ? 'Portal invite sent to' : 'Order list sent to'} ${r.custom.ownerName || 'the owner'}${home ? ' · ' + home : ''}`,
+        html: stayEmail({ origin: site, preheader: 'A copy for the team of what the owner was just sent.', eyebrow: 'Team copy · owner onboarding',
+          heading: kind === 'invite' ? `${r.custom.ownerName || 'The owner'} was invited to the owner portal` : `${r.custom.ownerName || 'The owner'} was sent the order list`,
+          paragraphs: [`This is a copy of what <b>${escHtml(r.custom.ownerName || 'the owner')}</b> (${escHtml(to)}) was just sent${home ? ' for <b>' + escHtml(home) + '</b>' : ''}. The owner’s private sign-in button is left out of this copy, because it would sign the reader in as the owner.`, '<b>What the owner received:</b>', ...copy.paragraphs.slice(1)],
+          list: copy.list, lead: copy.lead, cta: { label: 'Open the onboarding in Lighthouse', url: site + '/owner-onboarding/' + r.code },
+          sign: { name: gm.name, role: gm.role, email: gm.email }, footer: 'Sent by Lighthouse for Stay Hospitality · Owner onboarding' }) })
+    } catch { /* the owner's email went; the team copy is a courtesy */ }
+  }
   return { ok: res.ok, error: res.error }
 }

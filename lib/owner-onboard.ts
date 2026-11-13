@@ -57,18 +57,20 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string)
   const first = (c.ownerName || '').trim().split(/\s+/)[0] || 'there'
   const home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const gmFirst = gm.name.split(' ')[0] || 'our General Manager'
-  const steps = 'What happens next:\n1. Your owner portal: tell us about the home, confirm what is already there, and send your W-9 and payout details securely. About ten minutes, on any device.\n2. Photography, then your listing.\n3. We set the home up in our booking and pricing system.\n4. An onboarding call to walk you through the listing and the pricing strategy.\n5. Live and taking bookings.'
+  const gmRole = gm.role || 'General Manager'
+  const steps = `Here is what to expect:\n1. Home details and paperwork. In your portal you tell us about the home, confirm what is already there, and send your W-9 and payout details securely.\n2. Photography and listing. We photograph the home and build your listing.\n3. System setup. We set the home up in our booking and pricing platform.\n4. Onboarding call. ${gmFirst} walks you through your listing and the pricing strategy.\n5. Go live. Your home starts taking bookings.`
   const sig = (p: OOPerson) => [p.name, [p.role, 'Stay Hospitality'].filter(Boolean).join(', '), p.phone, p.email].filter(Boolean).join('\n')
-  const portal = `Your owner portal is here:\n${link}\n\nYou will also receive a separate email from us with a private sign-in link. The first time you open it you will create a password, and from then on the portal shows where everything stands.`
+  const portal = `Your next step is your owner portal:\n${link}\n\nYou will receive a separate email from us with a secure sign-in link. The first time you open it you will create a password, and the portal then guides you through everything we need. It takes about ten minutes, and it saves as you go.`
+  const thanks = `Welcome to Stay Hospitality, and thank you for trusting us with ${home ? 'your home at ' + home : 'your home'}. We are excited to get started.`
   if (c.from === 'gm') {
     return {
       subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}`,
-      body: `Hi ${first},\n\nWelcome to Stay Hospitality. I'm ${gm.name}, ${gm.role ? 'the ' + gm.role.toLowerCase() : 'the general manager'}, and I will be leading your onboarding${home ? ' at ' + home : ''}.\n\n${portal}\n\n${steps}\n\nIf you have any questions along the way, reply to this email or call me directly.\n\nBest regards,\n${sig(gm)}`,
+      body: `Hi ${first},\n\n${thanks}\n\nI am ${gm.name}, ${gmRole}. My team and I will lead your onboarding, and I will be your main point of contact from here.\n\n${portal}\n\n${steps}\n\nIf you have a question at any point, reply to this email or call me directly.\n\nBest regards,\n${sig(gm)}`,
     }
   }
   return {
     subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}: meet ${gmFirst}`,
-    body: `Hi ${first},\n\nThank you for choosing Stay Hospitality. I would like to introduce ${gm.name}, our ${gm.role.toLowerCase() || 'general manager'}, copied here. ${gmFirst} will lead your onboarding${home ? ' at ' + home : ''} and will be your main contact from here.\n\n${portal}\n\n${steps}\n\n${gmFirst} will be in touch shortly, and I am always here if you need me.\n\nBest regards,\n${sig(sa)}`,
+    body: `Hi ${first},\n\n${thanks}\n\nI would like to introduce ${gm.name}, our ${gmRole}, copied here. ${gmFirst} and the team will lead your onboarding, and ${gmFirst} will be your main point of contact from here.\n\n${portal}\n\n${steps}\n\n${gmFirst} will be in touch shortly. In the meantime, I am always here if you need anything.\n\nBest regards,\n${sig(sa)}`,
   }
 }
 export type OOAttach = { property: string; listingId: string; unitLabel: string }
