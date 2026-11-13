@@ -7,7 +7,7 @@
 // Readable by any signed-in user with access (the admin-only /api/users carries far more). Returns
 // name and email, nothing else.
 import { NextResponse } from 'next/server'
-import { getAccess } from '@/lib/access'
+import { getAccess , hideUsers } from '@/lib/access'
 import { isVrLogin, hotelOnlyRes } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
@@ -20,7 +20,7 @@ export async function GET() {
   if (!isVrLogin(access)) return hotelOnlyRes()
   const { data, error } = await supabaseAdmin().from('app_users').select('email,status,profile').limit(500)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  const users = ((data as any[]) || [])
+  const users = hideUsers(((data as any[]) || []))
     .filter(u => u && u.email && String(u.status || 'active') === 'active')
     .map(u => {
       const email = String(u.email).toLowerCase()

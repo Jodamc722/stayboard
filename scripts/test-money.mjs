@@ -213,8 +213,8 @@ ok('test copy of canSeeMoney still matches lib/access.ts', [
   "if (isSuperadmin(access.email)) return true",
   "return (access.features as any)?.money === true",
 ].every(s => fn.includes(s)), fn)
-ok('SUPERADMIN constant still matches lib/access.ts',
-  new RegExp("SUPERADMIN\\s*=\\s*'" + OWNER + "'").test(accessSrc))
+ok('the owner is still a hardcoded superadmin in lib/access.ts',
+  new RegExp("SUPERADMINS\\s*=\\s*\\[[^\\]]*'" + OWNER + "'").test(accessSrc))
 
 // The users API must let the switch through — it sanitises `features` on write, and `money` is not
 // a page feature, so without an explicit rule it would be silently dropped on every save.

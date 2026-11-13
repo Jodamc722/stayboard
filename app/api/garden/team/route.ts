@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireGarden } from '@/lib/garden/access'
 import { upsertMember, removeMember } from '@/lib/garden/people'
-import { isSuperadmin, bustGardenRolesCache } from '@/lib/access'
+import { isSuperadmin, bustGardenRolesCache , hideUsers } from '@/lib/access'
 import { GARDEN_PAGE_DEFS, GARDEN_PAGE_KEYS, GARDEN_PAGE_LABEL, gAtLeast } from '@/lib/garden/pages'
 
 export const dynamic = 'force-dynamic'
@@ -42,7 +42,7 @@ export async function GET() {
     ])
     // DUAL ROLES (Jon, 2026-09-29: "you can have dual roles that you manage both"). Each login shows
     // its hotel role AND its VR role, both set from here (the VR half by the owner or a VR admin).
-    out.members = (users || []).map((u: any) => { const vr = !Array.isArray(u.businesses) || u.businesses.includes('vr'); return { email: u.email, name: u.profile?.name || null, status: u.status, garden_role: u.garden_role, vr, vr_role: vr ? (u.role === 'admin' ? 'admin' : u.access_role || null) : null, vrAdmin: u.role === 'admin', last_seen_at: u.last_seen_at } })
+    out.members = hideUsers(users || []).map((u: any) => { const vr = !Array.isArray(u.businesses) || u.businesses.includes('vr'); return { email: u.email, name: u.profile?.name || null, status: u.status, garden_role: u.garden_role, vr, vr_role: vr ? (u.role === 'admin' ? 'admin' : u.access_role || null) : null, vrAdmin: u.role === 'admin', last_seen_at: u.last_seen_at } })
     out.roles = roles || []
     out.vrRoles = (vrRoles || []).filter((r: any) => r.key !== 'admin' || isSuperadmin(gate.access.email))
   }
