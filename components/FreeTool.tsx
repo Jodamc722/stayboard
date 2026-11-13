@@ -79,7 +79,6 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
   const [form, setForm] = useState({ email: '', name: '', phone: '', website: '' })
   const [err, setErr] = useState('')
   const [gate, setGate] = useState(false)
-  const [fmt, setFmt] = useState<'pdf' | 'xlsx'>(tool === 'inventory' ? 'xlsx' : 'pdf')
   const unlocked = useRef<{ email: string; name: string; phone: string } | null>(null)
   const set = (k: string, v: Any) => setInp((p: Any) => ({ ...p, [k]: v }))
   const [opts, setOpts] = useState<Any>(null)
@@ -114,7 +113,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
       // Straight to the download (Jon, 2026-11-12: "should just be a download").
       fullRef.current = d.full
       if (tool === 'income') { /* the projection shows on the page; the PDF is a button under it */ }
-      else if (fmt === 'xlsx') xlsx(form.email); else pdf(d.full)
+      else pdf(d.full)
     } catch { setErr('That did not go through. Try again.') } finally { setBusy(false) }
   }
   function openReport(code: string) {
@@ -140,16 +139,6 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
     } catch { /* */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  // THE EXCEL CHECKLIST (supply calculator only): counts, a Bought and an In-the-home tick column, notes.
-  async function xlsx(email = unlocked.current?.email || '') {
-    try {
-      const r = await fetch('/api/tools/xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: inp, email }) })
-      if (!r.ok) { setErr('The download did not start. Try again.'); return }
-      const blob = await r.blob(), url = URL.createObjectURL(blob)
-      const a = document.createElement('a'); a.href = url; a.download = 'rental-supply-checklist.xlsx'; document.body.appendChild(a); a.click(); a.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 4000)
-    } catch { setErr('The download did not start. Try again.') }
-  }
   // A REAL PDF FILE, DOWNLOADED (Jon, 2026-11-12: "should just be a download"; "looks bad" → the designed
   // layout in lib/free-tool-pdf). No print dialog, so it works the same on a phone.
   async function pdf(f: Any = fullRef.current) {
@@ -318,10 +307,7 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
                 <input placeholder="Phone (optional)" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} autoComplete="tel" inputMode="tel" />
               </div>
               <input className="ft-hp" tabIndex={-1} autoComplete="off" value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} aria-hidden />
-              {tool === 'inventory' ? (
-                <div className="ft-seg ft-fmt">{([['xlsx', 'Excel checklist'], ['pdf', 'PDF']] as ['xlsx' | 'pdf', string][]).map(([k, l]) => <button key={k} type="button" className={fmt === k ? 'on' : ''} onClick={() => setFmt(k)}>{l}</button>)}</div>
-              ) : null}
-              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : tool === 'income' ? 'See my projection' : fmt === 'xlsx' ? 'Download the Excel checklist' : 'Download the PDF'}</button>
+              <button type="submit" disabled={busy}>{busy ? 'Preparing…' : tool === 'income' ? 'See my projection' : 'Download the PDF'}</button>
               {err ? <p className="ft-err">{err}</p> : null}
               <p className="ft-fine">{tool === 'income' ? 'It shows right here, with a PDF to keep.' : 'It downloads right away.'} No spam, never shared, and no obligation to work with us.</p>
             </form>
@@ -339,7 +325,6 @@ export function FreeTool({ tool, refCode, where, area, contact, embedded, team }
             {tool === 'income' ? quote : null}
             </>)}
             <div className="ft-actions">
-              {tool === 'inventory' ? <button type="button" onClick={() => xlsx()}><Download size={15} /> Excel checklist</button> : null}
               {tool === 'income' ? null : <button type="button" onClick={() => pdf()}><Download size={15} /> PDF</button>}
               {tel && !contact?.name ? <a href={'tel:' + tel}><Phone size={15} /> Questions? Call us</a> : null}
             </div>
@@ -424,7 +409,7 @@ const FT_CSS = `
 .ft-acc{color:var(--ft-acc)}
 .ft-group li b.neg{color:#A1332B}
 .ft-group li.ft-comp{grid-template-columns:minmax(0,1fr) auto}.ft-comp em{display:none}.ft-comp span{display:flex;flex-direction:column;min-width:0}.ft-comp b{white-space:nowrap;font-size:15px!important}.ft-cline{display:block;color:var(--ft-muted);font-size:11.5px;margin-top:2px}
-.ft-fmt{margin:4px 0 2px;align-self:flex-start;justify-self:start}
+
 .ft-notes{margin-top:18px;padding:14px 16px;border-radius:12px;background:var(--ft-soft)}
 .ft-notes p{margin:0;font:400 14px/1.5 "Inter",sans-serif;color:var(--ft-ink)}
 .ft-notes .ft-lab{margin-bottom:6px;color:var(--ft-acc)}
