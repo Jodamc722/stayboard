@@ -3,6 +3,7 @@
 // (pick an owner / units / a building, a period → see what the report will carry → generate →
 // open the share page). Each row answers three things at a glance: what it is, whether it has
 // gone to the owner, and whether they opened it — and shares the owner link in one tap.
+import { SmartBuilding, type SmartBrand } from '@/components/SmartBuilding'
 import { ToolLeads } from '@/components/ToolLeads'
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Plus, Trash2, ExternalLink, Sparkles, Paperclip, Image as ImageIcon, X, Share2, Check, Send, Search, RefreshCw, Building2, BookOpen } from 'lucide-react'
@@ -227,6 +228,8 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
   const [loading, setLoading] = useState(true)
   const [pacing, setPacing] = useState<{ name: string; url: string } | null>(null)
   const [heroImg, setHeroImg] = useState<{ name: string; url: string } | null>(null)
+  // The building's own look, read from its website by the smart building field (components/SmartBuilding).
+  const [brand, setBrand] = useState<SmartBrand>(null)
   const [uploading, setUploading] = useState<string>('')
   // Real Guesty owner statements for the picked properties. Statements are SELECTED, never
   // uploaded — the figures come from the recognised owner-ledger mirror.
@@ -436,6 +439,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
           pacingUrl: kind === 'review' && pacing ? pacing.url : undefined,
           statementIds: kind === 'review' && stmtPicked.length ? stmtPicked : undefined,
           heroImageUrl: heroImg ? heroImg.url : undefined,
+          brand: kind === 'sales' && brand ? brand : undefined,
         }),
       })
       // A timeout or a gateway error comes back as HTML, not JSON. That used to throw into the
@@ -755,6 +759,11 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
                     <input value={presenter} onChange={e => setPresenter(e.target.value)} placeholder="Your name"
                       className="mt-1 block rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink" />
                   </label>
+                  {/* THE SMART BUILDING FIELD (Jon, 2026-11-12): type a building or address; it finds the real address,
+                      the website, details, theme, photos and our projections, and fills the form. */}
+                  <SmartBuilding building={iv('building')} address={iv('address')} setField={setIv} hero={heroImg} brand={brand}
+                    onLibrary={id => { setCmaPick('lib:' + id) }} onNoLibrary={() => { if (!cmaPick) { setCmaPick('blank'); setCompsOpen(true) } }}
+                    onHero={setHeroImg} onBrand={setBrand} />
                   <label className="block">
                     <span className="text-[11px] uppercase tracking-wider text-muted font-semibold">Building</span>
                     <input value={iv('building')} onChange={e => setIv('building', e.target.value)} placeholder="Domus Brickell Park"
