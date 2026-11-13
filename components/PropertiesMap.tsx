@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { StayMap, type MapPoint } from './StayMap'
+import { placesByAddress } from '@/lib/map-places'
 
 type Unit = { id: string; name: string; building: string; address: string; city: string; lat: number; lng: number; bd: number | null; ba: number | null; acc: number | null; pic: string }
 type Onb = { code: string; name: string; address: string; stage: string; lat: number; lng: number }
@@ -20,16 +21,8 @@ export function PropertiesMap() {
   useEffect(() => { fetch('/api/map').then(r => r.json()).then(d => (d?.ok ? setData(d) : setErr(d?.message || d?.error || 'Could not load the map.'))).catch(() => setErr('Could not load the map.')) }, [])
   const places = useMemo<Place[]>(() => {
     if (!data) return []
-    const m = new Map<string, Place>()
-    for (const u of data.units) {
-      // a building is its name; a unit with no building stands at its own coordinates
-      const k = u.building ? 'b:' + u.building : 'p:' + u.lat.toFixed(4) + ',' + u.lng.toFixed(4)
-      const p = m.get(k) || { id: k, name: u.building || u.name, address: u.address, city: u.city, lat: 0, lng: 0, units: [] }
-      p.units.push(u); m.set(k, p)
-    }
-    const out = Array.from(m.values())
-    for (const p of out) { p.lat = p.units.reduce((a, u) => a + u.lat, 0) / p.units.length; p.lng = p.units.reduce((a, u) => a + u.lng, 0) / p.units.length; p.units.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })) }
-    out.sort((a, b) => b.units.length - a.units.length || a.name.localeCompare(b.name))
+    // one property per street address (lib/map-places), not per listing
+    const out: Place[] = placesByAddress(data.units)
     for (const o of data.onboarding) out.push({ id: 'o:' + o.code, name: o.name, address: o.address, city: '', lat: o.lat, lng: o.lng, units: [], onb: o })
     return out
   }, [data])
@@ -67,7 +60,7 @@ export function PropertiesMap() {
               <ul className="flex-1 overflow-y-auto divide-y divide-line max-h-[52vh] lg:max-h-none" onMouseLeave={() => setHov(null)}>
                 {shown.map(p => <li key={p.id}><button type="button" onClick={() => setSel(p.id)} onMouseEnter={() => setHov(p.id)} className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-app">
                   <span className="grid place-items-center min-w-[28px] h-7 px-1.5 rounded-full text-white text-[12px] font-semibold shrink-0" style={{ background: p.onb ? '#8C6D3A' : '#14161B' }}>{p.onb ? '•' : p.units.length}</span>
-                  <span className="min-w-0"><span className="block text-[13.5px] font-semibold text-ink truncate">{p.name}</span><span className="block text-[12px] text-muted truncate">{p.onb ? 'Onboarding · ' + p.onb.stage : p.city || p.address}</span></span></button></li>)}
+                  <span className="min-w-0"><span className="block text-[13.5px] font-semibold text-ink truncate">{p.name}</span><span className="block text-[12px] text-muted truncate">{p.onb ? 'Onboarding · ' + p.onb.stage : p.address || p.city}</span></span></button></li>)}
               </ul>
             )}
           </>)}
@@ -76,7 +69,7 @@ export function PropertiesMap() {
           <StayMap points={points} selected={sel} hovered={hov} onSelect={setSel} fitKey={fitQ} height="100%" className={'h-[56vh] min-h-[320px] ' + paneH} />
         </div>
       </div>
-      <p className="text-[11.5px] text-muted mt-2">Dark pins are live properties with their unit count, and nearby pins gather into one until you zoom in. Gold pins are homes being onboarded.</p>
+      <p className="text-[11.5px] text-muted mt-2">Properties are grouped by street address. Dark pins are live properties with their unit count, and nearby pins gather into one until you zoom in. Gold pins are homes being onboarded.</p>
     </div>
   )
 }
