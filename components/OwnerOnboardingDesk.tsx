@@ -88,7 +88,7 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
   return (
     <section className={card}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{rows.length > 1 ? 'The owners’ portal accounts' : 'The owner’s portal account'} <Lock size={14} className="inline" /></h2></div>
-      <p className="text-[12.5px] text-muted mb-3">Each owner gets their own invite: they click the link, create their own password, and from then on sign in with their email and password, from the link or at <b className="text-ink">{host}/portal</b>. An owner account opens only this onboarding, never the rest of Lighthouse.</p>
+      <p className="text-[12.5px] text-muted mb-3">Each owner gets their own invite, with the team copied, and a second email to them alone with their private sign-in link: they click it, create their own password, and from then on sign in with their email and password, from the link or at <b className="text-ink">{host}/portal</b>. An owner account opens only this onboarding, never the rest of Lighthouse.</p>
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((o, i) => { const a = o.access || {}; return (
           <li key={o.id} className="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -472,7 +472,7 @@ function HandoffSettings() {
           <label className="block"><span className={lab}>To</span><input value={s.to} onChange={e => setS({ ...s, to: e.target.value })} className={field} /></label>
           <label className="block"><span className={lab}>Copy</span><input value={s.cc} onChange={e => setS({ ...s, cc: e.target.value })} className={field} /></label>
           <label className="block"><span className={lab}>Sent from (a connected Google mailbox)</span><input value={s.replyTo} onChange={e => setS({ ...s, replyTo: e.target.value })} className={field} /></label>
-          <label className="block sm:col-span-3"><span className={lab}>Copied on every onboarding email</span><input value={s.teamCc} onChange={e => setS({ ...s, teamCc: e.target.value })} className={field} /><span className="block text-[11.5px] text-muted mt-1">The handoff, the linen quote, and a team copy of the owner’s invite and order list. The team copy leaves out the owner’s private sign-in button.</span></label>
+          <label className="block sm:col-span-3"><span className={lab}>Copied on every onboarding email</span><input value={s.teamCc} onChange={e => setS({ ...s, teamCc: e.target.value })} className={field} /><span className="block text-[11.5px] text-muted mt-1">Copied on the owner’s invite and order-list emails, the handoff and the linen quote. The owner’s one-time sign-in link goes in a separate email to the owner alone.</span></label>
           <label className="block sm:col-span-3"><span className={lab}>Who walks a new unit (the walkthrough request goes to)</span><input value={s.walkTo} onChange={e => setS({ ...s, walkTo: e.target.value })} className={field} /></label>
           <label className="block sm:col-span-2"><span className={lab}>Linen vendor (the quote goes to)</span><input value={s.vendorTo} onChange={e => setS({ ...s, vendorTo: e.target.value })} placeholder="orders@vendor.com" className={field} /></label>
           <label className="block"><span className={lab}>Linen quote: copy</span><input value={s.vendorCc} onChange={e => setS({ ...s, vendorCc: e.target.value })} className={field} /></label>
