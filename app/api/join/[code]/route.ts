@@ -8,15 +8,27 @@ import { cleanHome, ownerView, routingOk, OO_TAX_CLASS, type OOPayout } from '@/
 import { encryptSecret, maskHint, vaultKeyReady } from '@/lib/vault'
 import { sendHandoff } from '@/lib/owner-onboard-mail'
 import { notify } from '@/lib/notify'
+import { signedIn as ownerSignedIn, emailHint } from '@/lib/owner-onboard-auth'
+import { requireLevel } from '@/lib/access'
+
+/** The owner signed in, or a teammate looking at the owner's view (Owner onboarding access). */
+async function signedIn(req: NextRequest, r: any): Promise<boolean> {
+  if (ownerSignedIn(req, r)) return true
+  try { return (await requireLevel('owner-onboarding', 'view')).ok } catch { return false }
+}
+
+/** What a locked link may say: who it greets, whether a password exists, where a sign-in link would go. */
+const locked = (r: any) => NextResponse.json({ ok: false, need: 'signin', hasPassword: !!r.auth?.pass, emailHint: emailHint(r.custom.ownerEmail), firstName: String(r.custom.ownerName || '').split(' ')[0] }, { status: 401, headers: { 'Cache-Control': 'no-store' } })
 
 export const dynamic = 'force-dynamic'
 const NO_STORE = { 'Cache-Control': 'no-store' }
 const hits = new Map<string, number[]>()
 const limited = (k: string) => { const now = Date.now(), w = (hits.get(k) || []).filter(t => now - t < 60_000); w.push(now); hits.set(k, w); if (hits.size > 5000) hits.clear(); return w.length > 90 }
 
-export async function GET(_: NextRequest, { params }: { params: { code: string } }) {
+export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
   const r = await readRecord(params.code)
   if (!r || r.archived) return NextResponse.json({ ok: false, error: 'This onboarding link is not active. Ask your Stay Hospitality contact for a new one.' }, { status: 404, headers: NO_STORE })
+  if (!(await signedIn(req, r))) return locked(r)
   const items = r.home ? await itemsFor(r.home, { supplies: r.custom.askSupplies, linen: r.custom.askLinen }) : []
   return NextResponse.json({ ok: true, record: ownerView(r), items }, { headers: NO_STORE })
 }
@@ -25,6 +37,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (limited(params.code)) return NextResponse.json({ ok: false, error: 'Too many saves. Wait a moment.' }, { status: 429, headers: NO_STORE })
   const r = await readRecord(params.code)
   if (!r || r.archived) return NextResponse.json({ ok: false, error: 'This onboarding link is not active.' }, { status: 404, headers: NO_STORE })
+  if (!(await signedIn(req, r))) return locked(r)
   const b = await req.json().catch(() => ({} as any))
   const step = (k: string) => r.steps.find(s => s.key === k)!
   const today = new Date().toISOString().slice(0, 10)

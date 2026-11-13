@@ -34,6 +34,22 @@ async function uploadAgreement(code: string, f: File) {
   if (!m?.ok) throw new Error(m?.error || 'Could not save the agreement.')
 }
 
+// ── email the owner their private link (a magic link; they then create a password) ──
+function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
+  const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
+  const acc = rec.ownerAccess || {}
+  return (
+    <section className={card}>
+      <h2 className="font-serif text-[22px] leading-none text-ink mb-1">The owner’s private link <Lock size={14} className="inline" /></h2>
+      <p className="text-[12.5px] text-muted mb-3">The owner’s page is private. Email them a sign-in link: it opens their page once and has them create a password. After that the link asks for the password, or emails them a fresh sign-in link.</p>
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" disabled={busy || !rec.custom.ownerEmail} onClick={async () => { setBusy(true); setMsg(''); const d = await fetch(`/api/owner-onboarding/${rec.code}/invite`, { method: 'POST' }).then(r => r.json()).catch(() => null); setBusy(false); if (d?.record) onRec(d.record); setMsg(d?.ok ? 'Sent to ' + rec.custom.ownerEmail + '.' : 'Not sent: ' + (d?.error || 'try again')) }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {acc.invitedAt ? 'Email the link again' : 'Email the owner their link'}</button>
+        <span className="text-[12.5px] text-muted">{msg || (!rec.custom.ownerEmail ? 'Add the owner’s email first (without one, the link stays open to anyone who has it).' : [acc.invitedAt ? 'Sent ' + new Date(acc.invitedAt).toLocaleDateString() : 'Not sent yet', acc.hasPassword ? 'password created' : 'no password yet'].join(' · '))}</span>
+      </div>
+    </section>
+  )
+}
+
 // ── the introductory email, ready to copy ──
 function IntroEmail({ rec }: { rec: Any }) {
   const [from, setFrom] = useState<'sales' | 'gm'>(rec.custom.from || 'sales')
@@ -156,6 +172,7 @@ export function OwnerOnboardingDesk() {
               <a href={'/owner-onboarding/' + made.code} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold">Open the report</a>
             </div>
           </section>
+          <InviteOwner rec={made} onRec={setMade} />
           <IntroEmail rec={made} />
         </div>
       ) : null}
@@ -352,7 +369,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             </div>
           </section>
 
-          <div className="oo-noprint"><IntroEmail rec={rec} /></div>
+          <div className="oo-noprint space-y-6"><InviteOwner rec={rec} onRec={setRec} /><IntroEmail rec={rec} /></div>
         </div>
 
         <div className="space-y-6 min-w-0">

@@ -36,15 +36,30 @@ export function OwnerJoin({ code }: { code: string }) {
   const timer = useRef<any>(null)
 
   const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); if (d.record.home) setHome(d.record.home); setNotes(d.record.ownerNotes || '') }
+  // SIGN-IN (lib/owner-onboard-auth): an emailed magic link signs in once; then a password.
+  const [gate, setGate] = useState<Any>(null)        // { hasPassword, emailHint, firstName } when locked
+  const [needPw, setNeedPw] = useState(false)       // signed in by link, no password yet
+  const [pw, setPw] = useState(''); const [pw2, setPw2] = useState(''); const [sent, setSent] = useState(false)
+  const auth = (body: Any) => fetch('/api/join/' + code + '/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()).catch(() => ({ ok: false, error: 'Check your connection and try again.' }))
+  const [tick, setTick] = useState(0)
   useEffect(() => {
-    fetch('/api/join/' + code, { cache: 'no-store' }).then(r => r.json()).then(d => {
+    const go = async () => {
+      // a magic link: spend its token, then drop it from the address bar
+      const k = new URLSearchParams(window.location.search).get('k')
+      if (k) { const a = await auth({ magic: k }); window.history.replaceState(null, '', window.location.pathname); if (a?.ok && !a.hasPassword) setNeedPw(true); else if (!a?.ok) setMsg(a?.error || '') }
+      const d = await fetch('/api/join/' + code, { cache: 'no-store' }).then(r => r.json()).catch(() => null)
+      if (!d) { setErr('Could not open this link. Check your connection and try again.'); return }
+      if (d.need === 'signin') { setGate(d); return }
       if (!d?.ok) { setErr(d?.error || 'This link is not active.'); return }
+      setGate(null)
       apply(d)
       const r = d.record
       setTab(r.submittedAt ? 'timeline' : r.home ? (r.custom.askSupplies || r.custom.askLinen ? 'supplies' : 'payout') : 'welcome')
       if (r.payout) setPay((p: Any) => ({ ...p, w9: { ...p.w9, ...r.payout.w9, tin: '' }, ach: { ...p.ach, ...r.payout.ach, routing: '', account: '' }, sign: { name: r.payout.sign.name, agree: true } }))
-    }).catch(() => setErr('Could not open this link. Check your connection and try again.'))
-  }, [code])
+    }
+    go()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, tick])
 
   async function patch(body: Any): Promise<Any> {
     const r = await fetch('/api/join/' + code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -85,6 +100,36 @@ export function OwnerJoin({ code }: { code: string }) {
   const c = flags.contact || {}
   const first = (flags.ownerName || '').split(' ')[0]
 
+  const shell = (inner: React.ReactNode) => <main className="oj"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" /><style>{CSS}</style><div className="oj-wrap oj-auth"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" />{inner}</div></main>
+  if (gate) return shell(<>
+    <p className="oj-kick">Owner onboarding</p>
+    <h1>{gate.firstName ? <>Welcome back, <em>{gate.firstName}.</em></> : <>Sign in to <em>your onboarding.</em></>}</h1>
+    {gate.hasPassword ? (
+      <form className="oj-card oj-authcard" onSubmit={async e => { e.preventDefault(); setBusy(true); setMsg(''); const a = await auth({ password: pw }); setBusy(false); if (a?.ok) { setPw(''); setTick(t => t + 1) } else setMsg(a?.error || 'That did not work.') }}>
+        <label className="oj-f"><span>Password</span><input type="password" autoComplete="current-password" required value={pw} onChange={e => setPw(e.target.value)} autoFocus /></label>
+        {msg ? <p className="oj-err">{msg}</p> : null}
+        <button type="submit" className="oj-cta" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+      </form>
+    ) : <p className="oj-p">This page is private. Open the link in the email we sent you, or have a new one sent below.</p>}
+    {!gate.hasPassword && msg ? <p className="oj-err">{msg}</p> : null}
+    <div className="oj-card oj-authcard">
+      <p className="oj-lab">{gate.hasPassword ? 'Forgot it?' : 'Need a link?'}</p>
+      {sent ? <p className="oj-ok"><Check size={15} /> If we have an email for this link, a sign-in link is on its way{gate.emailHint ? ' to ' + gate.emailHint : ''}. It works for 30 minutes.</p>
+        : <><p className="oj-p">We will email a one-time sign-in link{gate.emailHint ? ' to ' + gate.emailHint : ' to the address we have for you'}.</p>
+          <button type="button" className="oj-ghost" onClick={async () => { await auth({ sendLink: 1 }); setSent(true) }}><Mail size={15} /> Email me a sign-in link</button></>}
+    </div>
+  </>)
+  if (rec && (needPw)) return shell(<>
+    <p className="oj-kick">One quick step</p>
+    <h1>Create <em>your password.</em></h1>
+    <p className="oj-p">So only you can come back to this page. You will use it with this same link.</p>
+    <form className="oj-card oj-authcard" onSubmit={async e => { e.preventDefault(); if (pw.length < 8) { setMsg('Use at least 8 characters.'); return } if (pw !== pw2) { setMsg('The two passwords do not match.'); return } setBusy(true); setMsg(''); const a = await auth({ setPassword: pw }); setBusy(false); if (a?.ok) { setNeedPw(false); setPw(''); setPw2('') } else setMsg(a?.error || 'That did not save.') }}>
+      <label className="oj-f"><span>Password (8 or more characters)</span><input type="password" autoComplete="new-password" required value={pw} onChange={e => setPw(e.target.value)} autoFocus /></label>
+      <label className="oj-f"><span>Type it again</span><input type="password" autoComplete="new-password" required value={pw2} onChange={e => setPw2(e.target.value)} /></label>
+      {msg ? <p className="oj-err">{msg}</p> : null}
+      <button type="submit" className="oj-cta" disabled={busy}>{busy ? 'Saving…' : 'Save and continue'}</button>
+    </form>
+  </>)
   if (err) return <main className="oj"><style>{CSS}</style><div className="oj-wrap"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" /><h1>This link is not active</h1><p className="oj-p">{err}</p></div></main>
   if (!rec) return <main className="oj"><style>{CSS}</style><div className="oj-wrap"><p className="oj-p">Opening your onboarding…</p></div></main>
 
@@ -296,6 +341,7 @@ const CSS = `
 .oj-f{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid var(--rule);min-width:0}
 .oj-f>span{font:600 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}
 .oj-f input,.oj-f select,.oj-f textarea{width:100%;font:500 15px Inter,sans-serif;color:var(--ink);border:1px solid var(--rule);border-radius:10px;padding:11px 12px;background:#fff}
+.oj-auth{max-width:520px;padding-top:36px;padding-bottom:60px}.oj-auth .oj-logo{margin-bottom:36px}.oj-authcard{margin-top:16px;display:grid;gap:12px}.oj-authcard .oj-f{border-bottom:0;padding:0}.oj-authcard .oj-cta,.oj-authcard .oj-ghost{justify-self:start}
 .oj-match{display:inline-flex;align-items:center;gap:4px;color:var(--ok);font-weight:600;font-size:12px}
 .oj-apps{padding:12px 0;border-bottom:1px solid var(--rule)}
 .oj-apps>span{font:600 11px Inter,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--mut)}

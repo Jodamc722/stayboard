@@ -59,12 +59,12 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string)
   if (c.from === 'gm') {
     return {
       subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}: your onboarding link`,
-      body: `Hi ${first},\n\nWelcome to Stay Hospitality. I'm ${gm.name}, the ${gm.role.toLowerCase() || 'general manager'}, and I'll be looking after your onboarding${home ? ' at ' + home : ''} from here.\n\nTo get started, please open your onboarding link. It asks a few questions about the home, then shows everything a rental needs so you can tick what is already there. It saves as you go, so you can come back to it any time:\n\n${link}\n\n${steps}\n\nThe same link shows where things stand at every step. If anything is unclear, reply here or call me.\n\nBest,\n${sig(gm)}`,
+      body: `Hi ${first},\n\nWelcome to Stay Hospitality. I'm ${gm.name}, the ${gm.role.toLowerCase() || 'general manager'}, and I'll be looking after your onboarding${home ? ' at ' + home : ''} from here.\n\nTo get started, please open your onboarding link. It asks a few questions about the home, then shows everything a rental needs so you can tick what is already there. It saves as you go, so you can come back to it any time:\n\n${link}\n(You will also get a separate email with a private sign-in link, and you will create a password the first time.)\n\n${steps}\n\nThe same link shows where things stand at every step. If anything is unclear, reply here or call me.\n\nBest,\n${sig(gm)}`,
     }
   }
   return {
     subject: `Next steps with Stay Hospitality${home ? ' · ' + home : ''}: meet ${gmFirst}`,
-    body: `Hi ${first},\n\nThank you again for choosing Stay Hospitality. I'd like to introduce you to ${gm.name}, our ${gm.role.toLowerCase() || 'general manager'} (copied here), who will lead your onboarding${home ? ' at ' + home : ''} and be your main contact from here on.\n\nTo get started, please open your onboarding link. It asks a few questions about the home, then shows everything a rental needs so you can tick what is already there. It saves as you go:\n\n${link}\n\n${steps}\n\n${gmFirst} will be in touch shortly, and I'm always here if you need me.\n\nBest,\n${sig(sa)}`,
+    body: `Hi ${first},\n\nThank you again for choosing Stay Hospitality. I'd like to introduce you to ${gm.name}, our ${gm.role.toLowerCase() || 'general manager'} (copied here), who will lead your onboarding${home ? ' at ' + home : ''} and be your main contact from here on.\n\nTo get started, please open your onboarding link. It asks a few questions about the home, then shows everything a rental needs so you can tick what is already there. It saves as you go:\n\n${link}\n(You will also get a separate email with a private sign-in link, and you will create a password the first time.)\n\n${steps}\n\n${gmFirst} will be in touch shortly, and I'm always here if you need me.\n\nBest,\n${sig(sa)}`,
   }
 }
 export type OOAttach = { property: string; listingId: string; unitLabel: string }
@@ -96,6 +96,8 @@ export type OORecord = {
   payout?: OOPayout | null
   agreement?: OOFile | null
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
+  /** The owner's sign-in (lib/owner-onboard-auth): a password hash and one-time email links. Never leaves the server. */
+  auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string } | null
   archived?: boolean
 }
 /** What the list of links shows. */
@@ -132,12 +134,12 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, ...rest } = r
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, ...rest } = r
   void teamNotes; void createdBy; void agreement; void handoff
-  return { ...rest, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
+  return { ...rest, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
-export function teamView(r: OORecord) { return { ...r, payout: payoutHints(r.payout) } }
+export function teamView(r: OORecord) { const { auth, ...rest } = r; return { ...rest, payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '' } } }
 
 /** A US bank routing number: nine digits with a valid checksum. */
 export function routingOk(v: string): boolean {
