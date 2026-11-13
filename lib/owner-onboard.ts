@@ -82,7 +82,7 @@ export const OO_TAX_CLASS: { key: OOTaxClass; label: string }[] = [
 ]
 export type OOPayout = {
   w9: { name: string; business: string; taxClass: OOTaxClass; llcCode: string; other: string; address: string; cityStateZip: string; tinType: 'ssn' | 'ein'; tinEnc: string; tinHint: string }
-  ach: { holder: string; bank: string; accountType: 'checking' | 'savings'; routingEnc: string; routingHint: string; accountEnc: string; accountHint: string }
+  ach: { holder: string; bank: string; accountType: 'checking' | 'savings'; /** Personal or business account (Jon, 2026-11-13: "ACH has to state if personal or business"). Blank on forms sent before this was asked. */ ownership?: 'personal' | 'business'; routingEnc: string; routingHint: string; accountEnc: string; accountHint: string }
   sign: { name: string; at: string; ip: string }
 }
 /** THE ORDER LIST (Jon, 2026-11-13: "post owner fill-out we can send our order list with our actual items; the

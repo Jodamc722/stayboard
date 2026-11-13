@@ -35,6 +35,7 @@ function PayoutPreview({ pay, rec }: { pay: Any; rec: Any }) {
         <header><b style={{ fontSize: 15 }}>ACH</b><span>Direct deposit authorization · Stay Hospitality owner payouts</span></header>
         <L n="Account holder" v={pay.ach.holder} ph="Name on the account" />
         <L n="Bank" v={pay.ach.bank} ph="Bank name" />
+        <div className="oj-pl"><i>Account is</i><div className="oj-pcks"><span><em>{pay.ach.ownership === 'personal' ? 'X' : ''}</em>Personal</span><span><em>{pay.ach.ownership === 'business' ? 'X' : ''}</em>Business</span></div></div>
         <div className="oj-pl"><i>Account type</i><div className="oj-pcks"><span><em>{pay.ach.accountType === 'checking' ? 'X' : ''}</em>Checking</span><span><em>{pay.ach.accountType === 'savings' ? 'X' : ''}</em>Savings</span></div></div>
         <div className="oj-pl"><i>Routing number (9 digits)</i>{boxes(pay.ach.routing, [9], rec.payout?.ach?.routingHint)}</div>
         <L n="Account number" v={digits(pay.ach.account) || (rec.payout?.ach?.accountHint ? 'On file: ' + rec.payout.ach.accountHint : '')} ph="Account number" />
@@ -75,7 +76,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
-  const [pay, setPay] = useState<Any>({ w9: { name: '', business: '', taxClass: 'individual', llcCode: '', other: '', address: '', cityStateZip: '', tinType: 'ssn', tin: '' }, ach: { holder: '', bank: '', accountType: 'checking', routing: '', account: '', routing2: '', account2: '' }, sign: { name: '', agree: false } })
+  const [pay, setPay] = useState<Any>({ w9: { name: '', business: '', taxClass: 'individual', llcCode: '', other: '', address: '', cityStateZip: '', tinType: 'ssn', tin: '' }, ach: { holder: '', bank: '', ownership: '', accountType: 'checking', routing: '', account: '', routing2: '', account2: '' }, sign: { name: '', agree: false } })
   const [skip, setSkip] = useState<string[]>([]); const [oNote, setONote] = useState('')
   async function review(approve: boolean) { setBusy(true); setMsg(''); try { apply(await patch({ orderReview: { skip, note: oNote, approve } })); setMsg(approve ? 'Approved. Thank you! We will take it from here.' : 'Sent. We will update the list and send it back.') } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
   const pending = useRef<Record<string, OOMark>>({})
@@ -131,6 +132,7 @@ export function OwnerJoin({ code }: { code: string }) {
     e.preventDefault(); setMsg('')
     const tin = pay.w9.tin.replace(/\D/g, ''), rt = pay.ach.routing.replace(/\D/g, ''), ac = pay.ach.account.replace(/\D/g, '')
     const have = !!rec?.payout
+    if (pay.ach.ownership !== 'personal' && pay.ach.ownership !== 'business') { setMsg('Tell us whether the bank account is personal or business.'); return }
     if (!(have && !tin) && tin.length !== 9) { setMsg('The SSN or EIN must be 9 digits.'); return }
     if (!(have && !rt && !ac)) {
       if (rt.length !== 9) { setMsg('The routing number should be 9 digits. It is the first number at the bottom left of a check.'); return }
@@ -373,6 +375,7 @@ export function OwnerJoin({ code }: { code: string }) {
               <fieldset><legend>Bank account for payouts (ACH)</legend>
                 <label className="oj-f"><span>Account holder</span><input required value={pay.ach.holder} onChange={e => setPay({ ...pay, ach: { ...pay.ach, holder: e.target.value } })} /></label>
                 <label className="oj-f"><span>Bank</span><input required value={pay.ach.bank} onChange={e => setPay({ ...pay, ach: { ...pay.ach, bank: e.target.value } })} placeholder="e.g. Chase" /></label>
+                <Seg label="Personal or business account" value={pay.ach.ownership || ''} set={v => setPay({ ...pay, ach: { ...pay.ach, ownership: v } })} opts={[['personal', 'Personal'], ['business', 'Business']]} />
                 <Seg label="Account type" value={pay.ach.accountType} set={v => setPay({ ...pay, ach: { ...pay.ach, accountType: v } })} opts={[['checking', 'Checking'], ['savings', 'Savings']]} />
                 <label className="oj-f"><span>Routing number{rec.payout ? ' (on file: ' + rec.payout.ach.routingHint + ')' : ''}</span><input inputMode="numeric" autoComplete="off" value={pay.ach.routing} onChange={e => setPay({ ...pay, ach: { ...pay.ach, routing: e.target.value } })} placeholder="9 digits" /></label>
                 <label className="oj-f"><span>Confirm routing number</span><input inputMode="numeric" autoComplete="off" onPaste={e => e.preventDefault()} value={pay.ach.routing2} onChange={e => setPay({ ...pay, ach: { ...pay.ach, routing2: e.target.value } })} placeholder="Type it again" />{pay.ach.routing2 && pay.ach.routing.replace(/\D/g, '') === pay.ach.routing2.replace(/\D/g, '') && routingOk(pay.ach.routing) ? <small className="oj-match"><Check size={12} /> Matches</small> : null}</label>
@@ -403,7 +406,7 @@ export function OwnerJoin({ code }: { code: string }) {
                   <p className="oj-lab">Your W-9 and payout account</p>
                   {rec.payout ? (<>
                     <p className="oj-ok"><Check size={15} /> On file since {new Date(rec.payout.sign.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
-                    <p className="oj-small">{rec.payout.w9.tinType === 'ein' ? 'EIN' : 'SSN'} {rec.payout.w9.tinHint} · {rec.payout.ach.bank} {rec.payout.ach.accountType} {rec.payout.ach.accountHint}</p>
+                    <p className="oj-small">{rec.payout.w9.tinType === 'ein' ? 'EIN' : 'SSN'} {rec.payout.w9.tinHint} · {rec.payout.ach.bank} {rec.payout.ach.ownership || ''} {rec.payout.ach.accountType} {rec.payout.ach.accountHint}</p>
                     <div className="oj-docbtns">
                       <a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=w9'}>Download my W-9</a>
                       <a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=ach'}>Download my ACH form</a>
