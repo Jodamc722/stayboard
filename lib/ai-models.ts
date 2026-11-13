@@ -270,7 +270,9 @@ export const AI_TASKS: AiTask[] = [
     matters: 'Owners read these. This is the relationship on paper.' },
   // AD STUDIO (Jon, 2026-11-02): writes the script and scene plan for a video ad from a brief. Read
   // by the person building the ad, who edits every line before the voice is made; a few calls a day.
-  { key: 'ad-script', title: 'Ad Studio — write the script', group: 'Listings & reports', def: 'sonnet',
+  // Jon, 2026-11-13: "same power as Fable" — the script IS the ad (story, structure, every word on screen), a few
+  // calls a day at most, so it gets the top tier by default. Change it here in Settings if the cost matters more.
+  { key: 'ad-script', title: 'Ad Studio — write the script', group: 'Listings & reports', def: 'fable',
     what: 'Writes a short video ad from a brief: spoken lines, on-screen headlines, scene types and photo searches, from the house facts only.',
     matters: 'Goes out to prospects once edited and voiced. A made-up figure here is a claim we would be held to, so the prompt allows the house facts only.' },
   { key: 'polish', title: 'Polish wording (everywhere)', group: 'Operations', def: 'sonnet',
