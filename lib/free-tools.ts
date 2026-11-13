@@ -103,7 +103,7 @@ export function cleanInput(tool: ToolKey, raw: any): ToolInput {
 }
 
 // THE PARTNER NOTE (Jon, 2026-11-12: "have a notes: if we partner together we can put this list together
-// with actual items etc. and get this set up"). On the page, the PDF and the Excel.
+// with actual items etc. and get this set up"). On the page and in the PDF.
 export const PARTNER_NOTE = 'If we partner together, Stay puts this list together with the actual items, sourced and delivered, and gets your home set up and guest-ready.'
 
 export const money0 = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
