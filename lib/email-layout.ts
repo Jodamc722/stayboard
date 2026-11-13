@@ -4,7 +4,7 @@
 // has to be built (tables, inline styles, web-safe fonts) so it holds up in Gmail, Outlook and Apple Mail, on a
 // phone and in dark mode. Isomorphic (no secrets), so it can be previewed in the browser.
 
-export type EmailPerson = { name: string; role?: string; phone?: string; email?: string }
+export type EmailPerson = { name: string; role?: string; phone?: string; email?: string; /** absolute URL of a square headshot */ photo?: string }
 export type StayEmail = {
   origin: string                         // for the logo
   preheader?: string                     // the grey preview line in the inbox
@@ -51,7 +51,7 @@ ${e.table.rows.map(r => `<tr>${r.map((c, i) => `<td align="${right.has(i) ? 'rig
 ${e.ctaNote ? `<p style="margin:0 0 24px;font:400 12.5px/1.55 ${SANS};color:${MUT}">${e.ctaNote}</p>` : ''}` : ''
   const s = e.sign
   const sign = s ? `
-<table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 0;border-top:1px solid ${RULE};width:100%"><tr><td style="padding-top:18px">
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 0;border-top:1px solid ${RULE};width:100%"><tr>${s.photo ? `<td width="76" valign="top" style="padding-top:18px"><img src="${escHtml(s.photo)}" alt="${escHtml(s.name)}" width="60" height="60" style="display:block;width:60px;height:60px;border-radius:50%;object-fit:cover;border:0"></td>` : ''}<td valign="top" style="padding-top:18px">
 <p style="margin:0;font:600 15px/1.4 ${SANS};color:${INK}">${escHtml(s.name)}</p>
 <p style="margin:2px 0 0;font:400 13.5px/1.5 ${SANS};color:${MUT}">${escHtml([s.role, 'Stay Hospitality'].filter(Boolean).join(' · '))}</p>
 ${s.phone || s.email ? `<p style="margin:2px 0 0;font:400 13.5px/1.5 ${SANS};color:${MUT}">${[s.phone ? escHtml(s.phone) : '', s.email ? `<a href="mailto:${escHtml(s.email)}" style="color:${MUT};text-decoration:underline">${escHtml(s.email)}</a>` : ''].filter(Boolean).join(' &nbsp;·&nbsp; ')}</p>` : ''}

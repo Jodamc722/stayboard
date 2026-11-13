@@ -4,7 +4,7 @@
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Minus, Plus, Lock, Phone, Mail, ChevronRight, ChevronLeft } from 'lucide-react'
-import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
+import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, gmOf, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
 
 type Any = any
 /** The two forms, filling in as the owner types (Jon, 2026-11-13: "ACH and W9 forms should show them as they fill
@@ -86,6 +86,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); if (d.record.home) setHomes([d.record.home, ...(d.record.more || [])]); setNotes(d.record.ownerNotes || '') }
   // SIGN-IN (lib/owner-onboard-auth): an emailed magic link signs in once; then a password.
   const [viewer, setViewer] = useState<'owner' | 'team'>('owner')
+  const [em, setEm] = useState('')
   const [gate, setGate] = useState<Any>(null)        // { hasPassword, emailHint, firstName } when locked
   const [needPw, setNeedPw] = useState(false)       // signed in by link, no password yet
   const [pw, setPw] = useState(''); const [pw2, setPw2] = useState(''); const [sent, setSent] = useState(false)
@@ -107,7 +108,10 @@ export function OwnerJoin({ code }: { code: string }) {
       if (d.viewer !== 'team' && !d.record.hasPassword) setNeedPw(true)
       const r = d.record
       if (r.order) { setSkip(r.order.review?.skip || []); setONote(r.order.review?.note || '') }
-      setTab(r.order && r.order.status === 'sent' ? 'order' : r.submittedAt ? 'timeline' : r.home ? (r.custom.askSupplies || r.custom.askLinen ? 'supplies' : 'payout') : 'welcome')
+      // OPEN ON THE WELCOME PAGE, THEN MOVE THROUGH (Jon, 2026-11-13: "make sure it opens to the home page then move
+      // through"). It used to jump to Supplies whenever the home was already filled in, which is every link the team
+      // pre-fills. Only two things skip the welcome: an order list waiting for review, and a finished form.
+      setTab(r.order && r.order.status === 'sent' ? 'order' : r.submittedAt ? 'timeline' : 'welcome')
       if (r.payout) setPay((p: Any) => ({ ...p, w9: { ...p.w9, ...r.payout.w9, tin: '' }, ach: { ...p.ach, ...r.payout.ach, routing: '', account: '' }, sign: { name: r.payout.sign.name, agree: true } }))
     }
     go()
@@ -153,7 +157,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const shown = useMemo(() => items.filter(i => (i.unit || 0) === Math.min(su, unitCount - 1)), [items, su, unitCount])
   const groups = useMemo(() => Array.from(new Set(shown.map(i => i.group))), [shown])
   const counts = { have: items.filter(i => marks[i.key] === 'have').length, need: items.filter(i => marks[i.key] === 'need').length }
-  const c = flags.contact || {}
+  const c = gmOf(flags.contact || {})
   const first = (flags.ownerName || '').split(' ')[0]
 
   const shell = (inner: React.ReactNode) => <main className="oj"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" /><style>{CSS}</style><div className="oj-wrap oj-auth"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" />{inner}</div></main>
@@ -161,7 +165,8 @@ export function OwnerJoin({ code }: { code: string }) {
     <p className="oj-kick">Owner onboarding</p>
     <h1>{gate.firstName ? <>Welcome back, <em>{gate.firstName}.</em></> : <>Sign in to <em>your onboarding.</em></>}</h1>
     {gate.hasPassword ? (
-      <form className="oj-card oj-authcard" onSubmit={async e => { e.preventDefault(); setBusy(true); setMsg(''); const a = await auth({ password: pw }); setBusy(false); if (a?.ok) { setPw(''); setTick(t => t + 1) } else setMsg(a?.error || 'That did not work.') }}>
+      <form className="oj-card oj-authcard" onSubmit={async e => { e.preventDefault(); setBusy(true); setMsg(''); const a = await auth({ password: pw, email: gate.multi ? em : undefined }); setBusy(false); if (a?.ok) { setPw(''); setTick(t => t + 1) } else setMsg(a?.error || 'That did not work.') }}>
+        {gate.multi ? <label className="oj-f"><span>Your email</span><input type="email" autoComplete="username" required value={em} onChange={e => setEm(e.target.value)} autoFocus /></label> : null}
         <label className="oj-f"><span>Password</span><input type="password" autoComplete="current-password" required value={pw} onChange={e => setPw(e.target.value)} autoFocus /></label>
         {msg ? <p className="oj-err">{msg}</p> : null}
         <button type="submit" className="oj-cta" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
@@ -170,9 +175,9 @@ export function OwnerJoin({ code }: { code: string }) {
     {!gate.hasPassword && msg ? <p className="oj-err">{msg}</p> : null}
     <div className="oj-card oj-authcard">
       <p className="oj-lab">{gate.hasPassword ? 'Forgot it?' : 'Need a link?'}</p>
-      {sent ? <p className="oj-ok"><Check size={15} /> If we have an email for this link, a sign-in link is on its way{gate.emailHint ? ' to ' + gate.emailHint : ''}. It works for 30 minutes.</p>
-        : <><p className="oj-p">We will email a one-time sign-in link{gate.emailHint ? ' to ' + gate.emailHint : ' to the address we have for you'}.</p>
-          <button type="button" className="oj-ghost" onClick={async () => { await auth({ sendLink: 1 }); setSent(true) }}><Mail size={15} /> Email me a sign-in link</button></>}
+      {sent ? <p className="oj-ok"><Check size={15} /> If we have an email for this link, a sign-in link is on its way{gate.emailHint && !gate.multi ? ' to ' + gate.emailHint : ''}. It works for 30 minutes.</p>
+        : <><p className="oj-p">We will email a one-time sign-in link{gate.multi ? ' to each owner’s own address (enter yours above to get only your own)' : gate.emailHint ? ' to ' + gate.emailHint : ' to the address we have for you'}.</p>
+          <button type="button" className="oj-ghost" onClick={async () => { await auth({ sendLink: 1, email: gate.multi && em.trim() ? em : undefined }); setSent(true) }}><Mail size={15} /> Email me a sign-in link</button></>}
     </div>
   </>)
   if (rec && (needPw)) return shell(<>
@@ -210,7 +215,7 @@ export function OwnerJoin({ code }: { code: string }) {
     <main className="oj">
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" />
       <style>{CSS}</style>
-      <header className="oj-top"><div className="oj-wrap oj-top-in"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" /><span>{viewer === 'team' ? 'Team preview · ' : ''}{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : ''].filter(Boolean).join(' · ') || 'Owner portal'}{viewer === 'owner' && rec.hasPassword ? <button type="button" className="oj-out" onClick={async () => { await auth({ signOut: 1 }); window.location.href = '/portal' }}>Sign out</button> : null}</span></div>
+      <header className="oj-top"><div className="oj-wrap oj-top-in"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" /><span>{viewer === 'team' ? 'Team preview · ' : ''}{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : ''].filter(Boolean).join(' · ') || 'Owner portal'}{viewer === 'owner' && rec.me?.name && rec.coOwners?.length ? ' · ' + rec.me.name : ''}{viewer === 'owner' && rec.hasPassword ? <button type="button" className="oj-out" onClick={async () => { await auth({ signOut: 1 }); window.location.href = '/portal' }}>Sign out</button> : null}</span></div>
         <div className="oj-wrap"><nav className="oj-tabs">{tabs.map((t, i) => <button key={t} type="button" className={(t === tab ? 'on ' : '') + (tabs.indexOf(tab) > i ? 'past' : '')} onClick={() => go(t)}><em>{i + 1}</em>{({ welcome: 'Welcome', home: 'Your home', supplies: 'Supplies', order: 'Order list', payout: 'Payouts and tax', timeline: 'Timeline' } as Record<Tab, string>)[t]}</button>)}</nav></div>
       </header>
 
@@ -221,7 +226,8 @@ export function OwnerJoin({ code }: { code: string }) {
               <p className="oj-kick">Welcome to Stay Hospitality</p>
               <h1>{first ? <>Hi {first}, <em>let’s get started.</em></> : <>Let’s get your home <em>started.</em></>}</h1>
               <p className="oj-p">{flags.greeting || 'This page walks you through everything we need before your home goes live. It takes about ten minutes, saves as you go, and you can come back to it any time from this link.'}</p>
-              <button type="button" className="oj-cta" onClick={next}>Start <ChevronRight size={16} /></button>
+              {rec.home ? <p className="oj-p">We have already filled in what we know about your home. Please check each step and correct anything that is not right.</p> : null}
+              <button type="button" className="oj-cta" onClick={next}>{rec.home ? 'Review and continue' : 'Start'} <ChevronRight size={16} /></button>
             </div>
             <aside className="oj-card"><p className="oj-lab">What happens next</p>{timeline}</aside>
           </section>
@@ -412,9 +418,10 @@ export function OwnerJoin({ code }: { code: string }) {
                   {rec.payout ? (<>
                     <p className="oj-ok"><Check size={15} /> On file since {new Date(rec.payout.sign.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</p>
                     <p className="oj-small">{rec.payout.w9.tinType === 'ein' ? 'EIN' : 'SSN'} {rec.payout.w9.tinHint} · {rec.payout.ach.bank} {rec.payout.ach.ownership || ''} {rec.payout.ach.accountType} {rec.payout.ach.accountHint}</p>
+                    {rec.payoutMine === false ? <p className="oj-small">Sent by another owner on this home. For security, only they can download their copies.</p> : null}
                     <div className="oj-docbtns">
-                      <a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=w9'}>Download my W-9</a>
-                      <a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=ach'}>Download my ACH form</a>
+                      {rec.payoutMine === false ? null : <><a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=w9'}>Download my W-9</a>
+                      <a className="oj-ghost" href={'/api/join/' + code + '/forms?doc=ach'}>Download my ACH form</a></>}
                       <button type="button" className="oj-ghost" onClick={() => go('payout')}>Update</button>
                     </div>
                   </>) : <><p className="oj-p">Not sent yet. We need these to pay you and for your tax form.</p><button type="button" className="oj-cta" onClick={() => go('payout')}>Fill in my W-9 and bank details <Lock size={15} /></button></>}

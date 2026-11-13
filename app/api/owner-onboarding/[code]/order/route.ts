@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { readRecord, saveRecord, buildOrder, cleanOrderLines } from '@/lib/owner-onboard-server'
-import { emailMagicLink } from '@/lib/owner-onboard-auth'
+import { emailMagicLink, accounts } from '@/lib/owner-onboard-auth'
 import { teamView, unitsOf } from '@/lib/owner-onboard'
 import { syncFaq } from '@/lib/owner-onboard-faq'
 
@@ -26,7 +26,9 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   } else if (b.action === 'send' && r.order) {
     if (!r.order.lines.length) return NextResponse.json({ ok: false, error: 'The list is empty.' }, { status: 400 })
     r.order = { ...r.order, status: 'sent', sentAt: new Date().toISOString(), review: undefined }
-    if (r.custom.ownerEmail) { const m = await emailMagicLink(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, 'order').catch(() => ({ ok: false })); note = m.ok ? 'The owner was emailed a link to review it.' : 'It is on the owner’s page, but the email did not send.' }
+    // every owner on the link with an email gets their own link to the list
+    const to = accounts(r).filter(a => a.email)
+    if (to.length) { let sent = 0; for (const a of to) { const m = await emailMagicLink(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, 'order', a.id).catch(() => ({ ok: false })); if (m.ok) sent++ } note = sent === to.length ? (to.length > 1 ? `All ${to.length} owners were emailed a link to review it.` : 'The owner was emailed a link to review it.') : sent ? `It is on the owners’ page; ${sent} of ${to.length} emails sent.` : 'It is on the owner’s page, but the email did not send.' }
     else note = 'It is on the owner’s page. There is no owner email, so send them the link yourself.'
   } else if (b.action === 'unsend' && r.order) {
     r.order = { ...r.order, status: 'draft' }

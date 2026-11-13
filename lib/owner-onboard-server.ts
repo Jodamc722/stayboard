@@ -61,7 +61,7 @@ function indexRow(r: OORecord, items: OOItem[] | null): OOIndexRow {
   const marks = Object.entries(r.marks).filter(([k]) => !keys || keys.has(k))
   return { code: r.code, ownerName: r.custom.ownerName, property: r.attach.property, unitLabel: r.attach.unitLabel, listingId: r.attach.listingId, createdAt: r.createdAt, updatedAt: r.updatedAt, createdBy: r.createdBy,
     stage: stageOf(r), submitted: !!r.submittedAt, have: marks.filter(([, m]) => m === 'have').length, need: marks.filter(([, m]) => m === 'need').length,
-    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', ...(r.archived ? { archived: true } : {}) }
+    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), emails: [r.custom.ownerEmail, ...(r.owners || []).map(o => o.email)].map(e => String(e || '').trim().toLowerCase()).filter(Boolean), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', ...(r.archived ? { archived: true } : {}) }
 }
 async function writeIndex(row: OOIndexRow, by: string | null) {
   const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])
@@ -197,4 +197,20 @@ export async function deleteRecord(code: string, by: string | null): Promise<{ o
   await setSetting(OO_INDEX, (Array.isArray(idx) ? idx : []).filter(x => x && x.code !== code), by)
   try { const ls = await db.storage.from('owner-onboarding').list(code, { limit: 100 }); const paths = (ls.data || []).map(f => code + '/' + f.name); if (paths.length) await db.storage.from('owner-onboarding').remove(paths) } catch { /* the record is gone; a stray file is not reachable without it */ }
   return { ok: true }
+}
+
+/** The other owners on a link, from the team's form: up to five, each keeping the sign-in it already has. */
+export function cleanOwners(v: any, prev: OORecord['owners']): NonNullable<OORecord['owners']> {
+  const was = new Map((prev || []).map(o => [o.id, o] as [string, NonNullable<OORecord['owners']>[number]]))
+  const seen = new Set<string>()
+  return (Array.isArray(v) ? v : []).slice(0, 5).map((o: any) => {
+    let id = typeof o?.id === 'string' && /^[a-z0-9]{4,12}$/.test(o.id) && o.id !== 'p' && !seen.has(o.id) ? o.id : ''
+    while (!id || seen.has(id)) id = Math.random().toString(36).slice(2, 8)
+    seen.add(id)
+    const old = was.get(id)
+    const email = str(o?.email, 160).toLowerCase()
+    // a changed email is a different inbox: the old one-time links must not open the new owner's account
+    const auth = old?.auth ? (old.email.toLowerCase() === email ? old.auth : { ...old.auth, tokens: [], invitedAt: undefined }) : null
+    return { id, name: str(o?.name, 120), email, phone: str(o?.phone, 40), auth }
+  }).filter(o => o.name || o.email)
 }

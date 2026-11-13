@@ -48,12 +48,16 @@ export type OOCustom = {
   gm: OOPerson
   askHome: boolean; askSupplies: boolean; askLinen: boolean; askPayout: boolean
 }
-export const DEFAULT_GM: OOPerson = { name: 'Jon McGill', role: 'General Manager', phone: '', email: 'jon@stay-hospitality.com', photo: '' }
+// The GM's direct line is the one already on the owner decks (lib/onboarding-report team). The photo is shown in the
+// welcome email and on the owner's page once there is one at this path.
+export const DEFAULT_GM: OOPerson = { name: 'Jon McGill', role: 'General Manager', phone: '(954) 391-2116', email: 'jon@stay-hospitality.com', photo: '' }
+/** A link's GM card, with anything it was saved without (phone, photo) filled from today's default for the same person. */
+export const gmOf = (gm: OOPerson): OOPerson => (gm?.email && gm.email.toLowerCase() === DEFAULT_GM.email ? { ...gm, phone: gm.phone || DEFAULT_GM.phone, photo: gm.photo || DEFAULT_GM.photo } : gm)
 export const DEFAULT_SALES: OOPerson = { name: 'Nick Carline', role: 'Business Development', phone: '(651) 200-8283', email: 'nicholas@stay-hospitality.com', photo: '/deck-img/nick-carline.jpg' }
 
 /** The introductory email that carries the link, from sales (introducing the GM) or from the GM. */
 export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string): { subject: string; body: string } {
-  const c = r.custom, gm = c.gm, sa = c.sales
+  const c = r.custom, gm = gmOf(c.gm), sa = c.sales
   const first = (c.ownerName || '').trim().split(/\s+/)[0] || 'there'
   const home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const gmFirst = gm.name.split(' ')[0] || 'our General Manager'
@@ -73,6 +77,11 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string)
     body: `Hi ${first},\n\n${thanks}\n\nI would like to introduce ${gm.name}, our ${gmRole}, copied here. ${gmFirst} and the team will lead your onboarding, and ${gmFirst} will be your main point of contact from here.\n\n${portal}\n\n${steps}\n\n${gmFirst} will be in touch shortly. In the meantime, I am always here if you need anything.\n\nBest regards,\n${sig(sa)}`,
   }
 }
+/** One owner account's sign-in: a password hash, one-time link tokens, and when it was invited, created and last used. */
+export type OOAuth = { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string; activatedAt?: string; lastSeenAt?: string }
+export type OOCoOwner = { id: string; name: string; email: string; phone: string; auth?: OOAuth | null }
+/** Every owner on a link, the first one as id 'p'. */
+export const ownersOf = (r: Pick<OORecord, 'custom' | 'owners'>) => [{ id: 'p', name: r.custom.ownerName, email: r.custom.ownerEmail, phone: r.custom.ownerPhone }, ...(r.owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone }))]
 export type OOAttach = { property: string; listingId: string; unitLabel: string }
 export type OOCall = { at: string; link: string; note: string; minutes?: number; eventId?: string; eventUrl?: string; host?: string }
 /** THE W-9 AND ACH (Jon, 2026-11-12: "ACH and W-9 forms the owner can fill out in an encrypted format"). The
@@ -87,6 +96,8 @@ export type OOPayout = {
   w9: { name: string; business: string; taxClass: OOTaxClass; llcCode: string; other: string; address: string; cityStateZip: string; tinType: 'ssn' | 'ein'; tinEnc: string; tinHint: string }
   ach: { holder: string; bank: string; accountType: 'checking' | 'savings'; /** Personal or business account (Jon, 2026-11-13: "ACH has to state if personal or business"). Blank on forms sent before this was asked. */ ownership?: 'personal' | 'business'; routingEnc: string; routingHint: string; accountEnc: string; accountHint: string }
   sign: { name: string; at: string; ip: string }
+  /** Which owner sent the forms ('p' = the first owner). Only that owner can download their own copies. */
+  by?: string
 }
 /** THE ORDER LIST (Jon, 2026-11-13: "post owner fill-out we can send our order list with our actual items; the
  *  goal is for that to be reviewed"). Built by the team from Stay's own catalog (the real products, prices and
@@ -125,15 +136,16 @@ export type OORecord = {
     /** A note that goes to the vendor with the quote request. */
     note?: string } | null
   /** The owner's sign-in (lib/owner-onboard-auth): a password hash and one-time email links. Never leaves the server. */
-  auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string
-    /** The owner account: when they created their password, and when they last signed in. */
-    activatedAt?: string; lastSeenAt?: string } | null
+  auth?: OOAuth | null
+  /** MORE OWNERS (Jon, 2026-11-13: "option for multiple owners… each will need portal passcode and access"). The first
+   *  owner stays in `custom` and `auth`; each owner added here has their own invite, password and sign-in. */
+  owners?: OOCoOwner[]
   archived?: boolean
 }
 /** What the list of links shows. */
 export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
-  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | '' }
+  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** every owner's email on the link */ emails?: string[]; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | '' }
 
 export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '', wifiName: '', wifiPass: '' }
 
@@ -166,17 +178,18 @@ export function payoutHints(p?: OOPayout | null) {
   if (!p) return null
   const { tinEnc, ...w9 } = p.w9; const { routingEnc, accountEnc, ...ach } = p.ach
   void tinEnc; void routingEnc; void accountEnc
-  return { w9, ach, sign: { name: p.sign.name, at: p.sign.at } }
+  return { w9, ach, sign: { name: p.sign.name, at: p.sign.at }, by: p.by || 'p' }
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, ...rest } = r
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, ...rest } = r
+  void owners
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
-export function teamView(r: OORecord) { const { auth, ...rest } = r; return { ...rest, payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' } } }
+export function teamView(r: OORecord) { const { auth, owners, ...rest } = r; const acc = (a?: OOAuth | null) => ({ hasPassword: !!a?.pass, invitedAt: a?.invitedAt || '', activatedAt: a?.activatedAt || '', lastSeenAt: a?.lastSeenAt || '' }); return { ...rest, owners: (owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone, access: acc(o.auth) })), payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' } } }
 
 /** A US bank routing number: nine digits with a valid checksum. */
 export function routingOk(v: string): boolean {
