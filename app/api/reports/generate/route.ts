@@ -342,6 +342,12 @@ export async function POST(req: NextRequest) {
       // A building package already carries the projections, so the close asks for a call (Jon, 2026-11-11).
       if ((contentS as any).close) (contentS as any).close.headline = 'Book a call to learn more'
     }
+    // THE BUILDING'S OWN LOOK, read from its website on the new-deck form (components/SmartBuilding → body.brand):
+    // the magazine opens in that theme, with the building's logo and lead picture.
+    const br = body?.brand
+    if (br && typeof br === 'object' && br.theme && typeof br.theme === 'object' && /^#[0-9a-f]{3,8}$/i.test(String(br.theme.navy || ''))) {
+      ;(contentS as any).magazine = { ...((contentS as any).magazine || {}), style: 'custom', custom: br.theme, brandLogo: str(br.logo).slice(0, 500), brandImage: str(br.image).slice(0, 500), brandSource: str(br.source).slice(0, 300) }
+    }
     // OUR HOMES AGAINST THE MARKET (lib/sales-edge). Measured now so the deck arrives carrying it;
     // a market with no published benchmark, or where we do not win, simply has no rows.
     try {
