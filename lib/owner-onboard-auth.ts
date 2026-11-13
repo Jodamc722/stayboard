@@ -64,20 +64,20 @@ export function canSend(r: OORecord): boolean {
 export const emailHint = (e: string) => { const [u, d] = String(e || '').split('@'); return u && d ? u.slice(0, 2) + '•••@' + d : '' }
 
 const esc = (s: string) => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c])
-export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin'): Promise<{ ok: boolean; error?: string }> {
+export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin' | 'order'): Promise<{ ok: boolean; error?: string }> {
   const to = r.custom.ownerEmail
   if (!to) return { ok: false, error: 'There is no owner email on this link.' }
-  const token = newToken(r, kind === 'invite' ? 60 * 24 * 7 : 30)
+  const token = newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7)
   const link = origin.replace(/\/$/, '') + '/join/' + r.code + '?k=' + token
   const first = (r.custom.ownerName || '').split(' ')[0] || 'there'
   const gm = r.custom.gm, home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#111;line-height:1.55;max-width:520px">
 <p>Hi ${esc(first)},</p>
-<p>${kind === 'invite' ? `Here is your private onboarding link for Stay Hospitality${home ? ' (' + esc(home) + ')' : ''}. Open it to get started; you will be asked to create a password so only you can come back to it.` : 'Here is a new sign-in link for your Stay Hospitality onboarding.'}</p>
-<p><a href="${esc(link)}" style="display:inline-block;background:#14161B;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:bold">${kind === 'invite' ? 'Open my onboarding' : 'Sign in'}</a></p>
-<p style="color:#666;font-size:13px">This link signs you in once and works for ${kind === 'invite' ? '7 days' : '30 minutes'}. If the button does not work, paste this into your browser:<br>${esc(link)}</p>
+<p>${kind === 'order' ? `Your order list${home ? ' for ' + esc(home) : ''} is ready to review: the items we would buy to set the home up, with quantities and prices. Please look it over, tell us about anything you already have, and approve it.` : kind === 'invite' ? `Here is your private onboarding link for Stay Hospitality${home ? ' (' + esc(home) + ')' : ''}. Open it to get started; you will be asked to create a password so only you can come back to it.` : 'Here is a new sign-in link for your Stay Hospitality onboarding.'}</p>
+<p><a href="${esc(link)}" style="display:inline-block;background:#14161B;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:bold">${kind === 'order' ? 'Review my order list' : kind === 'invite' ? 'Open my onboarding' : 'Sign in'}</a></p>
+<p style="color:#666;font-size:13px">This link signs you in once and works for ${kind === 'signin' ? '30 minutes' : '7 days'}. If the button does not work, paste this into your browser:<br>${esc(link)}</p>
 <p>${esc(gm.name)}${gm.role ? ', ' + esc(gm.role) : ''}<br>Stay Hospitality${gm.phone ? '<br>' + esc(gm.phone) : ''}</p></div>`
-  const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'invite' ? 'Your Stay Hospitality onboarding link' : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'order' ? 'Your order list is ready to review · Stay Hospitality' : kind === 'invite' ? 'Your Stay Hospitality onboarding link' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') blank(r).invitedAt = new Date().toISOString()
   return { ok: res.ok, error: res.error }
 }

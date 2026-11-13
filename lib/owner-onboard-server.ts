@@ -4,8 +4,9 @@
 import 'server-only'
 import { getSettingFresh, setSetting, getSetting } from './app-settings'
 import { needList, NEED_ROOMS } from './need-list'
-import type { KitSize } from './starter-kit'
+import { itemsFor as kitItemsFor, lineFor, type KitSize, type KitSelection } from './starter-kit'
 import { normLinenStandard, linenQuote, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
+import type { OOOrder, OOOrderLine } from './owner-onboard'
 import { OO_PREFIX, OO_INDEX, cleanHome, unitsOf, unitName, DEFAULT_GM, DEFAULT_SALES, freshSteps, stageOf, type OORecord, type OOIndexRow, type OOItem, type OOHome, type OOCustom } from './owner-onboard'
 
 const newCode = () => { const c: any = (globalThis as any).crypto; return String(c?.randomUUID ? c.randomUUID() : Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 14) }
@@ -109,4 +110,28 @@ export async function createRecord(v: any, by: string): Promise<OORecord> {
   const w = await saveRecord(r, by)
   if (!w.ok) throw new Error(w.error || 'Could not save.')
   return r
+}
+
+/** A first order list from Stay's own catalog (the starter kit: real products, prices and links), sized per unit. */
+export function buildOrder(r: OORecord): OOOrder {
+  const units = unitsOf(r)
+  const blank: KitSelection = { inc: {}, qty: {}, own: {}, pick: {}, self: {}, have: {} } as any
+  const by = new Map<string, OOOrderLine>()
+  units.forEach((h, i) => {
+    const z: KitSize = { bedrooms: Math.max(1, h.bedrooms), bathrooms: Math.max(1, Math.ceil(h.bathrooms)), guests: h.guests, kitchen: h.kitchen, appliances: { ...h.appliances } }
+    for (const it of kitItemsFor(z)) {
+      const l = lineFor(it, z, blank)
+      if (!l.included || !(l.qty > 0)) continue
+      const e = by.get(it.key) || { key: it.key, category: it.category, name: it.name, detail: String(l.detail || it.detail || '').slice(0, 200), url: l.url || '', price: l.price ?? null, qty: units.map(() => 0) }
+      e.qty[i] = l.qty; by.set(it.key, e)
+    }
+  })
+  return { lines: Array.from(by.values()), status: 'draft', builtAt: new Date().toISOString() }
+}
+export function cleanOrderLines(v: any, units: number): OOOrderLine[] {
+  return (Array.isArray(v) ? v : []).slice(0, 300).map((l: any, i: number) => ({
+    key: String(l?.key || 'x' + i).slice(0, 80), category: String(l?.category || 'Other').slice(0, 60), name: String(l?.name || '').slice(0, 160), detail: String(l?.detail || '').slice(0, 200),
+    url: /^https?:\/\//.test(String(l?.url || '')) ? String(l.url).slice(0, 500) : '', price: Number.isFinite(Number(l?.price)) && l?.price !== null && l?.price !== '' ? Math.max(0, Math.round(Number(l.price) * 100) / 100) : null,
+    qty: Array.from({ length: Math.max(1, units) }, (_, u) => Math.max(0, Math.min(999, Math.round(Number(l?.qty?.[u]) || 0)))),
+  })).filter(l => l.name)
 }

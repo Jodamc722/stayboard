@@ -53,6 +53,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     for (const [k, v] of Object.entries(b.marks)) { if (++n > 600) break; if (v === 'have' || v === 'need' || v === '') r.marks[String(k).slice(0, 120)] = v as any }
   }
   if (typeof b.ownerNotes === 'string') r.ownerNotes = b.ownerNotes.slice(0, 4000)
+  // THE ORDER LIST, REVIEWED: lines the owner already has (skip), a note, and approve or ask for changes.
+  let reviewed = ''
+  if (b.orderReview && r.order && r.order.status !== 'draft') {
+    const keys = new Set(r.order.lines.map(l => l.key))
+    const skip = (Array.isArray(b.orderReview.skip) ? b.orderReview.skip : []).map((k: any) => String(k)).filter((k: string) => keys.has(k)).slice(0, 300)
+    r.order = { ...r.order, status: b.orderReview.approve ? 'approved' : 'changes', review: { at: new Date().toISOString(), name: String(b.orderReview.name || r.custom.ownerName || '').slice(0, 120), skip, note: String(b.orderReview.note || '').slice(0, 2000) } }
+    reviewed = r.order.status
+  }
   // THE W-9 AND ACH: checked, then the tax ID and bank numbers are encrypted before anything is saved.
   let firstPayout = false
   if (b.payout) {
@@ -92,6 +100,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   }
   const w = await saveRecord(r, 'owner:' + (r.custom.ownerEmail || r.code))
   if (!w.ok) return NextResponse.json(w, { status: 500, headers: NO_STORE })
+  if (reviewed) {
+    try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `${r.custom.ownerName || 'An owner'} ${reviewed === 'approved' ? 'approved the order list' : 'asked for changes to the order list'}`, body: r.order?.review?.note || [r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · '), link: '/owner-onboarding/' + r.code }) } catch { /* */ }
+  }
   if (firstSubmit) {
     try {
       const who = [r.createdBy, r.custom.gm.email, r.custom.from === 'sales' ? r.custom.sales.email : ''].filter(Boolean)

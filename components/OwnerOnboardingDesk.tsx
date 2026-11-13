@@ -50,6 +50,61 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
   )
 }
 
+// ── THE ORDER LIST: our actual items, edited by the team, sent to the owner to review ──
+function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r: Any) => void }) {
+  const o = rec.order
+  const [lines, setLines] = useState<Any[]>(o?.lines || [])
+  const [note, setNote] = useState(o?.note || '')
+  const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState(''); const [msg, setMsg] = useState('')
+  useEffect(() => { setLines(rec.order?.lines || []); setNote(rec.order?.note || ''); setDirty(false) }, [rec.order?.builtAt, rec.order?.status])
+  const money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  async function act(action: string, extra: Any = {}) {
+    setBusy(action); setMsg('')
+    const d = await fetch(`/api/owner-onboarding/${rec.code}/order`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...extra }) }).then(r => r.json()).catch(() => null)
+    setBusy(''); if (d?.record) onRec(d.record); setMsg(d?.ok ? (d.note || 'Saved.') : (d?.error || 'Not saved.')); return !!d?.ok
+  }
+  const set = (i: number, p: Any) => { setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true) }
+  const skip: string[] = o?.review?.skip || []
+  const total = lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (Number(l.price) || 0) * l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), 0)
+  const inp = 'rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink'
+  return (
+    <section className={card}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Order list</h2>
+        {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? 'Approved by the owner' : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}</div>
+      <p className="text-[12.5px] text-muted mb-3">Our actual items from the Stay catalog, sized to {units.length > 1 ? 'each unit' : 'the home'}. Take off what the owner already has, adjust, then send it to the owner to review and approve. Linen is separate.</p>
+      {!o ? <button type="button" disabled={busy === 'build' || !units.length} onClick={() => act('build')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'build' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Build the order list</button> : (<>
+        {o.review ? <div className={'rounded-xl p-3 mb-3 ' + (o.status === 'approved' ? 'bg-emerald-50' : 'bg-amber-50')}><p className={lab}>The owner’s review · {new Date(o.review.at).toLocaleString()}</p>
+          {o.review.skip.length ? <p className="text-[13px] text-ink mt-1">Already has: {o.review.skip.map((k: string) => lines.find(l => l.key === k)?.name || k).join(', ')}</p> : null}
+          {o.review.note ? <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap">“{o.review.note}”</p> : null}</div> : null}
+        <div className="overflow-x-auto"><table className="w-full min-w-[500px] text-[12.5px]">
+          <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th>{units.map(u => <th key={u} className="px-1 text-right font-semibold whitespace-nowrap">{units.length > 1 ? u : 'Qty'}</th>)}<th className="px-1 text-right font-semibold">Each</th><th className="text-right font-semibold">Total</th><th /></tr></thead>
+          <tbody>{lines.map((l, i) => { const q = l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), off = skip.indexOf(l.key) >= 0; return (
+            <tr key={l.key} className={'border-b border-line align-top ' + (off ? 'opacity-50' : '')}>
+              <td className="py-1.5 pr-2"><input value={l.name} onChange={e => set(i, { name: e.target.value })} className={inp + ' w-full font-semibold'} /><span className="block text-[11.5px] text-muted mt-0.5">{l.detail && l.detail !== l.name ? l.detail + ' · ' : ''}{l.category}{l.url ? <> · <a href={l.url} target="_blank" rel="noreferrer" className="underline">item</a></> : null}{off ? ' · owner has this' : ''}</span></td>
+              {units.map((u, ui) => <td key={u} className="px-1 text-right"><input inputMode="numeric" value={String(l.qty[ui] ?? 0)} onChange={e => set(i, { qty: units.map((_, k) => (k === ui ? Number(e.target.value.replace(/\D/g, '')) || 0 : l.qty[k] || 0)) })} className={inp + ' w-12 text-right'} /></td>)}
+              <td className="px-1 text-right"><input inputMode="decimal" value={l.price ?? ''} onChange={e => set(i, { price: e.target.value === '' ? null : e.target.value })} className={inp + ' w-[68px] text-right'} /></td>
+              <td className="text-right tabular-nums pt-2.5">{l.price != null && l.price !== '' ? money(Number(l.price) * q) : '—'}</td>
+              <td className="pl-1 pt-2"><button type="button" onClick={() => { setLines(ls => ls.filter((_, j) => j !== i)); setDirty(true) }} className="text-muted hover:text-red-700" title="Remove">×</button></td>
+            </tr>) })}</tbody>
+          <tfoot><tr><td className="pt-2 font-semibold text-ink" colSpan={units.length + 2}>Estimated total{skip.length ? ' (without what the owner has)' : ''}</td><td className="pt-2 text-right font-semibold tabular-nums">{money(total)}</td><td /></tr></tfoot>
+        </table></div>
+        <div className="oo-noprint">
+          <button type="button" onClick={() => { setLines(ls => [...ls, { key: 'c' + Date.now().toString(36), category: 'Other', name: 'New item', detail: '', url: '', price: null, qty: units.map(() => 1) }]); setDirty(true) }} className="mt-2 text-[12.5px] font-semibold text-ink">+ Add an item</button>
+          <label className="block mt-3"><span className={lab}>Note to the owner (shown above the list)</span><textarea rows={2} value={note} onChange={e => { setNote(e.target.value); setDirty(true) }} className={field} placeholder="e.g. We left off what you marked as already in the home." /></label>
+          <div className="flex flex-wrap items-center gap-2 mt-3">
+            <button type="button" disabled={!dirty || !!busy} onClick={() => act('save', { lines, note })} className="rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink disabled:opacity-40">Save changes</button>
+            <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('send') }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {o.status === 'draft' ? 'Send to the owner to review' : 'Send again'}</button>
+            {o.status !== 'draft' ? <button type="button" onClick={() => act('unsend')} className="text-[12.5px] text-muted underline">Take it back to a draft</button> : null}
+            <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the catalog</button>
+          </div>
+        </div>
+      </>)}
+      {msg ? <p className="text-[12.5px] text-ink mt-2">{msg}</p> : null}
+    </section>
+  )
+}
+
 // ── the introductory email, ready to copy ──
 function IntroEmail({ rec }: { rec: Any }) {
   const [from, setFrom] = useState<'sales' | 'gm'>(rec.custom.from || 'sales')
@@ -359,6 +414,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             </>)}
             {rec.ownerNotes ? <div className="mt-4 rounded-xl bg-app p-3"><p className={lab}>The owner’s note</p><p className="text-[13.5px] text-ink mt-1 whitespace-pre-wrap">{rec.ownerNotes}</p></div> : null}
           </section>
+
+          <OrderList rec={rec} units={units.map((_, i) => uLabel(i))} onRec={setRec} />
 
           {/* THE LINEN, ours to specify (Jon, 2026-11-13): counts at par, per unit and in all; approve, then send to the vendor */}
           <section className={card}>

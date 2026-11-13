@@ -6,7 +6,7 @@ import { Check, Minus, Plus, Lock, Phone, Mail, ChevronRight, ChevronLeft } from
 import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
 
 type Any = any
-type Tab = 'welcome' | 'home' | 'supplies' | 'payout' | 'timeline'
+type Tab = 'welcome' | 'home' | 'supplies' | 'order' | 'payout' | 'timeline'
 
 function Step({ label, value, set, min, max, step = 1, show }: { label: string; value: number; set: (v: number) => void; min: number; max: number; step?: number; show?: (v: number) => string }) {
   return (
@@ -37,6 +37,8 @@ export function OwnerJoin({ code }: { code: string }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [pay, setPay] = useState<Any>({ w9: { name: '', business: '', taxClass: 'individual', llcCode: '', other: '', address: '', cityStateZip: '', tinType: 'ssn', tin: '' }, ach: { holder: '', bank: '', accountType: 'checking', routing: '', account: '', routing2: '', account2: '' }, sign: { name: '', agree: false } })
+  const [skip, setSkip] = useState<string[]>([]); const [oNote, setONote] = useState('')
+  async function review(approve: boolean) { setBusy(true); setMsg(''); try { apply(await patch({ orderReview: { skip, note: oNote, approve } })); setMsg(approve ? 'Approved. Thank you! We will take it from here.' : 'Sent. We will update the list and send it back.') } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
   const pending = useRef<Record<string, OOMark>>({})
   const timer = useRef<any>(null)
 
@@ -59,7 +61,8 @@ export function OwnerJoin({ code }: { code: string }) {
       setGate(null)
       apply(d)
       const r = d.record
-      setTab(r.submittedAt ? 'timeline' : r.home ? (r.custom.askSupplies || r.custom.askLinen ? 'supplies' : 'payout') : 'welcome')
+      if (r.order) { setSkip(r.order.review?.skip || []); setONote(r.order.review?.note || '') }
+      setTab(r.order && r.order.status === 'sent' ? 'order' : r.submittedAt ? 'timeline' : r.home ? (r.custom.askSupplies || r.custom.askLinen ? 'supplies' : 'payout') : 'welcome')
       if (r.payout) setPay((p: Any) => ({ ...p, w9: { ...p.w9, ...r.payout.w9, tin: '' }, ach: { ...p.ach, ...r.payout.ach, routing: '', account: '' }, sign: { name: r.payout.sign.name, agree: true } }))
     }
     go()
@@ -78,7 +81,7 @@ export function OwnerJoin({ code }: { code: string }) {
     clearTimeout(timer.current); timer.current = setTimeout(async () => { const m = pending.current; pending.current = {}; try { await patch({ marks: m }) } catch (e: Any) { setMsg(e.message) } }, 700)
   }
   const flags = rec?.custom || {}
-  const tabs: Tab[] = (['welcome', 'home', ...(flags.askSupplies || flags.askLinen ? ['supplies'] : []), ...(flags.askPayout !== false ? ['payout'] : []), 'timeline'] as Tab[])
+  const tabs: Tab[] = (['welcome', 'home', ...(flags.askSupplies || flags.askLinen ? ['supplies'] : []), ...(rec?.order ? ['order'] : []), ...(flags.askPayout !== false ? ['payout'] : []), 'timeline'] as Tab[])
   const go = (t: Tab) => { setTab(t); setMsg(''); if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' }) }
   const next = () => go(tabs[Math.min(tabs.length - 1, tabs.indexOf(tab) + 1)])
   const back = () => go(tabs[Math.max(0, tabs.indexOf(tab) - 1)])
@@ -162,7 +165,7 @@ export function OwnerJoin({ code }: { code: string }) {
       <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&display=swap" />
       <style>{CSS}</style>
       <header className="oj-top"><div className="oj-wrap oj-top-in"><img src="/stay-logo.png" alt="Stay Hospitality" className="oj-logo" /><span>{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : ''].filter(Boolean).join(' · ') || 'Owner onboarding'}</span></div>
-        <div className="oj-wrap"><nav className="oj-tabs">{tabs.map((t, i) => <button key={t} type="button" className={(t === tab ? 'on ' : '') + (tabs.indexOf(tab) > i ? 'past' : '')} onClick={() => go(t)}><em>{i + 1}</em>{({ welcome: 'Welcome', home: 'Your home', supplies: 'Supplies', payout: 'Payouts and tax', timeline: 'Timeline' } as Record<Tab, string>)[t]}</button>)}</nav></div>
+        <div className="oj-wrap"><nav className="oj-tabs">{tabs.map((t, i) => <button key={t} type="button" className={(t === tab ? 'on ' : '') + (tabs.indexOf(tab) > i ? 'past' : '')} onClick={() => go(t)}><em>{i + 1}</em>{({ welcome: 'Welcome', home: 'Your home', supplies: 'Supplies', order: 'Order list', payout: 'Payouts and tax', timeline: 'Timeline' } as Record<Tab, string>)[t]}</button>)}</nav></div>
       </header>
 
       <div className="oj-wrap oj-body">
@@ -265,6 +268,39 @@ export function OwnerJoin({ code }: { code: string }) {
             <div className="oj-nav"><button type="button" className="oj-ghost" onClick={back}><ChevronLeft size={16} /> Back</button><button type="button" className="oj-cta" disabled={busy} onClick={finishSupplies}>{busy ? 'Saving…' : 'Save and continue'} <ChevronRight size={16} /></button></div>
           </section>
         ) : null}
+
+        {tab === 'order' && rec.order ? (() => {
+          const o = rec.order, money = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          const cats: string[] = Array.from(new Set(o.lines.map((l: Any) => l.category)))
+          const total = o.lines.filter((l: Any) => skip.indexOf(l.key) < 0).reduce((a: number, l: Any) => a + (l.price || 0) * l.qty.reduce((x: number, y: number) => x + y, 0), 0)
+          const multi = homes.length > 1
+          return (
+            <section>
+              <p className="oj-kick">For your review</p>
+              <h1>Your <em>order list.</em></h1>
+              <p className="oj-p">These are the items we would buy to set {multi ? 'your units' : 'the home'} up, with the quantity and price of each. Tap <b>I have this</b> on anything already there and we will take it off. Then approve, or tell us what to change.</p>
+              {o.note ? <p className="oj-lock">{o.note}</p> : null}
+              {o.status === 'approved' ? <p className="oj-ok"><Check size={15} /> You approved this list on {new Date(o.review.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.</p> : o.status === 'changes' ? <p className="oj-ok"><Check size={15} /> Your changes were sent. We will update the list.</p> : null}
+              <div className="oj-cols">
+                {cats.map(c => (
+                  <div key={c} className="oj-group">
+                    <p className="oj-lab">{c}</p>
+                    <ul>{o.lines.filter((l: Any) => l.category === c).map((l: Any) => { const q = l.qty.reduce((x: number, y: number) => x + y, 0), off = skip.indexOf(l.key) >= 0; return (
+                      <li key={l.key} className={'oj-ol' + (off ? ' off' : '')}>
+                        <span><b>{l.name}</b>{l.detail && l.detail !== l.name ? <small className="oj-od">{l.detail}</small> : null}
+                          <small className="oj-od">×{q}{multi ? ' (' + l.qty.map((n: number, i: number) => (homes[i]?.unit ? homes[i].unit : 'Unit ' + (i + 1)) + ': ' + n).join(', ') + ')' : ''}{l.price != null ? ' · ' + money(l.price) + ' each · ' + money(l.price * q) : ''}{l.url ? <> · <a href={l.url} target="_blank" rel="noreferrer">See the item</a></> : null}</small></span>
+                        <div className="oj-hn"><button type="button" className={off ? 'on need' : ''} onClick={() => setSkip(sk => (off ? sk.filter(k => k !== l.key) : [...sk, l.key]))}>{off ? 'I have this ✓' : 'I have this'}</button></div>
+                      </li>) })}</ul>
+                  </div>
+                ))}
+              </div>
+              <div className="oj-card oj-total"><span>Estimated total{skip.length ? ' (without the ' + skip.length + ' you have)' : ''}</span><b>{money(total)}</b><small>Before tax and shipping. Linen is quoted separately.</small></div>
+              <label className="oj-f oj-wide oj-mt"><span>Anything to change? (optional)</span><textarea rows={3} value={oNote} onChange={e => setONote(e.target.value)} placeholder="e.g. we already have a coffee maker; please use a different toaster" /></label>
+              {msg ? <p className={msg.startsWith('Approved') || msg.startsWith('Sent') ? 'oj-ok' : 'oj-err'}>{msg}</p> : null}
+              <div className="oj-nav"><button type="button" className="oj-ghost" disabled={busy} onClick={() => review(false)}>Ask for changes</button><button type="button" className="oj-cta" disabled={busy} onClick={() => review(true)}>{busy ? 'Sending…' : 'Approve this list'} <Check size={16} /></button></div>
+            </section>
+          )
+        })() : null}
 
         {tab === 'payout' ? (
           <form onSubmit={savePayout}>
@@ -407,6 +443,7 @@ const CSS = `
 .oj-appgrid button.on{border-color:var(--ok);background:#F1F8F3}.oj-appgrid button.on i{background:var(--ok);border-color:var(--ok)}
 .oj-warn{color:#B4532A;font-weight:600;font-size:13px;margin:8px 0 0}
 @media (max-width:520px){.oj-bigchoice{grid-template-columns:1fr}}
+.oj-ol>span{display:grid;gap:2px}.oj-ol b{font-weight:600}.oj-od{display:block;color:var(--mut);font-size:12.5px}.oj-od a{color:var(--acc);font-weight:600}.oj-ol.off>span{opacity:.45;text-decoration:line-through}.oj-total{display:grid;grid-template-columns:1fr auto;align-items:baseline;gap:2px 16px;margin-top:6px}.oj-total b{font:400 30px "Instrument Serif",Georgia,serif;color:var(--ink)}.oj-total small{grid-column:1/-1;color:var(--mut);font-size:12.5px}
 .oj-docs{margin:6px 0 16px}.oj-docbtns{display:flex;flex-wrap:wrap;gap:8px}.oj-docbtns .oj-ghost{height:40px;text-decoration:none;font-size:13px}
 .oj-units{display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 4px}.oj-units button{height:36px;padding:0 14px;border-radius:99px;border:1px solid var(--rule);background:#fff;color:var(--ink);font:600 13px Inter,sans-serif;cursor:pointer;display:inline-flex;align-items:center;gap:4px}.oj-units button.on{background:var(--navy);border-color:var(--navy);color:#fff}.oj-units button.add{border-style:dashed;color:var(--acc)}.oj-units button.rm{border:0;background:none;color:var(--bad);font-weight:500}.oj-units small{font-weight:400;opacity:.8}
 .oj-match{display:inline-flex;align-items:center;gap:4px;color:var(--ok);font-weight:600;font-size:12px}

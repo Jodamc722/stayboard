@@ -85,6 +85,13 @@ export type OOPayout = {
   ach: { holder: string; bank: string; accountType: 'checking' | 'savings'; routingEnc: string; routingHint: string; accountEnc: string; accountHint: string }
   sign: { name: string; at: string; ip: string }
 }
+/** THE ORDER LIST (Jon, 2026-11-13: "post owner fill-out we can send our order list with our actual items; the
+ *  goal is for that to be reviewed"). Built by the team from Stay's own catalog (the real products, prices and
+ *  links), edited, then sent to the owner, who reviews it line by line and approves or asks for changes. */
+export type OOOrderLine = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[] }   // qty per unit, in unit order
+export type OOOrder = { lines: OOOrderLine[]; status: 'draft' | 'sent' | 'approved' | 'changes'; builtAt: string; sentAt?: string; note?: string
+  review?: { at: string; name: string; skip: string[]; note: string } }
+export const orderTotal = (o: OOOrder, skip: string[] = []) => o.lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (l.price || 0) * l.qty.reduce((x, y) => x + y, 0), 0)
 export type OOFile = { path: string; name: string; size: number; at: string; by: string }
 export type OORecord = {
   code: string; createdAt: string; createdBy: string; updatedAt: string
@@ -102,6 +109,7 @@ export type OORecord = {
   agreement?: OOFile | null
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
   /** The linen order (Jon, 2026-11-13): approved by the team, then sent to the vendor. */
+  order?: OOOrder | null
   linen?: { approvedAt?: string; approvedBy?: string; sentAt?: string; sentTo?: string[]; error?: string } | null
   /** The owner's sign-in (lib/owner-onboard-auth): a password hash and one-time email links. Never leaves the server. */
   auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string } | null
@@ -146,9 +154,10 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, ...rest } = r
-  void teamNotes; void createdBy; void agreement; void handoff
-  return { ...rest, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, ...rest } = r
+  void teamNotes; void createdBy; void agreement; void handoff; void linen
+  // the owner sees the order list only once the team has sent it
+  return { ...rest, order: order && order.status !== 'draft' ? order : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
 export function teamView(r: OORecord) { const { auth, ...rest } = r; return { ...rest, payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '' } } }
