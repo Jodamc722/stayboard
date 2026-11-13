@@ -61,7 +61,7 @@ function indexRow(r: OORecord, items: OOItem[] | null): OOIndexRow {
   const marks = Object.entries(r.marks).filter(([k]) => !keys || keys.has(k))
   return { code: r.code, ownerName: r.custom.ownerName, property: r.attach.property, unitLabel: r.attach.unitLabel, listingId: r.attach.listingId, createdAt: r.createdAt, updatedAt: r.updatedAt, createdBy: r.createdBy,
     stage: stageOf(r), submitted: !!r.submittedAt, have: marks.filter(([, m]) => m === 'have').length, need: marks.filter(([, m]) => m === 'need').length,
-    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', ...(r.archived ? { archived: true } : {}) }
+    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', ...(r.archived ? { archived: true } : {}) }
 }
 async function writeIndex(row: OOIndexRow, by: string | null) {
   const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])

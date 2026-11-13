@@ -1,6 +1,7 @@
 'use client'
 // THE OWNER'S ONBOARDING PAGE, /join/<code> (lib/owner-onboard). Built for a phone first, fine on a computer.
 // Welcome → the home → what it already has → payouts and tax → the timeline. Saves as it goes.
+import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Minus, Plus, Lock, Phone, Mail, ChevronRight, ChevronLeft } from 'lucide-react'
 import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
@@ -239,7 +240,7 @@ export function OwnerJoin({ code }: { code: string }) {
             <div className="oj-sec">
               <p className="oj-sec-h"><em>1</em> The basics</p>
               <div className="oj-form">
-                <label className="oj-f oj-wide"><span>Address</span><input value={home.address} onChange={e => setHome({ ...home, address: e.target.value })} placeholder="Street, city" autoComplete="street-address" /></label>
+                <div className="oj-f oj-wide"><span>Address</span><AddressInput value={home.address} lat={home.lat} lng={home.lng} onChange={p => setHome({ ...home, address: p.address, lat: p.lat, lng: p.lng })} /></div>
                 <label className="oj-f"><span>Unit</span><input value={home.unit} onChange={e => setHome({ ...home, unit: e.target.value })} placeholder="e.g. 2401" /></label>
                 <label className="oj-f"><span>Square feet</span><input inputMode="numeric" value={home.sqft || ''} onChange={e => setHome({ ...home, sqft: Number(e.target.value.replace(/\D/g, '')) || 0 })} placeholder="e.g. 850" /></label>
                 <Step label="Bedrooms" value={home.bedrooms} set={v => setHome({ ...home, bedrooms: v })} min={0} max={10} show={v => (v === 0 ? 'Studio' : String(v))} />

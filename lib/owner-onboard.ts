@@ -17,7 +17,7 @@ export type OOAppliance = typeof OO_APPLIANCES[number]
 export const OO_APPLIANCE_LABEL: Record<OOAppliance, string> = { stove: 'Stove / cooktop', oven: 'Oven', microwave: 'Microwave', fridge: 'Refrigerator', dishwasher: 'Dishwasher' }
 
 /** One home. An owner with several units has one of these per unit (Jon, 2026-11-13); `uid` keys a later unit's ticks. */
-export type OOHome = { uid?: string; address: string; unit: string; sqft: number; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<OOAppliance, boolean>; washer: boolean; parking: string; access: string; wifiName: string; wifiPass: string }
+export type OOHome = { uid?: string; address: string; unit: string; sqft: number; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<OOAppliance, boolean>; washer: boolean; parking: string; access: string; wifiName: string; wifiPass: string; /** the address's pin, from the address lookup (lib/geo) */ lat?: number; lng?: number }
 export type OOMark = 'have' | 'need' | ''
 export type OOItem = { key: string; name: string; group: string; qty: number; tier: 'must' | 'recommended' | 'optional'; linen?: boolean; size?: string
   /** Which unit it is for (0 = the first), and that unit's label. */
@@ -57,17 +57,18 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string)
   const first = (c.ownerName || '').trim().split(/\s+/)[0] || 'there'
   const home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const gmFirst = gm.name.split(' ')[0] || 'our General Manager'
-  const steps = 'Here is what happens next:\n1. Tell us about the home, tick the supplies it already has, and send your W-9 and payout details securely (about 10 minutes, on any phone)\n2. Photos, then your listing\n3. We set the home up in Guesty, our booking and pricing system\n4. Once the photos are done, an onboarding call to walk you through the listing and the pricing strategy\n5. Live and taking bookings'
+  const steps = 'What happens next:\n1. Your owner portal: tell us about the home, confirm what is already there, and send your W-9 and payout details securely. About ten minutes, on any device.\n2. Photography, then your listing.\n3. We set the home up in our booking and pricing system.\n4. An onboarding call to walk you through the listing and the pricing strategy.\n5. Live and taking bookings.'
   const sig = (p: OOPerson) => [p.name, [p.role, 'Stay Hospitality'].filter(Boolean).join(', '), p.phone, p.email].filter(Boolean).join('\n')
+  const portal = `Your owner portal is here:\n${link}\n\nYou will also receive a separate email from us with a private sign-in link. The first time you open it you will create a password, and from then on the portal shows where everything stands.`
   if (c.from === 'gm') {
     return {
-      subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}: your onboarding link`,
-      body: `Hi ${first},\n\nWelcome to Stay Hospitality. I'm ${gm.name}, the ${gm.role.toLowerCase() || 'general manager'}, and I'll be looking after your onboarding${home ? ' at ' + home : ''} from here.\n\nTo get started, please open your onboarding link. It asks a few questions about the home, then shows everything a rental needs so you can tick what is already there. It saves as you go, so you can come back to it any time:\n\n${link}\n(You will also get a separate email with a private sign-in link, and you will create a password the first time.)\n\n${steps}\n\nThe same link shows where things stand at every step. If anything is unclear, reply here or call me.\n\nBest,\n${sig(gm)}`,
+      subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}`,
+      body: `Hi ${first},\n\nWelcome to Stay Hospitality. I'm ${gm.name}, ${gm.role ? 'the ' + gm.role.toLowerCase() : 'the general manager'}, and I will be leading your onboarding${home ? ' at ' + home : ''}.\n\n${portal}\n\n${steps}\n\nIf you have any questions along the way, reply to this email or call me directly.\n\nBest regards,\n${sig(gm)}`,
     }
   }
   return {
-    subject: `Next steps with Stay Hospitality${home ? ' · ' + home : ''}: meet ${gmFirst}`,
-    body: `Hi ${first},\n\nThank you again for choosing Stay Hospitality. I'd like to introduce you to ${gm.name}, our ${gm.role.toLowerCase() || 'general manager'} (copied here), who will lead your onboarding${home ? ' at ' + home : ''} and be your main contact from here on.\n\nTo get started, please open your onboarding link. It asks a few questions about the home, then shows everything a rental needs so you can tick what is already there. It saves as you go:\n\n${link}\n(You will also get a separate email with a private sign-in link, and you will create a password the first time.)\n\n${steps}\n\n${gmFirst} will be in touch shortly, and I'm always here if you need me.\n\nBest,\n${sig(sa)}`,
+    subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}: meet ${gmFirst}`,
+    body: `Hi ${first},\n\nThank you for choosing Stay Hospitality. I would like to introduce ${gm.name}, our ${gm.role.toLowerCase() || 'general manager'}, copied here. ${gmFirst} will lead your onboarding${home ? ' at ' + home : ''} and will be your main contact from here.\n\n${portal}\n\n${steps}\n\n${gmFirst} will be in touch shortly, and I am always here if you need me.\n\nBest regards,\n${sig(sa)}`,
   }
 }
 export type OOAttach = { property: string; listingId: string; unitLabel: string }
@@ -130,7 +131,7 @@ export type OORecord = {
 /** What the list of links shows. */
 export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
-  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; callAt?: string; linen?: 'approved' | 'sent' | '' }
+  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | '' }
 
 export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '', wifiName: '', wifiPass: '' }
 
@@ -154,7 +155,8 @@ export function cleanHome(v: any): OOHome {
   const appliances = {} as Record<OOAppliance, boolean>
   for (const a of OO_APPLIANCES) appliances[a] = r.appliances ? !!r.appliances[a] : D.appliances[a]
   return { ...(typeof r.uid === 'string' && /^[a-z0-9]{4,12}$/.test(r.uid) ? { uid: r.uid } : {}), address: t(r.address, 200), unit: t(r.unit, 40), sqft: Math.round(n(r.sqft, 0, 20000, 0)), bedrooms: Math.round(n(r.bedrooms, 0, 12, D.bedrooms)), bathrooms: n(r.bathrooms, 0, 12, D.bathrooms), guests: Math.round(n(r.guests, 1, 30, D.guests)),
-    beds, sleeper: !!r.sleeper, kitchen: r.kitchen !== false, appliances, washer: !!r.washer, parking: t(r.parking, 200), access: t(r.access, 300), wifiName: t(r.wifiName, 80), wifiPass: t(r.wifiPass, 80) }
+    beds, sleeper: !!r.sleeper, kitchen: r.kitchen !== false, appliances, washer: !!r.washer, parking: t(r.parking, 200), access: t(r.access, 300), wifiName: t(r.wifiName, 80), wifiPass: t(r.wifiPass, 80),
+    ...(Number.isFinite(Number(r.lat)) && Number.isFinite(Number(r.lng)) && r.lat !== '' && r.lat != null && Math.abs(Number(r.lat)) <= 90 && Math.abs(Number(r.lng)) <= 180 && !(Number(r.lat) === 0 && Number(r.lng) === 0) ? { lat: Number(r.lat), lng: Number(r.lng) } : {}) }
 }
 
 /** The payout details without anything encrypted: hints only. */

@@ -112,6 +112,7 @@ export const DESKS: Desk[] = [
     blurb: 'Listing optimization: properties and units, health and fix-next, copy, and channels.',
     views: [
       { to: '/buildings', label: 'Properties', hint: 'Buildings and units: health, fix next, copy and photos; unit pages open from here', match: ['/listings', '/optimize', '/health'] },
+      { to: '/buildings/map', label: 'Map', hint: 'Every property on a real map: buildings, their units, and the homes being onboarded' },
       { to: '/channels', label: 'Channels', hint: 'Which listing is live on which channel, and what broke' },
     ],
   },
