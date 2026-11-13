@@ -100,8 +100,16 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const who = account(r, id)
   const to = who?.email || ''
   if (!who || !to) return { ok: false, error: 'There is no email for this owner.' }
-  const token = newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7, id)
-  const link = origin.replace(/\/$/, '') + '/join/' + r.code + '?k=' + token
+  // THE TEAM IS CC'D ON THE OWNER'S INVITE AND ORDER-LIST EMAILS (Jon, 2026-11-13: "the copy, I mean cc on the invite
+  // emails to our team"), so the owner sees who is on their team and a reply-all reaches everyone. An email that
+  // several people receive cannot carry a one-time sign-in button: whoever clicked it first would be signed in AS THE
+  // OWNER and would use the link up. So the shared email's button opens the portal's sign-in page, and the owner's
+  // private one-time link goes in a second email, sent to the owner alone.
+  const shared = kind === 'invite' || kind === 'order'
+  const cc = shared ? (await readOOSettings().catch(() => null))?.teamCc.filter(e => e !== to.toLowerCase()) || [] : []
+  const needsPrivate = shared && (kind === 'invite' || !who.auth?.pass)
+  const token = shared ? '' : newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7, id)
+  const link = origin.replace(/\/$/, '') + '/join/' + r.code + (token ? '?k=' + token : '')
   const first = (who.name || '').split(' ')[0] || 'there'
   const gm = gmOf(r.custom.gm), home = [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const site = origin.replace(/\/$/, '')
@@ -114,7 +122,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     paragraphs: [`Hi ${escHtml(first)},`, `We have put together the list of items needed to get your home${at} guest-ready, based on what you told us is already there. Each item shows the quantity and the price, with a link to the exact product.`],
     list: ['Review the list', 'Mark anything you already own, and we will take it off', 'Approve it when you are happy, or tell us what to change'], lead: ['We will place the order as soon as you approve. Linen is quoted separately and is not on this list.'],
     cta: 'Review and approve', after: ['If you have any questions about an item, reply to this email.'],
-    note: 'This link is private to you. Please do not forward it.',
+    note: 'Nothing is ordered until you approve the list.',
   } : kind === 'remind' && remind ? remindCopy(remind, { first, at, gmPhone: gm.phone }) : kind === 'invite' ? {
     eyebrow: 'Welcome', heading: 'Welcome to Stay Hospitality',
     pre: 'Set up your owner portal: about ten minutes, and it saves as you go.',
@@ -134,27 +142,24 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const html = stayEmail({
     origin: site, preheader: copy.pre, eyebrow: copy.eyebrow, heading: copy.heading, paragraphs: copy.paragraphs, list: copy.list, lead: copy.lead,
     cta: { label: copy.cta, url: link },
-    ctaNote: kind === 'remind' ? `This button signs you in once and works for 7 days. You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.` : kind === 'signin' ? `You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with your email and password.` : `This button signs you in once and works for 7 days. You will create a password on your first visit, and after that you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.`,
+    ctaNote: shared ? (needsPrivate ? `For your security, your private sign-in link arrives in a separate email sent only to you. Use it the first time to create your password. After that, sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with your email and password.` : `Sign in with your email and password. If you have forgotten it, the sign-in page can email you a new link.`) : kind === 'remind' ? `This button signs you in once and works for 7 days. You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.` : kind === 'signin' ? `You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with your email and password.` : `This button signs you in once and works for 7 days. You will create a password on your first visit, and after that you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.`,
     note: copy.note, after: copy.after,
     sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email, photo: gm.photo ? (gm.photo.startsWith('/') ? site + gm.photo : gm.photo) : undefined },
   })
-  const res = await sendOnboardingMail({ to: [to], subject: kind === 'remind' && remind ? REMIND_SUBJECT[remind.kind] + (home ? ' · ' + home : '') : kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendOnboardingMail({ to: [to], cc, subject: kind === 'remind' && remind ? REMIND_SUBJECT[remind.kind] + (home ? ' · ' + home : '') : kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') authOf(r, id).invitedAt = new Date().toISOString()
-  // THE TEAM'S COPY (Jon, 2026-11-13: "cc Bernadette, Bethany, Roberto and Karla on all onboarding emails"). They are
-  // not put on the owner's own email: its button signs whoever clicks it in AS THE OWNER, tax and bank forms included.
-  // So the team gets the same message without that button, and a link to the onboarding in Lighthouse instead.
-  if (res.ok && kind !== 'signin' && kind !== 'remind') {
-    try {
-      const st = await readOOSettings()
-      const team = st.teamCc.filter(e => e !== to.toLowerCase())
-      if (team.length) await sendOnboardingMail({ to: team,
-        subject: `[Team copy] ${kind === 'invite' ? 'Portal invite sent to' : 'Order list sent to'} ${who.name || 'the owner'}${home ? ' · ' + home : ''}`,
-        html: stayEmail({ origin: site, preheader: 'A copy for the team of what the owner was just sent.', eyebrow: 'Team copy · owner onboarding',
-          heading: kind === 'invite' ? `${who.name || 'The owner'} was invited to the owner portal` : `${who.name || 'The owner'} was sent the order list`,
-          paragraphs: [`This is a copy of what <b>${escHtml(who.name || 'the owner')}</b> (${escHtml(to)}) was just sent${home ? ' for <b>' + escHtml(home) + '</b>' : ''}. The owner’s private sign-in button is left out of this copy, because it would sign the reader in as the owner.`, '<b>What the owner received:</b>', ...copy.paragraphs.slice(1)],
-          list: copy.list, lead: copy.lead, cta: { label: 'Open the onboarding in Lighthouse', url: site + '/owner-onboarding/' + r.code },
-          sign: { name: gm.name, role: gm.role, email: gm.email }, footer: 'Sent by Lighthouse for Stay Hospitality · Owner onboarding' }) })
-    } catch { /* the owner's email went; the team copy is a courtesy */ }
+  // the owner's own way in, to the owner alone
+  if (res.ok && needsPrivate) {
+    const t = newToken(r, 60 * 24 * 7, id)
+    const mine = await sendOnboardingMail({ to: [to], subject: 'Your private sign-in link · Stay Hospitality owner portal', html: stayEmail({
+      origin: site, preheader: 'Sent only to you. Use it to sign in and create your password.', eyebrow: 'Owner portal · private', heading: 'Your private sign-in link',
+      paragraphs: [`Hi ${escHtml(first)},`, `This is your private link to your Stay Hospitality owner portal${at}. It is sent only to you. Use it to sign in${who.auth?.pass ? '' : ' and create your password'}.`],
+      cta: { label: who.auth?.pass ? 'Sign in to my portal' : 'Set up my owner portal', url: site + '/join/' + r.code + '?k=' + t },
+      ctaNote: `This button signs you in once and works for 7 days. After you create your password you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.`,
+      note: 'Please do not forward this email: the button signs in whoever clicks it.',
+      sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email, photo: gm.photo ? (gm.photo.startsWith('/') ? site + gm.photo : gm.photo) : undefined },
+    }) })
+    if (!mine.ok) return { ok: false, error: 'The welcome email went, but the owner’s private sign-in link did not: ' + (mine.error || 'try “Send again”.') }
   }
   return { ok: res.ok, error: res.error }
 }

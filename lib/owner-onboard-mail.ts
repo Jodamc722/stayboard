@@ -13,9 +13,9 @@ import type { OORecord, OOItem } from './owner-onboard'
 import { stayEmail, escHtml } from './email-layout'
 
 export const OO_SETTINGS = 'oo_settings'
-/** teamCc (Jon, 2026-11-13: "add cc Bernadette, Bethany, Roberto and Karla to all onboarding emails"): copied on every
- *  onboarding email. On the owner's own emails they get a team copy WITHOUT the sign-in button, because that button
- *  signs whoever clicks it in as the owner. */
+/** teamCc (Jon, 2026-11-13: "add cc Bernadette, Bethany, Roberto and Karla to all onboarding emails"; "I mean cc on
+ *  the invite emails"): cc'd on the owner's invite and order-list emails, the handoff and the linen quote. The owner's
+ *  one-time sign-in link is never in a cc'd email (lib/owner-onboard-auth emailMagicLink). */
 export type OOSettings = { to: string[]; cc: string[]; replyTo: string; vendorTo: string[]; vendorCc: string[]; teamCc: string[]; /** who is asked to walk a new unit and count what is there */ walkTo: string[] }
 export const OO_SETTINGS_DEFAULT: OOSettings = { to: ['bethany@stay-hospitality.com'], cc: ['bernadette@stay-hospitality.com', 'jon@stay-hospitality.com'], replyTo: 'jon@stay-hospitality.com', walkTo: ['roberto@stay-hospitality.com', 'karla@stay-hospitality.com'], teamCc: ['bernadette@stay-hospitality.com', 'bethany@stay-hospitality.com', 'roberto@stay-hospitality.com', 'karla@stay-hospitality.com'], vendorTo: [], vendorCc: ['jon@stay-hospitality.com', 'roberto@stay-hospitality.com'] }
 const emails = (v: any) => (Array.isArray(v) ? v : String(v || '').split(/[,;\s]+/)).map((x: any) => String(x || '').trim().toLowerCase()).filter((x: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 10)
