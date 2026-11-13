@@ -10,7 +10,7 @@
 // Client-safe; drawn by drawFrame when the project's look is 'signature'.
 import type { AdProject, AdAssets, Timeline, AdScene } from './ad-engine'
 import { qrModules, sceneAt, captionText } from './ad-engine'
-import { MOMENTS } from './marketing-calendar'
+import { MOMENTS, CURRENT_OWNER_MOMENTS } from './marketing-calendar'
 
 const INK = '#F7F2E9', MUT = 'rgba(247,242,233,0.72)', GOLD = '#D4B47C', NIGHT = '#0E0F11', NIGHT2 = '#16181B'
 const clamp = (x: number, a = 0, b = 1) => Math.max(a, Math.min(b, x))
@@ -27,7 +27,15 @@ export type SigLayout = 'hero' | 'list' | 'numbers' | 'cards' | 'gallery' | 'quo
 const SIG_KEYS: SigLayout[] = ['hero', 'list', 'numbers', 'cards', 'gallery', 'quote', 'end']
 const NUMERIC = /^\s*[$€£]?\d[\d,.]*\s*(%|\+|x|k|m|★)?\s*\|/i
 export function layoutOf(sc: AdScene): SigLayout {
-  if (sc.sig && SIG_KEYS.indexOf(sc.sig) >= 0) return sc.sig   // the writer's or the editor's choice
+  const rows = (sc.items || []).filter(x => x && x.trim()).length, pics = sc.photos.filter(Boolean).length
+  if (sc.sig && SIG_KEYS.indexOf(sc.sig) >= 0) {
+    // the writer's or the editor's choice — unless the scene cannot carry it: rows on a "hero" would never be seen,
+    // and cards need a photo each
+    if (sc.sig === 'hero' && rows >= 2) return 'list'
+    if (sc.sig === 'cards' && (pics < 2 || rows < 2)) return rows ? 'list' : 'hero'
+    if (sc.sig === 'gallery' && pics < 2) return 'hero'
+    return sc.sig
+  }
   const k = sc.kind
   if (k === 'cta' || k === 'contact') return 'end'
   if (k === 'quote') return 'quote'
@@ -167,7 +175,8 @@ function rule(ctx: Ctx, x: number, y: number, len: number, local: number, delay:
   ctx.save(); ctx.fillStyle = color; ctx.fillRect(x, y, len * q, wpx); ctx.restore()
 }
 const strip = (s: string) => String(s || '').replace(/\*\*/g, '')
-const split = (row: string): [string, string] => { const i = row.indexOf('|'); return i < 0 ? [row.trim(), ''] : [row.slice(0, i).trim(), row.slice(i + 1).trim()] }
+/** "Title|detail" (a trailing "|#colour" from the older designs is dropped). */
+const split = (row0: string): [string, string] => { const row = String(row0 || '').replace(/\|\s*#[0-9a-f]{3,8}\s*$/i, ''); const i = row.indexOf('|'); return i < 0 ? [row.trim(), ''] : [row.slice(0, i).trim(), row.slice(i + 1).split('|')[0].trim()] }
 const pad2 = (n: number) => String(n).padStart(2, '0')
 const rr = (ctx: Ctx, x: number, y: number, w: number, h: number, r: number) => { ctx.beginPath(); if ((ctx as any).roundRect) (ctx as any).roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h) }
 /** One line, shrunk until it fits the width. */
@@ -294,7 +303,8 @@ function list(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: numb
   let y = ty + Math.max(0, (room - (ebH + hH + rowH * n)) / 2)
   if (tag) y += eyebrowRow(ctx, e, tag, tx, y, local, 0.15) + 0
   if (head) { setLines(ctx, e, head, tx, y, tw, hS, { font: e.serif, weight: 600, local, delay: 0.22 }); y += hH }
-  const tS = clamp(rowH * 0.29, 34 * u, (port ? 50 : 46) * u), dS = tS * 0.72
+  const plain = items.every(r => !split(r)[1])   // rows with no second line carry bigger type
+  const tS = clamp(rowH * (plain ? 0.36 : 0.29), 34 * u, (port ? (plain ? 58 : 50) : (plain ? 52 : 46)) * u), dS = tS * 0.72
   const numW = 84 * u
   items.forEach((row, k) => {
     const [t1, t2] = split(row)
@@ -526,7 +536,7 @@ function endCard(ctx: Ctx, e: Env, sc: AdScene, i: number, local: number, dur: n
   const qS = qr ? Math.min(W, H) * (port ? 0.3 : 0.26) : 0
   const rawCta = strip((sc.items || [])[0] || '').replace(/^book (at|on)\s+/i, '')
   // the button never repeats the headline word for word: when the address is already the headline, it says what to do
-  const cta0 = rawCta || (qr ? '' : 'stay-hospitality.com')
+  const cta0 = rawCta || (qr || (p.moment && CURRENT_OWNER_MOMENTS.indexOf(p.moment) >= 0) ? '' : 'stay-hospitality.com')   // a thank-you to current owners has nothing to click
   const cta = cta0 && bare(head).indexOf(bare(cta0)) >= 0 ? 'Book direct' : cta0
   // a line that only repeats the headline or the button says nothing — leave it out
   const sub = sc.sub && !sameWords(sc.sub, head + ' ' + cta) ? sc.sub : ''

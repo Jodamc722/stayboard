@@ -985,7 +985,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const types = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
     const mime = types.find(x => (window as any).MediaRecorder && MediaRecorder.isTypeSupported(x)) || ''
     if (!mime) { setErr('This browser cannot record video. Use Chrome or Safari.'); return }
-    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.max(W, H) > 1920 ? 30_000_000 : 18_000_000, audioBitsPerSecond: 256_000 })
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.max(W, H) > 1920 ? 32_000_000 : 22_000_000, audioBitsPerSecond: 256_000 })
     const chunks: Blob[] = []
     rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data) }
     const done = new Promise<void>(res => { rec.onstop = () => res() })
@@ -995,13 +995,24 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
     const at = c.currentTime + 0.15
     const nodes = wire(c, dest, 0, v, m, at, fx)
     setExportPct(0)
+    // SMOOTH (Jon, 2026-11-13: "make sure rendering is smooth and high quality"). The file is cut on an exact 30 fps
+    // grid: each tick of the screen (requestAnimationFrame, so it is locked to the display, not a drifting timer)
+    // asks "which frame number is the sound at?" and draws that frame at its exact time, once. Motion is then evenly
+    // spaced however busy the page is. A timer drove this before and its 33–50 ms wobble showed as judder on pans.
+    // With the tab in the background the screen stops ticking, so a timer takes over rather than stalling the export.
+    const FPS = 30
+    let lastFrame = -1
     await new Promise<void>(res => {
       const step = () => {
         const x = Math.max(0, c.currentTime - at)
-        drawFrame(g, p, tl, Math.min(x, tl.total - 0.001), assets()); pushFrame()
-        setExportPct(Math.min(100, Math.round(x / tl.total * 100)))
+        const n = Math.floor(x * FPS)
+        if (n > lastFrame) {
+          lastFrame = n
+          drawFrame(g, p, tl, Math.min(n / FPS, tl.total - 0.001), assets()); pushFrame()
+          if (n % 6 === 0) setExportPct(Math.min(100, Math.round(x / tl.total * 100)))
+        }
         if (x >= tl.total + 0.2) { res(); return }
-        setTimeout(step, 1000 / 30)
+        if (document.visibilityState === 'visible') requestAnimationFrame(step); else setTimeout(step, 1000 / FPS)
       }
       step()
     })

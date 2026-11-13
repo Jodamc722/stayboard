@@ -403,6 +403,8 @@ export function tidyHead(h: string): string {
     if (best >= 0) { const m = words[best].match(/^([^A-Za-z]*)(.*?)([^A-Za-z]*)$/); if (m) words[best] = m[1] + '**' + m[2] + '**' + m[3] }
     s = words.join('')
   }
+  // gold never splits a word ("Light**house**" → "**Lighthouse**")
+  s = s.replace(/([A-Za-z]+)\*\*([A-Za-z]+)\*\*/g, '**$1$2**').replace(/\*\*([A-Za-z]+)\*\*([A-Za-z]+)/g, '**$1$2**')
   // names keep their capitals
   s = s.replace(/\b(lighthouse|miami|florida|botanica|elser|amrit|nick|stay hospitality|fort lauderdale|palm beach|singer island|art basel)\b/gi, w => w.split(' ').map(x => x[0].toUpperCase() + x.slice(1).toLowerCase()).join(' '))
   // a capital opens the headline — and a new line only when it starts a new sentence ("Priced\nevery day", not "Priced\nEvery day")
