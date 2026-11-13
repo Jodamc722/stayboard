@@ -336,7 +336,7 @@ export function OwnerOnboardingDesk() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [made, setMade] = useState<Any>(null)
-  const [f, setF] = useState<Any>({ ownerName: '', ownerEmail: '', ownerPhone: '', property: '', listingId: '', unitLabel: '', from: 'sales', greeting: '', gm: { ...DEFAULT_GM }, sales: { ...DEFAULT_SALES }, askSupplies: true, askLinen: true, askPayout: true, prefill: false, home: { ...DEFAULT_HOME }, teamNotes: '' })
+  const [f, setF] = useState<Any>({ owners: [], ownerName: '', ownerEmail: '', ownerPhone: '', property: '', listingId: '', unitLabel: '', from: 'sales', greeting: '', gm: { ...DEFAULT_GM }, sales: { ...DEFAULT_SALES }, askSupplies: true, askLinen: true, askPayout: true, prefill: false, home: { ...DEFAULT_HOME }, teamNotes: '' })
   const agree = useRef<HTMLInputElement>(null)
   const [agreeFile, setAgreeFile] = useState<File | null>(null)
   const load = () => fetch('/api/owner-onboarding', { cache: 'no-store' }).then(r => r.json()).then(d => setLinks(d?.ok ? d.links : [])).catch(() => setLinks([]))
@@ -345,7 +345,7 @@ export function OwnerOnboardingDesk() {
   async function create(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setMsg('')
     try {
-      const body = { custom: { ownerName: f.ownerName, ownerEmail: f.ownerEmail, ownerPhone: f.ownerPhone, greeting: f.greeting, from: f.from, gm: f.gm, sales: f.sales, contact: f.gm, askHome: true, askSupplies: f.askSupplies, askLinen: f.askLinen, askPayout: f.askPayout }, attach: { property: f.property, listingId: f.listingId, unitLabel: f.unitLabel }, home: f.prefill ? f.home : null, teamNotes: f.teamNotes }
+      const body = { custom: { ownerName: f.ownerName, ownerEmail: f.ownerEmail, ownerPhone: f.ownerPhone, greeting: f.greeting, from: f.from, gm: f.gm, sales: f.sales, contact: f.gm, askHome: true, askSupplies: f.askSupplies, askLinen: f.askLinen, askPayout: f.askPayout }, attach: { property: f.property, listingId: f.listingId, unitLabel: f.unitLabel }, home: f.prefill ? f.home : null, teamNotes: f.teamNotes, owners: (f.owners || []).filter((o: Any) => o.name.trim() || o.email.trim()) }
       const d = await fetch('/api/owner-onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
       if (!d?.ok) throw new Error(d?.error || 'Could not create the link.')
       if (agreeFile) await uploadAgreement(d.code, agreeFile).catch(err => setMsg('The link is made, but the agreement did not upload: ' + err.message))
@@ -391,6 +391,13 @@ export function OwnerOnboardingDesk() {
             <label className="block"><span className={lab}>Owner name</span><input value={f.ownerName} onChange={e => setF({ ...f, ownerName: e.target.value })} className={field} required /></label>
             <label className="block"><span className={lab}>Owner email</span><input type="email" value={f.ownerEmail} onChange={e => setF({ ...f, ownerEmail: e.target.value })} className={field} /></label>
             <label className="block"><span className={lab}>Owner phone</span><input value={f.ownerPhone} onChange={e => setF({ ...f, ownerPhone: e.target.value })} className={field} /></label>
+            {/* MORE THAN ONE OWNER FOR THE PROPERTY: each gets their own invite, password and portal sign-in */}
+            {(f.owners || []).map((o: Any, i: number) => { const set = (p: Any) => setF({ ...f, owners: f.owners.map((x: Any, j: number) => (j === i ? { ...x, ...p } : x)) }); return [
+              <label key={'n' + i} className="block"><span className={lab}>Owner {i + 2} name</span><input value={o.name} onChange={e => set({ name: e.target.value })} className={field} /></label>,
+              <label key={'e' + i} className="block"><span className={lab}>Owner {i + 2} email</span><input type="email" value={o.email} onChange={e => set({ email: e.target.value })} className={field} /></label>,
+              <label key={'p' + i} className="block"><span className={lab}>Owner {i + 2} phone <button type="button" onClick={() => setF({ ...f, owners: f.owners.filter((_: Any, j: number) => j !== i) })} className="normal-case tracking-normal font-normal text-muted underline ml-1">remove</button></span><input value={o.phone} onChange={e => set({ phone: e.target.value })} className={field} /></label>,
+            ] })}
+            <div className="sm:col-span-3 flex flex-wrap items-center gap-x-3 gap-y-1">{(f.owners || []).length < 5 ? <button type="button" onClick={() => setF({ ...f, owners: [...(f.owners || []), { name: '', email: '', phone: '' }] })} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink"><Plus size={13} /> Add another owner</button> : null}{(f.owners || []).length ? <span className="text-[12px] text-muted">Each owner gets their own invite, password and sign-in to the same portal.</span> : <span className="text-[12px] text-muted">For a property with more than one owner.</span>}</div>
           </div>
           <UnitPicker property={f.property} listingId={f.listingId} unitLabel={f.unitLabel} onPick={p => setF({ ...f, ...p })} />
           <div>
