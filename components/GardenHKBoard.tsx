@@ -57,7 +57,7 @@ export function GardenHKBoard({ canEdit }: { canEdit: boolean }) {
   const rooms: Room[] = useMemo(() => (d?.rooms || []) as Room[], [d])
   const counts = useMemo(() => ({
     all: rooms.length, first: rooms.filter(isFirst).length, checkouts: rooms.filter(isCheckout).length, stayovers: rooms.filter(isStayover).length,
-    dirty: rooms.filter(r => r.condition === 'dirty' && !r.oos).length, ready: rooms.filter(r => ready(r) && !r.oos && !r.stay).length,
+    dirty: rooms.filter(r => r.condition === 'dirty' && !r.oos && !(r.stay && !r.departing)).length, ready: rooms.filter(r => ready(r) && !r.oos && !r.stay).length,
     occupied: rooms.filter(r => !!r.stay).length, oos: rooms.filter(r => !!r.oos).length,
   }), [rooms])
   // Lane default: if nothing is urgent, open on checkouts, then everything.
@@ -71,7 +71,7 @@ export function GardenHKBoard({ canEdit }: { canEdit: boolean }) {
       if (lane === 'first' && !isFirst(r)) return false
       if (lane === 'checkouts' && !isCheckout(r)) return false
       if (lane === 'stayovers' && !isStayover(r)) return false
-      if (lane === 'dirty' && !(r.condition === 'dirty' && !r.oos)) return false
+      if (lane === 'dirty' && !(r.condition === 'dirty' && !r.oos && !(r.stay && !r.departing))) return false
       if (lane === 'ready' && !(ready(r) && !r.oos && !r.stay)) return false
       if (lane === 'occupied' && !r.stay) return false
       if (lane === 'oos' && !r.oos) return false
@@ -128,7 +128,7 @@ export function GardenHKBoard({ canEdit }: { canEdit: boolean }) {
         <Stat k="first" label="Clean first" sub="arrival today, not ready" tone={counts.first ? 'text-rose-700' : 'text-emerald-700'} />
         <Stat k="checkouts" label="Checkouts" sub="departing, to turn" tone="text-amber-700" />
         <Stat k="stayovers" label="Stayovers" sub="in house, service due" tone="text-sky-700" />
-        <Stat k="dirty" label="Dirty" sub="all dirty rooms" tone="text-rose-700" />
+        <Stat k="dirty" label="Dirty to turn" sub="vacant or checking out" tone="text-rose-700" />
         <Stat k="ready" label="Ready to sell" sub="vacant, clean" tone="text-emerald-700" />
         <Stat k="occupied" label="Occupied" sub="guest in tonight" tone="text-ink" />
         <Stat k="oos" label="Out of service" sub="blocked in Cloudbeds" tone="text-slate-500" />

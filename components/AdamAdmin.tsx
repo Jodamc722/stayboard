@@ -19,6 +19,9 @@ export function AdamAdmin({ owner, canEdit, only }: { owner: boolean; canEdit: b
   const [lib, setLib] = useState<any | null>(null)
   const [fd, setFd] = useState<any>({ title: '', category: 'sop', body: '', source: '', file_path: '' })
   const [fmsg, setFmsg] = useState('')
+  const [smsg, setSmsg] = useState('')
+  const [sopBusy, setSopBusy] = useState('')
+  const [draftEdit, setDraftEdit] = useState<Record<string, string>>({})
   const loadLib = useCallback(async () => setLib(await j('/api/garden/adam/docs')), [])
   useEffect(() => { if (tab === 'files' && !lib) loadLib() }, [tab, lib, loadLib])
   const [answers, setAnswers] = useState<Record<string, string>>({})
@@ -83,6 +86,28 @@ export function AdamAdmin({ owner, canEdit, only }: { owner: boolean; canEdit: b
               </div>
             </>) : null}
             {fmsg ? <p className="text-[12px] text-emerald-800">{fmsg}</p> : null}
+          </div>
+        ) : null}
+        {canEdit ? (
+          <div className="rounded-2xl border border-line bg-white p-3 mb-3">
+            <div className="text-[13px] font-semibold text-ink">Learn from Cloudbeds</div>
+            <p className="text-[12px] text-muted mt-0.5 mb-2">Two ways. <b>Cloudbeds&apos; own procedures</b>: check-in and check-out, payments and holds, cancellations, notes, housekeeping — filed as reference so he can answer &ldquo;how do I do this in Cloudbeds&rdquo;. <b>How our desk does it</b>: he reads the last 60 days of the hotel&apos;s Cloudbeds data and drafts the SOP, with where we differ from the Cloudbeds way and questions for you. The draft is not policy until you approve it.</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button disabled={!!sopBusy} onClick={async () => { setSopBusy('guides'); setSmsg('Filing the Cloudbeds procedures…'); const r = await j('/api/garden/adam/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cloudbedsGuides: true }) }); setSmsg(r?.ok ? `Filed ${r.filed} Cloudbeds guides; learned ${r.learned} rules.${r.errors?.length ? ' ' + r.errors.join(' · ') : ''}` : (r?.error || 'Could not file them.')); setSopBusy(''); loadLib(); load() }} className="rounded-xl bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50">{sopBusy === 'guides' ? 'Learning…' : 'Learn Cloudbeds procedures'}</button>
+              <button disabled={!!sopBusy} onClick={async () => { setSopBusy('observe'); setSmsg('Reading 60 days of the desk’s Cloudbeds data — about a minute…'); const r = await j('/api/garden/adam/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ observe: true }) }); setSmsg(r?.ok ? 'Draft written — review it below.' : (r?.error || 'Could not write the draft.')); setSopBusy(''); loadLib() }} className="rounded-xl border border-line px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50">{sopBusy === 'observe' ? 'Studying…' : 'Draft our SOP from the desk’s data'}</button>
+            </div>
+            {smsg ? <p className="text-[12px] text-emerald-800 mt-2">{smsg}</p> : null}
+            {(lib?.drafts || []).map((x: any) => (
+              <div key={x.id} className="mt-3 rounded-xl border border-amber-200 bg-amber-50/50 p-2.5">
+                <div className="flex items-center gap-2 flex-wrap"><Tag tone="amber">draft</Tag><span className="text-[12.5px] font-semibold text-ink">{x.title}</span><span className="text-[11.5px] text-muted">{when(x.updated_at)}</span></div>
+                <textarea defaultValue={x.body} onChange={e => setDraftEdit(d => ({ ...d, [x.id]: e.target.value }))} rows={16} className="mt-2 w-full rounded-xl border border-line bg-white px-3 py-2 text-[12px] font-mono" />
+                <div className="flex items-center gap-2 mt-1.5">
+                  <button disabled={!!sopBusy} onClick={async () => { setSopBusy('approve'); const r = await j('/api/garden/adam/docs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ approve: x.id, body: draftEdit[x.id] || null }) }); setSmsg(r?.ok ? `Approved "${r.title}" — he learned ${r.learned} rules from it.` : (r?.error || 'Could not approve it.')); setSopBusy(''); loadLib(); load() }} className="rounded-xl bg-ink text-white px-3 py-1.5 text-[12px] font-semibold disabled:opacity-50">Approve — make it the SOP</button>
+                  <button disabled={!!sopBusy} onClick={async () => { await j('/api/garden/adam/docs', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: x.id, discard: true }) }); loadLib() }} className="rounded-xl border border-line px-3 py-1.5 text-[12px] font-semibold">Discard</button>
+                  <span className="text-[11.5px] text-muted">Edit anything that is wrong first — what you approve is what he follows.</span>
+                </div>
+              </div>
+            ))}
           </div>
         ) : null}
         {!lib ? <p className="text-[13px] text-muted">Loading…</p> : !lib.ok ? <LeanEmpty>{/does not exist|schema cache/i.test(lib.error || '') ? 'Run migration 136_agent_files.sql, then reload.' : lib.error}</LeanEmpty> : lib.docs.filter((x: any) => x.active).length ? (

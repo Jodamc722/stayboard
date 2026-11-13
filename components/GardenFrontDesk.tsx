@@ -111,7 +111,7 @@ export function GardenFrontDesk({ canEdit, canVerify, canTasks }: { canEdit: boo
         <Tile label="In-house" on={tab === 'inhouse'} onClick={() => setTab('inhouse')} value={s.inHouse} sub={s.occupancy != null ? `${s.occupancy}% occ · ${s.occupiedRooms}/${s.rooms}` : 'no rooms synced'} />
         <Tile label="Unpaid" on={tab === 'unpaid'} onClick={() => setTab('unpaid')} value={s.unpaid.count ? usd(Math.round(s.unpaid.total)) : '$0'} sub={`${s.unpaid.count} guest${s.unpaid.count === 1 ? '' : 's'} w/ balance`} tone={s.unpaid.count ? 'amber' : undefined} />
         <Tile label="ID / card due" on={tab === 'verify'} onClick={() => setTab('verify')} value={s.verificationsDue} sub={`${s.verificationsDueToday} arriving today`} tone={s.verificationsDueToday ? 'rose' : s.verificationsDue ? 'amber' : undefined} />
-        <Tile label="Rooms" on={tab === 'hk'} onClick={() => setTab('hk')} value={<span className="text-[15px]"><span className="text-rose-700">{s.hk.dirty}</span><span className="text-muted font-normal"> / </span><span className="text-emerald-700">{s.hk.clean}</span><span className="text-muted font-normal"> / </span><span className="text-brand-700">{s.hk.inspected}</span></span>} sub={`dirty/clean/insp · ${s.hk.oos} OOS`} />
+        <Tile label="Rooms" on={tab === 'hk'} onClick={() => setTab('hk')} value={<span className="text-[15px]"><span className="text-rose-700">{s.hk.dirtyVacant ?? s.hk.dirty}</span><span className="text-muted font-normal"> / </span><span className="text-emerald-700">{s.hk.clean}</span><span className="text-muted font-normal"> / </span><span className="text-brand-700">{s.hk.inspected}</span></span>} sub={`to turn/clean/insp · ${s.hk.dirtyOccupied ?? 0} occupied`} />
         <Tile label="Tasks done" on={tab === 'hk'} onClick={() => setTab('hk')} value={`${s.tasks.done}/${s.tasks.total}`} sub={s.tasks.inProgress ? `${s.tasks.inProgress} in progress` : 'today'} tone={s.tasks.total && s.tasks.done === s.tasks.total ? 'emerald' : undefined} />
         <Tile label="Team" on={tab === 'team'} onClick={() => setTab('team')} value={`${s.team.on}/${s.team.scheduled}`} sub={s.team.late ? `${s.team.late} late` : 'clocked in / sched.'} tone={s.team.late ? 'rose' : undefined} />
       </div>
@@ -311,6 +311,7 @@ function Housekeeping({ d, q, canTasks, reload }: { d: any; q: string; canTasks:
   const co = byKind('clean'), so = byKind('stayover'), ins = byKind('inspection')
   const turned = rooms.filter(r => r.departing && !r.oos)
   const turnedInspected = turned.filter(r => r.condition === 'inspected').length
+  const turnedReady = turned.filter(r => r.condition === 'inspected' || r.condition === 'clean').length
   const n = (c: Cond) => c === 'all' ? rooms.length : c === 'oos' ? s.oos : c === 'flags' ? rooms.filter(r => r.dnd || r.refused || r.comments).length : c === 'turning' ? rooms.filter(r => r.departing || r.arriving).length : s[c]
 
   const cleanChip = (k: string, l: string, x: { total: number; done: number; going: number }, extra?: string) => (
@@ -327,9 +328,9 @@ function Housekeeping({ d, q, canTasks, reload }: { d: any; q: string; canTasks:
         {cleanChip('stayover', 'Stayover cleans', so)}
         {cleanChip('inspection', 'Inspections', ins, `${s.inspected} rooms inspected`)}
         <button onClick={() => setCond(c => c === 'turning' ? 'all' : 'turning')} className={`text-left rounded-xl border bg-white px-3 py-1.5 min-w-[9rem] ${cond === 'turning' ? 'border-brand-400 ring-1 ring-brand-200' : 'border-line'}`} title="Rooms with a departure today">
-          <div className="text-[10.5px] uppercase tracking-wider text-muted font-semibold">Turned rooms inspected</div>
-          <div className={`text-[16px] font-semibold tabular-nums ${turned.length && turnedInspected === turned.length ? 'text-emerald-700' : 'text-ink'}`}>{turnedInspected}/{turned.length}</div>
-          <div className="text-[11px] text-muted">{turned.filter(r => r.condition === 'clean').length} clean, awaiting inspection</div>
+          <div className="text-[10.5px] uppercase tracking-wider text-muted font-semibold">Checkout rooms ready</div>
+          <div className={`text-[16px] font-semibold tabular-nums ${turned.length && turnedReady === turned.length ? 'text-emerald-700' : 'text-ink'}`}>{turnedReady}/{turned.length}</div>
+          <div className="text-[11px] text-muted">{turnedInspected} inspected · {turned.length - turnedReady} still dirty</div>
         </button>
       </div>
       <div className="flex items-center gap-2 flex-wrap mb-2">
