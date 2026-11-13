@@ -124,6 +124,8 @@ export const DESKS: Desk[] = [
     blurb: 'Sales decks and building packages, the projections library, Ad Studio, direct bookings, the guest email list, guest profiles and the photo library.',
     views: [
       { to: '/sales', label: 'Sales decks', hint: 'Proposals and building packages: floor-plan rental comparisons, comps, the agent partner program; keynote and magazine from one link' },
+      // OWNER ONBOARDING (Jon, 2026-11-12: "the owner onboarding link should be under sales, post signature").
+      { to: '/owner-onboarding', label: 'Owner onboarding', hint: 'After the agreement is signed: the owner’s link and intro email, then their home, supplies, W-9 and ACH, the timeline and the handoff to accounting' },
       { to: '/sales/projections', label: 'Projections library', hint: 'Every building’s floor plans and rental projections, edited in one place; new decks start from them' },
       { to: '/ads', label: 'Ad Studio', hint: 'Video ads: write from a brief, edit scenes on a timeline, add the voice and music, export for any platform' },
       { to: '/marketing', label: 'Direct bookings', hint: 'Direct bookings by the date they were made, vs the period before and last year; the partner share link' },
