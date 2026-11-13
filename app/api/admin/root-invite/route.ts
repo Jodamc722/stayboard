@@ -14,9 +14,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
 export async function POST(req: NextRequest) {
-  const g = await requireAdmin('owner')
-  if (!g.ok) return g.res
-  if (!isSuperadmin(g.access.email)) return NextResponse.json({ error: 'Only the owner can do this.' }, { status: 403 })
+  const gate = await requireAdmin('owner')
+  if (!gate.ok) return gate.res
+  if (!isSuperadmin(gate.access.email)) return NextResponse.json({ error: 'Only the owner can do this.' }, { status: 403 })
   const sb: any = supabaseAdmin()
   const origin = (process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin).replace(/\/$/, '')
   const redirectTo = origin + '/auth/callback'
