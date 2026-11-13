@@ -72,8 +72,15 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
     <section className={card}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Order list</h2>
         {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? 'Approved by the owner' : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}</div>
-      <p className="text-[12.5px] text-muted mb-3">Our actual items from the Stay catalog, sized to {units.length > 1 ? 'each unit' : 'the home'}. Take off what the owner already has, adjust, then send it to the owner to review and approve. Linen is separate.</p>
+      <p className="text-[12.5px] text-muted mb-3">Our actual items from the Stay catalog, sized to {units.length > 1 ? 'each unit' : 'the home'} and based on what the owner ticked on the supplies list: what they have is left off, what they need is on. Adjust it, then send it to the owner to review and approve. Linen is separate.</p>
       {!o ? <button type="button" disabled={busy === 'build' || !units.length} onClick={() => act('build')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'build' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Build the order list</button> : (<>
+        {o.basis ? <div className="oo-noprint rounded-xl bg-app p-3 mb-3 text-[12.5px] text-ink space-y-1">
+          <p className={lab}>Built from the owner’s supplies answers</p>
+          {!o.basis.marked ? <p>The owner has not ticked the supplies list yet, so this is the full catalog list for the home. Rebuild it once they have.</p> : null}
+          {o.basis.leftOff.length ? <p><b>Left off, the owner has these:</b> {o.basis.leftOff.join(', ')}</p> : o.basis.marked ? <p>Nothing was left off: the owner did not mark a whole product as already there.</p> : null}
+          {o.basis.partial.length ? <div><b>Sets the owner partly has (kept on the list, check them):</b><ul className="list-disc pl-5">{o.basis.partial.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
+          {o.basis.uncovered.length ? <p><b>Marked “need”, not in our catalog (add by hand if we are buying them):</b> {o.basis.uncovered.join(', ')}</p> : null}
+        </div> : null}
         {o.review ? <div className={'rounded-xl p-3 mb-3 ' + (o.status === 'approved' ? 'bg-emerald-50' : 'bg-amber-50')}><p className={lab}>The owner’s review · {new Date(o.review.at).toLocaleString()}</p>
           {o.review.skip.length ? <p className="text-[13px] text-ink mt-1">Already has: {o.review.skip.map((k: string) => lines.find(l => l.key === k)?.name || k).join(', ')}</p> : null}
           {o.review.note ? <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap">“{o.review.note}”</p> : null}</div> : null}
