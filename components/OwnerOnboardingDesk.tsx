@@ -182,6 +182,11 @@ function HomeEditor({ home, set }: { home: OOHome; set: (h: OOHome) => void }) {
       {OO_BEDS.map(b => <label key={b} className="block"><span className={lab}>{b} beds</span><input inputMode="numeric" value={String(home.beds[b] || 0)} onChange={e => set({ ...home, beds: { ...home.beds, [b]: Number(e.target.value.replace(/\D/g, '')) || 0 } })} className={field} /></label>)}
       <label className="flex items-center gap-2 text-[13px] text-ink pt-5"><input type="checkbox" checked={home.sleeper} onChange={e => set({ ...home, sleeper: e.target.checked })} /> Sofa bed</label>
       <label className="flex items-center gap-2 text-[13px] text-ink pt-5"><input type="checkbox" checked={home.kitchen} onChange={e => set({ ...home, kitchen: e.target.checked })} /> Kitchen</label>
+      <label className="flex items-center gap-2 text-[13px] text-ink pt-5"><input type="checkbox" checked={!!home.washer} onChange={e => set({ ...home, washer: e.target.checked })} /> Washer and dryer</label>
+      <label className="block sm:col-span-2"><span className={lab}>Wi-Fi network</span><input value={home.wifiName || ''} onChange={e => set({ ...home, wifiName: e.target.value })} className={field} autoCapitalize="off" spellCheck={false} /></label>
+      <label className="block sm:col-span-2"><span className={lab}>Wi-Fi password</span><input value={home.wifiPass || ''} onChange={e => set({ ...home, wifiPass: e.target.value })} className={field} autoCapitalize="off" spellCheck={false} autoComplete="off" /></label>
+      <label className="block sm:col-span-2"><span className={lab}>Parking</span><input value={home.parking || ''} onChange={e => set({ ...home, parking: e.target.value })} className={field} placeholder="e.g. one assigned space, P2 #114" /></label>
+      <label className="block sm:col-span-2"><span className={lab}>Access</span><input value={home.access || ''} onChange={e => set({ ...home, access: e.target.value })} className={field} placeholder="e.g. front desk holds the key" /></label>
       {home.kitchen ? <div className="sm:col-span-4 flex flex-wrap gap-2">{OO_APPLIANCES.map(a => <label key={a} className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-[12.5px] text-ink"><input type="checkbox" checked={home.appliances[a]} onChange={e => set({ ...home, appliances: { ...home.appliances, [a]: e.target.checked } })} /> {OO_APPLIANCE_LABEL[a]}</label>)}</div> : null}
     </div>
   )
@@ -344,6 +349,13 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState('')
   const [editHome, setEditHome] = useState(false)
+  const [markEdit, setMarkEdit] = useState(false)
+  // the team ticking supplies for the owner: shown at once, saved behind
+  async function mark(m: Record<string, string>) {
+    setRec((r: Any) => (r ? { ...r, marks: { ...r.marks, ...m } } : r))
+    const d = await fetch('/api/owner-onboarding/' + code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ marks: m }) }).then(r => r.json()).catch(() => null)
+    if (!d?.ok) { setMsg(d?.error || 'Not saved. Check your connection.'); load() }
+  }
   const [eu, setEu] = useState(0)
   async function linen(action: string, extra: Any = {}) { setBusy('linen'); const d = await fetch(`/api/owner-onboarding/${code}/linen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...extra }) }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); if (Array.isArray(d?.items)) setItems(d.items); if (d?.ok && (action === 'save' || action === 'reset')) setLinEdit(null); setMsg(d?.ok ? (action === 'send' ? 'Sent to the vendor.' : 'Saved.') : (d?.error || 'Not saved.')); setBusy('') }
   const agree = useRef<HTMLInputElement>(null)
@@ -395,7 +407,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           <section className={card}>
             <div className="flex items-center gap-2 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{units.length > 1 ? units.length + ' units' : 'The home'}</h2>
               <button type="button" onClick={() => { const list = [...units, { ...DEFAULT_HOME, address: units[0]?.address || '' }]; setRec({ ...rec, home: list[0], more: list.slice(1) }); setEditHome(true); setEu(list.length - 1) }} className="oo-noprint text-[12.5px] font-semibold text-ink">+ Add a unit</button></div>
-            {!units.length ? <p className="text-[13px] text-muted">The owner has not filled in the home yet. Use “Add a unit” to fill it in for them.</p> : units.map((u, i) => (
+            {!units.length ? <div><p className="text-[13px] text-muted mb-2">The owner has not filled in the home yet. If you already know the details, fill them in for the owner: they will see them on their portal and can correct anything.</p><button type="button" onClick={() => { const list = [{ ...DEFAULT_HOME, unit: rec.attach?.unitLabel || '' }]; setRec({ ...rec, home: list[0], more: [] }); setEditHome(true); setEu(0) }} className="oo-noprint rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold">Fill in the home for the owner</button></div> : units.map((u, i) => (
               <div key={i} className={'py-3 ' + (i ? 'border-t border-line' : '')}>
                 <div className="flex items-center gap-2 mb-2"><p className="text-[14px] font-semibold text-ink mr-auto">{uLabel(i)}</p>
                   <button type="button" onClick={() => { setEu(i); setEditHome(e => (eu === i ? !e : true)) }} className="oo-noprint text-[12.5px] font-semibold text-ink">{editHome && eu === i ? 'Close' : 'Edit'}</button>
@@ -413,6 +425,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           <section className={card}>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Supplies</h2><span className="text-[13px]"><b className="text-ink">{have.length}</b> have · <b className="text-[#B4532A]">{need.length}</b> need · <b className="text-ink">{open.length}</b> not checked</span></div>
             {!sup.length ? <p className="text-[13px] text-muted">The list appears once the home is filled in.</p> : (<>
+              <div className="oo-noprint flex flex-wrap items-center gap-x-3 gap-y-1 mb-3 text-[12.5px]"><button type="button" onClick={() => setMarkEdit(m => !m)} className="rounded-xl border border-line px-3 py-1.5 font-semibold text-ink">{markEdit ? 'Done' : 'Fill in the supplies for the owner'}</button><span className="text-muted">{markEdit ? 'Tick Have or Need on each item, or a whole set at once. It saves as you go, and the owner sees it on their portal.' : 'If you already know what is in the home, tick it here so the owner does not have to.'}</span></div>
               {needRoll.length ? (
                 <div className="rounded-xl bg-[#FBF1EC] p-3 mb-4"><p className={lab + ' text-[#B4532A]'}>To buy{units.length > 1 ? ' · all ' + units.length + ' units' : ''} · what the owner marked Need</p>
                   <div className="overflow-x-auto"><table className="w-full text-[13px] mt-2"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted"><th className="py-1 font-semibold">Item</th>{units.length > 1 ? units.map((_, i) => <th key={i} className="py-1 px-2 text-right font-semibold whitespace-nowrap">{uLabel(i)}</th>) : null}<th className="py-1 text-right font-semibold">Total</th></tr></thead>
@@ -420,9 +433,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
                 </div>
               ) : null}
               {units.map((_, ui) => { const mine = sup.filter(i => i.unit === ui); const gs = Array.from(new Set(mine.map(i => i.group))); return (
-                <details key={ui} className="mb-1"><summary className="cursor-pointer text-[13px] font-semibold text-ink py-1">{units.length > 1 ? uLabel(ui) + ': the whole list' : 'The whole list, by set'} <span className="font-normal text-muted">· {mine.filter(i => rec.marks[i.key] === 'need').length} need, {mine.filter(i => !rec.marks[i.key]).length} not checked</span></summary>
+                <details key={ui} className="mb-1" open={markEdit || undefined}><summary className="cursor-pointer text-[13px] font-semibold text-ink py-1">{units.length > 1 ? uLabel(ui) + ': the whole list' : 'The whole list, by set'} <span className="font-normal text-muted">· {mine.filter(i => rec.marks[i.key] === 'need').length} need, {mine.filter(i => !rec.marks[i.key]).length} not checked</span></summary>
                   <div className="mt-3 columns-1 md:columns-2 gap-6">{gs.map(g => (
-                    <div key={g} className="break-inside-avoid mb-4"><p className={lab}>{g}</p><ul className="text-[12.5px]">{mine.filter(i => i.group === g).map(i => <li key={i.key} className="flex justify-between gap-2 py-1 border-b border-line"><span className="text-ink">{i.name} <span className="text-muted">×{i.qty}</span></span><span className={rec.marks[i.key] === 'have' ? 'text-emerald-700 font-semibold' : rec.marks[i.key] === 'need' ? 'text-[#B4532A] font-semibold' : 'text-muted'}>{rec.marks[i.key] === 'have' ? 'Have' : rec.marks[i.key] === 'need' ? 'Need' : '—'}</span></li>)}</ul></div>
+                    <div key={g} className="break-inside-avoid mb-4"><p className={lab}>{g}{markEdit ? <span className="oo-noprint normal-case tracking-normal font-normal"> · all: <button type="button" className="underline" onClick={() => mark(Object.fromEntries(mine.filter(i => i.group === g).map(i => [i.key, 'have'])))}>have</button> / <button type="button" className="underline" onClick={() => mark(Object.fromEntries(mine.filter(i => i.group === g).map(i => [i.key, 'need'])))}>need</button></span> : null}</p><ul className="text-[12.5px]">{mine.filter(i => i.group === g).map(i => <li key={i.key} className="flex justify-between gap-2 py-1 border-b border-line"><span className="text-ink">{i.name} <span className="text-muted">×{i.qty}</span></span>{markEdit ? <span className="oo-noprint inline-flex shrink-0 rounded-full border border-line overflow-hidden text-[11.5px] font-semibold">{(['have', 'need'] as const).map(v => <button key={v} type="button" onClick={() => mark({ [i.key]: rec.marks[i.key] === v ? '' : v })} className={'px-2 py-0.5 ' + (rec.marks[i.key] === v ? '' : 'text-muted')} style={rec.marks[i.key] === v ? { background: v === 'have' ? '#047857' : '#B4532A', color: '#fff' } : undefined}>{v === 'have' ? 'Have' : 'Need'}</button>)}</span>
+                      : <span className={rec.marks[i.key] === 'have' ? 'text-emerald-700 font-semibold' : rec.marks[i.key] === 'need' ? 'text-[#B4532A] font-semibold' : 'text-muted'}>{rec.marks[i.key] === 'have' ? 'Have' : rec.marks[i.key] === 'need' ? 'Need' : '—'}</span>}</li>)}</ul></div>
                   ))}</div>
                 </details>) })}
             </>)}
