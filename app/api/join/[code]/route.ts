@@ -10,7 +10,7 @@ import { cleanHome, ownerView, routingOk, OO_TAX_CLASS, type OOPayout } from '@/
 import { encryptSecret, maskHint, vaultKeyReady } from '@/lib/vault'
 import { sendHandoff } from '@/lib/owner-onboard-mail'
 import { notify } from '@/lib/notify'
-import { signedIn as ownerSignedIn, emailHint } from '@/lib/owner-onboard-auth'
+import { signedIn as ownerSignedIn, emailHint, isProtected } from '@/lib/owner-onboard-auth'
 import { requireLevel } from '@/lib/access'
 
 /** The owner signed in, or a teammate looking at the owner's view (Owner onboarding access). */
@@ -32,7 +32,12 @@ export async function GET(req: NextRequest, { params }: { params: { code: string
   if (!r || r.archived) return NextResponse.json({ ok: false, error: 'This onboarding link is not active. Ask your Stay Hospitality contact for a new one.' }, { status: 404, headers: NO_STORE })
   if (!(await signedIn(req, r))) return locked(r)
   const items = await itemsFor(r)
-  return NextResponse.json({ ok: true, record: ownerView(r), items }, { headers: NO_STORE })
+  // WHO IS LOOKING: a signed-in teammate previewing the page, or the owner. The owner's first visit has them
+  // create their password (Jon, 2026-11-13: "they click link and create password and live as an owner user").
+  let team = false
+  try { team = (await requireLevel('owner-onboarding', 'view')).ok } catch { /* not a teammate */ }
+  const viewer = team && !(isProtected(r) && ownerSignedIn(req, r)) ? 'team' : 'owner'
+  return NextResponse.json({ ok: true, record: ownerView(r), items, viewer }, { headers: NO_STORE })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { code: string } }) {
