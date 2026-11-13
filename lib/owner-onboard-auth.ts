@@ -11,6 +11,7 @@ import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
 import type { OORecord, OOAuth } from './owner-onboard'
 import { gmOf } from './owner-onboard'
+import type { RemindKind } from './owner-onboard-remind'
 import { stayEmail, escHtml } from './email-layout'
 import { readOOSettings, sendOnboardingMail } from './owner-onboard-mail'
 
@@ -95,7 +96,7 @@ export function canSend(r: OORecord, id = 'p'): boolean {
 export const emailHint = (e: string) => { const [u, d] = String(e || '').split('@'); return u && d ? u.slice(0, 2) + '•••@' + d : '' }
 
 const esc = (s: string) => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c])
-export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin' | 'order', id = 'p'): Promise<{ ok: boolean; error?: string }> {
+export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin' | 'order' | 'remind', id = 'p', remind?: { kind: RemindKind; n: 1 | 2 | 3 }): Promise<{ ok: boolean; error?: string }> {
   const who = account(r, id)
   const to = who?.email || ''
   if (!who || !to) return { ok: false, error: 'There is no email for this owner.' }
@@ -114,7 +115,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     list: ['Review the list', 'Mark anything you already own, and we will take it off', 'Approve it when you are happy, or tell us what to change'], lead: ['We will place the order as soon as you approve. Linen is quoted separately and is not on this list.'],
     cta: 'Review and approve', after: ['If you have any questions about an item, reply to this email.'],
     note: 'This link is private to you. Please do not forward it.',
-  } : kind === 'invite' ? {
+  } : kind === 'remind' && remind ? remindCopy(remind, { first, at, gmPhone: gm.phone }) : kind === 'invite' ? {
     eyebrow: 'Welcome', heading: 'Welcome to Stay Hospitality',
     pre: 'Set up your owner portal: about ten minutes, and it saves as you go.',
     paragraphs: [`Hi ${escHtml(first)},`, `Thank you for trusting us with your home${at}. I am ${escHtml(gm.name)}${gm.role ? ', ' + escHtml(gm.role) : ''}, and my team and I will take it from signed agreement to its first booking.`, 'Your owner portal is where it all happens. In about ten minutes you can:'],
@@ -133,16 +134,16 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const html = stayEmail({
     origin: site, preheader: copy.pre, eyebrow: copy.eyebrow, heading: copy.heading, paragraphs: copy.paragraphs, list: copy.list, lead: copy.lead,
     cta: { label: copy.cta, url: link },
-    ctaNote: kind === 'signin' ? `You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with your email and password.` : `This button signs you in once and works for 7 days. You will create a password on your first visit, and after that you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.`,
+    ctaNote: kind === 'remind' ? `This button signs you in once and works for 7 days. You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.` : kind === 'signin' ? `You can also sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with your email and password.` : `This button signs you in once and works for 7 days. You will create a password on your first visit, and after that you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a>.`,
     note: copy.note, after: copy.after,
     sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email, photo: gm.photo ? (gm.photo.startsWith('/') ? site + gm.photo : gm.photo) : undefined },
   })
-  const res = await sendOnboardingMail({ to: [to], subject: kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendOnboardingMail({ to: [to], subject: kind === 'remind' && remind ? REMIND_SUBJECT[remind.kind] + (home ? ' · ' + home : '') : kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') authOf(r, id).invitedAt = new Date().toISOString()
   // THE TEAM'S COPY (Jon, 2026-11-13: "cc Bernadette, Bethany, Roberto and Karla on all onboarding emails"). They are
   // not put on the owner's own email: its button signs whoever clicks it in AS THE OWNER, tax and bank forms included.
   // So the team gets the same message without that button, and a link to the onboarding in Lighthouse instead.
-  if (res.ok && kind !== 'signin') {
+  if (res.ok && kind !== 'signin' && kind !== 'remind') {
     try {
       const st = await readOOSettings()
       const team = st.teamCc.filter(e => e !== to.toLowerCase())
@@ -156,4 +157,30 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     } catch { /* the owner's email went; the team copy is a courtesy */ }
   }
   return { ok: res.ok, error: res.error }
+}
+
+// ── REMINDERS (lib/owner-onboard-remind): short, specific, and kinder each time. The third says it is the last. ──
+const REMIND_SUBJECT: Record<RemindKind, string> = { start: 'Reminder: set up your Stay Hospitality owner portal', home: 'Reminder: tell us about your home', supplies: 'Reminder: your supplies check', paperwork: 'Reminder: your W-9 and payout details', order: 'Reminder: your order list is waiting for approval' }
+function remindCopy(m: { kind: RemindKind; n: 1 | 2 | 3 }, c: { first: string; at: string; gmPhone?: string }) {
+  const hi = `Hi ${escHtml(c.first)},`
+  const last = m.n === 3 ? [`This is our last reminder. If now is not a good time, or something is holding you up, just reply${c.gmPhone ? ' or call me at ' + escHtml(c.gmPhone) : ''} and we will work around it.`] : ['If you have a question, reply to this email and it comes straight to me.']
+  const by: Record<RemindKind, { heading: string; pre: string; paragraphs: string[]; list?: string[]; cta: string; note: string }> = {
+    start: { heading: m.n === 1 ? 'Your owner portal is ready when you are' : 'Your owner portal is still waiting', pre: 'It takes about ten minutes and it is the first step to getting your home live.',
+      paragraphs: [hi, `A quick reminder that your owner portal${c.at} is ready. Setting it up takes about ten minutes, and it is the first step to getting your home live and earning.`], list: ['Create your password', 'Tell us about the home', 'Send your W-9 and payout details securely'], cta: 'Set up my owner portal',
+      note: 'Your tax ID and bank details are encrypted the moment you send them, and we will never ask for them by email.' },
+    home: { heading: 'Pick up where you left off', pre: 'A few details about the home and we can get moving.',
+      paragraphs: [hi, `Thank you for setting up your portal. The next step is to tell us about your home${c.at}: its size, beds, kitchen and Wi-Fi. It takes a few minutes, and everything after it depends on it.`], cta: 'Tell us about my home',
+      note: 'It saves as you go, so you can stop and come back any time.' },
+    supplies: { heading: 'One quick step: what is already in the home', pre: 'Tap one answer and you are done; our team confirms the rest.',
+      paragraphs: [hi, `We are ready to work out what your home${c.at} needs before guests arrive. Please tell us what is already there. You do not need a perfect count: one tap for "fully stocked" or "nothing bought yet" is enough, and our team walks the home to confirm before anything is ordered.`], cta: 'Do my supplies check',
+      note: 'Nothing is ordered without your approval.' },
+    paperwork: { heading: 'We still need your W-9 and payout details', pre: 'So we can pay you. It takes about three minutes.',
+      paragraphs: [hi, `We are nearly there. To set up your payouts for your home${c.at} we still need two things from you, and they take about three minutes:`], list: ['Your W-9 details', 'The bank account you want your payouts sent to'], cta: 'Finish my paperwork',
+      note: 'Your tax ID and bank details are encrypted the moment you send them, and only the last four digits are ever shown again. We will never ask for them by email.' },
+    order: { heading: 'Your order list is waiting for your approval', pre: 'We place the order as soon as you approve it.',
+      paragraphs: [hi, `Your order list${c.at} is ready, and we are holding the order until you have looked at it. Please review it, mark anything you already own, and approve it or tell us what to change.`], cta: 'Review and approve',
+      note: 'Getting the home stocked is usually what decides the go-live date, so an early answer helps.' },
+  }
+  const x = by[m.kind]
+  return { eyebrow: m.n === 3 ? 'Final reminder' : 'A quick reminder', heading: x.heading, pre: x.pre, paragraphs: x.paragraphs, list: x.list, lead: undefined as string[] | undefined, cta: x.cta, after: last, note: x.note }
 }
