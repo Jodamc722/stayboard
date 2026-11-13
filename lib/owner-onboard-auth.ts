@@ -11,6 +11,7 @@ import crypto from 'crypto'
 import type { NextRequest } from 'next/server'
 import { sendResendEmail } from './resend-send'
 import type { OORecord } from './owner-onboard'
+import { stayEmail, escHtml } from './email-layout'
 
 const secret = () => process.env.VAULT_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.RESEND_API_KEY || 'stay-owner-onboarding'
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
@@ -75,13 +76,33 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const token = newToken(r, kind === 'signin' ? 30 : 60 * 24 * 7)
   const link = origin.replace(/\/$/, '') + '/join/' + r.code + '?k=' + token
   const first = (r.custom.ownerName || '').split(' ')[0] || 'there'
-  const gm = r.custom.gm, home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
-  const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#111;line-height:1.55;max-width:520px">
-<p>Hi ${esc(first)},</p>
-<p>${kind === 'order' ? `Your order list${home ? ' for ' + esc(home) : ''} is ready to review: the items we would buy to set the home up, with quantities and prices. Please look it over, tell us about anything you already have, and approve it.` : kind === 'invite' ? `Welcome to Stay Hospitality. Your owner portal${home ? ' for ' + esc(home) + '' : ''} is ready: it is where you tell us about the home, send your paperwork securely, review your order list and follow every step until you are live. Open it below and create your password. After that you can sign in any time at ${esc(origin.replace(/\/$/, ''))}/portal with this email address and your password.` : 'Here is a new sign-in link for your Stay Hospitality onboarding.'}</p>
-<p><a href="${esc(link)}" style="display:inline-block;background:#14161B;color:#fff;text-decoration:none;padding:12px 22px;border-radius:999px;font-weight:bold">${kind === 'order' ? 'Review my order list' : kind === 'invite' ? 'Open my owner portal' : 'Sign in'}</a></p>
-<p style="color:#666;font-size:13px">This link signs you in once and works for ${kind === 'signin' ? '30 minutes' : '7 days'}. If the button does not work, paste this into your browser:<br>${esc(link)}</p>
-<p>${esc(gm.name)}${gm.role ? ', ' + esc(gm.role) : ''}<br>Stay Hospitality${gm.phone ? '<br>' + esc(gm.phone) : ''}</p></div>`
+  const gm = r.custom.gm, home = [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
+  const site = origin.replace(/\/$/, '')
+  const portal = site.replace(/^https?:\/\//, '') + '/portal'
+  const copy = kind === 'order' ? {
+    eyebrow: 'For your review', heading: 'Your order list is ready',
+    pre: 'The items we would buy to set your home up, with quantities and prices.',
+    paragraphs: [`Hi ${escHtml(first)},`, `Your order list${home ? ' for <b>' + escHtml(home) + '</b>' : ''} is ready. It shows each item we would buy to set the home up, with the quantity and the price.`, 'Please look it over, tell us about anything you already have, and approve it so we can place the order.'],
+    cta: 'Review my order list',
+  } : kind === 'invite' ? {
+    eyebrow: 'Welcome', heading: 'Your owner portal is ready',
+    pre: 'Create your password and start your onboarding with Stay Hospitality.',
+    paragraphs: [`Hi ${escHtml(first)},`, `Welcome to Stay Hospitality. Your owner portal${home ? ' for <b>' + escHtml(home) + '</b>' : ''} is ready.`, 'It is where you tell us about the home, send your tax and payout details securely, review your order list, and follow each step until you are live and taking bookings.', 'Open it below and create your password. It takes about ten minutes, and it saves as you go.'],
+    cta: 'Open my owner portal',
+  } : {
+    eyebrow: 'Owner portal', heading: 'Your sign-in link',
+    pre: 'A one-time link to sign in to your Stay Hospitality owner portal.',
+    paragraphs: [`Hi ${escHtml(first)},`, 'Here is the sign-in link you asked for. It opens your owner portal on this device.'],
+    cta: 'Sign in',
+  }
+  const html = stayEmail({
+    origin: site, preheader: copy.pre, eyebrow: copy.eyebrow, heading: copy.heading, paragraphs: copy.paragraphs,
+    cta: { label: copy.cta, url: link },
+    ctaNote: `This link signs you in once and works for ${kind === 'signin' ? '30 minutes' : '7 days'}. After you create your password you can sign in any time at <a href="${escHtml(site)}/portal" style="color:#7A7B80">${escHtml(portal)}</a> with this email address.`,
+    note: kind === 'signin' ? 'If you did not ask for this link, you can ignore this email. Nobody can sign in without it.' : 'Your tax ID and bank details are encrypted the moment you send them. We will never ask for them by email.',
+    after: kind === 'signin' ? [] : ['If anything is unclear, reply to this email and it comes straight to me.'],
+    sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email },
+  })
   const res = await sendResendEmail({ to: [to], replyTo: gm.email || undefined, subject: kind === 'order' ? 'Your order list is ready to review · Stay Hospitality' : kind === 'invite' ? 'Your Stay Hospitality owner portal' : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') blank(r).invitedAt = new Date().toISOString()
   return { ok: res.ok, error: res.error }

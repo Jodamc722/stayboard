@@ -10,6 +10,7 @@ import { sendResendEmail, type MailAttachment } from './resend-send'
 import { sendGmail } from './gmail-send'
 import { fileBytes } from './owner-onboard-files'
 import type { OORecord, OOItem } from './owner-onboard'
+import { stayEmail, escHtml } from './email-layout'
 
 export const OO_SETTINGS = 'oo_settings'
 export type OOSettings = { to: string[]; cc: string[]; replyTo: string; vendorTo: string[]; vendorCc: string[] }
@@ -37,12 +38,18 @@ export async function sendHandoff(r: OORecord, origin: string): Promise<{ ok: bo
     ['ACH', r.payout ? 'Received (' + r.payout.ach.bank + ' ' + (r.payout.ach.ownership ? r.payout.ach.ownership + ' ' : '') + r.payout.ach.accountType + ' ending ' + r.payout.ach.accountHint.slice(-4) + ')' : 'Not yet'],
     ['Agreement', r.agreement ? 'Attached: ' + r.agreement.name : 'Not uploaded yet'],
   ]
-  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#111;line-height:1.5">
-<p>Hi ${esc((s.to[0] || '').split('@')[0].replace(/^./, c => c.toUpperCase()))},</p>
-<p>${esc(r.custom.ownerName || 'A new owner')} has finished onboarding for <b>${esc(where)}</b>. Please <b>set up the Guesty accounts</b> for this owner and unit, and the owner's payouts.</p>
-<table cellpadding="6" style="border-collapse:collapse;font-size:13px">${rows.filter(([, v]) => v).map(([k, v]) => `<tr><td style="color:#666;border-bottom:1px solid #eee">${esc(k)}</td><td style="border-bottom:1px solid #eee">${esc(v)}</td></tr>`).join('')}</table>
-<p>The W-9 and ACH forms are filled and kept encrypted in Lighthouse. Download them here (sign in required); they are not attached to this email for security:<br><a href="${esc(link)}">${esc(link)}</a></p>
-<p>Thank you,<br>Jon</p></div>`
+  const toName = (s.to[0] || '').split('@')[0].replace(/^./, c => c.toUpperCase())
+  const html = stayEmail({
+    origin, preheader: `${r.custom.ownerName || 'A new owner'} has finished onboarding for ${where}. Please set up Guesty and payouts.`,
+    eyebrow: 'New owner · action needed', heading: `Set up ${r.custom.ownerName || 'a new owner'} in Guesty`,
+    paragraphs: [`Hi ${escHtml(toName)},`, `<b>${escHtml(r.custom.ownerName || 'A new owner')}</b> has finished onboarding for <b>${escHtml(where)}</b>. Please set up the Guesty accounts for this owner and unit, and the owner’s payouts.`],
+    details: { title: 'Owner and home', rows },
+    cta: { label: 'Open the onboarding in Lighthouse', url: link },
+    ctaNote: 'Sign in to download the filled W-9 and ACH authorization.',
+    note: '<b>For security, the W-9 and bank details are not attached.</b> They are kept encrypted in Lighthouse and filled into the forms only when someone with full access downloads them.' + (r.agreement ? ' The signed management agreement is attached.' : ''),
+    sign: { name: 'Jon McGill', role: 'General Manager', email: s.replyTo || undefined },
+    footer: 'Sent by Lighthouse for Stay Hospitality · Owner onboarding',
+  })
   const attachments: MailAttachment[] = []
   if (r.agreement) { const b = await fileBytes(r.agreement.path).catch(() => null); if (b) attachments.push({ filename: r.agreement.name, content: b, contentType: /\.pdf$/i.test(r.agreement.name) ? 'application/pdf' : undefined }) }
   // FROM JON'S OWN MAILBOX when it is connected (Google, gmail.send); otherwise the app's sender with reply-to.
@@ -67,14 +74,19 @@ export async function sendLinenToVendor(r: OORecord, items: OOItem[]): Promise<{
   const keys = Array.from(new Set(linen.map(i => i.name + '|' + (i.size || ''))))
   const qty = (k: string, u: number) => linen.filter(i => i.unit === u && i.name + '|' + (i.size || '') === k).reduce((a, i) => a + i.qty, 0)
   const where = [r.attach.property, r.home?.address].filter(Boolean).join(' · ')
-  const td = 'padding:6px 10px;border-bottom:1px solid #eee'
-  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#111;line-height:1.5">
-<p>Hello,</p>
-<p>Please quote the linen below for <b>${esc(where || 'a new home')}</b>${units.length > 1 ? ' (' + units.length + ' units)' : ''}. Quantities are at par.</p>
-<table style="border-collapse:collapse;font-size:13px"><tr><th align="left" style="${td}">Item</th><th align="left" style="${td}">Size</th>${units.length > 1 ? units.map(u => `<th align="right" style="${td}">${esc(label(u))}</th>`).join('') : ''}<th align="right" style="${td}">Total</th></tr>
-${keys.map(k => { const [n, z] = k.split('|'); const per = units.map(u => qty(k, u)); return `<tr><td style="${td}">${esc(n)}</td><td style="${td}">${esc(z)}</td>${units.length > 1 ? per.map(q => `<td align="right" style="${td}">${q || ''}</td>`).join('') : ''}<td align="right" style="${td}"><b>${per.reduce((a, b) => a + b, 0)}</b></td></tr>` }).join('')}</table>
-${r.linen?.note ? `<p>${esc(r.linen.note).replace(/\n/g, '<br>')}</p>` : ''}
-<p>Please reply with pricing and lead time. Thank you,<br>Jon McGill<br>Stay Hospitality</p></div>`
+  const origin = process.env.NEXT_PUBLIC_SITE_URL || 'https://lighthouse-stay.vercel.app'
+  const multi = units.length > 1
+  const total = linen.reduce((a, i) => a + i.qty, 0)
+  const html = stayEmail({
+    origin, preheader: `Linen quote request for ${where || 'a new home'}: ${total} pieces.`,
+    eyebrow: 'Quote request', heading: 'Linen quote request',
+    paragraphs: ['Hello,', `Please quote the linen below for <b>${escHtml(where || 'a new home')}</b>${multi ? ' (' + units.length + ' units)' : ''}. Quantities are at par.`],
+    table: { head: ['Item', 'Size', ...(multi ? units.map(u => escHtml(label(u))) : []), 'Total'], alignRight: [...(multi ? units.map((_, i) => i + 2) : []), (multi ? units.length : 0) + 2],
+      rows: [...keys.map(k => { const [n, z] = k.split('|'); const per = units.map(u => qty(k, u)); return [escHtml(n), escHtml(z), ...(multi ? per.map(q => (q ? String(q) : '')) : []), String(per.reduce((a, b) => a + b, 0))] }), ['<b>Total pieces</b>', '', ...(multi ? units.map(() => '') : []), String(total)]] },
+    note: r.linen?.note ? escHtml(r.linen.note).replace(/\n/g, '<br>') : undefined,
+    after: ['Please reply with pricing and lead time. Thank you.'],
+    sign: { name: 'Jon McGill', role: 'General Manager', email: s.replyTo || undefined },
+  })
   const subject = `Linen quote request · ${where || r.custom.ownerName || 'new home'}`
   if (s.replyTo) { const g = await sendGmail({ fromEmail: s.replyTo, to: s.vendorTo, cc: s.vendorCc, subject, html, source: 'owner-onboarding' }).catch(() => ({ ok: false })); if (g.ok) return { ok: true, to: s.vendorTo, cc: s.vendorCc } }
   const res = await sendResendEmail({ to: s.vendorTo, cc: s.vendorCc, replyTo: s.replyTo, subject, html })

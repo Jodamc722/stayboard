@@ -4,6 +4,7 @@
 // "Supplies check" done, and the team is told.
 import { syncFaq } from '@/lib/owner-onboard-faq'
 import { NextRequest, NextResponse } from 'next/server'
+import { pinHomes } from '@/lib/geo'
 import { readRecord, saveRecord, itemsFor as allItems, ownerItems, cleanMore } from '@/lib/owner-onboard-server'
 const itemsFor = async (r: any) => ownerItems(await allItems(r))
 import { cleanHome, ownerView, routingOk, OO_TAX_CLASS, type OOPayout } from '@/lib/owner-onboard'
@@ -51,6 +52,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (b.home) {
     r.home = cleanHome(b.home)
     if (Array.isArray(b.more)) r.more = cleanMore(b.more)
+    await pinHomes([r.home, ...(r.more || [])])
     if (step('details').status !== 'done') { step('details').status = 'done'; step('details').date = today }
     if (step('supplies').status === 'todo') step('supplies').status = 'doing'
   }

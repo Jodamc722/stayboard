@@ -3,6 +3,7 @@
 // the home itself, archive.
 import { syncFaq } from '@/lib/owner-onboard-faq'
 import { NextRequest, NextResponse } from 'next/server'
+import { pinHomes } from '@/lib/geo'
 import { requireLevel, requireAdmin, isSuperadmin } from '@/lib/access'
 import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore } from '@/lib/owner-onboard-server'
 import { cleanHome, OO_STEPS, teamView, type OOStep } from '@/lib/owner-onboard'
@@ -27,6 +28,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (b.attach) r.attach = { property: String(b.attach.property ?? r.attach.property).slice(0, 120), listingId: String(b.attach.listingId ?? r.attach.listingId).slice(0, 60), unitLabel: String(b.attach.unitLabel ?? r.attach.unitLabel).slice(0, 60) }
   if (b.home) r.home = cleanHome(b.home)
   if (Array.isArray(b.more)) r.more = cleanMore(b.more)
+  if (b.home || Array.isArray(b.more)) await pinHomes([r.home, ...(r.more || [])])
   if (typeof b.teamNotes === 'string') r.teamNotes = b.teamNotes.slice(0, 4000)
   if (b.marks && typeof b.marks === 'object') for (const [k, v] of Object.entries(b.marks)) if (v === 'have' || v === 'need' || v === '') r.marks[String(k).slice(0, 120)] = v as any
   if (Array.isArray(b.steps)) {

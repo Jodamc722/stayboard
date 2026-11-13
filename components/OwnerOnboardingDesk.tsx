@@ -4,6 +4,7 @@
 //                          introductory email, what to ask, optionally the home started for them, the agreement)
 //   OwnerOnboardingReport — /owner-onboarding/<code>: the report the team works from: the home, what it has and
 //                          needs, the timeline, the onboarding call, the paperwork and the handoff to accounting.
+import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive } from 'lucide-react'
 import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome } from '@/lib/owner-onboard'
@@ -176,7 +177,7 @@ function HomeEditor({ home, set }: { home: OOHome; set: (h: OOHome) => void }) {
   const num = (k: keyof OOHome, l: string, step = 1) => <label className="block"><span className={lab}>{l}</span><input inputMode="decimal" value={String(home[k] ?? '')} onChange={e => set({ ...home, [k]: Number(e.target.value.replace(/[^\d.]/g, '')) || 0 } as OOHome)} className={field} step={step} /></label>
   return (
     <div className="grid gap-3 sm:grid-cols-4">
-      <label className="block sm:col-span-3"><span className={lab}>Address</span><input value={home.address} onChange={e => set({ ...home, address: e.target.value })} className={field} /></label>
+      <div className="block sm:col-span-3"><span className={lab}>Address</span><AddressInput value={home.address} lat={home.lat} lng={home.lng} inputClassName={field} onChange={p => set({ ...home, address: p.address, lat: p.lat, lng: p.lng })} /></div>
       <label className="block"><span className={lab}>Unit</span><input value={home.unit} onChange={e => set({ ...home, unit: e.target.value })} className={field} /></label>
       {num('sqft', 'Square feet')}{num('bedrooms', 'Bedrooms')}{num('bathrooms', 'Bathrooms', 0.5)}{num('guests', 'Sleeps')}
       {OO_BEDS.map(b => <label key={b} className="block"><span className={lab}>{b} beds</span><input inputMode="numeric" value={String(home.beds[b] || 0)} onChange={e => set({ ...home, beds: { ...home.beds, [b]: Number(e.target.value.replace(/\D/g, '')) || 0 } })} className={field} /></label>)}
