@@ -82,7 +82,7 @@ export const OO_TAX_CLASS: { key: OOTaxClass; label: string }[] = [
 ]
 export type OOPayout = {
   w9: { name: string; business: string; taxClass: OOTaxClass; llcCode: string; other: string; address: string; cityStateZip: string; tinType: 'ssn' | 'ein'; tinEnc: string; tinHint: string }
-  ach: { holder: string; bank: string; accountType: 'checking' | 'savings'; routingEnc: string; routingHint: string; accountEnc: string; accountHint: string }
+  ach: { holder: string; bank: string; accountType: 'checking' | 'savings'; /** Personal or business account (Jon, 2026-11-13: "ACH has to state if personal or business"). Blank on forms sent before this was asked. */ ownership?: 'personal' | 'business'; routingEnc: string; routingHint: string; accountEnc: string; accountHint: string }
   sign: { name: string; at: string; ip: string }
 }
 /** THE ORDER LIST (Jon, 2026-11-13: "post owner fill-out we can send our order list with our actual items; the
@@ -110,6 +110,8 @@ export type OORecord = {
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
   /** The linen order (Jon, 2026-11-13): approved by the team, then sent to the vendor. */
   order?: OOOrder | null
+  /** Every download of the filled W-9 or ACH form: who, which, when (newest first, last 200). */
+  payoutLog?: { at: string; by: string; doc: 'w9' | 'ach' }[]
   /** When this onboarding last fed the attached listing's FAQ, and how many entries it has added. */
   faq?: { at: string; listingId: string; added: number }
   linen?: { approvedAt?: string; approvedBy?: string; sentAt?: string; sentTo?: string[]; error?: string
@@ -160,8 +162,8 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, ...rest } = r
-  void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, ...rest } = r
+  void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? order : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }

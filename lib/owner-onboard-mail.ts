@@ -34,7 +34,7 @@ export async function sendHandoff(r: OORecord, origin: string): Promise<{ ok: bo
     ['Property', r.attach.property], ['Unit', unit], ['Address', h?.address || ''],
     ['Home', h ? [h.bedrooms === 0 ? 'Studio' : h.bedrooms + ' bed', h.bathrooms + ' bath', h.sqft ? h.sqft + ' SF' : '', 'sleeps ' + h.guests].filter(Boolean).join(' · ') : ''],
     ['W-9', r.payout ? 'Received (' + (r.payout.w9.business || r.payout.w9.name) + ', ' + (r.payout.w9.tinType === 'ein' ? 'EIN' : 'SSN') + ' ending ' + r.payout.w9.tinHint.slice(-4) + ')' : 'Not yet'],
-    ['ACH', r.payout ? 'Received (' + r.payout.ach.bank + ' ' + r.payout.ach.accountType + ' ending ' + r.payout.ach.accountHint.slice(-4) + ')' : 'Not yet'],
+    ['ACH', r.payout ? 'Received (' + r.payout.ach.bank + ' ' + (r.payout.ach.ownership ? r.payout.ach.ownership + ' ' : '') + r.payout.ach.accountType + ' ending ' + r.payout.ach.accountHint.slice(-4) + ')' : 'Not yet'],
     ['Agreement', r.agreement ? 'Attached: ' + r.agreement.name : 'Not uploaded yet'],
   ]
   const html = `<div style="font-family:Arial,sans-serif;font-size:14px;color:#111;line-height:1.5">

@@ -59,7 +59,7 @@ export async function achPdf(r: OORecord): Promise<Uint8Array> {
   row('Property', [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : r.home?.unit ? 'Unit ' + r.home.unit : ''].filter(Boolean).join(', '))
   row('Account holder', p.ach.holder)
   row('Bank', p.ach.bank)
-  row('Account type', p.ach.accountType === 'savings' ? 'Savings' : 'Checking')
+  row('Account type', (p.ach.ownership === 'business' ? 'Business ' : p.ach.ownership === 'personal' ? 'Personal ' : '') + (p.ach.accountType === 'savings' ? 'savings' : 'checking'))
   row('Routing number', routing)
   row('Account number', account)
   y -= 6

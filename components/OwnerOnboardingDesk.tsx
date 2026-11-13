@@ -467,10 +467,11 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
                 <p className={lab}>W-9 and ACH <Lock size={11} className="inline" /></p>
                 {rec.payout ? (<>
                   <p className="text-[13px] text-ink mt-1">{rec.payout.w9.business || rec.payout.w9.name} · {rec.payout.w9.tinType === 'ein' ? 'EIN' : 'SSN'} {rec.payout.w9.tinHint}</p>
-                  <p className="text-[13px] text-ink">{rec.payout.ach.bank} {rec.payout.ach.accountType} {rec.payout.ach.accountHint}</p>
+                  <p className="text-[13px] text-ink">{rec.payout.ach.bank} {rec.payout.ach.ownership || ''} {rec.payout.ach.accountType} {rec.payout.ach.accountHint}</p>
                   <p className="text-[11.5px] text-muted">Signed by {rec.payout.sign.name}, {new Date(rec.payout.sign.at).toLocaleDateString()}</p>
                   <div className="oo-noprint flex flex-wrap gap-2 mt-2"><a href={`/api/owner-onboarding/${code}/forms?doc=w9`} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold"><Download size={12} /> W-9</a><a href={`/api/owner-onboarding/${code}/forms?doc=ach`} className="inline-flex items-center gap-1.5 rounded-lg bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold"><Download size={12} /> ACH form</a></div>
                   <p className="text-[11px] text-muted mt-1">Filled on download, for full access only. Never emailed.</p>
+                  {rec.payoutLog?.length ? <details className="mt-2 text-[11.5px] text-muted"><summary className="cursor-pointer font-semibold text-ink">Download log ({rec.payoutLog.length})</summary><ul className="mt-1 space-y-0.5">{rec.payoutLog.slice(0, 30).map((l: Any, i: number) => <li key={i}>{l.doc === 'ach' ? 'ACH form' : 'W-9'} · {l.by === 'owner' ? 'the owner' : String(l.by).split('@')[0]} · {new Date(l.at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</li>)}</ul></details> : <p className="text-[11px] text-muted">No downloads yet. Each one is logged.</p>}
                 </>) : <p className="text-[13px] text-muted mt-1">{rec.custom.askPayout === false ? 'Not asked on this link.' : 'Not sent yet.'}</p>}
               </div>
               <div className="rounded-xl border border-line p-3">

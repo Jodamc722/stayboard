@@ -65,6 +65,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   // THE W-9 AND ACH: checked, then the tax ID and bank numbers are encrypted before anything is saved.
   let firstPayout = false
   if (b.payout) {
+    // A PASSWORD FIRST (Jon, 2026-11-13): tax and bank details are only taken on a link the owner has locked with their own password.
+    if (!r.auth?.pass) return NextResponse.json({ ok: false, need: 'password', error: 'Create your password first, so only you can open this page.' }, { status: 403, headers: NO_STORE })
     if (!vaultKeyReady()) return NextResponse.json({ ok: false, error: 'Secure storage is not set up yet. Please tell your Stay Hospitality contact.' }, { status: 503, headers: NO_STORE })
     const w = b.payout.w9 || {}, a = b.payout.ach || {}, sg = b.payout.sign || {}
     const s = (v: any, n: number) => String(v || '').trim().slice(0, n)
@@ -72,13 +74,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     const keepTin = !tin && r.payout?.w9.tinEnc, keepBank = !routing && !account && r.payout?.ach.routingEnc
     const bad = !s(w.name, 120) ? 'Enter the name as shown on your tax return.' : !keepTin && tin.length !== 9 ? 'The SSN or EIN must be 9 digits.' : !s(w.address, 200) || !s(w.cityStateZip, 120) ? 'Enter the address for the W-9.'
       : !keepBank && !routingOk(routing) ? 'That routing number does not match any US bank. Please check it against a check or your bank’s app.' : !keepBank && (routing !== String(a.routing2 || '').replace(/\D/g, '') || account !== String(a.account2 || '').replace(/\D/g, '')) ? 'The routing or account number does not match its confirmation. Please re-enter them.' : !keepBank && (account.length < 4 || account.length > 17) ? 'The account number should be 4 to 17 digits.'
-      : !s(a.holder, 120) || !s(a.bank, 120) ? 'Enter the account holder and the bank.' : !s(sg.name, 120) || !sg.agree ? 'Type your full name and confirm, to sign.' : ''
+      : !s(a.holder, 120) || !s(a.bank, 120) ? 'Enter the account holder and the bank.' : a.ownership !== 'personal' && a.ownership !== 'business' ? 'Say whether the bank account is personal or business.' : !s(sg.name, 120) || !sg.agree ? 'Type your full name and confirm, to sign.' : ''
     if (bad) return NextResponse.json({ ok: false, error: bad }, { status: 400, headers: NO_STORE })
     const prev = r.payout
     const p: OOPayout = {
       w9: { name: s(w.name, 120), business: s(w.business, 120), taxClass: OO_TAX_CLASS.some(c => c.key === w.taxClass) ? w.taxClass : 'individual', llcCode: s(w.llcCode, 1).toUpperCase(), other: s(w.other, 80), address: s(w.address, 200), cityStateZip: s(w.cityStateZip, 120),
         tinType: w.tinType === 'ein' ? 'ein' : 'ssn', tinEnc: keepTin ? prev!.w9.tinEnc : encryptSecret(tin), tinHint: keepTin ? prev!.w9.tinHint : maskHint(tin) },
-      ach: { holder: s(a.holder, 120), bank: s(a.bank, 120), accountType: a.accountType === 'savings' ? 'savings' : 'checking',
+      ach: { holder: s(a.holder, 120), bank: s(a.bank, 120), accountType: a.accountType === 'savings' ? 'savings' : 'checking', ownership: a.ownership === 'business' ? 'business' : 'personal',
         routingEnc: keepBank ? prev!.ach.routingEnc : encryptSecret(routing), routingHint: keepBank ? prev!.ach.routingHint : maskHint(routing),
         accountEnc: keepBank ? prev!.ach.accountEnc : encryptSecret(account), accountHint: keepBank ? prev!.ach.accountHint : maskHint(account) },
       sign: { name: s(sg.name, 120), at: new Date().toISOString(), ip: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim().slice(0, 60) },
