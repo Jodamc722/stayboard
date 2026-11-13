@@ -16,15 +16,15 @@ export const OO_SETTINGS = 'oo_settings'
 /** teamCc (Jon, 2026-11-13: "add cc Bernadette, Bethany, Roberto and Karla to all onboarding emails"): copied on every
  *  onboarding email. On the owner's own emails they get a team copy WITHOUT the sign-in button, because that button
  *  signs whoever clicks it in as the owner. */
-export type OOSettings = { to: string[]; cc: string[]; replyTo: string; vendorTo: string[]; vendorCc: string[]; teamCc: string[] }
-export const OO_SETTINGS_DEFAULT: OOSettings = { to: ['bethany@stay-hospitality.com'], cc: ['bernadette@stay-hospitality.com', 'jon@stay-hospitality.com'], replyTo: 'jon@stay-hospitality.com', teamCc: ['bernadette@stay-hospitality.com', 'bethany@stay-hospitality.com', 'roberto@stay-hospitality.com', 'karla@stay-hospitality.com'], vendorTo: [], vendorCc: ['jon@stay-hospitality.com', 'roberto@stay-hospitality.com'] }
+export type OOSettings = { to: string[]; cc: string[]; replyTo: string; vendorTo: string[]; vendorCc: string[]; teamCc: string[]; /** who is asked to walk a new unit and count what is there */ walkTo: string[] }
+export const OO_SETTINGS_DEFAULT: OOSettings = { to: ['bethany@stay-hospitality.com'], cc: ['bernadette@stay-hospitality.com', 'jon@stay-hospitality.com'], replyTo: 'jon@stay-hospitality.com', walkTo: ['roberto@stay-hospitality.com', 'karla@stay-hospitality.com'], teamCc: ['bernadette@stay-hospitality.com', 'bethany@stay-hospitality.com', 'roberto@stay-hospitality.com', 'karla@stay-hospitality.com'], vendorTo: [], vendorCc: ['jon@stay-hospitality.com', 'roberto@stay-hospitality.com'] }
 const emails = (v: any) => (Array.isArray(v) ? v : String(v || '').split(/[,;\s]+/)).map((x: any) => String(x || '').trim().toLowerCase()).filter((x: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)).slice(0, 10)
 export async function readOOSettings(): Promise<OOSettings> {
   const r: any = await getSettingFresh<any>(OO_SETTINGS, null)
   if (!r) return OO_SETTINGS_DEFAULT
-  return { to: emails(r.to).length ? emails(r.to) : OO_SETTINGS_DEFAULT.to, cc: emails(r.cc), replyTo: emails([r.replyTo])[0] || OO_SETTINGS_DEFAULT.replyTo, teamCc: r.teamCc == null ? OO_SETTINGS_DEFAULT.teamCc : emails(r.teamCc), vendorTo: emails(r.vendorTo), vendorCc: r.vendorCc == null ? OO_SETTINGS_DEFAULT.vendorCc : emails(r.vendorCc) }
+  return { to: emails(r.to).length ? emails(r.to) : OO_SETTINGS_DEFAULT.to, cc: emails(r.cc), replyTo: emails([r.replyTo])[0] || OO_SETTINGS_DEFAULT.replyTo, teamCc: r.teamCc == null ? OO_SETTINGS_DEFAULT.teamCc : emails(r.teamCc), walkTo: r.walkTo == null ? OO_SETTINGS_DEFAULT.walkTo : emails(r.walkTo), vendorTo: emails(r.vendorTo), vendorCc: r.vendorCc == null ? OO_SETTINGS_DEFAULT.vendorCc : emails(r.vendorCc) }
 }
-export async function saveOOSettings(v: any, by: string | null) { const s = { to: emails(v?.to), cc: emails(v?.cc), replyTo: emails([v?.replyTo])[0] || '', vendorTo: emails(v?.vendorTo), vendorCc: emails(v?.vendorCc), teamCc: emails(v?.teamCc) }; await setSetting(OO_SETTINGS, s, by); return readOOSettings() }
+export async function saveOOSettings(v: any, by: string | null) { const s = { to: emails(v?.to), cc: emails(v?.cc), replyTo: emails([v?.replyTo])[0] || '', vendorTo: emails(v?.vendorTo), vendorCc: emails(v?.vendorCc), teamCc: emails(v?.teamCc), walkTo: emails(v?.walkTo) }; await setSetting(OO_SETTINGS, s, by); return readOOSettings() }
 
 const esc = (s: string) => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c])
 /** ONE WAY OUT FOR EVERY ONBOARDING EMAIL: from the connected Google mailbox first (the handoff always went this way),
@@ -116,4 +116,28 @@ export async function sendLinenToVendor(r: OORecord, items: OOItem[]): Promise<{
   if (s.replyTo) { const g = await sendGmail({ fromEmail: s.replyTo, to: s.vendorTo, cc: s.vendorCc, subject, html, source: 'owner-onboarding' }).catch(() => ({ ok: false })); if (g.ok) return { ok: true, to: s.vendorTo, cc: s.vendorCc } }
   const res = await sendResendEmail({ to: s.vendorTo, cc: s.vendorCc, replyTo: s.replyTo, subject, html })
   return { ok: res.ok, error: res.error, to: s.vendorTo, cc: s.vendorCc }
+}
+
+/** THE WALKTHROUGH REQUEST (Jon, 2026-11-13: "create an email to do the walkthrough with a link for marking yes or no so
+ *  we can get the actual count"). To whoever walks units; the link opens the count sheet on a phone, no login. */
+export async function sendWalkRequest(r: OORecord, origin: string, to: string[], by: string): Promise<{ ok: boolean; error?: string; to: string[] }> {
+  const s = await readOOSettings()
+  const list = emails(to).length ? emails(to) : s.walkTo
+  if (!list.length) return { ok: false, error: 'Add who walks the unit first (Owner onboarding → Handoff and vendor emails).', to: [] }
+  if (!r.walk?.key) return { ok: false, error: 'The walkthrough link is not ready.', to: list }
+  const site = origin.replace(/\/$/, '')
+  const units = [r.home, ...(r.more || [])].filter(Boolean) as NonNullable<OORecord['home']>[]
+  const where = [r.attach.property, units.length === 1 ? (r.attach.unitLabel || units[0].unit ? 'Unit ' + (r.attach.unitLabel || units[0].unit) : '') : units.length + ' units'].filter(Boolean).join(' · ') || 'a new home'
+  const said = r.stock === 'full' ? 'The owner says the home is <b>fully stocked</b>.' : r.stock === 'none' ? 'The owner says <b>nothing has been bought yet</b>.' : 'The owner has ticked what they believe is there.'
+  const html = stayEmail({
+    origin: site, preheader: `Please walk ${where} and count what is there, so we order only what is missing.`,
+    eyebrow: 'Walkthrough needed', heading: `Walk ${where} and count the inventory`,
+    paragraphs: ['Hello,', `We are onboarding <b>${escHtml(where)}</b>${r.custom.ownerName ? ' for ' + escHtml(r.custom.ownerName) : ''}. ${said} Before we order anything, please walk the unit and record what is actually there.`],
+    list: ['Open the count sheet on your phone (no sign-in needed)', 'For each item, enter how many are there, or tap Yes or No for single items', 'Tap Finish when you are done; it saves as you go'], ordered: true,
+    cta: { label: 'Start the walkthrough', url: `${site}/join/${r.code}/walk?k=${r.walk.key}` },
+    details: { title: 'The home', rows: [['Property', r.attach.property], ...units.map((h, i) => [units.length > 1 ? 'Unit ' + (h.unit || i + 1) : 'Address', [units.length > 1 ? '' : (h.unit ? 'Unit ' + h.unit : ''), h.address, h.access ? 'Access: ' + h.access : ''].filter(Boolean).join(' · ')] as [string, string])] },
+    sign: { name: by.split('@')[0].replace(/^./, c => c.toUpperCase()) || 'Stay Hospitality', email: by || undefined }, footer: 'Sent by Lighthouse for Stay Hospitality · Owner onboarding',
+  })
+  const res = await sendOnboardingMail({ to: list, subject: `Walkthrough needed: ${where}`, html })
+  return { ok: res.ok, error: res.error, to: list }
 }

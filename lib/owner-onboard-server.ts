@@ -9,6 +9,7 @@ import { itemsFor as kitItemsFor, lineFor, KIT_ITEMS, type KitSize, type KitSele
 const KIT_ITEMS_ORDER = () => KIT_ITEMS.map(k => k.key)
 import { normLinenStandard, linenQuote, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
 import type { OOOrder, OOOrderLine } from './owner-onboard'
+import { stockOf } from './owner-onboard'
 import { OO_PREFIX, OO_INDEX, cleanHome, unitsOf, unitName, DEFAULT_GM, DEFAULT_SALES, freshSteps, stageOf, type OORecord, type OOIndexRow, type OOItem, type OOHome, type OOCustom } from './owner-onboard'
 
 const newCode = () => { const c: any = (globalThis as any).crypto; return String(c?.randomUUID ? c.randomUUID() : Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 14) }
@@ -61,7 +62,7 @@ function indexRow(r: OORecord, items: OOItem[] | null): OOIndexRow {
   const marks = Object.entries(r.marks).filter(([k]) => !keys || keys.has(k))
   return { code: r.code, ownerName: r.custom.ownerName, property: r.attach.property, unitLabel: r.attach.unitLabel, listingId: r.attach.listingId, createdAt: r.createdAt, updatedAt: r.updatedAt, createdBy: r.createdBy,
     stage: stageOf(r), submitted: !!r.submittedAt, have: marks.filter(([, m]) => m === 'have').length, need: marks.filter(([, m]) => m === 'need').length,
-    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), emails: [r.custom.ownerEmail, ...(r.owners || []).map(o => o.email)].map(e => String(e || '').trim().toLowerCase()).filter(Boolean), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', ...(r.archived ? { archived: true } : {}) }
+    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), emails: [r.custom.ownerEmail, ...(r.owners || []).map(o => o.email)].map(e => String(e || '').trim().toLowerCase()).filter(Boolean), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', walk: r.walk?.doneAt ? 'done' : r.walk?.sentAt ? 'sent' : r.submittedAt || r.stock || marks.length ? 'needed' : '', ...(r.archived ? { archived: true } : {}) }
 }
 async function writeIndex(row: OOIndexRow, by: string | null) {
   const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])
@@ -144,16 +145,26 @@ export function buildOrder(r: OORecord): OOOrder {
   const units = unitsOf(r)
   const blank: KitSelection = { inc: {}, qty: {}, own: {}, pick: {}, self: {}, have: {} } as any
   const by = new Map<string, OOOrderLine>()
-  const leftOff: string[] = [], partial: string[] = [], uncovered: string[] = []
+  const leftOff: string[] = [], partial: string[] = [], uncovered: string[] = [], short: string[] = [], declined: string[] = []
   const covered = new Set(Object.values(KIT_COVERS).flat())
   let marked = 0
   units.forEach((h, i) => {
     const z: KitSize = { bedrooms: Math.max(1, h.bedrooms), bathrooms: Math.max(1, Math.ceil(h.bathrooms)), guests: h.guests, kitchen: h.kitchen, appliances: { ...h.appliances } }
     const pre = (i === 0 ? '' : 'u' + (h.uid || i) + '|') + 's:'
     const tag = units.length > 1 ? ' (' + unitName(h, i) + ')' : ''
-    const pieces = new Map(needList(z).map(l => [l.item.key, l.item.name] as [string, string]))
-    const mark = (k: string) => (r.custom.askSupplies ? r.marks[pre + k] || '' : '')
-    pieces.forEach((name, k) => { const m = mark(k); if (m) marked++; if (m === 'need' && !covered.has(k)) uncovered.push(name + tag) })
+    const lines = needList(z)
+    const pieces = new Map(lines.map(l => [l.item.key, l.item.name] as [string, string]))
+    const qty = new Map(lines.map(l => [l.item.key, l.count] as [string, number]))
+    // each piece as it stands after the owner's answers, the walkthrough and the team's decisions (lib stockOf)
+    const st = (k: string) => stockOf(r, { key: pre + k, qty: qty.get(k) || 1 })
+    const mark = (k: string): '' | 'have' | 'need' => { const x = st(k); if (x.decision) return 'have'; if (x.onHand == null || (!r.custom.askSupplies && x.walk == null)) return ''; return x.onHand >= x.need ? 'have' : 'need' }
+    pieces.forEach((name, k) => {
+      const x = st(k), m = mark(k)
+      if (m || x.decision) marked++
+      if (x.decision) declined.push(`${name}${tag}: ${x.decision === 'owner' ? 'owner will supply it' : 'owner does not want to purchase'}`)
+      else if (m === 'need' && (x.onHand || 0) > 0) short.push(`${name}${tag}: ${x.onHand} of ${x.need} there, ${x.toBuy} to buy`)
+      if (m === 'need' && !covered.has(k)) uncovered.push(name + tag + (x.need > 1 ? ' ×' + x.toBuy : ''))
+    })
     for (const it of kitItemsFor(z)) {
       const l = lineFor(it, z, blank)
       if (!(l.qty > 0)) continue
@@ -168,7 +179,7 @@ export function buildOrder(r: OORecord): OOOrder {
   })
   const order = KIT_ITEMS_ORDER()
   const lines = Array.from(by.values()).sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))
-  return { lines, status: 'draft', builtAt: new Date().toISOString(), basis: { marked, leftOff, partial: partial.slice(0, 40), uncovered: uncovered.slice(0, 60) } }
+  return { lines, status: 'draft', builtAt: new Date().toISOString(), basis: { marked, leftOff, partial: partial.slice(0, 40), uncovered: uncovered.slice(0, 60), short: short.slice(0, 80), declined: declined.slice(0, 80), walked: !!r.walk?.doneAt } }
 }
 export function cleanOrderLines(v: any, units: number): OOOrderLine[] {
   return (Array.isArray(v) ? v : []).slice(0, 300).map((l: any, i: number) => ({
@@ -213,4 +224,21 @@ export function cleanOwners(v: any, prev: OORecord['owners']): NonNullable<OORec
     const auth = old?.auth ? (old.email.toLowerCase() === email ? old.auth : { ...old.auth, tokens: [], invitedAt: undefined }) : null
     return { id, name: str(o?.name, 120), email, phone: str(o?.phone, 40), auth }
   }).filter(o => o.name || o.email)
+}
+
+/** The walkthrough for this onboarding, with its link key made on first use. The caller saves the record. */
+export function ensureWalk(r: OORecord): NonNullable<OORecord['walk']> {
+  if (!r.walk?.key) { const c: any = (globalThis as any).crypto; r.walk = { ...(r.walk || {}), key: String(c.randomUUID()).replace(/-/g, '').slice(0, 24), counts: r.walk?.counts || {} } }
+  return r.walk!
+}
+/** { itemKey: how many } from a form: whole numbers 0 to 999; null or '' clears the entry. */
+export function mergeCounts(into: Record<string, number>, v: any): Record<string, number> {
+  const out = { ...into }; let n = 0
+  if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) {
+    if (++n > 800) break
+    const key = String(k).slice(0, 120)
+    if (x === null || x === '') { delete out[key]; continue }
+    const num = Math.round(Number(x)); if (Number.isFinite(num)) out[key] = Math.max(0, Math.min(999, num))
+  }
+  return out
 }

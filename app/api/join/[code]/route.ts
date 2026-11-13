@@ -5,7 +5,7 @@
 import { syncFaq } from '@/lib/owner-onboard-faq'
 import { NextRequest, NextResponse } from 'next/server'
 import { pinHomes } from '@/lib/geo'
-import { readRecord, saveRecord, itemsFor as allItems, ownerItems, cleanMore } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, itemsFor as allItems, ownerItems, cleanMore, mergeCounts } from '@/lib/owner-onboard-server'
 const itemsFor = async (r: any) => ownerItems(await allItems(r))
 import { cleanHome, ownerView, routingOk, OO_TAX_CLASS, type OOPayout } from '@/lib/owner-onboard'
 import { encryptSecret, maskHint, vaultKeyReady } from '@/lib/vault'
@@ -65,6 +65,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     let n = 0
     for (const [k, v] of Object.entries(b.marks)) { if (++n > 600) break; if (v === 'have' || v === 'need' || v === '') r.marks[String(k).slice(0, 120)] = v as any }
   }
+  if (b.counts && typeof b.counts === 'object') r.counts = mergeCounts(r.counts || {}, b.counts)
+  const stockWas = r.stock || ''
+  if (b.stock === 'none' || b.stock === 'full' || b.stock === '') r.stock = b.stock
   if (typeof b.ownerNotes === 'string') r.ownerNotes = b.ownerNotes.slice(0, 4000)
   // THE ORDER LIST, REVIEWED: lines the owner already has (skip), a note, and approve or ask for changes.
   let reviewed = ''
@@ -118,6 +121,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (reviewed === 'approved' && r.attach.listingId) await syncFaq(r, 'owner-onboarding').catch(() => null)
   const w = await saveRecord(r, 'owner:' + (r.custom.ownerEmail || r.code))
   if (!w.ok) return NextResponse.json(w, { status: 500, headers: NO_STORE })
+  // THE OWNER'S ONE-TAP ANSWER STARTS THE WALKTHROUGH (Jon: "this would then auto trigger need to inspect unit, which we
+  // need to do either way"): the team is told the moment the owner says fully stocked or nothing bought.
+  if ((r.stock || '') !== stockWas && r.stock) {
+    try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `Walkthrough needed: ${r.custom.ownerName || 'the owner'} says ${r.stock === 'full' ? 'the home is fully stocked' : 'nothing has been bought yet'}`, body: [r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · ') + ' — send the walkthrough to confirm the count before ordering.', link: '/owner-onboarding/' + r.code }) } catch { /* saved; the bell is a courtesy */ }
+  }
   if (reviewed) {
     try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `${r.custom.ownerName || 'An owner'} ${reviewed === 'approved' ? 'approved the order list' : 'asked for changes to the order list'}`, body: r.order?.review?.note || [r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · '), link: '/owner-onboarding/' + r.code }) } catch { /* */ }
   }

@@ -7,7 +7,7 @@
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive } from 'lucide-react'
-import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome } from '@/lib/owner-onboard'
+import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome } from '@/lib/owner-onboard'
 
 type Any = any
 const lab = 'text-[10.5px] uppercase tracking-[0.16em] text-muted font-semibold'
@@ -83,6 +83,71 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
   )
 }
 
+// ── THE INVENTORY REVIEW (Jon, 2026-11-13): the owner's answer, the walkthrough's count, and the team's call on each item,
+//    side by side; then the order list is generated from what is really short ──
+function InventoryReview({ rec, sup, units, uLabel, onApply, onMsg }: { rec: Any; sup: OOItem[]; units: OOHome[]; uLabel: (i: number) => string; onApply: (d: Any) => void; onMsg: (m: string) => void }) {
+  const [busy, setBusy] = useState(''); const [note, setNote] = useState(''); const [short, setShort] = useState(false); const [ui, setUi] = useState(0)
+  const [team, setTeam] = useState<string[]>([])
+  useEffect(() => { fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => setTeam(d?.settings?.walkTo || [])).catch(() => {}) }, [])
+  const w = rec.walk || null
+  const host = typeof window !== 'undefined' ? window.location.origin : ''
+  const link = w?.key ? `${host}/join/${rec.code}/walk?k=${w.key}` : ''
+  async function post(path: string, body: Any, tag: string) {
+    setBusy(tag); setNote('')
+    const d = await fetch(`/api/owner-onboarding/${rec.code}${path}`, { method: path ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()).catch(() => null)
+    setBusy(''); if (d?.record) onApply(d); setNote(d?.ok ? (d.note || '') : (d?.error || 'Not saved.')); return d
+  }
+  const save = (body: Any) => post('', body, 'save')
+  const rows = sup.filter(i => i.unit === ui).map(i => ({ i, s: stockOf(rec, i) }))
+  const shown = short ? rows.filter(x => x.s.toBuy > 0 || x.s.decision) : rows
+  const all = sup.map(i => stockOf(rec, i))
+  const toBuy = all.filter(s => s.toBuy > 0).length, unknown = all.filter(s => s.onHand == null && !s.decision).length, declined = all.filter(s => s.decision).length
+  const groups = Array.from(new Set(shown.map(x => x.i.group)))
+  const says = (x: { i: OOItem; s: Any }) => (x.s.owner == null ? '—' : x.i.qty > 1 ? String(x.s.owner) : x.s.owner >= 1 ? 'Yes' : 'No')
+  const inp = 'w-14 rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink text-right'
+  return (
+    <div>
+      <div className={'rounded-xl p-3 mb-3 ' + (w?.doneAt ? 'bg-emerald-50' : 'bg-amber-50')}>
+        <p className={lab}>{w?.doneAt ? 'Walkthrough finished' : 'Walkthrough needed'}</p>
+        <p className="text-[13px] text-ink mt-1">{rec.stock === 'full' ? 'The owner says the home is fully stocked. ' : rec.stock === 'none' ? 'The owner says nothing has been bought yet. ' : ''}{w?.doneAt ? `${w.by || 'The team'} finished the count on ${new Date(w.doneAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.` : w?.startedAt ? `${w.by || 'Someone'} has started the count; ${Object.keys(w.counts || {}).length} of ${sup.length} items so far.` : 'We walk every unit before ordering, to count what is really there.'}{w?.sentAt && !w?.doneAt ? ` Request sent ${new Date(w.sentAt).toLocaleDateString()} to ${(w.sentTo || []).join(', ')}.` : ''}</p>
+        {w?.note ? <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap">Note from the walkthrough: “{w.note}”</p> : null}
+        <div className="oo-noprint flex flex-wrap items-center gap-2 mt-2">
+          <button type="button" disabled={!!busy} onClick={() => post('/walk', { action: 'send' }, 'send')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {w?.sentAt ? 'Send the walkthrough again' : 'Send the walkthrough to the team'}</button>
+          {link ? <CopyBtn text={link} label="Copy the walkthrough link" small /> : <button type="button" disabled={!!busy} onClick={() => post('/walk', { action: 'link' }, 'link')} className="rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink">Get the walkthrough link</button>}
+          {link ? <a href={link} target="_blank" rel="noreferrer" className="text-[12.5px] font-semibold text-ink underline">Open the count sheet</a> : null}
+          {w?.doneAt ? <button type="button" onClick={() => post('/walk', { action: 'reopen' }, 'reopen')} className="text-[12.5px] text-muted underline">Reopen</button> : null}
+          <span className="text-[12px] text-muted basis-full">Goes to {team.length ? team.join(', ') : 'whoever is set under “Handoff and vendor emails”'}. The link opens a count sheet on a phone, no sign-in.</span>
+        </div>
+      </div>
+      <div className="oo-noprint flex flex-wrap items-center gap-x-4 gap-y-2 mb-2 text-[12.5px]">
+        {units.length > 1 ? <div className="inline-flex rounded-full bg-app p-0.5 font-semibold">{units.map((_, i) => <button key={i} type="button" onClick={() => setUi(i)} className={'rounded-full px-3 py-1 ' + (ui === i ? 'bg-white text-ink shadow-sm' : 'text-muted')}>{uLabel(i)}</button>)}</div> : null}
+        <label className="inline-flex items-center gap-1.5 text-ink"><input type="checkbox" checked={short} onChange={e => setShort(e.target.checked)} /> Only what is short or decided</label>
+        <span className="text-muted ml-auto"><b className="text-[#B4532A]">{toBuy}</b> to buy · <b className="text-ink">{declined}</b> not buying · <b className="text-ink">{unknown}</b> not counted yet</span>
+      </div>
+      <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-[12.5px]">
+        <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="px-1 text-right font-semibold">Needs</th><th className="px-1 text-right font-semibold">Owner says</th><th className="px-1 text-right font-semibold">Walkthrough</th><th className="px-1 text-right font-semibold">To buy</th><th className="pl-2 font-semibold">Decision</th></tr></thead>
+        <tbody>{groups.map(g => [<tr key={'g' + g}><td colSpan={6} className={lab + ' pt-3 pb-1'}>{g}</td></tr>, ...shown.filter(x => x.i.group === g).map(({ i, s }) => (
+          <tr key={i.key} className="border-b border-line">
+            <td className="py-1.5 pr-2 text-ink">{i.name}</td>
+            <td className="px-1 text-right tabular-nums text-muted">{i.qty}</td>
+            <td className="px-1 text-right tabular-nums">{says({ i, s })}</td>
+            <td className="px-1 text-right">{i.qty > 1
+              ? <input inputMode="numeric" defaultValue={s.walk == null ? '' : String(s.walk)} key={i.key + ':' + (s.walk ?? '')} placeholder="—" onBlur={e => { const v = e.target.value.replace(/\D/g, ''); if ((v === '' ? null : Number(v)) !== s.walk) save({ walkCounts: { [i.key]: v === '' ? null : Number(v) } }) }} className={inp + ' oo-noprint'} />
+              : <select value={s.walk == null ? '' : s.walk >= 1 ? '1' : '0'} onChange={e => save({ walkCounts: { [i.key]: e.target.value === '' ? null : Number(e.target.value) } })} className="oo-noprint rounded-lg border border-line px-1.5 py-1 text-[12.5px] text-ink"><option value="">—</option><option value="1">Yes</option><option value="0">No</option></select>}</td>
+            <td className={'px-1 text-right tabular-nums font-semibold ' + (s.toBuy > 0 ? 'text-[#B4532A]' : 'text-emerald-700')}>{s.decision ? '0' : s.onHand == null ? <span className="text-muted font-normal">{i.qty}?</span> : s.toBuy}</td>
+            <td className="pl-2"><select value={s.decision} onChange={e => save({ decisions: { [i.key]: e.target.value } })} className={'oo-noprint rounded-lg border border-line px-1.5 py-1 text-[12.5px] max-w-[190px] ' + (s.decision ? 'text-ink font-semibold bg-app' : 'text-muted')}><option value="">Buy what is short</option>{OO_DECISIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}</select></td>
+          </tr>))])}</tbody>
+      </table></div>
+      {!shown.length ? <p className="text-[13px] text-muted py-3">Nothing is short on this unit.</p> : null}
+      <div className="oo-noprint flex flex-wrap items-center gap-3 mt-4">
+        <button type="button" disabled={!!busy} onClick={async () => { const d = await post('/order', { action: 'build' }, 'order'); if (d?.ok) { onMsg('Order list built from the inventory review.'); document.getElementById('oo-order')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) } }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'order' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} {rec.order ? 'Rebuild the order list from this' : 'Generate the order list'}</button>
+        <span className="text-[12.5px] text-muted">{unknown ? `${unknown} items have no count yet; they are treated as needed.` : 'Every item is counted.'}{rec.order ? ' Rebuilding replaces hand edits on the current order list.' : ''}</span>
+      </div>
+      {note ? <p className="text-[12.5px] text-ink mt-2">{note}</p> : null}
+    </div>
+  )
+}
+
 // ── THE ORDER LIST: our actual items, edited by the team, sent to the owner to review ──
 function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r: Any) => void }) {
   const o = rec.order
@@ -112,6 +177,9 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
           {!o.basis.marked ? <p>The owner has not ticked the supplies list yet, so this is the full catalog list for the home. Rebuild it once they have.</p> : null}
           {o.basis.leftOff.length ? <p><b>Left off, the owner has these:</b> {o.basis.leftOff.join(', ')}</p> : o.basis.marked ? <p>Nothing was left off: the owner did not mark a whole product as already there.</p> : null}
           {o.basis.partial.length ? <div><b>Sets the owner partly has (kept on the list, check them):</b><ul className="list-disc pl-5">{o.basis.partial.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
+          {o.basis.walked ? <p className="text-emerald-800 font-semibold">Built after the walkthrough was finished.</p> : o.basis.marked ? <p className="text-amber-800">Built before the walkthrough was finished: counts are the owner’s own.</p> : null}
+          {o.basis.short?.length ? <div><b>Partly there, by count:</b><ul className="list-disc pl-5">{o.basis.short.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
+          {o.basis.declined?.length ? <div><b>Not buying (the team’s decision):</b><ul className="list-disc pl-5">{o.basis.declined.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           {o.basis.uncovered.length ? <p><b>Marked “need”, not in our catalog (add by hand if we are buying them):</b> {o.basis.uncovered.join(', ')}</p> : null}
         </div> : null}
         {o.review ? <div className={'rounded-xl p-3 mb-3 ' + (o.status === 'approved' ? 'bg-emerald-50' : 'bg-amber-50')}><p className={lab}>The owner’s review · {new Date(o.review.at).toLocaleString()}</p>
@@ -340,7 +408,7 @@ export function OwnerOnboardingDesk() {
                 <td className="pr-3 text-ink">{[l.property, l.unitLabel].filter(Boolean).join(' · ') || <span className="text-muted">—</span>}{(l.units || 0) > 1 ? <span className="ml-1 text-[11px] text-muted">{l.units} units</span> : null}{l.listingId ? <span className="ml-1 text-[10.5px] text-emerald-700 font-semibold">GUESTY</span> : null}</td>
                 <td className="pr-3"><span className="flex items-center gap-1" title={OO_STEPS.map((s, i) => s.label + ': ' + ({ d: 'done', g: 'in progress', t: 'to do' } as Any)[(l.steps || '')[i] || 't']).join('\n')}>{OO_STEPS.map((s, i) => { const c = (l.steps || '')[i] || 't'; return <i key={s.key} className={'inline-block w-4 h-1.5 rounded-full ' + (c === 'd' ? 'bg-emerald-600' : c === 'g' ? 'bg-[#8C6D3A]' : 'bg-line')} /> })}</span><span className="block text-[12px] text-ink mt-1">{l.stage}{l.callAt ? <span className="text-muted"> · call {new Date(l.callAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span> : null}</span></td>
                 <td className="pr-3 text-right tabular-nums">{l.need || '—'}</td>
-                <td className="pr-3 text-[12px]">{[l.agreement ? 'Agreement' : '', l.paperwork ? 'W-9 + ACH' : '', l.linen === 'sent' ? 'Linen sent' : l.linen === 'approved' ? 'Linen approved' : ''].filter(Boolean).join(' · ') || <span className="text-muted">None yet</span>}</td>
+                <td className="pr-3 text-[12px]">{[l.agreement ? 'Agreement' : '', l.paperwork ? 'W-9 + ACH' : '', l.linen === 'sent' ? 'Linen sent' : l.linen === 'approved' ? 'Linen approved' : '', l.walk === 'done' ? 'Walkthrough done' : l.walk === 'sent' ? 'Walkthrough sent' : l.walk === 'needed' ? 'Walkthrough needed' : ''].filter(Boolean).join(' · ') || <span className="text-muted">None yet</span>}</td>
                 <td className="pr-4 text-right text-[12px] text-muted whitespace-nowrap">{new Date(l.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
               </tr>
             ))}</tbody>
@@ -356,7 +424,7 @@ function HandoffSettings() {
   const [s, setS] = useState<Any>(null)
   const [open, setOpen] = useState(false)
   const [msg, setMsg] = useState('')
-  useEffect(() => { if (open && !s) fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => d?.ok && setS({ to: d.settings.to.join(', '), cc: d.settings.cc.join(', '), replyTo: d.settings.replyTo, vendorTo: (d.settings.vendorTo || []).join(', '), vendorCc: (d.settings.vendorCc || []).join(', '), teamCc: (d.settings.teamCc || []).join(', ') })).catch(() => {}) }, [open, s])
+  useEffect(() => { if (open && !s) fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => d?.ok && setS({ to: d.settings.to.join(', '), cc: d.settings.cc.join(', '), replyTo: d.settings.replyTo, vendorTo: (d.settings.vendorTo || []).join(', '), vendorCc: (d.settings.vendorCc || []).join(', '), teamCc: (d.settings.teamCc || []).join(', '), walkTo: (d.settings.walkTo || []).join(', ') })).catch(() => {}) }, [open, s])
   return (
     <section className="mt-6 rounded-2xl border border-line bg-white">
       <button type="button" onClick={() => setOpen(o => !o)} className="w-full text-left px-4 py-3 text-[13.5px] font-semibold text-ink">Handoff and vendor emails {open ? '▾' : '▸'} <span className="font-normal text-muted text-[12.5px]">· who gets the paperwork handoff and the linen quote</span></button>
@@ -366,6 +434,7 @@ function HandoffSettings() {
           <label className="block"><span className={lab}>Copy</span><input value={s.cc} onChange={e => setS({ ...s, cc: e.target.value })} className={field} /></label>
           <label className="block"><span className={lab}>Sent from (a connected Google mailbox)</span><input value={s.replyTo} onChange={e => setS({ ...s, replyTo: e.target.value })} className={field} /></label>
           <label className="block sm:col-span-3"><span className={lab}>Copied on every onboarding email</span><input value={s.teamCc} onChange={e => setS({ ...s, teamCc: e.target.value })} className={field} /><span className="block text-[11.5px] text-muted mt-1">The handoff, the linen quote, and a team copy of the owner’s invite and order list. The team copy leaves out the owner’s private sign-in button.</span></label>
+          <label className="block sm:col-span-3"><span className={lab}>Who walks a new unit (the walkthrough request goes to)</span><input value={s.walkTo} onChange={e => setS({ ...s, walkTo: e.target.value })} className={field} /></label>
           <label className="block sm:col-span-2"><span className={lab}>Linen vendor (the quote goes to)</span><input value={s.vendorTo} onChange={e => setS({ ...s, vendorTo: e.target.value })} placeholder="orders@vendor.com" className={field} /></label>
           <label className="block"><span className={lab}>Linen quote: copy</span><input value={s.vendorCc} onChange={e => setS({ ...s, vendorCc: e.target.value })} className={field} /></label>
           <div className="sm:col-span-3 flex items-center gap-3"><button type="button" onClick={async () => { const d = await fetch('/api/owner-onboarding/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(s) }).then(r => r.json()).catch(() => null); setMsg(d?.ok ? 'Saved.' : 'Could not save (full access needed).') }} className="rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save</button><span className="text-[12.5px] text-muted">{msg}</span></div>
@@ -387,6 +456,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   const [busy, setBusy] = useState('')
   const [editHome, setEditHome] = useState(false)
   const [markEdit, setMarkEdit] = useState(false)
+  const [supTab, setSupTab] = useState<'answers' | 'review'>('answers')
   // the team ticking supplies for the owner: shown at once, saved behind
   async function mark(m: Record<string, string>) {
     setRec((r: Any) => (r ? { ...r, marks: { ...r.marks, ...m } } : r))
@@ -460,8 +530,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
 
           {/* the supplies: everything to buy, and what each unit needs */}
           <section className={card}>
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Supplies</h2><span className="text-[13px]"><b className="text-ink">{have.length}</b> have · <b className="text-[#B4532A]">{need.length}</b> need · <b className="text-ink">{open.length}</b> not checked</span></div>
-            {!sup.length ? <p className="text-[13px] text-muted">The list appears once the home is filled in.</p> : (<>
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink">Supplies</h2><div className="oo-noprint inline-flex rounded-full bg-app p-0.5 text-[12px] font-semibold mr-auto">{([['answers', 'Owner’s answers'], ['review', 'Inventory review']] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setSupTab(k)} className={'rounded-full px-3 py-1 ' + (supTab === k ? 'bg-white text-ink shadow-sm' : 'text-muted')}>{l}{k === 'review' && !rec.walk?.doneAt && sup.length ? <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" /> : null}</button>)}</div><span className="text-[13px]"><b className="text-ink">{have.length}</b> have · <b className="text-[#B4532A]">{need.length}</b> need · <b className="text-ink">{open.length}</b> not checked</span></div>
+            {!sup.length ? <p className="text-[13px] text-muted">The list appears once the home is filled in.</p> : supTab === 'review' ? <InventoryReview rec={rec} sup={sup} units={units} uLabel={uLabel} onApply={apply} onMsg={setMsg} /> : (<>
               <div className="oo-noprint flex flex-wrap items-center gap-x-3 gap-y-1 mb-3 text-[12.5px]"><button type="button" onClick={() => setMarkEdit(m => !m)} className="rounded-xl border border-line px-3 py-1.5 font-semibold text-ink">{markEdit ? 'Done' : 'Fill in the supplies for the owner'}</button><span className="text-muted">{markEdit ? 'Tick Have or Need on each item, or a whole set at once. It saves as you go, and the owner sees it on their portal.' : 'If you already know what is in the home, tick it here so the owner does not have to.'}</span></div>
               {needRoll.length ? (
                 <div className="rounded-xl bg-[#FBF1EC] p-3 mb-4"><p className={lab + ' text-[#B4532A]'}>To buy{units.length > 1 ? ' · all ' + units.length + ' units' : ''} · what the owner marked Need</p>
@@ -480,7 +550,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             {rec.ownerNotes ? <div className="mt-4 rounded-xl bg-app p-3"><p className={lab}>The owner’s note</p><p className="text-[13.5px] text-ink mt-1 whitespace-pre-wrap">{rec.ownerNotes}</p></div> : null}
           </section>
 
-          <OrderList rec={rec} units={units.map((_, i) => uLabel(i))} onRec={setRec} />
+          <div id="oo-order"><OrderList rec={rec} units={units.map((_, i) => uLabel(i))} onRec={setRec} /></div>
 
           {/* THE LINEN, ours to specify (Jon, 2026-11-13): counts at par, per unit and in all; approve, then send to the vendor */}
           <section className={card}>

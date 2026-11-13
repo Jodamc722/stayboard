@@ -74,6 +74,8 @@ export function OwnerJoin({ code }: { code: string }) {
   const home = homes[Math.min(ui, homes.length - 1)]
   const setHome = (h: OOHome) => setHomes(hs => hs.map((x, i) => (i === Math.min(ui, hs.length - 1) ? h : x)))
   const [marks, setMarks] = useState<Record<string, OOMark>>({})
+  const [cnts, setCnts] = useState<Record<string, number>>({})
+  const pendingC = useRef<Record<string, number>>({})
   const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -83,7 +85,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const pending = useRef<Record<string, OOMark>>({})
   const timer = useRef<any>(null)
 
-  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); if (d.record.home) setHomes([d.record.home, ...(d.record.more || [])]); setNotes(d.record.ownerNotes || '') }
+  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); setCnts(d.record.counts || {}); if (d.record.home) setHomes([d.record.home, ...(d.record.more || [])]); setNotes(d.record.ownerNotes || '') }
   // SIGN-IN (lib/owner-onboard-auth): an emailed magic link signs in once; then a password.
   const [viewer, setViewer] = useState<'owner' | 'team'>('owner')
   const [em, setEm] = useState('')
@@ -125,9 +127,26 @@ export function OwnerJoin({ code }: { code: string }) {
     return d
   }
   // ticks save on their own, a moment after the last one
+  const flushSoon = () => { clearTimeout(timer.current); timer.current = setTimeout(async () => { const m = pending.current, c = pendingC.current; pending.current = {}; pendingC.current = {}; try { await patch({ marks: m, counts: c }) } catch (e: Any) { setMsg(e.message) } }, 700) }
+  /** How many of an item the owner has: the count is kept, and Have / Need follows from it. */
+  function count(k: string, qty: number, n: number) {
+    const v = Math.max(0, Math.min(999, Math.round(n)))
+    setCnts(c => ({ ...c, [k]: v })); pendingC.current[k] = v
+    const m: OOMark = v >= qty ? 'have' : 'need'
+    setMarks(x => ({ ...x, [k]: m })); pending.current[k] = m
+    flushSoon()
+  }
+  /** One tap for the whole home: nothing bought yet, or fully stocked. Every item on every unit follows. */
+  async function stockAll(kind: 'none' | 'full') {
+    const m: Record<string, OOMark> = {}, c: Record<string, number> = {}
+    for (const i of items) { m[i.key] = kind === 'full' ? 'have' : 'need'; if (i.qty > 1) c[i.key] = kind === 'full' ? i.qty : 0 }
+    setMarks(x => ({ ...x, ...m })); setCnts(x => ({ ...x, ...c })); clearTimeout(timer.current); pending.current = {}; pendingC.current = {}
+    setBusy(true); setMsg('')
+    try { apply(await patch({ marks: m, counts: c, stock: kind })) } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) }
+  }
   function mark(k: string, v: OOMark) {
     setMarks(m => ({ ...m, [k]: v })); pending.current[k] = v
-    clearTimeout(timer.current); timer.current = setTimeout(async () => { const m = pending.current; pending.current = {}; try { await patch({ marks: m }) } catch (e: Any) { setMsg(e.message) } }, 700)
+    flushSoon()
   }
   const flags = rec?.custom || {}
   const tabs: Tab[] = (['welcome', 'home', ...(flags.askSupplies || flags.askLinen ? ['supplies'] : []), ...(rec?.order ? ['order'] : []), ...(flags.askPayout !== false ? ['payout'] : []), 'timeline'] as Tab[])
@@ -136,7 +155,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const back = () => go(tabs[Math.max(0, tabs.indexOf(tab) - 1)])
 
   async function saveHome() { setBusy(true); setMsg(''); try { apply(await patch({ home: homes[0], more: homes.slice(1) })); setSu(0); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
-  async function finishSupplies() { setBusy(true); setMsg(''); try { clearTimeout(timer.current); const m = pending.current; pending.current = {}; apply(await patch({ marks: m, ownerNotes: notes, submit: flags.askPayout === false })); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
+  async function finishSupplies() { setBusy(true); setMsg(''); try { clearTimeout(timer.current); const m = pending.current, c = pendingC.current; pending.current = {}; pendingC.current = {}; apply(await patch({ marks: m, counts: c, ownerNotes: notes, submit: flags.askPayout === false })); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
   async function savePayout(e: React.FormEvent) {
     e.preventDefault(); setMsg('')
     const tin = pay.w9.tin.replace(/\D/g, ''), rt = pay.ach.routing.replace(/\D/g, ''), ac = pay.ach.account.replace(/\D/g, '')
@@ -293,23 +312,38 @@ export function OwnerJoin({ code }: { code: string }) {
           <section>
             <p className="oj-kick">Step {tabs.indexOf('supplies') + 1}</p>
             <h1>What does the home <em>already have?</em></h1>
-            <p className="oj-p">Everything a rental this size needs. Tick <b>Have</b> for what is there and <b>Need</b> for what is missing; we will go through what to buy together. It saves as you tick.</p>
+            <p className="oj-p">Everything a rental this size needs. Start with the quick answer if one fits, then adjust any item: enter how many you have, or tap <b>Have</b> or <b>Need</b>. It saves as you go.</p>
             {!items.length ? <p className="oj-p">Fill in the home first, then the list appears here.</p> : (<>
               {unitCount > 1 ? <div className="oj-units">{Array.from({ length: unitCount }, (_, i) => { const l = items.find(x => (x.unit || 0) === i)?.unitLabel || 'Unit ' + (i + 1); const left = items.filter(x => (x.unit || 0) === i && !marks[x.key]).length; return <button key={i} type="button" className={i === su ? 'on' : ''} onClick={() => setSu(i)}>{l}{left ? <small> · {left} to check</small> : <small> · done</small>}</button> })}</div> : null}
+              <div className="oj-quick">
+                <p className="oj-lab">The quick answer</p>
+                <div className="oj-quick-b">
+                  <button type="button" className={rec.stock === 'none' ? 'on' : ''} disabled={busy} onClick={() => stockAll('none')}><b>Nothing has been bought yet</b><small>Marks every item as needed</small></button>
+                  <button type="button" className={rec.stock === 'full' ? 'on' : ''} disabled={busy} onClick={() => stockAll('full')}><b>The home is fully stocked</b><small>Marks every item as there</small></button>
+                </div>
+                <p className="oj-small" style={{ margin: 0 }}>Either way, our team walks the home to confirm the count before anything is ordered. You can still change any item below.</p>
+              </div>
               <div className="oj-tally"><span><b>{counts.have}</b> have</span><span><b>{counts.need}</b> need</span><span><b>{items.length - counts.have - counts.need}</b> to check</span></div>
               <div className="oj-cols">
                 {groups.map(g => {
                   const list = shown.filter(i => i.group === g)
                   return (
                     <div key={g} className="oj-group">
-                      <div className="oj-g-head"><p className="oj-lab">{g}</p><button type="button" onClick={() => list.forEach(i => mark(i.key, 'have'))}>All have</button></div>
+                      <div className="oj-g-head"><p className="oj-lab">{g}</p><button type="button" onClick={() => list.forEach(i => (i.qty > 1 ? count(i.key, i.qty, i.qty) : mark(i.key, 'have')))}>All have</button></div>
                       <ul>{list.map(i => (
                         <li key={i.key} className={'oj-m-' + (marks[i.key] || '')}>
                           <span>{i.name}{i.size ? <small> · {i.size}</small> : null}<em>×{i.qty}</em></span>
+                          {i.qty > 1 ? (() => { const n = typeof cnts[i.key] === 'number' ? cnts[i.key] : marks[i.key] === 'have' ? i.qty : marks[i.key] === 'need' ? 0 : null; return (
+                            <div className="oj-qty" title={'How many are there, of the ' + i.qty + ' this home needs'}>
+                              <button type="button" aria-label={'One fewer ' + i.name} onClick={() => count(i.key, i.qty, (n ?? 0) - 1)} disabled={!n}>−</button>
+                              <input inputMode="numeric" aria-label={'How many ' + i.name + ' are there'} value={n == null ? '' : String(n)} placeholder="?" onChange={e => { const v = e.target.value.replace(/\D/g, ''); if (v !== '') count(i.key, i.qty, Number(v)) }} />
+                              <button type="button" aria-label={'One more ' + i.name} onClick={() => count(i.key, i.qty, (n ?? 0) + 1)}>+</button>
+                              <small>of {i.qty}</small>
+                            </div>) })() : (
                           <div className="oj-hn">
                             <button type="button" className={marks[i.key] === 'have' ? 'on have' : ''} onClick={() => mark(i.key, marks[i.key] === 'have' ? '' : 'have')}>Have</button>
                             <button type="button" className={marks[i.key] === 'need' ? 'on need' : ''} onClick={() => mark(i.key, marks[i.key] === 'need' ? '' : 'need')}>Need</button>
-                          </div>
+                          </div>)}
                         </li>
                       ))}</ul>
                     </div>
@@ -532,6 +566,16 @@ const CSS = `
 .oj-group li>span{min-width:0;color:var(--ink);font-size:14px}
 .oj-group li small{color:var(--mut)}
 .oj-group li em{font-style:normal;margin-left:8px;color:var(--mut);font:400 16px "Instrument Serif",Georgia,serif}
+.oj-quick{background:#fff;border:1px solid var(--rule);border-radius:16px;padding:14px 16px;margin:0 0 16px;display:grid;gap:10px}
+.oj-quick-b{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.oj-quick-b button{text-align:left;border:1.5px solid var(--rule);background:#fff;border-radius:12px;padding:12px 14px;cursor:pointer;display:grid;gap:2px;color:var(--ink)}
+.oj-quick-b button b{font:600 14.5px Inter,sans-serif}.oj-quick-b button small{font:400 12.5px Inter,sans-serif;color:var(--mut)}
+.oj-quick-b button.on{border-color:var(--ink);background:var(--soft)}.oj-quick-b button:disabled{opacity:.6}
+@media (max-width:520px){.oj-quick-b{grid-template-columns:1fr}}
+.oj-qty{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.oj-qty button{width:32px;height:32px;border-radius:99px;border:1px solid var(--rule);background:#fff;color:var(--ink);font:600 16px/1 Inter,sans-serif;cursor:pointer}.oj-qty button:disabled{opacity:.35;cursor:default}
+.oj-qty input{width:44px;height:32px;text-align:center;border:1px solid var(--rule);border-radius:8px;font:600 14px Inter,sans-serif;color:var(--ink);background:#fff;padding:0}
+.oj-qty small{font:500 12px Inter,sans-serif;color:var(--mut);min-width:34px}
 .oj-hn{display:flex;gap:4px;flex:0 0 auto}
 .oj-hn button{height:32px;padding:0 12px;border-radius:99px;border:1px solid var(--rule);background:#fff;color:var(--mut);font:600 12.5px Inter,sans-serif;cursor:pointer}
 .oj-hn button.have{background:var(--ok);border-color:var(--ok);color:#fff}
