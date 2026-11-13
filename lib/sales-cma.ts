@@ -20,8 +20,11 @@
 //
 // Isomorphic.
 
-/** Miami seasonal shape (Jan..Dec), read off the v9 packet's monthly chart. Shares of the year. */
-export const SEASON_RAW = [7.1, 7.7, 8.8, 5.9, 4.7, 4.4, 4.8, 2.9, 2.3, 3.7, 4.5, 9.0]
+/** Miami seasonal shape (Jan..Dec), read off the v9 packet's monthly chart. Shares of the year.
+ *  MARCH IS THE PEAK (Jon, 2026-11-12: "peak is March, not winter; winter is good but March generally is
+ *  peak"). The packet's chart had December on top; the season keeps its total, with March the high point
+ *  and December, January and February strong around it (as lib/season-shape already draws it). */
+export const SEASON_RAW = [7.4, 8.3, 9.4, 6.4, 4.7, 4.4, 4.6, 2.9, 2.3, 3.7, 4.5, 7.2]
 const SEASON_SUM = SEASON_RAW.reduce((a, b) => a + b, 0)
 export const SEASON = SEASON_RAW.map(v => v / SEASON_SUM)
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
