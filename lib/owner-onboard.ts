@@ -17,7 +17,7 @@ export type OOAppliance = typeof OO_APPLIANCES[number]
 export const OO_APPLIANCE_LABEL: Record<OOAppliance, string> = { stove: 'Stove / cooktop', oven: 'Oven', microwave: 'Microwave', fridge: 'Refrigerator', dishwasher: 'Dishwasher' }
 
 /** One home. An owner with several units has one of these per unit (Jon, 2026-11-13); `uid` keys a later unit's ticks. */
-export type OOHome = { uid?: string; address: string; unit: string; sqft: number; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<OOAppliance, boolean>; washer: boolean; parking: string; access: string }
+export type OOHome = { uid?: string; address: string; unit: string; sqft: number; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<OOAppliance, boolean>; washer: boolean; parking: string; access: string; wifiName: string; wifiPass: string }
 export type OOMark = 'have' | 'need' | ''
 export type OOItem = { key: string; name: string; group: string; qty: number; tier: 'must' | 'recommended' | 'optional'; linen?: boolean; size?: string
   /** Which unit it is for (0 = the first), and that unit's label. */
@@ -110,7 +110,13 @@ export type OORecord = {
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
   /** The linen order (Jon, 2026-11-13): approved by the team, then sent to the vendor. */
   order?: OOOrder | null
-  linen?: { approvedAt?: string; approvedBy?: string; sentAt?: string; sentTo?: string[]; error?: string } | null
+  /** When this onboarding last fed the attached listing's FAQ, and how many entries it has added. */
+  faq?: { at: string; listingId: string; added: number }
+  linen?: { approvedAt?: string; approvedBy?: string; sentAt?: string; sentTo?: string[]; error?: string
+    /** The team's own lines (Jon, 2026-11-13: "should be able to edit the linen quote"): when set, these replace the counts from the linen standard. qty is per unit. */
+    rows?: { name: string; size: string; qty: number[] }[]; editedAt?: string; editedBy?: string
+    /** A note that goes to the vendor with the quote request. */
+    note?: string } | null
   /** The owner's sign-in (lib/owner-onboard-auth): a password hash and one-time email links. Never leaves the server. */
   auth?: { pass?: { salt: string; hash: string }; tokens: { h: string; exp: number }[]; sent: number[]; ver: number; invitedAt?: string } | null
   archived?: boolean
@@ -120,7 +126,7 @@ export type OOIndexRow = { code: string; ownerName: string; property: string; un
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
   steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; callAt?: string; linen?: 'approved' | 'sent' | '' }
 
-export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '' }
+export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '', wifiName: '', wifiPass: '' }
 
 export function freshSteps(): OOStep[] { return OO_STEPS.map(s => ({ key: s.key, status: s.key === 'details' ? 'doing' : 'todo', date: '', note: '' })) }
 export const stepLabel = (k: OOStepKey) => OO_STEPS.find(s => s.key === k)?.label || k
@@ -142,7 +148,7 @@ export function cleanHome(v: any): OOHome {
   const appliances = {} as Record<OOAppliance, boolean>
   for (const a of OO_APPLIANCES) appliances[a] = r.appliances ? !!r.appliances[a] : D.appliances[a]
   return { ...(typeof r.uid === 'string' && /^[a-z0-9]{4,12}$/.test(r.uid) ? { uid: r.uid } : {}), address: t(r.address, 200), unit: t(r.unit, 40), sqft: Math.round(n(r.sqft, 0, 20000, 0)), bedrooms: Math.round(n(r.bedrooms, 0, 12, D.bedrooms)), bathrooms: n(r.bathrooms, 0, 12, D.bathrooms), guests: Math.round(n(r.guests, 1, 30, D.guests)),
-    beds, sleeper: !!r.sleeper, kitchen: r.kitchen !== false, appliances, washer: !!r.washer, parking: t(r.parking, 200), access: t(r.access, 300) }
+    beds, sleeper: !!r.sleeper, kitchen: r.kitchen !== false, appliances, washer: !!r.washer, parking: t(r.parking, 200), access: t(r.access, 300), wifiName: t(r.wifiName, 80), wifiPass: t(r.wifiPass, 80) }
 }
 
 /** The payout details without anything encrypted: hints only. */
@@ -154,8 +160,8 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, ...rest } = r
-  void teamNotes; void createdBy; void agreement; void handoff; void linen
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, ...rest } = r
+  void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? order : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }

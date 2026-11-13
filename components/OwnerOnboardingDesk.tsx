@@ -98,6 +98,10 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
             {o.status !== 'draft' ? <button type="button" onClick={() => act('unsend')} className="text-[12.5px] text-muted underline">Take it back to a draft</button> : null}
             <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the catalog</button>
           </div>
+          <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="mr-auto"><b>The unit’s FAQ.</b> {rec.faq ? `${rec.faq.added} ${rec.faq.added === 1 ? 'entry' : 'entries'} added, last on ${new Date(rec.faq.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.` : rec.attach?.listingId ? (o.status === 'approved' ? 'Approved items go in automatically.' : 'Items go in once the owner approves the list, with the Wi-Fi, parking and laundry.') : 'Attach the unit to its Guesty listing and the approved items, Wi-Fi, parking and laundry go into its FAQ.'}</span>
+            {rec.attach?.listingId ? <button type="button" disabled={!!busy} onClick={() => act('faq')} className="font-semibold underline">{busy === 'faq' ? 'Updating…' : 'Update the FAQ now'}</button> : null}
+          </div>
         </div>
       </>)}
       {msg ? <p className="text-[12.5px] text-ink mt-2">{msg}</p> : null}
@@ -326,14 +330,17 @@ function HandoffSettings() {
 export function OwnerOnboardingReport({ code }: { code: string }) {
   const [rec, setRec] = useState<Any>(null)
   const [items, setItems] = useState<OOItem[]>([])
+  const [linEdit, setLinEdit] = useState<Any>(null)
+  const [canDelete, setCanDelete] = useState(false); const [delAsk, setDelAsk] = useState(false)
+  async function remove() { setBusy('del'); const d = await fetch('/api/owner-onboarding/' + code, { method: 'DELETE' }).then(r => r.json()).catch(() => null); if (d?.ok) { window.location.href = '/owner-onboarding'; return } setBusy(''); setMsg(d?.message || d?.error || 'Not deleted.') }
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState('')
   const [editHome, setEditHome] = useState(false)
   const [eu, setEu] = useState(0)
-  async function linen(action: string) { setBusy('linen'); const d = await fetch(`/api/owner-onboarding/${code}/linen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); setMsg(d?.ok ? (action === 'send' ? 'Sent to the vendor.' : 'Saved.') : (d?.error || 'Not saved.')); setBusy('') }
+  async function linen(action: string, extra: Any = {}) { setBusy('linen'); const d = await fetch(`/api/owner-onboarding/${code}/linen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ...extra }) }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); if (Array.isArray(d?.items)) setItems(d.items); if (d?.ok && (action === 'save' || action === 'reset')) setLinEdit(null); setMsg(d?.ok ? (action === 'send' ? 'Sent to the vendor.' : 'Saved.') : (d?.error || 'Not saved.')); setBusy('') }
   const agree = useRef<HTMLInputElement>(null)
-  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []) }
+  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setCanDelete(!!d.canDelete) }
   const load = () => fetch('/api/owner-onboarding/' + code, { cache: 'no-store' }).then(r => r.json()).then(d => (d?.ok ? apply(d) : setErr(d?.error || 'Not found.'))).catch(() => setErr('Could not load.'))
   useEffect(() => { load() }, [code])
   async function patch(body: Any, note = 'Saved.') {
@@ -388,7 +395,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
                   {i > 0 ? <button type="button" onClick={() => saveUnits(units.filter((_, j) => j !== i))} className="oo-noprint text-[12.5px] text-muted hover:text-red-700">Remove</button> : null}</div>
                 {editHome && eu === i ? <><HomeEditor home={u} set={nh => { const list = units.map((x, j) => (j === i ? nh : x)); setRec({ ...rec, home: list[0], more: list.slice(1) }) }} /><button type="button" onClick={() => { saveUnits(units); setEditHome(false) }} className="mt-3 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save</button></> : (
                   <dl className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 text-[13.5px]">
-                    {([['Address', u.address], ['Size', u.sqft ? u.sqft.toLocaleString() + ' SF' : '—'], ['Bedrooms', u.bedrooms === 0 ? 'Studio' : String(u.bedrooms)], ['Bathrooms', String(u.bathrooms)], ['Sleeps', String(u.guests)], ['Beds', Object.entries(u.beds).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') + (u.sleeper ? ', sofa bed' : '') || '—'], ['Kitchen', u.kitchen ? OO_APPLIANCES.filter(a => u.appliances[a]).map(a => OO_APPLIANCE_LABEL[a]).join(', ') || 'Yes, no appliances ticked' : 'None'], ['Washer and dryer', u.washer ? 'Yes' : 'No'], ['Parking', u.parking || '—'], ['Access', u.access || '—']] as [string, string][]).map(([k, v]) => <div key={k} className={k === 'Address' || k === 'Kitchen' || k === 'Access' || k === 'Beds' ? 'col-span-2' : ''}><dt className={lab}>{k}</dt><dd className="text-ink mt-0.5">{v || '—'}</dd></div>)}
+                    {([['Address', u.address], ['Size', u.sqft ? u.sqft.toLocaleString() + ' SF' : '—'], ['Bedrooms', u.bedrooms === 0 ? 'Studio' : String(u.bedrooms)], ['Bathrooms', String(u.bathrooms)], ['Sleeps', String(u.guests)], ['Beds', Object.entries(u.beds).filter(([, n]) => n).map(([k, n]) => n + ' ' + k).join(', ') + (u.sleeper ? ', sofa bed' : '') || '—'], ['Kitchen', u.kitchen ? OO_APPLIANCES.filter(a => u.appliances[a]).map(a => OO_APPLIANCE_LABEL[a]).join(', ') || 'Yes, no appliances ticked' : 'None'], ['Wi-Fi network', u.wifiName || '—'], ['Wi-Fi password', u.wifiPass || '—'], ['Washer and dryer', u.washer ? 'Yes' : 'No'], ['Parking', u.parking || '—'], ['Access', u.access || '—']] as [string, string][]).map(([k, v]) => <div key={k} className={k === 'Address' || k === 'Kitchen' || k === 'Access' || k === 'Beds' ? 'col-span-2' : ''}><dt className={lab}>{k}</dt><dd className="text-ink mt-0.5">{v || '—'}</dd></div>)}
                   </dl>
                 )}
               </div>
@@ -420,8 +427,22 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           {/* THE LINEN, ours to specify (Jon, 2026-11-13): counts at par, per unit and in all; approve, then send to the vendor */}
           <section className={card}>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Linen at par</h2><span className="text-[13px]"><b className="text-ink">{lin.reduce((a, i) => a + i.qty, 0)}</b> pieces{units.length > 1 ? ' across ' + units.length + ' units' : ''}</span></div>
-            <p className="text-[12.5px] text-muted mb-3">For the team only: the owner’s page never lists linen. From the linen standard and each unit’s beds and baths.</p>
-            {!lin.length ? <p className="text-[13px] text-muted">The counts appear once the home is filled in.</p> : (<>
+            <p className="text-[12.5px] text-muted mb-3">For the team only: the owner’s page never lists linen. {rec.linen?.rows ? <b className="text-ink">Edited by {String(rec.linen.editedBy || 'the team').split('@')[0]}{rec.linen.editedAt ? ' on ' + new Date(rec.linen.editedAt).toLocaleDateString() : ''}; it no longer follows the home’s beds and baths.</b> : 'Counted by the linen calculator from the saved linen standard and each unit’s beds and baths. Adjust it here before you email or download it.'}</p>
+            {linEdit ? (<div className="oo-noprint">
+              <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="font-semibold">Size</th>{units.map((_, i) => <th key={i} className="px-1 text-right font-semibold whitespace-nowrap">{units.length > 1 ? uLabel(i) : 'Qty'}</th>)}<th /></tr></thead>
+                <tbody>{linEdit.rows.map((l: Any, k: number) => { const set = (p: Any) => setLinEdit({ ...linEdit, rows: linEdit.rows.map((x: Any, j: number) => (j === k ? { ...x, ...p } : x)) }); return (
+                  <tr key={k} className="border-b border-line"><td className="py-1 pr-1"><input value={l.name} onChange={e => set({ name: e.target.value })} placeholder="Item" className="w-full rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink" /></td>
+                    <td className="pr-1"><input value={l.size} onChange={e => set({ size: e.target.value })} placeholder="Size" className="w-24 rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink" /></td>
+                    {units.map((_, i) => <td key={i} className="px-1 text-right"><input inputMode="numeric" value={String(l.qty[i] ?? 0)} onChange={e => set({ qty: units.map((__, u) => (u === i ? Number(e.target.value.replace(/\D/g, '')) || 0 : l.qty[u] || 0)) })} className="w-14 rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink text-right" /></td>)}
+                    <td className="pl-1"><button type="button" title="Remove" onClick={() => setLinEdit({ ...linEdit, rows: linEdit.rows.filter((_: Any, j: number) => j !== k) })} className="text-muted hover:text-red-700">×</button></td></tr>) })}</tbody></table></div>
+              <button type="button" onClick={() => setLinEdit({ ...linEdit, rows: [...linEdit.rows, { name: '', size: '', qty: units.map(() => 1) }] })} className="mt-2 text-[12.5px] font-semibold text-ink">+ Add a line</button>
+              <label className="block mt-3"><span className={lab}>Note to the vendor (goes in the quote request)</span><textarea rows={2} value={linEdit.note} onChange={e => setLinEdit({ ...linEdit, note: e.target.value })} className={field} placeholder="e.g. white only, 300 thread count; deliver to the front desk" /></label>
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <button type="button" disabled={busy === 'linen'} onClick={() => linen('save', linEdit)} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'linen' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save the quote</button>
+                <button type="button" onClick={() => setLinEdit(null)} className="text-[12.5px] text-muted underline">Cancel</button>
+                {rec.linen?.approvedAt ? <span className="text-[12.5px] text-muted">Saving clears the approval, so the edited quote is approved again before it is sent.</span> : null}
+              </div>
+            </div>) : !lin.length ? <p className="text-[13px] text-muted">The counts appear once the home is filled in.</p> : (<>
               <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="font-semibold">Size</th>{units.length > 1 ? units.map((_, i) => <th key={i} className="px-2 text-right font-semibold whitespace-nowrap">{uLabel(i)}</th>) : null}<th className="text-right font-semibold">Total</th></tr></thead>
                 <tbody>{linRoll.map(e => <tr key={e.name + e.size} className="border-b border-line"><td className="py-1.5 text-ink">{e.name}</td><td className="text-muted">{e.size || ''}</td>{units.length > 1 ? units.map((_, i) => <td key={i} className="px-2 text-right tabular-nums">{e.per[i] || ''}</td>) : null}<td className="text-right tabular-nums font-semibold">{e.total}</td></tr>)}</tbody></table></div>
               <div className="oo-noprint mt-3 flex flex-wrap items-center gap-2">
@@ -429,6 +450,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
                   : <><span className="text-[12.5px] text-emerald-700 font-semibold"><Check size={13} className="inline" /> Approved {new Date(rec.linen.approvedAt).toLocaleDateString()} by {String(rec.linen.approvedBy || '').split('@')[0]}</span>
                     <button type="button" disabled={busy === 'linen'} onClick={() => linen('send')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'linen' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {rec.linen.sentAt ? 'Send to the vendor again' : 'Send to the vendor'}</button>
                     <button type="button" onClick={() => linen('unapprove')} className="text-[12.5px] text-muted underline">Undo approval</button></>}
+                <a href={`/api/owner-onboarding/${code}/linen`} className="inline-flex items-center gap-1.5 rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink"><Download size={13} /> Download the quote (PDF)</a>
+                <button type="button" onClick={() => setLinEdit({ rows: linRoll.map(e => ({ name: e.name, size: e.size || '', qty: units.map((_, i) => e.per[i] || 0) })), note: rec.linen?.note || '' })} className="rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink">Edit the quote</button>
+                {rec.linen?.rows ? <button type="button" onClick={() => linen('reset')} className="text-[12.5px] text-muted underline">Back to the linen standard</button> : null}
+                {rec.linen?.note ? <span className="text-[12.5px] text-ink basis-full">Note to the vendor: {rec.linen.note}</span> : null}
                 <span className="text-[12.5px] text-muted basis-full">{rec.linen?.error ? 'Not sent: ' + rec.linen.error : rec.linen?.sentAt ? 'Sent ' + new Date(rec.linen.sentAt).toLocaleString() + ' to ' + (rec.linen.sentTo || []).join(', ') : 'Approving unlocks “Send to the vendor”: the quantities go to the linen vendor, copying the team.'}</span>
               </div>
             </>)}
@@ -498,6 +523,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           </section>
 
           <button type="button" onClick={() => patch({ archived: !rec.archived }, rec.archived ? 'Restored.' : 'Archived: the owner link no longer opens.')} className="oo-noprint inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-muted hover:text-ink"><Archive size={13} /> {rec.archived ? 'Restore this link' : 'Archive this link'}</button>
+          {canDelete ? (delAsk ? <div className="oo-noprint rounded-xl border border-red-200 bg-red-50 p-3 text-[12.5px] text-ink"><p><b>Delete this onboarding for good?</b> The owner’s answers, the W-9 and ACH details, the agreement, the order list and the linen quote are removed, and the owner’s link stops working. This cannot be undone.</p><div className="flex items-center gap-3 mt-2"><button type="button" disabled={busy === 'del'} onClick={remove} className="rounded-lg bg-red-700 text-white px-3 py-1.5 font-semibold disabled:opacity-50">{busy === 'del' ? 'Deleting…' : 'Yes, delete it'}</button><button type="button" onClick={() => setDelAsk(false)} className="underline text-muted">Keep it</button></div></div>
+            : <button type="button" onClick={() => setDelAsk(true)} className="oo-noprint inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-red-700">Delete this onboarding</button>) : null}
         </div>
       </div>
     </div>
