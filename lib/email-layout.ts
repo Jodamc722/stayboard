@@ -12,6 +12,10 @@ export type StayEmail = {
   heading: string
   /** Paragraphs, already safe HTML (use escHtml on anything a person typed). */
   paragraphs: string[]
+  /** A short list after the paragraphs (safe HTML items); numbered when `ordered`. */
+  list?: string[]; ordered?: boolean
+  /** Paragraphs between the list and the button (safe HTML). */
+  lead?: string[]
   cta?: { label: string; url: string }
   /** Small print under the button (e.g. how long the link works). */
   ctaNote?: string
@@ -62,6 +66,8 @@ ${s.phone || s.email ? `<p style="margin:2px 0 0;font:400 13.5px/1.5 ${SANS};col
 ${e.eyebrow ? `<p style="margin:0 0 10px;font:600 11px/1.3 ${SANS};letter-spacing:.16em;text-transform:uppercase;color:${GOLD}">${escHtml(e.eyebrow)}</p>` : ''}
 <h1 style="margin:0 0 18px;font:400 27px/1.2 ${SERIF};color:${INK}">${escHtml(e.heading)}</h1>
 ${e.paragraphs.map(p).join('\n')}
+${e.list?.length ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px">${e.list.map((x, i) => `<tr><td width="26" valign="top" style="padding:4px 0;font:600 14px/1.6 ${SANS};color:${GOLD}">${e.ordered ? i + 1 + '.' : '&bull;'}</td><td valign="top" style="padding:4px 0;font:400 15px/1.6 ${SANS};color:${BODY}">${x}</td></tr>`).join('')}</table>` : ''}
+${(e.lead || []).map(p).join('\n')}
 ${cta}${details}${table}
 ${e.note ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px"><tr><td style="background:${PAPER};border-radius:12px;padding:14px 16px;font:400 13.5px/1.6 ${SANS};color:${BODY}">${e.note}</td></tr></table>` : ''}
 ${(e.after || []).map(p).join('\n')}
