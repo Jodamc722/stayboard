@@ -52,7 +52,7 @@ export async function sendHandoff(r: OORecord, origin: string): Promise<{ ok: bo
   const h = r.home
   const link = origin.replace(/\/$/, '') + '/owner-onboarding/' + r.code
   const rows: [string, string][] = [
-    ['Owner', r.custom.ownerName], ['Owner email', r.custom.ownerEmail], ['Owner phone', r.custom.ownerPhone],
+    ['Owner', r.custom.ownerName], ['Owner entity (LLC/company)', r.business || ''], ['Owner email', r.custom.ownerEmail], ['Owner phone', r.custom.ownerPhone],
     ...(r.owners || []).map((o, i) => ['Owner ' + (i + 2), [o.name, o.email, o.phone].filter(Boolean).join(' · ')] as [string, string]),
     ['Property', r.attach.property], ['Unit', unit], ['Address', h?.address || ''],
     ['Home', h ? [h.bedrooms === 0 ? 'Studio' : h.bedrooms + ' bed', h.bathrooms + ' bath', h.sqft ? h.sqft + ' SF' : '', 'sleeps ' + h.guests].filter(Boolean).join(' · ') : ''],

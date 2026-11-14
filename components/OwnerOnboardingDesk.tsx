@@ -89,6 +89,10 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
     <section className={card}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{rows.length > 1 ? 'The owners’ portal accounts' : 'The owner’s portal account'} <Lock size={14} className="inline" /></h2></div>
       <p className="text-[12.5px] text-muted mb-3">Each owner gets their own invite, with the team copied, and a second email to them alone with their private sign-in link: they click it, create their own password, and from then on sign in with their email and password, from the link or at <b className="text-ink">{host}/portal</b>. An owner account opens only this onboarding, never the rest of Lighthouse.</p>
+      <div className="oo-noprint rounded-xl bg-app p-3 mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <div className="min-w-0 mr-auto"><p className={lab}>Owner entity / LLC</p><p className="text-[12.5px] text-muted">On the W-9 and payouts. Blank = owned personally. The owner can set this too.</p></div>
+        <input defaultValue={rec.business || ''} key={'biz' + (rec.business || '')} placeholder="e.g. Cameron St. LLC" onBlur={async e => { const v = e.target.value.trim(); if (v === (rec.business || '')) return; const d = await fetch(`/api/owner-onboarding/${rec.code}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ business: v }) }).then(r => r.json()).catch(() => null); if (d?.record) onRec(d.record) }} className="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink w-full sm:w-80" />
+      </div>
       <ul className="divide-y divide-line border-y border-line">
         {rows.map((o, i) => { const a = o.access || {}; return (
           <li key={o.id} className="py-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -336,7 +340,7 @@ export function OwnerOnboardingDesk() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [made, setMade] = useState<Any>(null)
-  const [f, setF] = useState<Any>({ owners: [], ownerName: '', ownerEmail: '', ownerPhone: '', property: '', listingId: '', unitLabel: '', from: 'sales', greeting: '', gm: { ...DEFAULT_GM }, sales: { ...DEFAULT_SALES }, askSupplies: true, askLinen: true, askPayout: true, prefill: false, home: { ...DEFAULT_HOME }, teamNotes: '' })
+  const [f, setF] = useState<Any>({ owners: [], ownerName: '', ownerEmail: '', ownerPhone: '', business: '', property: '', listingId: '', unitLabel: '', from: 'sales', greeting: '', gm: { ...DEFAULT_GM }, sales: { ...DEFAULT_SALES }, askSupplies: true, askLinen: true, askPayout: true, prefill: false, home: { ...DEFAULT_HOME }, teamNotes: '' })
   const agree = useRef<HTMLInputElement>(null)
   const [agreeFile, setAgreeFile] = useState<File | null>(null)
   const load = () => fetch('/api/owner-onboarding', { cache: 'no-store' }).then(r => r.json()).then(d => setLinks(d?.ok ? d.links : [])).catch(() => setLinks([]))
@@ -345,7 +349,7 @@ export function OwnerOnboardingDesk() {
   async function create(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setMsg('')
     try {
-      const body = { custom: { ownerName: f.ownerName, ownerEmail: f.ownerEmail, ownerPhone: f.ownerPhone, greeting: f.greeting, from: f.from, gm: f.gm, sales: f.sales, contact: f.gm, askHome: true, askSupplies: f.askSupplies, askLinen: f.askLinen, askPayout: f.askPayout }, attach: { property: f.property, listingId: f.listingId, unitLabel: f.unitLabel }, home: f.prefill ? f.home : null, teamNotes: f.teamNotes, owners: (f.owners || []).filter((o: Any) => o.name.trim() || o.email.trim()) }
+      const body = { custom: { ownerName: f.ownerName, ownerEmail: f.ownerEmail, ownerPhone: f.ownerPhone, greeting: f.greeting, from: f.from, gm: f.gm, sales: f.sales, contact: f.gm, askHome: true, askSupplies: f.askSupplies, askLinen: f.askLinen, askPayout: f.askPayout }, attach: { property: f.property, listingId: f.listingId, unitLabel: f.unitLabel }, home: f.prefill ? f.home : null, teamNotes: f.teamNotes, business: f.business, owners: (f.owners || []).filter((o: Any) => o.name.trim() || o.email.trim()) }
       const d = await fetch('/api/owner-onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
       if (!d?.ok) throw new Error(d?.error || 'Could not create the link.')
       if (agreeFile) await uploadAgreement(d.code, agreeFile).catch(err => setMsg('The link is made, but the agreement did not upload: ' + err.message))
@@ -391,6 +395,7 @@ export function OwnerOnboardingDesk() {
             <label className="block"><span className={lab}>Owner name</span><input value={f.ownerName} onChange={e => setF({ ...f, ownerName: e.target.value })} className={field} required /></label>
             <label className="block"><span className={lab}>Owner email</span><input type="email" value={f.ownerEmail} onChange={e => setF({ ...f, ownerEmail: e.target.value })} className={field} /></label>
             <label className="block"><span className={lab}>Owner phone</span><input value={f.ownerPhone} onChange={e => setF({ ...f, ownerPhone: e.target.value })} className={field} /></label>
+            <label className="block sm:col-span-2"><span className={lab}>Owner entity / LLC (optional)</span><input value={f.business} onChange={e => setF({ ...f, business: e.target.value })} placeholder="e.g. Cameron St. LLC — leave blank if owned personally" className={field} /><span className="block text-[11.5px] text-muted mt-1">The legal entity on the W-9 and payouts. The owner can confirm or change it.</span></label>
             {/* MORE THAN ONE OWNER FOR THE PROPERTY: each gets their own invite, password and portal sign-in */}
             {(f.owners || []).map((o: Any, i: number) => { const set = (p: Any) => setF({ ...f, owners: f.owners.map((x: Any, j: number) => (j === i ? { ...x, ...p } : x)) }); return [
               <label key={'n' + i} className="block"><span className={lab}>Owner {i + 2} name</span><input value={o.name} onChange={e => set({ name: e.target.value })} className={field} /></label>,

@@ -69,6 +69,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   const stockWas = r.stock || ''
   if (b.stock === 'none' || b.stock === 'full' || b.stock === '') r.stock = b.stock
   if (typeof b.ownerNotes === 'string') r.ownerNotes = b.ownerNotes.slice(0, 4000)
+  if (typeof b.business === 'string') r.business = b.business.trim().slice(0, 160)
   // THE ORDER LIST, REVIEWED: lines the owner already has (skip), a note, and approve or ask for changes.
   let reviewed = ''
   if (b.orderReview && r.order && r.order.status !== 'draft') {
