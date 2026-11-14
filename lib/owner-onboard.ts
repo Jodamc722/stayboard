@@ -140,6 +140,9 @@ export type OORecord = {
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
   /** The linen order (Jon, 2026-11-13): approved by the team, then sent to the vendor. */
   order?: OOOrder | null
+  /** The LLC or company that owns the property, if any (Jon, 2026-11-14: "have LLC name or business name as
+   *  something for them to fill out"). Blank = owned personally. One entity per link; flows to the W-9 and the handoff. */
+  business?: string
   // THE INVENTORY, CHECKED (Jon, 2026-11-13: "an option on the owner inventory section: have not ordered any inventory /
   // fully stocked… this would then trigger need to inspect the unit, which we need to do either way… a link for our team
   // to mark yes or no so we can get the actual count… on the admin side mark it owner does not want to purchase… then

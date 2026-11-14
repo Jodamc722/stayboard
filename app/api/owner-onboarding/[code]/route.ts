@@ -24,6 +24,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
   const b = await req.json().catch(() => ({} as any))
   if (b.custom) r.custom = cleanCustom(b.custom, r.custom)
+  if (typeof b.business === 'string') r.business = b.business.trim().slice(0, 160)
   if (Array.isArray(b.owners)) r.owners = cleanOwners(b.owners, r.owners)
   const hadListing = r.attach.listingId
   if (b.attach) r.attach = { property: String(b.attach.property ?? r.attach.property).slice(0, 120), listingId: String(b.attach.listingId ?? r.attach.listingId).slice(0, 60), unitLabel: String(b.attach.unitLabel ?? r.attach.unitLabel).slice(0, 60) }

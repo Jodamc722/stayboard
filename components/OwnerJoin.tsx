@@ -77,6 +77,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const [cnts, setCnts] = useState<Record<string, number>>({})
   const pendingC = useRef<Record<string, number>>({})
   const [notes, setNotes] = useState('')
+  const [biz, setBiz] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [pay, setPay] = useState<Any>({ w9: { name: '', business: '', taxClass: 'individual', llcCode: '', other: '', address: '', cityStateZip: '', tinType: 'ssn', tin: '' }, ach: { holder: '', bank: '', ownership: '', accountType: 'checking', routing: '', account: '', routing2: '', account2: '' }, sign: { name: '', agree: false } })
@@ -85,7 +86,9 @@ export function OwnerJoin({ code }: { code: string }) {
   const pending = useRef<Record<string, OOMark>>({})
   const timer = useRef<any>(null)
 
-  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); setCnts(d.record.counts || {}); if (d.record.home) setHomes([d.record.home, ...(d.record.more || [])]); setNotes(d.record.ownerNotes || '') }
+  const apply = (d: Any) => { setRec(d.record); setItems(d.items || []); setMarks(d.record.marks || {}); setCnts(d.record.counts || {}); setBiz(d.record.business || '');
+      if (d.record.business) setPay((pp: Any) => (pp.w9.business ? pp : { ...pp, w9: { ...pp.w9, business: d.record.business } }));
+      if (d.record.home) setHomes([d.record.home, ...(d.record.more || [])]); setNotes(d.record.ownerNotes || '') }
   // SIGN-IN (lib/owner-onboard-auth): an emailed magic link signs in once; then a password.
   const [viewer, setViewer] = useState<'owner' | 'team'>('owner')
   const [em, setEm] = useState('')
@@ -155,8 +158,8 @@ export function OwnerJoin({ code }: { code: string }) {
   const next = () => go(tabs[Math.min(tabs.length - 1, tabs.indexOf(tab) + 1)])
   const back = () => go(tabs[Math.max(0, tabs.indexOf(tab) - 1)])
 
-  async function saveHome() { setBusy(true); setMsg(''); try { apply(await patch({ home: homes[0], more: homes.slice(1) })); setSu(0); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
-  async function finishSupplies() { setBusy(true); setMsg(''); try { clearTimeout(timer.current); const m = pending.current, c = pendingC.current; pending.current = {}; pendingC.current = {}; apply(await patch({ marks: m, counts: c, ownerNotes: notes, submit: flags.askPayout === false })); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
+  async function saveHome() { setBusy(true); setMsg(''); try { apply(await patch({ home: homes[0], more: homes.slice(1), business: biz })); setSu(0); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
+  async function finishSupplies() { setBusy(true); setMsg(''); try { clearTimeout(timer.current); const m = pending.current, c = pendingC.current; pending.current = {}; pendingC.current = {}; apply(await patch({ marks: m, counts: c, ownerNotes: notes, business: biz, submit: flags.askPayout === false })); next() } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
   async function savePayout(e: React.FormEvent) {
     e.preventDefault(); setMsg('')
     const tin = pay.w9.tin.replace(/\D/g, ''), rt = pay.ach.routing.replace(/\D/g, ''), ac = pay.ach.account.replace(/\D/g, '')
@@ -258,6 +261,10 @@ export function OwnerJoin({ code }: { code: string }) {
             <p className="oj-kick">Step {tabs.indexOf('home') + 1}</p>
             <h1>Tell us about <em>{homes.length > 1 ? 'each unit.' : 'the home.'}</em></h1>
             <p className="oj-p">This builds the list of everything the home needs, sized to its beds, baths and kitchen. More than one unit with us? Add each one.</p>
+            <div className="oj-sec" style={{ marginBottom: 18 }}>
+              <label className="oj-f oj-wide"><span>Owned by an LLC or company? (optional)</span><input value={biz} onChange={e => setBiz(e.target.value)} placeholder="Legal entity / business name — leave blank if you own it personally" /></label>
+              <p className="oj-small" style={{ margin: '4px 0 0' }}>This is the entity we’ll use on your W-9 and payouts. You can confirm or change it on the paperwork step.</p>
+            </div>
             <div className="oj-units">
               {homes.map((h, i) => <button key={i} type="button" className={i === ui ? 'on' : ''} onClick={() => setUi(i)}>{h.unit ? 'Unit ' + h.unit : 'Unit ' + (i + 1)}</button>)}
               <button type="button" className="add" onClick={() => { setHomes(hs => [...hs, { ...DEFAULT_HOME, address: hs[0].address, uid: Math.random().toString(36).slice(2, 8) }]); setUi(homes.length) }}><Plus size={13} /> Add another unit</button>
