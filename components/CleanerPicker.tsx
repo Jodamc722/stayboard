@@ -30,6 +30,38 @@ export function sameRosterPerson(a: string, b: string): boolean {
   return !xl || !yl || xl[0] === yl[0]
 }
 
+// THE SAME PERSON, SPELT TWO WAYS (2026-11-16 audit). Homebase has "Elianys C.", "Yunisleydi P." and "Shaany C.";
+// Breezeway has "Elyanis C.", "Yunisleidi p." and "shaany e." (the other surname). The strict test above called all
+// three "not scheduled today" on every clean they held while they were clocked in. So: the strict match first; failing
+// that, a near first name (one or two letters apart on a long name, same first letter) or the same first name with a
+// different surname initial — but ONLY when exactly one person on the list fits, so two Marias are never merged.
+function nameGap(a: string, b: string): number {
+  if (a === b) return 0
+  if (Math.abs(a.length - b.length) > 2) return 9
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i++) {
+    let last = prev[0]; prev[0] = i
+    for (let j = 1; j <= b.length; j++) { const keep = prev[j]; prev[j] = Math.min(prev[j] + 1, prev[j - 1] + 1, last + (a[i - 1] === b[j - 1] ? 0 : 1)); last = keep }
+  }
+  return prev[b.length]
+}
+export function rosterMatch<T extends { name: string }>(list: T[], name: string): T | undefined {
+  const strict = list.find(p => sameRosterPerson(p.name, name))
+  if (strict) return strict
+  const y = rosterNameParts(name)
+  if (!y.length) return undefined
+  const loose = list.filter(p => {
+    const x = rosterNameParts(p.name)
+    if (!x.length || x[0][0] !== y[0][0]) return false
+    if (x[0] === y[0]) return true                                   // same first name, another surname
+    const allow = Math.min(x[0].length, y[0].length) >= 6 ? 2 : Math.min(x[0].length, y[0].length) >= 5 ? 1 : 0
+    if (!allow || nameGap(x[0], y[0]) > allow) return false
+    const xl = x[1] || '', yl = y[1] || ''
+    return !xl || !yl || xl[0] === yl[0]                               // a near first name needs the surname to agree
+  })
+  return loose.length === 1 ? loose[0] : undefined
+}
+
 export default function CleanerPicker({ people, value, existing, onChange, disabled, placeholder, scheduled }: { people: Person[]; value: Person | null; existing?: string; onChange: (p: Person | null) => void; disabled?: boolean; placeholder?: string; scheduled?: Set<string> }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')

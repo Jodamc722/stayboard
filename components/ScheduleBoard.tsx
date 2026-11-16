@@ -19,7 +19,7 @@ import RowMenu, { type RowAction } from './RowMenu'
 import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
 import { ScheduleNextWeek } from './ScheduleNextWeek'
-import CleanerPicker, { sameRosterPerson } from './CleanerPicker'
+import CleanerPicker, { sameRosterPerson, rosterMatch } from './CleanerPicker'
 import GeLog from './GeLog'
 import { nameMatches } from '@/lib/person-name'
 
@@ -576,7 +576,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   const todayForHead = (data && data.today) || ''
   useEffect(() => {
     if (embedded || !boardDate || !todayForHead || typeof window === 'undefined') return
-    window.dispatchEvent(new CustomEvent('lh:schedule-day', { detail: { date: view === 'day' ? boardDate : todayForHead, today: todayForHead } }))
+    window.dispatchEvent(new CustomEvent('lh:schedule-day', { detail: { date: view === 'day' ? boardDate : todayForHead, today: todayForHead, short: view === 'day' && !boardIsPast && boardStaff.need > 0 ? Math.max(0, boardStaff.need - boardStaff.working) : 0 } }))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardDate, todayForHead, view])
   // WHERE CLEANS COULD GO when the day is short: the first later day of this week whose schedule
@@ -599,7 +599,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   // Stable identity for the pickers ("Scheduled today" at the top of the list).
   const scheduledSet = useMemo(() => new Set(crewFor(boardDate).map(p => p.name)), [crewCache, boardDate])
   const schedHit: Record<string, boolean> = {}
-  const isScheduledName = (name: string): boolean => { const k = name.trim().toLowerCase(); if (!(k in schedHit)) schedHit[k] = boardCrew.some(p => sameRosterPerson(p.name, name)); return schedHit[k] }
+  const isScheduledName = (name: string): boolean => { const k = name.trim().toLowerCase(); if (!(k in schedHit)) schedHit[k] = !!rosterMatch(boardCrew, name); return schedHit[k] }
 
   // EXPECTED HOURS BY CLEANER (Jon, 2026-11-02: "show a chart with cleaner name and expected hours").
   // Every clean that is actually on the day, at its estimated time (expected labor cost ÷ pay per
@@ -1183,7 +1183,7 @@ async function pushBlocks() {
         {(['all', ...MARKETS, 'vendor'] as const).map(m => (
           <button key={m} onClick={() => setMarket(m)} className={`lh-tab text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m === 'vendor' ? 'Vendor' : m}{data && m !== 'all' && m !== 'vendor' ? (() => { const _e = data.totals.byMarket.find(x => x.market === m); return ' · ' + (_e?.count ?? 0) + (_e?.fee ? ' · $' + Math.round(_e.fee).toLocaleString() : '') })() : ''}</button>
         ))}
-        {data && <span className="text-[12px] text-ink font-semibold ml-1">{data.totals.cleans} cleans{data.totals.feeTotal ? ' \u00b7 $' + Math.round(data.totals.feeTotal).toLocaleString() : ''} this {view}</span>}
+        {data && <span className="text-[12px] text-ink font-semibold ml-1">{data.totals.cleans} cleans{(() => { /* the day tile counts ours; this total includes the vendor's (2026-11-16 audit: 32 on the tile, 46 here, no explanation) */ const ours = data.totals.byMarket.reduce((n, x) => n + (x.count || 0), 0), v = data.totals.cleans - ours; return v > 0 ? ' (' + ours + ' ours \u00b7 ' + v + ' vendor)' : '' })()}{data.totals.feeTotal ? ' \u00b7 $' + Math.round(data.totals.feeTotal).toLocaleString() : ''} this {view}</span>}
         {view === 'day' && (
           <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
             <ArrowDownUp size={13} /> Sort
@@ -1505,8 +1505,8 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
   const diffTxt = (d: number) => Math.abs(d) < 0.25 ? 'even' : d > 0 ? '+' + fmtH(d) : '−' + fmtH(-d)
   const diffCls = (d: number, total = false) => d <= -0.25 ? 'text-rose-700 font-semibold' : (total && d > shiftHours) ? 'text-amber-700 font-semibold' : 'text-muted'
   const shownLines = staff.lines.filter(l => l.cleans > 0 || l.working > 0 || l.projCleans > 0)
-  const loadOf = (name: string) => load ? load.people.find(p => sameRosterPerson(p.name, name)) : undefined
-  const unscheduled = load ? load.people.filter(lp => !crew.some(p => sameRosterPerson(p.name, lp.name))) : []
+  const loadOf = (name: string) => load ? rosterMatch(load.people, name) : undefined
+  const unscheduled = load ? load.people.filter(lp => !rosterMatch(crew, lp.name)) : []
   // THE VERDICT, WITH THE ONE THING TO DO. Every number is one the table above already shows:
   // the shortfall is the Total row's +/−, "add N" is needed − working, and "move N cleans" is the
   // shortfall ÷ the day's average KPI hours per clean, offered only when a later day has room.
@@ -1531,8 +1531,8 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
         <span className="text-[11px] font-semibold text-brand-700 shrink-0">{openSm ? 'Hide' : 'Open'}</span>
       </button>
       <div className={(openSm ? 'mt-2.5 ' : 'hidden ') + 'lg:block lg:mt-0'}>
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="text-[13px] font-bold text-ink">Team — {dayLabel}</div>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-2">
+        <div className="text-[13px] font-bold text-ink whitespace-nowrap mr-auto">Team · {dayLabel}</div>
         <span className={'text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ' + (isPast ? 'bg-neutral-100 text-neutral-600' : short ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{isPast ? staff.working + ' scheduled' : staff.working + ' working · ' + staff.need + ' needed'}</span>
         {punches && punches.date === date && !punches.error && punches.list.length > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 bg-emerald-50 text-emerald-800" title="Clocked in on Homebase today: on the clock now / punched at all">{punches.list.filter(p => p.open).length} on the clock · {punches.list.length} punched</span>}
       </div>
@@ -1629,23 +1629,25 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
                 const notCounted = ACTIVE.test(eff(r)) && !counted && !NON_CLEANERS[r.mem]
                 return (
                   <div key={r.mem} className="group py-0.5">
-                    <div className="flex items-center gap-1.5">
+                    {/* TWO LINES (2026-11-16 audit): name and status on the first, the clock and the load on the second. On one
+                        line the 280px rail left the name three letters ("Al…") or none at all. */}
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                       {showAll && <button onClick={() => onRemove(mk, r.mem)} title="Remove from roster" className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-rose-600 text-xs leading-none">×</button>}
-                      <span className="text-xs text-ink flex-1 truncate">{shortTeamName(r.mem)}{NON_CLEANERS[r.mem] ? <span className="text-muted"> · {NON_CLEANERS[r.mem]}</span> : null}
+                      <span className="text-xs text-ink flex-1 min-w-[55%] truncate" title={r.mem + (r.shift ? ' · ' + r.shift : '')}>{shortTeamName(r.mem)}{NON_CLEANERS[r.mem] ? <span className="text-muted"> · {NON_CLEANERS[r.mem]}</span> : null}
                         {notCounted ? <span className="text-muted" title="Not in the working count: on call, not a cleaner by department, or already counted on another market's list."> · not counted</span> : null}
                         {r.shift ? <span className="text-muted"> · {r.shift}</span> : null}</span>
                       {(() => {
                         if (!punches || punches.date !== date || punches.error) return null
                         const pc = punchOf(r.mem)
-                        if (pc && pc.open) return <span className="text-[10.5px] font-semibold text-emerald-700 shrink-0 tabular-nums" title={'On the clock in Homebase since ' + clock(pc.firstIn)}>● In {clock(pc.firstIn)}</span>
-                        if (pc) return <span className="text-[10.5px] text-muted shrink-0 tabular-nums" title={'Homebase timecards: ' + clock(pc.firstIn) + ' to ' + clock(pc.lastOut) + ' · ' + fmtH(pc.hours)}>{clock(pc.firstIn)}–{clock(pc.lastOut)} · {fmtH(pc.hours)}</span>
-                        if (/work/i.test(eff(r)) && dayStarted && shiftBegun(r.shift)) return <span className="text-[10.5px] font-semibold text-amber-700 shrink-0" title="Working today, but no Homebase clock-in yet">No clock-in</span>
+                        if (pc && pc.open) return <span className="text-[10.5px] font-semibold text-emerald-700 shrink-0 tabular-nums order-2" title={'On the clock in Homebase since ' + clock(pc.firstIn)}>● In {clock(pc.firstIn)}</span>
+                        if (pc) return <span className="text-[10.5px] text-muted shrink-0 tabular-nums order-2" title={'Homebase timecards: ' + clock(pc.firstIn) + ' to ' + clock(pc.lastOut) + ' · ' + fmtH(pc.hours)}>{clock(pc.firstIn)}–{clock(pc.lastOut)} · {fmtH(pc.hours)}</span>
+                        if (/work/i.test(eff(r)) && dayStarted && shiftBegun(r.shift)) return <span className="text-[10.5px] font-semibold text-amber-700 shrink-0 order-2" title="Working today, but no Homebase clock-in yet">No clock-in</span>
                         return null
                       })()}
-                      {lp ? <span className={'text-[10.5px] tabular-nums shrink-0 ' + (over ? 'text-rose-700 font-bold' : 'text-ink font-semibold')} title={lp.cleans + ' clean' + (lp.cleans === 1 ? '' : 's') + ' at their estimated time, against a ' + shiftHours + 'h shift' + (over ? ' — over a full shift' : '')}>{fmtH(lp.hours)}<span className="text-muted font-normal">/{shiftHours}h</span></span> : null}
+                      {lp ? <span className={'text-[10.5px] tabular-nums shrink-0 order-2 ' + (over ? 'text-rose-700 font-bold' : 'text-ink font-semibold')} title={lp.cleans + ' clean' + (lp.cleans === 1 ? '' : 's') + ' at their estimated time, against a ' + shiftHours + 'h shift' + (over ? ' — over a full shift' : '')}>{fmtH(lp.hours)}<span className="text-muted font-normal">/{shiftHours}h</span></span> : null}
                       {/* Blank means "whatever Homebase says" — the placeholder shows what that is, so
                           an untouched cell still reads as a real answer rather than a dash. */}
-                      <select value={r.val} onChange={e => onSet(mk, r.mem, date, e.target.value)}
+                      <select value={r.val} onChange={e => onSet(mk, r.mem, date, e.target.value)} style={{ order: 1, marginLeft: 'auto', maxWidth: 108 }}
                         title={r.val ? 'Set by hand — pick “—” to hand the day back to Homebase' : r.shift ? 'From Homebase: ' + r.shift : 'Not on the Homebase schedule today'}
                         className={'text-[11px] rounded-full px-1.5 py-0.5 border ' + (r.val ? 'border-line ' + statusChip(r.val) : 'border-dashed border-line ' + statusChip(r.auto) + ' opacity-80')}>
                         <option value="">{r.auto ? r.auto + ' (Homebase)' : '—'}</option>

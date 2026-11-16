@@ -180,9 +180,9 @@ export function UpkeepBoard() {
         <Pill tone={t.late ? 'roseSolid' : 'emerald'} title="Jobs past their due date">{t.late} late{t.lateUnits ? ' · ' + t.lateUnits + ' units' : ''}{t.late90plus ? ' · ' + t.late90plus + ' over 90d' : ''}</Pill>
         <Pill tone="amber" title={'Due in the next ' + (data?.soonDays || 14) + ' days'}>{t.soon} due soon</Pill>
         {t.awaiting ? <Pill tone="amber" title="Due on a program that needs an approver's yes before it is booked">{t.awaiting} to approve</Pill> : null}
-        <Pill tone="sky" title="Already on the board in Breezeway">{t.booked} booked</Pill>
-        {t.bookedLate ? <Pill tone="amber" title="Booked, but the task's day has passed and it is still open — on the board, not done. Counted inside “booked”.">{t.bookedLate} booked past their day</Pill> : null}
-        {(() => { const n = typeof t.onClock === 'number' ? t.onClock : programs.reduce((k, p) => k + p.rows.filter(r => r.source === 'clock').length, 0); return n ? <Pill tone="slate" title="Never recorded, so the clock was started — first rounds are spread over one interval. Record a real date to replace one.">{n} on a new clock</Pill> : null })()}
+        {/* FOUR PILLS, NOT SIX (2026-11-16 audit): "2 booked past their day" rides the booked pill, and "711 on a new
+            clock" — a footnote nobody acts on — moved into the hover of the line under the title. */}
+        <Pill tone={t.bookedLate ? 'amber' : 'sky'} title={'Already on the board in Breezeway.' + (t.bookedLate ? ' ' + t.bookedLate + ' of them are past their day and still open: on the board, not done.' : '')}>{t.booked} booked{t.bookedLate ? ' · ' + t.bookedLate + ' past their day' : ''}</Pill>
         {t.none ? <Pill tone="slate" title="Never recorded on this unit — a data gap more often than neglect">{t.none} no record</Pill> : null}
       </> : null}
       {data && data.markets.length > 1 ? (
@@ -434,8 +434,8 @@ function ProgramTile({ p, on, onClick, onSetup, canProgram, justSaved }: { p: Up
       <button onClick={canProgram ? onSetup : undefined} disabled={!canProgram}
         title={p.label + ' — ' + line + (canProgram ? ' · opens the program to finish setting it up' : ' · the owner sets programs up')}
         className="text-left rounded-2xl border border-dashed border-amber-300 bg-amber-50/40 px-3 py-2.5 min-h-[92px] transition flex flex-col gap-1.5 min-w-0 hover:border-amber-500 disabled:hover:border-amber-300">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[10.5px] uppercase tracking-[0.08em] font-semibold text-muted truncate">{p.label}</span>
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-[10.5px] uppercase tracking-[0.08em] font-semibold text-muted line-clamp-2 min-w-0" title={p.label}>{p.label}</span>
           <span className="text-[10.5px] text-muted/70 shrink-0">{every(p.everyDays)}</span>
         </div>
         <span className="text-[13px] font-bold text-amber-900">{line}</span>
@@ -451,8 +451,8 @@ function ProgramTile({ p, on, onClick, onSetup, canProgram, justSaved }: { p: Up
     <button onClick={onClick} aria-pressed={on}
       title={p.label + ' — ' + every(p.everyDays) + ' · ' + p.units + ' units · ' + p.healthPct + '% current' + (on ? ' — click to close' : ' — click to open the list')}
       className={'text-left rounded-2xl border bg-white px-3 py-2.5 min-h-[92px] shadow-soft transition flex flex-col gap-1.5 min-w-0 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : justSaved ? 'border-emerald-300 hover:border-ink/30' : 'border-line hover:border-ink/30')}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10.5px] uppercase tracking-[0.08em] font-semibold text-muted truncate">{p.label}</span>
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-[10.5px] uppercase tracking-[0.08em] font-semibold text-muted line-clamp-2 min-w-0" title={p.label}>{p.label}</span>
         <span className="text-[10.5px] font-bold tabular-nums text-muted/70 shrink-0" title="Current: on track, due soon or booked for a day that has not passed — of the units with a date">{total ? p.healthPct + '%' : ''}</span>
       </div>
       <div className="flex items-baseline gap-x-1.5 gap-y-0.5 flex-wrap">
@@ -484,8 +484,8 @@ function PropertyTile({ t, today, report, planBroken, onClick }: { t: PropTileDa
   return (
     <button onClick={onClick} title={t.name + ' — opens it in Property programs'}
       className={'text-left rounded-2xl border px-3 py-2.5 min-h-[92px] transition flex flex-col gap-1.5 min-w-0 ' + (t.setup ? 'border-dashed border-amber-300 bg-amber-50/40 hover:border-amber-500' : 'border-line bg-white shadow-soft hover:border-ink/30')}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10.5px] uppercase tracking-[0.08em] font-semibold text-muted truncate">{t.name}</span>
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-[10.5px] uppercase tracking-[0.08em] font-semibold text-muted line-clamp-2 min-w-0" title={t.name}>{t.name}</span>
         <span className="text-[10.5px] text-muted/70 shrink-0" title={t.placeLabels.join(', ')}>{t.places} place{t.places === 1 ? '' : 's'}</span>
       </div>
       {t.setup ? (

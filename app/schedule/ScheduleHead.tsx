@@ -28,11 +28,11 @@ export function ScheduleHead() {
   // ('lh:schedule-day', see ScheduleBoard) and /api/capacity takes ?date=. Before this the pill
   // said "today" over whatever day was open. Today keeps the bare key, so it still shares one
   // cache entry with CapacityPanel's own read; another day uses the same key the panel's pager does.
-  const [sel, setSel] = useState<{ date: string; today: string } | null>(null)
+  const [sel, setSel] = useState<{ date: string; today: string; short: number } | null>(null)
   useEffect(() => {
     const on = (e: Event) => {
       const d = (e as CustomEvent).detail
-      if (d && typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) setSel({ date: d.date, today: typeof d.today === 'string' ? d.today : '' })
+      if (d && typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date)) setSel({ date: d.date, today: typeof d.today === 'string' ? d.today : '', short: Number(d.short) || 0 })
     }
     window.addEventListener('lh:schedule-day', on)
     return () => window.removeEventListener('lh:schedule-day', on)
@@ -41,7 +41,12 @@ export function ScheduleHead() {
   const dayWord = other && sel ? new Date(sel.date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }) : 'today'
   const { data } = useCachedFetch<{ ok?: boolean; kpi?: Kpi }>(other && sel ? '/api/capacity?date=' + sel.date : '/api/capacity', { ttl: 5 * 60_000 })
   const k = data && data.ok ? data.kpi : undefined
-  const tone: Tone = !k ? 'slate' : k.utilisationPct > 100 ? 'rose' : k.utilisationPct >= 85 ? 'amber' : 'emerald'
+  // ONE VERDICT, NOT TWO (2026-11-16 audit). The pill said "Team has room today" in green while the board's own rail,
+  // two inches below, said "Short 10h 44m — add 2 cleaners" in red: by the clock the day fits, by the labor KPI it is
+  // two people short, and seven people were past a full day. The board now tells the pill when it is short, the pill
+  // leads with that, and people past a full day keep it off green.
+  const short = sel ? sel.short : 0
+  const tone: Tone = !k ? 'slate' : short > 0 || k.utilisationPct > 100 ? 'rose' : k.utilisationPct >= 85 || k.overloaded > 0 ? 'amber' : 'emerald'
   const title = (k
     ? (other ? dayWord : 'Today') + ', by the clock (cleaning time + travel vs. shift time — a different question from the KPI hours on the board below): ' + hrs(k.workMinutes + k.travelMinutes) + ' of work on ' + k.peopleOnShift + ' '
       + (k.peopleOnShift === 1 ? 'person' : 'people') + ' ≈ ' + hrs(k.capacityMinutes) + ' capacity. '
@@ -58,7 +63,7 @@ export function ScheduleHead() {
           <span className="inline-flex items-center gap-1">
             <Users size={12} />
             <span className="sm:hidden">{k ? 'Crew ' + k.utilisationPct + '% ' + dayWord : 'Doable?'}</span>
-            <span className="hidden sm:inline">{k ? (k.utilisationPct > 100 ? 'Too much work ' + dayWord : k.utilisationPct >= 85 ? 'Team nearly full ' + dayWord : 'Team has room ' + dayWord) + ' · ' + k.utilisationPct + '%' : 'Is today doable?'}</span>
+            <span className="hidden sm:inline">{k ? (short > 0 ? 'Short ' + short + (short === 1 ? ' cleaner ' : ' cleaners ') + dayWord : k.utilisationPct > 100 ? 'Too much work ' + dayWord : k.utilisationPct >= 85 ? 'Team nearly full ' + dayWord : k.overloaded > 0 ? 'Work is uneven ' + dayWord : 'Team has room ' + dayWord) + ' · ' + k.utilisationPct + '% by the clock' : 'Is today doable?'}</span>
             {k && k.unassignedCount > 0 ? <span className="opacity-80 hidden sm:inline">· {k.unassignedCount} {k.unassignedCount === 1 ? 'clean' : 'cleans'} with nobody on {k.unassignedCount === 1 ? 'it' : 'them'}</span> : null}
             {k && k.overloaded > 0 ? <span className="opacity-80 hidden sm:inline">· {k.overloaded} past a full day</span> : null}
             <ChevronDown size={12} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
