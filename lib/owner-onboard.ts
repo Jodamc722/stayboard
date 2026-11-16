@@ -62,19 +62,24 @@ export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string)
   const home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const gmFirst = gm.name.split(' ')[0] || 'our General Manager'
   const gmRole = gm.role || 'General Manager'
-  const steps = `Here is what to expect:\n1. Home details and paperwork. In your portal you tell us about the home, confirm what is already there, and send your W-9 and payout details securely.\n2. Photography and listing. We photograph the home and build your listing.\n3. System setup. We set the home up in our booking and pricing platform.\n4. Onboarding call. ${gmFirst} walks you through your listing and the pricing strategy.\n5. Go live. Your home starts taking bookings.`
+  // REWRITTEN 2026-11-16 (Jon: "Can we rewrite the email … what if it's from Nick … do it, he can copy or open the email
+  // from Lighthouse for now"). Shorter: the welcome, who takes it from here, the one thing to do now (the portal, three
+  // steps), what we do after, and how to reach us. From sales it is a handoff — the person the owner already knows
+  // introduces the GM; from the GM it explains who the copied team is. The portal link and the separate secure sign-in
+  // email are in both, because the owner's private link never rides an email other people are copied on.
   const sig = (p: OOPerson) => [p.name, [p.role, 'Stay Hospitality'].filter(Boolean).join(', '), p.phone, p.email].filter(Boolean).join('\n')
-  const portal = `Your next step is your owner portal:\n${link}\n\nYou will receive a separate email from us with a secure sign-in link. The first time you open it you will create a password, and the portal then guides you through everything we need. It takes about ten minutes, and it saves as you go.`
-  const thanks = `Welcome to Stay Hospitality, and thank you for trusting us with ${home ? 'your home at ' + home : 'your home'}. We are excited to get started.`
+  const welcome = `Welcome to Stay Hospitality, and thank you for trusting us with ${home ? 'your home at ' + home : 'your home'}.`
+  const portal = `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n1. Tell us about the home\n2. Confirm what's already there, so we only order what's missing\n3. Send your W-9 and payout details securely\n\nYour owner portal:\n${link}\n\nYou'll also get a separate email, sent only to you, with a secure sign-in link. Use it the first time to create your password.`
+  const note = 'Your tax ID and bank details are encrypted the moment you send them. We will never ask for them by email.'
   if (c.from === 'gm') {
     return {
-      subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}`,
-      body: `Hi ${first},\n\n${thanks}\n\nI am ${gm.name}, ${gmRole}. My team and I will lead your onboarding, and I will be your main point of contact from here.\n\n${portal}\n\n${steps}\n\nIf you have a question at any point, reply to this email or call me directly.\n\nBest regards,\n${sig(gm)}`,
+      subject: 'Welcome to Stay Hospitality: your first step',
+      body: `Hi ${first},\n\n${welcome}\n\nI'm ${gm.name}, ${gmRole}. My team and I will take your home from signed agreement to its first guest, and I'm your point of contact the whole way. The people copied on this email are working on your home with me, so a reply-all reaches all of us.\n\n${portal}\n\nThen we get to work: photography, your listing, your onboarding call, and going live. The portal shows every step, so you always know where things stand.\n\nIf you have a question at any point, reply here${gm.phone ? ' or call me at ' + gm.phone : ''}. I look forward to working with you.\n\n${note}\n\nBest regards,\n${sig(gm)}`,
     }
   }
   return {
-    subject: `Welcome to Stay Hospitality${home ? ' · ' + home : ''}: meet ${gmFirst}`,
-    body: `Hi ${first},\n\n${thanks}\n\nI would like to introduce ${gm.name}, our ${gmRole}, copied here. ${gmFirst} and the team will lead your onboarding, and ${gmFirst} will be your main point of contact from here.\n\n${portal}\n\n${steps}\n\n${gmFirst} will be in touch shortly. In the meantime, I am always here if you need anything.\n\nBest regards,\n${sig(sa)}`,
+    subject: 'Welcome to Stay Hospitality: your first step',
+    body: `Hi ${first},\n\n${welcome} I've enjoyed getting to know you, and I'm glad we're doing this together.\n\nFrom here, I'd like to introduce ${gm.name}, our ${gmRole}, copied on this email. ${gmFirst} and the team will take your home from signed agreement to its first guest. I'm still here whenever you need me.\n\n${portal}\n\nThen the team gets to work: photography, your listing, your onboarding call, and going live. The portal shows every step, so you always know where things stand.\n\nIf you have a question at any point, reply here and it reaches all of us${sa.phone ? ', or call me at ' + sa.phone : ''}.\n\n${note}\n\nBest regards,\n${sig(sa)}`,
   }
 }
 /** One owner account's sign-in: a password hash, one-time link tokens, and when it was invited, created and last used. */
