@@ -48,7 +48,7 @@ export function OwnerPortalSignIn() {
           <div className="op-list">{open.map(o => <a key={o.code} href={'/join/' + o.code}>{o.label}</a>)}</div>
         </>) : (<>
           <h1>Sign in to <em>your portal.</em></h1>
-          <p>Use the email we have for you and the password you created from your welcome email.</p>
+          <p>Use the email we have for you and the password you created from your owner portal email.</p>
           <form className="op-card" onSubmit={signIn}>
             <label><span>Email</span><input type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} /></label>
             <label><span>Password</span><input type="password" autoComplete="current-password" required value={pw} onChange={e => setPw(e.target.value)} /></label>

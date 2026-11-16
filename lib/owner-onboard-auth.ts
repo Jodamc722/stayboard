@@ -124,12 +124,15 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     cta: 'Review and approve', after: ['If you have any questions about an item, reply to this email.'],
     note: 'Nothing is ordered until you approve the list.',
   } : kind === 'remind' && remind ? remindCopy(remind, { first, at, gmPhone: gm.phone }) : kind === 'invite' ? {
-    eyebrow: 'Welcome', heading: 'Welcome to Stay Hospitality',
+    // THE INVITE IS THE OWNER-PORTAL EMAIL, NOT THE WELCOME (Jon, 2026-11-16: "The send invite is separate, it's a
+    // reminder / owner portal email vs an intro email"). The introduction comes from Nick or Jon (introEmail, on the
+    // desk); this one only says the portal is ready, what it asks for, and how to get in.
+    eyebrow: 'Owner portal', heading: 'Your owner portal is ready',
     pre: 'Set up your owner portal: about ten minutes, and it saves as you go.',
-    paragraphs: [`Hi ${escHtml(first)},`, `Thank you for trusting us with your home${at}. I am ${escHtml(gm.name)}${gm.role ? ', ' + escHtml(gm.role) : ''}, and my team and I will take it from signed agreement to its first booking.`, 'Your owner portal is where it all happens. In about ten minutes you can:'],
+    paragraphs: [`Hi ${escHtml(first)},`, `Your owner portal for your home${at} is ready. It is where we collect what we need to get the home guest-ready, and where you can follow every step.`, 'It takes about ten minutes and saves as you go:'],
     list: ['Tell us about the home', 'Confirm what is already in it, so we only order what is missing', 'Send your W-9 and payout details securely'],
-    lead: ['After that, the portal shows every step, from photography and your listing to your onboarding call and going live, so you always know where things stand.'],
-    cta: 'Set up my owner portal', after: [`If you have a question at any point, reply to this email or call me directly${gm.phone ? ' at ' + escHtml(gm.phone) : ''}. I look forward to working with you.`],
+    lead: ['After that, the portal shows each step, from photography and your listing to your onboarding call and going live.'],
+    cta: 'Set up my owner portal', after: [`If you have a question, reply to this email${gm.phone ? ' or call ' + escHtml(gmFirst) + ' at ' + escHtml(gm.phone) : ''}.`],
     note: 'Your tax ID and bank details are encrypted the moment you send them, and we will never ask for them by email.',
   } : {
     eyebrow: 'Owner portal', heading: 'Sign in to your owner portal',
@@ -138,7 +141,6 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     cta: 'Sign in', after: [],
     note: 'Did not ask for this? You can safely ignore this email. Nobody can sign in without the link.',
   }
-  void gmFirst
   const html = stayEmail({
     origin: site, preheader: copy.pre, eyebrow: copy.eyebrow, heading: copy.heading, paragraphs: copy.paragraphs, list: copy.list, lead: copy.lead,
     cta: { label: copy.cta, url: link },
@@ -146,7 +148,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     note: copy.note, after: copy.after,
     sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email, photo: gm.photo ? (gm.photo.startsWith('/') ? site + gm.photo : gm.photo) : undefined },
   })
-  const res = await sendOnboardingMail({ to: [to], cc, subject: kind === 'remind' && remind ? REMIND_SUBJECT[remind.kind] + (home ? ' · ' + home : '') : kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? 'Welcome to Stay Hospitality: set up your owner portal' : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendOnboardingMail({ to: [to], cc, subject: kind === 'remind' && remind ? REMIND_SUBJECT[remind.kind] + (home ? ' · ' + home : '') : kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? `Your Stay Hospitality owner portal is ready${home ? ' · ' + home : ''}` : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') authOf(r, id).invitedAt = new Date().toISOString()
   // the owner's own way in, to the owner alone
   if (res.ok && needsPrivate) {
@@ -159,7 +161,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
       note: 'Please do not forward this email: the button signs in whoever clicks it.',
       sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email, photo: gm.photo ? (gm.photo.startsWith('/') ? site + gm.photo : gm.photo) : undefined },
     }) })
-    if (!mine.ok) return { ok: false, error: 'The welcome email went, but the owner’s private sign-in link did not: ' + (mine.error || 'try “Send again”.') }
+    if (!mine.ok) return { ok: false, error: 'The owner portal email went, but the owner’s private sign-in link did not: ' + (mine.error || 'try “Send again”.') }
   }
   return { ok: res.ok, error: res.error }
 }
