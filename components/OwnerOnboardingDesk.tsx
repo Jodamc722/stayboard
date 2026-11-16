@@ -6,9 +6,9 @@
 //                          needs, the timeline, the onboarding call, the paperwork and the handoff to accounting.
 import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive } from 'lucide-react'
-import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome } from '@/lib/owner-onboard'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock, X } from 'lucide-react'
+import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
 const lab = 'text-[10.5px] uppercase tracking-[0.16em] text-muted font-semibold'
@@ -16,6 +16,45 @@ const field = 'mt-1 w-full rounded-xl border border-line bg-white px-3 py-2 text
 const card = 'rounded-2xl border border-line bg-white p-5'
 const origin = () => (typeof window !== 'undefined' ? window.location.origin : '')
 const ownerLink = (code: string) => origin() + '/join/' + code
+
+// ── WHERE THE OWNER STANDS (Jon, 2026-11-16: "see if the onboarding email was sent or if the onboarding form was
+//    logged in… super visible in the main page and in the admin page… inventory finished and W-9 and ACH finished").
+//    One tag per thing, the same on the list and on the owner's page: green = done, amber = under way, red = not yet. ──
+const shortDay = (iso: string) => (iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '')
+type TrackTone = 'ok' | 'wait' | 'no'
+type TrackChip = { key: string; label: string; tone: TrackTone; tip: string }
+function trackChips(t: OOTrack): TrackChip[] {
+  const all = (n: number) => n >= t.owners
+  const out: TrackChip[] = [
+    { key: 'intro', tone: t.intro ? 'ok' : 'no', label: t.intro ? 'Intro email sent ' + shortDay(t.intro) : 'Intro email not sent', tip: 'The introductory email from sales or the GM. It goes from their own mailbox, so it is marked sent on the owner’s page.' },
+    { key: 'portal', tone: all(t.invited) ? 'ok' : t.invited ? 'wait' : 'no', label: all(t.invited) ? 'Portal email sent ' + shortDay(t.invitedAt) : t.invited ? `Portal email sent to ${t.invited} of ${t.owners}` : 'Portal email not sent', tip: 'The owner-portal email with their sign-in link (Send invite), one to each owner.' },
+    { key: 'signin', tone: all(t.signedIn) ? 'ok' : t.signedIn || t.invited ? 'wait' : 'no', label: all(t.signedIn) ? 'Signed in ' + shortDay(t.seenAt) : t.signedIn ? `${t.signedIn} of ${t.owners} signed in` : 'Not signed in yet', tip: 'Whether the owner has opened their portal and signed in, and when they were last there.' },
+    { key: 'home', tone: t.home ? 'ok' : 'no', label: t.home ? 'Home details in' : 'Home details missing', tip: 'The home: address, beds, baths, access.' },
+  ]
+  if (t.inventory !== 'na') out.push({ key: 'inventory', tone: t.inventory === 'done' ? 'ok' : t.inventory === 'started' ? 'wait' : 'no', label: t.inventory === 'done' ? 'Inventory finished' : t.inventory === 'started' ? 'Inventory started' : 'Inventory not started', tip: 'The owner’s supplies check: what is already in the home.' })
+  if (t.w9 !== 'na') out.push({ key: 'w9', tone: t.w9 ? 'ok' : 'no', label: t.w9 ? 'W-9 received' : 'W-9 missing', tip: 'The owner’s W-9, sent through the portal.' })
+  if (t.ach !== 'na') out.push({ key: 'ach', tone: t.ach ? 'ok' : 'no', label: t.ach ? 'ACH received' : 'ACH missing', tip: 'The owner’s payout (ACH) authorization, sent through the portal.' })
+  return out
+}
+const TRACK_TONE: Record<TrackTone, string> = { ok: 'bg-emerald-50 text-emerald-800 border-emerald-200', wait: 'bg-amber-50 text-amber-900 border-amber-200', no: 'bg-rose-50 text-rose-800 border-rose-200' }
+function TrackRow({ t, big }: { t: OOTrack; big?: boolean }) {
+  return (
+    <div className={'flex flex-wrap ' + (big ? 'gap-2' : 'gap-1.5')}>
+      {trackChips(t).map(c => (
+        <span key={c.key} title={c.tip} className={'inline-flex items-center gap-1 rounded-full border font-semibold whitespace-nowrap ' + TRACK_TONE[c.tone] + (big ? ' px-3 py-1.5 text-[13px]' : ' px-2 py-0.5 text-[11.5px]')}>
+          {c.tone === 'ok' ? <Check size={big ? 14 : 11} /> : c.tone === 'wait' ? <Clock size={big ? 14 : 11} /> : <X size={big ? 14 : 11} />}{c.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+/** What the list can be narrowed to: the things still outstanding. */
+const TRACK_FILTERS: { key: string; label: string; hit: (t: OOTrack) => boolean }[] = [
+  { key: 'portal', label: 'Portal email not sent', hit: t => t.invited < t.owners },
+  { key: 'signin', label: 'Not signed in', hit: t => t.signedIn < t.owners },
+  { key: 'inventory', label: 'Inventory not finished', hit: t => t.inventory !== 'na' && t.inventory !== 'done' },
+  { key: 'paper', label: 'W-9 or ACH missing', hit: t => t.w9 === false || t.ach === false },
+]
 
 function copyText(t: string, done: () => void) {
   const fb = () => { const a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select(); try { document.execCommand('copy') } catch { /* */ } a.remove(); done() }
@@ -250,17 +289,24 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
 }
 
 // ── the introductory email, ready to copy ──
-function IntroEmail({ rec }: { rec: Any }) {
+function IntroEmail({ rec, onRec }: { rec: Any; onRec?: (r: Any) => void }) {
   const [from, setFrom] = useState<'sales' | 'gm'>(rec.custom.from || 'sales')
   const e = introEmail({ ...rec, custom: { ...rec.custom, from } }, ownerLink(rec.code))
   const to = rec.custom.ownerEmail || ''
   const [team, setTeam] = useState<string[]>([])
   useEffect(() => { fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => setTeam(d?.settings?.teamCc || [])).catch(() => {}) }, [])
   const cc = Array.from(new Set([from === 'sales' ? rec.custom.gm.email : '', ...team].filter(Boolean))).join(', ')
+  // It leaves from a person's own mailbox, so Lighthouse cannot see it go: opening it in email marks it sent, and it can be set by hand.
+  const intro = rec.intro as { at: string; by: string } | null | undefined
+  async function setSent(sent: boolean) {
+    const d = await fetch('/api/owner-onboarding/' + rec.code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intro: { sent, from } }) }).then(r => r.json()).catch(() => null)
+    if (d?.record && onRec) onRec(d.record)
+  }
   return (
     <section className={card}>
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Introductory email</h2>
+        <h2 className="font-serif text-[22px] leading-none text-ink">Introductory email</h2>
+        <span className={'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-semibold mr-auto ' + (intro ? TRACK_TONE.ok : TRACK_TONE.no)}>{intro ? <Check size={12} /> : <X size={12} />}{intro ? 'Sent ' + shortDay(intro.at) + (intro.by ? ' by ' + intro.by.split('@')[0] : '') : 'Not sent yet'}</span>
         <div className="inline-flex rounded-full bg-app p-0.5 text-[12px] font-semibold">
           {(['sales', 'gm'] as const).map(k => <button key={k} type="button" onClick={() => setFrom(k)} className={'rounded-full px-3 py-1 ' + (from === k ? 'bg-white text-ink shadow-sm' : 'text-muted')}>From {k === 'sales' ? (rec.custom.sales.name.split(' ')[0] || 'sales') : (rec.custom.gm.name.split(' ')[0] || 'the GM')}</button>)}
         </div>
@@ -273,8 +319,10 @@ function IntroEmail({ rec }: { rec: Any }) {
       <pre className="mt-1 whitespace-pre-wrap rounded-xl bg-app p-3 text-[13px] leading-relaxed text-ink font-sans max-h-[360px] overflow-auto">{e.body}</pre>
       <div className="flex flex-wrap gap-2 mt-3">
         <CopyBtn text={e.body} label="Copy message" />
-        <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(e.subject)}${cc ? '&cc=' + encodeURIComponent(cc) : ''}&body=${encodeURIComponent(e.body)}`} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Mail size={13} /> Open in my email</a>
+        <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(e.subject)}${cc ? '&cc=' + encodeURIComponent(cc) : ''}&body=${encodeURIComponent(e.body)}`} onClick={() => { if (!intro) setSent(true) }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Mail size={13} /> Open in my email</a>
+        <button type="button" onClick={() => setSent(!intro)} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink">{intro ? 'Mark as not sent' : 'Mark as sent'}</button>
       </div>
+      <p className="text-[11.5px] text-muted mt-2">This email goes from your own mailbox. Opening it in your email marks it sent; if you copied it instead, press Mark as sent.</p>
     </section>
   )
 }
@@ -332,6 +380,7 @@ export function OwnerOnboardingDesk() {
   const [links, setLinks] = useState<OOIndexRow[] | null>(null)
   const [q, setQ] = useState('')
   const [showArch, setShowArch] = useState(false)
+  const [flt, setFlt] = useState('')
   const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
@@ -354,7 +403,9 @@ export function OwnerOnboardingDesk() {
     } catch (err: Any) { setMsg(err.message) } finally { setBusy(false) }
   }
 
-  const shown = (links || []).filter(l => (showArch || !l.archived) && (!q.trim() || (l.ownerName + ' ' + l.property + ' ' + l.unitLabel).toLowerCase().includes(q.trim().toLowerCase())))
+  const inScope = (links || []).filter(l => (showArch || !l.archived) && (!q.trim() || (l.ownerName + ' ' + l.property + ' ' + l.unitLabel).toLowerCase().includes(q.trim().toLowerCase())))
+  const fHit = TRACK_FILTERS.find(x => x.key === flt)
+  const shown = fHit ? inScope.filter(l => l.track && fHit.hit(l.track)) : inScope
   const P = (k: 'gm' | 'sales', key: string, label: string) => <label className="block"><span className={lab}>{label}</span><input value={f[k][key]} onChange={e => setF({ ...f, [k]: { ...f[k], [key]: e.target.value } })} className={field} /></label>
 
   return (
@@ -438,11 +489,19 @@ export function OwnerOnboardingDesk() {
           <label className="inline-flex items-center gap-1.5 text-[12.5px] text-muted"><input type="checkbox" checked={showArch} onChange={e => setShowArch(e.target.checked)} /> Archived</label>
           <label className="flex items-center gap-2 rounded-xl border border-line px-3 py-2 w-full sm:w-64"><Search size={14} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Find an owner or property" className="w-full min-w-0 text-[13px] bg-transparent outline-none" /></label>
         </div>
-        {!links ? <p className="py-10 text-center text-muted"><Loader2 size={15} className="inline animate-spin" /></p> : !shown.length ? <p className="p-5 text-[13px] text-muted">No owner links yet. Make the first with “New owner link”.</p> : (
+        {links && inScope.length ? (
+          <div className="flex flex-wrap items-center gap-1.5 px-4 py-3 border-b border-line">
+            <span className={lab + ' mr-1'}>Waiting on</span>
+            {TRACK_FILTERS.map(x => { const n = inScope.filter(l => l.track && x.hit(l.track)).length; return <button key={x.key} type="button" onClick={() => setFlt(flt === x.key ? '' : x.key)} className={'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12.5px] font-semibold ' + (flt === x.key ? 'bg-ink text-white border-ink' : n ? TRACK_TONE.no : 'bg-app text-muted border-line')}>{x.label}<span className="tabular-nums">{n}</span></button> })}
+            {flt ? <button type="button" onClick={() => setFlt('')} className="text-[12.5px] font-semibold text-muted underline ml-1">Show all</button> : null}
+          </div>
+        ) : null}
+        {!links ? <p className="py-10 text-center text-muted"><Loader2 size={15} className="inline animate-spin" /></p> : !shown.length ? <p className="p-5 text-[13px] text-muted">{flt ? 'Nobody is waiting on that.' : 'No owner links yet. Make the first with “New owner link”.'}</p> : (
           <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-[13px]">
             <thead><tr className="text-left text-[10.5px] uppercase tracking-[0.14em] text-muted border-b border-line"><th className="py-2.5 pl-4 pr-3 font-semibold">Owner</th><th className="pr-3 font-semibold">Property · unit</th><th className="pr-3 font-semibold">Where it stands</th><th className="pr-3 font-semibold text-right">Need</th><th className="pr-3 font-semibold">Paperwork</th><th className="pr-4 font-semibold text-right">Updated</th></tr></thead>
             <tbody>{shown.map(l => (
-              <tr key={l.code} onClick={() => { window.location.href = '/owner-onboarding/' + l.code }} className="border-b border-line last:border-0 cursor-pointer hover:bg-app">
+              <Fragment key={l.code}>
+              <tr onClick={() => { window.location.href = '/owner-onboarding/' + l.code }} className={'cursor-pointer hover:bg-app ' + (l.track ? '' : 'border-b border-line last:border-0')}>
                 <td className="py-2.5 pl-4 pr-3 font-semibold text-ink">{l.ownerName || '—'}{l.archived ? <span className="ml-1 text-[11px] text-muted">(archived)</span> : null}</td>
                 <td className="pr-3 text-ink">{[l.property, l.unitLabel].filter(Boolean).join(' · ') || <span className="text-muted">—</span>}{(l.units || 0) > 1 ? <span className="ml-1 text-[11px] text-muted">{l.units} units</span> : null}{l.listingId ? <span className="ml-1 text-[10.5px] text-emerald-700 font-semibold">GUESTY</span> : null}</td>
                 <td className="pr-3"><span className="flex items-center gap-1" title={OO_STEPS.map((s, i) => s.label + ': ' + ({ d: 'done', g: 'in progress', t: 'to do' } as Any)[(l.steps || '')[i] || 't']).join('\n')}>{OO_STEPS.map((s, i) => { const c = (l.steps || '')[i] || 't'; return <i key={s.key} className={'inline-block w-4 h-1.5 rounded-full ' + (c === 'd' ? 'bg-emerald-600' : c === 'g' ? 'bg-[#8C6D3A]' : 'bg-line')} /> })}</span><span className="block text-[12px] text-ink mt-1">{l.stage}{l.callAt ? <span className="text-muted"> · call {new Date(l.callAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span> : null}</span></td>
@@ -450,6 +509,8 @@ export function OwnerOnboardingDesk() {
                 <td className="pr-3 text-[12px]">{[l.agreement ? 'Agreement' : '', l.paperwork ? 'W-9 + ACH' : '', l.linen === 'sent' ? 'Linen sent' : l.linen === 'approved' ? 'Linen approved' : '', l.walk === 'done' ? 'Walkthrough done' : l.walk === 'sent' ? 'Walkthrough sent' : l.walk === 'needed' ? 'Walkthrough needed' : ''].filter(Boolean).join(' · ') || <span className="text-muted">None yet</span>}</td>
                 <td className="pr-4 text-right text-[12px] text-muted whitespace-nowrap">{new Date(l.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
               </tr>
+              {l.track ? <tr onClick={() => { window.location.href = '/owner-onboarding/' + l.code }} className="border-b border-line last:border-0 cursor-pointer"><td colSpan={6} className="pl-4 pr-4 pb-3"><TrackRow t={l.track} /></td></tr> : null}
+              </Fragment>
             ))}</tbody>
           </table></div>
         )}
@@ -546,6 +607,19 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
         </div>
       </header>
       {msg ? <p className="oo-noprint text-[12.5px] text-muted -mt-3 mb-3">{msg}</p> : null}
+      {rec.track ? (
+        <section className={card + ' oo-noprint mb-6'}>
+          <p className={lab + ' mb-2.5'}>Where the owner stands</p>
+          <TrackRow t={rec.track} big />
+          {(rec.owners || []).length ? (
+            <div className="mt-3 pt-3 border-t border-line grid gap-1 text-[12.5px] text-ink">
+              {[{ name: rec.custom.ownerName, a: rec.ownerAccess }, ...(rec.owners || []).map((o: Any) => ({ name: o.name, a: o.access }))].map((o: Any, i: number) => (
+                <p key={i}><b>{o.name || 'Owner ' + (i + 1)}</b><span className="text-muted">{' · '}{o.a?.invitedAt ? 'portal email ' + shortDay(o.a.invitedAt) : 'portal email not sent'}{' · '}{o.a?.lastSeenAt || o.a?.activatedAt ? 'last signed in ' + shortDay(o.a.lastSeenAt || o.a.activatedAt) : 'not signed in yet'}</span></p>
+              ))}
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="space-y-6 min-w-0">
@@ -656,7 +730,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             </div>
           </section>
 
-          <div className="oo-noprint space-y-6"><InviteOwner rec={rec} onRec={setRec} /><IntroEmail rec={rec} /></div>
+          <div className="oo-noprint space-y-6"><InviteOwner rec={rec} onRec={setRec} /><IntroEmail rec={rec} onRec={setRec} /></div>
         </div>
 
         <div className="space-y-6 min-w-0">

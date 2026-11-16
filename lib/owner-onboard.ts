@@ -173,12 +173,43 @@ export type OORecord = {
   /** MORE OWNERS (Jon, 2026-11-13: "option for multiple owners… each will need portal passcode and access"). The first
    *  owner stays in `custom` and `auth`; each owner added here has their own invite, password and sign-in. */
   owners?: OOCoOwner[]
+  /** The introductory email (from sales or the GM) is sent from a person's own mailbox, so the team marks it sent. */
+  intro?: { at: string; by: string; from: 'sales' | 'gm' } | null
   archived?: boolean
+}
+// WHERE THE OWNER STANDS, AT A GLANCE (Jon, 2026-11-16: "see if the onboarding email was sent or if the onboarding form
+// was logged in… super visible in the main page and in the admin page… should show inventory finished and W-9 and ACH
+// finished"). One small object, computed from the record on the server (it reads the sign-in data, which never leaves
+// it), carried on the list's index row and on the team's view of a record.
+export type OOTrack = {
+  /** when the introductory email was marked sent, '' if not */ intro: string
+  /** owners on the link, how many have been sent the owner-portal email, and the latest send */ owners: number; invited: number; invitedAt: string
+  /** how many owners have signed in to the portal, and the latest visit */ signedIn: number; seenAt: string
+  home: boolean
+  /** the supplies check: 'na' when the link does not ask for it */ inventory: 'na' | 'no' | 'started' | 'done'
+  /** 'na' when the link does not ask for the W-9 and bank details */ w9: boolean | 'na'; ach: boolean | 'na'
+  agreement: boolean
+}
+export function trackOf(r: OORecord): OOTrack {
+  const accs = [{ auth: r.auth }, ...(r.owners || []).map(o => ({ auth: o.auth }))]
+  const latest = (xs: (string | undefined)[]) => xs.filter(Boolean).sort().pop() || ''
+  const inv = accs.filter(a => a.auth?.invitedAt)
+  const si = accs.filter(a => a.auth?.pass || a.auth?.activatedAt || a.auth?.lastSeenAt)
+  const touched = Object.values(r.marks || {}).some(Boolean) || Object.keys(r.counts || {}).length > 0
+  const ask = r.custom
+  return {
+    intro: r.intro?.at || '', owners: accs.length, invited: inv.length, invitedAt: latest(inv.map(a => a.auth?.invitedAt)),
+    signedIn: si.length, seenAt: latest(si.map(a => a.auth?.lastSeenAt || a.auth?.activatedAt)),
+    home: !!(r.home && String(r.home.address || '').trim()),
+    inventory: ask.askSupplies === false ? 'na' : r.submittedAt || r.stock ? 'done' : touched ? 'started' : 'no',
+    w9: ask.askPayout === false ? 'na' : !!r.payout?.w9, ach: ask.askPayout === false ? 'na' : !!r.payout?.ach,
+    agreement: !!r.agreement,
+  }
 }
 /** What the list of links shows. */
 export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
-  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** every owner's email on the link */ emails?: string[]; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | ''; /** the unit walkthrough: needed once supplies are in, then sent, then done */ walk?: 'needed' | 'sent' | 'done' | '' }
+  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** every owner's email on the link */ emails?: string[]; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | ''; /** the unit walkthrough: needed once supplies are in, then sent, then done */ walk?: 'needed' | 'sent' | 'done' | ''; /** where the owner stands (trackOf); missing on rows written before 2026-11-16 until they are rebuilt */ track?: OOTrack }
 
 export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '', wifiName: '', wifiPass: '' }
 
@@ -222,7 +253,7 @@ export function ownerView(r: OORecord) {
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
-export function teamView(r: OORecord) { const { auth, owners, ...rest } = r; /* the walkthrough key stays: the team copies its link */ const acc = (a?: OOAuth | null) => ({ hasPassword: !!a?.pass, invitedAt: a?.invitedAt || '', activatedAt: a?.activatedAt || '', lastSeenAt: a?.lastSeenAt || '' }); return { ...rest, owners: (owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone, access: acc(o.auth) })), payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' } } }
+export function teamView(r: OORecord) { const { auth, owners, ...rest } = r; /* the walkthrough key stays: the team copies its link */ const acc = (a?: OOAuth | null) => ({ hasPassword: !!a?.pass, invitedAt: a?.invitedAt || '', activatedAt: a?.activatedAt || '', lastSeenAt: a?.lastSeenAt || '' }); return { ...rest, owners: (owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone, access: acc(o.auth) })), payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' }, track: trackOf(r) } }
 
 /** A US bank routing number: nine digits with a valid checksum. */
 export function routingOk(v: string): boolean {

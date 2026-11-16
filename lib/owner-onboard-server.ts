@@ -9,7 +9,7 @@ import { itemsFor as kitItemsFor, lineFor, KIT_ITEMS, type KitSize, type KitSele
 const KIT_ITEMS_ORDER = () => KIT_ITEMS.map(k => k.key)
 import { normLinenStandard, linenQuote, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
 import type { OOOrder, OOOrderLine } from './owner-onboard'
-import { stockOf } from './owner-onboard'
+import { stockOf, trackOf } from './owner-onboard'
 import { OO_PREFIX, OO_INDEX, cleanHome, unitsOf, unitName, DEFAULT_GM, DEFAULT_SALES, freshSteps, stageOf, type OORecord, type OOIndexRow, type OOItem, type OOHome, type OOCustom } from './owner-onboard'
 
 const newCode = () => { const c: any = (globalThis as any).crypto; return String(c?.randomUUID ? c.randomUUID() : Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 14) }
@@ -62,7 +62,7 @@ function indexRow(r: OORecord, items: OOItem[] | null): OOIndexRow {
   const marks = Object.entries(r.marks).filter(([k]) => !keys || keys.has(k))
   return { code: r.code, ownerName: r.custom.ownerName, property: r.attach.property, unitLabel: r.attach.unitLabel, listingId: r.attach.listingId, createdAt: r.createdAt, updatedAt: r.updatedAt, createdBy: r.createdBy,
     stage: stageOf(r), submitted: !!r.submittedAt, have: marks.filter(([, m]) => m === 'have').length, need: marks.filter(([, m]) => m === 'need').length,
-    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), emails: [r.custom.ownerEmail, ...(r.owners || []).map(o => o.email)].map(e => String(e || '').trim().toLowerCase()).filter(Boolean), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', walk: r.walk?.doneAt ? 'done' : r.walk?.sentAt ? 'sent' : r.submittedAt || r.stock || marks.length ? 'needed' : '', ...(r.archived ? { archived: true } : {}) }
+    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), emails: [r.custom.ownerEmail, ...(r.owners || []).map(o => o.email)].map(e => String(e || '').trim().toLowerCase()).filter(Boolean), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', walk: r.walk?.doneAt ? 'done' : r.walk?.sentAt ? 'sent' : r.submittedAt || r.stock || marks.length ? 'needed' : '', track: trackOf(r), ...(r.archived ? { archived: true } : {}) }
 }
 async function writeIndex(row: OOIndexRow, by: string | null) {
   const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])
@@ -71,7 +71,16 @@ async function writeIndex(row: OOIndexRow, by: string | null) {
 }
 export async function listRecords(): Promise<OOIndexRow[]> {
   const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])
-  return (Array.isArray(idx) ? idx : []).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+  let list = Array.isArray(idx) ? idx : []
+  // Rows written before the list carried the owner's status (track) are rebuilt from their records the first time the
+  // list is opened: a few at a time, written back once, and never re-dated (updatedAt is the record's own).
+  const old = list.filter(x => x && !x.track).slice(0, 60)
+  if (old.length) {
+    const fresh = new Map<string, OOIndexRow>()
+    await Promise.all(old.map(async x => { const r = await readRecord(x.code).catch(() => null); if (r) fresh.set(x.code, { ...x, track: trackOf(r) }) }))
+    if (fresh.size) { list = list.map(x => fresh.get(x.code) || x); await setSetting(OO_INDEX, list, null).catch(() => null) }
+  }
+  return list.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
 }
 
 export async function saveRecord(r: OORecord, by: string | null): Promise<{ ok: boolean; error?: string }> {

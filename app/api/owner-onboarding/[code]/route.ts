@@ -44,6 +44,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     const st = r.steps.find(s => s.key === 'call'); if (st && r.call.at && st.status === 'todo') { st.status = 'doing'; st.date = r.call.at.slice(0, 10) }
   }
   if (typeof b.archived === 'boolean') r.archived = b.archived
+  // the introductory email goes from a person's own mailbox, so sending it is recorded by hand (or by pressing Open in my email)
+  if (b.intro && typeof b.intro === 'object') r.intro = b.intro.sent === false ? null : { at: new Date().toISOString(), by: String(g.access.email || '').slice(0, 160), from: b.intro.from === 'gm' ? 'gm' : 'sales' }
   // THE UNIT JUST GOT ITS LISTING: what the owner told us and approved goes into that listing's FAQ.
   if (r.attach.listingId && r.attach.listingId !== hadListing) await syncFaq(r, g.access.email || null).catch(() => null)
   const w = await saveRecord(r, g.access.email || null)
