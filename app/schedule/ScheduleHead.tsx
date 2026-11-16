@@ -46,7 +46,8 @@ export function ScheduleHead() {
   // two people short, and seven people were past a full day. The board now tells the pill when it is short, the pill
   // leads with that, and people past a full day keep it off green.
   const short = sel ? sel.short : 0
-  const tone: Tone = !k ? 'slate' : short > 0 || k.utilisationPct > 100 ? 'rose' : k.utilisationPct >= 85 || k.overloaded > 0 ? 'amber' : 'emerald'
+  // The labor KPI is a guide, not an alarm (Jon, 2026-11-02): under it is amber, never red. Red is only "more work than hours".
+  const tone: Tone = !k ? 'slate' : k.utilisationPct > 100 ? 'rose' : short > 0 || k.utilisationPct >= 85 || k.overloaded > 0 ? 'amber' : 'emerald'
   const title = (k
     ? (other ? dayWord : 'Today') + ', by the clock (cleaning time + travel vs. shift time — a different question from the KPI hours on the board below): ' + hrs(k.workMinutes + k.travelMinutes) + ' of work on ' + k.peopleOnShift + ' '
       + (k.peopleOnShift === 1 ? 'person' : 'people') + ' ≈ ' + hrs(k.capacityMinutes) + ' capacity. '
@@ -63,7 +64,7 @@ export function ScheduleHead() {
           <span className="inline-flex items-center gap-1">
             <Users size={12} />
             <span className="sm:hidden">{k ? 'Crew ' + k.utilisationPct + '% ' + dayWord : 'Doable?'}</span>
-            <span className="hidden sm:inline">{k ? (short > 0 ? 'Short ' + short + (short === 1 ? ' cleaner ' : ' cleaners ') + dayWord : k.utilisationPct > 100 ? 'Too much work ' + dayWord : k.utilisationPct >= 85 ? 'Team nearly full ' + dayWord : k.overloaded > 0 ? 'Work is uneven ' + dayWord : 'Team has room ' + dayWord) + ' · ' + k.utilisationPct + '% by the clock' : 'Is today doable?'}</span>
+            <span className="hidden sm:inline">{k ? (short > 0 ? short + (short === 1 ? ' cleaner' : ' cleaners') + ' under the labor guide ' + dayWord : k.utilisationPct > 100 ? 'Too much work ' + dayWord : k.utilisationPct >= 85 ? 'Team nearly full ' + dayWord : k.overloaded > 0 ? 'Work is uneven ' + dayWord : 'Team has room ' + dayWord) + ' · ' + k.utilisationPct + '% by the clock' : 'Is today doable?'}</span>
             {k && k.unassignedCount > 0 ? <span className="opacity-80 hidden sm:inline">· {k.unassignedCount} {k.unassignedCount === 1 ? 'clean' : 'cleans'} with nobody on {k.unassignedCount === 1 ? 'it' : 'them'}</span> : null}
             {k && k.overloaded > 0 ? <span className="opacity-80 hidden sm:inline">· {k.overloaded} past a full day</span> : null}
             <ChevronDown size={12} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />

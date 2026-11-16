@@ -127,7 +127,7 @@ export type AdScene = {
   /** On-screen headline. Wrap a word in **double stars** to give it the accent colour. A newline forces a break. */
   head: string
   sub: string
-  /** Per-kind rows: stats "450+|listings", cards "Priced daily|Dedicated revenue managers", feed/checks "Title|detail". */
+  /** Per-kind rows: stats "500+|listings", cards "Priced daily|Dedicated revenue managers", feed/checks "Title|detail". */
   items: string[]
   /** Photo URLs (Guesty / Cloudinary), drawn through the same-origin image proxy. */
   photos: string[]
@@ -330,7 +330,7 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'photo', label: 'Photo', hint: 'One photo full-bleed, headline in the lower third.' },
   { kind: 'wall', label: 'Montage', hint: 'Full-screen photos one after another in quick cuts (2 to 5 photos), headline holds over them. Never a grid.' },
   { kind: 'cards', label: 'Three beats', hint: 'Three full-screen moments one after another, each with its own big title. Rows: Title|line' },
-  { kind: 'stats', label: 'Numbers', hint: 'Figures that count up. Rows: 450+|listings' },
+  { kind: 'stats', label: 'Numbers', hint: 'Figures that count up. Rows: 500+|listings' },
   { kind: 'feed', label: 'Live feed', hint: 'Cards that slide in, like Lighthouse at work. Rows: Title|detail' },
   { kind: 'checks', label: 'Checklist', hint: 'Items that tick off, beside a photo. Rows: item' },
   { kind: 'rise', label: 'Results', hint: 'Headline with a rising line. Rows become chips.' },
@@ -342,7 +342,7 @@ export const KINDS: { kind: AdKind; label: string; hint: string }[] = [
   { kind: 'cta', label: 'Book now', hint: 'Guest end card / social post: photo, headline, a button. Row 1 is the button text.' },
   // Pro designs — the twelve from the two sales videos (2026-11-04), editable here.
   { kind: 'beats', label: 'Beat lines', hint: 'Pro · the hook: 2 to 4 short lines (one per line of the headline) landing one per beat over the photo. **Gold** the key word.' },
-  { kind: 'tiles', label: 'Count-up tiles', hint: 'Pro · figures that count up under a gold rule. Rows: 450+|listings (up to 9). Sub: chips split by · (e.g. Miami · Fort Lauderdale).' },
+  { kind: 'tiles', label: 'Count-up tiles', hint: 'Pro · figures that count up under a gold rule. Rows: 500+|listings (up to 9). Sub: chips split by · (e.g. Miami · Fort Lauderdale).' },
   { kind: 'grid', label: 'Photo wall', hint: 'Pro · up to 9 photos as a labelled wall that pops in (rows label the photos). With a headline it becomes a full-bleed dimmed wall with the line over it.' },
   { kind: 'calendar', label: 'Pricing calendar', hint: 'Pro · nightly rates for 5 weeks, a few cells repricing live. Eyebrow: the label. Sub: the green tag. Row 1: footnote. Row 2: Mon–Sun base rates (189,179,…).' },
   { kind: 'dates', label: 'Event rates', hint: 'Pro · event cards that flip from a standard rate to a premium one. Rows: Dec|Art Basel Miami Beach|$309|$899. Sub: footnote.' },
@@ -952,7 +952,7 @@ export const IDEAS: { key: string; goal: string; title: string; why: string; pro
   { key: 'highdates', goal: 'owners', title: 'Priced for the big dates', why: 'Owners worry about leaving money on the table on Art Basel, New Year, F1.', prompt: 'An owner ad about pricing the high-demand dates months ahead — Art Basel, New Year’s Eve, the boat shows, Formula 1 Miami — with dedicated revenue managers pricing every day. End on the contact card with Nick.' },
   { key: 'lighthouse', goal: 'owners', title: 'Meet Lighthouse', why: 'Our own AI is a differentiator no competitor has: show it working.', prompt: 'An owner ad introducing Lighthouse, our in-house AI: spots recurring issues before guests do, turns problems into tasks, builds guest guidebooks, optimises listings, monitors reviews. Use the Live feed scene. End on the contact card with Nick.' },
   { key: 'team', goal: 'owners', title: 'One complete team', why: 'Owners leave managers over service; show housekeeping, maintenance, inspections, guest care.', prompt: 'An owner ad about the complete in-house team: housekeeping, maintenance, inspections, the Customer Care Team — and what that means for reviews and revenue. End on the contact card with Nick.' },
-  { key: 'partner', goal: 'partners', title: 'Your client just asked', why: 'Realtors get asked “who should manage it?” — give them the answer to forward.', prompt: 'A partner ad for realtors and advisors: when a client asks who should manage their property, here is the answer — Stay Hospitality, 450+ listings, 10 years, daily pricing, one team. Send an address, get a projection. End on the contact card with Nick.' },
+  { key: 'partner', goal: 'partners', title: 'Your client just asked', why: 'Realtors get asked “who should manage it?” — give them the answer to forward.', prompt: 'A partner ad for realtors and advisors: when a client asks who should manage their property, here is the answer — Stay Hospitality, 500+ listings, 10 years, daily pricing, one team. Send an address, get a projection. End on the contact card with Nick.' },
   { key: 'brand', goal: 'brand', title: 'South Florida, stayed well', why: 'Brand film: the portfolio across Miami, Fort Lauderdale, Pompano and Palm Beach.', prompt: 'A brand film for Stay Hospitality guests: South Florida stays from downtown Miami high-rises to the beach — montage of our best places, one line per city. End on Book at stay-hospitality.com.' },
 ]
 
@@ -3299,7 +3299,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, p: AdProject, tl: Timel
 
 /** Ask the AI to write: what we send it about the house, so every script starts from the same facts. */
 export const HOUSE_FACTS = `Stay Hospitality: short-term rental management across South Florida — 4 markets (Miami, Fort Lauderdale, Pompano, Palm Beach). Listings are rebuilt and refreshed every 3 months.
-450+ listings across 140+ properties (hotels are part of the listings — say "listings", never "homes" for the count). 10 years in business. 1,000,000+ guests hosted. 4.6/5 guest rating.
+500+ listings across 140+ properties (hotels are part of the listings — say "listings", never "homes" for the count). 10 years in business. 1,000,000+ guests hosted. 4.6/5 guest rating.
 Revenue: dedicated revenue managers price every listing every day against the competitive set; high-demand dates (Art Basel, New Year's Eve, the boat shows, Formula 1 Miami) are priced months ahead. We price to convert: higher conversion ranks listings higher, which books more and earns more.
 Distribution: 40+ channels (Airbnb, Vrbo, Booking.com, Expedia, Marriott, Blueground, our direct site stay-hospitality.com).
 Listings: built to convert (best photos first, copy that sells), refreshed every three months; underperformers are caught and fixed.
@@ -3327,9 +3327,9 @@ export type AdStory = AdTemplate & { length: string; who: string }
  *  welcome video, what the first 90 days looks like, team intro, our story"). Every fact is from HOUSE_FACTS / the house
  *  onboarding copy; photos come from the library; every word is editable after it is built. */
 export const STORIES: AdStory[] = [
-  { key: 'our-story', label: 'Our story · Stay Hospitality', length: '≈ 60 s', who: 'Owners, partners, the website', blurb: 'Who we are in a minute: ten years, 450+ listings, how we run revenue, tools and team — ends on Nick.', audience: 'owners', format: '16:9', name: 'Our story', scenes: [
-    { kind: 'cinema', vo: 'Ten years. Four hundred and fifty listings. One standard.', head: 'Ten **years.**\n450+ **listings.**\nOne **standard.**', sub: 'Stay Hospitality · South Florida', items: [], q: 'exterior', n: 1 },
-    { kind: 'stats', vo: 'Stay Hospitality manages short-term rentals across Miami, Fort Lauderdale, Pompano and Palm Beach.', head: 'South Florida, **by the numbers**', sub: '', items: ['10|years in business', '450+|listings', '140+|properties', '1M+|guests hosted', '4.6|guest rating', '40+|booking channels'], q: 'pool', n: 1 },
+  { key: 'our-story', label: 'Our story · Stay Hospitality', length: '≈ 60 s', who: 'Owners, partners, the website', blurb: 'Who we are in a minute: ten years, 500+ listings, how we run revenue, tools and team — ends on Nick.', audience: 'owners', format: '16:9', name: 'Our story', scenes: [
+    { kind: 'cinema', vo: 'Ten years. Four hundred and fifty listings. One standard.', head: 'Ten **years.**\n500+ **listings.**\nOne **standard.**', sub: 'Stay Hospitality · South Florida', items: [], q: 'exterior', n: 1 },
+    { kind: 'stats', vo: 'Stay Hospitality manages short-term rentals across Miami, Fort Lauderdale, Pompano and Palm Beach.', head: 'South Florida, **by the numbers**', sub: '', items: ['10|years in business', '500+|listings', '140+|properties', '1M+|guests hosted', '4.6|guest rating', '40+|booking channels'], q: 'pool', n: 1 },
     { kind: 'wall', vo: 'From downtown high-rises to beachfront buildings, we run whole buildings and the units inside them.', head: 'Buildings, **not just units.**', sub: '', items: [], q: 'exterior', n: 4 },
     { kind: 'cards', vo: 'Three things decide what a property earns: how the rate is managed, the tools it runs on, and the team that shows up.', head: '', sub: '', items: ['Revenue|Priced every day against the competitive set', 'Tools|Guesty, PriceLabs, Breezeway and Lighthouse', 'Team|Housekeeping, maintenance, inspections and guest care — in-house'], q: 'living room', n: 3 },
     { kind: 'feed', vo: 'Lighthouse is our own AI platform. It optimizes listings, builds guidebooks, catches recurring issues and turns problems into tasks before a guest notices.', head: '**Lighthouse**, built in-house', sub: 'Our own AI platform', items: ['Listings optimized|Best photos first, copy that sells, refreshed every three months', 'Issues caught early|Recurring problems become tasks automatically', 'Guests looked after|Guidebooks, ID checks, reviews and messages monitored'], q: 'kitchen', n: 1 },
@@ -3356,7 +3356,7 @@ export const STORIES: AdStory[] = [
     { kind: 'title', vo: 'One complete team. Here is who runs your property.', head: 'One complete **team.**', sub: 'Stay Hospitality', items: [], q: 'lobby', n: 1 },
     { kind: 'team', vo: 'Nick in business development. Jon, our general manager. Roberto managing operations. Ronnie on maintenance. Karla leading customer care.', head: 'The **people**', sub: '', items: ['Nick Carline|Business Development', 'Jon McGill|General Manager', 'Roberto Chirboga|Manager', 'Ronnie Regis|Maintenance Supervisor', 'Karla Valle|Customer Care'] },
     { kind: 'checks', vo: 'Behind them, four crews, all in-house: housekeeping, maintenance, inspections, and the Customer Care Team for every guest.', head: 'Four crews, **in-house**', sub: '', items: ['Housekeeping', 'Maintenance', 'Inspections', 'Customer Care Team'], q: 'living room', n: 1 },
-    { kind: 'stats', vo: 'Across Miami, Fort Lauderdale, Pompano and Palm Beach.', head: '', sub: '', items: ['450+|listings', '140+|properties', '4.6|guest rating', '1M+|guests hosted'], q: 'pool', n: 1 },
+    { kind: 'stats', vo: 'Across Miami, Fort Lauderdale, Pompano and Palm Beach.', head: '', sub: '', items: ['500+|listings', '140+|properties', '4.6|guest rating', '1M+|guests hosted'], q: 'pool', n: 1 },
     { kind: 'contact', vo: 'Meet us in person. Nick is at 651-200-8283.', head: 'Meet us **in person.**', sub: '', items: [], q: 'ocean view', n: 1 },
   ] },
   { key: 'stay-run', label: 'How a stay is run', length: '≈ 40 s', who: 'Owners', blurb: 'The guest journey from booking to review, and the record behind it.', audience: 'owners', format: '16:9', name: 'How a stay is run', scenes: [
@@ -3367,7 +3367,7 @@ export const STORIES: AdStory[] = [
   ] },
   { key: 'partner', label: 'Partner intro', length: '≈ 30 s', who: 'Realtors, lenders, CPAs', blurb: 'Who we are, what we run, and what their client gets — for referral partners.', audience: 'partners', format: '16:9', name: 'For our partners', scenes: [
     { kind: 'kinetic', vo: 'When your client buys a rental, here is who runs it.', head: 'Who runs **your client\'s** rental', sub: '', items: [], q: 'exterior', n: 1 },
-    { kind: 'stats', vo: 'Ten years, four hundred and fifty listings, over a million guests.', head: '', sub: '', items: ['10|years', '450+|listings', '1M+|guests', '4.6|rating'], q: 'pool', n: 1 },
+    { kind: 'stats', vo: 'Ten years, four hundred and fifty listings, over a million guests.', head: '', sub: '', items: ['10|years', '500+|listings', '1M+|guests', '4.6|rating'], q: 'pool', n: 1 },
     { kind: 'cards', vo: 'Revenue managed every day, one in-house team, and a statement every month your client can read.', head: '', sub: '', items: ['Revenue|Priced every day, big dates months ahead', 'Operations|One in-house team, every task photo-checked', 'Transparency|A statement every month, an owner portal any time'], q: 'living room', n: 3 },
     { kind: 'contact', vo: 'Introduce us. Nick, 651-200-8283.', head: 'Introduce **us.**', sub: '', items: [], q: 'ocean view', n: 1 },
   ] },

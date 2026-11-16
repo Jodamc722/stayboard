@@ -574,11 +574,13 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   // Tell the page header which day is open, so its capacity pill describes this day and not
   // always today (app/schedule/ScheduleHead.tsx listens). Not when embedded in another page.
   const todayForHead = (data && data.today) || ''
+  // How many cleaners short the open day is, once the roster is known (an empty roster is "not loaded", not "13 short").
+  const headShort = view === 'day' && !boardIsPast && boardCrew.length > 0 && boardStaff.need > 0 ? Math.max(0, boardStaff.need - boardStaff.working) : 0
   useEffect(() => {
     if (embedded || !boardDate || !todayForHead || typeof window === 'undefined') return
-    window.dispatchEvent(new CustomEvent('lh:schedule-day', { detail: { date: view === 'day' ? boardDate : todayForHead, today: todayForHead, short: view === 'day' && !boardIsPast && boardStaff.need > 0 ? Math.max(0, boardStaff.need - boardStaff.working) : 0 } }))
+    window.dispatchEvent(new CustomEvent('lh:schedule-day', { detail: { date: view === 'day' ? boardDate : todayForHead, today: todayForHead, short: headShort } }))
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boardDate, todayForHead, view])
+  }, [boardDate, todayForHead, view, headShort])
   // WHERE CLEANS COULD GO when the day is short: the first later day of this week whose schedule
   // has room for the whole shortfall, else the one with the most room. Same staffingFor() numbers
   // as the strip; null when the day is not short or no later day has spare hours.

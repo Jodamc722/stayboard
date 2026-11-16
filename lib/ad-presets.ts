@@ -343,7 +343,7 @@ function angles(m: Moment, when: string): Angle[] | null {
         flyer: poster('Same unit. **A whole new listing.**', 'Photos, copy and amenities rebuilt every three months', 'Priced daily · 40+ channels · in-house team', NICK, 'gallery', 'living room', F) },
       { key: 'switch', name: 'New year, new manager?', pitch: 'A straight question for unhappy owners', post: [
         { kind: 'beats', head: 'New year.\n**New manager?**', sub: '', items: [], q: 'building exterior', dur: 3.4 },
-        { kind: 'tiles', head: 'Why owners **switch**', sub: 'Miami · Fort Lauderdale · Pompano · Palm Beach', items: ['450+|listings', '10|years', '4.6|guest rating', '1,000,000+|guests hosted'], q: 'pool', dur: 4, tr: 'push' },
+        { kind: 'tiles', head: 'Why owners **switch**', sub: 'Miami · Fort Lauderdale · Pompano · Palm Beach', items: ['500+|listings', '10|years', '4.6|guest rating', '1,000,000+|guests hosted'], q: 'pool', dur: 4, tr: 'push' },
         hub('And sold on **every channel.**'),
         nick()],
         flyer: poster('New year. **New manager?**', 'More bookings, a lower fee, one complete team', 'Priced daily · 40+ channels · in-house team', NICK, 'dark', 'building exterior', F) },
