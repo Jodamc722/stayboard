@@ -38,7 +38,7 @@ import { CallNoteBtn, CallNoteStrip, CallNoteText } from '@/components/CallNote'
 import { IdCheckWhy, IdActions, ByHandStrip } from '@/components/IdCheckBits'
 import { ThreadThumbs, CheckDetails } from '@/components/CheckPhotos'
 import { checkStatus, checkFacts, CheckChip, checkDot, MoreActions } from '@/components/CheckStatus'
-import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, TaskStatusTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import { whereNow, shiftStatus } from '@/lib/team-where'
 import type { GuestCheckRow } from '@/app/api/guest-checks/route'
@@ -92,9 +92,7 @@ function MaintRow({ t, roster, canAssign: _canAssign, onChanged }: { t: TaskRow;
   return (
     <Row dot={!ta.done && (nobody || t.late || t.prio === 'urgent') ? (t.late || t.prio === 'urgent' ? 'rose' : 'amber') : null} title={t.unit}
       tags={<>
-        <TaskStateTag state={ta.done ? 'done' : state} />
-        {!ta.done && state === 'running' && <BehindTag late={t.late} />}
-        {nobody && !ta.done && <TaskStateTag state="unassigned" />}
+        <TaskStatusTag state={ta.done ? 'done' : state} behind={!ta.done && state === 'running' && t.late} nobody={nobody && !ta.done} />
         {pr && (pr.label === 'urgent' || pr.label === 'high') && !ta.done && <Tag tone={pr.tone} title="Priority in Breezeway">{pr.label}</Tag>}
       </>}
       meta={[t.name, whoShort(t.who), t.market].filter(Boolean).join(' · ')}

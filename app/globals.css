@@ -460,3 +460,12 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 
 /* Mention pop-ups (components/MentionPopups) slide in rather than appear. */
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+/* QUIET ROW ACTIONS (Jon, 2026-11-16: "This is so noisy"). On a desk with a mouse, a row's secondary
+   buttons — reassign, nudge, comments, open in Breezeway, report — wait until the row is hovered or
+   focused. The main action (Assign when nobody is on it, Done) always shows; a comment thread with
+   messages always shows. Phones and tablets have no hover, so everything stays visible there. */
+@media (hover: hover) and (pointer: fine) {
+  .lh-row .lh-quiet { opacity: 0; transition: opacity .12s ease }
+  .lh-row:hover .lh-quiet, .lh-row:focus-within .lh-quiet, .lh-row .lh-quiet[aria-pressed="true"] { opacity: 1 }
+}
