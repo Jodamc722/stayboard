@@ -162,9 +162,20 @@ GOALS
 STORY AND EXPECTATIONS (2026-10-05 — this is what makes copy convert)
 - PAINT THE STAY, NOT THE INVENTORY: open each selling section on a moment a guest will actually have here — the first thing they see walking in, coffee on the balcony, the walk to the water — grounded in a photo or a verified fact. Then the facts.
 - SAY WHO IT SUITS, when the data supports it: a studio with a workspace is for a solo traveller or a couple on a long stay; a 3BR with a full kitchen is for a family or a crew; a building with a pool and gym is for someone who wants to stay in. One honest line placing the right guest saves a wrong booking and a bad review.
-- SET EXPECTATIONS IN PLAIN WORDS: if the facts say street parking, a walk-up, a lively street, a pool shared with the building, a mini-split rather than central air, a longer drive to the beach — say it, kindly and early, as part of the picture. Guests forgive what they were told; they punish what they discover. Never hide a trade-off under a positive adjective.
+- SET EXPECTATIONS IN PLAIN WORDS: if the facts say street parking, a walk-up, a lively street, a pool shared with the building, a kitchenette rather than a full kitchen, a longer drive to the beach — say it, kindly and early, as part of the picture. Guests forgive what they were told; they punish what they discover. Never hide a trade-off under a positive adjective.
 - USE THE AREA AS A STORY: from the verified area facts, pick the three or four places that define THIS spot (the beach you walk to, the street you eat on, the district you drive to for a night out, the airport the trip starts at) and say how far they really are in minutes. A place "further out" is an outing, named so a guest can plan — never dressed up as next door.
 - END WITH A REASON TO BOOK NOW that is true: the view, the price-free perks (parking, laundry, pool), the location — not urgency words or exclamation marks.
+
+VARIETY AND DISCIPLINE (2026-11-16 — from reading real drafts across the portfolio side by side)
+- THE EXAMPLES IN THESE RULES SHOW THE KIND OF THING TO WRITE, NEVER WORDS TO REUSE. Do not lift their phrases: no "Guests book it for", no "come back from the beach to", no "not eating out every meal", and morning coffee is not the opening moment of every home. Our listings sit next to each other in search and the channels flag near-identical copy, so open the summary and The space with something only THIS home can say.
+- SAY A FACT ONCE PER SECTION. A walk or drive time appears once in a section — not in the paragraph, again in the Highlights and again in the closing line.
+- A WALK IS A SELLING POINT ONLY WHEN IT IS SHORT. In the summary, quote a walk time of about 15 minutes or less; anything longer is given as its drive time.
+- HIGHLIGHTS: 9 lines at most, one feature per line. Drop the lesser ones rather than bundling three into a line.
+- PLAIN AMENITY WORDS. The amenity labels in the data are data, not copy: write "fridge", "smart TV", "air-conditioned". Never read a label aloud or hedge it ("cooling fridge", "smart-style TV").
+- NO DECOR INVENTORY: no bedding or wall colours, no tile, stone or wood finishes, no accent walls, no linens.
+- NEVER TALK A GUEST OUT OF THE BOOKING or point them to another unit. State a limit once, plainly ("a studio with a kitchenette, not a full kitchen") and move on.
+- A DATED, TEMPORARY NOTICE in the current content (a pool closure, building work) is carried in exactly two places: one short clause in the summary and one line in Other notes. Never open The space with it and never repeat it in the other sections.
+- THE TITLE READS AS NATURAL PHRASES on both sides of a divider ("Walk to Beach & Free Parking", never "Walk to Sand & Parking") and fills at least 42 characters.
 
 HOUSE STYLE
 - Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest true point. Vivid but never padded or flowery.

@@ -83,7 +83,7 @@ export const SOUTH_FLORIDA_PLACES: Place[] = [
   { id: 'lake-worth-beach', name: 'Lake Worth Beach & Pier', kind: 'beach', lat: 26.613, lng: -80.037, what: 'the public beach, casino building and fishing pier', reach: 'local' },
   { id: 'lake-worth-downtown', name: 'Downtown Lake Worth Beach (Lake & Lucerne Avenues)', kind: 'district', lat: 26.615, lng: -80.056, what: 'the historic downtown of restaurants, bars and the Cultural Plaza', reach: 'local' },
   { id: 'palm-beach-worth-ave', name: 'Worth Avenue (Palm Beach)', kind: 'district', lat: 26.701, lng: -80.036, what: 'the island’s luxury shopping street', reach: 'local' },
-  { id: 'west-palm-clematis', name: 'Clematis Street & Rosemary Square (West Palm Beach)', kind: 'district', lat: 26.713, lng: -80.052, what: 'downtown West Palm’s dining, bars and waterfront', reach: 'local' },
+  { id: 'west-palm-clematis', name: 'Clematis Street & CityPlace (West Palm Beach)', kind: 'district', lat: 26.713, lng: -80.052, what: 'downtown West Palm’s dining, bars and waterfront', reach: 'local' },
   { id: 'brightline-wpb', name: 'Brightline West Palm Beach', kind: 'station', lat: 26.713, lng: -80.056, what: 'the West Palm rail station', reach: 'regional' },
   { id: 'pbi', name: 'Palm Beach International Airport (PBI)', kind: 'airport', lat: 26.683, lng: -80.096, what: 'the West Palm Beach airport', reach: 'regional' },
   // Boynton Beach & Delray (2026-10-30, Jon: "Boynton Beach is really close to Delray, and Delray is
@@ -100,7 +100,7 @@ export const SOUTH_FLORIDA_PLACES: Place[] = [
 ]
 
 /** Changes whenever a place is added or removed, so cached area facts recompute on their own. */
-export const PLACES_VERSION = String(SOUTH_FLORIDA_PLACES.length) + ':' + SOUTH_FLORIDA_PLACES.map(p => p.id).join(',').split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)
+export const PLACES_VERSION = String(SOUTH_FLORIDA_PLACES.length) + ':' + SOUTH_FLORIDA_PLACES.map(p => p.id + '|' + p.name).join(',').split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 7)
 
 /** Straight-line metres between two points. */
 export function haversineM(aLat: number, aLng: number, bLat: number, bLng: number): number {

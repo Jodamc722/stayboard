@@ -39,9 +39,12 @@ export type AreaFacts = {
   /** Staff layer: hidden ids, added items, per-item notes, a free note about the spot. */
   edits: { hidden: string[]; added: AreaItem[]; notes: Record<string, string>; spotNote?: string; by?: string; at?: string }
   routed: boolean
+  /** Why the facts were not read from or saved to the cache, when they were not. Shown on the Area tab. */
+  cacheNote?: string
 }
 
 const TABLE = 'area_facts'
+const MEMO = new Map<string, { at: number; items: AreaItem[]; routed: boolean; v: string }>()
 const FRESH_DAYS = 60
 const WALK_MAX_MIN = 30          // beyond this a guest drives (a 30-minute beach walk is still a walk)
 const FAR_MIN = 35               // beyond this it is "a drive away", said as such
@@ -54,9 +57,21 @@ export const gridKey = (lat: number, lng: number) => `${lat.toFixed(3)},${lng.to
 
 /** Straight-line estimates when a router is unavailable: a city walk ≈ 80 m/min on a 1.3× path; a drive ≈ 28 km/h door to door plus parking. */
 const estWalk = (m: number) => Math.round((m * 1.3) / 80)
-const estDrive = (m: number) => Math.round((m * 1.35) / (28_000 / 60) + 3)
+// Drive estimate (2026-11-16): the old one ran every trip at 28 km/h, so a 23-minute drive to Las Olas
+// came out as 41 and went into a draft as fact. Town speed for the first 4 km of road, then the
+// through-road speed, plus two minutes to park — within a few minutes of the routed figure on the
+// trips checked (Las Olas, Lake Worth pier, Lauderdale-by-the-Sea).
+const estDrive = (m: number) => { const road = m * 1.3; const town = Math.min(road, 4_000); return Math.round(town / (30_000 / 60) + (road - town) / (60_000 / 60) + 2) }
 
 async function osrmTable(profile: 'foot' | 'driving', from: { lat: number; lng: number }, to: { lat: number; lng: number }[]): Promise<(number | null)[] | null> {
+  // The public router drops requests when several drafts run at once. One more try after a pause
+  // is the difference between measured times and straight-line guesses.
+  const first = await osrmOnce(profile, from, to)
+  if (first) return first
+  await new Promise(r => setTimeout(r, 900))
+  return osrmOnce(profile, from, to)
+}
+async function osrmOnce(profile: 'foot' | 'driving', from: { lat: number; lng: number }, to: { lat: number; lng: number }[]): Promise<(number | null)[] | null> {
   if (!to.length) return []
   const host = profile === 'foot' ? 'https://routing.openstreetmap.de/routed-foot/table/v1/foot/' : 'https://routing.openstreetmap.de/routed-car/table/v1/driving/'
   const coords = [from, ...to].map(p => `${p.lng.toFixed(5)},${p.lat.toFixed(5)}`).join(';')
@@ -120,21 +135,32 @@ export async function areaFactsFor(lat: number, lng: number, opts: { refresh?: b
   const key = gridKey(lat, lng)
   const db = supabaseAdmin()
   let row: any = null
-  try { const { data } = await db.from(TABLE).select('*').eq('key', key).maybeSingle(); row = data || null } catch { row = null }
+  let cacheNote = ''
+  try { const { data, error } = await db.from(TABLE).select('*').eq('key', key).maybeSingle(); row = data || null; if (error) cacheNote = `read: ${error.message}` } catch (e: any) { row = null; cacheNote = `read: ${e?.message || e}` }
+  // Same spot asked twice by a warm server (five drafts in a sitting): answer from memory.
+  const mem = MEMO.get(key)
+  if (!row && mem && !opts.refresh && Date.now() - mem.at < 6 * 3600_000 && mem.v === PLACES_VERSION) row = { facts: { items: mem.items, routed: mem.routed, v: mem.v }, computed_at: new Date(mem.at).toISOString(), edits: {} }
   const stale = !row || !row.computed_at || (Date.now() - Date.parse(row.computed_at)) > FRESH_DAYS * 86400_000 || row?.facts?.v !== PLACES_VERSION
   let items: AreaItem[] = Array.isArray(row?.facts?.items) ? row.facts.items : []
   let routed = !!row?.facts?.routed
   let computedAt = String(row?.computed_at || '')
   if (stale || opts.refresh) {
     const c = await computeAreaFacts(lat, lng)
-    items = c.items; routed = c.routed; computedAt = new Date().toISOString()
-    try {
-      await db.from(TABLE).upsert({ key, lat, lng, facts: { items, routed, v: PLACES_VERSION }, computed_at: computedAt, edits: row?.edits || {} }, { onConflict: 'key' })
-    } catch { /* table not there yet — the facts still return, uncached */ }
+    // A recompute that could not reach the router must never replace times that were measured.
+    const hadMeasured = routed && items.length > 0 && row?.facts?.v === PLACES_VERSION
+    if (c.routed || !hadMeasured) {
+      items = c.items; routed = c.routed; computedAt = new Date().toISOString()
+      if (c.routed) MEMO.set(key, { at: Date.now(), items, routed, v: PLACES_VERSION })
+      try {
+        // Estimates are saved with no date, so the next call tries the router again.
+        const { error } = await db.from(TABLE).upsert({ key, lat, lng, facts: { items, routed, v: PLACES_VERSION }, computed_at: c.routed ? computedAt : null, edits: row?.edits || {} }, { onConflict: 'key' })
+        if (error) cacheNote = `save: ${error.message}`
+      } catch (e: any) { cacheNote = `save: ${e?.message || e}` }
+    }
   }
   const edits = normEdits(row?.edits)
   const all = [...items, ...edits.added].map(i => ({ ...i, hidden: edits.hidden.includes(i.id), note: edits.notes[i.id] || i.note }))
-  return { key, lat, lng, computedAt, items: all, edits, routed }
+  return { key, lat, lng, computedAt, items: all, edits, routed, ...(cacheNote ? { cacheNote } : {}) }
 }
 
 function normEdits(e: any): AreaFacts['edits'] {
@@ -162,12 +188,18 @@ export async function saveAreaEdits(key: string, patch: Partial<AreaFacts['edits
 
 const KIND_WORD: Record<PlaceKind, string> = { beach: 'Beach', district: 'Area', landmark: 'Landmark', park: 'Park', shopping: 'Shopping', airport: 'Airport', station: 'Train', port: 'Cruise port', arena: 'Stadium / arena', nature: 'Outdoors' }
 const minutes = (n: number) => n <= 3 ? 'a couple of minutes' : `about ${n} min`
+/** An estimate is never given to the minute: nearest five, and worded as rough. */
+const rough = (n: number) => `roughly ${Math.max(5, Math.round(n / 5) * 5)} min`
 
 /** One line per place, the way the copy may say it. */
 export function areaLine(i: AreaItem): string {
+  if (i.basis === 'estimated') {
+    const h = i.mode === 'walk' && i.walkMin != null ? `${rough(i.walkMin)} walk` : i.driveMin != null ? `${rough(i.driveMin)} drive${i.mode === 'far' ? ' — a day trip or an outing, not next door' : ''}` : ''
+    return `- ${KIND_WORD[i.kind]}: ${i.name} — ${h} (NOT MEASURED: write "roughly", or name the place with no time)${i.what ? ` · ${i.what}` : ''}${i.note ? ` · Staff note: ${i.note}` : ''}`
+  }
   const how = i.mode === 'walk' && i.walkMin != null ? `${minutes(i.walkMin)} walk${i.walkMin > 15 && i.driveMin != null ? ` (or ${minutes(i.driveMin)} drive)` : ''}`
     : i.driveMin != null ? `${minutes(i.driveMin)} drive${i.walkMin != null && i.walkMin <= 40 ? ` (a ${i.walkMin}-minute walk)` : ''}${i.mode === 'far' ? ' — a day trip or an outing, not next door' : ''}` : ''
-  return `- ${KIND_WORD[i.kind]}: ${i.name} — ${how}${i.basis === 'estimated' ? ' (estimated)' : ''}${i.what ? ` · ${i.what}` : ''}${i.note ? ` · Staff note: ${i.note}` : ''}`
+  return `- ${KIND_WORD[i.kind]}: ${i.name} — ${how}${i.what ? ` · ${i.what}` : ''}${i.note ? ` · Staff note: ${i.note}` : ''}`
 }
 
 /**
@@ -182,7 +214,7 @@ export function areaPrompt(f: AreaFacts | null): string {
   const walk = live.filter(i => i.mode === 'walk'), drive = live.filter(i => i.mode === 'drive'), far = live.filter(i => i.mode === 'far')
   const lines: string[] = []
   lines.push('VERIFIED AREA FACTS (measured from this unit’s location on the road network; you MAY name these places and quote these times)')
-  lines.push('Rules: say "about N minutes’ walk" or "about N minutes’ drive" — never blocks, never "steps from", never a place that is not listed here. Walkable things are the story of the stay; drives are the plan for the trip; "a drive away" things set expectations honestly (name them as an outing, not as nearby). An "(estimated)" time is straight-line and should be softened ("roughly").')
+  lines.push('Rules: say "about N minutes’ walk" or "about N minutes’ drive" — never blocks, never "steps from", never a place that is not listed here. Walkable things are the story of the stay; drives are the plan for the trip; "a drive away" things set expectations honestly (name them as an outing, not as nearby). A line marked NOT MEASURED is a straight-line estimate: say "roughly N minutes" exactly as given, or name the place with no time — never "about".')
   if (walk.length) { lines.push('WALKABLE FROM THE DOOR:'); walk.forEach(i => lines.push(areaLine(i))) }
   if (drive.length) { lines.push('A SHORT DRIVE OR RIDESHARE:'); drive.forEach(i => lines.push(areaLine(i))) }
   if (far.length) { lines.push('FURTHER OUT (worth naming so guests plan, never as "nearby"):'); far.forEach(i => lines.push(areaLine(i))) }

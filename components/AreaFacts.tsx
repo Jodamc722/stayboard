@@ -50,6 +50,7 @@ export function AreaFacts({ listingId }: { listingId: string }) {
         <div className="min-w-0 flex-1">
           <p className="text-[14px] font-semibold text-ink">{shown} places the copy may name, with measured times</p>
           <p className="text-[12.5px] text-muted mt-0.5">Walk and drive times are measured on the road network from this unit’s coordinates{f.routed ? '' : ' (router unreachable — these are straight-line estimates)'}, last {new Date(f.computedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}. Hide anything that is wrong for this building; it disappears from what the AI is allowed to say.</p>
+          {(f as any).cacheNote ? <p className="text-[12px] text-amber-700 mt-1">These times are being re-measured on every draft because they could not be saved ({String((f as any).cacheNote).slice(0, 140)}).</p> : null}
         </div>
         <button onClick={() => load(true)} disabled={!!busy} className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1.5 disabled:opacity-50"><RefreshCw size={12} className={busy === 'refresh' ? 'animate-spin' : ''} /> Re-measure</button>
         {data.canEdit ? <button onClick={() => setAdding(a => !a)} className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center gap-1.5"><Plus size={12} /> Add a place</button> : null}
