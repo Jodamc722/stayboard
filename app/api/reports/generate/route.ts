@@ -339,6 +339,12 @@ export async function POST(req: NextRequest) {
       if (libEntry?.website) (contentS as any).magazine = { ...((contentS as any).magazine || {}), brandSource: libEntry.website }
       // A building package is one photograph-led cover: the Miami skyline when no photo was chosen.
       if ((cmaPick === 'rider' || libEntry) && !heroImageUrl && (contentS as any).hero) (contentS as any).hero.heroImage = libEntry?.photo || '/deck-img/miami-skyline.jpg'
+      // THE REVAMP (Jon, 2026-11-17: "too long"). A package for a sales team or agents is about the
+      // floor plans and the program; the Lighthouse tour and the owner-portal demo are for an owner
+      // deciding who runs their home, so they start switched off here (Slides turns them back on).
+      if (audience !== 'owner') (contentS as any).omit = Array.from(new Set([...(((contentS as any).omit || []) as string[]), 'lighthouse', 'guesty']))
+      // The cover leads with the building, in its own picture when it has one (lib/sales-cma buildingCover).
+      if (audience !== 'owner' && (contentS as any).hero && (contentS as any).cma.building) (contentS as any).hero.title = (contentS as any).cma.building
       // A building package already carries the projections, so the close asks for a call (Jon, 2026-11-11).
       if ((contentS as any).close) (contentS as any).close.headline = 'Book a call to learn more'
     }
