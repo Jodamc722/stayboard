@@ -84,14 +84,12 @@ type CleanerLoad = { people: { name: string; hours: number; cleans: number }[]; 
 // Homebase departments that are not cleaning capacity. Somebody put on the rota by hand, or set
 // Working by hand for the day, is counted whatever their department says.
 const NOT_CLEANER_DEPT = /^(maintenance|ccs|inspection|supervision)$/
-const NEW_BOOKING_MS = 36 * 3600_000
 // "Seen" for new bookings is PER LOGIN, kept server-side in app_settings (/api/schedule/seen,
 // key schedule_seen_bookings:<email>) with this localStorage entry as the instant cache, keyed by
 // reservation id. If the server copy cannot be read or written the browser's own list still works.
 const SEEN_KEY = 'lh:schedule:seen-bookings:v1'
 /** "16:00" → "4 PM". */
 function fmtClock(t: string | null | undefined): string { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '')); if (!m) return ''; const h = Number(m[1]); return (h % 12 || 12) + (m[2] === '00' ? '' : ':' + m[2]) + ' ' + (h >= 12 ? 'PM' : 'AM') }
-const nextIso = (s: string) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10) }
 /** Hours to the minute, so a column of them adds up to its total exactly as printed. */
 const r60 = (h: number) => Math.round(h * 60) / 60
 const TEAM_STATUSES = ['Working', 'On Call', 'OFF', 'REQ OFF']
@@ -188,7 +186,7 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const [refreshTick, setRefreshTick] = useState(0)
   // New last-minute bookings this browser has already acknowledged (see SEEN_KEY).
   const [seen, setSeen] = useState<Record<string, number>>({})
-  const [onlyNew, setOnlyNew] = useState(false)
+  const [onlyUnassigned, setOnlyUnassigned] = useState(false)
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(SEEN_KEY)
@@ -226,8 +224,6 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
       return n
     })
   }
-  const isFreshBooking = (iso: string | null | undefined) => { const t = Date.parse(String(iso || '')); return Number.isFinite(t) && Date.now() - t <= NEW_BOOKING_MS }
-  const isNewUnseen = (c: Clean) => !!c.newBooking && !seen[c.newBooking.id] && isFreshBooking(c.newBooking.bookedAt)
   // ---- One-pager: forecast strip + weekly roster for the board's week ----
   // Keyed by the WEEK, not the day: stepping Mon -> Tue used to refetch the forecast and all three
   // market rosters again (7 roster calls per page load). Same week = same data, so it stays put.
@@ -623,33 +619,14 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     return { people: Object.values(by).map(r => ({ ...r, hours: r60(r.hours) })).sort((a, b) => b.hours - a.hours), unassigned: { hours: r60(unH), cleans: unN } }
   }, [activeCleans, cleanRates, overrides, cleared])
 
-  // NEW LAST-MINUTE BOOKINGS this browser has not acknowledged: the ones on a clean row, plus fresh
-  // arrivals into units with no checkout clean on the board (an empty unit booked for tonight).
-  const newArrivalsUnseen = ((data && data.newArrivals) || []).filter(a => !seen[a.id] && isFreshBooking(a.bookedAt) && (market === 'all' ? true : market === 'vendor' ? !!a.vendor : (a.market === market && !a.vendor)))
-  const newRowIds: string[] = []
-  for (const c of dayCleans) { if (isNewUnseen(c) && c.newBooking && newRowIds.indexOf(c.newBooking.id) < 0) newRowIds.push(c.newBooking.id) }
-  const newCount = newRowIds.length + newArrivalsUnseen.length
-  const onlyNewOn = onlyNew && newCount > 0
-  // THE ARRIVAL DAY, NOT "TOMORROW" (Jon, 2026-11-10: "confusing due to tomorrow vs the day I am on").
-  // The board is usually looking at another day than today, so a relative word reads against the wrong
-  // day. Every chip names the weekday and date it means: "arrives Wed Nov 11 4 PM".
-  const dayWord = (d: string) => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); return x.toLocaleDateString('en-US', { weekday: 'short' }) + ' ' + fmtDate(d) }
-
-  // TWELVE AT ONCE IS NOISE. What leads is a new ARRIVAL today or tomorrow — the booking that puts a
-  // deadline on a unit. Everything else that is new (a fresh checkout, an arrival two days out) keeps
-  // its chip on its row and is listed under one "N more new bookings" line.
+  // UNASSIGNED CLEANS (Jon, 2026-11-16: "get rid of the new booking flag and just [an] indicator if unassigned").
+  // A real clean on our side with nobody on it yet: not a vendor-covered building, not one that moved to another day,
+  // not already done. This is what leads the day now, in place of the old new-booking flag.
+  const isUnassigned = (c: Clean) => !c.vendor && !c.movedTo && c.taskStatus !== 'completed' && effective(c).ids.length === 0
+  const unassignedCount = dayCleans.filter(isUnassigned).length
+  const onlyUnassignedOn = onlyUnassigned && unassignedCount > 0
   const todayIso = (data && data.today) || ''
-  const soon = (d: string | null | undefined): boolean => !!d && !!todayIso && (d === todayIso || d === nextIso(todayIso))
-  const isLeadBooking = (c: Clean): boolean => isNewUnseen(c) && !!c.newBooking && c.newBooking.kind === 'arrival' && soon(c.newBooking.arrival)
-  const leadArrivals = newArrivalsUnseen.filter(a => soon(a.date))
-  const moreNew: { id: string; listingId: string; unit: string; date: string; what: string; bookedAt: string }[] = []
-  for (const a of newArrivalsUnseen) { if (!soon(a.date)) moreNew.push({ id: a.id, listingId: a.listingId, unit: a.unit, date: a.date, what: 'New booking · ' + dayWord(a.date), bookedAt: a.bookedAt }) }
-  for (const c of dayCleans) {
-    const nb = c.newBooking
-    if (!nb || !isNewUnseen(c) || isLeadBooking(c) || moreNew.some(x => x.id === nb.id)) continue
-    moreNew.push({ id: nb.id, listingId: c.listingId, unit: c.unit, date: c.date, what: 'New booking · ' + dayWord(nb.kind === 'arrival' ? (nb.arrival || c.date) : c.date), bookedAt: nb.bookedAt })
-  }
-
+  void todayIso
   const rows = useMemo(() => {
     // The embedded board shows only what the gate is about. 'needs-person' = nobody on it, Guesty-only,
     // staged-not-pushed, or a guest still in the unit; 'nobody' and 'active' split that in two.
@@ -666,9 +643,9 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       if (only === 'active') return staged && !nobody
       return nobody || staged || flagged
     }
-    const a = dayCleans.filter(c => keep(c) && (!onlyNewOn || isNewUnseen(c)))
-    // New arrivals today/tomorrow nobody has looked at lead the day; cleans that moved off it trail.
-    const lead = (list: Clean[]): Clean[] => { const rk = (c: Clean) => c.movedTo ? 2 : isLeadBooking(c) ? 0 : 1; return list.map((c, i) => ({ c, i })).sort((x, y) => rk(x.c) - rk(y.c) || x.i - y.i).map(x => x.c) }
+    const a = dayCleans.filter(c => keep(c) && (!onlyUnassignedOn || isUnassigned(c)))
+    // Unassigned cleans lead the day; cleans that moved off it trail.
+    const lead = (list: Clean[]): Clean[] => { const rk = (c: Clean) => c.movedTo ? 2 : isUnassigned(c) ? 0 : 1; return list.map((c, i) => ({ c, i })).sort((x, y) => rk(x.c) - rk(y.c) || x.i - y.i).map(x => x.c) }
     const byUnit = (x: Clean, y: Clean) => x.unit.localeCompare(y.unit)
     const byBuilding = (x: Clean, y: Clean) => (x.vendor ? 1 : 0) - (y.vendor ? 1 : 0) || x.hub.localeCompare(y.hub) || byUnit(x, y)
     switch (sortBy) {
@@ -680,7 +657,7 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
       default: return lead(a.sort(byBuilding))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dayCleans, sortBy, overrides, cleared, embedded?.only, seen, onlyNewOn, todayIso])
+  }, [dayCleans, sortBy, overrides, cleared, embedded?.only, onlyUnassignedOn])
 
   function statusRing(c: Clean) {
     const st = String(c.taskStatus || '')
@@ -1171,16 +1148,12 @@ async function pushBlocks() {
 
 {/* Five market chips carrying counts and dollars wrapped to three rows on a phone. */}
 {!embedded && <div className="lh-actions flex items-center gap-2 flex-wrap">
-        {/* NEW LAST-MINUTE BOOKINGS, first in the row so a phone shows it without a swipe. The chip
-            filters the table to them; "Mark seen" clears them for this browser. */}
-        {view === 'day' && newCount > 0 && (
-          <span className="inline-flex items-center gap-1">
-            <button onClick={() => setOnlyNew(o => !o)} aria-pressed={onlyNewOn} title="Booked in the last 36 hours for today, tomorrow or the day after, and not looked at yet on this device. Click to show only these."
-              className={'inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg border ' + (onlyNewOn ? 'bg-fuchsia-600 text-white border-fuchsia-600' : 'bg-fuchsia-50 text-fuchsia-800 border-fuchsia-300')}>
-              <span className={'inline-block w-1.5 h-1.5 rounded-full ' + (onlyNewOn ? 'bg-white' : 'bg-fuchsia-500')} />{newCount} new booking{newCount === 1 ? '' : 's'}{onlyNewOn ? ' · showing' : ''}
-            </button>
-            <button onClick={() => { markSeen(newRowIds.concat(newArrivalsUnseen.map(a => a.id))); setOnlyNew(false) }} className="text-[11px] font-semibold text-fuchsia-800 underline decoration-dotted px-1">Mark seen</button>
-          </span>
+        {/* UNASSIGNED — the one flag on the board now: cleans with nobody on them yet. Click to show only these. */}
+        {view === 'day' && unassignedCount > 0 && (
+          <button onClick={() => setOnlyUnassigned(o => !o)} aria-pressed={onlyUnassignedOn} title="Cleans with no cleaner assigned yet. Click to show only these."
+            className={'inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg border ' + (onlyUnassignedOn ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 text-rose-700 border-rose-300')}>
+            <span className={'inline-block w-1.5 h-1.5 rounded-full ' + (onlyUnassignedOn ? 'bg-white' : 'bg-rose-500')} />{unassignedCount} unassigned{onlyUnassignedOn ? ' · showing' : ''}
+          </button>
         )}
         {(['all', ...MARKETS, 'vendor'] as const).map(m => (
           <button key={m} onClick={() => setMarket(m)} className={`lh-tab text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${market === m ? 'lh-tab-on bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{m === 'all' ? 'All markets' : m === 'vendor' ? 'Vendor' : m}{data && m !== 'all' && m !== 'vendor' ? (() => { const _e = data.totals.byMarket.find(x => x.market === m); return ' · ' + (_e?.count ?? 0) + (_e?.fee ? ' · $' + Math.round(_e.fee).toLocaleString() : '') })() : ''}</button>
@@ -1201,34 +1174,6 @@ async function pushBlocks() {
         )}
       </div>}
 
-      {!embedded && view === 'day' && (leadArrivals.length > 0 || moreNew.length > 0) && (
-        <div className="rounded-xl border border-fuchsia-200 bg-fuchsia-50/60 px-3.5 py-2.5 space-y-1">
-          {leadArrivals.length > 0 && <div className="text-[12px] font-bold text-fuchsia-900">New arrivals with no checkout that day <span className="font-normal text-fuchsia-900/70">· no clean on this list is tied to them — check each unit is guest-ready</span></div>}
-          {leadArrivals.map(a => (
-            <div key={a.id} className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[12px] bg-white rounded-lg border border-line px-2.5 py-1.5">
-              <button type="button" onClick={() => { markSeen([a.id]); setOpsFor({ listingId: a.listingId, unit: a.unit, date: a.date }) }} className="font-semibold text-ink hover:underline decoration-dotted underline-offset-2">{a.unit}</button>
-              {a.vendor && <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-700">vendor</span>}
-              <span className="font-semibold text-fuchsia-800">New booking · {dayWord(a.date)}</span>
-              {a.guest && <span className="text-muted truncate max-w-[160px]">{a.guest}{a.nights ? ' · ' + a.nights + ' nt' : ''}</span>}
-              <button type="button" onClick={() => markSeen([a.id])} className="ml-auto text-[11px] font-semibold text-fuchsia-800 hover:underline">Seen</button>
-            </div>
-          ))}
-          {moreNew.length > 0 && (
-            <details>
-              <summary className="text-[12px] font-semibold text-fuchsia-900 cursor-pointer">{moreNew.length} more new booking{moreNew.length === 1 ? '' : 's'} <span className="font-normal text-fuchsia-900/70">· not arriving today or tomorrow, or only a new checkout</span></summary>
-              <div className="mt-1 space-y-1">
-                {moreNew.map(x => (
-                  <div key={x.id} className="flex items-center gap-x-2 gap-y-0.5 flex-wrap text-[12px] bg-white rounded-lg border border-line px-2.5 py-1">
-                    <button type="button" onClick={() => { markSeen([x.id]); setOpsFor({ listingId: x.listingId, unit: x.unit, date: x.date }) }} className="font-semibold text-ink hover:underline decoration-dotted underline-offset-2">{x.unit}</button>
-                    <span className="text-fuchsia-800">{x.what}</span>
-                    <button type="button" onClick={() => markSeen([x.id])} className="ml-auto text-[11px] font-semibold text-fuchsia-800 hover:underline">Seen</button>
-                  </div>
-                ))}
-              </div>
-            </details>
-          )}
-        </div>
-      )}
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} className="shrink-0" /> <span className="min-w-0">{error}</span></div>}
       {data && !data.breezeway && <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">Breezeway not connected — assignment is off; checkouts still show.</div>}
 
@@ -1254,7 +1199,7 @@ async function pushBlocks() {
           {guestyOnlyCount > 0 && (
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-amber-700"><AlertTriangle size={12} /> {guestyOnlyCount} clean{guestyOnlyCount === 1 ? '' : 's'} in Guesty not yet in Breezeway</div>
           )}
-          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">{embedded && embedded.only !== 'all' ? 'Every clean this day has a person on it.' : onlyNewOn ? 'The new bookings are the ones listed above — no clean on this day is affected.' : 'No checkouts for this day.'}</div> : (
+          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">{embedded && embedded.only !== 'all' ? 'Every clean this day has a person on it.' : onlyUnassignedOn ? 'Every clean this day has a person on it.' : 'No checkouts for this day.'}</div> : (
             <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-sm">
               {/* PHONE: one clean row is a checkbox, a cleaner picker, the unit with its badge
                   stack, the guest and a menu — five columns that cannot survive 375px, and this
@@ -1279,7 +1224,7 @@ async function pushBlocks() {
                     const newBuilding = (sortBy === 'building' && (i === 0 || rows[i - 1].hub !== c.hub || (!!rows[i - 1].vendor !== !!c.vendor))) || (sortBy === 'area' && (i === 0 || (rows[i - 1].city || '') !== (c.city || '')))
                     return (
                       <Fragment key={keyOf(c)}>
-                      <tr className={`group flex flex-wrap items-center sm:table-row hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${c.movedTo ? 'opacity-60' : blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : isLeadBooking(c) ? 'bg-fuchsia-50/60' : c.taskStatus === 'completed' ? 'bg-emerald-50/40' : (!e.label && !overrides[keyOf(c)] && !c.vendor) ? 'bg-amber-50/40' : ''}`}>
+                      <tr className={`group flex flex-wrap items-center sm:table-row hover:brightness-95 transition border-t ${newBuilding ? 'border-line/80 border-t-2' : 'border-line'} ${c.movedTo ? 'opacity-60' : blockStaged[keyOf(c)] ? 'bg-red-100' : selected[keyOf(c)] ? 'bg-brand-50/40' : isUnassigned(c) ? 'bg-rose-50/40' : c.taskStatus === 'completed' ? 'bg-emerald-50/40' : (!e.label && !overrides[keyOf(c)] && !c.vendor) ? 'bg-amber-50/40' : ''}`}>
                         <td className="order-1 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle">{!c.movedTo && <input type="checkbox" checked={!!selected[keyOf(c)]} onChange={ev => toggleSelect(c, ev.target.checked)} className="accent-brand-600" />}{c.syncStatus === 'guesty-only' && !c.guestyOnly && <span title="In Guesty but not synced to Breezeway yet"><AlertTriangle size={12} className="inline text-amber-500 ml-0.5" /></span>}</td>
                         <td className="order-4 grow basis-44 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle">{c.vendor ? (
                           /* ALWAYS ASSIGNED (Jon, 2026-09-23: "we don't touch Botanica in any way. Our
@@ -1338,17 +1283,10 @@ async function pushBlocks() {
                         {!c.movedTo && !c.movedFrom && c.taskDate && c.taskDate !== c.date && (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate + '. Click to open the task in Breezeway and check it.'} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle hover:bg-amber-100 underline decoration-dotted">Moved &rarr; {c.taskDate.slice(5)}</a> : <span title={'MOVED CLEAN - Breezeway has this scheduled on ' + c.taskDate} className="inline-block ml-0.5 text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 rounded px-1 align-middle">Moved &rarr; {c.taskDate.slice(5)}</span>)}{(c.bedrooms != null || c.nights != null || c.checkOutTime) && <div className="text-[11px] text-muted mt-0.5 font-normal">{[c.bedrooms != null ? (c.bedrooms === 0 ? 'Studio' : c.bedrooms + 'BR') : '', c.nights != null ? c.nights + ' nt' : '', c.checkOutTime ? 'out ' + c.checkOutTime : '', c.doorCode ? 'code ' + c.doorCode : ''].filter(Boolean).join(' \u00b7 ')}</div>}{c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed' && <span title={'Time on this clean (Breezeway timer). Benchmark for ' + (c.bedrooms == null ? 'this unit' : c.bedrooms === 0 ? 'a studio' : c.bedrooms + 'BR') + '. Duration only \u2014 not labor cost.'} className={'ml-1 inline-flex items-center gap-0.5 text-[9px] font-semibold px-1 py-0.5 rounded border align-middle font-normal ' + cleanTimeCls(c.bedrooms, c.cleanMinutes, presets.timing, c.unit, cleanRates)}>{'\u23f1'} {fmtMins(c.cleanMinutes)}</span>}</td>
                         <td className="order-5 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap tabular-nums">{(() => { const h = c.movedTo ? null : estHours(c); if (h == null) return <span className="text-muted">—</span>; const done = c.cleanMinutes != null && c.cleanMinutes > 0 && c.taskStatus === 'completed'; return <span className="inline-flex flex-col items-end leading-tight"><span className="font-semibold text-ink"><span className="sm:hidden text-[9px] font-normal text-muted mr-1">est</span>{fmtH(h)}</span>{done && <span className="text-[10px] text-muted">{fmtMins(c.cleanMinutes as number)} actual</span>}</span> })()}</td>
                         <td className="order-3 basis-full min-w-0 whitespace-normal sm:table-cell sm:max-w-[220px] px-2.5 py-1.5 align-middle text-ink/90">{(() => {
-                          // NEW BOOKING — loud until somebody has looked (click it, open the unit, or
-                          // assign the clean), then a quiet note for as long as the booking is fresh.
-                          const nbk = c.newBooking
-                          if (!nbk || !isFreshBooking(nbk.bookedAt)) return null
-                          const unseen = !seen[nbk.id]
-                          // JUST THE DATE (Jon, 2026-11-10: "just say new booking for the date, arrival we
-                          // know is always 4pm") — no clock, no "booked 2h ago"; the hover keeps the detail.
-                          const forDate = nbk.kind === 'arrival' ? (nbk.arrival || c.date) : c.date
-                          return <button type="button" onClick={() => markSeen([nbk.id])} title={(nbk.kind === 'arrival' ? 'A new guest' + (nbk.guest ? ' (' + nbk.guest + ')' : '') + ' booked this unit ' + agoLabel(nbk.bookedAt) + ' — the clean now has a deadline.' : 'This stay was booked ' + agoLabel(nbk.bookedAt) + ', so this clean is new on the list.') + (unseen ? ' Click to mark it seen.' : ' Seen on this device.')}
-                            className={'flex w-fit max-w-full items-center gap-1 text-[10px] rounded px-1.5 py-0.5 mb-0.5 border whitespace-normal text-left ' + (unseen ? 'font-bold text-fuchsia-900 bg-fuchsia-100 border-fuchsia-400' : 'font-medium text-muted bg-white border-line')}>{unseen && <span className="inline-block w-1.5 h-1.5 rounded-full bg-fuchsia-600 shrink-0" />}{unseen ? 'New booking' : 'Recent booking'} · {dayWord(forDate)}</button>
-                        })()}{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
+                          // UNASSIGNED — the board's one flag now: nobody on this clean yet.
+                          if (!isUnassigned(c)) return null
+                          return <span title="No cleaner assigned yet — pick someone in the cleaner column." className="flex w-fit items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 mb-0.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-rose-500" /> Unassigned</span>
+                                                })()}{c.walkInRisk && <span className="inline-flex items-center gap-1 text-[10px] font-bold text-white bg-rose-600 rounded px-1.5 py-0.5 mr-1" title="A confirmed guest is still in-house this day - do NOT clean / walk-in risk">⚠ Guest in-house</span>}{c.missing && <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-300 rounded px-1.5 py-0.5 mr-1" title="No Breezeway clean scheduled for this checkout within 14 days">⚠ No clean scheduled</span>}{c.manual ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Added manually</span> : c.bzOnly ? (c.breezewayReportUrl ? <a href={c.breezewayReportUrl} target="_blank" rel="noreferrer" title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here. Click to open the task in Breezeway and check it." className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 hover:bg-emerald-100 underline decoration-dotted">Moved-in clean &rarr;</a> : <span title="MOVED-IN CLEAN - scheduled in Breezeway on this day with no checkout here" className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">Moved-in clean</span>) : (c.guestOut ? <span className="inline-block max-w-[150px] truncate align-bottom" title={c.guestOut}>{c.guestOut}</span> : <span className="text-muted italic">—</span>)}</td>
                         
                         <td className="hidden sm:table-cell px-2.5 py-1.5 align-middle text-right whitespace-nowrap">{c.cleaningFee != null && c.cleaningFee > 0
                           ? <span title={c.feeSource === 'listing' ? 'Estimated — the listing’s cleaning fee; this booking carried no separate cleaning fee (bundled into the fare)' : 'The guest’s cleaning fee on this checkout'} className={'inline-flex items-center gap-1 text-[12px] font-bold tabular-nums ' + (c.feeSource === 'listing' ? 'text-emerald-700/70' : 'text-emerald-700')}>{'$' + Math.round(c.cleaningFee).toLocaleString()}{c.feeSource === 'listing' && <span className="text-[9px] font-semibold uppercase tracking-wider text-muted">est</span>}</span>
