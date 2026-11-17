@@ -4,7 +4,7 @@
 // when it is bought; it saves on its own and anyone else with the link sees the tick. What is left stays on top.
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-type Line = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[] }
+type Line = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[]; needs?: { name: string; n: number; unit: number }[] }
 type List = { place: string; units: string[]; lines: Line[]; got: Record<string, { at: string; by?: string }>; by: string }
 const CSS = `
 .os{--ink:#121316;--body:#3A3B40;--mut:#6E6F74;--rule:#E5E1D8;--acc:#8C6D3A;--ok:#2F7D4F;--soft:#F1EDE4;min-height:100vh;background:#F6F4EE;color:var(--body);font:400 16px/1.5 Inter,system-ui,sans-serif;color-scheme:light}
@@ -28,6 +28,7 @@ const CSS = `
 .os-t{flex:1;min-width:0;cursor:pointer}
 .os-t b{display:block;font:600 16px/1.3 Inter,sans-serif;color:var(--ink)}.os li.got .os-t b{color:var(--mut);text-decoration:line-through}
 .os-t small{display:block;font-size:13px;color:var(--mut);overflow-wrap:anywhere}
+.os-n{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;align-items:center}.os-n i{font:600 10.5px Inter,sans-serif;letter-spacing:.1em;text-transform:uppercase;color:var(--mut);font-style:normal;margin-right:2px}.os-n em{font:500 13px Inter,sans-serif;font-style:normal;color:var(--ink);background:var(--soft);border-radius:8px;padding:3px 8px}.os li.got .os-n em{color:var(--mut)}
 .os-r{flex:0 0 auto;text-align:right;font-size:13.5px;color:var(--body);font-variant-numeric:tabular-nums}
 .os-r b{display:block;font:600 16px Inter,sans-serif;color:var(--ink)}
 .os-r a{display:inline-block;margin-top:4px;font:600 13px Inter,sans-serif;color:var(--ink);border:1px solid var(--rule);border-radius:999px;padding:5px 11px;text-decoration:none;background:#fff}
@@ -92,9 +93,13 @@ export function OwnerShop({ code, k }: { code: string; k: string }) {
                   <b>{l.name}</b>
                   {l.detail ? <small>{l.detail}</small> : null}
                   {multi ? <small>{d.units.map((u, i) => (Number(l.qty[i]) ? u + ': ' + l.qty[i] : '')).filter(Boolean).join(' · ')}</small> : null}
+                  {/* The actual pieces this line is for (Jon, 2026-11-17: "list the actual items needed… like type needed"). */}
+                  {l.needs && l.needs.length ? (multi
+                    ? d.units.map((u, i) => { const xs = l.needs!.filter(x => x.unit === i); return xs.length ? <span key={u} className="os-n"><i>{u} needs</i>{xs.map(x => <em key={x.name}>{x.name}{x.n > 1 ? ' ×' + x.n : ''}</em>)}</span> : null })
+                    : <span className="os-n"><i>Needs</i>{l.needs.map(x => <em key={x.name}>{x.name}{x.n > 1 ? ' ×' + x.n : ''}</em>)}</span>) : null}
                   {on && got[l.key] ? <small>Bought {new Date(got[l.key].at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}{got[l.key].by ? ' by ' + got[l.key].by : ''}</small> : null}
                 </span>
-                <span className="os-r"><b>×{q}</b>{l.price != null ? (q > 1 ? usd(l.price) + ' each' : usd(l.price)) : 'no price yet'}{l.url ? <><br /><a href={l.url} target="_blank" rel="noreferrer">Open item</a></> : null}</span>
+                <span className="os-r"><b>×{q}</b>{l.price != null ? (q > 1 ? usd(l.price) + ' each' : usd(l.price)) : total ? 'no price yet' : ''}{l.url ? <><br /><a href={l.url} target="_blank" rel="noreferrer">Open item</a></> : null}</span>
               </li>) })}</ul></div>
           </div>) })}
         <div className="os-card"><label className="os-f"><span>Your name (shown next to what you tick)</span><input value={by} onChange={e => setBy(e.target.value)} onBlur={() => flush(by)} placeholder="Who is buying" autoComplete="name" /></label></div>
