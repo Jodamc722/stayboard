@@ -242,6 +242,11 @@ export function ensureWalk(r: OORecord): NonNullable<OORecord['walk']> {
   if (!r.walk?.key) { const c: any = (globalThis as any).crypto; r.walk = { ...(r.walk || {}), key: String(c.randomUUID()).replace(/-/g, '').slice(0, 24), counts: r.walk?.counts || {} } }
   return r.walk!
 }
+/** The shopping list link's key, made once (the same long random pass as the walkthrough's). */
+export function ensureShop(r: OORecord): NonNullable<OORecord['shop']> {
+  if (!r.shop?.key) { const c: any = (globalThis as any).crypto; r.shop = { ...(r.shop || {}), key: String(c.randomUUID()).replace(/-/g, '').slice(0, 24), got: r.shop?.got || {} } }
+  return r.shop!
+}
 /** { itemKey: how many } from a form: whole numbers 0 to 999; null or '' clears the entry. */
 export function mergeCounts(into: Record<string, number>, v: any): Record<string, number> {
   const out = { ...into }; let n = 0
