@@ -177,6 +177,33 @@ VARIETY AND DISCIPLINE (2026-11-16 — from reading real drafts across the portf
 - A DATED, TEMPORARY NOTICE in the current content (a pool closure, building work) is carried in exactly two places: one short clause in the summary and one line in Other notes. Never open The space with it and never repeat it in the other sections.
 - THE TITLE READS AS NATURAL PHRASES on both sides of a divider ("Walk to Beach & Free Parking", never "Walk to Sand & Parking") and fills at least 42 characters.
 
+THE STAY VOICE (2026-11-16 — Jon: "Stay Hospitality should have a format and style, a sound, a voice")
+Every Stay listing should sound like the same host wrote it: a local who knows the home and the streets around it, is proud of it, and tells you the truth about it.
+- WARM, PLAIN, SURE OF ITSELF. Short sentences. Talk to the guest as "you". Present tense. Say the real thing ("the beach is across the street") instead of an adjective about it ("unbeatable location").
+- CALM, NEVER LOUD. No exclamation marks, no urgency, no superlatives we cannot prove, no hype words. The home does the selling.
+- A HOST, NOT A BROCHURE AND NOT A SPEC SHEET. One picture of the stay, then the facts a guest needs to choose, then what to know before booking. Limits are said once, kindly, as part of the picture.
+- AMERICAN SPELLING AND USAGE throughout: traveler, favorite, neighborhood, center, snorkeling, cozy. Numbers as digits. Times as "4:00 PM". Distances only as "about N minutes' walk" or "about N minutes' drive".
+- "We" is Stay Hospitality, used sparingly ("we send access details before arrival"). Never name the management company or a staff member.
+
+THE STAY FORMAT (the same skeleton on every listing, so a guest who has seen one Stay listing knows where to look on the next)
+- TITLE: "[Strongest hook + home type] | [Feature] & [Feature or place]". One divider, Title Case, 42-50 characters.
+- SUMMARY: one paragraph in four beats — where it is and the best thing about it; who it suits and how it sleeps; the two or three things guests choose it for; one true closing reason. Then the standing last line.
+- THE SPACE: two or three short paragraphs, a blank line, the word "Highlights" on its own line with no colon, then hyphen lines.
+- GUEST ACCESS: one or two sentences on what is yours and what is shared, then hyphen lines that each start with a label: "- Getting in:", "- Parking:", "- Shared with the building:", "- Check-in and check-out:". Only the labels the facts support.
+- NEIGHBORHOOD: one or two lines on the area, "Our local picks:" on its own line, hyphen lines written "- Place, about N minutes' drive: why you would go", then one closing line on how it feels to stay here.
+- GETTING AROUND: one sentence that answers "do I need a car?", then hyphen lines written "- Airport or station (code): about N minutes' drive", then parking and rideshare in a sentence.
+- OTHER NOTES: hyphen lines only.
+
+HOW THE BOOKING SITES AND AI SEARCH READ THIS (write for them as well as for the guest)
+- Airbnb search now shows its own AI summary of the listing and answers guest questions from the listing's facts; Booking.com writes its own description from the facts it is given; AI assistants (ChatGPT, Gemini, Google) read only text. None of them can use an adjective. So every fact a guest filters or asks about is stated ONCE as a plain, checkable sentence in the standard words people type: bed sizes room by room, how many it sleeps, bathrooms, full kitchen or kitchenette, washer and dryer in the unit or in the building, parking type and whether it is free or paid, pool private or shared, workspace and WiFi, pets, elevator or stairs, the floor when the facts give it, and the kind of view.
+- SAY WHO IT SUITS in plain words (a couple, a family with young kids, a remote worker on a long stay, a group of friends). AI search matches "a place for a family near the beach with a washer" against exactly those words.
+- THE FIRST TWO SENTENCES OF THE SUMMARY CARRY THE LISTING. Channels cut the rest behind "show more", and AI summaries lean on the opening. Location, home type, sleeps and the best feature all land there.
+- THE TITLE IS THE ONE LINE GUESTS SEE EXACTLY AS WRITTEN. The first 30 characters carry the reason to click. Do not spend them on what the search card already shows on its own line (the city, "new").
+- VRBO JOINS EVERY SECTION INTO ONE LONG DESCRIPTION, so each section must read well on its own and must not repeat a sentence from another section. Booking.com rejects an address, a company or person's name, or any contact detail.
+- NAME THE NEIGHBORHOOD AND THE WELL-KNOWN PLACE NEARBY BY NAME. "Near X" is how guests and AI assistants search.
+- SISTER UNITS in the same building are compared by the channels for duplicates. Open the summary and The space with what is true of THIS unit (its floor, its view, its layout, its bed setup) before anything the whole building shares.
+- BED FACTS: when the data includes "beds" (the layout room by room from Guesty), use exactly that. Never guess a bed size from a photo.
+
 HOUSE STYLE
 - Structured and scannable: short labeled lines or tight, skimmable paragraphs per topic; lead each section with its strongest true point. Vivid but never padded or flowery.
 - FORMAT LISTS WITH HYPHENS: any time you present a list of items - room-by-room in The space, the building/unit amenities, the lines in Other notes - put each item on its own line starting with "- " (hyphen + space). Never use bullet dots, asterisks, or numbered lists.

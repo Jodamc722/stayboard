@@ -43,6 +43,24 @@ const effortFor = (model: string, effort: 'low' | 'medium' | 'high') =>
 
 export const maxDuration = 300
 
+/**
+ * The bed layout room by room, as Guesty holds it (raw.listingRooms). The writer was working bed
+ * sizes out from photos and the old copy; the channels and AI search match on exactly these words.
+ */
+function bedLayout(rooms: any): string[] | null {
+  if (!Array.isArray(rooms) || !rooms.length) return null
+  const word = (t: string) => String(t || '').toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+  const out: string[] = []
+  rooms.slice(0, 12).forEach((r: any, i: number) => {
+    const beds = (Array.isArray(r?.beds) ? r.beds : []).filter((b: any) => b && b.type && Number(b.quantity ?? 1) > 0)
+      .map((b: any) => `${Math.round(Number(b.quantity ?? 1))} ${word(b.type)}`)
+    if (!beds.length) return
+    const n = Number(r?.roomNumber)
+    out.push(`${n === 0 ? 'Shared space' : 'Bedroom ' + (Number.isFinite(n) && n > 0 ? n : i + 1)}: ${beds.join(', ')}`)
+  })
+  return out.length ? out : null
+}
+
 function str(v: any): string { return typeof v === 'string' ? v : '' }
 
 /* ------------------------------------------------------------------ *
@@ -254,6 +272,7 @@ export async function POST(req: NextRequest) {
       ? listing.amenities.filter((a: any) => !/^garage$/i.test(String(a || '').trim()) || /garage/i.test(String(bFacts?.parking || '')) && !/no garage/i.test(String(bFacts?.parking || ''))).slice(0, 80)
       : (listing.amenities ?? null),
     tags: Array.isArray(listing.tags) ? listing.tags.slice(0, 30) : (listing.tags ?? null),
+    beds: bedLayout(raw?.listingRooms),
     location, bookingSettings: settings,
     minAge21: /arya|amrit|district\s*225/i.test(str(listing.building)),
   }
