@@ -245,6 +245,29 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
     setBusy(''); if (d?.record) onRec(d.record); setMsg(d?.ok ? (d.note || 'Saved.') : (d?.error || 'Not saved.')); return !!d?.ok
   }
   const set = (i: number, p: Any) => { setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true) }
+  // NOT IN OUR CATALOG (Jon, 2026-11-17: "have it where we can select our hand selected items or just send
+  // the list"). What the owner marked "need" that our catalog does not carry is a tick list: tick the ones we
+  // are buying and they go on the order as lines to price, or leave them and send the list as it is.
+  const [pick, setPick] = useState<string[]>([])
+  const onList = (x: string) => { const p = parseNeed(x); return lines.some(l => String(l.name).toLowerCase() === p.name.toLowerCase() && (p.unit < 0 || (Number(l.qty[p.unit]) || 0) > 0)) }
+  function parseNeed(x: string) {
+    const q = x.match(/\s×(\d+)$/); let name = q ? x.slice(0, q.index) : x
+    const u = name.match(/\s\(([^()]+)\)$/); let unit = -1
+    if (u && units.indexOf(u[1]) >= 0) { unit = units.indexOf(u[1]); name = name.slice(0, u.index) }
+    return { name: name.trim(), unit, n: q ? Number(q[1]) || 1 : 1 }
+  }
+  function addNeeds(xs: string[]) {
+    setLines(ls => { const out = ls.slice()
+      for (const x of xs) { const p = parseNeed(x), ui = p.unit < 0 ? 0 : p.unit
+        const at = out.findIndex(l => String(l.name).toLowerCase() === p.name.toLowerCase() && String(l.key).startsWith('n'))
+        if (at >= 0) out[at] = { ...out[at], qty: units.map((_, k) => (k === ui ? Math.max(Number(out[at].qty[k]) || 0, p.n) : Number(out[at].qty[k]) || 0)) }
+        else out.push({ key: 'n' + Date.now().toString(36) + out.length, category: 'Added by the team', name: p.name, detail: 'Owner marked as needed; not in our catalog', url: '', price: null, qty: units.map((_, k) => (k === ui ? p.n : 0)) })
+      }
+      return out })
+    setPick([]); setDirty(true); setMsg(xs.length + (xs.length === 1 ? ' item' : ' items') + ' added to the list below. Add a price and a link, then save.')
+  }
+  // Downloads are of the SAVED list, so unsaved edits are saved first.
+  async function download(format: 'pdf' | 'xlsx') { if (dirty && !(await act('save', { lines, note }))) return; window.location.href = `/api/owner-onboarding/${rec.code}/order?format=${format}` }
   const skip: string[] = o?.review?.skip || []
   const total = lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (Number(l.price) || 0) * l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), 0)
   const inp = 'rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink'
@@ -262,7 +285,19 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
           {o.basis.walked ? <p className="text-emerald-800 font-semibold">Built after the walkthrough was finished.</p> : o.basis.marked ? <p className="text-amber-800">Built before the walkthrough was finished: counts are the owner’s own.</p> : null}
           {o.basis.short?.length ? <div><b>Partly there, by count:</b><ul className="list-disc pl-5">{o.basis.short.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           {o.basis.declined?.length ? <div><b>Not buying (the team’s decision):</b><ul className="list-disc pl-5">{o.basis.declined.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
-          {o.basis.uncovered.length ? <p><b>Marked “need”, not in our catalog (add by hand if we are buying them):</b> {o.basis.uncovered.join(', ')}</p> : null}
+          {o.basis.uncovered.length ? (() => { const left: string[] = o.basis.uncovered.filter((x: string) => !onList(x)); return (
+            <div className="pt-1">
+              <p><b>Marked “need”, not in our catalog.</b> {left.length ? 'Tick the ones we are buying to add them to the list, or leave them and send the list as it is.' : 'All of these are on the list now.'}</p>
+              {left.length ? <>
+                <div className="flex flex-wrap gap-1.5 mt-2">{left.map((x: string) => { const on = pick.indexOf(x) >= 0; return (
+                  <label key={x} className={'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer select-none ' + (on ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink')}>
+                    <input type="checkbox" className="sr-only" checked={on} onChange={() => setPick(p => (on ? p.filter(y => y !== x) : [...p, x]))} />{on ? <Check size={11} /> : <Plus size={11} />}{x}</label>) })}</div>
+                <div className="flex flex-wrap items-center gap-3 mt-2">
+                  <button type="button" disabled={!pick.length} onClick={() => addNeeds(pick)} className="rounded-xl bg-ink text-white px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-40">Add {pick.length || ''} ticked to the list</button>
+                  <button type="button" onClick={() => addNeeds(left)} className="text-[12.5px] font-semibold text-ink underline">Add all {left.length}</button>
+                  {pick.length ? <button type="button" onClick={() => setPick([])} className="text-[12.5px] text-muted underline">Clear</button> : null}
+                </div></> : null}
+            </div>) })() : null}
         </div> : null}
         {o.review ? <div className={'rounded-xl p-3 mb-3 ' + (o.status === 'approved' ? 'bg-emerald-50' : 'bg-amber-50')}><p className={lab}>The owner’s review · {new Date(o.review.at).toLocaleString()}</p>
           {o.review.skip.length ? <p className="text-[13px] text-ink mt-1">Already has: {o.review.skip.map((k: string) => lines.find(l => l.key === k)?.name || k).join(', ')}</p> : null}
@@ -287,6 +322,11 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
             <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('send') }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {o.status === 'draft' ? 'Send to the owner to review' : 'Send again'}</button>
             {o.status !== 'draft' ? <button type="button" onClick={() => act('unsend')} className="text-[12.5px] text-muted underline">Take it back to a draft</button> : null}
             <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the catalog</button>
+          </div>
+          <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-2">
+            <span className="mr-auto"><b>For our team.</b> Download the list to buy from: a printout with a tick box per line, or a spreadsheet with the links and a column for what has been ordered.</span>
+            <button type="button" disabled={!!busy} onClick={() => download('pdf')} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Printer size={13} /> PDF printout</button>
+            <button type="button" disabled={!!busy} onClick={() => download('xlsx')} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Download size={13} /> Excel</button>
           </div>
           <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="mr-auto"><b>The unit’s FAQ.</b> {rec.faq ? `${rec.faq.added} ${rec.faq.added === 1 ? 'entry' : 'entries'} added, last on ${new Date(rec.faq.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.` : rec.attach?.listingId ? (o.status === 'approved' ? 'Approved items go in automatically.' : 'Items go in once the owner approves the list, with the Wi-Fi, parking and laundry.') : 'Attach the unit to its Guesty listing and the approved items, Wi-Fi, parking and laundry go into its FAQ.'}</span>

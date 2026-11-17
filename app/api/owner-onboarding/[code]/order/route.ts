@@ -4,11 +4,15 @@
 //   POST { action: 'send' }           → shows it on the owner's page for review and emails them a sign-in link to it
 //   POST { action: 'unsend' }         → back to a draft
 //   POST { action: 'faq' }            → adds what is approved (and the Wi-Fi, parking, laundry) to the attached listing's FAQ
+//   GET  ?format=pdf | xlsx           → the list for OUR team to buy from (Jon, 2026-11-17: "have a pdf format / printout
+//                                       and excel for team to download if we are ordering for owner"): a printout with a
+//                                       tick box per line, or a spreadsheet with the links, to track what has been ordered
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { readRecord, saveRecord, buildOrder, cleanOrderLines } from '@/lib/owner-onboard-server'
 import { emailMagicLink, accounts } from '@/lib/owner-onboard-auth'
 import { teamView, unitsOf } from '@/lib/owner-onboard'
+import { orderDoc } from '@/lib/owner-onboard-order-doc'
 import { syncFaq } from '@/lib/owner-onboard-faq'
 
 export const dynamic = 'force-dynamic'
@@ -39,4 +43,13 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   } else return NextResponse.json({ ok: false, error: 'Nothing to do.' }, { status: 400 })
   await saveRecord(r, g.access.email || null)
   return NextResponse.json({ ok: true, note, record: teamView(r) })
+}
+
+export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
+  const g = await requireLevel('owner-onboarding', 'view'); if (!g.ok) return g.res
+  const r = await readRecord(params.code)
+  if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
+  const d = await orderDoc(r, req.nextUrl.searchParams.get('format') === 'xlsx' ? 'xlsx' : 'pdf')
+  if (!d.ok) return NextResponse.json({ ok: false, error: d.error }, { status: 400 })
+  return new NextResponse(d.buf as any, { headers: { 'Content-Type': d.type, 'Content-Disposition': `attachment; filename="${d.name}"`, 'Cache-Control': 'no-store' } })
 }
