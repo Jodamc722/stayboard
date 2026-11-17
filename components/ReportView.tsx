@@ -8566,14 +8566,15 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               // Then how we work together, and only then the rest of who we are, team last before the
               // close. An agent still sees the program first; an owner their own plan first.
               const part: Record<string, string[]> = {
-                who: ['property', 'edge', 'proof', 'returns', 'experience', 'cma-run', 'ops', 'maxrev', 'stack', 'lighthouse', 'guesty', 'statement', 'team'],
+                who: ['property', 'proof', 'returns', 'experience', 'cma-run', 'ops', 'maxrev', 'stack', 'lighthouse', 'guesty', 'statement', 'team'],
                 work: ['cma-partner', 'cma-second'],
                 num: aud === 'owner'
                   ? ['cma-num', 'cma-plan-*', 'cma-glance', 'cma-market', 'cma-comps', 'market', 'plan', 'comps']
                   : ['cma-num', 'cma-glance', 'cma-market', 'cma-comps', 'cma-plan-*', 'market', 'plan', 'comps'],
               }
               const keynoteOrder: Record<string, ('who' | 'work' | 'num')[]> = { owner: ['num', 'who', 'work'], agents: ['work', 'num', 'who'], building: ['num', 'work', 'who'] }
-              const story = ['welcome', 'contact', 'overview', ...keynoteOrder[aud].flatMap(k => part[k])]
+              // 'edge' is the Who-we-are slide (the four figures and the buildings we run): the one slide before the numbers.
+              const story = ['welcome', 'contact', 'edge', 'overview', ...keynoteOrder[aud].flatMap(k => part[k])]
               const tail = ['terms', 'onbsteps', 'close']
               const r2 = (k: string) => {
                 const ix = story.findIndex(x => x === k || (x.endsWith('*') && k.startsWith(x.slice(0, -1))))
