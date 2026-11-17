@@ -342,7 +342,14 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   // A flagged ID photo ('check') is still open: a person has to look (Jon, 2026-10-21).
   const gcIdOpenOf = (r: GuestCheckRow) => r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')
   const gcDepOpenOf = (r: GuestCheckRow) => r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled
-  const gcTodayOpen = gcRows.filter(r => r.today && (gcIdOpenOf(r) || gcDepOpenOf(r))).length
+  // ONE STATE PER GUEST (2026-11-16): the tile, its bar, the filter chips and the rows all count
+  // guests the same way, so "41 of 65 ready" on the tile is 41 rows under the "ready" chip.
+  const gcStateOf = (r: GuestCheckRow): 'done' | 'check' | 'id' | 'deposit' | 'release' => {
+    const st = checkStatus(r, d.today)
+    return st.state === 'done' || st.state === 'scheduled' ? 'done' : st.state === 'mismatch' || st.state === 'look' ? 'check' : st.state === 'release' ? 'release' : st.depOpen && !st.missing.some(m => m === 'ID' || m === 'selfie') ? 'deposit' : 'id'
+  }
+  const gcN = (k: string) => gcRows.filter(r => gcStateOf(r) === k).length
+  const gcTodayOpen = gcRows.filter(r => r.today && gcStateOf(r) !== 'done').length
   const gcIdOpen = gcRows.filter(gcIdOpenOf).length
   const gcToCheck = gcRows.filter(r => r.needId && r.idStatus === 'check').length
   const gcDepOpen = gcRows.filter(gcDepOpenOf).length
@@ -481,11 +488,9 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     { key: 'notices', label: 'Front-desk notices', done: ntC.sentToday, needed: ntToday.length, loading: !ntQ.data && ntQ.loading, title: 'Arrival notices the buildings need today (Elser’s registration form first): sent against to send, late ones first',
       segs: [{ label: 'sent', n: ntC.sentToday, cls: 'bg-emerald-500', tone: 'emerald', filter: 'sent' }, { label: 'late', n: ntC.late, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due', n: ntC.due, cls: 'bg-amber-400', tone: 'amber', filter: 'due' }, { label: 'to send', n: Math.max(0, ntC.toSend - ntC.late - ntC.due), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
       sub: ntQ.error ? 'could not read the notices' : ntToday.length ? [ntC.toSend ? ntC.toSend + ' to send' : 'all sent', ntC.late ? ntC.late + ' late' : '', ntC.blocked ? ntC.blocked + ' with no recipient' : ''].filter(Boolean).join(' · ') : 'none needed today' },
-    { key: 'checks', label: 'ID & deposits', done: gcDone, needed: gcNeeded, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): checks done against checks owed, today first. An ID is verified when its photo reads as the booking\'s guest, when the desk closes it by hand, or when “verified” is ticked on the booking in Guesty; a photo that does not read as the guest is flagged to check',
-      segs: [{ label: 'done', n: gcDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID photo to check', n: gcToCheck, cls: 'bg-rose-600', tone: 'rose', filter: 'check' }, { label: 'ID to verify', n: gcIdOpen - gcToCheck, cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'deposit to take', n: gcDepOpen, cls: 'bg-rose-500', tone: 'rose', filter: 'deposit' }],
-      // The filter chips under the tile count GUESTS (rows), so the number on a chip is the number of rows it shows.
-      chipLabels: { check: 'ID to look at', id: 'need ID', deposit: 'need deposit', release: 'deposit to release', done: 'ready' },
-      sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcNeeded ? [gcToCheck ? gcToCheck + ' ID photo' + (gcToCheck === 1 ? '' : 's') + ' to check' : '', gcTodayOpen ? gcTodayOpen + ' arriving today still open' : 'today’s arrivals covered', gcIdOpen - gcToCheck ? (gcIdOpen - gcToCheck) + ' ID' : '', gcDepOpen ? gcDepOpen + ' deposit' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
+    { key: 'checks', label: 'ID & deposits', done: gcN('done'), needed: gcRows.length, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): guests ready against guests arriving, today first. A guest is ready when everything their channel asks for is in — ID, selfie, deposit. An ID is verified when its photo reads as the booking\'s guest, when the desk closes it by hand, or when “verified” is ticked on the booking in Guesty; a photo that does not read as the guest is flagged to check',
+      segs: [{ label: 'ready', n: gcN('done'), cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID to look at', n: gcN('check'), cls: 'bg-rose-600', tone: 'rose', filter: 'check' }, { label: 'need ID', n: gcN('id'), cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'need deposit', n: gcN('deposit'), cls: 'bg-amber-500', tone: 'amber', filter: 'deposit' }, { label: 'deposit to release', n: gcN('release'), cls: 'bg-rose-500', tone: 'rose', filter: 'release' }],
+      sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcRows.length ? [gcTodayOpen ? gcTodayOpen + ' arriving today not ready' : 'today’s arrivals ready', gcN('check') ? gcN('check') + ' ID to look at' : '', gcN('release') ? gcN('release') + ' to release' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
     { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, loading: !blQ.data && blQ.loading, title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
       big: { value: String(blLive), unit: 'off today', tone: blNew ? 'text-rose-700' : blBlank ? 'text-amber-800' : blLive ? 'text-ink' : 'text-emerald-700' },
       segs: [{ label: 'new in 48h', n: blNew, cls: 'bg-rose-500', tone: 'rose', filter: 'new' }, { label: 'standing', n: blLive - blNew, cls: 'bg-slate-400', tone: 'slate', filter: 'live' }, { label: 'within 7 days', n: blSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: blLater, cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
@@ -534,8 +539,8 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
         : st.state === 'todo' && st.idOpen && !r.idLinkSentAt ? <button onClick={() => sendCheckLink(r.reservationId)} disabled={b} className={DARK}>{b ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} Send ID link</button>
         : st.state === 'todo' && st.depOpen ? <Link href="/welcome-calls?tab=checks" className={DARK}><Check size={12} /> Take deposit</Link>
         : null
-      const state = st.state === 'done' || st.state === 'scheduled' ? 'done' : st.state === 'mismatch' || st.state === 'look' ? 'check' : st.state === 'release' ? 'release' : st.depOpen && !st.idOpen ? 'deposit' : 'id'
-      out.push({ key: 'gc:' + r.reservationId, state, sort: (state === 'done' ? 9 : st.urgent ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={checkDot(st)} title={<button onClick={toggle} className="text-left hover:text-brand-700 hover:underline" title="Show the booking, the ID, selfie and check-in form">{r.guest}<span className="font-normal text-muted"> · {r.unit}</span></button>}
+      const state = gcStateOf(r)
+      out.push({ key: 'gc:' + r.reservationId, state, sort: (state === 'done' ? 9 : st.urgent || state === 'check' ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={checkDot(st)} title={<button onClick={toggle} className="text-left hover:text-brand-700 hover:underline" title="Show the booking, the ID, selfie and check-in form">{r.guest}<span className="font-normal text-muted"> · {r.unit}</span></button>}
         tags={<CheckChip s={st} r={r} />}
         meta={checkFacts(r, d.today)}
         actions={<>{primary}<button onClick={toggle} className={isOpen ? DARK : GHOST} aria-expanded={isOpen} title="Every action, the ID, selfie and check-in form"><ChevronDown size={12} className={isOpen ? 'rotate-180' : ''} /> Details</button></>}>

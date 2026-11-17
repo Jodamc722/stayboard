@@ -134,19 +134,22 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   const today = data?.today || ''
   // A flagged photo is open work: a person still has to look (Jon: "flag to check").
   // OPEN = TO VERIFY: anything short of the ID, the selfie and the deposit this channel asks for.
-  const isOpen = (r: GuestCheckRow) => r.checklist ? !r.checklist.complete : ((r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')) || (r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled))
+  // Same test as Today's tile (2026-11-16): a hold Guesty has scheduled is nothing for a person to do, so it is not open.
+  const isOpen = (r: GuestCheckRow) => { const k = checkStatus(r, today).state; return k === 'todo' || k === 'look' || k === 'mismatch' }
   const releaseDue = (r: GuestCheckRow) => r.depositStatus === 'captured' && !!r.depositReleaseDue && r.depositReleaseDue <= today
   const shown = useMemo(() => rows.filter(r => only === 'all' ? true : only === 'release' ? releaseDue(r) || (r.depositStatus === 'captured' && r.checkOut <= today) : isOpen(r) || releaseDue(r)), [rows, only, today])
-  const nOpen = rows.filter(isOpen).length, nRelease = rows.filter(releaseDue).length
+  const nState = (...ks: string[]) => rows.filter(r => ks.includes(checkStatus(r, today).state)).length
+  const nTodo = nState('todo'), nLook = nState('look', 'mismatch'), nRelease = nState('release'), nReady = nState('done', 'scheduled')
   const can = !!data?.canEdit
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <Pill tone={nOpen ? 'amber' : 'emerald'} title="Arrivals still missing the ID, the selfie or the deposit their channel asks for">{nOpen} to verify</Pill>
-        {!!data?.toCheck && <Pill tone="rose" title="ID photos on file that a person has to look at — the name did not match the booking, or could not be read">{data.toCheck} to check</Pill>}
-        <Pill tone={nRelease ? 'rose' : 'slate'} title="Deposits held past their release date">{nRelease} to release</Pill>
-        <Pill title="Guests with everything their channel asks for — ID, selfie, deposit">{rows.length - nOpen} of {rows.length} ready</Pill>
+        {/* Same words and the same counts (guests) as Today's tile. */}
+        <Pill title="Guests with everything their channel asks for — ID, selfie, deposit">{nReady} of {rows.length} ready</Pill>
+        {nTodo > 0 && <Pill tone="amber" title="Arrivals still missing the ID, the selfie or the deposit their channel asks for">{nTodo} need ID or deposit</Pill>}
+        {nLook > 0 && <Pill tone="rose" title="ID photos on file that a person has to look at — the name did not match the booking, or could not be read">{nLook} ID to look at</Pill>}
+        {nRelease > 0 && <Pill tone="rose" title="Deposits held past their release date">{nRelease} to release</Pill>}
         <span className="grow" />
         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
           {([['open', 'Open'], ['release', 'Deposits held'], ['all', 'All']] as const).map(([k, l]) => <button key={k} onClick={() => setOnly(k)} className={'px-2.5 py-1 font-semibold border-l border-line first:border-l-0 ' + (only === k ? 'bg-ink text-white' : 'bg-white text-muted')}>{l}</button>)}

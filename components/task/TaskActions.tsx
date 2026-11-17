@@ -69,7 +69,7 @@ export function TaskStatusTag({ state, behind, nobody, days }: { state: TaskStat
     parts.push(late ? 'late' : 'tight'); tone = late ? 'rose' : 'amber'
     titles.push(late ? 'Past its time, or will not land by the deadline at this pace' : 'Close to its deadline')
   }
-  if (state !== 'done' && days != null && days >= 7) { parts.push(days + ' days'); titles.push('Open ' + days + ' days') }
+  if (state !== 'done' && days != null && days >= 7) { parts.push(days + ' days'); if (tone === 'slate') tone = 'amber'; titles.push('Open ' + days + ' days') }
   if (nobody && state !== 'done') { parts.push('nobody on it'); if (tone === 'slate' || tone === 'sky') tone = 'amber'; titles.push(TASK_STATE.unassigned.title) }
   return <Tag tone={tone} title={titles.join(' · ')}>{parts.join(' · ')}</Tag>
 }
