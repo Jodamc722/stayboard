@@ -4,12 +4,13 @@
 //   POST { action: 'send' }           → shows it on the owner's page for review and emails them a sign-in link to it
 //   POST { action: 'unsend' }         → back to a draft
 //   POST { action: 'faq' }            → adds what is approved (and the Wi-Fi, parking, laundry) to the attached listing's FAQ
+//   POST { action: 'shop', reset?, off? } → makes the shopping list link (app/join/<code>/shop), clears its ticks, or retires it
 //   GET  ?format=pdf | xlsx           → the list for OUR team to buy from (Jon, 2026-11-17: "have a pdf format / printout
 //                                       and excel for team to download if we are ordering for owner"): a printout with a
 //                                       tick box per line, or a spreadsheet with the links, to track what has been ordered
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { readRecord, saveRecord, buildOrder, cleanOrderLines } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, buildOrder, cleanOrderLines, ensureShop } from '@/lib/owner-onboard-server'
 import { emailMagicLink, accounts } from '@/lib/owner-onboard-auth'
 import { teamView, unitsOf } from '@/lib/owner-onboard'
 import { orderDoc } from '@/lib/owner-onboard-order-doc'
@@ -36,6 +37,11 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
     else note = 'It is on the owner’s page. There is no owner email, so send them the link yourself.'
   } else if (b.action === 'unsend' && r.order) {
     r.order = { ...r.order, status: 'draft' }
+  } else if (b.action === 'shop' && r.order) {
+    // the shopping list link for whoever is buying; 'reset' clears the ticks, 'off' retires the link
+    if (b.off) r.shop = null
+    else { const sh = ensureShop(r); if (b.reset) sh.got = {} }
+    note = b.off ? 'The shopping link is switched off.' : b.reset ? 'The ticks are cleared.' : 'The shopping link is ready.'
   } else if (b.action === 'faq') {
     const f = await syncFaq(r, g.access.email || null)
     if (!f.ok) return NextResponse.json({ ok: false, error: f.error }, { status: 400 })

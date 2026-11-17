@@ -155,6 +155,9 @@ export type OORecord = {
   stock?: 'none' | 'full' | ''
   /** The team's walkthrough of the unit: what is really there. `key` opens the walkthrough link without a login. */
   walk?: { key: string; counts: Record<string, number>; note?: string; by?: string; sentAt?: string; sentTo?: string[]; startedAt?: string; doneAt?: string } | null
+  /** The shopping list link for whoever is buying the order (Jon, 2026-11-17: "also as a link, like a shopping list
+   *  that as they get they can mark"). `key` opens it without a login; `got` is what has been bought, by order-line key. */
+  shop?: { key: string; got: Record<string, { at: string; by?: string }>; by?: string; openedAt?: string } | null
   /** Automatic reminders to the owner (lib/owner-onboard-remind): every one sent, and whether they are paused. */
   remind?: { paused?: boolean; log: { at: string; kind: 'start' | 'home' | 'supplies' | 'paperwork' | 'order' | 'escalate'; about?: 'start' | 'home' | 'supplies' | 'paperwork' | 'order'; owner: string; to?: string }[] } | null
   /** The team's call on an item that is short: not buying it. */
@@ -246,8 +249,8 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, ...rest } = r
-  void owners; void walk; void decisions; void remind
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, ...rest } = r
+  void owners; void walk; void decisions; void remind; void shop
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }

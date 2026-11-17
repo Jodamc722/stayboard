@@ -1060,6 +1060,8 @@ export function SalesMagazine({ report, canEdit: canEdit0, onePager, digital, re
           ) : null}
           <p className="mz-form-h">Pages</p>
           <label className="mz-toggle"><input type="checkbox" checked={!!mag.showContents} onChange={e => setMag({ showContents: e.target.checked })} /> Contents and a note from the presenter</label>
+          {/* Jon, 2026-11-17: "for sales deck have option to hide page numbers". Off hides the number at the foot of every page and beside each contents entry. */}
+          <label className="mz-toggle"><input type="checkbox" checked={!mag.hidePageNumbers} onChange={e => setMag({ hidePageNumbers: !e.target.checked })} /> Page numbers</label>
           {PAGES.map(([k, l]) => <label key={k} className="mz-toggle"><input type="checkbox" checked={!hideMag[k]} onChange={e => setMag({ hide: { ...hideMag, [k]: !e.target.checked } })} /> {l}</label>)}
           {cma ? ([['partner', 'Agent partner program'], ['second', 'Stay as a second option'], ['market', 'Market and comparables'], ['glance', 'Floor plans at a glance'], ['plans', 'One page per floor plan']] as [keyof SalesCma['sections'], string][]).map(([k, l]) => (
             <label key={k} className="mz-toggle"><input type="checkbox" checked={!!cma.sections[k]} onChange={e => setCma({ ...cma, sections: { ...cma.sections, [k]: e.target.checked } })} /> {l}</label>
@@ -1196,7 +1198,7 @@ export function SalesMagazine({ report, canEdit: canEdit0, onePager, digital, re
   ) : null
 
   return (
-    <div className={'mz-root' + (flip && !editText && format !== 'onepage' && !phone ? ' mz-flipping' : '') + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
+    <div className={'mz-root' + (mag.hidePageNumbers ? ' mz-nonum' : '') + (flip && !editText && format !== 'onepage' && !phone ? ' mz-flipping' : '') + (canEdit && editText ? ' mz-editing' : '') + (drawer ? ' mz-with-drawer' : '')} style={themeVars(theme)}>
       <link rel="stylesheet" href={fontHref(drawer === 'style' ? Object.values(MAG_THEMES).flatMap(x => [x.display, x.sans]).concat([theme.display, theme.sans]) : [theme.display, theme.sans])} />
       {theme.displayUrl ? <link rel="stylesheet" href={theme.displayUrl} /> : null}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -1285,6 +1287,7 @@ const CSS = `
 .mz-run-dark{color:rgba(255,255,255,.82);border-color:rgba(255,255,255,.3)}
 .mz-foot{display:flex;justify-content:space-between;align-items:baseline;margin:auto 72px 44px;padding-top:12px;border-top:1px solid ${C.grid};font:500 10px ${SANS};letter-spacing:.18em;text-transform:uppercase;color:${C.muted}}
 .mz-folio{font:400 15px ${TEXT};letter-spacing:.04em;color:${C.ink}}
+.mz-nonum .mz-folio{visibility:hidden}.mz-nonum .mz-toc-n{display:none}
 
 /* type */
 .mz-kicker{font:600 10px ${SANS};letter-spacing:.22em;text-transform:uppercase;color:${C.sandText};margin:0 0 16px;display:flex;align-items:center;gap:12px}
