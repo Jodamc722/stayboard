@@ -32,11 +32,12 @@ import { InlineAssign, type Roster } from '@/components/CommandCockpit'
 import { Row, CleanRow, InspectionTaskRow, ArrivalInspectionRow, GlitchRow, TeamRow, TeamWhereStrip, LIST, GHOST, DARK, bz, money, INSPECT, tomorrowOf, whoShort } from '@/components/command/Hub'
 import { opsHealth } from '@/lib/ops-health'
 import { publishHealth } from '@/components/command/health-bus'
-import { Check } from 'lucide-react'
+import { Check, ChevronDown } from 'lucide-react'
 import { NudgeBtn } from '@/components/command/Nudge'
 import { CallNoteBtn, CallNoteStrip, CallNoteText } from '@/components/CallNote'
-import { IdTag, IdCheckWhy, IdActions, ByHandStrip } from '@/components/IdCheckBits'
-import { Checklist, ThreadThumbs, CheckDetails } from '@/components/CheckPhotos'
+import { IdCheckWhy, IdActions, ByHandStrip } from '@/components/IdCheckBits'
+import { ThreadThumbs, CheckDetails } from '@/components/CheckPhotos'
+import { checkStatus, checkFacts, CheckChip, checkDot, MoreActions } from '@/components/CheckStatus'
 import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import type { DayCalls, DayCallRow } from '@/app/api/command/calls/route'
 import { whereNow, shiftStatus } from '@/lib/team-where'
@@ -440,7 +441,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const rcTodayDone = rcToday.filter(r => r.done).length
   const rcLater = rc ? rc.rows.filter(r => !r.today && !r.done).length : 0
 
-  const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string } }[] = [
+  const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string }; chipLabels?: Record<string, string> }[] = [
     { key: 'team', label: 'Who’s working', done: shCount('on'), needed: teamRead.length, title: 'The field team today (housekeeping, supervisors, maintenance, inspectors — not CCS or office): on shift, clocked out, not clocked in, starting later, from Homebase — and where each one probably is, from Breezeway',
       big: { value: String(shCount('on') + shCount('scheduled')), unit: shCount('scheduled') && !shCount('on') ? 'scheduled' : 'on shift', tone: shCount('late') ? 'text-amber-800' : 'text-ink' },
       segs: [{ label: 'on shift', n: shCount('on'), cls: 'bg-emerald-500', tone: 'emerald', filter: 'on' }, { label: 'not clocked in', n: shCount('late'), cls: 'bg-amber-400', tone: 'amber', filter: 'late' }, { label: 'starting later', n: shCount('later') + shCount('scheduled'), cls: 'bg-sky-400', tone: 'sky', filter: 'later' }, { label: 'clocked out', n: shCount('out'), cls: 'bg-slate-400', tone: 'slate', filter: 'out' }, { label: 'no shift', n: shCount('noshift'), cls: 'bg-slate-200', tone: 'slate', filter: 'noshift' }],
@@ -484,6 +485,8 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       sub: ntQ.error ? 'could not read the notices' : ntToday.length ? [ntC.toSend ? ntC.toSend + ' to send' : 'all sent', ntC.late ? ntC.late + ' late' : '', ntC.blocked ? ntC.blocked + ' with no recipient' : ''].filter(Boolean).join(' · ') : 'none needed today' },
     { key: 'checks', label: 'ID & deposits', done: gcDone, needed: gcNeeded, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): checks done against checks owed, today first. An ID is verified when its photo reads as the booking\'s guest, when the desk closes it by hand, or when “verified” is ticked on the booking in Guesty; a photo that does not read as the guest is flagged to check',
       segs: [{ label: 'done', n: gcDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID photo to check', n: gcToCheck, cls: 'bg-rose-600', tone: 'rose', filter: 'check' }, { label: 'ID to verify', n: gcIdOpen - gcToCheck, cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'deposit to take', n: gcDepOpen, cls: 'bg-rose-500', tone: 'rose', filter: 'deposit' }],
+      // The filter chips under the tile count GUESTS (rows), so the number on a chip is the number of rows it shows.
+      chipLabels: { check: 'ID to look at', id: 'need ID', deposit: 'need deposit', release: 'deposit to release', done: 'ready' },
       sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcNeeded ? [gcToCheck ? gcToCheck + ' ID photo' + (gcToCheck === 1 ? '' : 's') + ' to check' : '', gcTodayOpen ? gcTodayOpen + ' arriving today still open' : 'today’s arrivals covered', gcIdOpen - gcToCheck ? (gcIdOpen - gcToCheck) + ' ID' : '', gcDepOpen ? gcDepOpen + ' deposit' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
     { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, loading: !blQ.data && blQ.loading, title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
       big: { value: String(blLive), unit: 'off today', tone: blNew ? 'text-rose-700' : blBlank ? 'text-amber-800' : blLive ? 'text-ink' : 'text-emerald-700' },
@@ -519,35 +522,39 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     if (open === 'reviews') for (const r of rvAll) { const f = fiveStar(r.rating, r.channel); const low = f != null && f <= 3; const done = r.hasReply || r.dismissed; out.push({ key: 'rv:' + r.id, state: done ? 'done' : low ? 'low' : 'wait', sort: done ? 9 : low ? 0 : 2, node: <Row dot={!done && low ? 'rose' : null} title={(r.guest || 'Guest') + (r.listing_name ? ' · ' + r.listing_name : '')} tags={<>{f != null && <Tag tone={low ? 'rose' : f >= 4.5 ? 'emerald' : 'slate'}>{f}★</Tag>}<Tag>{String(r.channel || '').replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking')}</Tag>{done ? <Tag tone="emerald">{r.hasReply ? 'responded' : 'set aside'}</Tag> : <Tag tone="amber">waiting</Tag>}</>} meta={new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })} actions={!done ? <Link href="/reviews" prefetch={false} className={DARK}>Reply</Link> : null} /> }) }
     if (open === 'notices') for (const n of ntToday) out.push({ key: 'nt:' + n.id, state: n.sent_at ? 'sent' : n.urgency === 'late' ? 'late' : n.urgency === 'due' ? 'due' : 'open', sort: n.sent_at ? 9 : n.urgency === 'late' ? 0 : n.urgency === 'due' ? 1 : 3, node: <Row dot={!n.sent_at && n.urgency === 'late' ? 'rose' : null} title={n.guest_name} tags={<>{n.propertyName && <Tag tone="violet">{n.propertyName}</Tag>}{n.sent_at ? <Tag tone="emerald">sent{n.sent_by ? ' · ' + n.sent_by : ''}</Tag> : n.urgency === 'late' ? <Tag tone="rose">late</Tag> : n.urgency === 'due' ? <Tag tone="amber">due now</Tag> : null}{!n.sent_at && n.hasRecipient === false && <Tag tone="amber">no recipient</Tag>}</>} meta={'Unit ' + n.unit_no + ' · arrives ' + String(n.arrival_date).slice(5)} actions={<>{!n.sent_at && <Link href="/reservation-emails" prefetch={false} className={GHOST}>Open</Link>}{!n.sent_at && <button onClick={() => sendNotice(n.id)} disabled={ntBusy === n.id} className={DARK}>{ntBusy === n.id ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Sent</button>}</>} /> })
     if (open === 'checks') for (const r of gcRows) {
-      const idOpen = gcIdOpenOf(r), depOpen = gcDepOpenOf(r)
-      // To verify until the ID, the selfie and the deposit are all in (2026-10-24).
-      const short = r.checklist ? !r.checklist.complete : (idOpen || depOpen)
+      // ONE CHIP, ONE BUTTON (Jon, 2026-11-16: "This is so noisy"): the next step in plain words, the
+      // facts in grey, one button for the next action — everything else is under Details.
+      const st = checkStatus(r, d.today)
       const openUrl = (url: string) => { try { window.open(url, '_blank', 'noopener') } catch { /* blocked */ } }
-      const relDue = r.depositStatus === 'captured' && !!r.depositReleaseDue && r.depositReleaseDue <= d.today
-      const at = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
       const canEdit = !!gcQ.data?.canEdit
       const b = gcBusy.startsWith(r.reservationId)
-      out.push({ key: 'gc:' + r.reservationId, state: !short && !relDue ? 'done' : r.idStatus === 'check' ? 'check' : depOpen || relDue ? 'deposit' : 'id', sort: (!short && !relDue ? 9 : r.idStatus === 'check' ? 0 : r.today || relDue ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={(short && r.today) || relDue || r.idStatus === 'check' ? 'rose' : null} title={<button onClick={() => setGcOpen(gcOpen === r.reservationId ? '' : r.reservationId)} className="text-left hover:text-brand-700 hover:underline" title="Show the booking, the ID, selfie and check-in form">{r.guest + ' · ' + r.unit}</button>}
-        tags={<><Tag>{r.channel}</Tag><Tag tone={r.today ? 'amber' : 'slate'}>{r.today ? 'arrives today' : r.inHouse ? 'in-house' : 'arrives ' + r.checkIn.slice(5)}</Tag>
-          <Checklist r={r} />
-          {r.idStatus !== 'pending' && <IdTag r={r} />}
-          {r.needDeposit && <Tag tone={r.depositStatus === 'pending' ? (r.depositScheduled ? 'sky' : 'amber') : relDue ? 'rose' : 'emerald'} title={r.depositAuto ? 'A security deposit on the booking in Guesty' : r.depositScheduled ? 'Guesty places the hold' + (r.depositScheduled.due ? ' on ' + at(r.depositScheduled.due) : ' before arrival') + ' — nothing to do unless it fails' : undefined}>{r.depositStatus === 'captured' ? 'deposit ' + (r.depositAmount != null ? '$' + Math.round(r.depositAmount).toLocaleString() : 'held') + (r.depositAuto ? ' · Guesty' : '') + (r.depositCapturedAt ? ' · ' + at(r.depositCapturedAt) : '') + (relDue ? ' · RELEASE DUE' : '') : r.depositStatus === 'released' ? 'deposit released' : r.depositStatus === 'claimed' ? 'deposit claimed' : r.depositStatus === 'waived' ? 'deposit waived' : r.depositScheduled ? 'deposit scheduled in Guesty · $' + Math.round(r.depositScheduled.amount).toLocaleString() : 'deposit to collect' + (r.depositDue ? ' · $' + r.depositDue : '')}</Tag>}</>}
-        meta={[r.idName ? 'ID: ' + r.idName : '', r.note, r.by ? 'by ' + String(r.by).split('@')[0] : ''].filter(Boolean).join(' · ')}
-        actions={<>
+      const isOpen = gcOpen === r.reservationId
+      const toggle = () => setGcOpen(isOpen ? '' : r.reservationId)
+      const primary = !canEdit ? null
+        : st.state === 'mismatch' || st.state === 'look' ? (!isOpen ? <button onClick={toggle} className={DARK}><Eye size={12} /> Review ID</button> : null)
+        : st.state === 'release' ? <button onClick={() => setCheck(r.reservationId, { deposit_status: 'released' })} disabled={!!gcBusy} className={DARK}><Check size={12} /> Released</button>
+        : st.state === 'todo' && st.idOpen && !r.idLinkSentAt ? <button onClick={() => sendCheckLink(r.reservationId)} disabled={b} className={DARK}>{b ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} Send ID link</button>
+        : st.state === 'todo' && st.depOpen ? <Link href="/welcome-calls?tab=checks" className={DARK}><Check size={12} /> Take deposit</Link>
+        : null
+      const state = st.state === 'done' || st.state === 'scheduled' ? 'done' : st.state === 'mismatch' || st.state === 'look' ? 'check' : st.state === 'release' ? 'release' : st.depOpen && !st.idOpen ? 'deposit' : 'id'
+      out.push({ key: 'gc:' + r.reservationId, state, sort: (state === 'done' ? 9 : st.urgent ? 0 : 2) + (r.checkIn > d.today ? 0.5 : 0), node: <Row dot={checkDot(st)} title={<button onClick={toggle} className="text-left hover:text-brand-700 hover:underline" title="Show the booking, the ID, selfie and check-in form">{r.guest}<span className="font-normal text-muted"> · {r.unit}</span></button>}
+        tags={<CheckChip s={st} r={r} />}
+        meta={checkFacts(r, d.today)}
+        actions={<>{primary}<button onClick={toggle} className={isOpen ? DARK : GHOST} aria-expanded={isOpen} title="Every action, the ID, selfie and check-in form"><ChevronDown size={12} className={isOpen ? 'rotate-180' : ''} /> Details</button></>}>
+        <IdCheckWhy r={r} />
+        {st.state !== 'done' && !isOpen && <ThreadThumbs r={r} onOpen={openUrl} />}
+        {isOpen && <MoreActions>
           <IdActions r={r} canEdit={canEdit} busy={b} ghost={GHOST} dark={DARK}
             onPatch={(patch) => setCheck(r.reservationId, patch)} onSendLink={() => sendCheckLink(r.reservationId)}
             onView={which => viewCheckPhoto(r.reservationId, which)} onRecheck={() => setCheck(r.reservationId, { recheck: true })}
             byHand={gcByHand === r.reservationId} setByHand={v => setGcByHand(v ? r.reservationId : '')} />
-          {canEdit && depOpen && <Link href="/welcome-calls?tab=checks" className={DARK}><Check size={12} /> Deposit…</Link>}
-          {canEdit && relDue && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'released' })} disabled={!!gcBusy} className={DARK}><Check size={12} /> Released</button>}
-          {canEdit && depOpen && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'waived' })} disabled={!!gcBusy} className={GHOST} title="No deposit for this stay">Waive deposit</button>}
-          <button onClick={() => setGcOpen(gcOpen === r.reservationId ? '' : r.reservationId)} className={gcOpen === r.reservationId ? DARK : GHOST} title="The booking, the ID, selfie and check-in form">Details</button>
+          {canEdit && st.depOpen && <Link href="/welcome-calls?tab=checks" className={GHOST}><Check size={12} /> Take deposit</Link>}
+          {canEdit && st.depOpen && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'waived' })} disabled={!!gcBusy} className={GHOST} title="No deposit for this stay">Waive deposit</button>}
+          {canEdit && r.depositStatus === 'captured' && st.state !== 'release' && <button onClick={() => setCheck(r.reservationId, { deposit_status: 'released' })} disabled={!!gcBusy} className={GHOST}><Check size={12} /> Released</button>}
           <a href={r.guestyUrl} target="_blank" rel="noreferrer" className={GHOST} title="Open this reservation in Guesty">Guesty</a>
           <Link href="/welcome-calls?tab=checks" className={GHOST} title="The ID & deposits desk">Desk</Link>
-        </>}>
-        <IdCheckWhy r={r} />
-        <ThreadThumbs r={r} onOpen={openUrl} />
-        {gcOpen === r.reservationId && <CheckDetails r={r} onOpen={openUrl} />}
+        </MoreActions>}
+        {isOpen && <CheckDetails r={r} onOpen={openUrl} />}
         {gcByHand === r.reservationId && canEdit && <ByHandStrip r={r} busy={b} ghost={GHOST} dark={DARK} field="rounded-lg border border-line bg-white px-2.5 py-1.5 text-[13px] text-ink outline-none focus:border-brand-400" onClose={() => setGcByHand('')} onPatch={async (patch) => { await setCheck(r.reservationId, patch); setGcByHand('') }} />}
       </Row> })
     }
@@ -560,7 +567,9 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   }, [open, d, teamRead.length, calls, roster, can.assign, can.plan, can.calls, unpaidQ.data, unpaidPatch, lfQ.data, rvQ.data, ntQ.data, ntBusy, gcQ.data, gcBusy, gcOpen, gcByHand, blQ.data, chQ.data])
 
   const tile = tiles.find(x => x.key === open) || null
-  const chips = tile ? tile.segs.filter(s => s.n > 0) : []
+  const chips: { filter: string; label: string; n: number }[] = !tile ? []
+    : tile.chipLabels ? Object.entries(tile.chipLabels).map(([f, label]) => ({ filter: f, label, n: items.filter(i => i.state === f).length })).filter(c => c.n > 0)
+    : tile.segs.filter(s => s.n > 0)
   const pick = filter !== 'all' && chips.some(c => c.filter === filter) ? filter : 'all'
   const shown = pick === 'all' ? items : items.filter(i => i.state === pick)
   const nudgeIds = shown.filter(i => i.taskId && i.who && i.state !== 'done').map(i => i.taskId as string)
@@ -569,7 +578,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     // The Unpaid tile points at the list already on the page (under the checklist) rather than opening a second copy.
     setOpen(k); setFilter('all')
   }
-  const headline = tile ? (tile.key === 'team' ? teamRead.length + ' field team · ' + shCount('on') + ' on shift · ' + shCount('out') + ' clocked out · ' + tmCount('at') + ' in a unit' : tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? tile.done + ' of ' + tile.needed + ' checks done' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
+  const headline = tile ? (tile.key === 'team' ? teamRead.length + ' field team · ' + shCount('on') + ' on shift · ' + shCount('out') + ' clocked out · ' + tmCount('at') + ' in a unit' : tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? items.filter(i => i.state === 'done').length + ' of ' + items.length + ' guests ready' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
 
   // ── OPS HEALTH (Jon, 2026-10-05: "a scorecard for the today board, like health of our operations").
   // One number from the same counts as the tiles — lib/ops-health — so it can never say something a
