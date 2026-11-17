@@ -80,7 +80,7 @@ export function MessageThread({ conversationId, channel, guest, unit, initialMes
   // Open at the newest message, like any inbox.
   const scroller = useStickToBottom(messages.length + (hideAuto ? 0.5 : 0))
   const counts = { guest: messages.filter(m => m.sender === 'guest').length, team: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && !isAuto(m)).length, auto: messages.filter(m => m.sender !== 'guest' && m.sender !== 'system' && isAuto(m)).length }
-  const stay = reservation && reservation.check_in ? `${fmtShort(reservation.check_in)} → ${fmtShort(reservation.check_out)}${reservation.nights != null ? ' · ' + reservation.nights + ' nights' : ''}` : ''
+  const stay = reservation && reservation.check_in ? `${fmtShort(reservation.check_in)} → ${fmtShort(reservation.check_out)}${reservation.nights != null ? ' · ' + reservation.nights + (reservation.nights === 1 ? ' night' : ' nights') : ''}` : ''
   // WHERE THE GUEST IS IN THEIR STAY — the first thing to know before answering.
   const checkIn = reservation?.check_in ? String(reservation.check_in).slice(0, 10) : null
   const phase = reservation ? stayPhase({ checkIn, checkOut: reservation.check_out ? String(reservation.check_out).slice(0, 10) : null, status: reservation.status || null }, etDay(Date.now())) : 'none'

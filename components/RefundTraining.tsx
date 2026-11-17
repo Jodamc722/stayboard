@@ -99,7 +99,7 @@ function CaseRow({ c, edit, busy, onSave, onDelete }: { c: Case; edit: boolean; 
     <div className="py-2.5">
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-[12.5px] font-bold text-ink">{c.unit || 'Unit'} · {c.category || 'uncategorised'}{c.channel ? ' · ' + c.channel : ''}{c.nights ? ' · ' + c.nights + ' nights' : ''}</p>
+          <p className="text-[12.5px] font-bold text-ink">{c.unit || 'Unit'} · {c.category || 'uncategorised'}{c.channel ? ' · ' + c.channel : ''}{c.nights ? ' · ' + c.nights + (c.nights === 1 ? ' night' : ' nights') : ''}</p>
           <p className="text-[12.5px] text-ink/85 mt-0.5">{c.what}</p>
           <p className="text-[12px] text-muted mt-0.5">
             Paid <b className="text-ink">{money(c.paid)}</b>{pct != null ? ' (' + pct + '% of the stay)' : ''}

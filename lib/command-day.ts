@@ -51,6 +51,7 @@
 // (tag 'day', 30 seconds) and shared. Only the rows cleared today differ between two reads a second
 // apart, so they are applied after the cache, read straight from the table — see withDismissals,
 // which holds the cap, the counts, Handled/Completed and the verdict (all of which read them).
+import { plainText } from './message-text'
 import { unstable_cache } from 'next/cache'
 import { supabaseAdmin } from './supabase-admin'
 import { DAY_TAG, tooOld } from './bust'
@@ -77,6 +78,9 @@ import { getAccess, canSeeMoney } from './access'
 import type { StaffDay } from './forecast/staffing'
 
 const str = (v: any) => String(v ?? '').trim()
+// A message preview can be a whole HTML document (a photo sent through Expedia arrives as
+// "<html><head></head><body><div><img …"), and that was printed on the Command Center as is.
+const previewText = (v: any) => { const raw = String(v ?? ''); const t = plainText(raw).replace(/\s+/g, ' ').trim(); return (t || (/<img\b/i.test(raw) ? 'Sent a photo' : '')).slice(0, 140) }
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d)
 const shift = (d: string, n: number) => ymd(new Date(Date.parse(d + 'T12:00:00Z') + n * 86400000))
 const DONE = TASK_DONE_RE   // the shared done rule (lib/task-categories)
@@ -970,7 +974,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
     const reply = w ? replyOf[cid] : null
     const lid = str((s && s.listing_id) || (w && w.listing_id) || c.listing_id)
     const channel = str((s && s.channel) || (w && w.channel) || c.channel)
-    const quote = str((s && s.guest_excerpt) || c.last_message_preview).replace(/\s+/g, ' ').slice(0, 140)
+    const quote = previewText((s && s.guest_excerpt) || c.last_message_preview)
     const tags: RowTag[] = []
     if (s) tags.push({ label: 'Unhappy', tone: 'rose', title: 'The sentiment scan read this guest as unhappy' })
     if (reply) tags.push({ label: reply.label, tone: reply.late ? 'rose' : 'amber', title: 'Waiting on our reply — ' + SLA_RULE_TEXT })
@@ -1002,7 +1006,7 @@ async function buildCommandCore(today: string): Promise<CommandCore> {
   for (const w of waitingFirst.slice(0, 8)) {
     const c = threadBy[w.conversation_id] || {}
     const channel = str(w.channel || c.channel)
-    deskRows.push({ key: 'msg:' + w.conversation_id, kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(w.listing_id || c.listing_id), text: str(c.last_message_preview).slice(0, 140), meta: replyOf[w.conversation_id].label + (channel ? ' · ' + channel : ''), href: '/inbox/' + encodeURIComponent(w.conversation_id) })
+    deskRows.push({ key: 'msg:' + w.conversation_id, kind: 'message', who: str(c.guest_name) || 'Guest', unit: nameOf(w.listing_id || c.listing_id), text: previewText(c.last_message_preview), meta: replyOf[w.conversation_id].label + (channel ? ' · ' + channel : ''), href: '/inbox/' + encodeURIComponent(w.conversation_id) })
   }
   for (const a of welcomeDue.slice(0, 8)) deskRows.push({ key: 'wc:' + a.reservationId, kind: 'welcome', who: a.guest, unit: a.unit, text: 'Welcome call due today', meta: a.nights + ' nt · ' + money(a.value), href: '/welcome-calls' })
   for (const a of approvals.slice(0, 6)) deskRows.push({ key: 'ap:' + str(a.id), kind: 'approval', who: str(a.vendor) || str(a.type), unit: [str(a.building), str(a.unit)].filter(Boolean).join(' '), text: str(a.title), meta: a.amount_usd != null ? money(Number(a.amount_usd)) : str(a.priority), href: '/requests' })

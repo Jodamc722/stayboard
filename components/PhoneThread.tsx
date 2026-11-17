@@ -136,7 +136,7 @@ export function PhoneThread({ number, display, guest, unit, events: initial, res
               <Row Icon={User} k="Guest" v={reservation.guest_name || '—'} />
               <Row Icon={Phone} k="Phone" v={reservation.guest_phone || display} />
               <Row Icon={Home} k="Unit" v={reservation.listing_name || '—'} />
-              <Row Icon={BedDouble} k="Stay" v={`${fmtDay(reservation.check_in)} → ${fmtDay(reservation.check_out)}${reservation.nights ? ` · ${reservation.nights} nights` : ''}`} />
+              <Row Icon={BedDouble} k="Stay" v={`${fmtDay(reservation.check_in)} → ${fmtDay(reservation.check_out)}${reservation.nights ? ` · ${reservation.nights} night${reservation.nights === 1 ? '' : 's'}` : ''}`} />
               <Row Icon={DollarSign} k="Total" v={reservation.money_total != null ? `${reservation.money_currency || '$'} ${Number(reservation.money_total).toLocaleString()}` : '—'} />
             </dl>
             <div className="mt-3 flex gap-2">

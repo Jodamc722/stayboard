@@ -228,7 +228,7 @@ export function ArrivalInspectionRow({ a, create, canCreate, onChanged, lane }: 
         <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
         {a.value >= 1000 && <Tag tone="slate" title={'A ' + money(a.value) + ' booking — high-ticket'}>{money(a.value)}</Tag>}
       </>}
-      meta={[a.guest, a.nights + ' nights'].join(' · ')} err={err}
+      meta={[a.guest, a.nights + (a.nights === 1 ? ' night' : ' nights')].join(' · ')} err={err}
       actions={<>
         {a.inspection === 'none' && !made && canCreate && create && <button onClick={go} disabled={busy} className={DARK} title="Create the pre-arrival inspection in Breezeway">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Create</button>}
         {a.inspectionTaskId && <a href={bz(a.inspectionTaskId)} target="_blank" rel="noreferrer" className={GHOST} title="Open the inspection in Breezeway"><ExternalLink size={12} /></a>}
@@ -264,7 +264,7 @@ export function CallRow({ a, canLog, onChanged, lane }: { a: ArrivalRow; canLog:
   return (
     <Row lane={lane} noteKey={'call:' + a.reservationId} dot={a.big ? 'amber' : null} title={a.guest}
       tags={<>{a.big && <Tag tone="violet" title="Big arrival — a mandatory call">must call</Tag>}{a.value >= 1000 && <Tag tone="slate" title={money(a.value) + ' booking'}>{money(a.value)}</Tag>}</>}
-      meta={[a.unit, a.nights + ' nights'].join(' · ')} err={err}
+      meta={[a.unit, a.nights + (a.nights === 1 ? ' night' : ' nights')].join(' · ')} err={err}
       actions={canLog ? <>
         {B('reached', 'Reached', 'Spoke to the guest — logs the call on the booking and in Guesty')}
         {B('voicemail', 'Voicemail', 'Left a voicemail — counts as called')}
@@ -353,7 +353,7 @@ function ReviewRow({ r, canReply, onGone, lane }: { r: Review; canReply: boolean
   return (
     <Row lane={lane} noteKey={'rv:' + r.id} dot={low ? 'rose' : null} title={r.listing_name || 'Unit'}
       tags={s != null ? <Tag tone={low ? 'rose' : s >= 4.5 ? 'emerald' : 'slate'} title={r.channel + ' · ' + r.created_at.slice(0, 10) + (low ? ' · a low score is answered within 24h' : '')}><Star size={10} className="inline -mt-0.5" /> {s}</Tag> : null}
-      meta={r.guest + ' · ' + (r.content || '(no text)').replace(/\s+/g, ' ').slice(0, 90)} err={err}
+      meta={(r.guest || 'Guest') + ' · ' + (r.content || '(no text)').replace(/\s+/g, ' ').slice(0, 90)} err={err}
       actions={canReply ? <>
         <button onClick={() => setOpen(o => !o)} className={open ? DARK : GHOST} title="Read it and write the public reply here">{open ? 'Close' : 'Reply'}</button>
         <button onClick={() => run('skip')} disabled={!!busy} className={GHOST} title="No reply needed — take it off the queue"><X size={12} /></button>

@@ -46,7 +46,7 @@ export function ResDetail({ id, compact = false }: { id: string; compact?: boole
       <H>Booking</H>
       <Row k="Confirmation"><span className="font-mono">{d.confirmation || '—'}</span>{d.otaNumber ? <span className="text-muted"> · OTA <span className="font-mono text-ink">{d.otaNumber}</span></span> : null}</Row>
       <Row k="Channel">{d.source || 'Direct'}{d.origin === 'guesty' ? <span className="text-muted"> · in Guesty</span> : null}</Row>
-      <Row k="Stay">{day(d.checkIn)} → {day(d.checkOut)}{d.nights ? <span className="text-muted"> · {d.nights} nights</span> : null}</Row>
+      <Row k="Stay">{day(d.checkIn)} → {day(d.checkOut)}{d.nights ? <span className="text-muted"> · {d.nights} night{d.nights === 1 ? '' : 's'}</span> : null}</Row>
       {d.arrivalTime ? <Row k="Arriving">{d.arrivalTime}</Row> : null}
       <Row k="Booked">{when(d.bookedAt) || '—'}{d.modifiedAt ? <span className="text-muted"> · changed {when(d.modifiedAt)}</span> : null}</Row>
       {d.email || d.phone ? <Row k="Contact">{[d.phone, d.email].filter(Boolean).join(' · ')}</Row> : null}

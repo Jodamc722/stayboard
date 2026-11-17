@@ -1463,7 +1463,7 @@ function MoneyTab({ g, openRefund, onChanged, canTrain, canApprove }: { g: Glitc
         {rec?.classification ? (
           <p className="text-[11.5px] text-muted mt-1.5">
             {[(rec.classification.issues || []).map((i: any) => i.label + ' (' + i.severity + ')').join(', '), rec.classification.tone ? 'tone ' + rec.classification.tone : '', rec.stay?.channel,
-              rec.stay?.nights ? rec.stay.nights + ' nights' : '',
+              rec.stay?.nights ? rec.stay.nights + (rec.stay.nights === 1 ? ' night' : ' nights') : '',
               rec.stay?.nightlyRate ? money(rec.stay.nightlyRate) + '/night' : '',
               rec.confidence ? rec.confidence + ' confidence' : ''].filter(Boolean).join(' · ')}
           </p>

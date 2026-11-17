@@ -215,7 +215,7 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
         {r.claimedBy && <Tag tone="amber" title="Somebody has claimed this call">{r.claimedBy.split(' ')[0]} on it</Tag>}
         {r.attempts > 0 && <Tag tone="slate" title="Attempts so far">{r.attempts} tr{r.attempts === 1 ? 'y' : 'ies'}</Tag>}
       </>}
-      meta={[r.unit, when, r.nights ? r.nights + ' nights' : ''].filter(Boolean).join(' · ')}
+      meta={[r.unit, when, r.nights ? r.nights + (r.nights === 1 ? ' night' : ' nights') : ''].filter(Boolean).join(' · ')}
       actions={canLog ? (isPost ? <>
         {B('happy', 'Happy', 'Spoke to the guest — all good', true)}
         {B('issue', 'Issue', 'Spoke to the guest — something to fix or make right')}
