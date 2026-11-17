@@ -93,7 +93,7 @@ export async function sendLinenToVendor(r: OORecord, items: OOItem[]): Promise<{
   const s = { ...s0, vendorCc: withTeam(s0.vendorCc, s0.teamCc, s0.vendorTo) }
   if (!s.vendorTo.length) return { ok: false, error: 'Add the linen vendor’s email first (Owner onboarding → Handoff and vendor emails).', to: [], cc: s.vendorCc }
   const linen = items.filter(i => i.linen)
-  if (!linen.length) return { ok: false, error: 'There is no linen list yet: fill in the home first.', to: s.vendorTo, cc: s.vendorCc }
+  if (!linen.length) return { ok: false, error: 'There is no linen to order: fill in the home first, or everything at par is already in the unit.', to: s.vendorTo, cc: s.vendorCc }
   const units = Array.from(new Set(linen.map(i => i.unit))).sort((a, b) => a - b)
   const label = (u: number) => linen.find(i => i.unit === u)?.unitLabel || 'Unit ' + (u + 1)
   const keys = Array.from(new Set(linen.map(i => i.name + '|' + (i.size || ''))))

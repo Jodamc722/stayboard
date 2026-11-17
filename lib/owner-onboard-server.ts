@@ -319,6 +319,14 @@ export function ensureWalk(r: OORecord): NonNullable<OORecord['walk']> {
   if (!r.walk?.key) { const c: any = (globalThis as any).crypto; r.walk = { ...(r.walk || {}), key: String(c.randomUUID()).replace(/-/g, '').slice(0, 24), counts: r.walk?.counts || {} } }
   return r.walk!
 }
+/** A linen on-hand count changed, so what was approved is no longer what would be sent: the quote is approved again
+ *  before it goes to the vendor (the same rule as editing its lines). Returns true when an approval was cleared. */
+export function linenCountsChanged(r: OORecord, counts: any): boolean {
+  if (!counts || typeof counts !== 'object' || !Object.keys(counts).some(k => k.startsWith('lin:'))) return false
+  if (!r.linen?.approvedAt) return false
+  r.linen = { rows: r.linen.rows, editedAt: r.linen.editedAt, editedBy: r.linen.editedBy, note: r.linen.note }
+  return true
+}
 /** The shopping list link's key, made once (the same long random pass as the walkthrough's). */
 export function ensureShop(r: OORecord): NonNullable<OORecord['shop']> {
   if (!r.shop?.key) { const c: any = (globalThis as any).crypto; r.shop = { ...(r.shop || {}), key: String(c.randomUUID()).replace(/-/g, '').slice(0, 24), got: r.shop?.got || {} } }

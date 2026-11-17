@@ -8,7 +8,7 @@ import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock } from 'lucide-react'
-import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
+import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
 const lab = 'text-[10.5px] uppercase tracking-[0.16em] text-muted font-semibold'
@@ -747,6 +747,20 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             </div>) : !lin.length ? <p className="text-[13px] text-muted">The counts appear once the home is filled in.</p> : (<>
               <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="font-semibold">Size</th>{units.length > 1 ? units.map((_, i) => <th key={i} className="px-2 text-right font-semibold whitespace-nowrap">{uLabel(i)}</th>) : null}<th className="text-right font-semibold">Total</th></tr></thead>
                 <tbody>{linRoll.map(e => <tr key={e.name + e.size} className="border-b border-line"><td className="py-1.5 text-ink">{e.name}</td><td className="text-muted">{e.size || ''}</td>{units.length > 1 ? units.map((_, i) => <td key={i} className="px-2 text-right tabular-nums">{e.per[i] || ''}</td>) : null}<td className="text-right tabular-nums font-semibold">{e.total}</td></tr>)}</tbody></table></div>
+              {/* ON HAND (Jon, 2026-11-17: "mark what's on hand and it should adjust the order"). Counted on the walkthrough
+                  sheet's Linen section or typed here; the quote and the vendor email ask only for what is short. */}
+              {(() => { const ll = linenLines(rec, items); const counted = ll.filter(e => e.have != null).length; const order = ll.reduce((a, e) => a + e.order, 0), par = ll.reduce((a, e) => a + e.par, 0)
+                const setHave = (key: string, v: string) => patch({ walkCounts: { [key]: v === '' ? null : Number(v) } }, 'On-hand count saved.')
+                return (
+                  <details className="mt-3 rounded-xl bg-app p-3" open={counted > 0}>
+                    <summary className="cursor-pointer text-[13px] font-semibold text-ink">Linen on hand · {counted ? <>{order} to order of {par} at par</> : 'not counted yet'}</summary>
+                    <p className="text-[12.5px] text-muted mt-1 mb-2">What is already in the unit and good enough to keep. It is counted on the walkthrough sheet’s Linen section, or type it here. The quote, the PDF and the vendor email then ask only for what is short. Leave a box empty if it has not been counted.</p>
+                    <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th>{units.length > 1 ? <th className="font-semibold">Unit</th> : null}<th className="text-right font-semibold">Par</th><th className="text-right font-semibold">On hand</th><th className="text-right font-semibold">To order</th></tr></thead>
+                      <tbody>{ll.map(e => <tr key={e.key} className="border-b border-line"><td className="py-1 text-ink">{e.name}{e.size ? <span className="text-muted"> · {e.size}</span> : null}</td>{units.length > 1 ? <td className="text-muted whitespace-nowrap">{e.unitLabel}</td> : null}<td className="text-right tabular-nums">{e.par}</td>
+                        <td className="text-right"><input key={e.key + ':' + (e.have ?? '')} inputMode="numeric" defaultValue={e.have ?? ''} placeholder="?" aria-label={'On hand: ' + e.name + ' ' + e.size} onBlur={ev => { const v = ev.target.value.replace(/\D/g, ''); if (v !== String(e.have ?? '')) setHave(e.key, v) }} className="w-14 rounded-lg border border-line bg-white px-2 py-1 text-[12.5px] text-ink text-right" /></td>
+                        <td className={'text-right tabular-nums font-semibold ' + (e.have != null && e.order === 0 ? 'text-emerald-700' : 'text-ink')}>{e.have != null && e.order === 0 ? 'none' : e.order}</td></tr>)}</tbody>
+                      <tfoot><tr><td className="pt-2 font-semibold text-ink" colSpan={units.length > 1 ? 2 : 1}>Total</td><td className="pt-2 text-right tabular-nums">{par}</td><td /><td className="pt-2 text-right tabular-nums font-semibold">{order}</td></tr></tfoot></table></div>
+                  </details>) })()}
               <div className="oo-noprint mt-3 flex flex-wrap items-center gap-2">
                 {!rec.linen?.approvedAt ? <button type="button" onClick={() => linen('approve')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Check size={13} /> Approve the linen quote</button>
                   : <><span className="text-[12.5px] text-emerald-700 font-semibold"><Check size={13} className="inline" /> Approved {new Date(rec.linen.approvedAt).toLocaleDateString()} by {String(rec.linen.approvedBy || '').split('@')[0]}</span>

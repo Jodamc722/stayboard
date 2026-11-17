@@ -5,8 +5,8 @@
 //   PATCH { k, counts?, note?, by?, done? } → saves as they go; done finishes it and tells the team
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { readRecord, saveRecord, itemsFor, ownerItems, mergeCounts } from '@/lib/owner-onboard-server'
-import { stockOf, unitsOf } from '@/lib/owner-onboard'
+import { readRecord, saveRecord, itemsFor, ownerItems, mergeCounts, linenCountsChanged } from '@/lib/owner-onboard-server'
+import { stockOf, unitsOf, linenLines } from '@/lib/owner-onboard'
 import { notify } from '@/lib/notify'
 
 export const dynamic = 'force-dynamic'
@@ -17,9 +17,12 @@ const keyOk = (want: string | undefined, got: string) => !!want && want.length =
 const NOPE = () => NextResponse.json({ ok: false, error: 'This walkthrough link is not active. Ask the office for a new one.' }, { status: 404, headers: NO_STORE })
 
 async function sheet(r: any) {
-  const items = ownerItems(await itemsFor(r)).map(i => ({ key: i.key, name: i.name, group: i.group, qty: i.qty, unit: i.unit, unitLabel: i.unitLabel, owner: stockOf(r, i).owner }))
+  const all = await itemsFor(r)
+  const items = ownerItems(all).map(i => ({ key: i.key, name: i.name, group: i.group, qty: i.qty, unit: i.unit, unitLabel: i.unitLabel, owner: stockOf(r, i).owner }))
+  // LINEN, ITS OWN SECTION (Jon, 2026-11-17): what the unit should have at par, counted the same way; what is there comes off the linen order
+  const linen = linenLines(r, all).map(e => ({ key: e.key, name: e.name + (e.size ? ' · ' + e.size : ''), group: 'Linen', qty: e.par, unit: e.unit, unitLabel: e.unitLabel, owner: null }))
   const units = unitsOf(r).map((h: any, i: number) => ({ label: h.unit ? 'Unit ' + h.unit : 'Unit ' + (i + 1), address: h.address, access: h.access || '', parking: h.parking || '' }))
-  return { ok: true, place: r.attach.property || '', units, stock: r.stock || '', items, counts: r.walk?.counts || {}, note: r.walk?.note || '', by: r.walk?.by || '', doneAt: r.walk?.doneAt || '' }
+  return { ok: true, place: r.attach.property || '', units, stock: r.stock || '', items, linen, counts: r.walk?.counts || {}, note: r.walk?.note || '', by: r.walk?.by || '', doneAt: r.walk?.doneAt || '' }
 }
 export async function GET(req: NextRequest, { params }: { params: { code: string } }) {
   if (limited(params.code)) return NextResponse.json({ ok: false, error: 'Too many requests. Wait a moment.' }, { status: 429, headers: NO_STORE })
@@ -35,10 +38,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   const w = r.walk
   if (!w.startedAt) w.startedAt = new Date().toISOString()
   // only items on this home's list can be counted
-  const valid = new Set(ownerItems(await itemsFor(r)).map(i => i.key))
+  const all = await itemsFor(r)
+  const valid = new Set([...ownerItems(all).map(i => i.key), ...linenLines(r, all).map(e => e.key)])
   const clean: Record<string, any> = {}
   if (b.counts && typeof b.counts === 'object') for (const [k, v] of Object.entries(b.counts)) if (valid.has(k)) clean[k] = v
   w.counts = mergeCounts(w.counts || {}, clean)
+  linenCountsChanged(r, clean)
   if (typeof b.note === 'string') w.note = b.note.slice(0, 2000)
   if (typeof b.by === 'string') w.by = b.by.trim().slice(0, 80)
   const finishing = !!b.done && !w.doneAt

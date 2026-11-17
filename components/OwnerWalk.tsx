@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 type Item = { key: string; name: string; group: string; qty: number; unit: number; unitLabel: string; owner: number | null }
-type Sheet = { place: string; units: { label: string; address: string; access: string; parking: string }[]; stock: string; items: Item[]; counts: Record<string, number>; note: string; by: string; doneAt: string }
+type Sheet = { place: string; units: { label: string; address: string; access: string; parking: string }[]; stock: string; items: Item[]; linen?: Item[]; counts: Record<string, number>; note: string; by: string; doneAt: string }
 const CSS = `
 .ow{--ink:#121316;--body:#3A3B40;--mut:#6E6F74;--rule:#E5E1D8;--acc:#8C6D3A;--ok:#2F7D4F;--bad:#A1332B;--soft:#F1EDE4;min-height:100vh;background:#F6F4EE;color:var(--body);font:400 16px/1.5 Inter,system-ui,sans-serif;color-scheme:light}
 .ow-in{max-width:720px;margin:0 auto;padding:18px max(16px,env(safe-area-inset-right)) 120px max(16px,env(safe-area-inset-left))}
@@ -41,6 +41,9 @@ const CSS = `
 export function OwnerWalk({ code, k }: { code: string; k: string }) {
   const [d, setD] = useState<Sheet | null>(null); const [err, setErr] = useState('')
   const [counts, setCounts] = useState<Record<string, number>>({}); const [note, setNote] = useState(''); const [by, setBy] = useState('')
+  // LINEN, ITS OWN SECTION (Jon, 2026-11-17: "we should be able to do the same for linen. Its own section"): the same
+  // counting, on the linen the unit should have at par. What is there comes off the linen order.
+  const [sec, setSec] = useState<'supplies' | 'linen'>('supplies')
   const [ui, setUi] = useState(0); const [saving, setSaving] = useState(false); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
   const pend = useRef<Record<string, number>>({}); const timer = useRef<any>(null)
   const call = (method: string, body?: unknown) => fetch('/api/join/' + code + '/walk' + (method === 'GET' ? '?k=' + encodeURIComponent(k) : ''), { method, cache: 'no-store', headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify({ k, ...(body as object) }) : undefined }).then(r => r.json()).catch(() => null)
@@ -52,13 +55,15 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
     setMsg(''); return x as Sheet
   }
   function set(key: string, n: number) { const v = Math.max(0, Math.min(999, Math.round(n))); setCounts(c => ({ ...c, [key]: v })); pend.current[key] = v; clearTimeout(timer.current); timer.current = setTimeout(() => flush(), 800) }
-  const mine = useMemo(() => (d ? d.items.filter(i => i.unit === ui) : []), [d, ui])
+  const mine = useMemo(() => (d ? (sec === 'linen' ? d.linen || [] : d.items).filter(i => i.unit === ui) : []), [d, ui, sec])
   const groups = useMemo(() => Array.from(new Set(mine.map(i => i.group))), [mine])
   if (err) return <main className="ow"><style>{CSS}</style><div className="ow-in"><img src="/stay-logo.png" alt="Stay Hospitality" /><p className="ow-k">Walkthrough</p><h1>This link is not active.</h1><p>{err}</p></div></main>
   if (!d) return <main className="ow"><style>{CSS}</style><div className="ow-in"><p className="ow-mut">Opening the count sheet…</p></div></main>
   const total = d.items.length, counted = d.items.filter(i => typeof counts[i.key] === 'number').length
   const unit = d.units[ui]
   const left = (u: number) => d.items.filter(i => i.unit === u && typeof counts[i.key] !== 'number').length
+  const linen = d.linen || []
+  const linLeft = linen.filter(i => i.unit === ui && typeof counts[i.key] !== 'number').length
   async function finish() { setBusy(true); const x = await flush({ done: true }); setBusy(false); if (x) setD(x) }
   return (
     <main className="ow"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600&display=swap" /><style>{CSS}</style>
@@ -71,13 +76,15 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
         {d.doneAt ? <div className="ow-card"><p className="ow-ok" style={{ margin: 0 }}>✓ Walkthrough finished {new Date(d.doneAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. You can still correct a count below.</p></div> : null}
         <div className="ow-card"><label className="ow-f"><span>Your name</span><input value={by} onChange={e => setBy(e.target.value)} onBlur={() => flush()} placeholder="Who is doing the walkthrough" autoComplete="name" /></label></div>
         {d.units.length > 1 ? <div className="ow-units">{d.units.map((u, i) => <button key={i} type="button" className={i === ui ? 'on' : ''} onClick={() => setUi(i)}>{u.label}{left(i) ? ' · ' + left(i) + ' left' : ' · done'}</button>)}</div> : null}
+        {linen.length ? <div className="ow-units"><button type="button" className={sec === 'supplies' ? 'on' : ''} onClick={() => setSec('supplies')}>Supplies{left(ui) ? ' · ' + left(ui) + ' left' : ' · done'}</button><button type="button" className={sec === 'linen' ? 'on' : ''} onClick={() => setSec('linen')}>Linen{linLeft ? ' · ' + linLeft + ' left' : ' · done'}</button></div> : null}
+        {sec === 'linen' ? <p className="ow-mut">Count the linen that is in the unit and in good enough condition to keep. Par is what the unit should have; anything already there comes off the linen order.</p> : null}
         {unit ? <p className="ow-mut">{[d.units.length === 1 ? unit.label : '', unit.address, unit.access ? 'Access: ' + unit.access : '', unit.parking ? 'Parking: ' + unit.parking : ''].filter(Boolean).join(' · ')}</p> : null}
         {groups.map(g => { const list = mine.filter(i => i.group === g); const todo = list.filter(i => typeof counts[i.key] !== 'number').length; return (
           <div key={g} className="ow-card">
             <p className="ow-g">{g}<small>{todo ? todo + ' to count' : 'done'}</small></p>
             <ul>{list.map(i => { const n = counts[i.key]; const has = typeof n === 'number'; return (
               <li key={i.key} className={has ? (n >= i.qty ? 'done' : 'short') : ''}>
-                <span><b>{i.name}</b><small>{i.qty > 1 ? 'Needs ' + i.qty : 'Needs 1'}{i.owner != null ? ' · owner says ' + (i.qty > 1 ? i.owner : i.owner >= 1 ? 'yes' : 'no') : ''}</small></span>
+                <span><b>{i.name}</b><small>{sec === 'linen' ? 'Par ' + i.qty : i.qty > 1 ? 'Needs ' + i.qty : 'Needs 1'}{i.owner != null ? ' · owner says ' + (i.qty > 1 ? i.owner : i.owner >= 1 ? 'yes' : 'no') : ''}</small></span>
                 {i.qty > 1 ? (
                   <div className="ow-qty">
                     <button type="button" aria-label={'One fewer ' + i.name} onClick={() => set(i.key, (has ? n : 0) - 1)}>−</button>
@@ -97,7 +104,7 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
         {msg ? <p className="ow-err">{msg}</p> : null}
       </div>
       <div className="ow-bar"><div className="ow-bar-in">
-        <p><b>{counted}</b> of {total} counted{saving ? ' · saving…' : ''}</p>
+        <p><b>{counted}</b> of {total} counted{linen.length ? ' · linen ' + linen.filter(i => typeof counts[i.key] === 'number').length + ' of ' + linen.length : ''}{saving ? ' · saving…' : ''}</p>
         <button type="button" className="ow-cta" disabled={busy} onClick={finish}>{busy ? 'Saving…' : d.doneAt ? 'Save changes' : counted < total ? 'Finish anyway' : 'Finish walkthrough'}</button>
       </div></div>
     </main>

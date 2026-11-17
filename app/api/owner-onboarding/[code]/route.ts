@@ -5,7 +5,7 @@ import { syncFaq } from '@/lib/owner-onboard-faq'
 import { NextRequest, NextResponse } from 'next/server'
 import { pinHomes } from '@/lib/geo'
 import { requireLevel, requireAdmin, isSuperadmin } from '@/lib/access'
-import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore, cleanOwners, mergeCounts, ensureWalk } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore, cleanOwners, mergeCounts, ensureWalk, linenCountsChanged } from '@/lib/owner-onboard-server'
 import { cleanHome, OO_STEPS, teamView, type OOStep } from '@/lib/owner-onboard'
 
 export const dynamic = 'force-dynamic'
@@ -33,7 +33,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (typeof b.teamNotes === 'string') r.teamNotes = b.teamNotes.slice(0, 4000)
   if (b.marks && typeof b.marks === 'object') for (const [k, v] of Object.entries(b.marks)) if (v === 'have' || v === 'need' || v === '') r.marks[String(k).slice(0, 120)] = v as any
   if (b.counts && typeof b.counts === 'object') r.counts = mergeCounts(r.counts || {}, b.counts)
-  if (b.walkCounts && typeof b.walkCounts === 'object') { const w = ensureWalk(r); w.counts = mergeCounts(w.counts || {}, b.walkCounts) }
+  if (b.walkCounts && typeof b.walkCounts === 'object') { const w = ensureWalk(r); w.counts = mergeCounts(w.counts || {}, b.walkCounts); linenCountsChanged(r, b.walkCounts) }
   if (b.decisions && typeof b.decisions === 'object') { const d = { ...(r.decisions || {}) }; let n = 0; for (const [k, v] of Object.entries(b.decisions)) { if (++n > 800) break; if (v === 'no-buy' || v === 'owner') d[String(k).slice(0, 120)] = v; else delete d[String(k).slice(0, 120)] } r.decisions = d }
   if (Array.isArray(b.steps)) {
     const keys = OO_STEPS.map(s => s.key)
