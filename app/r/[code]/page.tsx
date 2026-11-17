@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase-server'
 import { hasEditCookie } from '@/lib/edit-access'
 import nextDynamic from 'next/dynamic'
 import { reword } from '@/lib/sales-reword'
+import { buildingCover } from '@/lib/sales-cma'
+import { DeckViewSwitch } from '@/components/DeckViewSwitch'
 import { reportGallery } from '@/lib/report-gallery'
 import { reportByListingForEngine } from '@/lib/report-listings-v2'
 import { reportRecommendations } from '@/lib/report-recommendations'
@@ -65,6 +67,8 @@ export default async function PublicReportPage({ params, searchParams }: { param
   if (rep.content && typeof rep.content === 'object') rep.content = picsAsUrls(rep.content)
   // Sales decks made before the wording pass read with the new default sentences (lib/sales-reword).
   if (String((rep.content as any)?.meta?.kind || '') === 'sales') rep.content = reword(rep.content)
+  // A building package's cover leads with the building, over its backdrop (lib/sales-cma).
+  if (String((rep.content as any)?.meta?.kind || '') === 'sales') rep.content = buildingCover(rep.content)
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const unlocked = hasEditCookie()
@@ -103,14 +107,11 @@ export default async function PublicReportPage({ params, searchParams }: { param
   ])
   const view = <ReportView initial={rep} canEdit={!!user || unlocked} isTeam={!!user} gallery={gallery} listingTable={listingTable} recs={recs} delta={delta} />
   if (docKind !== 'sales') return view
-  // The keynote deck's way to the magazine. Bottom-left, out of the deck toolbar's way; never printed.
+  // One control for the deck's four presentations, the same one the magazine carries (components/DeckViewSwitch).
   return (
     <>
       {view}
-      <a href={'/r/' + code + '?view=magazine'} className="sb-noprint"
-        style={{ position: 'fixed', left: 16, bottom: 16, zIndex: 40, background: '#121A4F', color: '#fff', borderRadius: 999, padding: '9px 16px', font: '600 12.5px Inter, system-ui, sans-serif', textDecoration: 'none', boxShadow: '0 6px 20px rgba(18,26,79,.3)' }}>
-        Magazine view
-      </a>
+      <DeckViewSwitch code={code} current="slides" float onePage={!!(rep.content as any)?.cma} />
     </>
   )
 }

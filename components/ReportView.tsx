@@ -4123,7 +4123,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
                         <p style={{ color: '#fff', fontSize: 12, fontWeight: 700, letterSpacing: '0.42em' }}>{mark.word}</p>
                       )}
                       <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.2em', textTransform: 'uppercase', color: 'rgba(255,255,255,0.7)' }}>
-                        Management proposal{when ? ' · ' + when : ''}
+                        {normalizeCma((c as Any).cma) ? AUDIENCES[audienceOf((c as Any).audience)].mast : 'Management proposal'}{when ? ' · ' + when : ''}
                       </p>
                     </div>
                     <div className="mt-auto" style={{ maxWidth: '58%' }}>
@@ -8560,14 +8560,21 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
             // then the terms and the close. Anything not named keeps its house place inside its part.
             if (normalizeCma((c as Any).cma)) {
               const aud = audienceOf((c as Any).audience)
+              // THE REVAMP (Jon, 2026-11-17: "too long, wrong order", with Nick's Rider packet as the
+              // model). One slide says who Stay is, then the numbers: the building in its own pictures,
+              // every floor plan at a glance, the market and comparables behind them, and each plan.
+              // Then how we work together, and only then the rest of who we are, team last before the
+              // close. An agent still sees the program first; an owner their own plan first.
               const part: Record<string, string[]> = {
-                who: ['property', 'overview', 'edge', 'proof', 'returns', 'experience', 'team', 'cma-run', 'ops', 'maxrev', 'stack', 'lighthouse', 'guesty', 'statement'],
-                work: ['cma-work', 'cma-partner', 'cma-partner-steps', 'cma-second', 'cma-second-steps'],
+                who: ['property', 'proof', 'returns', 'experience', 'cma-run', 'ops', 'maxrev', 'stack', 'lighthouse', 'guesty', 'statement', 'team'],
+                work: ['cma-partner', 'cma-second'],
                 num: aud === 'owner'
                   ? ['cma-num', 'cma-plan-*', 'cma-glance', 'cma-market', 'cma-comps', 'market', 'plan', 'comps']
-                  : ['cma-num', 'cma-market', 'cma-comps', 'cma-glance', 'cma-plan-*', 'market', 'plan', 'comps'],
+                  : ['cma-num', 'cma-glance', 'cma-market', 'cma-comps', 'cma-plan-*', 'market', 'plan', 'comps'],
               }
-              const story = ['welcome', 'contact', ...AUDIENCES[aud].order.flatMap(k => part[k])]
+              const keynoteOrder: Record<string, ('who' | 'work' | 'num')[]> = { owner: ['num', 'who', 'work'], agents: ['work', 'num', 'who'], building: ['num', 'work', 'who'] }
+              // 'edge' is the Who-we-are slide (the four figures and the buildings we run): the one slide before the numbers.
+              const story = ['welcome', 'contact', 'edge', 'overview', ...keynoteOrder[aud].flatMap(k => part[k])]
               const tail = ['terms', 'onbsteps', 'close']
               const r2 = (k: string) => {
                 const ix = story.findIndex(x => x === k || (x.endsWith('*') && k.startsWith(x.slice(0, -1))))

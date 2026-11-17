@@ -153,7 +153,8 @@ export function YearChart({ months, kind, h = 210, w = 688 }: { months: { lo: nu
   const max = Math.max(1, ...series.map(m => m.hi))
   const raw = max / 4
   const mag = Math.pow(10, Math.floor(Math.log10(raw)))
-  const step = [1, 2, 2.5, 5, 10].map(x => x * mag).find(x => x >= raw) || raw
+  // Finer steps (2026-11-17): a $10.4K peak used to land on a $20K axis and the line sat in the bottom half.
+  const step = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 7.5, 10].map(x => x * mag).find(x => x >= raw) || raw
   const top = step * 4
   const ch = H - T - B, cw = (W - L) / 12
   const y = (v: number) => T + ch - (v / top) * ch

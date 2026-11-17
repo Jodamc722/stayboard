@@ -111,7 +111,19 @@ export type SalesCma = {
   adjust?: number
   /** The building's month shape (12 weights) when it differs from Miami's. */
   season?: number[] | null
+  /**
+   * Backdrops for this building (Jon, 2026-11-17: use the Rider site for images, then "it needs to
+   * be modified so it's not the original image and potentially blurred. We do not own the rights").
+   * So these are NOT the building's photographs: each is a cropped, heavily blurred, darkened
+   * backdrop that only carries the building's colour and mood behind our own words. The first sits
+   * behind the cover, the second behind the numbers opener. Nothing sharp, nothing shown as a
+   * picture of the building, and no original file is kept in this app. `gallerySource` is the credit.
+   */
+  gallery?: string[]
+  gallerySource?: string
 }
+/** The Rider's two backdrops, adapted from renderings on theriderresidences.com (cropped, blurred, darkened). */
+export const RIDER_GALLERY = ['/deck-img/rider/backdrop-1.jpg', '/deck-img/rider/backdrop-2.jpg']
 /** Older name, kept so the math reads the same everywhere. */
 export type Packet = SalesCma
 
@@ -246,6 +258,7 @@ export function riderTemplate(): SalesCma {
   return {
     building: 'The Rider Residences',
     area: 'Wynwood',
+    gallery: RIDER_GALLERY, gallerySource: 'theriderresidences.com',
     sections: { partner: true, second: true, market: true, glance: true, plans: true },
     partner: {
       lead: 'For clients who own, or are buying, in buildings that allow short-term rentals. Here is how we work with agents and sales teams.',
@@ -327,7 +340,7 @@ export function riderTemplate(): SalesCma {
 export function blankCma(building = '', area = ''): SalesCma {
   const t = riderTemplate()
   return {
-    ...t, building, area,
+    ...t, building, area, gallery: [], gallerySource: '',
     second: { ...t.second, choose: 'This building allows short-term rentals. A buyer is free to pick the manager that fits how they want to own. Stay works with the building’s rules, access and registration requirements, and with the sales team, from contract to opening day.' },
     market: { lead: t.market.lead, bullets: [['Supply.', ''], ['Competition.', ''], ['What wins.', t.market.bullets[2][1]], ['Event dates.', t.market.bullets[3][1]], ['Rental rules.', '']] },
     comps: [], plans: [],
@@ -358,7 +371,28 @@ export function normalizeCma(p: any): SalesCma | null {
     uplift: { ...t.uplift, ...(p.uplift || {}) },
     comps: Array.isArray(p.comps) ? p.comps : [],
     plans: Array.isArray(p.plans) ? p.plans : [],
+    // Only The Rider inherits The Rider's backdrops; every other building has its own or none.
+    gallery: Array.isArray(p.gallery) ? p.gallery.map(String).filter(Boolean) : /\brider\b/i.test(String(p.building || '')) ? RIDER_GALLERY : [],
+    gallerySource: typeof p.gallerySource === 'string' ? p.gallerySource : /\brider\b/i.test(String(p.building || '')) ? 'theriderresidences.com' : '',
   }
+}
+
+/**
+ * A building package's cover, read fresh (2026-11-17). Decks made before the revamp led with the
+ * prospect's name over the stock Miami skyline; a building package leads with the building, in the
+ * building's backdrop (blurred and darkened, never its photograph). Only those two defaults are replaced, so a title or photo someone chose
+ * stays. Returns the same object when there is nothing to change.
+ */
+export function buildingCover(content: any): any {
+  const cma = normalizeCma(content?.cma)
+  const hero = content?.hero
+  if (!cma || !hero || typeof hero !== 'object') return content
+  const prospect = String(content?.meta?.prospect || '').trim()
+  const next: any = { ...hero }
+  if (cma.building && (!String(hero.title || '').trim() || (prospect && String(hero.title).trim() === prospect))) next.title = cma.building
+  if (cma.gallery && cma.gallery[0] && (!hero.heroImage || hero.heroImage === '/deck-img/miami-skyline.jpg')) next.heroImage = cma.gallery[0]
+  if (String(hero.headline || '') === 'How we would run it, and what it could earn.' && cma.plans.length > 1) next.headline = 'What every floor plan could earn as a short-term rental, and how Stay would run it.'
+  return next.title === hero.title && next.heroImage === hero.heroImage && next.headline === hero.headline ? content : { ...content, hero: next }
 }
 
 export const fmtDate = (iso: string) => {

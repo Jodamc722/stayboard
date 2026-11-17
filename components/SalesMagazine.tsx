@@ -28,6 +28,7 @@ import { STACK_TOOLS } from '@/lib/onboarding-copy'
 import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
 import { AUDIENCES, audienceOf, type Audience } from '@/lib/sales-audience'
+import { DeckViewSwitch } from '@/components/DeckViewSwitch'
 import {
   normalizeCma, planNumbers, range, money, compGross, pctRange, fmtDate, MONTHS, adjustLine, newId,
   type SalesCma, type PacketPlan, type PacketComp,
@@ -1216,12 +1217,13 @@ export function SalesMagazine({ report, canEdit: canEdit0, onePager, digital, re
       ) : (
       <nav className={'mz-bar-top' + (flip && phone && !canEdit ? ' mz-bar-reader' : '')}>
         <span className="mz-run-mark mz-on-dark">STAY</span>
-        <span className="mz-switch">
-          {format === 'onepage' ? <a href={keynote + '?view=magazine'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }) } }}>Print</a> : flip ? <a href={keynote + '?view=magazine'}>Print</a> : <b>{format === 'brochure' ? 'Print · brochure' : 'Print'}</b>}
-          {format === 'onepage' ? <a href={keynote + '?view=digital'} onClick={e => { if (!onePager) { e.preventDefault(); setMag({ format: 'full' }); window.location.href = keynote + '?view=digital' } }}>Digital</a> : flip ? <b>Digital</b> : <a href={keynote + '?view=digital'}>Digital</a>}
-          {cma ? (format === 'onepage' ? <b>One page</b> : <a href={keynote + '?view=onepage'}>One page</a>) : null}
-          <a href={keynote}>Keynote</a>
-        </span>
+        {/* One control for the four presentations, the same one the slides carry (components/DeckViewSwitch). */}
+        <DeckViewSwitch code={report.code} onePage={!!cma} current={format === 'onepage' ? 'onepage' : flip ? 'digital' : 'magazine'}
+          onPick={(k, e) => {
+            // The one-pager can also be this magazine's saved format; leaving it puts the full magazine back first.
+            if (format === 'onepage' && !onePager && (k === 'magazine' || k === 'digital')) { setMag({ format: 'full' }); if (k === 'magazine' && !flip) e.preventDefault() }
+            else if (k === (format === 'onepage' ? 'onepage' : flip ? 'digital' : 'magazine')) e.preventDefault()
+          }} />
         <span className="mz-bar-r">
           {canEdit ? <button type="button" className={'mz-ghost' + (editText ? ' on' : '')} onClick={() => setEditText(x => !x)}>{editText ? 'Done editing' : 'Edit text'}</button> : null}
           {canEdit ? <button type="button" className={'mz-ghost' + (drawer ? ' on' : '')} onClick={() => setDrawer(d => d ? null : 'proj')}>Builder</button> : null}
@@ -1682,7 +1684,7 @@ div.mz-ed{display:block}
 
 @media screen and (max-width:760px){
   .mz-bar-top{padding:8px 10px;gap:6px}.mz-bar-top>.mz-run-mark{display:none}
-  .mz-bar-reader{padding:8px max(16px,env(safe-area-inset-left))}.mz-bar-reader>.mz-run-mark{display:inline!important}.mz-bar-reader .mz-switch{display:none}
+  .mz-bar-reader{padding:8px max(16px,env(safe-area-inset-left))}.mz-bar-reader>.mz-run-mark{display:inline!important}.mz-bar-reader .mz-switch,.mz-bar-reader .lh-views{display:none}
   .mz-bar-r{flex-wrap:nowrap;gap:6px}.mz-bar-top button{padding:6px 10px;font-size:11.5px;white-space:nowrap}
   .mz-switch a,.mz-switch b{padding:5px 8px;font-size:11.5px}
   .mz-wide{display:none}
