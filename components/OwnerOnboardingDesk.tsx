@@ -7,7 +7,7 @@
 import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock } from 'lucide-react'
+import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock } from 'lucide-react'
 import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
@@ -161,6 +161,66 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
       {msg ? <p className="text-[12.5px] text-ink mt-2">{msg}</p> : null}
       <Reminders rec={rec} onRec={onRec} />
       {rows.length > 1 ? <p className="text-[11.5px] text-muted mt-2">Every owner sees the home, the supplies, the order list and the timeline. The W-9 and bank forms can only be downloaded by the owner who sent them.</p> : null}
+    </section>
+  )
+}
+
+// ── OWNER INFORMATION (Jon, 2026-11-17: "add owner information section and email, phone number… make it clickable so
+// I can"). Who the owners are and how to reach them, at the top of the page: tap the email to write, the number to
+// call or text. Edit fills in or corrects a name, email or phone without going through the invite card.
+const telOf = (p: string) => { const d = String(p || '').replace(/[^\d+]/g, ''); return d.length >= 7 ? (d.startsWith('+') ? d : d.length === 10 ? '+1' + d : d) : '' }
+function OwnerInfo({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
+  const base = (): Any[] => [{ id: 'p', name: rec.custom.ownerName || '', email: rec.custom.ownerEmail || '', phone: rec.custom.ownerPhone || '' }, ...(rec.owners || []).map((o: Any) => ({ id: o.id, name: o.name || '', email: o.email || '', phone: o.phone || '' }))]
+  const [edit, setEdit] = useState<Any[] | null>(null); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
+  const rows = base()
+  async function save() {
+    if (!edit) return
+    const bad = edit.find(o => o.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.email.trim()))
+    if (bad) { setMsg('“' + bad.email + '” is not an email address.'); return }
+    setBusy(true); setMsg('')
+    const p = edit[0]
+    const d = await fetch('/api/owner-onboarding/' + rec.code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ custom: { ...rec.custom, ownerName: p.name.trim(), ownerEmail: p.email.trim(), ownerPhone: p.phone.trim() }, owners: edit.slice(1).map(o => ({ id: o.id, name: o.name.trim(), email: o.email.trim(), phone: o.phone.trim() })) }) }).then(r => r.json()).catch(() => null)
+    setBusy(false); if (d?.record) { onRec(d.record); setEdit(null) } setMsg(d?.ok ? 'Owner information saved.' : (d?.error || 'Not saved.'))
+  }
+  const link = 'inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink hover:bg-app'
+  return (
+    <section className={card + ' mb-6'}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Owner information</h2>
+        {!edit ? <button type="button" onClick={() => { setEdit(base()); setMsg('') }} className="oo-noprint text-[12.5px] font-semibold text-ink underline">Edit</button> : null}</div>
+      {rec.business ? <p className="text-[13px] text-ink mb-2"><span className="text-muted">Owned by</span> <b>{rec.business}</b></p> : null}
+      {!edit ? (
+        <ul className="divide-y divide-line border-y border-line">
+          {rows.map((o, i) => { const tel = telOf(o.phone); return (
+            <li key={o.id} className="py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="mr-auto min-w-0">
+                <p className="text-[15px] font-semibold text-ink">{o.name || (i === 0 ? 'Owner' : 'Owner ' + (i + 1))}{rows.length > 1 && i === 0 ? <span className="font-normal text-muted text-[12.5px]"> · first owner</span> : null}</p>
+                <p className="text-[13px] text-muted break-all">
+                  {o.email ? <a href={'mailto:' + o.email} className="text-ink underline decoration-line underline-offset-2">{o.email}</a> : 'No email yet'}
+                  {' · '}
+                  {o.phone ? (tel ? <a href={'tel:' + tel} className="text-ink underline decoration-line underline-offset-2 whitespace-nowrap">{o.phone}</a> : o.phone) : 'No phone yet'}
+                </p>
+              </div>
+              <div className="oo-noprint flex flex-wrap gap-2">
+                {o.email ? <a href={'mailto:' + o.email} className={link}><Mail size={13} /> Email</a> : null}
+                {tel ? <a href={'tel:' + tel} className={link}><Phone size={13} /> Call</a> : null}
+                {tel ? <a href={'sms:' + tel} className={link}><MessageSquare size={13} /> Text</a> : null}
+                {o.email ? <CopyBtn text={o.email} label="Copy email" /> : null}
+              </div>
+            </li>) })}
+        </ul>
+      ) : (
+        <div className="oo-noprint space-y-3">
+          {edit.map((o, i) => { const set = (p: Any) => setEdit(edit.map((x, j) => (j === i ? { ...x, ...p } : x))); return (
+            <div key={o.id} className="grid gap-2 sm:grid-cols-3">
+              <label className="block"><span className={lab}>{i === 0 ? 'First owner' : 'Owner ' + (i + 1)} · name</span><input value={o.name} onChange={e => set({ name: e.target.value })} className={field} autoComplete="off" /></label>
+              <label className="block"><span className={lab}>Email</span><input type="email" value={o.email} onChange={e => set({ email: e.target.value })} className={field} autoComplete="off" /></label>
+              <label className="block"><span className={lab}>Phone</span><input type="tel" value={o.phone} onChange={e => set({ phone: e.target.value })} className={field} autoComplete="off" placeholder="(305) 555-0100" /></label>
+            </div>) })}
+          <p className="text-[12px] text-muted">An owner signs in with their email, so changing it changes what they sign in with. To add or remove an owner, use the portal accounts card below.</p>
+          <div className="flex items-center gap-3"><button type="button" disabled={busy} onClick={save} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</button><button type="button" onClick={() => { setEdit(null); setMsg('') }} className="text-[12.5px] text-muted underline">Cancel</button></div>
+        </div>
+      )}
+      {msg ? <p className="text-[12.5px] text-ink mt-2" role="status">{msg}</p> : null}
     </section>
   )
 }
@@ -658,7 +718,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
         <div className="mr-auto min-w-0">
           <p className="text-[11px] uppercase tracking-[0.24em] text-muted font-semibold">Owner onboarding · {stepLabel(rec.steps.find((s: Any) => s.status !== 'done')?.key || 'live')}</p>
           <h1 className="font-serif text-[40px] leading-none text-ink mt-1">{rec.custom.ownerName || 'Owner'}</h1>
-          <p className="text-[13.5px] text-muted mt-2">{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : '', rec.custom.ownerEmail, rec.custom.ownerPhone].filter(Boolean).join(' · ')}</p>
+          <p className="text-[13.5px] text-muted mt-2">{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : ''].filter(Boolean).join(' · ')}{rec.custom.ownerEmail ? <> · <a href={'mailto:' + rec.custom.ownerEmail} className="underline underline-offset-2 hover:text-ink">{rec.custom.ownerEmail}</a></> : null}{rec.custom.ownerPhone ? <> · {telOf(rec.custom.ownerPhone) ? <a href={'tel:' + telOf(rec.custom.ownerPhone)} className="underline underline-offset-2 hover:text-ink whitespace-nowrap">{rec.custom.ownerPhone}</a> : rec.custom.ownerPhone}</> : null}</p>
         </div>
         <div className="oo-noprint flex flex-wrap gap-2">
           <CopyBtn text={ownerLink(code)} label="Copy owner link" />
@@ -668,6 +728,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
         </div>
       </header>
       {msg ? <p className="oo-noprint text-[12.5px] text-muted -mt-3 mb-3">{msg}</p> : null}
+      <OwnerInfo rec={rec} onRec={setRec} />
       {rec.track ? (
         <section className={card + ' oo-noprint mb-6'}>
           <p className={lab + ' mb-2.5'}>Where the owner stands</p>
