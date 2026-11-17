@@ -112,15 +112,18 @@ export type SalesCma = {
   /** The building's month shape (12 weights) when it differs from Miami's. */
   season?: number[] | null
   /**
-   * The building's own pictures (Jon, 2026-11-17: "use the Rider page for examples of images"):
-   * the first is the exterior and leads the cover; the rest sit on the numbers opener and on each
-   * floor plan's slide. `gallerySource` says where they came from, and prints as the credit.
+   * Backdrops for this building (Jon, 2026-11-17: use the Rider site for images, then "it needs to
+   * be modified so it's not the original image and potentially blurred. We do not own the rights").
+   * So these are NOT the building's photographs: each is a cropped, heavily blurred, darkened
+   * backdrop that only carries the building's colour and mood behind our own words. The first sits
+   * behind the cover, the second behind the numbers opener. Nothing sharp, nothing shown as a
+   * picture of the building, and no original file is kept in this app. `gallerySource` is the credit.
    */
   gallery?: string[]
   gallerySource?: string
 }
-/** The Rider's renderings, from theriderresidences.com, used in the package made for its sales team. */
-export const RIDER_GALLERY = ['exterior', 'living', 'bedroom', 'dining', 'kitchen', 'pool', 'lounge', 'pool-deck', 'gym', 'exterior-corner'].map(n => '/deck-img/rider/' + n + '.jpg')
+/** The Rider's two backdrops, adapted from renderings on theriderresidences.com (cropped, blurred, darkened). */
+export const RIDER_GALLERY = ['/deck-img/rider/backdrop-1.jpg', '/deck-img/rider/backdrop-2.jpg']
 /** Older name, kept so the math reads the same everywhere. */
 export type Packet = SalesCma
 
@@ -368,7 +371,7 @@ export function normalizeCma(p: any): SalesCma | null {
     uplift: { ...t.uplift, ...(p.uplift || {}) },
     comps: Array.isArray(p.comps) ? p.comps : [],
     plans: Array.isArray(p.plans) ? p.plans : [],
-    // Only The Rider inherits The Rider's pictures; every other building has its own or none.
+    // Only The Rider inherits The Rider's backdrops; every other building has its own or none.
     gallery: Array.isArray(p.gallery) ? p.gallery.map(String).filter(Boolean) : /\brider\b/i.test(String(p.building || '')) ? RIDER_GALLERY : [],
     gallerySource: typeof p.gallerySource === 'string' ? p.gallerySource : /\brider\b/i.test(String(p.building || '')) ? 'theriderresidences.com' : '',
   }
@@ -377,7 +380,7 @@ export function normalizeCma(p: any): SalesCma | null {
 /**
  * A building package's cover, read fresh (2026-11-17). Decks made before the revamp led with the
  * prospect's name over the stock Miami skyline; a building package leads with the building, in the
- * building's own picture. Only those two defaults are replaced, so a title or photo someone chose
+ * building's backdrop (blurred and darkened, never its photograph). Only those two defaults are replaced, so a title or photo someone chose
  * stays. Returns the same object when there is nothing to change.
  */
 export function buildingCover(content: any): any {

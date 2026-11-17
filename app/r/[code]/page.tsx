@@ -67,7 +67,7 @@ export default async function PublicReportPage({ params, searchParams }: { param
   if (rep.content && typeof rep.content === 'object') rep.content = picsAsUrls(rep.content)
   // Sales decks made before the wording pass read with the new default sentences (lib/sales-reword).
   if (String((rep.content as any)?.meta?.kind || '') === 'sales') rep.content = reword(rep.content)
-  // A building package's cover leads with the building, in its own picture (lib/sales-cma).
+  // A building package's cover leads with the building, over its backdrop (lib/sales-cma).
   if (String((rep.content as any)?.meta?.kind || '') === 'sales') rep.content = buildingCover(rep.content)
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()

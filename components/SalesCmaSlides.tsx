@@ -82,22 +82,21 @@ export function cmaSlides(cma: SalesCma, d: CmaDeps): CmaSlide[] {
     </Slide>
   ) })
 
-  // ── The building, in its own pictures: the opener to the numbers ───────────────────────────────
-  // Only when the building has pictures (cma.gallery). It replaces the old chart-and-title divider.
+  // ── The opener to the numbers, over the building's backdrop ─────────────────────────────────────
+  // Only when the building has one (cma.gallery[1]). The backdrop is a blurred, darkened adaptation,
+  // never the building's own photograph (we do not own those): it carries colour behind the title.
   const gal = (cma.gallery || []).filter(Boolean)
-  const credit = cma.gallerySource ? 'Renderings: ' + cma.gallerySource : ''
-  if (gal.length >= 3 && (S.plans || S.glance)) out.push({ key: 'cma-num', node: (
-    <Slide nav={cma.building || 'The building'} bleed warn={edit} ground={t.band}>
-      <div style={{ position: 'relative', width: '100%', height: '100%', display: 'grid', gridTemplateColumns: '1.55fr 1fr', gridTemplateRows: '1fr 1fr', gap: 4 }}>
-        <div style={{ gridRow: '1 / 3', backgroundImage: `url("${gal[0]}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
-        <div style={{ backgroundImage: `url("${gal[1]}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
-        <div style={{ backgroundImage: `url("${gal[5] || gal[2]}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} />
-        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(10,11,14,0) 40%, rgba(10,11,14,.82) 100%)' }} />
-        <div style={{ position: 'absolute', left: 56, right: 56, bottom: 44 }}>
-          {eyebrow(where || 'The building', true)}
-          {title(d.numbersTitle || (cma.plans.length > 1 ? cma.plans.length + ' floor plans. *What each could earn.*' : 'What it *could earn.*'), true, 52)}
+  const credit = cma.gallerySource ? 'Backdrop adapted from ' + cma.gallerySource : ''
+  if (gal.length >= 2 && (S.plans || S.glance)) out.push({ key: 'cma-num', node: (
+    <Slide nav="The numbers" bleed warn={edit} ground={t.band}>
+      <div style={{ position: 'relative', width: '100%', height: '100%', backgroundImage: `url("${gal[1]}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+        <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(90deg, rgba(10,11,14,.72) 0%, rgba(10,11,14,.35) 60%, rgba(10,11,14,.15) 100%)' }} />
+        <div style={{ position: 'absolute', left: 64, right: 64, top: 0, bottom: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', maxWidth: 720 }}>
+          {eyebrow(where || 'The numbers', true)}
+          {title(d.numbersTitle || (cma.plans.length > 1 ? cma.plans.length + ' floor plans. *What each could earn.*' : 'What it *could earn.*'), true, 64)}
+          <p style={{ fontSize: 18, lineHeight: 1.5, color: 'rgba(255,255,255,.84)', margin: '18px 0 0', maxWidth: '46ch' }}>Gross rental revenue for an established listing, with the market and the comparable units behind every range.</p>
         </div>
-        {credit ? <p style={{ position: 'absolute', right: 14, top: 10, fontSize: 10, color: 'rgba(255,255,255,.75)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,.6)' }}>{credit}</p> : null}
+        {credit ? <p style={{ position: 'absolute', right: 16, bottom: 12, fontSize: 10, color: 'rgba(255,255,255,.6)', margin: 0 }}>{credit}</p> : null}
       </div>
     </Slide>
   ) })
@@ -307,9 +306,6 @@ function planSlide(cma: SalesCma, p: PacketPlan, d: CmaDeps, h: Any) {
   const pi = cma.plans.findIndex(x => x.id === p.id)
   const T = (v: string, path: string, ml?: boolean): React.ReactNode => (d.ed && edit ? d.ed(v, path, ml) : v)
   const n = planNumbers(cma, p)
-  // The building's interiors and amenities, one per floor plan, in order (the exterior leads the cover).
-  const inside = (cma.gallery || []).slice(1)
-  const pic = inside.length ? inside[Math.max(0, pi) % inside.length] : ''
   const comps = p.compIds.map(id => cma.comps.find(c => c.id === id)).filter(Boolean) as SalesCma['comps']
   const dash = (a: number, b: number) => a === b ? money(a) : money(a) + ' – ' + money(b)
   const lab: React.CSSProperties = { fontSize: 9.5, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.muted, margin: 0 }
@@ -329,12 +325,13 @@ function planSlide(cma: SalesCma, p: PacketPlan, d: CmaDeps, h: Any) {
           {h.eyebrow((h.where ? h.where + ' · ' : '') + 'Rental projection')}
           {h.title(T(p.name, `cma.plans.${pi}.name`) as Any, false, 50)}
           <p style={{ fontSize: 15, color: t.muted, margin: '10px 0 0' }}>{[p.sf, p.rules].filter(Boolean).join(' · ')}</p>
-          {pic ? <div style={{ flex: '1 1 0', minHeight: 0, margin: '16px 0 18px', borderRadius: 14, backgroundImage: `url("${pic}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} title={cma.gallerySource ? 'Rendering: ' + cma.gallerySource : undefined} /> : null}
-          <div style={{ marginTop: pic ? 0 : 'auto' }}>
+          <div style={{ margin: 'auto 0' }}>
             <p style={lab}>Could earn in a year, once established</p>
-            <p style={{ fontFamily: serif, fontSize: 54, lineHeight: 1, letterSpacing: '-0.015em', color: t.ink, margin: '10px 0 0', fontVariantNumeric: 'lining-nums', whiteSpace: 'nowrap' }}>{dash(n.lo, n.hi)}</p>
+            <p style={{ fontFamily: serif, fontSize: 60, lineHeight: 1, letterSpacing: '-0.015em', color: t.ink, margin: '10px 0 0', fontVariantNumeric: 'lining-nums', whiteSpace: 'nowrap' }}>{dash(n.lo, n.hi)}</p>
             <p style={{ fontSize: 13, color: t.muted, margin: '8px 0 0' }}>Gross rental revenue, before channel fees and the management fee</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr 0.9fr', gap: 14, marginTop: 22, paddingTop: 16, borderTop: '1px solid ' + t.ink }}>
+          </div>
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr 0.9fr', gap: 14, paddingTop: 16, borderTop: '1px solid ' + t.ink }}>
               {fig('Per month', kMoney(n.monthLo) + '–' + kMoney(n.monthHi).replace('$', ''), 'on average')}
               {fig('Peak month', 'up to ' + kMoney(n.peak), n.peakMonth + ', high end')}
               {fig('Nightly', money(n.nightlyLo) + '–' + money(n.nightlyHi).slice(1), pctRange(p.occLo, p.occHi) + ' occupancy')}
