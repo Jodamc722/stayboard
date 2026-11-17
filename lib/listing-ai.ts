@@ -173,7 +173,7 @@ VARIETY AND DISCIPLINE (2026-11-16 — from reading real drafts across the portf
 - HIGHLIGHTS: 9 lines at most, one feature per line. Drop the lesser ones rather than bundling three into a line.
 - PLAIN AMENITY WORDS. The amenity labels in the data are data, not copy: write "fridge", "smart TV", "air-conditioned". Never read a label aloud or hedge it ("cooling fridge", "smart-style TV").
 - NO DECOR INVENTORY: no bedding or wall colours, no tile, stone or wood finishes, no accent walls, no linens.
-- NEVER TALK A GUEST OUT OF THE BOOKING or point them to another unit. State a limit once, plainly ("a studio with a kitchenette, not a full kitchen") and move on.
+- NEVER TALK A GUEST OUT OF THE BOOKING or point them to another unit. No comparisons with other kinds of lodging or what they cost ("not a motel", "without resort prices"). State a limit once, plainly ("a studio with a kitchenette, not a full kitchen") and move on.
 - A DATED, TEMPORARY NOTICE in the current content (a pool closure, building work) is carried in exactly two places: one short clause in the summary and one line in Other notes. Never open The space with it and never repeat it in the other sections.
 - THE TITLE READS AS NATURAL PHRASES on both sides of a divider ("Walk to Beach & Free Parking", never "Walk to Sand & Parking") and fills at least 42 characters.
 
@@ -201,7 +201,7 @@ HOW THE BOOKING SITES AND AI SEARCH READ THIS (write for them as well as for the
 - THE TITLE IS THE ONE LINE GUESTS SEE EXACTLY AS WRITTEN. The first 30 characters carry the reason to click. Do not spend them on what the search card already shows on its own line (the city, "new").
 - VRBO JOINS EVERY SECTION INTO ONE LONG DESCRIPTION, so each section must read well on its own and must not repeat a sentence from another section. Booking.com rejects an address, a company or person's name, or any contact detail.
 - NAME THE NEIGHBORHOOD AND THE WELL-KNOWN PLACE NEARBY BY NAME. "Near X" is how guests and AI assistants search.
-- SISTER UNITS in the same building are compared by the channels for duplicates. Open the summary and The space with what is true of THIS unit (its floor, its view, its layout, its bed setup) before anything the whole building shares.
+- SISTER UNITS in the same building are compared by the channels for duplicates. Open the summary and The space with what is true of THIS unit (its floor, its view, its layout, its bed setup) before anything the whole building shares. Never by its unit number: a unit, door or apartment number is never printed.
 - BED FACTS: when the data includes "beds" (the layout room by room from Guesty), use exactly that. Never guess a bed size from a photo.
 
 HOUSE STYLE

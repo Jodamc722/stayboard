@@ -49,7 +49,7 @@ export const maxDuration = 300
  */
 function bedLayout(rooms: any): string[] | null {
   if (!Array.isArray(rooms) || !rooms.length) return null
-  const word = (t: string) => String(t || '').toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+  const word = (t: string) => String(t || '').toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim().replace(/^single( bed)?$/, 'twin bed').replace(/^double( bed)?$/, 'full (double) bed')
   const out: string[] = []
   rooms.slice(0, 12).forEach((r: any, i: number) => {
     const beds = (Array.isArray(r?.beds) ? r.beds : []).filter((b: any) => b && b.type && Number(b.quantity ?? 1) > 0)
