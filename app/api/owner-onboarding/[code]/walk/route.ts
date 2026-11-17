@@ -1,10 +1,12 @@
 // The unit walkthrough for one onboarding, the team's side:
 //   POST { action: 'link' }            → makes the walkthrough link if there is none yet
 //   POST { action: 'send', to?: [] }   → emails the walkthrough request (to the people in settings unless `to` is given)
-//   POST { action: 'reopen' }          → a finished walkthrough can be counted again
+//   POST { action: 'close' }           → closes out the inventory from the desk (lib closeInventory): locks the sheet, marks the
+//                                        Supplies check done and builds the order list from the count
+//   POST { action: 'reopen' }          → a closed inventory can be counted again
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { readRecord, saveRecord, ensureWalk, itemsFor } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, ensureWalk, itemsFor, closeInventory } from '@/lib/owner-onboard-server'
 import { sendWalkRequest } from '@/lib/owner-onboard-mail'
 import { teamView } from '@/lib/owner-onboard'
 
@@ -21,7 +23,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   if (b.action === 'send') {
     const s = await sendWalkRequest(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, Array.isArray(b.to) ? b.to : [], by)
     if (s.ok) { w.sentAt = new Date().toISOString(); w.sentTo = s.to; note = 'Walkthrough request sent to ' + s.to.join(', ') + '.' } else error = s.error || 'Not sent.'
-  } else if (b.action === 'reopen') { delete w.doneAt; note = 'The walkthrough is open again.' }
+  } else if (b.action === 'close') { note = closeInventory(r, by.split('@')[0]) }
+  else if (b.action === 'reopen') { delete w.doneAt; delete w.closedNote; note = 'The inventory is open again: the count sheet can be changed.' }
   else if (b.action !== 'link') return NextResponse.json({ ok: false, error: 'Nothing to do.' }, { status: 400 })
   await saveRecord(r, by || null)
   return NextResponse.json({ ok: !error, error: error || undefined, note, record: teamView(r), items: await itemsFor(r) }, { status: error ? 502 : 200 })
