@@ -10,7 +10,7 @@
 //                                       tick box per line, or a spreadsheet with the links, to track what has been ordered
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { readRecord, saveRecord, buildOrder, cleanOrderLines, ensureShop } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, buildOrder, cleanOrderLines, ensureShop, hasCatalogLines } from '@/lib/owner-onboard-server'
 import { emailMagicLink, accounts } from '@/lib/owner-onboard-auth'
 import { teamView, unitsOf } from '@/lib/owner-onboard'
 import { orderDoc } from '@/lib/owner-onboard-order-doc'
@@ -30,6 +30,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
     r.order = { ...r.order, lines: cleanOrderLines(b.lines, unitsOf(r).length), note: String(b.note || '').slice(0, 1000) }
   } else if (b.action === 'send' && r.order) {
     if (!r.order.lines.length) return NextResponse.json({ ok: false, error: 'The list is empty.' }, { status: 400 })
+    // the catalog is not ready for owners: a list built from it has to be rebuilt as what is needed before it goes out
+    if (hasCatalogLines(r.order)) return NextResponse.json({ ok: false, error: 'This list was built from the catalog, which is not ready to show owners. Click “Rebuild from the supplies list” first, then send it.' }, { status: 400 })
     r.order = { ...r.order, status: 'sent', sentAt: new Date().toISOString(), review: undefined }
     // every owner on the link with an email gets their own link to the list
     const to = accounts(r).filter(a => a.email)

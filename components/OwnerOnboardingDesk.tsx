@@ -7,8 +7,8 @@
 import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Loader2, Copy, Check, Mail, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock } from 'lucide-react'
-import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
+import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock } from 'lucide-react'
+import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
 const lab = 'text-[10.5px] uppercase tracking-[0.16em] text-muted font-semibold'
@@ -165,6 +165,66 @@ function InviteOwner({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
   )
 }
 
+// ── OWNER INFORMATION (Jon, 2026-11-17: "add owner information section and email, phone number… make it clickable so
+// I can"). Who the owners are and how to reach them, at the top of the page: tap the email to write, the number to
+// call or text. Edit fills in or corrects a name, email or phone without going through the invite card.
+const telOf = (p: string) => { const d = String(p || '').replace(/[^\d+]/g, ''); return d.length >= 7 ? (d.startsWith('+') ? d : d.length === 10 ? '+1' + d : d) : '' }
+function OwnerInfo({ rec, onRec }: { rec: Any; onRec: (r: Any) => void }) {
+  const base = (): Any[] => [{ id: 'p', name: rec.custom.ownerName || '', email: rec.custom.ownerEmail || '', phone: rec.custom.ownerPhone || '' }, ...(rec.owners || []).map((o: Any) => ({ id: o.id, name: o.name || '', email: o.email || '', phone: o.phone || '' }))]
+  const [edit, setEdit] = useState<Any[] | null>(null); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
+  const rows = base()
+  async function save() {
+    if (!edit) return
+    const bad = edit.find(o => o.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(o.email.trim()))
+    if (bad) { setMsg('“' + bad.email + '” is not an email address.'); return }
+    setBusy(true); setMsg('')
+    const p = edit[0]
+    const d = await fetch('/api/owner-onboarding/' + rec.code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ custom: { ...rec.custom, ownerName: p.name.trim(), ownerEmail: p.email.trim(), ownerPhone: p.phone.trim() }, owners: edit.slice(1).map(o => ({ id: o.id, name: o.name.trim(), email: o.email.trim(), phone: o.phone.trim() })) }) }).then(r => r.json()).catch(() => null)
+    setBusy(false); if (d?.record) { onRec(d.record); setEdit(null) } setMsg(d?.ok ? 'Owner information saved.' : (d?.error || 'Not saved.'))
+  }
+  const link = 'inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink hover:bg-app'
+  return (
+    <section className={card + ' mb-6'}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-2"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Owner information</h2>
+        {!edit ? <button type="button" onClick={() => { setEdit(base()); setMsg('') }} className="oo-noprint text-[12.5px] font-semibold text-ink underline">Edit</button> : null}</div>
+      {rec.business ? <p className="text-[13px] text-ink mb-2"><span className="text-muted">Owned by</span> <b>{rec.business}</b></p> : null}
+      {!edit ? (
+        <ul className="divide-y divide-line border-y border-line">
+          {rows.map((o, i) => { const tel = telOf(o.phone); return (
+            <li key={o.id} className="py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="mr-auto min-w-0">
+                <p className="text-[15px] font-semibold text-ink">{o.name || (i === 0 ? 'Owner' : 'Owner ' + (i + 1))}{rows.length > 1 && i === 0 ? <span className="font-normal text-muted text-[12.5px]"> · first owner</span> : null}</p>
+                <p className="text-[13px] text-muted break-all">
+                  {o.email ? <a href={'mailto:' + o.email} className="text-ink underline decoration-line underline-offset-2">{o.email}</a> : 'No email yet'}
+                  {' · '}
+                  {o.phone ? (tel ? <a href={'tel:' + tel} className="text-ink underline decoration-line underline-offset-2 whitespace-nowrap">{o.phone}</a> : o.phone) : 'No phone yet'}
+                </p>
+              </div>
+              <div className="oo-noprint flex flex-wrap gap-2">
+                {o.email ? <a href={'mailto:' + o.email} className={link}><Mail size={13} /> Email</a> : null}
+                {tel ? <a href={'tel:' + tel} className={link}><Phone size={13} /> Call</a> : null}
+                {tel ? <a href={'sms:' + tel} className={link}><MessageSquare size={13} /> Text</a> : null}
+                {o.email ? <CopyBtn text={o.email} label="Copy email" /> : null}
+              </div>
+            </li>) })}
+        </ul>
+      ) : (
+        <div className="oo-noprint space-y-3">
+          {edit.map((o, i) => { const set = (p: Any) => setEdit(edit.map((x, j) => (j === i ? { ...x, ...p } : x))); return (
+            <div key={o.id} className="grid gap-2 sm:grid-cols-3">
+              <label className="block"><span className={lab}>{i === 0 ? 'First owner' : 'Owner ' + (i + 1)} · name</span><input value={o.name} onChange={e => set({ name: e.target.value })} className={field} autoComplete="off" /></label>
+              <label className="block"><span className={lab}>Email</span><input type="email" value={o.email} onChange={e => set({ email: e.target.value })} className={field} autoComplete="off" /></label>
+              <label className="block"><span className={lab}>Phone</span><input type="tel" value={o.phone} onChange={e => set({ phone: e.target.value })} className={field} autoComplete="off" placeholder="(305) 555-0100" /></label>
+            </div>) })}
+          <p className="text-[12px] text-muted">An owner signs in with their email, so changing it changes what they sign in with. To add or remove an owner, use the portal accounts card below.</p>
+          <div className="flex items-center gap-3"><button type="button" disabled={busy} onClick={save} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save</button><button type="button" onClick={() => { setEdit(null); setMsg('') }} className="text-[12.5px] text-muted underline">Cancel</button></div>
+        </div>
+      )}
+      {msg ? <p className="text-[12.5px] text-ink mt-2" role="status">{msg}</p> : null}
+    </section>
+  )
+}
+
 // ── THE INVENTORY REVIEW (Jon, 2026-11-13): the owner's answer, the walkthrough's count, and the team's call on each item,
 //    side by side; then the order list is generated from what is really short ──
 function InventoryReview({ rec, sup, units, uLabel, onApply, onMsg }: { rec: Any; sup: OOItem[]; units: OOHome[]; uLabel: (i: number) => string; onApply: (d: Any) => void; onMsg: (m: string) => void }) {
@@ -275,11 +335,11 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
     <section className={card}>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Order list</h2>
         {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? 'Approved by the owner' : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}</div>
-      <p className="text-[12.5px] text-muted mb-3">Our actual items from the Stay catalog, sized to {units.length > 1 ? 'each unit' : 'the home'} and based on what the owner ticked on the supplies list: what they have is left off, what they need is on. Adjust it, then send it to the owner to review and approve. Linen is separate.</p>
+      <p className="text-[12.5px] text-muted mb-3">The actual items {units.length > 1 ? 'each unit' : 'the home'} still needs, with how many of each, based on what the owner ticked on the supplies list and the walkthrough: what they have is left off, what they need is on. Add a price or a link to any line, adjust it, then send it to the owner to review and approve. Linen is separate.</p>
       {!o ? <button type="button" disabled={busy === 'build' || !units.length} onClick={() => act('build')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'build' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Build the order list</button> : (<>
         {o.basis ? <div className="oo-noprint rounded-xl bg-app p-3 mb-3 text-[12.5px] text-ink space-y-1">
           <p className={lab}>Built from the owner’s supplies answers</p>
-          {!o.basis.marked ? <p>The owner has not ticked the supplies list yet, so this is the full catalog list for the home. Rebuild it once they have.</p> : null}
+          {!o.basis.marked ? <p>The owner has not ticked the supplies list yet, so this is the full list for the home. Rebuild it once they have.</p> : null}
           {o.basis.leftOff.length ? <p><b>Left off, the owner has these:</b> {o.basis.leftOff.join(', ')}</p> : o.basis.marked ? <p>Nothing was left off: the owner did not mark a whole product as already there.</p> : null}
           {o.basis.partial.length ? <div><b>Sets the owner partly has (kept on the list, check them):</b><ul className="list-disc pl-5">{o.basis.partial.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           {o.basis.walked ? <p className="text-emerald-800 font-semibold">Built after the walkthrough was finished.</p> : o.basis.marked ? <p className="text-amber-800">Built before the walkthrough was finished: counts are the owner’s own.</p> : null}
@@ -321,7 +381,7 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
             <button type="button" disabled={!dirty || !!busy} onClick={() => act('save', { lines, note })} className="rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink disabled:opacity-40">Save changes</button>
             <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('send') }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {o.status === 'draft' ? 'Send to the owner to review' : 'Send again'}</button>
             {o.status !== 'draft' ? <button type="button" onClick={() => act('unsend')} className="text-[12.5px] text-muted underline">Take it back to a draft</button> : null}
-            <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the catalog</button>
+            <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the supplies list</button>
           </div>
           <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-2">
             <span className="mr-auto"><b>For our team.</b> Download the list to buy from: a printout with a tick box per line, or a spreadsheet with the links and a column for what has been ordered.</span>
@@ -658,7 +718,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
         <div className="mr-auto min-w-0">
           <p className="text-[11px] uppercase tracking-[0.24em] text-muted font-semibold">Owner onboarding · {stepLabel(rec.steps.find((s: Any) => s.status !== 'done')?.key || 'live')}</p>
           <h1 className="font-serif text-[40px] leading-none text-ink mt-1">{rec.custom.ownerName || 'Owner'}</h1>
-          <p className="text-[13.5px] text-muted mt-2">{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : '', rec.custom.ownerEmail, rec.custom.ownerPhone].filter(Boolean).join(' · ')}</p>
+          <p className="text-[13.5px] text-muted mt-2">{[rec.attach.property, rec.attach.unitLabel ? 'Unit ' + rec.attach.unitLabel : ''].filter(Boolean).join(' · ')}{rec.custom.ownerEmail ? <> · <a href={'mailto:' + rec.custom.ownerEmail} className="underline underline-offset-2 hover:text-ink">{rec.custom.ownerEmail}</a></> : null}{rec.custom.ownerPhone ? <> · {telOf(rec.custom.ownerPhone) ? <a href={'tel:' + telOf(rec.custom.ownerPhone)} className="underline underline-offset-2 hover:text-ink whitespace-nowrap">{rec.custom.ownerPhone}</a> : rec.custom.ownerPhone}</> : null}</p>
         </div>
         <div className="oo-noprint flex flex-wrap gap-2">
           <CopyBtn text={ownerLink(code)} label="Copy owner link" />
@@ -668,6 +728,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
         </div>
       </header>
       {msg ? <p className="oo-noprint text-[12.5px] text-muted -mt-3 mb-3">{msg}</p> : null}
+      <OwnerInfo rec={rec} onRec={setRec} />
       {rec.track ? (
         <section className={card + ' oo-noprint mb-6'}>
           <p className={lab + ' mb-2.5'}>Where the owner stands</p>
@@ -747,6 +808,20 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             </div>) : !lin.length ? <p className="text-[13px] text-muted">The counts appear once the home is filled in.</p> : (<>
               <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th><th className="font-semibold">Size</th>{units.length > 1 ? units.map((_, i) => <th key={i} className="px-2 text-right font-semibold whitespace-nowrap">{uLabel(i)}</th>) : null}<th className="text-right font-semibold">Total</th></tr></thead>
                 <tbody>{linRoll.map(e => <tr key={e.name + e.size} className="border-b border-line"><td className="py-1.5 text-ink">{e.name}</td><td className="text-muted">{e.size || ''}</td>{units.length > 1 ? units.map((_, i) => <td key={i} className="px-2 text-right tabular-nums">{e.per[i] || ''}</td>) : null}<td className="text-right tabular-nums font-semibold">{e.total}</td></tr>)}</tbody></table></div>
+              {/* ON HAND (Jon, 2026-11-17: "mark what's on hand and it should adjust the order"). Counted on the walkthrough
+                  sheet's Linen section or typed here; the quote and the vendor email ask only for what is short. */}
+              {(() => { const ll = linenLines(rec, items); const counted = ll.filter(e => e.have != null).length; const order = ll.reduce((a, e) => a + e.order, 0), par = ll.reduce((a, e) => a + e.par, 0)
+                const setHave = (key: string, v: string) => patch({ walkCounts: { [key]: v === '' ? null : Number(v) } }, 'On-hand count saved.')
+                return (
+                  <details className="mt-3 rounded-xl bg-app p-3" open={counted > 0}>
+                    <summary className="cursor-pointer text-[13px] font-semibold text-ink">Linen on hand · {counted ? <>{order} to order of {par} at par</> : 'not counted yet'}</summary>
+                    <p className="text-[12.5px] text-muted mt-1 mb-2">What is already in the unit and good enough to keep. It is counted on the walkthrough sheet’s Linen section, or type it here. The quote, the PDF and the vendor email then ask only for what is short. Leave a box empty if it has not been counted.</p>
+                    <div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th>{units.length > 1 ? <th className="font-semibold">Unit</th> : null}<th className="text-right font-semibold">Par</th><th className="text-right font-semibold">On hand</th><th className="text-right font-semibold">To order</th></tr></thead>
+                      <tbody>{ll.map(e => <tr key={e.key} className="border-b border-line"><td className="py-1 text-ink">{e.name}{e.size ? <span className="text-muted"> · {e.size}</span> : null}</td>{units.length > 1 ? <td className="text-muted whitespace-nowrap">{e.unitLabel}</td> : null}<td className="text-right tabular-nums">{e.par}</td>
+                        <td className="text-right"><input key={e.key + ':' + (e.have ?? '')} inputMode="numeric" defaultValue={e.have ?? ''} placeholder="?" aria-label={'On hand: ' + e.name + ' ' + e.size} onBlur={ev => { const v = ev.target.value.replace(/\D/g, ''); if (v !== String(e.have ?? '')) setHave(e.key, v) }} className="w-14 rounded-lg border border-line bg-white px-2 py-1 text-[12.5px] text-ink text-right" /></td>
+                        <td className={'text-right tabular-nums font-semibold ' + (e.have != null && e.order === 0 ? 'text-emerald-700' : 'text-ink')}>{e.have != null && e.order === 0 ? 'none' : e.order}</td></tr>)}</tbody>
+                      <tfoot><tr><td className="pt-2 font-semibold text-ink" colSpan={units.length > 1 ? 2 : 1}>Total</td><td className="pt-2 text-right tabular-nums">{par}</td><td /><td className="pt-2 text-right tabular-nums font-semibold">{order}</td></tr></tfoot></table></div>
+                  </details>) })()}
               <div className="oo-noprint mt-3 flex flex-wrap items-center gap-2">
                 {!rec.linen?.approvedAt ? <button type="button" onClick={() => linen('approve')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Check size={13} /> Approve the linen quote</button>
                   : <><span className="text-[12.5px] text-emerald-700 font-semibold"><Check size={13} className="inline" /> Approved {new Date(rec.linen.approvedAt).toLocaleDateString()} by {String(rec.linen.approvedBy || '').split('@')[0]}</span>

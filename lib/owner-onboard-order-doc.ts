@@ -8,6 +8,7 @@ import 'server-only'
 import ExcelJS from 'exceljs'
 import { buildQuotePdf } from '@/lib/order-pdf'
 import { unitsOf, unitName, type OORecord, type OOOrderLine } from '@/lib/owner-onboard'
+import { orderNeeds, needsText } from '@/lib/owner-onboard-server'
 
 const usd = (n: number) => '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 export type OrderDoc = { ok: true; buf: Buffer; type: string; name: string } | { ok: false; error: string }
@@ -21,6 +22,9 @@ export async function orderDoc(r: OORecord, format: 'pdf' | 'xlsx'): Promise<Ord
   const skip = o.review?.skip || []
   const buy = o.lines.filter(l => skip.indexOf(l.key) < 0), has = o.lines.filter(l => skip.indexOf(l.key) >= 0)
   const qty = (l: OOOrderLine) => l.qty.reduce((a, b) => a + (Number(b) || 0), 0)
+  // the actual pieces each line is for (pots and pans set: large frying pan, saucepans, stock pot), per unit
+  const allNeeds = orderNeeds(r), unitNames = units.map((_, i) => label(i))
+  const pieces = (l: OOOrderLine) => needsText((allNeeds[l.key] || []).filter(n => Number(l.qty[n.unit]) > 0), unitNames)
   const cats = Array.from(new Set(buy.map(l => l.category || 'Other')))
   const total = buy.reduce((a, l) => a + (l.price || 0) * qty(l), 0)
   const unpriced = buy.filter(l => l.price == null).length
@@ -36,18 +40,18 @@ export async function orderDoc(r: OORecord, format: 'pdf' | 'xlsx'): Promise<Ord
     const wb = new ExcelJS.Workbook(); wb.creator = 'Lighthouse'
     const ws = wb.addWorksheet('Order list', { views: [{ state: 'frozen', ySplit: 5 }], pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } })
     const unitCols = multi ? units.map((_, i) => label(i)) : []
-    const head = ['Category', 'Item', 'Details', ...unitCols, 'Qty', 'Each', 'Total', 'Link', 'Ordered', 'Order # / notes']
+    const head = ['Category', 'Item', 'Details', 'Pieces needed', ...unitCols, 'Qty', 'Each', 'Total', 'Link', 'Ordered', 'Order # / notes']
     ws.addRow(['Order list: ' + where]).font = { bold: true, size: 14 }
     ws.addRow([date + ' · ' + status + ' · ' + (units.length === 1 ? label(0) : units.length + ' units')]).font = { color: { argb: 'FF666666' } }
     ws.addRow([o.note ? 'Note to the owner: ' + o.note : '']).font = { italic: true, color: { argb: 'FF666666' } }
     ws.addRow([])
     const hr = ws.addRow(head); hr.font = { bold: true }
     hr.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1EFEA' } }; c.border = { bottom: { style: 'thin' } } })
-    const qCol = 4 + unitCols.length, eCol = qCol + 1, tCol = qCol + 2, lCol = qCol + 3
+    const qCol = 5 + unitCols.length, eCol = qCol + 1, tCol = qCol + 2, lCol = qCol + 3
     const L = (n: number) => ws.getColumn(n).letter
     const first = ws.rowCount + 1
     for (const c of cats) for (const l of buy.filter(x => (x.category || 'Other') === c)) {
-      const row = ws.addRow([c, l.name, l.detail && l.detail !== l.name ? l.detail : '', ...(multi ? units.map((_, i) => Number(l.qty[i]) || 0) : []), qty(l), l.price ?? null, null, null, '', ''])
+      const row = ws.addRow([c, l.name, l.detail && l.detail !== l.name ? l.detail : '', pieces(l), ...(multi ? units.map((_, i) => Number(l.qty[i]) || 0) : []), qty(l), l.price ?? null, null, null, '', ''])
       row.getCell(tCol).value = { formula: `IF(${L(eCol)}${row.number}="","",${L(qCol)}${row.number}*${L(eCol)}${row.number})`, result: l.price != null ? l.price * qty(l) : '' } as any
       if (l.url) { row.getCell(lCol).value = { text: 'Open', hyperlink: l.url } as any; row.getCell(lCol).font = { color: { argb: 'FF1D4ED8' }, underline: true } }
       row.alignment = { vertical: 'top', wrapText: true }
@@ -56,7 +60,7 @@ export async function orderDoc(r: OORecord, format: 'pdf' | 'xlsx'): Promise<Ord
     const tr = ws.addRow([]); tr.getCell(2).value = 'Estimated total' + (unpriced ? ' (' + unpriced + ' not priced yet)' : ''); tr.getCell(tCol).value = { formula: `SUM(${L(tCol)}${first}:${L(tCol)}${last})`, result: total } as any; tr.font = { bold: true }
     tr.eachCell({ includeEmpty: true }, c => { c.border = { top: { style: 'thin' } } })
     ws.getColumn(eCol).numFmt = '$#,##0.00'; ws.getColumn(tCol).numFmt = '$#,##0.00'
-    ;[20, 34, 44, ...unitCols.map(() => 9), 7, 11, 12, 9, 10, 26].forEach((w, i) => { ws.getColumn(i + 1).width = w })
+    ;[20, 30, 38, 46, ...unitCols.map(() => 9), 7, 11, 12, 9, 10, 26].forEach((w, i) => { ws.getColumn(i + 1).width = w })
     if (has.length) { ws.addRow([]); ws.addRow(['The owner already has these: do not order']).font = { bold: true }; for (const l of has) ws.addRow(['', l.name, l.detail && l.detail !== l.name ? l.detail : '']).font = { color: { argb: 'FF888888' } } }
     if (notInCatalog.length) {
       const w2 = wb.addWorksheet('Not in our catalog')
@@ -77,14 +81,14 @@ export async function orderDoc(r: OORecord, format: 'pdf' | 'xlsx'): Promise<Ord
     sections: [
       ...cats.map(c => { const ls = buy.filter(l => (l.category || 'Other') === c); return {
         heading: c,
-        rows: ls.map(l => ['[   ]', l.name + (l.detail && l.detail !== l.name ? ' - ' + l.detail : ''), ...(multi ? units.map((_, i) => (Number(l.qty[i]) ? String(l.qty[i]) : '')) : []), String(qty(l)), l.price != null ? usd(l.price) : '', l.price != null ? usd(l.price * qty(l)) : '']),
+        rows: ls.map(l => ['[   ]', l.name + (l.detail && l.detail !== l.name ? ' - ' + l.detail : '') + (pieces(l) ? '. Needs: ' + pieces(l) : ''), ...(multi ? units.map((_, i) => (Number(l.qty[i]) ? String(l.qty[i]) : '')) : []), String(qty(l)), l.price != null ? usd(l.price) : '', l.price != null ? usd(l.price * qty(l)) : '']),
         subtotal: ls.some(l => l.price != null) ? usd(ls.reduce((a, l) => a + (l.price || 0) * qty(l), 0)) : undefined,
       } }),
       ...(has.length ? [{ heading: 'The owner already has these: do not order', rows: has.map(l => ['', l.name, ...(multi ? units.map(() => '') : []), '', '', '']) }] : []),
       ...(notInCatalog.length ? [{ heading: 'Needed, not in our catalog', lines: ['The owner marked these as needed. Add the ones we are buying to the list in Lighthouse.'], rows: notInCatalog.map(x => ['[   ]', x, ...(multi ? units.map(() => '') : []), '', '', '']) }] : []),
     ],
     totals: [{ label: 'Estimated total', value: usd(total), strong: true }],
-    note: 'For the Stay team. Prices are catalog estimates; linen is quoted separately.' + (unpriced ? ' ' + unpriced + (unpriced === 1 ? ' line is' : ' lines are') + ' not priced yet, so the total is short by those.' : ''),
+    note: 'For the Stay team. Linen is quoted separately. ' + (unpriced === buy.length ? 'No prices have been added to this list yet.' : 'Prices are estimates.' + (unpriced ? ' ' + unpriced + (unpriced === 1 ? ' line is' : ' lines are') + ' not priced yet, so the total is short by those.' : '')),
   })
   return { ok: true, buf: pdf, type: 'application/pdf', name: file('pdf') }
 }

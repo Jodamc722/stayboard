@@ -145,6 +145,51 @@ const KIT_COVERS: Record<string, string[]> = {
   chess: ['board-games'], backgammon: ['board-games'], jenga: ['board-games'], monopoly: ['board-games'],
 }
 
+/**
+ * NO CATALOG FOR NOW (Jon, 2026-11-17: "let's stop using my catalog, get rid of that for now", after "list the
+ * actual items needed, so pots and pans, like type needed"). The order list used to be Stay's catalog products (a
+ * Vitamix blender, a 14-piece Tramontina set) standing in for what the home needs. It is now the needs themselves:
+ * one line per piece on the home's supplies list that is still to buy (large frying pan, saucepans ×2, stock pot),
+ * grouped by set, with no brand, price or link until the team adds one. The catalog builder is kept below, switched
+ * off by this flag, so turning it back on is one word.
+ */
+const ORDER_FROM_CATALOG = false
+/** True while the catalog is switched off and this list still carries catalog products (built before the switch).
+ *  Such a list must not go to the owner (Jon, 2026-11-17: "The catalog is not ready, do not connect to owner portal"). */
+export function hasCatalogLines(o: OOOrder | null | undefined): boolean {
+  if (ORDER_FROM_CATALOG || !o) return false
+  const cat = new Set(KIT_ITEMS.map(i => i.key))
+  return o.lines.some(l => cat.has(l.key))
+}
+function buildOrderFromNeeds(r: OORecord): OOOrder {
+  const units = unitsOf(r)
+  const by = new Map<string, OOOrderLine>(), rank = new Map<string, number>()
+  const leftOff: string[] = [], short: string[] = [], declined: string[] = []
+  let marked = 0
+  units.forEach((h, i) => {
+    const z: KitSize = { bedrooms: Math.max(1, h.bedrooms), bathrooms: Math.max(1, Math.ceil(h.bathrooms)), guests: h.guests, kitchen: h.kitchen, appliances: { ...h.appliances } }
+    const pre = (i === 0 ? '' : 'u' + (h.uid || i) + '|') + 's:'
+    const tag = units.length > 1 ? ' (' + unitName(h, i) + ')' : ''
+    needList(z).forEach((l, at) => {
+      const x = stockOf(r, { key: pre + l.item.key, qty: l.count })
+      // an answer counts once the owner was asked for the supplies list, or the unit has been walked
+      const known = !!x.decision || (x.onHand != null && (r.custom.askSupplies || x.walk != null))
+      if (known) marked++
+      if (x.decision) { declined.push(`${l.item.name}${tag}: ${x.decision === 'owner' ? 'owner will supply it' : 'owner does not want to purchase'}`); return }
+      const toBuy = known ? x.toBuy : l.count
+      if (known && toBuy <= 0) { leftOff.push(l.item.name + tag); return }
+      // nothing said about it yet: must-haves and recommended go on, optional pieces wait for an answer
+      if (!known && l.tier === 'optional') return
+      if (known && (x.onHand || 0) > 0) short.push(`${l.item.name}${tag}: ${x.onHand} of ${x.need} there, ${toBuy} to buy`)
+      const key = 'p:' + l.item.key
+      const e = by.get(key) || { key, category: l.item.room, name: l.item.name, detail: String(l.item.note || '').slice(0, 200), url: '', price: null, qty: units.map(() => 0) }
+      e.qty[i] = toBuy; by.set(key, e); if (!rank.has(key)) rank.set(key, at)
+    })
+  })
+  const lines = Array.from(by.values()).sort((a, b) => (rank.get(a.key) || 0) - (rank.get(b.key) || 0))
+  return { lines, status: 'draft', builtAt: new Date().toISOString(), basis: { marked, leftOff: leftOff.slice(0, 120), partial: [], uncovered: [], short: short.slice(0, 80), declined: declined.slice(0, 80), walked: !!r.walk?.doneAt } }
+}
+
 /** The order list, from Stay's own catalog (the starter kit: real products, prices and links), sized per unit AND
  *  BASED ON WHAT THE OWNER TICKED (Jon, 2026-11-13: "the order list should be based on the items selected"):
  *    - every piece a product covers is marked "have"  → the product is left off for that unit
@@ -153,6 +198,7 @@ const KIT_COVERS: Record<string, string[]> = {
  *  `basis` tells the team what was left off, which sets the owner only partly has, and what they need that the
  *  catalog does not sell (so it can be added by hand). */
 export function buildOrder(r: OORecord): OOOrder {
+  if (!ORDER_FROM_CATALOG) return buildOrderFromNeeds(r)
   const units = unitsOf(r)
   const blank: KitSelection = { inc: {}, qty: {}, own: {}, pick: {}, self: {}, have: {} } as any
   const by = new Map<string, OOOrderLine>()
@@ -191,6 +237,37 @@ export function buildOrder(r: OORecord): OOOrder {
   const order = KIT_ITEMS_ORDER()
   const lines = Array.from(by.values()).sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key))
   return { lines, status: 'draft', builtAt: new Date().toISOString(), basis: { marked, leftOff, partial: partial.slice(0, 40), uncovered: uncovered.slice(0, 60), short: short.slice(0, 80), declined: declined.slice(0, 80), walked: !!r.walk?.doneAt } }
+}
+/**
+ * WHAT EACH LINE IS ACTUALLY FOR (Jon, 2026-11-17: "list the actual items needed, so pots and pans, like type
+ * needed, in the shopping list"). A catalog product stands in for pieces on the home's supplies list: the pots
+ * and pans set is the large and small frying pans, the saucepans and the stock pot. For each order line this
+ * returns those pieces with how many are still to buy, per unit, after the owner's answers, the walkthrough and the
+ * team's decisions, so whoever is shopping knows what the set has to contain (or can buy the pieces on their own).
+ * Worked out fresh each time, never stored. Lines added by hand have no pieces.
+ */
+export function orderNeeds(r: OORecord): Record<string, { name: string; n: number; unit: number }[]> {
+  const out: Record<string, { name: string; n: number; unit: number }[]> = {}
+  unitsOf(r).forEach((h, i) => {
+    const z: KitSize = { bedrooms: Math.max(1, h.bedrooms), bathrooms: Math.max(1, Math.ceil(h.bathrooms)), guests: h.guests, kitchen: h.kitchen, appliances: { ...h.appliances } }
+    const pre = (i === 0 ? '' : 'u' + (h.uid || i) + '|') + 's:'
+    const lines = needList(z)
+    const pieces = new Map(lines.map(l => [l.item.key, l.item.name] as [string, string]))
+    const qty = new Map(lines.map(l => [l.item.key, l.count] as [string, number]))
+    for (const [key, covers] of Object.entries(KIT_COVERS)) for (const k of covers) {
+      if (!pieces.has(k)) continue
+      const x = stockOf(r, { key: pre + k, qty: qty.get(k) || 1 })
+      if (x.toBuy > 0) (out[key] = out[key] || []).push({ name: pieces.get(k) || k, n: x.toBuy, unit: i })
+    }
+  })
+  return out
+}
+/** The pieces for one line as short text: "Large frying pan, Saucepans ×2, Stock pot" (per unit when there are several). */
+export function needsText(needs: { name: string; n: number; unit: number }[] | undefined, unitNames: string[]): string {
+  if (!needs || !needs.length) return ''
+  const one = (xs: { name: string; n: number }[]) => xs.map(x => x.name + (x.n > 1 ? ' ×' + x.n : '')).join(', ')
+  if (unitNames.length <= 1) return one(needs)
+  return unitNames.map((u, i) => { const xs = needs.filter(x => x.unit === i); return xs.length ? u + ': ' + one(xs) : '' }).filter(Boolean).join('; ')
 }
 export function cleanOrderLines(v: any, units: number): OOOrderLine[] {
   return (Array.isArray(v) ? v : []).slice(0, 300).map((l: any, i: number) => ({
@@ -241,6 +318,14 @@ export function cleanOwners(v: any, prev: OORecord['owners']): NonNullable<OORec
 export function ensureWalk(r: OORecord): NonNullable<OORecord['walk']> {
   if (!r.walk?.key) { const c: any = (globalThis as any).crypto; r.walk = { ...(r.walk || {}), key: String(c.randomUUID()).replace(/-/g, '').slice(0, 24), counts: r.walk?.counts || {} } }
   return r.walk!
+}
+/** A linen on-hand count changed, so what was approved is no longer what would be sent: the quote is approved again
+ *  before it goes to the vendor (the same rule as editing its lines). Returns true when an approval was cleared. */
+export function linenCountsChanged(r: OORecord, counts: any): boolean {
+  if (!counts || typeof counts !== 'object' || !Object.keys(counts).some(k => k.startsWith('lin:'))) return false
+  if (!r.linen?.approvedAt) return false
+  r.linen = { rows: r.linen.rows, editedAt: r.linen.editedAt, editedBy: r.linen.editedBy, note: r.linen.note }
+  return true
 }
 /** The shopping list link's key, made once (the same long random pass as the walkthrough's). */
 export function ensureShop(r: OORecord): NonNullable<OORecord['shop']> {

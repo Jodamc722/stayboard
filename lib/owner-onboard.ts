@@ -101,6 +101,29 @@ export function stockOf(r: Pick<OORecord, 'marks' | 'counts' | 'walk' | 'decisio
   const decision = r.decisions?.[item.key] || ''
   return { need: item.qty, owner, walk, onHand, toBuy: decision ? 0 : Math.max(0, item.qty - (onHand ?? 0)), decision }
 }
+/**
+ * LINEN ON HAND (Jon, 2026-11-17: "when we do the inventory check we should be able to do the same for linen. Its
+ * own section. So we can mark what's on hand and it should adjust the order"). Linen at par is what a unit should
+ * have; what is already there is counted on the walkthrough sheet's Linen section or typed on the desk, and the
+ * quote asks the vendor only for the difference. Counts live with the walkthrough's other counts (walk.counts),
+ * under a key made from the unit, the item and its size, so they survive the team editing the quote's lines.
+ */
+export const linKey = (i: { unit: number; name: string; size?: string }) => 'lin:' + i.unit + '|' + i.name + '|' + (i.size || '')
+/** One line per unit, item and size: par, what is there (null = not counted) and what to order. */
+export type OOLinenLine = { key: string; unit: number; unitLabel: string; name: string; size: string; par: number; have: number | null; order: number }
+export function linenLines(r: Pick<OORecord, 'walk'>, items: OOItem[]): OOLinenLine[] {
+  const m = new Map<string, OOLinenLine>()
+  for (const i of items) { if (!i.linen) continue
+    const key = linKey(i), e = m.get(key) || { key, unit: i.unit, unitLabel: i.unitLabel, name: i.name, size: i.size || '', par: 0, have: null, order: 0 }
+    e.par += i.qty; m.set(key, e) }
+  const out = Array.from(m.values())
+  for (const e of out) { const h = r.walk?.counts?.[e.key]; e.have = typeof h === 'number' ? h : null; e.order = Math.max(0, e.par - (e.have || 0)) }
+  return out
+}
+/** The linen to ORDER, as items: par less what is on hand, lines that need nothing dropped. What the quote sends. */
+export function linenToOrder(r: Pick<OORecord, 'walk'>, items: OOItem[]): OOItem[] {
+  return linenLines(r, items).filter(e => e.order > 0).map(e => ({ key: e.key, name: e.name, size: e.size || undefined, group: 'Linen', qty: e.order, tier: 'must' as const, linen: true, unit: e.unit, unitLabel: e.unitLabel }))
+}
 export type OOAttach = { property: string; listingId: string; unitLabel: string }
 export type OOCall = { at: string; link: string; note: string; minutes?: number; eventId?: string; eventUrl?: string; host?: string }
 /** THE W-9 AND ACH (Jon, 2026-11-12: "ACH and W-9 forms the owner can fill out in an encrypted format"). The

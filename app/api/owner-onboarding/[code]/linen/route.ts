@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { readRecord, saveRecord, itemsFor, cleanLinenRows } from '@/lib/owner-onboard-server'
 import { sendLinenToVendor } from '@/lib/owner-onboard-mail'
-import { teamView, unitsOf } from '@/lib/owner-onboard'
+import { teamView, unitsOf, linenToOrder, linenLines } from '@/lib/owner-onboard'
 import { buildQuotePdf } from '@/lib/order-pdf'
 
 export const dynamic = 'force-dynamic'
@@ -22,7 +22,8 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   else if (b.action === 'reset') r.linen = r.linen?.note ? { note: r.linen.note } : null
   else if (b.action === 'send') {
     if (!r.linen?.approvedAt) return NextResponse.json({ ok: false, error: 'Approve the linen quote first.' }, { status: 400 })
-    const s = await sendLinenToVendor(r, await itemsFor(r))
+    // the vendor is asked for what is short: par less what the walkthrough found in the unit
+    const s = await sendLinenToVendor(r, linenToOrder(r, await itemsFor(r)))
     if (s.ok) r.linen = { ...r.linen, sentAt: new Date().toISOString(), sentTo: [...s.to, ...s.cc], error: undefined }
     else { error = s.error || 'Not sent.'; r.linen = { ...r.linen, error } }
   } else return NextResponse.json({ ok: false, error: 'Nothing to do.' }, { status: 400 })
@@ -36,8 +37,12 @@ export async function GET(_: NextRequest, { params }: { params: { code: string }
   const g = await requireLevel('owner-onboarding', 'view'); if (!g.ok) return g.res
   const r = await readRecord(params.code)
   if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
-  const linen = (await itemsFor(r)).filter(i => i.linen)
-  if (!linen.length) return NextResponse.json({ ok: false, error: 'There is no linen list yet: fill in the home first.' }, { status: 400 })
+  const all = await itemsFor(r)
+  if (!all.some(i => i.linen)) return NextResponse.json({ ok: false, error: 'There is no linen list yet: fill in the home first.' }, { status: 400 })
+  // what to ORDER: par less what is already in the unit (lib/owner-onboard linenToOrder)
+  const linen = linenToOrder(r, all)
+  const onHand = linenLines(r, all).some(e => (e.have || 0) > 0)
+  if (!linen.length) return NextResponse.json({ ok: false, error: 'Everything at par is already in the unit, so there is nothing to order.' }, { status: 400 })
   const units = Array.from(new Set(linen.map(i => i.unit))).sort((a, b) => a - b)
   const label = (u: number) => linen.find(i => i.unit === u)?.unitLabel || 'Unit ' + (u + 1)
   const keys = Array.from(new Set(linen.map(i => i.name + '|' + (i.size || ''))))
@@ -50,7 +55,7 @@ export async function GET(_: NextRequest, { params }: { params: { code: string }
     title: 'Linen quote request', subtitle: where,
     meta: [{ label: 'Date', value: date }, { label: 'From', value: 'Stay Hospitality' }, { label: units.length === 1 ? 'Unit' : 'Units', value: units.map(label).join(', ') }, { label: 'Pieces', value: total.toLocaleString('en-US') }],
     columns: [{ header: 'Item', width: multi ? 38 : 60, wrap: true }, { header: 'Size', width: multi ? 14 : 22 }, ...(multi ? units.map(u => ({ header: label(u), width: Math.floor(36 / units.length), align: 'r' as const })) : []), { header: 'Total', width: multi ? 12 : 18, align: 'r' as const }],
-    sections: [{ heading: 'Quantities at par', rows: keys.map(k => { const [n, z] = k.split('|'); const per = units.map(u => qty(k, u)); return [n, z || '', ...(multi ? per.map(q => (q ? String(q) : '')) : []), String(per.reduce((a, b) => a + b, 0))] }) }],
+    sections: [{ heading: onHand ? 'Quantities to order' : 'Quantities at par', rows: keys.map(k => { const [n, z] = k.split('|'); const per = units.map(u => qty(k, u)); return [n, z || '', ...(multi ? per.map(q => (q ? String(q) : '')) : []), String(per.reduce((a, b) => a + b, 0))] }) }],
     totals: [{ label: 'Total pieces', value: total.toLocaleString('en-US'), strong: true }],
     note: [String(r.linen?.note || '').replace(/\s+/g, ' ').trim().replace(/([^.!?])$/, '$1.'), 'Please reply with pricing and lead time.'].filter(Boolean).join(' '),
   })

@@ -76,15 +76,16 @@ export const BIG_HOME = 10
 export const NEED_ITEMS: NeedItem[] = [
   // Dishes & glassware — place settings at twice the guest count
   K('Dishes & glassware', 'dinner-plates', 'Dinner plates', 'must', 'settings', 1),
-  K('Dishes & glassware', 'side-plates', 'Salad / side plates', 'must', 'guest', 1),
+  // Two per guest, like the dinner plates (Jon, 2026-11-17: "Coffee mugs we need 2 per occupancy… same for salad plates").
+  K('Dishes & glassware', 'side-plates', 'Salad / side plates', 'must', 'settings', 1),
   K('Dishes & glassware', 'bowls', 'Bowls', 'must', 'settings', 1),
-  H('Dishes & glassware', 'mugs', 'Coffee mugs', 'must', 'guest', 1),
+  H('Dishes & glassware', 'mugs', 'Coffee mugs', 'must', 'settings', 1),
   H('Dishes & glassware', 'tall-glasses', 'Tall glasses', 'must', 'settings', 1),
   H('Dishes & glassware', 'wine-glasses', 'Wine glasses', 'must', 'guest', 1),
   H('Dishes & glassware', 'short-glasses', 'Short glasses', 'recommended', 'guest', 1),
   K('Dishes & glassware', 'serving-bowls', 'Serving bowls', 'recommended', 'guest', 0.25, { min: 2 }),
   K('Dishes & glassware', 'serving-platter', 'Serving platter', 'recommended', 'unit', 1, { big: 1 }),
-  H('Dishes & glassware', 'cocktail-glasses', 'Cocktail glasses', 'optional', 'guest', 1),
+  H('Dishes & glassware', 'cocktail-glasses', 'Cocktail glasses', 'optional', 'settings', 1),
   H('Dishes & glassware', 'shot-glasses', 'Shot glasses', 'optional', 'guest', 1),
   // Flatware
   K('Flatware', 'forks', 'Dinner forks', 'must', 'settings', 1),
