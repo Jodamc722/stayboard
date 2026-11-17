@@ -154,6 +154,13 @@ const KIT_COVERS: Record<string, string[]> = {
  * off by this flag, so turning it back on is one word.
  */
 const ORDER_FROM_CATALOG = false
+/** True while the catalog is switched off and this list still carries catalog products (built before the switch).
+ *  Such a list must not go to the owner (Jon, 2026-11-17: "The catalog is not ready, do not connect to owner portal"). */
+export function hasCatalogLines(o: OOOrder | null | undefined): boolean {
+  if (ORDER_FROM_CATALOG || !o) return false
+  const cat = new Set(KIT_ITEMS.map(i => i.key))
+  return o.lines.some(l => cat.has(l.key))
+}
 function buildOrderFromNeeds(r: OORecord): OOOrder {
   const units = unitsOf(r)
   const by = new Map<string, OOOrderLine>(), rank = new Map<string, number>()
