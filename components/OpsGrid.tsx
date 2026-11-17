@@ -47,7 +47,7 @@ import { DueCalendar, DueCount } from '@/components/DueCalendar'
 import { VacantTab } from '@/components/VacantTab'
 import { StayPanel } from '@/components/StayPanel'
 import { Tag as LTag, Tip as LTip } from '@/components/lean'
-import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, TASK_GHOST, type TaskState as TaskStateT } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, TaskStatusTag, BehindTag, taskStateOf, TASK_GHOST, type TaskState as TaskStateT } from '@/components/task/TaskActions'
 
 // ── types (mirrors of /api/ops-today) ───────────────────────────────────────────────────────────
 export type GTask = {
@@ -735,14 +735,12 @@ function TaskLine({ t, roster, mode, onRefresh, unitMeta }: {
     </> : null,
   })
   return (
-    <div className="px-3 py-2">
+    <div className="lh-row px-3 py-2">
       <div className="flex items-center gap-2 flex-wrap">
         <span className={'w-4 h-4 rounded-[4px] border shrink-0 inline-flex items-center justify-center ' + STATE[stateOf(t)].chip}><c.Icon size={9} strokeWidth={2.6} /></span>
         <span className="text-[13px] font-semibold text-ink">{t.name}</span>
         <LTag title="Category">{c.short}</LTag>
-        <TaskStateTag state={ta.done ? 'done' : state} />
-        {!ta.done && state === 'running' && <BehindTag late={t.late} />}
-        {!ta.done && !t.assignees.length && <TaskStateTag state="unassigned" />}
+        <TaskStatusTag state={ta.done ? 'done' : state} behind={!ta.done && state === 'running' && t.late} nobody={!ta.done && !t.assignees.length} />
         {t.done && (t.finishedAt || t.minutes) && <span className="text-[11.5px] text-muted">{t.finishedAt ? shortTime(t.finishedAt) : ''}{t.minutes ? ' · ' + t.minutes + 'm' : ''}</span>}
         {t.running && t.startedAt && <span className="text-[11.5px] text-muted">since {shortTime(t.startedAt)}</span>}
         {mv && <span className={'text-[11px] font-bold px-1.5 py-0.5 rounded-md ' + mv.cls} title={mv.line}>{mv.tag}</span>}

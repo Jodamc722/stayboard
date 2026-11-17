@@ -39,7 +39,7 @@ import { NudgeBtn } from '@/components/command/Nudge'
 import { CallNoteStrip } from '@/components/CallNote'
 import { DayKpis } from '@/components/command/DayKpis'
 import { ArrivalsLane } from '@/components/command/ArrivalsLane'
-import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, TaskStatusTag, BehindTag, taskStateOf, type TaskState } from '@/components/task/TaskActions'
 import { whereNow, shiftStatus } from '@/lib/team-where'
 import { UnpaidBoard, UnpaidRow as UnpaidBoardRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
@@ -138,7 +138,7 @@ export function Row({ dot, title, meta, tags, actions, children, err, lane, note
   const notesCtx = useContext(NotesCtx)
   const noteBtn = noteKey && notesCtx ? <NoteBtn noteKey={noteKey} open={notesOpen} onToggle={() => setNotesOpen(o => !o)} /> : null
   return (
-    <div className="px-3.5 py-2 min-h-[48px] flex flex-col justify-center hover:bg-app/60 transition-colors">
+    <div className="lh-row px-3.5 py-2 min-h-[48px] flex flex-col justify-center hover:bg-app/60 transition-colors">
       <div className="flex items-center gap-2 min-w-0 flex-wrap sm:flex-nowrap">
         <span aria-hidden className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (dot === 'rose' ? 'bg-rose-500' : dot === 'amber' ? 'bg-amber-400' : 'bg-transparent')} />
         <span className="flex-1 min-w-[55%] sm:min-w-0 flex items-center gap-x-1.5 flex-wrap">
@@ -172,10 +172,8 @@ export function CleanRow({ c, value, roster, canAssign: _canAssign, onChanged, l
   return (
     <Row lane={lane} dot={state === 'late' || (c.behind === 'late' && !ta.done) ? 'rose' : state === 'atRisk' || (c.behind && !ta.done) || (nobody && !ta.done) ? 'amber' : null} title={c.unit}
       tags={<>
-        <TaskStateTag state={ta.done ? 'done' : state} />
-        {c.behind && !ta.done && <Tag tone={c.behind === 'late' ? 'rose' : 'amber'} title={c.behind === 'late' ? 'In progress, but at this pace it finishes after the deadline' : 'In progress, finishing close to the deadline'}>{c.behind === 'late' ? 'running late' : 'tight'}</Tag>}
+        <TaskStatusTag state={ta.done ? 'done' : state} behind={ta.done ? null : c.behind} nobody={nobody && !ta.done} />
         {c.sameDay && !ta.done && <Tag tone="violet" title="A guest arrives into this unit today">same-day</Tag>}
-        {nobody && !ta.done && <TaskStateTag state="unassigned" />}
         {value >= 1000 && <Tag tone="slate" title={'The arriving booking is worth ' + money(value) + ' — high-ticket, first in line'}>{money(value)}</Tag>}
       </>}
       meta={[whoShort(c.who), c.arrivingAt ? 'guest in ' + c.arrivingAt : '', c.market].filter(Boolean).join(' · ')}
@@ -192,9 +190,7 @@ export function InspectionTaskRow({ t, big, roster, canAssign: _canAssign, onCha
   return (
     <Row lane={lane} dot={!ta.done && (nobody || t.late) ? (t.late ? 'rose' : 'amber') : null} title={t.unit}
       tags={<>
-        <TaskStateTag state={ta.done ? 'done' : state} />
-        {!ta.done && state === 'running' && <BehindTag late={t.late} />}
-        {nobody && !ta.done && <TaskStateTag state="unassigned" />}
+        <TaskStatusTag state={ta.done ? 'done' : state} behind={!ta.done && state === 'running' && t.late} nobody={nobody && !ta.done} />
         {big && <Tag tone="violet" title="A big arrival lands in this unit — walk it first">big arrival</Tag>}
       </>}
       meta={[t.name, whoShort(t.who), t.market].filter(Boolean).join(' · ')}

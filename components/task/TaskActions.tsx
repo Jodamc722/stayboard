@@ -53,6 +53,26 @@ export function BehindTag({ late, atRisk }: { late?: boolean; atRisk?: boolean }
   if (!late && !atRisk) return null
   return <Tag tone={late ? 'rose' : 'amber'} title={late ? 'In progress, but past its time' : 'In progress, close to its deadline'}>{late ? 'running late' : 'tight'}</Tag>
 }
+/**
+ * ONE CHIP PER TASK (Jon, 2026-11-16: "This is so noisy"). Rows used to wear three or four tags for
+ * one fact — "in progress" + "running late" + "nobody on it" + "38d". This folds them into one:
+ * "in progress · late", "late · 38 days", "not started · nobody on it". Started still wins (Jon,
+ * 2026-10-05): a started task always says "in progress" first.
+ */
+export function TaskStatusTag({ state, behind, nobody, days }: { state: TaskState; behind?: 'late' | 'atRisk' | boolean | null; nobody?: boolean; days?: number | null }) {
+  const s = TASK_STATE[state]
+  const parts = [s.label]
+  let tone: Tone = s.tone
+  const titles = [s.title]
+  if (state === 'running' && behind) {
+    const late = behind === true || behind === 'late'
+    parts.push(late ? 'late' : 'tight'); tone = late ? 'rose' : 'amber'
+    titles.push(late ? 'Past its time, or will not land by the deadline at this pace' : 'Close to its deadline')
+  }
+  if (state !== 'done' && days != null && days >= 7) { parts.push(days + ' days'); if (tone === 'slate') tone = 'amber'; titles.push('Open ' + days + ' days') }
+  if (nobody && state !== 'done') { parts.push('nobody on it'); if (tone === 'slate' || tone === 'sky') tone = 'amber'; titles.push(TASK_STATE.unassigned.title) }
+  return <Tag tone={tone} title={titles.join(' · ')}>{parts.join(' · ')}</Tag>
+}
 export function TaskStateTag({ state }: { state: TaskState }) {
   const s = TASK_STATE[state]
   return <Tag tone={s.tone} title={s.title}>{s.label}</Tag>
@@ -106,17 +126,17 @@ export function useTaskActions(p: TaskActionsProps) {
   const actions = (
     <>
       {!p.hide?.assign && canAssign && !done && (
-        <button onClick={() => setPanel(x => (x === 'assign' ? null : 'assign'))} aria-pressed={panel === 'assign'} className={nobody ? TASK_DARK : TASK_GHOST} title={nobody ? 'Pick who does it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>
+        <button onClick={() => setPanel(x => (x === 'assign' ? null : 'assign'))} aria-pressed={panel === 'assign'} className={nobody ? TASK_DARK : TASK_GHOST + ' lh-quiet'} title={nobody ? 'Pick who does it' : 'Hand it to someone else'}><UserPlus size={12} /> {nobody ? 'Assign' : 'Reassign'}</button>
       )}
       {!p.hide?.done && canDone && !done && (
         <button onClick={complete} disabled={busy} className={TASK_GHOST} title="Mark it done in Breezeway">{busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Done</button>
       )}
-      {!p.hide?.nudge && canAssign && !nobody && !done && <NudgeBtn taskIds={[p.taskId]} compact title={'Message ' + whoTxt + ' on Slack about this'} />}
+      {!p.hide?.nudge && canAssign && !nobody && !done && <span className="lh-quiet inline-flex"><NudgeBtn taskIds={[p.taskId]} compact title={'Message ' + whoTxt + ' on Slack about this'} /></span>}
       {!p.hide?.comments && (
-        <button onClick={() => setPanel(x => (x === 'comments' ? null : 'comments'))} aria-pressed={panel === 'comments'} className={TASK_GHOST + (count ? ' !border-amber-300 !bg-amber-50 !text-amber-900' : '')} title="Comments — one thread for the app, Breezeway and the guest's booking"><MessageSquare size={12} />{count ? <span className="tabular-nums">{count}</span> : null}</button>
+        <button onClick={() => setPanel(x => (x === 'comments' ? null : 'comments'))} aria-pressed={panel === 'comments'} className={TASK_GHOST + (count ? ' !border-amber-300 !bg-amber-50 !text-amber-900' : ' lh-quiet')} title="Comments — one thread for the app, Breezeway and the guest's booking"><MessageSquare size={12} />{count ? <span className="tabular-nums">{count}</span> : null}</button>
       )}
-      {!p.hide?.breezeway && <a href={bzUrl(p.taskId)} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Open in Breezeway"><ExternalLink size={12} /></a>}
-      {p.extra}
+      {!p.hide?.breezeway && <a href={bzUrl(p.taskId)} target="_blank" rel="noreferrer" className={TASK_GHOST + ' lh-quiet'} title="Open in Breezeway"><ExternalLink size={12} /></a>}
+      {p.extra ? <span className="lh-quiet inline-flex items-center gap-1.5">{p.extra}</span> : null}
     </>
   )
   const panels = (

@@ -232,9 +232,10 @@ function DayLine({ d, loading, reload, roster, vendorsOnSite }: { d: CommandDay;
   return (
     <section aria-live="polite">
       <LeanHead title="Today" sub={new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'America/New_York' }) + ' · ' + v.detail}>
-        <Pill tone={vTone} title={v.detail}>{v.headline}</Pill>
+        {/* One pill, not two (2026-11-16): past 4pm, the time over rides on the verdict itself. */}
+        <Pill tone={vTone} title={v.detail}>{v.headline}{left && p.minsLeft < 0 && /4\s?pm/i.test(v.headline) ? ' · ' + fmtLeft(p.minsLeft) + ' over' : ''}</Pill>
         {/* The cleans pill that sat here repeated the Departure cleans tile directly under it (2026-10-01 audit); the time left rides on the verdict instead. */}
-        {left && p.cleansTotal > p.cleansDone && <Pill tone={t.cleans.late ? 'rose' : 'slate'} title="Time left on today's cleans">{left}</Pill>}
+        {left && p.cleansTotal > p.cleansDone && !(p.minsLeft < 0 && /4\s?pm/i.test(v.headline)) && <Pill tone={t.cleans.late ? 'rose' : 'slate'} title="Time left on today's cleans">{left}</Pill>}
         {vendorsOnSite > 0 && <Pill title="Vendor visits booked for today">{plural(vendorsOnSite, 'vendor')} on site</Pill>}
         <Tip label={'Refresh the day · read ' + ago(d.generatedAt, tick)}>
           <button onClick={reload} aria-label="Refresh the day" className="inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink min-h-[28px] px-1">

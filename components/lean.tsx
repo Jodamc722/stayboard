@@ -13,6 +13,15 @@
 //   4. SECTIONS BECOME TABS. Stacked sections that each fill a screen become <LeanTabs> with counts.
 //   5. EMPTY IS ONE LINE. <LeanEmpty>.
 //   6. EVERY ICON-ONLY CONTROL HAS A HOVER LABEL. Use <IconBtn title=…> or wrap it in <Tip label=…>.
+//   7. ONE COLOURED CHIP PER ROW (Jon, 2026-11-16: "This is so noisy"). The chip says where the
+//      thing stands or the next step, in plain lower-case words ("in progress · late", "Needs ID and
+//      $350 deposit"). Never two chips for one fact (late + 38d, To verify + ✗ID). Colour means a
+//      person has to act: rose now, amber soon; done is green, everything else grey text.
+//   8. NO CAPITALS ON SCREEN for emphasis ("RELEASE DUE"). Colour and position carry urgency.
+//   9. ONE MAIN BUTTON PER ROW. Secondary buttons get `lh-quiet` (faded until the row is hovered
+//      on a desktop, full strength on a phone) or go behind Details. Rows that use it carry `lh-row`.
+//  10. A NUMBER COUNTS WHAT YOU SEE. A filter chip's number is the number of rows it shows; a pill at
+//      zero is hidden unless the zero is the news.
 import { useState, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 
@@ -153,7 +162,7 @@ export function LeanRow({ lead, name, meta, tags, actions, children, tint, open:
   const can = children != null && children !== false
   const bg = tint === 'rose' ? 'bg-rose-50/40' : tint === 'amber' ? 'bg-amber-50/40' : tint === 'emerald' ? 'bg-emerald-50/30' : ''
   return (
-    <li className={bg}>
+    <li className={'lh-row ' + bg}>
       {/* On a phone the actions drop to their own line instead of squeezing the name to nothing
           (2026-11-09 audit: the Calls desk row showed "A…" under five icon buttons). */}
       <div className="flex items-center gap-x-2.5 gap-y-1.5 px-3 sm:px-4 py-2 flex-wrap sm:flex-nowrap">

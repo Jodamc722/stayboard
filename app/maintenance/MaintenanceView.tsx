@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation'
 import { ArrowUpRight, Receipt } from 'lucide-react'
 import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, type Tone } from '@/components/lean'
 import { useCachedFetch } from '@/lib/swr'
-import { useTaskActions, TaskStateTag, BehindTag, taskStateOf, TASK_GHOST } from '@/components/task/TaskActions'
+import { useTaskActions, TaskStateTag, TaskStatusTag, BehindTag, taskStateOf, TASK_GHOST } from '@/components/task/TaskActions'
 import type { Roster } from '@/components/CommandCockpit'
 
 /** A Breezeway task on the triage list wears the same strip as every other board (2026-10-01). */
@@ -18,12 +18,7 @@ function TriageTaskRow({ t, roster, onChanged }: { t: TriageRow; roster: Roster[
   return (
     <LeanRow name={t.title} meta={[t.where, t.who].filter(Boolean).join(' · ')}
       tags={<>
-        <TaskStateTag state={ta.done ? 'done' : taskStateOf({ running: t.running, late: t.flags.includes('overdue') })} />
-        {!ta.done && t.running && <BehindTag late={t.flags.includes('overdue')} />}
-        {!ta.done && !t.who && <TaskStateTag state="unassigned" />}
-        <Tag tone={ageTone(t.age)} title={t.age + ' days old'}>{t.age}d</Tag>
-        <Tag title={KIND.task.title}>{KIND.task.label}</Tag>
-        {t.flags.includes('stale') && !t.flags.includes('overdue') && <Tag tone="amber" title="Open a week or more">stale</Tag>}
+        <TaskStatusTag state={ta.done ? 'done' : taskStateOf({ running: t.running, late: t.flags.includes('overdue') })} behind={!ta.done && t.running && t.flags.includes('overdue')} nobody={!ta.done && !t.who} days={t.age} />
       </>}
       actions={<span className="inline-flex items-center gap-1.5">{ta.actions}</span>}>
       {ta.panels}
@@ -69,10 +64,10 @@ export function MaintenanceView({ verdict, counts, triage, grid, unbilled }: {
     <div>
       {/* The numbers that ARE the grip. Each still goes somewhere. */}
       <LeanHead title="Maintenance">
-        <Link href="/requests"><Pill title="Open work orders — open the Work Orders page">{counts.wo} W.O. open</Pill></Link>
+        {counts.wo > 0 && <Link href="/requests"><Pill title="Open work orders — open the Work Orders page">{counts.wo} work orders</Pill></Link>}
         <Pill tone={counts.unassigned ? 'rose' : 'slate'} onClick={() => setTab('decide')} title="Open items with nobody on them">{counts.unassigned} unassigned</Pill>
-        <Pill tone={counts.overdue ? 'rose' : 'slate'} onClick={() => setTab('decide')} title="Past their due or scheduled date">{counts.overdue} overdue</Pill>
-        <Pill tone={counts.stale ? 'amber' : 'slate'} onClick={() => setTab('decide')} title={'Sitting 7 days or more. ' + verdict}>{counts.stale} stale 7d+</Pill>
+        <Pill tone={counts.overdue ? 'rose' : 'slate'} onClick={() => setTab('decide')} title="Past their due or scheduled date">{counts.overdue} late</Pill>
+        <Pill tone={counts.stale ? 'amber' : 'slate'} onClick={() => setTab('decide')} title={'Sitting 7 days or more. ' + verdict}>{counts.stale} open 7+ days</Pill>
         <Link href="/blocked"><Pill tone={counts.offline ? 'amber' : 'slate'} title="Units blocked on the calendar right now — open Blocked units">{counts.offline} offline</Pill></Link>
       </LeanHead>
 

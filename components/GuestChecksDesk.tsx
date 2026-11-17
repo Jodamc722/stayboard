@@ -6,13 +6,14 @@
 // themselves, editable per channel by an admin ("allow us to customize the rules").
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Check, ExternalLink, Eye, Loader2, Shield, Upload, X, Undo2, Settings2, RefreshCw, ChevronDown, Image as ImageIcon } from 'lucide-react'
+import { Check, ExternalLink, Eye, Loader2, Shield, Upload, X, Undo2, Settings2, RefreshCw, ChevronDown, Send, Image as ImageIcon } from 'lucide-react'
 import { Checklist, ThreadThumbs, CheckDetails, cifSweepIds } from '@/components/CheckPhotos'
 import { Tag, Pill } from '@/components/lean'
 import type { GuestCheckRow } from '@/app/api/guest-checks/route'
 import { CHANNELS, DEPOSIT_METHODS, type Channel, type ChannelRule } from '@/lib/welcome-call-guide'
 import { TASK_GHOST, TASK_DARK } from '@/components/task/TaskActions'
 import { IdTag, IdCheckWhy, IdActions, ByHandStrip, fmtAt } from '@/components/IdCheckBits'
+import { checkStatus, checkFacts, CheckChip, MoreActions } from '@/components/CheckStatus'
 
 const API = '/api/guest-checks'
 const fmtDay = (s?: string | null) => s ? new Date(s + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
@@ -133,19 +134,22 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
   const today = data?.today || ''
   // A flagged photo is open work: a person still has to look (Jon: "flag to check").
   // OPEN = TO VERIFY: anything short of the ID, the selfie and the deposit this channel asks for.
-  const isOpen = (r: GuestCheckRow) => r.checklist ? !r.checklist.complete : ((r.needId && (r.idStatus === 'pending' || r.idStatus === 'check')) || (r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled))
+  // Same test as Today's tile (2026-11-16): a hold Guesty has scheduled is nothing for a person to do, so it is not open.
+  const isOpen = (r: GuestCheckRow) => { const k = checkStatus(r, today).state; return k === 'todo' || k === 'look' || k === 'mismatch' }
   const releaseDue = (r: GuestCheckRow) => r.depositStatus === 'captured' && !!r.depositReleaseDue && r.depositReleaseDue <= today
   const shown = useMemo(() => rows.filter(r => only === 'all' ? true : only === 'release' ? releaseDue(r) || (r.depositStatus === 'captured' && r.checkOut <= today) : isOpen(r) || releaseDue(r)), [rows, only, today])
-  const nOpen = rows.filter(isOpen).length, nRelease = rows.filter(releaseDue).length
+  const nState = (...ks: string[]) => rows.filter(r => ks.includes(checkStatus(r, today).state)).length
+  const nTodo = nState('todo'), nLook = nState('look', 'mismatch'), nRelease = nState('release'), nReady = nState('done', 'scheduled')
   const can = !!data?.canEdit
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <Pill tone={nOpen ? 'amber' : 'emerald'} title="Arrivals still missing the ID, the selfie or the deposit their channel asks for">{nOpen} to verify</Pill>
-        {!!data?.toCheck && <Pill tone="rose" title="ID photos on file that a person has to look at — the name did not match the booking, or could not be read">{data.toCheck} to check</Pill>}
-        <Pill tone={nRelease ? 'rose' : 'slate'} title="Deposits held past their release date">{nRelease} to release</Pill>
-        <Pill title="Checks done against checks owed">{data?.done ?? 0} of {data?.needed ?? 0} done</Pill>
+        {/* Same words and the same counts (guests) as Today's tile. */}
+        <Pill title="Guests with everything their channel asks for — ID, selfie, deposit">{nReady} of {rows.length} ready</Pill>
+        {nTodo > 0 && <Pill tone="amber" title="Arrivals still missing the ID, the selfie or the deposit their channel asks for">{nTodo} need ID or deposit</Pill>}
+        {nLook > 0 && <Pill tone="rose" title="ID photos on file that a person has to look at — the name did not match the booking, or could not be read">{nLook} ID to look at</Pill>}
+        {nRelease > 0 && <Pill tone="rose" title="Deposits held past their release date">{nRelease} to release</Pill>}
         <span className="grow" />
         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
           {([['open', 'Open'], ['release', 'Deposits held'], ['all', 'All']] as const).map(([k, l]) => <button key={k} onClick={() => setOnly(k)} className={'px-2.5 py-1 font-semibold border-l border-line first:border-l-0 ' + (only === k ? 'bg-ink text-white' : 'bg-white text-muted')}>{l}</button>)}
@@ -165,49 +169,54 @@ export function GuestChecksDesk({ embed }: { embed?: boolean }) {
       {shown.length > 0 && (
         <div className="rounded-2xl border border-line bg-white divide-y divide-line overflow-hidden">
           {shown.map(r => {
-            const idOpen = r.needId && (r.idStatus === 'pending' || r.idStatus === 'check'), depOpen = r.needDeposit && r.depositStatus === 'pending' && !r.depositScheduled
+            const st = checkStatus(r, today)
+            const depOpen = st.depOpen
             const b = busy === r.reservationId
+            const isOpen = detailsFor === r.reservationId
+            const toggle = () => setDetailsFor(isOpen ? null : r.reservationId)
+            // ONE CHIP, ONE BUTTON (Jon, 2026-11-16): the next step, the facts in grey, the next action;
+            // every other button is under Details.
+            const primary = !can ? null
+              : st.state === 'mismatch' || st.state === 'look' ? (!isOpen ? <button onClick={toggle} className={TASK_DARK}><Eye size={12} /> Review ID</button> : null)
+              : st.state === 'release' ? <button onClick={() => post(r.reservationId, { deposit_status: 'released' }, 'Deposit marked released.')} disabled={b} className={TASK_DARK}><Undo2 size={12} /> Released</button>
+              : st.state === 'todo' && st.idOpen && !r.idLinkSentAt ? <button onClick={() => sendLink(r)} disabled={b} className={TASK_DARK}><Send size={12} /> Send ID link</button>
+              : st.state === 'todo' && depOpen ? <button onClick={() => setDepFor(depFor === r.reservationId ? null : r.reservationId)} className={TASK_DARK}><Check size={12} /> Deposit taken</button>
+              : null
             return (
-              <div key={r.reservationId} className={'px-3 sm:px-4 py-3 ' + ((idOpen || depOpen) && r.today ? 'bg-rose-50/40' : '')}>
+              <div key={r.reservationId} className={'px-3 sm:px-4 py-3 ' + (st.urgent && st.state !== 'done' ? 'bg-rose-50/40' : '')}>
                 <div className="flex items-start gap-2 flex-wrap">
                   <div className="min-w-0 grow basis-56">
-                    <button onClick={() => setDetailsFor(detailsFor === r.reservationId ? null : r.reservationId)} title="Show the booking, the ID, selfie and check-in form" className="block max-w-full text-left text-[13.5px] font-bold text-ink truncate hover:text-brand-700 hover:underline">{r.guest} <span className="font-semibold text-muted">· {r.unit}</span></button>
-                    <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                      <Tag>{r.channel}</Tag>
-                      <Tag tone={r.today ? 'amber' : r.inHouse ? 'sky' : 'slate'}>{r.today ? 'arrives today' : r.inHouse ? 'in-house · out ' + fmtDay(r.checkOut) : r.checkIn < today ? 'left ' + fmtDay(r.checkOut) : 'arrives ' + fmtDay(r.checkIn)}</Tag>
-                      <Checklist r={r} />
-                      {r.idStatus !== 'pending' && <IdTag r={r} />}
-                      {r.needDeposit && (r.depositStatus === 'captured'
-                        ? <Tag tone={releaseDue(r) ? 'rose' : 'emerald'} title={(r.depositAuto ? 'A security deposit on the booking in Guesty — read off the booking, not typed here' : 'Captured ' + fmtAt(r.depositCapturedAt) + (r.depositCapturedBy ? ' by ' + r.depositCapturedBy.split('@')[0] : ''))}>deposit {money(r.depositAmount) || 'held'}{r.depositAuto ? ' · Guesty' : r.depositMethod ? ' · ' + methodLabel(r.depositMethod) : ''} · {fmtAt(r.depositCapturedAt)}{r.depositReleaseDue ? (releaseDue(r) ? ' · RELEASE DUE ' : ' · release ') + fmtDay(r.depositReleaseDue) : ''}</Tag>
-                        : r.depositStatus === 'released' ? <Tag tone="slate">deposit released {fmtAt(r.depositReleasedAt)}</Tag>
-                        : r.depositStatus === 'claimed' ? <Tag tone="violet">deposit claimed</Tag>
-                        : r.depositStatus === 'waived' ? <Tag>deposit waived</Tag>
-                        : r.depositScheduled ? <Tag tone="sky" title={'Guesty places the hold on the card' + (r.depositScheduled.due ? ' on ' + fmtAt(r.depositScheduled.due) : ' before arrival') + ' — nothing to do unless it fails'}>deposit scheduled in Guesty · {money(r.depositScheduled.amount)}{r.depositScheduled.due ? ' · ' + fmtDay(r.depositScheduled.due.slice(0, 10)) : ''}</Tag>
-                        : <Tag tone="amber">deposit to collect{r.depositDue ? ' · ' + money(r.depositDue) : ''}{r.rule.depositMethod ? ' · ' + methodLabel(r.rule.depositMethod) : ''}</Tag>)}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button onClick={toggle} title="Show the booking, the ID, selfie and check-in form" className="max-w-full text-left text-[13.5px] font-bold text-ink truncate hover:text-brand-700 hover:underline">{r.guest} <span className="font-normal text-muted">· {r.unit}</span></button>
+                      <CheckChip s={st} r={r} />
                     </div>
-                    {(r.note || r.depositRef || r.idName) && <div className="mt-1 text-[11.5px] text-muted truncate">{[r.idName ? 'ID: ' + r.idName : '', r.depositRef && !r.depositAuto ? 'ref ' + r.depositRef : '', r.note].filter(Boolean).join(' · ')}</div>}
+                    <div className="mt-0.5 text-[12px] text-muted truncate">{checkFacts(r, today)}</div>
                     <IdCheckWhy r={r} />
-                    <ThreadThumbs r={r} onOpen={(url, title, isPdf) => setViewer({ url, title, isPdf })} />
+                    {st.state !== 'done' && !isOpen && <ThreadThumbs r={r} onOpen={(url, title, isPdf) => setViewer({ url, title, isPdf })} />}
                   </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                  <div className="flex items-center gap-1.5">
+                    {primary}
+                    <button onClick={toggle} aria-expanded={isOpen} className={TASK_GHOST + (isOpen ? ' !bg-ink !text-white' : '')} title="Every action, the ID, selfie, check-in form and the booking"><ChevronDown size={12} className={isOpen ? 'rotate-180' : ''} /> Details</button>
+                  </div>
+                </div>
+                {isOpen && <MoreActions>
                     <IdActions r={r} canEdit={can} busy={b} ghost={TASK_GHOST} dark={TASK_DARK}
                       onPatch={(patch, ok) => post(r.reservationId, patch, ok)} onSendLink={() => sendLink(r)} onCopyLink={() => copyLink(r)}
                       onView={which => view(r.reservationId, which, r.guest + (which === 'id' ? ' — ID' : ' — selfie'))} onRecheck={() => recheck(r)}
                       byHand={byHandFor === r.reservationId} setByHand={v => setByHandFor(v ? r.reservationId : null)} />
                     {r.hasDepositProof && <button onClick={() => view(r.reservationId, 'proof', r.guest + ' — deposit proof')} className={TASK_GHOST}><Eye size={12} /> Proof</button>}
                     {r.salatoVerified && <Link href="/vault" className={TASK_GHOST} title="Salato verification record (Vault → Records)"><Shield size={12} /> Record</Link>}
-                    {can && depOpen && <button onClick={() => setDepFor(depFor === r.reservationId ? null : r.reservationId)} className={TASK_DARK}><Check size={12} /> Deposit captured</button>}
-                    {can && r.depositStatus === 'captured' && <button onClick={() => post(r.reservationId, { deposit_status: 'released' }, 'Deposit marked released.')} disabled={b} className={releaseDue(r) ? TASK_DARK : TASK_GHOST} title="The hold was released / refunded"><Undo2 size={12} /> Released</button>}
+                    {can && depOpen && <button onClick={() => setDepFor(depFor === r.reservationId ? null : r.reservationId)} className={TASK_GHOST}><Check size={12} /> Deposit taken</button>}
+                    {can && r.depositStatus === 'captured' && st.state !== 'release' && <button onClick={() => post(r.reservationId, { deposit_status: 'released' }, 'Deposit marked released.')} disabled={b} className={TASK_GHOST} title="The hold was released / refunded"><Undo2 size={12} /> Released</button>}
                     {can && r.depositStatus === 'captured' && <button onClick={() => post(r.reservationId, { deposit_status: 'claimed' }, 'Deposit marked claimed — open a claim on the Claims desk.')} disabled={b} className={TASK_GHOST} title="We kept some or all of it for damage">Claimed</button>}
                     {can && r.depositStatus === 'captured' && (
-                      <label className={TASK_GHOST + ' cursor-pointer'} title="Attach the hold / authorization screenshot or receipt"><Upload size={12} /><input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => { uploadProof(r.reservationId, e.target.files?.[0]); e.target.value = '' }} /></label>
+                      <label className={TASK_GHOST + ' cursor-pointer'} title="Attach the hold / authorization screenshot or receipt"><Upload size={12} /> Proof<input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => { uploadProof(r.reservationId, e.target.files?.[0]); e.target.value = '' }} /></label>
                     )}
                     {can && depOpen && <button onClick={() => post(r.reservationId, { deposit_status: 'waived' }, 'Deposit waived for this stay.')} disabled={b} className={TASK_GHOST} title="No deposit for this stay">Waive deposit</button>}
-                    {can && r.needId && !r.checklist?.complete && <button onClick={() => pullThread(r)} disabled={b} className={TASK_GHOST} title="Read this booking's message thread from Guesty now — picks up a selfie or ID the guest replied with"><RefreshCw size={12} /> Thread</button>}
-                    <button onClick={() => setDetailsFor(detailsFor === r.reservationId ? null : r.reservationId)} className={TASK_GHOST + (detailsFor === r.reservationId ? ' !bg-ink !text-white' : '')} title="The whole booking — guest, money, payments, calls, messages, tasks"><ChevronDown size={12} className={detailsFor === r.reservationId ? 'rotate-180' : ''} /> Details</button>
+                    {can && r.needId && !r.checklist?.complete && <button onClick={() => pullThread(r)} disabled={b} className={TASK_GHOST} title="Read this booking's message thread from Guesty now — picks up a selfie or ID the guest replied with"><RefreshCw size={12} /> Check thread</button>}
                     <a href={r.guestyUrl} target="_blank" rel="noreferrer" className={TASK_GHOST} title="Open this reservation in Guesty"><ExternalLink size={12} /> Guesty</a>
-                  </div>
-                </div>
+                    {(r.note || r.depositRef) && <span className="text-[11.5px] text-muted">{[r.depositRef && !r.depositAuto ? 'ref ' + r.depositRef : '', r.note].filter(Boolean).join(' · ')}</span>}
+                  </MoreActions>}
                 {detailsFor === r.reservationId && <CheckDetails r={r} onOpen={(url, title, isPdf) => setViewer({ url, title, isPdf })} />}
                 {byHandFor === r.reservationId && can && (
                   <ByHandStrip r={r} busy={b} ghost={TASK_GHOST} dark={TASK_DARK} field={field} onClose={() => setByHandFor(null)}
