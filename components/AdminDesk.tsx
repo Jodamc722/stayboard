@@ -114,7 +114,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
         <ListingsTab rows={rows} today={today} tile={tile} setTile={setTile} counts={counts} channels={(desk.data?.channels || []).filter(c => c.major || c.key === 'googleVacationRentals')} loading={desk.loading && !desk.data} />
       )}
       {/* CHANNELS (Jon, 2026-11-09): the channel page is the admin's standard channel view — same component. */}
-      {tab === 'rates' && <AdminBaseRates />}
+      {tab === 'rates' && <AdminBaseRates canEdit={canEdit} />}
       {tab === 'channels' && <ChannelConnections canRun={canEdit} />}
       {tab === 'copy' && <CopyAuditTab />}
       {tab === 'reviews' && <ReviewsTab />}

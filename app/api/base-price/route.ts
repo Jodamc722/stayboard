@@ -146,7 +146,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireAnyLevel(['optimize', 'buildings'], 'edit')
+  // the Admin desk's Base rates tab pushes from its full list (Jon, 2026-11-18: "can we push the base rates from here to guesty")
+  const gate = await requireAnyLevel(['optimize', 'buildings', 'admin-desk'], 'edit')
   if (!gate.ok) return gate.res
   const body = await req.json().catch(() => ({} as any))
   const changes: { id: string; basePrice: number; weekendBasePrice: number | null }[] = (Array.isArray(body?.changes) ? body.changes : [])
