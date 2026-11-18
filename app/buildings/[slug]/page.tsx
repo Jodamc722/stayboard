@@ -9,6 +9,7 @@ import { computeScore, rollupBuilding, slugToBuilding, band, bandUi } from '@/li
 import { Shell } from '@/components/Shell'
 import { BulkAmenityPanel } from '@/components/BulkAmenityPanel'
 import { BulkPolicyPanel } from '@/components/BulkPolicyPanel'
+import { BasePricePanel } from '@/components/BasePricePanel'
 import { BulkPhotoPanel } from '@/components/BulkPhotoPanel'
 import { BulkListingCopy } from '@/components/BulkListingCopy'
 import { BulkRegenerate } from '@/components/BulkRegenerate'
@@ -166,7 +167,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
         )}
       </header>
 
-      <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /><BulkPhotoPanel units={bulkUnits} /><BulkListingCopy scope="property" building={buildingName} /><BulkRegenerate units={bulkUnits.map((u: any) => ({ id: u.id, name: u.name }))} /></div>
+      <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /><BasePricePanel building={buildingName} ids={bulkUnits.map((u: any) => String(u.id))} /><BulkPhotoPanel units={bulkUnits} /><BulkListingCopy scope="property" building={buildingName} /><BulkRegenerate units={bulkUnits.map((u: any) => ({ id: u.id, name: u.name }))} /></div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         {scored.map(({ l, dead, score, suggestions, mustFix }) => {
