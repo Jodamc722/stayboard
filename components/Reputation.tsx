@@ -357,29 +357,20 @@ function ChannelCard({ c, on, onPick }: { c: any; on: boolean; onPick: () => voi
           <span className={'ml-auto text-[10.5px] font-semibold tabular-nums whitespace-nowrap ' + (ch > 0 ? 'text-emerald-600' : 'text-rose-700')}>{ch > 0 ? '▲' : '▼'} {Math.abs(ch)}</span>
         )}
       </div>
-      <div className="flex items-end gap-2 mt-0.5">
+      <div className="mt-0.5">
         <span className="text-[19px] leading-none font-bold tabular-nums text-ink">{c.unitAvg ?? c.reviewAvg}<span className="text-[11px] font-semibold text-muted">{suffix}</span></span>
-        {months.length >= 2 && (
-          <span className="inline-flex items-end gap-px h-4 ml-auto" aria-hidden="true">
-            {months.map(m => <span key={m.month} className="w-1.5 rounded-sm bg-slate-300" style={{ height: Math.max(15, Math.min(100, ((m.avg - lo) / (c.scale - lo)) * 100)) + '%' }} />)}
-          </span>
-        )}
       </div>
-      <div className="text-[10.5px] text-muted mt-0.5 truncate">{c.units} unit{c.units === 1 ? '' : 's'} · {c.n} reviews</div>
-      {/* Chips are sized to the card: each truncates inside it instead of pushing the card wider
-          than half a phone screen (two cards per row at 390px). The full rule is in the hover. */}
+      <div className="text-[10.5px] text-muted mt-0.5 truncate">{c.units} unit{c.units === 1 ? '' : 's'} · {Number(c.n).toLocaleString()} reviews</div>
+      {/* The lines each channel draws (Superhost, Genius…), as words. Only a missed one is coloured. */}
       {badge.length > 0 && (
-        <div className="flex items-center gap-1 flex-wrap mt-1 min-w-0">
-          {badge.map((l: any) => {
+        <div className="text-[10.5px] text-muted mt-0.5 leading-snug">
+          {badge.map((l: any, i: number) => {
             const listing = l.scope === 'listing'
-            const tone = listing
-              ? (c.scored && l.unitsAt / c.scored >= 0.5 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600')
-              : (l.held == null ? 'bg-slate-100 text-slate-600' : l.held ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700')
-            const text = listing ? l.unitsAt + '/' + c.scored + ' ' + l.label : (l.held == null ? l.label : l.held ? l.label + ' ✓' : 'under ' + l.label)
+            const text = listing ? l.unitsAt + '/' + c.scored + ' ' + l.label : (l.held == null ? l.label : l.held ? l.label + ' held' : 'under ' + l.label)
             const tip = listing
               ? l.unitsAt + ' of ' + c.scored + ' scored units are at or above this line. ' + l.note
               : l.note + (c.year && c.year.avg != null ? ' Our last-365-day average on ' + c.channel + ' is ' + c.year.avg + ' across the portfolio; each host account is judged on its own listings.' : '')
-            return <span key={l.key} title={tip} className={'block max-w-full truncate text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ' + tone}>{text}</span>
+            return <span key={l.key} title={tip} className={!listing && l.held === false ? 'text-rose-700 font-semibold' : ''}>{i ? ' · ' : ''}{text}</span>
           })}
         </div>
       )}
@@ -648,30 +639,21 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
   return (
     <section className="mb-5">
       <LeanHead title="Reviews">
-        <Pill tone={change != null && change > 0.02 ? 'emerald' : change != null && change < -0.02 ? 'rose' : 'slate'} title={scoreTitle}>
+        <Pill tone={change != null && change > 0.02 ? 'emerald' : change != null && change < -0.02 ? 'rose' : 'slate'} title={scoreTitle + (h.fiveShare != null ? ' · top-rated ' + h.fiveShare + '% of reviews' : '')}>
           {headAvg ?? '—'}{bookingOnly ? '/10' : '★'}{change != null ? ' ' + (change > 0 ? '+' : '') + change : ''}
         </Pill>
-        <span className="hidden sm:contents">
-          <Pill title={'Share of reviews that are top-rated' + (h.prevFiveShare != null ? ' · was ' + h.prevFiveShare + '%' : '') + ' · live listings only'}>
-            Top-rated {h.fiveShare != null ? h.fiveShare + '%' : '—'}
-          </Pill>
-        </span>
+        {/* THREE PILLS (2026-11-18, Jon: the page "sucks", too much at the top). The score, what is
+            waiting on us, and what is about to cost us a line. Top-rated share is in the score's
+            hover; below-par and waiting units are the Units tab's own views. */}
         <Pill tone={replyN ? 'rose' : 'slate'} onClick={() => setPage('reply')}
           title={'Guests waiting on a reply' + (replyKpi.length ? ' · ' + replyKpi.join(' · ') : '') + (h.lowAwaiting ? ' · ' + h.lowAwaiting + ' of them low reviews' : '') + (h.oldestAwaitingDays ? ' · oldest ' + h.oldestAwaitingDays + 'd' : '')}>
-          To reply {replyN ?? '—'}{h.replyCoverage != null ? ' · ' + Math.round(h.replyCoverage) + '% answered' : ''}
+          To reply {replyN ?? '—'}
         </Pill>
         <Pill tone={holdN ? 'amber' : 'slate'} onClick={() => { setUnitView('risk'); setPage('units') }}
-          title={'Units whose next disappointed review takes the public score under a line it holds today (' + holdN + '), or that are a few five-star stays from the next line up. Basis: the all-time published score on the live listing.'}>
+          title={'Units whose next disappointed review takes the public score under a line it holds today (' + holdN + '), or that are a few five-star stays from the next line up. Basis: the all-time published score on the live listing.'
+            + ' · Below par: ' + (h.unitsBelowPar ?? '—') + ' · waiting for a good review: ' + (h.unitsInRecovery ?? '—') + ' (both on the Units tab)'}>
           At risk {d ? atRiskN : '—'}
         </Pill>
-        <Pill onClick={() => { setUnitView('work'); setPage('units') }} title={'Units more than ' + (d?.belowPar ?? 0.15) + ' below our normal for their channel — window average on live listings only'}>
-          Below par {h.unitsBelowPar ?? '—'}
-        </Pill>
-        <span className="hidden sm:contents">
-          <Pill onClick={() => { setUnitView('work'); setPage('units') }} title="Units waiting for a good review since their last low one — how stays went: every review counts, replaced listings included">
-            Waiting {h.unitsInRecovery ?? '—'}
-          </Pill>
-        </span>
       </LeanHead>
 
       {/* THE PUBLIC SCORE PER CHANNEL — live listings only. Two across on a phone, four on a desk. */}
@@ -931,13 +913,14 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         <div className={page === 'reply' || page === 'all' ? '' : 'hidden'}>
           {/* REPLY KPIs — one quiet line. Speed is a sample: only reviews whose channel stamps both ends. */}
           {replyKpi.length > 0 && (
-            <div className="flex items-center gap-1 flex-wrap mb-2 px-1">
-              {h.replyCoverage != null && <Tag tone={h.replyCoverage >= 95 ? 'emerald' : h.replyCoverage >= 80 ? 'slate' : 'amber'} title="Answered reviews over the ones that can be answered, in this window">{h.replyCoverage}% answered</Tag>}
-              {h.lowReplyCoverage != null && <Tag tone={h.lowReplyCoverage >= 95 ? 'emerald' : 'amber'} title={'Of ' + h.lowReviews + ' low reviews in this window — the replies a prospect reads first'}>low reviews {h.lowReplyCoverage}%</Tag>}
-              {h.medianReplyHours != null && <Tag tone={h.medianReplyHours <= 24 ? 'emerald' : h.medianReplyHours <= 72 ? 'slate' : 'amber'} title={'Median time from review to reply, on the ' + (h.replyTimedN ?? 0) + ' replies whose channel records both times'}>median {h.medianReplyHours}h</Tag>}
-              {h.replyWithin24hPct != null && <Tag title="Share of those replies posted within 24 hours">{h.replyWithin24hPct}% in 24h</Tag>}
-              {!!h.oldestAwaitingDays && <Tag tone={h.oldestAwaitingDays > 3 ? 'rose' : 'slate'} title="The longest a guest in this window has waited for a reply">oldest waiting {h.oldestAwaitingDays}d</Tag>}
-            </div>
+            <p className="text-[12px] text-muted mb-2 px-1">
+              {[
+                h.replyCoverage != null ? h.replyCoverage + '% answered' : '',
+                h.lowReplyCoverage != null ? 'low reviews ' + h.lowReplyCoverage + '%' : '',
+                h.medianReplyHours != null ? 'median reply ' + (h.medianReplyHours > 48 ? Math.round(h.medianReplyHours / 24) + ' days' : h.medianReplyHours + 'h') : '',
+              ].filter(Boolean).join(' · ')}
+              {h.oldestAwaitingDays ? <span className={h.oldestAwaitingDays > 3 ? 'text-rose-700 font-semibold' : ''} title="The longest a guest in this window has waited for a reply">{' · oldest waiting ' + h.oldestAwaitingDays + ' days'}</span> : null}
+            </p>
           )}
           {feed}
         </div>

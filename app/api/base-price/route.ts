@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAnyLevel } from '@/lib/access'
 import { guestyFetch } from '@/lib/guesty-retry'
+import { weightedMedian } from '@/lib/listing-strategy'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -33,15 +34,6 @@ async function token(sb: any): Promise<string | null> {
 }
 
 /** Median of nightly rates, each weighted by the nights sold at it. */
-function weightedMedian(rows: { rate: number; nights: number }[]): number | null {
-  const list = rows.filter(r => r.rate > 0 && r.nights > 0).sort((a, b) => a.rate - b.rate)
-  const total = list.reduce((s, r) => s + r.nights, 0)
-  if (!total) return null
-  let run = 0
-  for (const r of list) { run += r.nights; if (run >= total / 2) return r.rate }
-  return list[list.length - 1].rate
-}
-
 type Stay = { listing: string; rate: number; nights: number; weekend: 'all' | 'none' | 'mixed' }
 
 /** Is every night of the stay a Friday or Saturday night, none of them, or a mix? */

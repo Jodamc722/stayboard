@@ -37,6 +37,7 @@ import { ListingWorkspace, type WorkTab } from '@/components/ListingWorkspace'
 import { ListingRegenerate } from '@/components/ListingRegenerate'
 import { ContentTable } from '@/components/ContentTable'
 import { BrandLines } from '@/components/BrandLines'
+import { bookedNightly, sisterUnits, unitStrategy, typeLabel } from '@/lib/listing-strategy'
 import {
   computeScore, rollupBuilding, buildingSlug, band, bandUi, ratingToStars,
   lastOptimizedOf, scoreGaps, type Factor, type Gap,
@@ -156,6 +157,19 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const parkingFact = buildingGuideFor([listing.building, listing.nickname, listing.title].filter(Boolean).join(' '))?.parking || null
   const res = computeScore(listing, { avgRating, reviewCount: rated.length, isBeach, siblingAmenities, parkingFact })
   const optimizeScore = res.overall
+  // What copy cannot fix (2026-11-18): rating, thin reviews, a base price far from what nights sell for.
+  const [bookedMap, sisters] = await Promise.all([
+    bookedNightly(supabaseAdmin(), [String(listing.id)]).catch(() => new Map()),
+    sisterUnits(supabaseAdmin(), listing),
+  ])
+  const baseN = Number((listing.raw as any)?.prices?.basePrice)
+  const strategy = unitStrategy({
+    avgRating, reviewCount: rated.length,
+    base: Number.isFinite(baseN) && baseN > 0 ? baseN : null,
+    booked: bookedMap.get(String(listing.id))?.rate ?? null, bookedNights: bookedMap.get(String(listing.id))?.nights || 0,
+    sisters: sisters.count, typeWords: typeLabel(listing, true),
+    buildingHref: `/buildings/${buildingSlug(buildingName)}`, reviewsHref: '/reviews',
+  })
   const opt = bandUi(res.band)
   const allGaps = scoreGaps(res)
   // Fixes vs ideas (Jon, 2026-10-31): amenity suggestions are recommendations, not faults — they sit
@@ -295,6 +309,25 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
           panel: (
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
               <div className="min-w-0 space-y-3">
+                {strategy.length > 0 && (
+                  <div className="rounded-2xl border border-line bg-white overflow-hidden">
+                    <div className="px-3 py-2 bg-app border-b border-line flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted">Before the copy</span>
+                      <span className="text-[11px] text-muted">what a rewrite will not fix · not part of the score</span>
+                    </div>
+                    <div className="divide-y divide-line">
+                      {strategy.map(f => (
+                        <Link key={f.key} href={f.href} prefetch={false} className="px-3 py-2 flex items-center gap-3 hover:bg-app/50 transition-colors group">
+                          <span className="min-w-0 flex-1">
+                            <span className={`block text-[12.5px] font-bold ${f.severity === 'bad' ? 'text-rose-700' : 'text-ink'}`}>{f.label}</span>
+                            <span className="block text-[11.5px] text-muted leading-snug">{f.note}</span>
+                          </span>
+                          <span className="text-[11px] font-semibold text-muted group-hover:text-brand-600 shrink-0 inline-flex items-center gap-0.5">{f.action} <ArrowRight size={11} /></span>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {gaps.length === 0 ? (
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-800 inline-flex items-center gap-2">
                     <Check size={14} /> Nothing left on the checklist — every scored factor on this unit is full marks.

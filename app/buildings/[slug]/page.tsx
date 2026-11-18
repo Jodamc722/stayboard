@@ -10,6 +10,7 @@ import { Shell } from '@/components/Shell'
 import { BulkAmenityPanel } from '@/components/BulkAmenityPanel'
 import { BulkPolicyPanel } from '@/components/BulkPolicyPanel'
 import { BasePricePanel } from '@/components/BasePricePanel'
+import { bookedNightly, unitStrategy, buildingStrategy, typeKey, typeLabel } from '@/lib/listing-strategy'
 import { BulkPhotoPanel } from '@/components/BulkPhotoPanel'
 import { BulkListingCopy } from '@/components/BulkListingCopy'
 import { BulkRegenerate } from '@/components/BulkRegenerate'
@@ -114,10 +115,29 @@ export default async function BuildingPage({ params }: { params: { slug: string 
   // Offer only names Guesty will keep — a sibling's legacy spelling ("Smart TV") would be dropped on save.
   const bulkAddable = Array.from(new Set(siblingAmenities.map(a => resolveAmenity(a)).filter((x): x is string => !!x))).sort((a, b) => a.localeCompare(b))
 
+  // STRATEGY (2026-11-18): what copy cannot fix — rating, thin reviews, a base price far from what
+  // nights sell for, units that are the same on paper. Shown beside the score, never inside it.
+  const live = units.filter((u: any) => !DEAD.includes(String(u.status || '').toLowerCase()))
+  const booked = await bookedNightly(supabaseAdmin(), live.map((u: any) => String(u.id))).catch(() => new Map())
+  const typeCount: Record<string, number> = {}
+  for (const u of live) typeCount[typeKey(u)] = (typeCount[typeKey(u)] || 0) + 1
+  const stratOf = (l: any) => {
+    const id = String(l.id), b = booked.get(id)
+    const baseN = Number(l.raw?.prices?.basePrice)
+    return {
+      avgRating: _cnt[id] ? Math.round((_sum[id] / _cnt[id]) * 100) / 100 : null, reviewCount: _cnt[id] || 0,
+      base: Number.isFinite(baseN) && baseN > 0 ? baseN : null, booked: b?.rate ?? null, bookedNights: b?.nights || 0,
+      bedrooms: l.bedrooms, bathrooms: l.bathrooms, max_occupancy: l.max_occupancy,
+    }
+  }
+  const bStrategy = buildingStrategy(live.map(stratOf))
+
   const scored = units.map((l: any) => {
     const dead = DEAD.includes(String(l.status || '').toLowerCase())
-    const res = computeScore(l, { isBeach, siblingAmenities, avgRating: _cnt[String(l.id)] ? Math.round((_sum[String(l.id)] / _cnt[String(l.id)]) * 100) / 100 : null, reviewCount: _cnt[String(l.id)] || 0 })
-    return { l, dead, score: res.overall, suggestions: res.amenities.suggestions, mustFix: res.amenities.mustFix }
+    const st = stratOf(l)
+    const res = computeScore(l, { isBeach, siblingAmenities, avgRating: st.avgRating, reviewCount: st.reviewCount })
+    const flags = dead ? [] : unitStrategy({ ...st, sisters: (typeCount[typeKey(l)] || 1) - 1, typeWords: typeLabel(l, true), buildingHref: '' })
+    return { l, dead, score: res.overall, suggestions: res.amenities.suggestions, mustFix: res.amenities.mustFix, flags }
   }).sort((a, b) => {
     if (a.dead !== b.dead) return a.dead ? 1 : -1
     return a.score - b.score // weakest units first
@@ -167,10 +187,21 @@ export default async function BuildingPage({ params }: { params: { slug: string 
         )}
       </header>
 
+      {bStrategy.length > 0 ? (
+        <section className="mb-5 rounded-2xl border border-line bg-white px-4 py-3">
+          <h2 className="text-[11px] uppercase tracking-wider text-muted font-semibold mb-1.5">Before the copy</h2>
+          <ul className="space-y-1">
+            {bStrategy.map(x => (
+              <li key={x.key} className="text-[13px] leading-snug"><span className="font-semibold text-ink">{x.label}.</span> <span className="text-muted">{x.note}</span></li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <div className="mb-5 flex flex-wrap gap-2"><BulkAmenityPanel units={bulkUnits} addable={bulkAddable} /><BulkPolicyPanel units={bulkUnits} /><BasePricePanel building={buildingName} ids={bulkUnits.map((u: any) => String(u.id))} /><BulkPhotoPanel units={bulkUnits} /><BulkListingCopy scope="property" building={buildingName} /><BulkRegenerate units={bulkUnits.map((u: any) => ({ id: u.id, name: u.name }))} /></div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {scored.map(({ l, dead, score, suggestions, mustFix }) => {
+        {scored.map(({ l, dead, score, suggestions, mustFix, flags }) => {
           const u = bandUi(band(score))
           // Lead with the unit's own name ("Arya 1704/1"), not the marketing title — 23 Arya
           // units share near-identical titles, so the title alone cannot tell you which unit this is.
@@ -211,6 +242,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
                 ) : (
                   <div className="text-[11px] text-muted">{u.label}</div>
                 )}
+                {flags.length > 0 ? <p className="mt-1.5 text-[11px] text-muted leading-snug">{flags.map(f => f.label).join(' · ')}</p> : null}
               </div>
 
               {(() => { const links = otaLinksFrom(l.raw); return links.length ? (
