@@ -3,8 +3,15 @@
 // Jon, 2026-11-18, after the Yieldhouse deck ("Your site shows $500 for a $285 night"): the base
 // price is a fallback under the PriceLabs calendar, but the booking site prints it, and across the
 // portfolio it is a placeholder ($1,000 at Botanica, Capri and Park Towers against nights that sell
-// near $80). The rule he agreed: base = the unit's median booked nightly rate over the last 12
-// months.
+// near $80). The rule he first agreed was the median booked night; on 2026-11-18 he set it as the
+// YEARLY AVERAGE ("base rate should reflect yearly averages"): what the unit took for its nights over
+// the last 12 months, divided by the nights sold.
+//
+// PRICELABS DRIVES THE RATE, NOT THIS (Jon, same day: "the base rate does not drive rate, pricelabs
+// does"). The base is the figure the booking site prints and the fallback for a day PriceLabs has not
+// priced. Changing it does not move any night PriceLabs has priced.
+//
+// WHO MAY WRITE: Jon and Bernadette only (Jon, same day: "only Bernadette and I"), whatever a role allows.
 //
 //   GET  ?building=<name> | ?ids=a,b,c [&calendar=1]   the report: now, booked, proposed. Nothing is written.
 //   GET  ?all=1                                         every active listing (the Admin desk's Base rates tab)
@@ -18,7 +25,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAnyLevel } from '@/lib/access'
 import { guestyFetch } from '@/lib/guesty-retry'
-import { weightedMedian } from '@/lib/listing-strategy'
+
+/** The only people who may write a base price to Guesty. */
+const PUSHERS = ['jon@stay-hospitality.com', 'jodamc722@gmail.com', 'bernadette@stay-hospitality.com']
+const mayPush = (email?: string | null) => PUSHERS.indexOf(String(email || '').trim().toLowerCase()) >= 0
+/** The average night: everything taken for the nights, over the nights sold. Null with no nights. */
+function averageNight(stays: { rate: number; nights: number }[]): number | null {
+  let fare = 0, nights = 0
+  for (const s of stays) { fare += s.rate * s.nights; nights += s.nights }
+  return nights > 0 ? fare / nights : null
+}
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -34,7 +50,6 @@ async function token(sb: any): Promise<string | null> {
   return valid ? tok.access_token : null
 }
 
-/** Median of nightly rates, each weighted by the nights sold at it. */
 type Stay = { listing: string; rate: number; nights: number; weekend: 'all' | 'none' | 'mixed' }
 
 /** Is every night of the stay a Friday or Saturday night, none of them, or a mix? */
@@ -87,7 +102,7 @@ export async function GET(req: NextRequest) {
   for (const s of stays) { const a = byListing.get(s.listing) || []; a.push(s); byListing.set(s.listing, a) }
   // The weekend lift, from the stays that are purely one or the other. Building-wide: one unit
   // rarely has enough pure-weekend stays of its own.
-  const wkEnd = weightedMedian(stays.filter(s => s.weekend === 'all')), wkDay = weightedMedian(stays.filter(s => s.weekend === 'none'))
+  const wkEnd = averageNight(stays.filter(s => s.weekend === 'all')), wkDay = averageNight(stays.filter(s => s.weekend === 'none'))
   const lift = wkEnd && wkDay ? Math.min(2, Math.max(1, wkEnd / wkDay)) : 1.25
   // Fallback for a unit with too few nights of its own: the same bedroom count in the building.
   const byBeds = new Map<string, Stay[]>()
@@ -100,9 +115,9 @@ export async function GET(req: NextRequest) {
   for (const l of listings.sort((a, b) => String(a.nickname || '').localeCompare(String(b.nickname || ''), undefined, { numeric: true }))) {
     const own = byListing.get(String(l.id)) || []
     const nights = own.reduce((s, r) => s + r.nights, 0)
-    const ownMed = weightedMedian(own)
+    const ownMed = averageNight(own)
     const peers = byBeds.get(bedKey(l)) || []
-    const peerMed = weightedMedian(peers)
+    const peerMed = averageNight(peers)
     const basis = nights >= 20 && ownMed ? 'own' : peerMed ? 'building' : 'none'
     const med = basis === 'own' ? ownMed : basis === 'building' ? peerMed : null
     const base = num(l.prices?.basePrice), weekendBase = num(l.prices?.weekendBasePrice)
@@ -142,13 +157,14 @@ export async function GET(req: NextRequest) {
     avgBooked: withBoth.length ? Math.round(withBoth.reduce((s, u) => s + u.booked, 0) / withBoth.length) : null,
     calendarRead: withCalendar && !!tok,
   }
-  return NextResponse.json({ ok: true, building, units, summary })
+  return NextResponse.json({ ok: true, building, units, summary, canPush: mayPush((gate as any).access?.email) })
 }
 
 export async function POST(req: NextRequest) {
   // the Admin desk's Base rates tab pushes from its full list (Jon, 2026-11-18: "can we push the base rates from here to guesty")
   const gate = await requireAnyLevel(['optimize', 'buildings', 'admin-desk'], 'edit')
   if (!gate.ok) return gate.res
+  if (!mayPush((gate as any).access?.email)) return NextResponse.json({ ok: false, error: 'Only Jon and Bernadette can push base prices to Guesty.' }, { status: 403 })
   const body = await req.json().catch(() => ({} as any))
   const changes: { id: string; basePrice: number; weekendBasePrice: number | null }[] = (Array.isArray(body?.changes) ? body.changes : [])
     .map((c: any) => ({ id: String(c?.id || ''), basePrice: Number(c?.basePrice), weekendBasePrice: num(c?.weekendBasePrice) }))
