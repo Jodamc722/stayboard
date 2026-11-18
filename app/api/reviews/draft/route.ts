@@ -19,6 +19,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { cronAllowed } from '@/lib/cron-auth'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { isDepartureCleanName } from '@/lib/breezeway'
@@ -167,11 +168,17 @@ async function recentOpeners(): Promise<string[]> {
 export async function POST(req: NextRequest) {
   // Roles+levels write gate (2026-08-04): below-edit access on 'reviews' is rejected here,
   // whatever the UI shows. requireLevel also covers the signed-out 401.
-  const __gate = await requireLevel('reviews', 'edit')
-  if (!__gate.ok) return __gate.res
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // THE SCHEDULER MAY DRAFT TOO (2026-11-18, lib/review-autodraft): the review sync writes a draft
+  // for each new review by calling this same endpoint with the scheduler's bearer. Only the real
+  // secret passes — a missing one never opens the door.
+  const viaScheduler = cronAllowed(req).viaSecret
+  if (!viaScheduler) {
+    const __gate = await requireLevel('reviews', 'edit')
+    if (!__gate.ok) return __gate.res
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
 
   const body: any = await req.json().catch(() => ({} as any))
   const { content, rating, guest, channel, instruction, currentDraft, voicePreview, listing_name, listingId } = body

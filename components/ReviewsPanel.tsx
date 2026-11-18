@@ -76,7 +76,10 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
 }) {
   const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string; segments?: boolean }>({ loading: true })
   const [tab, setTab] = useState<'needs' | 'replied' | 'unmapped' | 'dismissed'>('needs')
-  const [sortDir, setSortDir] = useState<'desc' | 'asc'>('desc')
+  // SORT (Jon, 2026-11-18: "need to be able to sort by score"). The queue still opens on the
+  // longest-waiting reply; the score orders are one tap away and say what they are.
+  const [sortBy, setSortBy] = useState<'wait' | 'low' | 'high' | 'new'>('wait')
+  const [rephrase, setRephrase] = useState<Record<string, string | undefined>>({})
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [posted, setPosted] = useState<Record<string, boolean>>({})
   const [postedAt, setPostedAt] = useState<Record<string, number>>({})
@@ -115,6 +118,16 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   const rootRef = useRef<HTMLElement | null>(null)
   useEffect(() => { const saved = loadDrafts(); if (Object.keys(saved).length) setDrafts(d => ({ ...saved, ...d })) }, [])
   useEffect(() => { draftsRef.current = drafts }, [drafts])
+  // DRAFTS WRITTEN AS THE REVIEW ARRIVED (lib/review-autodraft): fill every row that has none yet.
+  // A draft somebody is already editing in this browser is never replaced.
+  useEffect(() => {
+    let off = false
+    fetch('/api/reviews/drafts').then(r => (r.ok ? r.json() : null)).then(j => {
+      if (off || !j || !j.drafts) return
+      setDrafts(d => { const next = { ...d }; for (const id of Object.keys(j.drafts)) if (!(next[id] || '').trim()) next[id] = String(j.drafts[id]); return next })
+    }).catch(() => { /* the Draft button still works */ })
+    return () => { off = true }
+  }, [])
 
   // "Answer N reviews" on a failing unit upstairs types that unit into this box, rather than
   // re-scoping the whole page behind the manager's back.
@@ -210,16 +223,20 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   const isRemoved = (r: Review) => (removedLocal[r.id] !== undefined ? removedLocal[r.id] : !!r.removed)
   const needs = (s.reviews || [])
     .filter(r => !r.hasReply && !posted[r.id] && !isDismissed(r) && matchQ(r))
-    // Most-overdue first (the SLA is the queue order); the rating toggle breaks ties.
     .sort((a, b) => {
-      const sa = slaState(a), sb = slaState(b)
-      const d = (sb ? sb.overdueH : -9999) - (sa ? sa.overdueH : -9999)
-      if (Math.abs(d) > 0.5) return d
-      return sortDir === 'desc' ? ratingFrac(b.rating) - ratingFrac(a.rating) : ratingFrac(a.rating) - ratingFrac(b.rating)
+      const waitD = () => { const sa = slaState(a), sb = slaState(b); return (sb ? sb.overdueH : -9999) - (sa ? sa.overdueH : -9999) }
+      const newD = () => (b.created_at || '').localeCompare(a.created_at || '')
+      if (sortBy === 'low') return ratingFrac(a.rating) - ratingFrac(b.rating) || waitD()
+      if (sortBy === 'high') return ratingFrac(b.rating) - ratingFrac(a.rating) || waitD()
+      if (sortBy === 'new') return newD()
+      const d = waitD()
+      return Math.abs(d) > 0.5 ? d : ratingFrac(a.rating) - ratingFrac(b.rating)
     })
   const replied = (s.reviews || [])
     .filter(r => (r.hasReply || posted[r.id]) && matchQ(r))
-    .sort((a, b) => (postedAt[b.id] || 0) - (postedAt[a.id] || 0) || (b.created_at || '').localeCompare(a.created_at || ''))
+    .sort((a, b) => sortBy === 'low' ? ratingFrac(a.rating) - ratingFrac(b.rating) || (b.created_at || '').localeCompare(a.created_at || '')
+      : sortBy === 'high' ? ratingFrac(b.rating) - ratingFrac(a.rating) || (b.created_at || '').localeCompare(a.created_at || '')
+      : (postedAt[b.id] || 0) - (postedAt[a.id] || 0) || (b.created_at || '').localeCompare(a.created_at || ''))
   const unmapped = (s.unmapped || []).filter(matchQ)
   const dismissedList = (s.reviews || []).filter(r => isDismissed(r) && matchQ(r))
   const selectedIds = needs.filter(r => selected[r.id])
@@ -475,10 +492,11 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
 
   // ── ROW PARTS (plain functions, not components, so a re-render never remounts a row) ─────────
   // Sub-scores worth a chip on the line are the ones the guest marked down; six fives are noise.
-  const catChips = (r: Review) => {
+  // The guest's low category scores, as words (they were three red pills a row).
+  const lowLine = (r: Review) => {
     const low = (r.categories || []).filter(c => c.rating <= 3).slice(0, 3)
     if (!low.length) return null
-    return <>{low.map(c => <Tag key={c.key} tone="rose" title={c.label + ' scored ' + c.rating + ' out of 5' + (c.comment ? ' — “' + c.comment + '”' : '')}>{c.label} {c.rating}</Tag>)}</>
+    return <span className="text-[11.5px] text-muted truncate" title="The categories this guest scored 3 or under">low on {low.map(c => c.label.toLowerCase() + ' ' + c.rating).join(', ')}</span>
   }
   // THE CHANNEL'S REVIEW WINDOW, COUNTED FROM CHECKOUT (lib/review-thresholds reviewWindowDays):
   // Airbnb closes reviews for both sides 14 days after checkout, Vrbo after 180. The tag appears in
@@ -491,7 +509,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
     if (!Number.isFinite(out)) return null
     const left = win - Math.floor((Date.now() - out) / 86400000)
     const ch = r.channel || 'The channel'
-    if (left <= 0) return <Tag title={ch + ' closes its review window ' + win + ' days after checkout (' + r.checkOut + '). This one is past it, so the post may be refused — mark it no-reply-needed if it is.'}>window likely closed</Tag>
+    if (left <= 0) return <span className="text-[11.5px] text-muted whitespace-nowrap" title={ch + ' closes its review window ' + win + ' days after checkout (' + r.checkOut + '). This one is past it, so the post may be refused — mark it no-reply-needed if it is.'}>· reply window closed</span>
     if (left > 14) return null
     return <Tag tone={left <= 3 ? 'rose' : 'amber'} title={ch + ' closes its review window ' + win + ' days after checkout (' + r.checkOut + ')'}>closes in {left}d</Tag>
   }
@@ -500,12 +518,11 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
       <Tag tone={isLow(r.rating, r.channel) ? 'rose' : 'emerald'} title="Guest score">{'★ '}{fmtRating(r.rating, r.channel)}</Tag>
       <span className="text-[13.5px] font-semibold text-ink truncate max-w-[11rem] sm:max-w-[14rem]">{r.listing_name}</span>
       {r.guest && <span className="text-[12px] text-muted truncate max-w-[8rem] sm:max-w-[10rem]">{r.guest}</span>}
-      {r.channel && <Tag>{r.channel}</Tag>}
-      {r.created_at && <span className="text-[11.5px] text-muted whitespace-nowrap">{fmtDate(r.created_at)}</span>}
+      <span className="text-[11.5px] text-muted whitespace-nowrap">{[r.channel, r.created_at ? fmtDate(r.created_at) : ''].filter(Boolean).join(' · ')}</span>
       {extra}
-      {catChips(r)}
-      {r.privateFeedback ? <Tag tone="violet" title="The guest also left private feedback. Open the row to read it — it informs the draft and is never part of the public reply."><Lock size={9} className="inline -mt-px mr-0.5" />private note</Tag> : null}
-      {isRemoved(r) && <Tag title={'The channel took this review down — not counted in scores' + (r.removedReason ? ' · ' + r.removedReason : '')}>Removed</Tag>}
+      {lowLine(r)}
+      {r.privateFeedback ? <span className="text-[11.5px] text-muted whitespace-nowrap" title="The guest also left private feedback. Open More to read it — it informs the draft and is never part of the public reply."><Lock size={10} className="inline -mt-px mr-0.5" />private note</span> : null}
+      {isRemoved(r) && <span className="text-[11.5px] text-muted" title={'The channel took this review down — not counted in scores' + (r.removedReason ? ' · ' + r.removedReason : '')}>· removed</span>}
     </div>
   )
   const text = (r: Review) => !r.content ? null
@@ -573,9 +590,11 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
           <Tag tone="amber" title="Reading live from Guesty right now, which does not carry building or owner on a review — so the filters are not being applied to this list">filters off</Tag>
         )}
         {view === 'needs' && !s.loading && needs.length > 0 && (<>
-          <IconBtn title={sortDir === 'desc' ? 'Ties: high to low rating — click for low to high' : 'Ties: low to high rating — click for high to low'} onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}>
-            {sortDir === 'desc' ? <ArrowDownWideNarrow size={14} /> : <ArrowUpNarrowWide size={14} />}
-          </IconBtn>
+          <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] font-semibold" title="Order of the list">
+            {([['wait', 'Longest waiting'], ['low', 'Lowest score'], ['high', 'Highest score'], ['new', 'Newest']] as const).map(([k, label]) => (
+              <button key={k} onClick={() => setSortBy(k)} className={'px-2 py-1 ' + (sortBy === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{label}</button>
+            ))}
+          </div>
           <button onClick={draftAllAI} disabled={allAi || draftedCount === needs.length} title="Write an AI draft for every review in the queue that does not have one yet"
             className={`${btn2} text-brand-700 border-brand-200 bg-brand-50 hover:bg-brand-100`}>
             <Sparkles size={12} /> {allAi ? 'Drafting…' : 'Draft all'}
@@ -810,21 +829,27 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
                             <Sparkles size={12} /> {aiBusy[r.id] ? 'Writing…' : 'Rewrite with AI'}
                           </button>
                         )}
-                        <button onClick={() => { const i = window.prompt('How should the AI adjust this reply? (e.g. warmer, shorter, more professional, or: let them know we resolved the issue)'); if (i && i.trim()) rewriteAI(r, i.trim()) }}
-                          disabled={busy} className={`${btn2} text-muted border-line hover:bg-app`}>
+                        <button onClick={() => setRephrase(x => ({ ...x, [r.id]: x[r.id] === undefined ? '' : undefined }))} disabled={busy} className={`${btn2} text-muted border-line hover:bg-app`}>
                           Rephrase…
                         </button>
                         <button onClick={() => doResearch(r)} disabled={busy}
                           title="Check what our ops systems show was actually completed at this property, then draft a reply that can say so with confidence"
                           className={`${btn2} text-muted border-line hover:bg-app`}>
-                          {research[r.id]?.loading ? 'Checking…' : research[r.id]?.open ? 'Hide research' : 'Research'}
+                          {research[r.id]?.loading ? 'Checking…' : research[r.id]?.open ? 'Hide our records' : 'Check our records'}
                         </button>
                         <button onClick={() => dismiss(r)} disabled={rowBusy[r.id]} title="No reply needed — clear this off the list (reversible, doesn't affect scores)"
                           className={`${btn2} text-muted border-line hover:bg-app`}>
-                          <XCircle size={12} /> Dismiss
+                          <XCircle size={12} /> No reply needed
                         </button>
                         {removedBtn(r, rowBusy[r.id])}
                       </div>
+                    )}
+                    {more[r.id] && rephrase[r.id] !== undefined && (
+                      <form className="flex items-center gap-1.5" onSubmit={e => { e.preventDefault(); const i = (rephrase[r.id] || '').trim(); if (i) { rewriteAI(r, i); setRephrase(x => ({ ...x, [r.id]: undefined })) } }}>
+                        <input autoFocus value={rephrase[r.id] || ''} onChange={e => setRephrase(x => ({ ...x, [r.id]: e.target.value }))} placeholder="How should it change? Warmer, shorter, say the A/C was fixed…"
+                          className="flex-1 h-8 rounded-lg border border-line px-2 text-[12.5px] text-ink focus:outline-none focus:ring-2 focus:ring-brand-200" />
+                        <button type="submit" disabled={busy || !(rephrase[r.id] || '').trim()} className="h-8 px-3 rounded-lg bg-ink text-white text-[12px] font-semibold disabled:opacity-40">Rewrite</button>
+                      </form>
                     )}
                     {more[r.id] && research[r.id]?.open && !research[r.id]?.loading && (
                       <div className="rounded-lg border border-line bg-app/60 p-2.5">
@@ -917,19 +942,18 @@ function LowPlaybook({ r, replied }: { r: Review; replied?: boolean }) {
   const btn = 'inline-flex items-center gap-1 text-[11.5px] font-semibold px-2 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app'
 
   return (
-    <div className="rounded-xl border border-rose-200/70 bg-rose-50/30 p-2.5 space-y-2">
+    <div className="rounded-lg border border-line bg-white divide-y divide-line/70">
       {/* WHAT WENT WRONG */}
-      <div>
-        <div className={lbl}>What went wrong</div>
+      <Fold title="What went wrong" hint={causes.length ? causes.map(c => c.label).join(', ') : 'nothing specific named'} defaultOpen>
         {causes.length === 0 && cats.length === 0 ? (
           <p className="text-[12px] text-muted">The guest named nothing specific — the walk is how we find what earned the score.</p>
         ) : (
           <ul className="mt-0.5 space-y-1">
             {causes.map(c => (
               <li key={c.key} className="text-[12px] text-ink">
-                <span className="font-semibold capitalize">{c.label}</span>{' '}
-                <Tag tone={c.owner === 'maintenance' ? 'amber' : c.owner === 'clean' ? 'sky' : c.owner === 'inspection' ? 'violet' : 'slate'} title="Who owns fixing it">{c.owner}</Tag>
-                {c.source === 'private' ? <> <Tag tone="violet" title="From the private feedback — do not repeat it publicly">private</Tag></> : null}
+                <span className="font-semibold capitalize">{c.label}</span>
+                <span className="text-muted" title="Who owns fixing it"> · {c.owner}</span>
+                {c.source === 'private' ? <span className="text-muted" title="From the private feedback — do not repeat it publicly"> · said privately</span> : null}
                 {c.quote ? <span className="text-muted"> — “{c.quote}”</span> : null}
                 <div className="text-[11.5px] text-muted">{c.action}</div>
               </li>
@@ -937,17 +961,16 @@ function LowPlaybook({ r, replied }: { r: Review; replied?: boolean }) {
           </ul>
         )}
         {cats.length > 0 && (
-          <div className="flex items-center gap-1 flex-wrap mt-1">
-            {cats.map(c => <Tag key={c.key} tone={c.rating <= 3 ? 'rose' : c.rating < 5 ? 'amber' : 'slate'} title={c.comment ? '“' + c.comment + '”' : c.label + ' — the guest’s own category score'}>{c.label} {c.rating}</Tag>)}
-          </div>
+          <p className="text-[11.5px] text-muted mt-1" title="The guest’s own category scores">
+            {cats.map((c, i) => <span key={c.key} title={c.comment ? '“' + c.comment + '”' : undefined}>{i ? ' · ' : ''}<span className={c.rating <= 3 ? 'font-semibold text-ink' : ''}>{c.label} {c.rating}</span></span>)}
+          </p>
         )}
-      </div>
+      </Fold>
 
-      {r.privateFeedback ? <PrivateNote text={r.privateFeedback} /> : null}
+      {r.privateFeedback ? <div className="px-2.5 py-1.5"><PrivateNote text={r.privateFeedback} /></div> : null}
 
       {/* WHAT TO DO — each line true of this review */}
-      <div>
-        <div className={lbl}>Recovery {state === 'loading' ? '· checking tasks and inspections…' : state === 'err' ? '· could not read tasks — the steps below assume nothing is open' : ''}</div>
+      <Fold title="Recovery" hint={state === 'loading' ? 'checking tasks and inspections…' : state === 'err' ? 'could not read tasks — the steps assume nothing is open' : steps.filter(st => !st.done).length + ' to do' + (steps.some(st => st.done) ? ' · ' + steps.filter(st => st.done).length + ' done' : '')}>
         <ul className="mt-0.5 space-y-0.5">
           {steps.map(st => (
             <li key={st.key} className="flex items-start gap-1.5 text-[12px] text-ink">
@@ -973,17 +996,16 @@ function LowPlaybook({ r, replied }: { r: Review; replied?: boolean }) {
             {d.score.risk ? ' — ' + d.score.risk + '.' : d.score.holds ? ' — holding ' + d.score.holds + '.' : '.'}
           </p>
         )}
-      </div>
+      </Fold>
 
       {/* CAN IT BE CHALLENGED? */}
-      <div>
-        <div className={lbl}>Removal request</div>
+      <Fold title="Removal request" hint={grounds.length ? grounds.length + ' possible ground' + (grounds.length === 1 ? '' : 's') : 'nothing in the wording to challenge'}>
         {grounds.length ? (
           <ul className="mt-0.5 space-y-1">
             {grounds.map(g => (
               <li key={g.key} className="text-[12px] text-ink">
-                <span className="font-semibold">{g.label}</span>{' '}
-                <Tag tone={g.strength === 'worth filing' ? 'emerald' : 'amber'} title={g.strength === 'worth filing' ? 'The review itself is the evidence' : 'Holds only with the evidence named here'}>{g.strength}</Tag>
+                <span className="font-semibold">{g.label}</span>
+                <span className="text-muted" title={g.strength === 'worth filing' ? 'The review itself is the evidence' : 'Holds only with the evidence named here'}> · {g.strength}</span>
                 <div className="text-[11.5px] text-muted">Needs: {g.evidence}</div>
               </li>
             ))}
@@ -1016,9 +1038,24 @@ function LowPlaybook({ r, replied }: { r: Review; replied?: boolean }) {
             </div>
           </div>
         )}
-      </div>
+      </Fold>
 
-      <CaseFile reviewId={r.id} causes={causes.map(c => c.label)} owners={Array.from(new Set(causes.map(c => String(c.owner))))} grounds={grounds.map(g => g.label)} />
+      <div className="px-2.5 py-1.5"><CaseFile reviewId={r.id} causes={causes.map(c => c.label)} owners={Array.from(new Set(causes.map(c => String(c.owner))))} grounds={grounds.map(g => g.label)} /></div>
+    </div>
+  )
+}
+
+// One quiet line that opens: the title, what is inside in a few words, and a chevron.
+function Fold({ title, hint, defaultOpen, children }: { title: string; hint?: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [o, setO] = useState(!!defaultOpen)
+  return (
+    <div className="px-2.5 py-1.5">
+      <button onClick={() => setO(v => !v)} className="w-full flex items-center gap-2 text-left">
+        <span className="text-[12.5px] font-semibold text-ink whitespace-nowrap">{title}</span>
+        <span className="text-[11.5px] text-muted truncate flex-1">{o ? '' : hint || ''}</span>
+        <ChevronDown size={13} className={'text-muted shrink-0 transition ' + (o ? 'rotate-180' : '')} />
+      </button>
+      {o ? <div className="mt-1">{children}</div> : null}
     </div>
   )
 }

@@ -130,9 +130,18 @@ async function run(req: NextRequest) {
     // reflected the moment the team opens the desk, not five minutes after they do.
     try { revalidateTag('reviews') } catch { /* cache tag is best-effort */ }
 
+    // A DRAFT FOR EVERY REVIEW STILL WAITING (2026-11-18): written here, right after the sync, so a
+    // new review is never opened blank. Bounded by what is left of this run; nothing is posted.
+    let drafts: any = null
+    try {
+      const left = 270_000 - (Date.now() - startedAt)
+      if (left > 40_000) { const { autoDraftReviews } = await import('@/lib/review-autodraft'); drafts = await autoDraftReviews({ origin: req.nextUrl.origin, max: 12, budgetMs: left - 20_000 }) }
+    } catch (e: any) { drafts = { ok: false, error: String(e?.message || e).slice(0, 160) } }
+
     return NextResponse.json({
       ok: true,
       ms: Date.now() - startedAt,
+      drafts,
       expectedVsActual,
       ...st,
       // false here means we ran out of time before the feed ran out of reviews — the one condition
