@@ -115,7 +115,7 @@ export function AdminBaseRates({ canEdit: canEditProp = false }: { canEdit?: boo
       {canEdit && units ? (
         <div className="rounded-2xl border border-line bg-white px-3 py-2 flex flex-wrap items-center gap-2 text-[12.5px] sticky top-2 z-10 shadow-sm">
           <span className="mr-auto text-ink">{changes.length ? <><b>{good.length}</b> price change{good.length === 1 ? '' : 's'} ready{changes.length > good.length ? <span className="text-rose-700"> · {changes.length - good.length} out of range ($20 to $5,000)</span> : null}</> : <span className="text-muted">No changes typed yet.</span>}</span>
-          <button type="button" onClick={fillShown} title="Sets the new base of every row showing to its yearly average night (rounded to $5), and the weekend to match. Nothing is written until you push." className="rounded-lg border border-line bg-white px-2.5 py-1.5 font-medium text-ink">Fill the {list.length} showing with the yearly average</button>
+          <button type="button" onClick={fillShown} title="Sets the new base of every row showing to its yearly average night plus 15% (rounded to $5), and the weekend to match. Nothing is written until you push." className="rounded-lg border border-line bg-white px-2.5 py-1.5 font-medium text-ink">Fill the {list.length} showing with yearly avg +15%</button>
           {changes.length ? <button type="button" onClick={() => setEdit({})} className="text-muted underline">Clear</button> : null}
           <button type="button" disabled={!good.length} onClick={openReview} className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 font-semibold text-white disabled:opacity-40"><UploadCloud size={13} /> Review and push to Guesty</button>
         </div>
