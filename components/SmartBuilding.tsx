@@ -9,7 +9,7 @@ import { Search, Loader2, Check, Sparkles, MapPin, Globe, ExternalLink } from 'l
 
 type Any = any
 type Sug = { kind: 'library' | 'portfolio' | 'address'; name: string; address: string; area: string; libId?: string; plans?: number; lat?: number; lng?: number }
-export type SmartBrand = { theme: Any; logo: string; image: string; source: string } | null
+export type SmartBrand = { theme: Any; logo: string; image: string; source: string; /** backdrops made from the site's pictures (blurred, darkened) */ gallery?: string[]; gallerySource?: string; fonts?: Any } | null
 
 const lab = 'text-[11px] uppercase tracking-wider text-muted font-semibold'
 export function SmartBuilding({ building, address, setField, onLibrary, onNoLibrary, onHero, onBrand, hero, brand }: {
@@ -35,8 +35,8 @@ export function SmartBuilding({ building, address, setField, onLibrary, onNoLibr
   async function readBrand(url: string) {
     setBusy('Reading the website for its look and photos…')
     try {
-      const d = await fetch('/api/sales/brand', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) }).then(r => r.json())
-      if (d?.ok && d.theme) onBrand({ theme: { ...d.theme, label: d.theme.label || 'From the building' }, logo: d.logo || '', image: d.image || '', source: url })
+      const d = await fetch('/api/sales/brand', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url, backdrops: true }) }).then(r => r.json())
+      if (d?.ok && d.theme) onBrand({ theme: { ...d.theme, label: d.theme.label || 'From the building' }, logo: d.logo || '', image: d.image || '', source: url, gallery: d.gallery || [], gallerySource: d.gallerySource || '', fonts: d.fonts || null })
     } catch { /* the deck still builds in the house look */ }
   }
   async function run(s: Partial<Sug> & { name?: string; address?: string }, site = '') {
@@ -129,6 +129,7 @@ export function SmartBuilding({ building, address, setField, onLibrary, onNoLibr
                 </div>
                 {brand ? <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-ink"><Check size={12} className="text-emerald-700" /> Theme read:{[brand.theme.navy, brand.theme.warm, brand.theme.sand].filter(Boolean).map((c: string, i: number) => <span key={i} className="inline-block w-4 h-4 rounded-full border border-line" style={{ background: c }} />)}<button type="button" onClick={() => onBrand(null)} className="text-muted underline ml-1">Use the house look</button></p>
                   : <p className="mt-1.5 text-[12px] text-muted">No theme read: the deck uses the house look.</p>}
+                {brand ? <p className="mt-1 text-[12px] text-muted">{[brand.fonts?.display ? 'Headlines in ' + brand.fonts.display.use + (brand.fonts.display.exact ? '' : ' (closest free match to ' + brand.fonts.display.site + ')') : '', brand.fonts?.text ? 'text in ' + brand.fonts.text.use : '', brand.gallery?.length ? brand.gallery.length + (brand.gallery.length === 1 ? ' backdrop' : ' backdrops') + ' made from its pictures, blurred' : ''].filter(Boolean).join(' · ') || 'Colours only: no typeface or pictures could be read.'}</p> : null}
               </div>
             </div>
           </div>

@@ -29,6 +29,7 @@ import { SALES_TEAM_EXCLUDE } from '@/lib/sales-copy'
 import { STAY_CONTACT } from '@/lib/need-list-contact'
 import { AUDIENCES, audienceOf, type Audience } from '@/lib/sales-audience'
 import { DeckViewSwitch } from '@/components/DeckViewSwitch'
+import { slideStyleFromTheme } from '@/lib/brand-fonts'
 import {
   normalizeCma, planNumbers, range, money, compGross, pctRange, fmtDate, MONTHS, adjustLine, newId,
   type SalesCma, type PacketPlan, type PacketComp,
@@ -966,11 +967,17 @@ export function SalesMagazine({ report, canEdit: canEdit0, onePager, digital, re
     if (!u) return
     setBrandMsg('Reading ' + u.replace(/^https?:\/\//, '') + '…')
     try {
-      const r = await fetch('/api/sales/brand', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u }) })
+      const r = await fetch('/api/sales/brand', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u, backdrops: true }) })
       const d = await r.json().catch(() => null)
       if (!r.ok || !d?.ok) throw new Error(d?.error || 'Could not read that website')
+      // ONE READ, EVERY VIEW (Jon, 2026-11-18): the magazine theme, the slides' colours and typefaces, and the
+      // building's backdrops (blurred and darkened, never its photograph) all come from the same read.
+      const nextCma = cma && Array.isArray(d.gallery) && d.gallery.length && !(cma.gallery || []).length ? { ...cma, gallery: d.gallery, gallerySource: d.gallerySource || '' } : null
       setMag({ style: 'custom', custom: { ...d.theme, label: d.theme.label || 'From the building' }, brandLogo: d.logo || '', brandImage: d.image || '', brandSource: u })
-      setBrandMsg('Theme built from ' + (d.theme.label || u) + (d.theme.display ? ', with ' + d.theme.display + ' for headlines' : '') + '. Save to keep it.')
+      patch('style', { ...(c.style || {}), ...slideStyleFromTheme(d.theme) })
+      if (nextCma) setCma(nextCma)
+      const f = d.fonts || {}
+      setBrandMsg('Look read from ' + (d.theme.label || u) + ': colours' + (f.display ? ', ' + f.display.use + ' for headlines' + (f.display.exact ? '' : ' (closest free match to ' + f.display.site + ')') : '') + (f.text ? ', ' + f.text.use + ' for text' : '') + (nextCma ? ', ' + d.gallery.length + ' blurred backdrop' + (d.gallery.length === 1 ? '' : 's') : '') + '. It applies to the magazine and the slides. Save to keep it.')
     } catch (e: Any) { setBrandMsg(e?.message || 'Could not read that website') }
   }
   const color = (k: keyof MagTheme, label: string) => (
