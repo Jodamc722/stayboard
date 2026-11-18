@@ -38,6 +38,7 @@ function scheduleText(p: Place) {
   if (d.length === 7) parts.push('Every day'); else if (d.length) parts.push(d.map(x => DAY_NAMES[x]).join(', '))
   if (p.alternate) parts.push('every other day')
   if (p.monthDay) parts.push('monthly on the ' + ordinal(p.monthDay))
+  if ((p as any).afterDays) return 'Every ' + (p as any).afterDays + ' day' + ((p as any).afterDays === 1 ? '' : 's') + ' after it is done' + (p.onCleanDays ? ' + clean days' : '')
   if (p.onCleanDays) parts.push('clean days')
   const s = parts.join(' + ') || 'No days set'
   return s.charAt(0).toUpperCase() + s.slice(1)
@@ -257,7 +258,7 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
   const setReport = (patch: Partial<ProgramReport>) => set({ report: { ...report, ...patch } })
   const [emailQ, setEmailQ] = useState('')
   const addEmail = () => { const e = emailQ.trim().toLowerCase(); if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && report.to.indexOf(e) < 0) setReport({ to: report.to.concat([e]) }); setEmailQ('') }
-  const canSave = p.name.trim().length > 1 && p.places.length > 0 && p.places.every(x => x.days.length || x.alternate || x.onCleanDays || x.monthDay)
+  const canSave = p.name.trim().length > 1 && p.places.length > 0 && p.places.every(x => x.days.length || x.alternate || x.onCleanDays || x.monthDay || (x as any).afterDays)
 
   const chip = (on: boolean) => 'h-7 px-2.5 rounded-full border text-[11.5px] font-semibold ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')
   return (
@@ -322,16 +323,18 @@ function Editor({ initial, options, busy, err, onCancel, onSave, onDelete }: {
                   <button onClick={() => set({ places: p.places.filter(x => x.id !== pl.id) })} className="text-muted hover:text-rose-700" title="Remove"><Trash2 size={14} /></button>
                 </div>
                 <div className="flex items-center gap-1 flex-wrap">
-                  <button onClick={() => setPlace(pl.id, { days: [0, 1, 2, 3, 4, 5, 6], alternate: false, monthDay: null })} className={chip(pl.days.length === 7 && !pl.monthDay)}>Every day</button>
-                  <button onClick={() => setPlace(pl.id, { days: [1, 3, 5], alternate: false, monthDay: null })} className={chip(pl.days.join() === '1,3,5' && !pl.alternate && !pl.monthDay)}>Mon · Wed · Fri</button>
-                  <button onClick={() => setPlace(pl.id, { days: [], alternate: true, monthDay: null })} className={chip(pl.alternate && !pl.days.length && !pl.monthDay)}>Every other day</button>
-                  <button onClick={() => setPlace(pl.id, { days: [1], alternate: false, monthDay: null })} className={chip(pl.days.join() === '1' && !pl.alternate && !pl.monthDay)}>Weekly</button>
-                  <button onClick={() => setPlace(pl.id, { days: [], alternate: false, monthDay: pl.monthDay || 1 })} className={chip(!!pl.monthDay && !pl.days.length)} title="Once a month, on the day below">Monthly</button>
+                  <button onClick={() => setPlace(pl.id, { days: [0, 1, 2, 3, 4, 5, 6], alternate: false, monthDay: null, afterDays: null } as any)} className={chip(!(pl as any).afterDays && pl.days.length === 7 && !pl.monthDay)}>Every day</button>
+                  <button onClick={() => setPlace(pl.id, { days: [1, 3, 5], alternate: false, monthDay: null, afterDays: null } as any)} className={chip(!(pl as any).afterDays && pl.days.join() === '1,3,5' && !pl.alternate && !pl.monthDay)}>Mon · Wed · Fri</button>
+                  <button onClick={() => setPlace(pl.id, { days: [], alternate: true, monthDay: null, afterDays: null } as any)} className={chip(!(pl as any).afterDays && pl.alternate && !pl.days.length && !pl.monthDay)}>Every other day</button>
+                  <button onClick={() => setPlace(pl.id, { days: [1], alternate: false, monthDay: null, afterDays: null } as any)} className={chip(!(pl as any).afterDays && pl.days.join() === '1' && !pl.alternate && !pl.monthDay)}>Weekly</button>
+                  <button onClick={() => setPlace(pl.id, { days: [], alternate: false, monthDay: pl.monthDay || 1, afterDays: null } as any)} className={chip(!!pl.monthDay && !pl.days.length)} title="Once a month, on the day below">Monthly</button>
+                  <button onClick={() => setPlace(pl.id, { days: [], alternate: false, monthDay: null, afterDays: (pl as any).afterDays || 3 } as any)} className={chip(!!(pl as any).afterDays)} title="The clock starts when it is done: finished today, the next one is filed this many days later">After it is done</button>
+                  {(pl as any).afterDays ? <label className="inline-flex items-center gap-1 text-[11.5px] text-muted">every <input type="number" min={1} max={60} value={(pl as any).afterDays} onChange={e => setPlace(pl.id, { afterDays: Math.max(1, Math.min(60, Math.round(Number(e.target.value) || 3))) } as any)} className="w-[52px] h-7 rounded-lg border border-line px-1.5 text-[12px] text-ink" /> days</label> : null}
                   {pl.monthDay ? <label className="inline-flex items-center gap-1 text-[11.5px] text-muted">on the <input type="number" min={1} max={28} value={pl.monthDay} onChange={e => setPlace(pl.id, { monthDay: Math.max(1, Math.min(28, Math.round(Number(e.target.value) || 1))) })} className="w-[52px] h-7 rounded-lg border border-line px-1.5 text-[12px] text-ink" /></label> : null}
                   <span className="mx-1 h-5 w-px bg-line" />
                   {DAYS.map((d, i) => {
                     const on = pl.days.indexOf(i) >= 0
-                    return <button key={i} title={DAY_NAMES[i]} onClick={() => setPlace(pl.id, { days: on ? pl.days.filter(x => x !== i) : pl.days.concat([i]).sort() })} className={'h-7 w-7 rounded-full border text-[11.5px] font-bold ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}>{d}</button>
+                    return <button key={i} title={DAY_NAMES[i]} onClick={() => setPlace(pl.id, { days: on ? pl.days.filter(x => x !== i) : pl.days.concat([i]).sort(), afterDays: null } as any)} className={'h-7 w-7 rounded-full border text-[11.5px] font-bold ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-ink border-line hover:border-ink/40')}>{d}</button>
                   })}
                   <span className="mx-1 h-5 w-px bg-line" />
                   <button onClick={() => setPlace(pl.id, { onCleanDays: !pl.onCleanDays })} className={chip(pl.onCleanDays)} title="Also any day a clean is scheduled there">+ clean days</button>

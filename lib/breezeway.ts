@@ -155,7 +155,7 @@ export function mapBreezewayTask(t: any) {
 // Either way that task is returned as if created, and nothing new is made. Departure / turnover
 // cleans are per stay and exempt. A caller that truly needs a second copy passes allowDuplicate: true.
 const PER_STAY = /\b(departure|turnover|check-?out|mid-?stay)\s+clean/i
-const twinKey = (n: any) => String(n ?? '').replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').toLowerCase().replace(/\s+/g, ' ').trim()
+const twinKey = (n: any) => String(n ?? '').replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').replace(/\s*·\s*\d+\s+days?\s+late\s*$/i, '').toLowerCase().replace(/\s+/g, ' ').trim()
 const ymdShift = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
 /** Tasks this server created in the last few minutes, by home + name — catches a parallel batch. */
 const RECENT = new Map<string, { id: string; date: string; at: number }>()

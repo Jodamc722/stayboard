@@ -52,6 +52,13 @@ export type Place = {
    * has it). A place can be monthly and nothing else — days empty, alternate off.
    */
   monthDay?: number | null
+  /**
+   * N DAYS AFTER IT IS DONE (Jon, 2026-11-18: "All exterior tasks should be on a 3 day cadence. So if
+   * completed, it should not show for 3 days."). The clock starts at the last completion, not on a
+   * weekday: done on the 18th with 3 → the next is filed on the 21st. Never done → due now. When set,
+   * it is the place's whole schedule (days / alternate / monthly are ignored).
+   */
+  afterDays?: number | null
   /** This place's own team; empty/absent = the program's people. */
   people?: Person[]
 }
@@ -124,6 +131,16 @@ export function buildingKey(building: string, name: string): string {
 /** The task title the crew reads, and the prefix every task of the program starts with. */
 export const titlePrefix = (p: Program) => p.name.trim() + ':'
 export const taskTitle = (p: Program, place: Place) => `${p.name.trim()}: ${place.label.trim()}`
+/**
+ * HOW FAR BEHIND, IN THE TITLE (Jon, 2026-11-18: "it should show how many days behind in title so
+ * operators know when to push on completion"). An open task past its day reads
+ * "Property Exterior Clean: Eden · 2 days late". The count is refreshed each morning when the task is
+ * moved to today. It goes at the END so the "<program>:" prefix every lookup keys on is untouched.
+ */
+const LATE_RE = /\s*·\s*\d+\s+days?\s+late\s*$/i
+export const lateTitle = (title: string, late: number) => title.replace(LATE_RE, '') + (late > 0 ? ` · ${late} day${late === 1 ? '' : 's'} late` : '')
+/** A task name without the stamps Lighthouse adds around it ("[Moved to …]" in front, "· N days late" behind). */
+export const bareName = (name: any) => str(name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').replace(LATE_RE, '').trim()
 
 /** Is today one of the place's days (cleans aside)? Pure. */
 export function onDays(place: Place, ymd: string): boolean {
@@ -144,6 +161,7 @@ export function scheduleLine(place: Place): string {
   else if (days.length) parts.push(days.map(d => names[d]).join(', '))
   if (place.alternate) parts.push('every other day')
   if (place.monthDay) parts.push('monthly on the ' + ordinal(place.monthDay))
+  if (place.afterDays) return `Every ${place.afterDays} day${place.afterDays === 1 ? '' : 's'} after it is done` + (place.onCleanDays ? ' + clean days' : '')
   if (place.onCleanDays) parts.push('clean days')
   if (!parts.length) return 'No days set'
   const s = parts.join(' + ')
@@ -165,7 +183,7 @@ export function reportOf(p: Pick<Program, 'report'> | null | undefined): Program
  * title is "<program name>: <place label>", and that prefix is the only thing the engine keys on.
  */
 export function programForTask(name: any, programs: Program[]): { program: Program; place: Place | null } | null {
-  const n = str(name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').trim()
+  const n = bareName(name)
   if (!n) return null
   const hits = programs.filter(p => n.indexOf(titlePrefix(p)) === 0).sort((a, b) => b.name.length - a.name.length)
   const program = hits[0]
@@ -189,6 +207,7 @@ function clean(p: any): Program | null {
     alternate: !!x?.alternate,
     onCleanDays: !!x?.onCleanDays,
     monthDay: Number(x?.monthDay) >= 1 && Number(x?.monthDay) <= 28 ? Math.round(Number(x.monthDay)) : null,
+    afterDays: Number(x?.afterDays) >= 1 && Number(x?.afterDays) <= 60 ? Math.round(Number(x.afterDays)) : null,
     people: (Array.isArray(x?.people) ? x.people : []).map((y: any) => ({ id: Number(y?.id), name: str(y?.name) })).filter((y: Person) => Number.isFinite(y.id) && y.id > 0).slice(0, 12),
   })).filter((x: Place) => x.ref && x.label)
   const people: Person[] = (Array.isArray(p.people) ? p.people : []).map((x: any) => ({ id: Number(x?.id), name: str(x?.name) })).filter((x: Person) => Number.isFinite(x.id) && x.id > 0)
@@ -416,7 +435,7 @@ export async function deleteProgram(id: string, by: string) {
 
 // ── the day's plan ───────────────────────────────────────────────────────────────────────────────
 
-export type OpenTask = { id: string; date: string; assigneeIds: number[]; homeId: number }
+export type OpenTask = { id: string; date: string; assigneeIds: number[]; homeId: number; name: string }
 export type PlacePlan = {
   programId: string; placeId: string; label: string; kind: Place['kind']; schedule: string
   homeId: number | null; where: string
@@ -425,6 +444,9 @@ export type PlacePlan = {
   today: OpenTask | null
   carry: OpenTask | null          // an open task from an earlier day, to move to today
   extras: OpenTask[]              // further open duplicates, to cancel
+  /** Days past its day (0 = on time), and the title the task should carry today. */
+  late: number
+  title: string
   action: 'create' | 'move' | 'add' | 'none' | 'skip'
   note: string
 }
@@ -487,7 +509,7 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
   // the look-back window (anything still open is carried, never duplicated).
   const tasks: any[] = [], seen = new Set<string>()
   const keep = (rows: any) => { for (const t of (rows || []) as any[]) if (!seen.has(str(t.id))) { seen.add(str(t.id)); tasks.push(t) } }
-  const COLS = 'id,name,home_id,type_department,assignees,status,finished_at,scheduled_date,upd:raw->>updated_at'
+  const COLS = 'id,name,home_id,type_department,assignees,status,finished_at,scheduled_date,upd:raw->>updated_at,crt:raw->>created_at'
   for (let i = 0; i < allHomes.length; i += 150) {
     const { data } = await db.from('breezeway_tasks_sync').select(COLS).in('home_id', allHomes.slice(i, i + 150)).eq('scheduled_date', day).limit(3000)
     keep(data)
@@ -521,8 +543,8 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     // which reads as "none open" and files a second one.
     const title = taskTitle(p, place).toLowerCase()
     const own = tasks.filter(t => {
-      const n = str(t.name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '')
-      return n.indexOf(titlePrefix(p)) === 0 && (mine.has(Number(t.home_id)) || n.trim().toLowerCase() === title)
+      const n = bareName(t.name)
+      return n.indexOf(titlePrefix(p)) === 0 && (mine.has(Number(t.home_id)) || n.toLowerCase() === title)
     })
     // REMOVED TODAY BY A PERSON → NOT FILED AGAIN TODAY (Jon, 2026-11-18: "never duplicated if not
     // completed … smart enough to just move the task vs recreate it"). The week of Nov 13–18 showed
@@ -534,7 +556,7 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     const removedToday = own.some(t => isTaskGone(t.status) && (str(t.scheduled_date).slice(0, 10) === day || etDay(t.upd) === day))
     // This program's open tasks at the place, newest first.
     const open = own.filter(t => !isTaskDone(t.status, t.finished_at) && !isTaskGone(t.status))
-      .map(t => ({ id: str(t.id), date: str(t.scheduled_date), assigneeIds: ids(t.assignees), homeId: Number(t.home_id) }))
+      .map(t => ({ id: str(t.id), date: str(t.scheduled_date), assigneeIds: ids(t.assignees), homeId: Number(t.home_id), name: str(t.name), crt: str(t.crt) }))
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : Number(b.id) - Number(a.id)))
     // Rescheduled ahead by someone (a walkthrough moved to Friday): it is this cycle's task — left
     // where it is, and nothing new is created while it waits.
@@ -546,9 +568,24 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     // TODAY, which the old rule (older days only) left standing.
     const kept = todayT || carry
     const extras = open.filter(t => t !== kept && t.date <= day)
-    const scheduled = onDays(place, day)
-    const due = scheduled || (place.onCleanDays && cleanToday)
-    const why = scheduled ? scheduleLine(place) : place.onCleanDays && cleanToday ? 'clean scheduled today' : 'not today'
+    // The last time it was DONE here (for the "N days after it is done" clock, and for how late it is).
+    let lastDone = ''
+    for (const t of own) {
+      if (isTaskGone(t.status) || !isTaskDone(t.status, t.finished_at)) continue
+      const dd = etDay(t.finished_at) || str(t.scheduled_date).slice(0, 10)
+      if (dd && dd > lastDone) lastDone = dd
+    }
+    const dayNum = (ymd: string) => Math.round(new Date(ymd + 'T12:00:00Z').getTime() / 86400000)
+    const sinceDone = lastDone ? dayNum(day) - dayNum(lastDone) : null
+    const scheduled = place.afterDays ? sinceDone == null || sinceDone >= place.afterDays : onDays(place, day)
+    const due = scheduled || (place.onCleanDays && cleanToday && !(place.afterDays && sinceDone === 0))
+    const why = scheduled ? (place.afterDays ? (lastDone ? `last done ${lastDone}` : 'never done') + ' — ' + scheduleLine(place).toLowerCase() : scheduleLine(place)) : place.onCleanDays && cleanToday ? 'clean scheduled today' : 'not today'
+    // DAYS BEHIND. On an "after it is done" clock the day it fell due is the last completion plus N;
+    // otherwise (and when it has never been done) it is the day the open task was first filed.
+    const keptT: any = kept
+    const filed = keptT && keptT.crt ? etDay(/[zZ]|[+-]\d\d:?\d\d$/.test(keptT.crt) ? keptT.crt : keptT.crt + 'Z') : ''
+    const dueDay = place.afterDays && lastDone ? shift(lastDone, place.afterDays) : filed
+    const late = dueDay ? Math.max(0, dayNum(day) - dayNum(dueDay)) : 0
     const people = place.people && place.people.length ? place.people : p.people
     let action: PlacePlan['action'] = 'none', note = ''
     if (r.homeId == null && !todayT && !carry) { action = 'skip'; note = place.kind === 'unit' ? 'unit not in Breezeway' : 'no Breezeway property at this building yet' }
@@ -559,17 +596,18 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     else if (due && removedToday) { action = 'none'; note = 'removed in Breezeway today — not filed again today; the next one comes on its next day' }
     else if (due) { action = 'create'; note = 'due — ' + why }
     else note = 'not today'
-    plans.push({ ...base, due, why, people, cleaners, today: todayT, carry, extras, action, note })
+    if (!scheduled && !todayT && !carry && place.afterDays && lastDone && action === 'none' && note === 'not today') note = `done ${lastDone} — next on ${shift(lastDone, place.afterDays)}`
+    plans.push({ ...base, due, why, people, cleaners, today: todayT, carry, extras, late, title: lateTitle(taskTitle(p, place), late), action, note })
   }
   // The newest FINISHED task of each program in the look-back window (the Upkeep board's "last done").
   const last: Record<string, LastDone> = {}
   for (const p of programs) {
     const pre = titlePrefix(p)
     for (const t of tasks) {
-      if (str(t.name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').indexOf(pre) !== 0) continue
+      if (bareName(t.name).indexOf(pre) !== 0) continue
       if (isTaskGone(t.status) || !isTaskDone(t.status, t.finished_at)) continue
       const date = str(t.finished_at || t.scheduled_date).slice(0, 10)
-      if (date && (!last[p.id] || date > last[p.id].date)) last[p.id] = { date, taskId: str(t.id), place: str(t.name).slice(str(t.name).indexOf(pre) + pre.length).trim() }
+      if (date && (!last[p.id] || date > last[p.id].date)) last[p.id] = { date, taskId: str(t.id), place: bareName(t.name).slice(pre.length).trim() }
     }
   }
   return { day, plans, last }
@@ -610,7 +648,7 @@ export function programTiles(programs: Program[], plans: PlacePlan[], last: Reco
       else if (pl.note === 'done today') done++
       else notToday++
     }
-    const hasDays = (x: Place) => x.days.length > 0 || x.alternate || !!x.monthDay || x.onCleanDays
+    const hasDays = (x: Place) => x.days.length > 0 || x.alternate || !!x.monthDay || x.onCleanDays || !!x.afterDays
     // The next scheduled day: today while something is open or late, else the first day on any place's schedule.
     let nextRun: string | null = null
     if (p.active && p.places.length) {
@@ -672,7 +710,9 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
     if (t) {
       const add = want.filter(id => t.assigneeIds.indexOf(id) < 0)
       const moving = pl.action === 'move'
-      if (!moving && !add.length) { lines.push(tag + ': today’s task ' + t.id + ' already has everyone'); continue }
+      // The title carries how far behind it is; refreshed whenever it no longer says the right thing.
+      const rename = !!pl.title && bareName(t.name) === bareName(pl.title) && str(t.name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').trim() !== pl.title
+      if (!moving && !add.length && !rename) { lines.push(tag + ': today’s task ' + t.id + ' already has everyone'); continue }
       if (opts.dryRun) { lines.push(tag + ': would ' + (moving ? 'move ' + t.id + ' from ' + t.date + ' to today' : 'add ' + add.length + ' to ' + t.id) + (moving && add.length ? ' and add ' + add.length : '')); continue }
       const body: any = {}
       // A task carried to today is for today's people: the standing assignees plus whoever is cleaning
@@ -680,6 +720,7 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
       if (moving && want.length) body.assignments = want
       else if (add.length) body.assignments = t.assigneeIds.concat(add)
       if (moving) body.scheduled_date = day
+      if (rename) body.name = pl.title
       const r = await updateBreezewayTask(t.id, body)
       if (!r.ok) { lines.push(tag + ': Breezeway said ' + r.status + ' ' + str(r.text).slice(0, 120)); continue }
       if (moving) moved++; else updated++
@@ -691,7 +732,7 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
     const templateId = await resolveTemplateId(p).catch(() => p.templateId || null)
     if (!templateId && p.templateName) lines.push(tag + ': checklist "' + p.templateName + '" is not in Breezeway yet — the task goes out with the note only')
     const res = await createBreezewayTask({
-      home_id: pl.homeId, name: taskTitle(p, { label: pl.label } as Place), type_department: p.department, scheduled_date: day, source: 'site-programs',
+      home_id: pl.homeId, name: pl.title || taskTitle(p, { label: pl.label } as Place), type_department: p.department, scheduled_date: day, source: 'site-programs',
       template_id: templateId || null, ...(p.description ? { description: await expandDescription(p.description, place0(p, pl)) } : {}), ...(want.length ? { assignments: want } : {}),
     })
     const id = res.ok && res.data ? str(res.data.id) : ''

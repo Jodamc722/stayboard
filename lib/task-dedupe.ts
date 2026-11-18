@@ -16,7 +16,7 @@ import { lighthouseCreatedIds, removeOwnDuplicate } from './own-tasks'
 import { isTaskDone, isTaskGone } from './task-categories'
 
 const SKIP = /\b(departure|turnover|check-?out|mid-?stay|arrival)\s+clean|\binspection\b/i
-const keyOf = (n: any) => String(n ?? '').replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').toLowerCase().replace(/\s+/g, ' ').trim()
+const keyOf = (n: any) => String(n ?? '').replace(/^\s*\[Moved to [^\]]+\]\s*/i, '').replace(/\s*·\s*\d+\s+days?\s+late\s*$/i, '').toLowerCase().replace(/\s+/g, ' ').trim()
 const ymd = (d: number) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10)
 
 export type DupGroup = { unit: string; name: string; keep: { id: string; date: string }; cancel: { id: string; date: string }[] }
