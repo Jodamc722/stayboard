@@ -20,6 +20,7 @@
 import { ProjCalcSettingsPanel } from '@/components/ProjCalcSettings'
 import { TeamCalcPages } from '@/components/TeamCalcPages'
 import { ProjectionFiles } from '@/components/ProjectionFiles'
+import { ProjectionsDrive } from '@/components/ProjectionsDrive'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Plus, Search, Upload, Sparkles, Trash2, SlidersHorizontal, Image as ImageIcon, Check, X, Copy, Settings2, Globe, FileUp, PenLine } from 'lucide-react'
 import { ProjectionTuner } from '@/components/ProjectionTuner'
@@ -279,6 +280,7 @@ export function ProjectionsLibrary() {
 
       {!entry && !loading ? (
         <div className="space-y-6">
+          <ProjectionsDrive canEdit onChange={loadList} />
           {/* THE LIST OF PROPERTIES (Jon, 2026-11-12: "more a list of properties; click into one and it opens to the
               room types and more data") */}
           <section className="rounded-3xl border border-line bg-white">
