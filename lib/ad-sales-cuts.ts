@@ -8,6 +8,10 @@ const P = (n: string) => '/ads/sales/' + n + '.jpg'
 let sid = 0
 const S = (x: Partial<AdScene> & Pick<AdScene, 'kind'>): AdScene => ({ id: 'p' + (++sid), vo: '', head: '', sub: '', items: [], photos: [], tr: 'fade', ...x })
 
+// 500+ listings (Jon's sales figure). The recorded take still says the old line, so the take is signed
+// against the old words below: Ad Studio then shows the voice as out of date until it is recorded again.
+const OLD_COUNT_VO = 'Four hundred and fifty listings across South Florida, and over a million guests hosted.'
+const NEW_COUNT_VO = 'More than five hundred listings across South Florida, and over a million guests hosted.'
 const NICK = { name: 'Nick Carline', role: 'Business Development · Stay Hospitality', phone: '651.200.8283', email: 'nicholas@stay-hospitality.com', photo: P('nick') }
 const BUILDINGS: [string, string][] = [['elser-pool', 'Elser'], ['arya-pool', 'Arya'], ['amrit-ocean', 'Amrit'], ['salato-dusk', 'Salato'], ['nomad-roof', 'NoMad'], ['botanica-pool', 'The Botanica'], ['eden-coast', 'Eden'], ['capri-pool', 'Capri'], ['17west-bed', '17WEST']]
 const LH_TILES = ['Listing optimization', 'Guest guidebooks', 'Recurring-issue detection', 'Automated tasks', 'Review + message monitoring', 'Guest ID + deposit checks', 'Spanish ⇄ English for the team', 'Smart turnover scheduling']
@@ -19,7 +23,7 @@ function full(): AdScene[] {
   sid = 0
   return [
     S({ kind: 'beats', vo: 'More revenue. A lower fee. One complete team. This is Stay Hospitality.', head: 'More **revenue.**\nLower **fee.**\nOne complete **team.**', photos: [P('salato-dusk')], dim: 1, tr: 'cut' }),
-    S({ kind: 'tiles', vo: 'Four hundred and fifty listings across South Florida, and over a million guests hosted.', items: ['450+|listings', '140+|properties', '4|markets', '10|years in business', '1M+|guests hosted', '4.6/5|guest rating'], sub: 'Miami · Fort Lauderdale · Pompano Beach · Palm Beach', photos: [P('elser-marina')], dim: 0 }),
+    S({ kind: 'tiles', vo: NEW_COUNT_VO, items: ['500+|listings', '140+|properties', '4|markets', '10|years in business', '1M+|guests hosted', '4.6/5|guest rating'], sub: 'Miami · Fort Lauderdale · Pompano Beach · Palm Beach', photos: [P('elser-marina')], dim: 0 }),
     S({ kind: 'grid', vo: '', photos: BUILDINGS.map(b => P(b[0])), items: BUILDINGS.map(b => b[1]) }),
     S({ kind: 'calendar', vo: 'It starts with revenue. Dedicated revenue managers price your home every day.', eyebrow: 'Nightly rate · next 5 weeks', sub: 'Comp set watched daily', items: ['Illustration of daily pricing. Real rates set by our revenue managers.', '189,179,185,199,259,289,229'], photos: [P('amrit-aerial')], dim: 2 }),
     S({ kind: 'dates', vo: "And the dates that matter most, like Art Basel and New Year's Eve, are priced months ahead.", eyebrow: 'High-demand dates · priced months ahead', items: ['Oct|Fort Lauderdale Boat Show|$289|$649', 'Dec|Art Basel Miami Beach|$309|$899', "Dec 31|New Year's Eve|$329|$999", 'Feb|Miami International Boat Show|$279|$619', 'May|Formula 1 Miami|$269|$759'], sub: 'Illustrative rates. Every event is priced to the demand it brings.', photos: [P('elser-aerial')], dim: 2 }),
@@ -66,6 +70,7 @@ export function salesProject(cut: SalesCut, id: string, by: string): AdProject {
     scenes: SALES_CUTS[cut].scenes(), contact: { ...NICK }, voice: null, createdAt: now, updatedAt: now, updatedBy: by,
   }
   const T = TAKES[cut]
-  p.voice = { path: T.path, sig: voiceSig(p), voiceId, starts: T.starts, ends: T.ends, dur: T.dur } as any
+  const asRecorded = { ...p, scenes: p.scenes.map(sc => sc.vo === NEW_COUNT_VO ? { ...sc, vo: OLD_COUNT_VO } : sc) }
+  p.voice = { path: T.path, sig: voiceSig(asRecorded), voiceId, starts: T.starts, ends: T.ends, dur: T.dur } as any
   return p
 }
