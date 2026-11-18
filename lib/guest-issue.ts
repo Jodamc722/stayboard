@@ -277,7 +277,7 @@ export function alertText(d: Detection, glitchId: string | null): { title: strin
     d.severity === 'security'
       ? 'This is a safety matter. Confirm the guest is safe and the unit is secure now, then tell operations and management.'
       : 'Customer care owns this: answer the guest, get the fix moving, and keep the glitch updated.',
-    glitchId ? 'Glitch filed: ' + APP_URL + '/glitches?id=' + glitchId : 'No glitch filed yet — file one from the Glitches board.',
+    glitchId ? 'Glitch filed: ' + APP_URL + '/glitches?id=' + glitchId : 'No glitch filed: it is a suggestion on the Glitches board (Detected). File it there if it should be tracked.',
     'Read it in full: ' + d.link,
   ].filter(Boolean).join('\n')
   return { title, body }
@@ -329,6 +329,7 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
     return { ...out, ok: false, error: String(e?.message || e).slice(0, 300) }
   }
   out.found = found.length
+  const autoFile = dryRun ? false : await guestIssueAutoFile()
 
   for (const d of found) {
     const already = seen.has(d.sourceKey)
@@ -361,13 +362,18 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
       out.detections.push({ ...d, verdict: 'merged', glitchId: merged.id, alerted: false })
       continue
     }
+    // SUGGESTED, NOT FILED (Jon, 2026-11-18: "the auto created glitches, let's turn that off. I am ok with the
+    // suggested"). The watch no longer files a glitch on its own. What it finds waits on the Detected tab as a
+    // suggestion a person files or dismisses in one click. Customer care is still flagged, by the same rules as
+    // before, so a safety matter is never silent. app_settings guest_issue_alerts.autoFile = true puts filing back.
     let glitchId: string | null = merged ? merged.id : null
-    if (!glitchId) { try { glitchId = await fileGlitch(d) } catch (e: any) { out.error = String(e?.message || e).slice(0, 200) } }
+    if (!glitchId && autoFile) { try { glitchId = await fileGlitch(d) } catch (e: any) { out.error = String(e?.message || e).slice(0, 200) } }
     if (glitchId && !merged) out.filed++
+    const none = autoFile ? 'skipped' : 'pending'
     // SETTLED ON THE CALL (Eve audit 2026-10-10): the glitch is the record; nobody is paged for it.
     if (d.quiet && d.severity !== 'security') {
-      await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted: false, note: 'settled on the call — filed quietly, nobody alerted' })
-      out.detections.push({ ...d, verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted: false })
+      await recordDetection(d, { verdict: glitchId ? 'filed' : none, glitchId, alerted: false, note: glitchId ? 'settled on the call — filed quietly, nobody alerted' : autoFile ? 'glitch not filed' : 'suggested — settled on the call; file it for the record or dismiss it' })
+      out.detections.push({ ...d, verdict: glitchId ? 'filed' : none, glitchId, alerted: false })
       continue
     }
     // ONE ALERT PER UNIT PER DAY (Eve audit 2026-10-10). Two different guests, or a stay the mirror
@@ -412,8 +418,8 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
     // Leadership sees safety matters in the Ops Command brief and on the glitch board.
     // An FYI alert (bell only) is noted as such, so it never counts as "customer care already alerted"
     // for a later report on the same unit that does belong in the room.
-    await recordDetection(d, { verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted, note: alerted && !toSlack ? `FYI — in Lighthouse only (${tier}), not posted to Slack` : glitchId ? (alreadyToday ? 'customer care already alerted about this unit today' : null) : 'glitch not filed' })
-    out.detections.push({ ...d, verdict: glitchId ? 'filed' : 'skipped', glitchId, alerted })
+    await recordDetection(d, { verdict: glitchId ? 'filed' : none, glitchId, alerted, note: alerted && !toSlack ? `FYI — in Lighthouse only (${tier}), not posted to Slack` : glitchId ? (alreadyToday ? 'customer care already alerted about this unit today' : null) : autoFile ? 'glitch not filed' : 'suggested — file it or dismiss it' })
+    out.detections.push({ ...d, verdict: glitchId ? 'filed' : none, glitchId, alerted })
   }
   return out
 }
@@ -428,6 +434,11 @@ export async function guestIssueSlackTiers(): Promise<AlertTier[]> {
     const t = v && Array.isArray(v.slackTiers) ? v.slackTiers.map(String).filter((x: string) => x === 'safety' || x === 'waiting' || x === 'fyi') : null
     return t ? (t as AlertTier[]) : DEFAULT_SLACK_TIERS
   } catch { return DEFAULT_SLACK_TIERS }
+}
+
+/** Whether the watch files glitches on its own (app_settings guest_issue_alerts.autoFile). Off by default: it suggests. */
+export async function guestIssueAutoFile(): Promise<boolean> {
+  try { const { getSetting } = await import('./app-settings'); const v = await getSetting<any>(GUEST_ISSUE_ALERTS_KEY, null); return !!(v && v.autoFile === true) } catch { return false }
 }
 
 async function recordDetection(d: Detection, r: { verdict: string; glitchId: string | null; alerted: boolean; note?: string | null }) {
