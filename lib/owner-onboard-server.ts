@@ -332,6 +332,31 @@ export function ensureShop(r: OORecord): NonNullable<OORecord['shop']> {
   if (!r.shop?.key) { const c: any = (globalThis as any).crypto; r.shop = { ...(r.shop || {}), key: String(c.randomUUID()).replace(/-/g, '').slice(0, 24), got: r.shop?.got || {} } }
   return r.shop!
 }
+/**
+ * CLOSE OUT THE INVENTORY (Jon, 2026-11-17: "have when team completes it close it out"). When the team finishes
+ * the count, on the walkthrough sheet or from the desk, the check is closed rather than left open:
+ *   - the count sheet locks (the link shows it as closed; the desk can reopen it)
+ *   - the Supplies check step on the owner's timeline is marked done
+ *   - the order list is built from the count, when there is none yet or only an untouched draft. A draft the team
+ *     has priced or added to, and a list already with the owner, are left alone and the note says so.
+ * Linen needs nothing here: its quote already reads the on-hand counts. Returns what it did, in a sentence.
+ */
+export function closeInventory(r: OORecord, by: string): string {
+  const w = ensureWalk(r)
+  if (!w.doneAt) w.doneAt = new Date().toISOString()
+  if (by && !w.by) w.by = by
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  r.steps = r.steps.map(s => (s.key === 'supplies' && s.status !== 'done' ? { ...s, status: 'done' as const, date: s.date || today } : s))
+  const o = r.order
+  const untouched = !!o && o.status === 'draft' && o.lines.every(l => l.key.startsWith('p:') && l.price == null && !l.url) && !o.note
+  let note: string
+  if (!r.home) note = 'Inventory closed out.'
+  else if (!o || untouched) { r.order = buildOrder(r); note = `Inventory closed out. The order list was built from the count: ${r.order.lines.length} ${r.order.lines.length === 1 ? 'item' : 'items'} to buy.` }
+  else if (o.status === 'draft') note = 'Inventory closed out. The order list has prices or lines the team added, so it was left as it is: rebuild it to pick up the count.'
+  else note = 'Inventory closed out. The order list is already with the owner, so it was not changed.'
+  w.closedNote = note
+  return note
+}
 /** { itemKey: how many } from a form: whole numbers 0 to 999; null or '' clears the entry. */
 export function mergeCounts(into: Record<string, number>, v: any): Record<string, number> {
   const out = { ...into }; let n = 0

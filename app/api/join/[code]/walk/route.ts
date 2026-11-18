@@ -5,7 +5,7 @@
 //   PATCH { k, counts?, note?, by?, done? } → saves as they go; done finishes it and tells the team
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
-import { readRecord, saveRecord, itemsFor, ownerItems, mergeCounts, linenCountsChanged } from '@/lib/owner-onboard-server'
+import { readRecord, saveRecord, itemsFor, ownerItems, mergeCounts, linenCountsChanged, closeInventory } from '@/lib/owner-onboard-server'
 import { stockOf, unitsOf, linenLines } from '@/lib/owner-onboard'
 import { notify } from '@/lib/notify'
 
@@ -36,6 +36,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   const b = await req.json().catch(() => ({} as any))
   if (!r || r.archived || !r.walk || !keyOk(r.walk.key, String(b?.k || ''))) return NOPE()
   const w = r.walk
+  // CLOSED OUT (Jon, 2026-11-17: "when team completes it close it out"): once finished, the sheet is locked. The office reopens it.
+  if (w.doneAt) return NextResponse.json({ ...(await sheet(r)), ok: false, error: 'This inventory check is closed. Ask the office to reopen it if a count needs to change.' }, { status: 409, headers: NO_STORE })
   if (!w.startedAt) w.startedAt = new Date().toISOString()
   // only items on this home's list can be counted
   const all = await itemsFor(r)
@@ -47,11 +49,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (typeof b.note === 'string') w.note = b.note.slice(0, 2000)
   if (typeof b.by === 'string') w.by = b.by.trim().slice(0, 80)
   const finishing = !!b.done && !w.doneAt
-  if (b.done) w.doneAt = w.doneAt || new Date().toISOString()
+  const closed = finishing ? closeInventory(r, w.by || '') : ''
   const s = await saveRecord(r, 'walk:' + (w.by || r.code))
   if (!s.ok) return NextResponse.json(s, { status: 500, headers: NO_STORE })
   if (finishing) {
-    try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `Walkthrough finished: ${[r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · ') || r.custom.ownerName || 'a new home'}`, body: `${w.by || 'The team'} counted ${Object.keys(w.counts).length} items. Review the inventory and build the order list.`, link: '/owner-onboarding/' + r.code }) } catch { /* saved; the bell is a courtesy */ }
+    try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `Inventory closed out: ${[r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · ') || r.custom.ownerName || 'a new home'}`, body: `${w.by || 'The team'} counted ${Object.keys(w.counts).length} items. ${closed}`, link: '/owner-onboarding/' + r.code }) } catch { /* saved; the bell is a courtesy */ }
   }
   return NextResponse.json(await sheet(r), { headers: NO_STORE })
 }

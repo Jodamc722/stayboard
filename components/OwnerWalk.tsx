@@ -36,6 +36,7 @@ const CSS = `
 .ow-bar-in{max-width:720px;margin:0 auto;display:flex;align-items:center;gap:12px}
 .ow-bar p{margin:0;flex:1;font-size:13.5px;color:var(--mut)}.ow-bar p b{color:var(--ink)}
 .ow-cta{background:var(--ink);color:#fff;border:0;border-radius:999px;padding:13px 22px;font:600 15px Inter,sans-serif;cursor:pointer}.ow-cta:disabled{opacity:.5}
+.ow-closed .ow-qty,.ow-closed .ow-yn{pointer-events:none;opacity:.55}
 .ow-err{color:var(--bad);font-size:14px}.ow-ok{color:var(--ok);font-weight:600}
 `
 export function OwnerWalk({ code, k }: { code: string; k: string }) {
@@ -54,7 +55,7 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
     if (!x?.ok) { Object.assign(pend.current, c); setMsg(x?.error || 'Not saved. Check your connection; your counts are kept on this screen.'); return null }
     setMsg(''); return x as Sheet
   }
-  function set(key: string, n: number) { const v = Math.max(0, Math.min(999, Math.round(n))); setCounts(c => ({ ...c, [key]: v })); pend.current[key] = v; clearTimeout(timer.current); timer.current = setTimeout(() => flush(), 800) }
+  function set(key: string, n: number) { if (d?.doneAt) return; const v = Math.max(0, Math.min(999, Math.round(n))); setCounts(c => ({ ...c, [key]: v })); pend.current[key] = v; clearTimeout(timer.current); timer.current = setTimeout(() => flush(), 800) }
   const mine = useMemo(() => (d ? (sec === 'linen' ? d.linen || [] : d.items).filter(i => i.unit === ui) : []), [d, ui, sec])
   const groups = useMemo(() => Array.from(new Set(mine.map(i => i.group))), [mine])
   if (err) return <main className="ow"><style>{CSS}</style><div className="ow-in"><img src="/stay-logo.png" alt="Stay Hospitality" /><p className="ow-k">Walkthrough</p><h1>This link is not active.</h1><p>{err}</p></div></main>
@@ -66,15 +67,15 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
   const linLeft = linen.filter(i => i.unit === ui && typeof counts[i.key] !== 'number').length
   async function finish() { setBusy(true); const x = await flush({ done: true }); setBusy(false); if (x) setD(x) }
   return (
-    <main className="ow"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600&display=swap" /><style>{CSS}</style>
+    <main className={'ow' + (d.doneAt ? ' ow-closed' : '')}><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif&family=Inter:wght@400;500;600&display=swap" /><style>{CSS}</style>
       <div className="ow-in">
         <img src="/stay-logo.png" alt="Stay Hospitality" />
         <p className="ow-k">Walkthrough{d.place ? ' · ' + d.place : ''}</p>
         <h1>Count what is in the home</h1>
         <p>For each item, enter how many are actually there, or tap All when the full number is there. For single items, tap Yes or No. It saves as you go, so you can stop and come back from the same link.</p>
         {d.stock ? <p className="ow-mut">The owner says {d.stock === 'full' ? 'the home is fully stocked' : 'nothing has been bought yet'}. The grey note under each item is what the owner told us.</p> : null}
-        {d.doneAt ? <div className="ow-card"><p className="ow-ok" style={{ margin: 0 }}>✓ Walkthrough finished {new Date(d.doneAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}. You can still correct a count below.</p></div> : null}
-        <div className="ow-card"><label className="ow-f"><span>Your name</span><input value={by} onChange={e => setBy(e.target.value)} onBlur={() => flush()} placeholder="Who is doing the walkthrough" autoComplete="name" /></label></div>
+        {d.doneAt ? <div className="ow-card"><p className="ow-ok" style={{ margin: 0 }}>✓ Inventory closed out {new Date(d.doneAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}{d.by ? ' by ' + d.by : ''}.</p><p className="ow-mut" style={{ margin: '6px 0 0' }}>The counts below are locked and the office has been told. If a count needs to change, ask the office to reopen it.</p></div> : null}
+        <div className="ow-card"><label className="ow-f"><span>Your name</span><input value={by} disabled={!!d.doneAt} onChange={e => setBy(e.target.value)} onBlur={() => flush()} placeholder="Who is doing the walkthrough" autoComplete="name" /></label></div>
         {d.units.length > 1 ? <div className="ow-units">{d.units.map((u, i) => <button key={i} type="button" className={i === ui ? 'on' : ''} onClick={() => setUi(i)}>{u.label}{left(i) ? ' · ' + left(i) + ' left' : ' · done'}</button>)}</div> : null}
         {linen.length ? <div className="ow-units"><button type="button" className={sec === 'supplies' ? 'on' : ''} onClick={() => setSec('supplies')}>Supplies{left(ui) ? ' · ' + left(ui) + ' left' : ' · done'}</button><button type="button" className={sec === 'linen' ? 'on' : ''} onClick={() => setSec('linen')}>Linen{linLeft ? ' · ' + linLeft + ' left' : ' · done'}</button></div> : null}
         {sec === 'linen' ? <p className="ow-mut">Count the linen that is in the unit and in good enough condition to keep. Par is what the unit should have; anything already there comes off the linen order.</p> : null}
@@ -100,12 +101,12 @@ export function OwnerWalk({ code, k }: { code: string; k: string }) {
                 )}
               </li>) })}</ul>
           </div>) })}
-        <div className="ow-card"><label className="ow-f"><span>Notes for the office (optional)</span><textarea rows={3} value={note} onChange={e => setNote(e.target.value)} onBlur={() => flush()} placeholder="e.g. the pots are worn and should be replaced; no iron found" /></label></div>
+        <div className="ow-card"><label className="ow-f"><span>Notes for the office (optional)</span><textarea rows={3} value={note} disabled={!!d.doneAt} onChange={e => setNote(e.target.value)} onBlur={() => flush()} placeholder="e.g. the pots are worn and should be replaced; no iron found" /></label></div>
         {msg ? <p className="ow-err">{msg}</p> : null}
       </div>
       <div className="ow-bar"><div className="ow-bar-in">
         <p><b>{counted}</b> of {total} counted{linen.length ? ' · linen ' + linen.filter(i => typeof counts[i.key] === 'number').length + ' of ' + linen.length : ''}{saving ? ' · saving…' : ''}</p>
-        <button type="button" className="ow-cta" disabled={busy} onClick={finish}>{busy ? 'Saving…' : d.doneAt ? 'Save changes' : counted < total ? 'Finish anyway' : 'Finish walkthrough'}</button>
+        {d.doneAt ? <span className="ow-ok">Closed</span> : <button type="button" className="ow-cta" disabled={busy} onClick={() => { if (counted < total && !window.confirm((total - counted) + ' items are not counted yet. Close out the inventory anyway? The sheet locks once it is closed.')) return; finish() }}>{busy ? 'Saving…' : 'Finish and close out'}</button>}
       </div></div>
     </main>
   )

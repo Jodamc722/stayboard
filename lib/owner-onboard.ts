@@ -177,7 +177,7 @@ export type OORecord = {
   /** The owner's one-tap answer for the whole home: nothing bought yet, or fully stocked. */
   stock?: 'none' | 'full' | ''
   /** The team's walkthrough of the unit: what is really there. `key` opens the walkthrough link without a login. */
-  walk?: { key: string; counts: Record<string, number>; note?: string; by?: string; sentAt?: string; sentTo?: string[]; startedAt?: string; doneAt?: string } | null
+  walk?: { key: string; counts: Record<string, number>; note?: string; by?: string; sentAt?: string; sentTo?: string[]; startedAt?: string; doneAt?: string; /** what closing it out did, for the desk */ closedNote?: string } | null
   /** The shopping list link for whoever is buying the order (Jon, 2026-11-17: "also as a link, like a shopping list
    *  that as they get they can mark"). `key` opens it without a login; `got` is what has been bought, by order-line key. */
   shop?: { key: string; got: Record<string, { at: string; by?: string }>; by?: string; openedAt?: string } | null

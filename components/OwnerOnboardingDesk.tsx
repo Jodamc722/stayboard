@@ -250,14 +250,16 @@ function InventoryReview({ rec, sup, units, uLabel, onApply, onMsg }: { rec: Any
   return (
     <div>
       <div className={'rounded-xl p-3 mb-3 ' + (w?.doneAt ? 'bg-emerald-50' : 'bg-amber-50')}>
-        <p className={lab}>{w?.doneAt ? 'Walkthrough finished' : 'Walkthrough needed'}</p>
+        <p className={lab}>{w?.doneAt ? 'Inventory closed out' : 'Walkthrough needed'}</p>
         <p className="text-[13px] text-ink mt-1">{rec.stock === 'full' ? 'The owner says the home is fully stocked. ' : rec.stock === 'none' ? 'The owner says nothing has been bought yet. ' : ''}{w?.doneAt ? `${w.by || 'The team'} finished the count on ${new Date(w.doneAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.` : w?.startedAt ? `${w.by || 'Someone'} has started the count; ${Object.keys(w.counts || {}).length} of ${sup.length} items so far.` : 'We walk every unit before ordering, to count what is really there.'}{w?.sentAt && !w?.doneAt ? ` Request sent ${new Date(w.sentAt).toLocaleDateString()} to ${(w.sentTo || []).join(', ')}.` : ''}</p>
+        {w?.doneAt && w?.closedNote ? <p className="text-[13px] text-ink mt-1">{String(w.closedNote).replace(/^Inventory closed out\.\s*/, '')} The count sheet is locked; Reopen lets it be changed.</p> : null}
         {w?.note ? <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap">Note from the walkthrough: “{w.note}”</p> : null}
         <div className="oo-noprint flex flex-wrap items-center gap-2 mt-2">
           <button type="button" disabled={!!busy} onClick={() => post('/walk', { action: 'send' }, 'send')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {w?.sentAt ? 'Send the walkthrough again' : 'Send the walkthrough to the team'}</button>
           {link ? <CopyBtn text={link} label="Copy the walkthrough link" small /> : <button type="button" disabled={!!busy} onClick={() => post('/walk', { action: 'link' }, 'link')} className="rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink">Get the walkthrough link</button>}
           {link ? <a href={link} target="_blank" rel="noreferrer" className="text-[12.5px] font-semibold text-ink underline">Open the count sheet</a> : null}
-          {w?.doneAt ? <button type="button" onClick={() => post('/walk', { action: 'reopen' }, 'reopen')} className="text-[12.5px] text-muted underline">Reopen</button> : null}
+          {w?.doneAt ? <button type="button" onClick={() => post('/walk', { action: 'reopen' }, 'reopen')} className="text-[12.5px] text-muted underline">Reopen</button>
+            : <button type="button" disabled={!!busy} onClick={() => post('/walk', { action: 'close' }, 'close')} title="Locks the count sheet, marks the Supplies check done and builds the order list from the count" className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink disabled:opacity-50">{busy === 'close' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Close out the inventory</button>}
           <span className="text-[12px] text-muted basis-full">Goes to {team.length ? team.join(', ') : 'whoever is set under “Handoff and vendor emails”'}. The link opens a count sheet on a phone, no sign-in.</span>
         </div>
       </div>
