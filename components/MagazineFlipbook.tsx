@@ -8,7 +8,7 @@
 //   • scaled to fit the window, so a spread is always whole
 // Pages are the magazine's own <section className="mz-page"> elements, rendered once each.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, List, Phone, Mail, X, MessageSquare } from 'lucide-react'
+import { ChevronLeft, ChevronRight, ChevronDown, List, Phone, Mail, X, MessageSquare } from 'lucide-react'
 
 const PW = 816, PH = 1056, TURN_MS = 760
 
@@ -73,53 +73,66 @@ function PageViewer({ pages, labels, vw, vh, top }: { pages: React.ReactNode[]; 
 }
 
 function PhoneReader({ pages, labels, names, contact, title }: { pages: React.ReactNode[]; labels: string[]; names: string[]; contact?: FlipContact; title?: string }) {
-  // ONE PAGE AT A TIME ON A PHONE TOO (Jon, 2026-11-12): the readable page fills the screen, scrolls
-  // within itself when it is long, and Next / Previous (or a swipe) turns to the next page.
-  const { at: cur, dir, go } = useTurner(pages.length)
-  const prog = (cur + 1) / Math.max(1, pages.length)
+  // ON A PHONE IT IS ONE CONTINUOUS READ (Jon, 2026-11-18: "I hate the way it feels when you share with
+  // someone on phone"). It used to be one page at a time: a card on a desk, "End of page", a Next card,
+  // arrows, a page tab, and the scroll thrown back to the top on every turn. Now the pages run edge to
+  // edge in one scroll, the way a phone already works. The cover fills the first screen, the top bar
+  // slides away while reading, and one dock holds the only two things a reader needs: where am I (and
+  // jump), and talk to us.
+  const n = pages.length
+  const refs = useRef<(HTMLDivElement | null)[]>([])
+  const progEl = useRef<HTMLElement | null>(null)
+  const [cur, setCur] = useState(0)
+  const [away, setAway] = useState(false)
   const [sheet, setSheet] = useState<null | 'contents' | 'contact'>(null)
-  useEffect(() => { window.scrollTo({ top: 0 }) }, [cur])
-  const sx = useRef<{ x: number; y: number } | null>(null)
-  const onDown = (e: React.PointerEvent) => { sx.current = { x: e.clientX, y: e.clientY } }
-  const onUp = (e: React.PointerEvent) => {
-    const s0 = sx.current; sx.current = null
-    if (!s0) return
-    const dx = e.clientX - s0.x, dy = e.clientY - s0.y
-    const t = e.target as HTMLElement
-    if (t && t.closest && t.closest('input,select,textarea,button,a,.ft')) return
-    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6) go(cur + (dx < 0 ? 1 : -1))
-  }
+  useEffect(() => {
+    let raf = 0, last = window.scrollY
+    const read = () => {
+      raf = 0
+      const y = window.scrollY, max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
+      if (progEl.current) progEl.current.style.transform = `scaleX(${Math.max(0, Math.min(1, y / max))})`
+      const mark = window.innerHeight * 0.4
+      let c = 0
+      for (let i = 0; i < n; i++) { const el = refs.current[i]; if (!el) continue; if (el.getBoundingClientRect().top <= mark) c = i; else break }
+      setCur(c)
+      if (Math.abs(y - last) > 10) { setAway(y > last && y > 160); last = y }
+    }
+    const on = () => { if (!raf) raf = requestAnimationFrame(read) }
+    read()
+    window.addEventListener('scroll', on, { passive: true }); window.addEventListener('resize', on)
+    return () => { window.removeEventListener('scroll', on); window.removeEventListener('resize', on); if (raf) cancelAnimationFrame(raf) }
+  }, [n])
+  // The top bar belongs to the magazine, not to this reader, so it is moved by a class on the document.
+  useEffect(() => {
+    document.documentElement.classList.toggle('mz-bar-away', away && !sheet)
+    return () => { document.documentElement.classList.remove('mz-bar-away') }
+  }, [away, sheet])
   // The contents: the first page of each section, in order.
-  const toc = labels.map((l, i) => ({ l: i === 0 ? 'Cover' : (l || (i === pages.length - 1 ? 'Contact' : '')), i }))
+  const toc = labels.map((l, i) => ({ l: i === 0 ? 'Cover' : (l || (i === n - 1 ? 'Contact' : '')), i }))
     .filter((x, j, a) => x.l && (j === 0 || a.findIndex(y => y.l === x.l) === j))
-  const jump = (i: number) => { setSheet(null); go(i) }
-  const label = cur === 0 ? (title || 'Cover') : (names[cur] || labels[cur] || (cur === pages.length - 1 ? 'Contact' : ''))
-  const atEnd = cur >= pages.length - 1
+  const jump = (i: number) => { setSheet(null); const el = refs.current[i]; if (el) el.scrollIntoView({ behavior: Math.abs(i - cur) > 4 ? 'auto' : 'smooth', block: 'start' }) }
+  const label = cur === 0 ? (title || 'Cover') : (names[cur] || labels[cur] || (cur === n - 1 ? 'Contact' : ''))
+  const atEnd = cur >= n - 1
   const first = (contact?.name || '').split(' ')[0]
   const tel = (contact?.phone || '').replace(/[^\d+]/g, '')
+  const canTalk = !!(contact && (contact.phone || contact.email))
   return (
-    <div className="mz-reader" onPointerDown={onDown} onPointerUp={onUp}>
+    <div className="mz-reader">
       <style>{FLIP_CSS}</style>
-      <i className="mz-r-prog" style={{ transform: `scaleX(${prog})` }} />
-      {/* EACH PAGE READS AS A PAGE (Jon, 2026-11-12: "the digital version you scan on the QR code needs to
-          delineate the pages better"): a page tab with its number and section, the page itself as a sheet
-          with an edge and a shadow on a darker desk, and an end mark before the Next card. */}
-      <div className="mz-r-tab"><b>{String(cur + 1).padStart(2, '0')}</b><span>of {String(pages.length).padStart(2, '0')}</span><em>{label}</em></div>
-      <div key={cur} className={'mz-r-page mz-r-turn ' + (dir > 0 ? 'fwd' : 'back') + (cur === 0 ? ' mz-r-cover' : '')}>{pages[cur]}</div>
-      {cur < pages.length - 1 ? <p className="mz-r-end">End of page {cur + 1}</p> : null}
-      <div className="mz-r-next">
-        {cur < pages.length - 1 ? <button type="button" onClick={() => go(cur + 1)}><span>Next</span><b>{names[cur + 1] || labels[cur + 1] || (cur + 1 === pages.length - 1 ? 'Next step' : 'Page ' + (cur + 2))}</b><ChevronRight size={18} /></button>
-          : contact && (contact.phone || contact.email) ? <button type="button" onClick={() => setSheet('contact')}><span>Next step</span><b>{first ? 'Talk to ' + first : 'Talk to us'}</b><ChevronRight size={18} /></button> : null}
-      </div>
+      <i className="mz-r-prog" ref={el => { progEl.current = el }} />
+      {pages.map((pg, i) => (
+        <div key={i} ref={el => { refs.current[i] = el }} className={'mz-r-page' + (i === 0 ? ' mz-r-cover' : '')}>
+          {pg}
+          {i === 0 && n > 1 ? <button type="button" className={'mz-r-hint' + (cur > 0 ? ' gone' : '')} onClick={() => jump(1)} aria-label="Start reading"><span>Scroll</span><ChevronDown size={16} /></button> : null}
+        </div>
+      ))}
       <div className={'mz-r-dock' + (sheet ? ' up' : '')}>
-        <button type="button" className="mz-r-arrow" onClick={() => go(cur - 1)} disabled={cur === 0} aria-label="Previous page"><ChevronLeft size={20} /></button>
         <button type="button" className="mz-r-where" onClick={() => setSheet(s => s === 'contents' ? null : 'contents')} aria-label="Contents">
-          <List size={16} /><span>{label}</span><em>{cur + 1}/{pages.length}</em>
+          <List size={16} /><span>{label}</span><em>{cur + 1}/{n}</em>
         </button>
-        <button type="button" className="mz-r-arrow mz-r-arrow-next" onClick={() => go(cur + 1)} disabled={cur >= pages.length - 1} aria-label="Next page"><ChevronRight size={20} /></button>
-        {contact && (contact.phone || contact.email) ? (
-          <button type="button" className={'mz-r-talk' + (atEnd ? ' hot' : '')} onClick={() => setSheet(s => s === 'contact' ? null : 'contact')} aria-label={first ? 'Talk to ' + first : 'Talk to us'}>
-            {contact.photo ? <img src={contact.photo} alt="" /> : <MessageSquare size={17} />}
+        {canTalk ? (
+          <button type="button" className={'mz-r-talk' + (atEnd ? ' hot' : '')} onClick={() => setSheet(s => s === 'contact' ? null : 'contact')}>
+            {contact!.photo ? <img src={contact!.photo} alt="" /> : <MessageSquare size={16} />}<span>{first ? 'Talk to ' + first : 'Talk to us'}</span>
           </button>
         ) : null}
       </div>
@@ -154,28 +167,15 @@ const FLIP_CSS = `
 @keyframes mzPvBack{from{opacity:0;translate:-36px 0}to{opacity:1;translate:0 0}}
 .mz-pv-arrow{width:56px;height:56px;border-radius:99px;border:1px solid rgba(0,0,0,.12);background:#fff;color:#101114;display:grid;place-items:center;cursor:pointer;box-shadow:0 6px 18px rgba(20,18,15,.12);flex:none}
 .mz-pv-arrow:disabled{opacity:.3;cursor:default}
-.mz-r-turn{animation:.32s cubic-bezier(.2,.8,.2,1) both}.mz-r-turn.fwd{animation-name:mzPvFwd}.mz-r-turn.back{animation-name:mzPvBack}
-.mz-r-next{padding:6px 10px 8px}
-.mz-r-next button{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;text-align:left;border:1px solid var(--mz-rule,#E4E2DD);background:#fff;border-radius:14px;padding:14px 16px;cursor:pointer;color:var(--mz-ink,#101114)}
-.mz-r-next span{font:600 10px "Inter",sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--mz-glow,#8C6D3A)}
-.mz-r-next b{font:400 20px var(--mz-display,Georgia,serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mz-r-arrow{width:48px;flex:none;padding:0!important;justify-content:center;background:rgba(255,255,255,.96);color:#101114}
-.mz-r-arrow:disabled{opacity:.45}
-.mz-r-arrow-next{background:var(--mz-navy,#14161B)!important;color:#fff!important}
-.mz-r-talk{width:48px;padding:0!important;justify-content:center}
-.mz-r-talk img{width:44px!important;height:44px!important}
-.mz-r-talk svg{margin-left:0!important}
-.mz-reader{overflow-x:clip;padding-bottom:96px;background:#E6E3DC;min-height:calc(100svh - 44px);box-sizing:border-box;margin:-36px -16px -64px}
-.mz-r-prog{position:fixed;left:0;right:0;top:44px;height:3px;background:var(--mz-glow,#8C6D3A);transform-origin:left center;z-index:40;pointer-events:none}
-.mz-r-page{margin:0 10px;border-radius:14px;overflow:hidden;box-shadow:0 1px 0 rgba(0,0,0,.04),0 10px 28px rgba(20,18,15,.16);background:var(--mz-paper,#fff)}
+.mz-reader{overflow-x:clip;padding-bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--mz-paper,#fff);min-height:calc(100svh - 44px);box-sizing:border-box;margin:-36px -16px -64px}
+html:has(.mz-reader){scroll-padding-top:0;-webkit-text-size-adjust:100%}
+.mz-bar-reader{transition:transform .28s cubic-bezier(.2,.8,.2,1)}.mz-bar-away .mz-bar-reader{transform:translateY(-100%)}
+.mz-bar-reader a.mz-ghost{display:none!important}
+.mz-r-prog{position:fixed;left:0;right:0;top:0;height:3px;transform:scaleX(0);background:var(--mz-glow,#8C6D3A);transform-origin:left center;z-index:40;pointer-events:none;will-change:transform}
+.mz-r-page{position:relative;margin:0;overflow:hidden;background:var(--mz-paper,#fff)}
 .mz-r-page>.mz-page{margin:0!important;box-shadow:none!important;border-radius:0!important;width:100%!important;max-width:none!important}
-.mz-r-tab{display:flex;align-items:baseline;gap:6px;padding:14px 16px 8px;font-family:"Inter",system-ui,sans-serif;color:#6B6C72}
-.mz-r-tab b{font:400 22px var(--mz-display,Georgia,serif);color:#101114;font-variant-numeric:lining-nums}
-.mz-r-tab span{font-size:11px;letter-spacing:.08em}
-.mz-r-tab em{margin-left:auto;font:600 10px "Inter",sans-serif;font-style:normal;letter-spacing:.16em;text-transform:uppercase;color:var(--mz-glow,#8C6D3A);max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mz-r-end{margin:12px 0 4px;text-align:center;font:600 9.5px "Inter",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#9A9BA0}
 .mz-r-page+.mz-r-page>.mz-page:not(.mz-dark):not(.mz-opener):not(.mz-backcover){border-top:1px solid var(--mz-rule,#e4e2dd)}
-.mz-r-cover>.mz-page{min-height:calc(100svh - 130px)!important;padding-bottom:104px!important;display:flex;flex-direction:column;justify-content:flex-end}
+.mz-r-cover>.mz-page{min-height:calc(100svh - 44px)!important;padding-bottom:124px!important;display:flex;flex-direction:column;justify-content:flex-end}
 .mz-r-page .mz-opener,.mz-r-page .mz-backcover{min-height:88svh!important}
 .mz-r-dock{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;z-index:45;font-family:"Inter",system-ui,sans-serif}
 .mz-r-dock button{display:flex;align-items:center;gap:8px;border:0;border-radius:999px;height:48px;padding:0 16px;font:600 13.5px "Inter",system-ui,sans-serif;box-shadow:0 10px 30px rgba(10,11,14,.22);cursor:pointer}
@@ -183,8 +183,13 @@ const FLIP_CSS = `
 .mz-r-where span{flex:1;min-width:0;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mz-r-where em{font-style:normal;font-weight:500;color:#6B6C72;font-variant-numeric:tabular-nums}
 .mz-r-talk{background:var(--mz-navy,#14161B);color:#fff}
+.mz-r-talk{flex:none;padding:0 16px 0 6px!important;gap:8px!important;white-space:nowrap;width:auto}
 .mz-r-talk img{width:36px;height:36px;border-radius:99px;object-fit:cover}
-.mz-r-talk svg{margin-left:10px}
+.mz-r-talk svg{margin-left:10px}.mz-r-talk:not(:has(img)){padding-left:6px!important}
+.mz-r-hint{position:absolute;left:50%;bottom:calc(74px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:inline-flex;align-items:center;gap:6px;border:0;background:none;color:#fff;font:600 10px "Inter",sans-serif;letter-spacing:.22em;text-transform:uppercase;opacity:.85;transition:opacity .3s;z-index:2;padding:8px 12px}
+.mz-r-hint svg{animation:mzNudge 1.8s ease-in-out infinite}.mz-r-hint.gone{opacity:0;pointer-events:none}
+@keyframes mzNudge{0%,100%{transform:translateY(0)}50%{transform:translateY(4px)}}
+@media (prefers-reduced-motion:reduce){.mz-r-hint svg{animation:none}.mz-bar-reader{transition:none}}
 .mz-r-talk.hot{background:var(--mz-glow,#8C6D3A)}
 .mz-r-scrim{position:fixed;inset:0;background:rgba(10,11,14,.36);z-index:46;animation:mzFade .2s ease-out}
 .mz-r-sheet{position:fixed;left:0;right:0;bottom:0;z-index:47;background:#fff;color:#101114;border-radius:20px 20px 0 0;padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));max-height:76svh;overflow-y:auto;font-family:"Inter",system-ui,sans-serif;animation:mzSheet .26s cubic-bezier(.2,.8,.2,1)}
