@@ -165,3 +165,31 @@ export function buildingStrategy(units: {
   }
   return out
 }
+
+/**
+ * THE BUILDING'S HOUSE STYLE (Jon, 2026-11-18: "building should have similar titles, similar look and
+ * sound. Nothing should be vastly different."). What the writer is shown before it writes one unit:
+ * how the other live units in the building are titled, and the full copy of the one optimized most
+ * recently, as the reference to stay close to.
+ */
+export async function buildingStyle(sb: any, listing: any): Promise<{ otherTitles: string[]; reference: Record<string, string> | null } | null> {
+  const building = String(listing?.building || '').trim()
+  if (!building) return null
+  try {
+    const { data } = await sb.from('guesty_listings')
+      .select('id,title,status,last_optimized,active:raw->>active,pd:raw->publicDescription')
+      .eq('building', building).limit(300)
+    const rows = ((data || []) as any[]).filter(r => String(r.id) !== String(listing.id) && String(r.active) !== 'false'
+      && !/inactive|archiv|deleted|offboard/i.test(String(r.status || '')) && String(r.title || '').trim())
+    if (!rows.length) return null
+    const otherTitles = Array.from(new Set(rows.map(r => String(r.title).trim()))).slice(0, 12)
+    const ref = rows.filter(r => r.last_optimized && String(r.pd?.summary || '').length > 120)
+      .sort((a, b) => String(b.last_optimized).localeCompare(String(a.last_optimized)))[0]
+    const cut = (v: any, n: number) => String(v || '').trim().slice(0, n)
+    const reference = ref ? {
+      title: String(ref.title).trim(), summary: cut(ref.pd?.summary, 700), space: cut(ref.pd?.space, 900),
+      access: cut(ref.pd?.access, 900), neighborhood: cut(ref.pd?.neighborhood, 1500), transit: cut(ref.pd?.transit, 900), notes: cut(ref.pd?.notes, 1200),
+    } : null
+    return { otherTitles, reference }
+  } catch { return null }
+}

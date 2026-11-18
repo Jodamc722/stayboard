@@ -16,7 +16,7 @@
 //    app_settings 'listing_ai' (lib/listing-ai), editable at /users -> App settings. The defaults
 //    are the same text, so an unset key behaves exactly as before. The HONESTY BLOCK below is NOT
 //    editable and is assembled here on every call.
-import { sisterUnits } from '@/lib/listing-strategy'
+import { sisterUnits, buildingStyle } from '@/lib/listing-strategy'
 import { NextRequest, NextResponse } from 'next/server'
 import { fitToCap, factIssues } from '@/lib/listing-fit'
 import { lintField } from '@/lib/channel-lint'
@@ -258,7 +258,7 @@ export async function POST(req: NextRequest) {
   const areaBlock = areaPrompt(area)
   const factsBlock = [factsPrompt(bFacts), areaBlock].filter(Boolean).join('\n\n')
 
-  const sisters = await sisterUnits(supabaseAdmin(), listing)
+  const [sisters, bStyle] = await Promise.all([sisterUnits(supabaseAdmin(), listing), buildingStyle(supabaseAdmin(), listing)])
   const facts = {
     currentTitle: current.title || null,
     nickname: listing.nickname || null,
@@ -278,6 +278,8 @@ export async function POST(req: NextRequest) {
     // Units in this building that match on bedrooms, baths and sleeps, with their titles, so the
     // writer keeps one pattern across the building and still makes this one different.
     sisterUnits: sisters.count ? { count: sisters.count, theirTitles: sisters.titles } : null,
+    // The building's house style: how its other units are titled, and the latest optimized unit's copy.
+    buildingStyle: bStyle,
     location, bookingSettings: settings,
     minAge21: /arya|amrit|district\s*225/i.test(str(listing.building)),
   }
