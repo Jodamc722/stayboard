@@ -41,7 +41,8 @@ async function itemsForHome(h: OOHome, i: number, o: { supplies: boolean; linen:
   for (const [k, v] of Object.entries(h.beds)) { if (!v) continue; if (k === 'Bunk') beds.Twin = (beds.Twin || 0) + v * 2; else beds[k] = (beds[k] || 0) + v }
   if (h.sleeper) beds[SOFA_BED] = (beds[SOFA_BED] || 0) + 1
   const unit: LinenUnit = { id: 'owner', name: 'Home', bedrooms: Math.max(1, h.bedrooms), bathrooms: h.bathrooms, guests: h.guests, kitchens: h.kitchen ? 1 : 0, beds, bedsSource: 'manual' }
-  for (const r of linenQuote(standard, [unit], 'mid').rows) out.push({ key: pre + 'l:' + r.name + (r.size ? '|' + r.size : ''), name: r.name, size: r.size || undefined, group: r.group, qty: r.qty, tier: 'must', linen: true, unit: i, unitLabel: label })
+  // pillows, protectors and cases by the bed they go on, not a catch-all "Standard" (Jon, 2026-11-18)
+  for (const r of linenQuote({ ...standard, pillowBy: 'bed' }, [unit], 'mid').rows) out.push({ key: pre + 'l:' + r.name + (r.size ? '|' + r.size : ''), name: r.name, size: r.size || undefined, group: r.group, qty: r.qty, tier: 'must', linen: true, unit: i, unitLabel: label })
   return out
 }
 /** Every unit's items on a link. */
@@ -52,7 +53,25 @@ export async function itemsFor(r: OORecord): Promise<OOItem[]> {
   for (let i = 0; i < units.length; i++) out.push(...(await itemsForHome(units[i], i, { supplies: r.custom.askSupplies, linen: !rows })))
   // the team edited the linen quote: their lines stand in for the standard's counts
   if (rows) rows.forEach((l, k) => units.forEach((h, i) => { const q = l.qty[i] || 0; if (q > 0) out.push({ key: 'le:' + k + ':' + i, name: l.name, size: l.size || undefined, group: 'Linen', qty: q, tier: 'must', linen: true, unit: i, unitLabel: unitName(h, i) }) }))
-  return out
+  return linenBySize(out)
+}
+/**
+ * LINEN BY SIZE (Jon, 2026-11-18: "it should organize by size, right column, in order, then the inventory").
+ * The linen list read item by item, so King and Queen alternated down the page. It now runs by size: every
+ * King line, then Queen, Full and Twin, then what has no size (towels, kitchen), each in the standard's own
+ * item order. Sorted here, once, so the quote, the on-hand table, the walkthrough's Linen section, the PDF
+ * and the vendor email all read the same way. Supplies are left exactly as they were.
+ */
+const SIZE_RANK = ['king', 'cal king', 'california king', 'queen', 'full', 'double', 'twin xl', 'twin']
+export function linenBySize(items: OOItem[]): OOItem[] {
+  const rank = (z?: string) => { const k = String(z || '').trim().toLowerCase(); if (!k) return 99; const i = SIZE_RANK.indexOf(k); return i >= 0 ? i : 50 }
+  const lin = items.filter(i => i.linen)
+  if (lin.length < 2) return items
+  const first = new Map<string, number>(); lin.forEach((i, n) => { if (!first.has(i.name)) first.set(i.name, n) })
+  const at = new Map(lin.map((i, n) => [i, n] as [OOItem, number]))
+  const sorted = lin.slice().sort((a, b) => rank(a.size) - rank(b.size) || String(a.size || '').localeCompare(String(b.size || '')) || first.get(a.name)! - first.get(b.name)! || a.unit - b.unit || at.get(a)! - at.get(b)!)
+  let n = 0
+  return items.map(i => (i.linen ? sorted[n++] : i))
 }
 /** What the owner ticks: the supplies, never the linen. */
 export const ownerItems = (items: OOItem[]) => items.filter(i => !i.linen)

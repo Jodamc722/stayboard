@@ -69,6 +69,10 @@ export type LinenVendor = {
 }
 
 export type LinenStandard = {
+  /** How the pillow family is labelled. Unset or 'pillow': by pillow size, King or Standard, which is how
+   *  pillows are bought and counted on the shelf. 'bed': by the bed they go on (King, Queen, Full, Twin),
+   *  for one unit's own inventory, where "Standard" does not say which bed. Set by the caller, never saved. */
+  pillowBy?: 'pillow' | 'bed'
   par: number
   bedSizes: string[]
   items: LinenItem[]
@@ -798,6 +802,9 @@ export function linenNeeds(standard: LinenStandard, unit: LinenUnit): LinenRow[]
       // 1.5 protectors × 10 Standard pillows is 15, not 8 + 8.
       const bySize = new Map<string, LinenRow & { exactUnit: number; exact: number }>()
       const pillowFamily = isPillowItem(it)
+      // A unit's own inventory lists pillows by the BED they go on (Jon, 2026-11-18: "Standard should be
+      // queen or full or twin"); buying and the shelf counts stay by pillow size. See LinenStandard.pillowBy.
+      const byBed = standard.pillowBy === 'bed'
       for (const size of sizes) {
         const n = unit.beds[size]
         // PER PILLOW (Jon, 2026-11-05: "calculate by pillows as inventory — protectors 1.5 per pillow, 2
@@ -807,7 +814,7 @@ export function linenNeeds(standard: LinenStandard, unit: LinenUnit): LinenRow[]
           : (it.qtyBySize && it.qtyBySize[size] !== undefined ? it.qtyBySize[size] : it.qty)
         const sofa = isSofa(size)
         const p = sofa && it.rotates ? Math.min(par, sofaPar) : par
-        const label = pillowFamily ? pillowSizeFor(size) : sofa ? sofaSize : size
+        const label = pillowFamily ? (byBed ? (/king/i.test(size) ? KING_PILLOW : sofa ? sofaSize : size) : pillowSizeFor(size)) : sofa ? sofaSize : size
         const exactUnit = q * n
         const exact = q * n * p
         if (exact <= 0) continue
@@ -815,7 +822,7 @@ export function linenNeeds(standard: LinenStandard, unit: LinenUnit): LinenRow[]
         if (cur) { cur.exactUnit += exactUnit; cur.exact += exact; continue }
         bySize.set(label, { itemId: it.id, name: it.name, group: it.group, size: label, perUnitQty: 0, par: p, total: 0, exactUnit, exact })
       }
-      const order = pillowFamily ? [KING_PILLOW, STANDARD_PILLOW] : standard.bedSizes
+      const order = pillowFamily && !byBed ? [KING_PILLOW, STANDARD_PILLOW] : standard.bedSizes
       for (const l of sortSizes(Array.from(bySize.keys()), order)) {
         const r = bySize.get(l)!
         out.push({ itemId: r.itemId, name: r.name, group: r.group, size: r.size, perUnitQty: up(r.exactUnit), par: r.par, total: up(r.exact) })
