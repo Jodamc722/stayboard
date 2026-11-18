@@ -6,9 +6,9 @@
 //                          needs, the timeline, the onboarding call, the paperwork and the handoff to accounting.
 import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock } from 'lucide-react'
-import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock, ChevronDown } from 'lucide-react'
+import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, orderTierLabel, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
 const lab = 'text-[10.5px] uppercase tracking-[0.16em] text-muted font-semibold'
@@ -292,6 +292,28 @@ function InventoryReview({ rec, sup, units, uLabel, onApply, onMsg }: { rec: Any
   )
 }
 
+// ── ONE SECTION OF THE REPORT, FOLDABLE (Jon, 2026-11-18: "on the admin page it still looks disorganized"). Every
+// section has the same header: its name, where it stands in a few words, and an arrow. A finished section starts
+// folded, so the page opens on what still needs someone; a choice made by hand is remembered per onboarding in this
+// browser. The body stays mounted while folded (nothing typed is lost) and always prints.
+const FOLD_ALL = 'oo-fold-all'
+function Fold({ code, id, title, summary, done, children }: { code: string; id: string; title: string; summary?: ReactNode; done?: boolean; children: ReactNode }) {
+  const key = 'oo-fold:' + code + ':' + id
+  const [open, setOpen] = useState(!done)
+  const put = (v: boolean) => { setOpen(v); try { localStorage.setItem(key, v ? '1' : '0') } catch {} }
+  useEffect(() => { try { const v = localStorage.getItem(key); if (v) setOpen(v === '1') } catch {} }, [key])
+  useEffect(() => { const h = (e: Any) => put(!!e.detail); window.addEventListener(FOLD_ALL, h); return () => window.removeEventListener(FOLD_ALL, h) }, [key])
+  return (
+    <section id={'oo-' + id} className={card + ' scroll-mt-4'}>
+      <button type="button" onClick={() => put(!open)} aria-expanded={open} className="oo-fold-head flex w-full items-center gap-x-3 text-left">
+        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mr-auto min-w-0"><span className="font-serif text-[22px] leading-none text-ink">{title}</span>{summary ? <span className="text-[12.5px] text-muted">{summary}</span> : null}</span>
+        <ChevronDown size={18} className={'oo-noprint shrink-0 text-muted transition-transform ' + (open ? '' : '-rotate-90')} />
+      </button>
+      <div hidden={!open} className="oo-fold-body mt-3">{children}</div>
+    </section>
+  )
+}
+
 // ── THE ORDER LIST: our actual items, edited by the team, sent to the owner to review ──
 function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r: Any) => void }) {
   const o = rec.order
@@ -307,10 +329,31 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
     setBusy(''); if (d?.record) onRec(d.record); setMsg(d?.ok ? (d.note || 'Saved.') : (d?.error || 'Not saved.')); return !!d?.ok
   }
   const set = (i: number, p: Any) => { setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true) }
+  // THE EMAIL, SEEN AND EDITED BEFORE IT GOES (Jon, 2026-11-18: "send owner for review should show preview of email.
+  // Also I should be able to edit"). Send opens the email first: who gets it, the subject and the message, both
+  // editable. The greeting, the steps, the button and the signature are fixed and shown as they will read.
+  const [mail, setMail] = useState<Any | null>(null); const [subj, setSubj] = useState(''); const [body, setBody] = useState('')
+  async function openMail() {
+    if (dirty && !(await act('save', { lines, note }))) return
+    setBusy('preview'); setMsg('')
+    const d = await fetch(`/api/owner-onboarding/${rec.code}/order`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'preview' }) }).then(r => r.json()).catch(() => null)
+    setBusy('')
+    if (!d?.ok) { setMsg(d?.error || 'Could not open the email.'); return }
+    setMail(d.email); setSubj(d.email.subject); setBody(d.email.message)
+  }
+  async function sendMail() { if (await act('send', { subject: subj, message: body })) setMail(null) }
   // NOT IN OUR CATALOG (Jon, 2026-11-17: "have it where we can select our hand selected items or just send
   // the list"). What the owner marked "need" that our catalog does not carry is a tick list: tick the ones we
   // are buying and they go on the order as lines to price, or leave them and send the list as it is.
   const [pick, setPick] = useState<string[]>([])
+  // COLLAPSABLE (Jon, 2026-11-18: "looks weird and clunky. Should be collapsable too"). Folded, the card is one
+  // line: status, how many items, the estimate, how many bought. The choice is remembered per onboarding in
+  // this browser; storage can be blocked, so it is only ever a convenience.
+  const foldKey = 'oo-order-fold:' + rec.code
+  const [fold, setFold] = useState(false)
+  useEffect(() => { try { setFold(localStorage.getItem(foldKey) === '1') } catch {} }, [foldKey])
+  const toggleFold = () => setFold(f => { try { localStorage.setItem(foldKey, f ? '0' : '1') } catch {} return !f })
+  useEffect(() => { const h = (e: Any) => { setFold(!e.detail); try { localStorage.setItem(foldKey, e.detail ? '0' : '1') } catch {} }; window.addEventListener(FOLD_ALL, h); return () => window.removeEventListener(FOLD_ALL, h) }, [foldKey])
   const onList = (x: string) => { const p = parseNeed(x); return lines.some(l => String(l.name).toLowerCase() === p.name.toLowerCase() && (p.unit < 0 || (Number(l.qty[p.unit]) || 0) > 0)) }
   function parseNeed(x: string) {
     const q = x.match(/\s×(\d+)$/); let name = q ? x.slice(0, q.index) : x
@@ -332,23 +375,44 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
   async function download(format: 'pdf' | 'xlsx') { if (dirty && !(await act('save', { lines, note }))) return; window.location.href = `/api/owner-onboarding/${rec.code}/order?format=${format}` }
   const skip: string[] = o?.review?.skip || []
   const total = lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (Number(l.price) || 0) * l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), 0)
-  const inp = 'rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink'
+  const inp = 'rounded-lg border border-line bg-white px-2 py-1 text-[12.5px] text-ink'
+  // the name reads as text until you go to edit it: no box on every row
+  const nameInp = 'w-full border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[13px] font-semibold text-ink hover:border-line focus:border-ink focus:outline-none focus:ring-0'
+  const buy = lines.filter(l => skip.indexOf(l.key) < 0)
+  const boughtN = buy.filter(l => rec.shop?.got?.[l.key]).length
+  const priced = buy.some(l => l.price != null && l.price !== '')
+  const summary = !o ? 'Not built yet' : [buy.length + (buy.length === 1 ? ' item' : ' items'), priced ? money(total) + ' est.' : '', rec.shop?.key ? boughtN + ' bought' : '', dirty ? 'unsaved changes' : ''].filter(Boolean).join(' · ')
+  // lines under their category, in the order the categories first appear; i stays the line's own index
+  const groups: { cat: string; rows: { l: Any; i: number }[] }[] = []
+  lines.forEach((l, i) => { const cat = String(l.category || 'Other'); let g = groups.find(x => x.cat === cat); if (!g) { g = { cat, rows: [] }; groups.push(g) } g.rows.push({ l, i }) })
+  const b = o?.basis
+  const basisLine = !b ? '' : [!b.marked ? 'the full list, the owner has not ticked supplies yet' : b.walked ? 'built after the walkthrough' : 'built before the walkthrough, counts are the owner’s own', b.leftOff.length ? b.leftOff.length + ' left off' : '', b.partial.length ? b.partial.length + ' partly there' : ''].filter(Boolean).join(' · ')
+  const rowBtn = 'inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] font-semibold text-ink disabled:opacity-50'
   return (
     <section className={card}>
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Order list</h2>
-        {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? 'Approved by the owner' : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}</div>
-      <p className="text-[12.5px] text-muted mb-3">The actual items {units.length > 1 ? 'each unit' : 'the home'} still needs, with how many of each, based on what the owner ticked on the supplies list and the walkthrough: what they have is left off, what they need is on. Add a price or a link to any line, adjust it, then send it to the owner to review and approve. Linen is separate.</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button type="button" onClick={toggleFold} aria-expanded={!fold} className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-left mr-auto min-w-0">
+          <h2 className="font-serif text-[22px] leading-none text-ink">Order list</h2>
+          <span className="text-[12.5px] text-muted">{summary}</span>
+        </button>
+        {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? (o.review?.self ? 'Owner is ordering it themselves' : 'Approved by the owner') : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}
+        <button type="button" onClick={toggleFold} title={fold ? 'Open' : 'Close'} aria-label={fold ? 'Open the order list' : 'Close the order list'} className="rounded-lg p-1 text-muted hover:text-ink"><ChevronDown size={18} className={'transition-transform ' + (fold ? '-rotate-90' : '')} /></button>
+      </div>
+      {fold ? null : <div className="mt-3">
+      {!o ? <p className="text-[12.5px] text-muted mb-3">What {units.length > 1 ? 'each unit' : 'the home'} still needs, from the owner’s supplies answers and the walkthrough. Linen is separate.</p> : null}
       {!o ? <button type="button" disabled={busy === 'build' || !units.length} onClick={() => act('build')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'build' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Build the order list</button> : (<>
-        {o.basis ? <div className="oo-noprint rounded-xl bg-app p-3 mb-3 text-[12.5px] text-ink space-y-1">
-          <p className={lab}>Built from the owner’s supplies answers</p>
+        {o.basis ? <div className="oo-noprint mb-3 text-[12.5px] text-ink">
+          <details className="group"><summary className="cursor-pointer list-none text-muted hover:text-ink [&::-webkit-details-marker]:hidden"><span className="underline decoration-dotted underline-offset-2">How this list was built</span>: {basisLine}</summary>
+          <div className="mt-2 rounded-xl bg-app p-3 space-y-1">
           {!o.basis.marked ? <p>The owner has not ticked the supplies list yet, so this is the full list for the home. Rebuild it once they have.</p> : null}
           {o.basis.leftOff.length ? <p><b>Left off, the owner has these:</b> {o.basis.leftOff.join(', ')}</p> : o.basis.marked ? <p>Nothing was left off: the owner did not mark a whole product as already there.</p> : null}
           {o.basis.partial.length ? <div><b>Sets the owner partly has (kept on the list, check them):</b><ul className="list-disc pl-5">{o.basis.partial.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           {o.basis.walked ? <p className="text-emerald-800 font-semibold">Built after the walkthrough was finished.</p> : o.basis.marked ? <p className="text-amber-800">Built before the walkthrough was finished: counts are the owner’s own.</p> : null}
           {o.basis.short?.length ? <div><b>Partly there, by count:</b><ul className="list-disc pl-5">{o.basis.short.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
-          {o.basis.declined?.length ? <div><b>Not buying (the team’s decision):</b><ul className="list-disc pl-5">{o.basis.declined.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
+          {o.basis.declined?.length ? <div><b>Not buying (the owner or the team said no):</b><ul className="list-disc pl-5">{o.basis.declined.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
+          </div></details>
           {o.basis.uncovered.length ? (() => { const left: string[] = o.basis.uncovered.filter((x: string) => !onList(x)); return (
-            <div className="pt-1">
+            <div className="mt-2 rounded-xl bg-app p-3">
               <p><b>Marked “need”, not in our catalog.</b> {left.length ? 'Tick the ones we are buying to add them to the list, or leave them and send the list as it is.' : 'All of these are on the list now.'}</p>
               {left.length ? <>
                 <div className="flex flex-wrap gap-1.5 mt-2">{left.map((x: string) => { const on = pick.indexOf(x) >= 0; return (
@@ -362,54 +426,80 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
             </div>) })() : null}
         </div> : null}
         {o.review ? <div className={'rounded-xl p-3 mb-3 ' + (o.status === 'approved' ? 'bg-emerald-50' : 'bg-amber-50')}><p className={lab}>The owner’s review · {new Date(o.review.at).toLocaleString()}</p>
+          {o.review.self ? <p className="text-[13px] text-ink mt-1 font-semibold">The owner is buying these themselves and ticks them off as they arrive. Nothing for us to order.</p> : null}
           {o.review.skip.length ? <p className="text-[13px] text-ink mt-1">Already has: {o.review.skip.map((k: string) => lines.find(l => l.key === k)?.name || k).join(', ')}</p> : null}
           {o.review.note ? <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap">“{o.review.note}”</p> : null}</div> : null}
-        <div className="overflow-x-auto"><table className="w-full min-w-[500px] text-[12.5px]">
-          <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th>{units.map(u => <th key={u} className="px-1 text-right font-semibold whitespace-nowrap">{units.length > 1 ? u : 'Qty'}</th>)}<th className="px-1 text-right font-semibold">Each</th><th className="text-right font-semibold">Total</th><th /></tr></thead>
-          <tbody>{lines.map((l, i) => { const q = l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), off = skip.indexOf(l.key) >= 0; return (
-            <tr key={l.key} className={'border-b border-line align-top ' + (off ? 'opacity-50' : '')}>
-              <td className="py-1.5 pr-2"><input value={l.name} onChange={e => set(i, { name: e.target.value })} className={inp + ' w-full font-semibold'} /><span className="block text-[11.5px] text-muted mt-0.5">{rec.shop?.got?.[l.key] ? <b className="text-emerald-700">Bought · </b> : null}{l.detail && l.detail !== l.name ? l.detail + ' · ' : ''}{l.category}{l.url ? <> · <a href={l.url} target="_blank" rel="noreferrer" className="underline">item</a></> : null}{off ? ' · owner has this' : ''}</span></td>
-              {units.map((u, ui) => <td key={u} className="px-1 text-right"><input inputMode="numeric" value={String(l.qty[ui] ?? 0)} onChange={e => set(i, { qty: units.map((_, k) => (k === ui ? Number(e.target.value.replace(/\D/g, '')) || 0 : l.qty[k] || 0)) })} className={inp + ' w-12 text-right'} /></td>)}
-              <td className="px-1 text-right"><input inputMode="decimal" value={l.price ?? ''} onChange={e => set(i, { price: e.target.value === '' ? null : e.target.value })} className={inp + ' w-[68px] text-right'} /></td>
-              <td className="text-right tabular-nums pt-2.5">{l.price != null && l.price !== '' ? money(Number(l.price) * q) : '—'}</td>
-              <td className="pl-1 pt-2"><button type="button" onClick={() => { setLines(ls => ls.filter((_, j) => j !== i)); setDirty(true) }} className="text-muted hover:text-red-700" title="Remove">×</button></td>
-            </tr>) })}</tbody>
-          <tfoot><tr><td className="pt-2 font-semibold text-ink" colSpan={units.length + 2}>Estimated total{skip.length ? ' (without what the owner has)' : ''}</td><td className="pt-2 text-right font-semibold tabular-nums">{money(total)}</td><td /></tr></tfoot>
+        <div className="overflow-x-auto"><table className="w-full min-w-[460px] text-[12.5px]">
+          <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted"><th className="pb-1 font-semibold min-w-[150px]">Item</th>{units.map(u => <th key={u} className="px-1 pb-1 text-right font-semibold whitespace-nowrap">{units.length > 1 ? u : 'Qty'}</th>)}<th className="px-1 pb-1 text-right font-semibold">Each</th><th className="pb-1 text-right font-semibold">Total</th><th /></tr></thead>
+          {groups.map(g => <tbody key={g.cat}>
+            <tr><td colSpan={units.length + 4} className="pt-3 pb-1 border-b border-line text-[11.5px] font-semibold text-muted">{g.cat} <span className="font-normal">· {g.rows.length}</span></td></tr>
+            {g.rows.map(({ l, i }) => { const q = l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), off = skip.indexOf(l.key) >= 0, got = !!rec.shop?.got?.[l.key]
+              const sub = [orderTierLabel(l), l.detail && l.detail !== l.name ? l.detail : '', off ? 'owner has this' : ''].filter(Boolean).join(' · '); return (
+            <tr key={l.key} className={'group/row border-b border-line/60 align-middle ' + (off ? 'opacity-50' : '')}>
+              <td className="py-1 pr-2"><input value={l.name} onChange={e => set(i, { name: e.target.value })} className={nameInp} aria-label="Item name" />
+                {sub || got || l.url ? <span className="block text-[11.5px] text-muted leading-snug">{got ? <b className="text-emerald-700">Bought{sub || l.url ? ' · ' : ''}</b> : null}{sub}{l.url ? <>{sub ? ' · ' : ''}<a href={l.url} target="_blank" rel="noreferrer" className="underline">link</a></> : null}</span> : null}</td>
+              {units.map((u, ui) => <td key={u} className="px-1 text-right"><input inputMode="numeric" value={String(l.qty[ui] ?? 0)} onChange={e => set(i, { qty: units.map((_, k) => (k === ui ? Number(e.target.value.replace(/\D/g, '')) || 0 : l.qty[k] || 0)) })} className={inp + ' w-12 text-right tabular-nums'} aria-label={'Quantity' + (units.length > 1 ? ', ' + u : '')} /></td>)}
+              <td className="px-1 text-right"><input inputMode="decimal" placeholder="$" value={l.price ?? ''} onChange={e => set(i, { price: e.target.value === '' ? null : e.target.value })} className={inp + ' w-[68px] text-right tabular-nums'} aria-label="Price each" /></td>
+              <td className="text-right tabular-nums text-ink">{l.price != null && l.price !== '' ? money(Number(l.price) * q) : <span className="text-muted">—</span>}</td>
+              <td className="pl-1 w-6 text-right"><button type="button" onClick={() => { setLines(ls => ls.filter((_, j) => j !== i)); setDirty(true) }} className="text-[15px] leading-none text-muted/50 hover:text-red-700 group-hover/row:text-muted" title="Remove" aria-label={'Remove ' + l.name}>×</button></td>
+            </tr>) })}
+          </tbody>)}
+          <tfoot><tr><td className="pt-3 font-semibold text-ink" colSpan={units.length + 2}>Estimated total{skip.length ? ' (without what the owner has)' : ''}</td><td className="pt-3 text-right font-semibold tabular-nums">{priced ? money(total) : '—'}</td><td /></tr></tfoot>
         </table></div>
         <div className="oo-noprint">
           <button type="button" onClick={() => { setLines(ls => [...ls, { key: 'c' + Date.now().toString(36), category: 'Other', name: 'New item', detail: '', url: '', price: null, qty: units.map(() => 1) }]); setDirty(true) }} className="mt-2 text-[12.5px] font-semibold text-ink">+ Add an item</button>
           <label className="block mt-3"><span className={lab}>Note to the owner (shown above the list)</span><textarea rows={2} value={note} onChange={e => { setNote(e.target.value); setDirty(true) }} className={field} placeholder="e.g. We left off what you marked as already in the home." /></label>
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <button type="button" disabled={!dirty || !!busy} onClick={() => act('save', { lines, note })} className="rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink disabled:opacity-40">Save changes</button>
-            <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('send') }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {o.status === 'draft' ? 'Send to the owner to review' : 'Send again'}</button>
+            <button type="button" disabled={!!busy || !!mail} onClick={openMail} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'preview' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {o.status === 'draft' ? 'Send to the owner to review' : 'Send again'}</button>
             {o.status !== 'draft' ? <button type="button" onClick={() => act('unsend')} className="text-[12.5px] text-muted underline">Take it back to a draft</button> : null}
             <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the supplies list</button>
           </div>
-          <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-2">
-            <span className="mr-auto"><b>For our team.</b> Download the list to buy from: a printout with a tick box per line, or a spreadsheet with the links and a column for what has been ordered.</span>
-            <button type="button" disabled={!!busy} onClick={() => download('pdf')} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Printer size={13} /> PDF printout</button>
-            <button type="button" disabled={!!busy} onClick={() => download('xlsx')} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Download size={13} /> Excel</button>
-          </div>
-          {/* The same list as a link (Jon, 2026-11-17: "like a shopping list that as they get they can mark"). */}
-          {(() => { const sh = rec.shop, host = typeof window !== 'undefined' ? window.location.origin : '', link = sh?.key ? `${host}/join/${rec.code}/shop?k=${sh.key}` : ''
-            const buyLines = lines.filter(l => skip.indexOf(l.key) < 0), bought = buyLines.filter(l => sh?.got?.[l.key]).length
-            return (
-              <div className="mt-2 rounded-xl bg-app p-3 text-[12.5px] text-ink">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="mr-auto"><b>Shopping list link.</b> {link ? <>{bought} of {buyLines.length} bought{sh?.by ? ', last by ' + sh.by : ''}. Whoever is buying taps each line as they get it; no sign-in needed.</> : 'A link for whoever is buying: they tap each line as they get it, on a phone or at a desk, and the ticks show here.'}</span>
-                  {link ? <>
-                    <button type="button" onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; try { await navigator.clipboard.writeText(link); setMsg('Shopping link copied.') } catch { setMsg(link) } }} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Copy size={13} /> Copy link</button>
-                    <a href={link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><ExternalLink size={13} /> Open</a>
-                  </> : <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('shop') }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'shop' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Make the shopping link</button>}
-                </div>
-                {link ? <p className="mt-1.5 text-muted"><span className="break-all">{link}</span> · <button type="button" className="underline" onClick={() => act('shop', { reset: true })}>Clear the ticks</button> · <button type="button" className="underline" onClick={() => act('shop', { off: true })}>Switch the link off</button> · <button type="button" className="underline" onClick={() => act('shop')}>Refresh</button></p> : null}
-              </div>) })()}
-          <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="mr-auto"><b>The unit’s FAQ.</b> {rec.faq ? `${rec.faq.added} ${rec.faq.added === 1 ? 'entry' : 'entries'} added, last on ${new Date(rec.faq.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.` : rec.attach?.listingId ? (o.status === 'approved' ? 'Approved items go in automatically.' : 'Items go in once the owner approves the list, with the Wi-Fi, parking and laundry.') : 'Attach the unit to its Guesty listing and the approved items, Wi-Fi, parking and laundry go into its FAQ.'}</span>
-            {rec.attach?.listingId ? <button type="button" disabled={!!busy} onClick={() => act('faq')} className="font-semibold underline">{busy === 'faq' ? 'Updating…' : 'Update the FAQ now'}</button> : null}
+          {mail ? <div className="mt-3 rounded-xl border border-ink/20 bg-app/60 p-3 text-[12.5px] text-ink">
+            <p className={lab}>The email the owner gets</p>
+            <p className="mt-1.5"><span className="text-muted">To</span> {mail.to.length ? mail.to.map((a: Any) => a.email).join(', ') : <b className="text-amber-800">No owner email on file: the list goes on their page, send them the link yourself.</b>}{mail.cc.length ? <><span className="text-muted"> · Cc</span> {mail.cc.join(', ')}</> : null}</p>
+            <label className="block mt-2"><span className="text-muted">Subject</span><input value={subj} onChange={e => setSubj(e.target.value)} maxLength={200} className={field} /></label>
+            <div className="mt-2 rounded-xl border border-line bg-white p-3">
+              <p className="text-[13px]">Hi {(mail.to[0]?.name || '').split(' ')[0] || 'there'},</p>
+              <textarea rows={7} value={body} onChange={e => setBody(e.target.value)} maxLength={4000} aria-label="Message" className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-2 text-[13px] leading-relaxed text-ink" />
+              <ol className="mt-1.5 list-decimal pl-5 text-[13px] text-muted">{mail.steps.map((x: string) => <li key={x}>{x}</li>)}</ol>
+              <p className="mt-2"><span className="inline-block rounded-lg bg-ink px-3 py-1.5 text-[12.5px] font-semibold text-white">{mail.button}</span></p>
+              <p className="mt-2 text-[11.5px] text-muted">{mail.note} Signed by {mail.from || 'the GM'}.{mail.to.length > 1 ? ' Each owner is greeted by their own first name.' : ''}</p>
+            </div>
+            <p className="mt-1.5 text-[11.5px] text-muted">You can edit the subject and the message. A blank line starts a new paragraph. The greeting, steps, button and signature are added for you.</p>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <button type="button" disabled={!!busy || !body.trim()} onClick={sendMail} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {mail.to.length ? 'Send it' : 'Put it on the owner’s page'}</button>
+              <button type="button" onClick={() => { setSubj(mail.subject); setBody(mail.message) }} className="text-[12.5px] text-muted underline">Reset the wording</button>
+              <button type="button" onClick={() => setMail(null)} className="text-[12.5px] text-muted underline">Cancel</button>
+            </div>
+          </div> : null}
+          <div className="mt-4 rounded-xl border border-line divide-y divide-line text-[12.5px] text-ink">
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+              <span className="mr-auto"><b>Download</b> <span className="text-muted">the list for whoever is buying</span></span>
+              <button type="button" disabled={!!busy} onClick={() => download('pdf')} className={rowBtn}><Printer size={13} /> PDF</button>
+              <button type="button" disabled={!!busy} onClick={() => download('xlsx')} className={rowBtn}><Download size={13} /> Excel</button>
+            </div>
+            {/* The same list as a link (Jon, 2026-11-17: "like a shopping list that as they get they can mark"). */}
+            {(() => { const sh = rec.shop, host = typeof window !== 'undefined' ? window.location.origin : '', link = sh?.key ? `${host}/join/${rec.code}/shop?k=${sh.key}` : ''
+              return (
+                <div className="px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="mr-auto"><b>Shopping link</b> <span className="text-muted">{link ? <>{boughtN} of {buy.length} bought{sh?.by ? ', last by ' + sh.by : ''}</> : 'they tap each line as they get it, no sign-in'}</span></span>
+                    {link ? <>
+                      <button type="button" onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; try { await navigator.clipboard.writeText(link); setMsg('Shopping link copied.') } catch { setMsg(link) } }} className={rowBtn}><Copy size={13} /> Copy link</button>
+                      <a href={link} target="_blank" rel="noreferrer" className={rowBtn}><ExternalLink size={13} /> Open</a>
+                    </> : <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('shop') }} className={rowBtn}>{busy === 'shop' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Make the link</button>}
+                  </div>
+                  {link ? <p className="mt-1 text-[11.5px] text-muted"><button type="button" className="underline" onClick={() => act('shop')}>Refresh</button> · <button type="button" className="underline" onClick={() => act('shop', { reset: true })}>Clear the ticks</button> · <button type="button" className="underline" onClick={() => act('shop', { off: true })}>Switch the link off</button></p> : null}
+                </div>) })()}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+              <span className="mr-auto"><b>Unit FAQ</b> <span className="text-muted">{rec.faq ? `${rec.faq.added} ${rec.faq.added === 1 ? 'entry' : 'entries'} added, last on ${new Date(rec.faq.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : rec.attach?.listingId ? (o.status === 'approved' ? 'approved items go in automatically' : 'items go in once the owner approves, with the Wi-Fi, parking and laundry') : 'attach the unit to its Guesty listing first'}</span></span>
+              {rec.attach?.listingId ? <button type="button" disabled={!!busy} onClick={() => act('faq')} className={rowBtn}>{busy === 'faq' ? 'Updating…' : 'Update now'}</button> : null}
+            </div>
           </div>
         </div>
       </>)}
+      </div>}
       {msg ? <p className="text-[12.5px] text-ink mt-2">{msg}</p> : null}
     </section>
   )
@@ -714,7 +804,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
 
   return (
     <div className="max-w-[1200px] mx-auto oo-report">
-      <style>{`@media print{.oo-noprint{display:none!important}.oo-report{max-width:none}}`}</style>
+      <style>{`/* a folded section's own card and title give way to the Fold's */.oo-fold-body>section{border:0;padding:0;border-radius:0;background:transparent}.oo-fold-body h2{display:none}@media print{.oo-noprint{display:none!important}.oo-report{max-width:none}.oo-fold-body[hidden]{display:block!important}}`}</style>
       <a href="/owner-onboarding" className="oo-noprint inline-flex items-center gap-1 text-[13px] font-semibold text-ink mb-4">← All owners</a>
       <header className="flex flex-wrap items-end gap-3 pb-5 mb-6 border-b border-line">
         <div className="mr-auto min-w-0">
@@ -731,6 +821,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
       </header>
       {msg ? <p className="oo-noprint text-[12.5px] text-muted -mt-3 mb-3">{msg}</p> : null}
       <OwnerInfo rec={rec} onRec={setRec} />
+      <nav className="oo-noprint mb-5 flex flex-wrap items-center gap-1.5 text-[12.5px]" aria-label="Sections">
+        {[['intro', 'Intro email'], ['portal', 'Portal'], ['home', 'Home'], ['supplies', 'Supplies'], ['order', 'Order list'], ['linen', 'Linen'], ['paperwork', 'Paperwork']].map(([id, l]) => <a key={id} href={'#oo-' + id} className="rounded-full border border-line bg-white px-2.5 py-1 font-semibold text-ink hover:border-ink">{l}</a>)}
+        <span className="ml-auto flex gap-3 text-muted"><button type="button" className="underline" onClick={() => window.dispatchEvent(new CustomEvent(FOLD_ALL, { detail: false }))}>Fold all</button><button type="button" className="underline" onClick={() => window.dispatchEvent(new CustomEvent(FOLD_ALL, { detail: true }))}>Open all</button></span>
+      </nav>
       {rec.track ? (
         <section className={card + ' oo-noprint mb-6'}>
           <p className={lab + ' mb-2.5'}>Where the owner stands</p>
@@ -747,7 +841,11 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="space-y-6 min-w-0">
+          {/* FIRST THINGS FIRST: the welcome email and the portal invite are how an onboarding starts, so they lead; once sent they fold to a line */}
+          <div className="oo-noprint"><Fold code={code} id="intro" title="Introductory email" done={!!rec.intro} summary={rec.intro ? 'Sent ' + shortDay(rec.intro.at) : 'Not sent yet'}><IntroEmail rec={rec} onRec={setRec} /></Fold></div>
+          <div className="oo-noprint"><Fold code={code} id="portal" title="Owner’s portal account" done={!!rec.ownerAccess?.invitedAt} summary={rec.ownerAccess?.lastSeenAt || rec.ownerAccess?.activatedAt ? 'Signed in' : rec.ownerAccess?.invitedAt ? 'Invited ' + shortDay(rec.ownerAccess.invitedAt) + ', not signed in yet' : 'Not invited yet'}><InviteOwner rec={rec} onRec={setRec} /></Fold></div>
           {/* the units */}
+          <Fold code={code} id="home" title={units.length > 1 ? units.length + ' units' : 'The home'} done={units.length > 0 && !!units[0].address} summary={units.length ? units.map((u, i) => [uLabel(i), u.bedrooms === 0 ? 'studio' : u.bedrooms + ' bed', u.bathrooms + ' bath', 'sleeps ' + u.guests].join(' · ')).slice(0, 2).join('  |  ') + (units.length > 2 ? '  | +' + (units.length - 2) + ' more' : '') : 'Not filled in yet'}>
           <section className={card}>
             <div className="flex items-center gap-2 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{units.length > 1 ? units.length + ' units' : 'The home'}</h2>
               <button type="button" onClick={() => { const list = [...units, { ...DEFAULT_HOME, address: units[0]?.address || '' }]; setRec({ ...rec, home: list[0], more: list.slice(1) }); setEditHome(true); setEu(list.length - 1) }} className="oo-noprint text-[12.5px] font-semibold text-ink">+ Add a unit</button></div>
@@ -764,8 +862,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
               </div>
             ))}
           </section>
+          </Fold>
 
           {/* the supplies: everything to buy, and what each unit needs */}
+          <Fold code={code} id="supplies" title="Supplies" done={!!rec.walk?.doneAt} summary={!sup.length ? 'Waiting on the home' : [have.length + ' have', need.length + ' need', open.length ? open.length + ' not checked' : '', rec.walk?.doneAt ? 'inventory closed' : ''].filter(Boolean).join(' · ')}>
           <section className={card}>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink">Supplies</h2><div className="oo-noprint inline-flex rounded-full bg-app p-0.5 text-[12px] font-semibold mr-auto">{([['answers', 'Owner’s answers'], ['review', 'Inventory review']] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setSupTab(k)} className={'rounded-full px-3 py-1 ' + (supTab === k ? 'bg-white text-ink shadow-sm' : 'text-muted')}>{l}{k === 'review' && !rec.walk?.doneAt && sup.length ? <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" /> : null}</button>)}</div><span className="text-[13px]"><b className="text-ink">{have.length}</b> have · <b className="text-[#B4532A]">{need.length}</b> need · <b className="text-ink">{open.length}</b> not checked</span></div>
             {!sup.length ? <p className="text-[13px] text-muted">The list appears once the home is filled in.</p> : supTab === 'review' ? <InventoryReview rec={rec} sup={sup} units={units} uLabel={uLabel} onApply={apply} onMsg={setMsg} /> : (<>
@@ -786,10 +886,12 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             </>)}
             {rec.ownerNotes ? <div className="mt-4 rounded-xl bg-app p-3"><p className={lab}>The owner’s note</p><p className="text-[13.5px] text-ink mt-1 whitespace-pre-wrap">{rec.ownerNotes}</p></div> : null}
           </section>
+          </Fold>
 
-          <div id="oo-order"><OrderList rec={rec} units={units.map((_, i) => uLabel(i))} onRec={setRec} /></div>
+          <div id="oo-order" className="scroll-mt-4"><OrderList rec={rec} units={units.map((_, i) => uLabel(i))} onRec={setRec} /></div>
 
           {/* THE LINEN, ours to specify (Jon, 2026-11-13): counts at par, per unit and in all; approve, then send to the vendor */}
+          <Fold code={code} id="linen" title="Linen at par" done={!!rec.linen?.sentAt} summary={!lin.length ? 'Waiting on the home' : [lin.reduce((a, i) => a + i.qty, 0) + ' pieces', rec.linen?.sentAt ? 'sent to the vendor' : rec.linen?.approvedAt ? 'approved, not sent' : 'not approved yet'].join(' · ')}>
           <section className={card}>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Linen at par</h2><span className="text-[13px]"><b className="text-ink">{lin.reduce((a, i) => a + i.qty, 0)}</b> pieces{units.length > 1 ? ' across ' + units.length + ' units' : ''}</span></div>
             <p className="text-[12.5px] text-muted mb-3">For the team only: the owner’s page never lists linen. {rec.linen?.rows ? <b className="text-ink">Edited by {String(rec.linen.editedBy || 'the team').split('@')[0]}{rec.linen.editedAt ? ' on ' + new Date(rec.linen.editedAt).toLocaleDateString() : ''}; it no longer follows the home’s beds and baths.</b> : 'Counted by the linen calculator from the saved linen standard and each unit’s beds and baths. Adjust it here before you email or download it.'}</p>
@@ -837,8 +939,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
               </div>
             </>)}
           </section>
+          </Fold>
 
           {/* paperwork */}
+          <Fold code={code} id="paperwork" title="Paperwork" done={!!rec.payout && !!rec.agreement && !!rec.handoff && !rec.handoff.error} summary={[rec.payout ? 'W-9 and ACH in' : rec.custom.askPayout === false ? 'W-9 not asked' : 'W-9 and ACH not sent', rec.agreement ? 'agreement in' : 'no agreement', rec.handoff && !rec.handoff.error ? 'handed to accounting' : 'not handed off'].join(' · ')}>
           <section className={card}>
             <h2 className="font-serif text-[22px] leading-none text-ink mb-3">Paperwork</h2>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -867,8 +971,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
               <button type="button" disabled={busy === 'send'} onClick={async () => { setBusy('send'); const d = await fetch(`/api/owner-onboarding/${code}/handoff`, { method: 'POST' }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); setMsg(d?.ok ? 'Sent to accounting.' : 'Not sent: ' + (d?.error || 'try again')); setBusy('') }} className="oo-noprint inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[12.5px] font-semibold disabled:opacity-50"><Send size={12} /> {rec.handoff ? 'Send again' : 'Send now'}</button>
             </div>
           </section>
+          </Fold>
 
-          <div className="oo-noprint space-y-6"><InviteOwner rec={rec} onRec={setRec} /><IntroEmail rec={rec} onRec={setRec} /></div>
         </div>
 
         <div className="space-y-6 min-w-0">

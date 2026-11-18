@@ -4,7 +4,8 @@
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Minus, Plus, Lock, Phone, Mail, ChevronRight, ChevronLeft } from 'lucide-react'
-import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, gmOf, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
+import { NeedPicture } from '@/components/NeedIcons'
+import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, gmOf, routingOk, type OOHome, type OOItem, type OOMark, orderTierLabel } from '@/lib/owner-onboard'
 
 type Any = any
 /** The two forms, filling in as the owner types (Jon, 2026-11-13: "ACH and W9 forms should show them as they fill
@@ -81,7 +82,13 @@ export function OwnerJoin({ code }: { code: string }) {
   const [msg, setMsg] = useState('')
   const [pay, setPay] = useState<Any>({ w9: { name: '', business: '', taxClass: 'individual', llcCode: '', other: '', address: '', cityStateZip: '', tinType: 'ssn', tin: '' }, ach: { holder: '', bank: '', ownership: '', accountType: 'checking', routing: '', account: '', routing2: '', account2: '' }, sign: { name: '', agree: false } })
   const [skip, setSkip] = useState<string[]>([]); const [oNote, setONote] = useState('')
-  async function review(approve: boolean) { setBusy(true); setMsg(''); try { apply(await patch({ orderReview: { skip, note: oNote, approve } })); setMsg(approve ? 'Approved. Thank you! We will take it from here.' : 'Sent. We will update the list and send it back.') } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
+  // THE OWNER CAN ORDER IT THEMSELVES (Jon, 2026-11-18: "they should also be able to order themselves"): approve with
+  // self, then tick each line here as it arrives. The ticks are the same ones the team's shopping link uses.
+  async function review(approve: boolean, self = false) { setBusy(true); setMsg(''); try { apply(await patch({ orderReview: { skip, note: oNote, approve, self } })); setMsg(self ? 'Approved. You are ordering these yourself: tick each item below as it arrives.' : approve ? 'Approved. Thank you! We will take it from here.' : 'Sent. We will update the list and send it back.') } catch (e: Any) { setMsg(e.message) } finally { setBusy(false) } }
+  async function gotIt(k: string, on: boolean) { try { apply(await patch({ orderGot: { [k]: on } })) } catch (e: Any) { setMsg(e.message) } }
+  /** The supplies-list key behind an item or an order line, for its picture. */
+  const picKey = (k: string) => String(k).replace(/^(u[^|]*\|)?[sp]:/, '')
+  const TIER: Record<string, string> = { must: 'Must-have', recommended: 'Recommended', optional: 'Optional' }
   const pending = useRef<Record<string, OOMark>>({})
   const timer = useRef<any>(null)
 
@@ -146,7 +153,7 @@ export function OwnerJoin({ code }: { code: string }) {
   }
   function mark(k: string, v: OOMark) {
     setMarks(m => ({ ...m, [k]: v })); pending.current[k] = v
-    if (v === '' && k in cnts) { setCnts(c => { const x = { ...c }; delete x[k]; return x }); (pendingC.current as Any)[k] = null }
+    if ((v === '' || v === 'skip') && k in cnts) { setCnts(c => { const x = { ...c }; delete x[k]; return x }); (pendingC.current as Any)[k] = null }
     flushSoon()
   }
   const flags = rec?.custom || {}
@@ -176,7 +183,7 @@ export function OwnerJoin({ code }: { code: string }) {
   const unitCount = Math.max(1, ...items.map(i => (i.unit || 0) + 1))
   const shown = useMemo(() => items.filter(i => (i.unit || 0) === Math.min(su, unitCount - 1)), [items, su, unitCount])
   const groups = useMemo(() => Array.from(new Set(shown.map(i => i.group))), [shown])
-  const counts = { have: items.filter(i => marks[i.key] === 'have').length, need: items.filter(i => marks[i.key] === 'need').length }
+  const counts = { have: items.filter(i => marks[i.key] === 'have').length, need: items.filter(i => marks[i.key] === 'need').length, skip: items.filter(i => marks[i.key] === 'skip').length }
   const c = gmOf(flags.contact || {})
   const first = (flags.ownerName || '').split(' ')[0]
 
@@ -313,7 +320,7 @@ export function OwnerJoin({ code }: { code: string }) {
           <section>
             <p className="oj-kick">Step {tabs.indexOf('supplies') + 1}</p>
             <h1>What does the home <em>already have?</em></h1>
-            <p className="oj-p">Everything a rental this size needs. Start with the quick answer if one fits, then adjust any item. Tap <b>Have</b> if it is there or <b>Need</b> if it is not. You do not need a perfect count: Have means you have enough, and you can type the number if you want to be exact. It saves as you go.</p>
+            <p className="oj-p">Everything a rental this size needs. Start with the quick answer if one fits, then adjust any item. Tap <b>Have</b> if it is there or <b>Need</b> if it is not. You do not need a perfect count: Have means you have enough, and you can type the number if you want to be exact. Must-haves are needed in every home; on a <b>recommended</b> or <b>optional</b> item you can tap <b>Don’t want</b> and we will leave it off. It saves as you go.</p>
             {!items.length ? <p className="oj-p">Fill in the home first, then the list appears here.</p> : (<>
               {unitCount > 1 ? <div className="oj-units">{Array.from({ length: unitCount }, (_, i) => { const l = items.find(x => (x.unit || 0) === i)?.unitLabel || 'Unit ' + (i + 1); const left = items.filter(x => (x.unit || 0) === i && !marks[x.key]).length; return <button key={i} type="button" className={i === su ? 'on' : ''} onClick={() => setSu(i)}>{l}{left ? <small> · {left} to check</small> : <small> · done</small>}</button> })}</div> : null}
               <div className="oj-quick">
@@ -324,7 +331,7 @@ export function OwnerJoin({ code }: { code: string }) {
                 </div>
                 <p className="oj-small" style={{ margin: 0 }}>Either way, our team walks the home to confirm the count before anything is ordered. You can still change any item below.</p>
               </div>
-              <div className="oj-tally"><span><b>{counts.have}</b> have</span><span><b>{counts.need}</b> need</span><span><b>{items.length - counts.have - counts.need}</b> to check</span></div>
+              <div className="oj-tally"><span><b>{counts.have}</b> have</span><span><b>{counts.need}</b> need</span>{counts.skip ? <span><b>{counts.skip}</b> don’t want</span> : null}<span><b>{items.length - counts.have - counts.need - counts.skip}</b> to check</span></div>
               <div className="oj-cols">
                 {groups.map(g => {
                   const list = shown.filter(i => i.group === g)
@@ -333,7 +340,8 @@ export function OwnerJoin({ code }: { code: string }) {
                       <div className="oj-g-head"><p className="oj-lab">{g}</p><button type="button" onClick={() => list.forEach(i => (i.qty > 1 ? count(i.key, i.qty, i.qty) : mark(i.key, 'have')))}>All have</button></div>
                       <ul>{list.map(i => (
                         <li key={i.key} className={'oj-m-' + (marks[i.key] || '')}>
-                          <span>{i.name}{i.size ? <small> · {i.size}</small> : null}<em>×{i.qty}</em></span>
+                          <i className="oj-pic" aria-hidden="true"><NeedPicture k={picKey(i.key)} name={i.name} size={30} /></i>
+                          <span className="oj-nm">{i.name}{i.size ? <small> · {i.size}</small> : null}<em>×{i.qty}</em><small className={'oj-tier ' + i.tier}>{TIER[i.tier] || ''}</small></span>
                           {/* YES IS ENOUGH (Jon, 2026-11-13: "they can mark yes if they hit the number, they don't need a perfect count…
                               they can edit the number or click yes and it assumes they have the number"). Have = all of them,
                               Need = none; the number is there for anyone who wants to be exact. Our walkthrough checks it. */}
@@ -342,10 +350,12 @@ export function OwnerJoin({ code }: { code: string }) {
                               <label className="oj-qty" title={'Optional: exactly how many are there, of the ' + i.qty + ' this home needs'}><input inputMode="numeric" aria-label={'How many ' + i.name + ' are there'} value={n == null ? '' : String(n)} placeholder="#" onChange={e => { const v = e.target.value.replace(/\D/g, ''); if (v !== '') count(i.key, i.qty, Number(v)) }} /><small>of {i.qty}</small></label>
                               <button type="button" className={marks[i.key] === 'have' ? 'on have' : ''} onClick={() => (marks[i.key] === 'have' ? mark(i.key, '') : count(i.key, i.qty, i.qty))}>Have</button>
                               <button type="button" className={marks[i.key] === 'need' ? 'on need' : ''} onClick={() => (marks[i.key] === 'need' && !n ? mark(i.key, '') : count(i.key, i.qty, 0))}>Need</button>
+                              {i.tier !== 'must' ? <button type="button" className={marks[i.key] === 'skip' ? 'on skip' : ''} onClick={() => mark(i.key, marks[i.key] === 'skip' ? '' : 'skip')}>Don’t want</button> : null}
                             </div>) })() : (
                           <div className="oj-hn">
                             <button type="button" className={marks[i.key] === 'have' ? 'on have' : ''} onClick={() => mark(i.key, marks[i.key] === 'have' ? '' : 'have')}>Have</button>
                             <button type="button" className={marks[i.key] === 'need' ? 'on need' : ''} onClick={() => mark(i.key, marks[i.key] === 'need' ? '' : 'need')}>Need</button>
+                            {i.tier !== 'must' ? <button type="button" className={marks[i.key] === 'skip' ? 'on skip' : ''} onClick={() => mark(i.key, marks[i.key] === 'skip' ? '' : 'skip')}>Don’t want</button> : null}
                           </div>)}
                         </li>
                       ))}</ul>
@@ -365,30 +375,33 @@ export function OwnerJoin({ code }: { code: string }) {
           const cats: string[] = Array.from(new Set(o.lines.map((l: Any) => l.category)))
           const total = o.lines.filter((l: Any) => skip.indexOf(l.key) < 0).reduce((a: number, l: Any) => a + (l.price || 0) * l.qty.reduce((x: number, y: number) => x + y, 0), 0)
           const multi = homes.length > 1
+          const self = !!o.review?.self && o.status === 'approved', got: string[] = o.got || []
           return (
             <section>
               <p className="oj-kick">For your review</p>
               <h1>Your <em>order list.</em></h1>
-              <p className="oj-p">These are the items we would buy to set {multi ? 'your units' : 'the home'} up, with the quantity and price of each. Tap <b>I have this</b> on anything already there and we will take it off. Then approve, or tell us what to change.</p>
+              <p className="oj-p">{self ? <>You are ordering these yourself. Tap <b>Got it</b> on each item as it arrives, so we know when the home is ready.</> : <>These are the items {multi ? 'your units still need' : 'the home still needs'}, with how many of each. Tap <b>I have this</b> on anything already there and we will take it off. Then approve it for us to order, order the items yourself, or tell us what to change.</>}</p>
               {o.note ? <p className="oj-lock">{o.note}</p> : null}
-              {o.status === 'approved' ? <p className="oj-ok"><Check size={15} /> You approved this list on {new Date(o.review.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.</p> : o.status === 'changes' ? <p className="oj-ok"><Check size={15} /> Your changes were sent. We will update the list.</p> : null}
+              {self ? <p className="oj-ok"><Check size={15} /> {got.length} of {o.lines.filter((l: Any) => skip.indexOf(l.key) < 0 && (o.review.skip || []).indexOf(l.key) < 0).length} items in.</p> : o.status === 'approved' ? <p className="oj-ok"><Check size={15} /> You approved this list on {new Date(o.review.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.</p> : o.status === 'changes' ? <p className="oj-ok"><Check size={15} /> Your changes were sent. We will update the list.</p> : null}
               <div className="oj-cols">
                 {cats.map(c => (
                   <div key={c} className="oj-group">
                     <p className="oj-lab">{c}</p>
-                    <ul>{o.lines.filter((l: Any) => l.category === c).map((l: Any) => { const q = l.qty.reduce((x: number, y: number) => x + y, 0), off = skip.indexOf(l.key) >= 0; return (
+                    <ul>{o.lines.filter((l: Any) => l.category === c).map((l: Any) => { const q = l.qty.reduce((x: number, y: number) => x + y, 0), off = self ? (o.review.skip || []).indexOf(l.key) >= 0 : skip.indexOf(l.key) >= 0, in_ = got.indexOf(l.key) >= 0; return (
                       <li key={l.key} className={'oj-ol' + (off ? ' off' : '')}>
-                        <span><b>{l.name}</b>{l.detail && l.detail !== l.name ? <small className="oj-od">{l.detail}</small> : null}
+                        {String(l.key).startsWith('p:') ? <i className="oj-pic" aria-hidden="true"><NeedPicture k={picKey(l.key)} name={l.name} size={30} /></i> : null}
+                        <span className="oj-nm"><b>{l.name}</b>{orderTierLabel(l) ? <small className="oj-od">{orderTierLabel(l)}</small> : null}{l.detail && l.detail !== l.name ? <small className="oj-od">{l.detail}</small> : null}
                           <small className="oj-od">×{q}{multi ? ' (' + l.qty.map((n: number, i: number) => (homes[i]?.unit ? homes[i].unit : 'Unit ' + (i + 1)) + ': ' + n).join(', ') + ')' : ''}{l.price != null ? ' · ' + money(l.price) + ' each · ' + money(l.price * q) : ''}{l.url ? <> · <a href={l.url} target="_blank" rel="noreferrer">See the item</a></> : null}</small></span>
-                        <div className="oj-hn"><button type="button" className={off ? 'on need' : ''} onClick={() => setSkip(sk => (off ? sk.filter(k => k !== l.key) : [...sk, l.key]))}>{off ? 'I have this ✓' : 'I have this'}</button></div>
+                        <div className="oj-hn">{self ? (off ? <small>Already have</small> : <button type="button" className={in_ ? 'on have' : ''} onClick={() => gotIt(l.key, !in_)}>{in_ ? 'Got it ✓' : 'Got it'}</button>) : <button type="button" className={off ? 'on need' : ''} onClick={() => setSkip(sk => (off ? sk.filter(k => k !== l.key) : [...sk, l.key]))}>{off ? 'I have this ✓' : 'I have this'}</button>}</div>
                       </li>) })}</ul>
                   </div>
                 ))}
               </div>
-              <div className="oj-card oj-total"><span>Estimated total{skip.length ? ' (without the ' + skip.length + ' you have)' : ''}</span><b>{money(total)}</b><small>Before tax and shipping. Linen is quoted separately.</small></div>
+              {o.lines.some((l: Any) => l.price != null) ? <div className="oj-card oj-total"><span>Estimated total{skip.length ? ' (without the ' + skip.length + ' you have)' : ''}</span><b>{money(total)}</b><small>Before tax and shipping. Linen is quoted separately.</small></div> : <p className="oj-small">Linen is quoted separately.</p>}
               <label className="oj-f oj-wide oj-mt"><span>Anything to change? (optional)</span><textarea rows={3} value={oNote} onChange={e => setONote(e.target.value)} placeholder="e.g. we already have a coffee maker; please use a different toaster" /></label>
               {msg ? <p className={msg.startsWith('Approved') || msg.startsWith('Sent') ? 'oj-ok' : 'oj-err'}>{msg}</p> : null}
-              <div className="oj-nav"><button type="button" className="oj-ghost" disabled={busy} onClick={() => review(false)}>Ask for changes</button><button type="button" className="oj-cta" disabled={busy} onClick={() => review(true)}>{busy ? 'Sending…' : 'Approve this list'} <Check size={16} /></button></div>
+              {self ? <p className="oj-small">Changed your mind? Tap Have Stay order instead and we will place the order for you.</p> : null}
+              <div className="oj-nav"><button type="button" className="oj-ghost" disabled={busy} onClick={() => review(false)}>Ask for changes</button><span className="oj-nav-r">{self ? null : <button type="button" className="oj-ghost" disabled={busy} onClick={() => review(true, true)}>I will order these myself</button>}<button type="button" className="oj-cta" disabled={busy} onClick={() => review(true)}>{busy ? 'Sending…' : self ? 'Have Stay order instead' : 'Approve, Stay orders'} <Check size={16} /></button></span></div>
             </section>
           )
         })() : null}
@@ -565,7 +578,7 @@ const CSS = `
 .oj-g-head .oj-lab{margin:0}
 .oj-g-head button{border:0;background:none;color:var(--acc);font:600 12px Inter,sans-serif;cursor:pointer}
 .oj-group ul{list-style:none;margin:6px 0 0;padding:0}
-.oj-group li{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--rule)}
+.oj-group li{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 10px;padding:8px 0;border-top:1px solid var(--rule)}
 .oj-group li>span{min-width:0;color:var(--ink);font-size:14px}
 .oj-group li small{color:var(--mut)}
 .oj-group li em{font-style:normal;margin-left:8px;color:var(--mut);font:400 16px "Instrument Serif",Georgia,serif}
@@ -578,7 +591,13 @@ const CSS = `
 .oj-qty{display:flex;align-items:center;gap:4px;flex:0 0 auto;margin-right:4px}
 .oj-qty input{width:40px;height:32px;text-align:center;border:1px solid var(--rule);border-radius:8px;font:600 13.5px Inter,sans-serif;color:var(--ink);background:#fff;padding:0}
 .oj-qty small{font:500 11.5px Inter,sans-serif;color:var(--mut);white-space:nowrap}
-.oj-hn{display:flex;gap:4px;flex:0 0 auto}
+.oj-hn{display:flex;gap:4px;flex:0 0 auto;margin-left:auto;align-items:center}
+.oj-hn button.skip{background:var(--mut);border-color:var(--mut);color:#fff}
+.oj-pic{flex:0 0 30px;display:flex;color:var(--mut);font-style:normal}
+.oj-group li>.oj-nm{flex:1 1 120px}
+.oj-tier{display:block;font:500 11.5px Inter,sans-serif}.oj-tier.must{display:none}
+.oj-m-skip>.oj-nm{opacity:.5;text-decoration:line-through}.oj-m-skip>.oj-pic{opacity:.4}
+.oj-nav-r{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto}
 .oj-hn button{height:32px;padding:0 12px;border-radius:99px;border:1px solid var(--rule);background:#fff;color:var(--mut);font:600 12.5px Inter,sans-serif;cursor:pointer}
 .oj-hn button.have{background:var(--ok);border-color:var(--ok);color:#fff}
 .oj-hn button.need{background:#B4532A;border-color:#B4532A;color:#fff}

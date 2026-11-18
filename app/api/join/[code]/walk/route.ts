@@ -18,7 +18,8 @@ const NOPE = () => NextResponse.json({ ok: false, error: 'This walkthrough link 
 
 async function sheet(r: any) {
   const all = await itemsFor(r)
-  const items = ownerItems(all).map(i => ({ key: i.key, name: i.name, group: i.group, qty: i.qty, unit: i.unit, unitLabel: i.unitLabel, owner: stockOf(r, i).owner }))
+  // what the owner said they do not want is not counted: it is not being bought (Jon, 2026-11-18)
+  const items = ownerItems(all).filter(i => r.marks?.[i.key] !== 'skip').map(i => ({ key: i.key, name: i.name, group: i.group, qty: i.qty, unit: i.unit, unitLabel: i.unitLabel, owner: stockOf(r, i).owner }))
   // LINEN, ITS OWN SECTION (Jon, 2026-11-17): what the unit should have at par, counted the same way; what is there comes off the linen order
   const linen = linenLines(r, all).map(e => ({ key: e.key, name: e.name + (e.size ? ' · ' + e.size : ''), group: 'Linen', qty: e.par, unit: e.unit, unitLabel: e.unitLabel, owner: null }))
   const units = unitsOf(r).map((h: any, i: number) => ({ label: h.unit ? 'Unit ' + h.unit : 'Unit ' + (i + 1), address: h.address, access: h.access || '', parking: h.parking || '' }))

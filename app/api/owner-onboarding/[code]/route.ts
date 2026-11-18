@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (b.marks && typeof b.marks === 'object') for (const [k, v] of Object.entries(b.marks)) if (v === 'have' || v === 'need' || v === '') r.marks[String(k).slice(0, 120)] = v as any
   if (b.counts && typeof b.counts === 'object') r.counts = mergeCounts(r.counts || {}, b.counts)
   if (b.walkCounts && typeof b.walkCounts === 'object') { const w = ensureWalk(r); w.counts = mergeCounts(w.counts || {}, b.walkCounts); linenCountsChanged(r, b.walkCounts) }
-  if (b.decisions && typeof b.decisions === 'object') { const d = { ...(r.decisions || {}) }; let n = 0; for (const [k, v] of Object.entries(b.decisions)) { if (++n > 800) break; if (v === 'no-buy' || v === 'owner') d[String(k).slice(0, 120)] = v; else delete d[String(k).slice(0, 120)] } r.decisions = d }
+  if (b.decisions && typeof b.decisions === 'object') { const d = { ...(r.decisions || {}) }; let n = 0; for (const [k, v] of Object.entries(b.decisions)) { if (++n > 800) break; if (v === 'no-buy' || v === 'owner') d[String(k).slice(0, 120)] = v; else { delete d[String(k).slice(0, 120)]; /* clearing it also clears the owner's own "Don't want" */ if (r.marks[String(k).slice(0, 120)] === 'skip') r.marks[String(k).slice(0, 120)] = '' } } r.decisions = d }
   if (Array.isArray(b.steps)) {
     const keys = OO_STEPS.map(s => s.key)
     r.steps = keys.map(k => { const n: any = b.steps.find((x: any) => x?.key === k) || r.steps.find(x => x.key === k) || {}; return { key: k, status: ['todo', 'doing', 'done'].includes(n.status) ? n.status : 'todo', date: String(n.date || '').slice(0, 30), note: String(n.note || '').slice(0, 300) } as OOStep })

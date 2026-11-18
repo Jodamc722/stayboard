@@ -4,6 +4,7 @@
 // lines to buy with their quantity, price and link, and what is already ticked. Nothing about the owner.
 //   GET   ?k=                 → the list
 //   PATCH { k, got: { lineKey: true | false }, by? } → ticks or unticks lines as they are bought
+import { orderTierLabel } from '@/lib/owner-onboard'
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { readRecord, saveRecord, orderNeeds } from '@/lib/owner-onboard-server'
@@ -23,7 +24,7 @@ function list(r: any) {
   // what the owner said they already have is not on the buying list
   const lines = (o?.lines || []).filter((l: any) => skip.indexOf(l.key) < 0 && l.qty.some((q: number) => Number(q) > 0))
     // `needs`: the actual pieces each line is for (pots and pans set → large frying pan, saucepans ×2, stock pot)
-    .map((l: any) => ({ key: l.key, category: l.category || 'Other', name: l.name, detail: l.detail && l.detail !== l.name ? l.detail : '', url: l.url || '', price: l.price, qty: l.qty, needs: (needs[l.key] || []).filter(n => Number(l.qty[n.unit]) > 0) }))
+    .map((l: any) => ({ key: l.key, category: l.category || 'Other', name: l.name, detail: l.detail && l.detail !== l.name ? l.detail : '', tier: orderTierLabel(l), url: l.url || '', price: l.price, qty: l.qty, needs: (needs[l.key] || []).filter(n => Number(l.qty[n.unit]) > 0) }))
   const got: Record<string, { at: string; by?: string }> = {}
   for (const l of lines) if (r.shop?.got?.[l.key]) got[l.key] = r.shop.got[l.key]
   return { ok: true, place: r.attach?.property || '', units, lines, got, by: r.shop?.by || '' }

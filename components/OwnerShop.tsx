@@ -4,7 +4,7 @@
 // when it is bought; it saves on its own and anyone else with the link sees the tick. What is left stays on top.
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-type Line = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[]; needs?: { name: string; n: number; unit: number }[] }
+type Line = { key: string; category: string; name: string; detail: string; tier?: string; url: string; price: number | null; qty: number[]; needs?: { name: string; n: number; unit: number }[] }
 type List = { place: string; units: string[]; lines: Line[]; got: Record<string, { at: string; by?: string }>; by: string }
 const CSS = `
 .os{--ink:#121316;--body:#3A3B40;--mut:#6E6F74;--rule:#E5E1D8;--acc:#8C6D3A;--ok:#2F7D4F;--soft:#F1EDE4;min-height:100vh;background:#F6F4EE;color:var(--body);font:400 16px/1.5 Inter,system-ui,sans-serif;color-scheme:light}
@@ -91,7 +91,7 @@ export function OwnerShop({ code, k }: { code: string; k: string }) {
                 <button type="button" className="os-tick" role="checkbox" aria-checked={on} aria-label={(on ? 'Bought: ' : 'Mark as bought: ') + l.name} onClick={() => tick(l.key)}>{on ? '✓' : ''}</button>
                 <span className="os-t" onClick={() => tick(l.key)}>
                   <b>{l.name}</b>
-                  {l.detail ? <small>{l.detail}</small> : null}
+                  {l.detail || l.tier ? <small>{[l.tier, l.detail].filter(Boolean).join(' · ')}</small> : null}
                   {multi ? <small>{d.units.map((u, i) => (Number(l.qty[i]) ? u + ': ' + l.qty[i] : '')).filter(Boolean).join(' · ')}</small> : null}
                   {/* The actual pieces this line is for (Jon, 2026-11-17: "list the actual items needed… like type needed"). */}
                   {l.needs && l.needs.length ? (multi

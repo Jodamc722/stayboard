@@ -1,7 +1,8 @@
 // The order list for one onboarding (lib/owner-onboard OOOrder).
 //   POST { action: 'build' }          → a first list from Stay's catalog, sized to the units (replaces a draft)
 //   POST { action: 'save', lines, note } → the team's edits
-//   POST { action: 'send' }           → shows it on the owner's page for review and emails them a sign-in link to it
+//   POST { action: 'preview' }        → the email the owner would get: who it goes to, the subject and the message (nothing is sent or saved)
+//   POST { action: 'send', subject?, message? } → shows it on the owner's page for review and emails them a link to it, with the team's edited subject and message
 //   POST { action: 'unsend' }         → back to a draft
 //   POST { action: 'faq' }            → adds what is approved (and the Wi-Fi, parking, laundry) to the attached listing's FAQ
 //   POST { action: 'shop', reset?, off? } → makes the shopping list link (app/join/<code>/shop), clears its ticks, or retires it
@@ -11,7 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { readRecord, saveRecord, buildOrder, cleanOrderLines, ensureShop, hasCatalogLines } from '@/lib/owner-onboard-server'
-import { emailMagicLink, accounts } from '@/lib/owner-onboard-auth'
+import { emailMagicLink, accounts, orderEmailPreview } from '@/lib/owner-onboard-auth'
 import { teamView, unitsOf } from '@/lib/owner-onboard'
 import { orderDoc } from '@/lib/owner-onboard-order-doc'
 import { syncFaq } from '@/lib/owner-onboard-faq'
@@ -23,6 +24,7 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
   const b = await req.json().catch(() => ({} as any))
   let note = ''
+  if (b.action === 'preview') return NextResponse.json({ ok: true, email: await orderEmailPreview(r) })
   if (b.action === 'build') {
     if (!r.home) return NextResponse.json({ ok: false, error: 'Fill in the home first.' }, { status: 400 })
     r.order = buildOrder(r)
@@ -35,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
     r.order = { ...r.order, status: 'sent', sentAt: new Date().toISOString(), review: undefined }
     // every owner on the link with an email gets their own link to the list
     const to = accounts(r).filter(a => a.email)
-    if (to.length) { let sent = 0; for (const a of to) { const m = await emailMagicLink(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, 'order', a.id).catch(() => ({ ok: false })); if (m.ok) sent++ } note = sent === to.length ? (to.length > 1 ? `All ${to.length} owners were emailed a link to review it.` : 'The owner was emailed a link to review it.') : sent ? `It is on the owners’ page; ${sent} of ${to.length} emails sent.` : 'It is on the owner’s page, but the email did not send.' }
+    if (to.length) { let sent = 0; for (const a of to) { const m = await emailMagicLink(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, 'order', a.id, undefined, { subject: typeof b.subject === 'string' ? b.subject : '', message: typeof b.message === 'string' ? b.message : '' }).catch(() => ({ ok: false })); if (m.ok) sent++ } note = sent === to.length ? (to.length > 1 ? `All ${to.length} owners were emailed a link to review it.` : 'The owner was emailed a link to review it.') : sent ? `It is on the owners’ page; ${sent} of ${to.length} emails sent.` : 'It is on the owner’s page, but the email did not send.' }
     else note = 'It is on the owner’s page. There is no owner email, so send them the link yourself.'
   } else if (b.action === 'unsend' && r.order) {
     r.order = { ...r.order, status: 'draft' }
