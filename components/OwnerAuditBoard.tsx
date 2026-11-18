@@ -403,6 +403,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})   // owner::status → expanded
   const [prepBusy, setPrepBusy] = useState('')
   const [fPrep, setFPrep] = useState<PrepFilter>('')
+  // OLDEST FIRST, AND SORTABLE (Jon, 2026-11-18: "the oldest one first at top, have sorting features"). The list
+  // used to come grouped by owner; it now opens with the earliest check-in at the top, and can be re-sorted.
+  const [prepSort, setPrepSort] = useState<'oldest' | 'newest' | 'open' | 'owner' | 'guest' | 'rental'>('oldest')
   const [recheckBusy, setRecheckBusy] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [rowSync, setRowSync] = useState('')   // item key currently being re-pulled from Guesty
@@ -1902,6 +1905,17 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 case 'marked': return !isSplit(p) && !!p.saved
                 default: return true
               }
+            }).slice().sort((a, b) => {
+              const owner = (p: PrepItem) => String(p.ownerName || ownerName[p.ownerId] || '~')
+              const byDate = String(a.checkIn || '').localeCompare(String(b.checkIn || '')) || String(a.checkOut || '').localeCompare(String(b.checkOut || '')) || a.resCode.localeCompare(b.resCode)
+              switch (prepSort) {
+                case 'newest': return -byDate
+                case 'open': return Number(prepResolved(a)) - Number(prepResolved(b)) || Number(!a.noFees) - Number(!b.noFees) || byDate
+                case 'owner': return owner(a).localeCompare(owner(b)) || String(a.unit || '').localeCompare(String(b.unit || ''), undefined, { numeric: true }) || byDate
+                case 'guest': return String(a.guest || '~').localeCompare(String(b.guest || '~')) || byDate
+                case 'rental': return (Number(b.onStatement ? b.rental : 0) || 0) - (Number(a.onStatement ? a.rental : 0) || 0) || byDate
+                default: return byDate
+              }
             })
             return (
               <>
@@ -1917,9 +1931,20 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     {chip('nofees', noFees + ' fees not set up', noFees ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-neutral-100 text-neutral-600 ring-neutral-200')}
                     {chip('split', split + ' split already', 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
                     {marked > 0 && chip('marked', marked + ' marked done', 'bg-emerald-50 text-emerald-700 ring-emerald-200')}
+                    <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted">Sort
+                      <select value={prepSort} onChange={e => setPrepSort(e.target.value as typeof prepSort)} aria-label="Sort the list"
+                        className="text-xs font-medium text-ink border border-line rounded-lg bg-white px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200">
+                        <option value="oldest">Oldest check-in first</option>
+                        <option value="newest">Newest check-in first</option>
+                        <option value="open">To break out first</option>
+                        <option value="owner">Owner, then unit</option>
+                        <option value="guest">Guest A to Z</option>
+                        <option value="rental">Rental, highest first</option>
+                      </select>
+                    </label>
                     {internal && !share && <button onClick={recheckGuesty} disabled={recheckBusy}
                       title="Pull the outstanding reservations fresh from Guesty so folio edits show up now"
-                      className="ml-auto inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white text-brand-700 hover:bg-app disabled:opacity-40">
+                      className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-line bg-white text-brand-700 hover:bg-app disabled:opacity-40">
                       <RefreshCw size={12} className={recheckBusy ? 'animate-spin' : ''} /> {recheckBusy ? 'Re-checking…' : 'Re-check Guesty'}
                     </button>}
                   </div>
