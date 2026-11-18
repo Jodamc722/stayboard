@@ -43,3 +43,31 @@ export async function safeGet(raw: string, max = 1_500_000): Promise<{ url: stri
   throw new Error('Too many redirects.')
 }
 
+
+/** The same guarded fetch, for a picture: the bytes and their type. Over `max` it is refused, not cut short. */
+export async function safeGetBytes(raw: string, max = 8_000_000): Promise<{ url: string; bytes: Buffer; type: string }> {
+  let url = await publicUrl(raw)
+  for (let hop = 0; hop < 4; hop++) {
+    const ctl = new AbortController()
+    const t = setTimeout(() => ctl.abort(), 10000)
+    try {
+      const r = await fetch(url, { redirect: 'manual', signal: ctl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; StayLighthouse/1.0; +https://stay-hospitality.com)', Accept: 'image/avif,image/webp,image/*,*/*' } })
+      if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { url = await publicUrl(new URL(r.headers.get('location')!, url).toString()); continue }
+      if (!r.ok) throw new Error('The website answered ' + r.status + '.')
+      if (Number(r.headers.get('content-length') || 0) > max) throw new Error('That picture is too large.')
+      const reader = r.body?.getReader()
+      if (!reader) throw new Error('Nothing came back.')
+      const chunks: Uint8Array[] = []
+      let size = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        size += value.length
+        if (size > max) { try { await reader.cancel() } catch {} throw new Error('That picture is too large.') }
+        chunks.push(value)
+      }
+      return { url: url.toString(), bytes: Buffer.concat(chunks.map(c => Buffer.from(c))), type: String(r.headers.get('content-type') || '') }
+    } finally { clearTimeout(t) }
+  }
+  throw new Error('Too many redirects.')
+}

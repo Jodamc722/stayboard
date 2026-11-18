@@ -122,6 +122,8 @@ export type SalesCma = {
   gallery?: string[]
   gallerySource?: string
 }
+/** A backdrop is one of ours (public/deck-img) or one lib/sales-backdrop made and stored: never a picture on someone else's site. */
+export const isBackdropUrl = (u: string) => /^\/deck-img\/[\w./-]+$/.test(String(u || '')) || /^https:\/\/[a-z0-9]+\.supabase\.co\/storage\/v1\/object\/public\/deck-backdrops\/[a-f0-9]+\.jpg$/.test(String(u || ''))
 /** The Rider's two backdrops, adapted from renderings on theriderresidences.com (cropped, blurred, darkened). */
 export const RIDER_GALLERY = ['/deck-img/rider/backdrop-1.jpg', '/deck-img/rider/backdrop-2.jpg']
 /** Older name, kept so the math reads the same everywhere. */

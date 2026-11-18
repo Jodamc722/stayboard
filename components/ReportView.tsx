@@ -39,6 +39,7 @@ import { SEASON_SHAPE, SEASON_PEAK_SHARE, SEASON_PEAK_LABEL, SEASON_BODY, season
 import { CANVAS, TYPE, blend, SERIF, inkA, type SlideTone } from '@/lib/deck'
 import { cmaSlides, CmaTuneModal } from '@/components/SalesCmaSlides'
 import { normalizeCma } from '@/lib/sales-cma'
+import { isGoogleFace, googleHrefPair, faceStack } from '@/lib/brand-fonts'
 import { DeckShare } from '@/components/DeckShare'
 import { AUDIENCES, audienceOf } from '@/lib/sales-audience'
 import { CHANNEL_MARKS, CHANNEL_BODY, CHANNEL_COUNT, CHANNEL_COUNT_RETIRED } from '@/lib/channel-marks'
@@ -1479,9 +1480,13 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
   // pace chips, bars, buttons, the PPTX export — inherits it with no further plumbing.
   const styleCfg: Any = (c && c.style) || {}
   const accentOv: string = /^#[0-9a-fA-F]{6}$/.test(String(styleCfg.accent || '')) ? String(styleCfg.accent) : ''
-  const fontKey: string = FONT_PAIRS[styleCfg.font] ? styleCfg.font
+  // THE BUILDING'S OWN TYPE (Jon, 2026-11-18: "styles should pull font style … from their website"): read off the
+  // building's website (lib/brand-read) and saved as style.brandFont. Only faces we know Google serves are loaded.
+  const bf: Any = styleCfg.brandFont && isGoogleFace(String(styleCfg.brandFont.display || '')) ? styleCfg.brandFont : null
+  const brandPair = bf ? { label: 'Building: ' + bf.display, display: faceStack(bf.display), href: googleHrefPair(bf.display, bf.text && isGoogleFace(bf.text) ? bf.text : undefined), ...(bf.text && isGoogleFace(bf.text) ? { body: faceStack(bf.text) } : {}) } : null
+  const fontKey: string = styleCfg.font === 'brand' && brandPair ? 'brand' : FONT_PAIRS[styleCfg.font] ? styleCfg.font
     : (String(((c || {}).meta || {}).kind || '') === 'sales' ? (themeKey === 'atelier' ? 'atelier' : 'stay') : String(((c || {}).meta || {}).kind || '') === 'onboarding' ? 'stay' : 'modern')
-  const fontPair = FONT_PAIRS[fontKey]
+  const fontPair: { label: string; display: string; href: string; body?: string; caps?: boolean } = fontKey === 'brand' && brandPair ? brandPair : FONT_PAIRS[fontKey]
   // Type size rides with the other style overrides, so it saves and shares like the rest.
   const TEXT_SIZES: { k: string; label: string; v: number }[] = [
     { k: 's', label: 'S', v: 0.92 }, { k: 'm', label: 'M', v: 1 },
@@ -3196,6 +3201,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
       {/* Display typeface for the chosen pairing — loaded only when a serif pairing is active. */}
       {fontPair.href ? <link rel="stylesheet" href={fontPair.href} /> : null}
       {/* The Design panel previews every typeface in itself, so it loads them all while open. */}
+      {designOpen && brandPair && fontKey !== 'brand' ? <link rel="stylesheet" href={brandPair.href} /> : null}
       {designOpen ? Object.keys(FONT_PAIRS).filter(k => FONT_PAIRS[k].href && k !== fontKey).map(k => <link key={k} rel="stylesheet" href={FONT_PAIRS[k].href} />) : null}
 
       {/* elevated look: smoother rhythm + hairline dividers between sections */}
@@ -3901,7 +3907,7 @@ export function ReportView({ initial, canEdit, isTeam, gallery, listingTable, re
               </div>
               {H('Headings typeface')}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(118px, 1fr))', gap: 8 }}>
-                {Object.keys(FONT_PAIRS).map(k => { const f = FONT_PAIRS[k]; const on = fontKey === k; return (
+                {[...(brandPair ? ['brand'] : []), ...Object.keys(FONT_PAIRS)].map(k => { const f: { label: string; display: string; caps?: boolean } = k === 'brand' ? brandPair! : FONT_PAIRS[k]; const on = fontKey === k; return (
                   <button key={k} onClick={() => setStyle({ font: k })} className="text-left" style={{ borderRadius: 10, padding: '8px 10px', border: '2px solid ' + (on ? t.ink : t.toolbarBorder), background: on ? t.chip : t.card }}>
                     <span style={{ display: 'block', fontFamily: f.display || undefined, fontSize: 20, lineHeight: 1.1, color: t.ink, textTransform: f.caps ? 'uppercase' : undefined }}>Aa Stay</span>
                     <span style={{ display: 'block', fontSize: 11, color: t.muted, marginTop: 3 }}>{f.label}</span>

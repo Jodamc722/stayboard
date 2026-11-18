@@ -9,6 +9,8 @@
 // /api/reports/statements); the Owner Statement section is computed from the recognised
 // Owners-ledger mirror, with no AI anywhere near the figures. Both sections stay null when
 // nothing is supplied, so they simply don't render.
+import { slideStyleFromTheme } from '@/lib/brand-fonts'
+import { isBackdropUrl } from '@/lib/sales-cma'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -353,6 +355,16 @@ export async function POST(req: NextRequest) {
     const br = body?.brand
     if (br && typeof br === 'object' && br.theme && typeof br.theme === 'object' && /^#[0-9a-f]{3,8}$/i.test(String(br.theme.navy || ''))) {
       ;(contentS as any).magazine = { ...((contentS as any).magazine || {}), style: 'custom', custom: br.theme, brandLogo: str(br.logo).slice(0, 500), brandImage: str(br.image).slice(0, 500), brandSource: str(br.source).slice(0, 300) }
+      // THE SAME LOOK IN EVERY VIEW (Jon, 2026-11-18: "styles should pull font style, photos from their website for
+      // design and colour themes for sales decks"): the slides take the building's colours and typefaces too, and
+      // its pictures come in as backdrops (blurred and darkened, never the photograph: lib/sales-backdrop).
+      ;(contentS as any).style = { ...((contentS as any).style || {}), ...slideStyleFromTheme(br.theme) }
+      const gal = (Array.isArray(br.gallery) ? br.gallery : []).map((u: any) => String(u)).filter(isBackdropUrl).slice(0, 2)
+      const cmaB: any = (contentS as any).cma
+      if (gal.length && cmaB && !(Array.isArray(cmaB.gallery) && cmaB.gallery.length)) {
+        cmaB.gallery = gal; cmaB.gallerySource = str(br.gallerySource).slice(0, 80)
+        if ((contentS as any).hero && (!(contentS as any).hero.heroImage || (contentS as any).hero.heroImage === '/deck-img/miami-skyline.jpg') && !heroImageUrl) (contentS as any).hero.heroImage = gal[0]
+      }
     }
     // OUR HOMES AGAINST THE MARKET (lib/sales-edge). Measured now so the deck arrives carrying it;
     // a market with no published benchmark, or where we do not win, simply has no rows.
