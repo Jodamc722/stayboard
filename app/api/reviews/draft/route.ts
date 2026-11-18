@@ -22,7 +22,7 @@ import { requireLevel } from '@/lib/access'
 import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { isDepartureCleanName } from '@/lib/breezeway'
-import { REVIEW_REPLY_SYSTEM, ratingBand, strategyLine, ratingLineFor } from '@/lib/review-reply-prompt'
+import { REVIEW_REPLY_SYSTEM, ratingBand, strategyLine, ratingLineFor, handoffLine } from '@/lib/review-reply-prompt'
 import { firstNameOf, lintReply, openerOf, subScoresOf, plainTag, styleFlags } from '@/lib/review-playbook'
 
 export const dynamic = 'force-dynamic'
@@ -266,6 +266,7 @@ export async function POST(req: NextRequest) {
     (first ? `First name: ${first}\n` : '') +
     `Rating: ${ratingLineFor(ratingNum, channel)}\n` +
     `Strategy: ${strategyLine(band, !!reviewText.trim())}\n` +
+    (reviewText.trim() ? `Handoff wording (only if the guest raised a problem; use this form once, with their own nouns for {topic}, and no second handoff sentence): ${handoffLine()}\n` : '') +
     (catsLine ? `Category scores the guest gave (context only — do not recite them): ${catsLine}\n` : '') +
     // Context, not copy (2026-11-18): the city was being worked into nearly every reply as a keyword.
     (city ? `Where the home is (context only; do not mention the city or area unless the guest did): ${city}\n` : '') +
