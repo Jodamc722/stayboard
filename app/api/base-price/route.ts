@@ -26,6 +26,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireAnyLevel } from '@/lib/access'
 import { guestyFetch } from '@/lib/guesty-retry'
 
+/** The proposed base: the yearly average night, plus this. */
+const BASE_OVER_AVERAGE = 1.15
 /** The only people who may write a base price to Guesty. */
 const PUSHERS = ['jon@stay-hospitality.com', 'jodamc722@gmail.com', 'bernadette@stay-hospitality.com']
 const mayPush = (email?: string | null) => PUSHERS.indexOf(String(email || '').trim().toLowerCase()) >= 0
@@ -121,7 +123,9 @@ export async function GET(req: NextRequest) {
     const basis = nights >= 20 && ownMed ? 'own' : peerMed ? 'building' : 'none'
     const med = basis === 'own' ? ownMed : basis === 'building' ? peerMed : null
     const base = num(l.prices?.basePrice), weekendBase = num(l.prices?.weekendBasePrice)
-    const proposed = med ? round5(med) : null
+    // 15% OVER THE YEARLY AVERAGE (Jon, 2026-11-18: "make it 15% higher than what you think"): the base sits a
+    // little above what the nights have sold for, so the figure the site prints and the fallback are not a discount.
+    const proposed = med ? round5(med * BASE_OVER_AVERAGE) : null
     const row: any = {
       id: String(l.id), name: String(l.nickname || l.title || ''), building: String(l.building || ''), bedrooms: l.bedrooms ?? null,
       base, weekendBase, booked: med ? Math.round(med) : null, nights, basis,

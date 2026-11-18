@@ -66,7 +66,7 @@ export function BasePricePanel({ building, ids }: { building: string; ids: strin
         <h3 className="text-[14px] font-bold text-ink flex-1">Base prices · {building}</h3>
         <button onClick={() => setOpen(false)} className="text-muted hover:text-ink" title="Close"><X size={16} /></button>
       </div>
-      <p className="text-[12px] text-muted mb-3">The base price is what the booking site shows and what a day falls back to when nothing else has priced it. PriceLabs sets the nightly rate; this does not move a night it has priced. Proposed = the average night sold over the last 12 months{lift ? `; weekend = that × ${lift}` : ''}. Nothing changes in Guesty until you apply.{canPush ? '' : ' Only Jon and Bernadette can apply a change.'}</p>
+      <p className="text-[12px] text-muted mb-3">The base price is what the booking site shows and what a day falls back to when nothing else has priced it. PriceLabs sets the nightly rate; this does not move a night it has priced. Proposed = the average night sold over the last 12 months plus 15%{lift ? `; weekend = that × ${lift}` : ''}. Nothing changes in Guesty until you apply.{canPush ? '' : ' Only Jon and Bernadette can apply a change.'}</p>
       {err ? <p className="text-[12.5px] text-rose-700 mb-2">{err}</p> : null}
       {busy === 'load' || !units ? <p className="text-[13px] text-muted">Loading…</p> : (
         <>
