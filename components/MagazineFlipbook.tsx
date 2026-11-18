@@ -169,7 +169,7 @@ const FLIP_CSS = `
 .mz-pv-arrow:disabled{opacity:.3;cursor:default}
 .mz-reader{overflow-x:clip;padding-bottom:calc(84px + env(safe-area-inset-bottom,0px));background:var(--mz-paper,#fff);min-height:calc(100svh - 44px);box-sizing:border-box;margin:-36px -16px -64px}
 html:has(.mz-reader){scroll-padding-top:0;-webkit-text-size-adjust:100%}
-.mz-bar-reader{transition:transform .28s cubic-bezier(.2,.8,.2,1)}.mz-bar-away .mz-bar-reader{transform:translateY(-100%)}
+.mz-bar-reader{transition:transform .28s cubic-bezier(.2,.8,.2,1);min-height:44px;box-sizing:border-box}.mz-bar-away .mz-bar-reader{transform:translateY(-100%)}
 .mz-bar-reader a.mz-ghost{display:none!important}
 .mz-r-prog{position:fixed;left:0;right:0;top:0;height:3px;transform:scaleX(0);background:var(--mz-glow,#8C6D3A);transform-origin:left center;z-index:40;pointer-events:none;will-change:transform}
 .mz-r-page{position:relative;margin:0;overflow:hidden;background:var(--mz-paper,#fff)}
