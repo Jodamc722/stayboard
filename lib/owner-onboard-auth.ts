@@ -95,8 +95,25 @@ export function canSend(r: OORecord, id = 'p'): boolean {
 }
 export const emailHint = (e: string) => { const [u, d] = String(e || '').split('@'); return u && d ? u.slice(0, 2) + '•••@' + d : '' }
 
+// ── THE ORDER-LIST EMAIL, AS THE TEAM SEES IT BEFORE IT GOES. The subject and the message are editable; the greeting
+// (each owner's own first name), the three steps, the button and the signature are fixed. ──
+export const ORDER_EMAIL_STEPS = ['Review the list', 'Mark anything you already own, and we will take it off', 'Approve it for us to order, or choose to order the items yourself']
+export function orderEmailDefaults(r: OORecord): { subject: string; message: string } {
+  const home = [r.attach.property, r.attach.unitLabel ? 'Unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
+  return { subject: `Your order list is ready for review${home ? ' · ' + home : ''}`,
+    message: `We have put together the list of items needed to get your home${home ? ' at ' + home : ''} guest-ready, based on what you told us is already there and our walk of the home. Each item shows how many are needed.\n\nWe can place the order for you as soon as you approve it, or you can order the items yourself and tick them off as they arrive. Linen is quoted separately and is not on this list.` }
+}
+/** The team's plain-text message as email paragraphs: a blank line starts a new one. */
+const orderMessageHtml = (t: string) => String(t || '').slice(0, 4000).split(/\n\s*\n/).map(p => p.trim()).filter(Boolean).slice(0, 12).map(p => escHtml(p).replace(/\n/g, '<br>'))
+/** Who it goes to and what it says, for the desk's preview. */
+export async function orderEmailPreview(r: OORecord) {
+  const to = accounts(r).filter(a => a.email)
+  const cc = ((await readOOSettings().catch(() => null))?.teamCc || []).filter(e => !to.some(a => a.email.toLowerCase() === e))
+  const gm = gmOf(r.custom.gm)
+  return { to: to.map(a => ({ name: a.name, email: a.email })), cc, ...orderEmailDefaults(r), steps: ORDER_EMAIL_STEPS, button: 'Review my order list', note: 'Nothing is ordered until you approve the list.', from: gm.name }
+}
 const esc = (s: string) => String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' } as any)[c])
-export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin' | 'order' | 'remind', id = 'p', remind?: { kind: RemindKind; n: 1 | 2 | 3 }): Promise<{ ok: boolean; error?: string }> {
+export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite' | 'signin' | 'order' | 'remind', id = 'p', remind?: { kind: RemindKind; n: 1 | 2 | 3 }, custom?: { subject?: string; message?: string }): Promise<{ ok: boolean; error?: string }> {
   const who = account(r, id)
   const to = who?.email || ''
   if (!who || !to) return { ok: false, error: 'There is no email for this owner.' }
@@ -119,9 +136,10 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
   const copy: { eyebrow: string; heading: string; pre: string; paragraphs: string[]; list?: string[]; lead?: string[]; cta: string; after: string[]; note: string } = kind === 'order' ? {
     eyebrow: 'For your review', heading: 'Your order list is ready for review',
     pre: 'The items your home needs to be guest-ready, with quantities and prices.',
-    paragraphs: [`Hi ${escHtml(first)},`, `We have put together the list of items needed to get your home${at} guest-ready, based on what you told us is already there. Each item shows the quantity and the price, with a link to the exact product.`],
-    list: ['Review the list', 'Mark anything you already own, and we will take it off', 'Approve it when you are happy, or tell us what to change'], lead: ['We will place the order as soon as you approve. Linen is quoted separately and is not on this list.'],
-    cta: 'Review and approve', after: ['If you have any questions about an item, reply to this email.'],
+    // the message is the team's to edit before it goes (Jon, 2026-11-18: "should show preview of email. Also I should be able to edit")
+    paragraphs: [`Hi ${escHtml(first)},`, ...orderMessageHtml(custom?.message || orderEmailDefaults(r).message)],
+    list: ORDER_EMAIL_STEPS,
+    cta: 'Review my order list', after: ['If you have any questions about an item, reply to this email.'],
     note: 'Nothing is ordered until you approve the list.',
   } : kind === 'remind' && remind ? remindCopy(remind, { first, at, gmPhone: gm.phone }) : kind === 'invite' ? {
     // THE INVITE IS THE OWNER-PORTAL EMAIL, NOT THE WELCOME (Jon, 2026-11-16: "The send invite is separate, it's a
@@ -148,7 +166,7 @@ export async function emailMagicLink(r: OORecord, origin: string, kind: 'invite'
     note: copy.note, after: copy.after,
     sign: { name: gm.name, role: gm.role, phone: gm.phone, email: gm.email, photo: gm.photo ? (gm.photo.startsWith('/') ? site + gm.photo : gm.photo) : undefined },
   })
-  const res = await sendOnboardingMail({ to: [to], cc, subject: kind === 'remind' && remind ? REMIND_SUBJECT[remind.kind] + (home ? ' · ' + home : '') : kind === 'order' ? `Your order list is ready for review${home ? ' · ' + home : ''}` : kind === 'invite' ? `Your Stay Hospitality owner portal is ready${home ? ' · ' + home : ''}` : 'Your Stay Hospitality sign-in link', html })
+  const res = await sendOnboardingMail({ to: [to], cc, subject: kind === 'remind' && remind ? REMIND_SUBJECT[remind.kind] + (home ? ' · ' + home : '') : kind === 'order' ? (String(custom?.subject || '').trim().slice(0, 200) || orderEmailDefaults(r).subject) : kind === 'invite' ? `Your Stay Hospitality owner portal is ready${home ? ' · ' + home : ''}` : 'Your Stay Hospitality sign-in link', html })
   if (res.ok && kind === 'invite') authOf(r, id).invitedAt = new Date().toISOString()
   // the owner's own way in, to the owner alone
   if (res.ok && needsPrivate) {

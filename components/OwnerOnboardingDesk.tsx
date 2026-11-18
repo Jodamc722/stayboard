@@ -307,6 +307,19 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
     setBusy(''); if (d?.record) onRec(d.record); setMsg(d?.ok ? (d.note || 'Saved.') : (d?.error || 'Not saved.')); return !!d?.ok
   }
   const set = (i: number, p: Any) => { setLines(ls => ls.map((l, j) => (j === i ? { ...l, ...p } : l))); setDirty(true) }
+  // THE EMAIL, SEEN AND EDITED BEFORE IT GOES (Jon, 2026-11-18: "send owner for review should show preview of email.
+  // Also I should be able to edit"). Send opens the email first: who gets it, the subject and the message, both
+  // editable. The greeting, the steps, the button and the signature are fixed and shown as they will read.
+  const [mail, setMail] = useState<Any | null>(null); const [subj, setSubj] = useState(''); const [body, setBody] = useState('')
+  async function openMail() {
+    if (dirty && !(await act('save', { lines, note }))) return
+    setBusy('preview'); setMsg('')
+    const d = await fetch(`/api/owner-onboarding/${rec.code}/order`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'preview' }) }).then(r => r.json()).catch(() => null)
+    setBusy('')
+    if (!d?.ok) { setMsg(d?.error || 'Could not open the email.'); return }
+    setMail(d.email); setSubj(d.email.subject); setBody(d.email.message)
+  }
+  async function sendMail() { if (await act('send', { subject: subj, message: body })) setMail(null) }
   // NOT IN OUR CATALOG (Jon, 2026-11-17: "have it where we can select our hand selected items or just send
   // the list"). What the owner marked "need" that our catalog does not carry is a tick list: tick the ones we
   // are buying and they go on the order as lines to price, or leave them and send the list as it is.
@@ -359,7 +372,7 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
           <h2 className="font-serif text-[22px] leading-none text-ink">Order list</h2>
           <span className="text-[12.5px] text-muted">{summary}</span>
         </button>
-        {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? 'Approved by the owner' : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}
+        {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? (o.review?.self ? 'Owner is ordering it themselves' : 'Approved by the owner') : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}
         <button type="button" onClick={toggleFold} title={fold ? 'Open' : 'Close'} aria-label={fold ? 'Open the order list' : 'Close the order list'} className="rounded-lg p-1 text-muted hover:text-ink"><ChevronDown size={18} className={'transition-transform ' + (fold ? '-rotate-90' : '')} /></button>
       </div>
       {fold ? null : <div className="mt-3">
@@ -373,7 +386,7 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
           {o.basis.partial.length ? <div><b>Sets the owner partly has (kept on the list, check them):</b><ul className="list-disc pl-5">{o.basis.partial.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           {o.basis.walked ? <p className="text-emerald-800 font-semibold">Built after the walkthrough was finished.</p> : o.basis.marked ? <p className="text-amber-800">Built before the walkthrough was finished: counts are the owner’s own.</p> : null}
           {o.basis.short?.length ? <div><b>Partly there, by count:</b><ul className="list-disc pl-5">{o.basis.short.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
-          {o.basis.declined?.length ? <div><b>Not buying (the team’s decision):</b><ul className="list-disc pl-5">{o.basis.declined.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
+          {o.basis.declined?.length ? <div><b>Not buying (the owner or the team said no):</b><ul className="list-disc pl-5">{o.basis.declined.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           </div></details>
           {o.basis.uncovered.length ? (() => { const left: string[] = o.basis.uncovered.filter((x: string) => !onList(x)); return (
             <div className="mt-2 rounded-xl bg-app p-3">
@@ -390,6 +403,7 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
             </div>) })() : null}
         </div> : null}
         {o.review ? <div className={'rounded-xl p-3 mb-3 ' + (o.status === 'approved' ? 'bg-emerald-50' : 'bg-amber-50')}><p className={lab}>The owner’s review · {new Date(o.review.at).toLocaleString()}</p>
+          {o.review.self ? <p className="text-[13px] text-ink mt-1 font-semibold">The owner is buying these themselves and ticks them off as they arrive. Nothing for us to order.</p> : null}
           {o.review.skip.length ? <p className="text-[13px] text-ink mt-1">Already has: {o.review.skip.map((k: string) => lines.find(l => l.key === k)?.name || k).join(', ')}</p> : null}
           {o.review.note ? <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap">“{o.review.note}”</p> : null}</div> : null}
         <div className="overflow-x-auto"><table className="w-full min-w-[460px] text-[12.5px]">
@@ -414,10 +428,28 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
           <label className="block mt-3"><span className={lab}>Note to the owner (shown above the list)</span><textarea rows={2} value={note} onChange={e => { setNote(e.target.value); setDirty(true) }} className={field} placeholder="e.g. We left off what you marked as already in the home." /></label>
           <div className="flex flex-wrap items-center gap-2 mt-3">
             <button type="button" disabled={!dirty || !!busy} onClick={() => act('save', { lines, note })} className="rounded-xl border border-line px-3 py-2 text-[13px] font-semibold text-ink disabled:opacity-40">Save changes</button>
-            <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('send') }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {o.status === 'draft' ? 'Send to the owner to review' : 'Send again'}</button>
+            <button type="button" disabled={!!busy || !!mail} onClick={openMail} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'preview' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {o.status === 'draft' ? 'Send to the owner to review' : 'Send again'}</button>
             {o.status !== 'draft' ? <button type="button" onClick={() => act('unsend')} className="text-[12.5px] text-muted underline">Take it back to a draft</button> : null}
             <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the supplies list</button>
           </div>
+          {mail ? <div className="mt-3 rounded-xl border border-ink/20 bg-app/60 p-3 text-[12.5px] text-ink">
+            <p className={lab}>The email the owner gets</p>
+            <p className="mt-1.5"><span className="text-muted">To</span> {mail.to.length ? mail.to.map((a: Any) => a.email).join(', ') : <b className="text-amber-800">No owner email on file: the list goes on their page, send them the link yourself.</b>}{mail.cc.length ? <><span className="text-muted"> · Cc</span> {mail.cc.join(', ')}</> : null}</p>
+            <label className="block mt-2"><span className="text-muted">Subject</span><input value={subj} onChange={e => setSubj(e.target.value)} maxLength={200} className={field} /></label>
+            <div className="mt-2 rounded-xl border border-line bg-white p-3">
+              <p className="text-[13px]">Hi {(mail.to[0]?.name || '').split(' ')[0] || 'there'},</p>
+              <textarea rows={7} value={body} onChange={e => setBody(e.target.value)} maxLength={4000} aria-label="Message" className="mt-1.5 w-full rounded-lg border border-line px-2.5 py-2 text-[13px] leading-relaxed text-ink" />
+              <ol className="mt-1.5 list-decimal pl-5 text-[13px] text-muted">{mail.steps.map((x: string) => <li key={x}>{x}</li>)}</ol>
+              <p className="mt-2"><span className="inline-block rounded-lg bg-ink px-3 py-1.5 text-[12.5px] font-semibold text-white">{mail.button}</span></p>
+              <p className="mt-2 text-[11.5px] text-muted">{mail.note} Signed by {mail.from || 'the GM'}.{mail.to.length > 1 ? ' Each owner is greeted by their own first name.' : ''}</p>
+            </div>
+            <p className="mt-1.5 text-[11.5px] text-muted">You can edit the subject and the message. A blank line starts a new paragraph. The greeting, steps, button and signature are added for you.</p>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <button type="button" disabled={!!busy || !body.trim()} onClick={sendMail} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'send' ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />} {mail.to.length ? 'Send it' : 'Put it on the owner’s page'}</button>
+              <button type="button" onClick={() => { setSubj(mail.subject); setBody(mail.message) }} className="text-[12.5px] text-muted underline">Reset the wording</button>
+              <button type="button" onClick={() => setMail(null)} className="text-[12.5px] text-muted underline">Cancel</button>
+            </div>
+          </div> : null}
           <div className="mt-4 rounded-xl border border-line divide-y divide-line text-[12.5px] text-ink">
             <div className="flex flex-wrap items-center gap-2 px-3 py-2">
               <span className="mr-auto"><b>Download</b> <span className="text-muted">the list for whoever is buying</span></span>

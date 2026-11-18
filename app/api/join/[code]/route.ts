@@ -63,7 +63,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   }
   if (b.marks && typeof b.marks === 'object') {
     let n = 0
-    for (const [k, v] of Object.entries(b.marks)) { if (++n > 600) break; if (v === 'have' || v === 'need' || v === '') r.marks[String(k).slice(0, 120)] = v as any }
+    // "Don't want" is for recommended and optional items only: a must-have has to stay on the list (Jon, 2026-11-18)
+    const tiers = Object.values(b.marks).some(v => v === 'skip') ? new Map((await allItems(r)).map(i => [i.key, i.linen ? 'must' : i.tier] as [string, string])) : null
+    for (const [k, v] of Object.entries(b.marks)) { if (++n > 600) break; const key = String(k).slice(0, 120)
+      if (v === 'have' || v === 'need' || v === '') r.marks[key] = v as any
+      else if (v === 'skip' && tiers && (tiers.get(key) === 'recommended' || tiers.get(key) === 'optional')) { r.marks[key] = 'skip'; if (r.counts) delete r.counts[key] } }
   }
   if (b.counts && typeof b.counts === 'object') r.counts = mergeCounts(r.counts || {}, b.counts)
   const stockWas = r.stock || ''
@@ -75,7 +79,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     const keys = new Set(r.order.lines.map(l => l.key))
     const skip = (Array.isArray(b.orderReview.skip) ? b.orderReview.skip : []).map((k: any) => String(k)).filter((k: string) => keys.has(k)).slice(0, 300)
     r.order = { ...r.order, status: b.orderReview.approve ? 'approved' : 'changes', review: { at: new Date().toISOString(), name: String(b.orderReview.name || acctOf(r, meId)?.name || r.custom.ownerName || '').slice(0, 120), skip, note: String(b.orderReview.note || '').slice(0, 2000) } }
+    if (b.orderReview.approve && b.orderReview.self) r.order.review!.self = true
     reviewed = r.order.status
+  }
+  // ORDERING IT THEMSELVES: the owner ticks each line as it arrives (the same ticks the team's shopping link uses)
+  if (b.orderGot && typeof b.orderGot === 'object' && r.order?.review?.self) {
+    const keys = new Set(r.order.lines.map(l => l.key)), got = { ...(r.shop?.got || {}) }; let n = 0
+    for (const [k, v] of Object.entries(b.orderGot)) { if (++n > 400) break; if (!keys.has(k)) continue; if (v) got[k] = got[k] || { at: new Date().toISOString(), by: 'owner' }; else delete got[k] }
+    r.shop = { ...(r.shop || { key: '' }), got, by: 'the owner' }
   }
   // THE W-9 AND ACH: checked, then the tax ID and bank numbers are encrypted before anything is saved.
   let firstPayout = false
@@ -127,7 +138,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `Walkthrough needed: ${r.custom.ownerName || 'the owner'} says ${r.stock === 'full' ? 'the home is fully stocked' : 'nothing has been bought yet'}`, body: [r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · ') + ' — send the walkthrough to confirm the count before ordering.', link: '/owner-onboarding/' + r.code }) } catch { /* saved; the bell is a courtesy */ }
   }
   if (reviewed) {
-    try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `${r.custom.ownerName || 'An owner'} ${reviewed === 'approved' ? 'approved the order list' : 'asked for changes to the order list'}`, body: r.order?.review?.note || [r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · '), link: '/owner-onboarding/' + r.code }) } catch { /* */ }
+    try { await notify([r.createdBy, r.custom.gm.email].filter(Boolean), { kind: 'owner_onboarding', title: `${r.custom.ownerName || 'An owner'} ${reviewed === 'approved' ? (r.order?.review?.self ? 'will order the list themselves' : 'approved the order list') : 'asked for changes to the order list'}`, body: r.order?.review?.note || [r.attach.property, r.attach.unitLabel].filter(Boolean).join(' · '), link: '/owner-onboarding/' + r.code }) } catch { /* */ }
   }
   if (firstSubmit) {
     try {

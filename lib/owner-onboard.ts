@@ -18,7 +18,9 @@ export const OO_APPLIANCE_LABEL: Record<OOAppliance, string> = { stove: 'Stove /
 
 /** One home. An owner with several units has one of these per unit (Jon, 2026-11-13); `uid` keys a later unit's ticks. */
 export type OOHome = { uid?: string; address: string; unit: string; sqft: number; bedrooms: number; bathrooms: number; guests: number; beds: Record<string, number>; sleeper: boolean; kitchen: boolean; appliances: Record<OOAppliance, boolean>; washer: boolean; parking: string; access: string; wifiName: string; wifiPass: string; /** the address's pin, from the address lookup (lib/geo) */ lat?: number; lng?: number }
-export type OOMark = 'have' | 'need' | ''
+/** 'skip' is the owner's "Don't want" on a recommended or optional item (Jon, 2026-11-18): it stays off the
+ *  walkthrough sheet and the order list. A must-have can never be skipped. */
+export type OOMark = 'have' | 'need' | 'skip' | ''
 export type OOItem = { key: string; name: string; group: string; qty: number; tier: 'must' | 'recommended' | 'optional'; linen?: boolean; size?: string
   /** Which unit it is for (0 = the first), and that unit's label. */
   unit: number; unitLabel: string }
@@ -98,7 +100,8 @@ export function stockOf(r: Pick<OORecord, 'marks' | 'counts' | 'walk' | 'decisio
   const w = r.walk?.counts?.[item.key]
   const walk = typeof w === 'number' ? w : null
   const onHand = walk ?? owner
-  const decision = r.decisions?.[item.key] || ''
+  // the owner's own "Don't want" counts as a decision not to buy, unless the team has said otherwise
+  const decision: OODecision | '' = r.decisions?.[item.key] || (m === 'skip' ? 'no-buy' : '')
   return { need: item.qty, owner, walk, onHand, toBuy: decision ? 0 : Math.max(0, item.qty - (onHand ?? 0)), decision }
 }
 /**
@@ -148,7 +151,9 @@ export type OOOrderLine = { key: string; category: string; name: string; detail:
 /** How the list was worked out from the owner's supplies answers (team only). */
 export type OOOrderBasis = { marked: number; leftOff: string[]; partial: string[]; uncovered: string[]; /** pieces partly there, by count */ short?: string[]; /** pieces the team decided not to buy */ declined?: string[]; /** built after the walkthrough was finished */ walked?: boolean }
 export type OOOrder = { basis?: OOOrderBasis; lines: OOOrderLine[]; status: 'draft' | 'sent' | 'approved' | 'changes'; builtAt: string; sentAt?: string; note?: string
-  review?: { at: string; name: string; skip: string[]; note: string } }
+  /** `self`: the owner is buying the list themselves (Jon, 2026-11-18: "they should also be able to order themselves");
+   *  they tick lines off on their page as things arrive, into the same ticks the shopping link uses (shop.got). */
+  review?: { at: string; name: string; skip: string[]; note: string; self?: boolean } }
 export const orderTotal = (o: OOOrder, skip: string[] = []) => o.lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (l.price || 0) * l.qty.reduce((x, y) => x + y, 0), 0)
 export type OOFile = { path: string; name: string; size: number; at: string; by: string }
 export type OORecord = {
@@ -273,10 +278,10 @@ export function payoutHints(p?: OOPayout | null) {
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
   const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, ...rest } = r
-  void owners; void walk; void decisions; void remind; void shop
+  void owners; void walk; void decisions; void remind
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
-  return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
+  return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined, got: order.review?.self ? Object.keys(shop?.got || {}) : undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
 }
 /** The team's view: everything but the ciphertext. */
 export function teamView(r: OORecord) { const { auth, owners, ...rest } = r; /* the walkthrough key stays: the team copies its link */ const acc = (a?: OOAuth | null) => ({ hasPassword: !!a?.pass, invitedAt: a?.invitedAt || '', activatedAt: a?.activatedAt || '', lastSeenAt: a?.lastSeenAt || '' }); return { ...rest, owners: (owners || []).map(o => ({ id: o.id, name: o.name, email: o.email, phone: o.phone, access: acc(o.auth) })), payout: payoutHints(r.payout), ownerAccess: { hasPassword: !!auth?.pass, invitedAt: auth?.invitedAt || '', activatedAt: auth?.activatedAt || '', lastSeenAt: auth?.lastSeenAt || '' }, track: trackOf(r) } }
