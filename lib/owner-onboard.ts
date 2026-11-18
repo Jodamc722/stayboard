@@ -1,3 +1,4 @@
+import { NEED_ITEMS } from './need-list'
 // OWNER ONBOARDING, FROM SCRATCH (Jon, 2026-11-12: "a simple onboarding process for owners… it's been very
 // clunky in the past… start fresh"). One link per owner:
 //   1. The team makes a link for an owner (customized: greeting, contact, what to ask) and can attach it to a
@@ -147,13 +148,19 @@ export type OOPayout = {
 /** THE ORDER LIST (Jon, 2026-11-13: "post owner fill-out we can send our order list with our actual items; the
  *  goal is for that to be reviewed"). Built by the team from Stay's own catalog (the real products, prices and
  *  links), edited, then sent to the owner, who reviews it line by line and approves or asks for changes. */
-export type OOOrderLine = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[] }   // qty per unit, in unit order
+export type OOOrderLine = { key: string; category: string; name: string; detail: string; url: string; price: number | null; qty: number[]; /** must-have, recommended or optional, from the supplies list */ tier?: 'must' | 'recommended' | 'optional' }   // qty per unit, in unit order
 /** How the list was worked out from the owner's supplies answers (team only). */
 export type OOOrderBasis = { marked: number; leftOff: string[]; partial: string[]; uncovered: string[]; /** pieces partly there, by count */ short?: string[]; /** pieces the team decided not to buy */ declined?: string[]; /** built after the walkthrough was finished */ walked?: boolean }
 export type OOOrder = { basis?: OOOrderBasis; lines: OOOrderLine[]; status: 'draft' | 'sent' | 'approved' | 'changes'; builtAt: string; sentAt?: string; note?: string
   /** `self`: the owner is buying the list themselves (Jon, 2026-11-18: "they should also be able to order themselves");
    *  they tick lines off on their page as things arrive, into the same ticks the shopping link uses (shop.got). */
   review?: { at: string; name: string; skip: string[]; note: string; self?: boolean } }
+/** SAY WHICH IT IS (Jon, 2026-11-18: "can we have it say recommended or optional"): the word shown beside an order
+ *  line that is not a must-have. A list built before lines carried a tier falls back to the supplies list's own. */
+export function orderTierLabel(l: { key: string; tier?: string }): '' | 'Recommended' | 'Optional' {
+  const t = l.tier || (String(l.key).startsWith('p:') ? NEED_ITEMS.find(i => i.key === String(l.key).slice(2))?.tier : '')
+  return t === 'recommended' ? 'Recommended' : t === 'optional' ? 'Optional' : ''
+}
 export const orderTotal = (o: OOOrder, skip: string[] = []) => o.lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (l.price || 0) * l.qty.reduce((x, y) => x + y, 0), 0)
 export type OOFile = { path: string; name: string; size: number; at: string; by: string }
 export type OORecord = {

@@ -201,7 +201,7 @@ function buildOrderFromNeeds(r: OORecord): OOOrder {
       if (!known && l.tier === 'optional') return
       if (known && (x.onHand || 0) > 0) short.push(`${l.item.name}${tag}: ${x.onHand} of ${x.need} there, ${toBuy} to buy`)
       const key = 'p:' + l.item.key
-      const e = by.get(key) || { key, category: l.item.room, name: l.item.name, detail: String(l.item.note || '').slice(0, 200), url: '', price: null, qty: units.map(() => 0) }
+      const e = by.get(key) || { key, category: l.item.room, name: l.item.name, detail: String(l.item.note || '').slice(0, 200), url: '', price: null, qty: units.map(() => 0), tier: l.tier }
       e.qty[i] = toBuy; by.set(key, e); if (!rank.has(key)) rank.set(key, at)
     })
   })
@@ -293,6 +293,7 @@ export function cleanOrderLines(v: any, units: number): OOOrderLine[] {
     key: String(l?.key || 'x' + i).slice(0, 80), category: String(l?.category || 'Other').slice(0, 60), name: String(l?.name || '').slice(0, 160), detail: String(l?.detail || '').slice(0, 200),
     url: /^https?:\/\//.test(String(l?.url || '')) ? String(l.url).slice(0, 500) : '', price: Number.isFinite(Number(l?.price)) && l?.price !== null && l?.price !== '' ? Math.max(0, Math.round(Number(l.price) * 100) / 100) : null,
     qty: Array.from({ length: Math.max(1, units) }, (_, u) => Math.max(0, Math.min(999, Math.round(Number(l?.qty?.[u]) || 0)))),
+    ...(l?.tier === 'must' || l?.tier === 'recommended' || l?.tier === 'optional' ? { tier: l.tier as OOOrderLine['tier'] } : {}),
   })).filter(l => l.name)
 }
 

@@ -5,7 +5,7 @@ import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Minus, Plus, Lock, Phone, Mail, ChevronRight, ChevronLeft } from 'lucide-react'
 import { NeedPicture } from '@/components/NeedIcons'
-import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, gmOf, routingOk, type OOHome, type OOItem, type OOMark } from '@/lib/owner-onboard'
+import { OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, OO_STEPS, OO_TAX_CLASS, DEFAULT_HOME, gmOf, routingOk, type OOHome, type OOItem, type OOMark, orderTierLabel } from '@/lib/owner-onboard'
 
 type Any = any
 /** The two forms, filling in as the owner types (Jon, 2026-11-13: "ACH and W9 forms should show them as they fill
@@ -390,7 +390,7 @@ export function OwnerJoin({ code }: { code: string }) {
                     <ul>{o.lines.filter((l: Any) => l.category === c).map((l: Any) => { const q = l.qty.reduce((x: number, y: number) => x + y, 0), off = self ? (o.review.skip || []).indexOf(l.key) >= 0 : skip.indexOf(l.key) >= 0, in_ = got.indexOf(l.key) >= 0; return (
                       <li key={l.key} className={'oj-ol' + (off ? ' off' : '')}>
                         {String(l.key).startsWith('p:') ? <i className="oj-pic" aria-hidden="true"><NeedPicture k={picKey(l.key)} name={l.name} size={30} /></i> : null}
-                        <span className="oj-nm"><b>{l.name}</b>{l.detail && l.detail !== l.name ? <small className="oj-od">{l.detail}</small> : null}
+                        <span className="oj-nm"><b>{l.name}</b>{orderTierLabel(l) ? <small className="oj-od">{orderTierLabel(l)}</small> : null}{l.detail && l.detail !== l.name ? <small className="oj-od">{l.detail}</small> : null}
                           <small className="oj-od">×{q}{multi ? ' (' + l.qty.map((n: number, i: number) => (homes[i]?.unit ? homes[i].unit : 'Unit ' + (i + 1)) + ': ' + n).join(', ') + ')' : ''}{l.price != null ? ' · ' + money(l.price) + ' each · ' + money(l.price * q) : ''}{l.url ? <> · <a href={l.url} target="_blank" rel="noreferrer">See the item</a></> : null}</small></span>
                         <div className="oj-hn">{self ? (off ? <small>Already have</small> : <button type="button" className={in_ ? 'on have' : ''} onClick={() => gotIt(l.key, !in_)}>{in_ ? 'Got it ✓' : 'Got it'}</button>) : <button type="button" className={off ? 'on need' : ''} onClick={() => setSkip(sk => (off ? sk.filter(k => k !== l.key) : [...sk, l.key]))}>{off ? 'I have this ✓' : 'I have this'}</button>}</div>
                       </li>) })}</ul>

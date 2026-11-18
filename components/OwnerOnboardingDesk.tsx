@@ -6,9 +6,9 @@
 //                          needs, the timeline, the onboarding call, the paperwork and the handoff to accounting.
 import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock, ChevronDown } from 'lucide-react'
-import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
+import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, orderTierLabel, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
 const lab = 'text-[10.5px] uppercase tracking-[0.16em] text-muted font-semibold'
@@ -292,6 +292,28 @@ function InventoryReview({ rec, sup, units, uLabel, onApply, onMsg }: { rec: Any
   )
 }
 
+// ── ONE SECTION OF THE REPORT, FOLDABLE (Jon, 2026-11-18: "on the admin page it still looks disorganized"). Every
+// section has the same header: its name, where it stands in a few words, and an arrow. A finished section starts
+// folded, so the page opens on what still needs someone; a choice made by hand is remembered per onboarding in this
+// browser. The body stays mounted while folded (nothing typed is lost) and always prints.
+const FOLD_ALL = 'oo-fold-all'
+function Fold({ code, id, title, summary, done, children }: { code: string; id: string; title: string; summary?: ReactNode; done?: boolean; children: ReactNode }) {
+  const key = 'oo-fold:' + code + ':' + id
+  const [open, setOpen] = useState(!done)
+  const put = (v: boolean) => { setOpen(v); try { localStorage.setItem(key, v ? '1' : '0') } catch {} }
+  useEffect(() => { try { const v = localStorage.getItem(key); if (v) setOpen(v === '1') } catch {} }, [key])
+  useEffect(() => { const h = (e: Any) => put(!!e.detail); window.addEventListener(FOLD_ALL, h); return () => window.removeEventListener(FOLD_ALL, h) }, [key])
+  return (
+    <section id={'oo-' + id} className={card + ' scroll-mt-4'}>
+      <button type="button" onClick={() => put(!open)} aria-expanded={open} className="oo-fold-head flex w-full items-center gap-x-3 text-left">
+        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mr-auto min-w-0"><span className="font-serif text-[22px] leading-none text-ink">{title}</span>{summary ? <span className="text-[12.5px] text-muted">{summary}</span> : null}</span>
+        <ChevronDown size={18} className={'oo-noprint shrink-0 text-muted transition-transform ' + (open ? '' : '-rotate-90')} />
+      </button>
+      <div hidden={!open} className="oo-fold-body mt-3">{children}</div>
+    </section>
+  )
+}
+
 // ── THE ORDER LIST: our actual items, edited by the team, sent to the owner to review ──
 function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r: Any) => void }) {
   const o = rec.order
@@ -331,6 +353,7 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
   const [fold, setFold] = useState(false)
   useEffect(() => { try { setFold(localStorage.getItem(foldKey) === '1') } catch {} }, [foldKey])
   const toggleFold = () => setFold(f => { try { localStorage.setItem(foldKey, f ? '0' : '1') } catch {} return !f })
+  useEffect(() => { const h = (e: Any) => { setFold(!e.detail); try { localStorage.setItem(foldKey, e.detail ? '0' : '1') } catch {} }; window.addEventListener(FOLD_ALL, h); return () => window.removeEventListener(FOLD_ALL, h) }, [foldKey])
   const onList = (x: string) => { const p = parseNeed(x); return lines.some(l => String(l.name).toLowerCase() === p.name.toLowerCase() && (p.unit < 0 || (Number(l.qty[p.unit]) || 0) > 0)) }
   function parseNeed(x: string) {
     const q = x.match(/\s×(\d+)$/); let name = q ? x.slice(0, q.index) : x
@@ -411,7 +434,7 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
           {groups.map(g => <tbody key={g.cat}>
             <tr><td colSpan={units.length + 4} className="pt-3 pb-1 border-b border-line text-[11.5px] font-semibold text-muted">{g.cat} <span className="font-normal">· {g.rows.length}</span></td></tr>
             {g.rows.map(({ l, i }) => { const q = l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), off = skip.indexOf(l.key) >= 0, got = !!rec.shop?.got?.[l.key]
-              const sub = [l.detail && l.detail !== l.name ? l.detail : '', off ? 'owner has this' : ''].filter(Boolean).join(' · '); return (
+              const sub = [orderTierLabel(l), l.detail && l.detail !== l.name ? l.detail : '', off ? 'owner has this' : ''].filter(Boolean).join(' · '); return (
             <tr key={l.key} className={'group/row border-b border-line/60 align-middle ' + (off ? 'opacity-50' : '')}>
               <td className="py-1 pr-2"><input value={l.name} onChange={e => set(i, { name: e.target.value })} className={nameInp} aria-label="Item name" />
                 {sub || got || l.url ? <span className="block text-[11.5px] text-muted leading-snug">{got ? <b className="text-emerald-700">Bought{sub || l.url ? ' · ' : ''}</b> : null}{sub}{l.url ? <>{sub ? ' · ' : ''}<a href={l.url} target="_blank" rel="noreferrer" className="underline">link</a></> : null}</span> : null}</td>
@@ -781,7 +804,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
 
   return (
     <div className="max-w-[1200px] mx-auto oo-report">
-      <style>{`@media print{.oo-noprint{display:none!important}.oo-report{max-width:none}}`}</style>
+      <style>{`/* a folded section's own card and title give way to the Fold's */.oo-fold-body>section{border:0;padding:0;border-radius:0;background:transparent}.oo-fold-body h2{display:none}@media print{.oo-noprint{display:none!important}.oo-report{max-width:none}.oo-fold-body[hidden]{display:block!important}}`}</style>
       <a href="/owner-onboarding" className="oo-noprint inline-flex items-center gap-1 text-[13px] font-semibold text-ink mb-4">← All owners</a>
       <header className="flex flex-wrap items-end gap-3 pb-5 mb-6 border-b border-line">
         <div className="mr-auto min-w-0">
@@ -798,6 +821,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
       </header>
       {msg ? <p className="oo-noprint text-[12.5px] text-muted -mt-3 mb-3">{msg}</p> : null}
       <OwnerInfo rec={rec} onRec={setRec} />
+      <nav className="oo-noprint mb-5 flex flex-wrap items-center gap-1.5 text-[12.5px]" aria-label="Sections">
+        {[['intro', 'Intro email'], ['portal', 'Portal'], ['home', 'Home'], ['supplies', 'Supplies'], ['order', 'Order list'], ['linen', 'Linen'], ['paperwork', 'Paperwork']].map(([id, l]) => <a key={id} href={'#oo-' + id} className="rounded-full border border-line bg-white px-2.5 py-1 font-semibold text-ink hover:border-ink">{l}</a>)}
+        <span className="ml-auto flex gap-3 text-muted"><button type="button" className="underline" onClick={() => window.dispatchEvent(new CustomEvent(FOLD_ALL, { detail: false }))}>Fold all</button><button type="button" className="underline" onClick={() => window.dispatchEvent(new CustomEvent(FOLD_ALL, { detail: true }))}>Open all</button></span>
+      </nav>
       {rec.track ? (
         <section className={card + ' oo-noprint mb-6'}>
           <p className={lab + ' mb-2.5'}>Where the owner stands</p>
@@ -814,7 +841,11 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="space-y-6 min-w-0">
+          {/* FIRST THINGS FIRST: the welcome email and the portal invite are how an onboarding starts, so they lead; once sent they fold to a line */}
+          <div className="oo-noprint"><Fold code={code} id="intro" title="Introductory email" done={!!rec.intro} summary={rec.intro ? 'Sent ' + shortDay(rec.intro.at) : 'Not sent yet'}><IntroEmail rec={rec} onRec={setRec} /></Fold></div>
+          <div className="oo-noprint"><Fold code={code} id="portal" title="Owner’s portal account" done={!!rec.ownerAccess?.invitedAt} summary={rec.ownerAccess?.lastSeenAt || rec.ownerAccess?.activatedAt ? 'Signed in' : rec.ownerAccess?.invitedAt ? 'Invited ' + shortDay(rec.ownerAccess.invitedAt) + ', not signed in yet' : 'Not invited yet'}><InviteOwner rec={rec} onRec={setRec} /></Fold></div>
           {/* the units */}
+          <Fold code={code} id="home" title={units.length > 1 ? units.length + ' units' : 'The home'} done={units.length > 0 && !!units[0].address} summary={units.length ? units.map((u, i) => [uLabel(i), u.bedrooms === 0 ? 'studio' : u.bedrooms + ' bed', u.bathrooms + ' bath', 'sleeps ' + u.guests].join(' · ')).slice(0, 2).join('  |  ') + (units.length > 2 ? '  | +' + (units.length - 2) + ' more' : '') : 'Not filled in yet'}>
           <section className={card}>
             <div className="flex items-center gap-2 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">{units.length > 1 ? units.length + ' units' : 'The home'}</h2>
               <button type="button" onClick={() => { const list = [...units, { ...DEFAULT_HOME, address: units[0]?.address || '' }]; setRec({ ...rec, home: list[0], more: list.slice(1) }); setEditHome(true); setEu(list.length - 1) }} className="oo-noprint text-[12.5px] font-semibold text-ink">+ Add a unit</button></div>
@@ -831,8 +862,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
               </div>
             ))}
           </section>
+          </Fold>
 
           {/* the supplies: everything to buy, and what each unit needs */}
+          <Fold code={code} id="supplies" title="Supplies" done={!!rec.walk?.doneAt} summary={!sup.length ? 'Waiting on the home' : [have.length + ' have', need.length + ' need', open.length ? open.length + ' not checked' : '', rec.walk?.doneAt ? 'inventory closed' : ''].filter(Boolean).join(' · ')}>
           <section className={card}>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3"><h2 className="font-serif text-[22px] leading-none text-ink">Supplies</h2><div className="oo-noprint inline-flex rounded-full bg-app p-0.5 text-[12px] font-semibold mr-auto">{([['answers', 'Owner’s answers'], ['review', 'Inventory review']] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setSupTab(k)} className={'rounded-full px-3 py-1 ' + (supTab === k ? 'bg-white text-ink shadow-sm' : 'text-muted')}>{l}{k === 'review' && !rec.walk?.doneAt && sup.length ? <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" /> : null}</button>)}</div><span className="text-[13px]"><b className="text-ink">{have.length}</b> have · <b className="text-[#B4532A]">{need.length}</b> need · <b className="text-ink">{open.length}</b> not checked</span></div>
             {!sup.length ? <p className="text-[13px] text-muted">The list appears once the home is filled in.</p> : supTab === 'review' ? <InventoryReview rec={rec} sup={sup} units={units} uLabel={uLabel} onApply={apply} onMsg={setMsg} /> : (<>
@@ -853,10 +886,12 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             </>)}
             {rec.ownerNotes ? <div className="mt-4 rounded-xl bg-app p-3"><p className={lab}>The owner’s note</p><p className="text-[13.5px] text-ink mt-1 whitespace-pre-wrap">{rec.ownerNotes}</p></div> : null}
           </section>
+          </Fold>
 
-          <div id="oo-order"><OrderList rec={rec} units={units.map((_, i) => uLabel(i))} onRec={setRec} /></div>
+          <div id="oo-order" className="scroll-mt-4"><OrderList rec={rec} units={units.map((_, i) => uLabel(i))} onRec={setRec} /></div>
 
           {/* THE LINEN, ours to specify (Jon, 2026-11-13): counts at par, per unit and in all; approve, then send to the vendor */}
+          <Fold code={code} id="linen" title="Linen at par" done={!!rec.linen?.sentAt} summary={!lin.length ? 'Waiting on the home' : [lin.reduce((a, i) => a + i.qty, 0) + ' pieces', rec.linen?.sentAt ? 'sent to the vendor' : rec.linen?.approvedAt ? 'approved, not sent' : 'not approved yet'].join(' · ')}>
           <section className={card}>
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Linen at par</h2><span className="text-[13px]"><b className="text-ink">{lin.reduce((a, i) => a + i.qty, 0)}</b> pieces{units.length > 1 ? ' across ' + units.length + ' units' : ''}</span></div>
             <p className="text-[12.5px] text-muted mb-3">For the team only: the owner’s page never lists linen. {rec.linen?.rows ? <b className="text-ink">Edited by {String(rec.linen.editedBy || 'the team').split('@')[0]}{rec.linen.editedAt ? ' on ' + new Date(rec.linen.editedAt).toLocaleDateString() : ''}; it no longer follows the home’s beds and baths.</b> : 'Counted by the linen calculator from the saved linen standard and each unit’s beds and baths. Adjust it here before you email or download it.'}</p>
@@ -904,8 +939,10 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
               </div>
             </>)}
           </section>
+          </Fold>
 
           {/* paperwork */}
+          <Fold code={code} id="paperwork" title="Paperwork" done={!!rec.payout && !!rec.agreement && !!rec.handoff && !rec.handoff.error} summary={[rec.payout ? 'W-9 and ACH in' : rec.custom.askPayout === false ? 'W-9 not asked' : 'W-9 and ACH not sent', rec.agreement ? 'agreement in' : 'no agreement', rec.handoff && !rec.handoff.error ? 'handed to accounting' : 'not handed off'].join(' · ')}>
           <section className={card}>
             <h2 className="font-serif text-[22px] leading-none text-ink mb-3">Paperwork</h2>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -934,8 +971,8 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
               <button type="button" disabled={busy === 'send'} onClick={async () => { setBusy('send'); const d = await fetch(`/api/owner-onboarding/${code}/handoff`, { method: 'POST' }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); setMsg(d?.ok ? 'Sent to accounting.' : 'Not sent: ' + (d?.error || 'try again')); setBusy('') }} className="oo-noprint inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[12.5px] font-semibold disabled:opacity-50"><Send size={12} /> {rec.handoff ? 'Send again' : 'Send now'}</button>
             </div>
           </section>
+          </Fold>
 
-          <div className="oo-noprint space-y-6"><InviteOwner rec={rec} onRec={setRec} /><IntroEmail rec={rec} onRec={setRec} /></div>
         </div>
 
         <div className="space-y-6 min-w-0">
