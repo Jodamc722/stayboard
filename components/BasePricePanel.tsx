@@ -1,6 +1,6 @@
 'use client'
 // BASE PRICES for one property: what Guesty says now, what the nights actually sold for, and the
-// price proposed from that (the median booked night of the last 12 months). You edit the proposal,
+// price proposed from that (the yearly average night: Jon, 2026-11-18). Jon and Bernadette edit the proposal,
 // pick the units, and confirm; only then is anything written to Guesty (/api/base-price).
 import { useState } from 'react'
 import { DollarSign, RefreshCw, X, Check, AlertTriangle } from 'lucide-react'
@@ -24,6 +24,7 @@ export function BasePricePanel({ building, ids }: { building: string; ids: strin
   const [confirming, setConfirming] = useState(false)
   const [results, setResults] = useState<Res[] | null>(null)
   const [err, setErr] = useState('')
+  const [canPush, setCanPush] = useState(false)
 
   const load = async (calendar: boolean) => {
     setBusy(calendar ? 'calendar' : 'load'); setErr(''); setResults(null)
@@ -31,7 +32,7 @@ export function BasePricePanel({ building, ids }: { building: string; ids: strin
       const r = await fetch('/api/base-price?ids=' + encodeURIComponent(ids.join(',')) + (calendar ? '&calendar=1' : ''))
       const j = await r.json()
       if (!j.ok) { setErr(j.error || 'Could not load.'); return }
-      setUnits(j.units); setLift(j.summary?.weekendLift ?? null)
+      setUnits(j.units); setLift(j.summary?.weekendLift ?? null); setCanPush(!!j.canPush)
       if (!calendar) {
         const e: Record<string, { base: string; weekend: string }> = {}
         for (const u of j.units as Unit[]) e[u.id] = { base: u.proposed != null ? String(u.proposed) : '', weekend: u.proposedWeekend != null ? String(u.proposedWeekend) : '' }
@@ -65,7 +66,7 @@ export function BasePricePanel({ building, ids }: { building: string; ids: strin
         <h3 className="text-[14px] font-bold text-ink flex-1">Base prices · {building}</h3>
         <button onClick={() => setOpen(false)} className="text-muted hover:text-ink" title="Close"><X size={16} /></button>
       </div>
-      <p className="text-[12px] text-muted mb-3">The base price is what the booking site shows and what a day falls back to when nothing else has priced it. Proposed = the median night actually booked in the last 12 months{lift ? `; weekend = that × ${lift}` : ''}. Nothing changes in Guesty until you apply.</p>
+      <p className="text-[12px] text-muted mb-3">The base price is what the booking site shows and what a day falls back to when nothing else has priced it. PriceLabs sets the nightly rate; this does not move a night it has priced. Proposed = the average night sold over the last 12 months{lift ? `; weekend = that × ${lift}` : ''}. Nothing changes in Guesty until you apply.{canPush ? '' : ' Only Jon and Bernadette can apply a change.'}</p>
       {err ? <p className="text-[12.5px] text-rose-700 mb-2">{err}</p> : null}
       {busy === 'load' || !units ? <p className="text-[13px] text-muted">Loading…</p> : (
         <>
@@ -74,7 +75,7 @@ export function BasePricePanel({ building, ids }: { building: string; ids: strin
               <thead><tr className="text-left text-muted">
                 <th className="py-1 pr-2 w-6"></th><th className="py-1 pr-3 font-semibold">Unit</th>
                 <th className="py-1 pr-3 font-semibold">Base now</th><th className="py-1 pr-3 font-semibold">Weekend now</th>
-                <th className="py-1 pr-3 font-semibold">Booked night</th><th className="py-1 pr-3 font-semibold">New base</th><th className="py-1 pr-3 font-semibold">New weekend</th>
+                <th className="py-1 pr-3 font-semibold">Yearly avg</th><th className="py-1 pr-3 font-semibold">New base</th><th className="py-1 pr-3 font-semibold">New weekend</th>
                 <th className="py-1 font-semibold">Calendar</th>
               </tr></thead>
               <tbody>
@@ -98,7 +99,7 @@ export function BasePricePanel({ building, ids }: { building: string; ids: strin
           <div className="mt-3 flex items-center gap-2 flex-wrap">
             <button onClick={() => load(true)} disabled={!!busy} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-line text-[12.5px] font-semibold text-ink disabled:opacity-50"><RefreshCw size={13} className={busy === 'calendar' ? 'animate-spin' : ''} /> {busy === 'calendar' ? 'Reading calendars…' : 'Check calendars first'}</button>
             {!confirming
-              ? <button onClick={() => setConfirming(true)} disabled={!!busy || !changes.length} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-ink text-white text-[12.5px] font-semibold disabled:opacity-40">Apply to {changes.length} unit{changes.length === 1 ? '' : 's'}</button>
+              ? <button onClick={() => setConfirming(true)} disabled={!!busy || !changes.length || !canPush} title={canPush ? undefined : 'Only Jon and Bernadette can push base prices to Guesty'} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-ink text-white text-[12.5px] font-semibold disabled:opacity-40">Apply to {changes.length} unit{changes.length === 1 ? '' : 's'}</button>
               : <><span className="text-[12.5px] text-ink">Write {changes.length} base price{changes.length === 1 ? '' : 's'} to Guesty?</span>
                 <button onClick={apply} disabled={!!busy} className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-ink text-white text-[12.5px] font-semibold disabled:opacity-50"><Check size={13} /> {busy === 'apply' ? 'Writing…' : 'Yes, write them'}</button>
                 <button onClick={() => setConfirming(false)} className="h-8 px-3 rounded-lg border border-line text-[12.5px] font-semibold text-ink">Cancel</button></>}

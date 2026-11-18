@@ -27,6 +27,7 @@ import { LeanHead, Pill, Tag, LeanTabs, LeanSection, LeanList, LeanRow, LeanEmpt
 import { TILES, tileCounts, rowInTile, worklist, channelCounts, rowWeight, optimizeState, photoFlags, performance, coverVerdict, agoShort, RULES, channelLabel, type AdminRow, type TileKey, type WorkItem, type Severity } from '@/lib/admin-desk-shared'
 import { VERDICT_LABEL, type CellVerdict } from '@/lib/channel-types'
 import { CopyAuditTab } from '@/components/CopyAuditTab'
+import { AdminBaseRates } from '@/components/AdminBaseRates'
 
 type DeskRes = { ok: boolean; error?: string; at: string; today: string; rows: AdminRow[]; channels: { key: string; label: string; major: boolean }[]; channelCheckedAt: string | null; read: { listings: number; reviews: number } }
 type BlockedRes = { ok: boolean; error?: string; runs?: any[]; linkedRuns?: any[]; liveNow?: number }
@@ -51,7 +52,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
   // Blocks walk Guesty's live calendar — slow, and a Guesty hiccup must never blank the rest.
   const blocked = useCachedFetch<BlockedRes>('/api/blocked-units?days=14', { ttl: 600_000 })
   const projects = useCachedFetch<ProjectsRes>('/api/projects', { ttl: 300_000 })
-  const [tab, setTab] = useState<'desk' | 'listings' | 'channels' | 'copy' | 'reviews' | 'guidebooks'>('desk')
+  const [tab, setTab] = useState<'desk' | 'listings' | 'rates' | 'channels' | 'copy' | 'reviews' | 'guidebooks'>('desk')
   const [tile, setTile] = useState<TileKey>('all')
   const [refreshing, setRefreshing] = useState(false)
   const today = desk.data?.today || todayET()
@@ -99,6 +100,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
       <LeanTabs value={tab} onChange={setTab} tabs={[
         { key: 'desk', label: 'Desk', n: work.filter(w => w.severity === 'high').length || null },
         { key: 'listings', label: 'Listings', n: rows.length || null },
+        { key: 'rates', label: 'Base rates' },
         { key: 'channels', label: 'Channels' },
         { key: 'copy', label: 'Copy audit' },
         { key: 'reviews', label: 'Reviews' },
@@ -112,6 +114,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
         <ListingsTab rows={rows} today={today} tile={tile} setTile={setTile} counts={counts} channels={(desk.data?.channels || []).filter(c => c.major || c.key === 'googleVacationRentals')} loading={desk.loading && !desk.data} />
       )}
       {/* CHANNELS (Jon, 2026-11-09): the channel page is the admin's standard channel view — same component. */}
+      {tab === 'rates' && <AdminBaseRates canEdit={canEdit} />}
       {tab === 'channels' && <ChannelConnections canRun={canEdit} />}
       {tab === 'copy' && <CopyAuditTab />}
       {tab === 'reviews' && <ReviewsTab />}
