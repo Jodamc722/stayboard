@@ -341,6 +341,39 @@ export function lintReply(text: string, r: { listing_name?: string | null; ratin
   const words = t.trim().split(/\s+/).length
   if (words > 90) out.push({ key: 'long', label: words + ' words — long for a public reply', block: false })
   if (!isLowReview(r.rating, r.channel) && Number(r.rating) >= 4.5 && /\b(sorry|apolog\w*)\b/i.test(t)) out.push({ key: 'sorry', label: 'apologises under a top score', block: false })
+  out.push(...styleFlags(t))
+  return out
+}
+
+// ── HOW IT SOUNDS (2026-11-18, Jon: "some of the way it sounds is quite bad") ────────────────────
+// The two things that made a posted reply read as machine-written, checked on every draft. Neither
+// blocks a send: they show under the draft, and the draft route asks the model once more when it
+// trips one (app/api/reviews/draft).
+const STOCK: [RegExp, string][] = [
+  [/\b(?:is|was|are) (?:exactly|just|precisely) what we (?:hope|hoped|want|wanted|aim)/i, '“…is exactly what we hope for”'],
+  [/\bwhat we hoped you(?:'|’)d (?:find|notice|use|say)/i, '“what we hoped you’d find”'],
+  [/\bhas gone to our team\b|\bhave gone to our team\b/i, '“has gone to our team”'],
+  [/\bwhat you shared about\b/i, '“what you shared about”'],
+  [/\b(?:so |being )?(?:candid|candour|candor)\b|\bfor (?:being |such an? )?(?:honest|plain|direct)\b|\bplain, honest words\b/i, 'thanks the guest for being candid or honest'],
+  [/\bsafe travels\b|\benjoy the rest of your\b/i, 'comments on the guest’s trip'],
+  [/\bthe booking platform\b/i, '“the booking platform” (name the channel)'],
+  [/\b(?:read every word|read it with care|act on notes like|notes like (?:this|these)|warmly received|a good note (?:for us )?to receive|is appreciated\b)/i, 'stock phrase'],
+  [/\bit means a lot\b|\bvalue your feedback\b|\bwe strive\b|\brest assured\b|\bmoving forward\b|\bwe pride ourselves\b|\bextra mile\b|\babove and beyond\b|\bexceeded expectations\b|\bmake a real difference\b|\bexperience we aim for\b/i, 'filler phrase'],
+]
+/** True when a reply's first sentence starts with a person: the guest's name, a thank-you, or "we". */
+export function plainOpener(text: string): boolean {
+  const t = String(text || '').replace(/^[\s"“”']+/, '')
+  if (!t) return true
+  return /^(?:thank you|thanks|we\b|we['’]re\b|we['’]d\b|we['’]ve\b|our team\b|glad\b|so glad\b|sorry\b|it was (?:a pleasure|great|lovely|good)\b)/i.test(t) || /^[A-Z][A-Za-zÀ-ÿ'’.-]{1,24}(?: [A-Z][A-Za-zÀ-ÿ'’.-]{1,24})?,\s/.test(t)
+}
+/** What makes this draft sound templated, in words a person can act on. Empty when it reads plainly. */
+export function styleFlags(text: string): ReplyFlag[] {
+  const t = String(text || '')
+  const out: ReplyFlag[] = []
+  if (!t.trim()) return out
+  if (!plainOpener(t)) out.push({ key: 'stilted', label: 'opens with a phrase instead of the guest, a thank-you or “we”', block: false })
+  const hit = STOCK.filter(([re]) => re.test(t)).map(([, label]) => label)
+  if (hit.length) out.push({ key: 'stock', label: 'template wording: ' + Array.from(new Set(hit)).slice(0, 3).join(', '), block: false })
   return out
 }
 

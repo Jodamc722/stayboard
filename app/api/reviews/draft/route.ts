@@ -23,7 +23,7 @@ import { modelFor } from '@/lib/ai-models'
 import { aiFetch } from '@/lib/ai-usage'
 import { isDepartureCleanName } from '@/lib/breezeway'
 import { REVIEW_REPLY_SYSTEM, ratingBand, strategyLine, ratingLineFor } from '@/lib/review-reply-prompt'
-import { firstNameOf, lintReply, openerOf, subScoresOf, plainTag } from '@/lib/review-playbook'
+import { firstNameOf, lintReply, openerOf, subScoresOf, plainTag, styleFlags } from '@/lib/review-playbook'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -267,7 +267,8 @@ export async function POST(req: NextRequest) {
     `Rating: ${ratingLineFor(ratingNum, channel)}\n` +
     `Strategy: ${strategyLine(band, !!reviewText.trim())}\n` +
     (catsLine ? `Category scores the guest gave (context only — do not recite them): ${catsLine}\n` : '') +
-    (city ? `Property facts: in ${city}.\n` : '') +
+    // Context, not copy (2026-11-18): the city was being worked into nearly every reply as a keyword.
+    (city ? `Where the home is (context only; do not mention the city or area unless the guest did): ${city}\n` : '') +
     (reviewDay ? `Review date: ${reviewDay}\n` : '') +
     `Guest review:\n"""${reviewText}"""\n\n` +
     (privateFeedback ? `Private feedback (told only to us — NEVER quote, mention or hint at it publicly):\n"""${privateFeedback}"""\n\n` : '') +
@@ -323,6 +324,27 @@ export async function POST(req: NextRequest) {
     }
     // Wrapping quotes are the one thing the model still adds now and then; a public reply has none.
     out = out.replace(/^["“]+|["”]+$/g, '').trim()
+    // ONE SECOND LOOK (2026-11-18). When the draft opens with a contorted phrase or leans on template
+    // wording (lib/review-playbook styleFlags), the model is shown its own draft and what is wrong with
+    // it, once. A host's own draft or instruction is left alone: those words are theirs. If the second
+    // try fails or is no better, the first draft stands and the flags show under it.
+    const style = !draft && !instr ? styleFlags(out) : []
+    if (style.length) {
+      try {
+        const fix = await aiFetch('review-reply', {
+          method: 'POST',
+          headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ ...JSON.parse(reqBody), messages: [
+            { role: 'user', content: userMsg },
+            { role: 'assistant', content: out },
+            { role: 'user', content: 'That draft does not sound like a person wrote it: ' + style.map(f => f.label).join('; ') + '. Rewrite it in plain sentences that start with the guest\'s name, "Thank you" or "We". Keep the same facts and the same length or shorter. Output only the reply.' },
+          ] }),
+        })
+        const d3: any = fix.ok ? await fix.json().catch(() => null) : null
+        const better = Array.isArray(d3?.content) ? d3.content.filter((c: any) => c?.type === 'text').map((c: any) => c?.text || '').join('').trim().replace(/^["“]+|["”]+$/g, '').trim() : ''
+        if (better && styleFlags(better).length < style.length) out = better
+      } catch { /* the first draft stands */ }
+    }
     const finalText = hv ? applyHostVoice(weNotThem(out), hv, 'review') : weNotThem(out)
     return NextResponse.json({
       draft: finalText,
