@@ -487,7 +487,7 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
   // the look-back window (anything still open is carried, never duplicated).
   const tasks: any[] = [], seen = new Set<string>()
   const keep = (rows: any) => { for (const t of (rows || []) as any[]) if (!seen.has(str(t.id))) { seen.add(str(t.id)); tasks.push(t) } }
-  const COLS = 'id,name,home_id,type_department,assignees,status,finished_at,scheduled_date'
+  const COLS = 'id,name,home_id,type_department,assignees,status,finished_at,scheduled_date,upd:raw->>updated_at'
   for (let i = 0; i < allHomes.length; i += 150) {
     const { data } = await db.from('breezeway_tasks_sync').select(COLS).in('home_id', allHomes.slice(i, i + 150)).eq('scheduled_date', day).limit(3000)
     keep(data)
@@ -515,8 +515,25 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
         if (Number.isFinite(id) && !NOT_A_PERSON.test(str(a?.name)) && !cleaners.some(c => c.id === id) && !p.people.some(x => x.id === id)) cleaners.push({ id, name: str(a?.name) })
       }
     }
+    // THIS PROGRAM'S TASKS FOR THE PLACE (2026-11-18). Found by the homes at the place, AND by the
+    // exact title wherever the task sits: a building renamed in Guesty (Boynton → Surfside) changes
+    // which Breezeway homes resolve to it, and an open task on the old home was then invisible —
+    // which reads as "none open" and files a second one.
+    const title = taskTitle(p, place).toLowerCase()
+    const own = tasks.filter(t => {
+      const n = str(t.name).replace(/^\s*\[Moved to [^\]]+\]\s*/i, '')
+      return n.indexOf(titlePrefix(p)) === 0 && (mine.has(Number(t.home_id)) || n.trim().toLowerCase() === title)
+    })
+    // REMOVED TODAY BY A PERSON → NOT FILED AGAIN TODAY (Jon, 2026-11-18: "never duplicated if not
+    // completed … smart enough to just move the task vs recreate it"). The week of Nov 13–18 showed
+    // the loop: somebody deletes the day's task in Breezeway, the next run two hours later sees none
+    // open and files another, and that one is deleted too — up to three a day at one building.
+    // A task of this cycle that was deleted or cancelled today means "not today"; the next one is
+    // filed on the place's next day. Finished is different: that is history, and the next day's is new.
+    const etDay = (v: any) => { const d = v ? new Date(str(v)) : null; return d && !isNaN(d.getTime()) ? ymdET(d) : '' }
+    const removedToday = own.some(t => isTaskGone(t.status) && (str(t.scheduled_date).slice(0, 10) === day || etDay(t.upd) === day))
     // This program's open tasks at the place, newest first.
-    const open = here.filter(t => str(t.name).indexOf(titlePrefix(p)) === 0 && !isTaskDone(t.status, t.finished_at) && !isTaskGone(t.status))
+    const open = own.filter(t => !isTaskDone(t.status, t.finished_at) && !isTaskGone(t.status))
       .map(t => ({ id: str(t.id), date: str(t.scheduled_date), assigneeIds: ids(t.assignees), homeId: Number(t.home_id) }))
       .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : Number(b.id) - Number(a.id)))
     // Rescheduled ahead by someone (a walkthrough moved to Friday): it is this cycle's task — left
@@ -525,7 +542,10 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     const todayT = open.find(t => t.date === day) || null
     const older = open.filter(t => t !== todayT && t.date < day)
     const carry = todayT ? null : older[0] || null
-    const extras = todayT ? older : older.slice(1)
+    // Every other open copy dated today or earlier is a duplicate — including a second one dated
+    // TODAY, which the old rule (older days only) left standing.
+    const kept = todayT || carry
+    const extras = open.filter(t => t !== kept && t.date <= day)
     const scheduled = onDays(place, day)
     const due = scheduled || (place.onCleanDays && cleanToday)
     const why = scheduled ? scheduleLine(place) : place.onCleanDays && cleanToday ? 'clean scheduled today' : 'not today'
@@ -535,7 +555,8 @@ export async function planPrograms(day = ymdET(new Date()), only?: string): Prom
     else if (todayT) { action = 'add'; note = 'today’s task is on the board' }
     else if (carry) { action = 'move'; note = 'not done on ' + carry.date + ' — moves to today' }
     else if (ahead) { action = 'none'; note = 'scheduled for ' + ahead.date }
-    else if (due && here.some(t => str(t.name).indexOf(titlePrefix(p)) === 0 && str(t.scheduled_date) === day && isTaskDone(t.status, t.finished_at))) { action = 'none'; note = 'done today' }
+    else if (due && own.some(t => str(t.scheduled_date).slice(0, 10) === day && !isTaskGone(t.status) && isTaskDone(t.status, t.finished_at))) { action = 'none'; note = 'done today' }
+    else if (due && removedToday) { action = 'none'; note = 'removed in Breezeway today — not filed again today; the next one comes on its next day' }
     else if (due) { action = 'create'; note = 'due — ' + why }
     else note = 'not today'
     plans.push({ ...base, due, why, people, cleaners, today: todayT, carry, extras, action, note })
@@ -654,7 +675,10 @@ export async function runPrograms(opts: { dryRun?: boolean; only?: string } = {}
       if (!moving && !add.length) { lines.push(tag + ': today’s task ' + t.id + ' already has everyone'); continue }
       if (opts.dryRun) { lines.push(tag + ': would ' + (moving ? 'move ' + t.id + ' from ' + t.date + ' to today' : 'add ' + add.length + ' to ' + t.id) + (moving && add.length ? ' and add ' + add.length : '')); continue }
       const body: any = {}
-      if (add.length) body.assignments = t.assigneeIds.concat(add)
+      // A task carried to today is for today's people: the standing assignees plus whoever is cleaning
+      // there TODAY. Adding on top of yesterday's cleaners left five names on one exterior clean.
+      if (moving && want.length) body.assignments = want
+      else if (add.length) body.assignments = t.assigneeIds.concat(add)
       if (moving) body.scheduled_date = day
       const r = await updateBreezewayTask(t.id, body)
       if (!r.ok) { lines.push(tag + ': Breezeway said ' + r.status + ' ' + str(r.text).slice(0, 120)); continue }
