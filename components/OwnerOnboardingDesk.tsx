@@ -7,7 +7,7 @@
 import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock } from 'lucide-react'
+import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock, ChevronDown } from 'lucide-react'
 import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
@@ -311,6 +311,13 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
   // the list"). What the owner marked "need" that our catalog does not carry is a tick list: tick the ones we
   // are buying and they go on the order as lines to price, or leave them and send the list as it is.
   const [pick, setPick] = useState<string[]>([])
+  // COLLAPSABLE (Jon, 2026-11-18: "looks weird and clunky. Should be collapsable too"). Folded, the card is one
+  // line: status, how many items, the estimate, how many bought. The choice is remembered per onboarding in
+  // this browser; storage can be blocked, so it is only ever a convenience.
+  const foldKey = 'oo-order-fold:' + rec.code
+  const [fold, setFold] = useState(false)
+  useEffect(() => { try { setFold(localStorage.getItem(foldKey) === '1') } catch {} }, [foldKey])
+  const toggleFold = () => setFold(f => { try { localStorage.setItem(foldKey, f ? '0' : '1') } catch {} return !f })
   const onList = (x: string) => { const p = parseNeed(x); return lines.some(l => String(l.name).toLowerCase() === p.name.toLowerCase() && (p.unit < 0 || (Number(l.qty[p.unit]) || 0) > 0)) }
   function parseNeed(x: string) {
     const q = x.match(/\s×(\d+)$/); let name = q ? x.slice(0, q.index) : x
@@ -332,23 +339,44 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
   async function download(format: 'pdf' | 'xlsx') { if (dirty && !(await act('save', { lines, note }))) return; window.location.href = `/api/owner-onboarding/${rec.code}/order?format=${format}` }
   const skip: string[] = o?.review?.skip || []
   const total = lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (Number(l.price) || 0) * l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), 0)
-  const inp = 'rounded-lg border border-line px-2 py-1 text-[12.5px] text-ink'
+  const inp = 'rounded-lg border border-line bg-white px-2 py-1 text-[12.5px] text-ink'
+  // the name reads as text until you go to edit it: no box on every row
+  const nameInp = 'w-full border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[13px] font-semibold text-ink hover:border-line focus:border-ink focus:outline-none focus:ring-0'
+  const buy = lines.filter(l => skip.indexOf(l.key) < 0)
+  const boughtN = buy.filter(l => rec.shop?.got?.[l.key]).length
+  const priced = buy.some(l => l.price != null && l.price !== '')
+  const summary = !o ? 'Not built yet' : [buy.length + (buy.length === 1 ? ' item' : ' items'), priced ? money(total) + ' est.' : '', rec.shop?.key ? boughtN + ' bought' : '', dirty ? 'unsaved changes' : ''].filter(Boolean).join(' · ')
+  // lines under their category, in the order the categories first appear; i stays the line's own index
+  const groups: { cat: string; rows: { l: Any; i: number }[] }[] = []
+  lines.forEach((l, i) => { const cat = String(l.category || 'Other'); let g = groups.find(x => x.cat === cat); if (!g) { g = { cat, rows: [] }; groups.push(g) } g.rows.push({ l, i }) })
+  const b = o?.basis
+  const basisLine = !b ? '' : [!b.marked ? 'the full list, the owner has not ticked supplies yet' : b.walked ? 'built after the walkthrough' : 'built before the walkthrough, counts are the owner’s own', b.leftOff.length ? b.leftOff.length + ' left off' : '', b.partial.length ? b.partial.length + ' partly there' : ''].filter(Boolean).join(' · ')
+  const rowBtn = 'inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12.5px] font-semibold text-ink disabled:opacity-50'
   return (
     <section className={card}>
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1"><h2 className="font-serif text-[22px] leading-none text-ink mr-auto">Order list</h2>
-        {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? 'Approved by the owner' : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}</div>
-      <p className="text-[12.5px] text-muted mb-3">The actual items {units.length > 1 ? 'each unit' : 'the home'} still needs, with how many of each, based on what the owner ticked on the supplies list and the walkthrough: what they have is left off, what they need is on. Add a price or a link to any line, adjust it, then send it to the owner to review and approve. Linen is separate.</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button type="button" onClick={toggleFold} aria-expanded={!fold} className="flex items-baseline gap-x-3 gap-y-1 flex-wrap text-left mr-auto min-w-0">
+          <h2 className="font-serif text-[22px] leading-none text-ink">Order list</h2>
+          <span className="text-[12.5px] text-muted">{summary}</span>
+        </button>
+        {o ? <span className={'rounded-full px-2 py-0.5 text-[11.5px] font-semibold ' + (o.status === 'approved' ? 'bg-emerald-50 text-emerald-800' : o.status === 'changes' ? 'bg-amber-50 text-amber-800' : o.status === 'sent' ? 'bg-app text-ink' : 'bg-app text-muted')}>{o.status === 'approved' ? 'Approved by the owner' : o.status === 'changes' ? 'Owner asked for changes' : o.status === 'sent' ? 'With the owner for review' : 'Draft'}</span> : null}
+        <button type="button" onClick={toggleFold} title={fold ? 'Open' : 'Close'} aria-label={fold ? 'Open the order list' : 'Close the order list'} className="rounded-lg p-1 text-muted hover:text-ink"><ChevronDown size={18} className={'transition-transform ' + (fold ? '-rotate-90' : '')} /></button>
+      </div>
+      {fold ? null : <div className="mt-3">
+      {!o ? <p className="text-[12.5px] text-muted mb-3">What {units.length > 1 ? 'each unit' : 'the home'} still needs, from the owner’s supplies answers and the walkthrough. Linen is separate.</p> : null}
       {!o ? <button type="button" disabled={busy === 'build' || !units.length} onClick={() => act('build')} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'build' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Build the order list</button> : (<>
-        {o.basis ? <div className="oo-noprint rounded-xl bg-app p-3 mb-3 text-[12.5px] text-ink space-y-1">
-          <p className={lab}>Built from the owner’s supplies answers</p>
+        {o.basis ? <div className="oo-noprint mb-3 text-[12.5px] text-ink">
+          <details className="group"><summary className="cursor-pointer list-none text-muted hover:text-ink [&::-webkit-details-marker]:hidden"><span className="underline decoration-dotted underline-offset-2">How this list was built</span>: {basisLine}</summary>
+          <div className="mt-2 rounded-xl bg-app p-3 space-y-1">
           {!o.basis.marked ? <p>The owner has not ticked the supplies list yet, so this is the full list for the home. Rebuild it once they have.</p> : null}
           {o.basis.leftOff.length ? <p><b>Left off, the owner has these:</b> {o.basis.leftOff.join(', ')}</p> : o.basis.marked ? <p>Nothing was left off: the owner did not mark a whole product as already there.</p> : null}
           {o.basis.partial.length ? <div><b>Sets the owner partly has (kept on the list, check them):</b><ul className="list-disc pl-5">{o.basis.partial.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           {o.basis.walked ? <p className="text-emerald-800 font-semibold">Built after the walkthrough was finished.</p> : o.basis.marked ? <p className="text-amber-800">Built before the walkthrough was finished: counts are the owner’s own.</p> : null}
           {o.basis.short?.length ? <div><b>Partly there, by count:</b><ul className="list-disc pl-5">{o.basis.short.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
           {o.basis.declined?.length ? <div><b>Not buying (the team’s decision):</b><ul className="list-disc pl-5">{o.basis.declined.map((x: string) => <li key={x}>{x}</li>)}</ul></div> : null}
+          </div></details>
           {o.basis.uncovered.length ? (() => { const left: string[] = o.basis.uncovered.filter((x: string) => !onList(x)); return (
-            <div className="pt-1">
+            <div className="mt-2 rounded-xl bg-app p-3">
               <p><b>Marked “need”, not in our catalog.</b> {left.length ? 'Tick the ones we are buying to add them to the list, or leave them and send the list as it is.' : 'All of these are on the list now.'}</p>
               {left.length ? <>
                 <div className="flex flex-wrap gap-1.5 mt-2">{left.map((x: string) => { const on = pick.indexOf(x) >= 0; return (
@@ -364,17 +392,22 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
         {o.review ? <div className={'rounded-xl p-3 mb-3 ' + (o.status === 'approved' ? 'bg-emerald-50' : 'bg-amber-50')}><p className={lab}>The owner’s review · {new Date(o.review.at).toLocaleString()}</p>
           {o.review.skip.length ? <p className="text-[13px] text-ink mt-1">Already has: {o.review.skip.map((k: string) => lines.find(l => l.key === k)?.name || k).join(', ')}</p> : null}
           {o.review.note ? <p className="text-[13px] text-ink mt-1 whitespace-pre-wrap">“{o.review.note}”</p> : null}</div> : null}
-        <div className="overflow-x-auto"><table className="w-full min-w-[500px] text-[12.5px]">
-          <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted border-b border-line"><th className="py-1.5 font-semibold">Item</th>{units.map(u => <th key={u} className="px-1 text-right font-semibold whitespace-nowrap">{units.length > 1 ? u : 'Qty'}</th>)}<th className="px-1 text-right font-semibold">Each</th><th className="text-right font-semibold">Total</th><th /></tr></thead>
-          <tbody>{lines.map((l, i) => { const q = l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), off = skip.indexOf(l.key) >= 0; return (
-            <tr key={l.key} className={'border-b border-line align-top ' + (off ? 'opacity-50' : '')}>
-              <td className="py-1.5 pr-2"><input value={l.name} onChange={e => set(i, { name: e.target.value })} className={inp + ' w-full font-semibold'} /><span className="block text-[11.5px] text-muted mt-0.5">{rec.shop?.got?.[l.key] ? <b className="text-emerald-700">Bought · </b> : null}{l.detail && l.detail !== l.name ? l.detail + ' · ' : ''}{l.category}{l.url ? <> · <a href={l.url} target="_blank" rel="noreferrer" className="underline">item</a></> : null}{off ? ' · owner has this' : ''}</span></td>
-              {units.map((u, ui) => <td key={u} className="px-1 text-right"><input inputMode="numeric" value={String(l.qty[ui] ?? 0)} onChange={e => set(i, { qty: units.map((_, k) => (k === ui ? Number(e.target.value.replace(/\D/g, '')) || 0 : l.qty[k] || 0)) })} className={inp + ' w-12 text-right'} /></td>)}
-              <td className="px-1 text-right"><input inputMode="decimal" value={l.price ?? ''} onChange={e => set(i, { price: e.target.value === '' ? null : e.target.value })} className={inp + ' w-[68px] text-right'} /></td>
-              <td className="text-right tabular-nums pt-2.5">{l.price != null && l.price !== '' ? money(Number(l.price) * q) : '—'}</td>
-              <td className="pl-1 pt-2"><button type="button" onClick={() => { setLines(ls => ls.filter((_, j) => j !== i)); setDirty(true) }} className="text-muted hover:text-red-700" title="Remove">×</button></td>
-            </tr>) })}</tbody>
-          <tfoot><tr><td className="pt-2 font-semibold text-ink" colSpan={units.length + 2}>Estimated total{skip.length ? ' (without what the owner has)' : ''}</td><td className="pt-2 text-right font-semibold tabular-nums">{money(total)}</td><td /></tr></tfoot>
+        <div className="overflow-x-auto"><table className="w-full min-w-[460px] text-[12.5px]">
+          <thead><tr className="text-left text-[10.5px] uppercase tracking-wider text-muted"><th className="pb-1 font-semibold min-w-[150px]">Item</th>{units.map(u => <th key={u} className="px-1 pb-1 text-right font-semibold whitespace-nowrap">{units.length > 1 ? u : 'Qty'}</th>)}<th className="px-1 pb-1 text-right font-semibold">Each</th><th className="pb-1 text-right font-semibold">Total</th><th /></tr></thead>
+          {groups.map(g => <tbody key={g.cat}>
+            <tr><td colSpan={units.length + 4} className="pt-3 pb-1 border-b border-line text-[11.5px] font-semibold text-muted">{g.cat} <span className="font-normal">· {g.rows.length}</span></td></tr>
+            {g.rows.map(({ l, i }) => { const q = l.qty.reduce((x: number, y: number) => x + (Number(y) || 0), 0), off = skip.indexOf(l.key) >= 0, got = !!rec.shop?.got?.[l.key]
+              const sub = [l.detail && l.detail !== l.name ? l.detail : '', off ? 'owner has this' : ''].filter(Boolean).join(' · '); return (
+            <tr key={l.key} className={'group/row border-b border-line/60 align-middle ' + (off ? 'opacity-50' : '')}>
+              <td className="py-1 pr-2"><input value={l.name} onChange={e => set(i, { name: e.target.value })} className={nameInp} aria-label="Item name" />
+                {sub || got || l.url ? <span className="block text-[11.5px] text-muted leading-snug">{got ? <b className="text-emerald-700">Bought{sub || l.url ? ' · ' : ''}</b> : null}{sub}{l.url ? <>{sub ? ' · ' : ''}<a href={l.url} target="_blank" rel="noreferrer" className="underline">link</a></> : null}</span> : null}</td>
+              {units.map((u, ui) => <td key={u} className="px-1 text-right"><input inputMode="numeric" value={String(l.qty[ui] ?? 0)} onChange={e => set(i, { qty: units.map((_, k) => (k === ui ? Number(e.target.value.replace(/\D/g, '')) || 0 : l.qty[k] || 0)) })} className={inp + ' w-12 text-right tabular-nums'} aria-label={'Quantity' + (units.length > 1 ? ', ' + u : '')} /></td>)}
+              <td className="px-1 text-right"><input inputMode="decimal" placeholder="$" value={l.price ?? ''} onChange={e => set(i, { price: e.target.value === '' ? null : e.target.value })} className={inp + ' w-[68px] text-right tabular-nums'} aria-label="Price each" /></td>
+              <td className="text-right tabular-nums text-ink">{l.price != null && l.price !== '' ? money(Number(l.price) * q) : <span className="text-muted">—</span>}</td>
+              <td className="pl-1 w-6 text-right"><button type="button" onClick={() => { setLines(ls => ls.filter((_, j) => j !== i)); setDirty(true) }} className="text-[15px] leading-none text-muted/50 hover:text-red-700 group-hover/row:text-muted" title="Remove" aria-label={'Remove ' + l.name}>×</button></td>
+            </tr>) })}
+          </tbody>)}
+          <tfoot><tr><td className="pt-3 font-semibold text-ink" colSpan={units.length + 2}>Estimated total{skip.length ? ' (without what the owner has)' : ''}</td><td className="pt-3 text-right font-semibold tabular-nums">{priced ? money(total) : '—'}</td><td /></tr></tfoot>
         </table></div>
         <div className="oo-noprint">
           <button type="button" onClick={() => { setLines(ls => [...ls, { key: 'c' + Date.now().toString(36), category: 'Other', name: 'New item', detail: '', url: '', price: null, qty: units.map(() => 1) }]); setDirty(true) }} className="mt-2 text-[12.5px] font-semibold text-ink">+ Add an item</button>
@@ -385,31 +418,33 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
             {o.status !== 'draft' ? <button type="button" onClick={() => act('unsend')} className="text-[12.5px] text-muted underline">Take it back to a draft</button> : null}
             <button type="button" onClick={() => act('build')} className="text-[12.5px] text-muted underline">Rebuild from the supplies list</button>
           </div>
-          <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-2">
-            <span className="mr-auto"><b>For our team.</b> Download the list to buy from: a printout with a tick box per line, or a spreadsheet with the links and a column for what has been ordered.</span>
-            <button type="button" disabled={!!busy} onClick={() => download('pdf')} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Printer size={13} /> PDF printout</button>
-            <button type="button" disabled={!!busy} onClick={() => download('xlsx')} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Download size={13} /> Excel</button>
-          </div>
-          {/* The same list as a link (Jon, 2026-11-17: "like a shopping list that as they get they can mark"). */}
-          {(() => { const sh = rec.shop, host = typeof window !== 'undefined' ? window.location.origin : '', link = sh?.key ? `${host}/join/${rec.code}/shop?k=${sh.key}` : ''
-            const buyLines = lines.filter(l => skip.indexOf(l.key) < 0), bought = buyLines.filter(l => sh?.got?.[l.key]).length
-            return (
-              <div className="mt-2 rounded-xl bg-app p-3 text-[12.5px] text-ink">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="mr-auto"><b>Shopping list link.</b> {link ? <>{bought} of {buyLines.length} bought{sh?.by ? ', last by ' + sh.by : ''}. Whoever is buying taps each line as they get it; no sign-in needed.</> : 'A link for whoever is buying: they tap each line as they get it, on a phone or at a desk, and the ticks show here.'}</span>
-                  {link ? <>
-                    <button type="button" onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; try { await navigator.clipboard.writeText(link); setMsg('Shopping link copied.') } catch { setMsg(link) } }} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><Copy size={13} /> Copy link</button>
-                    <a href={link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink"><ExternalLink size={13} /> Open</a>
-                  </> : <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('shop') }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50">{busy === 'shop' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Make the shopping link</button>}
-                </div>
-                {link ? <p className="mt-1.5 text-muted"><span className="break-all">{link}</span> · <button type="button" className="underline" onClick={() => act('shop', { reset: true })}>Clear the ticks</button> · <button type="button" className="underline" onClick={() => act('shop', { off: true })}>Switch the link off</button> · <button type="button" className="underline" onClick={() => act('shop')}>Refresh</button></p> : null}
-              </div>) })()}
-          <div className="mt-3 rounded-xl bg-app p-3 text-[12.5px] text-ink flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="mr-auto"><b>The unit’s FAQ.</b> {rec.faq ? `${rec.faq.added} ${rec.faq.added === 1 ? 'entry' : 'entries'} added, last on ${new Date(rec.faq.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.` : rec.attach?.listingId ? (o.status === 'approved' ? 'Approved items go in automatically.' : 'Items go in once the owner approves the list, with the Wi-Fi, parking and laundry.') : 'Attach the unit to its Guesty listing and the approved items, Wi-Fi, parking and laundry go into its FAQ.'}</span>
-            {rec.attach?.listingId ? <button type="button" disabled={!!busy} onClick={() => act('faq')} className="font-semibold underline">{busy === 'faq' ? 'Updating…' : 'Update the FAQ now'}</button> : null}
+          <div className="mt-4 rounded-xl border border-line divide-y divide-line text-[12.5px] text-ink">
+            <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+              <span className="mr-auto"><b>Download</b> <span className="text-muted">the list for whoever is buying</span></span>
+              <button type="button" disabled={!!busy} onClick={() => download('pdf')} className={rowBtn}><Printer size={13} /> PDF</button>
+              <button type="button" disabled={!!busy} onClick={() => download('xlsx')} className={rowBtn}><Download size={13} /> Excel</button>
+            </div>
+            {/* The same list as a link (Jon, 2026-11-17: "like a shopping list that as they get they can mark"). */}
+            {(() => { const sh = rec.shop, host = typeof window !== 'undefined' ? window.location.origin : '', link = sh?.key ? `${host}/join/${rec.code}/shop?k=${sh.key}` : ''
+              return (
+                <div className="px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="mr-auto"><b>Shopping link</b> <span className="text-muted">{link ? <>{boughtN} of {buy.length} bought{sh?.by ? ', last by ' + sh.by : ''}</> : 'they tap each line as they get it, no sign-in'}</span></span>
+                    {link ? <>
+                      <button type="button" onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; try { await navigator.clipboard.writeText(link); setMsg('Shopping link copied.') } catch { setMsg(link) } }} className={rowBtn}><Copy size={13} /> Copy link</button>
+                      <a href={link} target="_blank" rel="noreferrer" className={rowBtn}><ExternalLink size={13} /> Open</a>
+                    </> : <button type="button" disabled={!!busy} onClick={async () => { if (dirty && !(await act('save', { lines, note }))) return; act('shop') }} className={rowBtn}>{busy === 'shop' ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Make the link</button>}
+                  </div>
+                  {link ? <p className="mt-1 text-[11.5px] text-muted"><button type="button" className="underline" onClick={() => act('shop')}>Refresh</button> · <button type="button" className="underline" onClick={() => act('shop', { reset: true })}>Clear the ticks</button> · <button type="button" className="underline" onClick={() => act('shop', { off: true })}>Switch the link off</button></p> : null}
+                </div>) })()}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+              <span className="mr-auto"><b>Unit FAQ</b> <span className="text-muted">{rec.faq ? `${rec.faq.added} ${rec.faq.added === 1 ? 'entry' : 'entries'} added, last on ${new Date(rec.faq.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : rec.attach?.listingId ? (o.status === 'approved' ? 'approved items go in automatically' : 'items go in once the owner approves, with the Wi-Fi, parking and laundry') : 'attach the unit to its Guesty listing first'}</span></span>
+              {rec.attach?.listingId ? <button type="button" disabled={!!busy} onClick={() => act('faq')} className={rowBtn}>{busy === 'faq' ? 'Updating…' : 'Update now'}</button> : null}
+            </div>
           </div>
         </div>
       </>)}
+      </div>}
       {msg ? <p className="text-[12.5px] text-ink mt-2">{msg}</p> : null}
     </section>
   )
