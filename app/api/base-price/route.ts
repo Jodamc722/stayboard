@@ -7,6 +7,7 @@
 // months.
 //
 //   GET  ?building=<name> | ?ids=a,b,c [&calendar=1]   the report: now, booked, proposed. Nothing is written.
+//   GET  ?all=1                                         every active listing (the Admin desk's Base rates tab)
 //   POST { changes: [{ id, basePrice, weekendBasePrice? }] }   writes ONLY those two price fields.
 //
 // WHY THE CALENDAR CHECK. A day PriceLabs has not priced falls back to the base price. A $1,000 base
@@ -45,15 +46,18 @@ function weekendShape(checkIn: string, nights: number): Stay['weekend'] {
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireAnyLevel(['optimize', 'buildings', 'revenue'], 'view')
+  const gate = await requireAnyLevel(['optimize', 'buildings', 'revenue', 'admin-desk'], 'view')
   if (!gate.ok) return gate.res
+  // THE FULL LIST (Jon, 2026-11-18: "the base rates should show on admin page, by listing. Full list")
+  const all = req.nextUrl.searchParams.get('all') === '1'
   const building = (req.nextUrl.searchParams.get('building') || '').trim()
-  const withCalendar = req.nextUrl.searchParams.get('calendar') === '1'
+  const withCalendar = req.nextUrl.searchParams.get('calendar') === '1' && req.nextUrl.searchParams.get('all') !== '1'   // a calendar read per unit is too slow for the whole portfolio
   const sb = supabaseAdmin()
   let q = sb.from('guesty_listings').select('id,nickname,title,building,bedrooms,prices:raw->prices,active:raw->>active').limit(1000)
   // The property page rolls several raw building names into one, so it sends the unit ids.
   const idList = (req.nextUrl.searchParams.get('ids') || '').split(',').map(x => x.trim()).filter(x => /^[a-f0-9]{24}$/i.test(x)).slice(0, 150)
-  if (idList.length) q = q.in('id', idList)
+  if (all) { /* every listing */ }
+  else if (idList.length) q = q.in('id', idList)
   else if (building) q = q.eq('building', building)
   else return NextResponse.json({ ok: false, error: 'building or ids is required.' }, { status: 400 })
   const { data: ls, error } = await q
@@ -87,7 +91,8 @@ export async function GET(req: NextRequest) {
   const lift = wkEnd && wkDay ? Math.min(2, Math.max(1, wkEnd / wkDay)) : 1.25
   // Fallback for a unit with too few nights of its own: the same bedroom count in the building.
   const byBeds = new Map<string, Stay[]>()
-  for (const l of listings) { const k = String(l.bedrooms ?? ''); const a = byBeds.get(k) || []; byBeds.set(k, a.concat(byListing.get(String(l.id)) || [])) }
+  const bedKey = (l: any) => String(l.building || '') + '|' + String(l.bedrooms ?? '')
+  for (const l of listings) { const k = bedKey(l); const a = byBeds.get(k) || []; byBeds.set(k, a.concat(byListing.get(String(l.id)) || [])) }
 
   const tok = withCalendar ? await token(sb) : null
   const today = ymd(new Date()), end = ymd(new Date(Date.now() + 365 * 86400000))
@@ -96,14 +101,14 @@ export async function GET(req: NextRequest) {
     const own = byListing.get(String(l.id)) || []
     const nights = own.reduce((s, r) => s + r.nights, 0)
     const ownMed = weightedMedian(own)
-    const peers = byBeds.get(String(l.bedrooms ?? '')) || []
+    const peers = byBeds.get(bedKey(l)) || []
     const peerMed = weightedMedian(peers)
     const basis = nights >= 20 && ownMed ? 'own' : peerMed ? 'building' : 'none'
     const med = basis === 'own' ? ownMed : basis === 'building' ? peerMed : null
     const base = num(l.prices?.basePrice), weekendBase = num(l.prices?.weekendBasePrice)
     const proposed = med ? round5(med) : null
     const row: any = {
-      id: String(l.id), name: String(l.nickname || l.title || ''), bedrooms: l.bedrooms ?? null,
+      id: String(l.id), name: String(l.nickname || l.title || ''), building: String(l.building || ''), bedrooms: l.bedrooms ?? null,
       base, weekendBase, booked: med ? Math.round(med) : null, nights, basis,
       proposed, proposedWeekend: proposed ? round5(proposed * lift) : null,
     }
