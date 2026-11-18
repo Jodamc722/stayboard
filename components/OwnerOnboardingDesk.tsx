@@ -545,29 +545,76 @@ function IntroEmail({ rec, onRec }: { rec: Any; onRec?: (r: Any) => void }) {
 }
 
 // ── a unit picker: the buildings and units in Guesty ──
-function UnitPicker({ property, listingId, unitLabel, onPick }: { property: string; listingId: string; unitLabel: string; onPick: (p: { property: string; listingId: string; unitLabel: string }) => void }) {
+// Not attached yet: it looks in Guesty for this property and unit and offers the match to attach in
+// one click, and "Sync listings" pulls a listing made in Guesty a minute ago (Jon, 2026-11-18).
+function UnitPicker({ property, listingId, unitLabel, onPick, onAttach }: { property: string; listingId: string; unitLabel: string; onPick: (p: { property: string; listingId: string; unitLabel: string }) => void; onAttach?: (p: { property: string; listingId: string; unitLabel: string }) => void }) {
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Any[]>([])
   const [buildings, setBuildings] = useState<string[]>([])
-  useEffect(() => { fetch('/api/owner-onboarding/units').then(r => r.json()).then(d => d?.ok && setBuildings(d.buildings)).catch(() => {}) }, [])
+  const [found, setFound] = useState<Any[]>([])
+  const [looked, setLooked] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncNote, setSyncNote] = useState('')
+  const [tick, setTick] = useState(0)
+  useEffect(() => { fetch('/api/owner-onboarding/units').then(r => r.json()).then(d => d?.ok && setBuildings(d.buildings)).catch(() => {}) }, [tick])
   useEffect(() => { const id = setTimeout(() => { if (!q.trim()) { setHits([]); return } fetch('/api/owner-onboarding/units?q=' + encodeURIComponent(q)).then(r => r.json()).then(d => setHits(d?.units || [])).catch(() => {}) }, 250); return () => clearTimeout(id) }, [q])
+  // The listings Guesty has for this property, the ones naming this unit first.
+  useEffect(() => {
+    if (listingId || !property.trim()) { setFound([]); setLooked(false); return }
+    const id = setTimeout(() => {
+      fetch('/api/owner-onboarding/units?q=' + encodeURIComponent(property.trim())).then(r => r.json()).then(d => {
+        const u = unitLabel.trim().toLowerCase()
+        const names = (h: Any) => (h.unit + ' ' + h.nickname).toLowerCase()
+        const rows = ((d?.units || []) as Any[]).filter(h => h.active !== false)
+        const exact = u ? rows.filter(h => names(h).split(/[^a-z0-9]+/).includes(u)) : []
+        setFound((exact.length ? exact : rows).slice(0, exact.length ? 3 : 6)); setLooked(true)
+      }).catch(() => {})
+    }, 400)
+    return () => clearTimeout(id)
+  }, [property, unitLabel, listingId, tick])
+  async function sync() {
+    if (syncing) return
+    setSyncing(true); setSyncNote('')
+    try {
+      const d = await fetch('/api/sync/guesty?only=listings', { method: 'POST' }).then(r => r.json())
+      setSyncNote(d?.ok ? (d.added?.length ? `${d.added.length} new listing${d.added.length === 1 ? '' : 's'} pulled from Guesty.` : 'Guesty has nothing new.') : (d?.error || 'Could not reach Guesty.'))
+      setTick(t => t + 1)
+    } catch { setSyncNote('Could not reach Guesty.') } finally { setSyncing(false) }
+  }
+  const attach = (h: Any) => {
+    const p = { property: property || h.building, listingId: String(h.id), unitLabel: unitLabel || h.unit || h.nickname }
+    if (onAttach) onAttach(p); else onPick(p)
+    setQ(''); setHits([])
+  }
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <label className="block"><span className={lab}>Property</span>
-        <input list="oo-buildings" value={property} onChange={e => onPick({ property: e.target.value, listingId, unitLabel })} placeholder="e.g. Elser" className={field} />
-        <datalist id="oo-buildings">{buildings.map(b => <option key={b} value={b} />)}</datalist>
-      </label>
-      <div>
-        <span className={lab}>Unit {listingId ? <span className="normal-case tracking-normal font-normal text-emerald-700">· attached to Guesty</span> : <span className="normal-case tracking-normal font-normal">· attach once it is in Guesty</span>}</span>
-        <div className="relative">
-          <input value={q || unitLabel} onChange={e => { setQ(e.target.value); onPick({ property, listingId: '', unitLabel: e.target.value }) }} placeholder="Unit number, or search Guesty" className={field} />
-          {hits.length ? (
-            <ul className="absolute z-20 left-0 right-0 mt-1 max-h-60 overflow-auto rounded-xl border border-line bg-white shadow-lg">
-              {hits.map(h => <li key={h.id}><button type="button" onClick={() => { onPick({ property: h.building || property, listingId: h.id, unitLabel: h.unit || h.nickname }); setQ(''); setHits([]) }} className="w-full text-left px-3 py-2 text-[13px] hover:bg-app"><b className="text-ink">{h.building} {h.unit}</b> <span className="text-muted">{h.nickname}</span></button></li>)}
-            </ul>
-          ) : null}
+    <div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block"><span className={lab}>Property</span>
+          <input list="oo-buildings" value={property} onChange={e => onPick({ property: e.target.value, listingId, unitLabel })} placeholder="e.g. Elser" className={field} />
+          <datalist id="oo-buildings">{buildings.map(b => <option key={b} value={b} />)}</datalist>
+        </label>
+        <div>
+          <span className={lab}>Unit {listingId ? <span className="normal-case tracking-normal font-normal text-emerald-700">· attached to Guesty</span> : <span className="normal-case tracking-normal font-normal">· not attached to a listing yet</span>}</span>
+          <div className="relative">
+            <input value={q || unitLabel} onChange={e => { setQ(e.target.value); onPick({ property, listingId: '', unitLabel: e.target.value }) }} placeholder="Unit number, or search Guesty" className={field} />
+            {hits.length ? (
+              <ul className="absolute z-20 left-0 right-0 mt-1 max-h-60 overflow-auto rounded-xl border border-line bg-white shadow-lg">
+                {hits.map(h => <li key={h.id}><button type="button" onClick={() => attach(h)} className="w-full text-left px-3 py-2 text-[13px] hover:bg-app"><b className="text-ink">{h.building} {h.unit}</b> <span className="text-muted">{h.nickname}</span></button></li>)}
+              </ul>
+            ) : null}
+          </div>
         </div>
       </div>
+      {listingId ? (
+        <p className="oo-noprint mt-2 text-[12.5px] text-muted">Attached to its Guesty listing. <a href={'/listings/' + listingId} className="font-semibold text-ink underline decoration-line underline-offset-2">Open the listing</a> · <button type="button" onClick={() => (onAttach || onPick)({ property, listingId: '', unitLabel })} className="font-semibold text-muted hover:text-ink">Detach</button></p>
+      ) : property.trim() ? (
+        <div className="oo-noprint mt-2 text-[12.5px] text-ink flex flex-wrap items-center gap-x-2 gap-y-1.5">
+          {found.length ? <span className="text-muted">In Guesty for {property}:</span> : looked ? <span className="text-muted">No listing for {property} in Lighthouse yet.</span> : null}
+          {found.map(h => <button key={h.id} type="button" onClick={() => attach(h)} className="rounded-lg border border-line bg-white px-2.5 py-1 font-semibold hover:border-ink/40">Attach {h.nickname || [h.building, h.unit].filter(Boolean).join(' ')}</button>)}
+          <button type="button" onClick={sync} disabled={syncing} className="inline-flex items-center gap-1 font-semibold text-muted hover:text-ink disabled:opacity-60">{syncing ? <Loader2 size={12} className="animate-spin" /> : null}{syncing ? 'Syncing listings…' : 'Sync listings'}</button>
+          {syncNote ? <span className="text-muted">{syncNote}</span> : null}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -997,7 +1044,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           {/* attach + who */}
           <section className={card}>
             <h2 className="font-serif text-[22px] leading-none text-ink mb-3">Property and unit</h2>
-            <UnitPicker property={rec.attach.property} listingId={rec.attach.listingId} unitLabel={rec.attach.unitLabel} onPick={p => setRec({ ...rec, attach: p })} />
+            <UnitPicker property={rec.attach.property} listingId={rec.attach.listingId} unitLabel={rec.attach.unitLabel} onPick={p => setRec({ ...rec, attach: p })} onAttach={p => { setRec({ ...rec, attach: p }); patch({ attach: p }, p.listingId ? 'Attached to the Guesty listing.' : 'Detached.') }} />
             <button type="button" onClick={() => patch({ attach: rec.attach }, 'Attached.')} className="oo-noprint mt-3 rounded-xl bg-ink text-white px-4 py-2 text-[13px] font-semibold">Save</button>
           </section>
 
