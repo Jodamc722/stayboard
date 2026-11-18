@@ -104,7 +104,7 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
     <div className="rounded-2xl border border-line bg-white p-3 sm:p-4 mb-3">
       <div className="flex items-center gap-2 flex-wrap mb-2">
         <span className="text-[13px] font-bold text-ink">What we heard</span>
-        <span className="text-[11.5px] text-muted">guest issues picked up from recorded calls and message threads — filed, flagged to customer care and posted to Slack automatically</span>
+        <span className="text-[11.5px] text-muted">guest issues picked up from recorded calls and message threads. Each one is a suggestion: file it as a glitch or dismiss it. Nothing is filed on its own; customer care is still flagged</span>
         <span className="grow" />
         {nSec > 0 && <Pill tone="rose" title="Safety or security — these also go to leadership">{nSec} safety</Pill>}
         <Pill tone={nOpen ? 'amber' : 'slate'} title="Heard, but no glitch filed — waiting on a person">{nOpen} to look at</Pill>
@@ -115,7 +115,7 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
         </div>
         {canEdit && nStale > 0 && <button onClick={() => dismissStale(nStale)} disabled={!!busy} className={GHOST} title="Clear every unfiled detection whose stay ended more than a week ago (never safety or security)">{busy === 'stale' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Dismiss {nStale} stale</button>}
         {canEdit && <button onClick={run} disabled={!!busy} className={DARK} title="Read the last 48 hours of calls and threads now">{busy === 'run' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Check now</button>}
-        {canEdit && <button onClick={toggle} disabled={!!busy} className={GHOST} title={settings.on ? 'The watch runs every half hour' : 'The watch is off — nothing is filed or flagged automatically'}>{settings.on ? 'Watch on' : 'Watch off'}</button>}
+        {canEdit && <button onClick={toggle} disabled={!!busy} className={GHOST} title={settings.on ? 'The watch runs every half hour' : 'The watch is off — nothing is suggested or flagged'}>{settings.on ? 'Watch on' : 'Watch off'}</button>}
         <IconBtn title="Reload" onClick={load}><RefreshCw size={13} /></IconBtn>
       </div>
 
@@ -147,7 +147,7 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
                     {r.channel ? <Tag>{r.channel}</Tag> : null}
                     {r.category ? <Tag>{r.category.replace(/^Maintenance - /, '')}</Tag> : null}
                     <Tag tone="slate" title={fmt(r.occurred_at)}>{fmt(r.occurred_at) || fmt(r.detected_at)}</Tag>
-                    {r.glitch_id ? <Tag tone="emerald">glitch filed</Tag> : r.verdict === 'dismissed' ? <Tag>dismissed</Tag> : r.verdict === 'pending' ? <Tag tone="amber">waiting on you</Tag> : <Tag tone="amber">no glitch yet</Tag>}
+                    {r.glitch_id ? <Tag tone="emerald">glitch filed</Tag> : r.verdict === 'dismissed' ? <Tag>dismissed</Tag> : r.verdict === 'pending' ? <Tag tone="amber">suggested</Tag> : <Tag tone="amber">no glitch yet</Tag>}
                     {r.stale && open_(r) ? <Tag title="The stay ended more than a week ago">stale</Tag> : null}
                     {r.alerted ? <Tag tone="violet" title="Customer care got the pop-up and the Slack post">customer care flagged</Tag> : null}
                   </div>
