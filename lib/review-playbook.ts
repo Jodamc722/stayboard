@@ -372,6 +372,8 @@ export function styleFlags(text: string): ReplyFlag[] {
   const out: ReplyFlag[] = []
   if (!t.trim()) return out
   if (!plainOpener(t)) out.push({ key: 'stilted', label: 'opens with a phrase instead of the guest, a thank-you or “we”', block: false })
+  // two handoffs stacked: "passed it on to our team, and we're looking into it"
+  if (/\b(?:passed|shared|raised)\b[^.]{0,80}\bteam\b[^.]{0,12}\band we(?:'|’)re looking (?:into|at)\b/i.test(t)) out.push({ key: 'stock', label: 'says the handoff twice (“passed… and we’re looking into it”)', block: false })
   const hit = STOCK.filter(([re]) => re.test(t)).map(([, label]) => label)
   if (hit.length) out.push({ key: 'stock', label: 'template wording: ' + Array.from(new Set(hit)).slice(0, 3).join(', '), block: false })
   return out
