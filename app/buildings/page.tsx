@@ -29,6 +29,7 @@ import { unitRevenue, REV_WINDOWS, windowFor, windowRange, DEFAULT_BASIS } from 
 import { BASES, BASIS_SHORT, BASIS_NOTE, type Basis } from '@/lib/basis'
 import { LeanHead, Pill, LeanEmpty } from '@/components/lean'
 import { AlertTriangle, Plus } from 'lucide-react'
+import { SyncListingsButton } from '@/components/SyncListingsButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -196,7 +197,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
   // the cache first. unstable_cache hashes the callback's ARGUMENTS into the key on top of these
   // keyParts, so passing periodDays in is what keeps the four windows separate. Bumped to v3
   // because the cached shape changed (units + fixes added).
-}, ['portfolio-rollup-v3'], { revalidate: 120 })
+}, ['portfolio-rollup-v3'], { revalidate: 120, tags: ['portfolio'] })
 
 // Money is a separate, heavier read (every live reservation in the window) so it gets its own,
 // longer cache and only runs for the views that show it.
@@ -285,6 +286,7 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
             <Plus size={14} /> New unit
           </Link>
         )}
+        <SyncListingsButton />
         <Pill title={`${buildings.length} buildings · ${totalUnits} units`}>{totalUnits} units</Pill>
         {portfolioAvg != null && <Pill tone="brand" title="Portfolio Optimize Score: average of every active unit (all time)">Score {portfolioAvg}</Pill>}
         {portfolioRating != null && <Pill tone="amber" title={`Guest rating, all time · ${portfolioReviews} reviews`}>{portfolioRating.toFixed(2)}★ all</Pill>}

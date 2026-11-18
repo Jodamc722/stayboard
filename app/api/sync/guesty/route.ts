@@ -5,10 +5,12 @@
 //   (none)                          → incremental sync (default cron behaviour)
 //   ?full=1                         → full, non-incremental reconcile
 //   ?only=reservations              → sync ONLY reservations (fast; returns the count)
+//   ?only=listings                  → pull EVERY listing from Guesty and name the ones that are new
 //   ?probe=checkouts&day=YYYY-MM-DD → READ-ONLY diagnostic: ask Guesty directly which
 //                                     reservations check out on that day (no upsert).
 import { NextRequest, NextResponse } from 'next/server'
-import { runFullSync, syncReservations, syncReviews } from '@/lib/guesty'
+import { runFullSync, syncReservations, syncReviews, syncListings } from '@/lib/guesty'
+import { revalidateTag } from 'next/cache'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireUser } from '@/lib/access'
 import { requireCron } from '@/lib/cron-auth'
@@ -169,6 +171,35 @@ export async function POST(req: NextRequest) {
       }
       const n = await syncReservations(fast ? 20 : 80, since)
       return NextResponse.json({ ok: true, reservationsOnly: n, mode: since ? 'incremental' : 'full-window', since, elapsed_ms: Date.now() - started })
+    }
+
+    // LISTINGS ONLY (Jon, 2026-11-18: "sync listings to Lighthouse, new ones added. Need a button for
+    // that"). The schedule pulls listings twice a day, so a unit created in Guesty this morning is
+    // not in Lighthouse until the next run. This pulls every listing now (not just the ones Guesty
+    // marks as changed) and names what is new, so the button can say what arrived.
+    if (params.get('only') === 'listings') {
+      const sb = supabaseAdmin()
+      const idsNow = async (): Promise<Set<string>> => {
+        const out = new Set<string>()
+        for (let from = 0; from < 5000; from += 1000) {
+          const { data } = await sb.from('guesty_listings').select('id').order('id').range(from, from + 999)
+          for (const r of (data || []) as any[]) out.add(String(r.id))
+          if (!data || data.length < 1000) break
+        }
+        return out
+      }
+      const before = await idsNow()
+      const n = await syncListings(30, null)
+      const after = await idsNow()
+      const fresh = Array.from(after).filter(id => !before.has(id))
+      let added: { id: string; name: string; building: string | null }[] = []
+      if (fresh.length) {
+        const { data } = await sb.from('guesty_listings').select('id,nickname,title,building').in('id', fresh.slice(0, 200))
+        added = ((data || []) as any[]).map(r => ({ id: String(r.id), name: String(r.nickname || r.title || r.id), building: r.building || null }))
+          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+      }
+      try { revalidateTag('portfolio') } catch { /* the page cache also expires on its own in 2 minutes */ }
+      return NextResponse.json({ ok: true, listingsOnly: n, total: after.size, added, elapsed_ms: Date.now() - started })
     }
 
     if (params.get('only') === 'reviews') {
