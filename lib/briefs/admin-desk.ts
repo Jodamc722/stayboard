@@ -11,7 +11,7 @@ import { buildAdminDesk } from '@/lib/admin-desk'
 import { worklist, optimizeState, type WorkItem, type AdminRow } from '@/lib/admin-desk-shared'
 import { removalGrounds, type RemovalGround } from '@/lib/review-playbook'
 import { isLowReview } from '@/lib/review-scale'
-import { ACCENTS, T, esc, masthead, headline, section, block, footer, pill, fit, unitShort, type Line } from './ui'
+import { ACCENTS, T, esc, masthead, block, footer, pill, fit, unitShort, tileTable, type Line } from './ui'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app'
 const str = (v: any) => (v == null ? '' : String(v)).trim()
@@ -180,7 +180,6 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
     html: `${pill(f.strong ? 'worth filing' : 'only with proof', f.strong ? 'red' : 'amber')} <b>${esc(unitShort(f.unit))}</b> — ${esc(f.guest)} · ${esc(stars(f))} · ${esc(chanName(f.channel))} · ${esc(shortDate(f.date))}`,
     sub: `<b>${esc(f.ground.replace(/\.$/, ''))}.</b> ${f.quote ? `“${esc(f.quote.slice(0, 170))}” ` : ''}${f.evidence ? `Attach: ${esc(f.evidence.replace(/\.$/, ''))}.` : ''}`,
   }))
-  const noGround = Math.max(0, rem.lowTotal - rem.list.length)
 
   const prepLines: Line[] = prep ? prep.open.map((p: any) => ({
     tone: p.noFees ? 'red' as const : 'amber' as const,
@@ -202,29 +201,104 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
   if (st.never) top.push({ tone: 'amber', html: `<b>${plural(st.never, 'live listing')} never optimized</b>`, sub: `${names(live.filter(r => optimizeState(r, today) === 'never').map(r => r.name))} · ${link('Admin desk', '/admin')}` })
   if (notForSale - newChan.length > 0) top.push({ tone: 'amber', html: `<b>${plural(notForSale, 'unit')} stopped selling on a channel</b> and ${neverOn} more were never connected to one`, sub: `Grouped by fault below.` })
 
-  const head = [
-    `<b>${notForSale}</b> ${notForSale === 1 ? 'unit' : 'units'} stopped selling on a channel`,
-    owed ? `<b>${owed}</b> ${owed === 1 ? 'review' : 'reviews'} to reply${owedLow ? ` (<b style="${T.red}">${owedLow} low</b>)` : ''}` : '',
-    remLines.length ? `<b>${remLines.length}</b> worth a removal request` : '',
-    `<b>${st.never + st.low + st.stale}</b> listings to optimize`,
-    prep ? `<b>${prep.prepOpen}</b> statement prep open` : '',
-  ].filter(Boolean).join(' · ')
+  // ---- THE LOOK (Jon, 2026-11-19, on the first cut: "looks so ugly"). It was a wall: every unit on its own
+  // line, the same sentence forty times, grey notes under everything. Now it is four numbers, a short
+  // numbered "do first" list, and one quiet count table per subject with a single link out. Unit names
+  // appear only where a person needs them to act (the reviews to dispute).
+  const SERIF = "Georgia,'Times New Roman',serif"
+  const INK = '#101114', MUTED = '#6B6C72', FAINT = '#9A9BA0', RULE = '#F1EFEA', RED = '#B42318'
+  type Row = { label: string; sub?: string; value?: string | number; red?: boolean }
+  const table = (rows: Row[]) => `<table width="100%" cellspacing="0" cellpadding="0">${rows.map((r, i) => `<tr>
+      <td style="padding:10px 12px 10px 0;${i ? `border-top:1px solid ${RULE};` : ''}font-size:14px;line-height:1.45;color:${INK}">${r.label}${r.sub ? `<div style="margin-top:2px;font-size:12px;line-height:1.5;color:${MUTED}">${r.sub}</div>` : ''}</td>
+      <td align="right" valign="top" style="padding:8px 0 0;${i ? `border-top:1px solid ${RULE};` : ''}font-family:${SERIF};font-size:20px;line-height:1.3;white-space:nowrap;color:${r.red ? RED : INK}">${r.value ?? ''}</td>
+    </tr>`).join('')}</table>`
+  const more = (label: string, path: string) => `<p style="margin:10px 0 0;font-size:12.5px"><a href="${APP_URL}${path}" style="color:#6F5527;font-weight:600;text-decoration:none">${esc(label)} →</a></p>`
+  const few = (xs: string[], n = 4) => `${xs.slice(0, n).map(x => esc(unitShort(x))).join(', ')}${xs.length > n ? ` and ${xs.length - n} more` : ''}`
+  const bldOf = (name: string) => str(name).split(/\s+-\s+|\s+\d|\//)[0].trim() || str(name)
+
+  // The four numbers.
+  const numbers = tileTable([
+    { label: 'Stopped selling', value: String(notForSale), note: newChan.length ? `${newChan.length} new in 2 days` : 'on a channel', tone: notForSale ? 'red' : 'none' },
+    { label: 'Low reviews to reply', value: String(owedLow), note: `${owed} to reply in all`, tone: owedLow ? 'red' : 'none' },
+  ]) + tileTable([
+    { label: 'Worth disputing', value: String(strongRem.length), note: `of ${rem.lowTotal} low reviews`, tone: 'none' },
+    { label: 'Statement prep open', value: String(prep ? prep.prepOpen : 0), note: prep ? prep.label : '', tone: 'none' },
+  ])
+
+  // Do first: at most five, each one sentence and one link.
+  const todo: string[] = []
+  const a = (label: string, path: string) => `<a href="${APP_URL}${path}" style="color:#6F5527;text-decoration:none;font-weight:600">${esc(label)}</a>`
+  if (newChan.length) {
+    const byTitle = new Map<string, number>()
+    for (const w of newChan) byTitle.set(str(w.title), (byTitle.get(str(w.title)) || 0) + 1)
+    const [t, n] = Array.from(byTitle.entries()).sort((x, y) => y[1] - x[1])[0]
+    todo.push(`<b>Check ${plural(n, 'listing')}: ${esc(t.replace(' — ', ', '))}</b> in the last two days. ${a('Channels', '/channels?problems=1')}`)
+  }
+  if (owedLow) todo.push(`<b>Reply to ${plural(owedLow, 'low review')}.</b> Drafts are waiting on each one. ${a('Reviews', '/reviews')}`)
+  if (strongRem.length) todo.push(`<b>File ${plural(strongRem.length, 'removal request')}.</b> Details below. ${a('Reviews', '/reviews')}`)
+  if (noFees.length) todo.push(`<b>Set up fees on ${plural(noFees.length, 'reservation')}</b> before ${esc(prep!.label)} statements. ${a('Owner audit', '/owner-audit')}`)
+  if (st.never) todo.push(`<b>Optimize ${plural(st.never, 'listing')} that never has been.</b> ${a('Admin desk', '/admin')}`)
+  const todoHtml = todo.length
+    ? `<table width="100%" cellspacing="0" cellpadding="0">${todo.slice(0, 5).map((t, i) => `<tr><td valign="top" style="width:26px;padding:8px 0;font-family:${SERIF};font-size:18px;line-height:1.2;color:#8C6D3A">${i + 1}</td><td style="padding:8px 0;font-size:14px;line-height:1.5;color:${INK}">${t}</td></tr>`).join('')}</table>`
+    : `<p style="margin:2px 0 0;font-size:14px;${T.green}">Nothing urgent today.</p>`
+
+  // Channels: one row per fault, counts on the right.
+  const stopped: Row[] = [], never: Row[] = []
+  let rollout = ''
+  for (const [k, g] of Array.from(groups.entries()).sort((x, y) => y[1].length - x[1].length)) {
+    const w = g[0]
+    if (k.startsWith('P|')) { rollout = esc(w.title); continue }
+    const fresh = g.filter(x => sinceOf(x) >= dayBefore).length
+    const label = esc(str(w.title).replace(' — ', ' · '))
+    if (w.severity === 'high') stopped.push({ label: `<b>${label}</b>`, sub: `${few(g.map(x => x.name))}${fresh ? ` · <span style="color:${RED}">${fresh} new</span>` : ''}`, value: g.length, red: true })
+    else never.push({ label, value: g.length })
+  }
+  const chanHtml = (stopped.length ? `<p style="margin:0 0 2px;font-size:12px;color:${MUTED}">Was selling and stopped</p>${table(stopped)}` : `<p style="margin:0;font-size:14px;${T.green}">Nothing that was selling has stopped.</p>`)
+    + (never.length ? `<p style="margin:16px 0 2px;font-size:12px;color:${MUTED}">Never connected</p>${table(never)}` : '')
+    + (rollout ? `<p style="margin:10px 0 0;font-size:12px;line-height:1.5;color:${FAINT}">${rollout}: a rollout to decide, not a fault.</p>` : '')
+    + more('Open Channels', '/channels?problems=1')
+
+  // Reviews to dispute: the only place a unit gets its own card.
+  const noGround = Math.max(0, rem.lowTotal - rem.list.length)
+  const remHtml = rem.list.length
+    ? rem.list.slice(0, 5).map((f, i) => `<div style="padding:${i ? '14px' : '2px'} 0 12px;${i ? `border-top:1px solid ${RULE}` : ''}">
+        <p style="margin:0;font-size:14px;line-height:1.4;color:${INK}"><b>${esc(unitShort(f.unit))}</b> <span style="font-size:12px;color:${MUTED}">· ${esc(stars(f))} · ${esc(chanName(f.channel))} · ${esc(shortDate(f.date))}</span></p>
+        <p style="margin:4px 0 0;font-size:13px;line-height:1.5;color:${INK}">${pill(f.strong ? 'file it' : 'needs proof', f.strong ? 'red' : 'amber')} &nbsp;${esc(f.ground.replace(/\.$/, ''))}</p>
+        ${f.quote ? `<p style="margin:6px 0 0;padding-left:10px;border-left:2px solid #E7E4DD;font-family:${SERIF};font-style:italic;font-size:13.5px;line-height:1.5;color:#3A3B40">“${esc(f.quote.slice(0, 180))}”</p>` : ''}
+        ${f.evidence ? `<p style="margin:6px 0 0;font-size:12px;line-height:1.5;color:${MUTED}">Attach: ${esc(f.evidence.replace(/\.$/, ''))}</p>` : ''}
+      </div>`).join('')
+      + `<p style="margin:2px 0 0;font-size:12px;line-height:1.5;color:${FAINT}">${noGround ? `The other ${noGround} are fair complaints: reply and fix. ` : ''}${rem.by === 'model' ? '' : 'Keyword match only today, so read each one first. '}</p>` + more('Open Reviews', '/reviews')
+    : `<p style="margin:2px 0 0;font-size:14px;color:${MUTED}">${rem.lowTotal ? `None of the ${plural(rem.lowTotal, 'low review')} from the last 30 days breaks a channel rule. Reply and fix.` : 'No low reviews in the last 30 days.'}</p>`
+
+  // Listing optimization: by building.
+  const needs = live.filter(r => optimizeState(r, today) !== 'ok')
+  const byB = new Map<string, { never: number; other: number }>()
+  for (const r of needs) { const k = str(r.building) || bldOf(r.name); const g = byB.get(k) || { never: 0, other: 0 }; if (optimizeState(r, today) === 'never') g.never++; else g.other++; byB.set(k, g) }
+  const optRows: Row[] = Array.from(byB.entries()).sort((x, y) => (y[1].never * 2 + y[1].other) - (x[1].never * 2 + x[1].other)).slice(0, 6)
+    .map(([k, g]) => ({ label: `<b>${esc(k)}</b>`, sub: [g.never ? `${g.never} never optimized` : '', g.other ? `${g.other} low or older than 90 days` : ''].filter(Boolean).join(' · '), value: g.never + g.other }))
+  const optHtml = needs.length ? table(optRows) + (byB.size > 6 ? `<p style="margin:8px 0 0;font-size:12px;color:${FAINT}">and ${byB.size - 6} more buildings</p>` : '') + more('Open Admin desk', '/admin') : `<p style="margin:2px 0 0;font-size:14px;${T.green}">Every live listing is current.</p>`
+
+  // Statement prep: by owner.
+  let prepHtml = ''
+  if (prep) {
+    const byO = new Map<string, { n: number; noFees: number; first: string }>()
+    for (const p of prep.open as any[]) { const k = str(p.ownerName) || 'No owner'; const g = byO.get(k) || { n: 0, noFees: 0, first: str(p.checkIn) }; g.n++; if (p.noFees) g.noFees++; byO.set(k, g) }
+    const rowsO: Row[] = Array.from(byO.entries()).sort((x, y) => y[1].n - x[1].n).slice(0, 6)
+      .map(([k, g]) => ({ label: `<b>${esc(k)}</b>`, sub: `${g.noFees ? `<span style="color:${RED}">${g.noFees} with no fees</span> · ` : ''}oldest check-in ${esc(shortDate(g.first))}`, value: g.n }))
+    prepHtml = prep.open.length
+      ? `<p style="margin:0 0 2px;font-size:12px;color:${MUTED}">Reservations that still need the cleaning and repair split</p>` + table(rowsO) + (byO.size > 6 ? `<p style="margin:8px 0 0;font-size:12px;color:${FAINT}">and ${byO.size - 6} more owners</p>` : '') + more('Open Owner audit, Prep', '/owner-audit')
+      : `<p style="margin:2px 0 0;font-size:14px;${T.green}">Prep is clear.</p>`
+  }
 
   const parts = [
-    { html: masthead(A, 'Admin morning', 'Channels, listings, reviews and statements', niceDay(today)) },
-    { html: headline(A, head) },
-    { html: top.length ? section('Top issues', top, { cap: 6, accent: A }) : block('Top issues', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">Nothing urgent.</span> <span style="${T.muted}">No listing stopped selling, no low review is waiting and prep has its fees.</span></p>`, A) },
-    { html: chanLines.length ? section('Channels not connected', chanLines, { cap: 10, accent: A, more: on('Channels page', '/channels?problems=1'), note: `${plural(chanAll.filter(w => w.name !== 'Portfolio').length, 'unit and channel pair')}. Red = was selling and stopped. Amber = never connected.` }) : block('Channels not connected', `<p style="margin:2px 0 0;font-size:13.5px;${T.green}">Every active listing is live on its channels.</p>`, A) },
-    { html: remLines.length
-        ? section('Reviews worth a removal request', remLines, { cap: 6, accent: A, more: on('Reviews page', '/reviews'), note: `Checked ${plural(rem.lowTotal, 'low review')} from the last 30 days. ${noGround ? `${noGround} ${noGround === 1 ? 'has' : 'have'} no policy ground: a fair complaint is not removable, so the work there is the reply and the fix. ` : ''}${rem.by === 'model' ? 'Each review was read against its channel\'s own removal rules.' : 'Keyword match only today; read each one before filing.'} The request text is drafted on each review under More → Removal request; a person files it.` })
-        : block('Reviews worth a removal request', `<p style="margin:2px 0 0;font-size:13.5px;${T.muted}">${rem.lowTotal ? `None of the ${plural(rem.lowTotal, 'low review')} from the last 30 days points at a policy breach. Reply and fix; do not file.` : 'No low reviews in the last 30 days.'}</p>`, A) },
-    { html: opt.length ? section('Listing optimization', opt.map(itemLine), { cap: 8, accent: A, more: on('Admin desk', '/admin'), note: `${st.never} never optimized · ${st.low} scoring low · ${st.stale} not touched in 90 days. Start each building with its best unit: the first one optimized sets the pattern for the rest.` }) : '' },
-    { html: prep
-        ? (prepLines.length
-            ? section(`Statement prep · ${prep.label}`, prepLines, { cap: 8, accent: A, more: on('Owner audit, Prep', '/owner-audit'), note: `${prep.statements} statements · ${prep.review} to review · ${prep.action} need action · ${prep.signedOff} signed off. Oldest check-in first.` })
-            : block(`Statement prep · ${prep.label}`, `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">Prep is clear.</span> <span style="${T.muted}">${prep.statements} statements · ${prep.review} to review · ${prep.action} need action · ${prep.signedOff} signed off.</span></p>`, A))
-        : '', optional: true },
-    { html: footer(`${link('Admin desk', '/admin')} · ${link('Channels', '/channels')} · ${link('Reviews', '/reviews')} · ${link('Owner audit', '/owner-audit')}<br>Admin morning · 7:01 every morning`) },
+    { html: masthead(A, 'Admin morning', 'Channels, reviews, listings and statements', niceDay(today)) },
+    { html: `<div style="background:#FAF8F4;padding:8px 22px 10px">${numbers}</div>` },
+    { html: block('Do first', todoHtml, A) },
+    { html: block('Channels', chanHtml, A) },
+    { html: block('Reviews worth disputing', remHtml, A, rem.list.length || null) },
+    { html: block('Listings to optimize', optHtml, A, needs.length || null) },
+    { html: prep ? block(`Statement prep · ${prep.label}`, prepHtml, A, prep.prepOpen || null) : '', optional: true },
+    { html: footer(`Admin morning · 7:01 every morning`) },
   ]
   const { html } = fit(parts, 90_000)
   const subject = `Admin morning · ${niceDay(today)} · ${notForSale} off a channel · ${owed} to reply${remLines.length ? ` · ${remLines.length} to dispute` : ''}`
