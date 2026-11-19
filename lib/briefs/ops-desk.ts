@@ -300,11 +300,29 @@ export async function buildOpsDesk(): Promise<Built> {
   }
   const marketCleans = (mk: string) => cleans.filter(c => (mkOf(c) || 'Other') === mk)
     .sort((x, y) => Number(y.sameDayArrival) - Number(x.sameDayArrival) || Number(x.state === 'done') - Number(y.state === 'done') || x.unit.localeCompare(y.unit, undefined, { numeric: true }))
+  // GROUPED BY CLEANER (Jon, 2026-11-19: "Should be grouped by cleaner"). Inside each market: nobody-assigned
+  // first, then each cleaner with the most same-day turns first, their cleans numbered, same-day on top.
   const marketSection = (mk: string, label: string) => {
     const list = marketCleans(mk)
     if (!list.length) return mk === 'Miami' || mk === 'Broward' ? block(`Departure cleans · ${label}`, `<p style="margin:2px 0 0;font-size:13.5px;${T.muted}">No departure cleans today.</p>`, A) : ''
-    const sd = list.filter(c => c.sameDayArrival).length, done = list.filter(c => c.state === 'done').length
-    return section(`Departure cleans · ${label}`, list.map(cleanLine), { cap: 40, accent: A, more: on('boards', '/day'), note: [sd ? `${sd} same-day, listed first` : '', done ? `${done} done` : ''].filter(Boolean).join(' · ') || undefined })
+    const groups: Record<string, typeof cleans> = {}
+    for (const c of list) { const k = /UNASSIGNED/.test(c.assignee) ? '' : (ownerOf(c) || ''); (groups[k] = groups[k] || []).push(c) }
+    const sdOf = (k: string) => groups[k].filter(c => c.sameDayArrival).length
+    const names = Object.keys(groups).sort((x, y) => Number(y === '') - Number(x === '') || sdOf(y) - sdOf(x) || groups[y].length - groups[x].length || x.localeCompare(y))
+    const row = (c: typeof cleans[number], me: string) => {
+      const a = arrivals.find(x => str(x.listingId) === c.lid)
+      const vip = a ? vipKind(a) : []
+      const st = c.state === 'done' ? `<span style="${T.green}">done</span>` : c.state === 'running' ? `<span style="${T.amber}">in progress</span>` : `<span style="${T.muted}">not started</span>`
+      const riders = me ? ridersOf(c, me) : []
+      return `<span style="float:right;margin-left:12px;font-size:12.5px">${st}</span><b>${esc(unitShort(c.unit))}</b>${c.sameDayArrival ? ' ' + pill('same-day · ' + landsAt(a), 'red') : ''}${vip.length ? ' ' + vip.join(' ') : ''}${riders.length ? ` <span style="${T.muted};font-size:12px">· with ${esc(riders.slice(0, 2).join(', '))}</span>` : ''}`
+    }
+    const blocks = names.map(k => {
+      const g = groups[k], sd = sdOf(k), done = g.filter(c => c.state === 'done').length
+      const meta = [`${g.length} clean${g.length === 1 ? '' : 's'}`, sd ? `<b style="${T.red}">${sd} same-day</b>` : '', done ? `${done} done` : '', k ? esc(shiftLabel(k)) : ''].filter(Boolean).join(' · ')
+      return person(k ? personName(k) : 'Nobody assigned', meta, g.map(c => row(c, k)), [], { tone: k ? 'none' : 'red' })
+    })
+    const sdAll = list.filter(c => c.sameDayArrival).length
+    return block(`Departure cleans · ${label}`, `<p style="margin:0;font-size:12px;${T.muted}">${names.filter(Boolean).length} cleaner${names.filter(Boolean).length === 1 ? '' : 's'}${sdAll ? ` · ${sdAll} same-day, listed first` : ''}</p>` + blocks.join(''), A, list.length)
   }
   const known = new Set(['Miami', 'Broward'])
   const otherMarkets = Array.from(new Set(cleans.map(c => mkOf(c) || 'Other'))).filter(m => !known.has(m)).sort()
