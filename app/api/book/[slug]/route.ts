@@ -32,8 +32,10 @@ export async function POST(req: NextRequest, { params }: { params: { slug: strin
   const code = String(b?.o || '')
   const r = CODE.test(code) ? await readRecord(code).catch(() => null) : null
   const owner = r && !r.archived ? r : null
-  const name = (owner ? String(owner.custom.ownerName || '') : String(b?.name || '')).trim().slice(0, 80)
-  const email = (owner && /@/.test(String(owner.custom.ownerEmail || '')) ? String(owner.custom.ownerEmail) : String(b?.email || '')).trim().toLowerCase().slice(0, 120)
+  // what they typed, else what the onboarding has on file
+  const onFile = owner && /@/.test(String(owner.custom.ownerEmail || '')) ? String(owner.custom.ownerEmail).trim().toLowerCase() : ''
+  const name = (String(b?.name || '').trim() || (owner ? String(owner.custom.ownerName || '') : '')).trim().slice(0, 80)
+  const email = (String(b?.email || '').trim().toLowerCase() || onFile).slice(0, 120)
   if (!name) return NextResponse.json({ ok: false, error: 'Add your name.' }, { status: 400 })
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return NextResponse.json({ ok: false, error: 'Add an email we can send the invitation to.' }, { status: 400 })
   const ip = String(req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown'
@@ -46,7 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: { slug: strin
   const isCall = t.slug === 'onboarding-call'
   const place = owner ? [owner.home?.address, owner.home?.unit ? 'Unit ' + owner.home.unit : ''].filter(Boolean).join(', ') : ''
   const ev = await createBookingEvent(t, { day, time, name, email, phone: String(b?.phone || '').slice(0, 40), note: String(b?.note || '').slice(0, 500), place, ref: (owner?.code || 'pub') + '-' + t.slug,
-    also: owner ? (owner.owners || []).map((x: any) => String(x?.email || '')) : [], moveEventId: owner && isCall ? owner.call?.eventId : undefined })
+    also: owner ? [onFile, ...(owner.owners || []).map((x: any) => String(x?.email || ''))] : [], moveEventId: owner && isCall ? owner.call?.eventId : undefined })
   if (!ev.ok) return NextResponse.json({ ok: false, error: ev.error }, { status: 502 })
   if (owner) {
     // on the owner's onboarding: the call record the desk and their timeline already read

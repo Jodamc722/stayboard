@@ -16,7 +16,7 @@ export function BookingPage({ slug, owner }: { slug: string; owner: string }) {
   const [f, setF] = useState({ name: '', email: '', phone: '', note: '', website: '' })
   const [busy, setBusy] = useState(false); const [msg, setMsg] = useState(''); const [done, setDone] = useState<Any>(null)
   const url = '/api/book/' + encodeURIComponent(slug) + (owner ? '?o=' + encodeURIComponent(owner) : '')
-  const load = () => fetch(url, { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) { setD(j); setDay(x => (j.days.some((y: Any) => y.day === x) ? x : j.days[0]?.day || '')) } else setErr(j?.error || 'This booking link is not open.') }).catch(() => setErr('Could not load the calendar. Please try again.'))
+  const load = () => fetch(url, { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) { setD(j); if (j.owner?.name) setF(x => (x.name ? x : { ...x, name: j.owner.name })); setDay(x => (j.days.some((y: Any) => y.day === x) ? x : j.days[0]?.day || '')) } else setErr(j?.error || 'This booking link is not open.') }).catch(() => setErr('Could not load the calendar. Please try again.'))
   useEffect(() => { load() }, [url])   // eslint-disable-line react-hooks/exhaustive-deps
   const times: Any[] = useMemo(() => (d?.days || []).find((x: Any) => x.day === day)?.times || [], [d, day])
   const known = !!d?.owner?.name, knownEmail = !!d?.owner?.hasEmail
@@ -83,8 +83,10 @@ export function BookingPage({ slug, owner }: { slug: string; owner: string }) {
                   <button type="button" onClick={() => setTime('')} className="inline-flex items-center gap-1 text-[13px] font-semibold text-[#6b665c] hover:text-[#1a1a1a]"><ChevronLeft size={15} /> Change the time</button>
                   <h2 className="mt-2 font-serif text-[22px]">{longDay(day)} at {hm12(time)}</h2>
                   <div className="mt-4 space-y-3">
-                    {known ? null : <label className="block text-[13px] font-semibold">Your name<input required value={f.name} onChange={e => setF({ ...f, name: e.target.value })} autoComplete="name" className="mt-1 w-full rounded-xl border border-[#d9d3c6] px-3 py-2.5 text-[15px] font-normal" /></label>}
-                    {knownEmail ? null : <label className="block text-[13px] font-semibold">Email for the invitation<input required type="email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} autoComplete="email" className="mt-1 w-full rounded-xl border border-[#d9d3c6] px-3 py-2.5 text-[15px] font-normal" /></label>}
+                    {/* ALWAYS A PLACE FOR NAME AND EMAIL (Jon, 2026-11-19: "should be a place where they add email and name").
+                        On an owner's link the name is filled in and the email on file is used unless they give another. */}
+                    <label className="block text-[13px] font-semibold">Your name<input required value={f.name} onChange={e => setF({ ...f, name: e.target.value })} autoComplete="name" className="mt-1 w-full rounded-xl border border-[#d9d3c6] px-3 py-2.5 text-[15px] font-normal" /></label>
+                    <label className="block text-[13px] font-semibold">Email for the invitation{knownEmail ? <span className="font-normal text-[#8a8478]"> (leave blank to use the one we have for you)</span> : null}<input required={!knownEmail} type="email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} autoComplete="email" className="mt-1 w-full rounded-xl border border-[#d9d3c6] px-3 py-2.5 text-[15px] font-normal" /></label>
                     <label className="block text-[13px] font-semibold">Phone <span className="font-normal text-[#8a8478]">(optional)</span><input value={f.phone} onChange={e => setF({ ...f, phone: e.target.value })} autoComplete="tel" inputMode="tel" className="mt-1 w-full rounded-xl border border-[#d9d3c6] px-3 py-2.5 text-[15px] font-normal" /></label>
                     <label className="block text-[13px] font-semibold">Anything you would like to cover <span className="font-normal text-[#8a8478]">(optional)</span><textarea rows={3} value={f.note} onChange={e => setF({ ...f, note: e.target.value })} className="mt-1 w-full rounded-xl border border-[#d9d3c6] px-3 py-2.5 text-[15px] font-normal" /></label>
                     {/* a field people never see: anything typed here is a machine */}
