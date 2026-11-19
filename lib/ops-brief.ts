@@ -203,7 +203,7 @@ export async function gather(variant: BriefVariant) {
   // Departure cleans are NOT collected here — they already have their own numbered run above, and
   // listing them twice would double every count. What lands here is everything else: strips,
   // linen, restocks, mid-stays, inspections, and the full maintenance board.
-  type HkTask = { unit: string; lid: string; assignee: string; lead: string; task: string; dept: string; state: 'done' | 'running' | 'not_started' }
+  type HkTask = { unit: string; lid: string; assignee: string; lead: string; task: string; dept: string; state: 'done' | 'running' | 'not_started'; late: number }
   const hkOther: HkTask[] = []
   // Which crew each person is really on — labels a person's block, and spots the tech holding a
   // departure clean today.
@@ -241,7 +241,9 @@ export async function gather(variant: BriefVariant) {
         unit, lid, dept,
         assignee: ppl.join(', ') || '—  UNASSIGNED',
         lead: leadOf(ppl),
-        task: str(t.name).replace(/^(guest reported|field reported)[^a-z0-9]*/i, '').slice(0, 60) || 'Task',
+        task: str(t.name).replace(/^(guest reported|field reported)[^a-z0-9]*/i, '').replace(/\s*·\s*\d+\s+days?\s+late\s*$/i, '').slice(0, 60) || 'Task',
+        // A recurring program that was not done rolls to today with "· N days late" on its title.
+        late: Number((str(t.name).match(/·\s*(\d+)\s+days?\s+late\s*$/i) || [])[1]) || 0,
         state: (/complete|finish|close|approv/.test(status) || t.finished_at) ? 'done'
           : (/progress|started/.test(status) || t.started_at) ? 'running' : 'not_started',
       })

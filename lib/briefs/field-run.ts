@@ -16,6 +16,7 @@ import { upcomingAutoInspections } from '@/lib/auto-inspections'
 import { getNoService, skipsInspectionsIn } from '@/lib/no-service'
 import { getShifts, nameMatches } from '@/lib/homebase'
 import { translator, type BriefLang } from '@/lib/brief-lang'
+import { guestsToKnow, guestTags } from './guests'
 import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, crewOf, unitShort, personName, crewNote, isOfficeLike, type Line } from './ui'
 
 export type FieldMarket = 'Miami' | 'Broward'
@@ -52,7 +53,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
 
   // ---- the facts -----------------------------------------------------------------------------
   type Clean = { unit: string; lid: string; assignee: string; lead: string; state: string; sameDayArrival: boolean }
-  type Other = { unit: string; lid: string; assignee: string; lead: string; task: string; dept: string; state: string }
+  type Other = { unit: string; lid: string; assignee: string; lead: string; task: string; dept: string; state: string; late?: number }
   const cleans = d.cleans as Clean[]
   const other = d.hkOther as Other[]
   const arrivals: any[] = (sheet.arrivals || []).slice().sort((a: any, b: any) => str(a.checkInTime).localeCompare(str(b.checkInTime)) || str(a.unit).localeCompare(str(b.unit)))
@@ -80,13 +81,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const noteOf = (lid: string) => { const raw = str((d.arrivalNotes || {})[lid]); return /welcome call by talkroute/i.test(raw) ? '' : crewNote(raw) }
   const timeOf = (lid: string) => str(arrivalByLid[lid]?.checkInTime || '4:00 PM')
   const isVip = (lid: string) => !!(flags[lid]?.long || flags[lid]?.big || flags[lid]?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking')
-  const vipWhy = (lid: string) => {
-    const f = flags[lid]; const bits: string[] = []
-    if (f?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking') bits.push(pill('OWNER', 'blue'))
-    if (f?.big) bits.push(pill(`BIG $ · ${money0(f.total)}`, 'amber'))
-    if (f?.long) bits.push(pill(`${pick('LONG STAY', 'ESTANCIA LARGA')} · ${f.nights}n`, 'amber'))
-    return bits.join(' ')
-  }
+  const vipWhy = (lid: string) => guestTags({ ...(flags[lid] || {}), owner: !!flags[lid]?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking' }, pick)
 
   // Inspections pending: Lighthouse's arrival inspections (window: today + tomorrow), bad-review
   // walks, and any inspection/unit-check task on today's board — only the ones NOT done.
@@ -120,11 +115,12 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     for (const c of sameDay) (byCleaner[personName(first(c.lead || c.assignee)) || '—'] = byCleaner[personName(first(c.lead || c.assignee)) || '—'] || []).push(unitShort(c.unit))
     P(pick('SAME-DAY TURNS', 'MISMO DÍA'), 'red', `<b>${sameDay.length}</b> ${pick('guests land in units being cleaned today — these doors first, done by', 'huéspedes llegan a unidades que se limpian hoy — estas puertas primero, listas antes de')} ${esc(timeOf(sameDay[0].lid))}`, Object.keys(byCleaner).map(n => `<b>${esc(n)}</b>: ${byCleaner[n].map(esc).join(', ')}`).join(' · '), 'red')
   }
-  for (const a of walkIns) P(pick('WALK-IN', 'ÚLTIMO MINUTO'), 'red', `<b>${esc(unitShort(str(a.unit)))}</b> — ${pick('booked last minute', 'reservado de último momento')} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, t('Booked last minute — confirm the unit is guest-ready.'), 'red')
+  // A booking made today is not a priority by itself (Jon, 2026-11-19: "walk-ins, that's not really
+  // needed"); a big one shows under the guests to know.
   const ALREADY = /nobody assigned|booked today|walk-?in|same-?day turn|clean not started/i
   // One exception per unit, labeled by what it is — a checkout with no clean booked is not a guest
   // in the unit, and a unit already named above (walk-in) is not named again.
-  const seenExc = new Set<string>(walkIns.map(a => str(a.unit)))
+  const seenExc = new Set<string>()
   const excLabel = (e: any): string => {
     const k = (str(e.kind) + ' ' + str(e.detail)).toLowerCase()
     if (/nothing .*clean|no clean|book a clean/.test(k)) return pick('NO CLEAN BOOKED', 'SIN LIMPIEZA')
@@ -144,16 +140,17 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   }
   if (inHouse.length) P(pick('GUEST IN UNIT', 'HUÉSPED DENTRO'), 'amber', `<b>${inHouse.length}</b> ${pick('units have work booked while a guest is inside', 'unidades tienen trabajo con el huésped dentro')} — ${inHouse.map(esc).join(', ')}`, t('Call or message the guest before anyone enters.'), 'amber')
   for (const g of glitches.slice(0, 3)) P(pick('OPEN ISSUE', 'PROBLEMA ABIERTO'), 'amber', `<b>${esc(unitShort(str(g.unit)))}</b> — ${t('open guest issue')}${str(g.created_at) ? ` ${pick('since', 'desde')} ${esc(str(g.created_at).slice(5, 10))}` : ''}`, esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 120)), 'amber')
-  for (const a of arrivals.filter(a => isVip(str(a.listingId)))) {
-    const lid = str(a.listingId)
+  // RUNNING LATE (Jon, 2026-11-19: "if one of the exterior checks is running late, should mention
+  // it"): a recurring program still open and already rolled forward at least a day.
+  const lateWork = other.filter(o => (o.late || 0) > 0 && o.state !== 'done').sort((x, y) => (y.late || 0) - (x.late || 0))
+  for (const o of lateWork.slice(0, 4)) P(pick('RUNNING LATE', 'ATRASADO'), 'red', `<b>${esc(unitShort(o.unit))}</b> — ${esc(cleanTitle(o.task, lang))} · ${o.late} ${o.late === 1 ? pick('day late', 'día de atraso') : pick('days late', 'días de atraso')}`, /UNASSIGNED/.test(o.assignee) ? t('Not assigned — pick it up.') : `${t('With')} ${esc(personName(first(o.lead || o.assignee)))}.`, 'amber')
+  // VIPs, owners and inspections have their own sections below; the priorities are what is broken.
+  const inspSub = (lid: string, unit: string) => {
     const insp = autoInsp.find(i => str(i.listing_id) === lid)
-    P(pick('VIP ARRIVAL', 'LLEGADA VIP'), 'amber', `<b>${esc(unitShort(str(a.unit)))}</b> ${vipWhy(lid)} · ${esc(first(a.guest))} ${t('lands')} ${esc(str(a.checkInTime || '4:00 PM'))}`, insp ? `${pick('Pre-arrival inspection', 'Inspección previa')}: ${insp.assignees?.length ? esc(insp.assignees.map(first).join(', ')) : `<span style="${T.red}">${pick('not assigned', 'sin asignar')}</span>`} · ${/progress|start/i.test(str(insp.status)) ? t('in progress') : pick('open', 'pendiente')}` : (noSvc && skipsInspectionsIn(noSvc, a.unit)) ? '' : pick('Walk it before 3pm — no inspection is on the board.', 'Revísala antes de las 3pm — no hay inspección en el tablero.'), 'amber')
+    if (insp) return `${pick('Pre-arrival inspection', 'Inspección previa')}: ${insp.assignees?.length ? esc(insp.assignees.map(first).join(', ')) : `<span style="${T.red}">${pick('not assigned', 'sin asignar')}</span>`} · ${/progress|start/i.test(str(insp.status)) ? t('in progress') : pick('open', 'pendiente')}`
+    return (noSvc && skipsInspectionsIn(noSvc, unit)) ? '' : pick('Walk it before 3pm — no inspection is on the board.', 'Revísala antes de las 3pm — no hay inspección en el tablero.')
   }
-  const walkToday = reviewInsp.filter(i => i.check_in <= today)
-  for (const i of walkToday.slice(0, 3)) P(pick('BAD REVIEW', 'MALA RESEÑA'), 'red', `<b>${esc(unitShort(i.unit_name))}</b> — ${esc(i.reason)} · ${pick('unit is empty today, walk it before the next guest does', 'la unidad está vacía hoy, revísala antes que el próximo huésped')}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'), 'amber')
-  if (walkToday.length > 3) P(pick('BAD REVIEW', 'MALA RESEÑA'), 'red', `<b>${walkToday.length - 3}</b> ${pick('more units with a bad-review walk due and empty today', 'unidades más con revisión por mala reseña, vacías hoy')} — ${walkToday.slice(3).map(i => esc(unitShort(i.unit_name))).join(', ')}`, pick('Listed under Inspections below.', 'Listadas en Inspecciones abajo.'), 'amber')
-  for (const i of autoInsp.filter(i => str(i.check_in) <= today && !isVip(str(i.listing_id)))) P(pick('ARRIVAL INSPECTION', 'INSPECCIÓN'), 'blue', `<b>${esc(unitShort(str(i.unit_name)))}</b> — ${esc(str(i.reason))} · ${esc(first(i.guest_name))} ${t('lands')} ${esc(timeOf(str(i.listing_id)))}`, i.assignees?.length ? `${t('With')} ${i.assignees.map(first).map(esc).join(', ')}.` : t('Not assigned — pick it up.'))
-  for (const o of ownerStays.slice(0, 2)) P(pick('OWNER IN-HOUSE', 'PROPIETARIO'), 'blue', `<b>${esc(unitShort(str(o.unit)))}</b> — ${esc(str(o.owner || o.guest))} · ${pick('until', 'hasta')} ${esc(str(o.checkOut).slice(5))}`, pick('White-glove — no shortcuts, no surprises.', 'Servicio impecable — sin atajos.'))
+  const guests = guestsToKnow({ arrivals, flags, ownerStays, forward: ((d as any).forward || []) as any[], today, pick, niceDay, subFor: inspSub })
   const prioNumbered: Line[] = prio.map((l, i) => ({ ...l, html: `<span style="display:inline-block;min-width:18px;font-weight:700;color:${A.ink}">${i + 1}</span> ${l.html}` }))
 
   // ---- DEPARTURE CLEANS — BY CLEANER (Jon, 2026-10-05: "organize by cleaner so that it's just
@@ -221,7 +218,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     if (isOffice(n) || isTech(n)) continue
     ;(byPerson[n] = byPerson[n] || []).push(o)
   }
-  const otherBlocks = Object.keys(byPerson).sort().map(n => `<p style="margin:8px 0 2px;font-size:13px"><b>${esc(n)}</b> <span style="${T.muted};font-size:12px">· ${byPerson[n].length} ${byPerson[n].length === 1 ? pick('job', 'trabajo') : pick('jobs', 'trabajos')}${onShift.size && !shiftOf(n) && !/superv|inspect/.test(dept(n)) ? ` · <span style="${T.amber}">${pick('not on the schedule — confirm', 'no está en el horario — confirmar')}</span>` : ''}</span></p>` +
+  const otherBlocks = Object.keys(byPerson).filter(n => /superv|inspect/.test(dept(n))).sort().map(n => `<p style="margin:8px 0 2px;font-size:13px"><b>${esc(n)}</b> <span style="${T.muted};font-size:12px">· ${byPerson[n].length} ${byPerson[n].length === 1 ? pick('job', 'trabajo') : pick('jobs', 'trabajos')}${onShift.size && !shiftOf(n) && !/superv|inspect/.test(dept(n)) ? ` · <span style="${T.amber}">${pick('not on the schedule — confirm', 'no está en el horario — confirmar')}</span>` : ''}</span></p>` +
     `<table cellspacing="0" cellpadding="0" style="margin-left:4px">${byPerson[n].slice(0, 5).map(o => `<tr><td style="width:14px;padding:1px 0;font-size:12px;color:#cbd5e1;vertical-align:top">•</td><td style="padding:1px 0;font-size:12.5px;line-height:1.45;color:#374151">${esc(unitShort(o.unit))} · ${esc(cleanTitle(o.task, lang))}${o.state === 'running' ? ' ' + pill(t('in progress'), 'amber') : ''}</td></tr>`).join('')}${byPerson[n].length > 5 ? `<tr><td></td><td style="font-size:11.5px;color:#9ca3af">+${byPerson[n].length - 5} ${t('more on the board')}</td></tr>` : ''}</table>`)
 
   // ---- RUNNING THE DAY — the clock, from the facts ----------------------------------------------
@@ -259,13 +256,19 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
 
   // CLEANER (Jon, 2026-11-19: the same clean-up as the Ops morning): top priorities, then the cleans by
   // cleaner. Inspections, the hour-by-hour, arrivals and other work stay on the board.
-  void inspLines; void steps; void arrivalsTable; void otherBlocks
+  // Same day, second pass: guests to know, inspections and supervisor tasks are back, short. The
+  // hour-by-hour, the full arrivals list and the maintenance board stay on the live board.
+  void steps; void arrivalsTable; void walkIns
   const parts = [
     { html: masthead(A, pick('Field Run', 'Ruta del día') + ' — ' + market, pick('Field coordinator', 'Coordinador de campo'), niceDay(today)) },
     { html: headline(A, head, links) },
     { html: prioNumbered.length ? section(pick('Top priorities — in order', 'Prioridades — en orden'), prioNumbered, { cap: 8, accent: A, more: pick('on the board', 'en el tablero') }) : block(pick('Top priorities', 'Prioridades'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${t('Nothing on fire.')}</span> <span style="${T.muted}">${pick('Run the list, keep 4pm in sight.', 'Siga la lista, con las 4pm en mente.')}</span></p>`, A) },
+    { html: guests.todayLines.length ? section(pick('VIPs, big bookings and owners — today', 'VIP, reservas grandes y propietarios — hoy'), guests.todayLines, { cap: 8, accent: A }) : '', optional: true },
+    { html: guests.aheadLines.length ? section(pick(`Coming up — next ${(d as any).lookaheadDays || 7} days`, `Próximos ${(d as any).lookaheadDays || 7} días`), guests.aheadLines, { cap: 6, accent: A, more: pick('on the board', 'en el tablero') }) : '', optional: true },
     { html: block(pick('Departure cleans — by cleaner, same-day turns first', 'Limpiezas de salida — por persona, primero los del mismo día'), cleansTable, A, cleans.length) },
-    { html: footer(pick('Inspections, arrivals and other work are on the board. Confirm access before entering any unit.<br>Field Run · every morning at 7', 'Inspecciones, llegadas y otro trabajo están en el tablero. Confirme acceso antes de entrar a una unidad.<br>Ruta del día · cada mañana a las 7')) },
+    { html: inspLines.length ? section(pick('Inspections — pending', 'Inspecciones — pendientes'), inspLines, { cap: 8, accent: A, more: pick('on the board', 'en el tablero') }) : '', optional: true },
+    { html: otherBlocks.length ? block(pick('Supervisor tasks', 'Tareas de supervisión'), otherBlocks.join(''), A) : '', optional: true },
+    { html: footer(pick('All arrivals and the maintenance board are on the live board. Confirm access before entering any unit.<br>Field Run · every morning at 7', 'Todas las llegadas y el mantenimiento están en el tablero en vivo. Confirme acceso antes de entrar a una unidad.<br>Ruta del día · cada mañana a las 7')) },
   ]
   const { html } = fit(parts, 80_000)
   // PLAIN SUBJECTS (Jon, 2026-11-05): the brief, the market, the day, two numbers.

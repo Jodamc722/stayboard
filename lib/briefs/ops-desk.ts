@@ -20,6 +20,7 @@ import { getSalaried } from '@/lib/salary'
 import { getStaff } from '@/lib/staffing'
 import { buildReviewQueue, niceDate } from '@/lib/review-queue'
 import { blockedUnits } from '@/lib/blocked-units'
+import { guestsToKnow } from './guests'
 import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, footer, fit, pill, cleanTitle, unitShort, personName, person, type Line } from './ui'
 import { buildDirection, type DayDirection } from './direction'
 import { doorBriefItems } from '@/lib/connecting-doors'
@@ -97,13 +98,14 @@ export async function buildOpsDesk(): Promise<Built> {
   for (const dr of doors) {
     const verb = dr.kind === 'open' ? 'OPEN the connecting door before the guests arrive' : 'CLOSE the connecting door after checkout'
     const who = dr.task ? (dr.task.who.length ? 'Task on the board with ' + dr.task.who.map(first).map(esc).join(', ') : '<span style="' + T.red + '">Task on the board, nobody on it — assign the cleaner.</span>') : dr.skip ? esc(dr.skip) : '<span style="' + T.red + '">No door task yet — it is created on the next run; if the guest lands within the hour, call the cleaner.</span>'
-    unblock.unshift({ tone: dr.when === 'today' && (dr.walkIn || !dr.task?.who.length) && !dr.skip ? 'red' : 'amber', html: `${pill('CONNECTING DOOR', dr.when === 'today' ? 'red' : 'amber')}${dr.walkIn ? ' ' + pill('WALK-IN', 'red') : ''} <b>${esc(dr.pair)}</b> — ${dr.skip ? 'one-unit stay ends ' + dr.when : esc(verb)} · ${dr.when}${dr.guest ? ' · ' + esc(first(dr.guest)) : ''}`, sub: who })
+    unblock.unshift({ tone: dr.when === 'today' && (dr.walkIn || !dr.task?.who.length) && !dr.skip ? 'red' : 'amber', html: `${pill('CONNECTING DOOR', dr.when === 'today' ? 'red' : 'amber')}${dr.walkIn ? ' ' + pill('BOOKED TODAY', 'red') : ''} <b>${esc(dr.pair)}</b> — ${dr.skip ? 'one-unit stay ends ' + dr.when : esc(verb)} · ${dr.when}${dr.guest ? ' · ' + esc(first(dr.guest)) : ''}`, sub: who })
   }
   for (const c of unassigned) unblock.push({ tone: 'red', html: `${pill('UNASSIGNED', 'red')} <b>${esc(unitShort(c.unit))}</b> (${esc(mkOf(c) || '—')}) — ${c.sameDayArrival ? 'same-day turn with' : 'clean with'} <b>no one assigned</b>`, sub: idle.length ? `${idle.map(s => first(s.name)).map(esc).join(', ')} ${idle.length === 1 ? 'is' : 'are'} on the clock with nothing assigned — give it to ${idle.length === 1 ? 'them' : 'one of them'}.` : 'Nobody idle on the schedule — reassign or call the on-call.' })
   if (short.length) unblock.push({ tone: 'amber', html: `${pill('SHORT STAFFED', 'amber')} <b>${short.length} short day${short.length === 1 ? '' : 's'} in the next 3</b> — ${short.slice(0, 3).map((x: any) => `${esc(str(x.label || x.date))} ${esc(str(x.market))} needs ${x.needed}, ${x.rostered} rostered`).join(' · ')}${short.length > 3 ? ` +${short.length - 3}` : ''}`, sub: `Add a shift or call in the on-call today — <a href="${APP_URL}/team" style="color:${A.ink}">Weekly Planner</a>.` })
   for (const s of idle.slice(0, 2)) { if (unassigned.length) break; unblock.push({ tone: 'amber', html: `${pill('IDLE ON SHIFT', 'amber')} <b>${esc(s.name)}</b> — on shift ${esc(str(s.label))} with nothing on the board`, sub: 'Give them a strip, a vacant-unit deep clean or an inspection.' }) }
-  if (walkIns.length) unblock.push({ tone: 'amber', html: `${pill('WALK-IN', 'red')} <b>${walkIns.length} walk-in${walkIns.length === 1 ? '' : 's'} today</b> — ${walkIns.slice(0, 4).map(a => `${esc(unitShort(str(a.unit)))} (${esc(first(a.guest))})`).join(', ')}${walkIns.length > 4 ? ` +${walkIns.length - 4}` : ''}`, sub: 'Booked last minute — confirm each unit is guest-ready and the welcome message went out.' })
   const ALREADY = /nobody assigned|booked today|walk-?in|same-?day turn|clean not started/i
+  // RUNNING LATE (Jon, 2026-11-19): a recurring program (an exterior check, a walkthrough) still open after rolling forward.
+  for (const o of (other as any[]).filter(o => (o.late || 0) > 0 && o.state !== 'done').sort((x, y) => y.late - x.late).slice(0, 4)) unblock.push({ tone: 'amber', html: `${pill('RUNNING LATE', 'red')} <b>${esc(unitShort(o.unit))}</b> — ${esc(o.task)} · ${o.late} day${o.late === 1 ? '' : 's'} late`, sub: /UNASSIGNED/.test(o.assignee) ? 'Nobody assigned.' : `With ${esc(first(o.lead || o.assignee))}.` })
   for (const e of exceptions) { if (ALREADY.test(str(e.kind) + ' ' + str(e.detail))) continue; unblock.push({ tone: 'amber', html: `${pill('GUEST IN UNIT', 'amber')} <b>${esc(unitShort(str(e.unit)))}</b> — ${esc(str(e.detail))}`, sub: esc(str(e.action)) }) }
   for (const g of glitches.slice(0, 2)) unblock.push({ tone: 'amber', html: `${pill('OPEN ISSUE', 'amber')} <b>${esc(unitShort(str(g.unit)))}</b> — open guest issue since ${esc(str(g.created_at).slice(5, 10))}`, sub: esc(str(g.overview).replace(/\s+/g, ' ').slice(0, 120)) })
   for (const m of unassignedMaint.slice(0, 2)) unblock.push({ tone: 'amber', html: `${pill('NO TECH', 'amber')} <b>${esc(unitShort(m.unit))}</b> — maintenance job with nobody on it: ${esc(cleanTitle(m.task))}`, sub: 'Put a technician on it or it rolls again tomorrow.' })
@@ -324,6 +326,7 @@ export async function buildOpsDesk(): Promise<Built> {
     const sdAll = list.filter(c => c.sameDayArrival).length
     return block(`Departure cleans · ${label}`, `<p style="margin:0;font-size:12px;${T.muted}">${names.filter(Boolean).length} cleaner${names.filter(Boolean).length === 1 ? '' : 's'}${sdAll ? ` · ${sdAll} same-day, listed first` : ''}</p>` + blocks.join(''), A, list.length)
   }
+  const guests = guestsToKnow({ arrivals, flags: ((d as any).todayFlags || {}) as any, ownerStays: sheet.ownerStays || [], forward: ((d as any).forward || []) as any[], today, niceDay })
   const known = new Set(['Miami', 'Broward'])
   const otherMarkets = Array.from(new Set(cleans.map(c => mkOf(c) || 'Other'))).filter(m => !known.has(m)).sort()
   const boards = [['Glitches', '/glitches'], ['Boards', '/day'], ['Today board', '/command'], ['Blocked', '/blocked'], ['Claims', '/claims']]
@@ -332,6 +335,8 @@ export async function buildOpsDesk(): Promise<Built> {
     { html: masthead(A, 'Ops morning', 'Top priorities and departure cleans', niceDay(today)) },
     { html: headline(A, head) },
     { html: decideAll.length ? section('Top priorities', decideAll, { cap: 8, accent: A, more: on('Today board', '/command') }) : block('Top priorities', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">Nothing urgent.</span> <span style="${T.muted}">Every clean is assigned and nothing is overdue.</span></p>`, A) },
+    { html: guests.todayLines.length ? section('VIPs, big bookings and owners — today', guests.todayLines, { cap: 8, accent: A }) : '', optional: true },
+    { html: guests.aheadLines.length ? section(`Coming up — next ${(d as any).lookaheadDays || 7} days`, guests.aheadLines, { cap: 6, accent: A, more: on('boards', '/day') }) : '', optional: true },
     { html: marketSection('Miami', 'Miami') },
     { html: marketSection('Broward', 'Broward') },
     ...otherMarkets.map(m => ({ html: marketSection(m, m === 'North' ? 'North (vendor)' : m), optional: true })),
