@@ -207,14 +207,24 @@ export async function buildGmMorning(): Promise<GmBuilt> {
   const occToday = num(tod.occupancy)
   const head = `<b>${n ? `${n} to decide` : stale.length ? 'Nothing new to decide' : 'Nothing to decide'}</b>${stale.length ? ` · ${stale.length} still open` : ''}${blockedAtStake && !isHidden(dmap['blocked'], today) && !staleKeys.has('blocked') ? ` — the big one is ≈${money0(blockedAtStake)} of blocked nights` : ''}. ` +
     `${occToday != null ? pct1(occToday) + ' occupied tonight · ' : ''}${tod.arrivals || 0} in / ${tod.departures || 0} out${tod.sameDayTurns ? ` · <span style="${T.red}">${tod.sameDayTurns} same-day turns</span>` : ''}.`
+  // CLEANER (Jon, 2026-11-19: the same clean-up as the Ops morning). Decide, the numbers, arrivals. The
+  // labor detail (what moved, what is missing) and the blocked-unit list are one tap away on their
+  // boards; what stays from labor is the part that needs a person: a failing check.
+  void laborHtml; void blockedHtml
+  const failing = labor ? labor.checks.filter((c: any) => !c.ok) : []
+  const laborLink = `<a href="${APP_URL}/labor" style="color:${A.ink}">Labor board</a>`
+  const laborShort = !labor
+    ? block('Labor', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.amber}">The labor engine did not answer in time this morning.</span> <span style="${T.muted}">The 7:58 labor email carries it.</span></p>`, A)
+    : failing.length
+      ? section('Labor checks failing', failing.map((c: any) => ({ tone: c.level === 'red' ? 'red' as const : 'amber' as const, html: `<b>${esc(c.what)}</b>`, sub: esc(c.fix) })), { cap: 3, accent: A, more: `on the ${laborLink}` })
+      : block('Labor', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">All ${labor.checks.length} labor checks pass.</span> <span style="${T.muted}">What moved and what is missing: ${laborLink}.</span></p>`, A)
   const parts = [
     { html: masthead(A, 'GM morning', `Owner · whole portfolio · ${d.activeCount} active units`, niceDay(today)) },
     { html: headline(A, head) },
     { html: decideHtml },
     { html: numbersHtml },
-    { html: laborHtml },
+    { html: laborShort },
     { html: arrLines.length ? section('Notable arrivals', arrLines, { cap: 3, accent: A, more: `on the <a href="${APP_URL}/day" style="color:${A.ink}">boards</a>` }) : '', optional: true },
-    { html: blockedHtml, optional: true },
     { html: footer(`<a href="${APP_URL}/command" style="color:#6b7280">Today board</a> · <a href="${APP_URL}/labor" style="color:#6b7280">Labor board</a> · <a href="${APP_URL}/blocked" style="color:#6b7280">Blocked</a> · <a href="${APP_URL}/claims" style="color:#6b7280">Claims</a><br>GM morning · 7:01 every morning · the day itself is in Ops morning · every figure is the shared engine's.`) },
   ]
   const { html } = fit(parts, 80_000)

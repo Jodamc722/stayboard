@@ -256,16 +256,15 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const links = [{ label: pick('Live board', 'Tablero en vivo'), href: `${APP_URL}/day?market=${encodeURIComponent(market)}` }]
   if (schedUrl) links.push({ label: pick('Team schedule', 'Horario del equipo') + (schedHint ? ` (${pick('passcode ends', 'clave termina')} ${schedHint})` : ''), href: schedUrl })
 
+  // CLEANER (Jon, 2026-11-19: the same clean-up as the Ops morning): top priorities, then the cleans by
+  // cleaner. Inspections, the hour-by-hour, arrivals and other work stay on the board.
+  void inspLines; void steps; void arrivalsTable; void otherBlocks
   const parts = [
     { html: masthead(A, pick('Field Run', 'Ruta del día') + ' — ' + market, pick('Field coordinator', 'Coordinador de campo'), niceDay(today)) },
-    { html: headline(A, head + `<br><span style="font-size:12px;color:#6b7280">${pick('7am snapshot — the board is live. Confirm access before entering any unit.', 'Foto de las 7am — el tablero está en vivo. Confirme acceso antes de entrar a una unidad.')}</span>`, links) },
-    { html: prioNumbered.length ? section(pick('Top priorities — in order', 'Prioridades — en orden'), prioNumbered, { cap: 12, accent: A }) : block(pick('Top priorities', 'Prioridades'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${t('Nothing on fire.')}</span> <span style="${T.muted}">${pick('Run the list, keep 4pm in sight.', 'Siga la lista, con las 4pm en mente.')}</span></p>`, A) },
+    { html: headline(A, head, links) },
+    { html: prioNumbered.length ? section(pick('Top priorities — in order', 'Prioridades — en orden'), prioNumbered, { cap: 8, accent: A, more: pick('on the board', 'en el tablero') }) : block(pick('Top priorities', 'Prioridades'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${t('Nothing on fire.')}</span> <span style="${T.muted}">${pick('Run the list, keep 4pm in sight.', 'Siga la lista, con las 4pm en mente.')}</span></p>`, A) },
     { html: block(pick('Departure cleans — by cleaner, same-day turns first', 'Limpiezas de salida — por persona, primero los del mismo día'), cleansTable, A, cleans.length) },
-    { html: inspLines.length ? section(pick('Inspections — pending', 'Inspecciones — pendientes'), inspLines, { cap: 10, accent: A, note: pick('Only open ones are listed. A completed inspection leaves this list the next morning.', 'Solo las pendientes. Una inspección completada desaparece a la mañana siguiente.') }) : block(pick('Inspections — pending', 'Inspecciones — pendientes'), `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">${pick('None pending.', 'Ninguna pendiente.')}</span></p>`, A) },
-    { html: dayShape(A, steps, pick('Running the day', 'El día, hora por hora')) },
-    { html: block(pick('Arrivals today', 'Llegadas hoy'), arrivalsTable, A, arrivals.length) },
-    { html: otherBlocks.length ? block(pick('Other work on the board — by person', 'Otro trabajo — por persona'), otherBlocks.join(''), A) : '', optional: true },
-    { html: footer(pick('Field Run · sent every morning at 7 · the board has the live picture.', 'Ruta del día · cada mañana a las 7 · el tablero tiene la foto en vivo.')) },
+    { html: footer(pick('Inspections, arrivals and other work are on the board. Confirm access before entering any unit.<br>Field Run · every morning at 7', 'Inspecciones, llegadas y otro trabajo están en el tablero. Confirme acceso antes de entrar a una unidad.<br>Ruta del día · cada mañana a las 7')) },
   ]
   const { html } = fit(parts, 80_000)
   // PLAIN SUBJECTS (Jon, 2026-11-05): the brief, the market, the day, two numbers.
