@@ -48,12 +48,23 @@ const dayOf = (iso: string | null | undefined) => {
   return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d + ' days ago'
 }
 
+// CLICK THE STATUS, LAND ON THE OTA (Jon, 2026-11-19: "where it says quiet or suspended, click it so we
+// can just go directly to the link of the OTA"). When the channel gave us a public page the pill IS the
+// link, opening in a new tab; the small dot beside it still opens the detail panel (Guesty status, last
+// booking, how to fix). With no page on file the pill opens the panel, as before.
 function CellPill({ cell, onClick, ariaLabel }: { cell: Cell; onClick: () => void; ariaLabel: string }) {
+  const cls = 'inline-flex items-center justify-center min-w-[44px] h-7 px-1.5 rounded-md border text-[10.5px] font-semibold ' + PILL[cell.verdict]
+  const tip = VERDICT_LABEL[cell.verdict] + (cell.status ? ' · ' + cell.status : '')
+  if (!cell.url) return <button onClick={onClick} aria-label={ariaLabel} title={tip + ' · click for details'} className={cls}>{SHORT[cell.verdict]}</button>
   return (
-    <button onClick={onClick} aria-label={ariaLabel} title={VERDICT_LABEL[cell.verdict] + (cell.status ? ' · ' + cell.status : '')}
-      className={'inline-flex items-center justify-center min-w-[44px] h-7 px-1.5 rounded-md border text-[10.5px] font-semibold ' + PILL[cell.verdict]}>
-      {SHORT[cell.verdict]}
-    </button>
+    <span className="inline-flex items-center gap-0.5">
+      <a href={cell.url} target="_blank" rel="noopener noreferrer" aria-label={ariaLabel + ' — open the listing on the channel'} title={tip + ' · click to open the listing on the channel'}
+        className={cls + ' gap-0.5 hover:opacity-80'}>
+        {SHORT[cell.verdict]}<ExternalLink size={9} className="opacity-60" />
+      </a>
+      <button onClick={onClick} aria-label={ariaLabel + ' — details'} title="Details and how to fix"
+        className="h-7 w-3.5 inline-flex items-center justify-center text-muted hover:text-ink text-[13px] leading-none">⋮</button>
+    </span>
   )
 }
 
