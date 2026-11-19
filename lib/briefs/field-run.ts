@@ -76,7 +76,8 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const isTech = (n: string) => /maint/.test(dept(n))
   const arrivalByLid: Record<string, any> = {}
   for (const a of arrivals) arrivalByLid[str(a.listingId)] = a
-  const noteOf = (lid: string) => crewNote(str((d.arrivalNotes || {})[lid]))
+  // A welcome-call log is not a crew instruction: it stays on the reservation, off the Field Run.
+  const noteOf = (lid: string) => { const raw = str((d.arrivalNotes || {})[lid]); return /welcome call by talkroute/i.test(raw) ? '' : crewNote(raw) }
   const timeOf = (lid: string) => str(arrivalByLid[lid]?.checkInTime || '4:00 PM')
   const isVip = (lid: string) => !!(flags[lid]?.long || flags[lid]?.big || flags[lid]?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking')
   const vipWhy = (lid: string) => {

@@ -216,7 +216,7 @@ export async function buildGmMorning(): Promise<GmBuilt> {
   const laborShort = !labor
     ? block('Labor', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.amber}">The labor engine did not answer in time this morning.</span> <span style="${T.muted}">The 7:58 labor email carries it.</span></p>`, A)
     : failing.length
-      ? section('Labor checks failing', failing.map((c: any) => ({ tone: c.level === 'red' ? 'red' as const : 'amber' as const, html: `<b>${esc(c.what)}</b>`, sub: esc(c.fix) })), { cap: 3, accent: A, more: `on the ${laborLink}` })
+      ? section('Labor checks failing', failing.map((c: any) => ({ tone: c.level === 'red' ? 'red' as const : 'amber' as const, html: `<b>${esc(String(c.what).replace(/^(.{3,40}?) \1 — /, '$1 — '))}</b>`, sub: esc(c.fix) })), { cap: 3, accent: A, more: `on the ${laborLink}` })
       : block('Labor', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">All ${labor.checks.length} labor checks pass.</span> <span style="${T.muted}">What moved and what is missing: ${laborLink}.</span></p>`, A)
   const parts = [
     { html: masthead(A, 'GM morning', `Owner · whole portfolio · ${d.activeCount} active units`, niceDay(today)) },
