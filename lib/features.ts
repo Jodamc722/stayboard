@@ -288,6 +288,9 @@ export const OPEN_PREFIXES = [
   // /audit: the code resolves to one onboarding unit, the API checks it on every call.
   '/onboard/',
   '/join/',
+  // BOOKING LINKS (Jon, 2026-11-19: "a link where it can function like a Calendly"). /book/<type> is the page a
+  // guest or owner picks a time on (lib/booking). No sign-in: the link is the invitation.
+  '/book/',
   // FIELD BOARDS (Jon, 2026-08-25). /board/<code> is a share link like any other: the code is the
   // capability and the board carries its own passcode, checked server-side in
   // /api/public/field-board. Open here so a cleaner with no Lighthouse account can open the link

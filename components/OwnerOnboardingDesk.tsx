@@ -4,6 +4,7 @@
 //                          introductory email, what to ask, optionally the home started for them, the agreement)
 //   OwnerOnboardingReport — /owner-onboarding/<code>: the report the team works from: the home, what it has and
 //                          needs, the timeline, the onboarding call, the paperwork and the handoff to accounting.
+import { BookingLinksAdmin, OwnerBookingLinks } from '@/components/BookingLinksAdmin'
 import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
@@ -683,6 +684,7 @@ export function OwnerOnboardingDesk() {
         <button type="button" onClick={() => { setCreating(c => !c); setMade(null) }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-4 py-2.5 text-[13.5px] font-semibold"><Plus size={15} /> New owner link</button>
       </header>
 
+      <BookingLinksAdmin />
       {made ? (
         <div className="space-y-4 mb-8">
           <section className={card + ' border-emerald-300 bg-emerald-50/40'}>
@@ -1039,6 +1041,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
             <h2 className="font-serif text-[22px] leading-none text-ink mb-1">Onboarding call</h2>
             <p className="text-[12.5px] text-muted mb-3">{photosDone ? 'Photos are done: schedule the call to walk the owner through the listing and the pricing strategy.' : 'Schedule it once the listing photos are done. The owner sees it on their timeline.'}</p>
             <CallForm code={code} call={rec.call} ownerEmail={rec.custom.ownerEmail} onRec={setRec} onSave={c => patch({ call: c }, 'Call saved. The owner sees it on their timeline.')} />
+            <OwnerBookingLinks code={code} />
           </section>
 
           {/* attach + who */}

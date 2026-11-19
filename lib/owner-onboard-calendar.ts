@@ -19,7 +19,7 @@ const api = async (token: string, url: string, init?: RequestInit) => {
 const scopeErr = (host: string, status: number, d: any) => (status === 403 || /insufficient|scope/i.test(JSON.stringify(d?.error || '')) ? RECONNECT + encodeURIComponent(host) : String(d?.error?.message || 'Google Calendar said no (' + status + ').').slice(0, 200))
 
 /** UTC instant of a wall-clock time in Eastern (handles daylight saving). */
-function eastern(day: string, hm: string): Date {
+export function eastern(day: string, hm: string): Date {
   const guess = new Date(day + 'T' + hm + ':00Z')
   const shown = new Date(guess.toLocaleString('en-US', { timeZone: TZ })), utc = new Date(guess.toLocaleString('en-US', { timeZone: 'UTC' }))
   return new Date(guess.getTime() + (utc.getTime() - shown.getTime()))
