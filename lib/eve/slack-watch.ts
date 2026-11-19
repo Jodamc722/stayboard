@@ -743,6 +743,8 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
   const hour = etHour()
   if (opts?.nudge !== false && hour >= NUDGE_WINDOW_ET.start && hour < NUDGE_WINDOW_ET.end) {
     const now = Date.now()
+    // Quiet by default (2026-11-19): no "is this still open?" at a person unless eve_quiet.stillOpenNudges is false.
+    const quietNudges = await (await import('./quiet')).isQuiet('stillOpenNudges')
     for (const it of open) {
       // A question nobody answered in a day is not Eve's to re-ask (independent audit 2026-10-10: "this one
       // never got an answer. Still needed?" to Karla, in a vendor room). Questions expire on their own.
@@ -753,6 +755,7 @@ export async function runSlackWatch(opts?: { digest?: boolean; nudge?: boolean }
       // Small loops are visibility, not a chase (Jon, 2026-09-28: "delineate between something
       // small and something big").
       if (!isAsk && it.evidence?.weight === 'small') continue
+      if (!isAsk && quietNudges) continue
       if (!isAsk && it.nudge_count > 0) continue
       if (isAsk && (!ccs.enabled || it.nudge_count >= 2)) continue
       const due = isAsk

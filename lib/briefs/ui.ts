@@ -13,54 +13,60 @@ export const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-st
 
 export function esc(s: any): string { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }
 
+// THE LOOK (Jon, 2026-11-19: "revamp the look and design"). One white sheet on a warm page, the Stay
+// black masthead with the brief's name in serif, gold small-cap section labels, hairlines instead of
+// boxes inside boxes. Status is a thin coloured rule at the left of a line and a plain word, never a
+// filled pill. Every brief shares it, so the accents are one palette now and the brief is told apart
+// by its name.
 export type Accent = { bar: string; soft: string; ink: string }
-export const ACCENTS: Record<string, Accent> = {
-  field: { bar: '#0891b2', soft: '#ecfeff', ink: '#155e75' },      // cyan — the run
-  ops: { bar: '#4338ca', soft: '#eef2ff', ink: '#3730a3' },        // indigo — the desk
-  maint: { bar: '#b45309', soft: '#fffbeb', ink: '#92400e' },      // amber — the tools
-  labor: { bar: '#047857', soft: '#ecfdf5', ink: '#065f46' },      // green — the money
-  gm: { bar: '#0b1220', soft: '#f3f4f6', ink: '#0b1220' },         // ink — the owner
-}
+const INK = '#101114', GOLD = '#8C6D3A', LINK = '#6F5527', RULE = '#E7E4DD', SOFT = '#FAF8F4', MUTED = '#6B6C72', FAINT = '#9A9BA0'
+const RED = '#B42318', AMBER = '#B26A00', GREEN = '#1F7A4D'
+const ONE: Accent = { bar: GOLD, soft: SOFT, ink: LINK }
+export const ACCENTS: Record<string, Accent> = { field: ONE, ops: ONE, maint: ONE, labor: ONE, gm: ONE }
 
 const F = '-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+const SERIF = "Georgia,'Times New Roman',serif"
 export const T = {
-  body: `margin:0;padding:0;background:#f3f4f6;font-family:${F};color:#0b1220`,
-  wrap: 'max-width:600px;margin:0 auto;padding:16px 12px',
-  red: 'color:#b91c1c;font-weight:700', amber: 'color:#b45309;font-weight:700', green: 'color:#047857;font-weight:700',
-  muted: 'color:#6b7280', faint: 'color:#9ca3af',
+  body: `margin:0;padding:0;background:#F4F2EE;font-family:${F};color:${INK}`,
+  wrap: 'max-width:600px;margin:0 auto;padding:16px 10px 28px',
+  red: `color:${RED};font-weight:700`, amber: `color:${AMBER};font-weight:700`, green: `color:${GREEN};font-weight:700`,
+  muted: `color:${MUTED}`, faint: `color:${FAINT}`,
 }
+const PAD = '22px'
+const eyebrow = (title: string, count?: number | null) => `<p style="margin:0 0 6px;font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:${GOLD}">${esc(title)}${count != null ? ` <span style="font-weight:400;letter-spacing:.04em;color:${FAINT}">· ${count}</span>` : ''}</p>`
+const sheet = (inner: string, bg = '#fff') => `<div style="background:${bg};border-top:1px solid ${RULE};padding:18px ${PAD} 16px">${inner}</div>`
 
-/** The masthead: brand line, the brief's name, who it is for and the day. */
-export function masthead(a: Accent, name: string, forWhom: string, day: string): string {
-  return `<div style="background:#0b1220;border-radius:12px 12px 0 0;padding:16px 20px 14px;border-bottom:4px solid ${a.bar}">
-    <p style="margin:0 0 4px;font-size:10px;font-weight:700;letter-spacing:.2em;color:#a5b4fc">LIGHTHOUSE · STAY HOSPITALITY</p>
-    <p style="margin:0;font-size:20px;font-weight:700;color:#fff">${esc(name)}</p>
-    <p style="margin:4px 0 0;font-size:12px;color:#94a3b8">${esc(forWhom)} · ${esc(day)}</p>
+/** The masthead: the brand, the day, the brief's name and who it is for. */
+export function masthead(_a: Accent, name: string, forWhom: string, day: string): string {
+  return `<div style="background:${INK};padding:20px ${PAD} 20px">
+    <table width="100%" cellspacing="0" cellpadding="0"><tr>
+      <td style="font-size:11px;font-weight:700;letter-spacing:.34em;color:#fff">STAY <span style="font-weight:400;letter-spacing:.22em;color:#B9BAC0">HOSPITALITY</span></td>
+      <td align="right" style="font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:#B9BAC0;white-space:nowrap">${esc(day)}</td>
+    </tr></table>
+    <p style="margin:16px 0 0;font-family:${SERIF};font-size:30px;line-height:1.1;color:#fff">${esc(name)}</p>
+    <p style="margin:6px 0 0;font-size:12px;line-height:1.4;color:#B9BAC0">${esc(forWhom)}</p>
   </div>`
 }
 
 /** The one sentence under the masthead: the day in numbers, nothing else. */
-export function headline(a: Accent, html: string, links?: { label: string; href: string }[]): string {
-  return `<div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 12px 12px;padding:12px 20px 12px;margin-bottom:12px">
-    <p style="margin:0;font-size:14px;line-height:1.6">${html}</p>
-    ${links && links.length ? `<p style="margin:6px 0 0;font-size:12px">${links.map(l => `<a href="${l.href}" style="color:${a.ink};font-weight:600;text-decoration:none">${esc(l.label)} →</a>`).join(' &nbsp;·&nbsp; ')}</p>` : ''}
+export function headline(_a: Accent, html: string, links?: { label: string; href: string }[]): string {
+  return `<div style="background:${SOFT};padding:16px ${PAD} 15px">
+    <p style="margin:0;font-family:${SERIF};font-size:17px;line-height:1.5;color:${INK}">${html}</p>
+    ${links && links.length ? `<p style="margin:10px 0 0;font-size:12px">${links.map(l => `<a href="${l.href}" style="color:${LINK};font-weight:600;text-decoration:none">${esc(l.label)}</a>`).join(`<span style="color:${FAINT}"> &nbsp;·&nbsp; </span>`)}</p>` : ''}
   </div>`
 }
 
 export type Line = { tone?: 'red' | 'amber' | 'green' | 'none'; html: string; sub?: string }
 
-/** A section: an eyebrow title with a count, then lines. Lines over the cap collapse into "+N more". */
+/** A section: a small-cap title with a count, then lines. Lines over the cap collapse into "+N more". */
 export function section(title: string, lines: Line[], opts: { cap?: number; more?: string; note?: string; accent?: Accent } = {}): string {
   if (!lines.length) return ''
-  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px;overflow:hidden">
-    <div style="padding:10px 18px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${opts.accent ? opts.accent.ink : '#374151'}">${esc(title)} <span style="font-weight:400;color:#9ca3af">· ${lines.length}</span></div>
-    <div style="padding:4px 18px 0">${lineRows(lines, { cap: opts.cap, more: opts.more })}</div>
-    ${opts.note ? `<p style="margin:0;padding:0 18px 10px;font-size:11.5px;color:#9ca3af">${opts.note}</p>` : ''}
-  </div>`
+  return sheet(eyebrow(title, lines.length) + lineRows(lines, { cap: opts.cap, more: opts.more })
+    + (opts.note ? `<p style="margin:8px 0 0;font-size:11.5px;line-height:1.5;color:${FAINT}">${opts.note}</p>` : ''))
 }
 
 /**
- * The lines of a section without its card — for a block that holds more than one list (the GM
+ * The lines of a section without its title — for a block that holds more than one list (the GM
  * morning's Labor block). Over the cap: "+N more {more}", where `more` carries the board link.
  */
 export function lineRows(lines: Line[], opts: { cap?: number; more?: string } = {}): string {
@@ -68,65 +74,63 @@ export function lineRows(lines: Line[], opts: { cap?: number; more?: string } = 
   const cap = opts.cap ?? 8
   const shown = lines.slice(0, cap)
   const rest = lines.length - shown.length
-  const dot = (t?: Line['tone']) => t === 'red' ? `<span style="${T.red}">●</span>` : t === 'amber' ? `<span style="${T.amber}">●</span>` : t === 'green' ? `<span style="${T.green}">●</span>` : `<span style="color:#cbd5e1">●</span>`
-  return `<table width="100%" cellspacing="0" cellpadding="0" style="padding-bottom:6px">
-      ${shown.map(l => `<tr><td style="padding:5px 0;font-size:13px;line-height:1.5;border-top:1px solid #f8fafc;vertical-align:top;width:14px">${dot(l.tone)}</td><td style="padding:5px 0 5px 6px;font-size:13px;line-height:1.5;border-top:1px solid #f8fafc">${l.html}${l.sub ? `<div style="font-size:12px;color:#6b7280">${l.sub}</div>` : ''}</td></tr>`).join('')}
-    </table>${rest > 0 ? `<p style="margin:0;padding:0 0 10px;font-size:11.5px;color:#9ca3af">+${rest} more ${opts.more || 'on the board'}</p>` : ''}`
+  const bar = (t?: Line['tone']) => t === 'red' ? RED : t === 'amber' ? AMBER : t === 'green' ? GREEN : 'transparent'
+  return `<table width="100%" cellspacing="0" cellpadding="0">
+      ${shown.map((l, i) => `<tr><td style="width:3px;background:${bar(l.tone)};font-size:0;line-height:0">&nbsp;</td><td style="padding:8px 0 8px 11px;font-size:13.5px;line-height:1.5;color:${INK};${i ? `border-top:1px solid #F1EFEA` : ''}">${l.html}${l.sub ? `<div style="margin-top:1px;font-size:12px;line-height:1.5;color:${MUTED}">${l.sub}</div>` : ''}</td></tr>`).join('')}
+    </table>${rest > 0 ? `<p style="margin:6px 0 0;padding-left:14px;font-size:11.5px;color:${FAINT}">+${rest} more ${opts.more || 'on the board'}</p>` : ''}`
 }
 
 /** A person's block inside a run: name line, then numbered rows (the run) and bullets (the rest). */
 export function person(name: string, meta: string, numbered: string[], bullets: string[], opts: { bulletCap?: number; tone?: 'red' | 'amber' | 'none' } = {}): string {
   const cap = opts.bulletCap ?? 3
   const extra = bullets.length - Math.min(bullets.length, cap)
-  const head = `<p style="margin:10px 0 2px;font-size:13px"><b style="${opts.tone === 'red' ? T.red : opts.tone === 'amber' ? T.amber : ''}">${esc(name)}</b> <span style="${T.muted};font-size:12px">· ${meta}</span></p>`
-  const rows = numbered.map((h, i) => `<tr><td style="width:18px;padding:2px 0;font-size:12.5px;color:#9ca3af;vertical-align:top">${i + 1}</td><td style="padding:2px 0;font-size:13px;line-height:1.45">${h}</td></tr>`).join('')
-    + bullets.slice(0, cap).map(h => `<tr><td style="width:18px;padding:2px 0;font-size:12.5px;color:#cbd5e1;vertical-align:top">•</td><td style="padding:2px 0;font-size:12.5px;line-height:1.45;color:#374151">${h}</td></tr>`).join('')
-    + (extra > 0 ? `<tr><td></td><td style="padding:2px 0;font-size:11.5px;color:#9ca3af">+${extra} more on the board</td></tr>` : '')
-  return head + (rows ? `<table cellspacing="0" cellpadding="0" style="margin-left:4px">${rows}</table>` : '')
+  const head = `<p style="margin:14px 0 3px;font-size:14px;line-height:1.4"><b style="${opts.tone === 'red' ? `color:${RED}` : opts.tone === 'amber' ? `color:${AMBER}` : ''}">${esc(name)}</b> <span style="font-size:12px;color:${MUTED}">· ${meta}</span></p>`
+  const rows = numbered.map((h, i) => `<tr><td style="width:20px;padding:3px 0;font-size:12px;color:${FAINT};vertical-align:top">${i + 1}</td><td style="padding:3px 0;font-size:13px;line-height:1.45">${h}</td></tr>`).join('')
+    + bullets.slice(0, cap).map(h => `<tr><td style="width:20px;padding:3px 0;font-size:12px;color:#CFCBC2;vertical-align:top">–</td><td style="padding:3px 0;font-size:12.5px;line-height:1.45;color:#3A3B40">${h}</td></tr>`).join('')
+    + (extra > 0 ? `<tr><td></td><td style="padding:3px 0;font-size:11.5px;color:${FAINT}">+${extra} more on the board</td></tr>` : '')
+  return head + (rows ? `<table cellspacing="0" cellpadding="0" width="100%">${rows}</table>` : '')
 }
 
-/** A block of free HTML inside the same card chrome. */
-export function block(title: string, inner: string, accent?: Accent, count?: number | null): string {
-  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px;overflow:hidden">
-    <div style="padding:10px 18px 8px;border-bottom:1px solid #f3f4f6;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${accent ? accent.ink : '#374151'}">${esc(title)}${count != null ? ` <span style="font-weight:400;color:#9ca3af">· ${count}</span>` : ''}</div>
-    <div style="padding:6px 18px 12px">${inner}</div>
-  </div>`
+/** A block of free HTML under the same small-cap title. */
+export function block(title: string, inner: string, _accent?: Accent, count?: number | null): string {
+  return sheet(eyebrow(title, count) + inner)
 }
 
 /** How the day runs: a time column and what to do then. Deterministic, built from the data. */
 // "How the day runs", not "Shape of the day" (Jon, 2026-11-05: plain headings).
-export function dayShape(a: Accent, steps: { at: string; do: string }[], title = 'How the day runs'): string {
+export function dayShape(_a: Accent, steps: { at: string; do: string }[], title = 'How the day runs'): string {
   if (!steps.length) return ''
-  return `<div style="background:${a.soft};border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px;overflow:hidden">
-    <div style="padding:10px 18px 6px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${a.ink}">${esc(title)}</div>
-    <table cellspacing="0" cellpadding="0" style="padding:0 18px 12px">
-      ${steps.map(s => `<tr><td style="padding:3px 10px 3px 0;font-size:12px;font-weight:700;color:${a.ink};white-space:nowrap;vertical-align:top">${esc(s.at)}</td><td style="padding:3px 0;font-size:13px;line-height:1.5">${s.do}</td></tr>`).join('')}
-    </table>
-  </div>`
+  return sheet(eyebrow(title) + `<table cellspacing="0" cellpadding="0" width="100%">
+      ${steps.map(s => `<tr><td style="padding:4px 14px 4px 0;font-size:12px;font-weight:700;color:${INK};white-space:nowrap;vertical-align:top;width:1%">${esc(s.at)}</td><td style="padding:4px 0;font-size:13px;line-height:1.5">${s.do}</td></tr>`).join('')}
+    </table>`, SOFT)
 }
 
-/** Numbers in a row, each with a label and a one-word verdict. */
+/** Numbers in a row, each with a label and a short note. */
 export function tiles(items: TileItem[]): string {
-  return `<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;margin-bottom:12px">${tileTable(items)}</div>`
+  return sheet(tileTable(items))
 }
 export type TileItem = { label: string; value: string; note?: string; tone?: 'red' | 'amber' | 'green' | 'none' }
-/** The tile row without its card — for a block that states its own window in the heading. */
+/** The tile rows without a title — three to a row so they read on a phone. */
 export function tileTable(items: TileItem[]): string {
-  const col = (t: TileItem) => `<td style="padding:10px 6px;text-align:center;vertical-align:top;width:${Math.floor(100 / items.length)}%">
-    <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280">${esc(t.label)}</div>
-    <div style="font-size:22px;font-weight:700;margin-top:2px;${t.tone === 'red' ? 'color:#b91c1c' : t.tone === 'amber' ? 'color:#b45309' : t.tone === 'green' ? 'color:#047857' : ''}">${esc(t.value)}</div>
-    ${t.note ? `<div style="font-size:10.5px;color:#9ca3af;margin-top:1px">${esc(t.note)}</div>` : ''}
+  const per = items.length <= 4 ? Math.max(1, items.length) : 3
+  const col = (t: TileItem, i: number) => `<td style="padding:10px 10px 10px ${i ? '14px' : '0'};vertical-align:top;width:${Math.floor(100 / per)}%;${i ? `border-left:1px solid ${RULE}` : ''}">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:${MUTED}">${esc(t.label)}</div>
+    <div style="font-family:${SERIF};font-size:27px;line-height:1.15;margin-top:3px;color:${t.tone === 'red' ? RED : t.tone === 'amber' ? AMBER : INK}">${esc(t.value)}</div>
+    ${t.note ? `<div style="font-size:11px;line-height:1.4;color:${FAINT};margin-top:2px">${esc(t.note)}</div>` : ''}
   </td>`
-  return `<table width="100%" cellspacing="0" cellpadding="0"><tr>${items.map(col).join('')}</tr></table>`
+  const rows: string[] = []
+  for (let i = 0; i < items.length; i += per) rows.push(`<tr>${items.slice(i, i + per).map(col).join('')}</tr>`)
+  return `<table width="100%" cellspacing="0" cellpadding="0">${rows.join('')}</table>`
 }
 
 export function footer(text: string): string {
-  return `<p style="font-size:11px;color:#9ca3af;margin:12px 4px 0;text-align:center">${text}</p>`
+  return `<div style="background:${SOFT};border-top:1px solid ${RULE};padding:14px ${PAD} 16px;font-size:11px;line-height:1.6;color:${FAINT};text-align:center">${text}<br><span style="letter-spacing:.2em;text-transform:uppercase;font-size:9.5px">Lighthouse · Stay Hospitality</span></div>`
 }
 
+/** A status word in small caps. Plain coloured text, no filled pill (Jon dislikes noisy pills). */
 export function pill(text: string, tone: 'red' | 'amber' | 'green' | 'blue' | 'grey' = 'grey'): string {
-  const c = tone === 'red' ? 'background:#fee2e2;color:#991b1b' : tone === 'amber' ? 'background:#fef3c7;color:#92400e' : tone === 'green' ? 'background:#d1fae5;color:#065f46' : tone === 'blue' ? 'background:#e0e7ff;color:#3730a3' : 'background:#f3f4f6;color:#374151'
-  return `<span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;padding:1px 6px;border-radius:999px;vertical-align:middle;${c}">${esc(text)}</span>`
+  const c = tone === 'red' ? RED : tone === 'amber' ? AMBER : tone === 'green' ? GREEN : tone === 'blue' ? GOLD : MUTED
+  return `<span style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${c}">${esc(text)}</span>`
 }
 
 /** Wrap the body. `optional` sections are dropped from the END until the budget is met. */
@@ -143,7 +147,7 @@ export function wireSize(html: string): number {
 }
 
 export function fit(parts: { html: string; optional?: boolean }[], budget = 60_000): { html: string; dropped: number } {
-  const wrap = (inner: string) => `<!doctype html><html><body style="${T.body}"><div style="${T.wrap}">${inner}</div></body></html>`
+  const wrap = (inner: string) => `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="${T.body}"><div style="${T.wrap}"><div style="background:#fff;border:1px solid #E7E4DD;border-radius:14px;overflow:hidden">${inner}</div></div></body></html>`
   const live = parts.slice()
   let dropped = 0
   for (;;) {

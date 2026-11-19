@@ -32,6 +32,8 @@ const n0 = (v: any) => Math.round(Number(v) || 0)
 const money0 = (v: any) => '$' + n0(v).toLocaleString('en-US')
 const capped = <X,>(p: Promise<X>, ms = 45_000): Promise<X | null> => Promise.race([p.catch(() => null), new Promise<null>(r => setTimeout(() => r(null), ms))])
 
+const EVE_LOOPS_IN_BRIEF = false
+
 export async function buildOpsDesk(): Promise<Built> {
   const A = ACCENTS.ops
   const d = await gather('full')
@@ -133,7 +135,9 @@ export async function buildOpsDesk(): Promise<Built> {
   const L = D?.loops
   const ageTxt = (h: number) => (h < 48 ? h + 'h' : Math.round(h / 24) + 'd')
   const loopLines: Line[] = []
-  if (L) {
+  // Eve's read of Slack (guest asks, no owner, promised) is not in the brief any more (Jon, 2026-11-19:
+  // clean up the Eve noise). It stays on the Eve tab; only the housekeeping damage queue is named here.
+  if (L && EVE_LOOPS_IN_BRIEF) {
     for (const l of L.asks.slice(0, 3)) loopLines.push({ tone: l.ageH >= 4 ? 'red' : 'amber', html: `${pill('GUEST ASK', 'blue')} <b>${esc(unitShort(l.unit || ''))}</b> ${esc(l.summary.slice(0, 100))}`, sub: `${esc(l.owner || 'Nobody')} · waiting ${ageTxt(l.ageH)}` })
     for (const l of L.unowned.slice(0, 3)) loopLines.push({ tone: 'red', html: `${pill('NO OWNER', 'red')} <b>${esc(unitShort(l.unit || ''))}</b> ${esc(l.summary.slice(0, 100))}`, sub: `Raised in #${esc(l.channel || 'a room')} ${ageTxt(l.ageH)} ago — name someone or close it.` })
     for (const l of L.late.slice(0, 2)) loopLines.push({ tone: 'amber', html: `${pill('PROMISED', 'amber')} ${esc(l.summary.slice(0, 110))}`, sub: `${esc(l.owner || 'Someone')} · ${ageTxt(l.ageH)} ago` })
@@ -155,7 +159,7 @@ export async function buildOpsDesk(): Promise<Built> {
   } catch { /* the queue is optional here */ }
   // A mix of kinds, eight at most; whatever is left — cut here or never listed — is counted with its link.
   const loopsShown = loopLines.slice(0, 8)
-  const loopsTotal = (L ? L.asks.length + L.unowned.length + L.late.length : 0) + hkLines
+  const loopsTotal = (L && EVE_LOOPS_IN_BRIEF ? L.asks.length + L.unowned.length + L.late.length : 0) + hkLines
   const loopsMore = Math.max(0, loopsTotal - loopsShown.length)
   // Blocked — the units down now, with what Guesty calls the block.
   const bl: any = blocked
@@ -286,7 +290,7 @@ export async function buildOpsDesk(): Promise<Built> {
     { html: decideAll.length ? section('Decide today — in order', decideAll, { cap: 8, accent: A, more: on('Today board', '/command') }) : block('Decide today', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing needs a decision.</span> <span style="${T.muted}">Every clean has a name and nobody is waiting on the desk.</span></p>`, A) },
     { html: section('VIP and big arrivals', vipLines, { cap: 10, accent: A, more: on('boards', '/day'), note: vipLines.length ? 'Walk or check every one before the guest lands.' : undefined }) || block('VIP and big arrivals', `<p style="margin:6px 0 0;font-size:13px;${T.muted}">No big, long or owner arrivals today.</p>`, A) },
     { html: glLines.length ? section('Glitches', glLines, { cap: 6, accent: A, more: on('Glitch board', '/glitches') }) : '' },
-    { html: loopsShown.length ? section('Waiting on a person — from Slack', loopsShown, { cap: 8, accent: A, note: loopsMore ? `+${loopsMore} more ${on('Eve tab', '/eve?tab=loops')}` : undefined }) : '', optional: true },
+    { html: loopsShown.length ? section(EVE_LOOPS_IN_BRIEF ? 'Waiting on a person — from Slack' : 'Damage reports waiting', loopsShown, { cap: 8, accent: A, note: loopsMore ? `+${loopsMore} more ${on('Eve tab', '/eve?tab=loops')}` : undefined }) : '', optional: true },
     // WHO'S WORKING — one card (Jon, 2026-11-05): housekeeping, then maintenance, each person's day.
     { html: block("Who's working today", crewHtml, A, (hk.n + mt.n) || null) },
     { html: inspectionLines.length ? section('Inspections today', inspectionLines, { cap: 14, accent: A, more: on('boards', '/day') }) : '', optional: true },

@@ -432,7 +432,10 @@ export async function guestIssueSlackTiers(): Promise<AlertTier[]> {
     const { getSetting } = await import('./app-settings')
     const v = await getSetting<any>(GUEST_ISSUE_ALERTS_KEY, null)
     const t = v && Array.isArray(v.slackTiers) ? v.slackTiers.map(String).filter((x: string) => x === 'safety' || x === 'waiting' || x === 'fyi') : null
-    return t ? (t as AlertTier[]) : DEFAULT_SLACK_TIERS
+    if (t) return t as AlertTier[]
+    // Quiet by default (2026-11-19): only a safety matter posts unless eve_quiet.guestIssueFyi is false.
+    const { isQuiet } = await import('./eve/quiet')
+    return (await isQuiet('guestIssueFyi')) ? ['safety'] : DEFAULT_SLACK_TIERS
   } catch { return DEFAULT_SLACK_TIERS }
 }
 

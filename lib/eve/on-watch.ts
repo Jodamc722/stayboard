@@ -251,6 +251,8 @@ export async function runOnWatch(opts: { force?: boolean; preview?: boolean } = 
   const out: OnWatchRun = { ok: true, found: { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, U: 0 }, posted: {}, resolved: 0, escalated: 0, notes: [] }
   const cfg = await getOnWatchConfig()
   if (!cfg.enabled && !opts.force && !opts.preview) return { ...out, skipped: 'switched off (app_settings eve_on_watch)' }
+  // Quiet by default (2026-11-19): no drafts, lists or ✅ replies in Slack unless eve_quiet.fixedNotes is false.
+  if (!opts.force && !opts.preview) { const { isQuiet } = await import('./quiet'); if (await isQuiet('fixedNotes')) return { ...out, skipped: 'quiet (app_settings eve_quiet.fixedNotes)' } }
   const hour = etHourNow()
   if (!opts.force && !opts.preview && (hour < cfg.startHour || hour > cfg.endHour)) return { ...out, skipped: `outside ${cfg.startHour}:00–${cfg.endHour}:00 ET` }
 

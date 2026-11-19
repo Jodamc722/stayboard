@@ -168,10 +168,10 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     const note = noteOf(c.lid)
     const extra = me ? othersOn(c, me) : []
     return `<tr>
-      <td style="padding:5px 4px 5px 0;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;width:22px;text-align:center">${n != null ? `<span style="display:inline-block;min-width:18px;padding:1px 4px;border-radius:9px;background:${c.sameDayArrival ? '#fee2e2' : '#f1f5f9'};color:${c.sameDayArrival ? '#b91c1c' : '#475569'};font-weight:700;font-size:11px">${n}</span>` : ''}</td>
-      <td style="padding:5px 6px;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top"><b>${esc(unitShort(c.unit))}</b>${extra.length ? ` <span style="${T.muted};font-size:11.5px">· ${pick('with', 'con')} ${esc(extra.join(', '))}</span>` : ''}${me ? crewOf(c.assignee.split(',').map(x => x.trim()), c.lead) : ''}${note ? `<div style="font-size:11.5px;color:#4338ca">📝 ${esc(note)}</div>` : ''}</td>
-      <td style="padding:5px 6px;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;white-space:nowrap">${c.sameDayArrival ? pill(`${pick('lands', 'llega')} ${timeOf(c.lid)}`, 'red') + (isVip(c.lid) ? ' ' + vipWhy(c.lid) : '') : `<span style="${T.faint}">—</span>`}</td>
-      <td style="padding:5px 0 5px 6px;font-size:12px;border-top:1px solid #f3f4f6;vertical-align:top;text-align:right;white-space:nowrap">${stateOf(c)}</td>
+      <td style="padding:5px 4px 5px 0;font-size:12px;border-top:1px solid #F1EFEA;vertical-align:top;width:22px;text-align:center">${n != null ? `<span style="display:inline-block;min-width:18px;padding:1px 4px;border-radius:9px;color:${c.sameDayArrival ? '#B42318' : '#9A9BA0'};font-weight:700;font-size:11px">${n}</span>` : ''}</td>
+      <td style="padding:5px 6px;font-size:13px;border-top:1px solid #F1EFEA;vertical-align:top"><b>${esc(unitShort(c.unit))}</b>${extra.length ? ` <span style="${T.muted};font-size:11.5px">· ${pick('with', 'con')} ${esc(extra.join(', '))}</span>` : ''}${me ? crewOf(c.assignee.split(',').map(x => x.trim()), c.lead) : ''}${note ? `<div style="font-size:11.5px;color:#6F5527">📝 ${esc(note)}</div>` : ''}</td>
+      <td style="padding:5px 6px;font-size:12px;border-top:1px solid #F1EFEA;vertical-align:top;white-space:nowrap">${c.sameDayArrival ? pill(`${pick('lands', 'llega')} ${timeOf(c.lid)}`, 'red') + (isVip(c.lid) ? ' ' + vipWhy(c.lid) : '') : `<span style="${T.faint}">—</span>`}</td>
+      <td style="padding:5px 0 5px 6px;font-size:12px;border-top:1px solid #F1EFEA;vertical-align:top;text-align:right;white-space:nowrap">${stateOf(c)}</td>
     </tr>`
   }
   const runOrder = (a: Clean, b: Clean) => (b.sameDayArrival ? 1 : 0) - (a.sameDayArrival ? 1 : 0) || (a.state === 'done' ? 1 : 0) - (b.state === 'done' ? 1 : 0) || a.unit.localeCompare(b.unit)
@@ -186,7 +186,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     const doneN = list.filter(c => c.state === 'done').length
     const hot = list.filter(c => c.sameDayArrival && c.state !== 'done').length
     const sched = onShift.size && !shiftOf(n) && !isTech(n) && !/superv|inspect/.test(dept(n)) && !isOffice(n) ? ` · <span style="${T.amber}">${pick('not on the schedule — confirm', 'no está en el horario — confirmar')}</span>` : ''
-    return `<tr><td colspan="4" style="padding:10px 0 4px;font-size:13.5px;border-top:2px solid #e5e7eb"><b>${esc(n)}</b> <span style="${T.muted};font-size:12px">· ${list.length} ${list.length === 1 ? t('clean') : t('cleans')}${hot ? ` · <span style="${T.red}">${hot} ${pick('same-day', 'mismo día')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}${sched}</span></td></tr>`
+    return `<tr><td colspan="4" style="padding:10px 0 4px;font-size:13.5px;border-top:2px solid #E7E4DD"><b>${esc(n)}</b> <span style="${T.muted};font-size:12px">· ${list.length} ${list.length === 1 ? t('clean') : t('cleans')}${hot ? ` · <span style="${T.red}">${hot} ${pick('same-day', 'mismo día')}</span>` : ''}${doneN ? ` · ${doneN} ${t('done')}` : ''}${sched}</span></td></tr>`
   }
   const unassignedRows = unassigned.length
     ? `<tr><td colspan="4" style="padding:6px 0 4px;font-size:13.5px"><b style="${T.red}">${t('NO ONE ASSIGNED')}</b> <span style="${T.muted};font-size:12px">· ${unassigned.length} — ${pick('nobody’s list; assign before 10am', 'sin dueño; asignar antes de las 10')}</span></td></tr>` + unassigned.slice().sort(runOrder).map(c => cleanRow(c, null, '')).join('')
@@ -205,8 +205,8 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     const early = /early|temprano|\b(8|9|10|11)\s*am\b|\b12\s*pm\b/i.test(note)
     const tags = [vipWhy(lid), (a.bookedToday || a.bookedAfterSync) ? pill(t('WALK-IN'), 'red') : '', early ? pill(pick('EARLY', 'TEMPRANO'), 'amber') : '', cleanLids.has(lid) ? pill(pick('CLEAN TODAY', 'LIMPIEZA HOY'), 'grey') : ''].filter(Boolean).join(' ')
     return `<tr>
-      <td style="padding:4px 6px 4px 0;font-size:13px;border-top:1px solid #f3f4f6;vertical-align:top"><b>${esc(unitShort(str(a.unit)))}</b> ${tags}${note ? `<div style="font-size:11.5px;color:#4338ca">📝 ${esc(note)}</div>` : ''}</td>
-      <td style="padding:4px 0 4px 6px;font-size:12.5px;border-top:1px solid #f3f4f6;vertical-align:top;text-align:right;white-space:nowrap">${esc(str(a.checkInTime || '4:00 PM'))} · ${esc(first(a.guest))}${a.nights ? ` · ${a.nights}n` : ''}</td>
+      <td style="padding:4px 6px 4px 0;font-size:13px;border-top:1px solid #F1EFEA;vertical-align:top"><b>${esc(unitShort(str(a.unit)))}</b> ${tags}${note ? `<div style="font-size:11.5px;color:#6F5527">📝 ${esc(note)}</div>` : ''}</td>
+      <td style="padding:4px 0 4px 6px;font-size:12.5px;border-top:1px solid #F1EFEA;vertical-align:top;text-align:right;white-space:nowrap">${esc(str(a.checkInTime || '4:00 PM'))} · ${esc(first(a.guest))}${a.nights ? ` · ${a.nights}n` : ''}</td>
     </tr>`
   })
   const arrivalsTable = arrivals.length ? `<table width="100%" cellspacing="0" cellpadding="0">${arrRows.join('')}</table>` : `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">${pick('No arrivals today.', 'Sin llegadas hoy.')}</p>`

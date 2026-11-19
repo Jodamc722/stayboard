@@ -167,6 +167,8 @@ export async function morningIndex(opts: { dry?: boolean } = {}): Promise<{ post
   const routed = await routeReport({ kind: 'shared_boards', title: 'Shared boards — what is waiting', text, room: channel, pointer: overdue ? `${overdue} overdue` : 'nothing overdue' })
   const say = routed.post ? routed.text : (overdue && routed.url ? `📄 *Shared boards* — ${overdue} overdue · <${routed.url}|read it on the Eve tab>` : '')
   if (!say) return { posted: false, text, counts }
+  // Quiet by default (2026-11-19): filed on the Eve tab, not posted, unless eve_quiet.sharedBoardsPost is false.
+  try { const { isQuiet } = await import('./eve/quiet'); if (await isQuiet('sharedBoardsPost')) return { posted: false, text, counts } } catch { /* post as before */ }
   // THROUGH THE ROOM GATE (2026-11-09), as the evening recap above.
   try {
     const { gatedPost } = await import('./eve/room-gate')

@@ -114,31 +114,20 @@ export async function buildGmMorning(): Promise<GmBuilt> {
       num: `${gap} short`, act: 'add a shift or call the on-call (Weekly Planner)',
       short: `${soonShort.length} short days in the next 3 · ${gap} short` })
   }
-  // ASKED, NOBODY ANSWERED (Eve audit 2026-10-10): what Eve asked and nobody answered in a week.
-  try {
-    const { data: ex } = await db.from('eve_actions').select('payload,decided_at,created_at').eq('kind', 'ask').eq('status', 'expired')
-      .gte('created_at', new Date(Date.now() - 10 * 86400000).toISOString()).order('created_at', { ascending: false }).limit(60)
-    const rows = ((ex || []) as any[]).filter(r => r.payload?.type === 'action' && Date.parse(String(r.decided_at || r.created_at)) >= Date.now() - 7 * 86400000)
-    if (rows.length >= 3) {
-      decisions.push({ key: 'unanswered', tone: 'amber',
-        what: `<b>${rows.length} of Eve's asks expired unanswered</b> · last 7 days — e.g. ${rows.slice(0, 2).map(r => esc(str(r.payload?.summary).replace(/\s+/g, ' ').slice(0, 60))).join('; ')}`,
-        num: String(rows.length), act: 'Lighthouse → Eve → Agent mode',
-        short: `${rows.length} Eve asks expired unanswered` })
-    }
-  } catch { /* the brief still sends */ }
+  // Eve's own unanswered asks are not a GM decision (Jon, 2026-11-19: clean up the Eve noise). They stay on the Eve tab.
 
   // THE MEMORY (Eve audit 2026-10-10, lib/gm-decisions): the first morning a line is spelled out;
   // from the second it is "day N"; ✓ Decided / Defer hide it until the number behind it moves.
   const { loadDecisions, saveDecisions, noteSeen, isHidden } = await import('@/lib/gm-decisions')
   const dmap = await loadDecisions().catch(() => ({} as any))
-  const taps = (key: string) => `<a href="${APP_URL}/api/brief/decision?key=${key}&do=decided" style="color:#4338ca;text-decoration:none">✓ Decided</a> · <a href="${APP_URL}/api/brief/decision?key=${key}&do=defer&days=7" style="color:#6b7280;text-decoration:none">Defer a week</a>`
+  const taps = (key: string) => `<a href="${APP_URL}/api/brief/decision?key=${key}&do=decided" style="color:#6F5527;text-decoration:none">✓ Decided</a> · <a href="${APP_URL}/api/brief/decision?key=${key}&do=defer&days=7" style="color:#6b7280;text-decoration:none">Defer a week</a>`
   const decideLines: Line[] = []
   const hidden: string[] = []
   for (const dc of decisions) {
     const e = noteSeen(dmap, dc.key, dc.num, today)
     if (isHidden(e, today)) { hidden.push(dc.short + (e.state === 'deferred' ? ` (until ${e.until})` : ' (decided)')); continue }
     const label = e.days <= 1 ? dc.what : `${esc(dc.short)} <span style="${T.faint}">· day ${e.days}</span>`
-    decideLines.push({ tone: dc.tone, html: `${label} <b style="float:right">${dc.num}</b><br><span style="${T.muted};font-size:12px">→ ${dc.act}</span> <span style="font-size:11.5px">· ${taps(dc.key)}</span>` })
+    decideLines.push({ tone: dc.tone, html: `<b style="float:right;margin-left:12px">${dc.num}</b>${label}`, sub: `→ ${dc.act}<br><span style="font-size:11.5px">${taps(dc.key)}</span>` })
   }
   try { await saveDecisions(dmap, 'gm-brief') } catch { /* the brief still sends */ }
   const decideHtml = decideLines.length
@@ -181,7 +170,7 @@ export async function buildGmMorning(): Promise<GmBuilt> {
 
   // ── 4. NOTABLE ARRIVALS and BLOCKED ──────────────────────────────────────────────────────────
   const arrLines: Line[] = (d.bigArrivals || []).slice(0, 3).map((b: any) => ({ tone: 'none' as const,
-    html: `<b>${esc(b.unit)}</b> · ${esc(b.guest)} · ${b.today ? '<b>lands today</b>' : esc(b.when)}${b.nights ? ` · ${b.nights} nights` : ''} <b style="float:right">${money0(b.total)}</b>` }))
+    html: `<b style="float:right;margin-left:12px">${money0(b.total)}</b><b>${esc(b.unit)}</b> · ${esc(b.guest)} · ${b.today ? '<b>lands today</b>' : esc(b.when)}${b.nights ? ` · ${b.nights} nights` : ''}` }))
   // STANDING BLOCKS ARE NOT A DECISION (Jon, 2026-10-01): owner use, a building manager, a
   // do-not-sell, an offboarding never change morning to morning; they are counted, not listed.
   const STANDING = /do not sell|owner|building manager|offboard|long[- ]term|tenant|request|renovat|lease|personal use|staff/i
@@ -195,7 +184,7 @@ export async function buildGmMorning(): Promise<GmBuilt> {
   const blockedNote = `${blocked.length} blocked · ${liveBlocked.length} down now · ${nights30} nights off in 30 days · ${blocked.length - fixable.length} standing blocks (owner use, do-not-sell, offboarding) not chased here.`
   const blockedHtml = isHidden(dmap['blocked'], today) ? ''
     : blockedFailed ? block('Blocked units', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.red}">Guesty did not answer this morning.</span> <span style="${T.muted}">This is not an all-clear — check the <a href="${APP_URL}/blocked" style="color:${A.ink}">blocked board</a>.</span></p>`, A)
-    : blockedLines.length ? section('Blocked — the ones work can reopen', blockedLines, { cap: 6, accent: A, more: `on the <a href="${APP_URL}/blocked" style="color:${A.ink}">board</a>`, note: blockedNote })
+    : blockedLines.length ? section('Blocked — the ones work can reopen', blockedLines, { cap: 4, accent: A, more: `on the <a href="${APP_URL}/blocked" style="color:${A.ink}">board</a>`, note: blockedNote })
     : block('Blocked units', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing is waiting on a repair.</span> <span style="${T.muted}">${esc(blockedNote)}</span></p>`, A)
 
   // ── assemble ────────────────────────────────────────────────────────────────────────────────
