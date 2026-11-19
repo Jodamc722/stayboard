@@ -118,20 +118,35 @@ export async function buildGmMorning(): Promise<GmBuilt> {
 
   // THE MEMORY (Eve audit 2026-10-10, lib/gm-decisions): the first morning a line is spelled out;
   // from the second it is "day N"; ✓ Decided / Defer hide it until the number behind it moves.
-  const { loadDecisions, saveDecisions, noteSeen, isHidden } = await import('@/lib/gm-decisions')
+  const { loadDecisions, saveDecisions, noteSeen, isHidden, movedMaterially } = await import('@/lib/gm-decisions')
   const dmap = await loadDecisions().catch(() => ({} as any))
   const taps = (key: string) => `<a href="${APP_URL}/api/brief/decision?key=${key}&do=decided" style="color:#6F5527;text-decoration:none">✓ Decided</a> · <a href="${APP_URL}/api/brief/decision?key=${key}&do=defer&days=7" style="color:#6b7280;text-decoration:none">Defer a week</a>`
   const decideLines: Line[] = []
   const hidden: string[] = []
+  // A LINE THAT HAS LED THE BRIEF FOR A WEEK STOPS LEADING IT (Jon, 2026-11-19: some read "day 41").
+  // After 7 mornings it moves to one "Still open" line under the list, with its taps, and comes back
+  // to the top only when its number moves by a fifth or more.
+  const STALE_AFTER = 7
+  const stale: string[] = []
+  const staleKeys = new Set<string>()
   for (const dc of decisions) {
-    const e = noteSeen(dmap, dc.key, dc.num, today)
+    const e = noteSeen(dmap, dc.key, dc.num, today) as any
     if (isHidden(e, today)) { hidden.push(dc.short + (e.state === 'deferred' ? ` (until ${e.until})` : ' (decided)')); continue }
+    if (e.days > STALE_AFTER) {
+      if (!e.anchor) e.anchor = dc.num
+      if (movedMaterially(e.anchor, dc.num)) { e.anchor = null; e.days = 1; e.firstSeen = today }
+      else { staleKeys.add(dc.key); stale.push(`${esc(dc.short)} <span style="${T.faint}">· day ${e.days}</span> · ${taps(dc.key)}`); continue }
+    }
     const label = e.days <= 1 ? dc.what : `${esc(dc.short)} <span style="${T.faint}">· day ${e.days}</span>`
     decideLines.push({ tone: dc.tone, html: `<b style="float:right;margin-left:12px">${dc.num}</b>${label}`, sub: `→ ${dc.act}<br><span style="font-size:11.5px">${taps(dc.key)}</span>` })
   }
   try { await saveDecisions(dmap, 'gm-brief') } catch { /* the brief still sends */ }
+  const staleNote = stale.length ? `<span style="color:#6B6C72"><b>Still open</b> (a week or more): ${stale.join(' &nbsp;|&nbsp; ')}</span>` : ''
+  const offNote = hidden.length ? `Off the list: ${esc(hidden.join(' · '))}` : ''
+  const underNote = [staleNote, offNote].filter(Boolean).join('<br>') || undefined
   const decideHtml = decideLines.length
-    ? section('Decide today', decideLines, { cap: 8, accent: A, note: hidden.length ? `Off the list: ${esc(hidden.join(' · '))}` : undefined })
+    ? section('Decide today', decideLines, { cap: 8, accent: A, note: underNote })
+    : stale.length ? block('Decide today', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">Nothing new needs you.</span></p><p style="margin:8px 0 0;font-size:11.5px;line-height:1.6;${T.faint}">${underNote}</p>`, A)
     : block('Decide today', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing needs you.</span> <span style="${T.muted}">No blocked revenue, no unpriced work, no claims waiting, nothing overdue.</span>${hidden.length ? `<br><span style="font-size:11.5px;${T.faint}">Off the list: ${esc(hidden.join(' · '))}</span>` : ''}</p>`, A)
 
   // ── 2. THE NUMBERS — last 7 days, the last 30 (settled) beside each ───────────────────────────
@@ -190,7 +205,7 @@ export async function buildGmMorning(): Promise<GmBuilt> {
   // ── assemble ────────────────────────────────────────────────────────────────────────────────
   const n = decideLines.length
   const occToday = num(tod.occupancy)
-  const head = `<b>${n ? `${n} to decide` : 'Nothing to decide'}</b>${blockedAtStake && !isHidden(dmap['blocked'], today) ? ` — the big one is ≈${money0(blockedAtStake)} of blocked nights` : ''}. ` +
+  const head = `<b>${n ? `${n} to decide` : stale.length ? 'Nothing new to decide' : 'Nothing to decide'}</b>${stale.length ? ` · ${stale.length} still open` : ''}${blockedAtStake && !isHidden(dmap['blocked'], today) && !staleKeys.has('blocked') ? ` — the big one is ≈${money0(blockedAtStake)} of blocked nights` : ''}. ` +
     `${occToday != null ? pct1(occToday) + ' occupied tonight · ' : ''}${tod.arrivals || 0} in / ${tod.departures || 0} out${tod.sameDayTurns ? ` · <span style="${T.red}">${tod.sameDayTurns} same-day turns</span>` : ''}.`
   const parts = [
     { html: masthead(A, 'GM morning', `Owner · whole portfolio · ${d.activeCount} active units`, niceDay(today)) },

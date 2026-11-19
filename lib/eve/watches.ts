@@ -150,6 +150,7 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
   // before its thread moved again), decided below by the same rule once its check-in is known.
   const cands = set.rows.filter(r => r.overdue || !r.sla_due_at)
   if (!cands.length) return []
+  const nearStayOnly = await (await import('./quiet')).isQuiet('farOutGuestDrafts')
   const resIds = cands.map(r => str(r.reservation_id)).filter(Boolean)
   const resById: Record<string, any> = {}
   if (resIds.length) {
@@ -162,6 +163,13 @@ async function guestUnanswered(env: WatchEnv): Promise<Prepared[]> {
     const due = r.sla_due_at || slaDueAt(r.awaiting_since || r.last_guest_at, res ? str(res.check_in).slice(0, 10) : null)
     if (!due || Date.parse(due) > nowMs) continue
     if (res && /cancel|declin|inquir/i.test(str(res.status))) continue
+    // Quiet by default (2026-11-19: 44 of 80 automatic drafts in a week expired unread): she drafts on her own
+    // only for a guest in the unit or arriving within two days. Anyone can still press Draft with Eve.
+    if (nearStayOnly) {
+      const ci = res ? str(res.check_in).slice(0, 10) : '', co = res ? str(res.check_out).slice(0, 10) : ''
+      const soon = new Date(Date.parse(env.today + 'T12:00:00Z') + 2 * 86400000).toISOString().slice(0, 10)
+      if (!ci || !co || ci > soon || co < env.today) continue
+    }
     if (out.length >= 30) break
     const arrivesToday = !!res && str(res.check_in).slice(0, 10) === env.today
     const convId = str(r.conversation_id)
@@ -644,6 +652,7 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
     try { const { aiSpendToday } = await import('./agent-mode'); overAiBudget = (await aiSpendToday()) >= settings.budgets.aiUsdPerDay } catch { overAiBudget = false }
   }
 
+  const quiet = await (await import('./quiet')).eveQuiet()
   for (const row of rows) {
     if (opts.only && row.key !== opts.only) continue
     if (!row.enabled && !opts.only) continue
@@ -659,6 +668,8 @@ export async function runWatches(by = 'cron:watches', opts: { only?: string; for
     const rec = { key: row.key, found: 0, fired: 0, cooled: 0, modes: {} as Record<string, number>, ms: 0, error: undefined as string | undefined }
     let found: Prepared[] = []
     try { found = await def.trigger(env) } catch (e: any) { rec.error = String(e?.message || e).slice(0, 200) }
+    // Quiet by default (2026-11-19): a finding that can only ever be a note on the Thinking tab is not recorded.
+    if (quiet.flagThoughts) found = found.filter(f => !f.observeOnly)
     rec.found = found.length
 
     // Cooldown: one read for all this watch's subjects.
