@@ -105,12 +105,12 @@ export type WorkItem = {
   steps?: string[]
 }
 
-export const PROBLEM: CellVerdict[] = ['suspended', 'failed', 'disconnected', 'missing']
-export const NOT_FOR_SALE: CellVerdict[] = ['suspended', 'failed', 'disconnected']
+export const PROBLEM: CellVerdict[] = ['delisted', 'suspended', 'failed', 'disconnected', 'missing']
+export const NOT_FOR_SALE: CellVerdict[] = ['delisted', 'suspended', 'failed', 'disconnected']
 const MAJORS = ['airbnb2', 'bookingCom', 'homeaway2', 'expedia']
 const plural = (n: number, w: string) => n + ' ' + w + (n === 1 ? '' : 's')
 const LABEL: Record<string, string> = { airbnb2: 'Airbnb', bookingCom: 'Booking.com', homeaway2: 'Vrbo', expedia: 'Expedia', googleVacationRentals: 'Google VR', hopper: 'Hopper', bluegroundNestpick: 'Blueground', whimstay: 'Whimstay', homesVillasByMarriott: 'Marriott HVMI' }
-const VERDICT_WORD: Record<string, string> = { suspended: 'suspended', failed: 'failed', disconnected: 'disconnected', missing: 'not connected', unknown: 'unknown', stale: 'no bookings', live: 'live' }
+const VERDICT_WORD: Record<string, string> = { delisted: 'page removed', suspended: 'suspended', failed: 'failed', disconnected: 'disconnected', missing: 'not connected', unknown: 'unknown', stale: 'no bookings', live: 'live' }
 export const channelLabel = (k: string) => LABEL[k] || k
 
 // ── Dates ───────────────────────────────────────────────────────────────────────────────────────
@@ -258,10 +258,10 @@ export function tileCounts(rows: AdminRow[], today: string): Record<TileKey, num
 }
 
 // ── The channel strip: active listings per channel per verdict ──────────────────────────────────
-export type ChannelCount = { key: string; label: string; live: number; stale: number; suspended: number; failed: number; disconnected: number; missing: number; unknown: number }
+export type ChannelCount = { key: string; label: string; live: number; stale: number; delisted: number; suspended: number; failed: number; disconnected: number; missing: number; unknown: number }
 export function channelCounts(rows: AdminRow[], keys: string[]): ChannelCount[] {
   return keys.map(k => {
-    const c: ChannelCount = { key: k, label: channelLabel(k), live: 0, stale: 0, suspended: 0, failed: 0, disconnected: 0, missing: 0, unknown: 0 }
+    const c: ChannelCount = { key: k, label: channelLabel(k), live: 0, stale: 0, delisted: 0, suspended: 0, failed: 0, disconnected: 0, missing: 0, unknown: 0 }
     for (const r of rows) {
       if (!r.active) continue
       const cell = r.channels[k]; if (!cell) continue
@@ -305,7 +305,8 @@ export function worklist(rows: AdminRow[], today: string): WorkItem[] {
       const c = r.channels[k]; if (!c || PROBLEM.indexOf(c.verdict) < 0) continue
       if (c.verdict === 'missing' && rollout.has(k)) continue
       const sinceTxt = c.since ? ' · since ' + String(c.since).slice(0, 10) : ''
-      const detail = c.verdict === 'suspended' ? (c.approval ? 'Airbnb approval: ' + c.approval : 'Airbnb is not selling it')
+      const detail = c.verdict === 'delisted' ? 'Guesty says connected, but the ' + channelLabel(k) + ' page for this listing is gone. Check it in the ' + channelLabel(k) + ' host account'
+        : c.verdict === 'suspended' ? (c.approval ? 'Airbnb approval: ' + c.approval : 'Airbnb is not selling it')
         : c.verdict === 'missing' ? 'No ' + channelLabel(k) + ' integration on the listing in Guesty'
         : 'Guesty reports the connection ' + (c.status || c.verdict)
       out.push({

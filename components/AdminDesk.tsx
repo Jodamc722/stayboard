@@ -36,7 +36,7 @@ type ProjectsRes = { ok?: boolean; projects?: any[] }
 const DESK_URL = '/api/admin-desk'
 const SEV_TONE: Record<Severity, Tone> = { high: 'rose', medium: 'amber', low: 'slate' }
 const SEV_WORD: Record<Severity, string> = { high: 'Now', medium: 'This week', low: 'When you can' }
-const VERDICT_TONE: Record<CellVerdict, Tone> = { suspended: 'roseSolid', failed: 'rose', disconnected: 'rose', missing: 'amber', unknown: 'amber', stale: 'sky', live: 'emerald' }
+const VERDICT_TONE: Record<CellVerdict, Tone> = { delisted: 'roseSolid', suspended: 'roseSolid', failed: 'rose', disconnected: 'rose', missing: 'amber', unknown: 'amber', stale: 'sky', live: 'emerald' }
 const CH_SHORT: Record<string, string> = { airbnb2: 'A', bookingCom: 'B', homeaway2: 'V', expedia: 'E', googleVacationRentals: 'G', hopper: 'H', bluegroundNestpick: 'Bg', whimstay: 'W', homesVillasByMarriott: 'M' }
 const KIND_ICON: Record<WorkItem['kind'], any> = { channel: Radio, reply: MessageSquareText, refresh: Sparkles, optimize: Wrench, photos: Images, blocked: Home }
 const KIND_WORD: Record<WorkItem['kind'], string> = { channel: 'Channel', reply: 'Reviews', refresh: 'Refresh', optimize: 'Optimize', photos: 'Photos', blocked: 'Blocked' }
@@ -182,14 +182,15 @@ function DeskTab({ work, counts, strip, offline, projects, projectsLoading, load
       <LeanSection title="Channels" right={<Link href="/channels" className="text-[11.5px] font-semibold text-muted hover:text-ink">Open Channels →</Link>}>
         <LeanList>
           {strip.map(c => (
-            <LeanRow key={c.key} name={c.label} meta={<>{c.live + c.stale} live{c.stale ? ` (${c.stale} quiet)` : ''} of {c.live + c.stale + c.suspended + c.failed + c.disconnected + c.missing + c.unknown} active listings</>}
+            <LeanRow key={c.key} name={c.label} meta={<>{c.live + c.stale} live{c.stale ? ` (${c.stale} quiet)` : ''} of {c.live + c.stale + c.delisted + c.suspended + c.failed + c.disconnected + c.missing + c.unknown} active listings</>}
               tags={<>
+                {c.delisted > 0 && <Tag tone="roseSolid" title="Guesty says connected, but the channel's own page for the listing is gone">{c.delisted} page removed</Tag>}
                 {c.suspended > 0 && <Tag tone="roseSolid" title="Listed but not for sale — the channel's own verdict">{c.suspended} suspended</Tag>}
                 {c.failed > 0 && <Tag tone="rose" title="Guesty reports the sync FAILED">{c.failed} failed</Tag>}
                 {c.disconnected > 0 && <Tag tone="rose" title="The channel says DISCONNECTED">{c.disconnected} disconnected</Tag>}
                 {c.missing > 0 && <Tag tone="amber" title="No integration on this channel">{c.missing} not connected</Tag>}
                 {c.unknown > 0 && <Tag tone="amber" title="A status this app has not seen before — shown, never assumed fine">{c.unknown} unknown</Tag>}
-                {c.suspended + c.failed + c.disconnected + c.missing + c.unknown === 0 && <Tag tone="emerald">all live</Tag>}
+                {c.delisted + c.suspended + c.failed + c.disconnected + c.missing + c.unknown === 0 && <Tag tone="emerald">all live</Tag>}
               </>}
               actions={<IconBtn title={'Open ' + c.label + ' on the Channels page'} href={'/channels?channel=' + encodeURIComponent(c.key) + '&problems=1'}><ExternalLink size={14} /></IconBtn>} />
           ))}
@@ -303,7 +304,7 @@ function ListingRow({ r, today, channels }: { r: AdminRow; today: string; channe
   const items = useMemo(() => worklist([r], today), [r, today])
   const unitHref = '/listings/' + encodeURIComponent(r.id)
   return (
-    <LeanRow name={r.name} meta={<>{r.building} · {r.market}</>} tint={!r.active ? undefined : r.verdict === 'suspended' || r.verdict === 'failed' || r.verdict === 'disconnected' ? 'rose' : undefined}
+    <LeanRow name={r.name} meta={<>{r.building} · {r.market}</>} tint={!r.active ? undefined : r.verdict === 'delisted' || r.verdict === 'suspended' || r.verdict === 'failed' || r.verdict === 'disconnected' ? 'rose' : undefined}
       tags={<>
         {!r.active && <Tag tone="slate" title={'Guesty status: ' + r.guestyStatus}>offline · {r.guestyStatus}</Tag>}
         {r.active && channels.map(c => {
