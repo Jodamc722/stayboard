@@ -284,25 +284,46 @@ export async function buildOpsDesk(): Promise<Built> {
   const eveSlack = (eveCfg as any)?.slack === true
   const crewHtml = (hk.html ? `<p style="margin:8px 0 0;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280">Housekeeping · ${hk.n}</p>${hk.html}` : `<p style="margin:6px 0 0;font-size:13px;${T.muted}">No housekeeping on the board today.</p>`) +
     (mt.html ? `<p style="margin:14px 0 0;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6b7280">Maintenance · ${mt.n}</p>${mt.html}` : `<p style="margin:10px 0 0;font-size:13px;${T.muted}">No maintenance jobs on the board today.</p>`)
+  // TOP PRIORITIES, THEN THE DEPARTURE CLEANS BY MARKET (Jon, 2026-11-19: "Need it to be cleaner. Let's
+  // make it with top priorities, departure cleans (Broward and Miami)"). The brief is those two things.
+  // Glitches, who is working, inspections, blocked units and yesterday are one tap away on their boards.
+  const cleanLine = (c: typeof cleans[number]): Line => {
+    const a = arrivals.find(x => str(x.listingId) === c.lid)
+    const vip = a ? vipKind(a) : []
+    const nobody = /UNASSIGNED/.test(c.assignee)
+    const who = nobody ? `<span style="${T.red}">nobody assigned</span>` : esc(namesOn(c.assignee).slice(0, 2).map(n => first(personName(n))).join(', '))
+    const st = c.state === 'done' ? `<span style="${T.green}">done</span>` : c.state === 'running' ? `<span style="${T.amber}">in progress</span>` : 'not started'
+    return {
+      tone: nobody ? 'red' : c.state === 'done' ? 'green' : c.sameDayArrival ? 'amber' : 'none',
+      html: `<span style="float:right;margin-left:12px;font-size:12.5px;color:#6B6C72">${who} · ${st}</span><b>${esc(unitShort(c.unit))}</b>${c.sameDayArrival ? ' ' + pill('same-day · ' + landsAt(a), 'red') : ''}${vip.length ? ' ' + vip.join(' ') : ''}`,
+    }
+  }
+  const marketCleans = (mk: string) => cleans.filter(c => (mkOf(c) || 'Other') === mk)
+    .sort((x, y) => Number(y.sameDayArrival) - Number(x.sameDayArrival) || Number(x.state === 'done') - Number(y.state === 'done') || x.unit.localeCompare(y.unit, undefined, { numeric: true }))
+  const marketSection = (mk: string, label: string) => {
+    const list = marketCleans(mk)
+    if (!list.length) return mk === 'Miami' || mk === 'Broward' ? block(`Departure cleans · ${label}`, `<p style="margin:2px 0 0;font-size:13.5px;${T.muted}">No departure cleans today.</p>`, A) : ''
+    const sd = list.filter(c => c.sameDayArrival).length, done = list.filter(c => c.state === 'done').length
+    return section(`Departure cleans · ${label}`, list.map(cleanLine), { cap: 40, accent: A, more: on('boards', '/day'), note: [sd ? `${sd} same-day, listed first` : '', done ? `${done} done` : ''].filter(Boolean).join(' · ') || undefined })
+  }
+  const known = new Set(['Miami', 'Broward'])
+  const otherMarkets = Array.from(new Set(cleans.map(c => mkOf(c) || 'Other'))).filter(m => !known.has(m)).sort()
+  const boards = [['Glitches', '/glitches'], ['Boards', '/day'], ['Today board', '/command'], ['Blocked', '/blocked'], ['Claims', '/claims']]
+    .map(([l, h]) => `<a href="${APP_URL}${h}" style="color:#6b7280">${l}</a>`).join(' · ')
   const parts = [
-    { html: masthead(A, 'Ops morning', 'Operations manager · all markets', niceDay(today)) },
-    { html: headline(A, head, [{ label: 'Today board', href: `${APP_URL}/command` }, { label: 'Boards', href: `${APP_URL}/day` }, { label: 'Glitches', href: `${APP_URL}/glitches` }, { label: 'Review tab', href: `${APP_URL}/plan?tab=review` }]) },
-    { html: decideAll.length ? section('Decide today — in order', decideAll, { cap: 8, accent: A, more: on('Today board', '/command') }) : block('Decide today', `<p style="margin:6px 0 0;font-size:13px"><span style="${T.green}">Nothing needs a decision.</span> <span style="${T.muted}">Every clean has a name and nobody is waiting on the desk.</span></p>`, A) },
-    { html: section('VIP and big arrivals', vipLines, { cap: 10, accent: A, more: on('boards', '/day'), note: vipLines.length ? 'Walk or check every one before the guest lands.' : undefined }) || block('VIP and big arrivals', `<p style="margin:6px 0 0;font-size:13px;${T.muted}">No big, long or owner arrivals today.</p>`, A) },
-    { html: glLines.length ? section('Glitches', glLines, { cap: 6, accent: A, more: on('Glitch board', '/glitches') }) : '' },
-    { html: loopsShown.length ? section(EVE_LOOPS_IN_BRIEF ? 'Waiting on a person — from Slack' : 'Damage reports waiting', loopsShown, { cap: 8, accent: A, note: loopsMore ? `+${loopsMore} more ${on('Eve tab', '/eve?tab=loops')}` : undefined }) : '', optional: true },
-    // WHO'S WORKING — one card (Jon, 2026-11-05): housekeeping, then maintenance, each person's day.
-    { html: block("Who's working today", crewHtml, A, (hk.n + mt.n) || null) },
-    { html: inspectionLines.length ? section('Inspections today', inspectionLines, { cap: 14, accent: A, more: on('boards', '/day') }) : '', optional: true },
-    { html: blockedLines.length ? section('Blocked — down now', blockedLines, { cap: 5, accent: A, more: on('blocked board', '/blocked') }) : '', optional: true },
-    { html: block('Yesterday and tomorrow', `<p style="margin:6px 0 0;font-size:13px"><b>Yesterday</b> · ${yLine}${yWins}</p>${tomorrowTxt ? `<p style="margin:4px 0 0;font-size:13px"><b>Tomorrow</b> · ${esc(tomorrowTxt)}</p>` : ''}`, A), optional: true },
-    { html: footer(`Ops morning · 7:01 every morning${eveSlack ? ' · Eve posts the short form in Slack' : ''} · labor and the money are in the GM morning · each market's Field Run carries its own sheet.`) },
+    { html: masthead(A, 'Ops morning', 'Top priorities and departure cleans', niceDay(today)) },
+    { html: headline(A, head) },
+    { html: decideAll.length ? section('Top priorities', decideAll, { cap: 8, accent: A, more: on('Today board', '/command') }) : block('Top priorities', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">Nothing urgent.</span> <span style="${T.muted}">Every clean is assigned and nothing is overdue.</span></p>`, A) },
+    { html: marketSection('Miami', 'Miami') },
+    { html: marketSection('Broward', 'Broward') },
+    ...otherMarkets.map(m => ({ html: marketSection(m, m === 'North' ? 'North (vendor)' : m), optional: true })),
+    { html: footer(`${boards}<br>Ops morning · 7:01 every morning`) },
   ]
   // The budget went up with the day itself (Jon, 2026-10-08). Gmail clips a message around 102KB
   // and hides the rest behind "View entire message"; 90KB keeps the whole brief above that line
   // while `fit` still sheds the optional sections first if a day is genuinely enormous.
   const { html } = fit(parts, 90_000)
-  const subject = `Ops morning · ${niceDay(today)} · ${decideAll.length} to decide · ${unassigned.length} unassigned`
+  const subject = `Ops morning · ${niceDay(today)} · ${cleans.length} cleans · ${sameDay.length} same-day${unassigned.length ? ` · ${unassigned.length} unassigned` : ''}`
   return { subject, html, words: words(html), counts: { cleans: cleans.length, sameDay: sameDay.length, unassigned: unassigned.length, decide: decideAll.length, arrivals: arrivals.length, departures: departures.length } }
 }
 
