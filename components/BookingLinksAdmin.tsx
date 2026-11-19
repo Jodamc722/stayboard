@@ -31,8 +31,10 @@ export function BookingLinksAdmin({ canEdit = true }: { canEdit?: boolean }) {
   const [open, setOpen] = useState(false)
   const [types, setTypes] = useState<Any[] | null>(null); const [log, setLog] = useState<Any[]>([])
   const [dirty, setDirty] = useState(false); const [busy, setBusy] = useState(false); const [msg, setMsg] = useState('')
+  const [cals, setCals] = useState<Record<string, string>>({})
   const c = useCopy()
-  useEffect(() => { fetch('/api/booking-links', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) { setTypes(j.types || []); setLog(j.log || []) } }).catch(() => {}) }, [])
+  useEffect(() => { fetch('/api/booking-links', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) { setTypes(j.types || []); setLog(j.log || []); setCals(j.calendars || {}) } }).catch(() => {}) }, [])
+  const down = Object.entries(cals).filter(([, e]) => e)
   if (!types) return null
   const set = (i: number, p: Any) => { setTypes(ts => (ts || []).map((t, j) => (j === i ? { ...t, ...p } : t))); setDirty(true) }
   async function save() {
@@ -52,6 +54,7 @@ export function BookingLinksAdmin({ canEdit = true }: { canEdit?: boolean }) {
         {types.filter(t => t.on).map(t => <button key={t.slug} type="button" onClick={() => c.copy(t.slug, `${origin()}/book/${t.slug}`)} title={`${origin()}/book/${t.slug}`} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 font-semibold"><Copy size={13} /> {c.done === t.slug ? 'Copied' : t.title}</button>)}
         <button type="button" onClick={() => setOpen(o => !o)} aria-label={open ? 'Close' : 'Open'} className="rounded-lg p-1 text-muted hover:text-ink"><ChevronDown size={16} className={'transition-transform ' + (open ? '' : '-rotate-90')} /></button>
       </div>
+      {down.length ? <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-900"><b>No times can be shown yet.</b> {down.map(([h, e]) => <span key={h}>Lighthouse cannot read {h}’s calendar ({e}). They need to <a className="underline font-semibold" href={'/api/google/auth?mailbox=' + encodeURIComponent(h)}>connect Google again</a> and tick the calendar boxes. </span>)}</p> : null}
       {open ? (
         <div className="mt-3 border-t border-line pt-3 space-y-4">
           <p className="text-muted">These are the general links. For an owner already in onboarding, copy the link from their page instead: it knows who they are and puts the booking on their timeline. Times are Eastern and skip anything on the host’s Google Calendar.</p>

@@ -19,7 +19,7 @@
 // hour from one address, and a ceiling on bookings a day. Owner links (?o=) invite only the owner on file.
 import 'server-only'
 import { getSettingFresh, setSetting } from './app-settings'
-import { accessTokenFor } from './gmail-send'
+import { accessTokenFor, forgetToken } from './gmail-send'
 import { eastern } from './owner-onboard-calendar'
 
 export const BOOKING_KEY = 'booking_links'
@@ -66,11 +66,18 @@ export async function saveBookingTypes(list: any[], by: string | null): Promise<
 
 const ymdET = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
 const label = (hm: string) => { const [h, m] = hm.split(':').map(Number); return ((h % 12) || 12) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM') }
-async function busyBlocks(host: string, from: Date, to: Date): Promise<{ ok: boolean; error?: string; busy: { s: number; e: number }[] }> {
-  const t = await accessTokenFor(host)
-  if (!t.token) return { ok: false, error: t.error || 'Google is not connected for ' + host + '.', busy: [] }
-  const r = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', { method: 'POST', cache: 'no-store', headers: { Authorization: 'Bearer ' + t.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ timeMin: from.toISOString(), timeMax: to.toISOString(), timeZone: TZ, items: [{ id: 'primary' }] }) })
-  const d: any = await r.json().catch(() => ({}))
+export async function busyBlocks(host: string, from: Date, to: Date): Promise<{ ok: boolean; error?: string; busy: { s: number; e: number }[] }> {
+  const ask = async () => {
+    const t = await accessTokenFor(host)
+    if (!t.token) return { noToken: t.error || 'Google is not connected for ' + host + '.' }
+    const r = await fetch('https://www.googleapis.com/calendar/v3/freeBusy', { method: 'POST', cache: 'no-store', headers: { Authorization: 'Bearer ' + t.token, 'Content-Type': 'application/json' }, body: JSON.stringify({ timeMin: from.toISOString(), timeMax: to.toISOString(), timeZone: TZ, items: [{ id: 'primary' }] }) })
+    return { r, d: await r.json().catch(() => ({})) as any }
+  }
+  let a = await ask()
+  // a token minted before the calendar permission was granted: forget it and ask once more
+  if (a.r && (a.r.status === 401 || a.r.status === 403)) { forgetToken(host); a = await ask() }
+  if (a.noToken || !a.r) return { ok: false, error: a.noToken, busy: [] }
+  const r = a.r, d = a.d
   if (!r.ok) return { ok: false, error: String(d?.error?.message || 'Google Calendar said no (' + r.status + ').').slice(0, 200), busy: [] }
   return { ok: true, busy: ((d?.calendars?.primary?.busy || []) as any[]).map(b => ({ s: new Date(b.start).getTime(), e: new Date(b.end).getTime() })) }
 }
@@ -129,10 +136,11 @@ export async function createBookingEvent(t: BookingType, o: { day: string; time:
     ...(t.where === 'meet' ? { conferenceData: { createRequest: { requestId: o.ref + '-' + Date.now().toString(36), conferenceSolutionKey: { type: 'hangoutsMeet' } } } } : {}),
   }
   const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
-  const send = (url: string, method: string, b: any) => fetch(url, { method, cache: 'no-store', headers: { Authorization: 'Bearer ' + tok.token, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(async r => ({ ok: r.ok, status: r.status, d: await r.json().catch(() => ({})) as any }))
-  const res = o.moveEventId
-    ? await send(base + '/' + encodeURIComponent(o.moveEventId) + '?conferenceDataVersion=1&sendUpdates=all', 'PATCH', { ...body, conferenceData: undefined })
-    : await send(base + '?conferenceDataVersion=1&sendUpdates=all', 'POST', body)
+  const go = (token: string) => { const snd = (url: string, method: string, b: any) => fetch(url, { method, cache: 'no-store', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(async r => ({ ok: r.ok, status: r.status, d: await r.json().catch(() => ({})) as any })); return o.moveEventId
+    ? snd(base + '/' + encodeURIComponent(o.moveEventId) + '?conferenceDataVersion=1&sendUpdates=all', 'PATCH', { ...body, conferenceData: undefined })
+    : snd(base + '?conferenceDataVersion=1&sendUpdates=all', 'POST', body) }
+  let res = await go(tok.token)
+  if (res.status === 401 || res.status === 403) { forgetToken(t.host); const again = await accessTokenFor(t.host); if (again.token) res = await go(again.token) }
   if (!res.ok) return { ok: false, error: 'The calendar would not take the booking. Please reply to your Stay contact to set a time.' }
   return { ok: true, link: String(res.d?.hangoutLink || (res.d?.conferenceData?.entryPoints || []).find((e: any) => e.entryPointType === 'video')?.uri || ''), eventId: String(res.d?.id || ''), eventUrl: String(res.d?.htmlLink || '') }
 }
