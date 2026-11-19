@@ -16,6 +16,10 @@ import { recordEmail, sourceFromSubject } from './automation-runs'
 // unsent notice, and each ask was refreshing the token first (2026-10-02).
 const TOKENS = new Map<string, { token: string; until: number }>()
 /** A Google access token for a connected mailbox (also used by the calendar: lib/owner-onboard-calendar). */
+/** Drop the access token held in memory for a mailbox. An access token keeps the permissions it was minted with,
+ *  so after someone reconnects Google with a new permission the held one still answers 403 for up to 45 minutes.
+ *  A caller that gets a permission error forgets it and asks again (Jon reconnecting for the calendar, 2026-11-19). */
+export function forgetToken(email: string) { TOKENS.delete(String(email || '').toLowerCase()) }
 export async function accessTokenFor(email: string): Promise<{ token?: string; error?: string }> {
   const clientId = process.env.GOOGLE_CLIENT_ID
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET

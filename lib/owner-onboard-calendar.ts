@@ -6,7 +6,7 @@
 //                              the salesperson) invited; Google emails the invitations
 // Times are Eastern (America/New_York), as typed. Server-only.
 import 'server-only'
-import { accessTokenFor } from './gmail-send'
+import { accessTokenFor, forgetToken } from './gmail-send'
 import type { OORecord } from './owner-onboard'
 
 const TZ = 'America/New_York'
@@ -28,9 +28,12 @@ const hm = (d: Date) => d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'num
 
 export async function busyOn(host: string, day: string): Promise<{ ok: boolean; error?: string; busy: { from: string; to: string }[] }> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { ok: false, error: 'Pick a date.', busy: [] }
-  const t = await accessTokenFor(host)
+  let t = await accessTokenFor(host)
   if (!t.token) return { ok: false, error: t.error || 'Google is not connected for ' + host + '.', busy: [] }
-  const r = await api(t.token, 'https://www.googleapis.com/calendar/v3/freeBusy', { method: 'POST', body: JSON.stringify({ timeMin: eastern(day, '00:00').toISOString(), timeMax: eastern(day, '23:59').toISOString(), timeZone: TZ, items: [{ id: 'primary' }] }) })
+  const body = JSON.stringify({ timeMin: eastern(day, '00:00').toISOString(), timeMax: eastern(day, '23:59').toISOString(), timeZone: TZ, items: [{ id: 'primary' }] })
+  let r = await api(t.token, 'https://www.googleapis.com/calendar/v3/freeBusy', { method: 'POST', body })
+  // a token minted before the calendar permission was granted answers 403: forget it, take a fresh one, ask once more
+  if (r.status === 401 || r.status === 403) { forgetToken(host); t = await accessTokenFor(host); if (t.token) r = await api(t.token, 'https://www.googleapis.com/calendar/v3/freeBusy', { method: 'POST', body }) }
   if (!r.ok) return { ok: false, error: scopeErr(host, r.status, r.d), busy: [] }
   const list: any[] = r.d?.calendars?.primary?.busy || []
   return { ok: true, busy: list.map(b => ({ from: hm(new Date(b.start)), to: hm(new Date(b.end)) })) }
