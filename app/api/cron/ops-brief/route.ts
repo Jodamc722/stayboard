@@ -1,5 +1,6 @@
 // THE MORNING BRIEFS — cron sender + on-demand preview/test. ONE BRIEF PER ROLE (Jon, 2026-11-05):
 //   gm      → GM morning (the owner: decide, the numbers, labor, arrivals, blocked)
+//   admin   → Admin morning (administrators: top issues, channels, listings, reviews to dispute, statement prep)
 //   full    → Ops morning (the operations manager)
 //   miami / broward → Field Run per market · techs / maint → Maintenance Run · vendors → vendor briefs
 //
@@ -24,6 +25,7 @@ import { buildVendorBrief, VENDOR_GROUPS, type BriefVariant, type VendorGroup } 
 import { buildFieldRun } from '@/lib/briefs/field-run'
 import { buildOpsDesk } from '@/lib/briefs/ops-desk'
 import { buildGmMorning } from '@/lib/briefs/gm-morning'
+import { buildAdminBrief } from '@/lib/briefs/admin-desk'
 import { markLaborDelivered } from '@/lib/briefs/labor-scorecard'
 import { buildMaintenanceRun, maintenanceTechs } from '@/lib/briefs/maintenance-run'
 import { asLang, type BriefLang } from '@/lib/brief-lang'
@@ -39,7 +41,7 @@ export const maxDuration = 300
 
 export const OPS_BRIEF_KEY = 'ops_brief'
 type BriefCfg = {
-  enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]
+  enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; admin?: string[]
   vendors?: Partial<Record<VendorGroup, string[]>>
   // THE CREW'S LANGUAGE, PER BRIEF (Jon, 2026-08-25). Only the field day sheets take one — Ops
   // Command and the GM brief are management documents and stay English.
@@ -138,6 +140,8 @@ async function send(req: NextRequest) {
       const mb = await buildMaintenanceRun(preview.slice(6), lang)
       return new NextResponse(mb.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
     }
+    // ?preview=admin is the Admin morning (channels, listings, reviews to dispute, statement prep).
+    if (pv === 'admin') { const ab = await buildAdminBrief(); return new NextResponse(ab.html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }) }
     if (pv === 'techs') return NextResponse.json({ techs: await maintenanceTechs(), configured: Object.keys(cfg.techs || {}) })
     const v = pv === 'ops' || pv === 'desk' ? 'full' : pv === 'field-miami' ? 'Miami' : pv === 'field-broward' ? 'Broward' : ALL_VARIANTS.find(x => x.toLowerCase() === pv) || 'full'
     // ?preview=gm is the GM morning, ?preview=full the Ops morning.
@@ -157,6 +161,13 @@ async function send(req: NextRequest) {
       const b = await build(v, langFor(cfg, v))
       const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + b.subject, html: b.html, source: 'ops-brief' })
       out.push({ variant: v, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+    }
+    if (!only || only === 'admin') {
+      try {
+        const b = await buildAdminBrief()
+        const r = await sendGmail({ fromEmail, to: [me], subject: '[TEST] ' + b.subject, html: b.html, source: 'ops-brief' })
+        out.push({ variant: 'admin', subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+      } catch (e: any) { out.push({ variant: 'admin', sent: false, error: 'build failed: ' + String(e?.message || e) }) }
     }
     return NextResponse.json({ ok: out.every(o => o.sent), test: true, to: me, from: fromEmail, results: out })
   }
@@ -265,6 +276,21 @@ async function send(req: NextRequest) {
       out.push({ variant: 'vendor:' + g.key, to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) })
     }
   }
+  // ADMIN MORNING (Jon, 2026-11-19): channels, listings, reviews worth a removal request, statement
+  // prep, to the administrators on `ops_brief.admin`. Before the GM morning, which stays last.
+  if (wanted('admin')) {
+    const to = (cfg.admin || []).filter(Boolean)
+    if (!to.length) out.push({ variant: 'admin', skipped: 'no recipients' })
+    else if (done('admin')) out.push({ variant: 'admin', skipped: ALREADY })
+    else {
+      try {
+        const b = await buildAdminBrief()
+        const r = await sendGmail({ fromEmail, to, cc: ccFor(cfg, to), subject: b.subject, html: b.html, source: 'ops-brief' })
+        out.push({ variant: 'admin', to: to.length, subject: b.subject, counts: b.counts, sent: r.ok, error: r.error })
+        if (r.ok) await stampBriefSent('admin', today)
+      } catch (e: any) { out.push({ variant: 'admin', to: to.length, sent: false, error: 'build failed: ' + String(e?.message || e) }) }
+    }
+  } else out.push({ variant: 'admin', skipped: 'not in ?only' })
   // GM MORNING LAST (Jon, 2026-11-05). It carries the labor engine now — the slowest build of the
   // morning — so it goes after every team and vendor brief: if the shared time budget runs out, it
   // is the owner's email that is late, not a crew's. When it lands with its Labor block, the 7:58

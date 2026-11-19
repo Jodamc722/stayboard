@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt } from '@/lib/automation-runs'
 import { runPrograms } from '@/lib/site-programs'
+import { rollOnboardingCleans } from '@/lib/onboarding-cleans'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -13,8 +14,13 @@ export const maxDuration = 120
 async function run(req: NextRequest) {
   const gate = await requireCron(req)
   if (!gate.ok) return gate.res
-  const r = await runPrograms({ dryRun: req.nextUrl.searchParams.get('dry') === '1' })
-  return NextResponse.json({ ...r, plans: undefined, count: r.created + r.moved + r.updated + r.cancelled })
+  const dryRun = req.nextUrl.searchParams.get('dry') === '1'
+  const r = await runPrograms({ dryRun })
+  // Unfinished onboarding cleans from an earlier day move to today (Jon, 2026-11-19).
+  let onboarding: Awaited<ReturnType<typeof rollOnboardingCleans>> | { ok: false; error: string }
+  try { onboarding = await rollOnboardingCleans({ dryRun }) } catch (e: any) { onboarding = { ok: false, error: String(e?.message || e).slice(0, 160) } }
+  const rolled = 'moved' in onboarding ? onboarding.moved.length : 0
+  return NextResponse.json({ ...r, plans: undefined, onboarding, count: r.created + r.moved + r.updated + r.cancelled + (dryRun ? 0 : rolled) })
 }
 const receipted = withRouteReceipt<NextRequest>('site-programs', run, { skipWhen: (req) => req.nextUrl.searchParams.get('dry') === '1' })
 export async function GET(req: NextRequest) { return receipted(req) }
