@@ -40,6 +40,7 @@ export const CHANNEL_LABEL: Record<string, string> = CHANNELS.reduce((m, c) => {
  * One cell's verdict. Ordered worst → best, so "the worst cell" is `min` by index and a transition
  * "gets worse" when the index falls.
  *
+ *   delisted      Guesty says connected, but the channel's own page for the listing is gone (lib/channel-live opens it)
  *   suspended     airbnb2 approvalStatus says suspended / rejected / pending — the listing is up but Airbnb is not selling it
  *   failed        Guesty's own sync to the channel reports FAILED
  *   disconnected  the integration exists but the channel says DISCONNECTED
@@ -48,14 +49,14 @@ export const CHANNEL_LABEL: Record<string, string> = CHANNELS.reduce((m, c) => {
  *   stale         connected and COMPLETED, but no booking from it in 90 days on a MAJOR channel while the listing books elsewhere
  *   live          COMPLETED with a public URL
  */
-export type CellVerdict = 'suspended' | 'failed' | 'disconnected' | 'missing' | 'unknown' | 'stale' | 'live'
-export const VERDICT_ORDER: CellVerdict[] = ['suspended', 'failed', 'disconnected', 'missing', 'unknown', 'stale', 'live']
+export type CellVerdict = 'delisted' | 'suspended' | 'failed' | 'disconnected' | 'missing' | 'unknown' | 'stale' | 'live'
+export const VERDICT_ORDER: CellVerdict[] = ['delisted', 'suspended', 'failed', 'disconnected', 'missing', 'unknown', 'stale', 'live']
 export const VERDICT_LABEL: Record<CellVerdict, string> = {
-  suspended: 'Suspended', failed: 'Failed', disconnected: 'Disconnected', missing: 'Not connected',
+  delisted: 'Page removed', suspended: 'Suspended', failed: 'Failed', disconnected: 'Disconnected', missing: 'Not connected',
   unknown: 'Unknown', stale: 'No bookings', live: 'Live',
 }
 /** Which verdicts are worth a person's time. `stale` and `unknown` are shown, not alerted. */
-export const PROBLEM_VERDICTS: CellVerdict[] = ['suspended', 'failed', 'disconnected', 'missing']
+export const PROBLEM_VERDICTS: CellVerdict[] = ['delisted', 'suspended', 'failed', 'disconnected', 'missing']
 export function verdictRank(v: CellVerdict): number { const i = VERDICT_ORDER.indexOf(v); return i < 0 ? VERDICT_ORDER.length : i }
 export function worstOf(list: CellVerdict[]): CellVerdict {
   let best: CellVerdict = 'live'
@@ -105,4 +106,4 @@ export type ChannelHealth = {
   channels: ChannelDef[]
 }
 
-export const emptyTotals = (): Record<CellVerdict, number> => ({ suspended: 0, failed: 0, disconnected: 0, missing: 0, unknown: 0, stale: 0, live: 0 })
+export const emptyTotals = (): Record<CellVerdict, number> => ({ delisted: 0, suspended: 0, failed: 0, disconnected: 0, missing: 0, unknown: 0, stale: 0, live: 0 })

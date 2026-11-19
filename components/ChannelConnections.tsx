@@ -32,8 +32,9 @@ const PILL: Record<CellVerdict, string> = {
   disconnected: 'bg-rose-50 text-rose-700 border-rose-200',
   failed: 'bg-rose-100 text-rose-800 border-rose-300',
   suspended: 'bg-rose-600 text-white border-rose-700',
+  delisted: 'bg-rose-600 text-white border-rose-700',
 }
-const SHORT: Record<CellVerdict, string> = { live: 'Live', stale: 'Quiet', unknown: '?', missing: '—', disconnected: 'Disc.', failed: 'Failed', suspended: 'Susp.' }
+const SHORT: Record<CellVerdict, string> = { live: 'Live', stale: 'Quiet', unknown: '?', missing: '—', disconnected: 'Disc.', failed: 'Failed', suspended: 'Susp.', delisted: 'Gone' }
 
 const when = (iso: string | null | undefined) => {
   if (!iso) return null
@@ -189,7 +190,7 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
       <div className="flex items-center gap-1.5 flex-wrap">
         {CHANNELS.map(c => {
           const t = data.totals[c.key]
-          const bad = t.failed + t.disconnected + t.suspended
+          const bad = t.failed + t.disconnected + t.suspended + (t.delisted || 0)
           const tone = bad > 0 ? (c.major ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800') : t.unknown > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'
           const active = channel === c.key
           return (
@@ -328,7 +329,11 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
               <dt className="text-muted">Bookings, 90 days</dt><dd className="tabular-nums">{selCell.bookings90d} from this channel · {sel.l.bookings90d} in total</dd>
               <dt className="text-muted">Public page</dt><dd>{selCell.url ? <a href={selCell.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-brand-700 font-semibold hover:underline">Open on {selDef?.label} <ExternalLink size={12} /></a> : <span className="text-muted">no link from Guesty</span>}</dd>
             </dl>
-            {isProblem(selCell.verdict) ? (
+            {selCell.verdict === 'delisted' ? (
+              <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-900">
+                Guesty still shows this connection as complete, but the listing’s own page on {selDef?.label} answers “removed”, so guests cannot find or book it there. <b>Open it in the {selDef?.label} host account</b> to see whether it was unlisted, snoozed or taken down, then relist it. Lighthouse re-checks the page every few hours and clears this on its own.
+              </div>
+            ) : isProblem(selCell.verdict) ? (
               <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12.5px] text-rose-900">
                 Guests cannot book this unit on {selDef?.label} while it reads {VERDICT_LABEL[selCell.verdict].toLowerCase()}. <b>Reconnect on Guesty → Listings → Channels.</b>
                 {MAJOR_KEYS.indexOf(sel.key as any) < 0 ? ' Minor channel — shown here, never alerted.' : ''}

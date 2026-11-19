@@ -18,6 +18,7 @@
 //
 // SLIM READS. Only `raw->integrations` is selected, never the whole raw blob — the listing sync
 // stores photos, descriptions and calendars in there and 290 of them is several MB per call.
+import { readLive, isGone } from './channel-live'
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { rollupBuilding } from './optimize-score'
@@ -126,6 +127,7 @@ function cellFor(entry: any, ch: ChannelKey, bookings: { last: string | null; n9
 
 export async function buildChannelHealth(): Promise<ChannelHealth> {
   const db = supabaseAdmin()
+  const liveStore = await readLive().catch(() => null)
 
   // Listings — slim: the integrations array only, not raw.
   const listings: any[] = []
@@ -187,6 +189,9 @@ export async function buildChannelHealth(): Promise<ChannelHealth> {
       // STALE: connected and reporting fine, yet a MAJOR channel has sent nothing in 90 days while
       // the listing books ≥3 times elsewhere. Not an alert — a question worth asking Guesty.
       if (ch.major && cell.verdict === 'live' && cell.bookings90d === 0 && total90 - cell.bookings90d >= STALE_MIN_OTHER_BOOKINGS) cell.verdict = 'stale'
+      // CONNECTED IN GUESTY, GONE FROM THE CHANNEL (Jon, 2026-11-19, Capri 211 on Airbnb): the channel's own page
+      // for the listing answers "removed". That outranks Guesty's COMPLETED.
+      if ((cell.verdict === 'live' || cell.verdict === 'stale') && isGone(liveStore, id, ch.key, cell.url, cell.lastBookingAt)) cell.verdict = 'delisted'
       cells[ch.key] = cell
       if (isActive) {
         totals[ch.key][cell.verdict]++
