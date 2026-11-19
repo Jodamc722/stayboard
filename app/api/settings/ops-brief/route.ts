@@ -11,7 +11,7 @@ import { getSetting, setSetting } from '@/lib/app-settings'
 export const dynamic = 'force-dynamic'
 
 const KEY = 'ops_brief'
-const DEFAULTS = { enabled: false, fromEmail: 'jon@stay-hospitality.com', miami: [] as string[], broward: [] as string[], full: [] as string[], gm: [] as string[], cc: [] as string[] }
+const DEFAULTS = { enabled: false, fromEmail: 'jon@stay-hospitality.com', miami: [] as string[], broward: [] as string[], full: [] as string[], gm: [] as string[], admin: [] as string[], cc: [] as string[] }
 // THE MAINTENANCE RUN (Jon, 2026-10-01): one email per technician, in that person's language.
 // `techs` maps the technician's name (as Breezeway and Homebase spell it) to addresses + language;
 // `maint` is the combined run (Roberto).
@@ -78,7 +78,7 @@ export async function GET() {
     config: {
       enabled: s.enabled === true,
       fromEmail: typeof s.fromEmail === 'string' && s.fromEmail ? s.fromEmail : DEFAULTS.fromEmail,
-      miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm,
+      miami: cleanEmails(s.miami), broward: cleanEmails(s.broward), full: cleanEmails(s.full), gm, admin: cleanEmails(s.admin),
       maint: cleanEmails(s.maint), techs: cleanTechs(s.techs),
       vendors: { botanica: cleanEmails(s.vendors?.botanica), pt: cleanEmails(s.vendors?.pt), north: cleanEmails(s.vendors?.north) },
       cc: cleanEmails(s.cc),
@@ -102,7 +102,7 @@ export async function PUT(req: NextRequest) {
   const config = {
     enabled: c.enabled === true,
     fromEmail: typeof c.fromEmail === 'string' && /@/.test(c.fromEmail) ? c.fromEmail.trim().toLowerCase() : DEFAULTS.fromEmail,
-    miami: cleanEmails(c.miami), broward: cleanEmails(c.broward), full: cleanEmails(c.full), gm: cleanEmails(c.gm),
+    miami: cleanEmails(c.miami), broward: cleanEmails(c.broward), full: cleanEmails(c.full), gm: cleanEmails(c.gm), admin: cleanEmails(c.admin),
     maint: cleanEmails(c.maint), techs: cleanTechs(c.techs),
     vendors: { botanica: cleanEmails(c.vendors?.botanica), pt: cleanEmails(c.vendors?.pt), north: cleanEmails(c.vendors?.north) },
     lang: { miami: asLang(c.lang?.miami), broward: asLang(c.lang?.broward) },

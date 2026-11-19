@@ -13,7 +13,7 @@ type Digest = { enabled?: boolean; to?: string[]; fromEmail?: string; newBooking
 type TechCfg = { to: string[]; lang?: string }
 // `trueup` (app_settings labor_weekly) is still read, never edited: labor goes to the GM morning list
 // now, and `legacyLabor` is whoever was on the old labor lists and is not on the GM morning yet.
-type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; cc?: string[]; alertTo?: string[]; trueup?: Digest; legacyLabor?: string[]; salato?: Digest; eod?: Digest; laborPlan?: { targetMarginPct?: number | null }
+type Cfg = { enabled?: boolean; fromEmail?: string; miami?: string[]; broward?: string[]; full?: string[]; gm?: string[]; admin?: string[]; maint?: string[]; techs?: Record<string, TechCfg>; vendors?: { botanica?: string[]; pt?: string[]; north?: string[] }; cc?: string[]; alertTo?: string[]; trueup?: Digest; legacyLabor?: string[]; salato?: Digest; eod?: Digest; laborPlan?: { targetMarginPct?: number | null }
   // THE CREW'S LANGUAGE (Jon, 2026-08-25). Field day sheets only —
   // the Ops morning and the GM morning are management documents and stay English.
   lang?: { miami?: string; broward?: string } }
@@ -27,9 +27,10 @@ const DIGESTS: { key: 'salato' | 'eod'; label: string; blurb: string }[] = [
 
 // ONE BRIEF PER ROLE (Jon, 2026-11-05). The blurb is the promise each one makes — if a brief stops
 // matching its blurb, one of the two is wrong.
-const LISTS: { key: 'miami' | 'broward' | 'full' | 'gm'; label: string; blurb: string }[] = [
+const LISTS: { key: 'miami' | 'broward' | 'full' | 'gm' | 'admin'; label: string; blurb: string }[] = [
   { key: 'gm', label: 'GM morning · owner', blurb: '7:01am · Decide today, the numbers (last 7 days, last 30 beside each), labor (what moved, missing from the numbers, failing checks), notable arrivals, blocked units. Labor recipients go here.' },
-  { key: 'full', label: 'Ops morning · operations manager', blurb: '7:01am · Decide today, VIP and big arrivals, glitches, Slack items waiting on a person, who\'s working, inspections, units down now, yesterday and tomorrow.' },
+  { key: 'full', label: 'Ops morning · operations manager', blurb: '7:01am · Top priorities, then the day\'s departure cleans for Miami and Broward grouped by cleaner, same-day turns first.' },
+  { key: 'admin', label: 'Admin morning · administrators', blurb: '7:01am · Top issues, channels not connected grouped by fault, low reviews worth a removal request (read against each channel\'s rules), listing optimization, statement prep.' },
   { key: 'miami', label: 'Field Run · Miami', blurb: '7:01am · Top priorities in order, departure cleans by cleaner, pending inspections, how the day runs, arrivals. English or Spanish.' },
   { key: 'broward', label: 'Field Run · Broward', blurb: '7:01am · The same, for the Broward coordinator.' },
 ]
@@ -59,7 +60,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
   const [msg, setMsg] = useState<{ tone: 'ok' | 'bad'; text: string } | null>(null)
 
   const rawFromCfg = (c: Cfg): Record<string, string> => ({
-    miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '),
+    miami: (c.miami || []).join(', '), broward: (c.broward || []).join(', '), full: (c.full || []).join(', '), gm: (c.gm || []).join(', '), admin: (c.admin || []).join(', '),
     maint: (c.maint || []).join(', '),
     v_botanica: (c.vendors?.botanica || []).join(', '), v_pt: (c.vendors?.pt || []).join(', '), v_north: (c.vendors?.north || []).join(', '),
     d_salato: (c.salato?.to || []).join(', '), d_eod: (c.eod?.to || []).join(', '), cc: (c.cc || []).join(', '), alertTo: (c.alertTo || []).join(', '),
@@ -96,7 +97,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
     try {
       const config: Cfg = {
         ...cfg,
-        miami: parse(raw.miami || ''), broward: parse(raw.broward || ''), full: parse(raw.full || ''), gm: parse(raw.gm || ''),
+        miami: parse(raw.miami || ''), broward: parse(raw.broward || ''), full: parse(raw.full || ''), gm: parse(raw.gm || ''), admin: parse(raw.admin || ''),
         maint: parse(raw.maint || ''),
         techs: Object.fromEntries(techRows.filter(t => t.name.trim()).map(t => [t.name.trim(), { to: parse(t.to), lang: t.lang }])),
         vendors: { botanica: parse(raw.v_botanica || ''), pt: parse(raw.v_pt || ''), north: parse(raw.v_north || '') },
@@ -115,7 +116,7 @@ export function OpsBriefAdmin({ isOwner }: { isOwner: boolean }) {
       const j = await r.json(); if (!r.ok) throw new Error(j?.error || 'Could not save.')
       const c = j.config || config
       setCfg(c); setTechRows(techsFromCfg(c)); const rw = rawFromCfg(c); setRaw(rw); setSaved(JSON.stringify({ rw, enabled: c.enabled === true, nb: c.salato?.newBookings !== false, ds: c.salato?.enabled === true, de: c.eod?.enabled !== false, lg: JSON.stringify([c.lang?.miami, c.lang?.broward]) }))
-      const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length + (c.maint || []).length + (Object.values(c.techs || {}) as TechCfg[]).reduce((a: number, t) => a + (t.to || []).length, 0)
+      const total = (c.miami || []).length + (c.broward || []).length + (c.full || []).length + (c.gm || []).length + (c.admin || []).length + (c.maint || []).length + (Object.values(c.techs || {}) as TechCfg[]).reduce((a: number, t) => a + (t.to || []).length, 0)
         + (c.vendors?.botanica || []).length + (c.vendors?.pt || []).length + (c.vendors?.north || []).length
       setMsg({ tone: 'ok', text: `Saved — ${total} recipient${total === 1 ? '' : 's'} across all lists. Anything that didn't look like an email was dropped.` })
     } catch (e: any) { setMsg({ tone: 'bad', text: e.message || String(e) }) } finally { setBusy(null) }
