@@ -8,7 +8,7 @@
 import 'server-only'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { buildAdminDesk } from '@/lib/admin-desk'
-import { worklist, optimizeState, PROBLEM, type WorkItem, type AdminRow } from '@/lib/admin-desk-shared'
+import { worklist, optimizeState, type WorkItem, type AdminRow } from '@/lib/admin-desk-shared'
 import { removalGrounds, type RemovalGround } from '@/lib/review-playbook'
 import { isLowReview } from '@/lib/review-scale'
 import { ACCENTS, T, esc, masthead, headline, section, block, footer, pill, fit, unitShort, type Line } from './ui'
@@ -162,7 +162,9 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
         sub: `${esc(names.slice(0, 8).join(' · '))}${names.length > 8 ? ` · +${names.length - 8} more` : ''} · <a href="${APP_URL}${w.channel ? '/channels?channel=' + encodeURIComponent(w.channel) + '&problems=1' : '/channels?problems=1'}" style="color:#6F5527">Open</a>`,
       }
     })
-  const notForSale = rows.filter(r => r.active && Object.values(r.channels || {}).some((c: any) => c && PROBLEM.indexOf(c.verdict) >= 0 && c.verdict !== 'missing')).length
+  // Units that WERE selling on a major channel and stopped (failed, removed, suspended, disconnected).
+  const notForSale = new Set(chanAll.filter(w => w.name !== 'Portfolio' && w.severity === 'high').map(w => w.listingId || w.name)).size
+  const neverOn = new Set(chanAll.filter(w => w.name !== 'Portfolio' && w.severity !== 'high').map(w => w.listingId || w.name)).size
   // OPTIMIZATION: never optimized first, then low score, then stale. (The "underperforming" refresh
   // list stays on the Admin desk: it reads a unit listed last week as 100% under its peers.)
   const opt = work.filter(w => w.kind === 'optimize')
@@ -198,10 +200,10 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
   if (strongRem.length) top.push({ tone: 'red', html: `<b>${plural(strongRem.length, 'review')} worth a removal request today</b>`, sub: `${names(strongRem.map(f => f.unit))} · details below` })
   if (noFees.length) top.push({ tone: 'red', html: `<b>${plural(noFees.length, 'reservation')} with no fees on the folio</b> for ${esc(prep!.label)} statements`, sub: `${names(noFees.map((p: any) => str(p.unit)))} · ${link('Owner audit, Prep', '/owner-audit')}` })
   if (st.never) top.push({ tone: 'amber', html: `<b>${plural(st.never, 'live listing')} never optimized</b>`, sub: `${names(live.filter(r => optimizeState(r, today) === 'never').map(r => r.name))} · ${link('Admin desk', '/admin')}` })
-  if (notForSale - newChan.length > 0) top.push({ tone: 'amber', html: `<b>${plural(notForSale, 'unit')} off at least one channel</b> they should be selling on`, sub: `Grouped by fault below.` })
+  if (notForSale - newChan.length > 0) top.push({ tone: 'amber', html: `<b>${plural(notForSale, 'unit')} stopped selling on a channel</b> and ${neverOn} more were never connected to one`, sub: `Grouped by fault below.` })
 
   const head = [
-    `<b>${notForSale}</b> ${notForSale === 1 ? 'unit' : 'units'} off a channel`,
+    `<b>${notForSale}</b> ${notForSale === 1 ? 'unit' : 'units'} stopped selling on a channel`,
     owed ? `<b>${owed}</b> ${owed === 1 ? 'review' : 'reviews'} to reply${owedLow ? ` (<b style="${T.red}">${owedLow} low</b>)` : ''}` : '',
     remLines.length ? `<b>${remLines.length}</b> worth a removal request` : '',
     `<b>${st.never + st.low + st.stale}</b> listings to optimize`,
