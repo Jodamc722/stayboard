@@ -12,6 +12,17 @@ import { LOOKS, type AdKindOf } from '@/lib/ad-engine'
 import { AREA_LABEL, buildingsIn } from '@/lib/ad-places'
 
 export type HomeRow = { id: string; name: string; updatedAt: string; scenes: number; format: string; status?: string; kind?: string; look?: string; thumb?: string; moment?: string }
+/** THE NEW ENGINE (2026-11-20, Jon: "Rebuild it completely"): the calendar moments it makes, its pieces, and how to start one. */
+export type HomeAdx = {
+  moments: readonly string[]
+  rows: { id: string; title: string; updatedAt: string; moment: string; channel: string; scenes: number; seconds: number; thumb: string; ground: string; origin: string }[]
+  /** The guided brief, with the event already chosen. */
+  onStart: (m: Moment) => void
+  /** The studio's own finished design for the event, ready to edit (no AI). */
+  onHouse: (m: Moment) => void
+  onOpen: (id: string) => void
+  onDelete: (id: string) => void
+}
 export type HomeVideo = { key: string; name: string; url: string; thumb: string; dur: number; format: string; builtin: boolean; createdAt: string; path?: string }
 
 const UI = { bg: '#0B0F16', panel: '#121824', panel2: '#182131', line: 'rgba(255,255,255,0.09)', ink: '#F1F3F7', mut: '#8E9AAE', gold: '#D2B077', red: '#E06C6C', green: '#4CC488' }
@@ -28,9 +39,11 @@ export const KIND_META: Record<AdKindOf, { label: string; plural: string; blurb:
 const H2 = ({ children, display }: { children: React.ReactNode; display: string }) => <p style={{ fontFamily: display, fontWeight: 800, fontSize: 20, margin: 0 }}>{children}</p>
 const ghost: React.CSSProperties = { fontSize: 11.5, fontWeight: 700, padding: '4px 9px', borderRadius: 8, border: '1px solid ' + UI.line, background: 'transparent', color: UI.mut, cursor: 'pointer', whiteSpace: 'nowrap' }
 
-export default function StudioHome({ rows, canEdit, canDelete, busy, display, last, onMake, onMoment, onEventAd, onOpen, onDelete, onDeleteMany, onDuplicate, library = [], onEditVideo, onWatch, onDeleteVideo, onUploadVideo }: {
+export default function StudioHome({ rows, canEdit, canDelete, busy, display, last, adx, onMake, onMoment, onEventAd, onOpen, onDelete, onDeleteMany, onDuplicate, library = [], onEditVideo, onWatch, onDeleteVideo, onUploadVideo }: {
   rows: HomeRow[]; canEdit: boolean; canDelete: boolean; busy: string; display: string
   /** id of the piece opened last on this computer */ last?: string
+  /** The rebuilt engine: when given, its calendar moments are made there and its pieces are listed first. */
+  adx?: HomeAdx
   /** The Videos library: the built-in sales videos and every kept export. */
   library?: HomeVideo[]
   /** Opens a sales video scene by scene. `fresh` makes a new copy even when an editable one exists. */
@@ -119,7 +132,14 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
               <p style={{ fontSize: 12.5, margin: '8px 0 0', lineHeight: 1.45 }}>{m.headline.replace(/\*\*/g, '')}</p>
               <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 10px' }}>{m.audience === 'owners' ? 'For owners' : m.audience === 'both' ? 'Guests and owners' : 'For guests'} · {lk.label} look</p>
               {m.where && m.where.length ? <p title={'Photos from: ' + buildingsIn(m.where).join(', ')} style={{ fontSize: 11, color: UI.gold, margin: '-6px 0 10px' }}>📍 {m.where.map(k => AREA_LABEL[k]).join(' · ')} — {buildingsIn(m.where).slice(0, 4).join(', ')}{buildingsIn(m.where).length > 4 ? '…' : ''}</p> : null}
-              {canEdit ? (
+              {canEdit && adx && adx.moments.indexOf(m.key) >= 0 ? (
+                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                  <button type="button" disabled={!!busy} onClick={() => adx.onStart(m)} title="A guided brief, three ideas, the script, then a piece designed for this event, this audience and our photographs"
+                    style={{ fontSize: 12, fontWeight: 800, padding: '6px 11px', borderRadius: 8, border: 0, background: UI.gold, color: '#0B0F16', cursor: 'pointer' }}>✦ Design this piece</button>
+                  <button type="button" disabled={!!busy} onClick={() => adx.onHouse(m)} title="Opens the studio's own finished design for this event, ready to edit. No AI is used."
+                    style={{ fontSize: 11.5, fontWeight: 700, padding: '6px 10px', borderRadius: 8, border: '1px solid ' + UI.line, background: UI.panel2, color: UI.ink, cursor: 'pointer' }}>House design</button>
+                </div>
+              ) : canEdit ? (
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                   {(['flyer', 'post', 'video'] as AdKindOf[]).map(k => (
                     <button key={k} type="button" disabled={!!busy} onClick={() => onMoment(m, k)}
@@ -140,10 +160,35 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
         })}
       </div>
 
+      {/* ── new designs: pieces made by the rebuilt engine ── */}
+      {adx && adx.rows.length ? (<>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '30px 0 10px', flexWrap: 'wrap' }}>
+          <H2 display={display}>New designs</H2>
+          <span style={{ fontSize: 12.5, color: UI.mut }}>{adx.rows.length} piece{adx.rows.length === 1 ? '' : 's'} designed for their event — open one to edit the words and export.</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', gap: 10 }}>
+          {adx.rows.map(r => (
+            <div key={r.id} style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, overflow: 'hidden', position: 'relative' }}>
+              <button type="button" onClick={() => adx.onOpen(r.id)} title="Open" style={{ display: 'block', width: '100%', padding: 0, border: 0, background: 'transparent', cursor: 'pointer', textAlign: 'left', color: UI.ink }}>
+                <div style={{ height: 118, background: r.ground || '#000', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', padding: 10, position: 'relative' }}>
+                  {r.thumb ? <span style={{ width: 96, height: 96, borderRadius: 8, background: `url(${proxied(r.thumb)}) center/cover`, boxShadow: '0 4px 14px rgba(0,0,0,.35)' }} /> : null}
+                  <span style={{ position: 'absolute', left: 10, top: 9, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.08em', color: '#0B0F16', background: UI.gold, borderRadius: 5, padding: '2px 7px', textTransform: 'uppercase' }}>✦ New</span>
+                </div>
+                <div style={{ padding: '9px 10px 10px' }}>
+                  <span style={{ display: 'block', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={r.title}>{r.title}</span>
+                  <span style={{ display: 'block', fontSize: 11, color: UI.mut, marginTop: 2 }}>{r.scenes} scenes · {r.seconds} s · {ago(r.updatedAt)}</span>
+                </div>
+              </button>
+              {canDelete ? <button type="button" onClick={() => adx.onDelete(r.id)} title="Delete" style={{ position: 'absolute', right: 6, bottom: 6, width: 24, height: 22, borderRadius: 6, border: '1px solid rgba(224,108,108,0.4)', background: 'rgba(224,108,108,0.12)', color: UI.red, cursor: 'pointer', fontSize: 12 }}>✕</button> : null}
+            </div>
+          ))}
+        </div>
+      </>) : null}
+
       {/* ── your work ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '30px 0 10px', flexWrap: 'wrap' }}>
         <H2 display={display}>Your work</H2>
-        <span style={{ fontSize: 12.5, color: UI.mut }}>{rows.length} piece{rows.length === 1 ? '' : 's'}</span>
+        <span style={{ fontSize: 12.5, color: UI.mut }}>{rows.length} piece{rows.length === 1 ? '' : 's'}{adx ? ' from the earlier studio (Classic) — they open and export as before' : ''}</span>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
           {selecting ? (<>
             <span style={{ fontSize: 12, color: UI.gold, fontWeight: 700 }}>{picked.length} selected</span>
@@ -175,6 +220,7 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
                   <div style={{ height: 118, background: r.thumb ? `linear-gradient(rgba(8,11,16,0.45), rgba(8,11,16,0) 38%, rgba(8,11,16,0) 62%, rgba(8,11,16,0.5)), url(${proxied(r.thumb)}) center/cover` : `linear-gradient(135deg, ${lk.c.navy2}, ${lk.c.deep})`, position: 'relative', opacity: selecting && !on ? 0.7 : 1 }}>
                     <span style={{ position: 'absolute', left: 10, top: 9, fontSize: 10.5, fontWeight: 800, letterSpacing: '0.08em', color: '#fff', textTransform: 'uppercase', textShadow: '0 1px 3px rgba(0,0,0,.7)' }}>{KIND_META[k].label}</span>
                     <span style={{ position: 'absolute', right: 10, top: 8, fontSize: 10.5, color: '#fff', opacity: 0.9, textShadow: '0 1px 3px rgba(0,0,0,.7)' }}>{tall ? '▯' : '▭'} {r.format}</span>
+                    {adx && !selecting ? <span title="Made in the earlier studio. It still opens and exports as before." style={{ position: 'absolute', right: 10, bottom: 8, fontSize: 9.5, fontWeight: 800, letterSpacing: '0.1em', color: '#fff', background: 'rgba(0,0,0,.55)', borderRadius: 4, padding: '2px 6px', textTransform: 'uppercase' }}>Classic</span> : null}
                     {r.status === 'approved' ? <span style={{ position: 'absolute', left: 10, bottom: 8, fontSize: 10.5, fontWeight: 700, color: UI.green, textShadow: '0 1px 3px rgba(0,0,0,.8)' }}>✓ Approved</span> : r.status === 'review' ? <span style={{ position: 'absolute', left: 10, bottom: 8, fontSize: 10.5, fontWeight: 700, color: UI.gold, textShadow: '0 1px 3px rgba(0,0,0,.8)' }}>In review</span> : null}
                     {selecting ? <span style={{ position: 'absolute', right: 8, bottom: 8, width: 22, height: 22, borderRadius: 6, border: '2px solid ' + (on ? UI.red : '#fff'), background: on ? UI.red : 'rgba(0,0,0,.35)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 13, fontWeight: 800 }}>{on ? '✓' : ''}</span> : null}
                   </div>

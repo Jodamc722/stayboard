@@ -1,11 +1,15 @@
 // AD STUDIO (Jon, 2026-11-02): "a video editor for ads … prompt, have you write scripts, get
 // previews … think Final Cut Pro but AI, built for custom ads." Lives in Lighthouse so it can use our
 // photo library, listings and the house contact card. See components/AdStudio + lib/ad-engine.
+// AD STUDIO REBUILD (Jon, 2026-11-20: "Need the same engine that you use here to build them. Rebuild it completely."):
+// the page now mounts components/adx/AdStudioShell, which keeps the earlier studio as it was and sends the calendar's
+// special-date pieces to the new engine (lib/adx).
 import { redirect } from 'next/navigation'
 
 import { Shell } from '@/components/Shell'
-import AdStudio from '@/components/AdStudio'
-import { getAccess } from '@/lib/access'
+import AdStudioShell from '@/components/adx/AdStudioShell'
+import { getAccess, isSuperadmin } from '@/lib/access'
+import { getSetting } from '@/lib/app-settings'
 import { atLeast } from '@/lib/features'
 
 export const dynamic = 'force-dynamic'
@@ -25,6 +29,8 @@ export default async function AdsPage({ searchParams }: { searchParams?: { full?
   if (!a.user) redirect('/login')
   const lv = a.levels['ads']
   if (!atLeast(lv, 'view')) redirect(a.landing || '/command')
+  // The new engine is a pilot: on for Jon, off for everyone else until the `adx` setting says on.
+  const newEngine = isSuperadmin(a.email) || !!(await getSetting<{ on?: boolean }>('adx', {}).catch(() => ({} as { on?: boolean }))).on
   const fonts = (
     <>
       <link rel="stylesheet" href={FONTS_CSS} />
@@ -41,7 +47,7 @@ export default async function AdsPage({ searchParams }: { searchParams?: { full?
     return (
       <div style={{ minHeight: '100vh', background: '#0E1116' }}>
         {fonts}
-        <AdStudio full display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'edit')} />
+        <AdStudioShell full display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'edit')} newEngine={newEngine} />
       </div>
     )
   }
@@ -50,7 +56,7 @@ export default async function AdsPage({ searchParams }: { searchParams?: { full?
       {/* Top padding keeps the editor's top bar (voice + export buttons) clear of the floating Brief and bell buttons. */}
       <div style={{ padding: '56px 0 24px' }}>
         {fonts}
-        <AdStudio display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'edit')} />
+        <AdStudioShell display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'edit')} newEngine={newEngine} />
       </div>
     </Shell>
   )

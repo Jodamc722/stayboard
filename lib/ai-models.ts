@@ -278,6 +278,20 @@ export const AI_TASKS: AiTask[] = [
   { key: 'ad-script', title: 'Ad Studio — write the script', group: 'Listings & reports', def: 'fable',
     what: 'Writes a short video ad from a brief: spoken lines, on-screen headlines, scene types and photo searches, from the house facts only.',
     matters: 'Goes out to prospects once edited and voiced. A made-up figure here is a claim we would be held to, so the prompt allows the house facts only.' },
+  // AD STUDIO REBUILD (Jon, 2026-11-20: "Need the same engine that you use here to build them. Rebuild it completely.").
+  // The new engine makes a piece in three calls. The composer is the one step where taste decides the result — it
+  // is the art director, writing the whole composition for this event and these photographs — so it sits on the top
+  // tier by default; the two cheap steps before it do not. All three count toward Ad Studio's own monthly cap
+  // (lib/adx/composition ADX_MONTHLY_CAP_USD, enforced in lib/adx/budget). Change any of them here in Settings.
+  { key: 'adx-concept', title: 'Ad Studio — three ideas for a piece', group: 'Listings & reports', def: 'sonnet',
+    what: 'From the confirmed brief (event, audience, area, vibe, format) and our photographs for that area, proposes three different ideas for a seasonal piece.',
+    matters: 'Read by the person making the piece, who picks one. A weak idea costs a click.' },
+  { key: 'adx-copy', title: 'Ad Studio — script and copy options', group: 'Listings & reports', def: 'sonnet', inherit: 'adx-concept',
+    what: 'Writes three ways to say the chosen idea: a spoken line and an on-screen headline per scene, and a caption, from the house facts only.',
+    matters: 'The words go out once chosen and edited. The prompt carries the standing rules (no prices in guest pieces, the sales facts as given).' },
+  { key: 'adx-compose', title: 'Ad Studio — design the piece (art director)', group: 'Listings & reports', def: 'fable',
+    what: 'Looks at the chosen photographs and writes the whole composition for the piece: palette, type, every scene’s layout, motion and transitions. The result is validated, measured and audited before anyone sees it.',
+    matters: 'This is the piece that gets posted. One call per piece (about forty cents on the top tier), plus one repair call when the audit finds something.' },
   { key: 'polish', title: 'Polish wording (everywhere)', group: 'Operations', def: 'sonnet',
     what: 'Rewords a sentence or a description wherever the Polish button appears.',
     matters: 'Internal and quick; the person is still editing.' },

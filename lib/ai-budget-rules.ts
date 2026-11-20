@@ -56,7 +56,8 @@ export const WEEKLY_EXEMPT: ReadonlySet<string> = new Set(['eve-review', 'qualit
 // Anthropic call (OpenAI Images, app/api/ads/image), but its cost goes into the same ai_usage ledger, so the same
 // daily, monthly and hourly caps apply to it.
 // 'ad-script' (2026-11-12): writing an Ad Studio script is also someone pressing a button and waiting.
-export const INTERACTIVE: ReadonlySet<string> = new Set(['eve', 'eve-fast', 'eve-vision', 'eve-investigate', 'listing-copy', 'review-reply', 'reports', 'guidebook', 'project-plan', 'expectations', 'guest-reply', 'translate', 'memory-recall', 'ad-image', 'ad-script'])
+// 'adx-*' (2026-11-20): the rebuilt Ad Studio's three steps, each a person pressing a button and waiting.
+export const INTERACTIVE: ReadonlySet<string> = new Set(['eve', 'eve-fast', 'eve-vision', 'eve-investigate', 'listing-copy', 'review-reply', 'reports', 'guidebook', 'project-plan', 'expectations', 'guest-reply', 'translate', 'memory-recall', 'ad-image', 'ad-script', 'adx-concept', 'adx-copy', 'adx-compose'])
 
 /** A person's task key → the key its scheduled caller bills under. Each twin runs on its parent's model (lib/ai-models `inherit`). */
 export const AUTO_TWIN: Readonly<Record<string, string>> = { 'guest-reply': 'guest-reply-auto', 'eve-investigate': 'eve-investigate-auto', expectations: 'expectations-auto' }

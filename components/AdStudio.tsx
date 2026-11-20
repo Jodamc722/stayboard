@@ -15,7 +15,7 @@
 // generates music and sound effects with ElevenLabs and keeps them as a playlist; any scene can carry
 // a sound effect; the voice can be any voice in the ElevenLabs library, with delivery sliders.
 import { wearsSignature } from '@/lib/ad-signature'
-import StudioHome, { KIND_META } from './StudioHome'
+import StudioHome, { KIND_META, type HomeAdx } from './StudioHome'
 import AdDesignPicker from './AdDesignPicker'
 import { TransitionPicker, GraphicsPicker } from './AdFxPickers'
 import { momentPost, momentFlyer, momentAngles, type PresetScene, type Angle } from '@/lib/ad-presets'
@@ -125,7 +125,7 @@ function Fold({ id, title, folded, onToggle, children }: { id: string; title: st
 function FxRow({ name, children }: { name: string; children: React.ReactNode }) {
   return <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 4 }}><span style={{ fontSize: 10, color: UI.mut, width: 58, flex: '0 0 58px', letterSpacing: '0.04em', textTransform: 'uppercase' }}>{name}</span>{children}</div>
 }
-export default function AdStudio({ display, body, serif, condensed, elegant, canEdit, canDelete, full }: { display: string; body: string; serif?: string; condensed?: string; elegant?: string; canEdit: boolean; canDelete: boolean; full?: boolean }) {
+export default function AdStudio({ display, body, serif, condensed, elegant, canEdit, canDelete, full, adx }: { display: string; body: string; serif?: string; condensed?: string; elegant?: string; canEdit: boolean; canDelete: boolean; full?: boolean; /** The rebuilt engine (components/adx): its calendar moments and pieces, shown on the front door. */ adx?: HomeAdx }) {
   const [list, setList] = useState<ListRow[]>([])
   // The front door (Jon, 2026-11-04): start from fresh every time; the last ad is one click away in Your work.
   const [home, setHome] = useState(true)
@@ -1603,7 +1603,7 @@ export default function AdStudio({ display, body, serif, condensed, elegant, can
       {err ? <div style={{ background: notice ? '#3a3016' : '#3a1d1b', color: notice ? '#F0DFB4' : '#F3C2BC', padding: '8px 14px', fontSize: 12.5, display: 'flex', gap: 10 }}><span style={{ flex: 1 }}>{err}</span><button onClick={() => setErr('')} style={{ background: 'none', border: 0, color: 'inherit', cursor: 'pointer' }}>Dismiss</button></div> : null}
 
       {home ? (
-        <StudioHome rows={list} canEdit={canEdit} canDelete={canDelete} busy={busy} display={display} last={lastId}
+        <StudioHome rows={list} canEdit={canEdit} canDelete={canDelete} busy={busy} display={display} last={lastId} adx={adx}
           onMake={makeKind} onMoment={makeMoment} onEventAd={startEventAd} onOpen={id => open(id)} onDelete={quickDelete} onDeleteMany={quickDeleteMany} onDuplicate={quickDuplicate}
           library={lib} onEditVideo={editLibraryVideo} onWatch={v => setWatch(v as LibVideo)} onDeleteVideo={v => delVideo(v as LibVideo)} onUploadVideo={uploadVideo} />
       ) : null}
