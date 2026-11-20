@@ -202,7 +202,9 @@ export async function GET(req: NextRequest) {
       const recent = (g: any) => { const t = Date.parse(str(g.closed_at || g.created_at)); return !Number.isFinite(t) || t >= since }
       const keep: any[] = []
       for (const g of list) {
-        if (!CLOSED_STATUSES.includes(str(g.status)) || recent(g)) keep.push(g)
+        // A closed card whose refund still waits on a sign-off stays a full card however old it is,
+        // so the approve strip can name it (2026-11-20: five such cards were only a count).
+        if (!CLOSED_STATUSES.includes(str(g.status)) || recent(g) || (g.refund_needs_approval && !g.refund_approved_at)) keep.push(g)
         else olderLite.push([g.market || '', g.created_at || null, g.closed_at || null, g.closed_at_estimated ? 1 : 0, Number(g.refund_approved) || 0, g.refund_needs_approval ? 1 : 0])
       }
       closedOlder = olderLite.length
