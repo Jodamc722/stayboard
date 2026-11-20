@@ -20,6 +20,13 @@ export const FIN_LINES: { key: FinCat | 'gross' | 'expenses' | 'net' | 'guestRen
   { key: 'net', label: 'Net to owner', kind: 'total' },
   { key: 'paid', label: 'Paid out', kind: 'memo' },
 ]
+/** GROSS OR NET (Jon, 2026-11-20: "for the P&L can we have a button for gross or net"). Gross stops at gross owner
+ *  revenue: what guests paid and what the units earned, with Stay's commission, the owner charges, net and payouts
+ *  left off. Net is the whole P&L. */
+export type FinMode = 'gross' | 'net'
+const GROSS_END = FIN_LINES.findIndex(l => l.key === 'gross')
+export const finLines = (mode: FinMode) => (mode === 'gross' ? FIN_LINES.slice(0, GROSS_END + 1) : FIN_LINES)
+export const FIN_GROSS_CATS = ['rental', 'cleaning', 'fees', 'other']
 export type FinVals = { /** from the bookings: accommodation fare, cleaning fees and their sum, and nights, for stays in the period */ guestRent: number; guestCleaning: number; guestGross: number; nights: number; rental: number; cleaning: number; fees: number; other: number; commission: number; charges: number; passthru: number; paid: number; gross: number; expenses: number; net: number }
 export type FinRow = FinVals & { key: string; name: string; building: string; owner: string; units: number; /** net and gross by month, for the trend columns */ byMonth: Record<string, { gross: number; net: number }> }
 export type FinDetail = { cat: FinCat; name: string; amount: number; lines: number }
