@@ -264,6 +264,12 @@ export async function syncLedgerMonth(month: string, deadline = Date.now() + 240
   // too big for one invocation (August 2026: 24,000 rows, ~260s) still retires its stale rows once
   // the pass finally reaches the end — every row seen since the epoch carries a newer synced_at.
   const sweepEpoch = resumeAt > 0 && (prior as any)?.sweep_epoch ? String((prior as any).sweep_epoch) : new Date(started).toISOString()
+  // A RESUMED PASS WITH NO EPOCH ON FILE MUST NOT RETIRE (2026-11-20, August 2026). August's last attempt had
+  // stopped at its deadline before the epoch column existed, so this pass resumed near the end of the month with
+  // a fresh epoch of "now", saw only Aug 27 to 31, and the retire below deleted the other 26,926 rows as
+  // "withdrawn". A pass that did not start at zero only knows the whole month if the pass it continues recorded
+  // when it began. Without that, keep everything; the next from-zero pass retires properly.
+  const mayRetire = resumeAt === 0 || !!(prior as any)?.sweep_epoch
 
   await sb.from('guesty_ledger_months').upsert({
     month, status: 'running', last_error: null, sweep_epoch: sweepEpoch,
@@ -312,7 +318,7 @@ export async function syncLedgerMonth(month: string, deadline = Date.now() + 240
     // synced_at is older than the pass's epoch) is a line Guesty has withdrawn: delete it. An
     // early-stopped pass never deletes — only the completion does, resumed or not.
     let retired = 0
-    {
+    if (mayRetire) {
       const { data: gone } = await sb.from('guesty_owner_ledger').delete()
         .eq('entry_month', month).lt('synced_at', sweepEpoch).select('id')
       retired = Array.isArray(gone) ? gone.length : 0
