@@ -1,296 +1,338 @@
 'use client'
-// THE HOUSEKEEPING DAY (lib/garden/hk-plan) — Jon, 2026-11-20: "a world class stayover, check-in and
-// checkouts for schedule … accurate … same day turns … assign and push to Cloudbeds".
-//
-// Pick a day (today and the six after it). Every room with work is one line, in the order it should
-// be done: same-day turns, arrival rooms not ready, checkouts, stayovers, vacant dirty. Each line
-// says who is leaving (and whether they have left), who is coming or staying, where the room stands
-// in Cloudbeds, and who has it. Tick rooms and hand them to someone, or Auto-assign splits what is
-// left by minutes, wing by wing. Today's assignments and room conditions are written to Cloudbeds.
-// The strip under the days says whether the plan matches Cloudbeds' own room labels.
+// THE GARDEN HOUSEKEEPING BOARD — built to read like the VR Schedule board (Jon, 2026-11-20: "the
+// scheduler should be clear … like ours"). The same four things in the same places:
+//   1. the pager and the week strip — each day's rooms and its staffing pill (working / needed)
+//   2. one line of chips — unassigned, then the kinds of clean — and a Sort
+//   3. the Team rail on the left: working vs needed, one verdict sentence, each person's hours
+//   4. ONE table: checkbox · HK Team · Room · Est. time · Reservation · Status
+// Tick rows and the bar at the bottom assigns them; today's assignments go to Cloudbeds.
+// The rows come from lib/garden/hk-plan (bookings + the room's state in Cloudbeds).
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ArrowRightLeft, BedDouble, Check, CheckCheck, DoorOpen, Loader2, LogIn, LogOut, Moon, Printer, RefreshCw, Search, ShieldCheck, Sparkles, TriangleAlert, Wand2, X } from 'lucide-react'
-import { Tag, LeanEmpty, type Tone } from '@/components/lean'
+import { AlertTriangle, ArrowDownUp, CalendarRange, Check, CheckCheck, ChevronLeft, ChevronRight, LogIn, LogOut, Moon, Printer, RefreshCw, Repeat, UploadCloud, Users, Wand2 } from 'lucide-react'
 
 const j = async (url: string, init?: RequestInit) => { const r = await fetch(url, { cache: 'no-store', ...init }); return r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` })) }
 const send = (url: string, body: any, method = 'POST') => j(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-const hrs = (m: number) => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`
+const fmtMins = (m: number) => { const h = Math.floor(m / 60), mm = m % 60; return h > 0 ? h + 'h' + (mm ? ' ' + mm + 'm' : '') : mm + 'm' }
+const add = (ymd: string, n: number) => new Date(Date.parse(ymd + 'T12:00:00Z') + n * 864e5).toISOString().slice(0, 10)
 const dow = (ymd: string) => new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' })
-const dnum = (ymd: string) => new Date(ymd + 'T12:00:00Z').getUTCDate()
-const dayLong = (ymd: string) => new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' })
+const dayLong = (ymd: string) => new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: 'UTC' })
 const dayShort = (ymd: string) => new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
-const ago = (iso: string | null) => { if (!iso) return 'never'; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago` }
+const ago = (iso: string | null) => { if (!iso) return 'never'; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m}m ago` : `${Math.round(m / 60)}h ago` }
+const SHIFT = 420
 
 type Row = any
-type TypeKey = 'turn' | 'checkout' | 'stayover' | 'arrival' | 'dirty'
-const TYPE: Record<TypeKey, { label: string; plural: string; tone: Tone; bar: string; icon: any; what: string }> = {
-  turn: { label: 'Same-day turn', plural: 'Same-day turns', tone: 'rose', bar: 'bg-rose-500', icon: ArrowRightLeft, what: 'A guest leaves and another arrives today. First.' },
-  arrival: { label: 'Arrival', plural: 'Arrival rooms', tone: 'emerald', bar: 'bg-emerald-500', icon: LogIn, what: 'A guest arrives into a room nobody left today.' },
-  checkout: { label: 'Checkout', plural: 'Checkouts', tone: 'amber', bar: 'bg-amber-500', icon: LogOut, what: 'A guest leaves; nobody arrives today.' },
-  stayover: { label: 'Stayover', plural: 'Stayovers', tone: 'sky', bar: 'bg-sky-500', icon: Moon, what: 'A guest is staying through.' },
-  dirty: { label: 'Vacant dirty', plural: 'Vacant dirty', tone: 'slate', bar: 'bg-neutral-400', icon: BedDouble, what: 'Empty and dirty, no booking today.' },
+type Kind = 'turn' | 'checkout' | 'stayover' | 'arrival' | 'dirty'
+const KIND: Record<Kind, { label: string; chip: string; cls: string }> = {
+  turn: { label: 'same-day turn', chip: 'Same-day turns', cls: 'text-rose-700 bg-rose-50' },
+  arrival: { label: 'arrival', chip: 'Arrivals', cls: 'text-emerald-800 bg-emerald-50' },
+  checkout: { label: 'checkout', chip: 'Checkouts', cls: 'text-amber-800 bg-amber-50' },
+  stayover: { label: 'stayover', chip: 'Stayovers', cls: 'text-sky-800 bg-sky-50' },
+  dirty: { label: 'vacant dirty', chip: 'Vacant dirty', cls: 'text-neutral-600 bg-neutral-100' },
 }
-const ORDER: TypeKey[] = ['turn', 'arrival', 'checkout', 'stayover', 'dirty']
-const STATE: Record<string, { label: string; tone: Tone }> = {
-  waiting: { label: 'Guest still in', tone: 'violet' }, todo: { label: 'To clean', tone: 'rose' }, cleaning: { label: 'Cleaning', tone: 'brand' },
-  inspect: { label: 'Clean · inspect', tone: 'amber' }, ready: { label: 'Ready', tone: 'emerald' }, done: { label: 'Done', tone: 'emerald' }, skip: { label: 'Skip', tone: 'slate' }, planned: { label: 'Planned', tone: 'slate' },
+const KINDS: Kind[] = ['turn', 'checkout', 'stayover', 'arrival', 'dirty']
+const ORDER: Record<Kind, number> = { turn: 0, arrival: 1, checkout: 2, stayover: 3, dirty: 4 }
+const STATE: Record<string, { label: string; cls: string }> = {
+  waiting: { label: 'Guest still in', cls: 'bg-violet-50 text-violet-800' }, todo: { label: 'To clean', cls: 'bg-rose-50 text-rose-700' }, cleaning: { label: 'Cleaning', cls: 'bg-sky-50 text-sky-800' },
+  inspect: { label: 'Clean · inspect', cls: 'bg-amber-50 text-amber-800' }, ready: { label: 'Ready', cls: 'bg-green-100 text-green-700' }, done: { label: 'Done', cls: 'bg-green-100 text-green-700' },
+  skip: { label: 'Skip', cls: 'bg-neutral-100 text-neutral-600' }, planned: { label: 'Planned', cls: 'bg-neutral-100 text-neutral-600' },
 }
-const finished = (r: Row) => r.state === 'ready' || r.state === 'done'
-const closed = (r: Row) => finished(r) || r.state === 'skip'
-type Group = 'type' | 'person' | 'area'
+const closed = (r: Row) => r.state === 'ready' || r.state === 'done' || r.state === 'skip'
+const needsPerson = (r: Row) => !closed(r) && r.state !== 'inspect' && !r.assignedTo
+type Sort = 'priority' | 'wing' | 'cleaner' | 'room'
 
-export function GardenHKPlan({ canEdit }: { canEdit: boolean }) {
+export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolean; canSchedule?: boolean }) {
   const [date, setDate] = useState<string | null>(null)
   const [d, setD] = useState<any | null>(null)
   const [loading, setLoading] = useState(false)
-  const [filter, setFilter] = useState<TypeKey | 'all' | 'inspect' | 'unassigned'>('all')
-  const [group, setGroup] = useState<Group>('type')
+  const [kind, setKind] = useState<Kind | 'all'>('all')
+  const [onlyUnassigned, setOnlyUnassigned] = useState(false)
+  const [sortBy, setSortBy] = useState<Sort>('priority')
   const [who, setWho] = useState('')
-  const [q, setQ] = useState('')
-  const [hideDone, setHideDone] = useState(false)
-  const [pick, setPick] = useState<Set<string>>(new Set())
+  const [sel, setSel] = useState<Record<string, boolean>>({})
   const [to, setTo] = useState('')
   const [busy, setBusy] = useState('')
-  const [msg, setMsg] = useState<{ t: string; bad?: boolean } | null>(null)
-  const [auto, setAuto] = useState<Set<string> | null>(null)
+  const [msg, setMsg] = useState<{ t: string; warn?: boolean } | null>(null)
+  const [railOpen, setRailOpen] = useState(false)
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
-    const r = await j(`/api/garden/hk-plan${date ? `?date=${date}` : ''}`)
-    setD(r); setLoading(false)
+    setD(await j(`/api/garden/hk-plan${date ? `?date=${date}` : ''}`)); setLoading(false)
   }, [date])
   useEffect(() => { load() }, [load])
   useEffect(() => { const t = setInterval(() => load(true), 60_000); return () => clearInterval(t) }, [load])
-  useEffect(() => { setPick(new Set()) }, [date])
+  useEffect(() => { setSel({}); setWho(''); setOnlyUnassigned(false) }, [date])
 
-  const rows: Row[] = useMemo(() => d?.rows || [], [d])
+  const all: Row[] = useMemo(() => d?.rows || [], [d])
   const people: any[] = useMemo(() => d?.people || [], [d])
-  const names = useMemo(() => people.map(p => p.name), [people])
-  const shown = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    return rows.filter(r => (filter === 'all' || (filter === 'inspect' ? r.state === 'inspect' : filter === 'unassigned' ? !closed(r) && r.state !== 'inspect' && !r.assignedTo : r.type === filter))
-      && (!who || (who === '—' ? !r.assignedTo : r.assignedTo === who)) && (!hideDone || !closed(r))
-      && (!s || [r.room, r.roomType, r.assignedTo, r.out?.name, r.in?.name, r.stay?.name, r.area].join(' ').toLowerCase().includes(s)))
-  }, [rows, filter, who, q, hideDone])
-  const groups = useMemo(() => {
-    const m = new Map<string, Row[]>()
-    for (const r of shown) { const k = group === 'type' ? r.type : group === 'person' ? (r.assignedTo || 'Unassigned') : r.area; m.set(k, [...(m.get(k) || []), r]) }
-    const keys = Array.from(m.keys())
-    if (group === 'type') keys.sort((a, b) => ORDER.indexOf(a as TypeKey) - ORDER.indexOf(b as TypeKey))
-    else keys.sort((a, b) => (a === 'Unassigned' ? -1 : b === 'Unassigned' ? 1 : a.localeCompare(b, undefined, { numeric: true })))
-    return keys.map(k => ({ key: k, rows: m.get(k)! }))
-  }, [shown, group])
+  const rows = useMemo(() => {
+    const a = all.filter(r => (kind === 'all' || r.type === kind) && (!onlyUnassigned || needsPerson(r)) && (!who || r.assignedTo === who))
+    const byRoom = (x: Row, y: Row) => x.room.localeCompare(y.room, undefined, { numeric: true })
+    if (sortBy === 'wing') a.sort((x, y) => x.area.localeCompare(y.area, undefined, { numeric: true }) || byRoom(x, y))
+    else if (sortBy === 'room') a.sort(byRoom)
+    else if (sortBy === 'cleaner') a.sort((x, y) => (x.assignedTo ? 0 : 1) - (y.assignedTo ? 0 : 1) || String(x.assignedTo || '').localeCompare(String(y.assignedTo || '')) || byRoom(x, y))
+    else a.sort((x, y) => Number(closed(x)) - Number(closed(y)) || ORDER[x.type as Kind] - ORDER[y.type as Kind] || byRoom(x, y))
+    return a
+  }, [all, kind, onlyUnassigned, who, sortBy])
+  const selIds = Object.keys(sel).filter(k => sel[k])
+  const pickable = rows.filter(r => !closed(r))
+  const allSelected = pickable.length > 0 && pickable.every(r => sel[r.roomId])
 
-  const toggle = (id: string) => setPick(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
-  const cbNote = (c: string) => c === 'sent' ? 'Sent to Cloudbeds.' : c === 'skipped' ? '' : c === 'not known to Cloudbeds' ? 'Saved here — Cloudbeds has no housekeeper by that name, so add them in Cloudbeds → Housekeeping → Housekeepers.' : c[0].toUpperCase() + c.slice(1) + '.'
+  const cbNote = (c: string) => c === 'sent' ? ' Sent to Cloudbeds.' : c === 'skipped' || !c ? '' : c === 'not known to Cloudbeds' ? ' Saved here, but Cloudbeds has no housekeeper by that name — add them in Cloudbeds (Housekeeping → Housekeepers).' : ' ' + c[0].toUpperCase() + c.slice(1) + '.'
   const assign = async (ids: string[], name: string | null) => {
     if (!ids.length || !d) return
     setBusy('assign'); setMsg(null)
     const r = await send('/api/garden/assign', { op: 'assign', date: d.date, roomIds: ids, to: name })
     setBusy('')
-    if (!r?.ok) setMsg({ t: r?.error || 'Could not assign.', bad: true })
-    else { const c = String(r.cloudbeds || ''); setMsg({ t: `${ids.length} room${ids.length === 1 ? '' : 's'} ${name ? '→ ' + name : 'unassigned'}. ${cbNote(c)}`, bad: /refused|not known|kept/.test(c) }); setPick(new Set()) }
+    if (!r?.ok) setMsg({ t: r?.error || 'Could not assign.', warn: true })
+    else { const c = String(r.cloudbeds || ''); setMsg({ t: `${ids.length} room${ids.length === 1 ? '' : 's'} ${name ? 'assigned to ' + name : 'unassigned'}.${cbNote(c)}`, warn: /refused|not known|kept/.test(c) }); setSel({}); setTo('') }
     load(true)
   }
-  const runAuto = async () => {
-    if (!auto || !d) return
+  const autoAssign = async () => {
+    if (!d) return
+    const names = people.filter(p => p.onShift).map(p => p.name)
+    if (!names.length) { setMsg({ t: 'Mark who is working in the Team list first, then Auto-assign splits the rooms across them.', warn: true }); setRailOpen(true); return }
     setBusy('auto'); setMsg(null)
-    const r = await send('/api/garden/assign', { op: 'auto', date: d.date, people: Array.from(auto) })
-    setBusy(''); setAuto(null)
-    if (!r?.ok) setMsg({ t: r?.error || 'Could not auto-assign.', bad: true })
-    else setMsg({ t: `${r.assigned} room${r.assigned === 1 ? '' : 's'} split: ${Object.entries(r.perPerson || {}).map(([n, v]: any) => `${n.split(' ')[0]} ${v.rooms.length} (${hrs(v.minutes)})`).join(' · ')}. ${cbNote(String(r.cloudbeds || ''))}${r.warnings?.length ? ' ' + r.warnings.join(' · ') : ''}`, bad: !!r.warnings?.length })
+    const r = await send('/api/garden/assign', { op: 'auto', date: d.date, people: names })
+    setBusy('')
+    if (!r?.ok) setMsg({ t: r?.error || 'Could not auto-assign.', warn: true })
+    else setMsg({ t: `${r.assigned} room${r.assigned === 1 ? '' : 's'} split across ${names.length}.${cbNote(String(r.cloudbeds || ''))}${r.warnings?.length ? ' ' + r.warnings.join(' · ') : ''}`, warn: !!r.warnings?.length })
+    load(true)
+  }
+  const setWorking = async (p: any, on: boolean) => {
+    if (!d || !canSchedule || String(p.id).startsWith('cb:')) return
+    setBusy('w' + p.id)
+    const r = on ? await send('/api/garden/schedule', { op: 'shift', date: d.date, staffId: p.id, role: 'housekeeping', start: '09:00', end: '17:00' }) : await send('/api/garden/schedule', { op: 'delete_shift', id: p.shiftId })
+    setBusy(''); if (r?.error) setMsg({ t: r.error, warn: true })
     load(true)
   }
   const setCond = async (r: Row, condition: 'clean' | 'inspected' | 'dirty') => {
     setBusy(r.roomId + condition); setMsg(null)
     const x = await send('/api/garden/rooms', { roomId: r.roomId, condition }, 'PATCH')
-    setBusy('')
-    if (!x?.ok) setMsg({ t: x?.error || 'Could not set the room.', bad: true }); else setMsg({ t: `${r.room} marked ${condition} in Cloudbeds.` })
+    setBusy(''); setMsg(x?.ok ? { t: `Room ${r.room} marked ${condition} in Cloudbeds.` } : { t: x?.error || 'Could not set the room.', warn: true })
     load(true)
   }
 
-  if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Building the housekeeping day…</p>
-  if (!d.ok) return <LeanEmpty>{/does not exist|schema cache/i.test(d.error || '') ? 'The Garden Hotel tables are not in the database yet.' : d.error}</LeanEmpty>
-  const s = d.summary, live = d.live
-  const openAuto = () => { const on = people.filter(p => p.onShift).map(p => p.name); const withRooms = people.filter(p => p.rooms).map(p => p.name); setAuto(new Set(on.length ? on : withRooms)) }
-  const tile = (k: TypeKey, x: any) => {
-    const T = TYPE[k], I = T.icon, pct = x.total ? Math.round(((x.done + x.skip) / x.total) * 100) : 0
-    return (
-      <button key={k} onClick={() => setFilter(f => f === k ? 'all' : k)} title={T.what} className={`text-left rounded-xl border bg-white px-3 py-2 min-w-0 ${filter === k ? 'border-ink ring-1 ring-ink' : 'border-line hover:border-neutral-400'}`}>
-        <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted"><I size={12} />{T.plural}</div>
-        <div className="text-[22px] font-semibold tabular-nums text-ink leading-tight mt-0.5">{live ? <>{x.done}<span className="text-[13px] text-muted font-normal"> / {x.total}</span></> : x.total}</div>
-        {live ? <div className="h-1 rounded bg-app overflow-hidden mt-1"><div className={`h-full ${T.bar}`} style={{ width: pct + '%' }} /></div> : null}
-        <div className="text-[11px] text-muted mt-1 truncate">{!live ? 'forecast from bookings' : x.total === 0 ? 'none today' : [x.open - x.waiting > 0 ? `${x.open - x.waiting} to do` : '', x.waiting ? `${x.waiting} guest still in` : '', x.skip ? `${x.skip} skip` : ''].filter(Boolean).join(' · ') || 'all done'}</div>
-      </button>
-    )
-  }
+  if (!d) return <div className="rounded-2xl border border-line bg-white px-4 py-16 text-center text-sm text-muted">Loading the schedule&hellip;</div>
+  if (!d.ok) return <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-[13px] text-rose-700 flex items-center gap-2"><AlertTriangle size={14} /> {d.error}</div>
+  const s = d.summary, live = d.live, past = d.date < d.today
+  const working = s.working, need = s.need
+  const short = !past && need > 0 && working < need
+  const unassignedCount = all.filter(needsPerson).length
+  const unassignedMin = all.filter(needsPerson).reduce((a: number, r: Row) => a + r.minutes, 0)
+  const names: string[] = people.map(p => p.name)
+  const verdict = need === 0 ? { t: 'No housekeeping work on this day.', cls: 'text-muted' }
+    : working === 0 ? { t: `Nobody is marked working. The day needs ${need} housekeeper${need === 1 ? '' : 's'}.`, cls: 'text-rose-700 font-semibold' }
+    : short ? { t: `Short ${need - working}: add ${need - working} housekeeper${need - working === 1 ? '' : 's'}.`, cls: 'text-rose-700 font-semibold' }
+    : working > need + 1 ? { t: `${working - need} more than the day needs.`, cls: 'text-amber-700 font-semibold' }
+    : { t: 'Staffed for the day.', cls: 'text-green-700 font-semibold' }
+  const crew = people.filter(p => p.onShift), holding = people.filter(p => !p.onShift && p.rooms > 0), off = people.filter(p => !p.onShift && !p.rooms)
 
   return (
-    <div id="hkplan" className="pb-10">
+    <div id="hkplan" className="space-y-2.5">
       <style dangerouslySetInnerHTML={{ __html: '@media print { body * { visibility: hidden } #hkplan, #hkplan * { visibility: visible } #hkplan { position: absolute; left: 0; top: 0; width: 100%; padding: 12px } #hkplan .np { display: none !important } }' }} />
-      <div className="flex items-center gap-2 flex-wrap mb-3">
-        <Sparkles size={18} className="text-ink" /><h1 className="text-[20px] font-semibold text-ink">Housekeeping</h1>
-        <span className="text-[13px] text-muted">{dayLong(d.date)}{live ? '' : ' · forecast'}</span>
-        <span className="flex-1" />
-        <span className="np text-[12px] text-muted" title="Last Cloudbeds sync">Cloudbeds {ago(d.syncAt)}</span>
-        <button onClick={() => load()} className="np h-8 w-8 inline-flex items-center justify-center rounded-lg border border-line bg-white" title="Reload">{loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}</button>
-        <button onClick={() => window.print()} className="np h-8 px-2.5 inline-flex items-center gap-1.5 rounded-lg border border-line bg-white text-[12.5px] font-semibold" title="Print this list (what is on screen)"><Printer size={13} /> Print</button>
+
+      {/* 1. Pager */}
+      <div className="np flex items-center gap-2 flex-wrap">
+        <div className="inline-flex items-center gap-1">
+          <button onClick={() => setDate(add(d.date, -1))} aria-label="Previous day" className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronLeft size={15} /></button>
+          <button onClick={() => setDate(null)} className="text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app">Today</button>
+          <button onClick={() => setDate(add(d.date, 1))} aria-label="Next day" className="p-1.5 rounded-lg border border-line text-muted hover:text-ink"><ChevronRight size={15} /></button>
+          <input type="date" value={d.date} onChange={e => e.target.value && setDate(e.target.value)} className="text-[12px] font-semibold border border-line rounded-lg px-2.5 py-1.5 bg-white text-ink outline-none cursor-pointer" title="Jump to any date" />
+        </div>
+        <span className="text-sm font-semibold text-ink ml-1 inline-flex items-center gap-1.5">{loading ? <RefreshCw size={15} className="text-brand-600 animate-spin" /> : <CalendarRange size={15} className="text-brand-600" />} {dayLong(d.date)}{!live && !past ? <span className="text-[11px] font-medium text-muted">forecast</span> : null}</span>
+        <div className="ml-auto inline-flex items-center gap-1.5">
+          <span className="text-[11px] text-muted" title="When Cloudbeds was last read. It is read about every 30 minutes.">Data as of {ago(d.syncAt)}</span>
+          <button onClick={() => load()} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app"><RefreshCw size={12} /> Reload</button>
+          <button onClick={() => window.print()} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app"><Printer size={12} /> Print</button>
+        </div>
       </div>
 
-      {/* The week: what each day holds, in rooms. */}
-      <div className="np grid grid-cols-4 sm:grid-cols-7 gap-1.5 mb-3">
-        {d.week.map((w: any) => (
-          <button key={w.date} onClick={() => setDate(w.date)} className={`rounded-xl border px-2 py-1.5 text-left ${w.date === d.date ? 'border-ink bg-ink text-white' : 'border-line bg-white hover:border-neutral-400'}`}>
-            <div className="flex items-baseline gap-1.5"><span className="text-[11px] font-semibold uppercase tracking-wider opacity-70">{w.date === d.today ? 'Today' : dow(w.date)}</span><span className="text-[16px] font-semibold tabular-nums">{dnum(w.date)}</span><span className="flex-1" />{w.need ? <span className="text-[10.5px] opacity-70" title="Housekeepers the day needs">{w.need} HK</span> : null}</div>
-            <div className="text-[11px] tabular-nums opacity-80 mt-0.5 truncate" title={`${w.turns} same-day turns · ${w.checkouts} checkouts · ${w.stayovers} stayovers · ${w.arrivals} arrivals`}>
-              {w.turns ? <b className={w.date === d.date ? '' : 'text-rose-700'}>{w.turns} turn · </b> : null}{w.checkouts + w.turns} out · {w.stayovers} stay · {w.arrivals} in
+      {/* The week strip — same card as the VR board: rooms, working / needed, hours. */}
+      <div className="np flex gap-1.5 overflow-x-auto snap-x pb-0.5 sm:grid sm:grid-cols-4 sm:overflow-visible sm:pb-0 lg:grid-cols-7">
+        {d.week.map((w: any) => { const isSel = w.date === d.date, isToday = w.date === d.today, sh = w.need > 0 && w.scheduled < w.need; return (
+          <button key={w.date} onClick={() => setDate(isToday ? null : w.date)} title={`${w.turns} same-day turns · ${w.checkouts} checkouts · ${w.stayovers} stayovers · ${w.arrivals} arrivals\n${fmtMins(w.minutes)} of work → ${w.need} housekeeper${w.need === 1 ? '' : 's'} at 7h\n${w.scheduled} scheduled`}
+            className={'shrink-0 w-[104px] snap-start sm:w-auto rounded-xl px-2.5 py-1.5 text-left bg-white transition ' + (isSel ? 'border-2 border-neutral-900' : 'border border-line hover:border-neutral-400')}>
+            <div className="flex items-baseline justify-between gap-1">
+              <span className={'text-[10px] uppercase tracking-wide ' + (isToday ? 'font-bold text-neutral-900' : 'font-semibold text-muted')}>{dow(w.date)} {Number(w.date.slice(8, 10))}</span>
+              {isToday && <span className="text-[9px] font-bold text-emerald-700">TODAY</span>}
             </div>
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className="text-lg font-bold leading-tight">{w.rooms}<span className="ml-1 text-[10px] font-medium text-muted">rooms</span></span>
+              <span className={'px-1.5 py-0.5 rounded-full text-[10px] font-semibold ' + (sh ? 'bg-rose-100 text-rose-700' : 'bg-green-100 text-green-700')}>{w.scheduled}/{w.need}</span>
+              {w.minutes > 0 && <span className="text-[10px] text-muted">{Math.round(w.minutes / 6) / 10}h</span>}
+            </div>
+            {w.turns > 0 && <div className="text-[10px] font-semibold text-rose-600 inline-flex items-center gap-0.5"><Repeat size={9} /> {w.turns} same-day turn{w.turns === 1 ? '' : 's'}</div>}
           </button>
+        ) })}
+      </div>
+
+      {/* 2. Chips + sort */}
+      <div className="np flex items-center gap-2 flex-wrap">
+        {unassignedCount > 0 && (
+          <button onClick={() => setOnlyUnassigned(o => !o)} aria-pressed={onlyUnassigned} title="Rooms with nobody on them yet. Click to show only these."
+            className={'inline-flex items-center gap-1.5 text-[12px] font-bold px-2.5 py-1.5 rounded-lg border ' + (onlyUnassigned ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 text-rose-700 border-rose-300')}>
+            <span className={'inline-block w-1.5 h-1.5 rounded-full ' + (onlyUnassigned ? 'bg-white' : 'bg-rose-500')} />{unassignedCount} unassigned{onlyUnassigned ? ' · showing' : ''}
+          </button>
+        )}
+        <button onClick={() => setKind('all')} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${kind === 'all' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>All · {all.length}</button>
+        {KINDS.filter(k => s[k].total > 0).map(k => (
+          <button key={k} onClick={() => setKind(k)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{KIND[k].chip} · {live ? `${s[k].done}/${s[k].total}` : s[k].total}</button>
         ))}
+        {live && <span className="text-[12px] text-ink font-semibold ml-1">{fmtMins(s.minutes)} left · {s.arrivalsReady}/{s.arrivals} arrival rooms ready</span>}
+        <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
+          <ArrowDownUp size={13} /> Sort
+          <select value={sortBy} onChange={e => setSortBy(e.target.value as Sort)} className="text-[12px] font-semibold text-ink bg-white border border-line rounded-lg px-2 py-1 outline-none">
+            <option value="priority">What to do first</option><option value="wing">Wing</option><option value="cleaner">Housekeeper</option><option value="room">Room</option>
+          </select>
+        </label>
       </div>
 
-      {/* The check against Cloudbeds. */}
-      {live ? (d.mismatches.length || d.notArrived.length || d.syncError ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 mb-3 text-[12.5px] text-amber-900">
-          <div className="font-semibold inline-flex items-center gap-1.5"><TriangleAlert size={13} /> Check these rooms</div>
-          {d.syncError ? <div className="mt-0.5">Last Cloudbeds sync had a problem: {d.syncError}</div> : null}
-          {d.mismatches.length ? <div className="mt-0.5">Cloudbeds labels {d.mismatches.length === 1 ? 'this room' : 'these rooms'} differently: {d.mismatches.slice(0, 12).map((m: any) => `${m.room} (here ${m.ours}, Cloudbeds ${m.cloudbeds})`).join(' · ')}{d.mismatches.length > 12 ? ` · +${d.mismatches.length - 12} more` : ''}</div> : null}
-          {d.notArrived.length ? <div className="mt-0.5">Booked from an earlier day but not checked in and the room is empty, so no stayover clean: {d.notArrived.map((m: any) => `${m.room} ${m.guest}`).join(' · ')}</div> : null}
+      {live && (d.mismatches.length > 0 || d.notArrived.length > 0 || d.syncError) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] text-amber-800">
+          <span className="font-semibold inline-flex items-center gap-1.5"><AlertTriangle size={12} /> Check with the front desk:</span>{' '}
+          {d.syncError ? `the last Cloudbeds read had a problem (${d.syncError}). ` : ''}
+          {d.mismatches.length ? `Cloudbeds labels ${d.mismatches.slice(0, 10).map((m: any) => `${m.room} as ${m.cloudbeds} (here: ${m.ours})`).join(', ')}${d.mismatches.length > 10 ? ` and ${d.mismatches.length - 10} more` : ''}. ` : ''}
+          {d.notArrived.length ? `Booked from an earlier day but never checked in, so no stayover: ${d.notArrived.map((m: any) => m.room).join(', ')}.` : ''}
         </div>
-      ) : (
-        <div className="np rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 mb-3 text-[12.5px] text-emerald-900 inline-flex items-center gap-1.5"><ShieldCheck size={13} /> Matches Cloudbeds: every room here carries the same label Cloudbeds gives it ({rows.length} rooms with work of {s.rooms}).</div>
-      )) : <p className="np text-[12px] text-muted mb-3">A day ahead is a forecast from the bookings as they stand; rooms and guests can still change. Assignments made here are sent to Cloudbeds on the morning of the day.</p>}
+      )}
+      {msg && <div className={'np rounded-xl border px-3.5 py-2.5 text-[13px] flex items-center gap-2 ' + (msg.warn ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{msg.warn ? <AlertTriangle size={14} className="shrink-0" /> : <Check size={14} className="shrink-0" />} {msg.t}</div>}
 
-      {/* The day in numbers; each tile filters. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 mb-2">
-        {ORDER.filter(k => k !== 'dirty' || live).map(k => tile(k, s[k]))}
-        <div className="rounded-xl border border-line bg-white px-3 py-2 min-w-0">
-          <div className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">Work left</div>
-          <div className="text-[22px] font-semibold tabular-nums text-ink leading-tight mt-0.5">{hrs(s.minutes)}</div>
-          <div className="text-[11px] text-muted mt-1 truncate" title="At 45 min a checkout or turn, 20 a stayover, 7 working hours a shift">needs {s.need} housekeeper{s.need === 1 ? '' : 's'}</div>
-          <div className="text-[11px] mt-0.5 truncate">{live ? <span className={s.arrivalsReady === s.arrivals ? 'text-emerald-700' : 'text-amber-700'}>{s.arrivalsReady}/{s.arrivals} arrival rooms ready</span> : <span className="text-muted">{s.arrivals} arrivals</span>}</div>
-        </div>
-      </div>
-      <div className="np flex items-center gap-1.5 flex-wrap mb-3 text-[12px]">
-        {s.unassigned ? <button onClick={() => setFilter(f => f === 'unassigned' ? 'all' : 'unassigned')} className={`rounded-full border px-2.5 py-1 font-semibold ${filter === 'unassigned' ? 'border-ink bg-ink text-white' : 'border-rose-200 bg-rose-50 text-rose-800'}`}>{s.unassigned} unassigned</button> : rows.length ? <span className="rounded-full border border-emerald-200 bg-emerald-50 text-emerald-800 px-2.5 py-1 font-semibold">Everything is assigned</span> : null}
-        {live && s.toInspect ? <button onClick={() => setFilter(f => f === 'inspect' ? 'all' : 'inspect')} className={`rounded-full border px-2.5 py-1 font-semibold ${filter === 'inspect' ? 'border-ink bg-ink text-white' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>{s.toInspect} clean, waiting for inspection</button> : null}
-        {filter !== 'all' ? <button onClick={() => setFilter('all')} className="rounded-full border border-line bg-white px-2.5 py-1 font-semibold inline-flex items-center gap-1"><X size={11} /> Show everything</button> : null}
-        <span className="flex-1" />
-        <span className="text-muted">Group by</span>
-        {(['type', 'person', 'area'] as Group[]).map(g => <button key={g} onClick={() => setGroup(g)} className={`rounded-full border px-2.5 py-1 font-semibold ${group === g ? 'border-ink bg-ink text-white' : 'border-line bg-white'}`}>{g === 'type' ? 'Kind of clean' : g === 'person' ? 'Housekeeper' : 'Wing'}</button>)}
-        <select value={who} onChange={e => setWho(e.target.value)} className="h-7 rounded-lg border border-line bg-white px-2 text-[12px]"><option value="">Everyone</option><option value="—">Unassigned</option>{people.filter(p => p.rooms).map(p => <option key={p.name} value={p.name}>{p.name} · {p.rooms}</option>)}</select>
-        <label className="inline-flex items-center gap-1 text-muted"><input type="checkbox" checked={hideDone} onChange={e => setHideDone(e.target.checked)} /> hide finished</label>
-        <label className="relative"><Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Room, guest, person" className="h-7 w-40 rounded-lg border border-line bg-white pl-6 pr-2 text-[12px]" /></label>
-      </div>
-
-      {/* Who has what. */}
-      {people.some(p => p.rooms || p.onShift) ? (
-        <div className="flex gap-1.5 flex-wrap mb-3">
-          {people.filter(p => p.rooms || p.onShift).map(p => (
-            <button key={p.name} onClick={() => setWho(w => w === p.name ? '' : p.name)} className={`np text-left rounded-xl border bg-white px-2.5 py-1.5 ${who === p.name ? 'border-ink ring-1 ring-ink' : 'border-line'}`}>
-              <div className="text-[12.5px] font-semibold text-ink">{p.name}{p.onShift ? <span className="ml-1 text-[10.5px] font-semibold text-emerald-700">on shift</span> : null}</div>
-              <div className="text-[11px] text-muted tabular-nums">{p.rooms ? <>{live ? `${p.done}/${p.rooms} rooms` : `${p.rooms} rooms`} · {hrs(p.minutes)} left{p.minutes > 420 ? <span className="text-rose-700 font-semibold"> · over a shift</span> : null}</> : 'no rooms yet'}</div>
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {/* Assign. */}
-      {canEdit ? (
-        <div className="np sticky top-0 z-10 rounded-xl border border-line bg-white px-3 py-2 mb-3 flex items-center gap-2 flex-wrap shadow-sm">
-          <span className="text-[12.5px] font-semibold text-ink">{pick.size ? `${pick.size} room${pick.size === 1 ? '' : 's'} picked` : 'Tick rooms to hand them out'}</span>
-          <select value={to} onChange={e => setTo(e.target.value)} className="h-8 rounded-lg border border-line bg-white px-2 text-[12.5px] min-w-[11rem]"><option value="">Give to…</option>{people.map(p => <option key={p.name} value={p.name}>{p.name}{p.rooms ? ` · ${p.rooms} rooms, ${hrs(p.minutes)}` : ''}</option>)}</select>
-          <button disabled={!pick.size || !to || !!busy} onClick={() => assign(Array.from(pick), to)} className="h-8 px-3 rounded-lg bg-ink text-white text-[12.5px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5">{busy === 'assign' ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Assign{live ? ' & send to Cloudbeds' : ''}</button>
-          {pick.size ? <button disabled={!!busy} onClick={() => assign(Array.from(pick), null)} className="h-8 px-2.5 rounded-lg border border-line text-[12.5px] font-semibold">Unassign</button> : null}
-          <button onClick={() => setPick(new Set(shown.filter(r => !closed(r) && r.state !== 'inspect' && !r.assignedTo).map(r => r.roomId)))} className="h-8 px-2.5 rounded-lg border border-line text-[12.5px] font-semibold">Pick unassigned</button>
-          {pick.size ? <button onClick={() => setPick(new Set())} className="text-[12px] text-muted hover:text-ink">clear</button> : null}
-          <span className="flex-1" />
-          <button disabled={!!busy || !s.unassigned} onClick={openAuto} className="h-8 px-3 rounded-lg border border-ink text-ink text-[12.5px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5" title="Split every unassigned room across the people you pick, by minutes, wing by wing"><Wand2 size={13} /> Auto-assign {s.unassigned || ''}</button>
-        </div>
-      ) : null}
-      {msg ? <p className={`np text-[12.5px] mb-2 ${msg.bad ? 'text-amber-800' : 'text-emerald-800'}`}>{msg.t}</p> : null}
-
-      {auto ? (
-        <div className="np rounded-xl border border-ink bg-white p-3 mb-3">
-          <div className="text-[13px] font-semibold text-ink">Who is working {live ? 'today' : dayShort(d.date)}?</div>
-          <p className="text-[12px] text-muted mb-2">The {s.unassigned} unassigned rooms are split across them by minutes. Rooms already given to someone stay where they are.</p>
-          <div className="flex gap-1.5 flex-wrap">
-            {names.map(n => <button key={n} onClick={() => setAuto(a => { const x = new Set(a); x.has(n) ? x.delete(n) : x.add(n); return x })} className={`rounded-full border px-2.5 py-1 text-[12.5px] font-semibold ${auto.has(n) ? 'border-ink bg-ink text-white' : 'border-line bg-white'}`}>{n}</button>)}
-          </div>
-          {!names.length ? <p className="text-[12px] text-amber-800 mt-1">No housekeepers on the roster yet — add them under Staff week.</p> : null}
-          <div className="flex items-center gap-2 mt-2.5">
-            <button disabled={!auto.size || !!busy} onClick={runAuto} className="h-8 px-3 rounded-lg bg-ink text-white text-[12.5px] font-semibold disabled:opacity-40 inline-flex items-center gap-1.5">{busy === 'auto' ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} Split across {auto.size}{auto.size ? ` · about ${hrs(Math.round(s.minutes / auto.size))} each` : ''}</button>
-            <button onClick={() => setAuto(null)} className="h-8 px-2.5 rounded-lg border border-line text-[12.5px] font-semibold">Cancel</button>
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16">
+        {/* 3. THE TEAM RAIL */}
+        <div className="np rounded-xl border border-line bg-white shadow-sm">
+          <button onClick={() => setRailOpen(o => !o)} className="w-full text-left px-3 py-2.5 lg:cursor-default">
+            <div className="text-[10px] uppercase tracking-wider font-semibold text-muted">Team · {dow(d.date)} {dayShort(d.date)}</div>
+            <div className="mt-0.5 flex items-baseline gap-2">
+              <span className="text-[20px] font-bold text-ink leading-none">{working}</span><span className="text-[12px] text-muted">working</span>
+              <span className={'text-[20px] font-bold leading-none ' + (short ? 'text-rose-700' : 'text-ink')}>{need}</span><span className="text-[12px] text-muted">needed</span>
+            </div>
+            <div className={'text-[12px] mt-1 ' + verdict.cls}>{verdict.t}</div>
+            <div className="text-[11px] text-muted mt-0.5" title="45 min a checkout or same-day turn, 20 a stayover, over a 7-hour shift">{fmtMins(s.plannedMinutes)} of rooms ÷ 7h a shift</div>
+          </button>
+          <div className={(railOpen ? '' : 'hidden lg:block ') + 'border-t border-line'}>
+            {[...crew, ...holding].map(p => { const over = p.minutes > SHIFT; return (
+              <div key={p.id} className={'px-3 py-1.5 border-b border-line/70 ' + (who === p.name ? 'bg-brand-50/50' : '')}>
+                <div className="flex items-center gap-2">
+                  {canSchedule && !String(p.id).startsWith('cb:') ? <input type="checkbox" checked={p.onShift} disabled={!!busy} onChange={e => setWorking(p, e.target.checked)} className="accent-brand-600" title={p.onShift ? 'Working this day — untick to take off' : 'Tick to mark working this day'} /> : null}
+                  <button onClick={() => setWho(w => w === p.name ? '' : p.name)} className="text-[12.5px] font-semibold text-ink truncate hover:underline decoration-dotted underline-offset-2 text-left" title="Show only this person's rooms">{p.name}</button>
+                  {!p.onShift && <span className="text-[10px] font-semibold text-amber-700 shrink-0" title="Has rooms but is not marked working this day">not scheduled</span>}
+                  <span className={'ml-auto text-[11px] tabular-nums shrink-0 ' + (over ? 'text-rose-700 font-semibold' : 'text-muted')}>{p.rooms ? `${p.rooms} · ${fmtMins(p.minutes)}` : '—'}</span>
+                </div>
+                <div className="h-1 rounded bg-app overflow-hidden mt-1"><div className={'h-full ' + (over ? 'bg-rose-500' : 'bg-brand-600')} style={{ width: Math.min(100, Math.round((p.minutes / SHIFT) * 100)) + '%' }} /></div>
+              </div>
+            ) })}
+            {unassignedCount > 0 && (
+              <div className="px-3 py-2 border-b border-line/70 bg-rose-50/40">
+                <div className="flex items-center gap-2 text-[12.5px] font-semibold text-rose-700">Nobody yet<span className="ml-auto text-[11px] tabular-nums">{unassignedCount} · {fmtMins(unassignedMin)}</span></div>
+                {canEdit && <button onClick={autoAssign} disabled={!!busy} className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12px] font-semibold hover:bg-brand-700 disabled:opacity-50" title="Splits the unassigned rooms across the people ticked as working, by time, wing by wing">{busy === 'auto' ? <RefreshCw size={12} className="animate-spin" /> : <Wand2 size={12} />} Auto-assign to the {crew.length || ''} working</button>}
+              </div>
+            )}
+            {off.length > 0 && (
+              <div className="px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1">{canSchedule ? 'Not working — tick to add' : 'Not working'}</div>
+                <div className="space-y-1">
+                  {off.map(p => (
+                    <label key={p.id} className="flex items-center gap-2 text-[12px] text-muted cursor-pointer">
+                      {canSchedule && !String(p.id).startsWith('cb:') ? <input type="checkbox" checked={false} disabled={!!busy} onChange={() => setWorking(p, true)} className="accent-brand-600" /> : null}<span className="truncate">{p.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            {!people.length && <div className="px-3 py-3 text-[12px] text-muted">No housekeepers on the roster yet. Add them under Staff week.</div>}
           </div>
         </div>
-      ) : null}
 
-      {/* The rooms. */}
-      {!rows.length ? <LeanEmpty>{live ? 'No housekeeping work today: nobody leaving, staying or arriving, and no vacant dirty rooms.' : 'No bookings touch this day yet.'}</LeanEmpty> : !shown.length ? <LeanEmpty>No rooms in this view.</LeanEmpty> : groups.map(g => {
-        const T = group === 'type' ? TYPE[g.key as TypeKey] : null
-        const mins = g.rows.reduce((a, r) => a + r.minutes, 0), left = g.rows.filter(r => !closed(r)).length
-        return (
-          <section key={g.key} className="mb-4 break-inside-avoid">
-            <div className="flex items-baseline gap-2 mb-1 px-1">
-              <h2 className="text-[12px] font-bold uppercase tracking-wider text-ink">{T ? T.plural : g.key}</h2>
-              <span className="text-[12px] text-muted tabular-nums">{g.rows.length} room{g.rows.length === 1 ? '' : 's'}{live ? ` · ${left} left` : ''}{mins ? ` · ${hrs(mins)}` : ''}</span>
-              {T ? <span className="text-[11.5px] text-muted hidden sm:inline">{T.what}</span> : null}
-              <span className="flex-1" />
-              {canEdit ? <button onClick={() => setPick(p => { const n = new Set(p); const ids = g.rows.filter(r => !closed(r)).map(r => r.roomId); const all = ids.every(i => n.has(i)); ids.forEach(i => all ? n.delete(i) : n.add(i)); return n })} className="np text-[11.5px] font-semibold text-muted hover:text-ink">pick all</button> : null}
+        {/* 4. THE TABLE */}
+        <div className="space-y-2 min-w-0">
+          {who && <div className="np text-[12px] text-ink">Showing <b>{who}</b>&apos;s rooms. <button onClick={() => setWho('')} className="font-semibold text-brand-700 hover:underline">Show everyone</button></div>}
+          {rows.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-8 text-center text-[12px] text-muted">{onlyUnassigned ? 'Every room this day has a person on it.' : all.length ? 'No rooms in this view.' : 'No checkouts, stayovers or arrivals for this day.'}</div> : (
+            <div className="overflow-x-auto rounded-xl border border-line bg-white shadow-sm">
+              <table className="block sm:table w-full text-[12px] border-collapse">
+                <thead className="hidden sm:table-header-group">
+                  <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider text-left font-semibold border-b border-line">
+                    <th className="np px-2.5 py-2 w-8">{canEdit && <input type="checkbox" checked={allSelected} onChange={e => setSel(e.target.checked ? Object.fromEntries(pickable.map(r => [r.roomId, true])) : {})} aria-label={'Select all ' + pickable.length + ' rooms'} className="accent-brand-600 align-middle" />}</th>
+                    <th className="px-2.5 py-2 font-semibold min-w-[150px]">HK Team</th>
+                    <th className="px-2 py-2 font-semibold">Room</th>
+                    <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="45 min a checkout or same-day turn, 20 a stayover, 8 an inspection">Est. time</th>
+                    <th className="px-2 py-2 font-semibold">Reservation</th>
+                    <th className="px-2 py-2 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="block sm:table-row-group">
+                  {rows.map((r, i) => {
+                    const K = KIND[r.type as Kind], st = STATE[r.state]
+                    const brk = i > 0 && (sortBy === 'wing' ? rows[i - 1].area !== r.area : sortBy === 'cleaner' ? rows[i - 1].assignedTo !== r.assignedTo : sortBy === 'priority' ? (rows[i - 1].type !== r.type || closed(rows[i - 1]) !== closed(r)) : false)
+                    const tags = [...(r.out?.tags || []), ...(r.in?.tags || []), ...(r.stay?.tags || [])].filter((t: any, n: number, a: any[]) => a.findIndex(x => x.key === t.key) === n)
+                    return (
+                      <tr key={r.roomId} className={`flex flex-wrap items-center sm:table-row hover:brightness-95 transition border-t ${brk ? 'border-line/80 border-t-2' : 'border-line'} ${closed(r) ? 'opacity-60' : sel[r.roomId] ? 'bg-brand-50/40' : needsPerson(r) ? 'bg-rose-50/40' : ''}`}>
+                        <td className="np order-1 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle">{canEdit && !closed(r) && <input type="checkbox" checked={!!sel[r.roomId]} onChange={e => setSel(p => ({ ...p, [r.roomId]: e.target.checked }))} className="accent-brand-600" aria-label={'Select room ' + r.room} />}</td>
+                        <td className="order-4 grow basis-44 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle">
+                          {canEdit ? (
+                            <select value={r.assignedTo || ''} disabled={!!busy} onChange={e => assign([r.roomId], e.target.value || null)} title={r.assignedFrom === 'cloudbeds' ? 'Assigned in Cloudbeds' : r.assignedFrom === 'lighthouse' ? 'Assigned here' : 'Nobody yet'}
+                              className={'np w-full max-w-[11rem] text-[12px] rounded-lg border px-2 py-1 outline-none ' + (r.assignedTo ? 'border-line bg-white text-ink font-semibold' : 'border-line bg-white text-muted')}>
+                              <option value="">{closed(r) ? '—' : 'Pick housekeeper…'}</option>
+                              {r.assignedTo && !names.includes(r.assignedTo) ? <option value={r.assignedTo}>{r.assignedTo}</option> : null}
+                              {crew.length > 0 && <optgroup label="Working">{crew.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}</optgroup>}
+                              <optgroup label={crew.length ? 'Not working' : 'Housekeepers'}>{people.filter(p => !p.onShift).map(p => <option key={p.name} value={p.name}>{p.name}</option>)}</optgroup>
+                            </select>
+                          ) : null}
+                          <span className={canEdit ? 'hidden print:inline font-semibold' : 'font-semibold'}>{r.assignedTo || (closed(r) ? '' : '________')}</span>
+                        </td>
+                        <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink whitespace-nowrap">
+                          <span className="text-[14px] font-bold tabular-nums">{r.room}</span>
+                          {r.type === 'turn' ? <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> same-day turn</span> : <span className={'ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ' + K.cls}>{K.label}</span>}
+                          {tags.map((t: any) => <span key={t.key} className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">{t.label}</span>)}
+                          {r.dnd && r.state !== 'skip' ? <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">DND</span> : null}
+                          <div className="text-[10.5px] font-normal text-muted truncate max-w-[15rem]">{r.roomType || r.area}{r.comments ? ` · ${r.comments}` : ''}</div>
+                        </td>
+                        <td className="order-3 shrink-0 sm:table-cell px-2 py-1.5 align-middle text-right tabular-nums text-muted whitespace-nowrap">{r.minutes ? fmtMins(r.minutes) : '—'}</td>
+                        <td className="order-5 basis-full sm:table-cell px-2.5 py-1.5 align-middle text-ink">
+                          {r.out && <div className="flex items-center gap-1 whitespace-nowrap"><LogOut size={11} className="text-muted shrink-0" /><span className="truncate max-w-[12rem]">{r.out.name}</span>{live && <span className={'text-[10.5px] font-semibold ' + (r.out.status === 'checked_out' ? 'text-green-700' : 'text-violet-700')}>{r.out.status === 'checked_out' ? 'left' : 'still in'}</span>}</div>}
+                          {r.in && <div className="flex items-center gap-1 whitespace-nowrap"><LogIn size={11} className="text-muted shrink-0" /><span className="truncate max-w-[12rem]">{r.in.name}</span><span className="text-[10.5px] text-muted">{r.in.people} guest{r.in.people === '1' ? '' : 's'} · {r.in.nights ?? '?'} nt{live && r.in.status === 'checked_in' ? ' · arrived' : ''}</span></div>}
+                          {r.stay && <div className="flex items-center gap-1 whitespace-nowrap"><Moon size={11} className="text-muted shrink-0" /><span className="truncate max-w-[12rem]">{r.stay.name}</span><span className="text-[10.5px] text-muted">night {r.stay.night} of {r.stay.nights ?? '?'} · leaves {dayShort(r.stay.checkOut)}</span></div>}
+                          {r.type === 'dirty' && <span className="text-muted">Empty, no booking today</span>}
+                          {r.flag && <div className="text-[10.5px] font-semibold text-amber-700">{r.flag}</div>}
+                        </td>
+                        <td className="order-6 basis-full sm:table-cell px-2.5 py-1.5 align-middle whitespace-nowrap">
+                          <span className={'inline-block text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ' + st.cls}>{r.state === 'skip' ? (r.skipWhy || 'Skip') : st.label}</span>
+                          {canEdit && live ? (
+                            <span className="np ml-1.5 inline-flex gap-1 align-middle">
+                              {(r.state === 'todo' || r.state === 'cleaning') && <button disabled={!!busy} onClick={() => setCond(r, 'clean')} title="Mark the room Clean in Cloudbeds" className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-0.5 rounded border border-line bg-white text-ink hover:bg-app disabled:opacity-40"><Check size={10} /> Clean</button>}
+                              {(r.state === 'inspect' || ((r.state === 'todo' || r.state === 'cleaning') && r.type !== 'stayover')) && <button disabled={!!busy} onClick={() => setCond(r, 'inspected')} title="Mark the room Inspected in Cloudbeds — ready for the guest" className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-0.5 rounded border border-line bg-white text-ink hover:bg-app disabled:opacity-40"><CheckCheck size={10} /> Inspected</button>}
+                              {(r.state === 'ready' || r.state === 'inspect' || (r.state === 'done' && r.type === 'stayover')) && <button disabled={!!busy} onClick={() => setCond(r, 'dirty')} title="Back to Dirty in Cloudbeds" className="text-[10.5px] text-muted hover:text-ink">undo</button>}
+                            </span>
+                          ) : null}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
-            <div className="rounded-xl border border-line bg-white divide-y divide-line/70 overflow-hidden">
-              {g.rows.map(r => {
-                const TT = TYPE[r.type as TypeKey], st = STATE[r.state], I = TT.icon
-                const tags = [...(r.out?.tags || []), ...(r.in?.tags || []), ...(r.stay?.tags || [])].filter((t: any, i: number, a: any[]) => a.findIndex(x => x.key === t.key) === i)
-                return (
-                  <div key={r.roomId} className={`flex items-stretch ${closed(r) ? 'opacity-55' : ''} ${pick.has(r.roomId) ? 'bg-brand-50/60' : ''}`}>
-                    <div className={`w-1 shrink-0 ${TT.bar}`} />
-                    {canEdit ? <label className="np flex items-center pl-2.5 pr-1 cursor-pointer"><input type="checkbox" checked={pick.has(r.roomId)} onChange={() => toggle(r.roomId)} className="h-4 w-4" aria-label={`Pick room ${r.room}`} /></label> : null}
-                    <div className="w-[4.6rem] shrink-0 px-2 py-2">
-                      <div className="text-[19px] font-semibold tabular-nums text-ink leading-none">{r.room}</div>
-                      <div className="text-[10.5px] text-muted truncate mt-0.5" title={r.roomType || ''}>{r.roomType || r.area}</div>
-                    </div>
-                    <div className="flex-1 min-w-0 py-2 pr-2">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {group !== 'type' ? <Tag tone={TT.tone}><I size={10} className="inline -mt-0.5 mr-0.5" />{TT.label}</Tag> : null}
-                        <Tag tone={st.tone}>{r.state === 'skip' ? r.skipWhy || 'Skip' : st.label}</Tag>
-                        {r.flag ? <Tag tone="amber" title={r.flag}>{r.flag}</Tag> : null}
-                        {r.dnd && r.state !== 'skip' ? <Tag tone="violet">DND</Tag> : null}
-                        {tags.map((t: any) => <Tag key={t.key} tone={t.tone as Tone}>{t.label}</Tag>)}
-                      </div>
-                      <div className="text-[12.5px] text-ink mt-1 flex items-center gap-x-3 gap-y-0.5 flex-wrap">
-                        {r.out ? <span className="inline-flex items-center gap-1 min-w-0"><LogOut size={12} className="text-muted shrink-0" /><span className="truncate max-w-[11rem]">{r.out.name}</span>{live ? <span className={r.out.status === 'checked_out' ? 'text-emerald-700 font-semibold' : 'text-violet-700 font-semibold'}>{r.out.status === 'checked_out' ? 'left' : 'still in'}</span> : null}</span> : null}
-                        {r.in ? <span className="inline-flex items-center gap-1 min-w-0"><LogIn size={12} className="text-muted shrink-0" /><span className="truncate max-w-[11rem]">{r.in.name}</span><span className="text-muted">{r.in.people} guest{r.in.people === '1' ? '' : 's'} · {r.in.nights ?? '?'} nt{live && r.in.status === 'checked_in' ? <span className="text-emerald-700 font-semibold"> · arrived</span> : ''}</span></span> : null}
-                        {r.stay ? <span className="inline-flex items-center gap-1 min-w-0"><Moon size={12} className="text-muted shrink-0" /><span className="truncate max-w-[11rem]">{r.stay.name}</span><span className="text-muted">night {r.stay.night} of {r.stay.nights ?? '?'} · leaves {dayShort(r.stay.checkOut)}</span></span> : null}
-                        {r.type === 'dirty' ? <span className="text-muted inline-flex items-center gap-1"><DoorOpen size={12} /> empty · no booking today</span> : null}
-                      </div>
-                      {r.comments ? <div className="text-[11.5px] text-muted mt-0.5 truncate" title={r.comments}>Cloudbeds note: {r.comments}</div> : null}
-                    </div>
-                    <div className="shrink-0 py-2 pr-2.5 flex flex-col items-end justify-center gap-1">
-                      {canEdit ? (
-                        <select value={r.assignedTo || ''} disabled={!!busy} onChange={e => assign([r.roomId], e.target.value || null)} className={`np h-7 max-w-[10.5rem] rounded-lg border px-1.5 text-[12px] ${r.assignedTo ? 'border-line bg-white text-ink' : closed(r) ? 'border-line bg-white text-muted' : 'border-rose-200 bg-rose-50 text-rose-800 font-semibold'}`} title={r.assignedFrom === 'cloudbeds' ? 'Assigned in Cloudbeds' : r.assignedFrom === 'lighthouse' ? 'Assigned here' : 'Nobody yet'}>
-                          <option value="">Unassigned</option>
-                          {r.assignedTo && !names.includes(r.assignedTo) ? <option value={r.assignedTo}>{r.assignedTo}</option> : null}
-                          {names.map(n => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                      ) : null}
-                      <span className="hidden print:inline text-[12px] font-semibold">{r.assignedTo || '________'}</span>
-                      {!canEdit ? <span className="np text-[12px] text-ink">{r.assignedTo || <span className="text-rose-700">unassigned</span>}</span> : null}
-                      {canEdit && live ? (
-                        <div className="np flex gap-1">
-                          {(r.state === 'todo' || r.state === 'cleaning') ? <button disabled={!!busy} onClick={() => setCond(r, 'clean')} className="h-7 px-2 rounded-lg border border-emerald-300 text-emerald-800 text-[11.5px] font-semibold inline-flex items-center gap-1 disabled:opacity-40" title="Marks the room Clean in Cloudbeds">{busy === r.roomId + 'clean' ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />} Clean</button> : null}
-                          {(r.state === 'inspect' || ((r.state === 'todo' || r.state === 'cleaning') && r.type !== 'stayover')) ? <button disabled={!!busy} onClick={() => setCond(r, 'inspected')} className="h-7 px-2 rounded-lg border border-sky-300 text-sky-800 text-[11.5px] font-semibold inline-flex items-center gap-1 disabled:opacity-40" title="Marks the room Inspected in Cloudbeds — ready for the guest">{busy === r.roomId + 'inspected' ? <Loader2 size={11} className="animate-spin" /> : <CheckCheck size={11} />} Inspected</button> : null}
-                          {(r.state === 'ready' || r.state === 'inspect' || (r.state === 'done' && r.type === 'stayover')) ? <button disabled={!!busy} onClick={() => setCond(r, 'dirty')} className="h-7 px-2 rounded-lg border border-line text-muted text-[11.5px] font-semibold disabled:opacity-40" title="Back to Dirty in Cloudbeds">undo</button> : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                )
-              })}
+          )}
+        </div>
+      </div>
+
+      {/* The bulk bar — the same pill as the VR board. */}
+      {canEdit && selIds.length > 0 && (
+        <div className="np sticky bottom-[calc(env(safe-area-inset-bottom,0px)+4.25rem)] sm:bottom-3 z-20 flex justify-center">
+          <div className="flex flex-col gap-1.5 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-brand-200 bg-white shadow-lg px-3 py-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3 sm:rounded-full sm:px-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[13px] font-semibold text-ink inline-flex items-center gap-1.5"><Users size={14} className="text-brand-600" /> {selIds.length} selected</span>
+              <button onClick={() => setSel({})} className="ml-auto sm:ml-0 text-[12px] text-muted hover:text-ink">Clear</button>
             </div>
-          </section>
-        )
-      })}
+            <div className="flex items-center gap-2">
+              <select value={to} onChange={e => setTo(e.target.value)} className="flex-1 min-w-0 sm:flex-none sm:w-44 text-[12px] rounded-lg border border-line bg-white px-2 py-1.5 outline-none">
+                <option value="">Pick housekeeper…</option>
+                {crew.length > 0 && <optgroup label="Working">{crew.map(p => <option key={p.name} value={p.name}>{p.name} · {fmtMins(p.minutes)}</option>)}</optgroup>}
+                <optgroup label={crew.length ? 'Not working' : 'Housekeepers'}>{people.filter(p => !p.onShift).map(p => <option key={p.name} value={p.name}>{p.name}</option>)}</optgroup>
+              </select>
+              <button onClick={() => assign(selIds, to)} disabled={!to || !!busy} className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-brand-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'assign' ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />} {live ? `Push ${selIds.length} to Cloudbeds` : `Assign ${selIds.length}`}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

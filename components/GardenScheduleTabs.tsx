@@ -14,11 +14,11 @@ export function GardenScheduleTabs({ canEdit, canAssign }: { canEdit: boolean; c
   return (
     <>
       <div className="flex gap-1 mb-4 border-b border-line print:hidden">
-        {([['rooms', 'Housekeeping day'], ['staff', 'Staff week'], ['performance', 'Performance']] as [View, string][]).map(([k, l]) => (
+        {([['rooms', 'Board'], ['staff', 'Staff week'], ['performance', 'Performance']] as [View, string][]).map(([k, l]) => (
           <button key={k} onClick={() => go(k)} className={`px-3 py-2 text-[13px] font-semibold -mb-px border-b-2 ${view === k ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'}`}>{l}</button>
         ))}
       </div>
-      {view === 'rooms' ? <GardenHKPlan canEdit={canAssign} /> : view === 'staff' ? <GardenScheduleGrid canEdit={canEdit} /> : <GardenHKPerformance />}
+      {view === 'rooms' ? <GardenHKPlan canEdit={canAssign} canSchedule={canEdit} /> : view === 'staff' ? <GardenScheduleGrid canEdit={canEdit} /> : <GardenHKPerformance />}
     </>
   )
 }
