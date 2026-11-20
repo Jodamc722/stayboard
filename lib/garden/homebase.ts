@@ -105,6 +105,53 @@ export async function pullHbEmployees(): Promise<{ matched: number; total: numbe
   return { matched, total: people.length, unmatched: unmatched.slice(0, 40) }
 }
 
+/**
+ * THE SCHEDULE FROM HOMEBASE (Jon, 2026-11-20: "have option to connect to Homebase, I think they use
+ * it"). The shifts Homebase has for [from, to] become garden_shifts with source 'homebase', so the
+ * housekeeping board's "working" list is whoever Homebase scheduled — nobody ticks names twice.
+ * A person is matched to the roster by name; someone Homebase schedules who is not on the roster is
+ * added when their Homebase role says what they do. A shift entered by hand here is never replaced.
+ */
+export async function pullHbShifts(from: string, to: string): Promise<{ shifts: number; added: string[]; unmatched: string[] }> {
+  const db = supabaseAdmin()
+  const locs = await gardenLocations()
+  if (!locs.length) throw new Error('Pick the hotel\'s Homebase location first (Users & admin → Settings → Homebase).')
+  const raw: Json[] = [], seen = new Set<string>()
+  for (const loc of locs) for (const x of await paged(`/locations/${loc}/shifts?start_date=${from}&end_date=${to}`)) {
+    const id = x?.id != null ? String(x.id) : JSON.stringify([x?.first_name, x?.last_name, x?.start_at])
+    if (seen.has(id)) continue; seen.add(id); raw.push(x)
+  }
+  const norm = (v: string) => String(v || '').toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim()
+  const roleOf = (t: string): string | null => /house|hk\b|clean|room att|laundry|inspect/i.test(t) ? 'housekeeping' : /front|desk|agent|reception|night audit|bell|concierge/i.test(t) ? 'frontdesk' : /maint|engineer|tech/i.test(t) ? 'maintenance' : /manag|supervis|director|gm\b/i.test(t) ? 'manager' : null
+  const { data: staff } = await db.from('garden_staff').select('id,name,role,active')
+  const S = ((staff || []) as any[])
+  const et = (iso: string, what: 'date' | 'time') => what === 'date'
+    ? new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date(iso))
+    : new Intl.DateTimeFormat('en-GB', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso))
+  const rows: any[] = [], added: string[] = [], unmatched = new Set<string>()
+  for (const x of raw) {
+    const nested = pick(x, 'employee', 'user') || {}
+    const name = ([pick(x, 'first_name', 'firstName'), pick(x, 'last_name', 'lastName')].filter(Boolean).join(' ') || String(pick(nested, 'name', 'full_name') || '') || [pick(nested, 'first_name'), pick(nested, 'last_name')].filter(Boolean).join(' ')).trim()
+    const startAt = pick(x, 'start_at', 'starts_at', 'startAt'), endAt = pick(x, 'end_at', 'ends_at', 'endAt')
+    if (!name || !startAt) continue   // an open shift is nobody yet
+    const hbRole = roleOf(`${pick(x, 'role', 'position', 'job_role') || ''} ${pick(x, 'department', 'team') || ''}`)
+    let p = S.find(q => norm(q.name) === norm(name))
+    if (!p && hbRole) {
+      const ins = await db.from('garden_staff').insert({ name, role: hbRole, active: true, employment: 'contract', note: 'Added from the Homebase schedule' }).select('id,name,role,active').single()
+      if (ins.data) { p = ins.data; S.push(p); added.push(name) }
+    }
+    if (!p) { unmatched.add(name); continue }
+    rows.push({ date: et(String(startAt), 'date'), staff_id: p.id, role: hbRole || p.role, start_time: et(String(startAt), 'time'), end_time: endAt ? et(String(endAt), 'time') : '17:00', source: 'homebase', note: pick(x, 'role', 'position') ? String(pick(x, 'role', 'position')).slice(0, 80) : null })
+  }
+  // Replace the Homebase-made shifts in the window; hand-made ones stay, and win over a duplicate.
+  await db.from('garden_shifts').delete().eq('source', 'homebase').gte('date', from).lte('date', to)
+  const { data: manual } = await db.from('garden_shifts').select('date,staff_id').gte('date', from).lte('date', to)
+  const have = new Set(((manual || []) as any[]).map(m => `${m.date}|${m.staff_id}`))
+  const fresh = rows.filter(r => { const k = `${r.date}|${r.staff_id}`; if (have.has(k) || r.date < from || r.date > to) return false; have.add(k); return true })
+  for (let i = 0; i < fresh.length; i += 200) { const { error } = await db.from('garden_shifts').insert(fresh.slice(i, i + 200)); if (error) throw new Error(error.message) }
+  return { shifts: fresh.length, added, unmatched: Array.from(unmatched).slice(0, 30) }
+}
+
 /** Pull punches for [from, to] a week at a time, every hotel location, into garden_timecards. */
 export async function pullHbTimecards(from: string, to: string): Promise<{ cards: number; failedWeeks: string[] }> {
   const db = supabaseAdmin()
@@ -153,6 +200,8 @@ export async function syncGardenHomebase(opts: { full?: boolean } = {}): Promise
   const out: any = {}
   try { out.employees = await pullHbEmployees(); await mark('homebase_staff', { count: out.employees.total }) } catch (e: any) { out.employees = { error: String(e?.message || e) }; await mark('homebase_staff', { error: out.employees.error }) }
   try { out.timecards = await pullHbTimecards(from, today); await mark('homebase_timecards', out.timecards.failedWeeks.length ? { error: `${out.timecards.failedWeeks.length} week(s) failed: ${out.timecards.failedWeeks[0]}` } : { count: out.timecards.cards }) } catch (e: any) { out.timecards = { error: String(e?.message || e) }; await mark('homebase_timecards', { error: out.timecards.error }) }
+  // The schedule: today through a week out (the housekeeping board's "working" list).
+  try { const to7 = new Date(Date.now() + 7 * 864e5).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); out.shifts = await pullHbShifts(today, to7); await mark('homebase_shifts', { count: out.shifts.shifts }) } catch (e: any) { out.shifts = { error: String(e?.message || e) }; await mark('homebase_shifts', { error: out.shifts.error }) }
   return out
 }
 

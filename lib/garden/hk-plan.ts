@@ -71,7 +71,7 @@ export async function hkPlan(dateIn?: string) {
     db.from('garden_tasks').select('id,room_id,kind,status,assigned_to,started_at,finished_at').eq('date', date).in('kind', ['clean', 'stayover', 'inspection']).neq('status', 'cancelled'),
     db.from('garden_room_blocks').select('room_ids,kind,reason,start_date,end_date').lte('start_date', date).then(r => r, () => ({ data: [] as any[] })),
     db.from('garden_staff').select('id,name,role,active').eq('active', true).eq('role', 'housekeeping').order('name'),
-    db.from('garden_shifts').select('id,date,staff_id,role,start_time,end_time').gte('date', lo).lte('date', hi).eq('role', 'housekeeping').then(r => r, () => ({ data: [] as any[] })),
+    db.from('garden_shifts').select('id,date,staff_id,role,start_time,end_time,source').gte('date', lo).lte('date', hi).eq('role', 'housekeeping').then(r => r, () => ({ data: [] as any[] })),
   ])
   if (roomsQ.error) throw new Error(roomsQ.error.message)
   if (resQ.error) throw new Error(resQ.error.message)
@@ -171,12 +171,13 @@ export async function hkPlan(dateIn?: string) {
   // People: the hotel's housekeepers, who is on the schedule that day, and each one's load.
   const staff = ((staffQ.data || []) as any[])
   const SH = ((shiftsQ.data || []) as any[])
-  const shiftOf: Record<string, string> = {}; for (const x of SH) if (x.date === date) shiftOf[s(x.staff_id)] = s(x.id)
+  const shiftOf: Record<string, string> = {}, shiftSrc: Record<string, { source: string; hours: string }> = {}
+  for (const x of SH) if (x.date === date) { shiftOf[s(x.staff_id)] = s(x.id); shiftSrc[s(x.staff_id)] = { source: s(x.source) || 'manual', hours: `${s(x.start_time).slice(0, 5)}–${s(x.end_time).slice(0, 5)}` } }
   const onIds = new Set(Object.keys(shiftOf))
   const loadBy: Record<string, { rooms: number; minutes: number; done: number }> = {}
   for (const r of rows) if (r.assignedTo) { const l = loadBy[r.assignedTo] = loadBy[r.assignedTo] || { rooms: 0, minutes: 0, done: 0 }; l.rooms++; l.minutes += r.minutes; if (finished(r)) l.done++ }
-  const people: { id: string; name: string; onShift: boolean; shiftId: string | null; rooms: number; minutes: number; done: number }[] = staff.map(p => ({ id: s(p.id), name: s(p.name), onShift: onIds.has(s(p.id)), shiftId: shiftOf[s(p.id)] || null, ...(loadBy[p.name] || { rooms: 0, minutes: 0, done: 0 }) }))
-  for (const nm of Object.keys(loadBy)) if (!people.some(p => p.name === nm)) people.push({ id: 'cb:' + nm, name: nm, onShift: false, shiftId: null, ...loadBy[nm] })
+  const people: { id: string; name: string; onShift: boolean; shiftId: string | null; shiftFrom: string | null; hours: string | null; rooms: number; minutes: number; done: number }[] = staff.map(p => ({ id: s(p.id), name: s(p.name), onShift: onIds.has(s(p.id)), shiftId: shiftOf[s(p.id)] || null, shiftFrom: shiftSrc[s(p.id)]?.source || null, hours: shiftSrc[s(p.id)]?.hours || null, ...(loadBy[p.name] || { rooms: 0, minutes: 0, done: 0 }) }))
+  for (const nm of Object.keys(loadBy)) if (!people.some(p => p.name === nm)) people.push({ id: 'cb:' + nm, name: nm, onShift: false, shiftId: null, shiftFrom: null, hours: null, ...loadBy[nm] })
 
   // The week ahead, from the bookings: what each day holds, in rooms.
   const week: { date: string; turns: number; checkouts: number; stayovers: number; arrivals: number; rooms: number; minutes: number; need: number; scheduled: number }[] = []
@@ -191,6 +192,15 @@ export async function hkPlan(dateIn?: string) {
     week.push({ date: d, turns, checkouts, stayovers, arrivals: arrivals + turns, rooms: turns + checkouts + stayovers, minutes: m, need: m ? Math.max(1, Math.ceil(m / SHIFT_MINUTES)) : 0, scheduled: new Set(SH.filter(x => x.date === d).map(x => s(x.staff_id))).size })
   }
 
+  // Homebase: is the hotel's schedule coming from it?
+  let homebase: { connected: boolean; mode: string; at: string | null; error: string | null } = { connected: false, mode: 'none', at: null, error: null }
+  try {
+    const hb = await import('./homebase')
+    const mode = hb.hbMode().mode
+    const locs = mode === 'none' ? [] : await hb.gardenHbSettings().then(x => x.locationUuids)
+    const { data: st } = await db.from('garden_sync_status').select('last_sync_at,last_error').eq('entity', 'homebase_shifts').maybeSingle()
+    homebase = { connected: mode === 'own' || locs.length > 0, mode, at: (st as any)?.last_sync_at || null, error: (st as any)?.last_error || null }
+  } catch { /* not set up */ }
   const { data: sync } = await db.from('garden_sync_status').select('entity,last_sync_at,last_error').in('entity', ['reservations', 'housekeeping'])
   const syncAt = ((sync || []) as any[]).map(x => x.last_sync_at).filter(Boolean).sort()[0] || null
   return {
@@ -203,7 +213,7 @@ export async function hkPlan(dateIn?: string) {
       need: plannedAll ? Math.max(1, Math.ceil(plannedAll / SHIFT_MINUTES)) : 0,
       unassigned: n(r => open(r) && r.state !== 'inspect' && !r.assignedTo), rooms: rooms.length, outOfService: rooms.filter(r => oos.has(s(r.id)) || r.blocked).length,
     },
-    people, week, mismatches: live ? mismatches : [], notArrived, syncAt,
+    people, week, homebase, mismatches: live ? mismatches : [], notArrived, syncAt,
     syncError: ((sync || []) as any[]).map(x => x.last_error).filter(Boolean)[0] || null,
   }
 }
