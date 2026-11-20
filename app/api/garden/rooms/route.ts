@@ -20,7 +20,10 @@ export async function PATCH(req: NextRequest) {
     try { await setHousekeeping(roomId, condition) }
     catch (e: any) { return NextResponse.json({ ok: false, error: 'Cloudbeds refused: ' + String(e?.message || e).slice(0, 200) }, { status: 502 }) }
   }
+  const { data: before } = await supabaseAdmin().from('garden_rooms').select('name,hk_status,housekeeper').eq('id', roomId).maybeSingle()
   const { error } = await supabaseAdmin().from('garden_rooms').update({ hk_status: condition, hk_updated_at: new Date().toISOString() }).eq('id', roomId)
+  // Performance log (lib/garden/hk-perf): a clean / inspection marked here counts at the click.
+  if (!error && before) { try { const { logHk } = await import('@/lib/garden/hk-perf'); await logHk([{ roomId, roomName: (before as any).name, from: (before as any).hk_status || null, to: condition, housekeeper: (before as any).housekeeper || null }], 'lighthouse', gate.access.email || null) } catch { /* the room is set either way */ } }
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
   return NextResponse.json({ ok: true })
 }
