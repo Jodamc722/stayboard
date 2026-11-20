@@ -32,7 +32,7 @@ const KIND: Record<Kind, { label: string; chip: string; cls: string; edge: strin
 const KINDS: Kind[] = ['turn', 'checkout', 'stayover', 'arrival', 'dirty']
 const ORDER: Record<Kind, number> = { turn: 0, arrival: 1, checkout: 2, stayover: 3, dirty: 4 }
 const STATE: Record<string, { label: string; cls: string }> = {
-  waiting: { label: 'Guest still in', cls: 'bg-violet-50 text-violet-800' }, todo: { label: 'To clean', cls: 'bg-rose-50 text-rose-700' }, cleaning: { label: 'Cleaning', cls: 'bg-sky-50 text-sky-800' },
+  waiting: { label: 'Guest still in', cls: 'bg-[#f2f0fb] text-[#463a8a]' }, todo: { label: 'To clean', cls: 'bg-rose-50 text-rose-700' }, cleaning: { label: 'Cleaning', cls: 'bg-sky-50 text-sky-800' },
   inspect: { label: 'Clean · inspect', cls: 'bg-amber-50 text-amber-800' }, ready: { label: 'Ready', cls: 'bg-green-100 text-green-700' }, done: { label: 'Done', cls: 'bg-green-100 text-green-700' },
   skip: { label: 'Skip', cls: 'bg-neutral-100 text-neutral-600' }, planned: { label: 'Planned', cls: 'bg-neutral-100 text-neutral-600' },
 }
@@ -50,10 +50,12 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
   const [who, setWho] = useState('')
   const [sel, setSel] = useState<Record<string, boolean>>({})
   const [to, setTo] = useState('')
+  const [insp, setInsp] = useState('')
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState<{ t: string; warn?: boolean } | null>(null)
   const [railOpen, setRailOpen] = useState(false)
-  const [showDone, setShowDone] = useState(false)
+  const [showDone, setShowDone] = useState<Record<string, boolean>>({})
+  const [onlyInspect, setOnlyInspect] = useState<'' | 'todo' | 'done'>('')
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -66,14 +68,14 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
   const all: Row[] = useMemo(() => d?.rows || [], [d])
   const people: any[] = useMemo(() => d?.people || [], [d])
   const rows = useMemo(() => {
-    const a = all.filter(r => (kind === 'all' || r.type === kind) && (!onlyUnassigned || needsPerson(r)) && (!who || r.assignedTo === who))
+    const a = all.filter(r => (kind === 'all' || r.type === kind) && (!onlyInspect || (onlyInspect === 'todo' ? r.state === 'inspect' : r.condition === 'inspected' || !!r.inspectedAt)) && (!onlyUnassigned || needsPerson(r)) && (!who || r.assignedTo === who))
     const byRoom = (x: Row, y: Row) => x.room.localeCompare(y.room, undefined, { numeric: true })
     if (sortBy === 'wing') a.sort((x, y) => x.area.localeCompare(y.area, undefined, { numeric: true }) || byRoom(x, y))
     else if (sortBy === 'room') a.sort(byRoom)
     else if (sortBy === 'cleaner') a.sort((x, y) => (x.assignedTo ? 0 : 1) - (y.assignedTo ? 0 : 1) || String(x.assignedTo || '').localeCompare(String(y.assignedTo || '')) || byRoom(x, y))
     else a.sort((x, y) => Number(closed(x)) - Number(closed(y)) || ORDER[x.type as Kind] - ORDER[y.type as Kind] || byRoom(x, y))
     return a
-  }, [all, kind, onlyUnassigned, who, sortBy])
+  }, [all, kind, onlyUnassigned, onlyInspect, who, sortBy])
   // SECTIONS (Jon, 2026-11-20: "easier to delineate and understand"): the table is cut into bands —
   // by kind of clean in work order, or by wing / housekeeper when sorted that way — and everything
   // finished is folded into one band at the bottom.
@@ -82,12 +84,19 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
     const push = (key: string, title: string, hint: string, band: string, edge: string, r: Row, done = false) => { let g = out.find(x => x.key === key); if (!g) { g = { key, title, hint, band, edge, rows: [], done }; out.push(g) } g.rows.push(r) }
     for (const r of rows) {
       const K = KIND[r.type as Kind]
-      if (sortBy === 'priority') { if (closed(r)) push('done', 'Finished', 'Ready, done or skipped', 'bg-green-50 text-green-900', 'border-l-green-600', r, true); else push(r.type, K.chip, K.hint, K.band, K.edge, r) }
+      if (sortBy === 'priority') {
+        if (r.state === 'inspect') push('inspect', 'To inspect', 'Cleaned and waiting for an inspection. Rooms with a guest arriving today come first', 'bg-[#f2f0fb] text-[#3f3480]', 'border-l-[#7b6bd0]', r)
+        else if (r.state === 'ready') push('ready', 'Inspected · ready', 'Inspected and ready for the guest', 'bg-green-50 text-green-900', 'border-l-green-600', r, true)
+        else if (closed(r)) push('done', 'Finished', 'Stayovers serviced or skipped, and rooms the next guest is already in', 'bg-neutral-100 text-neutral-800', 'border-l-neutral-400', r, true)
+        else push(r.type, K.chip, K.hint, K.band, K.edge, r)
+      }
       else if (sortBy === 'wing') push(r.area, 'Rooms ' + r.area, '', 'bg-brand-50 text-brand-900', 'border-l-brand-600', r)
       else if (sortBy === 'cleaner') push(r.assignedTo || '—', r.assignedTo || 'Nobody yet', '', r.assignedTo ? 'bg-brand-50 text-brand-900' : 'bg-rose-50 text-rose-900', r.assignedTo ? 'border-l-brand-600' : 'border-l-rose-500', r)
       else push('all', 'All rooms', '', 'bg-brand-50 text-brand-900', 'border-l-brand-600', r)
     }
-    const done = out.filter(g => g.done); return [...out.filter(g => !g.done), ...done]
+    const insp = out.find(g => g.key === 'inspect'); if (insp) insp.rows.sort((a, b) => Number(!!b.in) - Number(!!a.in) || a.room.localeCompare(b.room, undefined, { numeric: true }))
+    const rank = (g: { key: string; done?: boolean }) => g.key === 'turn' ? 0 : g.key === 'inspect' ? 1 : g.key === 'ready' ? 8 : g.key === 'done' ? 9 : 2
+    return sortBy === 'priority' ? out.map((g, i) => ({ g, i })).sort((a, b) => rank(a.g) - rank(b.g) || a.i - b.i).map(x => x.g) : out
   }, [rows, sortBy])
   const selIds = Object.keys(sel).filter(k => sel[k])
   const pickable = rows.filter(r => !closed(r))
@@ -101,6 +110,15 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
     setBusy('')
     if (!r?.ok) setMsg({ t: r?.error || 'Could not assign.', warn: true })
     else { const c = String(r.cloudbeds || ''); setMsg({ t: `${ids.length} room${ids.length === 1 ? '' : 's'} ${name ? 'assigned to ' + name : 'unassigned'}.${cbNote(c)}`, warn: /refused|not known|kept/.test(c) }); setSel({}); setTo('') }
+    load(true)
+  }
+  const assignInspector = async (ids: string[], name: string | null) => {
+    if (!ids.length || !d) return
+    setBusy('insp'); setMsg(null)
+    const r = await send('/api/garden/assign', { op: 'inspector', date: d.date, roomIds: ids, to: name })
+    setBusy('')
+    setMsg(r?.ok ? { t: `${ids.length} room${ids.length === 1 ? '' : 's'}: ${name ? name + ' inspects' : 'no inspector'}.` } : { t: r?.error || 'Could not set the inspector.', warn: true })
+    if (r?.ok) { setSel({}); setInsp('') }
     load(true)
   }
   const autoAssign = async () => {
@@ -136,6 +154,8 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
   const unassignedCount = all.filter(needsPerson).length
   const unassignedMin = all.filter(needsPerson).reduce((a: number, r: Row) => a + r.minutes, 0)
   const names: string[] = people.map(p => p.name)
+  const inspectors: any[] = d.inspectors || []
+  const selInspect = selIds.filter(id => all.find(r => r.roomId === id)?.state === 'inspect')
   const verdict = need === 0 ? { t: 'No housekeeping work on this day.', cls: 'text-muted' }
     : working === 0 ? { t: `Nobody is marked working. The day needs ${need} housekeeper${need === 1 ? '' : 's'}.`, cls: 'text-rose-700 font-semibold' }
     : short ? { t: `Short ${need - working}: add ${need - working} housekeeper${need - working === 1 ? '' : 's'}.`, cls: 'text-rose-700 font-semibold' }
@@ -194,6 +214,9 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
         {KINDS.filter(k => s[k].total > 0).map(k => (
           <button key={k} onClick={() => setKind(k)} className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{KIND[k].chip} · {live ? `${s[k].done}/${s[k].total}` : s[k].total}</button>
         ))}
+        {live && (s.toInspect > 0 || s.inspected > 0) && <span className="w-px h-5 bg-line mx-0.5" />}
+        {live && s.toInspect > 0 && <button onClick={() => setOnlyInspect(v => v === 'todo' ? '' : 'todo')} title="Rooms cleaned and waiting for an inspection" className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${onlyInspect === 'todo' ? 'bg-[#5546a8] text-white border-[#5546a8]' : 'bg-[#f2f0fb] text-[#463a8a] border-[#cfc8ee]'}`}>To inspect · {s.toInspect}</button>}
+        {live && s.inspected > 0 && <button onClick={() => setOnlyInspect(v => v === 'done' ? '' : 'done')} title="Rooms inspected today" className={`text-[12px] font-semibold px-3 py-1.5 rounded-lg border ${onlyInspect === 'done' ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>Inspected · {s.inspected}</button>}
         {live && <span className="text-[12px] text-ink font-semibold ml-1">{fmtMins(s.minutes)} left · {s.arrivalsReady}/{s.arrivals} arrival rooms ready</span>}
         <label className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted">
           <ArrowDownUp size={13} /> Sort
@@ -266,6 +289,14 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                 {canEdit && <button onClick={autoAssign} disabled={!!busy} className="mt-1.5 w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12px] font-semibold hover:bg-brand-700 disabled:opacity-50" title="Splits the unassigned rooms across the people ticked as working, by time, wing by wing">{busy === 'auto' ? <RefreshCw size={12} className="animate-spin" /> : <Wand2 size={12} />} Auto-assign to the {crew.length || ''} working</button>}
               </div>
             )}
+            {live && (s.toInspect > 0 || s.inspected > 0) && (
+              <div className="px-3 py-2 border-b border-line/70">
+                <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1">Inspections</div>
+                <div className="flex items-baseline gap-2 text-[12px]"><button onClick={() => setOnlyInspect(v => v === 'todo' ? '' : 'todo')} className={'font-semibold hover:underline ' + (s.toInspect ? 'text-[#463a8a]' : 'text-muted')}>{s.toInspect} to inspect</button><span className="text-muted">·</span><button onClick={() => setOnlyInspect(v => v === 'done' ? '' : 'done')} className="font-semibold text-green-700 hover:underline">{s.inspected} inspected</button></div>
+                {s.inspectorless > 0 && <div className="text-[11px] text-[#463a8a] mt-0.5">{s.inspectorless} with no inspector yet</div>}
+                {inspectors.filter((x: any) => x.todo || x.done).map((x: any) => <div key={x.name} className="flex items-center gap-2 text-[12px] mt-1"><span className="truncate text-ink">{x.name}</span><span className="ml-auto tabular-nums text-muted">{x.done} done · {x.todo} to do</span></div>)}
+              </div>
+            )}
             {off.length > 0 && (
               <div className="px-3 py-2">
                 <div className="text-[10px] uppercase tracking-wider font-semibold text-muted mb-1">{canSchedule ? 'Not working — tick to add' : 'Not working'}</div>
@@ -299,15 +330,16 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                   </tr>
                 </thead>
                 <tbody className="block sm:table-row-group">
-                  {groups.map(g => { const folded = !!g.done && !showDone; const mins = g.rows.reduce((a, r) => a + r.minutes, 0), noOne = g.rows.filter(needsPerson).length; return (<Fragment key={g.key}>
+                  {groups.map(g => { const folded = !!g.done && !showDone[g.key] && !(onlyInspect === 'done' && g.key === 'ready'); const mins = g.rows.reduce((a, r) => a + r.minutes, 0), noOne = g.rows.filter(needsPerson).length; return (<Fragment key={g.key}>
                     <tr className={'block sm:table-row border-t-[6px] border-app ' + g.band}>
                       <td colSpan={6} className={'block sm:table-cell px-3 py-2 border-l-4 ' + g.edge}>
                         <div style={{ width: 0, minWidth: '100%' }} className="flex items-center gap-x-3 gap-y-0.5 flex-wrap">
                           <span className="gh-display text-[13px] font-bold tracking-wide uppercase">{g.title}</span>
                           <span className="text-[12px] font-semibold tabular-nums">{g.rows.length} room{g.rows.length === 1 ? '' : 's'}{mins ? ' · ' + fmtMins(mins) : ''}</span>
                           {noOne > 0 && <span className="text-[11px] font-bold text-rose-700 bg-white/70 rounded-full px-2 py-0.5">{noOne} need a housekeeper</span>}
+                          {g.key === 'inspect' && g.rows.some(r => !r.inspector) && <span className="text-[11px] font-bold text-[#463a8a] bg-white/70 rounded-full px-2 py-0.5">{g.rows.filter(r => !r.inspector).length} with no inspector</span>}
                           {g.hint && <span className="text-[11.5px] opacity-80">{g.hint}</span>}
-                          {g.done ? <button onClick={() => setShowDone(v => !v)} className="np ml-auto text-[11.5px] font-semibold underline underline-offset-2">{showDone ? 'Hide' : 'Show'}</button>
+                          {g.done ? <button onClick={() => setShowDone(v => ({ ...v, [g.key]: !v[g.key] }))} className="np ml-auto text-[11.5px] font-semibold underline underline-offset-2">{showDone[g.key] ? 'Hide' : 'Show'}</button>
                             : canEdit ? <button onClick={() => setSel(p => { const n = { ...p }; const ids = g.rows.filter(r => !closed(r)).map(r => r.roomId); const allOn = ids.every(i => n[i]); ids.forEach(i => { if (allOn) delete n[i]; else n[i] = true }); return n })} className="np ml-auto text-[11.5px] font-semibold underline underline-offset-2">Select these</button> : null}
                         </div>
                       </td>
@@ -330,21 +362,30 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                             </select>
                           ) : null}
                           <span className={canEdit ? 'hidden print:inline font-semibold' : 'font-semibold'}>{r.assignedTo || (closed(r) ? '' : '________')}</span>
+                          {r.state === 'inspect' && canEdit ? (
+                            <select value={r.inspector || ''} disabled={!!busy} onChange={e => assignInspector([r.roomId], e.target.value || null)} title="Who inspects this room"
+                              className={'np mt-1 w-full max-w-[11rem] text-[11.5px] rounded-lg border px-2 py-0.5 outline-none ' + (r.inspector ? 'border-[#cfc8ee] bg-[#f2f0fb] text-[#3f3480] font-semibold' : 'border-[#cfc8ee] bg-white text-[#5546a8]')}>
+                              <option value="">Inspector…</option>
+                              {r.inspector && !inspectors.some((x: any) => x.name === r.inspector) ? <option value={r.inspector}>{r.inspector}</option> : null}
+                              {inspectors.map((x: any) => <option key={x.name} value={x.name}>{x.name}{x.role === 'manager' ? ' · mgmt' : ''}</option>)}
+                            </select>
+                          ) : r.inspector && !r.inspectedAt && r.state !== 'ready' ? <div className="text-[10.5px] text-[#463a8a] mt-0.5">inspects: {r.inspector}</div> : null}
                         </td>
                         <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink">
                           <span className="text-[14px] font-bold tabular-nums">{r.room}</span>
                           {r.type === 'turn' ? <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> same-day turn</span> : <span className={'ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ' + K.cls}>{K.label}</span>}
                           {tags.map((t: any) => <span key={t.key} className="ml-1 inline-block whitespace-nowrap text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">{t.label}</span>)}
-                          {r.dnd && r.state !== 'skip' ? <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">DND</span> : null}
+                          {r.dnd && r.state !== 'skip' ? <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[#f2f0fb] text-[#5546a8]">DND</span> : null}
                           <div className="text-[10.5px] font-normal text-muted truncate max-w-[15rem]">{r.roomType || r.area}{r.comments ? ` · ${r.comments}` : ''}</div>
                         </td>
                         <td className="order-3 shrink-0 sm:table-cell px-2 py-1.5 align-middle text-right tabular-nums text-muted whitespace-nowrap">{r.minutes ? fmtMins(r.minutes) : '—'}</td>
                         <td className="order-5 basis-full sm:table-cell px-2.5 py-1.5 align-middle text-ink">
-                          {r.out && <div className="flex items-center gap-1 whitespace-nowrap"><LogOut size={11} className="text-muted shrink-0" /><span className="truncate max-w-[12rem]">{r.out.name}</span>{live && <span className={'text-[10.5px] font-semibold ' + (r.out.status === 'checked_out' ? 'text-green-700' : 'text-violet-700')}>{r.out.status === 'checked_out' ? 'left' : 'still in'}</span>}</div>}
+                          {r.out && <div className="flex items-center gap-1 whitespace-nowrap"><LogOut size={11} className="text-muted shrink-0" /><span className="truncate max-w-[12rem]">{r.out.name}</span>{live && <span className={'text-[10.5px] font-semibold ' + (r.out.status === 'checked_out' ? 'text-green-700' : 'text-[#5546a8]')}>{r.out.status === 'checked_out' ? 'left' : 'still in'}</span>}</div>}
                           {r.in && <div className="flex items-center gap-1 whitespace-nowrap"><LogIn size={11} className="text-muted shrink-0" /><span className="truncate max-w-[12rem]">{r.in.name}</span><span className="text-[10.5px] text-muted">{r.in.people} guest{r.in.people === '1' ? '' : 's'} · {r.in.nights ?? '?'} nt{live && r.in.status === 'checked_in' ? ' · arrived' : ''}</span></div>}
                           {r.stay && <div className="flex items-center gap-1 whitespace-nowrap"><Moon size={11} className="text-muted shrink-0" /><span className="truncate max-w-[12rem]">{r.stay.name}</span><span className="text-[10.5px] text-muted">night {r.stay.night} of {r.stay.nights ?? '?'} · leaves {dayShort(r.stay.checkOut)}</span></div>}
                           {r.type === 'dirty' && <span className="text-muted">Empty, no booking today</span>}
                           {r.flag && <div className="text-[10.5px] font-semibold text-amber-700">{r.flag}</div>}
+                          {(r.inspectedAt || (r.state === 'ready' && r.inspector)) && <div className="text-[10.5px] text-green-700">inspected{r.inspectedAt ? ' ' + new Date(r.inspectedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''}{r.inspectedBy || r.inspector ? ' · ' + (r.inspectedBy || r.inspector) : ''}</div>}
                         </td>
                         <td className="order-6 basis-full sm:table-cell px-2.5 py-1.5 align-middle sm:w-[12.5rem]">
                           <span className={'inline-block whitespace-nowrap text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ' + st.cls}>{r.state === 'skip' ? (r.skipWhy || 'Skip') : st.label}</span>
@@ -381,6 +422,12 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                 {crew.length > 0 && <optgroup label="Working">{crew.map(p => <option key={p.name} value={p.name}>{p.name} · {fmtMins(p.minutes)}</option>)}</optgroup>}
                 <optgroup label={crew.length ? 'Not working' : 'Housekeepers'}>{people.filter(p => !p.onShift).map(p => <option key={p.name} value={p.name}>{p.name}</option>)}</optgroup>
               </select>
+              {selInspect.length > 0 && (
+                <select value={insp} onChange={e => { setInsp(e.target.value); if (e.target.value) assignInspector(selInspect, e.target.value) }} className="sm:w-36 text-[12px] rounded-lg border border-[#cfc8ee] bg-[#f2f0fb] text-[#3f3480] px-2 py-1.5 outline-none" title={`Give the ${selInspect.length} cleaned room${selInspect.length === 1 ? '' : 's'} picked to an inspector`}>
+                  <option value="">Inspector for {selInspect.length}…</option>
+                  {inspectors.map((x: any) => <option key={x.name} value={x.name}>{x.name}</option>)}
+                </select>
+              )}
               <button onClick={() => assign(selIds, to)} disabled={!to || !!busy} className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-brand-600 text-white px-3.5 py-1.5 text-[13px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'assign' ? <RefreshCw size={14} className="animate-spin" /> : <UploadCloud size={14} />} {live ? `Push ${selIds.length} to Cloudbeds` : `Assign ${selIds.length}`}</button>
             </div>
           </div>

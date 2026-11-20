@@ -42,7 +42,7 @@ export function GardenHKPerformance() {
 
       {!d.daysTracked ? <LeanEmpty>Nothing logged yet. The first numbers appear after the next Cloudbeds sync that sees a room cleaned.</LeanEmpty> : (<>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 mb-4">
-          <Kpi label="Rooms cleaned" value={String(k.roomsCleaned)} sub={`${k.hours} h of work credited`} />
+          <Kpi label="Rooms cleaned" value={String(k.roomsCleaned)} sub={`${k.hours} h credited · ${d.inspections?.logged ?? 0} inspected`} />
           <Kpi label="Rooms per person per day" value={k.roomsPerPersonDay == null ? '—' : String(k.roomsPerPersonDay)} sub="rooms with a named housekeeper" />
           <Kpi label="Arrival rooms ready on time" value={pct(k.arrivalOnTimePct)} tone={grade(k.arrivalOnTimePct, 95, 80)} sub={`by ${t12(d.checkIn)} check-in · ${k.arrivalRoomsLogged} rooms`} />
           <Kpi label="Checkouts turned same day" value={pct(k.checkoutPct)} tone={grade(k.checkoutPct, 95, 85)} sub="finished days only" />
@@ -66,15 +66,26 @@ export function GardenHKPerformance() {
           </table>
         </div>
 
+        {d.inspections?.byPerson?.length ? (<>
+          <h2 className="text-[12px] font-bold uppercase tracking-wider text-ink mb-1 px-1">Inspections <span className="font-normal normal-case tracking-normal text-muted">· {d.inspections.logged} rooms inspected in the period</span></h2>
+          <div className="rounded-xl border border-line bg-white overflow-x-auto mb-4">
+            <table className="w-full text-[12.5px] tabular-nums">
+              <thead className="text-[10.5px] uppercase tracking-wider text-muted"><tr className="border-b border-line">{['Inspector', 'Given', 'Inspected', 'Done'].map(h => <th key={h} className={'px-3 py-2 font-semibold ' + (h === 'Inspector' ? 'text-left' : 'text-right')}>{h}</th>)}</tr></thead>
+              <tbody>{d.inspections.byPerson.map((p: any) => <tr key={p.name} className="border-b border-line/60 last:border-0"><td className="px-3 py-1.5 font-semibold text-ink">{p.name}</td><td className="px-3 py-1.5 text-right">{p.assigned}</td><td className="px-3 py-1.5 text-right font-semibold">{p.done}</td><td className="px-3 py-1.5 text-right">{p.assigned ? Math.round((p.done / p.assigned) * 100) + '%' : '—'}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </>) : null}
+
         <h2 className="text-[12px] font-bold uppercase tracking-wider text-ink mb-1 px-1">By day <span className="font-normal normal-case tracking-normal text-muted">· needed vs scheduled vs who cleaned</span></h2>
         <div className="rounded-xl border border-line bg-white overflow-x-auto">
           <table className="w-full text-[12.5px] tabular-nums">
-            <thead className="text-[10.5px] uppercase tracking-wider text-muted"><tr className="border-b border-line">{['Day', 'Turns', 'Checkouts', 'Stayovers', 'Rooms cleaned', 'Needed', 'Scheduled', 'Cleaned by', 'Arrival rooms ready', 'Last turn ready', ''].map(h => <th key={h} className={'px-3 py-2 font-semibold ' + (h === 'Day' ? 'text-left' : 'text-right')}>{h}</th>)}</tr></thead>
+            <thead className="text-[10.5px] uppercase tracking-wider text-muted"><tr className="border-b border-line">{['Day', 'Turns', 'Checkouts', 'Stayovers', 'Rooms cleaned', 'Inspected', 'Needed', 'Scheduled', 'Cleaned by', 'Arrival rooms ready', 'Last turn ready', ''].map(h => <th key={h} className={'px-3 py-2 font-semibold ' + (h === 'Day' ? 'text-left' : 'text-right')}>{h}</th>)}</tr></thead>
             <tbody>{d.days.map((x: any) => (
               <tr key={x.date} className="border-b border-line/60 last:border-0">
                 <td className="px-3 py-1.5 font-semibold text-ink whitespace-nowrap">{dayShort(x.date)}{x.inProgress ? <span className="ml-1"><Tag tone="brand">today</Tag></span> : null}</td>
                 <td className="px-3 py-1.5 text-right">{frac(x.turns)}</td><td className="px-3 py-1.5 text-right">{frac(x.checkouts)}</td><td className="px-3 py-1.5 text-right">{frac(x.stayovers)}{x.stayovers?.skip ? <span className="text-muted"> · {x.stayovers.skip} skip</span> : null}</td>
                 <td className="px-3 py-1.5 text-right font-semibold">{x.cleaned}</td>
+                <td className="px-3 py-1.5 text-right">{x.inspected ?? 0}</td>
                 <td className="px-3 py-1.5 text-right">{x.need ?? '—'}</td>
                 <td className={'px-3 py-1.5 text-right ' + (x.need != null && x.scheduled < x.need ? 'text-rose-700 font-semibold' : '')}>{x.scheduled}</td>
                 <td className="px-3 py-1.5 text-right">{x.worked}</td>
