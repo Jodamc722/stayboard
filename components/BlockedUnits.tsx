@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, RefreshCw, Link2, Download } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn, Clamp } from '@/components/lean'
+import { lossText } from '@/lib/signal'
 
 type Run = {
   listingId: string; unit: string; building: string; market: string
@@ -23,6 +24,8 @@ type Run = {
   reason: string; note: string | null; keys: string[]
   guestyLabel: string | null; createdBy: string | null; createdAt: string | null; blockEnd: string | null; blockStart?: string | null
   linked: boolean; alsoBlocks: string[]
+  // SIGNAL (Jon, 2026-11-20): what the block costs — the building's nightly rate × nights blocked in the window.
+  rate?: number | null; lostUsd?: number; tier?: 'high' | 'standard' | 'partner'
 }
 type CalRow = { listingId: string; unit: string; building: string; market: string; cells: string }
 type Data = {
@@ -66,6 +69,9 @@ function RunRow({ r, auto, standing }: { r: Run; auto?: boolean; standing?: bool
         : <Tag title="Still blocked on the last day in this window — the end date is unknown">No end date</Tag>) : null}
       <Tag title={'Block in Guesty: ' + dFull(r.blockStart || r.from) + ' → ' + (r.blockEnd ? dFull(r.blockEnd) : r.openEnded ? 'no end date' : dFull(r.to))}>{r.nights}n · {r.openEnded ? dNice(r.from) + '…' : dNice(r.from) + '–' + dNice(r.to)}</Tag>
       {r.alsoBlocks.length ? <Tag tone={standing ? 'slate' : 'amber'} title={'Also unsellable while this is down: ' + r.alsoBlocks.join(', ')}>+{r.alsoBlocks.length} linked</Tag> : null}
+      {/* SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+          The dollars this block costs, in plain words, on the rows work can reopen. */}
+      {!auto && !standing && lossText(r.lostUsd || 0) ? <Tag title={'An estimate: ' + r.building + ' averages $' + (r.rate || 0) + ' a night over the last 12 months, times the ' + r.nights + ' night' + (r.nights === 1 ? '' : 's') + ' blocked in this window'}>{r.tier === 'high' ? 'High · ' : ''}{lossText(r.lostUsd || 0)}</Tag> : null}
     </>}>
     {r.note ? <Clamp text={r.note.replace(/\s+/g, ' ')} lines={3} /> : null}
     <p className="text-[11.5px] text-muted">{r.reason}{r.building ? ' · ' + r.building : ''}{r.market ? ' · ' + r.market : ''}{r.createdBy ? ' · blocked by ' + r.createdBy.split('@')[0] : ''}{r.createdAt ? ' on ' + dNice(r.createdAt.slice(0, 10)) : ''}</p>
@@ -251,13 +257,18 @@ export function BlockedUnits() {
     return all.filter(r => (market === 'all' || r.market === market) && (!onlyLive || r.live))
   }, [data, market, onlyLive])
   // Two lists: what work can reopen, and the standing blocks nobody chases day to day.
-  const runs = useMemo(() => inView.filter(r => !isStanding(r)), [inView])
+  // SIGNAL (Jon, 2026-11-20): "To reopen" reads costliest first (nightly rate × nights blocked); equal
+  // figures keep the server's order (down now, then longest). Standing blocks keep their order.
+  const runs = useMemo(() => inView.filter(r => !isStanding(r)).map((r, i) => ({ r, i })).sort((a, b) => (b.r.lostUsd || 0) - (a.r.lostUsd || 0) || a.i - b.i).map(x => x.r), [inView])
   const standing = useMemo(() => inView.filter(isStanding), [inView])
   // The header counts the whole portfolio (not the market filter), so it always adds up to "down now".
   const head = useMemo(() => {
     const live = (data?.runs || []).filter(r => r.live)
-    const fix = live.filter(r => !isStanding(r)).length
-    return { fix, standing: live.length - fix }
+    const fixable = live.filter(r => !isStanding(r))
+    const fix = fixable.length
+    // SIGNAL (Jon, 2026-11-20): the header leads with what the fixable-now blocks cost in this window.
+    const lost = fixable.reduce((a, r) => a + (r.lostUsd || 0), 0)
+    return { fix, standing: live.length - fix, lost }
   }, [data])
 
   const markets = useMemo(() => Object.keys(data?.byMarket || {}).sort(), [data])
@@ -279,7 +290,7 @@ export function BlockedUnits() {
       <LeanHead title="Blocked Units">
         {data ? <>
           {/* CLEAN-UP (Jon, 2026-11-20): the first number is the one to act on; "N checked" was a count nobody acts on (now in the hover). */}
-          <Pill tone={head.fix ? 'rose' : 'slate'} title="Down today and not a standing block: a repair, a clean, or a block nobody explained. These are the ones work can reopen.">{head.fix} to reopen now</Pill>
+          <Pill tone={head.fix ? 'rose' : 'slate'} title="Down today and not a standing block: a repair, a clean, or a block nobody explained. These are the ones work can reopen. The dollar figure is each building's average nightly rate times the nights blocked in this window.">{head.fix} to reopen now{head.fix && lossText(head.lost) ? ' · ' + lossText(head.lost) : ''}</Pill>
           <Pill title="Down today on a standing block: owner use, do not sell, offboarding, a long-term tenant">{head.standing} standing</Pill>
           <Pill tone={data.upcoming ? 'amber' : 'slate'} title={'Blocks starting within ' + data.days + ' days'}>{data.upcoming} starting</Pill>
           <Pill title={'Nights never offered for sale in the next ' + data.days + ' days, across ' + data.listingsChecked + ' active listings read from Guesty. Reservations, booking-window and advance-notice flags are excluded: only inventory a person took off the market.'}>{data.nightsBlocked} nights</Pill>

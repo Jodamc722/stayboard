@@ -16,7 +16,7 @@ import { upcomingAutoInspections } from '@/lib/auto-inspections'
 import { getNoService, skipsInspectionsIn } from '@/lib/no-service'
 import { getShifts, nameMatches } from '@/lib/homebase'
 import { translator, type BriefLang } from '@/lib/brief-lang'
-import { guestsToKnow, guestTags } from './guests'
+import { guestsToKnow, guestTags, isGuestToKnow, type GuestFlag } from './guests'
 import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, crewOf, unitShort, personName, crewNote, isOfficeLike, type Line } from './ui'
 
 export type FieldMarket = 'Miami' | 'Broward'
@@ -69,7 +69,7 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   const unassigned = cleans.filter(c => /UNASSIGNED/.test(c.assignee))
   const sameDay = cleans.filter(c => c.sameDayArrival && c.state !== 'done')
   const walkIns = arrivals.filter(a => a.bookedToday || a.bookedAfterSync)
-  const flags: Record<string, { long: boolean; big: boolean; owner: boolean; total: number; nights: number }> = (d as any).todayFlags || {}
+  const flags: Record<string, GuestFlag> = (d as any).todayFlags || {}
   const office = new Set((d.officeNames || []) as string[])
   const isOffice = (n: string) => isOfficeLike(n) || Array.from(office).some(o => nameMatches(o, n))
   const deptMap: Record<string, string> = d.deptOfPerson || {}
@@ -80,7 +80,8 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
   // A welcome-call log is not a crew instruction: it stays on the reservation, off the Field Run.
   const noteOf = (lid: string) => { const raw = str((d.arrivalNotes || {})[lid]); return /welcome call by talkroute/i.test(raw) ? '' : crewNote(raw) }
   const timeOf = (lid: string) => str(arrivalByLid[lid]?.checkInTime || '4:00 PM')
-  const isVip = (lid: string) => !!(flags[lid]?.long || flags[lid]?.big || flags[lid]?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking')
+  // SIGNAL (Jon, 2026-11-20): a guest to know is a priority booking by the one rule (lib/signal.ts).
+  const isVip = (lid: string) => isGuestToKnow(flags[lid]) || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking'
   const vipWhy = (lid: string) => guestTags({ ...(flags[lid] || {}), owner: !!flags[lid]?.owner || str(arrivalByLid[lid]?.ownerFlag) === 'owner booking' }, pick)
 
   // Inspections pending: Lighthouse's arrival inspections (window: today + tomorrow), bad-review

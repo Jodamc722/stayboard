@@ -15,6 +15,7 @@ import type { InboxItem, WaitInfo, LastInfo, StayInfo } from '@/components/Messa
 import { cleanGuestName } from '@/lib/guest-name'
 import { readInboxState } from '@/lib/inbox-state'
 import { effectiveState, markTime, type InboxStateMap } from '@/lib/inbox-queue'
+import { priorityByReservation, priorityFromCache } from '@/lib/booking-priority'
 
 const HOUR_MS = 60 * 60 * 1000
 const CONVO_COLS = 'id, reservation_id, listing_id, guest_name, channel, last_message_at, last_message_preview, unread_count'
@@ -226,6 +227,17 @@ export async function loadInbox(): Promise<InboxData> {
   const resNameById: Record<string, string> = {}
   for (const r of stays) if (r.guest_name) resNameById[String(r.id)] = String(r.guest_name)
   for (const r of stays) stayById[String(r.id)] = { checkIn: r.check_in ? String(r.check_in).slice(0, 10) : null, checkOut: r.check_out ? String(r.check_out).slice(0, 10) : null, status: r.status ? String(r.status) : null }
+  // SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+  // Which of these stays is a priority booking — kept fifteen minutes per reservation, so a poll
+  // reads only the bookings it has not seen. Stays that are over are not asked about. Capped at four
+  // seconds: a slow lookup never holds the inbox — it falls back to what is already known, and the
+  // tag arrives on the next poll.
+  try {
+    const todayEt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+    const liveIds = Object.keys(stayById).filter(id => { const s = stayById[id]; return !!s.checkIn && (!s.checkOut || s.checkOut >= todayEt) && !/cancel|declin|expired/i.test(String(s.status || '')) })
+    const pri = await Promise.race([priorityByReservation(liveIds), new Promise<Record<string, { priority: boolean; why: string }>>(res => setTimeout(() => res(priorityFromCache(liveIds)), 4000))])
+    for (const id of Object.keys(pri)) if (pri[id].priority && stayById[id]) { stayById[id].priority = true; stayById[id].priorityWhy = pri[id].why }
+  } catch { /* rows read without the tag */ }
 
   const unitById: Record<string, string> = {}
   // The listing's own nickname ("Arya 1002", "17WEST 1203") — a bare number said nothing about which building.

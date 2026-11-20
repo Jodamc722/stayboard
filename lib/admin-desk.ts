@@ -30,6 +30,7 @@ import { isJunkCaption } from './photo-order'
 import { pageRows } from './db-page'
 import { RULES, isCombined, unitToken, type AdminRow, type ChannelCellLite } from './admin-desk-shared'
 import { otaLinksFrom } from './ota-links'
+import { getTiers, tierOfListing } from './property-tier'
 
 export const ADMIN_DESK_CACHE_TAG = 'admin-desk'
 
@@ -62,6 +63,9 @@ export function captionStats(pictures: any): { count: number; noCaption: number 
 async function assemble(): Promise<AdminDesk> {
   const sb = supabaseAdmin()
   const today = ymd(new Date())
+  // SIGNAL (Jon, 2026-11-20: "delineate a low-income property versus a high-income property"): each
+  // row carries its building's tier, the tie-break on the stopped-selling list. Never throws.
+  const tiers = await getTiers()
   const since365 = new Date(Date.now() - 365 * 86400000).toISOString()
 
   // Listings — the optimize score's slim fields (the same list /api/listing-health selects) plus the
@@ -228,6 +232,7 @@ async function assemble(): Promise<AdminDesk> {
     const ps = (l.photo_score && typeof l.photo_score === 'object') ? l.photo_score : (l.rawPs && typeof l.rawPs === 'object' ? l.rawPs : null)
     return {
       id, name, building, market, active, guestyStatus: str(l.status) || '(none)',
+      tier: tierOfListing(tiers, id, str(l.building), name).tier,
       channels, verdict: h ? h.verdict : 'missing',
       links: (() => { const m: Record<string, string> = {}; const key: Record<string, string> = { Airbnb: 'airbnb2', Vrbo: 'homeaway2', 'Booking.com': 'bookingCom', Expedia: 'expedia' }; for (const o of otaLinksFrom({ integrations: l.rawInts })) if (key[o.name]) m[key[o.name]] = o.url; return m })(),
       score,

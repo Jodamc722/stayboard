@@ -33,7 +33,8 @@ import { compareQueue, effectiveState, etDay, markTime, phaseTier, stayPhase, ty
 /** Who wrote the newest message in a thread: the guest, a named teammate, a Guesty template, or an internal note. */
 export type LastInfo = { who: 'guest' | 'team' | 'auto' | 'note'; name: string | null; module: string | null; text?: string | null }
 /** The booking behind a thread. */
-export type StayInfo = { checkIn: string | null; checkOut: string | null; status: string | null }
+// SIGNAL (Jon, 2026-11-20): `priority` = a priority booking by the one rule (lib/signal.ts); `priorityWhy` is the hover.
+export type StayInfo = { checkIn: string | null; checkOut: string | null; status: string | null; priority?: boolean; priorityWhy?: string }
 export type InboxConvo = {
   id: string; guest_name: string | null; channel: string; listing_id: string | null
   last_message_at: string | null; last_message_preview: string | null; unread_count: number | null
@@ -139,7 +140,7 @@ export function MessagesInbox({ items, unitById, waiting, lastResponderById, now
       }
       const w = waiting[it.c.id]
       const since = Date.parse(String((w && w.since) || it.at))
-      return { tier: phaseTier(stayPhase(it.c.stay, today)), unhappy: isUnhappy(sentById[it.c.id]), since, at: Number.isFinite(at) ? at : 0 }
+      return { tier: phaseTier(stayPhase(it.c.stay, today)), unhappy: isUnhappy(sentById[it.c.id]), since, at: Number.isFinite(at) ? at : 0, priority: !!it.c.stay?.priority }
     }
     const work: { it: InboxItem; k: QueueKey }[] = []
     const parked: InboxItem[] = []
@@ -378,6 +379,8 @@ const ConvoLine = memo(function ConvoLine({ c, unit, wait, now, lastBy, sentimen
       tags={<>
         <Tag>{CHANNEL_LABELS[String(c.channel || '').toLowerCase()] || c.channel}</Tag>
         <StayTag stay={c.stay} now={now} />
+        {/* SIGNAL (Jon, 2026-11-20: "priority bookings versus non-priority"): a plain tag, no new colour. */}
+        {c.stay?.priority && !/cancel/i.test(String(c.stay.status || '')) ? <Tag title={'Priority booking' + (c.stay.priorityWhy ? ': ' + c.stay.priorityWhy : '')}>Priority</Tag> : null}
         {wait && !parked && <WaitTag wait={wait} now={now} />}
         <MarkTags mark={mark} />
         {unread > 0 && <Tag tone="brand" title={`${unread} unread message${unread === 1 ? '' : 's'} — Guesty's own read flag`}>{unread} unread</Tag>}

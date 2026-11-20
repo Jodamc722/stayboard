@@ -28,6 +28,8 @@ import { ChannelConnections } from '@/components/ChannelConnections'
 import { LeanHead, Pill, Tag, LeanTabs, LeanSection, LeanList, LeanRow, LeanEmpty, IconBtn, LeanPick, Tip, type Tone } from '@/components/lean'
 import { TILES, tileCounts, rowInTile, worklist, channelCounts, rowWeight, optimizeState, photoFlags, performance, coverVerdict, agoShort, RULES, channelLabel, type AdminRow, type TileKey, type WorkItem, type Severity } from '@/lib/admin-desk-shared'
 import { VERDICT_LABEL, type CellVerdict } from '@/lib/channel-types'
+import { tierRank } from '@/lib/signal'
+import { isMajorChannel } from '@/lib/admin-desk-shared'
 import { CopyAuditTab } from '@/components/CopyAuditTab'
 import { AdminBaseRates } from '@/components/AdminBaseRates'
 
@@ -173,15 +175,17 @@ function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading
   const [all, setAll] = useState(false)
   const [allStopped, setAllStopped] = useState(false)
   // STOPPED SELLING, ranked by what is being lost: bookings that channel sent this listing in the last
-  // 90 days, then how recently it last booked there. (A ranking by building income waits for the
-  // property tier; this one uses only what the row already knows.)
+  // 90 days, then the building's tier (High first), then how recently it last booked there.
   const stopped = useMemo(() => {
     const byId = new Map(rows.map(r => [r.id, r]))
     return work.filter(isStopped).map(w => {
       const r = byId.get(w.listingId)
       const cell = r && w.channel ? r.channels[w.channel] : undefined
-      return { w, cell, url: (cell && cell.url) || (r && w.channel ? (r.links || {})[w.channel] : '') || '' }
+      return { w, cell, tier: r?.tier, url: (cell && cell.url) || (r && w.channel ? (r.links || {})[w.channel] : '') || '' }
+    // SIGNAL (Jon, 2026-11-20: "delineate a low-income property versus a high-income property"): still
+    // most bookings lost first; where two lost the same, the High-income building comes first.
     }).sort((a, b) => ((b.cell?.bookings90d || 0) - (a.cell?.bookings90d || 0))
+      || tierRank(a.tier) - tierRank(b.tier)
       || String(b.cell?.lastBookingAt || '').localeCompare(String(a.cell?.lastBookingAt || ''))
       || a.w.building.localeCompare(b.w.building) || a.w.name.localeCompare(b.w.name, undefined, { numeric: true }))
   }, [work, rows])
@@ -198,11 +202,11 @@ function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading
         right={stopped.length ? <span className="text-[11px] text-muted">{stopped.length !== counts.notForSale ? stopped.length + ' channel connections on ' + counts.notForSale + ' listings · ' : ''}most bookings lost first</span> : undefined}>
         {loading ? <LeanEmpty>Reading the portfolio…</LeanEmpty> : stopped.length === 0 ? <LeanEmpty>Nothing that was selling has stopped.</LeanEmpty> : (
           <LeanList>
-            {stoppedShown.map(({ w, cell, url }) => (
+            {stoppedShown.map(({ w, cell, url, tier }) => (
               <LeanRow key={w.listingId + ':' + (w.channel || '')}
                 lead={<Link href={here(w.href)} className={btn} title={w.why}>{w.verb}</Link>}
                 name={w.name} meta={<>{w.building ? w.building + ' · ' : ''}{w.title}{cell?.since ? ' · since ' + shortDay(cell.since) : ''}</>}
-                tags={cell ? <Tag title={'Bookings ' + channelLabel(w.channel || '') + ' sent this listing in the last 90 days' + (cell.lastBookingAt ? ' · last one ' + String(cell.lastBookingAt).slice(0, 10) : ' · none in 12 months')}>{cell.bookings90d ? cell.bookings90d + ' booked in 90d' : cell.lastBookingAt ? 'last booked ' + shortDay(cell.lastBookingAt) : 'never booked there'}</Tag> : undefined}
+                tags={cell ? <>{tier === 'high' ? <Tag title="High-income building: $150 a night or more over the last 12 months, or flagged">High</Tag> : null}<Tag title={'Bookings ' + channelLabel(w.channel || '') + ' sent this listing in the last 90 days' + (cell.lastBookingAt ? ' · last one ' + String(cell.lastBookingAt).slice(0, 10) : ' · none in 12 months')}>{cell.bookings90d ? cell.bookings90d + ' booked in 90d' : cell.lastBookingAt ? 'last booked ' + shortDay(cell.lastBookingAt) : 'never booked there'}</Tag></> : tier === 'high' ? <Tag title="High-income building: $150 a night or more over the last 12 months, or flagged">High</Tag> : undefined}
                 actions={<>
                   {url ? <IconBtn title={'Open the ' + channelLabel(w.channel || '') + ' page'} href={url}><ExternalLink size={14} /></IconBtn> : null}
                   <IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(w.listingId)}><Home size={14} /></IconBtn>
@@ -220,11 +224,13 @@ function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading
         <LeanList>
           {strip.map(c => (
             <LeanRow key={c.key} name={c.label} meta={<>{c.live + c.stale} live{c.stale ? ` (${c.stale} quiet)` : ''} of {c.live + c.stale + c.delisted + c.suspended + c.failed + c.disconnected + c.missing + c.unknown} active listings</>}
+              // SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"):
+              // red only on the four channels that carry the bookings; a minor channel (Google here) is plain.
               tags={<>
-                {c.delisted > 0 && <Tag tone="rose" title="Guesty says connected, but the channel's own page for the listing is gone">{c.delisted} page removed</Tag>}
-                {c.suspended > 0 && <Tag tone="rose" title="Listed but not for sale — the channel's own verdict">{c.suspended} suspended</Tag>}
-                {c.failed > 0 && <Tag tone="rose" title="Guesty reports the sync FAILED">{c.failed} failed</Tag>}
-                {c.disconnected > 0 && <Tag tone="rose" title="The channel says DISCONNECTED">{c.disconnected} disconnected</Tag>}
+                {c.delisted > 0 && <Tag tone={isMajorChannel(c.key) ? 'rose' : 'slate'} title="Guesty says connected, but the channel's own page for the listing is gone">{c.delisted} page removed</Tag>}
+                {c.suspended > 0 && <Tag tone={isMajorChannel(c.key) ? 'rose' : 'slate'} title="Listed but not for sale — the channel's own verdict">{c.suspended} suspended</Tag>}
+                {c.failed > 0 && <Tag tone={isMajorChannel(c.key) ? 'rose' : 'slate'} title="Guesty reports the sync FAILED">{c.failed} failed</Tag>}
+                {c.disconnected > 0 && <Tag tone={isMajorChannel(c.key) ? 'rose' : 'slate'} title="The channel says DISCONNECTED">{c.disconnected} disconnected</Tag>}
                 {c.missing > 0 && <Tag title="Never set up on this channel — a standing gap, not something that broke">{c.missing} never connected</Tag>}
                 {c.unknown > 0 && <Tag tone="amber" title="A status this app has not seen before — shown, never assumed fine">{c.unknown} unknown</Tag>}
               </>}

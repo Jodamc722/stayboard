@@ -306,6 +306,7 @@ export { ymdET }
 import { buildingOf, KNOWN_BUILDINGS } from '@/lib/segments'
 import { isLiveStay } from '@/lib/stay-status'
 import { unstable_cache } from 'next/cache'
+import { getTiers, highBuildings } from '@/lib/property-tier'
 
 // LUXURY UNITS — must-call regardless of how big the booking is (Jon, 2026-09-15): 17 West, Arya,
 // Elser, Nomad, District 225, Amrit. That is EXACTLY the `lux` tag in lib/segments, so this list is
@@ -322,11 +323,19 @@ export const BIG_NIGHTS = 10
 export type Tier = 'recovery' | 'lux' | 'big' | 'standard'
 export const TIER_LABEL: Record<Tier, string> = { recovery: 'Recovery', lux: 'Luxury', big: 'Big booking', standard: 'Standard' }
 
-export function tierOf(o: { listingName: string; building?: string | null; value: number; nights: number; recovery: boolean }): Tier {
+// SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+// "MUST CALL" NOW FOLLOWS THE PROPERTY TIER. The desk passes the buildings that are High today
+// (lib/property-tier: $150 a night or more over 12 months, or lux-flagged, or forced High in
+// settings) as `mustCall`, so the calls desk and every "High" tag mean the same buildings. That is
+// every lux building plus the ones the rate adds (7071 SW and 1587 on the day this was built).
+// CALL_LUX stays as the fallback when the tier read fails or returns nothing. The tier's key is
+// still 'lux' (it is stored on guest_calls rows) and still reads "Luxury" on the desk.
+export function tierOf(o: { listingName: string; building?: string | null; value: number; nights: number; recovery: boolean }, mustCall?: string[] | null): Tier {
   // The listing's own `building` field first, the name second — a lux unit whose Guesty nickname
   // is just "409" still resolves through the building it belongs to.
   const b = buildingOf(o.building || null, o.listingName)
-  if (b && CALL_LUX.some(l => l.toLowerCase() === b.toLowerCase())) return 'lux'
+  const must = mustCall && mustCall.length ? mustCall : CALL_LUX
+  if (b && must.some(l => l.toLowerCase() === b.toLowerCase())) return 'lux'
   if (o.recovery) return 'recovery'
   if (o.value >= BIG_VALUE || o.nights >= BIG_NIGHTS) return 'big'
   return 'standard'
@@ -781,6 +790,8 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string, o
   const skipWelcome = (r: any) => !!noSvc && skipsWelcomeCallsIn(noSvc, buildingOfListing.get(String(r.listing_id || '')), r.listing_name)
     && !(guestyCalled(r.custom_fields) || isCompleted(logOf(r.id, 'welcome')?.outcome))
 
+  // SIGNAL (Jon, 2026-11-20): the High buildings, once per desk load (cached about an hour; never throws).
+  const mustCall = highBuildings(await getTiers())
   // ── WELCOME CALLS ─────────────────────────────────────────────────────────────────────────────
   const rows: WelcomeRow[] = (arrivals || []).filter((r: any) => isLiveStay(r.status) && !skipWelcome(r)).map((r: any) => {
     const listing = String(r.listing_name || '')
@@ -788,7 +799,7 @@ export async function loadCallsDesk(sb: any, today: string, viewDate?: string, o
     const recv = recOf(r.listing_id)
     const value = Number(r.money_total) || 0
     const st = moneyStatus(r)
-    const tier = tierOf({ listingName: listing, building: buildingOfListing.get(String(r.listing_id || '')) || null, value, nights: st.nights, recovery: !!recv })
+    const tier = tierOf({ listingName: listing, building: buildingOfListing.get(String(r.listing_id || '')) || null, value, nights: st.nights, recovery: !!recv }, mustCall)
     const mandatory = tier !== 'standard'
     const lg = logOf(r.id, 'welcome')
     const localDone = !!lg && isCompleted(lg.outcome)

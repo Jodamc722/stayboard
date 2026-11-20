@@ -26,6 +26,9 @@ import { getStaff } from './staffing'
 import { getTimecardsAudited } from './homebase-labor'
 import { kindOfTask } from './labor-econ'
 import { isLiveStay } from './stay-status'
+import { flagArrivals } from './booking-priority'
+import { getTiers, tierOfListing } from './property-tier'
+import { PRIORITY_WHY_LABEL, type ArrivalFlag } from './signal'
 import { billingMonth } from './billing'
 import { translator, type BriefLang } from './brief-lang'
 
@@ -106,7 +109,7 @@ export async function gather(variant: BriefVariant) {
     // PAGED, in check-in order (2026-09-29): up to fifteen days of arrivals of every status can pass
     // 1,000 at the longest lookahead, and past that the single unordered read kept an arbitrary 1,000.
     pageRows<any>((a, b) => db.from('guesty_reservations')
-      .select('listing_id,check_in,check_out,nights,status,guest_name,money_total,custom_fields,source')
+      .select('id,guest_id,listing_id,check_in,check_out,nights,status,guest_name,money_total,custom_fields,source')
       .gte('check_in', today).lte('check_in', inN).order('check_in').order('id').range(a, b), 5)
       .then(r => { if (r.truncated) console.error('[ops-brief] the arrivals read stopped early — the brief may be missing arrivals'); return { data: r.rows } }),
     // REPUTATION IS NOT A FIELD SUBJECT (audit 2026-09-21). These two reads — a 300-row feedback
@@ -315,13 +318,36 @@ export async function gather(variant: BriefVariant) {
     .filter(r => isLiveStay(r.status))
     .filter(r => str(r.check_in).slice(0, 10) === today && Number(r.nights) >= LONG_N)
     .map(r => String(r.listing_id)))
+  // SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+  // ONE PRIORITY RULE for today's arrivals and the week ahead (lib/signal.ts): owner stay, guest
+  // marked Sensitive or VIP, big (BIG_USD), long (LONG_N) or a repeat guest — and "at risk" when a
+  // priority booking lands on a same-day turn, in a unit with an open glitch, or after a recent
+  // 2-star-or-lower review. The two thresholds are the same settings as before, passed in.
+  let arrFlags: Record<string, ArrivalFlag> = {}
+  try {
+    arrFlags = await flagArrivals(((arrRes.data || []) as any[]).filter(r => isLiveStay(r.status) && inVariant(String(r.listing_id))), { bigBookingUsd: BIG_USD, longStayNights: LONG_N })
+  } catch (e: any) { console.error('[ops-brief] priority flags not read: ' + String(e?.message || e).slice(0, 120)) }
+  // A partner hotel (Botanica) runs its own turns: its arrivals still read as guests to know, but
+  // are never "at risk" and never lead the list.
+  try {
+    const tiersP = await getTiers()
+    const lidOf: Record<string, string> = {}
+    for (const r of ((arrRes.data || []) as any[])) lidOf[str(r.id)] = String(r.listing_id)
+    for (const id of Object.keys(arrFlags)) {
+      const f = arrFlags[id]
+      if (f.atRisk && tierOfListing(tiersP, lidOf[id], null, meta[lidOf[id]]?.name).tier === 'partner') arrFlags[id] = { ...f, atRisk: false, tag: 'Priority', risk: [], rank: 1, reason: f.why.map(w => PRIORITY_WHY_LABEL[w]).join(', ') }
+    }
+  } catch { /* flags stand as read */ }
+  /** The priority reasons the OWNER / BIG BOOKING / LONG STAY pills do not already say. */
+  const alsoOf = (f?: ArrivalFlag) => (f ? f.why.filter(w => w !== 'owner' && w !== 'big' && w !== 'long').map(w => PRIORITY_WHY_LABEL[w]).join(', ') : '')
   // TODAY'S ARRIVALS, FLAGGED (2026-10-01, for the Field Run): long stay, big dollar, owner — the
   // ones that change how the unit is prepped, with the figure the flag came from.
-  const todayFlags: Record<string, { long: boolean; big: boolean; owner: boolean; total: number; nights: number }> = {}
+  const todayFlags: Record<string, { long: boolean; big: boolean; owner: boolean; total: number; nights: number; priority?: boolean; atRisk?: boolean; risk?: string; also?: string }> = {}
   for (const r of ((arrRes.data || []) as any[])) {
     if (!isLiveStay(r.status) || str(r.check_in).slice(0, 10) !== today) continue
     const nights = Number(r.nights) || 0, total = Math.round(Number(r.money_total) || 0)
-    todayFlags[String(r.listing_id)] = { long: nights >= LONG_N, big: total >= BIG_USD, owner: /^owner/i.test(str(r.source)), total, nights }
+    const pf = arrFlags[str(r.id)]
+    todayFlags[String(r.listing_id)] = { long: nights >= LONG_N, big: total >= BIG_USD, owner: /^owner/i.test(str(r.source)), total, nights, priority: !!pf?.priority, atRisk: !!pf?.atRisk, risk: pf?.atRisk ? pf.risk.join(', ') : '', also: alsoOf(pf) }
   }
 
   // ── THE WEEK AHEAD (Jon, 2026-08-24: "a section per market, and ops, that shows big
@@ -336,6 +362,7 @@ export async function gather(variant: BriefVariant) {
       const lid = String(r.listing_id)
       const nights = r.nights != null ? Number(r.nights) : null
       const total = Math.round(Number(r.money_total) || 0)
+      const pf = arrFlags[str(r.id)]
       return {
         lid,
         unit: meta[lid]?.name ?? 'Unit',
@@ -346,13 +373,16 @@ export async function gather(variant: BriefVariant) {
         owner: /^owner/i.test(str(r.source)),
         long: nights != null && nights >= LONG_N,
         big: total >= BIG_USD,
+        // SIGNAL (Jon, 2026-11-20): the same rule as today's arrivals — see arrFlags above.
+        priority: !!pf?.priority, atRisk: !!pf?.atRisk, risk: pf?.atRisk ? pf.risk.join(', ') : '', also: alsoOf(pf),
       }
     })
     // STRICTLY AHEAD. Today's owner arrival printed on the Arrivals row, in Owner stays, and again
     // here under a red TODAY pill — three copies of one booking in one email.
     .filter(x => x.when > today && x.when <= inN)
-    .filter(x => x.owner || x.long || x.big)
-    .sort((a, b) => a.when.localeCompare(b.when) || b.total - a.total)
+    .filter(x => x.owner || x.long || x.big || x.priority)
+    // PRIORITY AT RISK LEADS (Jon, 2026-11-20), then by day, then the bigger booking.
+    .sort((a, b) => (a.atRisk ? 0 : 1) - (b.atRisk ? 0 : 1) || a.when.localeCompare(b.when) || b.total - a.total)
 
   // Reputation pulse (30d).
   const avg = allRevs.length ? allRevs.reduce((s, r) => s + Number(r.rating), 0) / allRevs.length : null

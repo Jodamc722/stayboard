@@ -15,6 +15,8 @@ import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { getMultiCalendar, isOpsBlock, type BlockRef } from './guesty'
 import { marketOf, buildingOf } from './segments'
+import { getTiers, tierOfListing } from './property-tier'
+import { blockedLoss, type Tier } from './signal'
 
 const DEAD = ['inactive', 'disabled', 'archived', 'deleted']
 const str = (v: any) => (v == null ? '' : String(v))
@@ -51,6 +53,13 @@ export type BlockedRun = {
   // buries the blocks that actually need chasing.
   linked: boolean          // Guesty blocked this automatically because a linked listing sold
   alsoBlocks: string[]     // other listings on the same room that this block also takes offline
+  // SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+  // What the block costs: the building's realised nightly rate (lib/property-tier) × the nights
+  // blocked in this window. An estimate — the rate is the building's 12-month average, not a quote.
+  // A partner hotel (Botanica) carries no figure: it is not on our ranked lists.
+  rate: number | null
+  lostUsd: number
+  tier: Tier
 }
 
 // MULTI-CALENDAR (Jon, 2026-10-06: "a multi calendar view"). One row per unit with a block in the
@@ -149,6 +158,7 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
         guestyLabel: refs.map(r => r.reason).filter(Boolean)[0] || null,
         createdBy: lead?.createdBy || null, createdAt: lead?.createdAt || null, blockEnd, blockStart,
         linked: false, alsoBlocks: [],
+        rate: null, lostUsd: 0, tier: 'standard',
       })
       cur = null
     }
@@ -205,6 +215,16 @@ export async function blockedUnits(days = 30): Promise<BlockedReport> {
   for (const r of runs) {
     r.linked = r.keys.some(k => k === 'bd' || k === 'sr')
     r.alsoBlocks = collateralFor(r.listingId)
+  }
+
+  // SIGNAL (Jon, 2026-11-20): dollars lost per block, so the board can lead with the costliest.
+  // getTiers never throws; with no rates read every figure is simply 0 and the old order stands.
+  const tiers = await getTiers()
+  for (const r of runs) {
+    const t = tierOfListing(tiers, r.listingId, r.building, r.unit)
+    r.tier = t.tier
+    r.rate = t.tier === 'partner' ? null : t.rate
+    r.lostUsd = blockedLoss(r.rate, r.nights)
   }
 
   const outOfService = runs.filter(r => !r.linked)

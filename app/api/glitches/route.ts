@@ -9,6 +9,7 @@ import { marketOf } from '@/lib/segments'
 import { requireLevel } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { pageRows } from '@/lib/db-page'
+import { glitchSignals } from '@/lib/glitch-signal'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -211,6 +212,11 @@ export async function GET(req: NextRequest) {
       list = keep
     }
     await withTasks(list)
+    // SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+    // Every card still in play carries its score and the one line that says why (lib/glitch-signal);
+    // the board orders each lane by it. Best-effort: with no signals the board keeps newest first.
+    const signals = await glitchSignals(list)
+    for (const g of list) { const s = signals[str(g.id)]; if (s) g.signal = s }
     // Card rows travel without their empty fields (a third of the bytes were `"key":null`).
     if (!full) list = list.map(g => { const o: any = {}; for (const k of Object.keys(g)) if (g[k] !== null && g[k] !== undefined) o[k] = g[k]; return o })
     return NextResponse.json({ ok: true, glitches: list, counts, summary, all: wantAll, closedOlder, olderLite })

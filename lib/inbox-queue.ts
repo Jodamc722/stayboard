@@ -89,14 +89,19 @@ export function phaseTier(p: StayPhase): number {
   return 3
 }
 
-export type QueueKey = { tier: number; unhappy: boolean; since: number; at: number }
+// SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+// Jon's order is untouched: here now, then unhappy, then longest wait. A priority booking (owner
+// stay, Sensitive or VIP, big, long, repeat guest — lib/signal.ts) is ONLY the tie-break under those
+// three, and a plain "Priority" tag on the row. It never lifts a thread over one that waited longer.
+export type QueueKey = { tier: number; unhappy: boolean; since: number; at: number; priority?: boolean }
 
-/** The Needs-reply order: stay tier, unhappy first, longest waiting first, then newest activity. */
+/** The Needs-reply order: stay tier, unhappy first, longest waiting first, then a priority booking, then newest activity. */
 export function compareQueue(a: QueueKey, b: QueueKey): number {
   if (a.tier !== b.tier) return a.tier - b.tier
   if (a.unhappy !== b.unhappy) return a.unhappy ? -1 : 1
   const sa = Number.isFinite(a.since) ? a.since : Infinity, sb = Number.isFinite(b.since) ? b.since : Infinity
   if (sa !== sb) return sa < sb ? -1 : 1
+  if (!!a.priority !== !!b.priority) return a.priority ? -1 : 1
   return b.at - a.at
 }
 

@@ -41,6 +41,17 @@ type Glitch = {
   closed_at?: string | null; closed_at_estimated?: boolean | null
   history?: any[] | null
   created_at: string
+  // SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+  // From the server (lib/glitch-signal), on cards still in play: the 0-100 score, the one line that
+  // says why, the building's tier and whether the booking is a priority one.
+  signal?: { score: number; reason: string; tier: 'high' | 'standard' | 'partner' | null; ranked: boolean; priority: boolean; priorityWhy?: string; stake: number; rate: number | null } | null
+}
+/** Highest signal first inside a lane; cards with no score (a partner hotel, a failed read) keep the old order under them: newest first. */
+function bySignal(a: Glitch, b: Glitch): number {
+  const x = a.signal && a.signal.ranked ? a.signal : null, y = b.signal && b.signal.ranked ? b.signal : null
+  if (!!x !== !!y) return x ? -1 : 1
+  if (x && y) { const d = (y.score - x.score) || (y.stake - x.stake) || ((y.rate || 0) - (x.rate || 0)); if (d) return d }
+  return String(b.created_at).localeCompare(String(a.created_at)) || String(a.id).localeCompare(String(b.id))
 }
 const CLOSED_SHOWN = 20
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
@@ -584,7 +595,9 @@ export function GlitchBoard() {
           A search or a filter opens Closed by itself, so a match there is never hidden. */}
       <div className="flex gap-2.5 overflow-x-auto pb-3 -mx-1 px-1 snap-x snap-mandatory items-stretch" style={{ scrollbarGutter: 'stable' }}>
         {LANES.map(lane => {
-          const cards = rows.filter(g => laneOf(g.status).key === lane.key)
+          // SIGNAL (Jon, 2026-11-20): the working lanes read most important first; Closed stays newest first.
+          const laneCards = rows.filter(g => laneOf(g.status).key === lane.key)
+          const cards = lane.key === 'closed' ? laneCards : laneCards.slice().sort(bySignal)
           // THE CLOSED LANE SHOWS ITS NEWEST 20 (2026-11-09): it held every closed card of the
           // last 500 glitches, each one a mounted draggable card nobody was looking at. The count
           // on the lane is still all of them; a search or filter shows every match.
@@ -1696,6 +1709,7 @@ function GlitchCard({ g, onOpen, dup = 0 }: { g: Glitch; onOpen: () => void; dup
   // DAYS OPEN on the card (Jon, 2026-09-22: "a ticker, days open"). Grey under a day, amber from
   // one, red from three. Counted in Eastern calendar days, the same ruler as the due date (cardClock).
   const clock = cardClock(g, closed)
+  const sig = !closed ? g.signal || null : null
 
   // RED MEANS A GUEST IS WAITING OR A DATE HAS PASSED (2026-11-09). The age chip went red on every
   // card three days old, so a quiet card waiting on a vendor part looked the same as a guest sitting
@@ -1767,6 +1781,16 @@ function GlitchCard({ g, onOpen, dup = 0 }: { g: Glitch; onOpen: () => void; dup
             </span>
           ) : null}
         </div>
+        {/* SIGNAL (Jon, 2026-11-20: "the most important things that need to be completed vs busy work"; "delineate a low-income property versus a high-income property, priority bookings versus non-priority").
+            Why the card sits where it does, in one plain line, with High / Priority as plain words —
+            no new colour: red stays for overdue. */}
+        {sig && sig.ranked && sig.reason ? (
+          <p className="mt-0.5 text-[11px] leading-snug text-muted line-clamp-2 break-words" title={'Signal ' + sig.score + ' of 100 — the lane is ordered by this, highest first'}>
+            {sig.tier === 'high' ? <span className="font-semibold text-ink/80" title="High-income building: $150 a night or more over the last 12 months, or flagged">High · </span> : null}
+            {sig.priority ? <span className="font-semibold text-ink/80" title={'Priority booking' + (sig.priorityWhy ? ': ' + sig.priorityWhy : '')}>Priority · </span> : null}
+            {sig.reason}
+          </p>
+        ) : null}
         {tags.length ? <div className="flex items-center gap-1 flex-wrap mt-1">{tags}</div> : null}
       </button>
     </div>

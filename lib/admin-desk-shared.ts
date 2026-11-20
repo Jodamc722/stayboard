@@ -71,6 +71,9 @@ export type AdminRow = {
   links?: Record<string, string>
   /** Worst verdict across the major channels. */
   verdict: CellVerdict
+  // SIGNAL (Jon, 2026-11-20: "delineate a low-income property versus a high-income property"): the
+  // building's tier (lib/property-tier). The stopped-selling list uses it as its tie-break.
+  tier?: 'high' | 'standard' | 'partner'
   score: number | null
   lastOptimized: string | null
   photos: { count: number; noCaption: number; analyzedAt: string | null; photoScore: number | null }
@@ -108,6 +111,9 @@ export type WorkItem = {
 export const PROBLEM: CellVerdict[] = ['delisted', 'suspended', 'failed', 'disconnected', 'missing']
 export const NOT_FOR_SALE: CellVerdict[] = ['delisted', 'suspended', 'failed', 'disconnected']
 const MAJORS = ['airbnb2', 'bookingCom', 'homeaway2', 'expedia']
+/** SIGNAL (Jon, 2026-11-20): red is for the four channels that carry the bookings. Marriott, Hopper,
+ *  Blueground, Whimstay and Google are counted in plain text, never in a red count. */
+export const isMajorChannel = (key: string) => MAJORS.indexOf(key) >= 0
 const plural = (n: number, w: string) => n + ' ' + w + (n === 1 ? '' : 's')
 const LABEL: Record<string, string> = { airbnb2: 'Airbnb', bookingCom: 'Booking.com', homeaway2: 'Vrbo', expedia: 'Expedia', googleVacationRentals: 'Google VR', hopper: 'Hopper', bluegroundNestpick: 'Blueground', whimstay: 'Whimstay', homesVillasByMarriott: 'Marriott HVMI' }
 const VERDICT_WORD: Record<string, string> = { delisted: 'page removed', suspended: 'suspended', failed: 'failed', disconnected: 'disconnected', missing: 'not connected', unknown: 'unknown', stale: 'no bookings', live: 'live' }
