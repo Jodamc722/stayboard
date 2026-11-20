@@ -225,7 +225,8 @@ export async function buildGmMorning(): Promise<GmBuilt> {
     { html: numbersHtml },
     { html: laborShort },
     { html: arrLines.length ? section('Notable arrivals', arrLines, { cap: 3, accent: A, more: `on the <a href="${APP_URL}/day" style="color:${A.ink}">boards</a>` }) : '', optional: true },
-    { html: footer(`<a href="${APP_URL}/command" style="color:#6b7280">Today board</a> · <a href="${APP_URL}/labor" style="color:#6b7280">Labor board</a> · <a href="${APP_URL}/blocked" style="color:#6b7280">Blocked</a> · <a href="${APP_URL}/claims" style="color:#6b7280">Claims</a><br>GM morning · 7:01 every morning · the day itself is in Ops morning · every figure is the shared engine's.`) },
+    // SCORECARDS (Jon, 2026-11-20): a link in the footer only. This brief was just cut down at his request, so nothing else is added.
+    { html: footer(`<a href="${APP_URL}/command" style="color:#6b7280">Today board</a> · <a href="${APP_URL}/labor" style="color:#6b7280">Labor board</a> · <a href="${APP_URL}/blocked" style="color:#6b7280">Blocked</a> · <a href="${APP_URL}/claims" style="color:#6b7280">Claims</a> · <a href="${APP_URL}/scoreboard" style="color:#6b7280">Scorecards</a><br>GM morning · 7:01 every morning · the day itself is in Ops morning · every figure is the shared engine's.`) },
   ]
   const { html } = fit(parts, 80_000)
   const subject = `GM morning · ${niceDay(today)} · ${n} to decide`

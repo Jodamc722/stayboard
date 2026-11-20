@@ -184,6 +184,12 @@ export const FEATURES: Feature[] = [
   // full = archive. The personal links (/learn/<code>) are public by design — the field team has no
   // login — and are listed in OPEN_PREFIXES.
   { key: 'training',      label: 'Training',          path: '/training', group: 'Money & team' },
+  // SCORECARDS (Jon, 2026-11-20: "Everything should have a scorecard for things completed and Leaderboard
+  // based on KPI"). /scoreboard is the Scorecards page: what each team completed and the people ranked
+  // on the team KPI. Its own key because a leaderboard names colleagues: view reads it, and nothing on
+  // it can be edited. Its level follows Training (the inspection scoreboard) until a role sets it
+  // (LEVEL_FALLBACK), so whoever sees that board today sees this one and nobody else does.
+  { key: 'scorecards',    label: 'Scorecards',        path: '/scoreboard', group: 'Money & team' },
   // Labor Dashboard (2026-08-10, Jon): the live click-into view behind the daily labor email —
   // day / week / month, per person, with the exceptions leading.
   { key: 'labor-dashboard', label: 'Labor Dashboard',  path: '/labor/dashboard', group: 'Money & team' },
@@ -359,10 +365,9 @@ export function isOpenPath(path: string): boolean {
 // NOT in OPEN_PREFIXES on purpose: releasing a door code must require a login, unlike /approve/.
 // /front-desk is a view over two gated desks (welcome-calls + reservation-emails); its API requires
 // 'view' on either, so it needs no level of its own — whoever can see calls or notices sees it.
-// /scoreboard (2026-11-06) is only a redirect to /training/scoreboard, the Team scoreboard, which the
-// training key gates like the rest of /training.
+// /scoreboard left this list on 2026-11-20: it is the Scorecards page now, gated by the `scorecards` key.
 // '/projects' (2026-11-06): a redirect to the Leadership board, which gates itself.
-export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk', '/scoreboard', '/projects', '/account']
+export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk', '/projects', '/account']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
@@ -391,7 +396,8 @@ export type RoleDef = {
 // part of an existing area: nobody should have to touch every role to see them).
 // leadership → projects (2026-11-06): the Leadership board REPLACED Projects, so whoever could see
 // Projects sees the board until a role says otherwise.
-const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects', 'owner-onboarding': 'sales' }
+// scorecards → training (2026-11-20): the Scorecards page follows the inspection scoreboard's gate.
+const LEVEL_FALLBACK: Record<string, string> = { catalogs: 'ffe', linens: 'onboarding', leadership: 'projects', 'owner-onboarding': 'sales', scorecards: 'training' }
 export function roleLevel(role: RoleDef | null | undefined, featureKey: string): Level {
   if (!role || !role.perms || typeof role.perms !== 'object') return 'off'
   const explicit = role.perms[featureKey] ?? (LEVEL_FALLBACK[featureKey] ? role.perms[LEVEL_FALLBACK[featureKey]] : null)

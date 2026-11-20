@@ -176,7 +176,7 @@ export const DESKS: Desk[] = [
     // or billables, so making sure that it's just clear and visible").
     // 2026-11-20: payroll and the people it pays sit beside them, so the heading is "Money & team".
     key: 'money', label: 'Money & team',
-    blurb: 'The money pages and the team behind them: owner statements, billable hours, revenue, and labor.',
+    blurb: 'The money pages and the team behind them: owner statements, billable hours, revenue, labor and the team scorecards.',
     views: [
       { to: '/owner-audit', label: 'Statements', hint: 'Owner statements checked against bookings — review, approve, sign off' },
       { to: '/billing', label: 'Billing', hint: 'Owner billables: ops review, then final review, then export' },
@@ -184,6 +184,9 @@ export const DESKS: Desk[] = [
       // Revenue Center (/revenue) had no opens in the 30-day read and is in Jump.
       { to: '/revenue/sales', label: 'Revenue', hint: 'Booked today, this week and this month vs last year; channel mix; units behind pace; cancellations' },
       { to: '/labor', label: 'Team', hint: 'Payroll against cleans: cost per clean, people, days and the dashboard' },
+      // SCORECARDS (Jon, 2026-11-20: "Everything should have a scorecard for things completed and
+      // Leaderboard based on KPI"). A row, not a Jump page: it is the page the morning briefs link to.
+      { to: '/scoreboard', label: 'Scorecards', hint: 'What each team completed yesterday and in the last 7 days, and the people ranked on the team KPI: admin, guest support, housekeeping, maintenance, inspections, reviews' },
       { to: '/clean-invoices', label: 'Cleaning invoices', hint: 'Upload a vendor cleaning invoice — every line checked against the cleans on record, mismatches flagged before it is paid', jump: true },
       { to: '/revenue', label: 'Revenue Center', hint: 'Revenue, occupancy, ADR and RevPAR by building and unit, with the checks behind them', jump: true },
       { to: '/revenue-app', label: 'Revenue App', hint: 'The Revenue App, where budgets and forecasting live', jump: true },
@@ -192,7 +195,7 @@ export const DESKS: Desk[] = [
       { to: '/training', label: 'Training', hint: 'How-to videos and FAQs for the team, in English and Spanish — assign them, see who finished', jump: true },
       // Team scoreboard (Jon, 2026-11-06: "a scoreboard for our team, a way to organize the feedback, read
       // the inspection and be able to share the inspection reports with the girls"). Gated by training.
-      { to: '/training/scoreboard', label: 'Scoreboard', hint: 'Housekeepers ranked by inspection score, reports to send every 5 inspections, feedback to follow up, every inspection to read', match: ['/scoreboard'], jump: true },
+      { to: '/training/scoreboard', label: 'Inspection scoreboard', hint: 'Housekeepers ranked by inspection score, reports to send every 5 inspections, feedback to follow up, every inspection to read', jump: true },
     ],
     // The KPI board stays parked (Jon, 2026-09-09: "hide that for now") until it is rebuilt on the
     // shared numbers; it still belongs here.

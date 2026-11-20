@@ -21,7 +21,8 @@ import { getStaff } from '@/lib/staffing'
 import { buildReviewQueue, niceDate } from '@/lib/review-queue'
 import { blockedUnits } from '@/lib/blocked-units'
 import { guestsToKnow } from './guests'
-import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, footer, fit, pill, cleanTitle, unitShort, personName, person, type Line } from './ui'
+import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, footer, fit, pill, cleanTitle, unitShort, personName, person, tileTable, type Line } from './ui'
+import { buildScorecards, briefTiles, topOfBoard, type Scorecards } from '@/lib/scorecards'
 import { buildDirection, type DayDirection } from './direction'
 import { doorBriefItems } from '@/lib/connecting-doors'
 import type { Built } from './field-run'
@@ -45,7 +46,7 @@ export async function buildOpsDesk(): Promise<Built> {
   const scope = new Set<string>(); const nameOf: Record<string, string> = {}
   const soak = (rows: any) => { for (const r of (Array.isArray(rows) ? rows : [])) { const lid = str(r?.listingId || r?.listing_id || r?.lid); if (!lid) continue; scope.add(lid); const nm = str(r?.unit || r?.unit_name || r?.name); if (nm && !nameOf[lid]) nameOf[lid] = nm } }
   soak(d.cleans); soak(d.hkOther); soak(sheet.vacants); soak(sheet.arrivals); soak(sheet.departures); soak(sheet.units)
-  const [shifts, salaried, staff, review, blocked, forecast, dir, eveCfg] = await Promise.all([
+  const [shifts, salaried, staff, review, blocked, forecast, dir, eveCfg, cards] = await Promise.all([
     capped(getShifts(today, 'America/New_York')),
     capped(getSalaried()), capped(getStaff()),
     capped(buildReviewQueue(Array.from(scope), today, { nameOf, horizon: 21 })),
@@ -53,6 +54,8 @@ export async function buildOpsDesk(): Promise<Built> {
     capped(import('@/lib/forecast/staffing').then(m => m.buildStaffingForecast({ days: 7 }))),
     capped(buildDirection(), 50_000) as Promise<DayDirection | null>,
     capped(getSetting<{ slack?: boolean }>('eve_morning', {})),
+    // SCORECARDS (Jon, 2026-11-20: "Everything should have a scorecard for things completed and Leaderboard based on KPI").
+    capped(buildScorecards(), 40_000) as Promise<Scorecards | null>,
   ])
 
   // ---- the facts -----------------------------------------------------------------------------
@@ -327,6 +330,22 @@ export async function buildOpsDesk(): Promise<Built> {
     return block(`Departure cleans · ${label}`, `<p style="margin:0;font-size:12px;${T.muted}">${names.filter(Boolean).length} cleaner${names.filter(Boolean).length === 1 ? '' : 's'}${sdAll ? ` · ${sdAll} same-day, listed first` : ''}</p>` + blocks.join(''), A, list.length)
   }
   const guests = guestsToKnow({ arrivals, flags: ((d as any).todayFlags || {}) as any, ownerStays: sheet.ownerStays || [], forward: ((d as any).forward || []) as any[], today, niceDay })
+  // YESTERDAY, ONE TILE ROW (Jon, 2026-11-20: "Everything should have a scorecard for things completed and
+  // Leaderboard based on KPI… hours hit per clean, cleaning scores from hk audit"). The Scorecards page's
+  // own numbers (lib/scorecards); a tile that could not be read is left out. Then one line: the top
+  // three this week on the housekeeping KPI. Only the top is named in an email, and the KPI is a guide,
+  // so it reads "within the expected time".
+  let yesterdayHtml = ''
+  if (cards) {
+    const hkY = cards.yesterday.teams.housekeeping, inY = cards.yesterday.teams.inspections
+    const short = (t: { label: string; value: string; note?: string }) => ({ ...t, note: t.note && t.note.length <= 44 ? t.note : undefined })
+    const yT = briefTiles(hkY, ['cleans', 'sameDay', 'hoursHit'], { cleans: 'Cleans completed', sameDay: 'Same-day by 4 PM', hoursHit: 'Within expected time' })
+      .concat(briefTiles(inY, ['done'], { done: 'Inspections done' }))
+      .concat(briefTiles(hkY, ['audit'], { audit: 'Cleaning score' })).map(short)
+    const top = topOfBoard(cards.week.teams.housekeeping.leaderboard, 3)
+    const topLine = top.length ? `<p style="margin:10px 0 0;font-size:12.5px;line-height:1.5"><span style="${T.muted}">This week, within the expected time:</span> ${top.map(r => `<b>${esc(r.name)}</b> ${esc(r.kpi)} (${r.count} cleans)`).join(' · ')}</p>` : ''
+    if (yT.length) yesterdayHtml = tileTable(yT) + topLine + `<p style="margin:8px 0 0;font-size:12px"><a href="${APP_URL}/scoreboard?team=housekeeping" style="color:${A.ink};font-weight:600;text-decoration:none">Scorecards →</a></p>`
+  }
   const known = new Set(['Miami', 'Broward'])
   const otherMarkets = Array.from(new Set(cleans.map(c => mkOf(c) || 'Other'))).filter(m => !known.has(m)).sort()
   const boards = [['Glitches', '/glitches'], ['Boards', '/day'], ['Today board', '/command'], ['Blocked', '/blocked'], ['Claims', '/claims']]
@@ -337,6 +356,7 @@ export async function buildOpsDesk(): Promise<Built> {
     { html: decideAll.length ? section('Top priorities', decideAll, { cap: 8, accent: A, more: on('Today board', '/command') }) : block('Top priorities', `<p style="margin:2px 0 0;font-size:13.5px"><span style="${T.green}">Nothing urgent.</span> <span style="${T.muted}">Every clean is assigned and nothing is overdue.</span></p>`, A) },
     { html: guests.todayLines.length ? section('VIPs, big bookings and owners — today', guests.todayLines, { cap: 8, accent: A }) : '', optional: true },
     { html: guests.aheadLines.length ? section(`Coming up — next ${(d as any).lookaheadDays || 7} days`, guests.aheadLines, { cap: 6, accent: A, more: on('boards', '/day') }) : '', optional: true },
+    { html: yesterdayHtml ? block(`Yesterday · ${cards!.yesterday.label}`, yesterdayHtml, A) : '', optional: true },
     { html: marketSection('Miami', 'Miami') },
     { html: marketSection('Broward', 'Broward') },
     ...otherMarkets.map(m => ({ html: marketSection(m, m === 'North' ? 'North (vendor)' : m), optional: true })),

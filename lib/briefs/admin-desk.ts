@@ -12,6 +12,7 @@ import { worklist, optimizeState, type WorkItem, type AdminRow } from '@/lib/adm
 import { removalGrounds, type RemovalGround } from '@/lib/review-playbook'
 import { isLowReview } from '@/lib/review-scale'
 import { ACCENTS, T, esc, masthead, block, footer, pill, fit, unitShort, tileTable, type Line } from './ui'
+import { buildScorecards, briefTiles, topOfBoard, type Scorecards } from '@/lib/scorecards'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app'
 const str = (v: any) => (v == null ? '' : String(v)).trim()
@@ -128,10 +129,14 @@ async function statementPrep(): Promise<{ label: string; statements: number; rev
 
 export async function buildAdminBrief(): Promise<{ subject: string; html: string; words: number; counts: Record<string, number> }> {
   const A = ACCENTS.ops
-  const [desk, rem, prep] = await Promise.all([
+  const [desk, rem, prep, cards] = await Promise.all([
     buildAdminDesk(),
     removalCandidates().catch(() => ({ list: [] as Fightable[], lowTotal: 0, by: 'keywords' as const })),
     statementPrep().catch(() => null),
+    // SCORECARDS (Jon, 2026-11-20: "In the admin report that gets sent should show what was completed the
+    // other day. Optimized listing, new connected units, reviews responded etc. Like a KPI."). Capped: a
+    // slow read drops the two blocks and the rest of the brief still sends.
+    Promise.race([buildScorecards().catch(() => null), new Promise<null>(r => setTimeout(() => r(null), 40_000))]) as Promise<Scorecards | null>,
   ])
   const today = desk.today
   const rows = desk.rows as AdminRow[]
@@ -225,6 +230,19 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
     { label: 'Statement prep open', value: String(prep ? prep.prepOpen : 0), note: prep ? prep.label : '', tone: 'none' },
   ])
 
+  // COMPLETED YESTERDAY (Jon, 2026-11-20: "should show what was completed the other day… Like a KPI").
+  // The same numbers as the Scorecards page (lib/scorecards); a tile whose source could not be read is
+  // left out, never drawn as a zero. Then the week by person: the top five and what each completed.
+  // Only the top of the board goes in an email; the full table is on the page.
+  const cap = (text: string) => `<p style="margin:10px 0 0;font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:#8C6D3A">${esc(text)}</p>`
+  const yTiles = cards ? briefTiles(cards.yesterday.teams.admin, ['optimized', 'answered', 'channels', 'guidebooks', 'claims'], { optimized: 'Listings optimised', answered: 'Reviews answered', channels: 'Channels connected', guidebooks: 'Guidebooks approved', claims: 'Claims filed' }).map(t => ({ ...t, note: t.note && t.note.length <= 24 ? t.note : undefined })) : []
+  const doneHtml = yTiles.length ? cap(`Completed yesterday · ${cards!.yesterday.label}`) + tileTable(yTiles) + cap('Open now') : ''
+  const leaders = cards ? topOfBoard(cards.week.teams.admin.leaderboard, 5) : []
+  const leadersHtml = leaders.length
+    ? table(leaders.map(r => ({ label: `<b>${esc(r.name)}</b>`, sub: esc(r.secondary.join(' · ')), value: r.kpi })))
+      + `<p style="margin:8px 0 0;font-size:12px;line-height:1.5;color:${FAINT}">Last 7 days, ${esc(cards!.week.label)}. The number is everything a person completed.</p>` + more('Open Scorecards', '/scoreboard?team=admin&period=week')
+    : ''
+
   // Do first: at most five, each one sentence and one link.
   const todo: string[] = []
   const a = (label: string, path: string) => `<a href="${APP_URL}${path}" style="color:#6F5527;text-decoration:none;font-weight:600">${esc(label)}</a>`
@@ -292,13 +310,14 @@ export async function buildAdminBrief(): Promise<{ subject: string; html: string
 
   const parts = [
     { html: masthead(A, 'Admin morning', 'Channels, reviews, listings and statements', niceDay(today)) },
-    { html: `<div style="background:#FAF8F4;padding:8px 22px 10px">${numbers}</div>` },
+    { html: `<div style="background:#FAF8F4;padding:8px 22px 10px">${doneHtml}${numbers}</div>` },
+    { html: leadersHtml ? block('This week, by person', leadersHtml, A) : '', optional: true },
     { html: block('Do first', todoHtml, A) },
     { html: block('Channels', chanHtml, A) },
     { html: block('Reviews worth disputing', remHtml, A, rem.list.length || null) },
     { html: block('Listings to optimize', optHtml, A, needs.length || null) },
     { html: prep ? block(`Statement prep · ${prep.label}`, prepHtml, A, prep.prepOpen || null) : '', optional: true },
-    { html: footer(`Admin morning · 7:01 every morning`) },
+    { html: footer(`<a href="${APP_URL}/scoreboard?team=admin" style="color:#6b7280">Scorecards</a><br>Admin morning · 7:01 every morning`) },
   ]
   const { html } = fit(parts, 90_000)
   const subject = `Admin morning · ${niceDay(today)} · ${notForSale} off a channel · ${owed} to reply${remLines.length ? ` · ${remLines.length} to dispute` : ''}`

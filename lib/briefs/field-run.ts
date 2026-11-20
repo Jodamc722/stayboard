@@ -268,7 +268,8 @@ export async function buildFieldRun(market: FieldMarket, lang: BriefLang = 'en')
     { html: block(pick('Departure cleans — by cleaner, same-day turns first', 'Limpiezas de salida — por persona, primero los del mismo día'), cleansTable, A, cleans.length) },
     { html: inspLines.length ? section(pick('Inspections — pending', 'Inspecciones — pendientes'), inspLines, { cap: 8, accent: A, more: pick('on the board', 'en el tablero') }) : '', optional: true },
     { html: otherBlocks.length ? block(pick('Supervisor tasks', 'Tareas de supervisión'), otherBlocks.join(''), A) : '', optional: true },
-    { html: footer(pick('All arrivals and the maintenance board are on the live board. Confirm access before entering any unit.<br>Field Run · every morning at 7', 'Todas las llegadas y el mantenimiento están en el tablero en vivo. Confirme acceso antes de entrar a una unidad.<br>Ruta del día · cada mañana a las 7')) },
+    // SCORECARDS (Jon, 2026-11-20): a link in the footer only. The Field Runs were just cut down at his request, so nothing else is added.
+    { html: footer(pick('All arrivals and the maintenance board are on the live board. Confirm access before entering any unit.', 'Todas las llegadas y el mantenimiento están en el tablero en vivo. Confirme acceso antes de entrar a una unidad.') + `<br><a href="${APP_URL}/scoreboard?team=housekeeping" style="color:#6b7280">${pick('Scorecards', 'Marcadores')}</a><br>` + pick('Field Run · every morning at 7', 'Ruta del día · cada mañana a las 7')) },
   ]
   const { html } = fit(parts, 80_000)
   // PLAIN SUBJECTS (Jon, 2026-11-05): the brief, the market, the day, two numbers.

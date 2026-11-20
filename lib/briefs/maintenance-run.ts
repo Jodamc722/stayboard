@@ -11,7 +11,8 @@ import { buildReviewQueue, niceDate } from '@/lib/review-queue'
 import { maintData } from '@/lib/maint-brief'
 import { getStaff } from '@/lib/staffing'
 import { translator, type BriefLang } from '@/lib/brief-lang'
-import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, personName, isOfficeLike, type Line } from './ui'
+import { ACCENTS, APP_URL, T, esc, masthead, headline, section, block, dayShape, footer, fit, pill, cleanTitle, unitShort, personName, isOfficeLike, tileTable, type Line } from './ui'
+import { buildScorecards, briefTiles, topOfBoard, type Scorecards } from '@/lib/scorecards'
 import type { Built } from './field-run'
 
 const str = (v: any) => (typeof v === 'string' ? v : v == null ? '' : String(v))
@@ -39,10 +40,12 @@ export async function buildMaintenanceRun(tech: string | 'all', lang: BriefLang 
   const today = d.today
   const scope = new Set<string>(); const nameOf: Record<string, string> = {}
   for (const o of d.hkOther as any[]) { scope.add(o.lid); nameOf[o.lid] = o.unit }
-  const [shifts, mMi, mBr, review] = await Promise.all([
+  const [shifts, mMi, mBr, review, cards] = await Promise.all([
     capped(getShifts(today, 'America/New_York')),
     capped(maintData('Miami')), capped(maintData('Broward')),
     capped(buildReviewQueue(Array.from(scope), today, { nameOf, horizon: 7 })),
+    // SCORECARDS (Jon, 2026-11-20: "Everything should have a scorecard for things completed and Leaderboard based on KPI").
+    capped(buildScorecards(), 40_000) as Promise<Scorecards | null>,
   ])
 
   // ---- the state of every unit today --------------------------------------------------------
@@ -129,6 +132,18 @@ export async function buildMaintenanceRun(tech: string | 'all', lang: BriefLang 
     { at: pick('after 4', 'después 4'), do: `${pick('Building and common areas', 'Edificio y áreas comunes')} (${k('building')}). ${pick('Close every job in Breezeway with its cost before you leave.', 'Cierre cada trabajo en Breezeway con su costo antes de irse.')}` },
   ]
 
+  // ---- YESTERDAY, ONE TILE ROW (Jon, 2026-11-20: scorecards for things completed, a leaderboard on the
+  // KPI). The Scorecards page's own maintenance numbers, then the top three this week by tasks
+  // completed. Only the top of the board is named in an email; the full table is on the page.
+  let yesterdayHtml = ''
+  if (cards) {
+    const mt = cards.yesterday.teams.maintenance
+    const yT = briefTiles(mt, ['done', 'urgent', 'overdue'], { done: pick('Tasks completed', 'Tareas completadas'), urgent: pick('Urgent or high', 'Urgentes o altas'), overdue: pick('Still overdue', 'Aún atrasadas') }).map(x => ({ label: x.label, value: x.value }))
+    const top = topOfBoard(cards.week.teams.maintenance.leaderboard, 3)
+    const topLine = top.length ? `<p style="margin:10px 0 0;font-size:12.5px;line-height:1.5"><span style="${T.muted}">${pick('This week, by tasks completed', 'Esta semana, por tareas completadas')}:</span> ${top.map(r => `<b>${esc(r.name)}</b> ${esc(r.kpi)}`).join(' · ')}</p>` : ''
+    if (yT.length) yesterdayHtml = tileTable(yT) + topLine
+  }
+
   // ---- assemble ------------------------------------------------------------------------------
   const who = tech === 'all' ? pick('All technicians', 'Todos los técnicos') : first(techs[0])
   const head = `<b>${allJobs.length}</b> ${pick('jobs', 'trabajos')} · <b style="${T.red}">${k('pest') + k('guest')}</b> ${pick('guest / pest', 'huésped / plaga')} · <b style="${T.green}">${k('empty')}</b> ${pick('in empty units', 'en unidades vacías')} · <b style="${T.amber}">${k('arrival')}</b> ${pick('before 4pm', 'antes de las 4pm')}${unowned.length ? ` · <b style="${T.red}">${unowned.length} ${pick('with nobody', 'sin nadie')}</b>` : ''}`
@@ -136,11 +151,12 @@ export async function buildMaintenanceRun(tech: string | 'all', lang: BriefLang 
     { html: masthead(A, pick('Maintenance Run', 'Ruta de mantenimiento'), who, niceDay(today)) },
     { html: headline(A, head, [{ label: pick('Maintenance board', 'Tablero de mantenimiento'), href: `${APP_URL}/maintenance` }, { label: pick('Review tab', 'Pestaña Review'), href: `${APP_URL}/plan?tab=review` }]) },
     { html: doFirstAll.length ? section(pick('Do first', 'Primero'), doFirstAll, { cap: 5, accent: A }) : '' },
+    { html: yesterdayHtml ? block(`${pick('Yesterday', 'Ayer')} · ${cards!.yesterday.label}`, yesterdayHtml, A) : '', optional: true },
     { html: block(pick('Your list — in order', 'Su lista — en orden'), techBlocks.join('') || `<p style="margin:6px 0 0;font-size:13px;color:#6b7280">${t('Nothing on the board today.')}</p>`, A, allJobs.length) },
     { html: unownedLines.length && tech === 'all' ? section(pick('Nobody on it', 'Sin asignar'), unownedLines, { cap: 4, accent: A }) : '', optional: true },
     { html: dayShape(A, steps, pick('How the day runs', 'Cómo va el día')) },
     { html: reminder ? block(pick('Charges', 'Cargos'), reminder, A) : '', optional: true },
-    { html: footer(pick('Maintenance Run · every morning at 7 · the board has the live picture.', 'Ruta de mantenimiento · cada mañana a las 7 · el tablero tiene la foto en vivo.')) },
+    { html: footer(`<a href="${APP_URL}/scoreboard?team=maintenance" style="color:#6b7280">${pick('Scorecards', 'Marcadores')}</a><br>` + pick('Maintenance Run · every morning at 7 · the board has the live picture.', 'Ruta de mantenimiento · cada mañana a las 7 · el tablero tiene la foto en vivo.')) },
   ]
   const { html } = fit(parts, 60_000)
   // PLAIN SUBJECTS (Jon, 2026-11-05): the brief, the tech, the day, one number.
