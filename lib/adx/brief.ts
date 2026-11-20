@@ -222,5 +222,44 @@ Fix them without changing the idea or the words more than a fix needs. Reply wit
 {"scenes":[{"id":"...","name":"...","dur":0,"transitionIn":{},"layers":[]}]}`
 }
 
+// ── 5. the creative director's review: the designer LOOKS at its own rendered frames and revises ─────────────────
+// Jon, 2026-11-20: "this looks worse than the ones you rendered" → "Do it, but need this to be best" → "Back it with a
+// true Claude creative build as if creating here." Here the work is: design, render, look, criticise, redo. The blind
+// composer never saw its piece; this pass is given every scene as a picture (rendered by the same player that
+// exports), the measured audit's findings, and is told to be hard on it. It answers with whole replacement scenes
+// (data, through the validator like everything else) or says the piece is ready.
+export function reviewPrompt(doc: Composition, findings: string, photos: Record<string, PhotoAsset>, round: number, rounds: number): string {
+  const b = doc.brief, id = IDENTITIES[b.moment]
+  return `YOU ARE NOW LOOKING AT YOUR OWN PIECE, RENDERED. The pictures above are each scene at its resting moment, exactly as people will see it. This is review ${round} of at most ${rounds}.
+
+${briefText(b)}
+Concept     "${doc.concept.name}": ${doc.concept.idea}
+${id ? 'Identity    ' + id.name + ' — ' + id.expect + ' Ours: ' + id.ours + ' Never: ' + id.never : ''}
+
+Judge it the way a creative director judges work before it leaves a top studio. Be hard on it; "fine" is not good enough. Look, in this order:
+1. FIRST FRAME. Would it stop a thumb in one second? Is there one clear thing to look at, and is it beautiful?
+2. HIERARCHY. One dominant element in each scene. Is the headline large and confident, and close to what it is about? Are labels clearly smaller?
+3. COMPOSITION. Empty bands with nothing designed in them. Things almost but not quite aligned. Awkward gaps. Elements cramped against an edge or each other. A photograph in a timid little window when it could carry the frame. A crop that cuts off what the picture is about.
+4. THE EVENT. Does it look made for this moment (its colours and decoration used with intent, framing the content), or like generic blocks that could be for anything?
+5. RHYTHM. Do the scenes read as one piece with real variation (the ground changes, the layout turns), or the same slide repeated, or unrelated slides?
+6. FINISH. Decoration that clutters instead of frames. An end card where the mark, the date line and the button are not each clear and well spaced.
+
+THE MEASURED CHECK FOUND
+${findings || 'nothing failing'}
+Every item it lists must be fixed.
+
+If, and only if, the piece is already at that standard, reply with ONLY: {"verdict":"ship","notes":["one line on why it works"]}
+
+Otherwise redesign the weak scenes. Be bold: move, resize, re-crop (focal), change grounds, enlarge the photograph, add or remove shapes and decoration. Do not just nudge. Keep the idea, the meaning of the words (you may tighten a headline), every rule in your instructions, and the truth of the photographs: each used at most once, never drawn above 100% of its own pixels (sizes are listed below), never tinted.
+Reply with ONLY this JSON (no prose before or after):
+{"verdict":"revise","notes":["what was wrong and what you changed, one line each, at most 6"],"scenes":[the COMPLETE scene object for each scene you change, same ids as now]}
+
+YOUR DOCUMENT
+${JSON.stringify({ concept: doc.concept, tokens: doc.tokens, canvas: { w: doc.canvas.w, h: doc.canvas.h, safe: doc.canvas.safe }, scenes: doc.scenes.map(s => ({ id: s.id, name: s.name, dur: s.dur, transitionIn: s.transitionIn, layers: s.layers })) })}
+
+THE PHOTOGRAPHS (ids are fixed; you may swap in one that is not used yet)
+${photoList(photos)}`
+}
+
 /** The channels by name, for an owner piece that says "40+". */
 export const CHANNEL_LINE = CHANNEL_NAMES.join(' · ')

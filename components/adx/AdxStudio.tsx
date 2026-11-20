@@ -12,6 +12,7 @@ import type { Brief, Composition, PhotoAsset } from '@/lib/adx/composition'
 import { ADX_MONTHLY_CAP_USD } from '@/lib/adx/composition'
 import { IDENTITIES, LOOKS } from '@/lib/adx/identities'
 import { loadFonts } from '@/lib/adx/assets'
+import { lookAt } from '@/lib/adx/stills'
 import BriefWizard, { UI } from './BriefWizard'
 import AdxPlayer from './AdxPlayer'
 
@@ -45,6 +46,9 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
   const [options, setOptions] = useState<CopyOption[]>([])
   const [doc, setDoc] = useState<Composition | null>(null)
   const [notes, setNotes] = useState<string[]>([])
+  /** What the creative director said after looking at the rendered frames, and where the review is. */
+  const [review, setReview] = useState<string[]>([])
+  const [stage, setStage] = useState('')
   const [budget, setBudget] = useState<Budget | null>(null)
   const [saved, setSaved] = useState<'saved' | 'saving' | 'unsaved' | ''>('')
   const spent = useRef(0)
@@ -102,7 +106,45 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
     if (j?.budget) setBudget(j.budget)
     if (!j?.ok || !j.doc) { setCapped(!!j?.capped); setErr(j?.error || 'The design did not come back. Try again.'); return }
     changed.current = true
-    setDoc(j.doc); setNotes(j.notes || []); setSaved('saved'); setStep('piece')
+    setNotes(j.notes || [])
+    // the piece is not shown yet: the creative director looks at the rendered frames first, and revises
+    const done = await polish(j.doc, 2, photos)
+    setDoc(done); setSaved('saved'); setStep('piece')
+  }
+  // ── the creative director's review (Jon, 2026-11-20: "a true Claude creative build as if creating here"): draw
+  //    every scene with the player that exports, send the frames with the measured check's findings, take back
+  //    revised scenes, draw again, and keep a revision only when the measured check is no worse for it ──
+  const polish = async (d0: Composition, rounds: number, pool: Record<string, PhotoAsset>): Promise<Composition> => {
+    let d = d0
+    const said: string[] = []
+    setReview([])
+    for (let r = 1; r <= rounds; r++) {
+      setBusy('review'); setStage(`Drawing the frames and looking at them — review ${r} of ${rounds}`)
+      let seen
+      try { seen = await lookAt(d) } catch { said.push('The frames could not be drawn for the review, so the piece is as first designed.'); break }
+      const { status, j } = await post('/api/adx/review', { doc: d, photos: pool, stills: seen.stills, findings: seen.findings, round: r })
+      if (j?.budget) setBudget(j.budget)
+      if (!j?.ok || !j.doc) { said.push(j?.error ? 'The review stopped: ' + j.error : status === 0 ? 'The review did not finish (the connection dropped); the piece is as designed so far.' : 'The review did not finish; the piece is as designed so far.'); break }
+      for (const n of (j.notes || []) as string[]) said.push(n)
+      if (j.verdict !== 'revised') { d = { ...d, meta: { ...d.meta, costUsd: j.doc.meta?.costUsd || d.meta.costUsd } }; break }
+      setStage(`Checking the revision — review ${r} of ${rounds}`)
+      let after
+      try { after = await lookAt(j.doc) } catch { break }
+      if (after.fails > seen.fails) { said.push('One revision was set aside: it measured worse than what it replaced.'); d = { ...d, meta: { ...d.meta, costUsd: j.doc.meta?.costUsd || d.meta.costUsd } }; break }
+      d = j.doc
+    }
+    setReview(said); setStage('')
+    await post('/api/adx/pieces', { doc: d })
+    setBusy('')
+    return d
+  }
+  const polishOpen = async () => {
+    const d = docRef.current; if (!d || busy || !canEdit) return
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    setErr('')
+    const done = await polish(d, 1, {})
+    changed.current = true; dirty.current = false
+    setDoc(done); setSaved('saved')
   }
 
   // ── the open piece: every change is saved a moment later ──
@@ -164,6 +206,7 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
       {busy === 'concepts' ? Waiting({ text: "Looking through our photographs…", sub: `Finding the best pictures of our ${brief?.areaLabel || ''} units, measuring them, and sketching three different ideas for ${id?.name || 'the piece'}.` })
         : busy === 'copy' ? Waiting({ text: "Writing three ways to say it…", sub: "A spoken line and an on-screen headline for every scene, and a caption. You choose one and can change any word." })
         : busy === 'compose' ? Waiting({ text: "Designing the piece…", sub: "The art director is laying out every scene for these words and these photographs, in the event’s colours. It is then measured and checked before you see it. This takes a minute or two." })
+        : busy === 'review' ? Waiting({ text: "The creative director is looking at it…", sub: (stage ? stage + '. ' : '') + "Every scene is drawn exactly as it will export, looked at, criticised and redone where it is weak — the way it would be made by hand. This takes a few minutes; keep this tab open." })
         : busy === 'house' || busy === 'open' ? Waiting({ text: 'Opening…', sub: '' })
         : step === 'brief' ? (<>
           {err ? <div style={{ maxWidth: 860, margin: '0 auto', padding: '18px 24px 0' }}>{Trouble()}</div> : null}
@@ -247,10 +290,20 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
                 style={{ flex: 1, minWidth: 220, background: 'transparent', border: '1px solid transparent', borderRadius: 8, color: UI.ink, fontFamily: display, fontWeight: 800, fontSize: 20, padding: '6px 8px' }} />
               <span style={{ fontSize: 11.5, color: UI.mut }}>{doc.meta.origin === 'house' ? 'House design' : 'Designed for this brief'}{doc.meta.costUsd ? ` · AI cost $${doc.meta.costUsd.toFixed(2)}` : ''} · {saved === 'saving' ? 'Saving…' : saved === 'saved' ? 'Saved' : saved === 'unsaved' ? (doc.meta.origin === 'house' && !changed.current ? 'Not saved yet' : 'Unsaved changes') : ''}</span>
               {canEdit && saved === 'unsaved' ? <button type="button" onClick={save} style={big(true)}>Save</button> : null}
+              {canEdit && doc.meta.origin !== 'house' ? <button type="button" disabled={!!busy || (!!budget && budget.left <= 0)} onClick={polishOpen} title="The creative director draws every scene, looks at it and redoes what is weak. Uses AI." style={big(false, !!busy || (!!budget && budget.left <= 0))}>✦ Art-direct it again</button> : null}
               {canEdit ? <button type="button" onClick={remove} title="Delete this piece" style={{ ...big(false), color: UI.red, borderColor: 'rgba(224,108,108,0.4)' }}>✕ Delete</button> : null}
             </div>
             {Trouble()}
             {notes.length ? <p style={{ fontSize: 12, color: UI.mut, margin: '0 0 10px' }}>Tidied on the way in: {notes.slice(0, 4).join(' · ')}</p> : null}
+            {review.length ? (
+              <div style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '10px 13px', margin: '0 0 12px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ margin: '0 0 4px', fontSize: 12.5, fontWeight: 800, color: UI.gold }}>The creative director looked at the finished frames</p>
+                  {review.slice(0, 8).map((n, i) => <p key={i} style={{ margin: '2px 0 0', fontSize: 12.5, lineHeight: 1.45, color: UI.ink }}>· {n}</p>)}
+                </div>
+                <button type="button" onClick={() => setReview([])} style={{ background: 'none', border: 0, color: UI.mut, cursor: 'pointer', fontSize: 12.5 }}>Hide</button>
+              </div>
+            ) : null}
             <AdxPlayer doc={doc} onChange={change} canEdit={canEdit} display={display} />
             <p style={{ fontSize: 12, color: UI.mut, margin: '16px 0 0', lineHeight: 1.6 }}>{doc.concept.name ? <><b style={{ color: UI.ink }}>{doc.concept.name}.</b> {doc.concept.idea} </> : null}Photographs: {Array.from(new Set(Object.values(doc.assets.photos).map(p => p.building))).join(', ') || '—'} · {doc.brief.areaLabel}.</p>
           </div>

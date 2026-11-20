@@ -16,7 +16,7 @@ import { usageOf, costUsd } from '@/lib/ai-usage'
 import { looseJson } from '@/lib/ad-json'
 import { MUSIC } from '@/lib/ad-engine'
 import { sanitizeComposition, canvasFor, cleanText, LOOK_KEYS, type Brief, type Composition, type PhotoAsset } from './composition'
-import { conceptPrompt, copyPrompt, composerSystem, composerUser, repairPrompt, sceneCount, EXAMPLE_FOR } from './brief'
+import { conceptPrompt, copyPrompt, composerSystem, composerUser, repairPrompt, reviewPrompt, sceneCount, EXAMPLE_FOR } from './brief'
 import { IDENTITIES } from './identities'
 import { auditComposition, issueLines, MEASURED_CODES, type Issue } from './audit'
 import { approxMeasure } from './player'
@@ -140,4 +140,39 @@ export async function runCompose(brief: Brief, concept: Concept, option: CopyOpt
   }
   doc.meta.costUsd = Math.round((usd + priorUsd) * 10000) / 10000
   return { ok: true, doc, notes, issues: audit.issues, usd, repaired }
+}
+
+// ── the creative director's review (Jon, 2026-11-20: "a true Claude creative build as if creating here") ─────────
+export const REVIEW_ROUNDS = 2
+export type Still = { scene: string; data: string }
+/**
+ * One look at the rendered piece. `stills` are the scenes as JPEGs drawn by the browser with the same player that
+ * exports; `findings` is the browser's measured audit. Returns the piece (revised or as it was), what the director
+ * said, and which scenes changed. The reply is data: whole scenes, merged by id and put through the validator; a
+ * revision that makes the measurable problems worse is thrown away.
+ */
+export async function runReview(doc: Composition, pool: Record<string, PhotoAsset>, stills: Still[], findings: string, round: number): Promise<{ ok: true; doc: Composition; verdict: 'ship' | 'revised'; notes: string[]; changed: string[]; usd: number } | Fail> {
+  const example = housePiece(EXAMPLE_FOR[doc.brief.moment] || 'thanksgiving')
+  const system = composerSystem(doc.brief.audience === 'owners' ? 'owners' : 'guests', example)
+  const photos: Record<string, PhotoAsset> = { ...pool, ...doc.assets.photos }
+  const content: any[] = []
+  for (const st of stills) {
+    const sc = doc.scenes.find(s => s.id === st.scene); if (!sc) continue
+    content.push({ type: 'text', text: `SCENE ${sc.id} — "${sc.name}", ${sc.dur.toFixed(1)} s:` })
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: st.data } })
+  }
+  if (!content.length) return { ok: false, status: 400, error: 'No frames came through to look at.' }
+  content.push({ type: 'text', text: reviewPrompt(doc, findings, photos, round, REVIEW_ROUNDS) })
+  const a = await ask('adx-compose', { system, content, maxTokens: 12000, temperature: 0.5 })
+  if (!a.ok) return a
+  const notes = (Array.isArray(a.json?.notes) ? a.json.notes : []).map((n: any) => cleanText(n, 220)).filter(Boolean).slice(0, 6)
+  const fresh = new Map<string, any>((Array.isArray(a.json?.scenes) ? a.json.scenes : []).filter((s: any) => s && typeof s.id === 'string' && doc.scenes.some(x => x.id === s.id)).map((s: any) => [s.id, s]))
+  const cost = (d: Composition) => { d.meta.costUsd = Math.round(((doc.meta.costUsd || 0) + a.usd) * 10000) / 10000; return d }
+  if (a.json?.verdict === 'ship' || !fresh.size) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes, changed: [], usd: a.usd }
+  const authored = { concept: doc.concept, tokens: doc.tokens, script: doc.script, social: doc.social, scenes: doc.scenes.map(s => fresh.get(s.id) || { id: s.id, name: s.name, dur: s.dur, transitionIn: s.transitionIn, layers: s.layers }) }
+  const trusted = { id: doc.id, title: doc.title, brief: doc.brief, canvas: doc.canvas, photos, music: doc.assets.audio.music, meta: { ...doc.meta } }
+  const next = sanitizeComposition(authored, trusted).doc
+  const hard = (d: Composition) => auditComposition(d, approxMeasure).issues.filter(x => x.sev === 'fail' && MEASURED_CODES.indexOf(x.code) < 0).length
+  if (next.scenes.length !== doc.scenes.length || hard(next) > hard(doc)) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes: notes.concat('A revision was drawn and set aside: it broke more rules than it fixed.'), changed: [], usd: a.usd }
+  return { ok: true, doc: cost(next), verdict: 'revised', notes, changed: Array.from(fresh.keys()), usd: a.usd }
 }
