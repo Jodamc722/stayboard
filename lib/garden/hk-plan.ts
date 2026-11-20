@@ -71,7 +71,7 @@ export async function hkPlan(dateIn?: string) {
     db.from('garden_tasks').select('id,room_id,kind,status,assigned_to,started_at,finished_at').eq('date', date).in('kind', ['clean', 'stayover', 'inspection']).neq('status', 'cancelled'),
     db.from('garden_room_blocks').select('room_ids,kind,reason,start_date,end_date').lte('start_date', date).then(r => r, () => ({ data: [] as any[] })),
     db.from('garden_staff').select('id,name,role,active').eq('active', true).eq('role', 'housekeeping').order('name'),
-    db.from('garden_shifts').select('staff_id,role,start_time,end_time').eq('date', date).then(r => r, () => ({ data: [] as any[] })),
+    db.from('garden_shifts').select('id,date,staff_id,role,start_time,end_time').gte('date', lo).lte('date', hi).eq('role', 'housekeeping').then(r => r, () => ({ data: [] as any[] })),
   ])
   if (roomsQ.error) throw new Error(roomsQ.error.message)
   if (resQ.error) throw new Error(resQ.error.message)
@@ -165,17 +165,21 @@ export async function hkPlan(dateIn?: string) {
   const finished = (r: HkRow) => ['ready', 'done'].includes(r.state)
   const byType = (t: HkType) => ({ total: n(r => r.type === t), done: n(r => r.type === t && finished(r)), open: n(r => r.type === t && open(r)), waiting: n(r => r.type === t && r.state === 'waiting'), skip: n(r => r.type === t && r.state === 'skip') })
   const minutes = rows.reduce((a, r) => a + r.minutes, 0)
+  // Needed = the whole day's work (not what is left), so it does not shrink as rooms get done.
+  const plannedAll = rows.reduce((a, r) => a + (r.type === 'stayover' ? (r.state === 'skip' ? 0 : HK_MINUTES.stayover) : r.type === 'turn' || r.type === 'checkout' ? HK_MINUTES.checkout : 0), 0)
 
   // People: the hotel's housekeepers, who is on the schedule that day, and each one's load.
   const staff = ((staffQ.data || []) as any[])
-  const onIds = new Set(((shiftsQ.data || []) as any[]).filter(x => x.role === 'housekeeping').map(x => s(x.staff_id)))
+  const SH = ((shiftsQ.data || []) as any[])
+  const shiftOf: Record<string, string> = {}; for (const x of SH) if (x.date === date) shiftOf[s(x.staff_id)] = s(x.id)
+  const onIds = new Set(Object.keys(shiftOf))
   const loadBy: Record<string, { rooms: number; minutes: number; done: number }> = {}
   for (const r of rows) if (r.assignedTo) { const l = loadBy[r.assignedTo] = loadBy[r.assignedTo] || { rooms: 0, minutes: 0, done: 0 }; l.rooms++; l.minutes += r.minutes; if (finished(r)) l.done++ }
-  const people = staff.map(p => ({ id: s(p.id), name: s(p.name), onShift: onIds.has(s(p.id)), ...(loadBy[p.name] || { rooms: 0, minutes: 0, done: 0 }) }))
-  for (const nm of Object.keys(loadBy)) if (!people.some(p => p.name === nm)) people.push({ id: 'cb:' + nm, name: nm, onShift: false, ...loadBy[nm] })
+  const people: { id: string; name: string; onShift: boolean; shiftId: string | null; rooms: number; minutes: number; done: number }[] = staff.map(p => ({ id: s(p.id), name: s(p.name), onShift: onIds.has(s(p.id)), shiftId: shiftOf[s(p.id)] || null, ...(loadBy[p.name] || { rooms: 0, minutes: 0, done: 0 }) }))
+  for (const nm of Object.keys(loadBy)) if (!people.some(p => p.name === nm)) people.push({ id: 'cb:' + nm, name: nm, onShift: false, shiftId: null, ...loadBy[nm] })
 
   // The week ahead, from the bookings: what each day holds, in rooms.
-  const week: { date: string; turns: number; checkouts: number; stayovers: number; arrivals: number; minutes: number; need: number }[] = []
+  const week: { date: string; turns: number; checkouts: number; stayovers: number; arrivals: number; rooms: number; minutes: number; need: number; scheduled: number }[] = []
   const phys = new Set(rooms.map(r => s(r.id)))
   for (let i = 0; i < 7; i++) {
     const d = addDays(t0, i)
@@ -184,7 +188,7 @@ export async function hkPlan(dateIn?: string) {
     let turns = 0, checkouts = 0, stayovers = 0, arrivals = 0
     for (const R of Object.values(by)) { const c = classify(d, t0, R); if (c.out && c.inn) turns++; else if (c.out) checkouts++; else if (c.stay) { if (c.stay.status !== 'checked_out') stayovers++ } else if (c.inn) arrivals++ }
     const m = (turns + checkouts) * HK_MINUTES.checkout + stayovers * HK_MINUTES.stayover
-    week.push({ date: d, turns, checkouts, stayovers, arrivals: arrivals + turns, minutes: m, need: m ? Math.max(1, Math.ceil(m / SHIFT_MINUTES)) : 0 })
+    week.push({ date: d, turns, checkouts, stayovers, arrivals: arrivals + turns, rooms: turns + checkouts + stayovers, minutes: m, need: m ? Math.max(1, Math.ceil(m / SHIFT_MINUTES)) : 0, scheduled: new Set(SH.filter(x => x.date === d).map(x => s(x.staff_id))).size })
   }
 
   const { data: sync } = await db.from('garden_sync_status').select('entity,last_sync_at,last_error').in('entity', ['reservations', 'housekeeping'])
@@ -194,7 +198,9 @@ export async function hkPlan(dateIn?: string) {
     summary: {
       turn: byType('turn'), checkout: byType('checkout'), stayover: byType('stayover'), arrival: byType('arrival'), dirty: byType('dirty'),
       arrivalsReady: n(r => !!r.in && (r.state === 'ready' || r.state === 'done')), arrivals: n(r => !!r.in),
-      toInspect: n(r => r.state === 'inspect'), minutes, need: minutes ? Math.max(1, Math.ceil(minutes / SHIFT_MINUTES)) : 0,
+      toInspect: n(r => r.state === 'inspect'), minutes, working: people.filter(p => p.onShift).length,
+      plannedMinutes: rows.reduce((a, r) => a + (r.type === 'stayover' ? HK_MINUTES.stayover : r.type === 'turn' || r.type === 'checkout' ? HK_MINUTES.checkout : 0), 0),
+      need: plannedAll ? Math.max(1, Math.ceil(plannedAll / SHIFT_MINUTES)) : 0,
       unassigned: n(r => open(r) && r.state !== 'inspect' && !r.assignedTo), rooms: rooms.length, outOfService: rooms.filter(r => oos.has(s(r.id)) || r.blocked).length,
     },
     people, week, mismatches: live ? mismatches : [], notArrived, syncAt,
