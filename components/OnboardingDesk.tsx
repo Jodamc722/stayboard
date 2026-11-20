@@ -41,8 +41,10 @@ export function OnboardingDesk() {
       {/* One link per new unit: details → rooms → inventory and photos. Works before the unit is in
           Guesty; assign it to the listing when it goes live. */}
       <LeanHead title="Onboarding">
-        <Pill tone="amber" title="Links not finished yet (not started or being walked)">{stats.open} in progress</Pill>
-        <Pill tone="emerald" title="Walk finished — ready to assign to a live Guesty listing">{stats.complete} ready</Pill>
+        {/* CLEAN-UP (Jon, 2026-11-20): colour on the one count that is ours to act on. A finished walk is
+            waiting for us to assign it to its listing; a walk in progress is waiting on the walker. */}
+        {stats.complete > 0 && <Pill tone="amber" title="Walk finished — assign it to its live Guesty listing">{stats.complete} to assign</Pill>}
+        <Pill title="Links not finished yet (not started or being walked)">{stats.open} in progress</Pill>
         <Pill title="Assigned to a live listing">{stats.linked} assigned</Pill>
         <a href="/onboarding/linens" title="Linens — the linen standard (par, per bed / bath / guest) and the order calculator for any set of units"
           className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><BedDouble size={13} /> Linens</a>

@@ -165,7 +165,6 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
   useEffect(() => { if (view === 'quote') setQuoteOpened(true) }, [view])
   const go = (v: View) => { setView(v); store.set(VIEW_KEY, v) }
   const setTier = (t: LinenTier) => { setTierState(t); store.set(TIER_KEY, t) }
-  const activeCount = draft.items.filter(i => i.active !== false).length
   const canStd = level === 'full'
   const canBeds = level === 'edit' || level === 'full'
   const prefill = useMemo(() => {
@@ -188,8 +187,8 @@ export function LinenDesk({ initialUnit }: { initialUnit?: string }) {
           <h1 className="text-3xl font-bold text-ink tracking-tight">Linens</h1>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
-          {ready && <Pill title="Items on the standard that are counted (switched-off items are kept but not counted)">{activeCount} items</Pill>}
-          {ready && <Pill title="Sets in rotation: one on the bed, one in the wash, one on the shelf">par {draft.par}</Pill>}
+          {/* CLEAN-UP (Jon, 2026-11-20): "N items" and "par N" were here as grey chips. Nobody acts on the
+              item count, and the par is the control right under this header on all three views. */}
           {dirty && <Pill tone="amber" title="The standard has edits that are not saved yet — the calculator and quote already use them; the documents wait for a save">unsaved</Pill>}
           <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" role="tablist">
             {TABS.map(([k, label, tip]) => (
@@ -1094,7 +1093,8 @@ function CalculatorView({ standard, dirty, reorder, units, setUnits, partial, pi
             reorder={reorder} resetKey={picked.join(',') + '|' + JSON.stringify(chosen.map(u => [u.beds, inventory[u.id]?.countedAt || ''])) + '|' + (standard.updatedAt || '') + '|' + standard.par} />
           <div className="mb-1.5 px-1 flex items-center gap-2 flex-wrap">
             <h2 className={EYEBROW}>Selected <span className="tabular-nums">{chosen.length}</span></h2>
-            <span className="text-[12px] text-muted tabular-nums" title="Totals across the selected units">{bedroomsText(tally)} · {plural(tally.bathrooms, 'bath')} · {plural(tally.kitchens, 'kitchen')}{tally.kitchensAssumed ? ' (some assumed)' : ''} · sleeps {tallyNum(tally.guests)} · {bedsTallyText(tally, standard.bedSizes)}</span>
+            {/* CLEAN-UP (Jon, 2026-11-20): one tally, not two. The bedrooms / baths / kitchens / guests /
+                beds line that sat here repeated the tally bar under the unit picker word for word. */}
             {dirty && <Tag tone="amber" title="The standard has edits that are not saved — these numbers already use them">unsaved standard</Tag>}
             {countedChosen > 0
               ? <Tag tone="emerald" title="These units have a shelf count — the order below is only what is missing (need − have)">{countedChosen} of {chosen.length} counted · order is net of stock</Tag>

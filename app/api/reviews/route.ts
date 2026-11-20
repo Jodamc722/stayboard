@@ -48,6 +48,11 @@ export async function GET(req: Request) {
   // a reply (full text) and the score of the rest; replied reviews come back without their text or
   // the reply, which was 700KB of prose the page never showed.
   const hub = new URL(req.url).searchParams.get('hub') === '1'
+  // CLEAN-UP (Jon, 2026-11-20, speed): ?slim=1 is the reply queue's first read. Reviews still waiting
+  // on a reply come back whole; answered and dismissed ones come back without their text, reply and
+  // sub-scores (about 320KB of prose in a 90-day window that the "To reply" tab never draws). The
+  // page asks for the full list when "All reviews" is opened.
+  const slimRead = new URL(req.url).searchParams.get('slim') === '1'
   const daysParam = Number(new URL(req.url).searchParams.get('days') || DEFAULT_DAYS)
   const days = Math.min(Math.max(Number.isFinite(daysParam) ? daysParam : DEFAULT_DAYS, 1), MAX_DAYS)
   const sinceIso = new Date(Date.now() - days * 86400000).toISOString()
@@ -90,7 +95,62 @@ export async function GET(req: Request) {
       // Join guesty_listings for status/building filtering + listing_name.
       const ids = Array.from(new Set(rows.map((r: any) => r.listing_id).filter(Boolean)))
       const meta: Record<string, { name: string; status: string; building: string | null; group: string; market: string; ownerId: string; ownerName: string; ints: any }> = {}
-      if (ids.length) {
+
+      // CLEAN-UP (Jon, 2026-11-20, speed): ONE WAVE. The listing join, the checkout dates, the
+      // dismissed set and the removed set each need only the review rows above, and used to run one
+      // after another (four to six round trips of waiting on every open). Same reads, same
+      // fallbacks, side by side.
+
+      // CHECKOUT DATE of the stay behind each review still waiting on a reply — the channels count
+      // their review window from checkout (Airbnb 14 days, Vrbo 180), so the queue's "closes in Nd"
+      // tag needs it. Only unanswered reviews are looked up; a failed read just means no tag.
+      // The same row carries the GUEST'S NAME: the review itself arrives without one for nine in ten
+      // reviews, so the queue showed no name on the row. Display only (`guestName`); `guest` is
+      // still exactly what the review carried.
+      const checkOutOf: Record<string, string> = {}
+      const guestOf: Record<string, string> = {}
+      const readStays = async () => {
+        try {
+          const resIds = Array.from(new Set((rows as any[]).filter(r => !r.has_reply).map(r => String(r.res || r.res2 || '')).filter(Boolean)))
+          const chunks: string[][] = []
+          for (let i = 0; i < resIds.length && i < 2000; i += 200) chunks.push(resIds.slice(i, i + 200))
+          const parts = await Promise.all(chunks.map(c => sb.from('guesty_reservations').select('id, check_out, guest_name').in('id', c)))
+          for (const { data: rs, error } of parts) {
+            if (error) continue
+            for (const x of ((rs || []) as any[])) {
+              const d = String(x.check_out || '').slice(0, 10); if (d) checkOutOf[String(x.id)] = d
+              const g = String(x.guest_name || '').trim(); if (g) guestOf[String(x.id)] = g
+            }
+          }
+        } catch { /* no tag */ }
+      }
+
+      // Resilient: which of these reviews has the team dismissed ("no reply needed")? The `dismissed`
+      // column may not exist yet (pre-migration) — if so this just yields an empty set.
+      const dismissedIds = new Set<string>()
+      const readDismissed = async () => {
+        try {
+          const { data: dz } = await sb.from('guesty_reviews').select('id').eq('dismissed', true)
+            .gte('created_at', sinceIso)
+          ;(dz || []).forEach((d: any) => dismissedIds.add(d.id))
+        } catch { /* column not present yet */ }
+      }
+
+      // REMOVED BY THE CHANNEL (2026-09-22). Same resilience as `dismissed`: pre-migration the
+      // column is absent and this yields an empty set, so the page still renders. A removed
+      // review stays ON this page, struck through -- it is the only surface that shows it, since
+      // every score, brief, owner report and guidebook now filters it out.
+      const removedRows = new Map<string, string | null>()
+      const readRemoved = async () => {
+        try {
+          const { data: rz } = await sb.from('guesty_reviews').select('id,removed_reason')
+            .not('removed_at', 'is', null).gte('created_at', sinceIso)
+          ;(rz || []).forEach((d: any) => removedRows.set(d.id, d.removed_reason || null))
+        } catch { /* migration 107 not run yet */ }
+      }
+
+      const readListings = async () => {
+        if (!ids.length) return
         // SEGMENTS TRAVEL WITH THE REVIEW (Jon, 2026-09-09: "I should be able to select by owner,
         // building etc to see reviews"). The dashboard above this feed filters on market, building
         // and owner; without those on the row the feed could only ever show everything, and the two
@@ -125,6 +185,8 @@ export async function GET(req: Request) {
         })
       }
 
+      await Promise.all([readListings(), readStays(), readDismissed(), readRemoved()])
+
       // ON THE LISTING THAT IS LIVE NOW? (Jon, 2026-11-09: "we recreated listings on Airbnb, so make
       // sure the review score is the current score".) lib/channel-current-review decides, from the
       // channel's own listing id on the review against the one on the live listing; when either is
@@ -136,19 +198,6 @@ export async function GET(req: Request) {
         try { return isCurrentChannelReview(stub, { integrations: m.ints }, String(r.channel || '')) } catch { return true }
       }
 
-      // CHECKOUT DATE of the stay behind each review still waiting on a reply — the channels count
-      // their review window from checkout (Airbnb 14 days, Vrbo 180), so the queue's "closes in Nd"
-      // tag needs it. Only unanswered reviews are looked up; a failed read just means no tag.
-      const checkOutOf: Record<string, string> = {}
-      try {
-        const resIds = Array.from(new Set((rows as any[]).filter(r => !r.has_reply).map(r => String(r.res || r.res2 || '')).filter(Boolean)))
-        for (let i = 0; i < resIds.length && i < 2000; i += 200) {
-          const { data: rs, error } = await sb.from('guesty_reservations').select('id, check_out').in('id', resIds.slice(i, i + 200))
-          if (error) break
-          for (const x of ((rs || []) as any[])) { const d = String(x.check_out || '').slice(0, 10); if (d) checkOutOf[String(x.id)] = d }
-        }
-      } catch { /* no tag */ }
-
       const shape = (r: any, m: any) => ({
         id: r.id,
         rating: r.rating != null ? Number(r.rating) : null,
@@ -156,6 +205,8 @@ export async function GET(req: Request) {
         channel: r.channel || '',
         listingId: r.listing_id,
         guest: r.guest_name,
+        // The booking's guest, for the row only, when the review arrived without a name.
+        guestName: String(r.guest_name || '').trim() || guestOf[String(r.res || r.res2 || '')] || null,
         created_at: r.created_at,
         hasReply: !!r.has_reply,
         reply: r.reply || null,
@@ -176,26 +227,6 @@ export async function GET(req: Request) {
       // Active (mapped, synced) reviews are draftable + count toward scores. Unmapped reviews
       // (listing not synced, inactive, or flagged not-mapped-on-channel) are shown separately,
       // can't be replied to, and never count toward the average / health score.
-      // Resilient: which of these reviews has the team dismissed ("no reply needed")? The `dismissed`
-      // column may not exist yet (pre-migration) — if so this just yields an empty set.
-      const dismissedIds = new Set<string>()
-      try {
-        const { data: dz } = await sb.from('guesty_reviews').select('id').eq('dismissed', true)
-          .gte('created_at', sinceIso)
-        ;(dz || []).forEach((d: any) => dismissedIds.add(d.id))
-      } catch { /* column not present yet */ }
-
-      // REMOVED BY THE CHANNEL (2026-09-22). Same resilience as `dismissed`: pre-migration the
-      // column is absent and this yields an empty set, so the page still renders. A removed
-      // review stays ON this page, struck through -- it is the only surface that shows it, since
-      // every score, brief, owner report and guidebook now filters it out.
-      const removedRows = new Map<string, string | null>()
-      try {
-        const { data: rz } = await sb.from('guesty_reviews').select('id,removed_reason')
-          .not('removed_at', 'is', null).gte('created_at', sinceIso)
-        ;(rz || []).forEach((d: any) => removedRows.set(d.id, d.removed_reason || null))
-      } catch { /* migration 107 not run yet */ }
-
       const reviews: any[] = []
       const unmapped: any[] = []
       for (const r of rows as any[]) {
@@ -219,6 +250,10 @@ export async function GET(req: Request) {
       if (hub) {
         const slim = (r: any) => (r.hasReply || r.dismissed || r.removed) ? { ...r, content: '', reply: null, categories: [], privateFeedback: null } : { ...r, reply: null }
         return NextResponse.json({ reviews: reviews.map(slim), unmapped: [], segments: true })
+      }
+      if (slimRead) {
+        const bare = (r: any) => ({ ...r, content: '', reply: null, categories: [], privateFeedback: null })
+        return NextResponse.json({ reviews: reviews.map(r => ((r.hasReply || r.dismissed) ? bare(r) : r)), unmapped: unmapped.map(bare), segments: true, slim: true })
       }
       return NextResponse.json({ reviews, unmapped, segments: true })
     }

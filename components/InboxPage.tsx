@@ -22,8 +22,22 @@ const KIND: Record<string, { label: string; tone: Tone; Icon: any }> = {
   sent: { label: 'Sent', tone: 'slate', Icon: Send },
   due_soon: { label: 'Due soon', tone: 'amber', Icon: Clock },
   overdue: { label: 'Overdue', tone: 'rose', Icon: Clock },
+  // CLEAN-UP (Jon, 2026-11-20): these read "ops alert", "hk damage", "ai budget" — the database's words. Plain names, no colour.
+  ops_alert: { label: 'Cleans behind', tone: 'slate', Icon: Bell },
+  claim: { label: 'Claim deadline', tone: 'slate', Icon: Clock },
+  claim_review: { label: 'Claim to review', tone: 'slate', Icon: Check },
+  hk_damage: { label: 'Damage report', tone: 'slate', Icon: Bell },
+  ai_budget: { label: 'AI budget', tone: 'slate', Icon: Bell },
+  owner_onboarding: { label: 'Owner onboarding', tone: 'slate', Icon: UserPlus },
+  tool_lead: { label: 'Sales lead', tone: 'slate', Icon: UserPlus },
+  message: { label: 'Message', tone: 'violet', Icon: MessageSquare },
+  system: { label: 'System', tone: 'slate', Icon: Bell },
 }
-const kindOf = (k: string) => KIND[k] || { label: k.replace(/_/g, ' '), tone: 'slate' as Tone, Icon: Bell }
+const kindOf = (k: string) => KIND[k] || { label: (k.charAt(0).toUpperCase() + k.slice(1)).replace(/_/g, ' '), tone: 'slate' as Tone, Icon: Bell }
+/** Open for more than a week: what "Clear older than a week" completes. */
+const WEEK_MS = 7 * 86400_000
+/** The server takes 100 ids a call. */
+const chunks = <T,>(xs: T[], n: number): T[][] => { const out: T[][] = []; for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n)); return out }
 const dayOf = (iso: string) => new Date(iso).toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'long', month: 'long', day: 'numeric' })
 const timeOf = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' })
 const firstOf = (e: string | null) => String(e || '').split('@')[0]
@@ -69,8 +83,11 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
   const act = async (ids: string[], action: 'done' | 'open' | 'snooze', until?: string) => {
     setBusy(ids[0])
     try {
-      const j = await fetch('/api/inbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ids, until }) }).then(r => r.json())
-      if (!j?.ok) { setErr(j?.error || 'Could not update.'); return }
+      // CLEAN-UP (Jon, 2026-11-20): "Complete all" on more than 100 items completed the first 100 and hid the rest until the reload.
+      for (const part of chunks(ids, 100)) {
+        const j = await fetch('/api/inbox', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, ids: part, until }) }).then(r => r.json())
+        if (!j?.ok) { setErr(j?.error || 'Could not update.'); load(tab); return }
+      }
       setItems(x => x.filter(i => !ids.includes(i.id)))
       window.dispatchEvent(new Event('lh:inbox'))
       load(tab)
@@ -149,6 +166,8 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
   const [snoozePick, setSnoozePick] = useState('')
 
   const kinds = useMemo(() => { const m: Record<string, number> = {}; for (const i of items) m[i.kind] = (m[i.kind] || 0) + 1; return m }, [items])
+  // Handoff alerts are left out: "Got it" on one of those is a person's acknowledgement, not housekeeping.
+  const oldIds = useMemo(() => { const cut = Date.now() - WEEK_MS; return items.filter(i => i.status === 'open' && i.source !== 'handoff' && Date.parse(i.at) < cut).map(i => i.id) }, [items])
   const shown = useMemo(() => items.filter(i => !kind || i.kind === kind), [items, kind])
   const byDay = useMemo(() => { const m: Record<string, InboxItem[]> = {}; for (const i of shown) (m[dayOf(i.at)] = m[dayOf(i.at)] || []).push(i); return m }, [shown])
 
@@ -173,7 +192,9 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
         {Object.entries(kinds).map(([k, n]) => (
           <button key={k} onClick={() => setKind(kind === k ? '' : k)} className={`rounded-full px-2.5 py-1 text-[11.5px] font-semibold border ${kind === k ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink'}`}>{kindOf(k).label} · {n}</button>
         ))}
-        {tab === 'open' && items.length > 0 && <button onClick={() => act(items.map(i => i.id), 'done')} className="ml-auto text-[12px] font-semibold text-brand-700 hover:underline">Complete all</button>}
+        {/* CLEAN-UP (Jon, 2026-11-20): one tap for the backlog, without completing this week's items too. */}
+        {tab === 'open' && oldIds.length > 0 && oldIds.length < items.length && <button onClick={() => act(oldIds, 'done')} title="Completes only the items that have sat open for more than seven days; this week's stay" className="ml-auto text-[12px] font-semibold text-brand-700 hover:underline">Clear older than a week · {oldIds.length}</button>}
+        {tab === 'open' && items.length > 0 && <button onClick={() => act(items.map(i => i.id), 'done')} className={(oldIds.length > 0 && oldIds.length < items.length ? '' : 'ml-auto ') + 'text-[12px] font-semibold text-brand-700 hover:underline'}>Complete all</button>}
       </div>
       {degraded && <div className="mb-3 text-[11.5px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Snooze and reply-in-place need migration <code>155_inbox.sql</code> in Supabase. Until then Complete = read.</div>}
       {err && <div className="mb-3 text-[12px] text-rose-700">{err}</div>}
@@ -236,7 +257,7 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
                                 )}
                               </span>
                             )}
-                            {it.status !== 'open' && it.source !== 'handoff' && <button onClick={() => act([it.id], 'open')} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-muted hover:text-ink"><RotateCcw size={12} /> Reopen</button>}
+                            {it.status !== 'open' && it.source !== 'handoff' && !it.expired && <button onClick={() => act([it.id], 'open')} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-muted hover:text-ink"><RotateCcw size={12} /> Reopen</button>}
                           </div>
                         )}
                       </div>

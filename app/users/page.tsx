@@ -22,9 +22,24 @@ export default async function UsersPage() {
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-6 text-[13px] text-amber-800 inline-flex items-start gap-2">
           <ShieldAlert size={16} className="mt-0.5 flex-shrink-0" /> This page is for admins only. Ask an admin to manage access.
         </div>
-      ) : (
+      ) : (<>
+        {/* CLEAN-UP (Jon, 2026-11-20): the other admin pages, one click from here. They sat under
+            "More" in the sidebar and nowhere in this console, so Settings never led to them. */}
+        <nav aria-label="Other admin pages" className="mb-4 flex flex-wrap items-center gap-1.5 text-[12.5px]">
+          <span className="text-muted mr-0.5">Also here</span>
+          {([
+            ['/vault', 'Vault', 'Logins, gate codes and paperwork, revealed after unlock'],
+            ['/links', 'Share links', 'Every share link and passcode in one list'],
+            ['/api-keys', 'API keys', 'Your personal read-only keys for the API'],
+            ['/system-health', 'System health', 'Syncs, feeds and the daily self-audit'],
+            ['/brain', 'Business brain', 'Which apartments need a decision, what keeps failing, and data gaps'],
+          ] as const).map(([href, label, title]) => (
+            <a key={href} href={href} title={title}
+              className="rounded-lg border border-line bg-white px-2.5 py-1 font-semibold text-ink hover:bg-app">{label}</a>
+          ))}
+        </nav>
         <AdminConsole myEmail={access.email || ''} isOwner={isSuperadmin(access.email)} />
-      )}
+      </>)}
     </Shell>
   )
 }

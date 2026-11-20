@@ -6,16 +6,19 @@
 // actually asks the questions:
 //   1. per-channel counts (one line; tone says which matters; tap to filter)
 //   2. tabs: the matrix — every active listing × every channel, a pill per cell, tap for the detail;
-//      "Not connected" — listings off a MAJOR channel, the thing he asked for; inactive — reported,
-//      never alerted
+//      "Stopped selling" — was live on a MAJOR channel and is not now (page removed, suspended,
+//      failed, disconnected), most bookings lost first; "Never connected" — never set up on one, the
+//      standing gap; inactive — reported, never alerted
 //
-// Deep links: /channels?listing=<id> (from the Command Center and the audit finding) scrolls to and
-// highlights that row; /channels?problems=1 (from the Slack message) opens with the problems filter on.
+// Deep links: ?listing=<id> (from the Command Center and the audit finding) scrolls to and highlights
+// that row; ?channel= / ?building= / ?q= open the matrix on those; a bare ?problems=1 (the Slack
+// message, the morning email) opens on Stopped selling. The same links work on /admin?tab=channels,
+// where this component is the admin desk's Channels tab (`embedded`).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Loader2, RefreshCw, Download, ExternalLink, AlertTriangle } from 'lucide-react'
-import { LeanHead, Pill as LPill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, IconBtn } from '@/components/lean'
+import { LeanHead, Pill as LPill, Tag, LeanTabs, LeanList, LeanRow, LeanEmpty, LeanPick, IconBtn } from '@/components/lean'
 import { Sheet } from '@/components/Sheet'
 import {
   CHANNELS, MAJOR_KEYS, VERDICT_LABEL, VERDICT_ORDER, isProblem, verdictRank,
@@ -68,7 +71,12 @@ function CellPill({ cell, onClick, ariaLabel }: { cell: Cell; onClick: () => voi
   )
 }
 
-export function ChannelConnections({ canRun }: { canRun: boolean }) {
+// The verdicts that mean "was selling and stopped", against `missing` = never set up on the channel.
+const STOPPED: CellVerdict[] = ['delisted', 'suspended', 'failed', 'disconnected']
+const isStopped = (v: CellVerdict | undefined) => !!v && STOPPED.indexOf(v) >= 0
+
+/** `embedded`: mounted as the Channels tab of the admin desk, which already draws the page title. */
+export function ChannelConnections({ canRun, embedded }: { canRun: boolean; embedded?: boolean }) {
   const params = useSearchParams()
   const focusId = params.get('listing') || ''
   const [data, setData] = useState<Data | null>(null)
@@ -85,7 +93,10 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
   const [q, setQ] = useState(params.get('q') || '')
   // ORGANIZE (Jon, 2026-11-09: "make that the admin standard channel page and be able to organize by search").
   const [org, setOrg] = useState<'building' | 'problems' | 'name'>('building')
-  const [tab, setTab] = useState<'matrix' | 'missing' | 'inactive'>('matrix')
+  // CLEAN-UP (Jon, 2026-11-20): "stopped selling" and "never connected" are two lists, not one red
+  // count. A link that only says ?problems=1 (the morning email, the Slack alert) opens on the
+  // listings that stopped; a link to one listing, channel or building still opens the matrix.
+  const [tab, setTab] = useState<'matrix' | 'stopped' | 'missing' | 'inactive'>(() => params.get('problems') === '1' && !params.get('listing') && !params.get('channel') && !params.get('building') && !params.get('q') ? 'stopped' : 'matrix')
   const showInactive = tab === 'inactive'   // the CSV includes inactive rows while that tab is open
   const [sel, setSel] = useState<{ l: ListingHealth; key: string } | null>(null)
   const focusRef = useRef<HTMLTableRowElement | null>(null)
@@ -158,8 +169,16 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
     return Object.keys(m).sort().map(b => ({ building: b, rows: m[b].slice().sort((a, c) => verdictRank(a.verdict) - verdictRank(c.verdict) || a.name.localeCompare(c.name)) }))
   }, [rows, org])
 
-  const notConnected = useMemo(() => (data?.listings || []).filter(l => l.missingMajor.length > 0)
-    .filter(l => (market === 'all' || l.market === market) && (building === 'all' || l.building === building)), [data, market, building])
+  // Was selling on a major channel and stopped — most bookings lost first (what that channel sent the
+  // listing in the last 90 days, then the listing's own bookings).
+  const stoppedList = useMemo(() => {
+    const lost = (l: ListingHealth) => MAJOR_KEYS.reduce((n, k) => n + (isStopped(l.cells[k]?.verdict) ? (l.cells[k].bookings90d || 0) : 0), 0)
+    return (data?.listings || []).filter(l => MAJOR_KEYS.some(k => isStopped(l.cells[k]?.verdict)))
+      .sort((a, c) => lost(c) - lost(a) || c.bookings90d - a.bookings90d || a.building.localeCompare(c.building) || a.name.localeCompare(c.name, undefined, { numeric: true }))
+  }, [data])
+  // Never set up on a major channel — a standing gap, by building.
+  const neverList = useMemo(() => (data?.listings || []).filter(l => MAJOR_KEYS.some(k => l.cells[k]?.verdict === 'missing'))
+    .sort((a, c) => a.building.localeCompare(c.building) || a.name.localeCompare(c.name, undefined, { numeric: true })), [data])
 
   const csv = () => {
     if (!data) return
@@ -173,15 +192,14 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
     URL.revokeObjectURL(url)
   }
 
-  const head = (extra?: React.ReactNode) => (
-    <LeanHead title="Channels">{extra}</LeanHead>
-  )
+  const head = (extra?: React.ReactNode) => embedded
+    ? (extra ? <div className="flex items-center gap-1.5 flex-wrap">{extra}</div> : null)
+    : <LeanHead title="Channels">{extra}</LeanHead>
   if (loading && !data) return <div>{head()}<LeanEmpty><Loader2 size={16} className="animate-spin inline mr-2" /> Reading every listing&apos;s channels…</LeanEmpty></div>
   if (err && !data) return <div>{head()}<div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 flex items-center gap-2"><AlertTriangle size={14} /> {err}</div></div>
   if (!data) return null
 
   const total = data.listings.length
-  const totalProblems = data.listings.filter(l => l.missingMajor.length > 0).length
   const selCell = sel ? sel.l.cells[sel.key] : null
   const selDef = sel ? CHANNELS.find(c => c.key === sel.key) : null
   const unknownStatuses = CHANNELS.flatMap(c => Object.keys(data.statusesSeen?.[c.key] || {}).filter(s => !/^(COMPLETED|FAILED|DISCONNECTED|\(none\))$/.test(s) && !(c.key === 'expedia' && s === '(no status)')).map(s => c.label + ': ' + s + ' ×' + data.statusesSeen[c.key][s]))
@@ -193,7 +211,8 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
           opens a finding on Audits until it is live again. */}
       {head(<>
         <LPill title="Active listings">{total} active</LPill>
-        <LPill tone={totalProblems ? 'rose' : 'emerald'} title="Missing, failed, disconnected or suspended on Airbnb, Booking.com, Vrbo or Expedia" onClick={() => setTab('missing')}>{totalProblems} off a major</LPill>
+        <LPill tone={stoppedList.length ? 'rose' : 'emerald'} title="Was selling on Airbnb, Booking.com, Vrbo or Expedia and stopped: page removed, suspended, failed or disconnected" onClick={() => setTab('stopped')}>{stoppedList.length} stopped selling</LPill>
+        {neverList.length ? <LPill title="Never set up on at least one of Airbnb, Booking.com, Vrbo or Expedia — a standing gap, not something that broke" onClick={() => setTab('missing')}>{neverList.length} never connected</LPill> : null}
         <LPill title={'Data as of ' + (when(data.at) || '—')}>checked {when(data.snapshotAt) || 'never'}</LPill>
       </>)}
 
@@ -202,13 +221,15 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
         {CHANNELS.map(c => {
           const t = data.totals[c.key]
           const bad = t.failed + t.disconnected + t.suspended + (t.delisted || 0)
-          const tone = bad > 0 ? (c.major ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800') : t.unknown > 0 ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'
+          // Colour only where a person has to act: a major channel with listings that stopped. A minor
+          // channel is shown, never alerted, so it stays plain whatever it reports.
+          const tone = bad > 0 && c.major ? 'bg-rose-100 text-rose-700' : t.unknown > 0 ? 'bg-amber-100 text-amber-800' : 'bg-white border border-line text-ink'
           const active = channel === c.key
           return (
             <button key={c.key} onClick={() => setChannel(active ? 'all' : c.key)} aria-pressed={active}
-              title={(t.live + t.stale) + ' of ' + total + ' live · ' + bad + ' broken · ' + t.missing + ' not connected' + (t.unknown ? ' · ' + t.unknown + ' unknown' : '') + (t.stale ? ' · ' + t.stale + ' quiet' : '') + (c.major ? '' : ' · minor channel: shown, never alerted')}
+              title={(t.live + t.stale) + ' of ' + total + ' live · ' + bad + ' stopped · ' + t.missing + ' never connected' + (t.unknown ? ' · ' + t.unknown + ' unknown' : '') + (t.stale ? ' · ' + t.stale + ' quiet' : '') + (c.major ? '' : ' · minor channel: shown, never alerted')}
               className={'rounded-lg px-2 py-1 text-[12px] font-semibold tabular-nums whitespace-nowrap ' + tone + (active ? ' ring-2 ring-ink' : ' hover:opacity-80')}>
-              {c.label}{c.major ? '' : ' ·'} {t.live + t.stale}/{total}{bad ? ' · ' + bad + ' broken' : ''}
+              {c.label}{c.major ? '' : ' ·'} {t.live + t.stale}/{total}{bad ? ' · ' + bad + ' stopped' : ''}
             </button>
           )
         })}
@@ -218,7 +239,8 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
       <LeanTabs
         tabs={[
           { key: 'matrix' as const, label: 'Matrix', n: rows.length },
-          { key: 'missing' as const, label: 'Not connected', n: notConnected.length },
+          { key: 'stopped' as const, label: 'Stopped selling', n: stoppedList.length },
+          { key: 'missing' as const, label: 'Never connected', n: neverList.length },
           { key: 'inactive' as const, label: 'Inactive', n: data.inactive.length },
         ]}
         value={tab} onChange={setTab}
@@ -232,29 +254,19 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
         </>} />
 
       {/* ── controls — one line ──────────────────────────────────────────── */}
-      {tab !== 'missing' ? (
+      {tab === 'matrix' || tab === 'inactive' ? (
         <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
           <label className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1 cursor-pointer">
             <input type="checkbox" checked={onlyProblems} onChange={e => setOnlyProblems(e.target.checked)} /> Only problems
           </label>
-          <select value={channel} onChange={e => setChannel(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Channel">
-            <option value="all">All channels</option>
-            {CHANNELS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-          </select>
-          <select value={market} onChange={e => { setMarket(e.target.value); setBuilding('all') }} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Market">
-            <option value="all">All markets</option>
-            {markets.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
+          {/* The channel is picked on the count buttons above (there was a second, identical menu here). */}
+          {markets.length > 1 ? <LeanPick value={market} onPick={v => { setMarket(v); setBuilding('all') }} options={[{ v: 'all', label: 'All markets' }, ...markets.map(m => ({ v: m, label: m }))]} /> : null}
           <select value={building} onChange={e => setBuilding(e.target.value)} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Building">
             <option value="all">All buildings</option>
             {buildings.map(b => <option key={b} value={b}>{b}</option>)}
           </select>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search unit, building or status — e.g. “airbnb failed”" className="rounded-lg border border-line bg-white px-2.5 py-1 w-72 max-w-full" aria-label="Search" />
-          <select value={org} onChange={e => setOrg(e.target.value as any)} className="rounded-lg border border-line bg-white px-2 py-1" aria-label="Organize by">
-            <option value="building">Organize: by building</option>
-            <option value="problems">Organize: problems first</option>
-            <option value="name">Organize: unit A–Z</option>
-          </select>
+          <LeanPick value={org} onPick={setOrg} title="How the matrix is ordered" options={[{ v: 'building', label: 'By building' }, { v: 'problems', label: 'Problems first' }, { v: 'name', label: 'Unit A–Z' }]} />
         </div>
       ) : null}
       {runNote ? <div className="rounded-lg border border-line bg-white px-3 py-2 text-[12.5px] text-ink">{runNote}</div> : null}
@@ -291,22 +303,32 @@ export function ChannelConnections({ canRun }: { canRun: boolean }) {
         </div>
       ) : null}
 
-      {/* ── not connected — the plain list Jon asked for. Fix: Guesty → Listings → Channels ── */}
-      {tab === 'missing' ? (
-        notConnected.length === 0 ? <LeanEmpty>Every active listing is live on all four major channels.</LeanEmpty> : (
+      {/* ── stopped selling / never connected — two plain lists. Fix: Guesty → Listings → Channels ── */}
+      {tab === 'stopped' || tab === 'missing' ? (() => {
+        const stoppedTab = tab === 'stopped'
+        const list = stoppedTab ? stoppedList : neverList
+        if (list.length === 0) return <LeanEmpty>{stoppedTab ? 'Nothing that was selling has stopped.' : 'Every active listing is set up on all four major channels.'}</LeanEmpty>
+        return (
           <LeanList>
-            {notConnected.map(l => (
-              <LeanRow key={l.id}
-                name={<Link href={'/listings/' + l.id} className="hover:underline">{l.name}</Link>}
-                meta={l.building + ' · ' + l.market}
-                tags={<>
-                  {l.missingMajor.map(k => <button key={k} onClick={() => setSel({ l, key: k })} title="Details and how to fix" className={'rounded-md border px-1.5 py-[2px] text-[10.5px] font-semibold ' + PILL[l.cells[k].verdict]}>{CHANNELS.find(c => c.key === k)?.label}: {VERDICT_LABEL[l.cells[k].verdict]}</button>)}
-                  <Tag title="Bookings in the last 90 days, all channels">{l.bookings90d} bk 90d</Tag>
-                </>} />
-            ))}
+            {list.map(l => {
+              const keys = MAJOR_KEYS.filter(k => stoppedTab ? isStopped(l.cells[k]?.verdict) : l.cells[k]?.verdict === 'missing')
+              const lost = keys.reduce((n, k) => n + (l.cells[k].bookings90d || 0), 0)
+              return (
+                <LeanRow key={l.id}
+                  name={<Link href={'/listings/' + l.id} className="hover:underline">{l.name}</Link>}
+                  meta={l.building + ' · ' + l.market}
+                  tags={<>
+                    {keys.map(k => <button key={k} onClick={() => setSel({ l, key: k })} title="Details and how to fix" className={'rounded-md border px-1.5 py-[2px] text-[10.5px] font-semibold ' + PILL[l.cells[k].verdict]}>{CHANNELS.find(c => c.key === k)?.label}{stoppedTab ? ': ' + VERDICT_LABEL[l.cells[k].verdict] : ''}</button>)}
+                    {stoppedTab
+                      ? <Tag title="Bookings these channels sent this listing in the last 90 days — what is being lost">{lost ? lost + ' booked there in 90d' : 'none booked there in 90d'}</Tag>
+                      : <Tag title="Bookings in the last 90 days, all channels">{l.bookings90d} booked in 90d</Tag>}
+                  </>}
+                  actions={stoppedTab ? keys.filter(k => l.cells[k].url).map(k => <IconBtn key={k} title={'Open the ' + (CHANNELS.find(c => c.key === k)?.label || k) + ' page'} href={l.cells[k].url || ''}><ExternalLink size={13} /></IconBtn>) : undefined} />
+              )
+            })}
           </LeanList>
         )
-      ) : null}
+      })() : null}
 
       {/* ── inactive — reported, never alerted ───────────────────────────── */}
       {tab === 'inactive' ? (
@@ -366,12 +388,13 @@ function GroupRows({ building, rows, cols, focusId, focusRef, onCell }: {
   building: string; rows: ListingHealth[]; cols: typeof CHANNELS; focusId: string
   focusRef: React.MutableRefObject<HTMLTableRowElement | null>; onCell: (l: ListingHealth, key: string) => void
 }) {
-  const bad = rows.filter(r => r.missingMajor.length > 0).length
+  const stopped = rows.filter(r => MAJOR_KEYS.some(k => isStopped(r.cells[k]?.verdict))).length
+  const never = rows.filter(r => MAJOR_KEYS.some(k => r.cells[k]?.verdict === 'missing')).length
   return (
     <>
       <tr className="bg-app/40">
         <td colSpan={cols.length + 2} className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-ink/70 sticky left-0">
-          {building} <span className="font-normal text-muted normal-case tracking-normal">· {rows.length} unit{rows.length === 1 ? '' : 's'}{bad ? ' · ' : ''}{bad ? <span className="text-rose-700 font-semibold">{bad} off a major channel</span> : null}</span>
+          {building} <span className="font-normal text-muted normal-case tracking-normal">· {rows.length} unit{rows.length === 1 ? '' : 's'}{stopped ? ' · ' : ''}{stopped ? <span className="text-rose-700 font-semibold">{stopped} stopped selling</span> : null}{never ? ' · ' + never + ' never connected' : ''}</span>
         </td>
       </tr>
       {rows.map(l => {

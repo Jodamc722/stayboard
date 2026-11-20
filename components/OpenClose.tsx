@@ -33,10 +33,11 @@ type Data = OcDay & { canSign?: boolean; canManage?: boolean }
 type Status = 'todo' | 'pending' | 'active' | 'all'
 type Market = 'all' | 'Miami' | 'Broward' | 'North'
 const MARKETS: Market[] = ['all', 'Miami', 'Broward', 'North']
-const STATE_TAG: Record<OcState, { label: string; tone: 'amber' | 'sky' | 'emerald'; title: string }> = {
+// CLEAN-UP (Jon, 2026-11-20): colour only for what needs somebody. "active" and "done" are plain.
+const STATE_TAG: Record<OcState, { label: string; tone: 'amber' | 'slate'; title: string }> = {
   pending: { label: 'pending', tone: 'amber', title: 'Nobody has dealt with this yet' },
-  active: { label: 'active', tone: 'sky', title: 'Somebody is on it' },
-  done: { label: 'done', tone: 'emerald', title: 'Nothing left to do' },
+  active: { label: 'active', tone: 'slate', title: 'Somebody is on it' },
+  done: { label: 'done', tone: 'slate', title: 'Nothing left to do' },
 }
 const first = (s: string | null | undefined) => String(s || '').split(/[\s@]/)[0]
 const timeOf = (iso: string | null | undefined) => { if (!iso) return ''; const d = new Date(iso); return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) }
@@ -207,8 +208,8 @@ function Gate({ gate, status, market, data, roster, canSign, onChanged }: { gate
         <span className="text-[14px] font-semibold text-ink">{gate.label}</span>
         <Tag tone={when.tone} title={gate.hint}>{when.text}</Tag>
         {gate.counts.pending > 0 && <Tag tone="amber">{gate.counts.pending} pending</Tag>}
-        {gate.counts.active > 0 && <Tag tone="sky">{gate.counts.active} active</Tag>}
-        {gate.counts.done > 0 && status === 'all' && <Tag tone="emerald">{gate.counts.done} done</Tag>}
+        {gate.counts.active > 0 && <Tag>{gate.counts.active} active</Tag>}
+        {gate.counts.done > 0 && status === 'all' && <Tag>{gate.counts.done} done</Tag>}
         {gate.degraded && <Tag tone="rose" title={gate.degraded}>source unavailable</Tag>}
         {gate.note && <span className="text-[12px] text-muted">{gate.note}</span>}
         <span className="ml-auto inline-flex items-center gap-1.5 flex-wrap">

@@ -293,8 +293,14 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
       setLoading(false)
     }).catch(() => { setListErr('The report list did not load — check the connection and retry.'); setLoading(false) })
   }
+  useEffect(() => { loadReports() }, [])
+  // CLEAN-UP (Jon, 2026-11-20): speed. The owner, building and unit pickers belong to the New report
+  // form, which opens closed; their three lookups now wait for it instead of riding on every open
+  // of the desk. Asked for once, the first time the form is on screen.
+  const pickersAsked = useRef(false)
   useEffect(() => {
-    loadReports()
+    if (!showNew || pickersAsked.current) return
+    pickersAsked.current = true
     fetch('/api/reports/budgets?buildings=1').then(r => r.json()).then(d => {
       if (Array.isArray(d?.buildings)) setBuildings(d.buildings)
     }).catch(() => {})
@@ -308,7 +314,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
         .map(l => ({ id: String(l.id), name: String(l.nickname || l.title || l.id), building: String(l.building || '') }))
         .sort((a, b) => a.name.localeCompare(b.name)))
     }).catch(() => {})
-  }, [])
+  }, [showNew])
 
   // Statements follow the property selection. Anything whose period sits inside the report
   // window is preselected, since that is nearly always what the report is about. Statements
@@ -523,8 +529,11 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
 
   const nKind = (k: DocKind) => reports.filter(r => kindOfRow(r) === k).length
   const shownCount = reports.filter(r => salesOnly ? kindOfRow(r) === 'sales' : kindOfRow(r) !== 'sales').length
-  const nSent = reports.filter(r => String(r.status) === 'sent').length
-  const nUnopened = reports.filter(r => String(r.status) === 'sent' && !r.views).length
+  // CLEAN-UP (Jon, 2026-11-20): the header counts the rows this desk lists. Sent and not-opened used
+  // to count every document, so Owner Reports included the sales decks and Sales the owner reports.
+  const inScope = reports.filter(r => salesOnly ? kindOfRow(r) === 'sales' : kindOfRow(r) !== 'sales')
+  const nSent = inScope.filter(r => String(r.status) === 'sent').length
+  const nUnopened = inScope.filter(r => String(r.status) === 'sent' && !r.views).length
   const KIND_TAG: Record<DocKind, { l: string; t: 'brand' | 'violet' | 'emerald' | 'amber' }> = {
     review: { l: 'Review', t: 'brand' }, projection: { l: 'Projection', t: 'violet' }, onboarding: { l: 'Onboarding', t: 'emerald' },
     sales: { l: 'Proposal', t: 'amber' },

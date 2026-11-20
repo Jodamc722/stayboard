@@ -379,7 +379,15 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   }, [q])
   // Today and Upcoming are WORK: unsent only. Everything already sent — whatever day it was for —
   // pools into Sent, newest first, because that list is read as history and not as a queue.
-  const todayShown = useMemo(() => today.filter(r => !r.sent_at).filter(match), [today, match])
+  // CLEAN-UP (Jon, 2026-11-20): lead with the deadline. The list came grouped by building, so a guest already arriving with
+  // nothing sent could sit under another building's routine notices. Late first, then past the cutoff, then the rest;
+  // inside each, the earliest arrival, then the building order from Settings.
+  const todayShown = useMemo(() => {
+    const rank = (r: Row) => r.urgency === 'late' ? 0 : r.urgency === 'due' ? 1 : 2
+    const dayOfRow = (r: Row) => String(r.arrival_date || '').slice(0, 10)
+    return today.filter(r => !r.sent_at).filter(match).sort((a, b) =>
+      (rank(a) - rank(b)) || dayOfRow(a).localeCompare(dayOfRow(b)) || ((a.propertyOrder ?? 999) - (b.propertyOrder ?? 999)) || String(a.guest_name || '').localeCompare(String(b.guest_name || '')))
+  }, [today, match])
   const upcomingShown = useMemo(() => upcoming.filter(r => !r.sent_at).filter(match), [upcoming, match])
   const sentShown = useMemo(() => {
     const at = (r: Row) => String(r.sent_at || '')
@@ -552,7 +560,8 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
       {counts.late > 0 && <Pill tone="rose" title="Guest arriving today and no notice has gone out">{counts.late} arriving, unsent</Pill>}
       {counts.due > 0 && <Pill tone="amber" title="Past the building's cutoff — send now">{counts.due} past cutoff</Pill>}
       <Pill tone={counts.toSend ? 'brand' : 'emerald'} title="Notices still to send for today">{counts.toSend} to send today</Pill>
-      {counts.sentToday > 0 && <Pill tone="emerald" title="Sent for today's arrivals">{counts.sentToday} sent</Pill>}
+      {/* CLEAN-UP (Jon, 2026-11-20): done work is a plain count; colour is for what is still to do. */}
+      {counts.sentToday > 0 && <Pill title="Sent for today's arrivals">{counts.sentToday} sent</Pill>}
       {counts.blocked > 0 && <Pill tone="amber" onClick={() => setShowSettings(true)} title="That building has no recipient yet — click to add one in Settings">{counts.blocked} no recipient</Pill>}
       {/* Arriving today with a check still owed — the thing the front desk finds out too late. */}
       {checksOutstanding > 0 && <Pill tone="amber" title="Arriving today on a channel that needs a photo ID or a security deposit, and we do not have it yet. Capture it at the Calls desk → ID & deposits.">{checksOutstanding} ID/deposit outstanding</Pill>}
@@ -748,7 +757,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
           {r.check ? <CheckTags c={r.check} /> : null}
           {!r.sent_at && r.urgency === 'late' && <Tag tone="roseSolid" title={URGENCY.late.text}>Arriving · unsent</Tag>}
           {!r.sent_at && r.urgency === 'due' && <Tag tone="amber" title={URGENCY.due.text}>Past cutoff</Tag>}
-          {r.attach && <Tag tone={r.doc_path ? 'brand' : 'amber'} title={pdfTitle}>{r.doc_path ? 'Form filed' : 'Needs form'}</Tag>}
+          {r.attach && <Tag tone={r.doc_path ? 'slate' : 'amber'} title={pdfTitle}>{r.doc_path ? 'Form filed' : 'Needs form'}</Tag>}
           {r.propertyMissing && <Tag tone="rose" title="This building is not in Settings">Not configured</Tag>}
           {!r.hasRecipient && !r.propertyMissing && <Tag tone="amber" title="Add a recipient for this building in Settings">No recipient</Tag>}
           {drafted[r.id] && !r.sent_at && <Tag tone="brand" title="Draft is waiting in support@'s Gmail">In drafts</Tag>}

@@ -39,7 +39,18 @@ export type InboxItem = {
   entity: { type: string; id: string } | null
   /** The last few lines of that thread, newest last, so a reply can be written without opening it. */
   thread?: { by: string; body: string; at: string }[]
+  /** Closed by the clock, not by a person: yesterday's day-bound alert, or a reminder a newer one replaced. */
+  expired?: boolean
 }
+
+// STALE ALERTS ARE NOT OPEN WORK (CLEAN-UP, Jon, 2026-11-20: "a number nobody acts on is noise").
+// On 2026-11-20 the team held 2,769 open items; 1,395 were the daily "Departure cleans are running
+// behind" alert (some from July) and 54 were "AI budget" alerts — each true for one day only — and 330
+// were older copies of a claim-deadline reminder that is re-sent daily for the same claim. Read-time
+// only, nothing is written: a day-bound alert from before today (Eastern) reads as completed, and of
+// the claim reminders for one claim only the newest stays open. They remain under Completed.
+const DAY_BOUND = new Set(['ops_alert', 'ai_budget'])
+const etDay = (iso: string) => { const t = Date.parse(iso); return Number.isFinite(t) ? new Date(t).toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) : '' }
 
 const FULL = 'id,kind,title,body,link,actor_email,read,created_at,status,snoozed_until,done_at,entity_type,entity_id'
 const LEGACY = 'id,kind,title,body,link,actor_email,read,created_at'
@@ -54,40 +65,61 @@ export async function GET(req: NextRequest) {
   const now = new Date().toISOString()
   let degraded = false
 
-  // ── app_notifications ────────────────────────────────────────────────────────────────────────
-  let rows: any[] = []
-  {
+  // ONE ROUND (CLEAN-UP, Jon, 2026-11-20, speed): the three sources and the people list do not depend on each
+  // other, and the sidebar asks for this every minute from every page. They were read one after another.
+  const readApp = async () => {
     let r: any = await db.from('app_notifications').select(FULL).eq('user_email', me).order('created_at', { ascending: false }).limit(400)
     if (r.error && /status|snoozed_until|entity_type|schema cache/i.test(r.error.message)) {
       degraded = true
       r = await db.from('app_notifications').select(LEGACY).eq('user_email', me).order('created_at', { ascending: false }).limit(400)
     }
-    if (r.error) return NextResponse.json({ ok: false, error: r.error.message }, { status: 500 })
-    rows = (r.data as any[]) || []
+    return r
+  }
+  const [appRes, projRes, alerts, roster] = await Promise.all([
+    readApp(),
+    Promise.resolve(db.from('project_notifications').select('id,type,title,body,url,actor,created_at,read_at').eq('email', me).order('created_at', { ascending: false }).limit(200)).catch(() => ({ data: null })),   // no projects tables
+    readAlerts().catch(() => [] as Awaited<ReturnType<typeof readAlerts>>),
+    rosterForPicker().catch(() => [] as Awaited<ReturnType<typeof rosterForPicker>>),
+  ])
+
+  // ── app_notifications ────────────────────────────────────────────────────────────────────────
+  if (appRes.error) return NextResponse.json({ ok: false, error: appRes.error.message }, { status: 500 })
+  const rows: any[] = (appRes.data as any[]) || []
+  const today = etDay(now)
+  // Newest first, so the first claim reminder seen for a link is the one that stays open.
+  const seenReminder = new Set<string>()
+  const expiredOf = (r: any): boolean => {
+    const kind = str(r.kind)
+    if (DAY_BOUND.has(kind)) { const d = etDay(str(r.created_at)); return !!d && d < today }
+    if (kind === 'claim' && r.link) { const k = str(r.link); if (seenReminder.has(k)) return true; seenReminder.add(k) }
+    return false
   }
   const statusOf = (r: any): InboxItem['status'] => {
     if (degraded) return r.read ? 'done' : 'open'
     if (r.status === 'snoozed') return r.snoozed_until && r.snoozed_until <= now ? 'open' : 'snoozed'
     return r.status === 'done' ? 'done' : 'open'
   }
-  const items: InboxItem[] = rows.map(r => ({
-    id: 'n:' + r.id, source: 'app', kind: str(r.kind), title: str(r.title), body: r.body || null, link: r.link || null, actor: r.actor_email || null,
-    at: str(r.created_at), read: !!r.read, status: statusOf(r), snoozedUntil: r.snoozed_until || null,
-    entity: r.entity_type && r.entity_id ? { type: str(r.entity_type), id: str(r.entity_id) } : null,
-  }))
+  const items: InboxItem[] = rows.map(r => {
+    const status = statusOf(r)
+    // Asked of every row, open or not: a reminder already completed still replaces the older ones.
+    const stale = expiredOf(r)
+    const expired = status === 'open' && stale
+    return {
+      id: 'n:' + r.id, source: 'app', kind: str(r.kind), title: str(r.title), body: r.body || null, link: r.link || null, actor: r.actor_email || null,
+      at: str(r.created_at), read: !!r.read, status: expired ? 'done' : status, snoozedUntil: r.snoozed_until || null,
+      entity: r.entity_type && r.entity_id ? { type: str(r.entity_type), id: str(r.entity_id) } : null,
+      ...(expired ? { expired: true } : {}),
+    }
+  })
 
   // ── project_notifications ────────────────────────────────────────────────────────────────────
-  try {
-    const { data } = await db.from('project_notifications').select('id,type,title,body,url,actor,created_at,read_at').eq('email', me).order('created_at', { ascending: false }).limit(200)
-    for (const r of ((data || []) as any[])) items.push({
-      id: 'p:' + r.id, source: 'project', kind: r.type === 'mentioned' ? 'mention' : str(r.type), title: str(r.title), body: r.body || null, link: r.url || null, actor: r.actor || null,
-      at: str(r.created_at), read: !!r.read_at, status: r.read_at ? 'done' : 'open', snoozedUntil: null, entity: null,
-    })
-  } catch { /* no projects tables */ }
+  for (const r of (((projRes as any)?.data || []) as any[])) items.push({
+    id: 'p:' + r.id, source: 'project', kind: r.type === 'mentioned' ? 'mention' : str(r.type), title: str(r.title), body: r.body || null, link: r.url || null, actor: r.actor || null,
+    at: str(r.created_at), read: !!r.read_at, status: r.read_at ? 'done' : 'open', snoozedUntil: null, entity: null,
+  })
 
   // ── handoff alerts addressed to me, still open ──────────────────────────────────────────────
   try {
-    const alerts = await readAlerts()
     for (const a of alerts) {
       if (!isOpen(a) || !hasFired(a) || !isFor(a, { email: me, role })) continue
       if (a.audience.kind === 'everyone' && !(a.recipients || []).some(r => r.email === me)) continue   // the floater carries broadcast alerts
@@ -120,7 +152,7 @@ export async function GET(req: NextRequest) {
   const counts = { open: 0, unread: 0, snoozed: 0, done: 0 }
   for (const i of items) { counts[i.status]++; if (i.status === 'open' && !i.read) counts.unread++ }
   const shown = items.filter(i => i.status === tab).slice(0, tab === 'done' ? 100 : 200)
-  return NextResponse.json({ ok: true, me, tab, items: shown, counts, degraded, people: (await rosterForPicker()).filter(p => p.email !== me) })
+  return NextResponse.json({ ok: true, me, tab, items: shown, counts, degraded, people: roster.filter(p => p.email !== me) })
 }
 
 export async function POST(req: NextRequest) {

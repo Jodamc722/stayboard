@@ -8,7 +8,7 @@ import { customFieldNameMap, filledCustomFields } from '@/lib/custom-fields'
 import { ExternalLink } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanEmpty, IconBtn } from '@/components/lean'
 import { UnpaidStrip, loadUnpaidAll } from '@/components/UnpaidStrip'
-import type { UnpaidRow as UnpaidRowT } from '@/lib/unpaid'
+import { weCollect, type UnpaidRow as UnpaidRowT } from '@/lib/unpaid'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,19 +62,18 @@ function fmtSync(iso?: string | null): string {
   return `${Math.round(hrs / 24)}d ago`
 }
 
-const SOURCE_STYLE: Record<string, string> = {
-  airbnb: 'bg-rose-50 text-rose-700',
-  airbnb2: 'bg-rose-50 text-rose-700',
-  bookingcom: 'bg-blue-50 text-blue-700',
-  vrbo: 'bg-sky-50 text-sky-700',
-  homeaway: 'bg-sky-50 text-sky-700',
-  manual: 'bg-app text-muted',
-  direct: 'bg-emerald-50 text-emerald-700',
+// CLEAN-UP (Jon, 2026-11-20): the channel printed as Guesty stores it ("airbnb2", "be-api", "homesvillasbymarriott")
+// in a different colour per channel. A channel needs no action: its name, plain. An owner's stay is the one that says so.
+const SOURCE_LABEL: Record<string, string> = {
+  airbnb: 'Airbnb', airbnb2: 'Airbnb', bookingcom: 'Booking', booking: 'Booking', expedia: 'Expedia', vrbo: 'VRBO', homeaway: 'VRBO', homeaway2: 'VRBO',
+  manual: 'Direct', direct: 'Direct', beapi: 'Website', website: 'Website', google: 'Google', ownerguest: 'Owner guest', owner: 'Owner',
+  homesvillasbymarriott: 'Marriott', bluegroundnestpick: 'Blueground',
 }
-function sourceStyle(s?: string | null): string {
-  const k = (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-  return SOURCE_STYLE[k] || 'bg-brand-50 text-brand-700'
+function sourceLabel(s?: string | null): string {
+  const raw = String(s || '').trim()
+  return SOURCE_LABEL[raw.toLowerCase().replace(/[^a-z0-9]/g, '')] || raw
 }
+const SOURCE_CLS = 'bg-app text-muted'
 
 const STATUS_STYLE: Record<string, string> = {
   confirmed: 'bg-emerald-50 text-emerald-700',
@@ -210,11 +209,11 @@ export default async function ReservationsPage({ searchParams }: { searchParams?
   return (
     <Shell>
       <LeanHead title="Reservations">
-        <Pill tone="emerald" title={`Check-ins ${dl}`}>{checkInsToday} in</Pill>
-        <Pill tone="rose" title={`Check-outs ${dl}`}>{checkOutsToday} out</Pill>
-        <Pill tone="brand" title={`In-house ${viewingToday ? 'now' : 'on ' + dl}`}>{inHouse} in-house</Pill>
-        <Pill title="Arrivals in the next 7 days">{arrivals7Count} next 7d</Pill>
-        <Pill title="Booked revenue on arrivals in the next 7 days">{fmtMoney(revenue7, currency)} 7d</Pill>
+        {/* CLEAN-UP (Jon, 2026-11-20): counts, not alarms — red and green are kept for what needs doing. Booked revenue sits in the hover. */}
+        <Pill title={`Check-ins ${dl}`}>{checkInsToday} in</Pill>
+        <Pill title={`Check-outs ${dl}`}>{checkOutsToday} out</Pill>
+        <Pill title={`In-house ${viewingToday ? 'now' : 'on ' + dl}`}>{inHouse} in-house</Pill>
+        <Pill title={`Arrivals in the next 7 days · ${fmtMoney(revenue7, currency)} booked on them`}>{arrivals7Count} next 7d</Pill>
         {sync?.last_error && <Pill tone="amber" title="The last Guesty sync reported an issue — figures may be stale">Sync issue</Pill>}
         {near.truncated && <Pill tone="amber" title="Could not read every stay for this week — counts and tabs may be short. Refresh to try again.">Partial read</Pill>}
       </LeanHead>
@@ -269,16 +268,18 @@ function ResRows({ rows, cfMap }: { rows: any[]; cfMap: Record<string, string> }
         const cf = filledCustomFields(r.custom_fields, cfMap)
         const status = String(r.status || '').replace(/_/g, ' ')
         const nights = Number(r.nights) || 0
+        // CLEAN-UP (Jon, 2026-11-20): "unpaid is only for direct, VRBO and Google". The amber tag was on every Airbnb, Expedia
+        // and Booking stay the channel had not paid out yet — 156 of this week's 303 stays, none of them ours to collect.
+        const ours = weCollect(String(r.source || ''))
         return (
           <LeanRow key={r.id}
             name={<Link href={'/reservations/' + r.id} className={'hover:underline ' + (canceled ? 'line-through text-muted' : '')}>{r.guest_name || 'Guest'}</Link>}
             meta={`${r.listing_name || 'Unassigned'} · ${fmtWeekday(r.check_in)} ${fmtDay(r.check_in)} – ${fmtWeekday(r.check_out)} ${fmtDay(r.check_out)}`}
             tags={<>
-              {r.source && <span title="Booking channel" className={`${TAG_CLS} ${sourceStyle(r.source)}`}>{r.source}</span>}
+              {r.source && <span title="Booking channel" className={`${TAG_CLS} ${SOURCE_CLS}`}>{sourceLabel(r.source)}</span>}
               {status && !/^confirmed$/i.test(status) && <span title="Guesty status" className={`${TAG_CLS} ${statusStyle(r.status)}`}>{status}</span>}
               <Tag title={`Total${nights ? ` for ${nights} night${nights === 1 ? '' : 's'}` : ''}`}>{fmtMoney(total, cur)}</Tag>
-              {owed > 0.5 && !canceled && <Tag tone="amber" title="Balance not yet paid">{fmtMoney(owed, cur)} due</Tag>}
-              {cf.length > 0 && <Tag title={cf.map(f => `${f.name}: ${f.value}`).join('\n')}>{cf.length} field{cf.length === 1 ? '' : 's'}</Tag>}
+              {owed > 0.5 && !canceled && ours && <Tag tone="amber" title="Balance not yet paid — we collect on this channel">{fmtMoney(owed, cur)} due</Tag>}
             </>}
             actions={<IconBtn title="Open in Guesty" href={`https://app.guesty.com/reservations/${r.id}/summary`}><ExternalLink size={14} /></IconBtn>}
           >
@@ -319,11 +320,9 @@ const GROUPS: { key: string; title: string; hint: string; tone?: 'rose' }[] = [
 ]
 function UnpaidRows({ rows }: { rows: UnpaidRowT[] }) {
   const money = (n: number) => '$' + Math.round(n).toLocaleString('en-US')
-  const total = rows.reduce((a, r) => a + r.balance, 0)
-  const now = rows.filter(r => r.bucket !== 'later')
   return (
     <div className="space-y-4">
-      <p className="px-1 text-[12px] text-muted"><b className="text-ink tabular-nums">{money(total)}</b> owed on {rows.length} {rows.length === 1 ? 'stay' : 'stays'} on the books{now.length ? <> · <b className="text-rose-700">{now.length} to take care of this week ({money(now.reduce((a, r) => a + r.balance, 0))})</b></> : null} · direct, VRBO and Google only · <Link href="/reservations/unpaid" className="font-semibold text-brand-700 hover:underline">statuses and notes on the board →</Link></p>
+      {/* CLEAN-UP (Jon, 2026-11-20): the total, the count and "direct, VRBO and Google only" are in the strip above — said once. */}
       {GROUPS.map(g => {
         const xs = rows.filter(r => r.bucket === g.key)
         if (!xs.length) return null
@@ -345,7 +344,7 @@ function UnpaidRows({ rows }: { rows: UnpaidRowT[] }) {
                     name={<Link href={'/reservations/' + r.id} className="hover:underline">{r.guest}</Link>}
                     meta={`${r.unit} · ${fmtWeekday(r.checkIn)} ${fmtDay(r.checkIn)} – ${fmtWeekday(r.checkOut)} ${fmtDay(r.checkOut)}${r.nights ? ` · ${r.nights} night${r.nights === 1 ? '' : 's'}` : ''}`}
                     tags={<>
-                      <span title="Booking channel — we collect" className={`${TAG_CLS} ${sourceStyle(r.source)}`}>{CHAN[String(r.source || '').toLowerCase()] || r.source}</span>
+                      <span title="Booking channel — we collect" className={`${TAG_CLS} ${SOURCE_CLS}`}>{CHAN[String(r.source || '').toLowerCase()] || sourceLabel(r.source)}</span>
                       <Tag tone="rose" title={`Paid ${money(r.paid)} of ${money(r.total)}`}>{money(r.balance)} owed</Tag>
                       {r.paid > 0 ? <Tag title="What has been paid so far">{money(r.paid)} paid</Tag> : <Tag tone="amber" title="No payment has landed on this folio">nothing paid</Tag>}
                       <Tag tone={st.tone} title={'Follow-up status' + (r.tracking.updatedBy ? ' · ' + r.tracking.updatedBy : '')}>{st.label}</Tag>

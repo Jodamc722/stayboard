@@ -32,19 +32,25 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
   if (!user) redirect('/login')
   const db = supabaseAdmin()
 
+  // SPEED (Jon, 2026-11-20): the books and the listings are read together, not one after the other.
   let books: any[] = []
-  try {
-    const { rows } = await pageRows<any>((a, b) => db.from('guidebooks').select('id, listing_id, listing_name, title, status, updated_at, sections, answers').order('updated_at', { ascending: false }).order('id').range(a, b), 6)
-    books = rows || []
-  } catch { /* table missing */ }
+  let listings: any[] = []
+  await Promise.all([
+    (async () => {
+      try {
+        const { rows } = await pageRows<any>((a, b) => db.from('guidebooks').select('id, listing_id, listing_name, title, status, updated_at, sections, answers').order('updated_at', { ascending: false }).order('id').range(a, b), 6)
+        books = rows || []
+      } catch { /* table missing */ }
+    })(),
+    (async () => {
+      try {
+        const { data } = await db.from('guesty_listings').select('id, nickname, title, building, unit, status').not('building', 'is', null).limit(1000)
+        listings = (data || []).filter((l: any) => !/\bfull\b/i.test(String(l.nickname || l.title || '')) && !/inactive|disabled|archived|deleted/i.test(String(l.status || '')))
+      } catch { /* none */ }
+    })(),
+  ])
   const newest: Record<string, any> = {}
   for (const b of books) { const k = String(b.listing_id || b.id); if (!newest[k]) newest[k] = b }
-
-  let listings: any[] = []
-  try {
-    const { data } = await db.from('guesty_listings').select('id, nickname, title, building, unit, status').not('building', 'is', null).limit(1000)
-    listings = (data || []).filter((l: any) => !/\bfull\b/i.test(String(l.nickname || l.title || '')) && !/inactive|disabled|archived|deleted/i.test(String(l.status || '')))
-  } catch { /* none */ }
   const byId: Record<string, any> = {}
   for (const l of listings) byId[l.id] = l
 
@@ -60,7 +66,13 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
   }
   const names = Object.keys(groups).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
   const onlyB = String(searchParams?.b || '')
-  const show = String(searchParams?.show || '')
+  // SIGNAL (Jon, 2026-11-20): the page opens on what is WAITING FOR A PERSON — the drafts to review
+  // (and any book approved but not yet in Guesty). Units with no book are one line per building with
+  // its Create button, and the books already live are one click away (?show=all). It used to list
+  // every unit: the drafts sat scattered among the live books and the units with no book at all.
+  const showAll = String(searchParams?.show || '') === 'all'
+  const waiting = (r: Row) => !!r.book && stageOf(r.book) !== 'live'
+  const href = (b: string, all: boolean) => { const q = [b ? 'b=' + encodeURIComponent(b) : '', all ? 'show=all' : ''].filter(Boolean).join('&'); return '/guidebooks/review' + (q ? '?' + q : '') }
 
   const all = names.flatMap(n => groups[n])
   const withBook = all.filter(r => r.book)
@@ -80,15 +92,17 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
       if (!a.ids.some(x => x.id === r.book.id)) { a.n++; a.ids.push({ id: r.book.id, label: r.label }) }
     }
   }
+  const noBook = names.filter(n => !onlyB || n === onlyB).map(n => ({ n, m: groups[n].filter(r => !r.book).length, of: groups[n].length })).filter(x => x.m > 0)
   const aggList = Object.entries(agg).sort((a, b) => (a[1].level === 'block' ? 0 : 1) - (b[1].level === 'block' ? 0 : 1) || b[1].n - a[1].n)
 
   return (
     <Shell>
       <LeanHead title="Guidebook review">
-        <Pill tone="amber" title="Drafts waiting for review">{nDraft} to review</Pill>
-        <Pill tone="sky" title="Approved, not yet in Guesty">{nApproved} approved</Pill>
-        <Pill tone="emerald" title="Approved and pushed to Guesty">{nLive} live</Pill>
-        {nMissing ? <Pill tone="rose" title="Active units with no guidebook">{nMissing} no book</Pill> : null}
+        {/* One colour: the count a person works down. The rest are plain facts. */}
+        <Pill tone={nDraft ? 'amber' : 'slate'} title="Drafts waiting for review">{nDraft} to review</Pill>
+        {nApproved ? <Pill tone="amber" title="Approved, but the guest link is not in Guesty yet — open one and approve again to push it">{nApproved} approved, not in Guesty</Pill> : null}
+        {nMissing ? <Pill title="Active units with no guidebook — Create missing, on each building below">{nMissing} no book</Pill> : null}
+        <Pill title="Approved and pushed to Guesty">{nLive} live</Pill>
         <Link href="/guidebooks/bulk" className="inline-flex items-center gap-1 text-[12px] font-semibold rounded-lg bg-neutral-900 text-white px-2.5 py-1 hover:bg-neutral-700">Bulk create <ArrowRight size={13} /></Link>
         <Link href="/guidebooks" className="text-[12px] font-semibold text-muted hover:text-ink px-1">All guidebooks</Link>
       </LeanHead>
@@ -114,17 +128,29 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
         </LeanSection>
       ) : null}
 
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        <Link href="/guidebooks/review" className={'rounded-lg px-2.5 py-1 text-[12px] font-semibold ' + (!onlyB ? 'bg-ink text-white' : 'bg-white border border-line text-ink')}>All buildings</Link>
-        {names.map(n => <Link key={n} href={'/guidebooks/review?b=' + encodeURIComponent(n)} className={'rounded-lg px-2.5 py-1 text-[12px] font-semibold ' + (onlyB === n ? 'bg-ink text-white' : 'bg-white border border-line text-ink')}>{n}</Link>)}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <Link href={href(onlyB, false)} className={'rounded-lg px-2.5 py-1 text-[12px] font-semibold ' + (!showAll ? 'bg-ink text-white' : 'bg-white border border-line text-ink')}>To review</Link>
+        <Link href={href(onlyB, true)} className={'rounded-lg px-2.5 py-1 text-[12px] font-semibold ' + (showAll ? 'bg-ink text-white' : 'bg-white border border-line text-ink')} title="Every unit: drafts, live books and units with no book">All units</Link>
       </div>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        <Link href={href('', showAll)} className={'rounded-lg px-2.5 py-1 text-[12px] font-semibold ' + (!onlyB ? 'bg-ink text-white' : 'bg-white border border-line text-ink')}>All buildings</Link>
+        {names.map(n => {
+          const w = groups[n].filter(waiting).length
+          // In the To review view only the buildings with something to review are offered.
+          if (!showAll && !w && onlyB !== n) return null
+          return <Link key={n} href={href(n, showAll)} className={'rounded-lg px-2.5 py-1 text-[12px] font-semibold ' + (onlyB === n ? 'bg-ink text-white' : 'bg-white border border-line text-ink')}>{n}{w ? <span className="ml-1 opacity-70 tabular-nums">{w}</span> : null}</Link>
+        })}
+      </div>
+
+      {!showAll && all.filter(waiting).length === 0 ? <div className="mb-4 rounded-2xl border border-line bg-white px-4 py-6 text-center text-[13px] text-muted">Nothing to review: every guidebook that exists is live in Guesty.</div> : null}
 
       {names.filter(n => !onlyB || n === onlyB).map(n => {
         const rows = groups[n].slice().sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }))
         const missing = rows.filter(r => !r.book).length
-        const shown = rows.filter(r => show !== 'open' || !r.book || stageOf(r.book) === 'draft')
+        const shown = showAll ? rows : rows.filter(waiting)
+        if (!shown.length) return null
         return (
-          <LeanSection key={n} title={n} n={rows.length} right={<span className="flex items-center gap-3"><CheckPhotosAll ids={rows.filter(r => r.book && !reviewOf(r.book).photosCheckedAt).map(r => r.book.id)} />{missing ? <Link href={'/guidebooks/bulk?building=' + encodeURIComponent(n)} className="text-[12px] font-semibold text-brand-700 hover:underline">Create {missing} missing →</Link> : null}</span>}>
+          <LeanSection key={n} title={n} n={shown.length} right={<span className="flex items-center gap-3"><CheckPhotosAll ids={rows.filter(r => r.book && !reviewOf(r.book).photosCheckedAt).map(r => r.book.id)} />{missing ? <Link href={'/guidebooks/bulk?building=' + encodeURIComponent(n)} className="text-[12px] font-semibold text-brand-700 hover:underline">Create {missing} missing →</Link> : null}</span>}>
             <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70">
               {shown.map(r => {
                 const c = flagCounts(r.flags)
@@ -140,14 +166,15 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
                         {c.ask ? <Tag tone="amber" title={r.flags.filter(f => f.level === 'ask').map(f => f.text).join('\n')}>{c.ask} to confirm</Tag> : null}
                         {reviewOf(r.book).needsFix ? <Tag tone="roseSolid" title={reviewOf(r.book).needsFix?.note}>Needs fix</Tag> : null}
                         <Tag tone="slate" title="Review pages ticked">{r.ticked}/{REVIEW_PAGES.length} pages</Tag>
-                        <Tag tone={st === 'live' ? 'emerald' : st === 'approved' ? 'sky' : 'amber'}>{st === 'live' ? 'Live in Guesty' : st === 'approved' ? 'Approved' : 'Draft'}</Tag>
+                        {/* Every row of the Waiting view is a draft unless it says otherwise; "Draft" on each was noise. */}
+                        {st === 'approved' ? <Tag tone="amber" title="Approved, but the guest link is not in Guesty yet">Approved, not in Guesty</Tag> : st === 'live' ? <Tag>Live in Guesty</Tag> : showAll ? <Tag>Draft</Tag> : null}
                         <ArrowRight size={15} className="shrink-0 text-muted group-hover:text-ink" />
                       </Link>
                     ) : (
                       <div className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
                         <span className="text-[13.5px] font-semibold text-muted truncate max-w-[14rem]">{r.label}</span>
                         <span className="flex-1" />
-                        <Tag tone="rose">No guidebook</Tag>
+                        <Tag>No guidebook</Tag>
                       </div>
                     )}
                   </li>
@@ -157,6 +184,21 @@ export default async function GuidebookReviewQueue({ searchParams }: { searchPar
           </LeanSection>
         )
       })}
+
+      {!showAll && noBook.length ? (
+        <LeanSection title="No guidebook yet" n={noBook.reduce((t, x) => t + x.m, 0)} right={<span className="text-[11px] text-muted">nothing is created until you press Generate on the next page</span>}>
+          <ul className="rounded-2xl border border-line bg-white divide-y divide-line/70">
+            {noBook.map(x => (
+              <li key={x.n} className="flex items-center gap-2.5 px-3 sm:px-4 py-2">
+                <span className="text-[13.5px] font-semibold text-ink">{x.n}</span>
+                <span className="text-[12px] text-muted tabular-nums">{x.m} of {x.of} unit{x.of === 1 ? '' : 's'}</span>
+                <span className="flex-1" />
+                <Link href={'/guidebooks/bulk?building=' + encodeURIComponent(x.n)} className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">Create {x.m} <ArrowRight size={12} /></Link>
+              </li>
+            ))}
+          </ul>
+        </LeanSection>
+      ) : null}
     </Shell>
   )
 }

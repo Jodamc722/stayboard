@@ -3,11 +3,12 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { CheckCircle2, Send, Sparkles, MessageSquare, ArrowDownWideNarrow, ArrowUpNarrowWide, Square, CheckSquare, XCircle, RefreshCw, Trash2, ChevronDown, Undo2, Play, Pencil, SkipForward, Check, Circle, Lock, ShieldAlert, ExternalLink } from 'lucide-react'
 import { Tag, Clamp, IconBtn, LeanList, LeanEmpty, type Tone } from '@/components/lean'
 import { reviewWindowDays } from '@/lib/review-thresholds'
+import { isBookingChannel, ratingDisplay } from '@/lib/review-scale'
 import { REMOVAL_STATUSES, emptyCase, type ReviewCase, type RemovalStatus } from '@/lib/review-case'
 import { rootCausesOf, removalGrounds, removalDraft, removalPath, recoverySteps, guestNoteDraft, lintReply, openerOf, type OpsState, type PlaybookReview } from '@/lib/review-playbook'
 
 type Cat = { key: string; label: string; rating: number; comment?: string }
-type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string; categories?: Cat[]; privateFeedback?: string | null; checkOut?: string | null }
+type Review = { id: string; rating: number | null; content: string; channel: string; listing_name?: string; listingId?: string; guest?: string; guestName?: string | null; created_at?: string; hasReply: boolean; reply?: string; reason?: string; dismissed?: boolean; removed?: boolean; removedReason?: string | null; building?: string | null; market?: string | null; ownerId?: string; ownerName?: string; categories?: Cat[]; privateFeedback?: string | null; checkOut?: string | null }
 
 // A LOW SCORE, on the review's own scale: 3 and under out of 5, 7 and under out of 10. Ratings are
 // stored out of 5 for every channel, so a Booking.com 7/10 arrives as 3.5 and is read as low here
@@ -74,7 +75,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   /** Where "see the replied ones" goes when the panel is locked to the reply queue. */
   onOpenAll?: () => void
 }) {
-  const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string; segments?: boolean }>({ loading: true })
+  const [s, setS] = useState<{ loading: boolean; reviews?: Review[]; unmapped?: Review[]; error?: string; segments?: boolean; slim?: boolean }>({ loading: true })
   const [tab, setTab] = useState<'needs' | 'replied' | 'unmapped' | 'dismissed'>('needs')
   // SORT (Jon, 2026-11-18: "need to be able to sort by score"). The queue still opens on the
   // longest-waiting reply; the score orders are one tap away and say what they are.
@@ -149,15 +150,25 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   // Only the WINDOW is a server round-trip; market/building/owner/channel are applied below to the
   // rows already in hand, so moving the filter bar re-renders instantly instead of re-fetching.
   const feedDays = filter?.days
+  // CLEAN-UP (Jon, 2026-11-20, speed): the reply queue asks for the SLIM list — unanswered reviews
+  // whole, answered ones without their text and reply (about 320KB the "To reply" tab never draws).
+  // The full list is read the first time the status tabs are on screen (effect below).
+  const slimOk = mode === 'needs'
+  // The newest read wins: a slim read that lands after the full one must not put the page back on
+  // rows without their text.
+  const loadGen = useRef(0)
   const load = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!opts || !opts.quiet) setS(prev => ({ ...prev, loading: true }))
     setErr(null)
     const startedAt = Date.now()
+    const mine = ++loadGen.current
     try {
-      const d = await (await fetch('/api/reviews' + (feedDays ? '?days=' + feedDays : ''), { cache: 'no-store' })).json()
+      const qs = [feedDays ? 'days=' + feedDays : '', slimOk ? 'slim=1' : ''].filter(Boolean).join('&')
+      const d = await (await fetch('/api/reviews' + (qs ? '?' + qs : ''), { cache: 'no-store' })).json()
+      if (mine !== loadGen.current) return           // a newer read is on its way — it decides
       if (startedAt < mutatedAtRef.current) return   // stale: a click happened mid-flight — drop it
       const reviews: Review[] = d.reviews || []
-      setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error, segments: d.segments !== false })
+      setS({ loading: false, reviews, unmapped: d.unmapped || [], error: d.error, segments: d.segments !== false, slim: !!d.slim })
       setLoadedAt(Date.now())
       if (!didInitialTab.current) {
         didInitialTab.current = true
@@ -166,11 +177,23 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
       }
       // No template placeholders — drafts stay empty until the AI writes the real one.
     } catch (e: any) {
+      if (mine !== loadGen.current) return
       setS({ loading: false, error: String((e && e.message) || e) })
     }
-  }, [feedDays])
+  }, [feedDays, slimOk])
 
-  useEffect(() => { load() }, [load])
+  // First load, a new window, and the switch from the reply queue to the full list. Going back to
+  // the reply queue with the full list already in hand reads nothing.
+  const haveFull = useRef(false)
+  useEffect(() => { haveFull.current = !s.loading && !s.error && !s.slim && !!s.reviews }, [s])
+  const lastDays = useRef<number | undefined>(undefined)
+  const firstLoad = useRef(true)
+  useEffect(() => {
+    const sameWindow = !firstLoad.current && lastDays.current === feedDays
+    firstLoad.current = false; lastDays.current = feedDays
+    if (sameWindow && slimOk && haveFull.current) return
+    load(sameWindow ? { quiet: true } : undefined)
+  }, [load, feedDays, slimOk])
 
   useEffect(() => {
     const onVis = () => { if (document.visibilityState === 'visible') load({ quiet: true }) }
@@ -249,6 +272,9 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   }, [onCounts, s.loading, needs.length, overdueCount, replied.length, unmapped.length, dismissedList.length, totalCount])
   // Locked to the reply queue on the page's "To reply" tab; otherwise the panel's own sub-tab.
   const view = mode === 'needs' ? 'needs' : tab
+  // CLEAN-UP (Jon, 2026-11-20): "All reviews" opens on Replied. It used to open on "Needs a reply",
+  // the same list as the "To reply" tab beside it.
+  useEffect(() => { if (mode === 'all') setTab(t => (t === 'needs' ? 'replied' : t)) }, [mode])
 
   function setDraft(id: string, v: string) { setDrafts(d => ({ ...d, [id]: v })); persistDraft(id, v) }
 
@@ -515,9 +541,10 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
   }
   const head = (r: Review, extra?: ReactNode) => (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <Tag tone={isLow(r.rating, r.channel) ? 'rose' : 'emerald'} title="Guest score">{'★ '}{fmtRating(r.rating, r.channel)}</Tag>
+      {/* CLEAN-UP (Jon, 2026-11-20): colour only on a low score — a good one needs no action. */}
+      <Tag tone={isLow(r.rating, r.channel) ? 'rose' : 'slate'} title="Guest score">{'★ '}{fmtRating(r.rating, r.channel)}</Tag>
       <span className="text-[13.5px] font-semibold text-ink truncate max-w-[11rem] sm:max-w-[14rem]">{r.listing_name}</span>
-      {r.guest && <span className="text-[12px] text-muted truncate max-w-[8rem] sm:max-w-[10rem]">{r.guest}</span>}
+      {(r.guest || r.guestName) && <span className="text-[12px] text-muted truncate max-w-[8rem] sm:max-w-[10rem]">{r.guest || r.guestName}</span>}
       <span className="text-[11.5px] text-muted whitespace-nowrap">{[r.channel, r.created_at ? fmtDate(r.created_at) : ''].filter(Boolean).join(' · ')}</span>
       {extra}
       {lowLine(r)}
@@ -588,6 +615,16 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
         )}
         {barOn && s.segments === false && (
           <Tag tone="amber" title="Reading live from Guesty right now, which does not carry building or owner on a review — so the filters are not being applied to this list">filters off</Tag>
+        )}
+        {/* Jon, 2026-11-18: "need to be able to sort by score" — on the answered list too (2026-11-20). */}
+        {view === 'replied' && !s.loading && replied.length > 0 && (
+          <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] font-semibold" title="Order of the list">
+            {([['new', 'Newest'], ['low', 'Lowest score'], ['high', 'Highest score']] as const).map(([k, label]) => {
+              const on = k === 'new' ? (sortBy !== 'low' && sortBy !== 'high') : sortBy === k
+              // "Newest" here is the reply queue's default order too, so it never re-sorts that queue.
+              return <button key={k} onClick={() => setSortBy(k === 'new' ? 'wait' : k)} className={'px-2 py-1 ' + (on ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{label}</button>
+            })}
+          </div>
         )}
         {view === 'needs' && !s.loading && needs.length > 0 && (<>
           <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] font-semibold" title="Order of the list">
@@ -664,6 +701,8 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
           Couldn&rsquo;t load reviews ({String(s.error).slice(0, 80)}).
           <button onClick={() => load()} className="ml-1.5 font-semibold text-brand-700 underline">Try again</button>
         </LeanEmpty>
+      ) : view !== 'needs' && s.slim ? (
+        <LeanEmpty>Loading the full list…</LeanEmpty>
       ) : view === 'replied' ? (
         replied.length === 0 ? <LeanEmpty>No replied reviews yet.</LeanEmpty> : (
           <LeanList>
@@ -671,7 +710,7 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
               <li key={r.id}>
                 <div className="flex items-start gap-2.5 px-3 sm:px-4 py-2">
                   <div className="flex-1 min-w-0 space-y-1">
-                    {head(r, <Tag tone="emerald">Replied</Tag>)}
+                    {head(r)}
                     {text(r)}
                   </div>
                   {moreBtn(r, 'Reply')}
@@ -702,10 +741,8 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
             {unmapped.map(r => (
               <li key={r.id} className="bg-slate-50/40">
                 <div className="px-3 sm:px-4 py-2 space-y-1">
-                  {head(r, <>
-                    <Tag tone="rose" title="There is no live public page for this review to be answered on">Can&rsquo;t reply</Tag>
-                    <Tag title="Shown for the record; excluded from health and OTA scores, positive or negative">{r.reason || 'Not synced'}</Tag>
-                  </>)}
+                  {/* CLEAN-UP (Jon, 2026-11-20): one plain reason — nothing here can be acted on, so nothing is red. */}
+                  {head(r, <Tag title="No live public page to answer this on. Shown for the record; excluded from health and OTA scores, positive or negative">{r.reason || 'Not synced'}</Tag>)}
                   {text(r)}
                 </div>
               </li>
@@ -1040,7 +1077,7 @@ function LowPlaybook({ r, replied }: { r: Review; replied?: boolean }) {
         )}
       </Fold>
 
-      <div className="px-2.5 py-1.5"><CaseFile reviewId={r.id} causes={causes.map(c => c.label)} owners={Array.from(new Set(causes.map(c => String(c.owner))))} grounds={grounds.map(g => g.label)} /></div>
+      <CaseFile reviewId={r.id} causes={causes.map(c => c.label)} owners={Array.from(new Set(causes.map(c => String(c.owner))))} grounds={grounds.map(g => g.label)} />
     </div>
   )
 }
@@ -1112,10 +1149,9 @@ function CaseFile({ reviewId, causes, owners, grounds }: { reviewId: string; cau
   if (state === 'missing') {
     if (caseNoticeOwner == null) caseNoticeOwner = reviewId
     if (caseNoticeOwner !== reviewId) return null
-    return <p className="text-[11px] text-muted">Saving needs the review_cases table.</p>
+    return <p className="px-2.5 py-1.5 text-[11px] text-muted">Saving needs the review_cases table.</p>
   }
 
-  const lbl = 'text-[10px] uppercase tracking-wider font-semibold text-muted'
   const chip = (on: boolean) => 'text-[11.5px] font-semibold px-2 py-1 rounded-md border disabled:opacity-60 ' + (on ? 'bg-ink text-white border-ink' : 'bg-white border-line text-muted hover:text-ink')
   // The causes worked out from the review, plus any saved earlier that the wording no longer yields.
   const causeChoices = Array.from(new Set(causes.concat(c.rootCauses)))
@@ -1127,10 +1163,18 @@ function CaseFile({ reviewId, causes, owners, grounds }: { reviewId: string; cau
   }
   const day = (iso: string | null) => (iso ? String(iso).slice(0, 10) : '')
 
+  // CLEAN-UP (Jon, 2026-11-18: the "More" section is cluttered; 2026-11-20): the case file is one
+  // quiet line like the three above it — what was decided, in a few words — and opens on a tap.
+  const caseHint = [
+    c.owner ? 'owner ' + c.owner : '',
+    c.rootCauses.length ? c.rootCauses.join(', ') : '',
+    c.removalStatus !== 'none' ? 'removal ' + REMOVAL_LABEL[c.removalStatus].toLowerCase() : '',
+    c.guestNoteSentAt ? 'guest note sent' : '',
+  ].filter(Boolean).join(' · ') || 'nothing decided yet'
   return (
-    <div className="border-t border-rose-200/70 pt-2 space-y-1.5">
+    <Fold title="Case file" hint={caseHint}>
+    <div className="space-y-1.5">
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className={lbl}>Case file</span>
         <span className="text-[11px] text-muted">{saving ? 'Saving…' : c.updatedAt ? 'Saved ' + day(c.updatedAt) + (c.updatedBy ? ' · ' + c.updatedBy : '') : 'Each tap saves. Nothing here is sent anywhere.'}</span>
         {msg && <span className="text-[11px] text-rose-700">{msg}</span>}
       </div>
@@ -1170,6 +1214,7 @@ function CaseFile({ reviewId, causes, owners, grounds }: { reviewId: string; cau
         )}
       </div>
     </div>
+    </Fold>
   )
 }
 
@@ -1185,7 +1230,8 @@ type Audience = 'team' | 'vendor' | 'cleaner'
 
 function draftFor(a: Audience, r: Review): string {
   const unit = r.listing_name || 'the unit'
-  const stars = r.rating != null ? r.rating + '-star' : 'low'
+  // Booking.com reads on its own /10 (lib/review-scale); a stored 3.5 is a 7/10, not "3.5-star".
+  const stars = r.rating == null ? 'low' : isBookingChannel(r.channel) ? ratingDisplay(r.rating, r.channel) : r.rating + '-star'
   const when = r.created_at ? ' on ' + new Date(String(r.created_at)).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
   const via = r.channel ? ' (' + r.channel + ')' : ''
   const quote = r.content ? '\n\n"' + String(r.content).trim().replace(/\s+/g, ' ').slice(0, 500) + '"' : ''

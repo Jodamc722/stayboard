@@ -93,7 +93,10 @@ export function LaborPanel() {
   const tdy = d?.today
   const personTasks = d?.personTasks || {}
   const flags = d?.flags || { overtimeRisk: [], noShows: [], stillClockedIn: [] }
-  const hasFlags = flags.overtimeRisk.length || flags.noShows.length || flags.stillClockedIn.length
+  // CLEAN-UP (Jon, 2026-11-20): "open card" was everyone on shift right now, in amber — not a problem.
+  // The line now carries the card that IS one: clocked in on an earlier day and never clocked out.
+  const missedOut: string[] = (flags as any).missedClockOuts || []
+  const hasFlags = flags.overtimeRisk.length || flags.noShows.length || missedOut.length
   const bandTone = pay.band === 'on_target' ? 'good' : pay.band === 'watch' ? 'warn' : pay.band === 'over' ? 'bad' : undefined
   // The server decides who sees amounts (lib/access.ts canSeeMoney) and simply doesn't send them to
   // anyone else — `moneyHidden` only tells this component which layout to draw. Every dollar tile
@@ -297,6 +300,21 @@ export function LaborPanel() {
       ) : null}
 
       {err && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-[12.5px] text-rose-700">{err}</div>}
+      {/* CLEAN-UP (Jon, 2026-11-20): signal. Who needs a word this week — overtime risk, no-shows, open
+          timecards — used to sit on the third tab with the names only in a hover. It is now the first
+          line under the tabs on Overview and People, with the names written out. */}
+      {!!hasFlags && (tab === 'overview' || tab === 'people') && (() => {
+        const names = (list: string[]) => list.slice(0, 4).join(', ') + (list.length > 4 ? ' +' + (list.length - 4) : '')
+        return (
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-[12.5px] text-ink">
+            <AlertTriangle size={14} className="text-amber-600" />
+            {flags.overtimeRisk.length > 0 && <span title={'OT risk this workweek: ' + flags.overtimeRisk.join(', ')}><Tag tone="rose">{flags.overtimeRisk.length} OT risk</Tag> {names(flags.overtimeRisk)}</span>}
+            {flags.noShows.length > 0 && <span title={'Scheduled, never clocked in: ' + flags.noShows.map((n: any) => n.name + ' (' + String(n.date).slice(5) + ')').join(', ')}><Tag tone="amber">{flags.noShows.length} no-show{flags.noShows.length === 1 ? '' : 's'}</Tag> {names(flags.noShows.map((n: any) => n.name + ' ' + String(n.date).slice(5)))}</span>}
+            {missedOut.length > 0 && <span title={'Clocked in on an earlier day and never clocked out, so their hours and cost read low: ' + missedOut.join(', ')}><Tag tone="amber">{missedOut.length} no clock-out</Tag> {names(missedOut)}</span>}
+            {tab !== 'people' && <button onClick={() => setTab('people')} className="text-[12px] font-semibold text-muted hover:text-ink underline">Open People</button>}
+          </div>
+        )
+      })()}
       {tab === 'overview' ? (<>
       {/* TODAY — in-day decisions, one line */}
       {tdy && (
@@ -712,15 +730,6 @@ export function LaborPanel() {
       )}
       </>) : null}
       {tab === 'people' ? (<>
-      {/* flags — one line of tags, the names in each tag's hover */}
-      {!!hasFlags && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <AlertTriangle size={14} className="text-amber-600" />
-          {flags.overtimeRisk.length > 0 && <Tag tone="rose" title={'OT risk this workweek: ' + flags.overtimeRisk.join(', ')}>{flags.overtimeRisk.length} OT risk</Tag>}
-          {flags.noShows.length > 0 && <Tag tone="amber" title={'Scheduled, never clocked in: ' + flags.noShows.map((n: any) => n.name + ' (' + String(n.date).slice(5) + ')').join(', ')}>{flags.noShows.length} no-show{flags.noShows.length === 1 ? '' : 's'}</Tag>}
-          {flags.stillClockedIn.length > 0 && <Tag tone="amber" title={'Open timecards: ' + flags.stillClockedIn.join(', ')}>{flags.stillClockedIn.length} open card{flags.stillClockedIn.length === 1 ? '' : 's'}</Tag>}
-        </div>
-      )}
       {/* PEOPLE — one row each: crew, hours, payroll and the flags as tags; open a row for the full
           ledger line and their days (Breezeway tasks + the engine's per-day P&L). */}
       <LeanSection title="People" n={people.length} right="open a row for their days">

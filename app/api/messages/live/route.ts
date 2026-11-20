@@ -7,9 +7,8 @@
 //                                     only the header and the clock come back (2026-11-10: every poll
 //                                     used to resend ~116 KB and redraw the list to say "nothing new")
 import { NextRequest, NextResponse } from 'next/server'
-import { createHash } from 'crypto'
 import { requireLevel } from '@/lib/access'
-import { loadInbox } from '@/lib/inbox-data'
+import { loadInbox, inboxVersion } from '@/lib/inbox-data'
 import { pullInboxLive } from '@/lib/inbox-live'
 
 export const dynamic = 'force-dynamic'
@@ -34,9 +33,8 @@ export async function GET(req: NextRequest) {
       }
       return NextResponse.json({ ok: true, reply, unread })
     }
-    // A fingerprint of everything the list draws. The clock and the header pills are left out: they
-    // move on their own and always travel.
-    const v = createHash('sha1').update(JSON.stringify([data.items, data.unitById, data.waiting, data.lastResponderById, data.state])).digest('hex').slice(0, 16)
+    // A fingerprint of everything the list draws (lib/inbox-data inboxVersion — the page computes the same one).
+    const v = inboxVersion(data)
     if (req.nextUrl.searchParams.get('v') === v) return NextResponse.json({ ok: true, unchanged: true, v, pull, now: data.now, header: data.header })
     return NextResponse.json({ ok: true, v, pull, ...data })
   } catch (e: any) {

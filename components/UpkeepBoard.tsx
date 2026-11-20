@@ -171,18 +171,20 @@ export function UpkeepBoard() {
   const t = data?.totals
   const head = (
     <LeanHead title="Upkeep" sub={data ? (() => {
-      const live = programs.filter(p => !(p.setup || p.inert)).length, setup = programs.length - live
+      const setup = programs.filter(p => p.setup || p.inert).length
       const tiles = prop.data?.tiles || null
       const total = programs.length + (tiles ? tiles.length : 0)
-      return `${t && typeof t.units === 'number' ? t.units : new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size} units · ${total} programs — ${live} on a clock${setup ? ` (+${setup} to set up)` : ''}${tiles ? ` · ${tiles.length} property program${tiles.length === 1 ? '' : 's'}` : ' · property programs not read yet'} · as of ${nice(data.today)}`
+      // CLEAN-UP (Jon, 2026-11-20): one short line of facts; "N to set up" only when there is something to set up.
+      return `${t && typeof t.units === 'number' ? t.units : new Set(programs.flatMap(p => p.rows.map(r => r.listingId))).size} units · ${total} program${total === 1 ? '' : 's'}${setup ? ` · ${setup} to set up` : ''} · as of ${nice(data.today)}`
     })() : 'Recurring programs, every unit, on their clocks'}>
       {t ? <>
-        <Pill tone={t.late ? 'roseSolid' : 'emerald'} title="Jobs past their due date">{t.late} late{t.lateUnits ? ' · ' + t.lateUnits + ' units' : ''}{t.late90plus ? ' · ' + t.late90plus + ' over 90d' : ''}</Pill>
-        <Pill tone="amber" title={'Due in the next ' + (data?.soonDays || 14) + ' days'}>{t.soon} due soon</Pill>
+        {/* CLEAN-UP (Jon, 2026-11-20): colour only where there is something to do — a zero is plain, and "booked" is only amber when a booked task is past its day. */}
+        <Pill tone={t.late ? 'roseSolid' : 'slate'} title="Jobs past their due date">{t.late} late{t.lateUnits ? ' · ' + t.lateUnits + ' units' : ''}{t.late90plus ? ' · ' + t.late90plus + ' over 90d' : ''}</Pill>
+        <Pill tone={t.soon ? 'amber' : 'slate'} title={'Due in the next ' + (data?.soonDays || 14) + ' days'}>{t.soon} due soon</Pill>
         {t.awaiting ? <Pill tone="amber" title="Due on a program that needs an approver's yes before it is booked">{t.awaiting} to approve</Pill> : null}
         {/* FOUR PILLS, NOT SIX (2026-11-16 audit): "2 booked past their day" rides the booked pill, and "711 on a new
             clock" — a footnote nobody acts on — moved into the hover of the line under the title. */}
-        <Pill tone={t.bookedLate ? 'amber' : 'sky'} title={'Already on the board in Breezeway.' + (t.bookedLate ? ' ' + t.bookedLate + ' of them are past their day and still open: on the board, not done.' : '')}>{t.booked} booked{t.bookedLate ? ' · ' + t.bookedLate + ' past their day' : ''}</Pill>
+        <Pill tone={t.bookedLate ? 'amber' : 'slate'} title={'Already on the board in Breezeway.' + (t.bookedLate ? ' ' + t.bookedLate + ' of them are past their day and still open: on the board, not done.' : '')}>{t.booked} booked{t.bookedLate ? ' · ' + t.bookedLate + ' past their day' : ''}</Pill>
         {t.none ? <Pill tone="slate" title="Never recorded on this unit — a data gap more often than neglect">{t.none} no record</Pill> : null}
       </> : null}
       {data && data.markets.length > 1 ? (
@@ -413,7 +415,7 @@ export function UpkeepBoard() {
           )}
         </section>
       ) : (
-        <p className="text-[12px] text-muted">Open a tile to see its units. A program's clock restarts whenever a Breezeway task matching it is completed (or, for FF&E, a finished walk in /ffe). To add an activity on a period — what it is called, every how many days, which trade, which equipment or buildings, what counts as done — use <b className="text-ink">+ Program</b> at the top; its tile shows here the moment it is saved. Finer settings (equipment, billing, approvers) are in <Link href="/users?tab=settings&panel=cadences" className="font-semibold text-brand-700 hover:underline">Settings → Cadences</Link>.</p>
+        <p className="text-[12px] text-muted">Open a tile to see its units. Finishing the matching Breezeway task restarts a unit's clock. Equipment, billing and approvers are in <Link href="/users?tab=settings&panel=cadences" className="font-semibold text-brand-700 hover:underline">Settings → Cadences</Link>.</p>
       )}
       </>)}
     </div>

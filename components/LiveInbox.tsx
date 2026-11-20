@@ -42,7 +42,9 @@ function Ago({ iso }: { iso: string | null }) {
   return <span suppressHydrationWarning>{now ? ago(iso, now) : ''}</span>
 }
 
-export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: string; name: string } }) {
+export function LiveInbox({ initial, me, v }: { initial: InboxData; me?: { email: string; name: string }
+  /** The fingerprint of `initial` (lib/inbox-data inboxVersion): the first poll of an unchanged list answers in one line. */
+  v?: string }) {
   const [data, setData] = useState<InboxData>(initial)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -52,7 +54,7 @@ export function LiveInbox({ initial, me }: { initial: InboxData; me?: { email: s
   // newest ask may write.
   const asked = useRef(0)
   // The fingerprint of the list on screen: sent back so an unchanged list is not downloaded again.
-  const ver = useRef('')
+  const ver = useRef(v || '')
 
   /** `pull: false` re-reads our own copy only — after a reply or a mark, where Guesty has nothing new to say. */
   const refresh = useCallback(async (pull: boolean = true) => {

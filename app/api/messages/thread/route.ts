@@ -14,7 +14,11 @@ export async function GET(req: NextRequest) {
     let live: { pulled: boolean; error?: string } | null = null
     if (id && req.nextUrl.searchParams.get('live') === '1') { const { pullThreadLive } = await import('@/lib/inbox-live'); live = await pullThreadLive(id) }
     if (id) {
-      const { loadGuestyThread } = await import('@/lib/message-thread')
+      const { loadGuestyThread, guestyThreadSig } = await import('@/lib/message-thread')
+      // CLEAN-UP (Jon, 2026-11-20, speed): the 20-second re-ask read all 500 messages, bodies included, before finding
+      // out nothing had changed. The fingerprint needs ids and times only; the thread is loaded when it differs.
+      const asked = req.nextUrl.searchParams.get('sig') || ''
+      if (asked && asked === await guestyThreadSig(id).catch(() => null)) return NextResponse.json({ ok: true, unchanged: true, sig: asked, live, at: new Date().toISOString() })
       const t = await loadGuestyThread(id, g.access)
       if (!t) return NextResponse.json({ ok: false, error: 'That conversation is not cached here.' }, { status: 404 })
       const at = new Date().toISOString()

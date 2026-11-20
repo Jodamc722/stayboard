@@ -14,6 +14,7 @@ import { loadPhoneThread } from '@/lib/phone-threads'
 import { talkrouteConfigured } from '@/lib/talkroute'
 import { cleanGuestName } from '@/lib/guest-name'
 import { hostVoiceFor } from '@/lib/host-voice'
+import { plainText } from '@/lib/message-text'
 
 export const CHANNEL_LABELS: Record<string, string> = {
   airbnb: 'Airbnb', airbnb2: 'Airbnb', vrbo: 'VRBO', homeaway: 'VRBO', homeaway2: 'VRBO', booking: 'Booking', 'booking.com': 'Booking',
@@ -53,10 +54,35 @@ export function threadSig(msgs: { id?: any; sent_at?: any }[]): string {
   const last = msgs.length ? msgs[msgs.length - 1] : null
   return msgs.length + ':' + String(last?.id ?? '') + ':' + String(last?.sent_at ?? '')
 }
+/**
+ * The fingerprint of a thread as loadGuestyThread would compute it, from ids and times alone — no bodies.
+ * The open thread asks every 20 seconds; when this matches what the pane holds, nothing else is read.
+ */
+export async function guestyThreadSig(id: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin().from('guesty_messages').select('id, sent_at').eq('conversation_id', id).order('sent_at', { ascending: false }).limit(500)
+  if (error || !data) return null
+  return threadSig((data as any[]).slice().reverse())
+}
 export type PhoneThreadData = {
   kind: 'phone'
   number: string; display: string; guest: string; unit: string; events: any[]; reservation: ThreadReservation; reservationId: string | null
   conversationId: string; fromNumber: string; connected: boolean; canReply: boolean
+}
+
+/**
+ * WHO REALLY SENT IT (CLEAN-UP, Jon, 2026-11-20). Our copy files every post without a host type as the
+ * guest's; Guesty's own `sentBy` says otherwise for two kinds, and the thread drew both as the guest
+ * speaking: the channel's notices ("Your reservation with Justin has been updated", a 39 KB Resolution
+ * Center email) and replies we typed in the channel's app. Display only: the stored row is untouched.
+ */
+function trueSender(m: any): any {
+  const { sent_by, ...rest } = m
+  const by = String(sent_by || '').toLowerCase()
+  if (rest.sender !== 'guest' || (by !== 'channel' && by !== 'guesty' && by !== 'host')) return rest
+  if (by === 'host') return { ...rest, sender: 'host' }
+  // A notice: one centred line named after the channel, the email's markup and tracking links off.
+  const text = plainText(String(rest.body || '')).replace(/\[image[^\]]*\]/gi, ' ').replace(/\[?https?:\/\/\S+\]?/gi, ' ').replace(/-{4,}/g, ' ').replace(/\s+/g, ' ').trim()
+  return { ...rest, sender: 'system', sender_name: CHANNEL_LABELS[String(rest.module || '').toLowerCase()] || 'Channel', body: text.length > 320 ? text.slice(0, 320).trimEnd() + '…' : text, attachments: null }
 }
 
 export async function loadGuestyThread(id: string, access: Access): Promise<GuestyThread | null> {
@@ -67,10 +93,10 @@ export async function loadGuestyThread(id: string, access: Access): Promise<Gues
   // recent — including the message being answered. Newest-first, then turned back into reading order.
   const [{ data: convo }, { data: newest }] = await Promise.all([
     sb.from('guesty_conversations').select('id, reservation_id, listing_id, guest_name, channel, raw').eq('id', id).maybeSingle(),
-    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at, module, is_automated, attachments').eq('conversation_id', id).order('sent_at', { ascending: false }).limit(500),
+    sb.from('guesty_messages').select('id, sender, sender_name, body, sent_at, module, is_automated, attachments, sent_by:raw->>sentBy').eq('conversation_id', id).order('sent_at', { ascending: false }).limit(500),
   ])
   if (!convo) return null
-  const msgs: any[] = ((newest ?? []) as any[]).slice().reverse()
+  const msgs: any[] = ((newest ?? []) as any[]).slice().reverse().map(trueSender)
   const meta: any = (convo.raw && typeof convo.raw === 'object') ? (convo.raw as any).meta || {} : {}
   const metaRes: any = Array.isArray(meta.reservations) && meta.reservations.length ? meta.reservations[0] : null
   const metaListing: any = metaRes?.listing || null

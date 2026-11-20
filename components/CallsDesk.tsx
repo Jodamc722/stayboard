@@ -22,6 +22,7 @@ import { useRouter } from 'next/navigation'
 import { RefreshCw, PhoneCall, Check, AlertTriangle, Loader2, Copy, StickyNote, MapPin, KeyRound, ChevronDown, CreditCard, CalendarDays, Globe, Car, Star, Wrench, HeartHandshake, PhoneOff, MessageSquareWarning, Crown, Gem, Hand, Voicemail, UserCheck, FileText, X } from 'lucide-react'
 import { channelOf, channelPolicy, buildingGuideFor } from '@/lib/welcome-call-guide'
 import { IconBtn, Tip } from '@/components/lean'
+import { isBookingChannel, ratingDisplay } from '@/lib/review-scale'
 import { CallNoteBtn, CallNoteStrip, CallNoteText, saveCallNote, type CallNoteSaved } from '@/components/CallNote'
 import { StayPanel } from '@/components/StayPanel'
 import { GuestChecksDesk } from '@/components/GuestChecksDesk'
@@ -86,19 +87,24 @@ function ProofTags({ p, done, by, pc }: { p: Proof; done: boolean; by?: string; 
   const byHand = done && !tr
   const verdict = !byHand ? '' : pc?.intl ? 'intl' : pc?.connected ? 'proven' : (pc?.calls || 0) > 0 ? 'attempted' : 'none'
   return (<>
-    {tr && <Tag tone="brand" title={`Talkroute saw this call${p.lastAttemptAt ? ' · ' + day(p.lastAttemptAt) : ''}${p.talkSeconds ? ' · talked ' + talkMins(p.talkSeconds) : ''}`}>Talkroute{p.talkSeconds ? ` ${talkMins(p.talkSeconds)}` : ''}</Tag>}
+    {/* CLEAN-UP (Jon, 2026-11-20): a proven, finished call needs nobody — plain tags. Colour stays on
+        the ones that ask a question (no Talkroute call, tried but not connected, not transcribed). */}
+    {tr && <Tag title={`Talkroute saw this call${p.lastAttemptAt ? ' · ' + day(p.lastAttemptAt) : ''}${p.talkSeconds ? ' · talked ' + talkMins(p.talkSeconds) : ''}`}>Talkroute{p.talkSeconds ? ` ${talkMins(p.talkSeconds)}` : ''}</Tag>}
     {byHand && verdict === 'proven' && <Tag title="Marked complete by hand — and Talkroute has a connected call to this guest's number">By hand · Talkroute agrees</Tag>}
     {byHand && verdict === 'attempted' && <Tag tone="amber" title="Marked complete by hand; Talkroute has calls to this number but none that connected">By hand · Talkroute: tried, not connected</Tag>}
     {byHand && verdict === 'none' && <Tag tone="rose" title="Marked complete by hand and Talkroute has NO call to this guest's number in the last two weeks — made from a personal phone, or not made?">By hand · no Talkroute call</Tag>}
     {byHand && verdict === 'intl' && <Tag title="Marked complete by hand — international number, called over WhatsApp, which Talkroute cannot see">By hand · intl (WhatsApp)</Tag>}
     {!done && pc?.intl && <Tag title="International number — call over WhatsApp, then log it here (Talkroute will not see it)">intl · WhatsApp</Tag>}
     {p.callId
-      ? <Tag tone="emerald" title={'Transcribed and written up' + (p.noteBy ? ' · ' + who(p.noteBy) : '')}>Transcribed</Tag>
+      ? <Tag title={'Transcribed and written up' + (p.noteBy ? ' · ' + who(p.noteBy) : '')}>Transcribed</Tag>
       : (tr && p.talkSeconds > 0 ? <Tag tone="amber" title="The phone system saw a conversation but no transcript has been written up yet">Not transcribed</Tag> : null)}
-    {done && by && <Tag tone="emerald">Completed · {who(by)}</Tag>}
+    {done && by && <Tag>Completed · {who(by)}</Tag>}
   </>)
 }
 function talkMins(sec: number) { return sec >= 60 ? `${Math.round(sec / 60)} min` : `${sec}s` }
+// CLEAN-UP (Jon, 2026-11-20): the review-scale rule on the desk too. Ratings are stored out of 5, so
+// a Booking.com 7/10 was printed here as "3.5★"; it now reads 7/10, everything else N.N★.
+const recScore = (rec: { rating: number; channel: string }) => isBookingChannel(rec.channel) ? ratingDisplay(rec.rating, rec.channel) : rec.rating.toFixed(1) + '★'
 /**
  * WHAT WAS SAID (2026-09-21, Jon: "in the call on call desk i should be able to see record notes").
  * The note written from the recording, on the card. Promises first when there are any — the caller
@@ -262,7 +268,7 @@ function RecoveryNote({ rec, unit }: { rec: Recovery; unit: string }) {
         <HeartHandshake size={13} /> The goal of this call is a good review at {unit}
       </div>
       <div className="mt-1 text-[11.5px] text-rose-900/90">
-        Last review <b>{rec.rating.toFixed(1)}★</b>{rec.channel ? ` on ${rec.channel}` : ''}{rec.guest ? ` from ${rec.guest}` : ''} · {rec.openDays} {rec.openDays === 1 ? 'day' : 'days'} ago
+        Last review <b>{recScore(rec)}</b>{rec.channel ? ` on ${rec.channel}` : ''}{rec.guest ? ` from ${rec.guest}` : ''} · {rec.openDays} {rec.openDays === 1 ? 'day' : 'days'} ago
         {rec.reviewsSince > 0 && <> · {rec.reviewsSince} review{rec.reviewsSince === 1 ? '' : 's'} since, none of them good</>}
       </div>
       {rec.content && <div className="mt-1.5 text-[11.5px] text-rose-900 italic border-l-2 border-rose-300 pl-2">&ldquo;{rec.content}&rdquo;</div>}
@@ -430,8 +436,18 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // today's checkouts for follow-up calls, with the option to change the date." `date` is the day
   // the desk is pointed at; DAY shows only that day, 72H is the old rolling sheet.
   const date = date0 || today
-  const [mode, setMode] = useState<'day' | 'window'>('day')
-  const goDate = (d: string) => { if (d && d !== date) router.push(d === today ? '/welcome-calls' : '/welcome-calls?date=' + d) }
+  // CLEAN-UP (Jon, 2026-11-20, signal): the desk opens on calls still owed. With every arrival of
+  // today already called, "Today" was an empty sheet while the next three days' calls sat behind the
+  // "Next 72h" switch — so it opens on that sheet instead. Any other date, or a day with calls left,
+  // opens exactly as before.
+  const [mode, setMode] = useState<'day' | 'window'>(() => {
+    if ((date0 || today) !== today) return 'day'
+    const todayLeft = initial.some(r => r.check_in === today && !r.done)
+    const windowLeft = initial.some(r => !r.done && !r.closed && r.due && r.check_in >= today)
+    return !todayLeft && windowLeft ? 'window' : 'day'
+  })
+  // Picking a date always shows that day (the 72-hour sheet ignores the date, so it read as a dead control).
+  const goDate = (d: string) => { if (d && d !== date) { setMode('day'); router.push(d === today ? '/welcome-calls' : '/welcome-calls?date=' + d) } }
   const shiftDate = (n: number) => { const d = new Date(date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); goDate(d.toISOString().slice(0, 10)) }
   const dateLabel = date === today ? 'Today' : new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
   const [busy, setBusy] = useState<string | null>(null)
@@ -570,7 +586,10 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // Today forward only (Jon: "today focused and future focused"). Yesterday's misses are on the scoreboard.
   // Jon, 2026-09-25: the 14-day view is a worklist, not a guest list — only calls still to make.
   const allSorted = rows.filter(r => r.check_in >= today && !r.done && !r.closed).sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (b.value - a.value))
-  const shownOut = [...outRows].filter(r => mode === 'window' || r.check_out === date).sort((a, b) => (Number(a.done) - Number(b.done)) || b.check_out.localeCompare(a.check_out))
+  // CLEAN-UP (Jon, 2026-11-20, signal): under Today, a follow-up still owed from yesterday's
+  // checkouts is today's work too (it stays open for 48 hours). It used to be hidden until the
+  // "Next 72h" switch was pressed, so this tab showed fewer recovery calls than the Today page counts.
+  const shownOut = [...outRows].filter(r => mode === 'window' || r.check_out === date || (date === today && !r.done && !r.closed)).sort((a, b) => (Number(a.done) - Number(b.done)) || b.check_out.localeCompare(a.check_out))
 
   // By arrival day, then lux > recovery > big > standard, then value (Jon: "organized by the day of arrival").
   const byArrival = (xs: Row[]) => [...xs].sort((a, b) => a.check_in.localeCompare(b.check_in) || (TIER_RANK[a.tier] - TIER_RANK[b.tier]) || (Number(!!b.recovery) - Number(!!a.recovery)) || (b.value - a.value))
@@ -593,6 +612,8 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   // closed incomplete; a far day shows who is coming). WINDOW mode: the rolling 72-hour sheet.
   const due = mode === 'day' ? rows.filter(r => r.check_in === date && !r.done) : duePending.filter(r => r.check_in >= today)
   const dayDone = mode === 'day' ? rows.filter(r => r.check_in === date && r.done) : []
+  // What the 72-hour sheet holds beyond the day on screen — the line under Today's list.
+  const moreDue = mode === 'day' && date === today ? duePending.filter(r => r.check_in > today).length : 0
   const LANES = [
     // Jon, 2026-09-25: every row here is a welcome call (the tag says so); the lane is the priority.
     { key: 'must', title: 'Must call · luxury & big bookings', why: 'every one, today', must: true,
@@ -618,9 +639,11 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
   const TABS = [
     { key: 'welcome' as const, label: 'To call', n: mode === 'day' ? due.length : duePending.length },
     { key: 'post' as const, label: 'Post-checkout', n: mode === 'day' ? shownOut.filter(r => !r.done && !r.closed).length : kpis.postDue },
+    // CLEAN-UP (Jon, 2026-11-20): the three lists of calls to make sit together; the record, the
+    // scoreboard and the ID & deposits desk follow.
+    { key: 'all' as const, label: 'Not called · 14 days', n: allSorted.length },
     { key: 'done' as const, label: 'Done', n: doneCalls.length },
     { key: 'board' as const, label: 'Scoreboard', n: null as number | null },
-    { key: 'all' as const, label: 'Not called · 14 days', n: allSorted.length },
     // ID & deposits (Jon, 2026-10-03): the channel checks live with the calls that ask for them.
     { key: 'checks' as const, label: 'ID & deposits', n: null as number | null },
   ]
@@ -715,8 +738,9 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
         due.length === 0 ? (
           <div className="rounded-2xl border border-line bg-white px-4 py-8 text-center text-sm text-muted">
             {mode === 'day'
-              ? (dayDone.length ? `All ${dayDone.length} arrival${dayDone.length === 1 ? '' : 's'} on ${dateLabel === 'Today' ? 'today' : dateLabel} have had their call.` : `No arrivals on ${dateLabel === 'Today' ? 'today' : dateLabel}.`)
+              ? (dayDone.length ? `All ${dayDone.length} arrival${dayDone.length === 1 ? '' : 's'} ${dateLabel === 'Today' ? 'today' : 'on ' + dateLabel} have had their call.` : `No arrivals ${dateLabel === 'Today' ? 'today' : 'on ' + dateLabel}.`)
               : 'Nothing due — everyone arriving in the next 72 hours has had their call.'}
+            {moreDue > 0 && <button onClick={() => setMode('window')} className="ml-2 font-semibold text-brand-700 hover:underline">{moreDue} more due in the next 3 days — show them</button>}
           </div>
         ) : (
           <div className="space-y-4">
@@ -732,8 +756,11 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
           </div>
         )
       )}
-      {tab === 'welcome' && mode === 'day' && dayDone.length > 0 && due.length > 0 && (
-        <p className="text-[12px] text-muted px-1">{dayDone.length} arrival{dayDone.length === 1 ? '' : 's'} on {dateLabel === 'Today' ? 'today' : dateLabel} already called — see Done.</p>
+      {tab === 'welcome' && mode === 'day' && due.length > 0 && (dayDone.length > 0 || moreDue > 0) && (
+        <p className="text-[12px] text-muted px-1">
+          {dayDone.length > 0 && <>{dayDone.length} arrival{dayDone.length === 1 ? '' : 's'} {dateLabel === 'Today' ? 'today' : 'on ' + dateLabel} already called — see Done.</>}
+          {moreDue > 0 && <button onClick={() => setMode('window')} className={(dayDone.length > 0 ? 'ml-2 ' : '') + 'font-semibold text-brand-700 hover:underline'}>{moreDue} more due in the next 3 days</button>}
+        </p>
       )}
 
       {tab === 'all' && (
@@ -940,7 +967,7 @@ function WelcomeList({ rows, today, openId, setOpenId, draft, setDraft, busy, co
                   {r.check_in === nextDay(today) && <Tag tone="amber">Tomorrow</Tag>}
                   {r.tier === 'lux' && <Tag tone="violet">Luxury</Tag>}
                   {r.tier === 'big' && <Tag tone="emerald">Big {money(r.value)}</Tag>}
-                  {r.recovery && <Tag tone="rose" title={`Last review ${r.recovery.rating.toFixed(1)}★ — ${r.recovery.openDays}d without a good one`}>Recovery {r.recovery.rating.toFixed(1)}★</Tag>}
+                  {r.recovery && <Tag tone="rose" title={`Last review ${recScore(r.recovery)} — ${r.recovery.openDays}d without a good one`}>Recovery {recScore(r.recovery)}</Tag>}
                   <Tag>{ch}</Tag>
                   {owes && <Tag tone="amber">Owes {money(r.status.balance)}</Tag>}
                   {r.sensitive && <Tag tone="rose">Sensitive</Tag>}

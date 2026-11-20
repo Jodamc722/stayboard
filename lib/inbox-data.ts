@@ -3,6 +3,7 @@
 // /api/messages/live — which the open inbox polls — produce the identical list, waiting set and
 // header numbers. Two copies of "who is waiting on us" would drift; one cannot.
 import 'server-only'
+import { createHash } from 'crypto'
 import { plainText, isMachineName } from '@/lib/message-text'
 import { pageRows } from '@/lib/db-page'
 import { createClient } from '@/lib/supabase-server'
@@ -53,6 +54,73 @@ async function speedSample(sb: any, since30: string, now: number): Promise<{ row
   return page
 }
 
+// NOT EVERY "GUEST" MESSAGE IS A GUEST (CLEAN-UP, Jon, 2026-11-20: "a badge that never reaches zero is noise").
+// Guesty marks who really sent a post in `sentBy`: guest, host, or `channel` — Airbnb's own notices
+// ("Your reservation with Justin has been updated", Resolution Center emails). Our copy files every post
+// without a host type as the guest's, so on 2026-11-20 seventeen of the twenty threads "waiting on us"
+// were Airbnb reporting something already settled, or a reply we had typed in the Airbnb app.
+//
+// A thread stays waiting when, inside its unanswered run, any of these is still open:
+//   · a real guest message with nothing from us after it;
+//   · a change request the channel relayed ("alteration … has been requested", a Vrbo cancellation
+//     request) with no "updated / canceled / declined / accepted" after it;
+//   · a Resolution Center email that says the next move is ours ("You have 64 hours to respond",
+//     "Airbnb Support is involved");
+//   · a channel notice of a kind not listed here (unknown stays visible).
+// It leaves when all that is left is a settled notice. Read once per (thread, guest's newest message):
+// the verdict cannot change until that side of the thread moves again.
+const realWaitCache = new Map<string, boolean>()
+/** The one-line preview of a message and who Guesty says sent it, by message id (per server instance). */
+const previewCache = new Map<string, { text: string | null; by: string }>()
+const SETTLED = /has been (updated|cancell?ed|declined|accepted)\b/i
+const ASKED = /has been requested\b|cancellation request/i
+const RESOLUTION = /resolutions? status\s*:/i
+const OUR_MOVE = /resolutions? status\s*:\s*you have \d+ \w+ to respond|airbnb support is involved/i
+async function dropChannelNotices<T extends { conversation_id: string; last_guest_at: string | null; awaiting_since: string | null }>(sb: any, rows: T[]): Promise<{ rows: T[]; dropped: number }> {
+  const keyOf = (r: T) => String(r.conversation_id) + '|' + String(r.last_guest_at || '')
+  const ask = rows.filter(r => r.last_guest_at && !realWaitCache.has(keyOf(r)))
+  if (ask.length) {
+    const sinceOf = (r: T) => { const t = Date.parse(String(r.awaiting_since || r.last_guest_at)); return Number.isFinite(t) ? t - 60_000 : NaN }
+    const floor = ask.reduce((m, r) => { const t = sinceOf(r); return Number.isFinite(t) && t < m ? t : m }, Date.now())
+    // `plainTextBody` is the channel's own short text of a notice (under 1 KB); a message a guest typed has none.
+    const msgs = await inChunks(ask.map(r => String(r.conversation_id)), ids => sb.from('guesty_messages')
+      .select('conversation_id,sent_at,sent_by:raw->>sentBy,plain:raw->>plainTextBody').in('conversation_id', ids).eq('sender', 'guest')
+      .gte('sent_at', new Date(floor).toISOString()).order('sent_at', { ascending: true }).limit(1000), 40, true).catch(() => [] as any[])
+    const by: Record<string, any[]> = {}
+    for (const m of msgs) (by[String(m.conversation_id)] = by[String(m.conversation_id)] || []).push(m)
+    for (const r of ask) {
+      const from = sinceOf(r)
+      const run = (by[String(r.conversation_id)] || []).filter(m => !Number.isFinite(from) || Date.parse(String(m.sent_at)) >= from)
+      // Nothing read back (a failed or short read): leave the thread waiting and ask again next time.
+      if (!run.length) continue
+      let guest = false, change = false, resolution = false, unknown = false
+      for (const m of run) {
+        const who = String(m.sent_by || '').toLowerCase()
+        if (who === 'host') { guest = false; continue }                       // our own reply, typed in the channel's app
+        if (who !== 'channel' && who !== 'guesty') { guest = true; continue }  // the guest (or a sender Guesty does not name)
+        const text = String(m.plain || '').replace(/\s+/g, ' ')
+        if (RESOLUTION.test(text)) resolution = OUR_MOVE.test(text)
+        else if (SETTLED.test(text)) change = false
+        else if (ASKED.test(text)) change = true
+        else unknown = true
+      }
+      realWaitCache.set(keyOf(r), guest || change || resolution || unknown)
+      if (realWaitCache.size > 2000) { const first = realWaitCache.keys().next().value; if (first) realWaitCache.delete(first) }
+    }
+  }
+  const kept = rows.filter(r => realWaitCache.get(keyOf(r)) !== false)
+  return { rows: kept, dropped: rows.length - kept.length }
+}
+
+/**
+ * A fingerprint of everything the list draws. The clock and the header pills are left out: they move on
+ * their own and always travel. The page sends it down with its first render, so the first poll of an
+ * unchanged inbox is one line instead of the whole list again.
+ */
+export function inboxVersion(data: InboxData): string {
+  return createHash('sha1').update(JSON.stringify([data.items, data.unitById, data.waiting, data.lastResponderById, data.state])).digest('hex').slice(0, 16)
+}
+
 export async function loadInbox(): Promise<InboxData> {
   const supabase = createClient()
   const sb = supabaseAdmin()
@@ -66,7 +134,7 @@ export async function loadInbox(): Promise<InboxData> {
   // the mean of every guest→host gap — Guesty's automated templates and log/note rows included, so
   // a template firing in 40 seconds counted as us answering in 40 seconds. lib/response-times has
   // measured every thread properly since 2026-08-26 and nothing here read it.
-  const [{ data: convos }, { data: sync }, waiting, speed, phone, state] = await Promise.all([
+  const [{ data: convos }, { data: sync }, waitingAll, speed, phone, state] = await Promise.all([
     supabase.from('guesty_conversations').select(CONVO_COLS).order('last_message_at', { ascending: false }).limit(100),
     supabase.from('guesty_sync_status').select('entity,last_sync_at,last_error').in('entity', ['conversations', 'conversations_live']),
     // THE ONE "WAITING ON US" SET (D3/D5): the pill and the Needs-reply tab both come from this.
@@ -77,6 +145,10 @@ export async function loadInbox(): Promise<InboxData> {
     phoneThreads(sb),
     readInboxState(),
   ])
+
+  // CLEAN-UP (Jon, 2026-11-20): a settled channel notice, or our own reply typed in the channel's app, is not a guest waiting.
+  const real = await dropChannelNotices(sb, waitingAll.rows).catch(() => ({ rows: waitingAll.rows, dropped: 0 }))
+  const waiting = { ...waitingAll, rows: real.rows, ids: real.rows.map(r => r.conversation_id) }
 
   const list: any[] = (convos ?? []).slice()
   const listed = new Set(list.map(c => String(c.id)))
@@ -132,8 +204,23 @@ export async function loadInbox(): Promise<InboxData> {
   }
   // The words of that newest message. Guesty's own preview is empty on most older threads, so the
   // list read "(no text)"; only the ~100 newest bodies are fetched, never the whole history.
-  const bodies = await inChunks(Object.keys(newestId), ids => sb.from('guesty_messages').select('id,body').in('id', ids))
-  for (const b of bodies) { const k = newestId[String(b.id)]; if (k && lastById[k] && b.body) lastById[k].text = plainText(String(b.body)).replace(/\s+/g, ' ').slice(0, PREVIEW_CHARS) }
+  // READ ONCE, NOT EVERY POLL (CLEAN-UP, Jon, 2026-11-20, speed). A sent message never changes, yet every poll — each
+  // open inbox every 10 seconds, the floating badge every 2 minutes — fetched these ~100 bodies again, some of them
+  // 39 KB Airbnb emails, to cut one line from each. Only the messages not seen before are asked for now.
+  const need = Object.keys(newestId).filter(id => !previewCache.has(id))
+  const bodies = need.length ? await inChunks(need, ids => sb.from('guesty_messages').select('id,body,sent_by:raw->>sentBy').in('id', ids)) : []
+  for (const b of bodies) {
+    previewCache.set(String(b.id), { text: b.body ? previewText(String(b.body)) : null, by: String(b.sent_by || '').toLowerCase() })
+    if (previewCache.size > 4000) { const first = previewCache.keys().next().value; if (first) previewCache.delete(first) }
+  }
+  for (const id of Object.keys(newestId)) {
+    const k = newestId[id], hit = previewCache.get(id)
+    if (!hit || !lastById[k]) continue
+    if (hit.text) lastById[k].text = hit.text
+    // CLEAN-UP (Jon, 2026-11-20): an Airbnb notice is not the guest speaking, and a reply typed in the channel's app is ours.
+    if (lastById[k].who === 'guest' && (hit.by === 'channel' || hit.by === 'guesty')) lastById[k] = { ...lastById[k], who: 'auto', name: null }
+    else if (lastById[k].who === 'guest' && hit.by === 'host') lastById[k] = { ...lastById[k], who: 'team', name: null }
+  }
   const stayById: Record<string, StayInfo> = {}
   // The booking's copy of the guest's name: a second spelling to repair a damaged one from (lib/guest-name).
   const resNameById: Record<string, string> = {}
@@ -214,6 +301,7 @@ export async function loadInbox(): Promise<InboxData> {
       + (phone.on ? ` · ${gWaiting} Guesty · ${phoneAwaiting} phone` : '')
       + (waiting.truncated ? ' · first 1,000 only' : '')
       + (parkedN ? ` · ${parkedN} more marked handled or snoozed by the desk` : '')
+      + (real.dropped ? ` · ${real.dropped} left out: settled channel notices (reservation updated, a closed resolution) or already answered in the channel's app` : '')
 
 
   return {
@@ -258,6 +346,14 @@ async function inChunks(ids: string[], q: (ids: string[]) => PromiseLike<any>, s
 }
 
 /* ---------- Formatting ---------- */
+
+/** One line of a message for the list. An Airbnb email is 39 KB of tags, image placeholders and tracking links: those come off. */
+function previewText(body: string): string {
+  const t = plainText(body)
+  // A message a person typed is shown as typed; only an HTML email is tidied.
+  if (!/<(!doctype|html|table|div)\b/i.test(body)) return t.replace(/\s+/g, ' ').slice(0, PREVIEW_CHARS)
+  return t.replace(/\[image[^\]]*\]/gi, ' ').replace(/\[?https?:\/\/\S+\]?/gi, ' ').replace(/-{4,}/g, ' ').replace(/\s+/g, ' ').trim().slice(0, PREVIEW_CHARS)
+}
 
 function fmtDur(ms: number | null) {
   if (ms == null) return '—'

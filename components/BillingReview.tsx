@@ -1052,10 +1052,11 @@ export function BillingReview() {
 
   return (
     <div className="space-y-3">
-      {/* ── one line: the four numbers the desk is judged on (whole month, never the filtered view) */}
+      {/* ── one line: the four numbers the desk is judged on (whole month, never the filtered view).
+            CLEAN-UP (Jon, 2026-11-20): "$X final" read as finalised; it is the money still waiting on final review. */}
       <LeanHead title="Billable Hours">
         <Pill title={'Open — ops to review · ' + kpi.open.n + ' task' + (kpi.open.n === 1 ? '' : 's')}>{money(kpi.open.$)} open</Pill>
-        <Pill tone="brand" title={'Ops approved — waiting on final (GM) review · ' + kpi.gm.n + ' task' + (kpi.gm.n === 1 ? '' : 's')}>{money(kpi.gm.$)} final</Pill>
+        <Pill tone="brand" title={'Ops approved — waiting on final (GM) review · ' + kpi.gm.n + ' task' + (kpi.gm.n === 1 ? '' : 's')}>{money(kpi.gm.$)} in final review</Pill>
         <Pill tone="emerald" title={'Final approved — statement-ready · ' + kpi.done.n + ' task' + (kpi.done.n === 1 ? '' : 's')}>{money(kpi.done.$)} approved</Pill>
         {kpi.should.n ? <Pill tone="brand" onClick={() => { setBFilter('should'); setStage('all'); resnapshot() }} title="The billable model says these should bill the owner and they are still $0 — click to see them">{kpi.should.n} should bill</Pill> : null}
         {kpi.flagged.n ? <Pill tone="amber" title={'Flagged and not final-approved: ' + money(kpi.flagged.$) + '. Amber edge on a row = over $150. A flag never blocks approval.'}>{kpi.flagged.n} flagged</Pill> : null}

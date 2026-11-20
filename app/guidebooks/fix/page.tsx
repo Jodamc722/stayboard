@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { ArrowLeft } from 'lucide-react'
 import { BulkFixPanel } from '@/components/BulkFixPanel'
+import { LeanHead } from '@/components/lean'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,12 +14,10 @@ export default async function BulkFixPage() {
   if (!user) redirect('/login')
   return (
     <Shell>
-      <header className="mb-6">
-        <Link href="/guidebooks" className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink mb-2"><ArrowLeft size={13} />Guidebooks</Link>
-        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold">Guests</p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Bulk fix with AI</h1>
-        <p className="text-sm text-muted mt-1">Spot something wrong? State the correct fact once and apply it to every guidebook in a building.</p>
-      </header>
+      {/* CLEAN-UP (Jon, 2026-11-20): the one-line header every other page has. */}
+      <LeanHead title="Bulk fix with AI" sub="State the correct fact once and apply it to every guidebook in a building.">
+        <Link href="/guidebooks" className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><ArrowLeft size={13} />Guidebooks</Link>
+      </LeanHead>
       <div className="max-w-3xl">
         <BulkFixPanel />
       </div>

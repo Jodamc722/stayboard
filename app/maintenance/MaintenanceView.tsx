@@ -2,7 +2,7 @@
 // MAINTENANCE — the presentation half of app/maintenance/page.tsx (lean pass, 2026-09-22). The page
 // still does every query and the ranking; this only lays it out: one-line header, three tabs
 // (Decide / By building / Unbilled), one row per thing.
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ArrowUpRight, Receipt } from 'lucide-react'
@@ -10,6 +10,7 @@ import { LeanHead, LeanTabs, Pill, Tag, IconBtn, LeanList, LeanRow, LeanEmpty, t
 import { useCachedFetch } from '@/lib/swr'
 import { useTaskActions, TaskStateTag, TaskStatusTag, BehindTag, taskStateOf, TASK_GHOST } from '@/components/task/TaskActions'
 import type { Roster } from '@/components/CommandCockpit'
+import { rollup } from './rollup'
 
 /** A Breezeway task on the triage list wears the same strip as every other board (2026-10-01). */
 function TriageTaskRow({ t, roster, onChanged }: { t: TriageRow; roster: Roster[]; onChanged: () => void }) {
@@ -18,6 +19,8 @@ function TriageTaskRow({ t, roster, onChanged }: { t: TriageRow; roster: Roster[
   return (
     <LeanRow name={t.title} meta={[t.where, t.who].filter(Boolean).join(' · ')}
       tags={<>
+        {/* CLEAN-UP (Jon, 2026-11-20): Breezeway's own priority, so urgent work reads as urgent. */}
+        {!ta.done && t.priority ? <Tag tone={t.priority === 'urgent' ? 'rose' : 'amber'} title={'Marked ' + t.priority + ' in Breezeway'}>{t.priority === 'urgent' ? 'Urgent' : 'High'}</Tag> : null}
         <TaskStatusTag state={ta.done ? 'done' : taskStateOf({ running: t.running, late: t.flags.includes('overdue') })} behind={!ta.done && t.running && t.flags.includes('overdue')} nobody={!ta.done && !t.who} days={t.age} />
       </>}
       actions={<span className="inline-flex items-center gap-1.5">{ta.actions}</span>}>
@@ -37,7 +40,12 @@ export type TriageRow = {
   score: number
   /** Breezeway tasks only: the shared task strip (Assign · Done · Nudge · Comments · Breezeway) needs these. */
   taskId?: string; reportUrl?: string | null; dept?: string; running?: boolean
+  /** Breezeway tasks only: the task's own priority when it is urgent or high. */
+  priority?: 'urgent' | 'high' | null
 }
+// The Today tile's copy of the blocked report (at most ten minutes old) — the same URL, so one read serves both.
+const BLOCKED_URL = '/api/blocked-units?days=30&cached=1'
+type BlockedLite = { ok?: boolean; runs?: { live: boolean; building: string; unit: string }[] }
 type GridRow = { b: string; wo: number; task: number; glitch: number; blocked: number; unbilled: number; total: number }
 type Unbilled = { id: string; name: string; unit: string; who: string | null; hours: number | null; age: number }
 
@@ -50,15 +58,30 @@ const KIND: Record<TriageRow['kind'], { label: string; title: string }> = {
   glitch: { label: 'Glitch', title: 'Guest-reported glitch' },
 }
 
-export function MaintenanceView({ verdict, counts, triage, grid, unbilled }: {
+export function MaintenanceView({ verdict, counts, triage, grid: gridBase, unbilled }: {
   verdict: string
-  counts: { wo: number; unassigned: number; overdue: number; stale: number; unbilled: number; offline: number }
+  counts: { wo: number; unassigned: number; overdue: number; stale: number; unbilled: number }
   triage: TriageRow[]; grid: GridRow[]; unbilled: Unbilled[]
 }) {
   const router = useRouter()
   const rosterQ = useCachedFetch<{ people: Roster[] }>('/api/breezeway/people', { ttl: 10 * 60_000 })
   const roster: Roster[] = Array.isArray(rosterQ.data?.people) ? rosterQ.data!.people : []
   const [tab, setTab] = useState<'decide' | 'building' | 'unbilled'>('decide')
+  // SPEED (Jon, 2026-11-20): units offline now, read after the page has painted (it used to hold the
+  // whole page for a walk of Guesty's calendar). Until it answers there is no number, not a "0".
+  const blockedQ = useCachedFetch<BlockedLite>(BLOCKED_URL, { ttl: 10 * 60_000 })
+  const offline = useMemo(() => (Array.isArray(blockedQ.data?.runs) ? blockedQ.data!.runs!.filter(r => r.live) : null), [blockedQ.data])
+  const grid = useMemo(() => {
+    if (!offline || !offline.length) return gridBase
+    const by = new Map<string, GridRow>(gridBase.map(r => [r.b, { ...r }]))
+    for (const run of offline) {
+      const b = rollup(run.building || run.unit)
+      const row = by.get(b) || { b, wo: 0, task: 0, glitch: 0, blocked: 0, unbilled: 0, total: 0 }
+      row.blocked += 1; row.total += 1
+      by.set(b, row)
+    }
+    return Array.from(by.values()).sort((a, b) => b.total - a.total)
+  }, [gridBase, offline])
 
   return (
     <div>
@@ -68,7 +91,7 @@ export function MaintenanceView({ verdict, counts, triage, grid, unbilled }: {
         <Pill tone={counts.unassigned ? 'rose' : 'slate'} onClick={() => setTab('decide')} title="Open items with nobody on them">{counts.unassigned} unassigned</Pill>
         <Pill tone={counts.overdue ? 'rose' : 'slate'} onClick={() => setTab('decide')} title="Past their due or scheduled date">{counts.overdue} late</Pill>
         <Pill tone={counts.stale ? 'amber' : 'slate'} onClick={() => setTab('decide')} title={'Sitting 7 days or more. ' + verdict}>{counts.stale} open 7+ days</Pill>
-        <Link href="/blocked"><Pill tone={counts.offline ? 'amber' : 'slate'} title="Units blocked on the calendar right now — open Blocked units">{counts.offline} offline</Pill></Link>
+        {offline ? <Link href="/blocked"><Pill tone={offline.length ? 'amber' : 'slate'} title="Units blocked on the calendar right now — open Blocked units">{offline.length} offline</Pill></Link> : null}
       </LeanHead>
 
       <LeanTabs value={tab} onChange={setTab} tabs={[

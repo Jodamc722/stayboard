@@ -380,7 +380,9 @@ function ChannelCard({ c, on, onPick }: { c: any; on: boolean; onPick: () => voi
 
 // ── LEAGUE TABLES ───────────────────────────────────────────────────────────────────────────────
 
-function League({ rows, nameOf, subOf, href, extraOf }: { rows: any[]; nameOf: (r: any) => string; subOf: (r: any) => string; href?: (r: any) => string | null; extraOf?: (r: any) => ReactNode }) {
+function League({ rows, nameOf, subOf, href, extraOf, scaleOf }: { rows: any[]; nameOf: (r: any) => string; subOf: (r: any) => string; href?: (r: any) => string | null; extraOf?: (r: any) => ReactNode
+  /** The one channel the page is filtered to, if any — a Booking-only table reads on Booking's /10. */
+  scaleOf?: string }) {
   if (!rows.length) return <p className="text-[12px] text-muted py-2">Nothing in this window.</p>
   return (
     <ul className="divide-y divide-line">
@@ -396,7 +398,7 @@ function League({ rows, nameOf, subOf, href, extraOf }: { rows: any[]; nameOf: (
             {!!r.inRecovery && <Tag tone="rose" title="Units waiting for a good review — every review counts, replaced listings included">{r.inRecovery} waiting</Tag>}
             {!!r.awaiting && <Tag tone="amber" title="Reviews waiting for a reply">{r.awaiting} to answer</Tag>}
             <span className="text-[11px] text-muted tabular-nums w-8 text-right" title="Reviews in this window on live listings">{r.n}</span>
-            <span className={'text-[13px] font-bold tabular-nums w-10 text-right ' + (bad ? 'text-rose-700' : 'text-ink')} title="Average in this window — live listings only">{r.avg ?? '—'}</span>
+            <span className={'text-[13px] font-bold tabular-nums text-right ' + (isBookingChannel(scaleOf) ? 'w-14 ' : 'w-10 ') + (bad ? 'text-rose-700' : 'text-ink')} title="Average in this window — live listings only">{r.avg == null ? '—' : isBookingChannel(scaleOf) ? ratingDisplay(r.avg, scaleOf) : r.avg}</span>
             <ParBar v={r.vsPar} />
             <span className={'w-[40px] text-right text-[11.5px] font-semibold tabular-nums ' + (bad ? 'text-rose-700' : r.vsPar >= 0.15 ? 'text-emerald-600' : 'text-muted')}>
               {r.vsPar > 0 ? '+' : ''}{r.vsPar}
@@ -656,15 +658,6 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         </Pill>
       </LeanHead>
 
-      {/* THE PUBLIC SCORE PER CHANNEL — live listings only. Two across on a phone, four on a desk. */}
-      {channelCards.length > 0 && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 mb-3">
-          {channelCards.map(c => (
-            <ChannelCard key={c.channel} c={c} on={channel === c.channel} onPick={() => setChannel(channel === c.channel ? 'all' : c.channel)} />
-          ))}
-        </div>
-      )}
-
       {/* FILTER BAR — one line. Everything on the page, including the feed, obeys it. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-3">
         <div className="lh-tabs-strip inline-flex rounded-lg border border-line overflow-hidden">
@@ -727,6 +720,20 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         ]}
         value={page} onChange={setPage} />
 
+      {/* THE PUBLIC SCORE PER CHANNEL — live listings only. Two across on a phone, four on a desk. */}
+      {/* CLEAN-UP (Jon, 2026-11-20, signal): the cards are where we stand, so they sit with the Units
+          and Buildings tabs. The reply queue opens on the reviews to answer, with the header's three
+          numbers above it and nothing else. Under the tab strip, so opening a tab never moves the
+          tabs. The channel picker in the filter bar still filters every tab. */}
+      {channelCards.length > 0 && (page === 'units' || page === 'buildings') && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 mb-3">
+          {channelCards.map(c => (
+            <ChannelCard key={c.channel} c={c} on={channel === c.channel} onPick={() => setChannel(channel === c.channel ? 'all' : c.channel)} />
+          ))}
+        </div>
+      )}
+
+
       {/* ── UNITS THAT NEED SOMEONE ──────────────────────────────────────────────────────────── */}
       {/* id="recovery": the Calls desk links to /reviews#recovery; ReviewsPage opens this tab for it. */}
       <div id="recovery" className={page === 'units' ? 'scroll-mt-4' : 'hidden'}>
@@ -784,14 +791,14 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
         <div className={tableLoading ? 'hidden' : 'px-3 py-2'}>
           {/* Under each building: its three weakest Airbnb categories — where its stars are going. */}
           {tab === 'buildings' && (
-            <League rows={d?.buildings || []}
+            <League rows={d?.buildings || []} scaleOf={channel}
               nameOf={r => r.building}
               subOf={r => [r.market, r.unitsReviewed + ' of ' + r.unitsTotal + ' units reviewed', r.unitsRetired ? r.unitsRetired + ' retired' : ''].filter(Boolean).join(' · ')}
               href={() => null}
               extraOf={r => (r.cats || []).length ? <div className="px-1 pt-0.5"><CatLine cats={(r.cats as any[]).slice(0, 3)} base={base} /></div> : null} />
           )}
           {tab === 'owners' && (
-            <League rows={d?.owners || []}
+            <League rows={d?.owners || []} scaleOf={channel}
               nameOf={r => r.ownerName}
               subOf={r => [r.unitsReviewed + ' of ' + r.unitsTotal + ' units reviewed', (r.buildings || []).slice(0, 3).join(', ')].filter(Boolean).join(' · ')} />
           )}
@@ -912,7 +919,9 @@ export function Reputation({ f, setF, onFocusUnit, tab: tabProp, setTab: setTabP
       {feed ? (
         <div className={page === 'reply' || page === 'all' ? '' : 'hidden'}>
           {/* REPLY KPIs — one quiet line. Speed is a sample: only reviews whose channel stamps both ends. */}
-          {replyKpi.length > 0 && (
+          {/* CLEAN-UP (Jon, 2026-11-20): on "All reviews" only. Above the reply queue it repeated the
+              "To reply" pill's own hover and pushed the first review down a line. */}
+          {replyKpi.length > 0 && page === 'all' && (
             <p className="text-[12px] text-muted mb-2 px-1">
               {[
                 h.replyCoverage != null ? h.replyCoverage + '% answered' : '',

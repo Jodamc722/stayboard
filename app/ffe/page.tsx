@@ -3,6 +3,7 @@ import { Sofa } from 'lucide-react'
 import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { FfeTabs } from '@/components/FfeTabs'
+import { LeanHead } from '@/components/lean'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,18 +13,9 @@ export default async function FfePage() {
   if (!data.user) redirect('/login')
   return (
     <Shell>
-      <header className="mb-6">
-        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold flex items-center gap-1.5">
-          <Sofa size={13} /> Operations
-        </p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">FF&amp;E Audit</h1>
-        <p className="text-sm text-muted mt-1 max-w-2xl">
-          One link per owner, already made. It opens a page of that owner&apos;s units — each with its own link,
-          today&apos;s status and a progress bar — so the team can move in and out of units and mark each one complete.
-          Room by room, Replace / Keep / Not here, in English or Spanish. What comes back is a furniture order,
-          not a work order: nothing here touches Breezeway, maintenance or billing.
-        </p>
-      </header>
+      {/* CLEAN-UP (Jon, 2026-11-20): the one-line header every other page has (it was an eyebrow, a
+          large title and a four-line paragraph). */}
+      <LeanHead title="FF&E audit" icon={<Sofa size={18} className="text-muted" />} sub="One link per owner. Room by room: Replace, Keep or Not here. What comes back is a furniture order, not a work order." />
       <FfeTabs />
     </Shell>
   )

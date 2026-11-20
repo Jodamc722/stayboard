@@ -18,10 +18,9 @@ export default async function LaborDashboardPage() {
           <Timer size={13} /> Team
         </p>
         <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Labor Dashboard</h1>
-        <p className="text-sm text-muted mt-1 max-w-2xl">
-          Payroll, the work it bought, and anything that looks off — by day, week or month. The same figures
-          the daily labor email is built from, so the screen and the inbox can never disagree. Billables run
-          on a wider rolling window because owner billing gets edited after the fact.
+        {/* CLEAN-UP (Jon, 2026-11-20): one line; the rest is in the hover. */}
+        <p className="text-sm text-muted mt-1 max-w-2xl" title="The same figures the daily labor email is built from. Billables run on a wider rolling window because owner billing gets edited after the fact.">
+          Payroll, the work it bought, and anything that looks off, by day, week or month.
         </p>
         {/* Nav diet 2026-08-11 (Jon): reached from /labor's Board|Dashboard switcher. */}
         <span className="mt-3 inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">

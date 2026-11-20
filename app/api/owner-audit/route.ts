@@ -126,10 +126,17 @@ export async function GET(req: NextRequest) {
       const prev = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7)
       // The picker feed and the "is last month still unsigned" check do not depend on each other.
       let prevUnsigned: boolean
+      // CLEAN-UP (Jon, 2026-11-20): speed on first open. After the 10th the board always opens on
+      // today's month, so its audit starts building while the month picker is being read instead of
+      // after it. getAudit shares one build per month, so if the picker does choose it nothing is
+      // built twice; if it chooses another month this one is simply not used.
+      const cur = et.slice(0, 7)
+      const early = Number(et.slice(8, 10)) > 10 ? getAudit(cur) : null
+      if (early) early.catch(() => {})
       ;[months, prevUnsigned] = await Promise.all([getAuditMonths(), Number(et.slice(8, 10)) <= 10 ? prevMonthUnsigned(prev) : Promise.resolve(false)])
       const month = defaultAuditMonth(months, { prevUnsigned })
       if (!month) return NextResponse.json({ ok: true, internal: who.internal, months, data: null })
-      data = await getAudit(month)
+      data = early && month === cur ? await early : await getAudit(month)
     }
     // ?summary=1 — everything but the rows: the header totals, the month picker, the statement
     // list, prep and resolutions. The page paints from this while the rows (the megabyte) arrive.

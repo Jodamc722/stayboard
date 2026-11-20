@@ -14,10 +14,10 @@ import { redirect } from 'next/navigation'
 import { getAccess } from '@/lib/access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { Shell } from '@/components/Shell'
-import { blockedUnits } from '@/lib/blocked-units'
 import { pageRows } from '@/lib/db-page'
 import { unstable_cache } from 'next/cache'
 import { MaintenanceView, type TriageRow } from './MaintenanceView'
+import { rollup } from './rollup'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,18 +25,6 @@ const TZ = 'America/New_York'
 const ymd = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d)
 const shift = (s: string, n: number) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d) }
 const str = (v: any) => (v == null ? '' : String(v))
-
-// Same rollup rule the Work Orders page uses — a unit-level name folds into its parent property.
-const PARENTS = ['Botanica', 'Oasis', 'Arya', 'Capri', 'Lucerne', '17WEST', 'Elser', 'Salato']
-const OASIS_UNITS = ['mahogany', 'royal palm', 'bougainvillea', 'bamboo', 'sapodilla', 'jasmine']
-function rollup(raw?: string | null): string {
-  const b = str(raw).trim()
-  if (!b) return 'Unassigned'
-  const lower = b.toLowerCase()
-  for (const p of PARENTS) if (lower === p.toLowerCase() || lower.startsWith(p.toLowerCase() + ' ')) return p
-  if (OASIS_UNITS.some(u => lower === u || lower.startsWith(u + ' '))) return 'Oasis'
-  return b
-}
 
 function ageDays(iso?: string | null): number {
   if (!iso) return 0
@@ -72,12 +60,12 @@ const chunks = (ids: string[]) => { const out: string[][] = []; for (let i = 0; 
 // work out on every open: which units are blocked on the calendar right now, and which finished
 // maintenance tasks of the last 30 days carry no billing. Both are computed exactly as before and
 // simply reused for 120 seconds. A read that stopped early is shown but never kept.
-type UnbilledTask = { id: any; reference_property_id: any; name: any; status: any; assignee_name: any; finished_at: any; total_minutes: any }
+type UnbilledTask = { id: any; reference_property_id: any; home_id?: any; name: any; status: any; assignee_name: any; finished_at: any; total_minutes: any }
 async function readUnbilled(): Promise<{ rows: UnbilledTask[]; whole: boolean }> {
   const db = supabaseAdmin()
   const d30 = shift(ymd(new Date()), -30)
   const done = await pageRows<any>((a, b) => db.from('breezeway_tasks_sync')
-    .select('id, reference_property_id, name, status, assignee_name, finished_at, total_minutes')
+    .select('id, reference_property_id, home_id, name, status, assignee_name, finished_at, total_minutes')
     .eq('type_department', 'maintenance')
     .gte('finished_at', d30 + 'T00:00:00').order('id').range(a, b))
   if (done.truncated) console.error('[maintenance] finished tasks read stopped early — the page may be missing rows')
@@ -110,10 +98,10 @@ const keptUnbilled = unstable_cache(async (): Promise<UnbilledTask[]> => {
 async function unbilledWork(): Promise<UnbilledTask[]> {
   try { return await keptUnbilled() } catch { return (await readUnbilled()).rows }
 }
-const liveBlockedUnits = unstable_cache(async (): Promise<{ building: string; unit: string }[]> => {
-  const b = await blockedUnits(30)
-  return b.runs.filter(r => r.live).map(r => ({ building: str(r.building), unit: str(r.unit) }))
-}, ['maintenance-live-blocked-v1'], { revalidate: 120 })
+// SPEED (Jon, 2026-11-20): the "offline" count used to be worked out HERE, which made the whole page
+// wait on a walk of Guesty's live calendar (about seven seconds on a cold open, and this page is
+// opened a few times a month, so every open was cold). MaintenanceView now reads the copy the Today
+// tile already keeps (/api/blocked-units?cached=1) after the page has painted. Same count, same rule.
 
 const GLITCH_OPEN = ['pool', 'ops', 'guest_followup', 'refund', 'manager_review', 'incident']
 const WO_CLOSED = ['done', 'cancelled']
@@ -138,12 +126,12 @@ export default async function MaintenancePage() {
   const today = ymd(new Date())
   const d30 = shift(today, -30)
 
-  const [woRes, taskRes, unbilled, glitchRes, blocked] = await Promise.all([
+  const [woRes, taskRes, unbilled, glitchRes] = await Promise.all([
     openWorkOrders(db),
     // Open maintenance execution: unfinished Breezeway maintenance tasks scheduled in the last
     // 60 days or undated. Older than that is archaeology, not operations.
     whole('open tasks', (a, b) => db.from('breezeway_tasks_sync')
-      .select('id, reference_property_id, type_department, name, status, assignee_name, finished_at, scheduled_date, report_url, created:raw->>created_at')
+      .select('id, reference_property_id, home_id, type_department, name, status, assignee_name, finished_at, scheduled_date, report_url, created:raw->>created_at, pri:raw->>type_priority')
       .eq('type_department', 'maintenance').is('finished_at', null)
       .gte('scheduled_date', shift(today, -60)).order('id').range(a, b)),
     // Closed maintenance work in the last 30 days that never got billed (kept 2 minutes).
@@ -151,7 +139,6 @@ export default async function MaintenancePage() {
     // Only the statuses the queue counts as open (the same GLITCH_OPEN filter below), so this read
     // does not page through every closed glitch ever logged.
     whole('glitches', (a, b) => db.from('glitches').select('id,status,unit,market,glitch_type,category,overview,assignee,due_date,created_at,breezeway_task_id').in('status', GLITCH_OPEN).order('id').range(a, b)),
-    liveBlockedUnits().catch(() => null),
   ])
 
   // Listing names for Breezeway tasks, which only know their listing id.
@@ -160,10 +147,24 @@ export default async function MaintenancePage() {
       .map(t => str(t.reference_property_id)).filter(Boolean)
   ))
   const lname: Record<string, string> = {}
-  const listingPages = await Promise.all(chunks(listingIds).map(c => db.from('guesty_listings').select('id,nickname,title,building').in('id', c)))
+  // CLEAN-UP (Jon, 2026-11-20): no more "Unknown unit". A task filed on a building or a common area
+  // (Eden Building, an exterior: the pool tests, the drains) has no Guesty listing, only a Breezeway
+  // property; its name is read from the Breezeway property list in the same round trip.
+  const homeIds = Array.from(new Set(
+    [...((taskRes.data || []) as any[]), ...unbilled]
+      .filter(t => !str(t.reference_property_id) && t.home_id != null).map(t => Number(t.home_id)).filter(n => Number.isFinite(n))
+  ))
+  const hname: Record<string, string> = {}
+  const [listingPages, homeRes] = await Promise.all([
+    Promise.all(chunks(listingIds).map(c => db.from('guesty_listings').select('id,nickname,title,building').in('id', c))),
+    homeIds.length ? db.from('breezeway_properties').select('home_id,name').in('home_id', homeIds.slice(0, 400)) : Promise.resolve({ data: [] as any[] }),
+  ])
   for (const { data } of listingPages) {
     for (const l of ((data || []) as any[])) lname[str(l.id)] = str(l.nickname || l.title || l.building || l.id)
   }
+  for (const h of ((homeRes.data || []) as any[])) if (str(h.name)) hname[str(h.home_id)] = str(h.name)
+  /** Where a Breezeway task is: the listing, else the Breezeway property (a building), else empty. */
+  const placeOf = (t: any): string => lname[str(t.reference_property_id)] || hname[str(t.home_id)] || ''
 
   // ---- the triage queue: every open item across all three systems, ranked ----
   const wos = ((woRes.data || []) as any[]).filter(r => !WO_CLOSED.includes(str(r.status)))
@@ -194,14 +195,21 @@ export default async function MaintenancePage() {
     if (!str(t.assignee_name)) flags.push('unassigned')
     if (t.scheduled_date && str(t.scheduled_date) < today) flags.push('overdue')
     if (age >= 7) flags.push('stale')
+    // CLEAN-UP (Jon, 2026-11-20): signal. Breezeway's own priority was not read, so an urgent task
+    // ranked like any other and one that was assigned and on time never reached this list at all.
+    const pri = str(t.pri).toLowerCase()
+    if (pri === 'urgent' || pri === 'high') flags.push('urgent')
     if (!flags.length) continue
+    // Work filed ahead for a later day (the pre-filed pool tests, next week's visit) is real, but it
+    // is not today's decision: it stays on the list, under everything that is due or overdue.
+    const ahead = !!t.scheduled_date && str(t.scheduled_date) > shift(today, 1)
     triage.push({
       // The task itself, not the read-only field report (2026-10-01: the row said "Open in Breezeway" and opened the report).
       kind: 'task', href: 'https://app.breezeway.io/task/' + encodeURIComponent(str(t.id)), title: str(t.name) || 'Breezeway task',
       taskId: str(t.id), reportUrl: str(t.report_url) || null, dept: 'maintenance', running: /progress|started/i.test(str(t.status)),
-      where: lname[str(t.reference_property_id)] || 'Unknown unit',
-      who: str(t.assignee_name) || null, age, flags,
-      score: (flags.includes('overdue') ? 30 : 0) + (flags.includes('unassigned') ? 20 : 0) + Math.min(age, 30),
+      where: placeOf(t) || 'No unit on the task',
+      who: str(t.assignee_name) || null, age, flags, priority: pri === 'urgent' ? 'urgent' : pri === 'high' ? 'high' : null,
+      score: (flags.includes('urgent') ? 40 : 0) + (flags.includes('overdue') ? 30 : 0) + (flags.includes('unassigned') ? 20 : 0) + Math.min(age, 30) - (ahead ? 100 : 0),
     })
   }
   for (const g of glitches) {
@@ -224,10 +232,10 @@ export default async function MaintenancePage() {
   const grid: Record<string, { wo: number; task: number; glitch: number; blocked: number; unbilled: number }> = {}
   const cell = (b: string) => (grid[b] = grid[b] || { wo: 0, task: 0, glitch: 0, blocked: 0, unbilled: 0 })
   for (const r of wos) cell(rollup(r.building)).wo++
-  for (const t of tasks) cell(rollup(lname[str(t.reference_property_id)])).task++
+  for (const t of tasks) cell(rollup(placeOf(t))).task++
   for (const g of glitches) cell(rollup(str(g.unit) ? str(g.unit) : str(g.market))).glitch++
-  for (const t of unbilled) cell(rollup(lname[str(t.reference_property_id)])).unbilled++
-  if (blocked) for (const run of blocked) cell(rollup(run.building || run.unit)).blocked++
+  for (const t of unbilled) cell(rollup(placeOf(t))).unbilled++
+  // Offline units are added to this grid by MaintenanceView once the blocked report has been read.
   const gridRows = Object.entries(grid)
     .map(([b, v]) => ({ b, ...v, total: v.wo + v.task + v.glitch + v.blocked + v.unbilled }))
     .filter(r => r.total > 0)
@@ -236,7 +244,6 @@ export default async function MaintenancePage() {
   const unassignedCount = triage.filter(t => t.flags.includes('unassigned')).length
   const staleCount = triage.filter(t => t.flags.includes('stale')).length
   const overdueCount = triage.filter(t => t.flags.includes('overdue')).length
-  const liveBlocked = blocked ? blocked.length : 0
 
   const verdict = triage.length === 0
     ? 'Nothing is stuck. Every open item is assigned, current, and inside its dates.'
@@ -247,12 +254,12 @@ export default async function MaintenancePage() {
     <Shell>
       <MaintenanceView
         verdict={verdict}
-        counts={{ wo: wos.length, unassigned: unassignedCount, overdue: overdueCount, stale: staleCount, unbilled: unbilled.length, offline: liveBlocked }}
+        counts={{ wo: wos.length, unassigned: unassignedCount, overdue: overdueCount, stale: staleCount, unbilled: unbilled.length }}
         triage={triage}
         grid={gridRows}
         unbilled={unbilled.map((t: any) => ({
           id: str(t.id), name: str(t.name) || 'Maintenance task',
-          unit: lname[str(t.reference_property_id)] || 'Unknown unit',
+          unit: placeOf(t) || 'No unit on the task',
           who: str(t.assignee_name) || null,
           hours: t.total_minutes ? Math.round(t.total_minutes / 6) / 10 : null,
           age: ageDays(t.finished_at),

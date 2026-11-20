@@ -68,8 +68,10 @@ export function GuidebookGroups({ groups }: { groups: GuidebookGroup[] }) {
                       <div className="flex-1 min-w-0 flex items-center gap-1.5 flex-wrap">
                         <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{g.name}</span>
                         <span className="text-[12px] text-muted truncate max-w-[18rem]">{g.sub}</span>
-                        <Tag tone={g.themeTone} title="Colour theme">{g.themeLabel}</Tag>
-                        {g.status ? <Tag tone={g.status === 'draft' ? 'amber' : 'emerald'}>{g.status}</Tag> : null}
+                        {/* CLEAN-UP (Jon, 2026-11-20): one coloured chip, and only where a person has to act (a
+                            draft to review). The theme and "live" are plain: nothing to do about either. */}
+                        <Tag title="Colour theme">{g.themeLabel}</Tag>
+                        {g.status ? <Tag tone={g.status === 'live' ? 'slate' : 'amber'}>{g.status}</Tag> : null}
                       </div>
                       <ArrowRight size={15} className="shrink-0 text-muted group-hover:text-ink transition" />
                     </Link>

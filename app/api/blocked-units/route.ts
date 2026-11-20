@@ -3,7 +3,8 @@
 //
 // ?days=N   how far ahead to look (default 30, max 120)
 // ?raw=1    admins only: the raw Guesty calendar days, for checking the shape by eye
-// ?cached=1 the Today tile: the same report, at most 10 minutes old (the board itself reads live)
+// ?cached=1 the Today tile and the board's first paint: the same report, at most 10 minutes old
+//           (the board then re-reads live behind it)
 import { NextRequest, NextResponse } from 'next/server'
 import { unstable_cache } from 'next/cache'
 import { requireLevel } from '@/lib/access'
@@ -16,8 +17,11 @@ export const maxDuration = 90
 
 // The report walks Guesty's live multi-calendar. The Today tile re-read it every five minutes for
 // every viewer to print one number; the tile asks for this copy instead. A failed walk throws, and
-// a throw is never cached. The Blocked board does not pass ?cached, so it stays live.
-const cachedBlocked = unstable_cache((days: number) => blockedUnits(days), ['blocked-units-report-v1'], { revalidate: 600 })
+// a throw is never cached. The Blocked board paints this copy first, then re-reads live.
+// CLEAN-UP (Jon, 2026-11-20): every answer says when it was read (asOf), so the board can paint this
+// copy at once and tell a ten-minute-old read from a fresh one. Same report, one extra field.
+const stamped = async (days: number) => ({ ...(await blockedUnits(days)), asOf: new Date().toISOString() })
+const cachedBlocked = unstable_cache((days: number) => stamped(days), ['blocked-units-report-v2'], { revalidate: 600 })
 
 export async function GET(req: NextRequest) {
   // GATE MATCHES THE PAGE (2026-09-03): the page is granted under `blocked`; this answered under
@@ -37,7 +41,7 @@ export async function GET(req: NextRequest) {
       const cal = await getMultiCalendar(((data || []) as any[]).map(l => String(l.id)), today, ymd(to))
       return NextResponse.json({ ok: true, sampled: cal.length, sample: cal.slice(0, 40).map(d => d.raw) })
     }
-    const report = sp.get('cached') ? await cachedBlocked(days) : await blockedUnits(days)
+    const report = sp.get('cached') ? await cachedBlocked(days) : await stamped(days)
     return NextResponse.json({ ok: true, ...report })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 })

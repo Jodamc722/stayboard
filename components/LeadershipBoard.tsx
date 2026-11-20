@@ -406,8 +406,9 @@ export function LeadershipBoard({ initialItem }: { initialItem?: string | null }
               {it.priority === 'urgent' && !it.done && <Tag tone="rose">urgent</Tag>}
               {it.priority === 'high' && !it.done && <Tag tone="amber">high</Tag>}
               {showLane && it.lane !== 'Tasks' && <span className="text-[11px] text-muted">{it.lane}</span>}
-              {it.property && <Tag tone="brand">{it.property}</Tag>}
-              {it.vendor && <Tag tone="violet" title="Waiting on">{it.vendor}</Tag>}
+              {/* CLEAN-UP (Jon, 2026-11-20): where and who we wait on are facts, not alarms: plain tags. Colour stays for late, urgent and no owner. */}
+              {it.property && <Tag>{it.property}</Tag>}
+              {it.vendor && <Tag title="Waiting on">{it.vendor}</Tag>}
               {it.comments.length > 0 && <span className="text-[11px] text-muted inline-flex items-center gap-0.5"><MessageSquare size={11} />{it.comments.length}</span>}
               {it.photos.length > 0 && <span className="text-[11px] text-muted inline-flex items-center gap-0.5"><ImageIcon size={11} />{it.photos.length}</span>}
               {who.length > 0

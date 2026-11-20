@@ -475,10 +475,9 @@ export async function buildOpenClose(opts: { mode: OcMode; date?: string | null;
   const tomorrow = addDays(day, 1), yesterday = addDays(day, -1)
   const degraded: string[] = []
 
-  const rules = await getSlackRules().catch(() => null)
-  const LONG = rules ? rules.longStayNights : 14
-  const BIG = rules ? rules.bigBookingUsd : 3000
-  const OT_RISK = 40
+  // SPEED (Jon, 2026-11-20): the rules were read first and everything else waited on them; nothing in
+  // the big read below uses them, so they are read alongside it and picked up after.
+  const rulesP = getSlackRules().catch(() => null)
 
   const [cd, sched, schedT, shifts, shiftsT, roster, week, res, vips, glitches, tasksToday, tasksT, visits, visitsT, unpaid, claims, signs, carried, days] = await Promise.all([
     safe('today', () => buildCommandDay(), degraded),
@@ -501,8 +500,16 @@ export async function buildOpenClose(opts: { mode: OcMode; date?: string | null;
     readCarried(),
     readDays([day, yesterday]),
   ])
-  const glitchTasks = glitches ? await safe('glitch tasks', () => readTasksById(glitches.map(g => g.breezeway_task_id || '').filter(Boolean)), degraded) : null
-  const asks = sched ? (await safe('extension asks', () => readExtensionAsks(sched.map(c => str(c.reservationId)).filter(Boolean)), degraded)) || new Set<string>() : new Set<string>()
+  const rules = await rulesP
+  const LONG = rules ? rules.longStayNights : 14
+  const BIG = rules ? rules.bigBookingUsd : 3000
+  const OT_RISK = 40
+  // The two follow-up reads do not depend on each other: together, not one after the other.
+  const [glitchTasks, asksRead] = await Promise.all([
+    glitches ? safe('glitch tasks', () => readTasksById(glitches.map(g => g.breezeway_task_id || '').filter(Boolean)), degraded) : Promise.resolve(null),
+    sched ? safe('extension asks', () => readExtensionAsks(sched.map(c => str(c.reservationId)).filter(Boolean)), degraded) : Promise.resolve(null),
+  ])
+  const asks = asksRead || new Set<string>()
 
   // Calendar helpers from the reservations window.
   const resList = res || []

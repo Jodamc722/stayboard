@@ -6,8 +6,9 @@
 // "a review tab, filters by date and window, stats, top issue, directional feedback").
 //
 // Three tabs, one truth:
-//   Desk      Do now (every line a verb and a deep link, worst first) · the numbers (each tile is a
-//             filter) · the channels strip · admin projects · listings offline in Guesty
+//   Desk      Stopped selling (most bookings lost first) · by channel · Do now (every line a verb and
+//             a deep link, worst first) · all counts (each tile is a filter) · admin projects ·
+//             listings offline in Guesty
 //   Listings  one row per listing — channel chips, score, last optimized, photos, reviews, blocked —
 //             with search, market / building / quick-view buttons
 //   Copy audit  every listing's copy: over the channel limits, wrong facts, empty sections, Regenerate
@@ -17,8 +18,9 @@
 // Rules live in lib/admin-desk-shared.ts (tested); rows come from /api/admin-desk; blocks from
 // /api/blocked-units; the report from /api/reviews/kpi. Clean rows and tags, buttons not menus, and
 // every icon explains itself on hover (lib/lean rules).
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { ExternalLink, Home, Images, MessageSquareText, Radio, RefreshCw, Search, Wrench, ArrowUpRight, ArrowDownRight, Minus, Sparkles } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
 import { GuidebookWalk } from '@/components/GuidebookWalk'
@@ -42,18 +44,52 @@ const KIND_ICON: Record<WorkItem['kind'], any> = { channel: Radio, reply: Messag
 const KIND_WORD: Record<WorkItem['kind'], string> = { channel: 'Channel', reply: 'Reviews', refresh: 'Refresh', optimize: 'Optimize', photos: 'Photos', blocked: 'Blocked' }
 const KIND_HINT: Record<WorkItem['kind'], string> = { channel: 'A channel problem', reply: 'A review to answer', refresh: 'Performing poorly against its building — new cover, re-order, re-optimize', optimize: 'Listing copy, settings or score', photos: 'Photos, captions or the analysis', blocked: 'The Guesty calendar' }
 const ADMIN_PROJECT_CATEGORIES = ['onboarding', 'offboarding', 'rollout']
+// One name per thing on this page and in the morning email: "stopped selling", not also "not for sale".
+const TILE_LABEL: Partial<Record<TileKey, string>> = { notForSale: 'Stopped selling' }
 const todayET = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 const agoText = (iso?: string | null) => { if (!iso) return ''; const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? 'just now' : m < 60 ? m + 'm ago' : Math.round(m / 60) + 'h ago' }
 const btn = 'inline-flex items-center gap-1 rounded-lg bg-ink text-white px-2.5 py-1 text-[12px] font-bold hover:opacity-90 shrink-0'
 const ghost = 'inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:border-ink/40 shrink-0'
 
+// CLEAN-UP (Jon, 2026-11-20): one page, not two. /admin?tab=channels (and every other tab) is a real
+// address, so the Channels page can live here: ?tab= picks the tab, ?show= the Listings filter, and
+// the channel links on this desk open its own Channels tab with the same ?channel= / ?listing= /
+// ?problems= the Channels page reads.
+type TabKey = 'desk' | 'listings' | 'rates' | 'channels' | 'copy' | 'reviews' | 'guidebooks'
+const TAB_KEYS: TabKey[] = ['desk', 'listings', 'rates', 'channels', 'copy', 'reviews', 'guidebooks']
+const tabOf = (v: string | null): TabKey => (TAB_KEYS as string[]).indexOf(String(v || '')) >= 0 ? (v as TabKey) : 'desk'
+const tileOf = (v: string | null): TileKey | null => v === 'all' || TILES.some(t => t.key === v) ? (v as TileKey) : null
+const here = (href: string) => href === '/channels' ? '/admin?tab=channels' : href.indexOf('/channels?') === 0 ? '/admin?tab=channels&' + href.slice('/channels?'.length) : href
+const shortDay = (iso?: string | null) => { const s = String(iso || '').slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return ''; return new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) }
+/** The stopped-selling lines and the standing "never connected" gap are drawn in their own sections. */
+const isStopped = (w: WorkItem) => w.kind === 'channel' && w.severity === 'high' && !!w.listingId
+const isChannelGap = (w: WorkItem) => w.kind === 'channel' && !isStopped(w)
+
 export function AdminDesk({ canEdit }: { canEdit: boolean }) {
+  const params = useSearchParams()
+  const qs = params.toString()
+  const [tab, setTabState] = useState<TabKey>(() => tabOf(params.get('tab')))
+  const [tile, setTile] = useState<TileKey>(() => tileOf(params.get('show')) || 'all')
+  // The address follows the tab (so a refresh, a shared link or Back lands on the same tab), and the
+  // tab follows the address (so a link on this desk to /admin?tab=channels&listing=… switches it).
+  const setTab = useCallback((k: TabKey, show?: TileKey) => {
+    setTabState(k)
+    try { window.history.replaceState(null, '', window.location.pathname + (k === 'desk' ? '' : '?tab=' + k + (show && show !== 'all' ? '&show=' + show : ''))) } catch { /* the tab still changed */ }
+  }, [])
+  useEffect(() => {
+    const p = new URLSearchParams(qs)
+    setTabState(tabOf(p.get('tab')))
+    const t = tileOf(p.get('show')); if (t) setTile(t)
+  }, [qs])
   const desk = useCachedFetch<DeskRes>(DESK_URL, { ttl: 300_000 })
   // Blocks walk Guesty's live calendar — slow, and a Guesty hiccup must never blank the rest.
-  const blocked = useCachedFetch<BlockedRes>('/api/blocked-units?days=14', { ttl: 600_000 })
-  const projects = useCachedFetch<ProjectsRes>('/api/projects', { ttl: 300_000 })
-  const [tab, setTab] = useState<'desk' | 'listings' | 'rates' | 'channels' | 'copy' | 'reviews' | 'guidebooks'>('desk')
-  const [tile, setTile] = useState<TileKey>('all')
+  // SPEED (Jon, 2026-11-20): the calendar walk and the projects list feed the Desk and Listings tabs
+  // only. Opening /admin?tab=channels (or Reviews, Copy audit, …) no longer starts them; they start
+  // the first time one of those two tabs is shown, and stay loaded after that.
+  const [wantLists, setWantLists] = useState(tab === 'desk' || tab === 'listings')
+  useEffect(() => { if (tab === 'desk' || tab === 'listings') setWantLists(true) }, [tab])
+  const blocked = useCachedFetch<BlockedRes>(wantLists ? '/api/blocked-units?days=14' : null, { ttl: 600_000 })
+  const projects = useCachedFetch<ProjectsRes>(wantLists ? '/api/projects' : null, { ttl: 300_000 })
   const [refreshing, setRefreshing] = useState(false)
   const today = desk.data?.today || todayET()
 
@@ -80,7 +116,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
   const offline = useMemo(() => rows.filter(r => !r.active), [rows])
   const adminProjects = useMemo(() => (projects.data?.projects || []).filter((p: any) => ADMIN_PROJECT_CATEGORIES.indexOf(String(p.category || '').toLowerCase()) >= 0 && !p.archived && p.stage !== 'done' && p.stage !== 'cancelled'), [projects.data])
 
-  const openTile = (k: TileKey) => { setTile(k); setTab('listings') }
+  const openTile = (k: TileKey) => { setTile(k); setTab('listings', k) }
   const refresh = async () => {
     setRefreshing(true)
     try { await fetch(DESK_URL + '?refresh=1', { cache: 'no-store' }); invalidateCache(DESK_URL); await desk.refresh() } finally { setRefreshing(false) }
@@ -89,11 +125,12 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
   return (
     <div className="max-w-[1400px]">
       <LeanHead title="Admin desk" sub={desk.data ? `${counts.all - counts.offline} active listings · ${counts.offline} offline in Guesty · updated ${agoText(desk.data.at)}` : desk.error ? 'Could not load: ' + desk.error : 'Reading the portfolio…'}>
-        <Pill tone={counts.notForSale ? 'rose' : 'emerald'} title={TILES.find(t => t.key === 'notForSale')!.hint} onClick={() => openTile('notForSale')}>{counts.notForSale} not for sale</Pill>
-        <Pill tone={counts.notConnected ? 'amber' : 'slate'} title={TILES.find(t => t.key === 'notConnected')!.hint} onClick={() => openTile('notConnected')}>{counts.notConnected} not connected</Pill>
-        <Pill tone={counts.replyOwed ? 'amber' : 'slate'} title={TILES.find(t => t.key === 'replyOwed')!.hint} onClick={() => openTile('replyOwed')}>{counts.replyOwed} reply owed</Pill>
-        <Pill tone="slate" title={TILES.find(t => t.key === 'neverOptimized')!.hint} onClick={() => openTile('neverOptimized')}>{counts.neverOptimized} never optimized</Pill>
-        <Pill tone="slate" title={TILES.find(t => t.key === 'blocked')!.hint + (blocked.data ? '' : ' — still reading the calendar')} onClick={() => openTile('blocked')}>{blocked.data ? counts.blocked : '…'} blocked</Pill>
+        {/* CLEAN-UP (Jon, 2026-11-20): the header carries the two counts with a clock on them, in the
+            morning email's words. "Not connected", "never optimized" and "blocked" were here AND on the
+            tiles below; they are standing work, so they stay on the tiles only. Nothing is printed
+            before the rows arrive (it read "0 not for sale" in green while loading). */}
+        {desk.data && <Pill tone={counts.notForSale ? 'rose' : 'emerald'} title="Was selling on Airbnb, Booking.com, Vrbo or Expedia and stopped: page removed, suspended, failed or disconnected. Each one is lost bookings." onClick={() => openTile('notForSale')}>{counts.notForSale} stopped selling</Pill>}
+        {desk.data && counts.replyOwed > 0 && <Pill tone="amber" title={TILES.find(t => t.key === 'replyOwed')!.hint} onClick={() => openTile('replyOwed')}>{counts.replyOwed} reply owed</Pill>}
         {canEdit && <IconBtn title={refreshing ? 'Rebuilding…' : 'Rebuild the desk now (otherwise every 5 minutes)'} onClick={refresh} disabled={refreshing}><RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /></IconBtn>}
       </LeanHead>
 
@@ -108,14 +145,14 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
       ]} />
 
       {tab === 'desk' && (
-        <DeskTab work={work} counts={counts} strip={strip} offline={offline} projects={adminProjects} projectsLoading={projects.loading} loading={desk.loading && !desk.data} blockedState={blocked.error ? 'error' : blocked.data ? 'ok' : 'loading'} onTile={openTile} channelCheckedAt={desk.data?.channelCheckedAt || null} />
+        <DeskTab work={work} rows={rows} counts={counts} strip={strip} offline={offline} projects={adminProjects} projectsLoading={projects.loading} loading={desk.loading && !desk.data} blockedState={blocked.error ? 'error' : blocked.data ? 'ok' : 'loading'} onTile={openTile} onChannels={() => setTab('channels')} channelCheckedAt={desk.data?.channelCheckedAt || null} />
       )}
       {tab === 'listings' && (
         <ListingsTab rows={rows} today={today} tile={tile} setTile={setTile} counts={counts} channels={(desk.data?.channels || []).filter(c => c.major || c.key === 'googleVacationRentals')} loading={desk.loading && !desk.data} />
       )}
       {/* CHANNELS (Jon, 2026-11-09): the channel page is the admin's standard channel view — same component. */}
       {tab === 'rates' && <AdminBaseRates canEdit={canEdit} />}
-      {tab === 'channels' && <ChannelConnections canRun={canEdit} />}
+      {tab === 'channels' && <ChannelConnections canRun={canEdit} embedded />}
       {tab === 'copy' && <CopyAuditTab />}
       {tab === 'reviews' && <ReviewsTab />}
       {/* GUIDEBOOKS (Jon, 2026-11-06): approve them one by one, property by property, without opening each. */}
@@ -125,47 +162,90 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
 }
 
 // ── DESK ────────────────────────────────────────────────────────────────────────────────────────
-function DeskTab({ work, counts, strip, offline, projects, projectsLoading, loading, blockedState, onTile, channelCheckedAt }: {
-  work: WorkItem[]; counts: Record<TileKey, number>; strip: ReturnType<typeof channelCounts>; offline: AdminRow[]
-  projects: any[]; projectsLoading: boolean; loading: boolean; blockedState: 'ok' | 'loading' | 'error'; onTile: (k: TileKey) => void; channelCheckedAt: string | null
+// SIGNAL (Jon, 2026-11-20): the desk opens on the listings that STOPPED SELLING on a channel, because
+// each one is lost bookings today; the ones that were booking there come first. Then the per-channel
+// picture (where "not connected" is the standing gap, in plain text), then the rest of the work, and
+// only then the twelve counts. The order used to be: counts, one long list, channels.
+function DeskTab({ work, rows, counts, strip, offline, projects, projectsLoading, loading, blockedState, onTile, onChannels, channelCheckedAt }: {
+  work: WorkItem[]; rows: AdminRow[]; counts: Record<TileKey, number>; strip: ReturnType<typeof channelCounts>; offline: AdminRow[]
+  projects: any[]; projectsLoading: boolean; loading: boolean; blockedState: 'ok' | 'loading' | 'error'; onTile: (k: TileKey) => void; onChannels: () => void; channelCheckedAt: string | null
 }) {
   const [all, setAll] = useState(false)
-  const shown = all ? work : work.slice(0, 25)
+  const [allStopped, setAllStopped] = useState(false)
+  // STOPPED SELLING, ranked by what is being lost: bookings that channel sent this listing in the last
+  // 90 days, then how recently it last booked there. (A ranking by building income waits for the
+  // property tier; this one uses only what the row already knows.)
+  const stopped = useMemo(() => {
+    const byId = new Map(rows.map(r => [r.id, r]))
+    return work.filter(isStopped).map(w => {
+      const r = byId.get(w.listingId)
+      const cell = r && w.channel ? r.channels[w.channel] : undefined
+      return { w, cell, url: (cell && cell.url) || (r && w.channel ? (r.links || {})[w.channel] : '') || '' }
+    }).sort((a, b) => ((b.cell?.bookings90d || 0) - (a.cell?.bookings90d || 0))
+      || String(b.cell?.lastBookingAt || '').localeCompare(String(a.cell?.lastBookingAt || ''))
+      || a.w.building.localeCompare(b.w.building) || a.w.name.localeCompare(b.w.name, undefined, { numeric: true }))
+  }, [work, rows])
+  const stoppedShown = allStopped ? stopped : stopped.slice(0, 30)
+  // The rest of the work. "Not connected" lines are not in it: a channel that was never set up is a
+  // standing gap the Channels section counts, not forty amber lines ahead of a review reply.
+  const rest = useMemo(() => work.filter(w => !isStopped(w) && !isChannelGap(w)), [work])
+  const shown = all ? rest : rest.slice(0, 25)
+  const nSev = (sv: Severity) => rest.filter(w => w.severity === sv).length
   return (
     <div className="space-y-5">
-      {/* THE NUMBERS — each one is the filter its click applies, nothing more. */}
-      <section>
-        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-6 gap-1.5">
-          {TILES.map(t => {
-            const n = counts[t.key]
-            const pending = t.key === 'blocked' && blockedState !== 'ok'
-            const tone = n === 0 ? 'text-muted/60' : t.key === 'notForSale' ? 'text-rose-700' : t.key === 'liveAll' ? 'text-emerald-700' : (t.key === 'notConnected' || t.key === 'replyOwed' || t.key === 'lowReviews' || t.key === 'refresh') ? 'text-amber-800' : 'text-ink'
-            return (
-              <button key={t.key} onClick={() => onTile(t.key)} title={t.hint + (pending ? (blockedState === 'error' ? ' — the calendar could not be read' : ' — reading the calendar…') : '') + ' — click to see these listings'}
-                className="text-left rounded-xl border border-line bg-white px-2.5 py-2 min-w-0 hover:border-ink/30 transition">
-                <span className={'block text-[20px] leading-none font-bold tabular-nums ' + tone}>{pending ? '…' : n}</span>
-                <span className="block mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-muted truncate">{t.label}</span>
-              </button>
-            )
-          })}
-        </div>
-      </section>
+      {/* STOPPED SELLING */}
+      <LeanSection title="Stopped selling" n={loading ? undefined : counts.notForSale} tone={stopped.length ? 'rose' : undefined}
+        right={stopped.length ? <span className="text-[11px] text-muted">{stopped.length !== counts.notForSale ? stopped.length + ' channel connections on ' + counts.notForSale + ' listings · ' : ''}most bookings lost first</span> : undefined}>
+        {loading ? <LeanEmpty>Reading the portfolio…</LeanEmpty> : stopped.length === 0 ? <LeanEmpty>Nothing that was selling has stopped.</LeanEmpty> : (
+          <LeanList>
+            {stoppedShown.map(({ w, cell, url }) => (
+              <LeanRow key={w.listingId + ':' + (w.channel || '')}
+                lead={<Link href={here(w.href)} className={btn} title={w.why}>{w.verb}</Link>}
+                name={w.name} meta={<>{w.building ? w.building + ' · ' : ''}{w.title}{cell?.since ? ' · since ' + shortDay(cell.since) : ''}</>}
+                tags={cell ? <Tag title={'Bookings ' + channelLabel(w.channel || '') + ' sent this listing in the last 90 days' + (cell.lastBookingAt ? ' · last one ' + String(cell.lastBookingAt).slice(0, 10) : ' · none in 12 months')}>{cell.bookings90d ? cell.bookings90d + ' booked in 90d' : cell.lastBookingAt ? 'last booked ' + shortDay(cell.lastBookingAt) : 'never booked there'}</Tag> : undefined}
+                actions={<>
+                  {url ? <IconBtn title={'Open the ' + channelLabel(w.channel || '') + ' page'} href={url}><ExternalLink size={14} /></IconBtn> : null}
+                  <IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(w.listingId)}><Home size={14} /></IconBtn>
+                </>}>
+                <p className="text-[12.5px] text-ink/85">{w.why}</p>
+              </LeanRow>
+            ))}
+            {stopped.length > stoppedShown.length && <li className="px-4 py-2 text-center"><button onClick={() => setAllStopped(true)} className="text-[12.5px] font-semibold text-muted hover:text-ink">Show all {stopped.length}</button></li>}
+          </LeanList>
+        )}
+      </LeanSection>
 
-      {/* DO NOW */}
-      <LeanSection title="Do now" n={work.length} tone={work.some(w => w.severity === 'high') ? 'rose' : undefined}
-        right={<span className="inline-flex items-center gap-1.5 text-[11px] text-muted">
-          {(['high', 'medium', 'low'] as Severity[]).map(sv => { const n = work.filter(w => w.severity === sv).length; return n ? <Tag key={sv} tone={SEV_TONE[sv]} title={sv === 'high' ? 'A listing not selling, or a low review about to close' : sv === 'medium' ? 'Not connected, replies owed, long blocks, never optimized, few photos' : 'Optimization due again, captions, photo analysis'}>{n} {SEV_WORD[sv].toLowerCase()}</Tag> : null })}
-          <span>worst first · every line opens where the fix is</span>
-        </span>}>
-        {loading ? <LeanEmpty>Reading the portfolio…</LeanEmpty> : work.length === 0 ? <LeanEmpty>Nothing needs an administrator right now.</LeanEmpty> : (
+      {/* BY CHANNEL — "not connected" is the standing gap: counted here, in plain text. */}
+      <LeanSection title="By channel" right={<button onClick={onChannels} className="text-[11.5px] font-semibold text-muted hover:text-ink">Open Channels →</button>}>
+        <LeanList>
+          {strip.map(c => (
+            <LeanRow key={c.key} name={c.label} meta={<>{c.live + c.stale} live{c.stale ? ` (${c.stale} quiet)` : ''} of {c.live + c.stale + c.delisted + c.suspended + c.failed + c.disconnected + c.missing + c.unknown} active listings</>}
+              tags={<>
+                {c.delisted > 0 && <Tag tone="rose" title="Guesty says connected, but the channel's own page for the listing is gone">{c.delisted} page removed</Tag>}
+                {c.suspended > 0 && <Tag tone="rose" title="Listed but not for sale — the channel's own verdict">{c.suspended} suspended</Tag>}
+                {c.failed > 0 && <Tag tone="rose" title="Guesty reports the sync FAILED">{c.failed} failed</Tag>}
+                {c.disconnected > 0 && <Tag tone="rose" title="The channel says DISCONNECTED">{c.disconnected} disconnected</Tag>}
+                {c.missing > 0 && <Tag title="Never set up on this channel — a standing gap, not something that broke">{c.missing} never connected</Tag>}
+                {c.unknown > 0 && <Tag tone="amber" title="A status this app has not seen before — shown, never assumed fine">{c.unknown} unknown</Tag>}
+              </>}
+              actions={<IconBtn title={'Open ' + c.label + ' on the Channels tab'} href={'/admin?tab=channels&channel=' + encodeURIComponent(c.key) + '&problems=1'}><ExternalLink size={14} /></IconBtn>} />
+          ))}
+        </LeanList>
+        {channelCheckedAt && <p className="mt-1 px-1 text-[11px] text-muted">Channels last checked {agoText(channelCheckedAt)}.</p>}
+      </LeanSection>
+
+      {/* DO NOW — everything that is not a channel */}
+      <LeanSection title="Do now" n={loading ? undefined : nSev('high')} tone={nSev('high') ? 'rose' : undefined}
+        right={<span className="text-[11px] text-muted">{[nSev('medium') ? nSev('medium') + ' this week' : '', nSev('low') ? nSev('low') + ' when you can' : '', 'worst first'].filter(Boolean).join(' · ')}</span>}>
+        {loading ? <LeanEmpty>Reading the portfolio…</LeanEmpty> : rest.length === 0 ? <LeanEmpty>Nothing else needs an administrator right now.</LeanEmpty> : (
           <LeanList>
             {shown.map((w, i) => {
               const I = KIND_ICON[w.kind]
               return (
                 <LeanRow key={w.kind + ':' + w.listingId + ':' + (w.channel || '') + ':' + i}
-                  lead={<Link href={w.href} className={btn} title={w.why}>{w.verb}</Link>}
+                  lead={<Link href={here(w.href)} className={btn} title={w.why}>{w.verb}</Link>}
                   name={w.name} meta={<>{w.building ? w.building + ' · ' : ''}{w.title}</>}
-                  tags={<><Tag tone={SEV_TONE[w.severity]} title={w.why}>{SEV_WORD[w.severity]}</Tag><Tag title={KIND_HINT[w.kind]}><I size={11} className="inline -mt-0.5 mr-1" />{w.kind === 'channel' ? channelLabel(w.channel || '') : KIND_WORD[w.kind]}</Tag></>}
+                  tags={<><Tag tone={SEV_TONE[w.severity]} title={w.why}>{SEV_WORD[w.severity]}</Tag><Tag title={KIND_HINT[w.kind]}><I size={11} className="inline -mt-0.5 mr-1" />{KIND_WORD[w.kind]}</Tag></>}
                   actions={w.listingId ? <IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(w.listingId)}><Home size={14} /></IconBtn> : undefined}>
                   {w.steps && w.steps.length ? (
                     <ol className="list-decimal pl-5 space-y-0.5 text-[12.5px] text-ink/85">{w.steps.map((st, j) => <li key={j}>{st}</li>)}</ol>
@@ -173,29 +253,28 @@ function DeskTab({ work, counts, strip, offline, projects, projectsLoading, load
                 </LeanRow>
               )
             })}
-            {work.length > shown.length && <li className="px-4 py-2 text-center"><button onClick={() => setAll(true)} className="text-[12.5px] font-semibold text-muted hover:text-ink">Show all {work.length}</button></li>}
+            {rest.length > shown.length && <li className="px-4 py-2 text-center"><button onClick={() => setAll(true)} className="text-[12.5px] font-semibold text-muted hover:text-ink">Show all {rest.length}</button></li>}
           </LeanList>
         )}
       </LeanSection>
 
-      {/* CHANNELS */}
-      <LeanSection title="Channels" right={<Link href="/channels" className="text-[11.5px] font-semibold text-muted hover:text-ink">Open Channels →</Link>}>
-        <LeanList>
-          {strip.map(c => (
-            <LeanRow key={c.key} name={c.label} meta={<>{c.live + c.stale} live{c.stale ? ` (${c.stale} quiet)` : ''} of {c.live + c.stale + c.delisted + c.suspended + c.failed + c.disconnected + c.missing + c.unknown} active listings</>}
-              tags={<>
-                {c.delisted > 0 && <Tag tone="roseSolid" title="Guesty says connected, but the channel's own page for the listing is gone">{c.delisted} page removed</Tag>}
-                {c.suspended > 0 && <Tag tone="roseSolid" title="Listed but not for sale — the channel's own verdict">{c.suspended} suspended</Tag>}
-                {c.failed > 0 && <Tag tone="rose" title="Guesty reports the sync FAILED">{c.failed} failed</Tag>}
-                {c.disconnected > 0 && <Tag tone="rose" title="The channel says DISCONNECTED">{c.disconnected} disconnected</Tag>}
-                {c.missing > 0 && <Tag tone="amber" title="No integration on this channel">{c.missing} not connected</Tag>}
-                {c.unknown > 0 && <Tag tone="amber" title="A status this app has not seen before — shown, never assumed fine">{c.unknown} unknown</Tag>}
-                {c.delisted + c.suspended + c.failed + c.disconnected + c.missing + c.unknown === 0 && <Tag tone="emerald">all live</Tag>}
-              </>}
-              actions={<IconBtn title={'Open ' + c.label + ' on the Channels page'} href={'/channels?channel=' + encodeURIComponent(c.key) + '&problems=1'}><ExternalLink size={14} /></IconBtn>} />
-          ))}
-        </LeanList>
-        {channelCheckedAt && <p className="mt-1 px-1 text-[11px] text-muted">Channel check last compared {agoText(channelCheckedAt)}; "since" dates on the lines above come from it.</p>}
+      {/* THE NUMBERS — each one is the filter its click applies on the Listings tab. Colour only where
+          a person has to act (stopped selling, replies, low reviews); the rest are plain counts. */}
+      <LeanSection title="All counts" right={<span className="text-[11px] text-muted">click one to see those listings</span>}>
+        <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-6 gap-1.5">
+          {TILES.map(t => {
+            const n = counts[t.key]
+            const pending = loading || (t.key === 'blocked' && blockedState !== 'ok')
+            const tone = n === 0 ? 'text-muted/60' : t.key === 'notForSale' ? 'text-rose-700' : (t.key === 'replyOwed' || t.key === 'lowReviews') ? 'text-amber-800' : 'text-ink'
+            return (
+              <button key={t.key} onClick={() => onTile(t.key)} title={t.hint + (t.key === 'blocked' && blockedState !== 'ok' ? (blockedState === 'error' ? ' — the calendar could not be read' : ' — reading the calendar…') : '') + ' — click to see these listings'}
+                className="text-left rounded-xl border border-line bg-white px-2.5 py-2 min-w-0 hover:border-ink/30 transition">
+                <span className={'block text-[20px] leading-none font-bold tabular-nums ' + (pending ? 'text-muted/60' : tone)}>{pending ? '…' : n}</span>
+                <span className="block mt-1 text-[10.5px] font-semibold uppercase tracking-wide text-muted truncate">{TILE_LABEL[t.key] || t.label}</span>
+              </button>
+            )
+          })}
+        </div>
       </LeanSection>
 
       {/* ADMIN PROJECTS */}
@@ -225,7 +304,7 @@ function DeskTab({ work, counts, strip, offline, projects, projectsLoading, load
               return (
                 <LeanRow key={r.id} name={r.name} meta={r.building}
                   tags={<><Tag tone="slate" title="Guesty's own status on the listing">{r.guestyStatus}</Tag>{stillOn.length > 0 && <Tag tone="amber" title={'Integration still reads live on: ' + stillOn.map(channelLabel).join(', ')}>{stillOn.length} channel{stillOn.length === 1 ? '' : 's'} still attached</Tag>}</>}
-                  actions={<><IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(r.id)}><Home size={14} /></IconBtn><IconBtn title="See its channels" href={'/channels?listing=' + encodeURIComponent(r.id)}><Radio size={14} /></IconBtn></>} />
+                  actions={<><IconBtn title="Open the unit page" href={'/listings/' + encodeURIComponent(r.id)}><Home size={14} /></IconBtn><IconBtn title="See its channels" href={'/admin?tab=channels&listing=' + encodeURIComponent(r.id)}><Radio size={14} /></IconBtn></>} />
               )
             })}
             {offline.length > 40 && <li className="px-4 py-2 text-[12px] text-muted text-center">and {offline.length - 40} more — the Listings tab lists them all under "Offline in Guesty"</li>}
@@ -275,7 +354,7 @@ function ListingsTab({ rows, today, tile, setTile, counts, channels, loading }: 
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-[11px] font-bold uppercase tracking-wider text-muted mr-1">Show</span>
-          <LeanPick size="sm" value={tile} onPick={setTile} options={[{ v: 'all' as TileKey, label: <>All <span className="opacity-60 tabular-nums">{counts.all}</span></>, title: 'Every listing in Guesty, active or not' }, ...TILES.map(t => ({ v: t.key, label: <>{t.label} <span className="opacity-60 tabular-nums">{counts[t.key]}</span></>, title: t.hint }))]} />
+          <LeanPick size="sm" value={tile} onPick={setTile} options={[{ v: 'all' as TileKey, label: <>All <span className="opacity-60 tabular-nums">{counts.all}</span></>, title: 'Every listing in Guesty, active or not' }, ...TILES.map(t => ({ v: t.key, label: <>{TILE_LABEL[t.key] || t.label} <span className="opacity-60 tabular-nums">{counts[t.key]}</span></>, title: t.hint }))]} />
         </div>
         {buildings.length > 1 && (
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -338,14 +417,14 @@ function ListingRow({ r, today, channels }: { r: AdminRow; today: string; channe
       </>}>
       {items.length ? (
         <ul className="space-y-1">
-          {items.map((w, i) => <li key={i} className="text-[12.5px] text-ink/85 flex items-start gap-2"><Tag tone={SEV_TONE[w.severity]}>{SEV_WORD[w.severity]}</Tag><span><b>{w.title}</b> — {w.steps && w.steps.length ? <>{w.why.split('. ')[0]}.<ol className="list-decimal pl-5 mt-0.5 space-y-0.5">{w.steps.map((st, j) => <li key={j}>{st}</li>)}</ol></> : w.why} <Link href={w.href} className="font-semibold text-ink hover:underline">{w.verb} →</Link></span></li>)}
+          {items.map((w, i) => <li key={i} className="text-[12.5px] text-ink/85 flex items-start gap-2"><Tag tone={SEV_TONE[w.severity]}>{SEV_WORD[w.severity]}</Tag><span><b>{w.title}</b> — {w.steps && w.steps.length ? <>{w.why.split('. ')[0]}.<ol className="list-decimal pl-5 mt-0.5 space-y-0.5">{w.steps.map((st, j) => <li key={j}>{st}</li>)}</ol></> : w.why} <Link href={here(w.href)} className="font-semibold text-ink hover:underline">{w.verb} →</Link></span></li>)}
         </ul>
       ) : <p className="text-[12.5px] text-muted">{r.active ? 'Nothing needs an administrator on this listing.' : 'Offline in Guesty — turn it back on there when it should sell again.'}</p>}
       {r.active && r.perf && <p className="text-[11.5px] text-muted">{perf.why}{r.perf.bookings90 ? ' · ' + r.perf.bookings90 + ' booking' + (r.perf.bookings90 === 1 ? '' : 's') + ' made in 90 days' : ' · no booking made in 90 days'}{r.cover ? ' · cover ' + cover.why : ' · cover not analyzed'}</p>}
       {r.active && (
         <div className="flex items-center gap-1.5 flex-wrap pt-1">
           {channels.map(c => { const cell = r.channels[c.key]; return cell && cell.url ? <a key={c.key} href={cell.url} target="_blank" rel="noopener noreferrer" className={ghost} title={'Open the live ' + c.label + ' page'}><ExternalLink size={11} /> {c.label}</a> : null })}
-          <Link href={'/channels?listing=' + encodeURIComponent(r.id)} className={ghost}><Radio size={11} /> Channels</Link>
+          <Link href={'/admin?tab=channels&listing=' + encodeURIComponent(r.id)} className={ghost}><Radio size={11} /> Channels</Link>
         </div>
       )}
     </LeanRow>

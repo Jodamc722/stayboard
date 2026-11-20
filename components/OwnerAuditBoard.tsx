@@ -938,6 +938,30 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
     return m
   }, [filtered])
 
+  // CLEAN-UP (Jon, 2026-11-20): signal. Needs review lists the owners by what could make a statement
+  // wrong — rows with a high flag first, then the dollars sitting on their open rows — instead of
+  // A to Z. The order is worked out once per month and filter and then HELD, so approving a row
+  // never moves the statement being worked out from under the reviewer. Approved and Everything
+  // stay A to Z, as does the Statements tab.
+  const rankHeld = useRef<{ key: string; order: Record<string, number> }>({ key: '', order: {} })
+  const rankKey = (data ? data.month : '') + '|' + filterKey + '|' + (itemsPending ? 'pending' : 'rows')
+  if (data && scope === 'review' && rankHeld.current.key !== rankKey) {
+    const ranked = Object.keys(byOwner).map(id => ({
+      id,
+      high: byOwner[id].filter(it => it.flags.some(f => f.severity === 'high')).length,
+      money: byOwner[id].reduce((a, it) => a + Math.abs(Number(it.net) || 0), 0),
+    })).sort((a, b) => b.high - a.high || b.money - a.money || (ownerName[a.id] || '').localeCompare(ownerName[b.id] || ''))
+    const order: Record<string, number> = {}
+    ranked.forEach((r, i) => { order[r.id] = i })
+    rankHeld.current = { key: rankKey, order }
+  }
+  const worklistOwners = (list: Owner[]): Owner[] => {
+    if (scope !== 'review') return list
+    const order = rankHeld.current.order
+    const at = (o: Owner) => (order[o.ownerId] !== undefined ? order[o.ownerId] : 1e9)
+    return list.slice().sort((a, b) => at(a) - at(b) || a.ownerName.localeCompare(b.ownerName))
+  }
+
 
   // THE CSV PRINTS EVERY ROW'S GUESTY NOTE, which the list no longer carries — so the export asks
   // for the whole audit first (?full=1) and takes the notes from it. If that read fails there is
@@ -1436,9 +1460,13 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
       <LeanHead title={'Statement review' + (data ? ' · ' + data.label : '')}>
         {data && t ? <>
           <Pill tone="brand" title={t.clear.toLocaleString() + ' more rows had nothing flagged'}>{total === 0 ? 'Nothing flagged' : t.done + '/' + total + ' reviewed · ' + pct + '%'}</Pill>
-          <Pill tone={t.statements && t.signedOff === t.statements ? 'emerald' : 'slate'} title="Statements signed off">{t.signedOff}/{t.statements} signed</Pill>
-          <Pill title="Owed to owners — total of the statements’ closing balances (due to owner)">{fmt0(t.dueToOwner)} owed</Pill>
-          <Pill title="Paid out so far — payout movements posted on these statements">{t.paid ? fmt0(t.paid) + ' paid' : 'none paid'}</Pill>
+          {/* CLEAN-UP (Jon, 2026-11-20): a month with no statements yet has nothing to sign, owe or pay —
+              "0/0 signed · $0 owed · none paid" read as three real figures. They appear with the statements. */}
+          {t.statements > 0 && <>
+            <Pill tone={t.signedOff === t.statements ? 'emerald' : 'slate'} title="Statements signed off">{t.signedOff}/{t.statements} signed</Pill>
+            <Pill title="Owed to owners — total of the statements’ closing balances (due to owner)">{fmt0(t.dueToOwner)} owed</Pill>
+            <Pill title="Paid out so far — payout movements posted on these statements">{t.paid ? fmt0(t.paid) + ' paid' : 'none paid'}</Pill>
+          </>}
           <Pill title={'Owner earnings: rental − commission + fees, from the statement line items. ' + t.statements + ' statements · ' + t.owners + ' owners · ' + t.reservations + ' reservations · rental ' + fmt0(t.rental) + ' · commission ' + fmt0(t.commission)}>{fmt0(t.net)} earned</Pill>
         </> : null}
       </LeanHead>
@@ -1901,6 +1929,17 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 {label}
               </button>
             )
+            // CLEAN-UP (Jon, 2026-11-20): a booking that has not arrived has no ledger line yet, so it came
+            // with no owner (the morning brief files these under "No owner"). The unit's other rows this
+            // month say whose it is; a unit seen under two owners is left blank instead of guessed.
+            const unitOwner: Record<string, string> = {}
+            for (const it of data.items) {
+              if (!it.unit || !it.ownerId) continue
+              if (unitOwner[it.unit] === undefined) unitOwner[it.unit] = it.ownerId
+              else if (unitOwner[it.unit] !== it.ownerId) unitOwner[it.unit] = ''
+            }
+            const prepOwner = (p: PrepItem) => String(p.ownerName || ownerName[p.ownerId] || (p.onStatement ? p.ownerId : '') || (p.unit && unitOwner[p.unit] ? ownerName[unitOwner[p.unit]] || '' : ''))
+            const todayEt = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
             const list = data.prep.filter(p => {
               switch (fPrep) {
                 case 'open': return !prepResolved(p) && !p.noFees
@@ -1910,7 +1949,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 default: return true
               }
             }).slice().sort((a, b) => {
-              const owner = (p: PrepItem) => String(p.ownerName || ownerName[p.ownerId] || '~')
+              const owner = (p: PrepItem) => prepOwner(p) || '~'
               const byDate = String(a.checkIn || '').localeCompare(String(b.checkIn || '')) || String(a.checkOut || '').localeCompare(String(b.checkOut || '')) || a.resCode.localeCompare(b.resCode)
               switch (prepSort) {
                 case 'newest': return -byDate
@@ -1918,7 +1957,9 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                 case 'owner': return owner(a).localeCompare(owner(b)) || String(a.unit || '').localeCompare(String(b.unit || ''), undefined, { numeric: true }) || byDate
                 case 'guest': return String(a.guest || '~').localeCompare(String(b.guest || '~')) || byDate
                 case 'rental': return (Number(b.onStatement ? b.rental : 0) || 0) - (Number(a.onStatement ? a.rental : 0) || 0) || byDate
-                default: return byDate
+                // CLEAN-UP (Jon, 2026-11-20): the oldest check-in STILL TO DO leads; rows already split or
+                // marked done follow in the same oldest-first order instead of sitting on top of the work.
+                default: return Number(prepResolved(a)) - Number(prepResolved(b)) || byDate
               }
             })
             return (
@@ -1938,7 +1979,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                     <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted">Sort
                       <select value={prepSort} onChange={e => setPrepSort(e.target.value as typeof prepSort)} aria-label="Sort the list"
                         className="text-xs font-medium text-ink border border-line rounded-lg bg-white px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-200">
-                        <option value="oldest">Oldest check-in first</option>
+                        <option value="oldest">Oldest still to do first</option>
                         <option value="newest">Newest check-in first</option>
                         <option value="open">To break out first</option>
                         <option value="owner">Owner, then unit</option>
@@ -1967,16 +2008,18 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
                               {p.guest || '(guest unknown)'} <span className="text-muted font-normal">· {p.resCode}</span>
                             </div>
                             <div className="text-[11px] text-muted truncate">
-                              {(p.ownerName || ownerName[p.ownerId] || (p.onStatement ? p.ownerId : ''))}{p.unit ? (p.ownerName || p.onStatement ? ' · ' : '') + p.unit : ''} · {dateShort(p.checkIn)} &ndash; {dateShort(p.checkOut)} · {p.monthNights}n in month
+                              {prepOwner(p)}{p.unit ? (prepOwner(p) ? ' · ' : '') + p.unit : ''} · {dateShort(p.checkIn)} &ndash; {dateShort(p.checkOut)} · {p.monthNights}n in month
                               <span className="ml-1"><SourceChip source={p.source} /></span>
-                              {!p.onStatement && (
-                                <span title="This booking has no line items on any owner statement for this month yet" className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">Not on statement</span>
+                              {/* CLEAN-UP (Jon, 2026-11-20): amber only when it needs a look. A booking that has not
+                                  arrived cannot be on the ledger yet; the amount column says "not arrived" in plain text. */}
+                              {!p.onStatement && p.checkIn <= todayEt && (
+                                <span title="This booking has arrived but has no line items on any owner statement for this month yet" className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ring-1 ring-inset bg-amber-50 text-amber-700 ring-amber-200">Not on statement</span>
                               )}
                             </div>
                           </div>
                           <div className="text-right w-24">
                             <div className="text-sm font-semibold text-ink">{p.onStatement ? fmt(p.rental) : '—'}</div>
-                            <div className="text-[11px] text-muted">{p.onStatement ? 'rental' : 'no stmt yet'}</div>
+                            <div className="text-[11px] text-muted">{p.onStatement ? 'rental' : p.checkIn > todayEt ? 'not arrived' : 'no stmt yet'}</div>
                           </div>
                           {p.splitDone ? (
                             <div className="text-xs text-emerald-700 font-medium">
@@ -2240,7 +2283,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
 
               {/* owner sections — collapsed to totals by default; expanding shows the flagged
                   and open rows first, with the full statement one click further */}
-              {data.owners.filter(o => byOwner[o.ownerId] && byOwner[o.ownerId].length).map(o => {
+              {worklistOwners(data.owners.filter(o => byOwner[o.ownerId] && byOwner[o.ownerId].length)).map(o => {
                 const items = byOwner[o.ownerId]
                 // Needs review opens straight onto its rows; Approved and Everything stay folded to the
                 // owner totals until a tag, owner or search narrows them (1,250 open rows is not a view).

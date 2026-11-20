@@ -10,11 +10,9 @@ export default function SystemHealthPage() {
     <Shell>
       <div className="max-w-5xl">
         <h1 className="text-xl font-bold text-ink mb-1">System health</h1>
-        <p className="text-[12.5px] text-muted mb-5 max-w-3xl leading-relaxed">
-          Lighthouse checking itself: whether the syncs are current, whether guests are falling through
-          the pipeline, whether reviews are going unanswered, and whether the numbers add up. It runs once
-          a day and reports here rather than in Slack — an alert about the app in a channel people are in
-          to run buildings is how a channel gets muted.
+        {/* CLEAN-UP (Jon, 2026-11-20): one line; why it is not in Slack is in the hover. */}
+        <p className="text-[12.5px] text-muted mb-5 max-w-3xl" title="It runs once a day and reports here rather than in Slack: an alert about the app in a channel people use to run buildings is how a channel gets muted.">
+          Lighthouse checking itself once a day: syncs, guests falling through, unanswered reviews, numbers that do not add up.
         </p>
         <SystemHealth />
       </div>

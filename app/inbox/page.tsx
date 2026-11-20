@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { Shell } from '@/components/Shell'
 import { getAccess } from '@/lib/access'
 import { atLeast } from '@/lib/features'
-import { loadInbox } from '@/lib/inbox-data'
+import { loadInbox, inboxVersion } from '@/lib/inbox-data'
 import { LiveInbox } from '@/components/LiveInbox'
 
 export const dynamic = 'force-dynamic'
@@ -27,7 +27,9 @@ export default async function GuestInboxPage({ searchParams }: { searchParams?: 
   const me = { email, name: String((access.profile as any)?.name || (access.profile as any)?.full_name || '').trim() || email.split('@')[0] }
   return (
     <Shell>
-      <LiveInbox initial={data} me={me} />
+      {/* CLEAN-UP (Jon, 2026-11-20, "not loady"): the list's fingerprint goes down with it, so opening the page no longer
+          downloads and redraws the same list a second time a moment later. */}
+      <LiveInbox initial={data} me={me} v={inboxVersion(data)} />
     </Shell>
   )
 }

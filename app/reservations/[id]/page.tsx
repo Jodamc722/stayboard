@@ -10,6 +10,7 @@ import { ContactHistory } from '@/components/ContactHistory'
 import { loadContactHistory } from '@/lib/reservation-contact'
 import { StayPanel } from '@/components/StayPanel'
 import { GuestProfilePanel } from '@/components/GuestProfilePanel'
+import { plainText } from '@/lib/message-text'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,79 +19,85 @@ export default async function ReservationDetail({ params }: { params: { id: stri
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
+  // CLEAN-UP (Jon, 2026-11-20, speed): this page read `*` (the whole Guesty payload of the booking and of 200 messages) and
+  // asked its seven questions one after another. It now asks for the columns it prints, and for everything at once.
   const { data: r } = await supabase
     .from('guesty_reservations')
-    .select('*')
+    .select('id, listing_name, guest_name, guest_email, guest_phone, check_in, check_out, nights, status, source, confirmation_code, money_total, money_currency, custom_fields, conversation_id')
     .eq('id', params.id)
     .maybeSingle()
   if (!r) notFound()
 
+  const admin = supabaseAdmin()
   // The booking row often has no conversation_id — the conversation mirror links back by
   // reservation_id, so look there too (the same fallback lib/reservation-360 uses).
-  let convId: string | null = r.conversation_id || null
-  if (!convId) {
-    try {
-      const { data: c } = await supabaseAdmin().from('guesty_conversations').select('id').eq('reservation_id', params.id).order('last_message_at', { ascending: false }).limit(1)
-      convId = Array.isArray(c) && c.length ? String((c[0] as any).id) : null
-    } catch { convId = null }
+  const loadMessages = async (): Promise<{ convId: string | null; messages: any[] }> => {
+    let convId: string | null = r.conversation_id || null
+    if (!convId) {
+      try {
+        const { data: c } = await admin.from('guesty_conversations').select('id').eq('reservation_id', params.id).order('last_message_at', { ascending: false }).limit(1)
+        convId = Array.isArray(c) && c.length ? String((c[0] as any).id) : null
+      } catch { convId = null }
+    }
+    if (!convId) return { convId, messages: [] }
+    // THE NEWEST 200, in reading order. This was oldest-first with a limit, so a long thread showed its
+    // first 200 messages and none of the recent ones.
+    const { data } = await supabase.from('guesty_messages').select('id, sender, sender_name, body, sent_at')
+      .eq('conversation_id', convId).order('sent_at', { ascending: false }).limit(200)
+    return { convId, messages: ((data ?? []) as any[]).slice().reverse() }
   }
-  const messages = convId
-    ? (await supabase
-        .from('guesty_messages')
-        .select('*')
-        .eq('conversation_id', convId)
-        .order('sent_at', { ascending: true })
-        .limit(200)).data ?? []
-    : []
 
   // Has the building been told this guest is coming? Reservation notices are the record of that,
   // and this is where anyone actually looking at a booking would expect to see it — rather than
   // having to remember there is a separate desk. Missing table or RLS hiccup must not 500 the page,
   // so a failure just reads as "no notice on file".
-  let notice: any = null
-  try {
-    const { data } = await supabase
-      .from('reservation_notices')
-      .select('id, property_id, unit_no, arrival_date, sent_at, sent_by, doc_name, created_at')
-      .eq('reservation_id', params.id)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .limit(1)
-    notice = Array.isArray(data) && data.length ? data[0] : null
-  } catch { notice = null }
+  const loadNotice = async (): Promise<any> => {
+    try {
+      const { data } = await supabase
+        .from('reservation_notices')
+        .select('id, property_id, unit_no, arrival_date, sent_at, sent_by, doc_name, created_at')
+        .eq('reservation_id', params.id)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      return Array.isArray(data) && data.length ? data[0] : null
+    } catch { return null }
+  }
 
   // DAMAGE CLAIMS ON THIS STAY. The claim is the reason money moved after the guest left, so it
   // belongs on the booking rather than only on its own board. Claims are service-role-only (RLS
   // with no policy), so this reads through the admin client; a failure reads as "no claims".
-  let claims: any[] = []
-  try {
-    const { data } = await supabaseAdmin()
-      .from('claims')
-      .select('id, stage, outcome, amount_sought, amount_paid, deadline_on, submitted_on, channel')
-      .eq('reservation_id', params.id).is('deleted_at', null)
-      .order('created_at', { ascending: false })
-    claims = Array.isArray(data) ? data : []
-  } catch { claims = [] }
+  const loadClaims = async (): Promise<any[]> => {
+    try {
+      const { data } = await admin
+        .from('claims')
+        .select('id, stage, outcome, amount_sought, amount_paid, deadline_on, submitted_on, channel')
+        .eq('reservation_id', params.id).is('deleted_at', null)
+        .order('created_at', { ascending: false })
+      return Array.isArray(data) ? data : []
+    } catch { return [] }
+  }
 
   // GUEST ORDERS ON THIS STAY (2026-08-24): the pre-arrival order link and every basket the
   // guest sent, on the booking itself. Service-role tables; a failure reads as "no link yet".
-  let orderLink: any = null
-  let guestOrders: any[] = []
-  try {
-    const db = supabaseAdmin()
-    const [{ data: l }, { data: o }] = await Promise.all([
-      db.from('guest_order_links').select('code, sent_at, send_error, opened_at, created_at').eq('reservation_id', params.id).limit(1),
-      db.from('guest_orders').select('id, status, items, total_usd, submitted_at, delivery_date, delivery_note, requested_delivery, requested_date, payment_note, charge_error').eq('reservation_id', params.id).order('submitted_at', { ascending: false }).limit(20),
-    ])
-    orderLink = Array.isArray(l) && l.length ? l[0] : null
-    guestOrders = Array.isArray(o) ? o : []
-  } catch { orderLink = null; guestOrders = [] }
+  const loadOrders = async (): Promise<{ orderLink: any; guestOrders: any[] }> => {
+    try {
+      const [{ data: l }, { data: o }] = await Promise.all([
+        admin.from('guest_order_links').select('code, sent_at, send_error, opened_at, created_at').eq('reservation_id', params.id).limit(1),
+        admin.from('guest_orders').select('id, status, items, total_usd, submitted_at, delivery_date, delivery_note, requested_delivery, requested_date, payment_note, charge_error').eq('reservation_id', params.id).order('submitted_at', { ascending: false }).limit(20),
+      ])
+      return { orderLink: Array.isArray(l) && l.length ? l[0] : null, guestOrders: Array.isArray(o) ? o : [] }
+    } catch { return { orderLink: null, guestOrders: [] } }
+  }
 
-  // EVERY TIME WE WERE IN TOUCH BY PHONE (2026-09-21). Calls with what was said, texts and
-  // voicemails, matched to this booking by the Talkroute matcher. Fails soft to an empty history.
-  const contact = await loadContactHistory(supabaseAdmin(), params.id, r.guest_phone)
+  const [{ convId, messages }, notice, claims, { orderLink, guestOrders }, contact, cfMap] = await Promise.all([
+    loadMessages(), loadNotice(), loadClaims(), loadOrders(),
+    // EVERY TIME WE WERE IN TOUCH BY PHONE (2026-09-21). Calls with what was said, texts and
+    // voicemails, matched to this booking by the Talkroute matcher. Fails soft to an empty history.
+    loadContactHistory(admin, params.id, r.guest_phone),
+    customFieldNameMap(),
+  ])
 
-  const cfMap = await customFieldNameMap()
   const idOf = (cf: any) => String(cf?.fieldId?._id || cf?.fieldId || cf?.field?._id || cf?._id || '')
   const labelOf = (cf: any) => String(cf?.fieldName || cf?.name || cfMap[idOf(cf)] || '').trim().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 
@@ -105,7 +112,7 @@ export default async function ReservationDetail({ params }: { params: { id: stri
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{r.guest_name}</h1>
           <p className="text-sm text-slate-500">
-            {r.listing_name} · {fmt(r.check_in)} → {fmt(r.check_out)} · {r.nights ?? '—'} nights
+            {r.listing_name} · {fmt(r.check_in)} → {fmt(r.check_out)} · {r.nights ?? '—'} {Number(r.nights) === 1 ? 'night' : 'nights'}
             {r.confirmation_code && <> · <span className="font-mono">{r.confirmation_code}</span></>}
           </p>
         </div>
@@ -115,7 +122,8 @@ export default async function ReservationDetail({ params }: { params: { id: stri
               ? new Intl.NumberFormat('en-US', { style: 'currency', currency: r.money_currency || 'USD', maximumFractionDigits: 0 }).format(Number(r.money_total))
               : '—'}
           </div>
-          <div className="text-xs uppercase text-slate-500">{r.source}</div>
+          {/* CLEAN-UP (Jon, 2026-11-20): the channel by its name, not Guesty's key ("AIRBNB2", "BE-API"). */}
+          <div className="text-xs uppercase text-slate-500">{channelName(r.source)}</div>
           <a href={`https://app.guesty.com/reservations/${params.id}/summary`} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold text-brand-600 hover:text-brand-700 mt-1 inline-block">Open in Guesty ↗</a>
         </div>
       </header>
@@ -149,14 +157,14 @@ export default async function ReservationDetail({ params }: { params: { id: stri
                 <div className="text-xs mt-0.5">
                   Arriving {fmt(notice.arrival_date)} · {String(notice.property_id || '').toUpperCase()} {notice.unit_no}
                 </div>
-                <Link href="/reservation-emails" className="text-xs font-semibold underline mt-1 inline-block">Open reservation emails →</Link>
+                <Link href="/reservation-emails" className="text-xs font-semibold underline mt-1 inline-block">Open Front-desk notices →</Link>
               </div>
             )
           ) : (
             // No row at all: either the building doesn't require notice, or it isn't switched on yet.
             <p className="text-xs text-slate-400">
               No arrival notice on file — this building either doesn&apos;t need one or isn&apos;t switched on in{' '}
-              <Link href="/reservation-emails" className="underline">reservation emails</Link>.
+              <Link href="/reservation-emails" className="underline">Front-desk notices</Link>.
             </p>
           )}
 
@@ -224,7 +232,7 @@ export default async function ReservationDetail({ params }: { params: { id: stri
           <dl className="space-y-2 text-sm">
             <Row label="Email" value={r.guest_email} />
             <Row label="Phone" value={r.guest_phone} />
-            <Row label="Status" value={(r.status || '').replace('_', ' ')} />
+            <Row label="Status" value={(r.status || '').replace(/_/g, ' ')} />
           </dl>
         </section>
 
@@ -239,8 +247,9 @@ export default async function ReservationDetail({ params }: { params: { id: stri
         <section className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-slate-900">Conversation</h2>
-            {r.conversation_id && (
-              <Link href={`/inbox/${r.conversation_id}`} className="text-xs text-brand-600 hover:underline">Open full thread →</Link>
+            {/* The thread found through the conversation mirror counts too — the link was missing whenever the booking row had no id of its own. */}
+            {convId && (
+              <Link href={`/inbox/${convId}`} className="text-xs text-brand-600 hover:underline">Open full thread →</Link>
             )}
           </div>
           {messages.length === 0 ? (
@@ -253,7 +262,8 @@ export default async function ReservationDetail({ params }: { params: { id: stri
                     <div className={`text-[10px] uppercase tracking-wide mb-0.5 ${m.sender === 'guest' ? 'text-slate-500' : 'text-white/70'}`}>{m.sender_name || m.sender}</div>
                     {/* A pasted booking link or a long guest email in a message body has no break
                         opportunity and pushed the bubble past the card on a phone. */}
-                    <div className="break-words sm:break-normal">{m.body}</div>
+                    {/* An HTML email (a Guesty template, an Airbnb notice) printed its markup; plainText reads it as text. */}
+                    <div className="break-words sm:break-normal whitespace-pre-wrap">{clip(plainText(m.body))}</div>
                     <div className={`text-[10px] mt-0.5 ${m.sender === 'guest' ? 'text-slate-400' : 'text-white/70'}`}>{m.sent_at ? new Date(m.sent_at).toLocaleString() : ''}</div>
                   </div>
                 </div>
@@ -264,6 +274,20 @@ export default async function ReservationDetail({ params }: { params: { id: stri
       </div>
     </Shell>
   )
+}
+
+const CHANNEL_NAME: Record<string, string> = {
+  airbnb: 'Airbnb', airbnb2: 'Airbnb', bookingcom: 'Booking.com', booking: 'Booking.com', expedia: 'Expedia', vrbo: 'VRBO', homeaway: 'VRBO', homeaway2: 'VRBO',
+  manual: 'Direct', direct: 'Direct', beapi: 'Website', website: 'Website', google: 'Google', ownerguest: 'Owner guest', owner: 'Owner',
+  homesvillasbymarriott: 'Marriott', bluegroundnestpick: 'Blueground',
+}
+function channelName(s?: string | null): string {
+  const raw = String(s || '').trim()
+  return CHANNEL_NAME[raw.toLowerCase().replace(/[^a-z0-9]/g, '')] || raw
+}
+/** A message as text, held to a readable length (an email notice can run to thousands of characters). */
+function clip(t: string): string {
+  return t.length > 3000 ? t.slice(0, 3000).trimEnd() + '…' : t
 }
 
 function CFValue({ cf }: { cf: any }) {

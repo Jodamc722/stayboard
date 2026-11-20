@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase-server'
 import { Shell } from '@/components/Shell'
 import { ArrowLeft } from 'lucide-react'
 import { BulkGuidebookBuilder } from '@/components/BulkGuidebookBuilder'
+import { LeanHead } from '@/components/lean'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,12 +14,12 @@ export default async function BulkGuidebookPage() {
   if (!user) redirect('/login')
   return (
     <Shell>
-      <header className="mb-6">
-        <Link href="/guidebooks" className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-ink mb-2"><ArrowLeft size={13} />Guidebooks</Link>
-        <p className="text-[11px] uppercase tracking-[0.18em] text-muted font-semibold">Guests</p>
-        <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">Bulk build a building</h1>
-        <p className="text-sm text-muted mt-1">Fill the building-level info once and generate a guidebook for every unit.</p>
-      </header>
+      {/* CLEAN-UP (Jon, 2026-11-20): the one-line header every other page has, with the two places
+          this page leads back to as buttons. */}
+      <LeanHead title="Bulk build a building" sub="Fill the building-level info once and generate a guidebook for every unit.">
+        <Link href="/guidebooks/review" className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app">Review queue</Link>
+        <Link href="/guidebooks" className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[12px] font-semibold text-ink hover:bg-app"><ArrowLeft size={13} />Guidebooks</Link>
+      </LeanHead>
       <div className="max-w-3xl">
         <BulkGuidebookBuilder />
       </div>

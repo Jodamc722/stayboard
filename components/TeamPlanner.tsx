@@ -85,12 +85,12 @@ export function TeamPlanner() {
   // LEAN PASS (2026-09-22): the page header lives here so its pills can carry the numbers that
   // used to be an amber banner and a footer paragraph.
   const head = (
-    <LeanHead title={<span>Week plan <span className="text-muted font-medium text-[14px]">· {niceRange(from, to)}</span></span>}>
-      {shortDays ? <Pill tone="rose" title={Object.entries(staffing).filter(([, s]) => s.verdict === 'short').map(([d, s]) => d + ': ' + s.line).join('\n')}>{shortDays} short day{shortDays === 1 ? '' : 's'}</Pill> : fc ? <Pill tone="emerald" title="No day in view needs more housekeepers than are rostered">staffed</Pill> : null}
+    <LeanHead title={<span title={data ? 'Long stay = ' + data.rules.longStayNights + '+ nights, big arrival = $' + data.rules.bigBookingUsd.toLocaleString() + '+ (Users → Task automation). On/off comes from the Scheduler roster; the work is what is assigned in Breezeway.' : undefined}>Week plan <span className="text-muted font-medium text-[14px]">· {niceRange(from, to)}</span></span>}>
+      {shortDays ? <Pill tone="rose" title={Object.entries(staffing).filter(([, s]) => s.verdict === 'short').map(([d, s]) => d + ': ' + s.line).join('\n')}>{shortDays} short day{shortDays === 1 ? '' : 's'}</Pill> : fc ? <Pill title="No day in view needs more housekeepers than are rostered">staffed</Pill> : null}
       {data && !data.counts.rosterWeeks ? <Pill tone="rose" title="No roster saved for these weeks — set who is on and off on the Scheduler">No roster</Pill> : null}
       {data && data.counts.rosterWeeks && data.counts.clashes ? <Pill tone="amber" title="Days where the roster and the work disagree — ringed in amber below">{data.counts.clashes} clash{data.counts.clashes === 1 ? '' : 'es'}</Pill> : null}
       {data && data.counts.unassignedDropped ? <Pill tone="amber" title="Jobs with nobody assigned in Breezeway yet">{data.counts.unassignedDropped} unassigned</Pill> : null}
-      {data ? <Pill title={'Long stay = ' + data.rules.longStayNights + '+ nights, big arrival = $' + data.rules.bigBookingUsd.toLocaleString() + '+ (Users → Task automation). On/off comes from the Scheduler roster; the work is what is assigned in Breezeway.'}>{data.rules.longStayNights}+n · ${data.rules.bigBookingUsd.toLocaleString()}+</Pill> : null}
+      {/* CLEAN-UP (Jon, 2026-11-20): the "14+n · $3,000+" pill was a rule, not a number to act on — it is the hover on the title now. */}
     </LeanHead>
   )
 
