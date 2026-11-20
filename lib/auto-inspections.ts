@@ -21,7 +21,7 @@
 // lifetime, however often the cron runs. A row with no task_id is a failed creation and is retried.
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
-import { createBreezewayTask, updateBreezewayTask, cancelBreezewayTask, matchBreezewayPerson, breezewayConfigured } from './breezeway'
+import { createBreezewayTask, updateBreezewayTask, cancelBreezewayTask, deleteBreezewayTask, matchBreezewayPerson, breezewayConfigured } from './breezeway'
 import { marketOf } from './segments'
 import { getSetting, setSetting, getOpsPresets } from './app-settings'
 import { noBreezewayRegex } from './ops-presets'
@@ -1150,7 +1150,7 @@ export async function retireArrivalInspections(opts: { dryRun?: boolean } = {}):
 // rolling the old ones forward, but left them open "for a person to close". Nobody did: twelve sat
 // on the supervisors' lists and in the Field Run every morning. This retires them: every OPEN
 // inspection Lighthouse itself files by name (quality, pre-arrival) at a no-inspection building is
-// cancelled in Breezeway. A task a person named by hand is not touched, and a finished one never is.
+// removed from Breezeway. A task a person named by hand is not touched, and a finished one never is.
 const LIGHTHOUSE_INSPECTION = /^\s*(\[Moved to [^\]]+\]\s*)?(quality inspection|pre-arrival inspection)\b/i
 export async function retireNoServiceInspections(opts: { dryRun?: boolean } = {}): Promise<{
   ok: boolean; found: number; retired: { taskId: string; name: string; date: string }[]; failed: { taskId: string; error: string }[]
@@ -1179,9 +1179,11 @@ export async function retireNoServiceInspections(opts: { dryRun?: boolean } = {}
   if (opts.dryRun || !breezewayConfigured()) return { ...out, retired: stale.map(row) }
   for (const t of stale) {
     try {
-      const res = await cancelBreezewayTask(str(t.id))
-      if (!res.ok) throw new Error('Breezeway would not cancel (' + res.status + ')')
-      try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled', synced_at: new Date().toISOString() }).eq('id', str(t.id)) } catch { /* next sync */ }
+      // DELETE, not cancel: Breezeway answers 200 to a cancel and leaves the task at "Created"
+      // (see cancelBreezewayTask), so all twelve refused on the first run. Jon's word was "remove".
+      const res = await deleteBreezewayTask(str(t.id))
+      if (!res.ok) throw new Error('Breezeway would not delete (' + res.status + ')')
+      try { await db.from('breezeway_tasks_sync').delete().eq('id', str(t.id)) } catch { /* the next sync drops it */ }
       out.retired.push(row(t))
     } catch (e: any) { out.failed.push({ taskId: str(t.id), error: String(e?.message || e).slice(0, 140) }) }
   }
