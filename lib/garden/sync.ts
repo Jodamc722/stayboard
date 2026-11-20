@@ -114,8 +114,10 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
     // for a vacant room; and a room whose row did not change is not written again (310 writes a run).
     const same = (c: any, h: any) => c && 'housekeeper' in c && c.hk_status === h.condition && (c.occupied ?? null) === (h.occupied ?? null) && (c.housekeeper ?? null) === (h.housekeeper ?? null) && (c.hk_comments ?? null) === (h.comments ?? null) && !!c.dnd === !!h.dnd && !!c.refused_service === !!h.refused && (c.frontdesk_status ?? null) === (h.frontdeskStatus ?? null) && !!c.blocked === !!h.blocked
     const turnedDirty = (h: any) => h.condition === 'dirty' && h.occupied !== true && curBy[h.roomId] && curBy[h.roomId].hk_status !== 'dirty'
+    const moved: { roomId: string; roomName: string; from: string | null; to: string; housekeeper: string | null }[] = []
     for (const h of hk) {
       if (same(curBy[h.roomId], h)) continue
+      if (curBy[h.roomId] && h.condition && curBy[h.roomId].hk_status !== h.condition) moved.push({ roomId: h.roomId, roomName: curBy[h.roomId].name || h.roomName, from: curBy[h.roomId].hk_status || null, to: h.condition, housekeeper: h.housekeeper || curBy[h.roomId].housekeeper || null })
       const base = { hk_status: h.condition, occupied: h.occupied, hk_updated_at: new Date().toISOString() }
       if (detail) {
         const { error } = await db.from('garden_rooms').update({ ...base, housekeeper: h.housekeeper, housekeeper_id: h.housekeeperId, hk_comments: h.comments, dnd: h.dnd, refused_service: h.refused, frontdesk_status: h.frontdeskStatus, blocked: h.blocked }).eq('id', h.roomId)
@@ -125,12 +127,15 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
       await db.from('garden_rooms').update(base).eq('id', h.roomId)
       if (turnedDirty(h)) await emitGardenEvent('room_dirty', h.roomId, { room_name: curBy[h.roomId].name })
     }
+    // Performance: every room that went clean / inspected since the last sync (lib/garden/hk-perf).
+    try { const { logHk } = await import('./hk-perf'); await logHk(moved, 'cloudbeds') } catch (e: any) { out.errors.push(`hk log: ${e?.message || e}`) }
     out.housekeeping = hk.length
     await mark('housekeeping', { count: hk.length })
   } catch (e: any) { out.ok = false; out.errors.push(`housekeeping: ${e?.message || e}`); await mark('housekeeping', { error: String(e?.message || e) }) }
 
   // 4) Auto cleans from the mirror
   try { out.cleans = await ensureCleans() } catch (e: any) { out.errors.push(`cleans: ${e?.message || e}`) }
+  try { const { snapshotHkDay } = await import('./hk-perf'); await snapshotHkDay() } catch (e: any) { out.errors.push(`hk day: ${e?.message || e}`) }
   // 5) The Cloudbeds hub: multi-calendar, channels, payments, messaging (lib/garden/hub).
   try { const { syncHub } = await import('./hub'); out.hub = await syncHub() } catch (e: any) { out.errors.push(`hub: ${e?.message || e}`) }
   // 6) The desks that ride the sync: the day's events, the call queue, the triggers, the phone.
@@ -172,11 +177,18 @@ async function emitDayEvents(): Promise<void> {
 export async function ensureCleans(): Promise<number> {
   const db = supabaseAdmin()
   const t0 = todayET(0), t1 = todayET(1)
-  const { data: res } = await db.from('garden_reservations').select('id,status,check_in,check_out,room_ids,room_names,guest_name')
-    .in('status', ['confirmed', 'checked_in', 'not_confirmed', 'checked_out']).or(`check_out.in.(${t0},${t1}),and(check_in.lte.${t0},check_out.gt.${t0})`)
-  const { data: existing } = await db.from('garden_tasks').select('room_id,date,kind').in('date', [t0, t1])
-  const have = new Set(((existing || []) as any[]).map(t => `${t.room_id}|${t.date}|${t.kind}`))
-  const inserts: any[] = []
+  const [{ data: res }, { data: existing }, { data: rooms }] = await Promise.all([
+    db.from('garden_reservations').select('id,status,check_in,check_out,room_ids,room_names,guest_name')
+      .in('status', ['confirmed', 'checked_in', 'not_confirmed', 'checked_out']).or(`check_out.in.(${t0},${t1}),and(check_in.lte.${t0},check_out.gt.${t0})`),
+    db.from('garden_tasks').select('id,room_id,date,kind,status,source,note').in('date', [t0, t1]).in('kind', ['clean', 'stayover']),
+    db.from('garden_rooms').select('id,occupied'),
+  ])
+  const occ: Record<string, boolean | null> = {}
+  for (const r of ((rooms || []) as any[])) occ[String(r.id)] = r.occupied == null ? null : !!r.occupied
+  const known = new Set(Object.keys(occ))
+  const E = (existing || []) as any[]
+  const have = new Map<string, any>(E.map(t => [`${t.room_id}|${t.date}|${t.kind}`, t]))
+  const wanted = new Map<string, any>()
   for (const r of ((res || []) as any[])) {
     const ids: string[] = Array.isArray(r.room_ids) ? r.room_ids : []
     const names: string[] = Array.isArray(r.room_names) ? r.room_names : []
@@ -184,23 +196,34 @@ export async function ensureCleans(): Promise<number> {
       const nm = names[i] || rid
       if ((r.check_out === t0 || r.check_out === t1) && r.status !== 'canceled') {
         const k = `${rid}|${r.check_out}|clean`
-        if (!have.has(k)) { have.add(k); inserts.push({ room_id: rid, room_name: nm, date: r.check_out, kind: 'clean', reservation_id: r.id, source: 'auto', note: `Departure · ${r.guest_name || ''}`.trim() }) }
+        if (!wanted.has(k)) wanted.set(k, { room_id: rid, room_name: nm, date: r.check_out, kind: 'clean', reservation_id: r.id, source: 'auto', note: `Departure · ${r.guest_name || ''}`.trim() })
       }
-      // In house = the dates say so. The desk often leaves a long stay "confirmed" instead of checking
-      // it in (2026-11-10: a 106-night guest), which used to mean no stayover was ever made.
-      if (['checked_in', 'confirmed', 'not_confirmed'].includes(r.status) && r.check_in < t0 && r.check_out > t0) {
+      // A STAYOVER NEEDS SOMEONE IN THE ROOM (audit 2026-11-20, against the live hotel). Checked in is
+      // in house — unless Cloudbeds shows that room empty (a second room nobody took). A booking the
+      // desk left "confirmed" counts only when Cloudbeds shows the room occupied (the 106-night guest
+      // of 2026-11-10 does; a guest who never arrived does not).
+      const inHouse = r.status === 'checked_in' ? occ[rid] !== false : ['confirmed', 'not_confirmed'].includes(r.status) && occ[rid] === true
+      if (inHouse && r.check_in < t0 && r.check_out > t0) {
         const k = `${rid}|${t0}|stayover`
-        if (!have.has(k)) { have.add(k); inserts.push({ room_id: rid, room_name: nm, date: t0, kind: 'stayover', reservation_id: r.id, source: 'auto', note: `In house · ${r.guest_name || ''}`.trim() }) }
+        if (!wanted.has(k)) wanted.set(k, { room_id: rid, room_name: nm, date: t0, kind: 'stayover', reservation_id: r.id, source: 'auto', note: `In house · ${r.guest_name || ''}`.trim() })
       }
     })
   }
-  if (inserts.length) {
-    // A room id Cloudbeds has not told us about yet must not break the insert (FK on garden_rooms).
-    const { data: rooms } = await db.from('garden_rooms').select('id')
-    const known = new Set(((rooms || []) as any[]).map(r => String(r.id)))
-    const safe = inserts.map(i => known.has(i.room_id) ? i : { ...i, room_id: null })
-    const { error } = await db.from('garden_tasks').insert(safe)
-    if (error) throw new Error(error.message)
+  // THE LIST FOLLOWS THE BOOKINGS (2026-11-20: 4 of 27 checkout cleans were for bookings since
+  // cancelled or moved). An automatic clean nobody has started, whose booking no longer calls for it,
+  // is withdrawn; if the booking comes back, so does the clean. A clean someone started, finished or
+  // added by hand is never touched.
+  const GONE = 'Withdrawn — the booking changed'
+  const withdraw = E.filter(t => t.source === 'auto' && t.status === 'open' && !wanted.has(`${t.room_id}|${t.date}|${t.kind}`)).map(t => t.id)
+  for (let i = 0; i < withdraw.length; i += 100) await db.from('garden_tasks').update({ status: 'cancelled', note: GONE, updated_at: new Date().toISOString() }).in('id', withdraw.slice(i, i + 100))
+  const inserts: any[] = []
+  for (const [k, w] of Array.from(wanted.entries())) {
+    const e = have.get(k)
+    if (!e) inserts.push(known.has(w.room_id) ? w : { ...w, room_id: null })   // an unknown room id must not break the insert (FK)
+    else if (e.status === 'cancelled' && e.source === 'auto' && e.note === GONE) await db.from('garden_tasks').update({ status: 'open', note: w.note, reservation_id: w.reservation_id, updated_at: new Date().toISOString() }).eq('id', e.id)
   }
+  if (inserts.length) { const { error } = await db.from('garden_tasks').insert(inserts); if (error) throw new Error(error.message) }
+  // Assignments made ahead of the day reach Cloudbeds on the day (lib/garden/assign).
+  try { const { pushDayAssignments } = await import('./assign'); await pushDayAssignments() } catch { /* the plan still shows them */ }
   return inserts.length
 }
