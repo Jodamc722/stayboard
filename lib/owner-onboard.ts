@@ -58,31 +58,38 @@ export const DEFAULT_GM: OOPerson = { name: 'Jon McGill', role: 'General Manager
 export const gmOf = (gm: OOPerson): OOPerson => (gm?.email && gm.email.toLowerCase() === DEFAULT_GM.email ? { ...gm, phone: gm.phone || DEFAULT_GM.phone, photo: gm.photo || DEFAULT_GM.photo } : gm)
 export const DEFAULT_SALES: OOPerson = { name: 'Nick Carline', role: 'Business Development', phone: '(651) 200-8283', email: 'nicholas@stay-hospitality.com', photo: '/deck-img/nick-carline.jpg' }
 
-/** The introductory email that carries the link, from sales (introducing the GM) or from the GM. */
-export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string): { subject: string; body: string } {
+/**
+ * The introductory email, from sales (introducing the GM) or from the GM.
+ * REWRITTEN 2026-11-20 (Jon: "let's recreate the emails. The intro email should send a Google Calendar invite to
+ * schedule a 15-minute call with me… Onboarding call, Calendly link will get auto sent once everything is completed,
+ * once the photos and listing is created"). In order: the welcome, who takes it from here, the 15-minute introductory
+ * call to book now (`callLink`, left out when that booking link is switched off), the portal and its three steps,
+ * and what happens after, including that the link to book the hour-long onboarding call arrives on its own once the
+ * photos and the listing are done. The owner's private sign-in still goes in its own email, to them alone.
+ */
+export function introEmail(r: Pick<OORecord, 'custom' | 'attach'>, link: string, callLink = ''): { subject: string; body: string } {
   const c = r.custom, gm = gmOf(c.gm), sa = c.sales
   const first = (c.ownerName || '').trim().split(/\s+/)[0] || 'there'
   const home = [r.attach.property, r.attach.unitLabel ? 'unit ' + r.attach.unitLabel : ''].filter(Boolean).join(', ')
   const gmFirst = gm.name.split(' ')[0] || 'our General Manager'
   const gmRole = gm.role || 'General Manager'
-  // REWRITTEN 2026-11-16 (Jon: "Can we rewrite the email … what if it's from Nick … do it, he can copy or open the email
-  // from Lighthouse for now"). Shorter: the welcome, who takes it from here, the one thing to do now (the portal, three
-  // steps), what we do after, and how to reach us. From sales it is a handoff — the person the owner already knows
-  // introduces the GM; from the GM it explains who the copied team is. The portal link and the separate secure sign-in
-  // email are in both, because the owner's private link never rides an email other people are copied on.
   const sig = (p: OOPerson) => [p.name, [p.role, 'Stay Hospitality'].filter(Boolean).join(', '), p.phone, p.email].filter(Boolean).join('\n')
   const welcome = `Welcome to Stay Hospitality, and thank you for trusting us with ${home ? 'your home at ' + home : 'your home'}.`
-  const portal = `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n1. Tell us about the home\n2. Confirm what's already there, so we only order what's missing\n3. Send your W-9 and payout details securely\n\nYour owner portal:\n${link}\n\nYou'll also get a separate email, sent only to you, with a secure sign-in link. Use it the first time to create your password.`
+  const steps = `1. Tell us about the home\n2. Confirm what's already there, so we only order what's missing\n3. Send your W-9 and payout details securely`
+  const signIn = `You'll also get a separate email, sent only to you, with a secure sign-in link. Use it the first time to create your password.`
   const note = 'Your tax ID and bank details are encrypted the moment you send them. We will never ask for them by email.'
+  const after = (who: string) => `Then ${who}: photography and your listing. When both are ready, you'll get a link to book your onboarding call with ${c.from === 'gm' ? 'me' : gmFirst}, about an hour, where we walk through the listing and the pricing strategy before your home goes live. The portal shows every step, so you always know where things stand.`
   if (c.from === 'gm') {
+    const call = callLink ? `Two things to do now.\n\nFirst, a quick hello. Pick a time for a 15-minute introductory call with me:\n${callLink}\n\nSecond, your owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}` : `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}`
     return {
-      subject: 'Welcome to Stay Hospitality: your first step',
-      body: `Hi ${first},\n\n${welcome}\n\nI'm ${gm.name}, ${gmRole}. My team and I will take your home from signed agreement to its first guest, and I'm your point of contact the whole way. The people copied on this email are working on your home with me, so a reply-all reaches all of us.\n\n${portal}\n\nThen we get to work: photography, your listing, your onboarding call, and going live. The portal shows every step, so you always know where things stand.\n\nIf you have a question at any point, reply here${gm.phone ? ' or call me at ' + gm.phone : ''}. I look forward to working with you.\n\n${note}\n\nBest regards,\n${sig(gm)}`,
+      subject: 'Welcome to Stay Hospitality: your first steps',
+      body: `Hi ${first},\n\n${welcome}\n\nI'm ${gm.name}, ${gmRole}. My team and I will take your home from signed agreement to its first guest, and I'm your point of contact the whole way. The people copied on this email are working on your home with me, so a reply-all reaches all of us.\n\n${call}\n\n${signIn}\n\n${after('we get to work')}\n\nIf you have a question at any point, reply here${gm.phone ? ' or call me at ' + gm.phone : ''}. I look forward to working with you.\n\n${note}\n\nBest regards,\n${sig(gm)}`,
     }
   }
+  const call = callLink ? `Two things to do now.\n\nFirst, a quick hello with ${gmFirst}. Pick a time for a 15-minute introductory call:\n${callLink}\n\nSecond, your owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}` : `Your first step is the owner portal. It takes about ten minutes and saves as you go:\n${steps}\n\nYour owner portal:\n${link}`
   return {
-    subject: 'Welcome to Stay Hospitality: your first step',
-    body: `Hi ${first},\n\n${welcome} I've enjoyed getting to know you, and I'm glad we're doing this together.\n\nFrom here, I'd like to introduce ${gm.name}, our ${gmRole}, copied on this email. ${gmFirst} and the team will take your home from signed agreement to its first guest. I'm still here whenever you need me.\n\n${portal}\n\nThen the team gets to work: photography, your listing, your onboarding call, and going live. The portal shows every step, so you always know where things stand.\n\nIf you have a question at any point, reply here and it reaches all of us${sa.phone ? ', or call me at ' + sa.phone : ''}.\n\n${note}\n\nBest regards,\n${sig(sa)}`,
+    subject: 'Welcome to Stay Hospitality: your first steps',
+    body: `Hi ${first},\n\n${welcome} I've enjoyed getting to know you, and I'm glad we're doing this together.\n\nFrom here, I'd like to introduce ${gm.name}, our ${gmRole}, copied on this email. ${gmFirst} and the team will take your home from signed agreement to its first guest. I'm still here whenever you need me.\n\n${call}\n\n${signIn}\n\n${after('the team gets to work')}\n\nIf you have a question at any point, reply here and it reaches all of us${sa.phone ? ', or call me at ' + sa.phone : ''}.\n\n${note}\n\nBest regards,\n${sig(sa)}`,
   }
 }
 /** One owner account's sign-in: a password hash, one-time link tokens, and when it was invited, created and last used. */
@@ -218,6 +225,9 @@ export type OORecord = {
   owners?: OOCoOwner[]
   /** The introductory email (from sales or the GM) is sent from a person's own mailbox, so the team marks it sent. */
   intro?: { at: string; by: string; from: 'sales' | 'gm' } | null
+  /** The email that asks the owner to book the onboarding call: sent on its own once the photos and the listing are
+   *  done (lib/owner-onboard-callinvite), or by hand from the desk. */
+  callInvite?: { at: string; to: string[]; by: string; error?: string } | null
   archived?: boolean
 }
 // WHERE THE OWNER STANDS, AT A GLANCE (Jon, 2026-11-16: "see if the onboarding email was sent or if the onboarding form
@@ -249,6 +259,11 @@ export function trackOf(r: OORecord): OOTrack {
     agreement: !!r.agreement,
   }
 }
+/** READY FOR THE ONBOARDING CALL: the photos and the listing are both done (Jon, 2026-11-20: "once the photos and
+ *  listing is created"). */
+export const readyForCall = (r: Pick<OORecord, 'steps'>) => ['photos', 'listing'].every(k => r.steps.find(s => s.key === k)?.status === 'done')
+/** The booking-link email is owed: ready, no call on the books yet, not sent before, and the onboarding is active. */
+export const callInviteDue = (r: Pick<OORecord, 'steps' | 'call' | 'callInvite' | 'archived'>) => readyForCall(r) && !r.call?.at && !r.callInvite?.at && !r.archived && r.steps.find(s => s.key === 'call')?.status !== 'done'
 /** What the list of links shows. */
 export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
@@ -289,8 +304,8 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, deal, ...rest } = r
-  void deal; void owners; void walk; void decisions; void remind
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, deal, callInvite, ...rest } = r
+  void deal; void callInvite; void owners; void walk; void decisions; void remind
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined, got: order.review?.self ? Object.keys(shop?.got || {}) : undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }

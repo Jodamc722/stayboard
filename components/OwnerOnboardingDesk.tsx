@@ -511,7 +511,6 @@ function OrderList({ rec, units, onRec }: { rec: Any; units: string[]; onRec: (r
 // ── the introductory email, ready to copy ──
 function IntroEmail({ rec, onRec }: { rec: Any; onRec?: (r: Any) => void }) {
   const [from, setFrom] = useState<'sales' | 'gm'>(rec.custom.from || 'sales')
-  const e = introEmail({ ...rec, custom: { ...rec.custom, from } }, ownerLink(rec.code))
   const to = rec.custom.ownerEmail || ''
   const [team, setTeam] = useState<string[]>([])
   useEffect(() => { fetch('/api/owner-onboarding/settings').then(r => r.json()).then(d => setTeam(d?.settings?.teamCc || [])).catch(() => {}) }, [])
@@ -523,6 +522,11 @@ function IntroEmail({ rec, onRec }: { rec: Any; onRec?: (r: Any) => void }) {
   const [boxes, setBoxes] = useState<Any>(null); const [sending, setSending] = useState(false); const [ask, setAsk] = useState(false); const [note, setNote] = useState('')
   useEffect(() => { fetch(`/api/owner-onboarding/${rec.code}/intro-send`, { cache: 'no-store' }).then(r => r.json()).then(d => setBoxes(d?.ok ? d : null)).catch(() => {}) }, [rec.code, rec.custom.sales.email, rec.custom.gm.email])
   const box = boxes ? boxes[from] : null
+  const e = introEmail({ ...rec, custom: { ...rec.custom, from } }, ownerLink(rec.code), boxes?.introCall ? origin() + '/book/intro-call?o=' + rec.code : '')
+  // SIGNED BY ONE PERSON, SENT BY THAT PERSON (Jon, 2026-11-20: "It should never allow me to send an email signed off
+  // as Nick from my email and vice versa"). When the email is written from someone else there is no Copy and no Open
+  // in my email: it can only leave from their mailbox, with Send, or they send it themselves.
+  const notMine = !box?.mine
   const first = String(box?.name || '').split(' ')[0] || (from === 'sales' ? 'sales' : 'the GM')
   const whose = box?.mine ? 'my' : first + '’s'
   async function sendNow() {
@@ -547,19 +551,24 @@ function IntroEmail({ rec, onRec }: { rec: Any; onRec?: (r: Any) => void }) {
       <p className={lab}>To</p><p className="text-[13.5px] text-ink">{to || <span className="text-muted">Add the owner’s email above</span>}</p>
       {cc ? <><p className={lab + ' mt-3'}>Cc</p><div className="flex flex-wrap items-center gap-2"><p className="text-[13px] text-ink mr-auto break-all">{cc}</p><CopyBtn text={cc} label="Copy cc" small /></div></> : null}
       <p className={lab + ' mt-3'}>Subject</p>
-      <div className="flex flex-wrap items-center gap-2"><p className="text-[14px] font-semibold text-ink mr-auto">{e.subject}</p><CopyBtn text={e.subject} label="Copy subject" small /></div>
+      <div className="flex flex-wrap items-center gap-2"><p className="text-[14px] font-semibold text-ink mr-auto">{e.subject}</p>{notMine ? null : <CopyBtn text={e.subject} label="Copy subject" small />}</div>
       <p className={lab + ' mt-3'}>Message</p>
       <pre className="mt-1 whitespace-pre-wrap rounded-xl bg-app p-3 text-[13px] leading-relaxed text-ink font-sans max-h-[360px] overflow-auto">{e.body}</pre>
       <div className="flex flex-wrap gap-2 mt-3">
         {box?.ready ? (ask
           ? <span className="inline-flex flex-wrap items-center gap-2 rounded-xl border border-ink px-3 py-1.5 text-[13px] text-ink"><span>Send to <b>{to || 'the owner'}</b> from {box.email}?</span><button type="button" disabled={sending || !to} onClick={sendNow} className="rounded-lg bg-ink px-3 py-1 font-semibold text-white disabled:opacity-50">{sending ? 'Sending…' : 'Yes, send'}</button><button type="button" onClick={() => setAsk(false)} className="font-semibold text-muted">Cancel</button></span>
           : <button type="button" disabled={!to} onClick={() => setAsk(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50"><Send size={13} /> {intro ? 'Send again from ' : 'Send from '}{whose} Gmail</button>) : null}
+        {notMine ? null : <>
         <CopyBtn text={e.body} label="Copy message" />
         <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(e.subject)}${cc ? '&cc=' + encodeURIComponent(cc) : ''}&body=${encodeURIComponent(e.body)}`} onClick={() => { if (!intro) setSent(true) }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Mail size={13} /> Open in my email</a>
+        </>}
         <button type="button" onClick={() => setSent(!intro)} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink">{intro ? 'Mark as not sent' : 'Mark as sent'}</button>
       </div>
       {note ? <p className="text-[12.5px] text-ink mt-2">{note}</p> : null}
-      <p className="text-[11.5px] text-muted mt-2">{box?.ready ? <>Send from {whose} Gmail sends it now from {box.email} and marks it sent. </> : box?.email ? (box.mine ? <><a href="/account" className="underline font-semibold text-ink">Connect your Google account</a> to send this from Lighthouse in one click. </> : <>{first} has not connected Google yet, so it cannot be sent from {box.email} here. They do it on their Account page. </>) : null}Or copy it, or open it in your own email; if you copied it, press Mark as sent.</p>
+      <p className="text-[11.5px] text-muted mt-2">{notMine
+        ? <>This email is signed by {first}, so it can only leave from {first}’s mailbox{box?.email ? ' (' + box.email + ')' : ''}. {box?.ready ? 'Send sends it from there now and marks it sent.' : <>{first} has not connected Google yet. {first} connects it on their Account page, or signs in and sends it. To send it as yourself, switch who it is from above.</>}</>
+        : box?.ready ? <>Send from my Gmail sends it now from {box.email} and marks it sent. Or copy it, or open it in your own email; if you copied it, press Mark as sent.</>
+        : <><a href="/account" className="underline font-semibold text-ink">Connect your Google account</a> to send this from Lighthouse in one click. Or copy it, or open it in your own email; if you copied it, press Mark as sent.</>}</p>
     </section>
   )
 }
@@ -864,7 +873,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   async function patch(body: Any, note = 'Saved.') {
     setMsg('Saving…')
     const d = await fetch('/api/owner-onboarding/' + code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()).catch(() => null)
-    if (d?.ok) { apply(d); setMsg(note) } else setMsg(d?.error || 'Not saved.')
+    if (d?.ok) { apply(d); setMsg(d.callInvite === 'sent' ? 'Saved. Photos and listing are done, so the owner was emailed the link to book the onboarding call.' : d.callInvite === 'failed' ? 'Saved, but the onboarding call booking link did not send. Send it from the Onboarding call section.' : note) } else setMsg(d?.error || 'Not saved.')
   }
   const groups = useMemo(() => Array.from(new Set(items.map(i => i.group))), [items])
   if (err) return <p className="p-8 text-muted">{err}</p>
@@ -1070,7 +1079,12 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
           {/* the onboarding call */}
           <section className={card}>
             <h2 className="font-serif text-[22px] leading-none text-ink mb-1">Onboarding call</h2>
-            <p className="text-[12.5px] text-muted mb-3">{photosDone ? 'Photos are done: schedule the call to walk the owner through the listing and the pricing strategy.' : 'Schedule it once the listing photos are done. The owner sees it on their timeline.'}</p>
+            <p className="text-[12.5px] text-muted mb-3">About an hour, once the photos and the listing are done: a walk through the listing and the pricing strategy. The owner sees it on their timeline. You can also set it yourself below.</p>
+            {/* the owner books it: the link goes on its own once Photos and Listing are done, or by hand from here */}
+            {!rec.call?.at ? <div className="oo-noprint mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-app px-3 py-2.5 text-[12.5px] text-ink">
+              <span className="mr-auto min-w-0">{rec.callInvite?.at ? <><b>Booking link sent {shortDay(rec.callInvite.at)}</b> to {(rec.callInvite.to || []).join(', ')}. The owner has not picked a time yet.</> : rec.callInvite?.error ? <><b className="text-red-700">The booking link did not send:</b> {rec.callInvite.error}</> : <><b>The owner books this themselves.</b> When Photos and Listing are both marked done, they are emailed a link to pick a time from the open times on the calendar.</>}</span>
+              <button type="button" disabled={busy === 'callinv'} onClick={async () => { setBusy('callinv'); const d = await fetch(`/api/owner-onboarding/${code}/call-invite`, { method: 'POST' }).then(r => r.json()).catch(() => null); if (d?.record) setRec(d.record); setMsg(d?.ok ? 'Booking link sent to ' + (d.to || []).join(', ') + '.' : 'Not sent: ' + (d?.error || 'try again')); setBusy('') }} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 py-1.5 font-semibold"><Send size={12} /> {busy === 'callinv' ? 'Sending…' : rec.callInvite?.at ? 'Send it again' : 'Send the booking link now'}</button>
+            </div> : null}
             <CallForm code={code} call={rec.call} ownerEmail={rec.custom.ownerEmail} onRec={setRec} onSave={c => patch({ call: c }, 'Call saved. The owner sees it on their timeline.')} />
             <OwnerBookingLinks code={code} />
           </section>

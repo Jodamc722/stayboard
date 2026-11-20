@@ -12,6 +12,9 @@ import { introEmail, teamView } from '@/lib/owner-onboard'
 import { readOOSettings } from '@/lib/owner-onboard-mail'
 import { sendGmail } from '@/lib/gmail-send'
 import { myGoogle } from '@/lib/google-mine'
+import { readBooking, INTRO_CALL } from '@/lib/booking'
+
+const introCallOn = async () => (await readBooking().catch(() => null))?.types.some(t => t.slug === INTRO_CALL && t.on) || false
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -27,7 +30,7 @@ export async function GET(_: NextRequest, { params }: { params: { code: string }
   const me = String(g.access.email || '').trim().toLowerCase()
   const one = async (p: { name: string; email: string }) => { const email = String(p?.email || '').trim().toLowerCase(); const s = OKMAIL.test(email) && (email === me || await isTeammate(email)) ? await myGoogle(email) : null; return { name: String(p?.name || ''), email, ready: !!s?.connected && s.mail, mine: email === me } }
   const [sales, gm] = await Promise.all([one(r.custom.sales), one(r.custom.gm)])
-  return NextResponse.json({ ok: true, sales, gm })
+  return NextResponse.json({ ok: true, sales, gm, introCall: await introCallOn() })
 }
 
 export async function POST(req: NextRequest, { params }: { params: { code: string } }) {
@@ -45,7 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: { code: strin
   const to = String(r.custom.ownerEmail || '').trim()
   if (!OKMAIL.test(to)) return NextResponse.json({ ok: false, error: 'Add the owner’s email first.' }, { status: 400 })
   const origin = (process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin).replace(/\/$/, '')
-  const e = introEmail({ ...r, custom: { ...r.custom, from } }, origin + '/join/' + r.code)
+  const e = introEmail({ ...r, custom: { ...r.custom, from } }, origin + '/join/' + r.code, (await introCallOn()) ? origin + '/book/' + INTRO_CALL + '?o=' + r.code : '')
   const s = await readOOSettings().catch(() => null)
   const cc = Array.from(new Set([from === 'sales' ? r.custom.gm.email : '', ...((s?.teamCc || []) as string[])].map(x => String(x || '').trim().toLowerCase()).filter(x => OKMAIL.test(x) && x !== box && x !== to.toLowerCase())))
   // plain paragraphs, links made clickable: it should read like an email a person wrote, not a template

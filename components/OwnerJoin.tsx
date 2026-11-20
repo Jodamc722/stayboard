@@ -230,6 +230,7 @@ export function OwnerJoin({ code }: { code: string }) {
             <i>{st.status === 'done' ? <Check size={13} /> : null}</i>
             <div><b>{s.label}</b><span>{s.key === 'call' && rec.call?.at ? 'Scheduled for ' + new Date(rec.call.at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : s.owner}</span>
               {s.key === 'call' && rec.call?.link ? <a href={rec.call.link} target="_blank" rel="noreferrer">Join the call</a> : null}
+              {s.key === 'call' && st.status !== 'done' && ['photos', 'listing'].every(k => rec.steps.find((x: Any) => x.key === k)?.status === 'done') ? <a href={'/book/onboarding-call?o=' + code} target="_blank" rel="noreferrer">{rec.call?.at ? 'Change the time' : 'Book your onboarding call'}</a> : null}
               {st.status === 'done' && st.date ? <small>Done {new Date(st.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</small> : st.status === 'doing' ? <small>In progress</small> : null}
             </div>
           </li>

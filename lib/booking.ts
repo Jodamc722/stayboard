@@ -34,8 +34,16 @@ export type BookingType = {
 export type BookingLog = { at: string; slug: string; day: string; time: string; name: string; email: string; code?: string; eventUrl?: string }
 export type BookingSettings = { types: BookingType[]; log: BookingLog[]; hits?: Record<string, number[]> }
 
+/** THE INTRODUCTORY CALL (Jon, 2026-11-20: "the intro email should send a Google Calendar invite to schedule a
+ *  15-minute call with me. Let's only have those calls available during the middle of the day, I can determine that").
+ *  Its link rides the introductory email. It is always in the list (switch it off rather than removing it), and its
+ *  hours, days, notice and length are edited like any other link, on the host's Account page. */
+export const INTRO_CALL = 'intro-call'
+export const ONBOARDING_CALL = 'onboarding-call'
+const INTRO_DEFAULT: BookingType = { slug: INTRO_CALL, title: 'Introductory call', blurb: 'A quick hello with your General Manager, and any first questions.', minutes: 15, where: 'meet', host: 'jon@stay-hospitality.com', hostName: 'Jon McGill', days: [1, 2, 3, 4, 5], from: '11:00', to: '14:00', noticeHours: 4, horizonDays: 14, bufferMin: 10, on: true }
 const DEFAULTS: BookingType[] = [
-  { slug: 'onboarding-call', title: 'Onboarding call', blurb: 'A walk through your listing and the pricing strategy, on Google Meet.', minutes: 30, where: 'meet', host: 'jon@stay-hospitality.com', hostName: 'Jon McGill', days: [1, 2, 3, 4, 5], from: '09:00', to: '17:00', noticeHours: 24, horizonDays: 21, bufferMin: 15, on: true },
+  INTRO_DEFAULT,
+  { slug: 'onboarding-call', title: 'Onboarding call', blurb: 'A walk through your listing and the pricing strategy, on Google Meet.', minutes: 60, where: 'meet', host: 'jon@stay-hospitality.com', hostName: 'Jon McGill', days: [1, 2, 3, 4, 5], from: '09:00', to: '17:00', noticeHours: 24, horizonDays: 21, bufferMin: 15, on: true },
   { slug: 'onboarding-meeting', title: 'Onboarding meeting at the home', blurb: 'We meet you at the home to walk it together.', minutes: 60, where: 'in-person', host: 'jon@stay-hospitality.com', hostName: 'Jon McGill', days: [1, 2, 3, 4, 5], from: '10:00', to: '16:00', noticeHours: 48, horizonDays: 21, bufferMin: 30, on: true },
 ]
 const HM = /^([01]\d|2[0-3]):[0-5]\d$/
@@ -53,6 +61,7 @@ export function cleanType(t: any): BookingType | null {
 export async function readBooking(): Promise<BookingSettings> {
   const v = await getSettingFresh<any>(BOOKING_KEY, null)
   const types = (Array.isArray(v?.types) ? v.types : DEFAULTS).map(cleanType).filter(Boolean) as BookingType[]
+  if (types.length && !types.some(t => t.slug === INTRO_CALL)) types.unshift(INTRO_DEFAULT)
   return { types: types.length ? types : DEFAULTS, log: Array.isArray(v?.log) ? v.log.slice(0, 200) : [], hits: v?.hits && typeof v.hits === 'object' ? v.hits : {} }
 }
 export async function saveBookingTypes(list: any[], by: string | null): Promise<{ ok: boolean; error?: string; types?: BookingType[] }> {
@@ -116,7 +125,8 @@ export async function openSlots(t: BookingType, only?: string): Promise<{ ok: bo
     const dow = new Date(day + 'T12:00:00Z').getUTCDay()
     if (t.days.indexOf(dow) < 0) continue
     const times: DaySlots['times'] = []
-    for (let m = fh * 60 + fm; m + t.minutes <= th * 60 + tm; m += 30) {
+    // a short call is offered every 15 minutes, anything longer on the half hour
+    for (let m = fh * 60 + fm; m + t.minutes <= th * 60 + tm; m += t.minutes <= 15 ? 15 : 30) {
       const hm = String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0')
       const s = eastern(day, hm).getTime(), e = s + t.minutes * 60_000
       if (s < earliest || s > now + (t.horizonDays + 1) * 86400_000) continue
