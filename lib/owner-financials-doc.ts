@@ -16,7 +16,8 @@ function groupSheet(wb: ExcelJS.Workbook, name: string, f: Financials, rows: Fin
   const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', xSplit: cols.length, ySplit: 4 }] })
   title(ws, 'Owner financials · ' + name.toLowerCase(), period)
   const money: { h: string; k: keyof FinVals }[] = [
-    { h: 'Rental income', k: 'rental' }, { h: 'Cleaning fees', k: 'cleaning' }, { h: 'Guest fees', k: 'fees' }, { h: 'Other income', k: 'other' }, { h: 'Gross revenue', k: 'gross' },
+    { h: 'Gross booking value (guests)', k: 'guestGross' }, { h: 'Cleaning fees guests paid', k: 'guestCleaning' },
+    { h: 'Rental income', k: 'rental' }, { h: 'Cleaning credited to owner', k: 'cleaning' }, { h: 'Guest fees', k: 'fees' }, { h: 'Other income', k: 'other' }, { h: 'Gross owner revenue', k: 'gross' },
     { h: 'Management commission', k: 'commission' }, { h: 'Owner charges', k: 'charges' }, { h: 'Total expenses', k: 'expenses' }, { h: 'Pass-through (net)', k: 'passthru' }, { h: 'Net to owner', k: 'net' }, { h: 'Paid out', k: 'paid' },
   ]
   ws.addRow([...cols.map(c => c.h), ...money.map(m => m.h), 'Commission % of rental', 'Net % of gross', ...f.months.map(m => 'Net ' + mLabel(m))])
@@ -47,12 +48,14 @@ export async function financialsWorkbook(f: Financials): Promise<Buffer> {
   title(ws, 'Owner financials · profit and loss', period)
   ws.addRow(['', ...f.months.map(mLabel), 'Total', '% of gross']); head(ws, 4)
   const section = (label: string) => { const r = ws.addRow([label]); r.font = { bold: true, size: 10, color: { argb: 'FF6B665C' } } }
-  section('REVENUE')
+  section('WHAT GUESTS PAID (from the bookings)')
   for (const ln of FIN_LINES) {
-    if (ln.key === 'commission') section('EXPENSES')
-    const k = ln.key as keyof FinVals
-    const r = ws.addRow([(ln.kind === 'total' ? '' : '   ') + ln.label, ...f.monthly.map(m => m[k]), f.total[k], f.total.gross && ln.key !== 'paid' ? f.total[k] / f.total.gross : null])
-    for (let i = 2; i <= f.months.length + 2; i++) r.getCell(i).numFmt = USD
+    if (ln.key === 'rental') { ws.addRow([]); section('OWNER STATEMENTS · REVENUE') }
+    if (ln.key === 'commission') section('OWNER STATEMENTS · EXPENSES')
+    const k = ln.key as keyof FinVals, guest = ln.kind === 'guest' || ln.kind === 'guestTotal' || ln.kind === 'count'
+    const r = ws.addRow([(ln.kind === 'total' || ln.kind === 'guestTotal' ? '' : '   ') + ln.label, ...f.monthly.map(m => m[k]), f.total[k], f.total.gross && ln.key !== 'paid' && !guest ? f.total[k] / f.total.gross : null])
+    for (let i = 2; i <= f.months.length + 2; i++) r.getCell(i).numFmt = ln.kind === 'count' ? '#,##0' : USD
+    if (ln.kind === 'guestTotal') r.font = { bold: true }
     r.getCell(f.months.length + 3).numFmt = PCT
     if (ln.kind === 'total') { r.font = { bold: true }; r.eachCell(c => { c.border = { top: { style: 'thin', color: { argb: RULE } } } }); if (ln.key === 'net') r.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BAND } }; c.border = { top: { style: 'thin', color: { argb: INK } }, bottom: { style: 'double', color: { argb: INK } } } }) }
     if (ln.kind === 'memo') r.font = { italic: true, color: { argb: 'FF6B665C' } }
@@ -60,7 +63,9 @@ export async function financialsWorkbook(f: Financials): Promise<Buffer> {
   }
   ws.addRow([]); const notes = [
     'Source: the recognized lines of the owner ledger in Guesty, the same lines the owner statements are made of.',
-    'Gross revenue is what the units earned for the owner before Stay’s commission and any owner charges.',
+    'What guests paid is from the bookings: the accommodation fare spread over the nights of each stay, and the cleaning fee on the check-in month. Units with no statement line in the period are left out' + (f.offStatement.stays ? ' (' + f.offStatement.stays + ' stays, $' + Math.round(f.offStatement.gross).toLocaleString() + ').' : '.'),
+    'The guest side and the owner side are not meant to tie: channel commissions, taxes and the cleaning that pays for the clean sit between them.',
+    'Gross owner revenue is what the units earned for the owner before Stay’s commission and any owner charges.',
     'Pass-through reservations: a stay whose commission is 90 to 110% of its rental is a wash; both legs are kept out of gross and commission.',
     'Paid out is the payouts actually sent. It is a settlement, shown for reference, and is not part of net.',
     ...(f.notSynced.length ? ['NOT FULLY SYNCED, figures may be short: ' + f.notSynced.map(mLabel).join(', ') + '.'] : []),

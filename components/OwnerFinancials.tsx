@@ -38,8 +38,9 @@ export function OwnerFinancials() {
   const sel = 'rounded-lg border border-line bg-white px-2 py-1.5 text-[12.5px] text-ink'
   const th = 'px-2 py-2 text-right font-semibold whitespace-nowrap cursor-pointer select-none'
   const COLS: { k: keyof FinVals; h: string; title?: string; strong?: boolean }[] = [
-    { k: 'rental', h: 'Rental' }, { k: 'cleaning', h: 'Cleaning', title: 'Cleaning fees and their channel-fee reimbursements' }, { k: 'fees', h: 'Guest fees' }, { k: 'other', h: 'Other' },
-    { k: 'gross', h: 'Gross', strong: true, title: 'Rental + cleaning + guest fees + other income' }, { k: 'commission', h: 'Commission' }, { k: 'charges', h: 'Charges', title: 'Owner charges: repairs, supplies, adjustments' },
+    { k: 'guestGross', h: 'Guests paid', title: 'Gross booking value: accommodation plus cleaning, from the bookings' }, { k: 'guestCleaning', h: 'Cleaning (guests)', title: 'Cleaning fees guests paid, from the bookings' },
+    { k: 'rental', h: 'Rental' }, { k: 'cleaning', h: 'Cleaning to owner', title: 'Cleaning fees and reimbursements credited on the statements' }, { k: 'fees', h: 'Guest fees' }, { k: 'other', h: 'Other' },
+    { k: 'gross', h: 'Owner gross', strong: true, title: 'Rental + cleaning credited + guest fees + other income, on the statements' }, { k: 'commission', h: 'Commission' }, { k: 'charges', h: 'Charges', title: 'Owner charges: repairs, supplies, adjustments' },
     { k: 'net', h: 'Net to owner', strong: true }, { k: 'paid', h: 'Paid out', title: 'Payouts actually sent' },
   ]
 
@@ -58,7 +59,7 @@ export function OwnerFinancials() {
       {err ? <LeanEmpty>{err}</LeanEmpty> : !f ? <LeanEmpty>Reading the owner statements…</LeanEmpty> : <>
         {f.notSynced.length ? <p className="rounded-xl bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900"><b>Not fully synced:</b> {f.notSynced.map(mLabel).join(', ')}. Figures for {f.notSynced.length === 1 ? 'that month' : 'those months'} may be short until the owner-statement sync finishes.</p> : null}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-          {([['Gross revenue', f.total.gross, ''], ['Cleaning fees', f.total.cleaning, pct(f.total.cleaning, f.total.gross) + ' of gross'], ['Commission', f.total.commission, pct(f.total.commission, f.total.rental) + ' of rental'], ['Owner charges', f.total.charges, ''], ['Net to owner', f.total.net, pct(f.total.net, f.total.gross) + ' of gross']] as [string, number, string][]).map(([l, v, s]) => (
+          {([['Gross booking value', f.total.guestGross, 'what guests paid, ' + f.stays.toLocaleString() + ' stays'], ['Cleaning fees guests paid', f.total.guestCleaning, usd(f.total.cleaning) + ' credited to owners'], ['Gross owner revenue', f.total.gross, 'on the statements'], ['Commission', f.total.commission, pct(f.total.commission, f.total.rental) + ' of rental'], ['Net to owner', f.total.net, pct(f.total.net, f.total.gross) + ' of owner gross']] as [string, number, string][]).map(([l, v, s]) => (
             <div key={l} className="rounded-2xl border border-line bg-white px-3 py-2.5"><p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">{l}</p><p className="mt-0.5 text-[20px] font-semibold tabular-nums text-ink">{usd(v)}</p><p className="text-[11.5px] text-muted">{s || ' '}</p></div>))}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -71,17 +72,18 @@ export function OwnerFinancials() {
           <div className="rounded-2xl border border-line bg-white overflow-x-auto">
             <table className="w-full text-[12.5px]" style={{ minWidth: 260 + (f.months.length + 1) * 92 }}>
               <thead><tr className="border-b border-line text-[10.5px] uppercase tracking-wider text-muted"><th className="sticky left-0 bg-white py-2 pl-4 pr-2 text-left font-semibold">Line</th>{f.months.map(m => <th key={m} className="px-2 py-2 text-right font-semibold whitespace-nowrap">{mLabel(m)}</th>)}<th className="px-2 py-2 pr-4 text-right font-semibold">Total</th></tr></thead>
-              <tbody>{FIN_LINES.map(ln => { const k = ln.key as keyof FinVals; const strong = ln.kind === 'total'; return (
+              <tbody>{FIN_LINES.map(ln => { const k = ln.key as keyof FinVals; const strong = ln.kind === 'total' || ln.kind === 'guestTotal'; const fmt = (n: number) => (ln.kind === 'count' ? (n ? Math.round(n).toLocaleString() : '—') : usd(n, true)); return [
+                ln.key === 'guestRent' || ln.key === 'rental' ? <tr key={ln.key + '-h'}><td colSpan={f.months.length + 2} className={'sticky left-0 bg-white pl-4 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted ' + (ln.key === 'rental' ? 'pt-4' : 'pt-2')}>{ln.key === 'rental' ? 'On the owner statements' : 'What guests paid, from the bookings'}</td></tr> : null,
                 <tr key={ln.key} className={(strong ? 'border-t border-line font-semibold ' : '') + (ln.key === 'net' ? 'bg-app/70 ' : '') + (ln.kind === 'memo' ? 'text-muted italic ' : 'text-ink ')}>
                   <td className={'sticky left-0 py-1.5 pl-4 pr-2 whitespace-nowrap ' + (ln.key === 'net' ? 'bg-[#f3f1ec]' : 'bg-white') + (strong ? '' : ' pl-7')}>{ln.label}</td>
-                  {f.monthly.map(m => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{usd(m[k], true)}</td>)}
-                  <td className="px-2 py-1.5 pr-4 text-right tabular-nums">{usd(f.total[k], true)}</td>
-                </tr>) })}</tbody>
+                  {f.monthly.map(m => <td key={m.month} className="px-2 py-1.5 text-right tabular-nums">{fmt(m[k])}</td>)}
+                  <td className="px-2 py-1.5 pr-4 text-right tabular-nums">{fmt(f.total[k])}</td>
+                </tr>] })}</tbody>
             </table>
           </div>
         ) : rows.length === 0 ? <LeanEmpty>Nothing matches.</LeanEmpty> : (
           <div className="rounded-2xl border border-line bg-white overflow-x-auto">
-            <table className="w-full min-w-[980px] text-[12.5px]">
+            <table className="w-full min-w-[1180px] text-[12.5px]">
               <thead><tr className="border-b border-line text-[10.5px] uppercase tracking-wider text-muted">
                 <th className="py-2 pl-4 pr-2 text-left font-semibold cursor-pointer" onClick={() => setSort('name')}>{view === 'building' ? 'Building' : view === 'listing' ? 'Listing' : 'Owner'}</th>
                 {COLS.map(c => <th key={c.k} title={c.title} onClick={() => setSort(c.k)} className={th + (sort === c.k ? ' text-ink underline' : '')}>{c.h}</th>)}
@@ -99,7 +101,7 @@ export function OwnerFinancials() {
             </table>
           </div>
         )}
-        <p className="px-1 text-[11.5px] text-muted">From the recognized lines of the owner ledger in Guesty, the same lines the statements are made of. <b>Gross</b> is what the units earned for the owner before Stay’s commission and any charges. A stay whose commission equals its rental is a pass-through and is kept out of both{f.total.passthru ? ` (net ${usd(f.total.passthru)})` : ''}. <b>Paid out</b> is the payouts sent, shown beside net, not inside it. The Excel file has the same figures on five sheets, with net by month for every building, listing and owner.</p>
+        <p className="px-1 text-[11.5px] text-muted">From the recognized lines of the owner ledger in Guesty, the same lines the statements are made of. <b>What guests paid</b> comes from the bookings (accommodation spread over the nights, cleaning on the check-in month); most of the cleaning fee pays for the clean and never reaches a statement, which is why the owner-side cleaning line is far smaller. <b>Owner gross</b> is what the units earned for the owner before Stay’s commission and any charges. A stay whose commission equals its rental is a pass-through and is kept out of both{f.total.passthru ? ` (net ${usd(f.total.passthru)})` : ''}. <b>Paid out</b> is the payouts sent, shown beside net, not inside it. The Excel file has the same figures on five sheets, with net by month for every building, listing and owner.</p>
       </>}
     </div>
   )

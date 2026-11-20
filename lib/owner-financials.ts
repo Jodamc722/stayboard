@@ -6,7 +6,13 @@
 // THE SOURCE is the owner ledger Lighthouse mirrors from Guesty (guesty_owner_ledger): the recognized lines, the
 // same ones the statements are made of and the same ones lib/owner-statements reads. Nothing here is estimated.
 //
-// THE LINES. Every ledger line lands on exactly one, so the column always foots to net:
+// TWO SIDES, KEPT APART.
+//   THE GUEST SIDE comes from the bookings: what guests paid for the nights and for cleaning. This is the full
+//   cleaning figure. Most of it is never credited to an owner (it pays for the clean), so it is not on a statement.
+//   THE OWNER SIDE comes from the statements: what was credited and charged to the owner, down to net.
+// The two are not meant to tie: channel commissions, taxes and the cleaning Stay keeps sit between them.
+//
+// THE OWNER LINES. Every ledger line lands on exactly one, so the column always foots to net:
 //   REVENUE
 //     Rental income              AF, the nightly net rental income
 //     Cleaning fees              any line named for cleaning: the cleaning fee and its channel-fee reimbursements
@@ -34,7 +40,7 @@ const money = (n: number) => Math.round(n * 100) / 100
 import { type FinCat, type FinVals, type FinRow, type FinDetail, type Financials } from './owner-financials-shared'
 export { FIN_LINES } from './owner-financials-shared'
 export type { FinCat, FinVals, FinRow, FinDetail, Financials } from './owner-financials-shared'
-const zero = (): FinVals => ({ rental: 0, cleaning: 0, fees: 0, other: 0, commission: 0, charges: 0, passthru: 0, paid: 0, gross: 0, expenses: 0, net: 0 })
+const zero = (): FinVals => ({ guestRent: 0, guestCleaning: 0, guestGross: 0, nights: 0, rental: 0, cleaning: 0, fees: 0, other: 0, commission: 0, charges: 0, passthru: 0, paid: 0, gross: 0, expenses: 0, net: 0 })
 
 /** Which line a ledger entry belongs on. */
 export function finCat(code: string, name: string, passthru: boolean): FinCat {
@@ -55,6 +61,7 @@ function add(v: FinVals, cat: FinCat, amount: number) {
 }
 function finish(v: FinVals) {
   for (const k of ['rental', 'cleaning', 'fees', 'other', 'commission', 'charges', 'passthru', 'paid'] as const) v[k] = money(v[k])
+  v.guestRent = money(v.guestRent); v.guestCleaning = money(v.guestCleaning); v.guestGross = money(v.guestRent + v.guestCleaning); v.nights = Math.round(v.nights)
   v.gross = money(v.rental + v.cleaning + v.fees + v.other)
   v.expenses = money(v.commission + v.charges)
   v.net = money(v.gross - v.expenses + v.passthru)
@@ -145,6 +152,48 @@ export async function buildFinancials(fromIn: string, toIn: string): Promise<Fin
     const d = detail.get(dk) || (detail.set(dk, { cat, name, amount: 0, lines: 0 }), detail.get(dk)!)
     d.amount += cat === 'paid' || cat === 'commission' || cat === 'charges' ? amt : -amt; d.lines++
   }
+  // ── THE GUEST SIDE, FROM THE BOOKINGS ──
+  // What guests paid for the stay and for cleaning. The accommodation fare is spread over the nights of the stay
+  // (so a stay across two months lands in both, as the ledger's nightly lines do); the cleaning fee sits on the
+  // check-in month. Only units that have a statement line in the period get rows; the rest is reported apart.
+  const first = months[0] + '-01', lastDay = new Date(Date.UTC(Number(months[months.length - 1].slice(0, 4)), Number(months[months.length - 1].slice(5, 7)), 0)).toISOString().slice(0, 10)
+  const inRange = new Set(months)
+  const stays: any[] = []
+  for (let p = 0; p < 60; p++) {
+    const { data, error } = await sb.from('guesty_reservations').select('id, listing_id, check_in, check_out, nights, acc:raw->money->>fareAccommodation, clean:raw->money->>fareCleaning')
+      .in('status', ['confirmed', 'checked_in', 'checked_out']).lte('check_in', lastDay).gte('check_out', first).order('id').range(p * 1000, p * 1000 + 999)
+    if (error) throw new Error('bookings: ' + error.message)
+    stays.push(...(data || [])); if (!data || data.length < 1000) break
+  }
+  // the listing row a booking belongs to: the unit's owner with the most rental in the period
+  const rowOfListing = new Map<string, FinRow>()
+  rows.l.forEach((r, k) => { const lid = k.split('|')[0]; if (lid === 'none') return; const cur = rowOfListing.get(lid); if (!cur || r.rental > cur.rental) rowOfListing.set(lid, r) })
+  const ownerOfRow = new Map<FinRow, string>(); rows.l.forEach((r, k) => ownerOfRow.set(r, k.split('|')[1] || ''))
+  const off = { stays: 0, gross: 0 }; let stayCount = 0
+  const give = (tk: string, tr: FinRow | FinVals, mo: string, rent: number, clean: number, n: number) => {
+    tr.guestRent += rent; tr.guestCleaning += clean; tr.nights += n
+    if (tk) { const mk = tk + '|' + mo; const mv = mAcc.get(mk) || (mAcc.set(mk, zero()), mAcc.get(mk)!); mv.guestRent += rent; mv.guestCleaning += clean; mv.nights += n }
+  }
+  for (const s of stays) {
+    const acc = Number(s.acc) || 0, clean = Number(s.clean) || 0, ci = String(s.check_in || '').slice(0, 10), co = String(s.check_out || '').slice(0, 10)
+    if (!ci || (!acc && !clean)) continue
+    const n = Math.max(1, Number(s.nights) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000) || 1)
+    // nights of this stay in each month of the range
+    const parts: Record<string, number> = {}
+    for (let i = 0, d = new Date(ci + 'T12:00:00Z'); i < n && i < 400; i++, d.setUTCDate(d.getUTCDate() + 1)) { const mo = d.toISOString().slice(0, 7); if (inRange.has(mo)) parts[mo] = (parts[mo] || 0) + 1 }
+    const ciMo = ci.slice(0, 7)
+    if (!Object.keys(parts).length && !inRange.has(ciMo)) continue
+    const lr = rowOfListing.get(String(s.listing_id || ''))
+    if (!lr) { off.stays++; off.gross += Object.values(parts).reduce((a, b) => a + b, 0) / n * acc + (inRange.has(ciMo) ? clean : 0); continue }
+    stayCount++
+    const br = rows.b.get(lr.building), or = rows.o.get(ownerOfRow.get(lr) || '')
+    const moSet = new Set([...Object.keys(parts), ...(inRange.has(ciMo) ? [ciMo] : [])])
+    moSet.forEach(mo => {
+      const nn = parts[mo] || 0, rent = (nn / n) * acc, cl = mo === ciMo ? clean : 0
+      give('', total, mo, rent, cl, nn); give('', monthly[mo] || (monthly[mo] = zero()), mo, rent, cl, nn)
+      give('l:' + lr.key, lr, mo, rent, cl, nn); if (br) give('b:' + br.key, br, mo, rent, cl, nn); if (or) give('o:' + or.key, or, mo, rent, cl, nn)
+    })
+  }
   mAcc.forEach((v, mk) => { finish(v); const cut = mk.lastIndexOf('|'), tk = mk.slice(0, cut), mo = mk.slice(cut + 1); const m = tk[0] === 'b' ? rows.b : tk[0] === 'l' ? rows.l : rows.o; const r = m.get(tk.slice(2)); if (r) r.byMonth[mo] = { gross: v.gross, net: v.net } })
   const list = (m: Map<string, FinRow>) => Array.from(m.values()).map(r => finish(r) as FinRow).sort((a, b) => b.net - a.net)
   rows.b.forEach((r, k) => { r.units = unitsOf.b.get(k)?.size || 0 }); rows.o.forEach((r, k) => { r.units = unitsOf.o.get(k)?.size || 0 })
@@ -152,6 +201,7 @@ export async function buildFinancials(fromIn: string, toIn: string): Promise<Fin
     from, to, months,
     notSynced: months.filter(m => !done.has(m)), noStatements: months.filter(m => !stmtMonths[m] && monthly[m]),
     statements: Object.values(stmtMonths).reduce((a, b) => a + b, 0), ledgerLines: lines.length,
+    stays: stayCount, offStatement: { stays: off.stays, gross: money(off.gross) },
     total: finish(total), monthly: months.map(m => ({ month: m, ...finish(monthly[m] || zero()) })),
     buildings: list(rows.b), listings: list(rows.l), owners: list(rows.o),
     detail: Array.from(detail.values()).map(d => ({ ...d, amount: money(d.amount) })).sort((a, b) => a.cat.localeCompare(b.cat) || Math.abs(b.amount) - Math.abs(a.amount)),
