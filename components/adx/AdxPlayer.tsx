@@ -17,7 +17,7 @@
 // (does it still fit, is it still readable, is a photograph being stretched). No drop-down menus.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MUSIC } from '@/lib/ad-engine'
-import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, runsToPlain, plainToRuns, cleanText, musicLevel } from '@/lib/adx/composition'
+import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, runsToPlain, plainToRuns, cleanText, musicLevel, lum as lumOf } from '@/lib/adx/composition'
 import { renderFrame, restTime, sceneAt, canvasMeasure, type Assets, type Ctx } from '@/lib/adx/player'
 import { auditComposition, canvasSampler, type AuditResult } from '@/lib/adx/audit'
 import { loadAssets } from '@/lib/adx/assets'
@@ -293,6 +293,23 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     } catch (e: any) { setAddErr(String(e?.message || e)) }
     setAdding(false)
   }
+  // ── a 3D object made for this piece (Jon, 2026-11-20: "add some 3d generation to the mix to fit the look") ──
+  const addObject = async (what: string) => {
+    setAddErr(''); setAdding(true)
+    try {
+      const d0 = docRef.current
+      // its colours: the piece's mid-tones first (not the lightest or darkest ground)
+      const cols = Object.values(d0.tokens.color).slice().sort((a, b) => Math.abs(0.4 - lumOf(a)) - Math.abs(0.4 - lumOf(b))).slice(0, 3)
+      const r = await fetch('/api/adx/prop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what, colors: cols }) })
+      const j = await r.json().catch(() => null)
+      if (!j?.ok) throw new Error(j?.error || 'The object was not made. Try again.')
+      const d = docRef.current, sc = d.scenes[sceneAt(d, tRef.current)]
+      const at = lastPt.current && lastPt.current.scene === sc.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined
+      const res = E.addImage(d, sc.id, { src: j.src, w: j.w, h: j.h, source: 'upload', building: '', unit: '', area: '', shows: '3D ' + String(j.name || what).slice(0, 50) }, at)
+      commit(E.patchLayer(res.doc, res.layerId, l => ({ ...l, idle: 'float', in: { preset: 'fade', at: 0.3, dur: 0.6 } } as Layer))); select(res.layerId)
+    } catch (e: any) { setAddErr(String(e?.message || e)) }
+    setAdding(false)
+  }
   const goScene = (sid: string, d: Composition) => { const s = d.scenes.find(x => x.id === sid); if (s) { setPlaying(false); setT(restTime(s)) } }
 
   // ── export ──
@@ -390,7 +407,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
           ))}
           {canEdit ? <button type="button" onClick={() => openPicker({ mode: 'scene', sceneId: cur.id })} title="Add a scene after the one on screen" style={{ ...btn(), padding: '6px 10px' }}>+ Scene</button> : null}
         </div>
-        {canEdit && cur ? <AddBar doc={doc} scene={cur} at={lastPt.current && lastPt.current.scene === cur.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddPhoto={sid => openPicker({ mode: 'add', sceneId: sid })} onImage={addImageFile} busy={adding} err={addErr} /> : null}
+        {canEdit && cur ? <AddBar doc={doc} scene={cur} at={lastPt.current && lastPt.current.scene === cur.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddPhoto={sid => openPicker({ mode: 'add', sceneId: sid })} onImage={addImageFile} onObject={addObject} busy={adding} err={addErr} /> : null}
         {canEdit ? <p style={{ margin: '10px auto 0', maxWidth: 820, fontSize: 11.5, color: UI.mut, textAlign: 'center' }}>Click anything in the picture to change it. Drag to move, drag the corner to resize, Delete removes it, ⌘Z undoes.</p> : null}
         {music ? <audio ref={audioRef} src={music.file} preload="auto" /> : null}
       </div>

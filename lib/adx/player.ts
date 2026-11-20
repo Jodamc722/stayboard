@@ -183,6 +183,14 @@ function drawPhoto(ctx: Ctx, doc: Composition, l: PhotoLayer, local: number, dur
   const whole = Math.abs(img.width / img.height - asset.w / asset.h) < 0.02
   const foc = whole ? (l.focal || asset.focal || { x: 0.5, y: 0.5 }) : { x: 0.5, y: 0.5 }
   const dx = added ? x + (w - dw) / 2 : clamp(x + w / 2 - foc.x * dw + lerp('x', 0) * w, x + w - dw, x), dy = added ? y + (h - dh) / 2 : clamp(y + h / 2 - foc.y * dh + lerp('y', 0) * h, y + h - dh, y)
+  // an added image or 3D object keeps gently moving once it has arrived (deterministic: it depends only on the time)
+  if (added && l.idle) {
+    const cx = x + w / 2, cy = y + h / 2, ph = local * Math.PI * 2
+    if (l.idle === 'float') ctx.translate(0, Math.sin(ph / 3.2) * h * 0.03)
+    else if (l.idle === 'sway') { ctx.translate(cx, cy); ctx.rotate(Math.sin(ph / 3.6) * 0.07); ctx.translate(-cx, -cy) }
+    else if (l.idle === 'spin') { ctx.translate(cx, cy); ctx.rotate(local * 0.35); ctx.translate(-cx, -cy) }
+    else if (l.idle === 'pulse') { const k = 1 + Math.sin(ph / 2.2) * 0.035; ctx.translate(cx, cy); ctx.scale(k, k); ctx.translate(-cx, -cy) }
+  }
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
   if (l.treatment !== 'none' && hasFilter(ctx)) (ctx as any).filter = FILTER[l.treatment] || 'none'
   ctx.drawImage(img, dx, dy, dw, dh)

@@ -18,7 +18,11 @@ export const ADX_FORMAT = 'stay.composition/1'
 /** Monthly AI cap for Ad Studio (old and new engine together), in dollars. Enforced in lib/adx/budget.ts. */
 export const ADX_MONTHLY_CAP_USD = 50
 /** The calendar moments (lib/marketing-calendar keys) the NEW engine makes. Everything else stays on the old path. */
-export const ADX_MOMENTS: readonly string[] = ['thanksgiving', 'christmas', 'nye', 'basel']
+export const ADX_MOMENTS: readonly string[] = ['thanksgiving', 'christmas', 'nye', 'basel', 'stays', 'ownerstory', 'team']
+/** FROM SCRATCH (Jon, 2026-11-20: "The new ad from scratch is the old model … Need the same engine" and "team promo
+ *  videos, culture events, announcements, etc, internal ads"). Pieces that belong to no calendar event: our stays for
+ *  guests, the owner piece, and internal pieces for the team. Each has an identity in lib/adx/identities. */
+export const ADX_ANYTIME: readonly string[] = ['stays', 'ownerstory', 'team']
 /** A photograph is never drawn larger than this multiple of its real pixels. */
 export const MAX_PHOTO_UPSCALE = 1.0
 /** No horizontal band taller than this share of the frame may be plain ground (nothing designed in it). */
@@ -101,7 +105,8 @@ export type Cam = { scale?: number; x?: number; y?: number }
 export type Run = { t: string; style?: string; color?: ColorRef } | { br: true }
 type Common = { id: string; opacity?: number; rotate?: number; in?: Entrance }
 export type FillLayer = Common & { type: 'fill'; color: ColorRef }
-export type PhotoLayer = Common & { type: 'photo'; photo: string; box: Box; focal?: { x: number; y: number }; treatment: typeof TREATMENTS[number]; mask?: { shape: typeof MASKS[number]; radius?: number }; camera?: { from: Cam; to: Cam; ease?: Ease } }
+export const IDLES = ['float', 'sway', 'spin', 'pulse'] as const
+export type PhotoLayer = Common & { type: 'photo'; photo: string; box: Box; /** How an added image or 3D object keeps moving once it has arrived. */ idle?: typeof IDLES[number]; focal?: { x: number; y: number }; treatment: typeof TREATMENTS[number]; mask?: { shape: typeof MASKS[number]; radius?: number }; camera?: { from: Cam; to: Cam; ease?: Ease } }
 export type TextLayer = Common & { type: 'text'; style: string; color: ColorRef; box: Box; align?: 'left' | 'center' | 'right'; size?: number; fit?: { max: number; min: number; lines: number }; runs: Run[] }
 export type ShapeLayer = Common & { type: 'shape'; shape: typeof SHAPES[number]; color: ColorRef; box: Box; radius?: number; stroke?: number }
 export type VectorLayer = Common & { type: 'vector'; box: Box; viewBox: [number, number]; paths: { d: string; fill?: ColorRef; stroke?: ColorRef; strokeWidth?: number }[] }
@@ -113,7 +118,7 @@ export type Transition = { type: typeof TRANSITIONS[number]; dir?: typeof DIRS[n
 export type Scene = { id: string; name: string; start: number; dur: number; transitionIn: Transition; layers: Layer[] }
 
 export type Brief = {
-  goal: string; audience: 'guests' | 'owners'; who: string; takeaway: string
+  goal: string; audience: 'guests' | 'owners' | 'team'; who: string; takeaway: string
   moment: string; momentName: string; dates: string; area: string; areaLabel: string; vibe: string
   channel: ChannelKey; seconds: number; note: string
   confirmedBy: string; confirmedAt: string
@@ -158,10 +163,11 @@ export const OWNER_CTA = 'Talk to Nick · 651.200.8283'
 /** The channels behind "40+ platforms": when the number is used, these are named. */
 export const CHANNEL_NAMES = ['Airbnb', 'Vrbo', 'Booking.com', 'Expedia', 'Marriott', 'Blueground', 'stay-hospitality.com']
 export function rulesFor(brief: Pick<Brief, 'audience' | 'area'>): Rules {
-  const guests = brief.audience !== 'owners'
+  // an internal piece for the team sells nothing: no booking button, no owner line — it ends on the mark
+  const team = brief.audience === 'team', guests = !team && brief.audience !== 'owners'
   return {
     guestAd: guests, noPrices: guests, noPhone: guests, bannedSpoken: BANNED_SPOKEN.slice(), bannedAnywhere: BANNED_ANYWHERE.slice(),
-    endsOn: guests ? GUEST_CTA : OWNER_CTA, photoArea: brief.area || '', photoTreatment: 'none', maxPhotoUpscale: MAX_PHOTO_UPSCALE,
+    endsOn: guests ? GUEST_CTA : team ? '' : OWNER_CTA, photoArea: brief.area || '', photoTreatment: 'none', maxPhotoUpscale: MAX_PHOTO_UPSCALE,
     textInsideSafe: true, minLabelPx: MIN_LABEL_PX, minHeadlinePx: MIN_HEADLINE_PX, maxTransitionKinds: 2, deadBandMax: DEAD_BAND_MAX,
   }
 }
@@ -231,6 +237,7 @@ function layer(raw: unknown, ctx: { W: number; H: number; dur: number; palette: 
     if (!Object.prototype.hasOwnProperty.call(ctx.photos, key)) { ctx.notes.push(`${id}: dropped, no photograph "${cleanText(key, 30)}" in the asset table`); return null }
     const l: PhotoLayer = { ...common, type, photo: key, box: box(raw.box, W, H, full), treatment: pick(raw.treatment, TREATMENTS, 'none') }
     if (isObj(raw.focal)) l.focal = { x: num(raw.focal.x, 0, 1, 0.5), y: num(raw.focal.y, 0, 1, 0.5) }
+    if ((IDLES as readonly string[]).indexOf(raw.idle) >= 0 && ctx.photos[key].source === 'upload') l.idle = raw.idle
     if (isObj(raw.mask) && (MASKS as readonly string[]).indexOf(raw.mask.shape) >= 0 && raw.mask.shape !== 'rect') l.mask = { shape: raw.mask.shape, ...(raw.mask.radius != null ? { radius: num(raw.mask.radius, 0, 600, 24) } : {}) }
     if (isObj(raw.camera)) l.camera = { from: cam(raw.camera.from), to: cam(raw.camera.to), ...((EASES as readonly string[]).indexOf(raw.camera.ease) >= 0 ? { ease: raw.camera.ease } : {}) }
     return l
@@ -334,7 +341,7 @@ function photoAsset(v: unknown): PhotoAsset | null {
 export function cleanBrief(v: unknown): Brief {
   const b = isObj(v) ? v : {}
   return {
-    goal: cleanText(b.goal, 200), audience: b.audience === 'owners' ? 'owners' : 'guests', who: cleanText(b.who, 240), takeaway: cleanText(b.takeaway, 300),
+    goal: cleanText(b.goal, 200), audience: b.audience === 'owners' ? 'owners' : b.audience === 'team' ? 'team' : 'guests', who: cleanText(b.who, 240), takeaway: cleanText(b.takeaway, 300),
     moment: idOf(b.moment, ''), momentName: cleanText(b.momentName, 80), dates: cleanText(b.dates, 60), area: idOf(b.area, ''), areaLabel: cleanText(b.areaLabel, 60), vibe: cleanText(b.vibe, 80),
     channel: pick(b.channel, Object.keys(CHANNELS) as ChannelKey[], 'vertical'), seconds: Math.round(num(b.seconds, 6, 60, 15)), note: cleanText(b.note, 400),
     confirmedBy: cleanText(b.confirmedBy, 120), confirmedAt: cleanText(b.confirmedAt, 40),

@@ -170,7 +170,7 @@ export function auditComposition(doc: Composition, measure: Measure, opts: { sam
   if (end.dur < 3) fail('end-short', `The last scene holds ${end.dur.toFixed(1)} s — too short to read and act on. Give it at least 3 s.`, end.id)
   const endWords = end.layers.map(l => (l.type === 'button' ? l.label : l.type === 'text' ? textOf(l) : '')).join(' ')
   if (R.guestAd) { if (!end.layers.some(l => l.type === 'button' && /stay-hospitality\.com/i.test(l.label))) fail('end-cta', `A guest piece ends on a “${R.endsOn}” button.`, end.id) }
-  else if (!/651[-. ]?200[-. ]?8283/.test(endWords) || !/nick/i.test(endWords)) fail('end-cta', `An owner piece ends on Nick's contact line (“${R.endsOn}”).`, end.id)
+  else if (R.endsOn && (!/651[-. ]?200[-. ]?8283/.test(endWords) || !/nick/i.test(endWords))) fail('end-cta', `An owner piece ends on Nick's contact line (“${R.endsOn}”).`, end.id)
   if (lastPhotoSource && lastPhotoSource !== 'ours') fail('photo-source', 'The last photograph in a piece must be one of our own listings.')
   const kinds = new Set(S.map(s => s.transitionIn.type).filter(t => t !== 'none' && t !== 'cut'))
   if (kinds.size > R.maxTransitionKinds) fail('transitions', `${kinds.size} kinds of transition in one piece (${Array.from(kinds).join(', ')}). Keep to ${R.maxTransitionKinds}.`)

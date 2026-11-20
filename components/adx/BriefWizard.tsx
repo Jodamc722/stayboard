@@ -9,8 +9,8 @@ import { useMemo, useState } from 'react'
 import { MOMENTS } from '@/lib/marketing-calendar'
 import { whenShortOf } from '@/lib/ad-event'
 import { MARKETS, MARKET_LABEL, marketAreas, buildingsIn, buildingName, type MarketKey } from '@/lib/ad-places'
-import { ADX_MOMENTS, CHANNELS, type Brief, type ChannelKey } from '@/lib/adx/composition'
-import { IDENTITIES, AUDIENCES, GOALS, VIBES, LENGTHS } from '@/lib/adx/identities'
+import { ADX_MOMENTS, ADX_ANYTIME, CHANNELS, type Brief, type ChannelKey } from '@/lib/adx/composition'
+import { IDENTITIES, AUDIENCES, GOALS, VIBES, LENGTHS, ANYTIME, TEAM_AUDIENCE } from '@/lib/adx/identities'
 
 export const UI = { bg: '#0B0F16', panel: '#121824', panel2: '#182131', line: 'rgba(255,255,255,0.09)', ink: '#F1F3F7', mut: '#8E9AAE', gold: '#D2B077', red: '#E06C6C', green: '#4CC488' }
 
@@ -39,7 +39,10 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
 }) {
   const events = useMemo(() => MOMENTS.filter(m => ADX_MOMENTS.indexOf(m.key) >= 0), [])
   const [ev, setEv] = useState(moment && ADX_MOMENTS.indexOf(moment) >= 0 ? moment : '')
-  const [audience, setAudience] = useState<'guests' | 'owners' | ''>('')
+  // FROM SCRATCH (Jon, 2026-11-20): a piece for no event — our stays, owners, or the team (internal). Who it is for
+  // comes with the kind, the area is optional for the team, and what it is about is typed in.
+  const any = ANYTIME.find(x => x.key === ev) || null
+  const [audience, setAudience] = useState<'guests' | 'owners' | 'team' | ''>(() => (ANYTIME.find(x => x.key === moment)?.audience || ''))
   const [goal, setGoal] = useState('')
   const [area, setArea] = useState<MarketKey | ''>('')
   const [vibe, setVibe] = useState('')
@@ -48,32 +51,35 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
   const [note, setNote] = useState('')
   const [review, setReview] = useState(false)
 
-  const m = events.find(x => x.key === ev)
+  const m = events.find(x => x.key === ev) || (any ? ({ key: any.key, name: any.label, start: '', end: '', where: [] } as unknown as typeof events[number]) : undefined)
+  const team = audience === 'team'
   const id = ev ? IDENTITIES[ev] : null
-  const goals = audience ? GOALS[audience] : []
+  // a piece for no event has no event dates to fill or price
+  const goals = (audience ? GOALS[audience] : []).filter(x => !any || (x.key !== 'book-dates' && x.key !== 'big-dates'))
   // where the event happens comes first; every area we have units in can be chosen
   // then the wider markets (Jon, 2026-11-20: "more options, broader markets"), then the other single areas
   const areaOrder = useMemo(() => { const pref = (m?.where || []) as MarketKey[]; const wide = MARKETS.filter(x => x.areas.length > 1).map(x => x.key); return pref.concat(wide, MARKETS.map(x => x.key).filter(k => pref.indexOf(k) < 0 && wide.indexOf(k) < 0)) }, [m])
   const homes = (k: string, n: number) => { const b = buildingsIn(marketAreas(k)).map(buildingName); return b.slice(0, n).join(', ') + (b.length > n ? ` +${b.length - n} more` : '') }
-  const done = !!(m && audience && goal && area && vibe && channel && seconds)
-  const g = goals.find(x => x.key === goal), v = VIBES.find(x => x.key === vibe), a = AUDIENCES.find(x => x.key === audience)
+  const [noPhotos, setNoPhotos] = useState(false)
+  const done = !!(m && audience && goal && (area || (team && noPhotos)) && vibe && channel && seconds && (!any || note.trim().length >= 4))
+  const g = goals.find(x => x.key === goal), v = VIBES.find(x => x.key === vibe), a = team ? TEAM_AUDIENCE : AUDIENCES.find(x => x.key === audience)
 
   const brief = (): Brief => ({
-    goal: g?.brief || '', audience: audience === 'owners' ? 'owners' : 'guests', who: a?.brief || '', takeaway: '',
-    moment: ev, momentName: m?.name || '', dates: m ? whenShortOf(m) : '', area: area || '', areaLabel: area ? MARKET_LABEL[area] : '', vibe: v?.brief || '',
+    goal: g?.brief || '', audience: audience === 'owners' ? 'owners' : audience === 'team' ? 'team' : 'guests', who: a?.brief || '', takeaway: '',
+    moment: ev, momentName: m?.name || '', dates: m && !any ? whenShortOf(m) : '', area: area || '', areaLabel: area ? MARKET_LABEL[area] : '', vibe: v?.brief || '',
     channel: (channel || 'vertical') as ChannelKey, seconds: seconds || 15, note: note.trim().slice(0, 400), confirmedBy: '', confirmedAt: '',
   })
 
   if (review && done && m) {
     const ch = CHANNELS[channel as ChannelKey]
     const rows: [string, string][] = [
-      ['Event', `${m.name} · ${whenShortOf(m)}${m.approx ? ' (dates to confirm)' : ''}`],
+      any ? ['Piece', any.label + ' — ' + any.hint] as [string, string] : ['Event', `${m.name} · ${whenShortOf(m)}${m.approx ? ' (dates to confirm)' : ''}`],
       ['For', `${a!.label} — ${a!.brief}`],
       ['It should', g!.brief],
-      ['Where', `${MARKET_LABEL[area]} — only our units there (${homes(area, 6)})`],
+      ['Where', area ? `${MARKET_LABEL[area]} — only our units there (${homes(area, 6)})` : 'No unit photographs: type, colour and design only'],
       ['Vibe', v!.label],
       ['Format', `${ch.label} · ${ch.hint} · about ${seconds} seconds`],
-      ...(note.trim() ? [['Must say', note.trim()] as [string, string]] : []),
+      ...(note.trim() ? [[any ? 'About' : 'Must say', note.trim()] as [string, string]] : []),
     ]
     return (
       <div style={{ maxWidth: 760, margin: '0 auto', padding: '26px 24px 40px', color: UI.ink }}>
@@ -86,7 +92,7 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
               <span style={{ lineHeight: 1.5 }}>{val}</span>
             </div>
           ))}
-          <p style={{ fontSize: 12, color: UI.mut, margin: '10px 0' }}>Always: the black Stay logo, {audience === 'guests' ? 'no prices, ends on “Book at stay-hospitality.com”' : 'ends on Nick’s line'}, one photograph at a time, never the same one twice, colours and motifs for {id?.name}.</p>
+          <p style={{ fontSize: 12, color: UI.mut, margin: '10px 0' }}>Always: the Stay logo, {audience === 'guests' ? 'no prices, ends on “Book at stay-hospitality.com”' : team ? 'nothing to sell, ends on the mark' : 'ends on Nick’s line'}, one photograph at a time, never the same one twice, colours and motifs for {id?.name}.</p>
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
           <button type="button" disabled={busy} onClick={() => onConfirm(brief())} style={{ fontSize: 14, fontWeight: 800, padding: '11px 20px', borderRadius: 10, border: 0, background: UI.gold, color: '#0B0F16', cursor: busy ? 'default' : 'pointer', opacity: busy ? 0.6 : 1 }}>{busy ? 'Working…' : 'Confirm the brief → three ideas'}</button>
@@ -104,18 +110,27 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
       </div>
       <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 22px' }}>Seven quick choices. The piece is designed for exactly this — the event, the people, the place — and nothing is built until you confirm.</p>
 
-      <Q n={1} title="Which event?">
-        {events.map(e => <Chip key={e.key} on={ev === e.key} onClick={() => { setEv(e.key); setArea('') }} hint={whenShortOf(e)}>{e.emoji} {IDENTITIES[e.key]?.name || e.name}</Chip>)}
+      <Q n={1} title="What is it?" note="an event, or a piece for any time">
+        {events.map(e => <Chip key={e.key} on={ev === e.key} onClick={() => { setEv(e.key); setArea(''); if (audience === 'team') { setAudience(''); setGoal('') } }} hint={whenShortOf(e)}>{e.emoji} {IDENTITIES[e.key]?.name || e.name}</Chip>)}
+        {ANYTIME.filter(x => ADX_ANYTIME.indexOf(x.key) >= 0).map(x => <Chip key={x.key} on={ev === x.key} onClick={() => { setEv(x.key); setArea(''); setAudience(x.audience); setGoal(''); setNoPhotos(false) }} hint={x.hint}>{x.emoji} {x.label}</Chip>)}
       </Q>
+      {any ? (
+        <section style={{ margin: '0 0 22px' }}>
+          <p style={{ margin: '0 0 9px', fontSize: 13, fontWeight: 800, color: UI.ink }}>What is it about? <span style={{ fontWeight: 500, color: UI.mut }}>the news, the event, the people — in your words</span></p>
+          <textarea value={note} onChange={e => setNote(e.target.value)} maxLength={400} rows={2} placeholder={team ? 'e.g. Holiday lunch, Fri Dec 18, noon at the Fort Lauderdale office. Thank you for a record year.' : any.key === 'ownerstory' ? 'e.g. Why owners in Miami Beach switch to Stay: 15% fee, 40+ platforms, a local team' : 'e.g. Long weekends by the water: balconies, pools, full kitchens'}
+            style={{ width: '100%', boxSizing: 'border-box', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 10, color: UI.ink, padding: '10px 12px', fontSize: 13.5, fontFamily: 'inherit', resize: 'vertical' }} />
+        </section>
+      ) : null}
       <Q n={2} title="Who is it for?">
-        {AUDIENCES.map(x => <Chip key={x.key} on={audience === x.key} onClick={() => { setAudience(x.key as 'guests' | 'owners'); setGoal('') }} hint={x.hint}>{x.label}</Chip>)}
+        {any ? <Chip on onClick={() => {}} hint={a?.hint}>{a?.label || ''}</Chip> : AUDIENCES.map(x => <Chip key={x.key} on={audience === x.key} onClick={() => { setAudience(x.key as 'guests' | 'owners'); setGoal('') }} hint={x.hint}>{x.label}</Chip>)}
       </Q>
       <Q n={3} title="What should it do?" note={audience ? '' : 'pick who it is for first'}>
         {goals.map(x => <Chip key={x.key} on={goal === x.key} onClick={() => setGoal(x.key)} hint={x.hint}>{x.label}</Chip>)}
         {!goals.length ? <span style={{ fontSize: 12.5, color: UI.mut }}>—</span> : null}
       </Q>
-      <Q n={4} title="Where?" note="one area, or a wider market — the piece shows only our units there">
-        {areaOrder.map(k => <Chip key={k} on={area === k} onClick={() => setArea(k)} hint={homes(k, 3)}>{MARKET_LABEL[k]}{m?.where && (m.where as string[]).indexOf(k) >= 0 ? ' · where it happens' : ''}</Chip>)}
+      <Q n={4} title="Where?" note={team ? 'unit photographs from one market, or none at all' : 'one area, or a wider market — the piece shows only our units there'}>
+        {team ? <Chip on={noPhotos && !area} onClick={() => { setNoPhotos(true); setArea('') }} hint="Type, colour and design only">No unit photos</Chip> : null}
+        {areaOrder.map(k => <Chip key={k} on={area === k} onClick={() => { setArea(k); setNoPhotos(false) }} hint={homes(k, 3)}>{MARKET_LABEL[k]}{m?.where && (m.where as string[]).indexOf(k) >= 0 ? ' · where it happens' : ''}</Chip>)}
       </Q>
       <Q n={5} title="The vibe?">
         {VIBES.map(x => <Chip key={x.key} on={vibe === x.key} onClick={() => setVibe(x.key)}>{x.label}</Chip>)}
@@ -126,16 +141,16 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
       <Q n={7} title="How long?">
         {LENGTHS.map(s => <Chip key={s} on={seconds === s} onClick={() => setSeconds(s)}>{s} seconds</Chip>)}
       </Q>
-      <section style={{ margin: '0 0 22px' }}>
+      {any ? null : <section style={{ margin: '0 0 22px' }}>
         <p style={{ margin: '0 0 9px', fontSize: 13, fontWeight: 800, color: UI.ink }}>Anything it must say? <span style={{ fontWeight: 500, color: UI.mut }}>optional</span></p>
         <input value={note} onChange={e => setNote(e.target.value)} maxLength={400} placeholder="e.g. mention the rooftop pool, or a property by name"
           style={{ width: '100%', boxSizing: 'border-box', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 10, color: UI.ink, padding: '10px 12px', fontSize: 13.5 }} />
-      </section>
+      </section>}
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" disabled={!done} onClick={() => setReview(true)} style={{ fontSize: 14, fontWeight: 800, padding: '11px 20px', borderRadius: 10, border: 0, background: done ? UI.gold : UI.panel2, color: done ? '#0B0F16' : UI.mut, cursor: done ? 'pointer' : 'default' }}>Review the brief →</button>
-        {!done ? <span style={{ fontSize: 12.5, color: UI.mut }}>Answer all seven to continue.</span> : null}
-        {ev ? <button type="button" disabled={busy} onClick={() => onHouse(ev)} title="Opens the studio's own finished design for this event, ready to edit. No AI is used." style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, padding: '9px 13px', borderRadius: 10, border: '1px solid ' + UI.line, background: 'transparent', color: UI.ink, cursor: 'pointer' }}>Or open the house design for {id?.name} (no AI)</button> : null}
+        {!done ? <span style={{ fontSize: 12.5, color: UI.mut }}>{any && note.trim().length < 4 ? 'Say what it is about, and answer all seven, to continue.' : 'Answer all seven to continue.'}</span> : null}
+        {ev && !any ? <button type="button" disabled={busy} onClick={() => onHouse(ev)} title="Opens the studio's own finished design for this event, ready to edit. No AI is used." style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, padding: '9px 13px', borderRadius: 10, border: '1px solid ' + UI.line, background: 'transparent', color: UI.ink, cursor: 'pointer' }}>Or open the house design for {id?.name} (no AI)</button> : null}
       </div>
     </div>
   )

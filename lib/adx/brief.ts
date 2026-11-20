@@ -14,11 +14,11 @@ import { IDENTITIES, LOOKS, SALES_FACTS, type Identity } from './identities'
 const or = (list: readonly string[]) => list.map(x => `"${x}"`).join(' | ')
 
 /** Jon's rules, stated once and used in every prompt. */
-export function houseRules(audience: 'guests' | 'owners'): string {
-  const guests = audience !== 'owners'
+export function houseRules(audience: 'guests' | 'owners' | 'team'): string {
+  const guests = audience === 'guests'
   return `BRAND
 - The Stay logo is black. Use the black mark on light grounds and the white mark (which may be tinted to a palette colour) on dark grounds. Black is the house default; gold appears only where the event's palette has it.
-- ${guests ? `This is a GUEST piece: no prices, no discounts, no "deals", no phone number, never "call us". The only ask is "${GUEST_CTA}", on a button in the last scene.` : `This is an OWNER piece for people not yet with us: it ends on Nick's line, "${OWNER_CTA}". Build it for an owner: how the date is priced, where the listing sells, who looks after the unit. Never generic.`}
+- ${guests ? `This is a GUEST piece: no prices, no discounts, no "deals", no phone number, never "call us". The only ask is "${GUEST_CTA}", on a button in the last scene.` : audience === 'team' ? `This is an INTERNAL piece for Stay's own team (Slack, the office screen, a team meeting): it sells nothing. No booking button, no phone number, no prices, no sales claims. It ends on the Stay mark with one clear line (the date and place, the thank-you, or what to do next). Warm, proud and human; name people only when the brief names them, exactly as written.` : `This is an OWNER piece for people not yet with us: it ends on Nick's line, "${OWNER_CTA}". Build it for an owner: how the date is priced, where the listing sells, who looks after the unit. Never generic.`}
 FACTS YOU MAY STATE
 ${SALES_FACTS}
 WORDS
@@ -90,13 +90,14 @@ export function briefText(b: Brief): string {
   const ch = CHANNELS[b.channel]
   return `Event       ${b.momentName}${b.dates ? ' · ' + b.dates : ''}
 Goal        ${b.goal}
-Audience    ${b.audience === 'owners' ? 'Owners' : 'Guests'}. ${b.who}
+Audience    ${b.audience === 'owners' ? 'Owners' : b.audience === 'team' ? 'Our own team (internal)' : 'Guests'}. ${b.who}
 Area        ${b.areaLabel || 'South Florida'} only
 Vibe        ${b.vibe}
 Channel     ${ch.label} (${ch.hint}), ${ch.w} x ${ch.h}, about ${b.seconds} seconds at 30 fps
 Safe area   words, the logo and the button stay inside: top ${ch.safe.top}, bottom ${ch.safe.bottom}, left ${ch.safe.left}, right ${ch.safe.right} px from the edges${b.note ? `\nMust say    ${b.note}` : ''}`
 }
 export function photoList(photos: Record<string, PhotoAsset>): string {
+  if (!Object.keys(photos).length) return '(none: this piece is made of type, colour, shapes and decoration. Use no photo layers, and fill every frame with design.)'
   return Object.entries(photos).map(([k, p]) => `${k}  ${p.w} x ${p.h}  ${p.source}  ${p.building}${p.unit && p.unit !== p.building ? ' (' + p.unit + ')' : ''}  —  ${p.shows || 'no description'}`).join('\n')
 }
 export const sceneCount = (seconds: number) => Math.max(3, Math.min(6, Math.round(seconds / 3)))
@@ -153,10 +154,10 @@ Reply with ONLY this JSON:
 
 // ── 3. the composer ─────────────────────────────────────────────────────────────────────────────────────────────
 /** Which finished piece is shown as the worked example: always a DIFFERENT event and look, so structure is copied and design is not. */
-export const EXAMPLE_FOR: Record<string, string> = { thanksgiving: 'basel', christmas: 'thanksgiving', nye: 'christmas', basel: 'nye' }
+export const EXAMPLE_FOR: Record<string, string> = { thanksgiving: 'basel', christmas: 'thanksgiving', nye: 'christmas', basel: 'nye', stays: 'nye', ownerstory: 'nye', team: 'basel' }
 
 /** Sections that are the same for every piece of an event: sent as the cached system prompt. */
-export function composerSystem(audience: 'guests' | 'owners', example: Composition | null): string {
+export function composerSystem(audience: 'guests' | 'owners' | 'team', example: Composition | null): string {
   const ex = example ? JSON.stringify({ concept: example.concept, tokens: example.tokens, scenes: example.scenes.map(s => ({ id: s.id, name: s.name, dur: s.dur, transitionIn: s.transitionIn, layers: s.layers })), script: example.script, social: example.social }) : ''
   return `You are the art director and motion designer for Stay Hospitality, a short-term rental manager in South Florida. You design ONE piece, for one moment, one audience and one goal, from the photographs you are shown. You are not filling in a template. Decide what this piece should look like, then write it as a composition document. A player draws exactly what you write; nothing is added for you, and nothing you write is executed.
 

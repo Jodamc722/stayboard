@@ -101,13 +101,65 @@ export const IDENTITIES: Record<string, Identity> = {
   },
 }
 
+// FROM SCRATCH (Jon, 2026-11-20): pieces for no calendar event. They are identities like the events — a palette and
+// a vocabulary, never a layout — so the same designer, review and editor make them.
+Object.assign(IDENTITIES, {
+  stays: {
+    key: 'stays', name: 'Our stays',
+    expect: 'A confident travel brand: the place itself is the hero. Clean, modern, unhurried.',
+    ours: 'Real apartments and homes in South Florida with the space of a home and the polish of a hotel: full kitchens, pools, balconies over the water, a local team and 24/7 guest support.',
+    palette: { black: '#000000', coal: '#161616', white: '#FFFFFF', sand: '#EDE6DA', gold: '#D2B077', sea: '#1F6F8B' },
+    type: 'display: Bricolage Grotesque 800, tight · displayAccent: Fraunces 500 italic · label: Instrument Sans 600, tracked capitals',
+    motifs: 'No seasonal props. Hard-edged photograph windows, thin frames ("shape" with stroke), one line that draws, a block of sand or sea colour. At most one accent colour in a scene.',
+    motion: 'Cuts and pushes, mask reveals, one slow camera move on the strongest photograph. Fast in, then hold.',
+    never: 'Stock-brochure clichés ("your home away from home", "paradise awaits"), prices, "deals", anything flashing, a tint over a photograph.',
+    looks: ['stay-black', 'gallery-white', 'true-colour'], logoDress: 'none', music: 'rooftops',
+    subjects: ['ocean view', 'pool', 'living room', 'balcony view', 'kitchen', 'bedroom', 'city view', 'exterior'],
+    territories: ['The space of a home, the polish of a hotel', 'Wake up to this: the view from your own balcony', 'Room for everyone: a real kitchen, a real table, a pool downstairs'],
+  },
+  ownerstory: {
+    key: 'ownerstory', name: 'For owners',
+    expect: 'A serious, premium management company: calm, exact, black and white with one warm accent.',
+    ours: 'Stay manages 500+ units for a 15% fee, lists them on 40+ platforms (Airbnb, Vrbo, Booking.com, Expedia, Marriott, Blueground, stay-hospitality.com), with a local team and 24/7 guest support. March is the peak month. Owners talk to Nick Carline, 651.200.8283.',
+    palette: { black: '#000000', coal: '#161616', white: '#FFFFFF', paper: '#F4F1EA', gold: '#D2B077', slate: '#5B6470' },
+    type: 'display: Bricolage Grotesque 800, tight · displayAccent: Fraunces 500 italic in gold · label: Instrument Sans 600, tracked capitals',
+    motifs: 'No props. Large numerals as design ("15%", "500+"), hairlines that draw, a thin frame round a photograph, the channel names set as a clean list.',
+    motion: 'Measured. Lines draw, numbers arrive once and hold, pushes between grounds. Nothing bounces.',
+    never: 'Any number that is not in the facts above, guarantees of income, "passive income", "in seconds", "CCS", clip-art charts, a tint over a photograph.',
+    looks: ['stay-black', 'gallery-white'], logoDress: 'none', music: 'backbay',
+    subjects: ['exterior', 'living room', 'ocean view', 'kitchen', 'pool', 'bedroom', 'city view'],
+    territories: ['The numbers, plainly: 15%, 500+ units, 40+ platforms', 'Your place, looked after: a local team and 24/7 guest support', 'Priced for the dates that matter: March, the holidays, the big events'],
+  },
+  team: {
+    key: 'team', name: 'Team (internal)',
+    expect: 'A company talking to its own people: warm, proud, a little playful. Big friendly type, strong colour, clear news.',
+    ours: 'The Stay team in South Florida: housekeeping, maintenance, guest care, the office. Wins, welcomes, events, announcements, thank-yous.',
+    palette: { black: '#000000', white: '#FFFFFF', gold: '#D2B077', cream: '#F6EFE2', coral: '#F0603F', sky: '#3E8FD0', leaf: '#2F7D5B' },
+    type: 'display: Bricolage Grotesque 800, tight · displayAccent: Fraunces 500 italic · label: Instrument Sans 600, tracked capitals',
+    motifs: 'Flat blocks and circles of strong colour, "sparkle" or a "star" for a win, "rays" behind a headline, one shape you draw yourself ("vector"). With no photographs, colour and type ARE the piece: fill every frame.',
+    motion: 'Upbeat. Blocks wipe on, headlines rise line by line, a star or sparkle arrives once. Pushes between grounds.',
+    never: 'Corporate filler ("synergy", "rockstars", "family"), anything sarcastic, a booking button, guest-facing sales lines, names or facts that are not in the brief.',
+    looks: ['colour-field', 'stay-black'], logoDress: 'none', music: 'hopeonrepeat',
+    subjects: ['exterior', 'pool', 'living room'],
+    territories: ['The news, big and clear: what, when, where', 'A proper thank-you: name the win, name the people', 'Come along: the event as an invitation'],
+  },
+} as Record<string, Identity>)
+/** The from-scratch kinds, as the brief offers them. `audience` is fixed by the kind. */
+export const ANYTIME: { key: string; label: string; emoji: string; hint: string; audience: 'guests' | 'owners' | 'team' }[] = [
+  { key: 'stays', label: 'Our stays', emoji: '🌴', hint: 'For guests, any time of year', audience: 'guests' },
+  { key: 'ownerstory', label: 'For owners', emoji: '🔑', hint: 'Why owners choose Stay', audience: 'owners' },
+  { key: 'team', label: 'Team (internal)', emoji: '🎉', hint: 'Promo, culture event, announcement', audience: 'team' },
+]
+
 // ── the guided brief: every choice is a button ──────────────────────────────────────────────────────────────────
 export type Choice = { key: string; label: string; hint?: string; brief: string }
 export const AUDIENCES: Choice[] = [
   { key: 'guests', label: 'Guests', hint: 'People choosing where to stay', brief: 'Travellers choosing where to stay in South Florida' },
   { key: 'owners', label: 'Owners', hint: 'People who own a rental here', brief: 'Owners of a South Florida rental who are not yet with Stay' },
 ]
-export const GOALS: Record<'guests' | 'owners', Choice[]> = {
+/** The team is never offered beside guests and owners: it comes with the internal kind. */
+export const TEAM_AUDIENCE: Choice = { key: 'team', label: 'The team', hint: 'Internal', brief: 'Stay Hospitality’s own team: housekeeping, maintenance, guest care and the office' }
+export const GOALS: Record<'guests' | 'owners' | 'team', Choice[]> = {
   guests: [
     { key: 'book-dates', label: 'Fill these dates', hint: 'Bookings for the event itself', brief: 'Bookings for the event dates' },
     { key: 'reach', label: 'Reach new guests', hint: 'People who have never stayed with us', brief: 'Make people who have never stayed with us want to' },
@@ -116,6 +168,13 @@ export const GOALS: Record<'guests' | 'owners', Choice[]> = {
   owners: [
     { key: 'win-owners', label: 'Win new owners', hint: 'A call with Nick', brief: 'Get owners who are not with us to book a call with Nick' },
     { key: 'big-dates', label: 'Show how we price the big dates', hint: 'Why this event earns more with us', brief: 'Show owners how Stay prices and fills the high-demand dates' },
+  ],
+  team: [
+    { key: 'announce', label: 'Announcement', hint: 'News the team needs to know', brief: 'Tell the team one piece of news clearly: what, when, where' },
+    { key: 'event', label: 'Culture event', hint: 'A party, lunch, outing', brief: 'Invite the team to an event and make them want to come' },
+    { key: 'shoutout', label: 'Shout-out', hint: 'Thank or celebrate people', brief: 'Celebrate a win and thank the people behind it, by name where the brief names them' },
+    { key: 'welcome', label: 'Welcome', hint: 'New team member or property', brief: 'Welcome someone or something new to the team' },
+    { key: 'promo', label: 'Team promo', hint: 'Who we are, why it is good here', brief: 'Show who the Stay team is and make people proud to be part of it' },
   ],
 }
 export const VIBES: Choice[] = [

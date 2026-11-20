@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react'
 import { comingUp, whenLabel, type Moment } from '@/lib/marketing-calendar'
 import { LOOKS, type AdKindOf } from '@/lib/ad-engine'
 import { AREA_LABEL, buildingsIn } from '@/lib/ad-places'
+import { ANYTIME } from '@/lib/adx/identities'
 
 export type HomeRow = { id: string; name: string; updatedAt: string; scenes: number; format: string; status?: string; kind?: string; look?: string; thumb?: string; moment?: string }
 /** THE NEW ENGINE (2026-11-20, Jon: "Rebuild it completely"): the calendar moments it makes, its pieces, and how to start one. */
@@ -88,9 +89,29 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
         </button>
       ) : null}
 
+      {/* ── FROM SCRATCH on the new studio (Jon, 2026-11-20: "The new ad from scratch is the old model … Need the same
+          engine", and "team promo videos, culture events, announcements, internal ads") ── */}
+      {adx && canEdit ? (<>
+        <p style={{ fontFamily: display, fontWeight: 800, fontSize: 24, margin: '0 0 4px', letterSpacing: '-0.01em' }}>Design a piece</p>
+        <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 14px' }}>A short brief, three ideas, the script, then the piece is designed for it, drawn, looked at and redone where it is weak before you see it. Everything in it can be changed afterwards.</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10, marginBottom: 30 }}>
+          {ANYTIME.filter(k => adx.moments.indexOf(k.key) >= 0).map(k => (
+            <button key={k.key} type="button" disabled={!!busy} onClick={() => adx.onStart({ key: k.key } as Moment)}
+              style={{ textAlign: 'left', background: UI.panel, border: '1px solid ' + UI.gold, borderRadius: 14, padding: '16px 16px 14px', cursor: 'pointer', color: UI.ink }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(210,176,119,0.14)', display: 'grid', placeItems: 'center', fontSize: 18 }}>{k.emoji}</span>
+                <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16 }}>{k.label}</span>
+              </span>
+              <span style={{ display: 'block', fontSize: 12.5, color: UI.mut, lineHeight: 1.5, marginTop: 10 }}>{k.hint}</span>
+              <span style={{ display: 'block', fontSize: 11, color: UI.gold, marginTop: 8, fontWeight: 700, letterSpacing: '0.06em' }}>✦ DESIGNED FOR THE BRIEF · MP4 · PNG</span>
+            </button>
+          ))}
+        </div>
+      </>) : null}
+
       {/* ── make something ── */}
-      <p style={{ fontFamily: display, fontWeight: 800, fontSize: 24, margin: '0 0 4px', letterSpacing: '-0.01em' }}>What are you making?</p>
-      <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 14px' }}>Every piece starts fresh, in the house look, with photos from our library. Nothing is saved until it is built.</p>
+      <p style={{ fontFamily: display, fontWeight: 800, fontSize: 24, margin: '0 0 4px', letterSpacing: '-0.01em' }}>{adx ? 'Classic templates' : 'What are you making?'}</p>
+      <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 14px' }}>{adx ? 'The earlier studio: template pieces, as before.' : 'Every piece starts fresh, in the house look, with photos from our library. Nothing is saved until it is built.'}</p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10 }}>
         {(Object.keys(KIND_META) as AdKindOf[]).map(k => {
           const m = KIND_META[k]

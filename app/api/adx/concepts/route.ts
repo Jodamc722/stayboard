@@ -18,9 +18,11 @@ export async function POST(req: NextRequest) {
     const b = await req.json().catch(() => ({} as any))
     const brief = { ...cleanBrief(b?.brief), confirmedBy: String(g.access.email || ''), confirmedAt: new Date().toISOString() }
     if (ADX_MOMENTS.indexOf(brief.moment) < 0) return NextResponse.json({ ok: false, error: 'This event is not made in the new studio yet.' }, { status: 400 })
-    if (!brief.area) return NextResponse.json({ ok: false, error: 'Pick the area first: the piece shows our units there.' }, { status: 400 })
-    const photos = await candidatePhotos(brief.moment, brief.area)
-    if (Object.keys(photos).length < 3) return NextResponse.json({ ok: false, error: `There are not enough good photographs of our ${brief.areaLabel || 'units'} in the library for this piece (${Object.keys(photos).length} found). Pick another area.` }, { status: 422 })
+    // an internal piece for the team may have no unit photographs at all: it is made of type, colour and design
+    const team = brief.audience === 'team'
+    if (!brief.area && !team) return NextResponse.json({ ok: false, error: 'Pick the area first: the piece shows our units there.' }, { status: 400 })
+    const photos = brief.area ? await candidatePhotos(brief.moment, brief.area) : {}
+    if (Object.keys(photos).length < 3 && !(team && !brief.area)) return NextResponse.json({ ok: false, error: `There are not enough good photographs of our ${brief.areaLabel || 'units'} in the library for this piece (${Object.keys(photos).length} found). Pick another area.` }, { status: 422 })
     const thumbs = Object.fromEntries(Object.entries(photos).map(([k, p]) => [k, thumbUrl(p.src, 480)]))
     const r = await runConcepts(brief, photos)
     const budget = await adxSpend(true)

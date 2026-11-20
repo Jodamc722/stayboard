@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       voice: cleanText(o.voice, 40), caption: cleanText(o.caption, 600), hashtags: [],
       lines: (Array.isArray(o.lines) ? o.lines : []).slice(0, 6).map((l: any) => ({ vo: cleanText(l?.vo, 200), head: String(l?.head || '').replace(/[\u0000-\u0009\u000b-\u001f]+/g, ' ').slice(0, 120), photo: keys.indexOf(String(l?.photo)) >= 0 ? String(l.photo) : '' })),
     }
-    if (ADX_MOMENTS.indexOf(brief.moment) < 0 || !concept.name || option.lines.length < 2 || keys.length < 2) return NextResponse.json({ ok: false, error: 'The brief, the idea, the script or the photographs are missing. Start again from the brief.' }, { status: 400 })
+    if (ADX_MOMENTS.indexOf(brief.moment) < 0 || !concept.name || option.lines.length < 2 || (keys.length < 2 && brief.audience !== 'team')) return NextResponse.json({ ok: false, error: 'The brief, the idea, the script or the photographs are missing. Start again from the brief.' }, { status: 400 })
     const r = await runCompose(brief, concept, option, photos, by, Math.max(0, Math.min(5, Number(b?.spentUsd) || 0)))
     if (!r.ok) return NextResponse.json({ ok: false, error: r.error, capped: !!r.budget }, { status: r.status })
     const saved = await savePiece(r.doc, by)

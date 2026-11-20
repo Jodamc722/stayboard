@@ -80,6 +80,12 @@ export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwa
         </div>
       </>) : null}
 
+      {layer.type === 'photo' && added ? (<>
+        <span style={label}>Movement</span>
+        <div style={row}>
+          {([['', 'Still'], ['float', 'Float'], ['sway', 'Sway'], ['spin', 'Turn slowly'], ['pulse', 'Pulse']] as const).map(([k, name]) => <button key={name} type="button" onClick={() => patch(l => { const { idle: _i, ...rest } = l as PhotoLayer; return (k ? { ...rest, idle: k } : rest) as Layer })} style={chip((layer.idle || '') === k)}>{name}</button>)}
+        </div>
+      </>) : null}
       {layer.type === 'photo' && added ? (soft ? <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.red }}>This image is drawn larger than its real pixels, so it will look soft. Make it smaller or add a larger file.</p> : <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>Your image, shown whole. Drag its corner to resize.</p>) : null}
       {layer.type === 'photo' && !added ? (<>
         <div style={{ ...row, marginTop: 10 }}>
@@ -407,11 +413,14 @@ export function PhotoPicker({ doc, title, pool, busy, err, q, onQ, onPick, onCan
 // Jon, 2026-11-20: "Should be add shape or image or png tree or lights etc option when you click." One row under the
 // picture, always there. Click a spot in the picture first and the new thing lands on it; otherwise it lands in the
 // middle. Shape and Decoration open a second row of choices (buttons, not a menu).
-export function AddBar({ doc, scene, at, commit, onSelect, onAddPhoto, onImage, busy, err }: {
+export function AddBar({ doc, scene, at, commit, onSelect, onAddPhoto, onImage, onObject, busy, err }: {
   doc: Composition; scene: Scene; at?: E.Pt; commit: Commit
-  onSelect: (id: string | null) => void; onAddPhoto: (sceneId: string) => void; onImage: (file: File) => void; busy: boolean; err: string
+  onSelect: (id: string | null) => void; onAddPhoto: (sceneId: string) => void; onImage: (file: File) => void; onObject: (what: string) => void; busy: boolean; err: string
 }) {
-  const [open, setOpen] = useState<'' | 'shape' | 'decor'>('')
+  const [open, setOpen] = useState<'' | 'shape' | 'decor' | '3d'>('')
+  const [what, setWhat] = useState('')
+  // 3D objects that suit the piece (Jon, 2026-11-20: "add some 3d generation to the mix to fit the look")
+  const ideas = ({ christmas: ['Christmas ornament', 'wrapped gift box', 'Christmas tree', 'candy cane', 'gold star'], thanksgiving: ['pumpkin', 'autumn leaf', 'pie', 'candle'], nye: ['champagne glass', 'disco ball', 'firework rocket', 'party balloon', 'clock at midnight'], basel: ['abstract sculpture', 'paint brush', 'picture frame', 'spiral ribbon'], team: ['trophy', 'party popper', 'megaphone', 'heart', 'balloon', 'thumbs up sign'], ownerstory: ['house key', 'small modern house', 'rising arrow', 'calendar'], stays: ['palm tree', 'sun', 'suitcase', 'beach umbrella', 'sunglasses', 'cocktail glass'] } as Record<string, string[]>)[doc.brief.moment] || ['palm tree', 'sun', 'gift box', 'star', 'heart']
   const file = useRef<HTMLInputElement>(null)
   const sid = scene.id
   const hasPhoto = scene.layers.some(l => l.type === 'photo' && !E.isAdded(doc, l))
@@ -425,12 +434,24 @@ export function AddBar({ doc, scene, at, commit, onSelect, onAddPhoto, onImage, 
         <button type="button" onClick={() => done(E.addText(doc, sid, 'label'))} style={chip()}>Small label</button>
         <button type="button" aria-pressed={open === 'shape'} onClick={() => setOpen(open === 'shape' ? '' : 'shape')} style={chip(open === 'shape')}>Shape</button>
         <button type="button" aria-pressed={open === 'decor'} onClick={() => setOpen(open === 'decor' ? '' : 'decor')} style={chip(open === 'decor')}>Decoration</button>
+        <button type="button" aria-pressed={open === '3d'} onClick={() => setOpen(open === '3d' ? '' : '3d')} title="A rendered 3D object on a clear background, made for this piece in its colours. Uses AI: a few cents each." style={chip(open === '3d')}>✦ 3D object</button>
         <button type="button" disabled={busy} onClick={() => file.current?.click()} title="A PNG, JPEG or WebP from your computer: a sticker, a badge, your own picture" style={chip(false, busy)}>{busy ? 'Adding…' : 'Image or PNG'}</button>
         {!hasPhoto ? <button type="button" onClick={() => onAddPhoto(sid)} style={chip()}>Photo of a unit</button> : null}
         <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onImage(f) }} />
       </div>
       {open === 'shape' ? <div style={{ ...row, marginTop: 8 }}>{E.SHAPE_KINDS.map(k => <button key={k.key} type="button" onClick={() => done(E.addShape(doc, sid, k.key, at))} style={chip()}>{k.label}</button>)}</div> : null}
       {open === 'decor' ? <div style={{ ...row, marginTop: 8 }}>{E.DECORATIONS.filter(d => !d.needsButton || hasButton).map(d => <button key={d.key} type="button" onClick={() => done(E.addDecoration(doc, sid, d.key, at))} style={chip()}>{d.label}</button>)}</div> : null}
+      {open === '3d' ? (
+        <div style={{ marginTop: 8 }}>
+          <div style={row}>{ideas.map(x => <button key={x} type="button" disabled={busy} onClick={() => onObject(x)} style={chip(false, busy)}>{x.charAt(0).toUpperCase() + x.slice(1)}</button>)}</div>
+          <div style={{ ...row, marginTop: 6 }}>
+            <input value={what} onChange={e => setWhat(e.target.value)} maxLength={120} placeholder="or type any object: a surfboard, a coffee cup, a golden key" onKeyDown={e => { if (e.key === 'Enter' && what.trim().length >= 3 && !busy) onObject(what.trim()) }}
+              style={{ flex: 1, minWidth: 180, background: UI.bg, border: '1px solid ' + UI.line, borderRadius: 8, color: UI.ink, padding: '7px 9px', fontSize: 13 }} />
+            <button type="button" disabled={busy || what.trim().length < 3} onClick={() => onObject(what.trim())} style={{ ...chip(false, busy || what.trim().length < 3), background: UI.gold, color: '#0B0F16', border: 0 }}>{busy ? 'Making it…' : 'Make it'}</button>
+          </div>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: UI.mut }}>Rendered in 3D on a clear background, in this piece’s colours. It takes about half a minute and costs a few cents of the AI budget.</p>
+        </div>
+      ) : null}
       {err ? <p style={{ margin: '8px 0 0', fontSize: 12, color: UI.red }}>{err}</p> : null}
       <p style={{ margin: '7px 0 0', fontSize: 11, color: UI.mut }}>{at ? 'It lands where you last clicked in the picture.' : 'Click a spot in the picture first and it lands there.'} New things go under the words, so they never cover them.</p>
     </div>

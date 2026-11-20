@@ -153,7 +153,7 @@ export type Still = { scene: string; data: string }
  */
 export async function runReview(doc: Composition, pool: Record<string, PhotoAsset>, stills: Still[], findings: string, round: number): Promise<{ ok: true; doc: Composition; verdict: 'ship' | 'revised'; notes: string[]; changed: string[]; usd: number } | Fail> {
   const example = housePiece(EXAMPLE_FOR[doc.brief.moment] || 'thanksgiving')
-  const system = composerSystem(doc.brief.audience === 'owners' ? 'owners' : 'guests', example)
+  const system = composerSystem(doc.brief.audience, example)
   const photos: Record<string, PhotoAsset> = { ...pool, ...doc.assets.photos }
   const content: any[] = []
   for (const st of stills) {
