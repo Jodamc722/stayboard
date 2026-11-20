@@ -4,7 +4,7 @@
 // designed. Nothing is saved here.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { cleanBrief, cleanText, photoSrcAllowed, ADX_MOMENTS, type PhotoAsset } from '@/lib/adx/composition'
+import { cleanBrief, cleanText, photoSrcAllowed, type PhotoAsset } from '@/lib/adx/composition'
 import { runCopy, type Concept } from '@/lib/adx/compose'
 
 export const dynamic = 'force-dynamic'
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   try {
     const b = await req.json().catch(() => ({} as any))
     const brief = cleanBrief(b?.brief), photos = photosOf(b?.photos), concept = conceptOf(b?.concept)
-    if (ADX_MOMENTS.indexOf(brief.moment) < 0 || !concept.name || (Object.keys(photos).length < 2 && brief.audience !== 'team')) return NextResponse.json({ ok: false, error: 'The brief, the idea or the photographs are missing. Start again from the brief.' }, { status: 400 })
+    if (!brief.moment || !concept.name || (Object.keys(photos).length < 2 && brief.audience !== 'team')) return NextResponse.json({ ok: false, error: 'The brief, the idea or the photographs are missing. Start again from the brief.' }, { status: 400 })
     const r = await runCopy(brief, concept, photos)
     if (!r.ok) return NextResponse.json({ ok: false, error: r.error, capped: !!r.budget }, { status: r.status })
     return NextResponse.json({ ok: true, options: r.options, usd: r.usd })

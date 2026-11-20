@@ -9,8 +9,8 @@
 // design for the event, which costs nothing and is just as editable.
 import { useEffect, useRef, useState } from 'react'
 import type { Brief, Composition, PhotoAsset } from '@/lib/adx/composition'
-import { ADX_MONTHLY_CAP_USD, ADX_ANYTIME } from '@/lib/adx/composition'
-import { IDENTITIES, LOOKS } from '@/lib/adx/identities'
+import { ADX_MONTHLY_CAP_USD, ADX_HOUSE } from '@/lib/adx/composition'
+import { IDENTITIES, LOOKS, identityOf } from '@/lib/adx/identities'
 import { loadFonts } from '@/lib/adx/assets'
 import { lookAt } from '@/lib/adx/stills'
 import { placeArt } from '@/lib/adx/edit'
@@ -182,7 +182,7 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
   }
   const close = async () => { if (saveTimer.current) clearTimeout(saveTimer.current); if (dirty.current && docRef.current && canEdit) await save(); onClose(changed.current) }
 
-  const id = brief ? IDENTITIES[brief.moment] : doc ? IDENTITIES[doc.brief.moment] : null
+  const id = brief ? identityOf(brief.moment, brief.audience, brief.momentName) : doc ? identityOf(doc.brief.moment, doc.brief.audience, doc.brief.momentName) : null
   const pal = id ? id.palette : {}
   const colours = Object.values(pal)
   const grotesk = !!id && /Bricolage/.test(id.type)
@@ -202,7 +202,7 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
   const Trouble = () => err ? (
     <div role="alert" style={{ background: capped ? '#3a3016' : '#3a1d1b', color: capped ? '#F0DFB4' : '#F3C2BC', borderRadius: 10, padding: '11px 14px', fontSize: 13, lineHeight: 1.5, margin: '0 0 14px', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
       <span style={{ flex: 1, minWidth: 240 }}>{err}</span>
-      {(brief?.moment || doc?.brief.moment) && step !== 'piece' && ADX_ANYTIME.indexOf(brief?.moment || doc?.brief.moment || '') < 0 ? <button type="button" disabled={!!busy} onClick={() => openHouse((brief?.moment || doc!.brief.moment))} style={big(true, !!busy)}>Open the house design</button> : null}
+      {(brief?.moment || doc?.brief.moment) && step !== 'piece' && ADX_HOUSE.indexOf(brief?.moment || doc?.brief.moment || '') >= 0 ? <button type="button" disabled={!!busy} onClick={() => openHouse((brief?.moment || doc!.brief.moment))} style={big(true, !!busy)}>Open the house design</button> : null}
       <button type="button" onClick={() => setErr('')} style={{ background: 'none', border: 0, color: 'inherit', cursor: 'pointer', fontSize: 12.5 }}>Dismiss</button>
     </div>
   ) : null

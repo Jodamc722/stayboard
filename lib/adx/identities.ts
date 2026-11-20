@@ -144,6 +144,15 @@ Object.assign(IDENTITIES, {
     territories: ['The news, big and clear: what, when, where', 'A proper thank-you: name the win, name the people', 'Come along: the event as an invitation'],
   },
 } as Record<string, Identity>)
+/** EVERYTHING ON THE NEW STUDIO (Jon, 2026-11-20: "Also everything should run on the new engine please"). An event
+ *  with its own identity uses it; any other moment on the calendar, and any kind of piece, takes the brand identity
+ *  for its audience under its own name — so nothing has to fall back to the earlier template engine. */
+export function identityOf(key: string, audience: 'guests' | 'owners' | 'team' = 'guests', name = ''): Identity {
+  const own = IDENTITIES[key]
+  if (own) return own
+  const base = IDENTITIES[audience === 'owners' ? 'ownerstory' : audience === 'team' ? 'team' : 'stays']
+  return { ...base, key: key || base.key, name: name || base.name }
+}
 /** The from-scratch kinds, as the brief offers them. `audience` is fixed by the kind. */
 export const ANYTIME: { key: string; label: string; emoji: string; hint: string; audience: 'guests' | 'owners' | 'team' }[] = [
   { key: 'stays', label: 'Our stays', emoji: '🌴', hint: 'For guests, any time of year', audience: 'guests' },
@@ -184,7 +193,8 @@ export const VIBES: Choice[] = [
   { key: 'energy', label: 'High energy', brief: 'energetic, quick, a sense of occasion' },
   { key: 'festive', label: 'Festive', brief: 'festive and cheerful, clearly dressed for the season' },
 ]
-export const LENGTHS = [10, 15, 20]
+/** 6 seconds is a single designed frame: a photo post, exported as a PNG. */
+export const LENGTHS = [6, 10, 15, 20, 30]
 
 /** The facts a piece may state (Jon's standing sales facts and wording). */
 export const SALES_FACTS = `- 15% management fee (owner pieces only, and only when the brief asks for the fee).

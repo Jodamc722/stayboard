@@ -17,7 +17,7 @@ import { looseJson } from '@/lib/ad-json'
 import { MUSIC } from '@/lib/ad-engine'
 import { sanitizeComposition, canvasFor, cleanText, LOOK_KEYS, type Brief, type Composition, type PhotoAsset } from './composition'
 import { conceptPrompt, copyPrompt, composerSystem, composerUser, repairPrompt, reviewPrompt, sceneCount, EXAMPLE_FOR } from './brief'
-import { IDENTITIES } from './identities'
+import { identityOf } from './identities'
 import { auditComposition, issueLines, MEASURED_CODES, type Issue } from './audit'
 import { approxMeasure } from './player'
 import { housePiece } from './seeds'
@@ -61,7 +61,7 @@ async function ask(task: string, body: { system?: string; content: any; maxToken
 const str = (v: unknown, n: number) => cleanText(v, n)
 
 export async function runConcepts(brief: Brief, photos: Record<string, PhotoAsset>): Promise<{ ok: true; concepts: Concept[]; usd: number } | Fail> {
-  const id = IDENTITIES[brief.moment]
+  const id = identityOf(brief.moment, brief.audience, brief.momentName)
   const a = await ask('adx-concept', { content: conceptPrompt(brief, photos), maxTokens: 2600, temperature: 0.8 })
   if (!a.ok) return a
   const keys = Object.keys(photos)
@@ -93,14 +93,14 @@ export async function runCopy(brief: Brief, concept: Concept, photos: Record<str
       caption: str(o?.caption, 600),
       hashtags: (Array.isArray(o?.hashtags) ? o.hashtags : []).map((h: any) => String(h || '').trim()).filter((h: string) => /^#[A-Za-z0-9_]{1,40}$/.test(h)).slice(0, 4),
     }
-  }).filter((o: CopyOption) => o.lines.length >= 2)
+  }).filter((o: CopyOption) => o.lines.length >= Math.min(2, n))
   if (!options.length) return { ok: false, status: 502, error: 'No usable script came back. Try again.' }
   return { ok: true, options, usd: a.usd }
 }
 
 /** The music a piece starts with: the event's own track, with its licence credit (from the studio's bundled list, never from a model). */
-export function musicFor(moment: string): { track: string; gain: number; credit: string } {
-  const m = MUSIC.find(x => x.key === (IDENTITIES[moment]?.music || ''))
+export function musicFor(moment: string, audience: Brief['audience'] = 'guests'): { track: string; gain: number; credit: string } {
+  const m = MUSIC.find(x => x.key === (identityOf(moment, audience).music || ''))
   return m ? { track: m.key, gain: 0.5, credit: m.credit } : { track: '', gain: 0.5, credit: '' }
 }
 
@@ -113,7 +113,7 @@ export async function runCompose(brief: Brief, concept: Concept, option: CopyOpt
   const a = await ask('adx-compose', { system, content: [...images, { type: 'text', text: user }], maxTokens: 14000, temperature: 0.7 })
   if (!a.ok) return a
   let usd = a.usd
-  const trusted = { id: newPieceId(), title: `${brief.momentName} · ${concept.name}`, brief, canvas: canvasFor(brief.channel), photos, music: musicFor(brief.moment), meta: { updatedBy: by, origin: 'composer' as const } }
+  const trusted = { id: newPieceId(), title: `${brief.momentName} · ${concept.name}`, brief, canvas: canvasFor(brief.channel), photos, music: musicFor(brief.moment, brief.audience), meta: { updatedBy: by, origin: 'composer' as const } }
   let authored: any = a.json
   let { doc, notes } = sanitizeComposition(authored, trusted)
   if (!doc.scenes.length) return { ok: false, status: 502, error: 'The design came back empty. Try again.' }

@@ -4,7 +4,7 @@
 // answer says so plainly and the wizard offers the house design instead.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
-import { cleanBrief, ADX_MOMENTS } from '@/lib/adx/composition'
+import { cleanBrief } from '@/lib/adx/composition'
 import { candidatePhotos, thumbUrl } from '@/lib/adx/photos'
 import { runConcepts } from '@/lib/adx/compose'
 import { adxSpend } from '@/lib/adx/budget'
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   try {
     const b = await req.json().catch(() => ({} as any))
     const brief = { ...cleanBrief(b?.brief), confirmedBy: String(g.access.email || ''), confirmedAt: new Date().toISOString() }
-    if (ADX_MOMENTS.indexOf(brief.moment) < 0) return NextResponse.json({ ok: false, error: 'This event is not made in the new studio yet.' }, { status: 400 })
+    if (!brief.moment) return NextResponse.json({ ok: false, error: 'This event is not made in the new studio yet.' }, { status: 400 })
     // an internal piece for the team may have no unit photographs at all: it is made of type, colour and design
     const team = brief.audience === 'team'
     if (!brief.area && !team) return NextResponse.json({ ok: false, error: 'Pick the area first: the piece shows our units there.' }, { status: 400 })

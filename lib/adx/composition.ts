@@ -23,6 +23,8 @@ export const ADX_MOMENTS: readonly string[] = ['thanksgiving', 'christmas', 'nye
  *  videos, culture events, announcements, etc, internal ads"). Pieces that belong to no calendar event: our stays for
  *  guests, the owner piece, and internal pieces for the team. Each has an identity in lib/adx/identities. */
 export const ADX_ANYTIME: readonly string[] = ['stays', 'ownerstory', 'team']
+/** The events that have a hand-made house design (lib/adx/seeds). */
+export const ADX_HOUSE: readonly string[] = ['thanksgiving', 'christmas', 'nye', 'basel']
 /** A photograph is never drawn larger than this multiple of its real pixels. */
 export const MAX_PHOTO_UPSCALE = 1.0
 /** No horizontal band taller than this share of the frame may be plain ground (nothing designed in it). */

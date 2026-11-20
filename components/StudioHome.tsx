@@ -11,6 +11,7 @@ import { comingUp, whenLabel, type Moment } from '@/lib/marketing-calendar'
 import { LOOKS, type AdKindOf } from '@/lib/ad-engine'
 import { AREA_LABEL, buildingsIn } from '@/lib/ad-places'
 import { ANYTIME } from '@/lib/adx/identities'
+import { ADX_HOUSE } from '@/lib/adx/composition'
 
 export type HomeRow = { id: string; name: string; updatedAt: string; scenes: number; format: string; status?: string; kind?: string; look?: string; thumb?: string; moment?: string }
 /** THE NEW ENGINE (2026-11-20, Jon: "Rebuild it completely"): the calendar moments it makes, its pieces, and how to start one. */
@@ -102,13 +103,16 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
                 <span style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(210,176,119,0.14)', display: 'grid', placeItems: 'center', fontSize: 18 }}>{k.emoji}</span>
                 <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16 }}>{k.label}</span>
               </span>
-              <span style={{ display: 'block', fontSize: 12.5, color: UI.mut, lineHeight: 1.5, marginTop: 10 }}>{k.hint}</span>
+              <span style={{ display: 'block', fontSize: 12.5, color: UI.mut, lineHeight: 1.5, marginTop: 10 }}>{k.hint}. A video, an animated post or a still.</span>
               <span style={{ display: 'block', fontSize: 11, color: UI.gold, marginTop: 8, fontWeight: 700, letterSpacing: '0.06em' }}>✦ DESIGNED FOR THE BRIEF · MP4 · PNG</span>
             </button>
           ))}
         </div>
       </>) : null}
 
+      {/* EVERYTHING ON THE NEW STUDIO (Jon, 2026-11-20: "everything should run on the new engine"): with it on, the
+          earlier template tiles are gone; pieces already made in them still open from the list below. */}
+      {adx ? null : (<>
       {/* ── make something ── */}
       <p style={{ fontFamily: display, fontWeight: 800, fontSize: 24, margin: '0 0 4px', letterSpacing: '-0.01em' }}>{adx ? 'Classic templates' : 'What are you making?'}</p>
       <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 14px' }}>{adx ? 'The earlier studio: template pieces, as before.' : 'Every piece starts fresh, in the house look, with photos from our library. Nothing is saved until it is built.'}</p>
@@ -129,6 +133,8 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
           )
         })}
       </div>
+
+      </>)}
 
       {/* ── coming up ── */}
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '30px 0 10px' }}>
@@ -153,12 +159,12 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
               <p style={{ fontSize: 12.5, margin: '8px 0 0', lineHeight: 1.45 }}>{m.headline.replace(/\*\*/g, '')}</p>
               <p style={{ fontSize: 11, color: UI.mut, margin: '3px 0 10px' }}>{m.audience === 'owners' ? 'For owners' : m.audience === 'both' ? 'Guests and owners' : 'For guests'} · {lk.label} look</p>
               {m.where && m.where.length ? <p title={'Photos from: ' + buildingsIn(m.where).join(', ')} style={{ fontSize: 11, color: UI.gold, margin: '-6px 0 10px' }}>📍 {m.where.map(k => AREA_LABEL[k]).join(' · ')} — {buildingsIn(m.where).slice(0, 4).join(', ')}{buildingsIn(m.where).length > 4 ? '…' : ''}</p> : null}
-              {canEdit && adx && adx.moments.indexOf(m.key) >= 0 ? (
+              {canEdit && adx ? (
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                   <button type="button" disabled={!!busy} onClick={() => adx.onStart(m)} title="A guided brief, three ideas, the script, then a piece designed for this event, this audience and our photographs"
                     style={{ fontSize: 12, fontWeight: 800, padding: '6px 11px', borderRadius: 8, border: 0, background: UI.gold, color: '#0B0F16', cursor: 'pointer' }}>✦ Design this piece</button>
-                  <button type="button" disabled={!!busy} onClick={() => adx.onHouse(m)} title="Opens the studio's own finished design for this event, ready to edit. No AI is used."
-                    style={{ fontSize: 11.5, fontWeight: 700, padding: '6px 10px', borderRadius: 8, border: '1px solid ' + UI.line, background: UI.panel2, color: UI.ink, cursor: 'pointer' }}>House design</button>
+                  {ADX_HOUSE.indexOf(m.key) < 0 ? null : <button type="button" disabled={!!busy} onClick={() => adx.onHouse(m)} title="Opens the studio's own finished design for this event, ready to edit. No AI is used."
+                    style={{ fontSize: 11.5, fontWeight: 700, padding: '6px 10px', borderRadius: 8, border: '1px solid ' + UI.line, background: UI.panel2, color: UI.ink, cursor: 'pointer' }}>House design</button>}
                 </div>
               ) : canEdit ? (
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>

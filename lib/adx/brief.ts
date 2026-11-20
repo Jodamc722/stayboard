@@ -10,7 +10,7 @@
 import { styleOf, ART_STYLES } from './prop'
 import type { Brief, Composition, PhotoAsset } from './composition'
 import { CHANNELS, EASES, TRANSITIONS, DIRS, TREATMENTS, MASKS, SHAPES, MOTIFS, MOTIF_VARIANTS, DRESSES, PRESETS, FROMS, LOOK_KEYS, FONT_FAMILIES, GUEST_CTA, OWNER_CTA, CHANNEL_NAMES, DEAD_BAND_MAX, MIN_LABEL_PX, MIN_HEADLINE_PX, MAX_PHOTO_UPSCALE } from './composition'
-import { IDENTITIES, LOOKS, SALES_FACTS, type Identity } from './identities'
+import { IDENTITIES, LOOKS, SALES_FACTS, type Identity, identityOf } from './identities'
 
 const or = (list: readonly string[]) => list.map(x => `"${x}"`).join(' | ')
 
@@ -101,11 +101,12 @@ export function photoList(photos: Record<string, PhotoAsset>): string {
   if (!Object.keys(photos).length) return '(none: this piece is made of type, colour, shapes and decoration. Use no photo layers, and fill every frame with design.)'
   return Object.entries(photos).map(([k, p]) => `${k}  ${p.w} x ${p.h}  ${p.source}  ${p.building}${p.unit && p.unit !== p.building ? ' (' + p.unit + ')' : ''}  —  ${p.shows || 'no description'}`).join('\n')
 }
-export const sceneCount = (seconds: number) => Math.max(3, Math.min(6, Math.round(seconds / 3)))
+/** A piece of 6 seconds or less is one designed frame (a photo post). */
+export const sceneCount = (seconds: number) => (seconds <= 6 ? 1 : Math.max(3, Math.min(6, Math.round(seconds / 3))))
 
 // ── 1. concepts ─────────────────────────────────────────────────────────────────────────────────────────────────
 export function conceptPrompt(b: Brief, photos: Record<string, PhotoAsset>): string {
-  const id = IDENTITIES[b.moment]
+  const id = identityOf(b.moment, b.audience, b.momentName)
   return `You are the creative director for Stay Hospitality, a short-term rental manager in South Florida. Propose THREE different ideas for one seasonal piece. They must differ in what the piece is about, which picture leads, and how it feels — not three wordings of one idea.
 
 THE BRIEF (confirmed by the person making it)
@@ -195,7 +196,7 @@ ${ex ? `\nA FINISHED PIECE FOR A DIFFERENT EVENT, in the format (its frame was $
 
 /** This piece: the brief Jon confirmed, the event's identity, the idea and the words he picked, the photographs. */
 export function composerUser(b: Brief, concept: { name: string; idea: string; look: string }, lines: { vo: string; head: string; photo: string }[], caption: string, photos: Record<string, PhotoAsset>): string {
-  const id = IDENTITIES[b.moment], ch = CHANNELS[b.channel]
+  const id = identityOf(b.moment, b.audience, b.momentName), ch = CHANNELS[b.channel]
   return `THIS PIECE (confirmed by ${b.confirmedBy || 'the team'} before this call was made)
 ${briefText(b)}
 Concept     "${concept.name}": ${concept.idea}
@@ -231,7 +232,7 @@ Fix them without changing the idea or the words more than a fix needs. Reply wit
 // exports), the measured audit's findings, and is told to be hard on it. It answers with whole replacement scenes
 // (data, through the validator like everything else) or says the piece is ready.
 export function reviewPrompt(doc: Composition, findings: string, photos: Record<string, PhotoAsset>, round: number, rounds: number, canArt = false): string {
-  const b = doc.brief, id = IDENTITIES[b.moment]
+  const b = doc.brief, id = identityOf(b.moment, b.audience, b.momentName)
   // GRAPHIC DESIGN, NOT ONLY LAYOUT (Jon, 2026-11-20: "Add graphic design, new style and needs the creative power of AI
   // not just templates"): the director may call for graphics made for this piece by an image model, and sees them
   // rendered in the next review.
