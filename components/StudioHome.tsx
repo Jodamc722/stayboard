@@ -12,6 +12,7 @@ import { LOOKS, type AdKindOf } from '@/lib/ad-engine'
 import { AREA_LABEL, buildingsIn } from '@/lib/ad-places'
 import { ANYTIME } from '@/lib/adx/identities'
 import { ADX_HOUSE } from '@/lib/adx/composition'
+import { adxVersion } from '@/lib/adx/versions'
 
 export type HomeRow = { id: string; name: string; updatedAt: string; scenes: number; format: string; status?: string; kind?: string; look?: string; thumb?: string; moment?: string }
 /** THE NEW ENGINE (2026-11-20, Jon: "Rebuild it completely"): the calendar moments it makes, its pieces, and how to start one. */
@@ -93,7 +94,8 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
       {/* ── FROM SCRATCH on the new studio (Jon, 2026-11-20: "The new ad from scratch is the old model … Need the same
           engine", and "team promo videos, culture events, announcements, internal ads") ── */}
       {adx && canEdit ? (<>
-        <p style={{ fontFamily: display, fontWeight: 800, fontSize: 24, margin: '0 0 4px', letterSpacing: '-0.01em' }}>Design a piece</p>
+        <p style={{ fontFamily: display, fontWeight: 800, fontSize: 24, margin: '0 0 4px', letterSpacing: '-0.01em' }}>Design a piece <span title={adxVersion().items.join(' · ')} style={{ fontFamily: 'inherit', fontSize: 11, fontWeight: 800, letterSpacing: '0.06em', color: UI.gold, border: '1px solid rgba(210,176,119,0.45)', borderRadius: 6, padding: '2px 7px', marginLeft: 8, verticalAlign: 'middle' }}>VERSION {adxVersion().v}</span></p>
+        <p style={{ fontSize: 12, color: UI.mut, margin: '0 0 6px' }}><b style={{ color: UI.ink }}>New in {adxVersion().v}:</b> {adxVersion().items.slice(0, 3).join(' · ')}</p>
         <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 14px' }}>A short brief, three ideas, the script, then the piece is designed for it, drawn, looked at and redone where it is weak before you see it. Everything in it can be changed afterwards.</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10, marginBottom: 30 }}>
           {ANYTIME.filter(k => adx.moments.indexOf(k.key) >= 0).map(k => (
