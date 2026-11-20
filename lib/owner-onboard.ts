@@ -163,6 +163,9 @@ export function orderTierLabel(l: { key: string; tier?: string }): '' | 'Recomme
 }
 export const orderTotal = (o: OOOrder, skip: string[] = []) => o.lines.filter(l => skip.indexOf(l.key) < 0).reduce((a, l) => a + (l.price || 0) * l.qty.reduce((x, y) => x + y, 0), 0)
 export type OOFile = { path: string; name: string; size: number; at: string; by: string }
+// The deal sales signed: live date and management fee (lib/owner-onboard-deal).
+export { cleanDeal, daysToLive, liveLabel, liveIn, feeLabel, byLiveDate, DEFAULT_FEE, type OODeal } from './owner-onboard-deal'
+import type { OODeal } from './owner-onboard-deal'
 export type OORecord = {
   code: string; createdAt: string; createdBy: string; updatedAt: string
   custom: OOCustom; attach: OOAttach
@@ -177,6 +180,8 @@ export type OORecord = {
   submittedAt: string
   payout?: OOPayout | null
   agreement?: OOFile | null
+  /** Live date and management fee, set by sales when the link is made. Team only. */
+  deal?: OODeal | null
   handoff?: { at: string; to: string[]; cc: string[]; error?: string } | null
   /** The linen order (Jon, 2026-11-13): approved by the team, then sent to the vendor. */
   order?: OOOrder | null
@@ -247,7 +252,7 @@ export function trackOf(r: OORecord): OOTrack {
 /** What the list of links shows. */
 export type OOIndexRow = { code: string; ownerName: string; property: string; unitLabel: string; listingId: string; createdAt: string; updatedAt: string; createdBy: string; stage: string; submitted: boolean; have: number; need: number; archived?: boolean
   /** Where it stands, for the team's list: each step's status in order (t/g/d), and the paperwork. */
-  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** every owner's email on the link */ emails?: string[]; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | ''; /** the unit walkthrough: needed once supplies are in, then sent, then done */ walk?: 'needed' | 'sent' | 'done' | ''; /** where the owner stands (trackOf); missing on rows written before 2026-11-16 until they are rebuilt */ track?: OOTrack }
+  steps?: string; units?: number; paperwork?: boolean; agreement?: boolean; password?: boolean; /** the owner's email, lower case: how /portal finds their links */ email?: string; /** every owner's email on the link */ emails?: string[]; /** the first home's address and pin, for the properties map */ address?: string; lat?: number; lng?: number; callAt?: string; linen?: 'approved' | 'sent' | ''; /** the unit walkthrough: needed once supplies are in, then sent, then done */ walk?: 'needed' | 'sent' | 'done' | ''; /** where the owner stands (trackOf); missing on rows written before 2026-11-16 until they are rebuilt */ track?: OOTrack; /** when the home can start taking guests (YYYY-MM-DD) and the management fee, from the deal */ liveDate?: string; fee?: number | null }
 
 export const DEFAULT_HOME: OOHome = { address: '', unit: '', sqft: 0, bedrooms: 0, bathrooms: 1, guests: 2, beds: { King: 0, Queen: 1, Full: 0, Twin: 0, Bunk: 0 }, sleeper: false, kitchen: true, appliances: { stove: true, oven: true, microwave: true, fridge: true, dishwasher: true }, washer: false, parking: '', access: '', wifiName: '', wifiPass: '' }
 
@@ -284,8 +289,8 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, ...rest } = r
-  void owners; void walk; void decisions; void remind
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, deal, ...rest } = r
+  void deal; void owners; void walk; void decisions; void remind
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined, got: order.review?.self ? Object.keys(shop?.got || {}) : undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }

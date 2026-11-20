@@ -6,7 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { pinHomes } from '@/lib/geo'
 import { requireLevel, requireAdmin, isSuperadmin } from '@/lib/access'
 import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore, cleanOwners, mergeCounts, ensureWalk, linenCountsChanged } from '@/lib/owner-onboard-server'
-import { cleanHome, OO_STEPS, teamView, type OOStep } from '@/lib/owner-onboard'
+import { cleanHome, cleanDeal, OO_STEPS, teamView, type OOStep } from '@/lib/owner-onboard'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +44,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
     const st = r.steps.find(s => s.key === 'call'); if (st && r.call.at && st.status === 'todo') { st.status = 'doing'; st.date = r.call.at.slice(0, 10) }
   }
   if (typeof b.archived === 'boolean') r.archived = b.archived
+  // the live date and the management fee (lib/owner-onboard OODeal)
+  if (b.deal && typeof b.deal === 'object') r.deal = cleanDeal(b.deal, r.deal)
   // the introductory email goes from a person's own mailbox, so sending it is recorded by hand (or by pressing Open in my email)
   if (b.intro && typeof b.intro === 'object') r.intro = b.intro.sent === false ? null : { at: new Date().toISOString(), by: String(g.access.email || '').slice(0, 160), from: b.intro.from === 'gm' ? 'gm' : 'sales' }
   // THE UNIT JUST GOT ITS LISTING: what the owner told us and approved goes into that listing's FAQ.

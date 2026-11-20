@@ -10,6 +10,7 @@ import { sendResendEmail, type MailAttachment } from './resend-send'
 import { sendGmail } from './gmail-send'
 import { fileBytes } from './owner-onboard-files'
 import type { OORecord, OOItem } from './owner-onboard'
+import { feeLabel, liveLabel } from './owner-onboard'
 import { stayEmail, escHtml } from './email-layout'
 
 export const OO_SETTINGS = 'oo_settings'
@@ -59,6 +60,7 @@ export async function sendHandoff(r: OORecord, origin: string): Promise<{ ok: bo
     ['W-9', r.payout ? 'Received (' + (r.payout.w9.business || r.payout.w9.name) + ', ' + (r.payout.w9.tinType === 'ein' ? 'EIN' : 'SSN') + ' ending ' + r.payout.w9.tinHint.slice(-4) + ')' : 'Not yet'],
     ['ACH', r.payout ? 'Received (' + r.payout.ach.bank + ' ' + (r.payout.ach.ownership ? r.payout.ach.ownership + ' ' : '') + r.payout.ach.accountType + ' ending ' + r.payout.ach.accountHint.slice(-4) + ')' : 'Not yet'],
     ['Agreement', r.agreement ? 'Attached: ' + r.agreement.name : 'Not uploaded yet'],
+    ['Management fee', feeLabel(r.deal?.fee) || 'Not entered'], ['Live date', r.deal?.liveDate ? liveLabel(r.deal.liveDate) : 'Not set'],
   ]
   const toName = (s.to[0] || '').split('@')[0].replace(/^./, c => c.toUpperCase())
   const html = stayEmail({

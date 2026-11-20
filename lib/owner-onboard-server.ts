@@ -9,7 +9,7 @@ import { itemsFor as kitItemsFor, lineFor, KIT_ITEMS, type KitSize, type KitSele
 const KIT_ITEMS_ORDER = () => KIT_ITEMS.map(k => k.key)
 import { normLinenStandard, linenQuote, LINEN_STANDARD_KEY, SOFA_BED, type LinenUnit } from './linens'
 import type { OOOrder, OOOrderLine } from './owner-onboard'
-import { stockOf, trackOf } from './owner-onboard'
+import { stockOf, trackOf, cleanDeal } from './owner-onboard'
 import { OO_PREFIX, OO_INDEX, cleanHome, unitsOf, unitName, DEFAULT_GM, DEFAULT_SALES, freshSteps, stageOf, type OORecord, type OOIndexRow, type OOItem, type OOHome, type OOCustom } from './owner-onboard'
 
 const newCode = () => { const c: any = (globalThis as any).crypto; return String(c?.randomUUID ? c.randomUUID() : Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2)).replace(/-/g, '').slice(0, 14) }
@@ -81,7 +81,7 @@ function indexRow(r: OORecord, items: OOItem[] | null): OOIndexRow {
   const marks = Object.entries(r.marks).filter(([k]) => !keys || keys.has(k))
   return { code: r.code, ownerName: r.custom.ownerName, property: r.attach.property, unitLabel: r.attach.unitLabel, listingId: r.attach.listingId, createdAt: r.createdAt, updatedAt: r.updatedAt, createdBy: r.createdBy,
     stage: stageOf(r), submitted: !!r.submittedAt, have: marks.filter(([, m]) => m === 'have').length, need: marks.filter(([, m]) => m === 'need').length,
-    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), emails: [r.custom.ownerEmail, ...(r.owners || []).map(o => o.email)].map(e => String(e || '').trim().toLowerCase()).filter(Boolean), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', walk: r.walk?.doneAt ? 'done' : r.walk?.sentAt ? 'sent' : r.submittedAt || r.stock || marks.length ? 'needed' : '', track: trackOf(r), ...(r.archived ? { archived: true } : {}) }
+    steps: r.steps.map(s => (s.status === 'done' ? 'd' : s.status === 'doing' ? 'g' : 't')).join(''), units: unitsOf(r).length, paperwork: !!r.payout, agreement: !!r.agreement, password: !!r.auth?.pass, email: String(r.custom.ownerEmail || '').trim().toLowerCase(), emails: [r.custom.ownerEmail, ...(r.owners || []).map(o => o.email)].map(e => String(e || '').trim().toLowerCase()).filter(Boolean), address: r.home?.address || '', ...(r.home?.lat != null && r.home?.lng != null ? { lat: r.home.lat, lng: r.home.lng } : {}), callAt: r.call?.at || '', linen: r.linen?.sentAt ? 'sent' : r.linen?.approvedAt ? 'approved' : '', walk: r.walk?.doneAt ? 'done' : r.walk?.sentAt ? 'sent' : r.submittedAt || r.stock || marks.length ? 'needed' : '', track: trackOf(r), liveDate: r.deal?.liveDate || '', fee: r.deal?.fee ?? null, ...(r.archived ? { archived: true } : {}) }
 }
 async function writeIndex(row: OOIndexRow, by: string | null) {
   const idx = await getSettingFresh<OOIndexRow[]>(OO_INDEX, [])
@@ -142,6 +142,8 @@ export async function createRecord(v: any, by: string): Promise<OORecord> {
     home: v?.home ? cleanHome(v.home) : null, more: cleanMore(v?.more),
     // more than one owner from the start (Jon, 2026-11-13: "option to create multiple owners for one property")
     owners: cleanOwners(v?.owners, []),
+    // what sales signed: when the home can start taking guests, and the management fee
+    deal: cleanDeal(v?.deal),
     marks: {}, ownerNotes: '', teamNotes: str(v?.teamNotes, 4000), steps: freshSteps(), call: { at: '', link: '', note: '' }, submittedAt: '',
   }
   const w = await saveRecord(r, by)

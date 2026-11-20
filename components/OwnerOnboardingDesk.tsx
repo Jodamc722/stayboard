@@ -9,7 +9,7 @@ import { remindState, REMIND_LABEL } from '@/lib/owner-onboard-remind'
 import { AddressInput } from './AddressInput'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Plus, Loader2, Copy, Check, Mail, Phone, MessageSquare, ExternalLink, FileUp, Download, Send, Lock, Printer, Search, Archive, Clock, ChevronDown } from 'lucide-react'
-import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, orderTierLabel, linenLines, introEmail, stepLabel, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
+import { OO_STEPS, OO_BEDS, OO_APPLIANCES, OO_APPLIANCE_LABEL, DEFAULT_GM, DEFAULT_SALES, DEFAULT_HOME, OO_DECISIONS, stockOf, orderTierLabel, linenLines, introEmail, stepLabel, daysToLive, liveLabel, liveIn, feeLabel, byLiveDate, DEFAULT_FEE, type OOIndexRow, type OOItem, type OOStepStatus, type OOHome, type OOTrack } from '@/lib/owner-onboard'
 
 type Any = any
 const lab = 'text-[10.5px] uppercase tracking-[0.16em] text-muted font-semibold'
@@ -61,7 +61,9 @@ function TrackRow({ t }: { t: OOTrack }) {
 }
 const TRACK_TONE = { ok: 'bg-app text-ink border-line', no: 'bg-app text-muted border-line' }
 /** What the list can be narrowed to: the things still outstanding. */
-const TRACK_FILTERS: { key: string; label: string; hit: (t: OOTrack) => boolean }[] = [
+const TRACK_FILTERS: { key: string; label: string; hit: (t: OOTrack) => boolean; /** reads the whole row, not just the owner's status */ row?: (l: OOIndexRow) => boolean }[] = [
+  { key: 'live', label: 'No live date', hit: () => false, row: l => !l.liveDate && l.stage !== 'Live' },
+  { key: 'agree', label: 'No agreement', hit: () => false, row: l => !l.agreement },
   { key: 'portal', label: 'Portal email not sent', hit: t => t.invited < t.owners },
   { key: 'signin', label: 'Not signed in', hit: t => t.signedIn < t.owners },
   { key: 'inventory', label: 'Inventory not finished', hit: t => t.inventory !== 'na' && t.inventory !== 'done' },
@@ -650,27 +652,33 @@ export function OwnerOnboardingDesk() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [made, setMade] = useState<Any>(null)
-  const [f, setF] = useState<Any>({ owners: [], ownerName: '', ownerEmail: '', ownerPhone: '', property: '', listingId: '', unitLabel: '', from: 'sales', greeting: '', gm: { ...DEFAULT_GM }, sales: { ...DEFAULT_SALES }, askSupplies: true, askLinen: true, askPayout: true, prefill: false, home: { ...DEFAULT_HOME }, teamNotes: '' })
+  const [f, setF] = useState<Any>({ owners: [], ownerName: '', ownerEmail: '', ownerPhone: '', property: '', listingId: '', unitLabel: '', from: 'sales', greeting: '', gm: { ...DEFAULT_GM }, sales: { ...DEFAULT_SALES }, askSupplies: true, askLinen: true, askPayout: true, prefill: false, home: { ...DEFAULT_HOME }, teamNotes: '', liveDate: '', fee: '', noAgree: false })
+  const [sort, setSort] = useState<'live' | 'updated'>('live')
   const agree = useRef<HTMLInputElement>(null)
   const [agreeFile, setAgreeFile] = useState<File | null>(null)
   const load = () => fetch('/api/owner-onboarding', { cache: 'no-store' }).then(r => r.json()).then(d => setLinks(d?.ok ? d.links : [])).catch(() => setLinks([]))
   useEffect(() => { load() }, [])
 
   async function create(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setMsg('')
+    e.preventDefault(); setMsg('')
+    // THE CONTRACT IS ASKED FOR (Jon, 2026-11-20): a new owner needs the signed agreement, or a plain "not signed yet"
+    if (!agreeFile && !f.noAgree) { setMsg('Upload the signed management agreement, or tick “Not signed yet”.'); return }
+    if (f.fee === '' || !(Number(f.fee) >= 0 && Number(f.fee) <= 100)) { setMsg('Enter the management fee as a percentage, for example ' + DEFAULT_FEE + '.'); return }
+    setBusy(true)
     try {
-      const body = { custom: { ownerName: f.ownerName, ownerEmail: f.ownerEmail, ownerPhone: f.ownerPhone, greeting: f.greeting, from: f.from, gm: f.gm, sales: f.sales, contact: f.gm, askHome: true, askSupplies: f.askSupplies, askLinen: f.askLinen, askPayout: f.askPayout }, attach: { property: f.property, listingId: f.listingId, unitLabel: f.unitLabel }, home: f.prefill ? f.home : null, teamNotes: f.teamNotes, owners: (f.owners || []).filter((o: Any) => o.name.trim() || o.email.trim()) }
+      const body = { deal: { liveDate: f.liveDate, fee: Number(f.fee) }, custom: { ownerName: f.ownerName, ownerEmail: f.ownerEmail, ownerPhone: f.ownerPhone, greeting: f.greeting, from: f.from, gm: f.gm, sales: f.sales, contact: f.gm, askHome: true, askSupplies: f.askSupplies, askLinen: f.askLinen, askPayout: f.askPayout }, attach: { property: f.property, listingId: f.listingId, unitLabel: f.unitLabel }, home: f.prefill ? f.home : null, teamNotes: f.teamNotes, owners: (f.owners || []).filter((o: Any) => o.name.trim() || o.email.trim()) }
       const d = await fetch('/api/owner-onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json())
       if (!d?.ok) throw new Error(d?.error || 'Could not create the link.')
       if (agreeFile) await uploadAgreement(d.code, agreeFile).catch(err => setMsg('The link is made, but the agreement did not upload: ' + err.message))
       const full = await fetch('/api/owner-onboarding/' + d.code).then(r => r.json())
-      setMade(full.record); setCreating(false); setAgreeFile(null); load()
+      setMade(full.record); setCreating(false); setAgreeFile(null); setF((x: Any) => ({ ...x, liveDate: '', fee: '', noAgree: false })); load()
     } catch (err: Any) { setMsg(err.message) } finally { setBusy(false) }
   }
 
   const inScope = (links || []).filter(l => (showArch || !l.archived) && (!q.trim() || (l.ownerName + ' ' + l.property + ' ' + l.unitLabel).toLowerCase().includes(q.trim().toLowerCase())))
   const fHit = TRACK_FILTERS.find(x => x.key === flt)
-  const shown = fHit ? inScope.filter(l => l.track && fHit.hit(l.track)) : inScope
+  const shown0 = fHit ? inScope.filter(l => fHit.row ? fHit.row(l) : !!l.track && fHit.hit(l.track)) : inScope
+  const shown = sort === 'live' ? [...shown0].sort(byLiveDate) : shown0
   const P = (k: 'gm' | 'sales', key: string, label: string) => <label className="block"><span className={lab}>{label}</span><input value={f[k][key]} onChange={e => setF({ ...f, [k]: { ...f[k], [key]: e.target.value } })} className={field} /></label>
 
   return (
@@ -717,6 +725,17 @@ export function OwnerOnboardingDesk() {
             <div className="sm:col-span-3 flex flex-wrap items-center gap-x-3 gap-y-1">{(f.owners || []).length < 5 ? <button type="button" onClick={() => setF({ ...f, owners: [...(f.owners || []), { name: '', email: '', phone: '' }] })} className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-ink"><Plus size={13} /> Add another owner</button> : null}{(f.owners || []).length ? <span className="text-[12px] text-muted">Each owner gets their own invite, password and sign-in to the same portal.</span> : <span className="text-[12px] text-muted">For a property with more than one owner.</span>}</div>
           </div>
           <UnitPicker property={f.property} listingId={f.listingId} unitLabel={f.unitLabel} onPick={p => setF({ ...f, ...p })} />
+          {/* THE DEAL: when we can start running the home, the fee on the agreement, and the agreement itself */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="block"><span className={lab}>Live date</span><input type="date" value={f.liveDate} onChange={e => setF({ ...f, liveDate: e.target.value })} className={field} /><span className="block text-[11.5px] text-muted mt-1">The day we can start running the unit. The list is worked in this order. Leave empty if it is not known yet.</span></label>
+            <label className="block"><span className={lab}>Management fee (%)</span><input type="number" inputMode="decimal" min={0} max={100} step={0.5} value={f.fee} onChange={e => setF({ ...f, fee: e.target.value })} placeholder={String(DEFAULT_FEE)} className={field} required /><span className="block text-[11.5px] text-muted mt-1">As written on the signed agreement.</span></label>
+            <div>
+              <span className={lab}>Signed agreement</span>
+              <input ref={agree} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={e => { const fl = e.target.files?.[0] || null; setAgreeFile(fl); if (fl) setF((x: Any) => ({ ...x, noAgree: false })) }} />
+              <button type="button" onClick={() => agree.current?.click()} className={'mt-1 w-full inline-flex items-center gap-2 rounded-xl border border-dashed bg-white px-3 py-2 text-[13px] text-ink hover:border-ink/40 ' + (agreeFile ? 'border-emerald-400' : 'border-line')}><FileUp size={14} className="shrink-0" /> <span className="truncate">{agreeFile ? agreeFile.name : 'Upload the signed agreement'}</span></button>
+              {agreeFile ? <span className="block text-[11.5px] text-muted mt-1">It goes to accounting with the owner’s details when the paperwork is in.</span> : <label className="mt-1.5 flex items-center gap-2 text-[12px] text-ink"><input type="checkbox" checked={f.noAgree} onChange={e => setF({ ...f, noAgree: e.target.checked })} /> Not signed yet, I will upload it later</label>}
+            </div>
+          </div>
           <div>
             <p className={lab}>The introductory email comes from</p>
             <div className="inline-flex rounded-full bg-app p-0.5 text-[12.5px] font-semibold mt-1">{(['sales', 'gm'] as const).map(k => <button key={k} type="button" onClick={() => setF({ ...f, from: k })} className={'rounded-full px-4 py-1.5 ' + (f.from === k ? 'bg-white text-ink shadow-sm' : 'text-muted')}>{k === 'sales' ? 'Sales, introducing the GM' : 'The GM'}</button>)}</div>
@@ -735,15 +754,7 @@ export function OwnerOnboardingDesk() {
             <label className="inline-flex items-center gap-2 text-[13px] font-semibold text-ink"><input type="checkbox" checked={f.prefill} onChange={e => setF({ ...f, prefill: e.target.checked })} /> Start the home for them (what we already know)</label>
             {f.prefill ? <div className="mt-3"><HomeEditor home={f.home} set={h => setF({ ...f, home: h })} /></div> : null}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <span className={lab}>Signed agreement (optional)</span>
-              <input ref={agree} type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={e => setAgreeFile(e.target.files?.[0] || null)} />
-              <button type="button" onClick={() => agree.current?.click()} className="mt-1 w-full inline-flex items-center gap-2 rounded-xl border border-dashed border-line bg-white px-3 py-2.5 text-[13px] text-ink hover:border-ink/40"><FileUp size={14} /> {agreeFile ? agreeFile.name : 'Upload the signed management agreement'}</button>
-              <p className="text-[11.5px] text-muted mt-1">It goes to accounting with the owner’s details when the paperwork is in.</p>
-            </div>
-            <label className="block"><span className={lab}>Team notes (never shown to the owner)</span><textarea rows={3} value={f.teamNotes} onChange={e => setF({ ...f, teamNotes: e.target.value })} className={field} /></label>
-          </div>
+          <label className="block"><span className={lab}>Team notes (never shown to the owner)</span><textarea rows={3} value={f.teamNotes} onChange={e => setF({ ...f, teamNotes: e.target.value })} className={field} /></label>
           {msg ? <p className="text-[13px] text-red-700">{msg}</p> : null}
           <div className="flex gap-2"><button type="submit" disabled={busy} className="rounded-xl bg-ink text-white px-4 py-2.5 text-[13.5px] font-semibold disabled:opacity-50">{busy ? 'Creating…' : 'Create the link and email'}</button><button type="button" onClick={() => setCreating(false)} className="rounded-xl border border-line px-4 py-2.5 text-[13.5px] font-semibold text-ink">Cancel</button></div>
         </form>
@@ -752,23 +763,25 @@ export function OwnerOnboardingDesk() {
       <section className="rounded-2xl border border-line bg-white">
         <div className="flex flex-wrap items-center gap-2 p-4 border-b border-line">
           <h2 className="font-serif text-[24px] leading-none text-ink mr-auto">Owners <span className="text-muted text-[15px]">{shown.length}</span></h2>
+          <span className="inline-flex rounded-full bg-app p-0.5 text-[12px] font-semibold" title="The order of the list">{([['live', 'By live date'], ['updated', 'Recently updated']] as const).map(([k, l]) => <button key={k} type="button" onClick={() => setSort(k)} className={'rounded-full px-3 py-1 ' + (sort === k ? 'bg-white text-ink shadow-sm' : 'text-muted')}>{l}</button>)}</span>
           <label className="inline-flex items-center gap-1.5 text-[12.5px] text-muted"><input type="checkbox" checked={showArch} onChange={e => setShowArch(e.target.checked)} /> Archived</label>
           <label className="flex items-center gap-2 rounded-xl border border-line px-3 py-2 w-full sm:w-64"><Search size={14} className="text-muted" /><input value={q} onChange={e => setQ(e.target.value)} placeholder="Find an owner or property" className="w-full min-w-0 text-[13px] bg-transparent outline-none" /></label>
         </div>
         {links && inScope.length ? (
           <div className="flex flex-wrap items-center gap-1.5 px-4 py-2.5 border-b border-line">
             <span className={lab + ' mr-1'}>Waiting on</span>
-            {TRACK_FILTERS.map(x => { const n = inScope.filter(l => l.track && x.hit(l.track)).length; return <button key={x.key} type="button" onClick={() => setFlt(flt === x.key ? '' : x.key)} className={'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] ' + (flt === x.key ? 'bg-ink text-white border-ink font-semibold' : n ? 'bg-white text-ink border-line' : 'bg-white text-muted/60 border-line')}>{x.label}<span className="tabular-nums font-semibold">{n}</span></button> })}
+            {TRACK_FILTERS.map(x => { const n = inScope.filter(l => x.row ? x.row(l) : !!l.track && x.hit(l.track)).length; return <button key={x.key} type="button" onClick={() => setFlt(flt === x.key ? '' : x.key)} className={'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[12px] ' + (flt === x.key ? 'bg-ink text-white border-ink font-semibold' : n ? 'bg-white text-ink border-line' : 'bg-white text-muted/60 border-line')}>{x.label}<span className="tabular-nums font-semibold">{n}</span></button> })}
             {flt ? <button type="button" onClick={() => setFlt('')} className="text-[12.5px] font-semibold text-muted underline ml-1">Show all</button> : null}
           </div>
         ) : null}
         {!links ? <p className="py-10 text-center text-muted"><Loader2 size={15} className="inline animate-spin" /></p> : !shown.length ? <p className="p-5 text-[13px] text-muted">{flt ? 'Nobody is waiting on that.' : 'No owner links yet. Make the first with “New owner link”.'}</p> : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-[13px]">
-            <thead><tr className="text-left text-[10.5px] uppercase tracking-[0.14em] text-muted border-b border-line"><th className="py-2.5 pl-4 pr-3 font-semibold">Owner</th><th className="pr-3 font-semibold">Property · unit</th><th className="pr-3 font-semibold">Where it stands</th>{TRACK_COLS.map(c => <th key={c} className="px-1.5 font-semibold text-center whitespace-nowrap">{c}</th>)}<th className="pr-4 pl-3 font-semibold text-right">Updated</th></tr></thead>
+          <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-[13px]">
+            <thead><tr className="text-left text-[10.5px] uppercase tracking-[0.14em] text-muted border-b border-line"><th className="py-2.5 pl-4 pr-3 font-semibold">Owner</th><th className="pr-3 font-semibold">Property · unit</th><th className="pr-3 font-semibold whitespace-nowrap">Live date</th><th className="pr-3 font-semibold">Where it stands</th>{TRACK_COLS.map(c => <th key={c} className="px-1.5 font-semibold text-center whitespace-nowrap">{c}</th>)}<th className="pr-4 pl-3 font-semibold text-right">Updated</th></tr></thead>
             <tbody>{shown.map(l => (
               <tr key={l.code} onClick={() => { window.location.href = '/owner-onboarding/' + l.code }} className="border-b border-line last:border-0 cursor-pointer hover:bg-app">
                 <td className="py-2.5 pl-4 pr-3 font-semibold text-ink">{l.ownerName || '—'}{l.archived ? <span className="ml-1 text-[11px] text-muted">(archived)</span> : null}</td>
-                <td className="pr-3 text-ink">{[l.property, l.unitLabel].filter(Boolean).join(' · ') || <span className="text-muted">—</span>}{(l.units || 0) > 1 ? <span className="ml-1 text-[11px] text-muted">{l.units} units</span> : null}{l.listingId ? <span className="ml-1 text-[10.5px] text-emerald-700 font-semibold">GUESTY</span> : null}{(() => { const ex = [l.agreement ? 'Agreement in' : '', l.linen === 'sent' ? 'Linen sent' : l.linen === 'approved' ? 'Linen approved' : '', l.walk === 'done' ? 'Walkthrough done' : l.walk === 'sent' ? 'Walkthrough sent' : l.walk === 'needed' ? 'Walkthrough needed' : '', l.need ? l.need + ' to order' : ''].filter(Boolean).join(' · '); return ex ? <span className="block text-[11.5px] text-muted mt-0.5">{ex}</span> : null })()}</td>
+                <td className="pr-3 text-ink">{[l.property, l.unitLabel].filter(Boolean).join(' · ') || <span className="text-muted">—</span>}{(l.units || 0) > 1 ? <span className="ml-1 text-[11px] text-muted">{l.units} units</span> : null}{l.listingId ? <span className="ml-1 text-[10.5px] text-emerald-700 font-semibold">GUESTY</span> : null}{(() => { const ex = [feeLabel(l.fee) ? feeLabel(l.fee) + ' fee' : '', l.agreement ? 'Agreement in' : 'No agreement', l.linen === 'sent' ? 'Linen sent' : l.linen === 'approved' ? 'Linen approved' : '', l.walk === 'done' ? 'Walkthrough done' : l.walk === 'sent' ? 'Walkthrough sent' : l.walk === 'needed' ? 'Walkthrough needed' : '', l.need ? l.need + ' to order' : ''].filter(Boolean).join(' · '); return ex ? <span className="block text-[11.5px] text-muted mt-0.5">{ex}</span> : null })()}</td>
+                <td className="pr-3 whitespace-nowrap">{(() => { const d = daysToLive(l.liveDate); if (d == null) return <span className="text-muted">Not set</span>; const live = l.stage === 'Live'; return <><span className="font-semibold text-ink tabular-nums">{liveLabel(l.liveDate || '')}</span><span className={'block text-[11.5px] mt-0.5 ' + (live ? 'text-muted' : d < 0 ? 'text-red-700 font-semibold' : d <= 14 ? 'text-[#8C6D3A] font-semibold' : 'text-muted')}>{live ? 'live' : d < 0 ? 'passed ' + liveIn(d) : liveIn(d)}</span></> })()}</td>
                 <td className="pr-3"><span className="flex items-center gap-1" title={OO_STEPS.map((s, i) => s.label + ': ' + ({ d: 'done', g: 'in progress', t: 'to do' } as Any)[(l.steps || '')[i] || 't']).join('\n')}>{OO_STEPS.map((s, i) => { const c = (l.steps || '')[i] || 't'; return <i key={s.key} className={'inline-block w-4 h-1.5 rounded-full ' + (c === 'd' ? 'bg-emerald-600' : c === 'g' ? 'bg-[#8C6D3A]' : 'bg-line')} /> })}</span><span className="block text-[12px] text-ink mt-1">{l.stage}{l.callAt ? <span className="text-muted"> · call {new Date(l.callAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span> : null}</span></td>
                 {l.track ? trackChips(l.track).map(c => <td key={c.key} title={c.tip} className="px-1.5 text-center">{<TrackMark c={c} />}</td>) : TRACK_COLS.map(c => <td key={c} />)}
                 <td className="pr-4 pl-3 text-right text-[12px] text-muted whitespace-nowrap">{new Date(l.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
@@ -874,6 +887,7 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
         {[['intro', 'Intro email'], ['portal', 'Portal'], ['home', 'Home'], ['supplies', 'Supplies'], ['order', 'Order list'], ['linen', 'Linen'], ['paperwork', 'Paperwork']].map(([id, l]) => <a key={id} href={'#oo-' + id} className="rounded-full border border-line bg-white px-2.5 py-1 font-semibold text-ink hover:border-ink">{l}</a>)}
         <span className="ml-auto flex gap-3 text-muted"><button type="button" className="underline" onClick={() => window.dispatchEvent(new CustomEvent(FOLD_ALL, { detail: false }))}>Fold all</button><button type="button" className="underline" onClick={() => window.dispatchEvent(new CustomEvent(FOLD_ALL, { detail: true }))}>Open all</button></span>
       </nav>
+      <DealCard rec={rec} onSave={deal => patch({ deal })} onAgreement={() => { window.dispatchEvent(new CustomEvent(FOLD_ALL, { detail: true })); setTimeout(() => document.getElementById('oo-paperwork')?.scrollIntoView({ behavior: 'smooth' }), 50) }} />
       {rec.track ? (
         <section className={card + ' oo-noprint mb-6'}>
           <p className={lab + ' mb-2.5'}>Where the owner stands</p>
@@ -1065,6 +1079,31 @@ export function OwnerOnboardingReport({ code }: { code: string }) {
   )
 }
 
+// THE DEAL (Jon, 2026-11-20): the live date sales set, the management fee and whether the agreement is in, at the top
+// of the owner's page. Both fields save when they are left.
+function DealCard({ rec, onSave, onAgreement }: { rec: Any; onSave: (d: Any) => void; onAgreement: () => void }) {
+  const [day, setDay] = useState<string>(rec.deal?.liveDate || '')
+  const [fee, setFee] = useState<string>(rec.deal?.fee != null ? String(rec.deal.fee) : '')
+  useEffect(() => { setDay(rec.deal?.liveDate || ''); setFee(rec.deal?.fee != null ? String(rec.deal.fee) : '') }, [rec.deal?.liveDate, rec.deal?.fee])
+  const d = daysToLive(day)
+  const live = !rec.steps.some((s: Any) => s.status !== 'done')
+  const feeOk = fee === '' || (Number(fee) >= 0 && Number(fee) <= 100)
+  return (
+    <section className={card + ' mb-6'}>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <label className="block"><span className={lab}>Live date</span>
+          <input type="date" value={day} onChange={e => { setDay(e.target.value); if (e.target.value !== (rec.deal?.liveDate || '')) onSave({ liveDate: e.target.value }) }} className={field + ' oo-noprint'} />
+          <span className={'block text-[12px] mt-1 ' + (d == null ? 'text-red-700 font-semibold' : live ? 'text-muted' : d < 0 ? 'text-red-700 font-semibold' : d <= 14 ? 'text-[#8C6D3A] font-semibold' : 'text-muted')}>{d == null ? 'Not set. The owners list is worked by this date.' : liveLabel(day) + ' · ' + (live ? 'live' : d < 0 ? 'passed ' + liveIn(d) : liveIn(d))}</span></label>
+        <label className="block"><span className={lab}>Management fee (%)</span>
+          <input type="number" inputMode="decimal" min={0} max={100} step={0.5} value={fee} placeholder={String(DEFAULT_FEE)} onChange={e => setFee(e.target.value)} onBlur={() => { if (!feeOk) return; const cur = rec.deal?.fee != null ? String(rec.deal.fee) : ''; if (fee !== cur) onSave({ fee: fee === '' ? null : Number(fee) }) }} className={field + ' oo-noprint'} />
+          <span className={'block text-[12px] mt-1 ' + (!feeOk || fee === '' ? 'text-red-700 font-semibold' : 'text-muted')}>{!feeOk ? 'Between 0 and 100.' : fee === '' ? 'Not entered.' : feeLabel(Number(fee)) + ' of revenue, as on the agreement.'}</span></label>
+        <div><span className={lab}>Management agreement</span>
+          <p className={'text-[13.5px] mt-2 ' + (rec.agreement ? 'text-ink' : 'text-red-700 font-semibold')}>{rec.agreement ? 'Uploaded ' + shortDay(rec.agreement.at) : 'Not uploaded yet'}</p>
+          <button type="button" onClick={onAgreement} className="oo-noprint text-[12px] font-semibold text-ink underline mt-1">{rec.agreement ? 'Open it in Paperwork' : 'Upload it in Paperwork'}</button></div>
+      </div>
+    </section>
+  )
+}
 function CallForm({ code, call, ownerEmail, onSave, onRec }: { code: string; call: Any; ownerEmail: string; onSave: (c: Any) => void; onRec: (r: Any) => void }) {
   const [day, setDay] = useState(call?.at ? String(call.at).slice(0, 10) : '')
   const [time, setTime] = useState(call?.at ? String(call.at).slice(11, 16) : '10:00')
