@@ -7,9 +7,9 @@
 // so every edit is instant and free, and the plain-node tests run the same code the browser does.
 // What is saved still passes through sanitizeComposition (lib/adx/composition): an edit can never put anything into
 // a piece that the composer could not.
-import type { Composition, Scene, Layer, PhotoLayer, TextLayer, PhotoAsset, Transition, Box, Entrance } from './composition'
+import type { Composition, Scene, Layer, PhotoLayer, TextLayer, ShapeLayer, MotifLayer, MotifKey, PhotoAsset, Transition, Box, Entrance } from './composition'
 import { lum, contrast, resolveColor } from './composition'
-import { layoutText, logoHeight, maxUpscale, groundOf, type Measure } from './player'
+import { layoutText, logoHeight, maxUpscale, drawnScale, groundOf, type Measure } from './player'
 
 const r30 = (x: number) => Math.round(x * 30) / 30
 const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x))
@@ -128,7 +128,7 @@ export function setBox(doc: Composition, lid: string, box: Partial<Box>): Compos
     if (l.type === 'fill') return l
     const b = { ...(l.box as Box), ...box }
     const nb: any = { x: Math.round(clamp(b.x, -W, 2 * W)), y: Math.round(clamp(b.y, -H, 2 * H)), w: Math.round(clamp(b.w, l.type === 'logo' ? 60 : 24, l.type === 'logo' ? W : 2 * W)) }
-    if (l.type !== 'logo') nb.h = Math.round(clamp(b.h ?? 1, 24, 2 * H))
+    if (l.type !== 'logo') nb.h = Math.round(clamp(b.h ?? 1, l.type === 'shape' && l.shape === 'line' ? 1 : 24, 2 * H))
     return { ...l, box: nb } as Layer
   })
 }
@@ -150,7 +150,7 @@ export const ENTRANCES: Record<string, { key: Entrance['preset']; label: string 
   vector: [{ key: 'fade', label: 'Fade' }, { key: 'fade-up', label: 'Float up' }, { key: 'draw', label: 'Draw on' }],
   logo: [{ key: 'fade', label: 'Fade' }, { key: 'fade-up', label: 'Float up' }],
   button: [{ key: 'pop', label: 'Pop' }],
-  motif: [],
+  motif: [{ key: 'fade', label: 'Fade' }, { key: 'settle', label: 'Drop in' }],
 }
 
 // ── photographs ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -337,7 +337,12 @@ export function setHeadlineFace(doc: Composition, family: string, weight: number
 }
 export function setMusic(doc: Composition, track: string, credit: string, gain?: number): Composition {
   const m = doc.assets.audio.music
-  return touch({ ...doc, assets: { ...doc.assets, audio: { ...doc.assets.audio, music: { track, credit, gain: gain == null ? m.gain : clamp(gain, 0, 1) } } } })
+  return touch({ ...doc, assets: { ...doc.assets, audio: { ...doc.assets.audio, music: { ...m, track, credit, gain: gain == null ? m.gain : clamp(gain, 0, 1) } } } })
+}
+/** How long the music takes to fade out at the end (0 = it stops with the picture). */
+export function setMusicFade(doc: Composition, seconds: number): Composition {
+  const m = doc.assets.audio.music
+  return touch({ ...doc, assets: { ...doc.assets, audio: { ...doc.assets.audio, music: { ...m, fadeOut: clamp(seconds, 0, 8) } } } })
 }
 
 // ── clicking into the picture ───────────────────────────────────────────────────────────────────────────────────
@@ -347,6 +352,8 @@ export function layerRect(doc: Composition, l: Layer): Rect | null {
   if (l.type === 'fill') return null
   if (l.type === 'logo') return { x0: l.box.x, y0: l.box.y, x1: l.box.x + l.box.w, y1: l.box.y + logoHeight(l) }
   const b = l.box as Box
+  // a line is too thin to click or hold: its frame is a band round it
+  if (l.type === 'shape' && l.shape === 'line' && b.h < 28) return { x0: b.x, y0: b.y - 14, x1: b.x + b.w, y1: b.y + b.h + 14 }
   return { x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h }
 }
 /** Everything under a point of the canvas in the scene on screen, the likeliest target first: words, the button and
@@ -367,6 +374,7 @@ export function hitLayers(doc: Composition, sceneIndex: number, px: number, py: 
 /** What a layer is, in words a person would use. */
 export function layerName(doc: Composition, l: Layer): string {
   if (l.type === 'fill') return 'Background'
+  if (l.type === 'photo' && doc.assets.photos[l.photo]?.source === 'upload') return 'Image' + (doc.assets.photos[l.photo].shows ? ' · ' + doc.assets.photos[l.photo].shows.slice(0, 40) : '')
   if (l.type === 'photo') { const a = doc.assets.photos[l.photo]; return 'Photo' + (a ? ' · ' + ([a.building, (a.shows || '').split(/[.,;]/)[0]].filter(Boolean).join(' · ').slice(0, 48)) : '') }
   if (l.type === 'text') { const t = l.runs.map(r => ('br' in r ? ' ' : r.t)).join('').replace(/\s+/g, ' ').trim(); return (l.fit ? 'Headline' : 'Label') + ' · “' + t.slice(0, 30) + (t.length > 30 ? '…' : '') + '”' }
   if (l.type === 'button') return 'Button · “' + l.label.slice(0, 30) + '”'
@@ -393,3 +401,87 @@ export function setLayerColor(doc: Composition, lid: string, color: string): Com
     return l
   })
 }
+
+// ── adding things: shapes, decorations, your own image ──────────────────────────────────────────────────────────
+// Jon, 2026-11-20: "Should be add shape or image or png tree or lights etc option when you click." Each lands where
+// the picture was last clicked (or in the middle), UNDER the words so it can never cover them, and is selected so its
+// options are open. Decorations are the engine's own drawn ones (the same the designer uses), so they animate.
+export type Pt = { x: number; y: number }
+/** Is this photo layer an image a person added (drawn whole, not one of the piece's photographs)? */
+export const isAdded = (doc: Composition, l: Layer): boolean => l.type === 'photo' && doc.assets.photos[l.photo]?.source === 'upload'
+/** A palette colour that shows on the scene's ground without shouting: the mid-tone furthest from it. */
+export function accentOn(doc: Composition, scene: Scene): string {
+  const g = lum(groundOf(doc, scene)), vals = Object.entries(doc.tokens.color)
+  const mids = vals.filter(([, v]) => { const c = contrast(lum(v), g); return c >= 1.6 && lum(v) > 0.03 && lum(v) < 0.9 })
+  const pickFrom = mids.length ? mids : vals
+  return (pickFrom.slice().sort((a, b) => contrast(lum(b[1]), g) - contrast(lum(a[1]), g))[mids.length > 1 ? 1 : 0] || vals[0] || ['#888888'])[0]
+}
+function place(doc: Composition, w: number, h: number, at?: Pt): Box {
+  const W = doc.canvas.w, H = doc.canvas.h, sf = doc.canvas.safe
+  const cx = at ? at.x : W / 2, cy = at ? at.y : sf.top + (H - sf.top - sf.bottom) / 2
+  return { x: Math.round(clamp(cx - w / 2, 0, Math.max(0, W - w))), y: Math.round(clamp(cy - h / 2, 0, Math.max(0, H - h))), w: Math.round(w), h: Math.round(h) }
+}
+/** Under the words (and the logo and button), over the ground, the photograph and whatever was already there. */
+function insertUnderWords(doc: Composition, sid: string, layer: Layer, bottom = false): Composition {
+  return touch({ ...doc, scenes: doc.scenes.map(s => {
+    if (s.id !== sid) return s
+    const first = s.layers.findIndex(l => l.type === 'text' || l.type === 'logo' || l.type === 'button')
+    const at = bottom ? (s.layers[0]?.type === 'fill' ? 1 : 0) : first < 0 ? s.layers.length : first
+    return { ...s, layers: [...s.layers.slice(0, at), layer, ...s.layers.slice(at)] }
+  }) })
+}
+export const SHAPE_KINDS: { key: string; label: string }[] = [
+  { key: 'block', label: 'Block' }, { key: 'rounded', label: 'Rounded block' }, { key: 'circle', label: 'Circle' }, { key: 'frame', label: 'Frame' }, { key: 'line', label: 'Line' },
+]
+export function addShape(doc: Composition, sid: string, kind: string, at?: Pt): { doc: Composition; layerId: string } {
+  const s = doc.scenes.find(x => x.id === sid); if (!s) return { doc, layerId: '' }
+  const id = freshId(allIds(doc), sid + '-' + kind), color = accentOn(doc, s), u = doc.canvas.w / 1080
+  const base = { id, type: 'shape' as const, color, in: { preset: 'fade' as const, at: 0.2, dur: 0.5 } }
+  const layer: ShapeLayer =
+    kind === 'circle' ? { ...base, shape: 'ellipse', box: place(doc, 320 * u, 320 * u, at) }
+    : kind === 'line' ? { ...base, shape: 'line', stroke: 6, box: { ...place(doc, 420 * u, 6, at), h: 1 }, in: { preset: 'draw', at: 0.2, dur: 0.6, from: 'left' } }
+    : kind === 'frame' ? { ...base, shape: 'rect', stroke: 6, box: place(doc, 460 * u, 560 * u, at) }
+    : kind === 'rounded' ? { ...base, shape: 'rect', radius: 36, box: place(doc, 420 * u, 300 * u, at) }
+    : { ...base, shape: 'rect', box: place(doc, 420 * u, 300 * u, at) }
+  return { doc: insertUnderWords(doc, sid, layer), layerId: id }
+}
+/** What a shape is now, in the words of SHAPE_KINDS. */
+export function shapeKind(l: ShapeLayer): string { return l.shape === 'line' ? 'line' : l.shape === 'ellipse' ? 'circle' : l.stroke ? 'frame' : l.radius ? 'rounded' : 'block' }
+
+export const DECORATIONS: { key: MotifKey; label: string; needsButton?: boolean }[] = [
+  { key: 'string-lights', label: 'String of lights' }, { key: 'tree', label: 'Tree' }, { key: 'ornament', label: 'Ornament' }, { key: 'star', label: 'Star' },
+  { key: 'snow', label: 'Snow' }, { key: 'sparkle', label: 'Sparkle' }, { key: 'firework', label: 'Firework' }, { key: 'leaf', label: 'Leaf' }, { key: 'rays', label: 'Rays' },
+  { key: 'bulbs-around', label: 'Lights round the button', needsButton: true },
+]
+export const VARIANT_LABEL: Record<string, string> = { maple: 'Maple', oval: 'Oval', palm: 'Palm', multi: 'Coloured', warm: 'Warm white', white: 'White', ball: 'Ball', drop: 'Drop', four: 'Four points', five: 'Five points', dot: 'Dots', fan: 'Fan', full: 'Full circle', evergreen: 'Evergreen', soft: 'Soft', burst: 'Burst' }
+export function addDecoration(doc: Composition, sid: string, motif: MotifKey, at?: Pt): { doc: Composition; layerId: string } {
+  const s = doc.scenes.find(x => x.id === sid); if (!s) return { doc, layerId: '' }
+  const W = doc.canvas.w, H = doc.canvas.h, u = W / 1080, sf = doc.canvas.safe
+  const id = freshId(allIds(doc), sid + '-' + motif), accent = accentOn(doc, s)
+  const settle = { preset: 'settle' as const, at: 0.4, dur: 0.9, fromY: -240, spin: 30 }, fade = { preset: 'fade' as const, at: 0.2, dur: 0.6 }
+  let layer: MotifLayer, bottom = false
+  if (motif === 'string-lights') layer = { id, type: 'motif', motif, variant: 'multi', box: { x: 0, y: Math.round(at ? clamp(at.y - 40 * u, 0, H - 120 * u) : 96 * u), w: W, h: Math.round(64 * u) }, in: { preset: 'light-up', at: 0.2, dur: 1.2 } }
+  else if (motif === 'bulbs-around') { const b = s.layers.find(l => l.type === 'button'); if (!b || b.type !== 'button') return { doc, layerId: '' }; layer = { id, type: 'motif', motif, variant: 'multi', box: { ...b.box }, target: b.id, in: { preset: 'light-up', at: 0.6, dur: 1.2 } } }
+  else if (motif === 'tree') layer = { id, type: 'motif', motif, variant: 'evergreen', box: place(doc, 260 * u, 340 * u, at || { x: W - sf.right - 150 * u, y: H - sf.bottom - 190 * u }), in: fade }
+  else if (motif === 'ornament') layer = { id, type: 'motif', motif, variant: 'ball', color: accent, box: place(doc, 84 * u, 250 * u, at ? { x: at.x, y: at.y - 80 * u } : undefined), in: { ...settle, spin: 0 } }
+  else if (motif === 'star') layer = { id, type: 'motif', motif, variant: 'five', color: accent, box: place(doc, 110 * u, 110 * u, at), in: fade }
+  else if (motif === 'leaf') layer = { id, type: 'motif', motif, variant: 'maple', color: accent, rotate: -18, box: place(doc, 150 * u, 150 * u, at), in: settle }
+  else if (motif === 'snow') layer = { id, type: 'motif', motif, variant: 'soft', count: 40, box: { x: 0, y: 0, w: W, h: H }, in: fade }
+  else if (motif === 'sparkle') layer = { id, type: 'motif', motif, variant: 'four', count: 12, color: accent, box: place(doc, 520 * u, 420 * u, at), in: fade }
+  else if (motif === 'firework') layer = { id, type: 'motif', motif, variant: 'burst', color: accent, box: place(doc, 520 * u, 520 * u, at), in: { preset: 'fade', at: 0.3, dur: 1.4 } }
+  else { layer = { id, type: 'motif', motif: 'rays', variant: 'fan', color: accent, opacity: 0.35, box: place(doc, 760 * u, 520 * u, at), in: { preset: 'fade', at: 0.1, dur: 0.9 } }; bottom = true }
+  return { doc: insertUnderWords(doc, sid, layer, bottom), layerId: id }
+}
+/** An image or PNG a person added: shown whole, at up to 40% of the frame's width and never past its real pixels. */
+export function addImage(doc: Composition, sid: string, asset: PhotoAsset, at?: Pt): { doc: Composition; layerId: string } {
+  const s = doc.scenes.find(x => x.id === sid); if (!s) return { doc, layerId: '' }
+  const a: PhotoAsset = { ...asset, source: 'upload' }
+  const key = photoKeyFor(doc, 'img1', a), W = doc.canvas.w
+  const w = Math.min(a.w, Math.round(W * 0.4)), h = Math.round((w * a.h) / a.w)
+  const id = freshId(allIds(doc), sid + '-image')
+  const layer: PhotoLayer = { id, type: 'photo', photo: key, box: place(doc, w, h, at), treatment: 'none', in: { preset: 'fade', at: 0.2, dur: 0.5 } }
+  const d = { ...doc, assets: { ...doc.assets, photos: { ...doc.assets.photos, [key]: a } } }
+  return { doc: insertUnderWords(d, sid, layer), layerId: id }
+}
+/** How far past its real pixels a picture is drawn (1 = exactly its own size). */
+export function upscaleOf(doc: Composition, l: PhotoLayer): number { const a = doc.assets.photos[l.photo]; return a ? drawnScale(l, a) : 1 }

@@ -27,6 +27,15 @@ export const DEAD_BAND_MAX = 0.2
 export const MIN_LABEL_PX = 26
 export const MIN_HEADLINE_PX = 64
 
+/** How long the music takes to fade out at the end unless a person sets it (seconds), and its fade in. */
+export const MUSIC_FADE_OUT = 2
+export const MUSIC_FADE_IN = 0.6
+/** The music's level at time t of a piece `dur` long: up over the fade in, down to silence over the fade out. One
+ *  function for the preview and both export paths, so what is heard is what is exported. */
+export function musicLevel(t: number, dur: number, gain: number, fadeOut: number): number {
+  const up = Math.min(1, Math.max(0, t / MUSIC_FADE_IN)), down = fadeOut > 0.01 ? Math.min(1, Math.max(0, (dur - t) / Math.min(fadeOut, Math.max(0.1, dur - MUSIC_FADE_IN)))) : 1
+  return Math.max(0, Math.min(1, gain * up * down))
+}
 export const LOGO = { black: '/ads/stay-logo-black.png', white: '/ads/stay-logo-white.png', w: 1332, h: 636 } as const
 export const FONT_FAMILIES = ['Fraunces', 'Instrument Sans', 'Bricolage Grotesque'] as const
 /** The files behind the families (public/ads/fonts, SIL Open Font License). Loaded and awaited before any draw. */
@@ -111,7 +120,9 @@ export type Brief = {
 }
 export type PhotoAsset = {
   src: string; w: number; h: number
-  source: 'ours' | 'stock' | 'ai'; building: string; unit: string; area: string
+  /** 'upload' (editor, 2026-11-20): an image or PNG a person added — a sticker, a badge, their own picture. It is
+   *  drawn whole (never cropped) and is not counted as one of the piece's photographs. */
+  source: 'ours' | 'stock' | 'ai' | 'upload'; building: string; unit: string; area: string
   /** What the picture IS (photo analysis / caption) — the composer and the audit read it. */
   shows: string
   focal?: { x: number; y: number }
@@ -129,7 +140,7 @@ export type Composition = {
   concept: { name: string; idea: string; look: LookKey; identity: string }
   canvas: { w: number; h: number; fps: 30; duration: number; safe: Safe }
   tokens: { color: Record<string, string>; type: Record<string, TypeStyle>; motion: { language: string; ease: Ease; easeMove: Ease } }
-  assets: { photos: Record<string, PhotoAsset>; logo: typeof LOGO; audio: { music: { track: string; gain: number; credit: string } } }
+  assets: { photos: Record<string, PhotoAsset>; logo: typeof LOGO; audio: { music: { track: string; gain: number; credit: string; /** Seconds the music takes to fade out at the end (0 = it stops with the picture). */ fadeOut: number } } }
   script: { lines: { scene: string; vo: string }[]; alternates: Record<string, string[]> }
   scenes: Scene[]
   social: { caption: string; captionAlternates: string[]; hashtags: string[] }
@@ -308,13 +319,13 @@ function typeStyle(v: unknown, d: TypeStyle): TypeStyle {
 }
 
 /** The trusted half of a piece: built by the server (or carried by a saved file) and never taken from the model. */
-export type TrustedParts = { id: string; title?: string; brief: Brief; canvas: Composition['canvas']; photos: Record<string, PhotoAsset>; music?: { track: string; gain?: number; credit?: string }; meta?: Partial<Composition['meta']> }
+export type TrustedParts = { id: string; title?: string; brief: Brief; canvas: Composition['canvas']; photos: Record<string, PhotoAsset>; music?: { track: string; gain?: number; credit?: string; fadeOut?: number }; meta?: Partial<Composition['meta']> }
 
 function photoAsset(v: unknown): PhotoAsset | null {
   if (!isObj(v) || !photoSrcAllowed(String(v.src || ''))) return null
   const a: PhotoAsset = {
     src: String(v.src), w: Math.round(num(v.w, 1, 20000, 1200)), h: Math.round(num(v.h, 1, 20000, 800)),
-    source: pick(v.source, ['ours', 'stock', 'ai'] as const, 'ours'), building: cleanText(v.building, 60), unit: cleanText(v.unit, 80), area: cleanText(v.area, 30), shows: cleanText(v.shows, 240),
+    source: pick(v.source, ['ours', 'stock', 'ai', 'upload'] as const, 'ours'), building: cleanText(v.building, 60), unit: cleanText(v.unit, 80), area: cleanText(v.area, 30), shows: cleanText(v.shows, 240),
   }
   if (isObj(v.focal)) a.focal = { x: num(v.focal.x, 0, 1, 0.5), y: num(v.focal.y, 0, 1, 0.5) }
   return a
@@ -410,7 +421,7 @@ export function sanitizeComposition(authored: unknown, trusted: TrustedParts): {
     concept: { name: cleanText(co.name, 80), idea: cleanText(co.idea, 500), look: pick(co.look, LOOK_KEYS, 'colour-field'), identity: idOf(co.identity || brief.moment, '') },
     canvas: { w: W, h: H, fps: 30, duration, safe },
     tokens: { color: palette, type: types, motion: { language: cleanText(mo.language, 40), ease: pick(mo.ease, EASES, 'outExpo'), easeMove: pick(mo.easeMove, EASES, 'inOutCubic') } },
-    assets: { photos: usedPhotos, logo: LOGO, audio: { music: { track: /^[a-z0-9]{1,24}$/.test(String(music.track || '')) ? String(music.track) : '', gain: num(music.gain, 0, 1, 0.5), credit: cleanText(music.credit, 160) } } },
+    assets: { photos: usedPhotos, logo: LOGO, audio: { music: { track: /^[a-z0-9]{1,24}$/.test(String(music.track || '')) ? String(music.track) : '', gain: num(music.gain, 0, 1, 0.5), credit: cleanText(music.credit, 160), fadeOut: num(music.fadeOut, 0, 8, MUSIC_FADE_OUT) } } },
     script: { lines, alternates },
     scenes,
     social: {
@@ -429,7 +440,7 @@ export function reopenComposition(stored: unknown): { doc: Composition; notes: s
   const s = isObj(stored) ? stored : {}
   const assets = isObj(s.assets) ? s.assets : {}
   const music = isObj(assets.audio) && isObj(assets.audio.music) ? assets.audio.music : {}
-  return sanitizeComposition(s, { id: String(s.id || ''), title: typeof s.title === 'string' ? s.title : undefined, brief: s.brief as Brief, canvas: s.canvas as Composition['canvas'], photos: isObj(assets.photos) ? (assets.photos as Record<string, PhotoAsset>) : {}, music: { track: String(music.track || ''), gain: music.gain, credit: String(music.credit || '') }, meta: isObj(s.meta) ? s.meta : {} })
+  return sanitizeComposition(s, { id: String(s.id || ''), title: typeof s.title === 'string' ? s.title : undefined, brief: s.brief as Brief, canvas: s.canvas as Composition['canvas'], photos: isObj(assets.photos) ? (assets.photos as Record<string, PhotoAsset>) : {}, music: { track: String(music.track || ''), gain: music.gain, credit: String(music.credit || ''), fadeOut: music.fadeOut }, meta: isObj(s.meta) ? s.meta : {} })
 }
 
 // ── colour maths shared by the player and the audit ─────────────────────────────────────────────────────────────

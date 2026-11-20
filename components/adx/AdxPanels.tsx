@@ -10,8 +10,8 @@
 // can be undone. The measured check runs again after each one.
 import { useEffect, useRef, useState } from 'react'
 import { MUSIC } from '@/lib/ad-engine'
-import type { Composition, Layer, Scene, PhotoAsset, PhotoLayer, TextLayer, ButtonLayer, Transition } from '@/lib/adx/composition'
-import { resolveColor, TRANSITIONS } from '@/lib/adx/composition'
+import type { Composition, Layer, Scene, PhotoAsset, PhotoLayer, TextLayer, ButtonLayer, ShapeLayer, MotifLayer, Transition } from '@/lib/adx/composition'
+import { resolveColor, TRANSITIONS, MOTIF_VARIANTS } from '@/lib/adx/composition'
 import * as E from '@/lib/adx/edit'
 import { groundOf, maxUpscale } from '@/lib/adx/player'
 import { UI } from './BriefWizard'
@@ -63,7 +63,8 @@ export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwa
   const en = layer.in
   const W = doc.canvas.w, H = doc.canvas.h
   const photo = layer.type === 'photo' ? doc.assets.photos[layer.photo] : null
-  const soft = layer.type === 'photo' && photo ? maxUpscale(layer, photo.w, photo.h) > 1.005 : false
+  const added = E.isAdded(doc, layer)
+  const soft = layer.type === 'photo' && photo ? E.upscaleOf(doc, layer) > 1.005 : false
   const accent = layer.type === 'text' ? (layer.runs.find(r => !('br' in r) && r.color) as { color?: string } | undefined) : undefined
   return (
     <Sec accent title={E.layerName(doc, layer)} right={<button type="button" onClick={onDeselect} style={chip()}>Done</button>}>
@@ -79,7 +80,8 @@ export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwa
         </div>
       </>) : null}
 
-      {layer.type === 'photo' ? (<>
+      {layer.type === 'photo' && added ? (soft ? <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.red }}>This image is drawn larger than its real pixels, so it will look soft. Make it smaller or add a larger file.</p> : <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>Your image, shown whole. Drag its corner to resize.</p>) : null}
+      {layer.type === 'photo' && !added ? (<>
         <div style={{ ...row, marginTop: 10 }}>
           <button type="button" onClick={() => onSwap(id)} style={{ ...chip(), background: UI.gold, color: '#0B0F16', border: 0 }}>Swap photo</button>
           <button type="button" onClick={() => commit(E.patchLayer(doc, id, l => { const { mask: _m, ...rest } = l as PhotoLayer; return { ...rest, box: { x: 0, y: 0, w: W, h: H } } as Layer }))} style={chip()}>Fill the frame</button>
@@ -112,7 +114,36 @@ export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwa
         </div>
       </>) : null}
 
-      {E.layerColor(doc, layer) || layer.type === 'motif' ? (<>
+      {layer.type === 'shape' ? (<>
+        <span style={label}>Shape</span>
+        <div style={row}>
+          {E.SHAPE_KINDS.map(k => (
+            <button key={k.key} type="button" onClick={() => patch(l => {
+              const { radius: _r, stroke: _s, ...rest } = l as ShapeLayer, b = rest.box
+              const box = k.key === 'line' ? { ...b, h: 1 } : b.h < 28 ? { ...b, h: Math.round(b.w * 0.7) } : b
+              return (k.key === 'circle' ? { ...rest, shape: 'ellipse', box } : k.key === 'line' ? { ...rest, shape: 'line', stroke: (l as ShapeLayer).stroke || 6, box } : k.key === 'frame' ? { ...rest, shape: 'rect', stroke: (l as ShapeLayer).stroke || 6, box } : k.key === 'rounded' ? { ...rest, shape: 'rect', radius: 36, box } : { ...rest, shape: 'rect', box }) as Layer
+            })} style={chip(E.shapeKind(layer) === k.key)}>{k.label}</button>
+          ))}
+        </div>
+        {layer.stroke || layer.shape === 'line' ? (
+          <div style={{ ...row, marginTop: 6 }}>
+            {([['Thin', 3], ['Medium', 6], ['Thick', 12]] as const).map(([name, w]) => <button key={name} type="button" onClick={() => patch(l => ({ ...(l as ShapeLayer), stroke: w }))} style={chip((layer.stroke || 2) === w)}>{name}</button>)}
+          </div>
+        ) : null}
+      </>) : null}
+      {layer.type === 'motif' && (MOTIF_VARIANTS[layer.motif] || []).length > 1 ? (<>
+        <span style={label}>Style</span>
+        <div style={row}>
+          {(MOTIF_VARIANTS[layer.motif] || []).map(v => <button key={v} type="button" onClick={() => patch(l => ({ ...(l as MotifLayer), variant: v }))} style={chip((layer.variant || MOTIF_VARIANTS[layer.motif][0]) === v)}>{E.VARIANT_LABEL[v] || v}</button>)}
+        </div>
+      </>) : null}
+      {layer.type === 'motif' && (layer.motif === 'snow' || layer.motif === 'sparkle') ? (
+        <div style={{ ...row, marginTop: 8 }}>
+          {([['A few', layer.motif === 'snow' ? 20 : 6], ['Some', layer.motif === 'snow' ? 40 : 12], ['Lots', layer.motif === 'snow' ? 70 : 24]] as const).map(([name, n]) => <button key={name} type="button" onClick={() => patch(l => ({ ...(l as MotifLayer), count: n }))} style={chip((layer.count || (layer.motif === 'snow' ? 40 : 12)) === n)}>{name}</button>)}
+        </div>
+      ) : null}
+
+      {E.layerColor(doc, layer) || (layer.type === 'motif' && ['leaf', 'ornament', 'star', 'sparkle', 'firework', 'rays', 'snow', 'tree'].indexOf(layer.motif) >= 0) ? (<>
         <span style={label}>{layer.type === 'button' ? 'Button colour' : 'Colour'}</span>
         <Swatches doc={doc} value={E.layerColor(doc, layer)} onPick={k => commit(E.setLayerColor(doc, id, k))} />
       </>) : null}
@@ -165,13 +196,12 @@ export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwa
 // ── the scene on screen ─────────────────────────────────────────────────────────────────────────────────────────
 const TR_LABEL: Record<string, string> = { cut: 'Cut', dissolve: 'Dissolve', dip: 'Dip to colour', push: 'Push', slide: 'Slide over', wipe: 'Wipe' }
 const ARROW: Record<string, string> = { up: '↑', down: '↓', left: '←', right: '→' }
-export function ScenePanel({ doc, scene, index, sel, commit, onSelect, onAddPhoto, onAddScene, onGo }: {
+export function ScenePanel({ doc, scene, index, sel, commit, onSelect, onAddScene, onGo }: {
   doc: Composition; scene: Scene; index: number; sel: string | null; commit: Commit
-  onSelect: (id: string | null) => void; onAddPhoto: (sceneId: string) => void; onAddScene: (sceneId: string) => void; onGo: (sceneId: string, d: Composition) => void
+  onSelect: (id: string | null) => void; onAddScene: (sceneId: string) => void; onGo: (sceneId: string, d: Composition) => void
 }) {
   const tr = scene.transitionIn, sid = scene.id, last = index === doc.scenes.length - 1
   const fill = scene.layers.find(l => l.type === 'fill')
-  const hasPhoto = scene.layers.some(l => l.type === 'photo')
   const setDur = (d: number, key = '') => commit(E.setSceneDur(doc, sid, d), key)
   const setTr = (p: Partial<Transition>) => commit(E.setTransition(doc, sid, p))
   const moving = tr.type !== 'none' && tr.type !== 'cut'
@@ -217,11 +247,6 @@ export function ScenePanel({ doc, scene, index, sel, commit, onSelect, onAddPhot
             <button type="button" title="Delete" aria-label={'Delete ' + E.layerName(doc, l)} onClick={() => { commit(E.deleteLayer(doc, l.id)); if (sel === l.id) onSelect(null) }} style={{ background: 'none', border: 0, color: UI.mut, cursor: 'pointer', fontSize: 14, padding: '2px 6px' }}>✕</button>
           </div>
         ))}
-      </div>
-      <div style={{ ...row, marginTop: 8 }}>
-        {!hasPhoto ? <button type="button" onClick={() => onAddPhoto(sid)} style={chip()}>+ Photo</button> : null}
-        <button type="button" onClick={() => { const r = E.addText(doc, sid, 'headline'); commit(r.doc); onSelect(r.layerId) }} style={chip()}>+ Headline</button>
-        <button type="button" onClick={() => { const r = E.addText(doc, sid, 'label'); commit(r.doc); onSelect(r.layerId) }} style={chip()}>+ Small label</button>
       </div>
 
       <span style={label}>This scene</span>
@@ -300,6 +325,13 @@ export function StylePanel({ doc, original, commit }: { doc: Composition; origin
           <span style={{ fontSize: 11.5, color: UI.mut, minWidth: 34, textAlign: 'right' }}>{Math.round(gain * 100)}%</span>
         </div>
       ) : null}
+      {track ? (<>
+        <span style={label}>Fade out at the end</span>
+        <div style={row}>
+          {([['No fade', 0], ['1 s', 1], ['2 s', 2], ['3 s', 3], ['5 s', 5]] as const).map(([name, n]) => <button key={name} type="button" onClick={() => commit(E.setMusicFade(doc, n))} style={chip(Math.abs(doc.assets.audio.music.fadeOut - n) < 0.26)}>{name}</button>)}
+        </div>
+        <p style={{ margin: '6px 0 0', fontSize: 11, color: UI.mut }}>Play the last scene to hear it. The file fades the same way.</p>
+      </>) : null}
       <audio ref={audio} preload="none" onEnded={() => setHearing('')} />
     </Sec>
 
@@ -348,5 +380,39 @@ export function PhotoPicker({ doc, title, pool, busy, err, q, onQ, onPick, onCan
         }) : null}
       </div>
     </Sec>
+  )
+}
+
+// ── add something to the scene on screen ────────────────────────────────────────────────────────────────────────
+// Jon, 2026-11-20: "Should be add shape or image or png tree or lights etc option when you click." One row under the
+// picture, always there. Click a spot in the picture first and the new thing lands on it; otherwise it lands in the
+// middle. Shape and Decoration open a second row of choices (buttons, not a menu).
+export function AddBar({ doc, scene, at, commit, onSelect, onAddPhoto, onImage, busy, err }: {
+  doc: Composition; scene: Scene; at?: E.Pt; commit: Commit
+  onSelect: (id: string | null) => void; onAddPhoto: (sceneId: string) => void; onImage: (file: File) => void; busy: boolean; err: string
+}) {
+  const [open, setOpen] = useState<'' | 'shape' | 'decor'>('')
+  const file = useRef<HTMLInputElement>(null)
+  const sid = scene.id
+  const hasPhoto = scene.layers.some(l => l.type === 'photo' && !E.isAdded(doc, l))
+  const hasButton = scene.layers.some(l => l.type === 'button')
+  const done = (r: { doc: Composition; layerId: string }) => { if (!r.layerId) return; commit(r.doc); onSelect(r.layerId); setOpen('') }
+  return (
+    <div style={{ margin: '10px auto 0', maxWidth: 820, background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '9px 11px' }}>
+      <div style={row}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, marginRight: 4 }}>Add</span>
+        <button type="button" onClick={() => done(E.addText(doc, sid, 'headline'))} style={chip()}>Headline</button>
+        <button type="button" onClick={() => done(E.addText(doc, sid, 'label'))} style={chip()}>Small label</button>
+        <button type="button" aria-pressed={open === 'shape'} onClick={() => setOpen(open === 'shape' ? '' : 'shape')} style={chip(open === 'shape')}>Shape</button>
+        <button type="button" aria-pressed={open === 'decor'} onClick={() => setOpen(open === 'decor' ? '' : 'decor')} style={chip(open === 'decor')}>Decoration</button>
+        <button type="button" disabled={busy} onClick={() => file.current?.click()} title="A PNG, JPEG or WebP from your computer: a sticker, a badge, your own picture" style={chip(false, busy)}>{busy ? 'Adding…' : 'Image or PNG'}</button>
+        {!hasPhoto ? <button type="button" onClick={() => onAddPhoto(sid)} style={chip()}>Photo of a unit</button> : null}
+        <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onImage(f) }} />
+      </div>
+      {open === 'shape' ? <div style={{ ...row, marginTop: 8 }}>{E.SHAPE_KINDS.map(k => <button key={k.key} type="button" onClick={() => done(E.addShape(doc, sid, k.key, at))} style={chip()}>{k.label}</button>)}</div> : null}
+      {open === 'decor' ? <div style={{ ...row, marginTop: 8 }}>{E.DECORATIONS.filter(d => !d.needsButton || hasButton).map(d => <button key={d.key} type="button" onClick={() => done(E.addDecoration(doc, sid, d.key, at))} style={chip()}>{d.label}</button>)}</div> : null}
+      {err ? <p style={{ margin: '8px 0 0', fontSize: 12, color: UI.red }}>{err}</p> : null}
+      <p style={{ margin: '7px 0 0', fontSize: 11, color: UI.mut }}>{at ? 'It lands where you last clicked in the picture.' : 'Click a spot in the picture first and it lands there.'} New things go under the words, so they never cover them.</p>
+    </div>
   )
 }

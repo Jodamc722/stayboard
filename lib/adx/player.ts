@@ -151,6 +151,8 @@ function drawText(ctx: Ctx, doc: Composition, l: TextLayer, local: number) {
 export function coverScale(l: PhotoLayer, pw: number, ph: number) { return Math.max(l.box.w / pw, l.box.h / ph) }
 /** The largest scale a layer ever draws its photograph at: the cover crop times the camera's furthest push. */
 export function maxUpscale(l: PhotoLayer, pw: number, ph: number) { const c = l.camera; return coverScale(l, pw, ph) * Math.max(c?.from.scale || 1, c?.to.scale || 1) }
+/** The scale a picture is really drawn at: an added image (source 'upload') is fitted whole inside its box. */
+export function drawnScale(l: PhotoLayer, a: { w: number; h: number; source?: string }) { return a.source === 'upload' ? Math.min(l.box.w / a.w, l.box.h / a.h) : maxUpscale(l, a.w, a.h) }
 const FILTER: Record<string, string> = { warm: 'sepia(0.18) saturate(1.08)', cool: 'saturate(0.92) hue-rotate(-6deg)', mono: 'grayscale(1) contrast(1.05)' }
 
 function maskPath(ctx: Ctx, l: { box: Box; mask?: PhotoLayer['mask'] }) {
@@ -175,10 +177,12 @@ function drawPhoto(ctx: Ctx, doc: Composition, l: PhotoLayer, local: number, dur
   const cam = l.camera, cq = cam ? ease(cam.ease, 'linear', local / Math.max(0.001, dur)) : 0
   const lerp = (k: 'scale' | 'x' | 'y', d: number) => { const f = cam?.from[k] ?? d, t = cam?.to[k] ?? d; return f + (t - f) * cq }
   // the image handed over may be the whole photograph or one already cropped to this box: cover it either way
-  const s = Math.max(w / img.width, h / img.height) * lerp('scale', 1), dw = img.width * s, dh = img.height * s
+  // an added image or PNG is shown whole, centred in its box (its transparency kept); a photograph covers its window
+  const added = asset.source === 'upload'
+  const s = added ? Math.min(w / img.width, h / img.height) : Math.max(w / img.width, h / img.height) * lerp('scale', 1), dw = img.width * s, dh = img.height * s
   const whole = Math.abs(img.width / img.height - asset.w / asset.h) < 0.02
   const foc = whole ? (l.focal || asset.focal || { x: 0.5, y: 0.5 }) : { x: 0.5, y: 0.5 }
-  const dx = clamp(x + w / 2 - foc.x * dw + lerp('x', 0) * w, x + w - dw, x), dy = clamp(y + h / 2 - foc.y * dh + lerp('y', 0) * h, y + h - dh, y)
+  const dx = added ? x + (w - dw) / 2 : clamp(x + w / 2 - foc.x * dw + lerp('x', 0) * w, x + w - dw, x), dy = added ? y + (h - dh) / 2 : clamp(y + h / 2 - foc.y * dh + lerp('y', 0) * h, y + h - dh, y)
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'
   if (l.treatment !== 'none' && hasFilter(ctx)) (ctx as any).filter = FILTER[l.treatment] || 'none'
   ctx.drawImage(img, dx, dy, dw, dh)

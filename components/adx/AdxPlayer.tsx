@@ -17,14 +17,14 @@
 // (does it still fit, is it still readable, is a photograph being stretched). No drop-down menus.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MUSIC } from '@/lib/ad-engine'
-import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, runsToPlain, plainToRuns, cleanText } from '@/lib/adx/composition'
+import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, runsToPlain, plainToRuns, cleanText, musicLevel } from '@/lib/adx/composition'
 import { renderFrame, restTime, sceneAt, canvasMeasure, type Assets, type Ctx } from '@/lib/adx/player'
 import { auditComposition, canvasSampler, type AuditResult } from '@/lib/adx/audit'
 import { loadAssets } from '@/lib/adx/assets'
 import { exportVideo, exportPng, type ExportResult } from '@/lib/adx/export'
 import * as E from '@/lib/adx/edit'
 import { UI } from './BriefWizard'
-import { LayerPanel, ScenePanel, StylePanel, PhotoPicker, Swatches, Sec, chip, type Pool } from './AdxPanels'
+import { LayerPanel, ScenePanel, StylePanel, PhotoPicker, AddBar, Swatches, Sec, chip, type Pool } from './AdxPanels'
 
 const btn = (primary = false, disabled = false): React.CSSProperties => ({ fontSize: 12.5, fontWeight: 800, padding: '8px 13px', borderRadius: 9, border: primary ? 0 : '1px solid ' + UI.line, background: primary ? UI.gold : UI.panel2, color: primary ? '#0B0F16' : UI.ink, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, whiteSpace: 'nowrap' })
 const mmss = (s: number) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0')
@@ -35,7 +35,19 @@ function download(blob: Blob, name: string) {
 }
 type Tab = 'edit' | 'style' | 'words' | 'files'
 type Picker = { mode: 'swap'; layerId: string } | { mode: 'add'; sceneId: string } | { mode: 'scene'; sceneId: string }
-type Drag = { id: string; mode: 'move' | 'size'; sx: number; sy: number; k: number; box: Box; live: Box; moved: boolean }
+type Drag = { id: string; mode: 'move' | 'size'; sx: number; sy: number; k: number; box: Box; live: Box; moved: boolean; lock: '' | 'aspect' | 'width' }
+/** A picked file made small enough to send: at most 2000 px on its long side, transparency kept. */
+async function shrinkImage(file: File): Promise<Blob> {
+  if (file.size < 3_000_000 && /^image\/(png|jpeg|webp)$/.test(file.type)) return file
+  const bmp = await createImageBitmap(file), k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height))
+  const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * k)); c.height = Math.max(1, Math.round(bmp.height * k))
+  c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height)
+  const to = (type: string) => new Promise<Blob | null>(res => c.toBlob(res, type, 0.9))
+  const first = await to(file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png')
+  const out = first && first.size > 4_000_000 ? await to('image/webp') : first
+  if (!out) throw new Error('That image could not be read.')
+  return out
+}
 
 export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Composition; onChange: (d: Composition) => void; canEdit: boolean; display: string }) {
   const W = doc.canvas.w, H = doc.canvas.h, dur = doc.canvas.duration
@@ -52,6 +64,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   const hist = useRef<{ id: string; past: Composition[]; future: Composition[]; key: string; at: number }>({ id: doc.id, past: [], future: [], key: '', at: 0 })
   if (hist.current.id !== doc.id) hist.current = { id: doc.id, past: [], future: [], key: '', at: 0 }
   const dragRef = useRef<Drag | null>(null)
+  /** Where the picture was last clicked (canvas pixels, with the scene it was in): new things land there. */
+  const lastPt = useRef<{ scene: string; x: number; y: number } | null>(null)
   const poolCache = useRef<Record<string, Pool>>({})
   const [, setHv] = useState(0)
   const [ready, setReady] = useState(false)
@@ -74,6 +88,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   const [result, setResult] = useState<ExportResult | null>(null)
   const [err, setErr] = useState('')
   const [copied, setCopied] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [addErr, setAddErr] = useState('')
   tRef.current = t
 
   const music = MUSIC.find(m => m.key === doc.assets.audio.music.track && m.file)
@@ -125,6 +141,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     const tick2 = () => {
       const x = (performance.now() - start) / 1000
       if (x >= dur) { setT(dur - 0.02); setPlaying(false); return }
+      // the music comes up and fades out in the preview exactly as it will in the file
+      if (a && music) { try { const m = docRef.current.assets.audio.music; a.volume = musicLevel(x, dur, m.gain, m.fadeOut) } catch { /* volume is best-effort */ } }
       setT(x); raf = requestAnimationFrame(tick2)
     }
     raf = requestAnimationFrame(tick2)
@@ -165,6 +183,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   const pickAt = (clientX: number, clientY: number) => {
     const cv = canvasRef.current; if (!cv) return
     const r = cv.getBoundingClientRect(), k = W / r.width
+    lastPt.current = { scene: cur.id, x: (clientX - r.left) * k, y: (clientY - r.top) * k }
     const hits = E.hitLayers(doc, si, (clientX - r.left) * k, (clientY - r.top) * k, canvasMeasure(cv.getContext('2d') as Ctx))
     setPlaying(false)
     if (!hits.length) { select(null); return }
@@ -180,7 +199,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     e.preventDefault(); e.stopPropagation()
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* the drag still works without capture */ }
     const b = selLayer.box as Box, box: Box = { x: b.x, y: b.y, w: b.w, h: selLayer.type === 'logo' ? (selRect ? selRect.y1 - selRect.y0 : 0) : b.h }
-    dragRef.current = { id: selLayer.id, mode, sx: e.clientX, sy: e.clientY, k: W / cv.getBoundingClientRect().width, box, live: box, moved: false }
+    const lock = E.isAdded(doc, selLayer) ? 'aspect' : selLayer.type === 'shape' && selLayer.shape === 'line' && b.h < 28 ? 'width' : ''
+    dragRef.current = { id: selLayer.id, mode, sx: e.clientX, sy: e.clientY, k: W / cv.getBoundingClientRect().width, box, live: box, moved: false, lock }
   }
   const moveDrag = (e: React.PointerEvent) => {
     const d = dragRef.current; if (!d) return
@@ -197,10 +217,11 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
       for (const sy of snapY) if (Math.abs(y - sy) < 14) { y = sy; break }
       b = { ...d.box, x: Math.round(x), y: Math.round(y) }
     } else {
-      let w = Math.max(40, d.box.w + dx), h = Math.max(30, d.box.h + dy)
+      let w = Math.max(40, d.box.w + dx), h = d.lock === 'width' ? d.box.h : Math.max(30, d.box.h + dy)
       if (Math.abs(d.box.x + w - (W - sf.right)) < 14) w = W - sf.right - d.box.x
       if (Math.abs(d.box.x + w - W) < 14) w = W - d.box.x
       if (Math.abs(d.box.y + h - H) < 14) h = H - d.box.y
+      if (d.lock === 'aspect') h = (w * d.box.h) / Math.max(1, d.box.w)       // an added image keeps its shape
       b = { ...d.box, w: Math.round(w), h: Math.round(h) }
     }
     d.live = b; setDragBox({ id: d.id, box: b })
@@ -256,6 +277,21 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
       const head = s ? s.layers.find(l => l.type === 'text' && !!l.fit) : null; setDrafts({}); setSel(head ? head.id : null)
     }
     setPicker(null)
+  }
+  // ── an image or PNG from the person's computer ──
+  const addImageFile = async (file: File) => {
+    setAddErr(''); setAdding(true)
+    try {
+      const body = await shrinkImage(file)
+      const r = await fetch('/api/adx/upload?name=' + encodeURIComponent(file.name.slice(0, 80)), { method: 'POST', headers: { 'Content-Type': body.type || 'application/octet-stream' }, body })
+      const j = await r.json().catch(() => null)
+      if (!j?.ok) throw new Error(j?.error || 'The image did not upload. Try again.')
+      const d = docRef.current, sc = d.scenes[sceneAt(d, tRef.current)]
+      const at = lastPt.current && lastPt.current.scene === sc.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined
+      const res = E.addImage(d, sc.id, { src: j.src, w: j.w, h: j.h, source: 'upload', building: '', unit: '', area: '', shows: String(j.name || file.name).replace(/\.[a-z0-9]+$/i, '').slice(0, 60) }, at)
+      commit(res.doc); select(res.layerId)
+    } catch (e: any) { setAddErr(String(e?.message || e)) }
+    setAdding(false)
   }
   const goScene = (sid: string, d: Composition) => { const s = d.scenes.find(x => x.id === sid); if (s) { setPlaying(false); setT(restTime(s)) } }
 
@@ -315,7 +351,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
               <p style={{ margin: '0 0 6px', fontSize: 11, fontWeight: 800, color: UI.gold, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{E.layerName(doc, selLayer)}</p>
               {selLayer.type === 'text' || selLayer.type === 'button' ? <textarea key={selLayer.id} autoFocus rows={selLayer.type === 'button' ? 1 : 2} value={wordsOf(selLayer)} onChange={e => setWords(selLayer, e.target.value)} onKeyDown={e => { if (e.key === 'Escape') select(null) }} aria-label="Words" style={{ ...area, marginBottom: 6 }} /> : null}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                {selLayer.type === 'photo' ? <button type="button" onClick={() => openPicker({ mode: 'swap', layerId: selLayer.id })} style={btn(true)}>Swap photo</button> : null}
+                {selLayer.type === 'photo' && !E.isAdded(doc, selLayer) ? <button type="button" onClick={() => openPicker({ mode: 'swap', layerId: selLayer.id })} style={btn(true)}>Swap photo</button> : null}
                 {selLayer.type === 'text' || selLayer.type === 'button' ? (<>
                   <button type="button" onClick={() => commit(E.resizeText(doc, selLayer.id, -2))} style={chip()}>A −</button>
                   <button type="button" onClick={() => commit(E.resizeText(doc, selLayer.id, 2))} style={chip()}>A +</button>
@@ -354,6 +390,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
           ))}
           {canEdit ? <button type="button" onClick={() => openPicker({ mode: 'scene', sceneId: cur.id })} title="Add a scene after the one on screen" style={{ ...btn(), padding: '6px 10px' }}>+ Scene</button> : null}
         </div>
+        {canEdit && cur ? <AddBar doc={doc} scene={cur} at={lastPt.current && lastPt.current.scene === cur.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddPhoto={sid => openPicker({ mode: 'add', sceneId: sid })} onImage={addImageFile} busy={adding} err={addErr} /> : null}
         {canEdit ? <p style={{ margin: '10px auto 0', maxWidth: 820, fontSize: 11.5, color: UI.mut, textAlign: 'center' }}>Click anything in the picture to change it. Drag to move, drag the corner to resize, Delete removes it, ⌘Z undoes.</p> : null}
         {music ? <audio ref={audioRef} src={music.file} preload="auto" /> : null}
       </div>
@@ -383,7 +420,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
           <PhotoPicker doc={doc} title={picker.mode === 'swap' ? 'Swap this photo' : picker.mode === 'add' ? 'Add a photo to this scene' : 'New scene — pick its photo'} pool={pool} busy={poolBusy} err={poolErr} q={poolQ} onQ={loadPool} onPick={pickPhoto} onCancel={() => setPicker(null)} exceptLayer={picker.mode === 'swap' ? picker.layerId : undefined} />
         ) : (<>
           {selLayer ? <LayerPanel doc={doc} scene={cur} layer={(E.findLayer(doc, selLayer.id)?.layer) || selLayer} commit={commit} wordsOf={wordsOf} setWords={setWords} onSwap={id => openPicker({ mode: 'swap', layerId: id })} onDeselect={() => select(null)} /> : null}
-          <ScenePanel doc={doc} scene={cur} index={si} sel={sel} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddPhoto={sid => openPicker({ mode: 'add', sceneId: sid })} onAddScene={sid => openPicker({ mode: 'scene', sceneId: sid })} onGo={goScene} />
+          <ScenePanel doc={doc} scene={cur} index={si} sel={sel} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddScene={sid => openPicker({ mode: 'scene', sceneId: sid })} onGo={goScene} />
         </>)) : null}
 
         {tab === 'style' ? (canEdit ? <StylePanel doc={doc} original={origColors.current.color} commit={commit} /> : null) : null}

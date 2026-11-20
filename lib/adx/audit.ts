@@ -10,7 +10,7 @@
 // server and in the plain-node tests an approximate Measure runs the same checks.
 import type { Composition, Scene, Layer, TextLayer, Box } from './composition'
 import { resolveColor, lum, contrast, CHANNEL_NAMES } from './composition'
-import { layoutText, logoHeight, maxUpscale, restTime, renderFrame, buttonSize, groundOf, type Measure, type Assets, type Ctx } from './player'
+import { layoutText, logoHeight, maxUpscale, drawnScale, restTime, renderFrame, buttonSize, groundOf, type Measure, type Assets, type Ctx } from './player'
 
 export type Issue = { sev: 'fail' | 'warn'; code: string; scene?: string; layer?: string; msg: string }
 export type Rect = { x0: number; y0: number; x1: number; y1: number }
@@ -132,9 +132,15 @@ export function auditComposition(doc: Composition, measure: Measure, opts: { sam
         if (bd.kind === 'flat') { const ratio = contrast(lum(ink), lum(bd.color)); if (ratio < 3) fail('logo-contrast', `The ${l.variant} logo is lost on ${bd.color} (${ratio.toFixed(1)}:1). Use the ${l.variant === 'black' ? 'white' : 'black'} mark there.`, s.id, l.id) }
         else { const smp = opts.sample ? opts.sample(si, r, k) : null; if (smp) { const ratio = Math.min(contrast(lum(ink), smp.lo), contrast(lum(ink), smp.hi)); if (ratio < 2.4) fail('logo-contrast', `The logo is hard to see over the photograph (${ratio.toFixed(1)}:1). Move it onto a ground.`, s.id, l.id) } }
       } else if (l.type === 'photo') {
-        photoN++; photosHere++
         const a = doc.assets.photos[l.photo]
         if (!a) { fail('photo-missing', 'A scene points at a photograph that is not in the piece.', s.id, l.id); return }
+        if (a.source === 'upload') {
+          // an image a person added (a sticker, a badge, a PNG): decoration, not one of the piece's photographs
+          const up = drawnScale(l, a)
+          if (up > R.maxPhotoUpscale + 0.005) fail('photo-soft', `This ${a.w}×${a.h} image is drawn at ${Math.round(up * 100)}% of its real size and will look soft. Make it smaller (or add a larger file).`, s.id, l.id)
+          return
+        }
+        photoN++; photosHere++
         lastPhotoSource = a.source
         if (seenKey.has(l.photo) || seenSrc.has(a.src)) fail('photo-reuse', `The same photograph is used twice (also in ${seenKey.get(l.photo) || seenSrc.get(a.src)}). Every scene gets its own.`, s.id, l.id)
         else { seenKey.set(l.photo, s.name); seenSrc.set(a.src, s.name) }

@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { candidatePhotos, thumbUrl } from '@/lib/adx/photos'
-import { AREAS } from '@/lib/ad-places'
+import { marketAreas } from '@/lib/ad-places'
 import type { PhotoAsset } from '@/lib/adx/composition'
 
 export const dynamic = 'force-dynamic'
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     const moment = String(sp.get('moment') || '').replace(/[^a-z0-9-]/gi, '').slice(0, 30)
     const area = String(sp.get('area') || '')
     const q = String(sp.get('q') || '').toLowerCase()
-    if (!AREAS.some(a => a.key === area)) return NextResponse.json({ ok: false, error: 'This piece has no area set, so there are no photographs to offer.' }, { status: 400 })
+    if (!marketAreas(area).length) return NextResponse.json({ ok: false, error: 'This piece has no area set, so there are no photographs to offer.' }, { status: 400 })
     if (q && SUBJECTS.indexOf(q) < 0) return NextResponse.json({ ok: false, error: 'Unknown subject.' }, { status: 400 })
     const key = [moment, area, q].join('|')
     let hit = cache.get(key)

@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react'
 import { MOMENTS } from '@/lib/marketing-calendar'
 import { whenShortOf } from '@/lib/ad-event'
-import { AREAS, AREA_LABEL, buildingsIn, type AreaKey } from '@/lib/ad-places'
+import { MARKETS, MARKET_LABEL, marketAreas, buildingsIn, buildingName, type MarketKey } from '@/lib/ad-places'
 import { ADX_MOMENTS, CHANNELS, type Brief, type ChannelKey } from '@/lib/adx/composition'
 import { IDENTITIES, AUDIENCES, GOALS, VIBES, LENGTHS } from '@/lib/adx/identities'
 
@@ -41,7 +41,7 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
   const [ev, setEv] = useState(moment && ADX_MOMENTS.indexOf(moment) >= 0 ? moment : '')
   const [audience, setAudience] = useState<'guests' | 'owners' | ''>('')
   const [goal, setGoal] = useState('')
-  const [area, setArea] = useState<AreaKey | ''>('')
+  const [area, setArea] = useState<MarketKey | ''>('')
   const [vibe, setVibe] = useState('')
   const [channel, setChannel] = useState<ChannelKey | ''>('')
   const [seconds, setSeconds] = useState(0)
@@ -52,13 +52,15 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
   const id = ev ? IDENTITIES[ev] : null
   const goals = audience ? GOALS[audience] : []
   // where the event happens comes first; every area we have units in can be chosen
-  const areaOrder = useMemo(() => { const pref = (m?.where || []) as AreaKey[]; return pref.concat(AREAS.map(a => a.key).filter(k => pref.indexOf(k) < 0)) }, [m])
+  // then the wider markets (Jon, 2026-11-20: "more options, broader markets"), then the other single areas
+  const areaOrder = useMemo(() => { const pref = (m?.where || []) as MarketKey[]; const wide = MARKETS.filter(x => x.areas.length > 1).map(x => x.key); return pref.concat(wide, MARKETS.map(x => x.key).filter(k => pref.indexOf(k) < 0 && wide.indexOf(k) < 0)) }, [m])
+  const homes = (k: string, n: number) => { const b = buildingsIn(marketAreas(k)).map(buildingName); return b.slice(0, n).join(', ') + (b.length > n ? ` +${b.length - n} more` : '') }
   const done = !!(m && audience && goal && area && vibe && channel && seconds)
   const g = goals.find(x => x.key === goal), v = VIBES.find(x => x.key === vibe), a = AUDIENCES.find(x => x.key === audience)
 
   const brief = (): Brief => ({
     goal: g?.brief || '', audience: audience === 'owners' ? 'owners' : 'guests', who: a?.brief || '', takeaway: '',
-    moment: ev, momentName: m?.name || '', dates: m ? whenShortOf(m) : '', area: area || '', areaLabel: area ? AREA_LABEL[area] : '', vibe: v?.brief || '',
+    moment: ev, momentName: m?.name || '', dates: m ? whenShortOf(m) : '', area: area || '', areaLabel: area ? MARKET_LABEL[area] : '', vibe: v?.brief || '',
     channel: (channel || 'vertical') as ChannelKey, seconds: seconds || 15, note: note.trim().slice(0, 400), confirmedBy: '', confirmedAt: '',
   })
 
@@ -68,7 +70,7 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
       ['Event', `${m.name} · ${whenShortOf(m)}${m.approx ? ' (dates to confirm)' : ''}`],
       ['For', `${a!.label} — ${a!.brief}`],
       ['It should', g!.brief],
-      ['Where', `${AREA_LABEL[area as AreaKey]} — only our units there (${buildingsIn([area as AreaKey]).slice(0, 5).join(', ')})`],
+      ['Where', `${MARKET_LABEL[area]} — only our units there (${homes(area, 6)})`],
       ['Vibe', v!.label],
       ['Format', `${ch.label} · ${ch.hint} · about ${seconds} seconds`],
       ...(note.trim() ? [['Must say', note.trim()] as [string, string]] : []),
@@ -112,8 +114,8 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
         {goals.map(x => <Chip key={x.key} on={goal === x.key} onClick={() => setGoal(x.key)} hint={x.hint}>{x.label}</Chip>)}
         {!goals.length ? <span style={{ fontSize: 12.5, color: UI.mut }}>—</span> : null}
       </Q>
-      <Q n={4} title="Where?" note="the piece shows only our units in this area">
-        {areaOrder.map(k => <Chip key={k} on={area === k} onClick={() => setArea(k)} hint={buildingsIn([k]).slice(0, 3).join(', ')}>{AREA_LABEL[k]}{m?.where && m.where.indexOf(k) >= 0 ? ' · where it happens' : ''}</Chip>)}
+      <Q n={4} title="Where?" note="one area, or a wider market — the piece shows only our units there">
+        {areaOrder.map(k => <Chip key={k} on={area === k} onClick={() => setArea(k)} hint={homes(k, 3)}>{MARKET_LABEL[k]}{m?.where && (m.where as string[]).indexOf(k) >= 0 ? ' · where it happens' : ''}</Chip>)}
       </Q>
       <Q n={5} title="The vibe?">
         {VIBES.map(x => <Chip key={x.key} on={vibe === x.key} onClick={() => setVibe(x.key)}>{x.label}</Chip>)}

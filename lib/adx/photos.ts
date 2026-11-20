@@ -12,7 +12,7 @@ import 'server-only'
 import sharp from 'sharp'
 import { searchPhotos, type PhotoHit } from '@/lib/photo-library'
 import { adPhotoScore, photoText } from '@/lib/ad-photo-pick'
-import { buildingsIn, inBuildings, type AreaKey } from '@/lib/ad-places'
+import { buildingsIn, inBuildings, marketAreas } from '@/lib/ad-places'
 import { isCollagePhoto } from '@/lib/collage'
 import { photoSrcAllowed, type PhotoAsset } from './composition'
 import { IDENTITIES } from './identities'
@@ -58,7 +58,8 @@ export function thumbUrl(src: string, w = 640): string {
 /** Up to `limit` photographs of our units in `area`, the best for the event's subjects, measured, none a collage. */
 export async function candidatePhotos(moment: string, area: string, limit = 10, opts: { perSubject?: number; subjects?: string[] } = {}): Promise<Record<string, PhotoAsset>> {
   const id = IDENTITIES[moment]
-  const set = buildingsIn([area as AreaKey])
+  // `area` is the piece's market: one area, or a wider one made of several (lib/ad-places MARKETS)
+  const set = buildingsIn(marketAreas(area))
   // EDITOR (Jon, 2026-11-20: "add photos, swap photo"): the picker asks for more per subject, or for one subject.
   const subjects = opts.subjects && opts.subjects.length ? opts.subjects : id ? id.subjects : []
   const per = Math.max(1, opts.perSubject || 2)

@@ -10,6 +10,7 @@
 // is recorded the way the studio always has (MediaRecorder on the canvas, in real time) and the result says so.
 // Browser only.
 import type { Composition } from './composition'
+import { MUSIC_FADE_IN } from './composition'
 import { renderFrame, type Assets, type Ctx } from './player'
 import { muxMp4, type Mp4Sample } from './mp4'
 
@@ -50,8 +51,9 @@ async function mixAudio(doc: Composition, musicUrl: string, gain: number): Promi
   const music = await ctx.decodeAudioData(ab)
   const src = ctx.createBufferSource(); src.buffer = music
   const g = ctx.createGain(); src.connect(g); g.connect(ctx.destination)
-  const out = Math.min(1.6, dur / 4)
-  g.gain.setValueAtTime(0, 0); g.gain.linearRampToValueAtTime(gain, 0.6); g.gain.setValueAtTime(gain, Math.max(0.6, dur - out)); g.gain.linearRampToValueAtTime(0, dur)
+  // the fade a person chose in the editor (0 = the music stops with the picture, with a breath of a ramp so it does not click)
+  const out = Math.max(0.04, Math.min(doc.assets.audio.music.fadeOut, Math.max(0.1, dur - MUSIC_FADE_IN)))
+  g.gain.setValueAtTime(0, 0); g.gain.linearRampToValueAtTime(gain, MUSIC_FADE_IN); g.gain.setValueAtTime(gain, Math.max(MUSIC_FADE_IN, dur - out)); g.gain.linearRampToValueAtTime(0, dur)
   src.start(0)
   return ctx.startRendering()
 }
@@ -129,7 +131,8 @@ async function viaRecorder(doc: Composition, A: Assets, o: ExportOpts, why: stri
       const ab = await fetch(o.musicUrl).then(r => r.arrayBuffer()), buf = await actx.decodeAudioData(ab), dest = actx.createMediaStreamDestination()
       src = actx.createBufferSource(); src.buffer = buf
       const g = actx.createGain(), dur = doc.canvas.duration, t = actx.currentTime + 0.12, gain = o.musicGain ?? 0.5
-      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.6); g.gain.setValueAtTime(gain, t + Math.max(0.6, dur - 1.6)); g.gain.linearRampToValueAtTime(0, t + dur)
+      const out = Math.max(0.04, Math.min(doc.assets.audio.music.fadeOut, Math.max(0.1, dur - MUSIC_FADE_IN)))
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + MUSIC_FADE_IN); g.gain.setValueAtTime(gain, t + Math.max(MUSIC_FADE_IN, dur - out)); g.gain.linearRampToValueAtTime(0, t + dur)
       src.connect(g); g.connect(dest); tracks.push(...dest.stream.getAudioTracks()); hasAudio = true
     } catch { actx = null; src = null }
   }

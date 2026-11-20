@@ -15,6 +15,23 @@ export const AREAS: { key: AreaKey; label: string; buildings: string[]; words: R
   { key: 'palm-beach', label: 'Palm Beach', buildings: ['Capri', 'Boynton', 'Lucerne', 'Amrit'], words: /\b(palm beach|lake worth|boynton|delray|riviera beach|jupiter)\b/i },
 ]
 export const AREA_LABEL: Record<AreaKey, string> = Object.fromEntries(AREAS.map(a => [a.key, a.label])) as Record<AreaKey, string>
+// MARKETS (Jon, 2026-11-20, on the new studio's "Where?" step: "Should have more options, broader markets, etc").
+// A piece can be about one area or a wider market made of several. The wider keys are only ever used as a piece's
+// area (brief.area); everything that looks up photographs or buildings goes through marketAreas().
+export type MarketKey = AreaKey | 'south-florida' | 'miami-all' | 'broward'
+export const MARKETS: { key: MarketKey; label: string; areas: AreaKey[] }[] = [
+  { key: 'south-florida', label: 'All South Florida', areas: AREAS.map(a => a.key) },
+  { key: 'miami-all', label: 'Miami & Miami Beach', areas: ['miami-beach', 'miami'] },
+  { key: 'broward', label: 'Broward County', areas: ['fort-lauderdale', 'pompano'] },
+  ...AREAS.map(a => ({ key: a.key as MarketKey, label: a.label, areas: [a.key] })),
+]
+export const MARKET_LABEL: Record<string, string> = Object.fromEntries(MARKETS.map(m => [m.key, m.label]))
+/** The areas behind a market key (a single area is its own market). Empty for a key we do not know. */
+export function marketAreas(key: string): AreaKey[] { return (MARKETS.find(m => m.key === key) || { areas: [] as AreaKey[] }).areas }
+/** A building as people say it (the library's key for Surfside is still its old name). */
+const BUILDING_NAME: Record<string, string> = { Boynton: 'Surfside', '17WEST': '17 West' }
+export const buildingName = (b: string) => BUILDING_NAME[b] || b
+
 /** The areas a brief talks about, in the order they appear in it (empty = anywhere we are). */
 export function areasIn(text: string): AreaKey[] {
   const t = String(text || '')
