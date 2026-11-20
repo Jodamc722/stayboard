@@ -4,6 +4,7 @@ import { HandoffFloater } from '@/components/HandoffAlerts'
 import { MentionPopups } from '@/components/MentionPopups'
 import { applyTheme, isThemeKey } from '@/lib/theme'
 import { LighthouseMark } from '@/components/ui/LighthouseMark'
+import { GardenBrand } from '@/components/GardenBrand'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
@@ -519,13 +520,15 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     // ancestor, and that ancestor was not scrolling). h-screen makes main the real scroller, so the
     // sidebar stays put and sticky headers work on every page.
     <ShellMenu.Provider value={{ open: () => setDrawerOpen(true), full }}>
-    <div className="h-screen overflow-hidden flex bg-app">
+    <div data-business={business} className="h-screen overflow-hidden flex bg-app">
       {/* Sidebar — desktop only. Below lg the header + drawer + bottom bar take over. */}
       <aside className={full ? 'hidden' : 'hidden lg:flex w-60 bg-rail border-r border-line flex-col'}>
+        {business === 'garden' ? <GardenBrand /> : (
         <div className="px-4 pt-5 pb-4 flex items-center gap-2.5">
           <LighthouseMark size={24} />
           <span className="font-bold text-[13px] tracking-[0.22em] text-ink">LIGHTHOUSE</span>
         </div>
+        )}
         {bizSwitcher()}
         <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto">
           {navBody()}
@@ -634,8 +637,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           <div className="absolute inset-0 bg-ink/40" onClick={() => setDrawerOpen(false)} />
           <div className="absolute left-0 top-0 bottom-0 w-[86%] max-w-[320px] bg-white shadow-lifted flex flex-col pt-safe pb-safe">
             <div className="px-4 pt-4 pb-3 flex items-center gap-2.5 border-b border-line">
-              <LighthouseMark size={22} />
-              <span className="font-bold text-[12px] tracking-[0.22em] text-ink">LIGHTHOUSE</span>
+              {business === 'garden' ? <GardenBrand compact /> : <><LighthouseMark size={22} />
+              <span className="font-bold text-[12px] tracking-[0.22em] text-ink">LIGHTHOUSE</span></>}
               <button type="button" onClick={() => setDrawerOpen(false)} aria-label="Close menu"
                 className="ml-auto w-8 h-8 rounded-lg grid place-items-center text-muted hover:text-ink">
                 <X size={17} />

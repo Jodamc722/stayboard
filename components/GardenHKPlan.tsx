@@ -7,7 +7,7 @@
 //   4. ONE table: checkbox · HK Team · Room · Est. time · Reservation · Status
 // Tick rows and the bar at the bottom assigns them; today's assignments go to Cloudbeds.
 // The rows come from lib/garden/hk-plan (bookings + the room's state in Cloudbeds).
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowDownUp, CalendarRange, Check, CheckCheck, ChevronLeft, ChevronRight, LogIn, LogOut, Moon, Printer, RefreshCw, Repeat, UploadCloud, Users, Wand2 } from 'lucide-react'
 
 const j = async (url: string, init?: RequestInit) => { const r = await fetch(url, { cache: 'no-store', ...init }); return r.json().catch(() => ({ ok: false, error: `HTTP ${r.status}` })) }
@@ -22,12 +22,12 @@ const SHIFT = 420
 
 type Row = any
 type Kind = 'turn' | 'checkout' | 'stayover' | 'arrival' | 'dirty'
-const KIND: Record<Kind, { label: string; chip: string; cls: string }> = {
-  turn: { label: 'same-day turn', chip: 'Same-day turns', cls: 'text-rose-700 bg-rose-50' },
-  arrival: { label: 'arrival', chip: 'Arrivals', cls: 'text-emerald-800 bg-emerald-50' },
-  checkout: { label: 'checkout', chip: 'Checkouts', cls: 'text-amber-800 bg-amber-50' },
-  stayover: { label: 'stayover', chip: 'Stayovers', cls: 'text-sky-800 bg-sky-50' },
-  dirty: { label: 'vacant dirty', chip: 'Vacant dirty', cls: 'text-neutral-600 bg-neutral-100' },
+const KIND: Record<Kind, { label: string; chip: string; cls: string; edge: string; band: string; hint: string }> = {
+  turn: { label: 'same-day turn', chip: 'Same-day turns', cls: 'text-rose-700 bg-rose-50', edge: 'border-l-rose-500', band: 'bg-rose-50 text-rose-900', hint: 'Do these first: a guest leaves and another arrives today' },
+  arrival: { label: 'arrival', chip: 'Arrivals', cls: 'text-emerald-800 bg-emerald-50', edge: 'border-l-emerald-600', band: 'bg-emerald-50 text-emerald-900', hint: 'A guest arrives today and the room is not ready yet' },
+  checkout: { label: 'checkout', chip: 'Checkouts', cls: 'text-amber-800 bg-amber-50', edge: 'border-l-amber-500', band: 'bg-amber-50 text-amber-900', hint: 'The guest leaves today; nobody arrives until tomorrow or later' },
+  stayover: { label: 'stayover', chip: 'Stayovers', cls: 'text-sky-800 bg-sky-50', edge: 'border-l-sky-500', band: 'bg-sky-50 text-sky-900', hint: 'The guest is staying: service the room' },
+  dirty: { label: 'vacant dirty', chip: 'Vacant dirty', cls: 'text-neutral-600 bg-neutral-100', edge: 'border-l-neutral-400', band: 'bg-neutral-100 text-neutral-800', hint: 'Empty and dirty, no booking today: when there is time' },
 }
 const KINDS: Kind[] = ['turn', 'checkout', 'stayover', 'arrival', 'dirty']
 const ORDER: Record<Kind, number> = { turn: 0, arrival: 1, checkout: 2, stayover: 3, dirty: 4 }
@@ -53,6 +53,7 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState<{ t: string; warn?: boolean } | null>(null)
   const [railOpen, setRailOpen] = useState(false)
+  const [showDone, setShowDone] = useState(false)
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -73,6 +74,21 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
     else a.sort((x, y) => Number(closed(x)) - Number(closed(y)) || ORDER[x.type as Kind] - ORDER[y.type as Kind] || byRoom(x, y))
     return a
   }, [all, kind, onlyUnassigned, who, sortBy])
+  // SECTIONS (Jon, 2026-11-20: "easier to delineate and understand"): the table is cut into bands —
+  // by kind of clean in work order, or by wing / housekeeper when sorted that way — and everything
+  // finished is folded into one band at the bottom.
+  const groups = useMemo(() => {
+    const out: { key: string; title: string; hint: string; band: string; edge: string; rows: Row[]; done?: boolean }[] = []
+    const push = (key: string, title: string, hint: string, band: string, edge: string, r: Row, done = false) => { let g = out.find(x => x.key === key); if (!g) { g = { key, title, hint, band, edge, rows: [], done }; out.push(g) } g.rows.push(r) }
+    for (const r of rows) {
+      const K = KIND[r.type as Kind]
+      if (sortBy === 'priority') { if (closed(r)) push('done', 'Finished', 'Ready, done or skipped', 'bg-green-50 text-green-900', 'border-l-green-600', r, true); else push(r.type, K.chip, K.hint, K.band, K.edge, r) }
+      else if (sortBy === 'wing') push(r.area, 'Rooms ' + r.area, '', 'bg-brand-50 text-brand-900', 'border-l-brand-600', r)
+      else if (sortBy === 'cleaner') push(r.assignedTo || '—', r.assignedTo || 'Nobody yet', '', r.assignedTo ? 'bg-brand-50 text-brand-900' : 'bg-rose-50 text-rose-900', r.assignedTo ? 'border-l-brand-600' : 'border-l-rose-500', r)
+      else push('all', 'All rooms', '', 'bg-brand-50 text-brand-900', 'border-l-brand-600', r)
+    }
+    const done = out.filter(g => g.done); return [...out.filter(g => !g.done), ...done]
+  }, [rows, sortBy])
   const selIds = Object.keys(sel).filter(k => sel[k])
   const pickable = rows.filter(r => !closed(r))
   const allSelected = pickable.length > 0 && pickable.every(r => sel[r.roomId])
@@ -197,6 +213,23 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
       )}
       {msg && <div className={'np rounded-xl border px-3.5 py-2.5 text-[13px] flex items-center gap-2 ' + (msg.warn ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{msg.warn ? <AlertTriangle size={14} className="shrink-0" /> : <Check size={14} className="shrink-0" />} {msg.t}</div>}
 
+      {/* THREE STEPS, while the day is not set up yet. Each one ticks itself off. */}
+      {canEdit && !past && all.length > 0 && (working === 0 || unassignedCount > 0) && (
+        <div className="np rounded-xl border border-brand-200 bg-brand-50 px-3.5 py-2.5 flex items-center gap-x-5 gap-y-1.5 flex-wrap text-[12.5px] text-brand-900">
+          <span className="gh-display font-bold text-[12px]">Set up {live ? 'today' : dayShort(d.date)}</span>
+          {[
+            { ok: working > 0, t: working > 0 ? `${working} working` : d.homebase?.connected ? 'Who is working — nobody is on the Homebase schedule for this day; tick names on the left' : 'Tick who is working (left)' },
+            { ok: unassignedCount === 0, t: unassignedCount === 0 ? 'Every room has a housekeeper' : `Hand out the ${unassignedCount} rooms` },
+            { ok: unassignedCount === 0 && working > 0, t: live ? 'Sent to Cloudbeds as you assign' : 'Sent to Cloudbeds on the morning of the day' },
+          ].map((x, i) => (
+            <span key={i} className={'inline-flex items-center gap-1.5 ' + (x.ok ? 'opacity-60' : 'font-semibold')}>
+              <span className={'w-[18px] h-[18px] rounded-full grid place-items-center text-[10px] font-bold ' + (x.ok ? 'bg-brand-600 text-white' : 'bg-white border border-brand-300 text-brand-800')}>{x.ok ? <Check size={11} /> : i + 1}</span>{x.t}
+            </span>
+          ))}
+          {working > 0 && unassignedCount > 0 && <button onClick={autoAssign} disabled={!!busy} className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand-600 text-white px-3 py-1.5 text-[12.5px] font-semibold hover:bg-brand-700 disabled:opacity-50">{busy === 'auto' ? <RefreshCw size={13} className="animate-spin" /> : <Wand2 size={13} />} Auto-assign {unassignedCount} rooms</button>}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] gap-3 items-start pb-16">
         {/* 3. THE TEAM RAIL */}
         <div className="np rounded-xl border border-line bg-white shadow-sm">
@@ -209,13 +242,19 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
             <div className={'text-[12px] mt-1 ' + verdict.cls}>{verdict.t}</div>
             <div className="text-[11px] text-muted mt-0.5" title="45 min a checkout or same-day turn, 20 a stayover, over a 7-hour shift">{fmtMins(s.plannedMinutes)} of rooms ÷ 7h a shift</div>
           </button>
+          <div className="px-3 pb-2 -mt-1 text-[11px]">
+            {d.homebase?.connected
+              ? <span className={d.homebase.error ? 'text-amber-700' : 'text-muted'} title={d.homebase.error || 'Whoever Homebase has scheduled is marked working here. You can still tick or untick anyone by hand.'}>{d.homebase.error ? 'Homebase schedule could not be read' : `Schedule from Homebase · ${ago(d.homebase.at)}`}</span>
+              : <a href="/garden/users?tab=settings&panel=homebase" className="font-semibold text-brand-700 hover:underline" title="Connect the hotel's Homebase so whoever is scheduled there is marked working here automatically">Connect Homebase to fill this in →</a>}
+          </div>
           <div className={(railOpen ? '' : 'hidden lg:block ') + 'border-t border-line'}>
             {[...crew, ...holding].map(p => { const over = p.minutes > SHIFT; return (
               <div key={p.id} className={'px-3 py-1.5 border-b border-line/70 ' + (who === p.name ? 'bg-brand-50/50' : '')}>
                 <div className="flex items-center gap-2">
-                  {canSchedule && !String(p.id).startsWith('cb:') ? <input type="checkbox" checked={p.onShift} disabled={!!busy} onChange={e => setWorking(p, e.target.checked)} className="accent-brand-600" title={p.onShift ? 'Working this day — untick to take off' : 'Tick to mark working this day'} /> : null}
+                  {canSchedule && !String(p.id).startsWith('cb:') ? <input type="checkbox" checked={p.onShift} disabled={!!busy || p.shiftFrom === 'homebase'} onChange={e => setWorking(p, e.target.checked)} className="accent-brand-600" title={p.shiftFrom === 'homebase' ? `Scheduled in Homebase ${p.hours || ''} — change it there` : p.onShift ? 'Working this day — untick to take off' : 'Tick to mark working this day'} /> : null}
                   <button onClick={() => setWho(w => w === p.name ? '' : p.name)} className="text-[12.5px] font-semibold text-ink truncate hover:underline decoration-dotted underline-offset-2 text-left" title="Show only this person's rooms">{p.name}</button>
                   {!p.onShift && <span className="text-[10px] font-semibold text-amber-700 shrink-0" title="Has rooms but is not marked working this day">not scheduled</span>}
+                  {p.onShift && p.hours && <span className="text-[10px] text-muted shrink-0 tabular-nums" title={p.shiftFrom === 'homebase' ? 'From Homebase' : 'Set here'}>{p.hours.replace(/:00/g, '')}</span>}
                   <span className={'ml-auto text-[11px] tabular-nums shrink-0 ' + (over ? 'text-rose-700 font-semibold' : 'text-muted')}>{p.rooms ? `${p.rooms} · ${fmtMins(p.minutes)}` : '—'}</span>
                 </div>
                 <div className="h-1 rounded bg-app overflow-hidden mt-1"><div className={'h-full ' + (over ? 'bg-rose-500' : 'bg-brand-600')} style={{ width: Math.min(100, Math.round((p.minutes / SHIFT) * 100)) + '%' }} /></div>
@@ -256,17 +295,30 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                     <th className="px-2 py-2 font-semibold">Room</th>
                     <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="45 min a checkout or same-day turn, 20 a stayover, 8 an inspection">Est. time</th>
                     <th className="px-2 py-2 font-semibold">Reservation</th>
-                    <th className="px-2 py-2 font-semibold">Status</th>
+                    <th className="px-2 py-2 font-semibold sm:w-[12.5rem]">Status</th>
                   </tr>
                 </thead>
                 <tbody className="block sm:table-row-group">
-                  {rows.map((r, i) => {
+                  {groups.map(g => { const folded = !!g.done && !showDone; const mins = g.rows.reduce((a, r) => a + r.minutes, 0), noOne = g.rows.filter(needsPerson).length; return (<Fragment key={g.key}>
+                    <tr className={'block sm:table-row border-t-[6px] border-app ' + g.band}>
+                      <td colSpan={6} className={'block sm:table-cell px-3 py-2 border-l-4 ' + g.edge}>
+                        <div style={{ width: 0, minWidth: '100%' }} className="flex items-center gap-x-3 gap-y-0.5 flex-wrap">
+                          <span className="gh-display text-[13px] font-bold tracking-wide uppercase">{g.title}</span>
+                          <span className="text-[12px] font-semibold tabular-nums">{g.rows.length} room{g.rows.length === 1 ? '' : 's'}{mins ? ' · ' + fmtMins(mins) : ''}</span>
+                          {noOne > 0 && <span className="text-[11px] font-bold text-rose-700 bg-white/70 rounded-full px-2 py-0.5">{noOne} need a housekeeper</span>}
+                          {g.hint && <span className="text-[11.5px] opacity-80">{g.hint}</span>}
+                          {g.done ? <button onClick={() => setShowDone(v => !v)} className="np ml-auto text-[11.5px] font-semibold underline underline-offset-2">{showDone ? 'Hide' : 'Show'}</button>
+                            : canEdit ? <button onClick={() => setSel(p => { const n = { ...p }; const ids = g.rows.filter(r => !closed(r)).map(r => r.roomId); const allOn = ids.every(i => n[i]); ids.forEach(i => { if (allOn) delete n[i]; else n[i] = true }); return n })} className="np ml-auto text-[11.5px] font-semibold underline underline-offset-2">Select these</button> : null}
+                        </div>
+                      </td>
+                    </tr>
+                  {!folded && g.rows.map((r, i) => {
                     const K = KIND[r.type as Kind], st = STATE[r.state]
-                    const brk = i > 0 && (sortBy === 'wing' ? rows[i - 1].area !== r.area : sortBy === 'cleaner' ? rows[i - 1].assignedTo !== r.assignedTo : sortBy === 'priority' ? (rows[i - 1].type !== r.type || closed(rows[i - 1]) !== closed(r)) : false)
+                    const brk = false
                     const tags = [...(r.out?.tags || []), ...(r.in?.tags || []), ...(r.stay?.tags || [])].filter((t: any, n: number, a: any[]) => a.findIndex(x => x.key === t.key) === n)
                     return (
                       <tr key={r.roomId} className={`flex flex-wrap items-center sm:table-row hover:brightness-95 transition border-t ${brk ? 'border-line/80 border-t-2' : 'border-line'} ${closed(r) ? 'opacity-60' : sel[r.roomId] ? 'bg-brand-50/40' : needsPerson(r) ? 'bg-rose-50/40' : ''}`}>
-                        <td className="np order-1 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle">{canEdit && !closed(r) && <input type="checkbox" checked={!!sel[r.roomId]} onChange={e => setSel(p => ({ ...p, [r.roomId]: e.target.checked }))} className="accent-brand-600" aria-label={'Select room ' + r.room} />}</td>
+                        <td className={'np order-1 shrink-0 sm:table-cell px-2.5 py-1.5 align-middle border-l-4 ' + K.edge}>{canEdit && !closed(r) && <input type="checkbox" checked={!!sel[r.roomId]} onChange={e => setSel(p => ({ ...p, [r.roomId]: e.target.checked }))} className="accent-brand-600" aria-label={'Select room ' + r.room} />}</td>
                         <td className="order-4 grow basis-44 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle">
                           {canEdit ? (
                             <select value={r.assignedTo || ''} disabled={!!busy} onChange={e => assign([r.roomId], e.target.value || null)} title={r.assignedFrom === 'cloudbeds' ? 'Assigned in Cloudbeds' : r.assignedFrom === 'lighthouse' ? 'Assigned here' : 'Nobody yet'}
@@ -279,10 +331,10 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                           ) : null}
                           <span className={canEdit ? 'hidden print:inline font-semibold' : 'font-semibold'}>{r.assignedTo || (closed(r) ? '' : '________')}</span>
                         </td>
-                        <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink whitespace-nowrap">
+                        <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink">
                           <span className="text-[14px] font-bold tabular-nums">{r.room}</span>
                           {r.type === 'turn' ? <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-semibold text-rose-600"><Repeat size={9} /> same-day turn</span> : <span className={'ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded ' + K.cls}>{K.label}</span>}
-                          {tags.map((t: any) => <span key={t.key} className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">{t.label}</span>)}
+                          {tags.map((t: any) => <span key={t.key} className="ml-1 inline-block whitespace-nowrap text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">{t.label}</span>)}
                           {r.dnd && r.state !== 'skip' ? <span className="ml-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-violet-50 text-violet-700">DND</span> : null}
                           <div className="text-[10.5px] font-normal text-muted truncate max-w-[15rem]">{r.roomType || r.area}{r.comments ? ` · ${r.comments}` : ''}</div>
                         </td>
@@ -294,10 +346,10 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                           {r.type === 'dirty' && <span className="text-muted">Empty, no booking today</span>}
                           {r.flag && <div className="text-[10.5px] font-semibold text-amber-700">{r.flag}</div>}
                         </td>
-                        <td className="order-6 basis-full sm:table-cell px-2.5 py-1.5 align-middle whitespace-nowrap">
-                          <span className={'inline-block text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ' + st.cls}>{r.state === 'skip' ? (r.skipWhy || 'Skip') : st.label}</span>
+                        <td className="order-6 basis-full sm:table-cell px-2.5 py-1.5 align-middle sm:w-[12.5rem]">
+                          <span className={'inline-block whitespace-nowrap text-[10.5px] font-semibold px-1.5 py-0.5 rounded-full ' + st.cls}>{r.state === 'skip' ? (r.skipWhy || 'Skip') : st.label}</span>
                           {canEdit && live ? (
-                            <span className="np ml-1.5 inline-flex gap-1 align-middle">
+                            <span className="np mt-1 flex flex-wrap gap-1">
                               {(r.state === 'todo' || r.state === 'cleaning') && <button disabled={!!busy} onClick={() => setCond(r, 'clean')} title="Mark the room Clean in Cloudbeds" className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-0.5 rounded border border-line bg-white text-ink hover:bg-app disabled:opacity-40"><Check size={10} /> Clean</button>}
                               {(r.state === 'inspect' || ((r.state === 'todo' || r.state === 'cleaning') && r.type !== 'stayover')) && <button disabled={!!busy} onClick={() => setCond(r, 'inspected')} title="Mark the room Inspected in Cloudbeds — ready for the guest" className="inline-flex items-center gap-0.5 text-[10.5px] font-semibold px-1.5 py-0.5 rounded border border-line bg-white text-ink hover:bg-app disabled:opacity-40"><CheckCheck size={10} /> Inspected</button>}
                               {(r.state === 'ready' || r.state === 'inspect' || (r.state === 'done' && r.type === 'stayover')) && <button disabled={!!busy} onClick={() => setCond(r, 'dirty')} title="Back to Dirty in Cloudbeds" className="text-[10.5px] text-muted hover:text-ink">undo</button>}
@@ -307,6 +359,7 @@ export function GardenHKPlan({ canEdit, canSchedule = false }: { canEdit: boolea
                       </tr>
                     )
                   })}
+                  </Fragment>) })}
                 </tbody>
               </table>
             </div>
