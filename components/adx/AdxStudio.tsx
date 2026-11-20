@@ -13,6 +13,7 @@ import { ADX_MONTHLY_CAP_USD, ADX_ANYTIME } from '@/lib/adx/composition'
 import { IDENTITIES, LOOKS } from '@/lib/adx/identities'
 import { loadFonts } from '@/lib/adx/assets'
 import { lookAt } from '@/lib/adx/stills'
+import { placeArt } from '@/lib/adx/edit'
 import BriefWizard, { UI } from './BriefWizard'
 import AdxPlayer from './AdxPlayer'
 
@@ -122,16 +123,29 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
       setBusy('review'); setStage(`Drawing the frames and looking at them — review ${r} of ${rounds}`)
       let seen
       try { seen = await lookAt(d) } catch { said.push('The frames could not be drawn for the review, so the piece is as first designed.'); break }
-      const { status, j } = await post('/api/adx/review', { doc: d, photos: pool, stills: seen.stills, findings: seen.findings, round: r })
+      const { status, j } = await post('/api/adx/review', { doc: d, photos: pool, stills: seen.stills, findings: seen.findings, round: r, canArt: r < rounds })
       if (j?.budget) setBudget(j.budget)
       if (!j?.ok || !j.doc) { said.push(j?.error ? 'The review stopped: ' + j.error : status === 0 ? 'The review did not finish (the connection dropped); the piece is as designed so far.' : 'The review did not finish; the piece is as designed so far.'); break }
       for (const n of (j.notes || []) as string[]) said.push(n)
       if (j.verdict !== 'revised') { d = { ...d, meta: { ...d.meta, costUsd: j.doc.meta?.costUsd || d.meta.costUsd } }; break }
+      // the graphics the director called for are made now and placed, so the next review sees them
+      let nd: Composition = j.doc
+      const asks = (Array.isArray(j.art) ? j.art : []) as { scene: string; kind: string; style: string; what: string; box: { x?: number; y?: number; w?: number }; idle?: 'float' | 'sway' | 'spin' | 'pulse' }[]
+      for (let k = 0; k < asks.length; k++) {
+        const a = asks[k]
+        setStage(`Making the graphics it asked for (${k + 1} of ${asks.length}: ${a.what.slice(0, 50)})`)
+        const cols = Object.values(nd.tokens.color).slice().sort((x, y) => Math.abs(0.4 - lumOf(x)) - Math.abs(0.4 - lumOf(y))).slice(0, 4)
+        const g = await post('/api/adx/prop', { what: a.what, colors: cols, style: a.style, kind: a.kind, frame: nd.canvas.w > nd.canvas.h ? 'wide' : nd.canvas.w === nd.canvas.h ? 'square' : 'tall' })
+        if (g.j?.budget) setBudget(g.j.budget)
+        if (!g.j?.ok) { said.push('A graphic was asked for but not made: ' + (g.j?.error || 'the image service did not answer') ); continue }
+        const placed = placeArt(nd, a.scene, { src: g.j.src, w: g.j.w, h: g.j.h, source: 'upload', building: '', unit: '', area: '', shows: (a.kind === 'backdrop' ? 'Backdrop: ' : 'Graphic: ') + a.what.slice(0, 50) }, { backdrop: a.kind === 'backdrop', box: a.box, idle: a.idle })
+        if (placed.layerId) { nd = { ...placed.doc, meta: { ...placed.doc.meta, costUsd: Math.round(((placed.doc.meta.costUsd || 0) + (Number(g.j.costUsd) || 0)) * 10000) / 10000 } }; said.push('Made for this piece: ' + a.what + ' (' + a.style + ').') }
+      }
       setStage(`Checking the revision — review ${r} of ${rounds}`)
       let after
-      try { after = await lookAt(j.doc) } catch { break }
-      if (after.fails > seen.fails) { said.push('One revision was set aside: it measured worse than what it replaced.'); d = { ...d, meta: { ...d.meta, costUsd: j.doc.meta?.costUsd || d.meta.costUsd } }; break }
-      d = j.doc
+      try { after = await lookAt(nd) } catch { break }
+      if (after.fails > seen.fails) { said.push('One revision was set aside: it measured worse than what it replaced.'); d = { ...d, meta: { ...d.meta, costUsd: nd.meta?.costUsd || d.meta.costUsd } }; break }
+      d = nd
     }
     setReview(said); setStage('')
     await post('/api/adx/pieces', { doc: d })

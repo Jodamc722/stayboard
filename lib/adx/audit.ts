@@ -137,7 +137,8 @@ export function auditComposition(doc: Composition, measure: Measure, opts: { sam
         if (a.source === 'upload') {
           // an image a person added (a sticker, a badge, a PNG): decoration, not one of the piece's photographs
           const up = drawnScale(l, a)
-          if (up > R.maxPhotoUpscale + 0.005) fail('photo-soft', `This ${a.w}×${a.h} image is drawn at ${Math.round(up * 100)}% of its real size and will look soft. Make it smaller (or add a larger file).`, s.id, l.id)
+          // a backdrop is soft colour and illustration, not detail: it may be stretched a little further than a photograph
+          if (up > (l.cover ? 1.9 : R.maxPhotoUpscale) + 0.005) fail('photo-soft', `This ${a.w}×${a.h} image is drawn at ${Math.round(up * 100)}% of its real size and will look soft. Make it smaller (or add a larger file).`, s.id, l.id)
           return
         }
         photoN++; photosHere++

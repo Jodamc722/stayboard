@@ -106,7 +106,7 @@ export type Run = { t: string; style?: string; color?: ColorRef } | { br: true }
 type Common = { id: string; opacity?: number; rotate?: number; in?: Entrance }
 export type FillLayer = Common & { type: 'fill'; color: ColorRef }
 export const IDLES = ['float', 'sway', 'spin', 'pulse'] as const
-export type PhotoLayer = Common & { type: 'photo'; photo: string; box: Box; /** How an added image or 3D object keeps moving once it has arrived. */ idle?: typeof IDLES[number]; focal?: { x: number; y: number }; treatment: typeof TREATMENTS[number]; mask?: { shape: typeof MASKS[number]; radius?: number }; camera?: { from: Cam; to: Cam; ease?: Ease } }
+export type PhotoLayer = Common & { type: 'photo'; photo: string; box: Box; /** How an added image or 3D object keeps moving once it has arrived. */ idle?: typeof IDLES[number]; /** An added graphic that fills its box edge to edge (a backdrop) instead of being shown whole. */ cover?: boolean; focal?: { x: number; y: number }; treatment: typeof TREATMENTS[number]; mask?: { shape: typeof MASKS[number]; radius?: number }; camera?: { from: Cam; to: Cam; ease?: Ease } }
 export type TextLayer = Common & { type: 'text'; style: string; color: ColorRef; box: Box; align?: 'left' | 'center' | 'right'; size?: number; fit?: { max: number; min: number; lines: number }; runs: Run[] }
 export type ShapeLayer = Common & { type: 'shape'; shape: typeof SHAPES[number]; color: ColorRef; box: Box; radius?: number; stroke?: number }
 export type VectorLayer = Common & { type: 'vector'; box: Box; viewBox: [number, number]; paths: { d: string; fill?: ColorRef; stroke?: ColorRef; strokeWidth?: number }[] }
@@ -121,6 +121,8 @@ export type Brief = {
   goal: string; audience: 'guests' | 'owners' | 'team'; who: string; takeaway: string
   moment: string; momentName: string; dates: string; area: string; areaLabel: string; vibe: string
   channel: ChannelKey; seconds: number; note: string
+  /** The art style the brief asked for (lib/adx/prop STYLES key; '' = the designer chooses). */
+  style?: string
   confirmedBy: string; confirmedAt: string
 }
 export type PhotoAsset = {
@@ -238,6 +240,7 @@ function layer(raw: unknown, ctx: { W: number; H: number; dur: number; palette: 
     const l: PhotoLayer = { ...common, type, photo: key, box: box(raw.box, W, H, full), treatment: pick(raw.treatment, TREATMENTS, 'none') }
     if (isObj(raw.focal)) l.focal = { x: num(raw.focal.x, 0, 1, 0.5), y: num(raw.focal.y, 0, 1, 0.5) }
     if ((IDLES as readonly string[]).indexOf(raw.idle) >= 0 && ctx.photos[key].source === 'upload') l.idle = raw.idle
+    if (raw.cover === true && ctx.photos[key].source === 'upload') l.cover = true
     if (isObj(raw.mask) && (MASKS as readonly string[]).indexOf(raw.mask.shape) >= 0 && raw.mask.shape !== 'rect') l.mask = { shape: raw.mask.shape, ...(raw.mask.radius != null ? { radius: num(raw.mask.radius, 0, 600, 24) } : {}) }
     if (isObj(raw.camera)) l.camera = { from: cam(raw.camera.from), to: cam(raw.camera.to), ...((EASES as readonly string[]).indexOf(raw.camera.ease) >= 0 ? { ease: raw.camera.ease } : {}) }
     return l
@@ -343,7 +346,7 @@ export function cleanBrief(v: unknown): Brief {
   return {
     goal: cleanText(b.goal, 200), audience: b.audience === 'owners' ? 'owners' : b.audience === 'team' ? 'team' : 'guests', who: cleanText(b.who, 240), takeaway: cleanText(b.takeaway, 300),
     moment: idOf(b.moment, ''), momentName: cleanText(b.momentName, 80), dates: cleanText(b.dates, 60), area: idOf(b.area, ''), areaLabel: cleanText(b.areaLabel, 60), vibe: cleanText(b.vibe, 80),
-    channel: pick(b.channel, Object.keys(CHANNELS) as ChannelKey[], 'vertical'), seconds: Math.round(num(b.seconds, 6, 60, 15)), note: cleanText(b.note, 400),
+    channel: pick(b.channel, Object.keys(CHANNELS) as ChannelKey[], 'vertical'), seconds: Math.round(num(b.seconds, 6, 60, 15)), note: cleanText(b.note, 400), style: idOf(b.style, ''),
     confirmedBy: cleanText(b.confirmedBy, 120), confirmedAt: cleanText(b.confirmedAt, 40),
   }
 }

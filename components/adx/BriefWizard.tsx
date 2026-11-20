@@ -10,6 +10,7 @@ import { MOMENTS } from '@/lib/marketing-calendar'
 import { whenShortOf } from '@/lib/ad-event'
 import { MARKETS, MARKET_LABEL, marketAreas, buildingsIn, buildingName, type MarketKey } from '@/lib/ad-places'
 import { ADX_MOMENTS, ADX_ANYTIME, CHANNELS, type Brief, type ChannelKey } from '@/lib/adx/composition'
+import { STYLES } from '@/lib/adx/prop'
 import { IDENTITIES, AUDIENCES, GOALS, VIBES, LENGTHS, ANYTIME, TEAM_AUDIENCE } from '@/lib/adx/identities'
 
 export const UI = { bg: '#0B0F16', panel: '#121824', panel2: '#182131', line: 'rgba(255,255,255,0.09)', ink: '#F1F3F7', mut: '#8E9AAE', gold: '#D2B077', red: '#E06C6C', green: '#4CC488' }
@@ -46,6 +47,8 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
   const [goal, setGoal] = useState('')
   const [area, setArea] = useState<MarketKey | ''>('')
   const [vibe, setVibe] = useState('')
+  /** The art style (Jon, 2026-11-20: "Add graphic design, new style"); '' leaves it to the designer. */
+  const [style, setStyle] = useState('')
   const [channel, setChannel] = useState<ChannelKey | ''>('')
   const [seconds, setSeconds] = useState(0)
   const [note, setNote] = useState('')
@@ -67,7 +70,7 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
   const brief = (): Brief => ({
     goal: g?.brief || '', audience: audience === 'owners' ? 'owners' : audience === 'team' ? 'team' : 'guests', who: a?.brief || '', takeaway: '',
     moment: ev, momentName: m?.name || '', dates: m && !any ? whenShortOf(m) : '', area: area || '', areaLabel: area ? MARKET_LABEL[area] : '', vibe: v?.brief || '',
-    channel: (channel || 'vertical') as ChannelKey, seconds: seconds || 15, note: note.trim().slice(0, 400), confirmedBy: '', confirmedAt: '',
+    channel: (channel || 'vertical') as ChannelKey, seconds: seconds || 15, note: note.trim().slice(0, 400), style, confirmedBy: '', confirmedAt: '',
   })
 
   if (review && done && m) {
@@ -78,6 +81,7 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
       ['It should', g!.brief],
       ['Where', area ? `${MARKET_LABEL[area]} — only our units there (${homes(area, 6)})` : 'No unit photographs: type, colour and design only'],
       ['Vibe', v!.label],
+      ['Style', (STYLES.find(x => x.key === style) || STYLES[0]).label + (style ? ' — with graphics made for the piece by AI' : '')],
       ['Format', `${ch.label} · ${ch.hint} · about ${seconds} seconds`],
       ...(note.trim() ? [[any ? 'About' : 'Must say', note.trim()] as [string, string]] : []),
     ]
@@ -108,7 +112,7 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
         <p style={{ fontFamily: display, fontWeight: 800, fontSize: 24, margin: 0 }}>What are we making?</p>
         <button type="button" onClick={onCancel} style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, padding: '6px 11px', borderRadius: 8, border: '1px solid ' + UI.line, background: 'transparent', color: UI.mut, cursor: 'pointer' }}>✕ Close</button>
       </div>
-      <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 22px' }}>Seven quick choices. The piece is designed for exactly this — the event, the people, the place — and nothing is built until you confirm.</p>
+      <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 22px' }}>A few quick choices. The piece is designed for exactly this — the event, the people, the place — and nothing is built until you confirm.</p>
 
       <Q n={1} title="What is it?" note="an event, or a piece for any time">
         {events.map(e => <Chip key={e.key} on={ev === e.key} onClick={() => { setEv(e.key); setArea(''); if (audience === 'team') { setAudience(''); setGoal('') } }} hint={whenShortOf(e)}>{e.emoji} {IDENTITIES[e.key]?.name || e.name}</Chip>)}
@@ -135,10 +139,13 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
       <Q n={5} title="The vibe?">
         {VIBES.map(x => <Chip key={x.key} on={vibe === x.key} onClick={() => setVibe(x.key)}>{x.label}</Chip>)}
       </Q>
-      <Q n={6} title="Where will it run?">
+      <Q n={6} title="The style?" note="how it is drawn — the designer can call for AI-made graphics in this style">
+        {STYLES.map(x => <Chip key={x.key || 'any'} on={style === x.key} onClick={() => setStyle(x.key)} hint={x.hint}>{x.label}</Chip>)}
+      </Q>
+      <Q n={7} title="Where will it run?">
         {(Object.keys(CHANNELS) as ChannelKey[]).map(k => <Chip key={k} on={channel === k} onClick={() => setChannel(k)} hint={CHANNELS[k].hint}>{CHANNELS[k].label}</Chip>)}
       </Q>
-      <Q n={7} title="How long?">
+      <Q n={8} title="How long?">
         {LENGTHS.map(s => <Chip key={s} on={seconds === s} onClick={() => setSeconds(s)}>{s} seconds</Chip>)}
       </Q>
       {any ? null : <section style={{ margin: '0 0 22px' }}>
@@ -149,7 +156,7 @@ export default function BriefWizard({ moment, display, busy, onConfirm, onHouse,
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" disabled={!done} onClick={() => setReview(true)} style={{ fontSize: 14, fontWeight: 800, padding: '11px 20px', borderRadius: 10, border: 0, background: done ? UI.gold : UI.panel2, color: done ? '#0B0F16' : UI.mut, cursor: done ? 'pointer' : 'default' }}>Review the brief →</button>
-        {!done ? <span style={{ fontSize: 12.5, color: UI.mut }}>{any && note.trim().length < 4 ? 'Say what it is about, and answer all seven, to continue.' : 'Answer all seven to continue.'}</span> : null}
+        {!done ? <span style={{ fontSize: 12.5, color: UI.mut }}>{any && note.trim().length < 4 ? 'Say what it is about, and answer every question, to continue.' : 'Answer every question to continue.'}</span> : null}
         {ev && !any ? <button type="button" disabled={busy} onClick={() => onHouse(ev)} title="Opens the studio's own finished design for this event, ready to edit. No AI is used." style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 700, padding: '9px 13px', borderRadius: 10, border: '1px solid ' + UI.line, background: 'transparent', color: UI.ink, cursor: 'pointer' }}>Or open the house design for {id?.name} (no AI)</button> : null}
       </div>
     </div>

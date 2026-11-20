@@ -7,6 +7,7 @@
 //   repairPrompt    the audit's findings handed back once, for the scenes that failed
 // The composer is told the format from the same constants the validator enforces, so the two cannot drift.
 // Pure string builders; client and server safe.
+import { styleOf, ART_STYLES } from './prop'
 import type { Brief, Composition, PhotoAsset } from './composition'
 import { CHANNELS, EASES, TRANSITIONS, DIRS, TREATMENTS, MASKS, SHAPES, MOTIFS, MOTIF_VARIANTS, DRESSES, PRESETS, FROMS, LOOK_KEYS, FONT_FAMILIES, GUEST_CTA, OWNER_CTA, CHANNEL_NAMES, DEAD_BAND_MAX, MIN_LABEL_PX, MIN_HEADLINE_PX, MAX_PHOTO_UPSCALE } from './composition'
 import { IDENTITIES, LOOKS, SALES_FACTS, type Identity } from './identities'
@@ -92,7 +93,7 @@ export function briefText(b: Brief): string {
 Goal        ${b.goal}
 Audience    ${b.audience === 'owners' ? 'Owners' : b.audience === 'team' ? 'Our own team (internal)' : 'Guests'}. ${b.who}
 Area        ${b.areaLabel || 'South Florida'} only
-Vibe        ${b.vibe}
+Vibe        ${b.vibe}${b.style && styleOf(b.style).key ? `\nStyle       ${styleOf(b.style).label} — ${styleOf(b.style).brief}` : ''}
 Channel     ${ch.label} (${ch.hint}), ${ch.w} x ${ch.h}, about ${b.seconds} seconds at 30 fps
 Safe area   words, the logo and the button stay inside: top ${ch.safe.top}, bottom ${ch.safe.bottom}, left ${ch.safe.left}, right ${ch.safe.right} px from the edges${b.note ? `\nMust say    ${b.note}` : ''}`
 }
@@ -229,8 +230,24 @@ Fix them without changing the idea or the words more than a fix needs. Reply wit
 // composer never saw its piece; this pass is given every scene as a picture (rendered by the same player that
 // exports), the measured audit's findings, and is told to be hard on it. It answers with whole replacement scenes
 // (data, through the validator like everything else) or says the piece is ready.
-export function reviewPrompt(doc: Composition, findings: string, photos: Record<string, PhotoAsset>, round: number, rounds: number): string {
+export function reviewPrompt(doc: Composition, findings: string, photos: Record<string, PhotoAsset>, round: number, rounds: number, canArt = false): string {
   const b = doc.brief, id = IDENTITIES[b.moment]
+  // GRAPHIC DESIGN, NOT ONLY LAYOUT (Jon, 2026-11-20: "Add graphic design, new style and needs the creative power of AI
+  // not just templates"): the director may call for graphics made for this piece by an image model, and sees them
+  // rendered in the next review.
+  const st = styleOf(b.style || '')
+  const art = !canArt ? '' : `
+
+GRAPHICS YOU MAY CALL FOR
+You are not limited to photographs and flat shapes. You may ask for up to 3 graphics made for THIS piece by an image model, drawn in the piece's own colours:
+  kind "object"        one thing on a clear background (a glossy ornament, a paper sun, a neon palm)
+  kind "illustration"  a drawn motif or small scene on a clear background
+  kind "backdrop"      fills the whole frame of one scene, behind everything (use it for a scene with no photograph, or keep the photograph in a window over it)
+  style                ${ART_STYLES.map(x => x.key + ' (' + x.label.toLowerCase() + ')').join(' · ')}
+${st.key ? `The brief asked for the "${st.label}" style, so prefer art style "${st.art}".` : 'Choose one art style for the whole piece and keep to it.'}
+Ask only when it makes the piece more striking and more itself: a strong graphic idea beats decoration. Never ask for a pretend photograph of a home, for text or lettering, a logo, or a person.
+To ask, add to your reply:  "art":[{"scene":"s2","kind":"object","style":"3d","what":"a glossy gift box with a ribbon","box":{"x":640,"y":1180,"w":360},"idle":"float"}]
+"box" is where it sits on the ${doc.canvas.w} x ${doc.canvas.h} canvas (x, y of its top left, and its width; its height follows its shape); leave room for it in the scene you rewrite. "idle" may be float, sway, spin or pulse. It is placed under the words. You will see it rendered in the next review.`
   return `YOU ARE NOW LOOKING AT YOUR OWN PIECE, RENDERED. The pictures above are each scene at its resting moment, exactly as people will see it. This is review ${round} of at most ${rounds}.
 
 ${briefText(b)}
@@ -253,7 +270,7 @@ If, and only if, the piece is already at that standard, reply with ONLY: {"verdi
 
 Otherwise redesign the weak scenes. Be bold: move, resize, re-crop (focal), change grounds, enlarge the photograph, add or remove shapes and decoration. Do not just nudge. Keep the idea, the meaning of the words (you may tighten a headline), every rule in your instructions, and the truth of the photographs: each used at most once, never drawn above 100% of its own pixels (sizes are listed below), never tinted.
 Reply with ONLY this JSON (no prose before or after):
-{"verdict":"revise","notes":["what was wrong and what you changed, one line each, at most 6"],"scenes":[the COMPLETE scene object for each scene you change, same ids as now]}
+{"verdict":"revise","notes":["what was wrong and what you changed, one line each, at most 6"],"scenes":[the COMPLETE scene object for each scene you change, same ids as now]${canArt ? ',"art":[optional, see below]' : ''}}${art}
 
 YOUR DOCUMENT
 ${JSON.stringify({ concept: doc.concept, tokens: doc.tokens, canvas: { w: doc.canvas.w, h: doc.canvas.h, safe: doc.canvas.safe }, scenes: doc.scenes.map(s => ({ id: s.id, name: s.name, dur: s.dur, transitionIn: s.transitionIn, layers: s.layers })) })}

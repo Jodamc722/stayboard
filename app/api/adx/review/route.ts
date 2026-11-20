@@ -31,8 +31,8 @@ export async function POST(req: NextRequest) {
       pool[k] = { src: String(p.src), w: Math.max(1, Math.round(Number(p.w) || 0)), h: Math.max(1, Math.round(Number(p.h) || 0)), source: 'ours', building: cleanText(p.building, 60), unit: cleanText(p.unit, 80), area: cleanText(p.area, 30), shows: cleanText(p.shows, 240) }
     }
     const round = Math.max(1, Math.min(REVIEW_ROUNDS, Math.round(Number(b?.round) || 1)))
-    const r = await runReview(doc, pool, stills, String(b?.findings || '').replace(/[\u0000-\u0009\u000b-\u001f]+/g, ' ').slice(0, 3000), round)
+    const r = await runReview(doc, pool, stills, String(b?.findings || '').replace(/[\u0000-\u0009\u000b-\u001f]+/g, ' ').slice(0, 3000), round, b?.canArt === true)
     if (!r.ok) return NextResponse.json({ ok: false, error: r.error, capped: !!r.budget }, { status: r.status })
-    return NextResponse.json({ ok: true, doc: r.doc, verdict: r.verdict, notes: r.notes, changed: r.changed, usd: r.usd, budget: await adxSpend(true) })
+    return NextResponse.json({ ok: true, doc: r.doc, verdict: r.verdict, notes: r.notes, changed: r.changed, art: r.art, usd: r.usd, budget: await adxSpend(true) })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 }) }
 }

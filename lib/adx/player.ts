@@ -152,7 +152,7 @@ export function coverScale(l: PhotoLayer, pw: number, ph: number) { return Math.
 /** The largest scale a layer ever draws its photograph at: the cover crop times the camera's furthest push. */
 export function maxUpscale(l: PhotoLayer, pw: number, ph: number) { const c = l.camera; return coverScale(l, pw, ph) * Math.max(c?.from.scale || 1, c?.to.scale || 1) }
 /** The scale a picture is really drawn at: an added image (source 'upload') is fitted whole inside its box. */
-export function drawnScale(l: PhotoLayer, a: { w: number; h: number; source?: string }) { return a.source === 'upload' ? Math.min(l.box.w / a.w, l.box.h / a.h) : maxUpscale(l, a.w, a.h) }
+export function drawnScale(l: PhotoLayer, a: { w: number; h: number; source?: string }) { return a.source === 'upload' && !l.cover ? Math.min(l.box.w / a.w, l.box.h / a.h) : maxUpscale(l, a.w, a.h) }
 const FILTER: Record<string, string> = { warm: 'sepia(0.18) saturate(1.08)', cool: 'saturate(0.92) hue-rotate(-6deg)', mono: 'grayscale(1) contrast(1.05)' }
 
 function maskPath(ctx: Ctx, l: { box: Box; mask?: PhotoLayer['mask'] }) {
@@ -178,13 +178,13 @@ function drawPhoto(ctx: Ctx, doc: Composition, l: PhotoLayer, local: number, dur
   const lerp = (k: 'scale' | 'x' | 'y', d: number) => { const f = cam?.from[k] ?? d, t = cam?.to[k] ?? d; return f + (t - f) * cq }
   // the image handed over may be the whole photograph or one already cropped to this box: cover it either way
   // an added image or PNG is shown whole, centred in its box (its transparency kept); a photograph covers its window
-  const added = asset.source === 'upload'
+  const isAdded = asset.source === 'upload', added = isAdded && !l.cover          // a backdrop (cover) fills its box like a photograph
   const s = added ? Math.min(w / img.width, h / img.height) : Math.max(w / img.width, h / img.height) * lerp('scale', 1), dw = img.width * s, dh = img.height * s
   const whole = Math.abs(img.width / img.height - asset.w / asset.h) < 0.02
   const foc = whole ? (l.focal || asset.focal || { x: 0.5, y: 0.5 }) : { x: 0.5, y: 0.5 }
   const dx = added ? x + (w - dw) / 2 : clamp(x + w / 2 - foc.x * dw + lerp('x', 0) * w, x + w - dw, x), dy = added ? y + (h - dh) / 2 : clamp(y + h / 2 - foc.y * dh + lerp('y', 0) * h, y + h - dh, y)
   // an added image or 3D object keeps gently moving once it has arrived (deterministic: it depends only on the time)
-  if (added && l.idle) {
+  if (isAdded && l.idle) {
     const cx = x + w / 2, cy = y + h / 2, ph = local * Math.PI * 2
     if (l.idle === 'float') ctx.translate(0, Math.sin(ph / 3.2) * h * 0.03)
     else if (l.idle === 'sway') { ctx.translate(cx, cy); ctx.rotate(Math.sin(ph / 3.6) * 0.07); ctx.translate(-cx, -cy) }

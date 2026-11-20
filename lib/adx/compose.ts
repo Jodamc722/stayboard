@@ -24,6 +24,7 @@ import { housePiece } from './seeds'
 import { adxBudgetBlock, bustAdxSpend } from './budget'
 import { thumbUrl } from './photos'
 import { newPieceId } from './store'
+import { ART_STYLES, type ArtKind } from './prop'
 
 export type Concept = { name: string; idea: string; look: string; ground: string[]; hook: string; lead: string; beats: string[]; why: string }
 export type CopyOption = { voice: string; lines: { vo: string; head: string; photo: string }[]; caption: string; hashtags: string[] }
@@ -151,7 +152,9 @@ export type Still = { scene: string; data: string }
  * said, and which scenes changed. The reply is data: whole scenes, merged by id and put through the validator; a
  * revision that makes the measurable problems worse is thrown away.
  */
-export async function runReview(doc: Composition, pool: Record<string, PhotoAsset>, stills: Still[], findings: string, round: number): Promise<{ ok: true; doc: Composition; verdict: 'ship' | 'revised'; notes: string[]; changed: string[]; usd: number } | Fail> {
+/** A graphic the director called for: made by the image model and placed by the browser, then seen in the next review. */
+export type ArtAsk = { scene: string; kind: ArtKind; style: string; what: string; box: { x?: number; y?: number; w?: number }; idle?: 'float' | 'sway' | 'spin' | 'pulse' }
+export async function runReview(doc: Composition, pool: Record<string, PhotoAsset>, stills: Still[], findings: string, round: number, canArt = false): Promise<{ ok: true; doc: Composition; verdict: 'ship' | 'revised'; notes: string[]; changed: string[]; art: ArtAsk[]; usd: number } | Fail> {
   const example = housePiece(EXAMPLE_FOR[doc.brief.moment] || 'thanksgiving')
   const system = composerSystem(doc.brief.audience, example)
   const photos: Record<string, PhotoAsset> = { ...pool, ...doc.assets.photos }
@@ -162,17 +165,24 @@ export async function runReview(doc: Composition, pool: Record<string, PhotoAsse
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: st.data } })
   }
   if (!content.length) return { ok: false, status: 400, error: 'No frames came through to look at.' }
-  content.push({ type: 'text', text: reviewPrompt(doc, findings, photos, round, REVIEW_ROUNDS) })
+  content.push({ type: 'text', text: reviewPrompt(doc, findings, photos, round, REVIEW_ROUNDS, canArt) })
   const a = await ask('adx-compose', { system, content, maxTokens: 12000, temperature: 0.5 })
   if (!a.ok) return a
   const notes = (Array.isArray(a.json?.notes) ? a.json.notes : []).map((n: any) => cleanText(n, 220)).filter(Boolean).slice(0, 6)
   const fresh = new Map<string, any>((Array.isArray(a.json?.scenes) ? a.json.scenes : []).filter((s: any) => s && typeof s.id === 'string' && doc.scenes.some(x => x.id === s.id)).map((s: any) => [s.id, s]))
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : undefined)
+  const art: ArtAsk[] = !canArt ? [] : (Array.isArray(a.json?.art) ? a.json.art : []).slice(0, 3).map((x: any) => ({
+    scene: String(x?.scene || ''), kind: (x?.kind === 'backdrop' ? 'backdrop' : x?.kind === 'illustration' ? 'illustration' : 'object') as ArtKind,
+    style: ART_STYLES.some(y => y.key === x?.style) ? String(x.style) : '3d', what: cleanText(x?.what, 160),
+    box: { x: n(x?.box?.x), y: n(x?.box?.y), w: n(x?.box?.w) }, ...(['float', 'sway', 'spin', 'pulse'].indexOf(x?.idle) >= 0 ? { idle: x.idle } : {}),
+  })).filter((x: ArtAsk) => x.what.length >= 3 && doc.scenes.some(sc => sc.id === x.scene))
   const cost = (d: Composition) => { d.meta.costUsd = Math.round(((doc.meta.costUsd || 0) + a.usd) * 10000) / 10000; return d }
-  if (a.json?.verdict === 'ship' || !fresh.size) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes, changed: [], usd: a.usd }
+  if ((a.json?.verdict === 'ship' || !fresh.size) && !art.length) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes, changed: [], art: [], usd: a.usd }
+  if (!fresh.size) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'revised', notes, changed: [], art, usd: a.usd }
   const authored = { concept: doc.concept, tokens: doc.tokens, script: doc.script, social: doc.social, scenes: doc.scenes.map(s => fresh.get(s.id) || { id: s.id, name: s.name, dur: s.dur, transitionIn: s.transitionIn, layers: s.layers }) }
   const trusted = { id: doc.id, title: doc.title, brief: doc.brief, canvas: doc.canvas, photos, music: doc.assets.audio.music, meta: { ...doc.meta } }
   const next = sanitizeComposition(authored, trusted).doc
   const hard = (d: Composition) => auditComposition(d, approxMeasure).issues.filter(x => x.sev === 'fail' && MEASURED_CODES.indexOf(x.code) < 0).length
-  if (next.scenes.length !== doc.scenes.length || hard(next) > hard(doc)) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes: notes.concat('A revision was drawn and set aside: it broke more rules than it fixed.'), changed: [], usd: a.usd }
-  return { ok: true, doc: cost(next), verdict: 'revised', notes, changed: Array.from(fresh.keys()), usd: a.usd }
+  if (next.scenes.length !== doc.scenes.length || hard(next) > hard(doc)) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes: notes.concat('A revision was drawn and set aside: it broke more rules than it fixed.'), changed: [], art: [], usd: a.usd }
+  return { ok: true, doc: cost(next), verdict: 'revised', notes, changed: Array.from(fresh.keys()), art, usd: a.usd }
 }

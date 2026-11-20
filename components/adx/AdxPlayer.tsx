@@ -294,19 +294,19 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     setAdding(false)
   }
   // ── a 3D object made for this piece (Jon, 2026-11-20: "add some 3d generation to the mix to fit the look") ──
-  const addObject = async (what: string) => {
+  const addObject = async (what: string, kind: 'object' | 'illustration' | 'backdrop' = 'object', style = '3d') => {
     setAddErr(''); setAdding(true)
     try {
       const d0 = docRef.current
       // its colours: the piece's mid-tones first (not the lightest or darkest ground)
       const cols = Object.values(d0.tokens.color).slice().sort((a, b) => Math.abs(0.4 - lumOf(a)) - Math.abs(0.4 - lumOf(b))).slice(0, 3)
-      const r = await fetch('/api/adx/prop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what, colors: cols }) })
+      const r = await fetch('/api/adx/prop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ what, colors: cols, kind, style, frame: W > H ? 'wide' : W === H ? 'square' : 'tall' }) })
       const j = await r.json().catch(() => null)
       if (!j?.ok) throw new Error(j?.error || 'The object was not made. Try again.')
       const d = docRef.current, sc = d.scenes[sceneAt(d, tRef.current)]
       const at = lastPt.current && lastPt.current.scene === sc.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined
-      const res = E.addImage(d, sc.id, { src: j.src, w: j.w, h: j.h, source: 'upload', building: '', unit: '', area: '', shows: '3D ' + String(j.name || what).slice(0, 50) }, at)
-      commit(E.patchLayer(res.doc, res.layerId, l => ({ ...l, idle: 'float', in: { preset: 'fade', at: 0.3, dur: 0.6 } } as Layer))); select(res.layerId)
+      const res = E.placeArt(d, sc.id, { src: j.src, w: j.w, h: j.h, source: 'upload', building: '', unit: '', area: '', shows: (kind === 'backdrop' ? 'Backdrop: ' : 'Graphic: ') + String(j.name || what).slice(0, 50) }, { backdrop: kind === 'backdrop', at, idle: kind === 'object' ? 'float' : undefined })
+      commit(res.doc); select(res.layerId)
     } catch (e: any) { setAddErr(String(e?.message || e)) }
     setAdding(false)
   }

@@ -12,9 +12,9 @@ import { requireLevel } from '@/lib/access'
 import { budgetBlock, bustBudgetCache } from '@/lib/ai-budget'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { saveAiImage } from '@/lib/ad-studio'
-import { imageCostUsd, IMAGE_MODEL, IMAGE_QUALITY, AI_KEY_MISSING } from '@/lib/ad-image-prompt'
+import { imageCostUsd, scrubNames, IMAGE_MODEL, IMAGE_QUALITY, AI_KEY_MISSING } from '@/lib/ad-image-prompt'
 import { cleanText } from '@/lib/adx/composition'
-import { propPrompt } from '@/lib/adx/prop'
+import { propPrompt, artStyle, type ArtKind } from '@/lib/adx/prop'
 import { adxBudgetBlock, adxSpend, bustAdxSpend } from '@/lib/adx/budget'
 
 export const dynamic = 'force-dynamic'
@@ -36,13 +36,17 @@ export async function POST(req: NextRequest) {
   if (what.length < 3) return NextResponse.json({ ok: false, error: 'Say what the object is: an ornament, a palm tree, a set of keys.' }, { status: 400 })
   const cap = (await adxBudgetBlock()) || (await budgetBlock('ad-image'))
   if (cap) return NextResponse.json({ ok: false, capped: true, error: cap }, { status: 429 })
-  const prompt = propPrompt(what, Array.isArray(b?.colors) ? b.colors.map((c: any) => String(c)) : [])
+  const kind: ArtKind = b?.kind === 'backdrop' ? 'backdrop' : b?.kind === 'illustration' ? 'illustration' : 'object'
+  const style = artStyle(String(b?.style || '3d')).key
+  // a backdrop is made in the shape of the frame it fills; everything else square
+  const shape: 'portrait' | 'square' | 'landscape' = kind !== 'backdrop' ? 'square' : b?.frame === 'wide' ? 'landscape' : b?.frame === 'square' ? 'square' : 'portrait'
+  const prompt = propPrompt(scrubNames(what), Array.isArray(b?.colors) ? b.colors.map((c: any) => String(c)) : [], style, kind)
   const t0 = Date.now()
   let r: Response
   try {
     r = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: IMAGE_MODEL, prompt, n: 1, size: '1024x1024', quality: IMAGE_QUALITY, background: 'transparent', output_format: 'png', moderation: 'auto' }),
+      body: JSON.stringify({ model: IMAGE_MODEL, prompt, n: 1, size: shape === 'portrait' ? '1024x1536' : shape === 'landscape' ? '1536x1024' : '1024x1024', quality: IMAGE_QUALITY, ...(kind === 'backdrop' ? { background: 'opaque', output_format: 'jpeg', output_compression: 90 } : { background: 'transparent', output_format: 'png' }), moderation: 'auto' }),
       signal: AbortSignal.timeout(170_000),
     })
   } catch (e: any) {
@@ -61,13 +65,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error }, { status: 502 })
   }
   const b64 = String(d?.data?.[0]?.b64_json || '')
-  const cost = imageCostUsd('square', 1, d?.usage || null)
+  const cost = imageCostUsd(shape, 1, d?.usage || null)
   await logSpend(cost.usd, cost.estimated, ms, !!b64, r.status)
   if (!b64) return NextResponse.json({ ok: false, error: 'The image service answered with no picture. Try again.' }, { status: 502 })
   try {
     // trimmed to the object, so its box in the piece hugs it
-    const out = await sharp(Buffer.from(b64, 'base64')).trim({ threshold: 4 }).png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true })
-    const path = await saveAiImage(out.data, 'png', { kind: '3d', what, sent: prompt, model: IMAGE_MODEL, quality: IMAGE_QUALITY, by: String(g.access.email || ''), usd: cost.usd, estimated: cost.estimated })
-    return NextResponse.json({ ok: true, src: '/api/ads/image?path=' + encodeURIComponent(path), w: out.info.width, h: out.info.height, name: what, costUsd: Math.round(cost.usd * 1000) / 1000, budget: await adxSpend(true) })
+    const out = kind === 'backdrop' ? await sharp(Buffer.from(b64, 'base64')).jpeg({ quality: 90 }).toBuffer({ resolveWithObject: true }) : await sharp(Buffer.from(b64, 'base64')).trim({ threshold: 4 }).png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true })
+    const path = await saveAiImage(out.data, kind === 'backdrop' ? 'jpg' : 'png', { kind, style, what, sent: prompt, model: IMAGE_MODEL, quality: IMAGE_QUALITY, by: String(g.access.email || ''), usd: cost.usd, estimated: cost.estimated })
+    return NextResponse.json({ ok: true, src: '/api/ads/image?path=' + encodeURIComponent(path), w: out.info.width, h: out.info.height, name: what, kind, style, costUsd: Math.round(cost.usd * 1000) / 1000, budget: await adxSpend(true) })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 200) }, { status: 500 }) }
 }

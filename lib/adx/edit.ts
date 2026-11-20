@@ -490,3 +490,22 @@ export function addImage(doc: Composition, sid: string, asset: PhotoAsset, at?: 
 }
 /** How far past its real pixels a picture is drawn (1 = exactly its own size). */
 export function upscaleOf(doc: Composition, l: PhotoLayer): number { const a = doc.assets.photos[l.photo]; return a ? drawnScale(l, a) : 1 }
+
+/** A graphic the designer (or a person) called for, placed in a scene: a backdrop goes edge to edge at the back,
+ *  anything else sits under the words in the box asked for (kept to its own shape and its real pixels). */
+export function placeArt(doc: Composition, sid: string, asset: PhotoAsset, opts: { backdrop?: boolean; box?: Partial<Box>; idle?: PhotoLayer['idle']; at?: Pt } = {}): { doc: Composition; layerId: string } {
+  const s = doc.scenes.find(x => x.id === sid); if (!s) return { doc, layerId: '' }
+  const a: PhotoAsset = { ...asset, source: 'upload' }
+  const key = photoKeyFor(doc, 'art1', a), W = doc.canvas.w, H = doc.canvas.h
+  const id = freshId(allIds(doc), sid + (opts.backdrop ? '-backdrop' : '-art'))
+  let layer: PhotoLayer
+  if (opts.backdrop) layer = { id, type: 'photo', photo: key, cover: true, box: { x: 0, y: 0, w: W, h: H }, treatment: 'none', in: { preset: 'fade', at: 0, dur: 0.4 } }
+  else {
+    const want = opts.box || {}
+    const w = Math.round(clamp(Number(want.w) || W * 0.4, 80, Math.min(a.w, W))), h = Math.round((w * a.h) / a.w)
+    const b = want.x != null && want.y != null ? { x: Math.round(clamp(Number(want.x), -w / 2, W - w / 2)), y: Math.round(clamp(Number(want.y), -h / 2, H - h / 2)), w, h } : place(doc, w, h, opts.at)
+    layer = { id, type: 'photo', photo: key, box: b, treatment: 'none', in: { preset: 'fade', at: 0.3, dur: 0.6 }, ...(opts.idle ? { idle: opts.idle } : {}) }
+  }
+  const d = { ...doc, assets: { ...doc.assets, photos: { ...doc.assets.photos, [key]: a } } }
+  return { doc: insertUnderWords(d, sid, layer, !!opts.backdrop), layerId: id }
+}
