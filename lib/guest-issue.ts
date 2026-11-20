@@ -23,7 +23,7 @@
 import 'server-only'
 import { supabaseAdmin } from './supabase-admin'
 import { marketOf } from './segments'
-import { judgeIssue, categoryFor, noSafetyCall, alertTier, guestWaitingNow, type IssueSeverity, type AlertTier } from './guest-issue-judge'
+import { dropRepeatedNotes, dropRepeatedHistory, judgeIssue, categoryFor, noSafetyCall, alertTier, guestWaitingNow, type IssueSeverity, type AlertTier } from './guest-issue-judge'
 export { judgeIssue, categoryFor, severityFor } from './guest-issue-judge'
 
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
@@ -258,11 +258,29 @@ async function mergeIntoOpenGlitch(d: Detection): Promise<{ id: string; security
   const g = ((data || []) as any[]).find(r => !/closed|resolved|done|cancel/i.test(str(r.status)))
   if (!g) return null
   const when = new Date(d.occurredAt || Date.now()).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  // Said once is enough: the same report (same source, or the same line and link) is never added twice.
+  const again = (Array.isArray(g.history) ? g.history : []).some((h: any) => str(h?.detail).endsWith('merged from ' + d.sourceKey))
+  if (again) return { id: str(g.id), security: /security/i.test(str(g.glitch_type)) }
   const add = `\n\nAlso heard (${d.kind === 'call' ? 'call' : 'message'}, ${when}): ${d.headline}${d.issues.length > 1 ? ' — ' + d.issues.join('; ') : ''}\n${d.link}`
   const history = Array.isArray(g.history) ? g.history.slice(-40) : []
   history.push({ at: new Date().toISOString(), by: 'lighthouse', action: 'note', detail: 'another report on this stay merged from ' + d.sourceKey })
+  if (str(g.overview).includes(add.trim())) return { id: str(g.id), security: /security/i.test(str(g.glitch_type)) }
   await db.from('glitches').update({ overview: (str(g.overview) + add).slice(0, 6000), history }).eq('id', g.id)
   return { id: str(g.id), security: /security/i.test(str(g.glitch_type)) }
+}
+
+/** Clean the glitches the repeat left behind (2026-11-20). Runs with the watch; a glitch already clean is not written. */
+async function healRepeatedNotes(): Promise<number> {
+  const db = supabaseAdmin()
+  const { data } = await db.from('glitches').select('id,overview,history').like('overview', '%Also heard%Also heard%').gte('created_at', new Date(Date.now() - 90 * 86400_000).toISOString()).limit(300)
+  let n = 0
+  for (const g of (data || []) as any[]) {
+    const overview = dropRepeatedNotes(str(g.overview)), history = dropRepeatedHistory(g.history)
+    if (overview === str(g.overview) && history.length === (Array.isArray(g.history) ? g.history.length : 0)) continue
+    const { error } = await db.from('glitches').update({ overview, history }).eq('id', g.id)
+    if (!error) n++
+  }
+  return n
 }
 
 /** The line customer care sees — in the pop-up they must acknowledge, and in Slack. */
@@ -312,10 +330,21 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
   // What we have already judged — by source key, so nothing is filed twice.
   const seen = new Set<string>()
   try {
-    const { data } = await db.from('guest_issue_detections').select('source_key').gte('detected_at', new Date(Date.now() - 60 * 86400_000).toISOString()).limit(5000)
-    for (const r of (data || []) as any[]) seen.add(str(r.source_key))
+    // ALL OF THEM, A PAGE AT A TIME (2026-11-20). One select returns at most 1,000 rows whatever limit it asks for.
+    // Once there were more than 1,000 detections in 60 days (Nov 13) the rest counted as never seen: every run read
+    // those threads again, judged them again, and added the same "Also heard" line to the open glitch again, 40-odd
+    // times on 100 glitches (Jon, 2026-11-20: "look at this long list on glitch").
+    const from60 = new Date(Date.now() - 60 * 86400_000).toISOString()
+    for (let page = 0; page < 30; page++) {
+      const { data, error } = await db.from('guest_issue_detections').select('source_key').gte('detected_at', from60).order('source_key', { ascending: true }).range(page * 1000, page * 1000 + 999)
+      if (error) throw error
+      for (const r of (data || []) as any[]) seen.add(str(r.source_key))
+      if ((data || []).length < 1000) break
+    }
   } catch (e: any) {
     if (/relation|does not exist|schema cache/i.test(str(e?.message))) return { ...out, ok: false, error: 'Run migration 148 (guest_issue_detections) in Supabase first.' }
+    // Without the full list of what was already judged, a run would judge and file it all again: stop instead.
+    return { ...out, ok: false, error: 'Could not read what was already judged: ' + str(e?.message).slice(0, 160) }
   }
   // A dry run wants to SHOW what is already handled too, so it does not hide the recent history.
   const skipSeen = dryRun ? new Set<string>() : seen
@@ -330,6 +359,7 @@ export async function runGuestIssueWatch(opts: { hours?: number; dryRun?: boolea
   }
   out.found = found.length
   const autoFile = dryRun ? false : await guestIssueAutoFile()
+  if (!dryRun) await healRepeatedNotes().catch(() => 0)
 
   for (const d of found) {
     const already = seen.has(d.sourceKey)

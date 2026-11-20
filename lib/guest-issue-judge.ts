@@ -113,3 +113,33 @@ export function guestWaitingNow(p: { kind: 'call' | 'message'; lastGuestAt?: str
   }
   return !noSafetyCall(p.callKind) && p.followUp === true && recent(p.callAt)
 }
+
+/**
+ * THE SAME NOTE, ONCE. A glitch overview is paragraphs; a paragraph that starts "Also heard" and repeats an earlier
+ * one word for word is dropped (as is a last one cut off mid-line by the length cap, when it is the start of one
+ * already there). Everything a person typed is left exactly as it was. Pure.
+ */
+export function dropRepeatedNotes(overview: string): string {
+  const parts = String(overview || '').split(/\n{2,}/)
+  const kept: string[] = []
+  const heard: string[] = []
+  for (const p of parts) {
+    const t = p.trim()
+    if (/^Also heard \(/.test(t)) {
+      if (heard.some(h => h === t || h.startsWith(t))) continue
+      heard.push(t)
+    }
+    kept.push(p)
+  }
+  return kept.join('\n\n')
+}
+/** The matching history: one "merged from <source>" note per source. */
+export function dropRepeatedHistory(history: any[]): any[] {
+  const seen = new Set<string>()
+  return (Array.isArray(history) ? history : []).filter(h => {
+    const d = String(h?.detail || '')
+    if (h?.action !== 'note' || !/merged from /.test(d)) return true
+    if (seen.has(d)) return false
+    seen.add(d); return true
+  })
+}
