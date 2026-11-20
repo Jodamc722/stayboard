@@ -475,27 +475,30 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 /* ================================================================================================
    THE GARDEN HOTEL & RESORT — the hotel side wears the hotel's own brand (Jon, 2026-11-20: "make it
    more garden looking … brand the interface to look like their colors and logos"). Read from
-   thegardenhotelandresort.com: sand paper #E7D8C9, forest green #364936 (their buttons and banner),
-   near-black #141617 text, Playfair Display uppercase headlines, Montserrat body. Shell puts
+   thegardenhotelandresort.com: forest green #364936 (their buttons and banner; softened here), near-black
+   text, (their sand #E7D8C9 was tried and dropped — see below), Playfair Display uppercase headlines, Montserrat body. Shell puts
    data-business="garden" on its root, so only the hotel's pages change; every page still reads its
    colors through the same variables.
    ================================================================================================ */
 [data-business="garden"] {
-  --c-app: 245 238 230;          /* a lighter sand for the page, so white cards still lift */
-  --c-rail: 231 216 201;         /* the site's sand, on the sidebar */
-  --c-ink: 20 22 23;
-  --c-muted: 84 86 78;
-  --c-line: 216 203 187;
-  --c-brand-50: 239 244 238;     /* forest green */
-  --c-brand-100: 224 233 222;
-  --c-brand-200: 197 212 195;
-  --c-brand-300: 158 181 156;
-  --c-brand-400: 113 142 111;
-  --c-brand-500: 79 107 78;
-  --c-brand-600: 54 73 54;       /* #364936 — the site's green */
-  --c-brand-700: 44 60 44;
-  --c-brand-800: 35 48 35;
-  --c-brand-900: 26 36 26;
+  /* WHITE, NOT SAND (Jon, 2026-11-20: "soften the colors, don't love the brown, keep white"). The
+     page and sidebar are white / near-white; the hotel shows in a softened sage-green accent, the
+     logo and the type. */
+  --c-app: 250 251 249;          /* a barely-green white for the page */
+  --c-rail: 255 255 255;         /* white sidebar */
+  --c-ink: 28 32 30;
+  --c-muted: 92 98 93;
+  --c-line: 228 231 226;
+  --c-brand-50: 244 248 244;     /* sage green, softened from the site's #364936 */
+  --c-brand-100: 232 240 232;
+  --c-brand-200: 210 224 210;
+  --c-brand-300: 176 198 177;
+  --c-brand-400: 136 165 138;
+  --c-brand-500: 104 136 107;
+  --c-brand-600: 82 112 86;
+  --c-brand-700: 66 92 70;
+  --c-brand-800: 52 72 55;
+  --c-brand-900: 38 53 41;
   --font-ui: 'Montserrat', 'Geist', system-ui, sans-serif;
   --font-display: 'Playfair Display', Georgia, serif;
   font-family: var(--font-ui);
