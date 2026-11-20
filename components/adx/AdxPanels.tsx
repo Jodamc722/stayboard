@@ -275,6 +275,18 @@ export function StylePanel({ doc, original, commit }: { doc: Composition; origin
     stop.current = setTimeout(() => { a.pause(); setHearing('') }, 12000)
   }
   const track = doc.assets.audio.music.track, gain = doc.assets.audio.music.gain
+  // the songs by kind, as buttons (Jon, 2026-11-20: "Can we do some better music"): the new set opens first
+  const KINDS: { key: string; label: string; test: (m: typeof MUSIC[number]) => boolean }[] = [
+    { key: 'new', label: 'New', test: m => !!m.fresh },
+    { key: 'chill', label: 'Chill', test: m => /lo-fi|chill|island|easy|dream|ambient|calm|piano|thoughtful|soft|gentle/i.test(m.mood) },
+    { key: 'upbeat', label: 'Upbeat', test: m => /upbeat|funk|disco|pop|party|electronic|happy|bright|tropical|groove|latin|epic|quick|ukulele/i.test(m.mood) },
+    { key: 'lounge', label: 'Lounge & jazz', test: m => /lounge|jazz|bossa|sax|sleek/i.test(m.mood) },
+    { key: 'festive', label: 'Festive', test: m => /christmas|holiday|halloween/i.test(m.mood) },
+    { key: 'all', label: 'All', test: () => true },
+  ]
+  const [kind, setKind] = useState('new')
+  const songs = MUSIC.filter(m => m.file && (KINDS.find(k => k.key === kind) || KINDS[0]).test(m))
+  const start = doc.assets.audio.music.start || 0
   const same = (a: Record<string, string>, b: Record<string, string>) => Object.keys(a).every(k => a[k] === b[k])
   const face = doc.tokens.type.display.family
   const total = doc.canvas.duration
@@ -309,9 +321,12 @@ export function StylePanel({ doc, original, commit }: { doc: Composition; origin
     </Sec>
 
     <Sec title="Song" right={<span style={{ fontSize: 11.5, color: UI.mut }}>▶ to listen first</span>}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 8, maxHeight: 300, overflowY: 'auto' }}>
+      <div style={{ ...row, marginTop: 8 }}>
+        {KINDS.map(k => <button key={k.key} type="button" aria-pressed={kind === k.key} onClick={() => setKind(k.key)} style={chip(kind === k.key)}>{k.label}</button>)}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 8, maxHeight: 340, overflowY: 'auto' }}>
         <button type="button" onClick={() => commit(E.setMusic(doc, '', ''))} style={{ ...chip(!track), textAlign: 'left' }}>No music</button>
-        {MUSIC.filter(m => m.file).map(m => (
+        {songs.map(m => (
           <div key={m.key} style={{ display: 'flex', gap: 5 }}>
             <button type="button" aria-label={(hearing === m.key ? 'Stop ' : 'Listen to ') + m.label} onClick={() => hear(m)} style={{ ...chip(hearing === m.key), minWidth: 34 }}>{hearing === m.key ? '❚❚' : '▶'}</button>
             <button type="button" onClick={() => commit(E.setMusic(doc, m.key, m.credit))} style={{ ...chip(track === m.key), flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.label}<span style={{ color: UI.mut, fontWeight: 500 }}> · {m.mood}</span></button>
@@ -326,6 +341,11 @@ export function StylePanel({ doc, original, commit }: { doc: Composition; origin
         </div>
       ) : null}
       {track ? (<>
+        <span style={label}>Start the song at</span>
+        <div style={row}>
+          <input type="range" min={0} max={80} step={1} value={start} onChange={e => commit(E.setMusicStart(doc, Number(e.target.value)), 'mstart')} style={{ flex: 1, accentColor: UI.gold }} aria-label="Where in the song the video starts" />
+          <span style={{ fontSize: 11.5, color: UI.mut, minWidth: 64, textAlign: 'right' }}>{start ? start + ' s in' : 'its start'}</span>
+        </div>
         <span style={label}>Fade out at the end</span>
         <div style={row}>
           {([['No fade', 0], ['1 s', 1], ['2 s', 2], ['3 s', 3], ['5 s', 5]] as const).map(([name, n]) => <button key={name} type="button" onClick={() => commit(E.setMusicFade(doc, n))} style={chip(Math.abs(doc.assets.audio.music.fadeOut - n) < 0.26)}>{name}</button>)}

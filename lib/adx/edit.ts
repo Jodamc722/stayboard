@@ -337,7 +337,12 @@ export function setHeadlineFace(doc: Composition, family: string, weight: number
 }
 export function setMusic(doc: Composition, track: string, credit: string, gain?: number): Composition {
   const m = doc.assets.audio.music
-  return touch({ ...doc, assets: { ...doc.assets, audio: { ...doc.assets.audio, music: { ...m, track, credit, gain: gain == null ? m.gain : clamp(gain, 0, 1) } } } })
+  return touch({ ...doc, assets: { ...doc.assets, audio: { ...doc.assets.audio, music: { ...m, track, credit, gain: gain == null ? m.gain : clamp(gain, 0, 1), start: track === m.track ? m.start : 0 } } } })
+}
+/** Where in the song the piece starts (seconds from the song's beginning). */
+export function setMusicStart(doc: Composition, seconds: number): Composition {
+  const m = doc.assets.audio.music
+  return touch({ ...doc, assets: { ...doc.assets, audio: { ...doc.assets.audio, music: { ...m, start: clamp(Math.round(seconds), 0, 90) } } } })
 }
 /** How long the music takes to fade out at the end (0 = it stops with the picture). */
 export function setMusicFade(doc: Composition, seconds: number): Composition {

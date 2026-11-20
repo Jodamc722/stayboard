@@ -280,7 +280,27 @@ export const VOICES: { id: string; name: string; blurb: string }[] = [
 ]
 const KM = (t: string) => `Music: “${t}” by Kevin MacLeod (incompetech.com) · CC BY 4.0`
 /** The bundled tracks (royalty-free, credit printed on the end card). Generated tracks live in the Sounds library. */
-export const MUSIC: { key: string; label: string; file: string; credit: string; mood: string }[] = [
+export const MUSIC: { key: string; label: string; file: string; credit: string; mood: string; fresh?: boolean }[] = [
+  // 2026-11-20 (Jon: "Can we do some better music" → "Free"). Sixteen public-domain tracks (CC0 1.0: HoliznaCC0,
+  // Zane Little, Loyalty Freak Music, TRG Banks, Art Flower — sources and the licence check are in
+  // public/ads/music/CREDITS.md). CC0 needs no credit, so `credit` is empty and nothing is drawn on the ad. Each is
+  // 100 s cut from where the track is under way, evened to about -16 LUFS. `mood` is the archive's own genre tags.
+  { key: 'rooftops', label: 'Roof Tops', mood: 'Lo-fi, chill', file: '/ads/music/roof-tops.mp3', credit: '', fresh: true },
+  { key: 'faded', label: 'Faded in the Sunlight', mood: 'Lo-fi, chill', file: '/ads/music/faded-in-the-sunlight.mp3', credit: '', fresh: true },
+  { key: 'lastlongday', label: 'The Last Long Day', mood: 'Lo-fi, chill', file: '/ads/music/the-last-long-day.mp3', credit: '', fresh: true },
+  { key: 'oceanmemory', label: 'Ocean Memory', mood: 'Lo-fi, chill', file: '/ads/music/ocean-memory.mp3', credit: '', fresh: true },
+  { key: 'springinsight', label: 'Spring in Sight', mood: 'Lo-fi, easy listening', file: '/ads/music/spring-in-sight.mp3', credit: '', fresh: true },
+  { key: 'hopeonrepeat', label: 'Hope on Repeat', mood: 'Lo-fi, easy listening', file: '/ads/music/hope-on-repeat.mp3', credit: '', fresh: true },
+  { key: 'beyondclouds', label: 'Beyond the Clouds', mood: 'Lounge, ambient', file: '/ads/music/beyond-the-clouds.mp3', credit: '', fresh: true },
+  { key: 'lostinbrazil', label: 'Lost in Brazil', mood: 'Latin, electronic', file: '/ads/music/lost-in-brazil.mp3', credit: '', fresh: true },
+  { key: 'usedtodance', label: 'We Used to Dance', mood: 'Disco, pop', file: '/ads/music/we-used-to-dance.mp3', credit: '', fresh: true },
+  { key: 'gotafeeling', label: 'Got a Feeling', mood: 'Synth pop', file: '/ads/music/got-a-feeling.mp3', credit: '', fresh: true },
+  { key: 'mutantclub', label: 'Mutant Club', mood: 'Synth pop, power pop', file: '/ads/music/mutant-club.mp3', credit: '', fresh: true },
+  { key: 'midnightcruiser', label: 'Midnight Cruiser', mood: 'Funk, lo-fi electronic', file: '/ads/music/midnight-cruiser.mp3', credit: '', fresh: true },
+  { key: 'drive', label: 'Drive', mood: 'Funk, lo-fi electronic', file: '/ads/music/drive.mp3', credit: '', fresh: true },
+  { key: 'cantstop', label: 'Can’t Stop My Feet', mood: 'Disco, surf rock', file: '/ads/music/cant-stop-my-feet.mp3', credit: '', fresh: true },
+  { key: 'christmaslights', label: 'Christmas Lights', mood: 'Christmas, ambient', file: '/ads/music/christmas-lights.mp3', credit: '', fresh: true },
+  { key: 'joytotheworld', label: 'Joy to the World (synth)', mood: 'Christmas, synth pop', file: '/ads/music/joy-to-the-world-synth.mp3', credit: '', fresh: true },
   { key: 'werq', label: 'Werq', mood: 'Upbeat groove', file: '/ads/music/werq.mp3', credit: KM('Werq') },
   { key: 'backbay', label: 'Backbay Lounge', mood: 'Lounge, upscale', file: '/ads/music/backbay-lounge.mp3', credit: KM('Backbay Lounge') },
   { key: 'moonlight', label: 'Moonlight Beach', mood: 'Island, easy', file: '/ads/music/moonlight-beach.mp3', credit: KM('Moonlight Beach') },

@@ -54,7 +54,7 @@ async function mixAudio(doc: Composition, musicUrl: string, gain: number): Promi
   // the fade a person chose in the editor (0 = the music stops with the picture, with a breath of a ramp so it does not click)
   const out = Math.max(0.04, Math.min(doc.assets.audio.music.fadeOut, Math.max(0.1, dur - MUSIC_FADE_IN)))
   g.gain.setValueAtTime(0, 0); g.gain.linearRampToValueAtTime(gain, MUSIC_FADE_IN); g.gain.setValueAtTime(gain, Math.max(MUSIC_FADE_IN, dur - out)); g.gain.linearRampToValueAtTime(0, dur)
-  src.start(0)
+  src.start(0, Math.max(0, Math.min(doc.assets.audio.music.start || 0, Math.max(0, music.duration - 1))))
   return ctx.startRendering()
 }
 
@@ -145,7 +145,7 @@ async function viaRecorder(doc: Composition, A: Assets, o: ExportOpts, why: stri
   renderFrame(ctx, doc, 0, A); vtrack?.requestFrame()
   rec.start(500)
   const start = performance.now() + 120
-  if (src && actx) src.start(actx.currentTime + 0.12)
+  if (src && actx) src.start(actx.currentTime + 0.12, Math.max(0, Math.min(doc.assets.audio.music.start || 0, Math.max(0, (src.buffer?.duration || 100) - 1))))
   let last = -1
   await new Promise<void>(res => {
     const step = () => {

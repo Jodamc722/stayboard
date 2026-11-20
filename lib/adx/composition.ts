@@ -140,7 +140,7 @@ export type Composition = {
   concept: { name: string; idea: string; look: LookKey; identity: string }
   canvas: { w: number; h: number; fps: 30; duration: number; safe: Safe }
   tokens: { color: Record<string, string>; type: Record<string, TypeStyle>; motion: { language: string; ease: Ease; easeMove: Ease } }
-  assets: { photos: Record<string, PhotoAsset>; logo: typeof LOGO; audio: { music: { track: string; gain: number; credit: string; /** Seconds the music takes to fade out at the end (0 = it stops with the picture). */ fadeOut: number } } }
+  assets: { photos: Record<string, PhotoAsset>; logo: typeof LOGO; audio: { music: { track: string; gain: number; credit: string; /** Seconds the music takes to fade out at the end (0 = it stops with the picture). */ fadeOut: number; /** Seconds into the song the piece starts from (0 = its beginning). */ start: number } } }
   script: { lines: { scene: string; vo: string }[]; alternates: Record<string, string[]> }
   scenes: Scene[]
   social: { caption: string; captionAlternates: string[]; hashtags: string[] }
@@ -319,7 +319,7 @@ function typeStyle(v: unknown, d: TypeStyle): TypeStyle {
 }
 
 /** The trusted half of a piece: built by the server (or carried by a saved file) and never taken from the model. */
-export type TrustedParts = { id: string; title?: string; brief: Brief; canvas: Composition['canvas']; photos: Record<string, PhotoAsset>; music?: { track: string; gain?: number; credit?: string; fadeOut?: number }; meta?: Partial<Composition['meta']> }
+export type TrustedParts = { id: string; title?: string; brief: Brief; canvas: Composition['canvas']; photos: Record<string, PhotoAsset>; music?: { track: string; gain?: number; credit?: string; fadeOut?: number; start?: number }; meta?: Partial<Composition['meta']> }
 
 function photoAsset(v: unknown): PhotoAsset | null {
   if (!isObj(v) || !photoSrcAllowed(String(v.src || ''))) return null
@@ -421,7 +421,7 @@ export function sanitizeComposition(authored: unknown, trusted: TrustedParts): {
     concept: { name: cleanText(co.name, 80), idea: cleanText(co.idea, 500), look: pick(co.look, LOOK_KEYS, 'colour-field'), identity: idOf(co.identity || brief.moment, '') },
     canvas: { w: W, h: H, fps: 30, duration, safe },
     tokens: { color: palette, type: types, motion: { language: cleanText(mo.language, 40), ease: pick(mo.ease, EASES, 'outExpo'), easeMove: pick(mo.easeMove, EASES, 'inOutCubic') } },
-    assets: { photos: usedPhotos, logo: LOGO, audio: { music: { track: /^[a-z0-9]{1,24}$/.test(String(music.track || '')) ? String(music.track) : '', gain: num(music.gain, 0, 1, 0.5), credit: cleanText(music.credit, 160), fadeOut: num(music.fadeOut, 0, 8, MUSIC_FADE_OUT) } } },
+    assets: { photos: usedPhotos, logo: LOGO, audio: { music: { track: /^[a-z0-9]{1,24}$/.test(String(music.track || '')) ? String(music.track) : '', gain: num(music.gain, 0, 1, 0.5), credit: cleanText(music.credit, 160), fadeOut: num(music.fadeOut, 0, 8, MUSIC_FADE_OUT), start: num(music.start, 0, 90, 0) } } },
     script: { lines, alternates },
     scenes,
     social: {
@@ -440,7 +440,7 @@ export function reopenComposition(stored: unknown): { doc: Composition; notes: s
   const s = isObj(stored) ? stored : {}
   const assets = isObj(s.assets) ? s.assets : {}
   const music = isObj(assets.audio) && isObj(assets.audio.music) ? assets.audio.music : {}
-  return sanitizeComposition(s, { id: String(s.id || ''), title: typeof s.title === 'string' ? s.title : undefined, brief: s.brief as Brief, canvas: s.canvas as Composition['canvas'], photos: isObj(assets.photos) ? (assets.photos as Record<string, PhotoAsset>) : {}, music: { track: String(music.track || ''), gain: music.gain, credit: String(music.credit || ''), fadeOut: music.fadeOut }, meta: isObj(s.meta) ? s.meta : {} })
+  return sanitizeComposition(s, { id: String(s.id || ''), title: typeof s.title === 'string' ? s.title : undefined, brief: s.brief as Brief, canvas: s.canvas as Composition['canvas'], photos: isObj(assets.photos) ? (assets.photos as Record<string, PhotoAsset>) : {}, music: { track: String(music.track || ''), gain: music.gain, credit: String(music.credit || ''), fadeOut: music.fadeOut, start: music.start }, meta: isObj(s.meta) ? s.meta : {} })
 }
 
 // ── colour maths shared by the player and the audit ─────────────────────────────────────────────────────────────

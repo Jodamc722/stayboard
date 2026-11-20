@@ -136,7 +136,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     if (!playing) { audioRef.current?.pause(); return }
     const start = performance.now() - tRef.current * 1000
     const a = audioRef.current
-    if (a && music) { try { a.currentTime = Math.min(tRef.current, Math.max(0, (a.duration || 100) - 0.2)); a.volume = Math.max(0, Math.min(1, docRef.current.assets.audio.music.gain)); a.play().catch(() => {}) } catch { /* no sound in the preview is fine */ } }
+    if (a && music) { try { a.currentTime = Math.min((docRef.current.assets.audio.music.start || 0) + tRef.current, Math.max(0, (a.duration || 100) - 0.2)); a.volume = Math.max(0, Math.min(1, docRef.current.assets.audio.music.gain)); a.play().catch(() => {}) } catch { /* no sound in the preview is fine */ } }
     let raf = 0
     const tick2 = () => {
       const x = (performance.now() - start) / 1000
