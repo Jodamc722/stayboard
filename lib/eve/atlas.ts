@@ -11,19 +11,24 @@
 // It replaced (2026-11-10) a per-feature list with a hand-written note for every page — longer, and
 // drifting from the sidebar. Pages outside the desks (Garden Hotel) are left out on purpose: that is
 // Adam's business, not Eve's.
+//
+// 2026-11-20 (Jon: "get rid of tabs that we do not use… think a professional webapp"): the desks are now
+// Operations, Guests, Properties, Owners & sales, Money & team and Settings, and a page can be off the
+// sidebar (`jump` in lib/desks.ts). She still knows every page; the ones off the sidebar are marked
+// "Jump only" so she sends people to Cmd/Ctrl-K instead of to a row that is not there.
 import 'server-only'
 import { DESKS } from '@/lib/desks'
 import { DOMAINS } from './registry'
 
 /** Which tool drawer answers questions about a desk's pages. Keys are lib/desks.ts desk keys. */
 const DESK_TOOLS: Record<string, string[]> = {
-  operations: ['ops', 'labor'], guests: ['guests', 'property'], reviews: ['quality'], listings: ['quality', 'property'],
-  marketing: ['money'], owners: ['money', 'quality'], team: ['labor'], kpis: ['money'], admin: ['system'],
+  operations: ['ops', 'labor', 'quality'], guests: ['guests', 'property', 'quality'], properties: ['quality', 'property'],
+  owners: ['money'], money: ['money', 'labor'], admin: ['system'],
 }
 
 /** Where a setting lives when it is a panel, not a page. */
 const SETTINGS = [
-  'Admin → Users & admin (/users) → Settings holds: task automation, front-desk notices, Slack rules, approval limits, review voice, share links, staffing and Ops presets (roster, growth buffer, vendor buildings), PAR levels, Guesty custom fields, Salato front-desk units, labor rules and integrations',
+  'Settings (the gear at the foot of the sidebar) → Users & admin (/users) → Settings holds: task automation, front-desk notices, Slack rules, approval limits, review voice, share links, staffing and Ops presets (roster, growth buffer, vendor buildings), PAR levels, Guesty custom fields, Salato front-desk units, labor rules and integrations',
   'Settings → Eve: your memory, voice, direction, agent mode, Reports routing, the OTA playbook (each channel\'s refund / cancellation / extras process) and the operating model',
   'Clean rates (the KPI hours per clean): Schedule → Rates',
 ]
@@ -37,14 +42,15 @@ export function appAtlas(): string {
   for (const d of DOMAINS) blurbOf[d.key] = d.label
   const desks = DESKS.map(desk => {
     const tools = (DESK_TOOLS[desk.key] || []).filter(k => blurbOf[k])
-    const views = desk.views.map(v => `${v.label} ${v.to} — ${v.hint}`).join('; ')
+    const views = desk.views.map(v => `${v.label} ${v.to}${v.jump ? ' (Jump only)' : ''} — ${v.hint}`).join('; ')
     return `- ${desk.label.toUpperCase()}${tools.length ? ` [tools: ${tools.join(', ')}]` : ''}: ${views}`
   }).join('\n')
   const drawers = DOMAINS.map(d => `- ${d.key} (${d.label}, ${d.tools.length} tools)`).join('\n')
   _cache = 'WHERE TO FIND IT (Lighthouse). Answer from a tool, then point the person to the page where they can see or fix it — '
     + 'by desk and page name ("Operations → Schedule → Next 7 days"). Anything the app already tracks on its own page '
     + '(channel connections, door codes, arrival instructions, listing health, review feeds, audit findings) you report '
-    + 'and point to; you do not chase why it is unresolved.\n'
+    + 'and point to; you do not chase why it is unresolved. A page marked (Jump only) is not in the sidebar: tell the person '
+    + 'to open Jump (Cmd/Ctrl-K) and type its name, or give them the path.\n'
     + desks
     + '\nSETTINGS: ' + SETTINGS.join('. ') + '.'
     + '\nALWAYS-ON ANSWERS: a unit or building — property_card; getting in / door or access code — access_info (never a code); '

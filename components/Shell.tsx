@@ -10,7 +10,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase-browser'
 import { featureForPath, pageAllowed, workspaceDef } from '@/lib/features'
 import { defaultPinsFor, cleanPins, MAX_PINS, PINS_LS_KEY } from '@/lib/nav'
-import { DESKS, deskForPath, type DeskView } from '@/lib/desks'
+import { DESKS, deskForPath, menuViews, type DeskView } from '@/lib/desks'
 import { EveFloat } from '@/components/EveFloat'
 import { InboxFloater } from '@/components/InboxFloater'
 import { AddTaskHost, openAddTask } from '@/components/AddTaskSheet'
@@ -18,8 +18,8 @@ import { BUSINESSES, businessForPath, businessDef, GARDEN_NAV, GARDEN_SECTIONS, 
 import { AdamFloat } from '@/components/AdamFloat'
 import { forgetAllCached } from '@/lib/swr'
 import {
-  Building2, MessageSquare, ListChecks, LogOut, RefreshCw, Gauge, Star, TrendingUp, Users, FileText, Bell,
-  Search, Menu, X, Plus, ChevronDown, Check, Sparkles, CalendarDays, Settings as SettingsIcon, Megaphone } from 'lucide-react'
+  Building2, MessageSquare, ListChecks, LogOut, RefreshCw, Gauge, Star, TrendingUp, FileText, Bell,
+  Search, Menu, X, Plus, ChevronDown, Check, Sparkles, CalendarDays, Settings as SettingsIcon, AlertTriangle } from 'lucide-react'
 
 // ------------------------------------------------------------------------------------------------
 // NAV, 2026-09-29 (Jon): "get rid of useless or noisy tabs… break it down into simple tabs", then
@@ -35,23 +35,31 @@ import {
 // History, briefly: 38 rows in 7 folding groups with a pinned band (2026-08-19), hubs (08-24),
 // tab sets (09-03). Each round moved the same pages around; this one puts them under the job they
 // serve, and the permission grid, Eve's map and the Jump box read the same list.
+//
+// 2026-11-20 (Jon: "get rid of tabs that we do not use… think a professional webapp"): the menu is
+// Today and Eve, five headings (Operations, Guests, Properties, Owners & sales, Money & team) and
+// Settings behind the gear. 31 rows, all of them always drawn. The "+N more" line of 2026-11-09 is
+// gone: a page is either a row or it is `jump: true` in lib/desks.ts, which keeps it in the Jump box
+// (Cmd/Ctrl-K), at its URL and behind the same permission, and draws nothing in the sidebar.
 // ------------------------------------------------------------------------------------------------
 
 type NavItem = { to: string; label: string; Icon: any }
 type NavSection = { title: string; items: NavItem[] }
 
-// One icon per desk (lib/desks.ts stays free of JSX). Admin is the gear.
+// One icon per desk (lib/desks.ts stays free of JSX). Settings (key `admin`) is the gear.
 const DESK_ICONS: Record<string, any> = {
-  today: Gauge, eve: Sparkles, operations: ListChecks, guests: MessageSquare, reviews: Star, listings: Building2, marketing: Megaphone,
-  owners: FileText, team: Users, kpis: TrendingUp, admin: SettingsIcon,
+  today: Gauge, eve: Sparkles, operations: ListChecks, guests: MessageSquare, properties: Building2,
+  owners: FileText, money: TrendingUp, admin: SettingsIcon,
 }
 // The phone's bottom bar: the four pages used most, then More (Jon, 2026-09-30: Today, the
 // scheduler and the day's work should be readily available).
+// 2026-11-20: Glitches took Eve's slot (30-day team opens: Glitches 456, Eve 7). Eve is still one
+// tap away on a phone: her floating button rides on every page and her row is at the top of the More drawer.
 const PHONE_BAR: { to: string; label: string; Icon: any }[] = [
   { to: '/command', label: 'Today', Icon: Gauge },
   { to: '/schedule', label: 'Schedule', Icon: CalendarDays },
   { to: '/inbox', label: 'Inbox', Icon: MessageSquare },
-  { to: '/eve', label: 'Eve', Icon: Sparkles },
+  { to: '/glitches', label: 'Glitches', Icon: AlertTriangle },
 ]
 
 // PER-TAB CACHE FOR THE SHELL'S OWN READS (2026-09-18). The Shell is rendered inside every page,
@@ -239,6 +247,9 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // console, which gates itself, so it shows for admins only.
   const viewVisible = (v: DeskView) => v.to === '/users' ? isAdmin : canSee(v.to)
   const desks = DESKS.map(d => ({ desk: d, views: d.views.filter(viewVisible) })).filter(x => x.views.length > 0)
+  // WHAT THE SIDEBAR DRAWS (2026-11-20): the same desks without their `jump` views. `desks` above stays
+  // the full list of what this person can open, and is what the Jump box searches.
+  const menu = DESKS.map(d => ({ desk: d, views: menuViews(d).filter(viewVisible) })).filter(x => x.views.length > 0)
   const deskHit = deskForPath(path)
   const deskHere = deskHit ? desks.find(x => x.desk.key === deskHit.desk.key) || null : null
   const viewHere: DeskView | null = deskHit && deskHit.view && viewVisible(deskHit.view) ? deskHit.view : null
@@ -362,7 +373,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   const gActive = (to: string) => path === to || (to !== '/garden' && !!path && path.startsWith(to + '/'))
   const gardenSections: NavSection[] = GARDEN_SECTIONS.map(sc => ({ title: sc.title, items: sc.items.filter(it => gVisible(it.key)).map(it => ({ to: it.to, label: it.label, Icon: it.Icon })) })).filter(sc => sc.items.length > 0)
   const gardenPinned: NavItem[] = (pins || []).map(p => gardenNav.find(g => g.to === p)).filter(Boolean).map((g: any) => ({ to: g.to, label: g.label, Icon: g.Icon }))
-  // The Jump box and the phone bar read the same list the sidebar does.
+  // The Jump box reads the same map the sidebar does, and all of it: every page the person can open,
+  // including the ones that are off the sidebar (`jump`).
   const deskSections: NavSection[] = desks.map(x => ({ title: x.desk.label, items: x.views.map(v => ({ to: v.to, label: v.label, Icon: DESK_ICONS[x.desk.key] || Gauge })) }))
 
   const jumpBox = (onNavigate?: () => void) => (
@@ -377,9 +389,6 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   // THE SIDEBAR LISTS EVERY PAGE (Jon, 2026-09-30: "pages are buried… the most important things
   // [should be] readily available"). Today and Eve are rows of their own at the top; every other
   // desk is a heading with its pages always listed under it. No strip across the top of the page.
-  const [moreOpen, setMoreOpen] = useState<Record<string, boolean>>({})
-  useEffect(() => { try { const r = localStorage.getItem('shell:more'); if (r) setMoreOpen(JSON.parse(r)) } catch { /* default: tucked */ } }, [])
-  const toggleMore = (k: string) => setMoreOpen(m => { const n = { ...m, [k]: !m[k] }; try { localStorage.setItem('shell:more', JSON.stringify(n)) } catch { /* fine */ } return n })
   const deskRow = (x: { desk: typeof DESKS[number]; views: DeskView[] }, onNavigate?: () => void) => {
     const Icon = DESK_ICONS[x.desk.key] || Gauge
     const active = !!deskHere && deskHere.desk.key === x.desk.key
@@ -404,33 +413,21 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
           <Icon size={13} className={here ? 'text-brand-600' : ''} />
           <span className="truncate">{x.desk.label}</span>
         </div>
-        {(() => {
-          // THE DAILY PAGES SHOW; THE RARE ONES SIT BEHIND "+N more" (usage audit 2026-11-09: 49 rows, about
-          // half of them opened by nobody in a month). Not a folded section — the desk's main pages are
-          // always listed; the line only tucks away the rarely-used ones, remembers being opened, and the
-          // page you are on always shows.
-          const openMore = !!moreOpen[x.desk.key]
-          const hidden = x.views.filter(v => v.more && !(viewHere && viewHere.to === v.to))
-          const shown = openMore ? x.views : x.views.filter(v => !v.more || (viewHere && viewHere.to === v.to))
-          return <>
-            {shown.map(v => {
-              const on = !!viewHere && viewHere.to === v.to
-              return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint} aria-current={on ? 'page' : undefined}
-                className={'block pl-[31px] pr-2 py-[5px] rounded-md text-[13px] truncate ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-ink/75 hover:text-ink hover:bg-app')}>{v.label}</Link>
-            })}
-            {hidden.length > 0 || openMore ? (
-              <button type="button" onClick={() => toggleMore(x.desk.key)} title={openMore ? 'Show only the daily pages' : hidden.map(v => v.label).join(' · ')}
-                className="block w-full text-left pl-[31px] pr-2 py-[4px] rounded-md text-[12px] text-muted hover:text-ink hover:bg-app">{openMore ? 'Less' : '+' + hidden.length + ' more'}</button>
-            ) : null}
-          </>
-        })()}
+        {/* EVERY ROW, ALWAYS (2026-11-20). The usage audit of 2026-11-09 tucked the rarely opened pages
+            behind a "+N more" line; that was still a fold. Those pages are off the sidebar now (`jump`
+            in lib/desks.ts, found with Cmd/Ctrl-K), and what is listed here is never hidden. */}
+        {x.views.map(v => {
+          const on = !!viewHere && viewHere.to === v.to
+          return <Link key={v.to} href={v.to} prefetch={false} onClick={onNavigate} title={v.hint} aria-current={on ? 'page' : undefined}
+            className={'block pl-[31px] pr-2 py-[5px] rounded-md text-[13px] truncate ' + (on ? 'text-brand-700 font-semibold bg-brand-50' : 'text-ink/75 hover:text-ink hover:bg-app')}>{v.label}</Link>
+        })}
       </div>
     )
   }
   const vrNav = (onNavigate?: () => void) => {
-    const top = desks.filter(x => x.desk.key === 'today' || x.desk.key === 'eve')
-    const main = desks.filter(x => x.desk.key !== 'admin' && x.desk.key !== 'today' && x.desk.key !== 'eve')
-    const admin = desks.find(x => x.desk.key === 'admin')
+    const top = menu.filter(x => x.desk.key === 'today' || x.desk.key === 'eve')
+    const main = menu.filter(x => x.desk.key !== 'admin' && x.desk.key !== 'today' && x.desk.key !== 'eve')
+    const admin = menu.find(x => x.desk.key === 'admin')
     return (
       <>
         {jumpBox(onNavigate)}
