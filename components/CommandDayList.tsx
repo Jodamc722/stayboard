@@ -34,7 +34,7 @@
 //   · EveLine, VendorVisitsCard (→ "· N vendors on site" on the day line), the owner-lane filter.
 //
 // Data: the same one read (/api/command/day, lib/command-day unchanged). Everything is derived here.
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
 import {
   RefreshCw, ExternalLink, UserPlus, Loader2, Check, X, AlertTriangle, ChevronDown, ChevronRight,
@@ -200,7 +200,10 @@ export function CommandDayList() {
       {/* "Eve is thinking about N things" lived here until 2026-11-10: her thoughts are a filter of
           the one Eve inbox now (/eve?tab=inbox → Would have done), and the band above carries its head. */}
       <CompletedLine d={data} onChanged={reload} />
-      <AvailabilityAlert />
+      {/* SPEED (Jon, 2026-11-20): the last thing on the page, asked for when it is about to be seen.
+          Its scan (every active listing's calendar in Guesty, ~40s on the day's first run) used to
+          start the moment Today opened, alongside the tiles. */}
+      <WhenNear><AvailabilityAlert /></WhenNear>
     </div>
   )
 }
@@ -689,15 +692,36 @@ function CompletedLine({ d, onChanged }: { d: CommandDay; onChanged: () => void 
   const tick = useTick()
   const [open, setOpen] = useState(true)
   const c = d.completed
+  // CLEAN-UP (Jon, 2026-11-20): one count, not two. The card under this line opened with the same
+  // four numbers under its own "Completed today" title. It is drawn only when it has something the
+  // line does not — rows cleared here, each with its Bring-it-back — and the line carries the calls.
+  const hasRows = (d.handled || []).length > 0
+  const line = <>Completed today: <b className="text-ink/80 font-semibold">{c.cleansDone}</b> cleans · <b className="text-ink/80 font-semibold">{c.tasksDone}</b> tasks · <b className="text-ink/80 font-semibold">{c.callsDone}</b> calls · <b className="text-ink/80 font-semibold">{c.handledDone}</b> cleared here</>
+  if (!hasRows) return <section><p className="px-1 text-[12px] text-muted min-h-[32px] flex items-center gap-1 flex-wrap">{line}</p></section>
   return (
     <section>
       <button onClick={() => setOpen(o => !o)} aria-expanded={open} className="px-1 inline-flex items-center gap-1 text-[12px] text-muted hover:text-ink min-h-[32px]">
-        Completed today: <b className="text-ink/80 font-semibold">{c.cleansDone}</b> cleans · <b className="text-ink/80 font-semibold">{c.tasksDone}</b> tasks · <b className="text-ink/80 font-semibold">{c.handledDone}</b> cleared here
+        {line}
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
       </button>
       {open && <div className="mt-1.5"><CompletedCard d={d} onChanged={onChanged} tick={tick} /></div>}
     </section>
   )
+}
+
+/** Mounts its children when the spot is within a screen of being seen (or at once where the browser cannot tell). */
+function WhenNear({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [near, setNear] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || near) return
+    if (typeof IntersectionObserver === 'undefined') { setNear(true); return }
+    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) setNear(true) }, { rootMargin: '600px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [near])
+  return <div ref={ref}>{near ? children : null}</div>
 }
 
 function Skeleton() {

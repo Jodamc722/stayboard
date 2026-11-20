@@ -52,9 +52,6 @@ export async function GET(req: NextRequest) {
       // are ALWAYS excluded — only real stays attach to glitches.
       const scope = str(req.nextUrl.searchParams.get('scope')) === 'all' ? 'all' : 'active'
       const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-      const { data: lRows } = await db.from('guesty_listings').select('id,nickname,title,building,address_city')
-      const lmap: Record<string, { name: string; market: string }> = {}
-      for (const l of (lRows || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
       let qy = db.from('guesty_reservations')
         .select('id,listing_id,guest_name,guest_phone,guest_email,notes,check_in,check_out,status,source,confirmation_code,total:raw->money->>hostPayout,fare:raw->money->>fareAccommodationAdjusted,cleaning:raw->money->>fareCleaning')
       if (resQ) qy = qy.eq('id', resQ)
@@ -62,9 +59,14 @@ export async function GET(req: NextRequest) {
         qy = qy.ilike('guest_name', '%' + guest + '%').in('status', ['confirmed', 'closed'])
         if (scope === 'active') qy = qy.lte('check_in', today).gte('check_out', today)
       }
-      const { data: rows, error } = await qy
-        .order('check_in', { ascending: false })
-        .limit(12)
+      // SPEED (Jon, 2026-11-20): the listing names and the reservation search do not depend on each
+      // other — read together instead of one after the other. Same two reads, same answer.
+      const [{ data: lRows }, { data: rows, error }] = await Promise.all([
+        db.from('guesty_listings').select('id,nickname,title,building,address_city'),
+        qy.order('check_in', { ascending: false }).limit(12),
+      ])
+      const lmap: Record<string, { name: string; market: string }> = {}
+      for (const l of (lRows || []) as any[]) { const name = l.nickname || l.title || 'Unit'; lmap[String(l.id)] = { name, market: marketOf(l.building, l.address_city, name) } }
       if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 })
       // Message sentiment for these reservations. 2026-08-20 FIX: this read `guest_sentiment`,
       // which does not exist — the scan (/api/sentiment/scan) writes `guesty_conversation_sentiment`.
@@ -134,7 +136,9 @@ export async function GET(req: NextRequest) {
         const { data: ts } = await db.from('breezeway_tasks_sync').select('id,status,finished_at,report_url').in('id', taskIds)
         for (const t of (ts || []) as any[]) {
           const st = str(t.status)
-          tmap[String(t.id)] = (/complete|finish|close|approv/i.test(st) || t.finished_at) ? 'completed' : /progress|started/i.test(st) ? 'in_progress' : 'created'
+          // CLEAN-UP (Jon, 2026-11-20): a task deleted in Breezeway read "Task not started" on the
+          // card, so the crew job looked queued when nobody had it any more.
+          tmap[String(t.id)] = (/complete|finish|close|approv/i.test(st) || t.finished_at) ? 'completed' : /delet|cancel/i.test(st) ? 'deleted' : /progress|started/i.test(st) ? 'in_progress' : 'created'
           rmap[String(t.id)] = t.report_url || null
         }
       }

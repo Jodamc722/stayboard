@@ -65,12 +65,24 @@ async function opsFacts(money: boolean): Promise<Fact[]> {
 async function build(money = false): Promise<Fact[]> {
   const sb = supabaseAdmin()
   const today = etDay()
-  const facts: Fact[] = await opsFacts(money).catch(() => [])
-  const [w3, w7, gl, rv] = await Promise.all([
+  // SPEED (Jon, 2026-11-20): ONE WAVE. This used to run in five steps, each waiting on the last:
+  // the KPI engine (the slow one) → welcome rates + glitches + the week's reviews → the 30-day
+  // reviews → the newest Airbnb review → the newest Vrbo review → the week's finished tasks. None
+  // of them reads another's answer, so they all start together and the facts are assembled below in
+  // the same order as before. A read that is not needed (the review extras when the week's review
+  // read failed) is simply not used.
+  const d30 = new Date(Date.now() - 30 * 86400000).toISOString(), d7 = new Date(Date.now() - 7 * 86400000).toISOString()
+  const newestOf = (ch: string) => Promise.resolve(sb.from('guesty_reviews').select('created_at').ilike('channel', ch + '%').order('created_at', { ascending: false }).limit(1)).then(r => r, () => ({ data: null as any }))
+  const [facts, w3, w7, gl, rv, r30Read, newestAirbnb, newestVrbo, teamRead] = await Promise.all([
+    opsFacts(money).catch(() => [] as Fact[]),
     welcomeRate(sb, addDays(today, -3), addDays(today, -1)).catch(() => null),
     welcomeRate(sb, addDays(today, -7), addDays(today, -1)).catch(() => null),
-    sb.from('glitches').select('created_at,closed_at,closed_at_estimated').gte('closed_at', new Date(Date.now() - 30 * 86400000).toISOString()).limit(2000),
-    sb.from('guesty_reviews').select('rating').eq('excluded_from_score', false).is('removed_at', null).gte('created_at', new Date(Date.now() - 7 * 86400000).toISOString()).limit(2000),
+    sb.from('glitches').select('created_at,closed_at,closed_at_estimated').gte('closed_at', d30).limit(2000),
+    sb.from('guesty_reviews').select('rating').eq('excluded_from_score', false).is('removed_at', null).gte('created_at', d7).limit(2000),
+    Promise.resolve(sb.from('guesty_reviews').select('rating').eq('excluded_from_score', false).is('removed_at', null).gte('created_at', d30).limit(5000)).then(r => r, () => ({ data: null as any })),
+    newestOf('Airbnb'), newestOf('Vrbo'),
+    pageRows<any>((a, b) => sb.from('breezeway_tasks_sync').select('id,name,type_department,assignees,finished_at')
+      .gte('finished_at', d7).order('id').range(a, b), 6).then(r => r, () => null),
   ])
   const wTone = (r: number | null) => r == null ? 'slate' : r >= 90 ? 'emerald' : r >= 75 ? 'sky' : 'amber'
   if (w3 && w3.n) facts.push({ key: 'welcome3', label: 'Welcome calls · last 3 days', value: w3.rate != null ? w3.rate + '%' : w3.text, sub: w3.completed + ' completed of ' + w3.n + ' due', href: '/welcome-calls', tone: wTone(w3.rate) as any })
@@ -95,13 +107,12 @@ async function build(money = false): Promise<Fact[]> {
   // as Airbnb did Oct 4 and in August — the board says so instead of averaging what did arrive.
   if (!rv.error) {
     const stars = ((rv.data || []) as any[]).map(r => ratingToStars(Number(r.rating))).filter((s): s is number => s != null)
-    const { data: r30 } = await sb.from('guesty_reviews').select('rating').eq('excluded_from_score', false).is('removed_at', null).gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()).limit(5000)
+    const r30 = r30Read.data
     const s30 = ((r30 || []) as any[]).map(r => ratingToStars(Number(r.rating))).filter((s): s is number => s != null)
     const avg = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length
     const tone = (v: number) => v >= 4.7 ? 'emerald' : v >= 4.4 ? 'sky' : 'amber'
     const silent: string[] = []
-    for (const [ch, days] of [['Airbnb', 3], ['Vrbo', 14]] as [string, number][]) {
-      const { data: nd } = await sb.from('guesty_reviews').select('created_at').ilike('channel', ch + '%').order('created_at', { ascending: false }).limit(1)
+    for (const [ch, days, nd] of [['Airbnb', 3, newestAirbnb.data], ['Vrbo', 14, newestVrbo.data]] as [string, number, any[] | null][]) {
       const newest = nd && nd[0] ? String((nd[0] as any).created_at) : ''
       if (newest && Date.now() - Date.parse(newest) > days * 86400000) silent.push(ch + ' since ' + md(newest))
     }
@@ -116,9 +127,8 @@ async function build(money = false): Promise<Fact[]> {
   // the last 7 days, by kind (lib/labor-econ kindOfTask — the Labor board's own rule for what a
   // departure clean is). Vendor-run buildings never close tasks, so this is the in-house team.
   try {
-    const since = new Date(Date.now() - 7 * 86400000).toISOString()
-    const { rows } = await pageRows<any>((a, b) => sb.from('breezeway_tasks_sync').select('id,name,type_department,assignees,finished_at')
-      .gte('finished_at', since).order('id').range(a, b), 6)
+    if (!teamRead) throw new Error('the task read failed')
+    const { rows } = teamRead
     const by: Record<string, Record<string, number>> = { clean: {}, inspection: {}, maintenance: {} }
     const total: Record<string, number> = { clean: 0, inspection: 0, maintenance: 0 }
     for (const t of rows) {
@@ -185,11 +195,24 @@ async function notes(facts: Fact[]): Promise<{ highlights: Note[]; lowlights: No
 }
 
 // Five minutes, one copy per money state (dollars only for people with the money switch).
-const cached = unstable_cache(async (money: boolean) => { const facts = await build(money); return { facts, ...(await notes(facts).catch(() => ({ highlights: [], lowlights: [] }))), asOf: new Date().toISOString() } }, ['bulletin-stats-v5'], { revalidate: 300 })
+//
+// NEVER YESTERDAY'S NUMBERS AS TODAY'S (Jon, 2026-11-20: Today "must never show a wrong number").
+// Next's cache hands back an expired copy however old it is and rebuilds behind the response — so
+// the first person on Today each morning got last night's "Today's turnover 60 / 78 cleans" and
+// "Occupancy tonight" until their browser asked again five minutes later. Two guards:
+//   · the ET day is part of the key, so a new day never reads the old day's copy;
+//   · an answer more than 15 minutes old says `stale: true` (the rebuild is already running behind
+//     it) and the board asks again a few seconds later instead of sitting on it.
+const STALE_MS = 15 * 60_000
+const cached = unstable_cache(async (money: boolean, _day: string) => { const facts = await build(money); return { facts, ...(await notes(facts).catch(() => ({ highlights: [], lowlights: [] }))), asOf: new Date().toISOString() } }, ['bulletin-stats-v6'], { revalidate: 300 })
 
 export async function GET() {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
-  try { const c = await cached(canSeeMoney(gate.access as any)); return NextResponse.json({ ok: true, facts: c.facts, highlights: (c as any).highlights || [], lowlights: (c as any).lowlights || [], asOf: c.asOf }) }
+  try {
+    const c = await cached(canSeeMoney(gate.access as any), etDay())
+    const stale = Date.now() - Date.parse(c.asOf) > STALE_MS
+    return NextResponse.json({ ok: true, facts: c.facts, highlights: (c as any).highlights || [], lowlights: (c as any).lowlights || [], asOf: c.asOf, ...(stale ? { stale: true } : {}) })
+  }
   catch (e: any) { return NextResponse.json({ ok: false, facts: [], error: String(e?.message || e).slice(0, 200) }) }
 }

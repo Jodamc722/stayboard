@@ -47,7 +47,6 @@ async function fetchCheckouts(db: any, from: string, to: string) {
 export async function GET(req: NextRequest) {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
-  const VENDOR = vendorRegex((await getOpsPresets()).vendorBuildings)
   const HIST = 60
   const today = ymd(new Date())
   const histStart = addDays(today, -HIST)
@@ -61,15 +60,27 @@ export async function GET(req: NextRequest) {
   const qTo = maxD(addDays(today, 6), weekEnd)
 
   const db = supabaseAdmin()
-  const [outs, { data: listings }] = await Promise.all([
+  // SPEED (Jon, 2026-11-20 audit — the Scheduler fires this on every open). Six reads, none of which needs
+  // another's answer, ran as five steps one after the other: the presets, then check-outs with listings, then the
+  // clean rates, then the week's Breezeway departure tasks, then the new bookings. They now go out together and
+  // the route waits once. Same queries, same filters, same answers.
+  const sinceIso = new Date(Date.now() - 36 * 3600_000).toISOString()
+  const newEnd = addDays(today, 2)
+  const [presets, outs, { data: listings }, ratesRaw, bzRes, freshRes] = await Promise.all([
+    getOpsPresets(),
     fetchCheckouts(db, qFrom, qTo),
     db.from('guesty_listings').select('id,nickname,title,building,address_city,bedrooms').limit(1000), // deliberate cap: one row per listing, ~290
+    getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null),
+    db.from('breezeway_tasks_sync').select('reference_property_id, scheduled_date, name, status').ilike('name', '%Departure%').gte('scheduled_date', weekStart).lte('scheduled_date', weekEnd),
+    Promise.resolve(db.from('guesty_reservations').select('id,check_in,check_out,status,created_at').gte('created_at', sinceIso).lte('check_in', newEnd).gte('check_out', today).limit(500))
+      .catch((e: any) => { console.error('schedule/forecast: new-booking read failed', e); return { data: null as any[] | null } }),
   ])
+  const VENDOR = vendorRegex(presets.vendorBuildings)
   if (!listings || !listings.length) return NextResponse.json({ ok: false, error: 'Listing data unavailable - hit Sync and retry.' }, { status: 503 })
 
   // HOURS PER CLEAN (Jon, 2026-11-02): every clean is priced at its expected labor cost (P&L KPI) ÷ $20 — the
   // paid hours it carries — so a day's need is hours ÷ a shift, per market (lib/clean-rates.ts).
-  const rates = resolveCleanRates(await getSetting<any>(CLEAN_RATES_KEY, null).catch(() => null))
+  const rates = resolveCleanRates(ratesRaw)
   const meta: Record<string, { market: string; vendor: boolean; hours: number }> = {}
   for (const l of listings as any[]) {
     const id = String(l.id)
@@ -118,7 +129,7 @@ export async function GET(req: NextRequest) {
   }
   // Fold in Breezeway departure cleans for the current week (status-filtered like the daily
   // board) and reconcile MOVED cleans so each turnover counts once, on its actual Breezeway day.
-  const bzWeekRaw = (await db.from('breezeway_tasks_sync').select('reference_property_id, scheduled_date, name, status').ilike('name', '%Departure%').gte('scheduled_date', weekStart).lte('scheduled_date', weekEnd)).data as any[] | null;
+  const bzWeekRaw = bzRes.data as any[] | null;
   const bzWeek = (bzWeekRaw || []).filter((t: any) => !/cancel|delet/i.test(String(t.status || '')));
   const bzDates: Record<string, string[]> = {};
   for (const t of bzWeek) {
@@ -175,9 +186,7 @@ export async function GET(req: NextRequest) {
   // "seen" per user in the browser and lights the day card's dot for the ones not seen yet.
   const newBookings: Record<string, string[]> = {}
   try {
-    const sinceIso = new Date(Date.now() - 36 * 3600_000).toISOString()
-    const newEnd = addDays(today, 2)
-    const { data: fresh } = await db.from('guesty_reservations').select('id,check_in,check_out,status,created_at').gte('created_at', sinceIso).lte('check_in', newEnd).gte('check_out', today).limit(500)
+    const fresh = freshRes && freshRes.data
     for (const r of (fresh || []) as any[]) {
       if (!LIVE.test(str(r.status))) continue
       const rid = str(r.id); if (!rid) continue

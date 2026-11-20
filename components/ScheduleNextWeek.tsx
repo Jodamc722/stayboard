@@ -4,7 +4,16 @@
 // on a tap the market × day grid — people Working against people needed on the rail's KPI basis.
 // Same numbers Eve's schedule_plan tool and the Sunday readout use (lib/forecast/plan.ts via
 // /api/schedule/plan). Read-only: every move is something a person does on this page or in Homebase.
+//
+// ONE LINE (Jon, 2026-11-20: "clean up … some data is noisy"). This was a full-width banner of two lines above the
+// board on every visit — a headline that read "10 short days in the next 7" (market-days, counted against calendar
+// days) and then the moves — on a page whose header pill, day strip and team rail each already said who is short.
+// It is now one button at the right end of the tab row: "Next 7 days · short on 5 days". The moves and the
+// market × day grid open underneath on a click, and the choice is still remembered per device.
+// SPEED: the read goes through lib/swr, so a return visit paints the last plan at once and refreshes behind it
+// (the route is a 2.9s build when its ten-minute server cache is cold, which at five opens a day is most opens).
 import { useEffect, useState } from 'react'
+import { useCachedFetch } from '@/lib/swr'
 import { ChevronDown, ChevronRight, CalendarClock, RefreshCw } from 'lucide-react'
 import type { PlanDay, PlanMove, PlanSummary, PlanSettings } from '@/lib/forecast/plan-core'
 
@@ -41,60 +50,51 @@ function cellTitle(d: PlanDay, s: PlanSettings): string {
 
 export function ScheduleNextWeek({ market }: { market: string }) {
   const inHouse = market === 'Miami' || market === 'Broward' ? market : market === 'all' ? '' : null
-  const [plan, setPlan] = useState<Plan | null>(null)
-  const [err, setErr] = useState('')
-  const [loading, setLoading] = useState(false)
   const [open, setOpen] = useState(false)
-  const [tick, setTick] = useState(0)
-
   useEffect(() => { try { setOpen(window.localStorage.getItem(OPEN_KEY) === '1') } catch { /* no storage: closed */ } }, [])
   const toggle = () => setOpen(o => { const n = !o; try { window.localStorage.setItem(OPEN_KEY, n ? '1' : '0') } catch { /* fine */ } return n })
+  // North and the vendor view are not our roster — nothing to plan, and nothing to fetch.
+  const { data, error, loading, refresh } = useCachedFetch<Plan>(
+    inHouse === null ? null : '/api/schedule/plan?days=7' + (inHouse ? '&market=' + encodeURIComponent(inHouse) : ''), { ttl: 10 * 60_000 })
+  const plan = data && data.ok ? data : null
 
-  useEffect(() => {
-    if (inHouse === null) return
-    let dead = false
-    setLoading(true)
-    fetch('/api/schedule/plan?days=7' + (inHouse ? '&market=' + encodeURIComponent(inHouse) : ''), { cache: 'no-store' })
-      .then(r => r.json())
-      .then((j: Plan) => { if (dead) return; if (j && j.ok) { setPlan(j); setErr('') } else setErr((j && j.error) || 'The plan could not be built.') })
-      .catch(e => { if (!dead) setErr(String(e?.message || e)) })
-      .finally(() => { if (!dead) setLoading(false) })
-    return () => { dead = true }
-  }, [inHouse, tick])
-
-  // North and the vendor view are not our roster — nothing to plan.
   if (inHouse === null) return null
   if (!plan) {
     return (
-      <div className="rounded-xl border border-line bg-white px-3 py-2 text-[12px] text-muted inline-flex items-center gap-2 w-full">
+      <span className="ml-auto inline-flex items-center gap-1.5 text-[12px] text-muted" title={error || undefined}>
         <CalendarClock size={14} className="text-brand-600 shrink-0" />
-        {err ? <span>Next 7 days: {err}</span> : <span>Next 7 days — building the plan…</span>}
-      </div>
+        {error && !loading ? 'Next 7 days — the plan could not be built' : 'Next 7 days…'}
+      </span>
     )
   }
 
   const dates = Array.from(new Set(plan.days.map(d => d.date))).sort()
   const s = plan.summary
-  const tone = s.shortDays ? 'text-rose-700' : s.unknownDays ? 'text-neutral-700' : 'text-emerald-700'
+  // Calendar days with at least one market short — the number a person means by "short days".
+  const shortDates = new Set(plan.days.filter(d => d.verdict === 'short').map(d => d.date)).size
+  // The labor KPI is a guide, not an alarm (Jon, 2026-11-02): under it is amber, never red.
+  const line = shortDates
+    ? 'short on ' + shortDates + (shortDates === 1 ? ' day' : ' days')
+    : s.unknownDays ? 'roster not out for ' + s.unknownDays + (s.unknownDays === 1 ? ' day' : ' days') : 'staffed to the KPI'
+  const tone = shortDates ? 'text-amber-700 font-semibold' : 'text-muted'
   const at = (mk: string, date: string) => plan.days.find(d => d.market === mk && d.date === date) || null
 
   return (
-    <div className="rounded-xl border border-line bg-white">
-      <button onClick={toggle} aria-expanded={open} className="w-full flex items-start gap-2 px-3 py-2 text-left">
-        <CalendarClock size={15} className="text-brand-600 shrink-0 mt-0.5" />
-        <span className="min-w-0 flex-1">
-          <span className="text-[12.5px] font-bold text-ink">Next 7 days</span>
-          <span className={'text-[12.5px] font-semibold ' + tone}> · {s.headline}</span>
-          {plan.moves.length > 0 && (
-            <span className="block text-[12px] text-ink mt-0.5">
-              {plan.moves.map((m, i) => <span key={i} className="mr-3 inline-block" title={m.why}><b className="text-muted font-semibold">{i + 1}.</b> {m.text}</span>)}
-            </span>
-          )}
-        </span>
-        <span className="shrink-0 text-muted mt-0.5">{open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</span>
+    <>
+      <button onClick={toggle} aria-expanded={open} title={s.headline + (open ? '' : ' — click for the day-by-day grid' + (plan.moves.length ? ' and the suggested moves' : ''))}
+        className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] hover:border-neutral-400">
+        <CalendarClock size={14} className="text-brand-600 shrink-0" />
+        <span className="font-semibold text-ink">Next 7 days</span>
+        <span className={tone}>· {line}</span>
+        {open ? <ChevronDown size={14} className="text-muted" /> : <ChevronRight size={14} className="text-muted" />}
       </button>
       {open && (
-        <div className="px-3 pb-3 space-y-2">
+        <div className="basis-full w-full rounded-xl border border-line bg-white px-3 py-2.5 space-y-2">
+          {plan.moves.length > 0 && (
+            <ol className="text-[12px] text-ink space-y-0.5">
+              {plan.moves.map((m, i) => <li key={i} title={m.why}><b className="text-muted font-semibold">{i + 1}.</b> {m.text}</li>)}
+            </ol>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] border-separate border-spacing-1 text-[11.5px]">
               <thead>
@@ -131,10 +131,10 @@ export function ScheduleNextWeek({ market }: { market: string }) {
             {plan.rosterPublishedThrough ? ` Homebase is published through ${plan.rosterPublishedThrough}.` : ''}
             {plan.pickupLearning ? ' The booking pickup is still learning.' : ''}
             {plan.notes.length ? ` Partial: ${plan.notes.slice(0, 2).join('; ')}.` : ''}
-            <button onClick={() => setTick(t => t + 1)} className="ml-2 inline-flex items-center gap-1 underline decoration-dotted hover:text-ink" aria-label="Refresh the plan"><RefreshCw size={10} className={loading ? 'animate-spin' : ''} /> refresh</button>
+            <button onClick={() => refresh()} className="ml-2 inline-flex items-center gap-1 underline decoration-dotted hover:text-ink" aria-label="Refresh the plan"><RefreshCw size={10} className={loading ? 'animate-spin' : ''} /> refresh</button>
           </p>
         </div>
       )}
-    </div>
+    </>
   )
 }

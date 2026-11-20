@@ -27,7 +27,8 @@ import { KINDS, REACTIONS, MAX_PHOTOS, DEFAULT_FRAME, dueState, type Frame, type
 export const BULLETIN_URL = '/api/command/bulletin'
 
 type BoardRes = { ok: boolean; error?: string; today: string; me: string; canPost: boolean; posts: Post[]; haveTo: Post[]; reviews?: ReviewRef[]; people?: string[]; quote?: { q: string; a: string; src: string }; celebrations?: { name: string; md: string; inDays: number }[]; birthdays?: Record<string, string> }
-type Slide = { key: string; label: string; secs: number; node: ReactNode }
+/** `line`: the slide in one sentence, for the folded board (2026-11-20). */
+type Slide = { key: string; label: string; secs: number; node: ReactNode; line?: string }
 
 const KIND_LABEL: Record<PostKind, string> = { eotm: 'Employee of the month', quote: 'Quote of the day', reminder: 'Reminder', announcement: 'Announcement', review: 'Five-star review', shoutout: 'Shout-out' }
 
@@ -65,20 +66,39 @@ const cap = (s: string) => s ? s[0].toUpperCase() + s.slice(1) : s
 
 type StatFact = { key: string; label: string; value: string; sub: string; href?: string; tone?: string; kpi?: boolean }
 type StatNote = { text: string; href?: string }
-type StatsRes = { ok: boolean; facts: StatFact[]; highlights?: StatNote[]; lowlights?: StatNote[]; asOf?: string }
+type StatsRes = { ok: boolean; facts: StatFact[]; highlights?: StatNote[]; lowlights?: StatNote[]; asOf?: string; stale?: boolean }
+type ComposeRes = { ok?: boolean; reviews?: ReviewRef[]; people?: string[] }
+const etDayOf = (iso?: string) => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(iso ? new Date(iso) : new Date()) } catch { return '' } }
+/** The folded board's one line of numbers: the four the team asks about, by short name. */
+const LINE_KPIS: [string, string][] = [['welcome7', 'Welcome calls'], ['avgStars', 'Rating 7d'], ['occ7', 'Occupancy 7d'], ['glitchOpen', 'Issues open']]
+const oneLine = (s: string, max = 140) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > max ? t.slice(0, max - 1).replace(/\s+\S*$/, '') + '…' : t }
 
 export function BulletinBoard({ d }: { d: CommandDay }) {
   const q = useCachedFetch<BoardRes>(BULLETIN_URL, { ttl: 300_000 })
   // THE REPORT (Jon, 2026-10-26: "get the bulletin report to show KPI, welcome call completion, avg
   // review scores, etc. Highlights and low lights") — three slides at the front of the card.
-  const sq = useCachedFetch<StatsRes>(BULLETIN_URL + '/stats', { ttl: 300_000 })
+  // SPEED (Jon, 2026-11-20): asked for 2.5s after the page is up, not alongside the day's tiles —
+  // the last report is already on the device (`kept`, below), so nothing on screen waits for this.
+  const [statsOn, setStatsOn] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setStatsOn(true), 2500); return () => clearTimeout(t) }, [])
+  const sq = useCachedFetch<StatsRes>(statsOn ? BULLETIN_URL + '/stats' : null, { ttl: 300_000 })
   // THE LAST STATS, KEPT IN THIS BROWSER (Jon, 2026-11-05: "why is bulletin board not working"). The
   // stats take ~5s to build on a cache miss and the board used to start after 4s with only the quote,
   // so it sat on one slide with no dots — it looked broken. Now the last KPIs show at once from the
   // browser and are swapped for fresh ones when they land.
   const [kept, setKept] = useState<StatsRes | null>(null)
-  useEffect(() => { try { const v = JSON.parse(localStorage.getItem('lh-bulletin-stats') || 'null'); if (v?.ok) setKept(v) } catch { /* private window */ } }, [])
-  useEffect(() => { if (sq.data?.ok) try { localStorage.setItem('lh-bulletin-stats', JSON.stringify(sq.data)) } catch { /* full or blocked */ } }, [sq.data])
+  // TODAY'S ONLY (2026-11-20): a copy kept from another day is not shown — it carried yesterday's
+  // "Today's turnover" and "Occupancy tonight" into this morning until the fresh report landed.
+  useEffect(() => { try { const v = JSON.parse(localStorage.getItem('lh-bulletin-stats') || 'null'); if (v?.ok && v.asOf && etDayOf(v.asOf) === etDayOf()) setKept(v) } catch { /* private window */ } }, [])
+  useEffect(() => { if (sq.data?.ok && !sq.data.stale) try { localStorage.setItem('lh-bulletin-stats', JSON.stringify(sq.data)) } catch { /* full or blocked */ } }, [sq.data])
+  // The server says when its answer is an old copy it is rebuilding behind the response (`stale`):
+  // ask again in a few seconds, a few times, rather than sit on it for the five-minute tick.
+  const staleTries = useRef(0)
+  useEffect(() => {
+    if (!sq.data?.stale || staleTries.current >= 3) return
+    const t = setTimeout(() => { staleTries.current++; sq.refresh() }, 6000)
+    return () => clearTimeout(t)
+  }, [sq.data, sq.refresh])
   // THE REPORT IS SLOW TO WAKE (2026-10-26, Jon: "the bulletin was working and now it's not"). The
   // stats behind it take ~30s the first time after a deploy; a miss used to leave the card on the
   // quote alone for the hook's five-minute tick. Ask again in ten seconds, a few times, so the first
@@ -98,12 +118,22 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
   // ONE SLIM LINE BY DEFAULT (Jon, 2026-11-10, Today revamp: the work comes first). The board still
   // turns; the line shows the slide's name and the day's headline, and Open shows the full slide.
   // Remembered per browser. Writing a post, framing a photo or reading a post always opens it.
+  // CLEAN-UP (Jon, 2026-11-20: the board "takes the top third" above the tiles). Two changes:
+  //   · the folded line now SAYS the slide — the week's four numbers, the first highlight, the quote —
+  //     where it used to say only its name ("Highlights"), which is why people opened it and left it open;
+  //   · the remembered choice starts over once (new key), so everyone begins on the one line. Open
+  //     still opens it and is remembered from then on.
+  const OPEN_KEY = 'lh.bulletin.open.v2'
   const [expanded, setExpanded] = useState(false)
-  useEffect(() => { try { setExpanded(localStorage.getItem('lh.bulletin.open') === '1') } catch { /* closed */ } }, [])
-  const toggleOpen = () => setExpanded(o => { const n = !o; try { localStorage.setItem('lh.bulletin.open', n ? '1' : '0') } catch { /* fine */ } return n })
+  // A bell or Slack link to a post (/command?tab=bulletin) opens the board; it used to land on the folded line.
+  useEffect(() => { try { setExpanded(localStorage.getItem(OPEN_KEY) === '1' || new URLSearchParams(window.location.search).get('tab') === 'bulletin') } catch { /* closed */ } }, [])
+  const toggleOpen = () => setExpanded(o => { const n = !o; try { localStorage.setItem(OPEN_KEY, n ? '1' : '0') } catch { /* fine */ } return n })
+  // The post form's pick-lists (5★ reviews to pin, the staff names) are read when the form opens —
+  // they used to ride on every Today load for every leader (2026-11-20).
+  const cq = useCachedFetch<ComposeRes>(composing && data?.canPost ? BULLETIN_URL + '?compose=1' : null, { ttl: 300_000, live: false })
   const act = useCallback(async (body: any) => {
     setErr('')
-    try { const j = await send(body); setLocal(prev => ({ ...(prev || q.data || {} as any), ...j })); invalidateCache(BULLETIN_URL) }
+    try { const j = await send(body); setLocal(prev => ({ ...(prev || q.data || {} as any), ...j })); invalidateCache(BULLETIN_URL); invalidateCache(BULLETIN_URL + '?compose=1') }
     catch (e: any) { setErr(e?.message || String(e)) }
   }, [q.data])
 
@@ -128,9 +158,11 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     if (st?.ok) {
       const order = ['welcome7', 'avgStars', 'avg30', 'occ7', 'adr7', 'onTime7', 'mood7', 'glitchClose', 'glitchOpen', 'arr7', 'occTonight', 'turnToday']
       const kpis = order.map(k => st.facts.find(f => f.key === k)).filter(Boolean) as StatFact[]
-      if (kpis.length) out.push({ key: 'report:kpi', label: 'This week · KPIs', secs: 14, node: <KpiSlide facts={kpis.slice(0, 8)} /> })
-      if (st.highlights?.length) out.push({ key: 'report:hi', label: 'Highlights', secs: 11, node: <NotesSlide title="Highlights" tone="good" notes={st.highlights} /> })
-      if (st.lowlights?.length) out.push({ key: 'report:lo', label: 'Lowlights', secs: 11, node: <NotesSlide title="Needs attention" tone="bad" notes={st.lowlights} /> })
+      const kpiLine = LINE_KPIS.map(([k, name]) => { const f = st.facts.find(x => x.key === k); return f ? name + ' ' + f.value : '' }).filter(Boolean).join(' · ')
+      const notesLine = (ns: StatNote[]) => oneLine(ns[0].text, 110) + (ns.length > 1 ? ' · +' + (ns.length - 1) + ' more' : '')
+      if (kpis.length) out.push({ key: 'report:kpi', label: 'This week', secs: 14, line: kpiLine, node: <KpiSlide facts={kpis.slice(0, 8)} /> })
+      if (st.highlights?.length) out.push({ key: 'report:hi', label: 'Highlights', secs: 11, line: notesLine(st.highlights), node: <NotesSlide title="Highlights" tone="good" notes={st.highlights} /> })
+      if (st.lowlights?.length) out.push({ key: 'report:lo', label: 'Needs attention', secs: 11, line: notesLine(st.lowlights), node: <NotesSlide title="Needs attention" tone="bad" notes={st.lowlights} /> })
     }
 
     const posts = data?.posts || []
@@ -140,11 +172,12 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
     // worded as blame stays in Decide where a leader acts on it, and a stat only shows when it is good
     // news — an amber number (a low call rate, a slow close time) belongs in the tiles, not up here.
     // A quote every day: a leader's wins; otherwise the day's quote from the internet (or our list).
-    if (quote) out.push({ key: 'post:' + quote.id, label: KIND_LABEL.quote, secs: 10, node: <PostSlide p={quote} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
-    else if (data?.quote?.q) out.push({ key: 'quote:auto', label: KIND_LABEL.quote, secs: 10, node: <AutoQuote q={data.quote} /> })
+    const postLine = (p: Post) => oneLine(p.kind === 'review' && p.review ? '“' + p.review.text + '” — ' + p.review.guest + ', ' + p.review.unit : p.kind === 'quote' ? '“' + (p.body || p.title) + '”' + (p.body && p.title ? ' — ' + p.title : '') : [p.title, p.body].filter(Boolean).join(' — '))
+    if (quote) out.push({ key: 'post:' + quote.id, label: KIND_LABEL.quote, secs: 10, line: postLine(quote), node: <PostSlide p={quote} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
+    else if (data?.quote?.q) out.push({ key: 'quote:auto', label: KIND_LABEL.quote, secs: 10, line: oneLine('“' + data.quote.q + '” — ' + data.quote.a), node: <AutoQuote q={data.quote} /> })
     const cel = data?.celebrations || []
-    if (cel.length) out.push({ key: 'bday:' + cel.map(c => c.name).join('+'), label: cel.some(c => !c.inDays) ? 'Birthday' : 'Birthdays this week', secs: 9, node: <BirthdaySlide cel={cel} today={data?.today || ''} /> })
-    for (const p of others) out.push({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
+    if (cel.length) out.push({ key: 'bday:' + cel.map(c => c.name).join('+'), label: cel.some(c => !c.inDays) ? 'Birthday' : 'Birthdays this week', secs: 9, line: cel.map(c => c.name.split(/\s+/)[0] + (c.inDays ? ' in ' + c.inDays + 'd' : ' today')).join(' · '), node: <BirthdaySlide cel={cel} today={data?.today || ''} /> })
+    for (const p of others) out.push({ key: 'post:' + p.id, label: KIND_LABEL[p.kind], secs: p.kind === 'review' ? 10 : 8, line: postLine(p), node: <PostSlide p={p} me={me} canPost={canPost} act={act} onFrame={setFraming} onOpen={x => setViewing(x.id)} /> })
     return out
   }, [data, act, sq.data, kept])
 
@@ -201,11 +234,11 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
       onFocusCapture={() => { if (!held) hold(true) }} onBlurCapture={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) hold(false) }}>
       <div className="flex items-center gap-2 px-3.5 h-9 border-b border-line/70">
         <span className="lh-display text-[16px] leading-none text-ink">Bulletin</span>
-        {cur && <button onClick={() => { if (!expanded) toggleOpen() }} className="text-[12px] text-muted truncate hover:text-ink text-left" title={expanded ? undefined : 'Open the slide'}>{cur.label}</button>}
+        {cur && <button onClick={() => { if (!expanded) toggleOpen() }} className="min-w-0 text-[12px] text-muted truncate hover:text-ink text-left" title={expanded ? undefined : (cur.line ? cur.line + ' — ' : '') + 'open the slide'}>{cur.label}{!expanded && cur.line ? <span className="text-ink/80"> · {cur.line}</span> : null}</button>}
         {ready && manualIdx >= 0 && <button onClick={() => { setManual(null); setNow(Date.now()) }} className="text-[11.5px] text-muted hover:text-ink underline shrink-0">Back to live</button>}
         <span className="flex-1" />
         {ready && slides.length > 1 && (
-          <div className="hidden sm:flex items-center gap-1 mr-1" role="tablist" aria-label="Slides">
+          <div className={(expanded ? 'hidden sm:flex' : 'hidden') + ' items-center gap-1 mr-1 shrink-0'} role="tablist" aria-label="Slides">
             {slides.map((s, i) => (
               <button key={s.key} role="tab" aria-selected={i === idx} aria-label={s.label} onClick={() => go(i)}
                 className={'h-1.5 rounded-full transition-all ' + (i === idx ? 'w-4 bg-ink' : 'w-1.5 bg-ink/20 hover:bg-ink/40')} />
@@ -228,7 +261,7 @@ export function BulletinBoard({ d }: { d: CommandDay }) {
       ) : framing ? (
         <FrameDialog p={framing} onClose={() => setFraming(null)} onSave={async frames => { await act({ action: 'edit', id: framing.id, post: { frames } }); setFraming(null) }} />
       ) : composing && data ? (
-        <Composer data={data} initial={composing} onClose={() => setComposing(null)} onPost={async p => { await act({ action: 'create', post: p }); setComposing(null) }} onAct={act} />
+        <Composer data={{ ...data, reviews: cq.data?.reviews ?? data.reviews, people: cq.data?.people ?? data.people }} loadingLists={!cq.data && !cq.error} initial={composing} onClose={() => setComposing(null)} onPost={async p => { await act({ action: 'create', post: p }); setComposing(null) }} onAct={act} />
       ) : !expanded ? null : (
         // ONE HEIGHT for every slide, so the page under it never jumps as the board turns.
         <div className="px-4 py-3 h-[150px] flex items-center overflow-hidden" aria-live="polite">
@@ -545,7 +578,7 @@ function BirthdaySlide({ cel, today }: { cel: { name: string; md: string; inDays
 }
 
 // ── COMPOSER (leaders) ──────────────────────────────────────────────────────────────────────────
-function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; initial: PostKind; onClose: () => void; onPost: (p: any) => Promise<void>; onAct: (b: any) => Promise<void> }) {
+function Composer({ data, loadingLists, initial, onClose, onPost, onAct }: { data: BoardRes; loadingLists?: boolean; initial: PostKind; onClose: () => void; onPost: (p: any) => Promise<void>; onAct: (b: any) => Promise<void> }) {
   const [kind, setKind] = useState<PostKind>(initial)
   const [bday, setBday] = useState(false)
   const [bName, setBName] = useState(''); const [bDate, setBDate] = useState('')
@@ -611,7 +644,7 @@ function Composer({ data, initial, onClose, onPost, onAct }: { data: BoardRes; i
       )}
       {!bday && kind === 'review' && (
         <div className="space-y-1 max-h-[220px] overflow-y-auto pr-1">
-          {!(data.reviews || []).length && <div className="text-[12.5px] text-muted">No new five-star reviews with a written comment in the last three weeks.</div>}
+          {!(data.reviews || []).length && <div className="text-[12.5px] text-muted">{loadingLists ? 'Reading the last three weeks of five-star reviews…' : 'No new five-star reviews with a written comment in the last three weeks.'}</div>}
           {(data.reviews || []).map(r => (
             <button key={r.id} onClick={() => setReview(r)} className={'block w-full text-left rounded-lg border px-2.5 py-1.5 ' + (review?.id === r.id ? 'border-ink' : 'border-line hover:border-ink/30')}>
               <div className="text-[11.5px] text-muted"><span className="text-amber-500">★★★★★</span> {r.guest}, {r.unit}, {shortDay(r.date)}</div>

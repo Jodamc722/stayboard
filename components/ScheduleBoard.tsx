@@ -4,7 +4,7 @@
 // (sort by Cleaner). Row checkboxes + bulk assign; each picker is pre-filled with whoever is already on the
 // Breezeway task. Botanica is hotel-staff (vendor) so its rows are tagged. NOTHING writes to Breezeway until
 // you click Push. The schedule is cached and only re-pulls on the morning/noon cron or when you hit Sync.
-import { useEffect, useMemo, useState, useRef, Fragment } from 'react'
+import { useEffect, useMemo, useState, useRef, Fragment, type ReactNode } from 'react'
 import { HomebaseWeek } from '@/components/HomebaseWeek'
 import { createPortal } from 'react-dom'
 import { useOpsPresets } from '@/lib/useOpsPresets'
@@ -19,7 +19,7 @@ import RowMenu, { type RowAction } from './RowMenu'
 import ListingOpsPanel from './ListingOpsPanel'
 import { ForecastBoard } from './ForecastBoard'
 import { ScheduleNextWeek } from './ScheduleNextWeek'
-import CleanerPicker, { sameRosterPerson, rosterMatch } from './CleanerPicker'
+import CleanerPicker, { sameRosterPerson, rosterMatch, tidyName } from './CleanerPicker'
 import GeLog from './GeLog'
 import { nameMatches } from '@/lib/person-name'
 
@@ -153,7 +153,11 @@ function descFor(c: Clean): string {
 // that reads the URL, but every row and every write is this component's own.
 export type ScheduleEmbed = { date: string; only: 'needs-person' | 'nobody' | 'active' | 'all'; market?: 'all' | 'Miami' | 'Broward' | 'North' | 'vendor' }
 
-export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
+// ONE TAB ROW (Jon, 2026-11-20: "organized and easy to use"). The Scheduler page had two rows of tabs — Board /
+// Multi-calendar from the page, then Day board / GE Log / Weekly planner from this component. The page now owns one
+// strip of four and hands it in as `tabs` with the chosen `tab`; this component draws that strip where its own
+// three-tab bar used to sit. Without the props (the Open & Close embed) nothing changes.
+export function ScheduleBoard({ embedded, tab: tabProp, tabs: tabsSlot }: { embedded?: ScheduleEmbed; tab?: 'board' | 'gelog' | 'planner'; tabs?: ReactNode } = {}) {
   const presets = useOpsPresets()
   const NON_CLEANERS = presets.roster.nonCleaners
   const DEFAULT_RATE = presets.roster.rate
@@ -175,7 +179,8 @@ export function ScheduleBoard({ embedded }: { embedded?: ScheduleEmbed } = {}) {
   const [market, setMarket] = useState<'all' | 'vendor' | typeof MARKETS[number]>('all')
   const [sortBy, setSortBy] = useState<'building' | 'area' | 'unit' | 'checkout' | 'nights' | 'cleaner'>('building')
   const [overrides, setOverrides] = useState<Record<string, Person>>({})
-  const [tab, setTab] = useState<'board' | 'gelog' | 'planner'>('board')
+  const [tabOwn, setTab] = useState<'board' | 'gelog' | 'planner'>('board')
+  const tab = tabProp || tabOwn
   const [fc, setFc] = useState<Fc | null>(null)
   const [teamDocs, setTeamDocs] = useState<Record<string, TeamDoc>>({})
   const [rosters, setRosters] = useState<Record<string, Roster>>({})
@@ -516,6 +521,36 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
     skipCache.set(d, skipped.filter(x => !taken[x.name.trim().toLowerCase()]))
     return out
   }
+  // OFF TODAY, AND ONLY THAT (Jon, 2026-11-20: "some data is noisy and unclean"). "not scheduled today" sat in
+  // amber under nearly every clean. It tested the assignee against the CLEANER COUNT above, which leaves
+  // supervisors, maintenance and CCS out on purpose — so a supervisor on shift and holding fourteen of the day's
+  // cleans read as not scheduled on all fourteen, and so did agency accounts Homebase never lists. The flag now
+  // asks the rota itself, every department: on it today, or clocked in today = nothing to say; on this week's rota
+  // and off today (no Homebase shift and no clock-in, or set OFF by hand) = "off today"; unknown to the rota =
+  // nothing, because we do not know.
+  const [punched, setPunched] = useState<{ date: string; list: { name: string }[] }>({ date: '', list: [] })
+  const rotaCache = useMemo(() => new Map<string, { on: { name: string }[]; off: { name: string }[] }>(), [teamDocs, rosters])
+  const rotaFor = (d: string) => {
+    const hit = rotaCache.get(d); if (hit) return hit
+    const on: { name: string }[] = [], off: { name: string }[] = []
+    const onSeen: Record<string, boolean> = {}, offSeen: Record<string, boolean> = {}
+    const put = (isOn: boolean, name: string) => { const id = name.trim().toLowerCase(); const seenIn = isOn ? onSeen : offSeen; if (!id || seenIn[id]) return; seenIn[id] = true; (isOn ? on : off).push({ name }) }
+    for (const mk of MARKETS) {
+      const doc = teamDocs[mk] || { members: [], cells: {} }
+      const ros = rosters[mk]
+      const list: { name: string; cell: RosterCell | null }[] = ros ? ros.people.map(p => ({ name: p.name, cell: p.days[d] || null })) : doc.members.map(m => ({ name: m, cell: null }))
+      for (const p of list) {
+        // Same reading as crewFor: a status set by hand wins, otherwise Homebase. A cell Homebase could not answer says nothing.
+        const eff = String(doc.cells[p.name + '__' + d] || '') || (p.cell && p.cell.source === 'homebase' ? String(p.cell.status || '') : '')
+        if (/on.?call|work/i.test(eff)) put(true, p.name); else if (/off/i.test(eff)) put(false, p.name)
+      }
+      // In Homebase this week but filed on no market tab: on shift on the days listed, off on the others.
+      for (const u of ((ros && ros.unplaced) || [])) put(u.dates.indexOf(d) >= 0, u.name)
+    }
+    const out = { on, off }
+    rotaCache.set(d, out)
+    return out
+  }
 
   // The board's own cleans for the day it is showing, priced at the P&L's expected labor cost.
   const boardByMarket = useMemo(() => {
@@ -596,8 +631,11 @@ const [sugAdded, setSugAdded] = useState<Record<string, string | null>>({})
   })()
   // Stable identity for the pickers ("Scheduled today" at the top of the list).
   const scheduledSet = useMemo(() => new Set(crewFor(boardDate).map(p => p.name)), [crewCache, boardDate])
-  const schedHit: Record<string, boolean> = {}
-  const isScheduledName = (name: string): boolean => { const k = name.trim().toLowerCase(); if (!(k in schedHit)) schedHit[k] = !!rosterMatch(boardCrew, name); return schedHit[k] }
+  const offHit: Record<string, boolean> = {}
+  // …and somebody with a Homebase clock-in on the day is plainly working it, shift or no shift (the team rail
+  // reads the day's punches and hands the names up).
+  const punchedHere = punched.date === boardDate ? punched.list : []
+  const isOffToday = (name: string): boolean => { const k = name.trim().toLowerCase(); if (!(k in offHit)) { const r = rotaFor(boardDate); offHit[k] = !rosterMatch(r.on, name) && !rosterMatch(punchedHere, name) && !!rosterMatch(r.off, name) } return offHit[k] }
 
   // EXPECTED HOURS BY CLEANER (Jon, 2026-11-02: "show a chart with cleaner name and expected hours").
   // Every clean that is actually on the day, at its estimated time (expected labor cost ÷ pay per
@@ -1010,7 +1048,7 @@ async function pushBlocks() {
 
   // Board/planner switcher. Takes its own display classes so the phone can carry it inside the
   // toolbar strip below while the desktop keeps it on its own line, exactly where it has always sat.
-  const tabsBar = (show: string) => (
+  const tabsBar = (show: string) => tabsSlot ? <>{tabsSlot}</> : (
     <div className={show + ' items-center gap-1 border border-line rounded-xl p-1 bg-white'}>
       <button onClick={() => setTab('board')} className={'lh-tab px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'board' ? 'lh-tab-on bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>Day board</button>
       <button onClick={() => setTab('gelog')} className={'lh-tab px-3 py-1.5 rounded-lg text-xs font-semibold ' + (tab === 'gelog' ? 'lh-tab-on bg-neutral-900 text-white' : 'text-neutral-600 hover:bg-neutral-100')}>GE Log</button>
@@ -1056,11 +1094,14 @@ async function pushBlocks() {
   )
 
   return (
-    <div className={embedded ? 'space-y-2' : 'space-y-4'}>
+    <div className={embedded ? 'space-y-2' : 'space-y-3'}>
       {/* PHONE (2026-11-09 audit): the three tabs rode in the same swipe strip as Day/Week with no
           gap, and both wore the tab style, so it read "Weekly plannerDay Week". The tabs have their
-          own line at every width again; Day/Week is a bordered switch, not a fourth and fifth tab. */}
-      {!embedded && tabsBar('inline-flex')}
+          own line at every width again; Day/Week is a bordered switch, not a fourth and fifth tab.
+          FEWER ROWS (Jon, 2026-11-20): the first clean sat ~520px down, under two tab rows and a two-line
+          "Next 7 days" banner. One tab strip now, and the week ahead is one line at the right end of it
+          (its grid and its moves open underneath on a click). */}
+      {!embedded && <div className="flex items-center gap-2 flex-wrap">{tabsBar('inline-flex')}<ScheduleNextWeek market={market} /></div>}
       {opsFor && <ListingOpsPanel listingId={opsFor.listingId} unitName={opsFor.unit} date={opsFor.date} onClose={() => setOpsFor(null)} />}
       {!embedded && <div className="flex items-center gap-2 flex-wrap">
         {/* THREE BANDS OF CHROME BECOME ONE (Jon, 2026-08-22). Day board/Weekly planner sat on its
@@ -1101,9 +1142,6 @@ async function pushBlocks() {
           <button onClick={sync} disabled={syncing || loading} className="inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1.5 rounded-lg border border-line bg-white text-ink hover:bg-app disabled:opacity-50" title="Re-pull from reservations + Breezeway"><RefreshCw size={13} className={syncing || loading ? 'animate-spin' : ''} /> Sync</button>
         </div>
       </div>}
-
-      {/* NEXT 7 DAYS (2026-11-10): the preemptive plan — same KPI model as the strip and the rail. */}
-      {!embedded && <ScheduleNextWeek market={market} />}
 
       {!embedded && view === 'day' && data && stripDays.length > 0 && (
 /* PHONE: seven cards in three columns were three rows of tiles above the first clean. Under sm
@@ -1186,12 +1224,13 @@ async function pushBlocks() {
               sheet that sat under it is in the More menu. */}
           {!embedded && (
           <div className="space-y-3">
-            <WorkingRail rosters={rosters} date={boardDate} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(boardDate)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} staff={boardStaff} crew={boardCrew} skipped={boardSkipped} shiftHours={SHIFT_H} growth={Number(GROWTH) || 0} load={cleanerLoad} dollars={rateDollars} payPerHour={PAY} isPast={boardIsPast} moveTo={moveTo} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
+            <WorkingRail rosters={rosters} date={boardDate} dayLabel={((data.days[0] && data.days[0].dow) || '') + ' ' + fmtDate(boardDate)} docs={teamDocs} markets={stripMarkets} saveState={teamSave} staff={boardStaff} crew={boardCrew} skipped={boardSkipped} shiftHours={SHIFT_H} growth={Number(GROWTH) || 0} load={cleanerLoad} dollars={rateDollars} payPerHour={PAY} isPast={boardIsPast} moveTo={moveTo} offToday={boardIsPast ? undefined : isOffToday} onPunched={(d, names) => setPunched({ date: d, list: names.map(name => ({ name })) })} onSet={setTeamCell} onAdd={addTeamMember} onRemove={removeTeamMember} />
           </div>
           )}
           <div className="space-y-2 min-w-0">
           {rows.length > 0 && (
-            <label className="inline-flex items-center gap-2 text-[12px] text-muted cursor-pointer">
+            // Phone only on the Scheduler page: from sm up the same box sits in the table header (2026-11-20).
+            <label className={'inline-flex items-center gap-2 text-[12px] text-muted cursor-pointer' + (embedded ? '' : ' sm:hidden')}>
               <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} className="accent-brand-600" /> Select all ({pickable.length})
             </label>
           )}
@@ -1209,7 +1248,7 @@ async function pushBlocks() {
               <table className="block sm:table w-full text-[12px] border-collapse">
                 <thead className="hidden sm:table-header-group">
                   <tr className="bg-neutral-50 text-neutral-500 text-[10px] uppercase tracking-wider text-left font-semibold border-b border-line">
-                    <th className="px-2 py-2 w-8"></th>
+                    <th className="px-2.5 py-2 w-8">{!embedded && <input type="checkbox" checked={allSelected} onChange={e => setSelectMany(rows, e.target.checked)} aria-label={'Select all ' + pickable.length + ' cleans'} title={'Select all (' + pickable.length + ')'} className="accent-brand-600 align-middle" />}</th>
                     <th className="px-2.5 py-2 font-semibold min-w-[150px]">HK Team</th>
                     <th className="px-2 py-2 font-semibold">Listing</th>
                     <th className="px-2 py-2 font-semibold text-right whitespace-nowrap" title="Estimated cleaning time: the P&L's expected labor cost for this unit ÷ $20/hour. After the clean, the Breezeway time sits underneath.">Est. time</th>
@@ -1244,15 +1283,15 @@ async function pushBlocks() {
                             Now on {fmtDate(String(c.movedTo))} &rarr;
                           </button>
                         ) : <><CleanerPicker people={people} scheduled={scheduledSet} value={overrides[keyOf(c)] || null} existing={cleared[keyOf(c)] ? '' : e.source === 'existing' ? e.label : ''} onChange={p => setPerson(c, p)} disabled={!data.breezeway} />{(() => { const hasC = e.ids.length > 0 || !!overrides[keyOf(c)]; if (!hasC) return null; const staged = !!overrides[keyOf(c)] || (c as any).staged === true; if (!staged) return null /* pushed is the normal state — only "Staged" (not sent yet) needs saying (2026-11-16) */; return <div className="mt-1">{staged ? <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5" title="Cleaner staged — not pushed to Breezeway yet"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />Staged</span> : null}</div> })()}{(() => {
-                          // NOT SCHEDULED TODAY — against the same crew list the rail counts (a hand-set
-                          // status, otherwise Homebase). This used to read only the hand-set statuses, so
-                          // one override made everybody Homebase had on shift "off roster".
-                          if (boardCrew.length === 0) return null
+                          // OFF TODAY (Jon, 2026-11-20) — only when the rota knows the person and has them off
+                          // (see rotaFor). A supervisor or a maintenance tech on shift is on shift; an account
+                          // Homebase never lists is not something this line can know. Not on a day already gone.
+                          if (boardIsPast) return null
                           const k = keyOf(c)
                           const names = overrides[k] ? [overrides[k].name] : (cleared[k] || e.source !== 'existing') ? [] : (c.assignedNames || []).filter(Boolean)
-                          const off = names.filter(n => !isScheduledName(n))
+                          const off = names.filter(n => isOffToday(n))
                           if (!off.length) return null
-                          return <div className="mt-1 text-[10px] font-semibold text-amber-700" title="Not working or on call today, by the team list on the left (a status set by hand, otherwise the Homebase schedule).">{names.length > 1 ? off.map(shortTeamName).join(', ') + ' — ' : ''}not scheduled today</div>
+                          return <div className="mt-1 text-[10px] font-semibold text-amber-700" title="On this week's rota but off today: no Homebase shift and no clock-in, or set OFF by hand on the team list. Reassign the clean, or set them Working on the team list.">{names.length > 1 ? off.map(shortTeamName).join(', ') + ' — ' : ''}off today</div>
                         })()}{pushErrors[keyOf(c)] ? <div className="mt-1 text-[10px] font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded px-1.5 py-0.5 whitespace-normal" title="The last push for this clean did not go through. Fix and push again.">Not pushed — {pushErrors[keyOf(c)]}</div> : null}</>}</td>
                         
                         <td className="order-2 grow basis-0 min-w-0 sm:table-cell px-2.5 py-1.5 align-middle font-medium text-ink">{c.vendor && <span className="mr-1 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-50 text-amber-700 align-middle">vendor</span>}{statusRing(c)}{c.listingId ? <button type="button" onClick={() => { if (c.newBooking) markSeen([c.newBooking.id]); setOpsFor({ listingId: String(c.listingId), unit: String(c.unit), date }) }} className="text-left font-semibold whitespace-nowrap lg:whitespace-normal hover:underline decoration-dotted underline-offset-2">{c.unit}</button> : c.unit}{c.taskStatus === 'in_progress' && <span title={'Started in Breezeway' + (c.assignedNames?.length ? ' · ' + c.assignedNames.join(', ') : '')} className="ml-1 inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 align-middle whitespace-nowrap">in progress</span>}{c.rebook
@@ -1391,7 +1430,7 @@ async function pushBlocks() {
 //              because "needed" is the Total's KPI hours ÷ a shift, rounded up.
 //   The team:  each person with the hours of cleans on them against their shift (red when over),
 //              then anyone holding cleans who is not scheduled today, then what nobody holds yet.
-function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [], shiftHours = 8, growth = 0, load, dollars = false, payPerHour = 20, isPast = false, moveTo = null, markets, saveState, onSet, onAdd, onRemove }: { date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; staff: Staffing; crew: CrewPerson[]; skipped?: CrewSkip[]; shiftHours?: number; growth?: number; load?: CleanerLoad; dollars?: boolean; payPerHour?: number; isPast?: boolean; moveTo?: { label: string; spare: number } | null; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
+function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [], shiftHours = 8, growth = 0, load, dollars = false, payPerHour = 20, isPast = false, moveTo = null, offToday, onPunched, markets, saveState, onSet, onAdd, onRemove }: { offToday?: (name: string) => boolean; onPunched?: (date: string, names: string[]) => void; date: string; dayLabel: string; docs: Record<string, TeamDoc>; rosters: Record<string, Roster>; staff: Staffing; crew: CrewPerson[]; skipped?: CrewSkip[]; shiftHours?: number; growth?: number; load?: CleanerLoad; dollars?: boolean; payPerHour?: number; isPast?: boolean; moveTo?: { label: string; spare: number } | null; markets: string[]; saveState: string; onSet: (mk: string, mem: string, d: string, val: string) => void; onAdd: (mk: string, name: string) => void; onRemove: (mk: string, name: string) => void }) {
   const NON_CLEANERS = useOpsPresets().roster.nonCleaners
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [showAll, setShowAll] = useState(false)
@@ -1407,7 +1446,7 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
     const todayNY = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
     if (date > todayNY) { setPunches({ date, list: [] }); return }
     const get = () => fetch('/api/schedule/punches?date=' + date, { cache: 'no-store' }).then(r => r.json())
-      .then(j => { if (!dead) setPunches(j && j.ok ? { date, list: j.punches || [] } : { date, list: [], error: (j && j.error) || 'Could not read Homebase' }) })
+      .then(j => { if (dead) return; setPunches(j && j.ok ? { date, list: j.punches || [] } : { date, list: [], error: (j && j.error) || 'Could not read Homebase' }); if (j && j.ok && onPunched) onPunched(date, ((j.punches || []) as Punch[]).map(p => p.name)) })
       .catch(() => { if (!dead) setPunches({ date, list: [], error: 'Could not read Homebase' }) })
     get()
     const t = date === todayNY ? setInterval(get, 120_000) : null
@@ -1626,16 +1665,18 @@ function WorkingRail({ date, dayLabel, docs, rosters, staff, crew, skipped = [],
             </div>
           )
         })()}
-        {/* Holding cleans today but not on today's team list — the same fact the table flags per row. */}
+        {/* Holding cleans but not in the cleaner count: supervisors, maintenance, agency accounts. This list was
+            headed "not scheduled today" in amber for all of them (Jon, 2026-11-20: noisy). Plain now; amber is
+            kept for the one case to act on — the rota has the person off today (the same test as the rows). */}
         {unscheduled.length > 0 && (
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-amber-700 font-semibold mb-1">Has cleans · not scheduled today</div>
-            {unscheduled.map(p => (
+            <div className="text-[10px] uppercase tracking-wide text-muted font-semibold mb-1" title="Holding cleans today, but not in the cleaner count above: supervisors, maintenance, vendor and agency accounts.">Also holding cleans</div>
+            {unscheduled.map(p => { const off = !!offToday && offToday(p.name); return (
               <div key={p.name} className="flex items-baseline justify-between gap-2 text-[11px] py-0.5">
-                <span className="text-ink truncate">{shortTeamName(p.name)} <span className="text-muted">· {p.cleans} clean{p.cleans === 1 ? '' : 's'}</span></span>
-                <span className="tabular-nums font-semibold text-amber-700">{fmtH(p.hours)}</span>
+                <span className="text-ink truncate" title={tidyName(p.name)}>{shortTeamName(tidyName(p.name))} <span className="text-muted">· {p.cleans} clean{p.cleans === 1 ? '' : 's'}</span>{off ? <span className="font-semibold text-amber-700" title="On this week's rota but off today"> · off today</span> : null}</span>
+                <span className={'tabular-nums font-semibold ' + (off ? 'text-amber-700' : 'text-ink')}>{fmtH(p.hours)}</span>
               </div>
-            ))}
+            ) })}
           </div>
         )}
         {load && load.unassigned.cleans > 0 && (

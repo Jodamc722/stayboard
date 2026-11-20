@@ -6,9 +6,16 @@
 // Each card: the unit, what housekeeping found, the guest who just left, the filing clock, the
 // photos — and two buttons. Autofill claim makes the draft (stay, items, photos, the post as
 // evidence) and opens it; Not claimable files it with a reason. Handled ones fold away underneath.
+//
+// CLEAN-UP (Jon, 2026-11-20: "some data is noisy… clean, one liners and tags"): the queue was ten
+// tall cards ahead of the claims with filing deadlines, half of them "Probably not claimable". Now
+// ONE LINE per report (unit, what was found, the guest, the clock) with its two buttons on the row;
+// the detail (items, photos, the post, fix the match) opens under it. Reports the reader already
+// judged not claimable, and the ones past the channel's cutoff, fold into one line at the bottom.
+// Nothing about what Autofill / Not claimable / Fix unit do has changed.
 import { useCallback, useEffect, useState } from 'react'
 import { Loader2, RefreshCw, ExternalLink, Wand2, X, ChevronDown, Pencil, Camera } from 'lucide-react'
-import { Tag, Pill, type Tone } from '@/components/lean'
+import { Tag } from '@/components/lean'
 
 type Stay = { reservationId: string; guestName: string; channel: string; confirmationCode: string | null; checkIn: string; checkOut: string; ownerStay: boolean; deadline: string | null; due: string | null }
 type Report = {
@@ -21,7 +28,6 @@ type Report = {
 }
 type Payload = { ok: boolean; reports: Report[]; lastScanAt: string | null; lastError: string | null; closeReasons: string[]; error?: string }
 
-const CLAIM_TONE: Record<string, Tone> = { likely: 'emerald', maybe: 'amber', no: 'slate' }
 const CLAIM_WORD: Record<string, string> = { likely: 'Likely claimable', maybe: 'Maybe claimable', no: 'Probably not claimable' }
 const fileHref = (p: string) => '/api/claims/file?path=' + encodeURIComponent(p)
 const md = (d: string | null | undefined) => d ? new Date(d.slice(0, 10) + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }) : ''
@@ -36,6 +42,13 @@ function daysTo(ymd: string | null) {
   const t = new Date(); const today = Date.UTC(t.getFullYear(), t.getMonth(), t.getDate())
   return Math.round((Date.parse(ymd + 'T00:00:00Z') - today) / 86400000)
 }
+// TOO LATE IS NOT NEW (2026-11-10). A report whose stay is already past the channel's filing
+// cutoff sat in the queue as "new" for good, wearing the same badge as one posted this morning.
+// It is marked "Too late to file" and folded under the live ones — still there to close with a
+// reason, or to autofill if someone knows better.
+const tooLate = (r: Report) => { const h = daysTo(r.stay?.deadline || null); return h != null && h < 0 }
+// What folds into one line: already judged not claimable, or past the cutoff. Folded is not closed.
+const quiet = (r: Report) => tooLate(r) || r.claimable === 'no'
 async function post(body: any) {
   const r = await fetch('/api/claims/hk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   const j = await r.json().catch(() => ({}))
@@ -48,6 +61,7 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
   const [scanning, setScanning] = useState(false)
   const [err, setErr] = useState('')
   const [showDone, setShowDone] = useState(false)
+  const [showFolded, setShowFolded] = useState(false)
   const [note, setNote] = useState('')
   const load = useCallback(async () => {
     try { const r = await fetch('/api/claims/hk', { cache: 'no-store' }); const j = await r.json(); if (j.ok) setData(j); else setErr(j.error || 'Could not load HK reports.') } catch (e: any) { setErr(String(e?.message || e)) }
@@ -56,12 +70,14 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
   const scan = async () => { setScanning(true); setErr(''); try { await post({ action: 'scan' }); await load() } catch (e: any) { setErr(e.message) } finally { setScanning(false) } }
   const patch = (r: Report) => setData(d => d ? { ...d, reports: d.reports.map(x => x.id === r.id ? r : x) } : d)
 
+  // A link straight to a folded report (?hk=<id>) opens the fold, once.
+  const loaded = !!data
+  useEffect(() => {
+    if (focusId && data && data.reports.some(r => r.id === focusId && r.status === 'new' && quiet(r))) setShowFolded(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, loaded])
+
   if (!data) return null
-  // TOO LATE IS NOT NEW (2026-11-10). A report whose stay is already past the channel's filing
-  // cutoff sat in the queue as "new" for good, wearing the same badge as one posted this morning.
-  // It is marked "Too late to file", sorted under the live ones and left out of the "new" count —
-  // still there to close with a reason, or to autofill if someone knows better.
-  const tooLate = (r: Report) => { const h = daysTo(r.stay?.deadline || null); return h != null && h < 0 }
   // SAME STAY, SEVERAL POSTS: kept next to each other and labelled — Autofill already puts every
   // report about one stay onto ONE claim.
   const keyOf = (r: Report) => r.stay?.reservationId ? 's:' + r.stay.reservationId : r.listingId ? 'u:' + r.listingId + ':' + r.postedAt.slice(0, 10) : 'r:' + r.id
@@ -74,16 +90,25 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
     Number(tooLate(a)) - Number(tooLate(b))
     || firstAt[keyOf(b)].localeCompare(firstAt[keyOf(a)]) || keyOf(a).localeCompare(keyOf(b))
     || b.postedAt.localeCompare(a.postedAt))
-  const nLate = open.filter(tooLate).length
-  const nLive = open.length - nLate
+  // CLEAN-UP (Jon, 2026-11-20): two piles. What is worth a decision stays on the list; what the
+  // reader already called "probably not claimable", and what is past the channel's cutoff, folds
+  // into one line. Folded is not closed — each one still needs its reason, a tap away.
+  const live = open.filter(r => !quiet(r))
+  const folded = open.filter(quiet)
+  const nLate = folded.filter(tooLate).length
+  const nNo = folded.length - nLate
+  const foldOpen = showFolded
+  // ONE LINE, NOT ONE PER CARD: when Slack will not hand the photos over it says so on every
+  // report. Say it once, with the count.
+  const photoStuck = open.filter(r => r.photoError && r.photoCount > r.photos.length)
   const done = data.reports.filter(r => r.status !== 'new')
+  const list = 'rounded-2xl border border-line bg-white divide-y divide-line/70 [&>li:first-child]:rounded-t-2xl [&>li:last-child]:rounded-b-2xl'
+  const row = (r: Report) => <Card key={r.id} r={r} reasons={data.closeReasons} focus={focusId === r.id} late={tooLate(r)} quiet={quiet(r)} siblings={groupN[keyOf(r)] || 1} onNote={setNote} onPatch={patch} onOpenClaim={onOpenClaim} onClaimsChanged={onClaimsChanged} />
   return (
-    <section className="mb-5">
+    <section>
       <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
         <h2 className="text-[13px] font-bold text-ink">HK damage reports</h2>
-        <span className="text-[12px] text-muted">from #vr-hkdamagereports — autofill a claim or close it as not claimable</span>
-        {nLive ? <Pill tone="amber">{nLive} new</Pill> : null}
-        {nLate ? <Pill title="Past the channel's filing cutoff — close them with a reason">{nLate} too late to file</Pill> : null}
+        <span className="text-[12px] text-muted">{live.length ? live.length + ' to review · ' : ''}from #vr-hkdamagereports — autofill a claim or close it as not claimable</span>
         <span className="ml-auto inline-flex items-center gap-2 text-[11.5px] text-muted">
           {data.lastScanAt ? 'Read ' + ago(data.lastScanAt) : 'Not read yet'}
           <button onClick={scan} disabled={scanning} title="Read the channel now" className="inline-flex items-center gap-1 font-semibold text-ink hover:text-brand-700 disabled:opacity-50">
@@ -92,15 +117,22 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
         </span>
       </div>
       {data.lastError ? <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2">{data.lastError}</p> : null}
+      {photoStuck.length ? <p className="text-[12px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2">Photos on {photoStuck.length} report{photoStuck.length === 1 ? '' : 's'} are still only in Slack: {photoStuck[0].photoError}</p> : null}
       {err ? <p className="text-[12px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-1.5 mb-2">{err}</p> : null}
       {note ? <p role="status" className="text-[12px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2 flex items-start gap-2"><span className="flex-1">{note}</span><button onClick={() => setNote('')} aria-label="Dismiss" className="shrink-0 font-semibold">✕</button></p> : null}
-      {open.length === 0 ? (
-        <div className="rounded-xl border border-line bg-white px-3 py-2.5 text-[12.5px] text-muted">Nothing new from housekeeping.</div>
-      ) : (
-        <ul className="space-y-2">
-          {open.map(r => <Card key={r.id} r={r} reasons={data.closeReasons} focus={focusId === r.id} late={tooLate(r)} siblings={groupN[keyOf(r)] || 1} onNote={setNote} onPatch={patch} onOpenClaim={onOpenClaim} onClaimsChanged={onClaimsChanged} />)}
-        </ul>
-      )}
+      {live.length === 0
+        ? (folded.length === 0 ? <div className="rounded-xl border border-line bg-white px-3 py-2.5 text-[12.5px] text-muted">Nothing new from housekeeping.</div> : null)
+        : <ul className={list}>{live.map(row)}</ul>}
+      {folded.length ? (
+        <div className={live.length ? 'mt-2' : ''}>
+          <button onClick={() => setShowFolded(!foldOpen)} aria-expanded={foldOpen} title="Still open — each one needs closing with a reason, or a claim if someone knows better"
+            className="min-h-[36px] sm:min-h-0 text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
+            <ChevronDown size={12} className={'transition ' + (foldOpen ? 'rotate-180' : '')} />
+            {[nNo ? nNo + ' probably not claimable' : '', nLate ? nLate + ' too late to file' : ''].filter(Boolean).join(' · ')} — still to close
+          </button>
+          {foldOpen ? <ul className={list + ' mt-1.5'}>{folded.map(row)}</ul> : null}
+        </div>
+      ) : null}
       {done.length ? (
         <div className="mt-2">
           <button onClick={() => setShowDone(!showDone)} className="text-[12px] font-semibold text-muted hover:text-ink inline-flex items-center gap-1">
@@ -110,7 +142,7 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
             <ul className="mt-1.5 rounded-xl border border-line bg-white divide-y divide-line">
               {done.map(r => (
                 <li key={r.id} className="px-3 py-2 flex items-center gap-2 flex-wrap text-[12.5px]">
-                  <b className="text-ink">{r.unit || r.unitAsWritten || 'Unit?'}</b>
+                  <b className="text-ink">{r.unit || r.unitAsWritten || 'No unit'}</b>
                   <span className="text-ink/80 truncate max-w-[420px]">{r.summary}</span>
                   {r.status === 'claimed'
                     ? <button onClick={() => r.claimId && onOpenClaim(r.claimId)}><Tag tone="emerald">Claim made</Tag></button>
@@ -127,16 +159,21 @@ export function HkDamageQueue({ onOpenClaim, onClaimsChanged, focusId }: { onOpe
   )
 }
 
-function Card({ r, reasons, focus, late, siblings, onNote, onPatch, onOpenClaim, onClaimsChanged }: { r: Report; reasons: string[]; focus: boolean; late: boolean; siblings: number; onNote: (s: string) => void; onPatch: (r: Report) => void; onOpenClaim: (id: string) => void; onClaimsChanged: () => void }) {
+// ONE REPORT, ONE LINE (Jon, 2026-11-20). Unit, what was found, whose stay and the filing clock,
+// then the two buttons. Everything else — items, photos, the post, fixing the match — opens under it.
+function Card({ r, reasons, focus, late, quiet, siblings, onNote, onPatch, onOpenClaim, onClaimsChanged }: { r: Report; reasons: string[]; focus: boolean; late: boolean; quiet: boolean; siblings: number; onNote: (s: string) => void; onPatch: (r: Report) => void; onOpenClaim: (id: string) => void; onClaimsChanged: () => void }) {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [closing, setClosing] = useState(false)
   const [fixing, setFixing] = useState(false)
+  const [open, setOpen] = useState(focus)
+  useEffect(() => { if (focus) setOpen(true) }, [focus])
   const s = r.stay
   const due = daysTo(s?.due || null)
   const autofill = async () => {
-    setBusy('claim'); setErr('')
+    // Ask BEFORE marking the row busy: cancelling used to leave every button on the card disabled.
     if (late && !window.confirm('This stay is past the channel\'s filing cutoff' + (s?.deadline ? ' (' + md(s.deadline) + ')' : '') + '. Make the claim anyway?')) return
+    setBusy('claim'); setErr('')
     try {
       const j = await post({ action: 'claim', id: r.id })
       // Said out loud, because the card is about to leave the queue: what did NOT make it onto the claim.
@@ -160,34 +197,64 @@ function Card({ r, reasons, focus, late, siblings, onNote, onPatch, onOpenClaim,
     setBusy('close'); setErr('')
     try { const j = await post({ action: 'close', id: r.id, reason }); onPatch(j.report) } catch (e: any) { setErr(e.message) } finally { setBusy(''); setClosing(false) }
   }
+  // The reason most likely to be right leads the row of reasons; the rest follow as they were.
+  const likely = late ? 'Too late to file' : s?.ownerStay ? 'Owner / friends & family stay' : r.claimable !== 'no' ? '' : r.category === 'maintenance' ? 'Maintenance, not guest-caused' : 'Not a damage report'
+  const reasonList = likely && (late || reasons.indexOf(likely) >= 0) ? [likely].concat(reasons.filter(x => x !== likely)) : reasons
+  const nPhotos = r.photos.length || r.photoCount
+  // 36px tall under sm: a thumb has to land on these.
+  const btn = 'shrink-0 h-9 sm:h-8 px-2.5 rounded-lg text-[12px] font-semibold inline-flex items-center justify-center gap-1 disabled:opacity-40 '
+  const main = 'bg-ink text-white'
+  const side = 'border border-line bg-white text-ink hover:border-ink/40'
   return (
-    <li ref={el => { if (focus && el) el.scrollIntoView({ block: 'center' }) }} className={'rounded-xl border bg-white px-3 py-2.5 ' + (focus ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line')}>
-      <div className="flex items-start gap-3 flex-wrap">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {late ? <Tag tone="slate" title={'The channel\'s filing cutoff' + (s?.deadline ? ' was ' + md(s.deadline) : ' has passed') + ' — close it with a reason unless you know better'}>Too late to file</Tag> : <Tag tone="brand">New HK damage report</Tag>}
-            {siblings > 1 ? <Tag tone="amber" title="More than one post about this stay — Autofill puts them all on one claim">{siblings} reports · same stay</Tag> : null}
-            <b className="text-[13.5px] text-ink">{r.unit || <span className="text-amber-800">{r.unitAsWritten || 'Unit?'} — not matched</span>}</b>
-            <span className="text-[11.5px] text-muted">{r.author} · {ago(r.postedAt)}</span>
-            {r.permalink ? <a href={r.permalink} target="_blank" rel="noreferrer" title="Open the post in Slack" className="text-muted hover:text-ink"><ExternalLink size={12} /></a> : null}
-          </div>
-          <p className="text-[13px] text-ink mt-1">{r.summary}</p>
+    <li ref={el => { if (focus && el) el.scrollIntoView({ block: 'center' }) }} className={focus ? 'bg-brand-50/40 ring-2 ring-inset ring-brand-200' : ''}>
+      <div className="flex items-center gap-x-2.5 gap-y-1.5 flex-wrap sm:flex-nowrap px-3 sm:px-4 py-2">
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'Hide the detail' : r.reason || 'Show the items, the photos and the post'}
+          className="flex-1 min-w-0 basis-full sm:basis-0 text-left flex items-center gap-x-2 gap-y-0.5 flex-wrap sm:flex-nowrap">
+          {r.unit
+            ? <b className="shrink-0 text-[13.5px] text-ink">{r.unit}</b>
+            : <b className="shrink-0 text-[13.5px] text-amber-800" title="The reader could not tell which unit this is — open it and pick the unit">{r.unitAsWritten ? '“' + r.unitAsWritten + '” · unit not matched' : 'No unit given'}</b>}
+          <span className="min-w-0 flex-1 basis-full sm:basis-0 truncate text-[12.5px] text-ink/85">{r.summary}</span>
+          {siblings > 1 ? <Tag title="More than one post about this stay — Autofill puts them all on one claim">{siblings} on this stay</Tag> : null}
+          {s ? <span className="shrink-0 max-w-[14rem] truncate text-[11.5px] text-muted">{s.guestName || 'Guest'} · {s.channel}</span>
+            : r.unit ? <span className="shrink-0 text-[11.5px] text-amber-800" title="No guest checked out of this unit in the three days before the report — pick the stay by hand">no stay matched</span> : null}
+          {late ? <Tag title={'The channel\'s filing cutoff' + (s?.deadline ? ' was ' + md(s.deadline) : ' has passed') + ' — close it with a reason unless you know better'}>Too late to file</Tag>
+            : s?.ownerStay ? <Tag title="Owner or friends-and-family stay — not claimable">Owner stay</Tag>
+            : s?.due && due != null ? (due <= 3
+              ? <Tag tone={due < 0 ? 'roseSolid' : 'rose'} title={'Our filing target' + (s.deadline ? ' · channel cutoff ' + s.deadline : '')}>{due < 0 ? 'File by ' + md(s.due) + ' — passed' : due === 0 ? 'File today' : due + 'd left to file'}</Tag>
+              : <span className="shrink-0 text-[11.5px] text-muted" title={'Our filing target' + (s.deadline ? ' · channel cutoff ' + s.deadline : '')}>file by {md(s.due)}</span>)
+            : null}
+          {!quiet && r.claimable === 'likely' ? <Tag tone="amber" title={r.reason}>Likely claimable</Tag> : null}
+          <span className="shrink-0 text-[11.5px] text-muted">{ago(r.postedAt)}</span>
+          <ChevronDown size={13} className={'shrink-0 text-muted transition ' + (open ? 'rotate-180' : '')} />
+        </button>
+        {s
+          ? <button onClick={autofill} disabled={!!busy} title={'Make a draft claim against ' + s.guestName + ' with these items and photos, and open it'} className={btn + (quiet ? side : main)}>
+              {busy === 'claim' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} Autofill claim
+            </button>
+          : <button onClick={() => { setOpen(true); setFixing(true) }} disabled={!!busy} title="No stay is picked yet — choose the unit and the guest, then autofill" className={btn + (quiet ? side : main)}>
+              <Pencil size={12} /> Match stay
+            </button>}
+        <button onClick={() => setClosing(!closing)} disabled={!!busy} title="Close it with a reason" className={btn + (quiet ? main : side)}>
+          {busy === 'close' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Not claimable
+        </button>
+      </div>
+      {closing ? (
+        <div className="flex flex-wrap gap-1.5 px-3 sm:px-4 pb-2">
+          {reasonList.map(x => <button key={x} onClick={() => close(x)} disabled={!!busy} className="text-[12px] rounded-full border border-line px-2.5 py-1 min-h-[36px] sm:min-h-0 hover:border-ink/40 text-ink disabled:opacity-40">{x}</button>)}
+        </div>
+      ) : null}
+      {open ? (
+        <div className="px-3 sm:px-4 pb-2.5 text-[12px]">
+          <p className="text-muted"><span className="text-ink font-semibold">{CLAIM_WORD[r.claimable]}</span>{r.reason ? ' — ' + r.reason : ''}</p>
           {r.items.length ? (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {r.items.map((it, i) => <span key={i} className="text-[11.5px] rounded-md bg-app border border-line px-1.5 py-0.5 text-ink/80">{it.qty > 1 ? it.qty + ' × ' : ''}{it.description}</span>)}
             </div>
           ) : null}
-          <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[12px]">
-            <Tag tone={CLAIM_TONE[r.claimable]} title={r.reason}>{CLAIM_WORD[r.claimable]}</Tag>
-            <span className="text-muted">{r.reason}</span>
-          </div>
-          <div className="flex items-center gap-1.5 flex-wrap mt-1.5 text-[12px]">
-            {s ? (<>
-              <span className="text-ink"><b>{s.guestName || 'Guest'}</b> · {s.channel}{s.confirmationCode ? ' · ' + s.confirmationCode : ''} · {md(s.checkIn)}–{md(s.checkOut)}</span>
-              {s.ownerStay ? <Tag tone="violet">Owner / F&amp;F stay</Tag> : null}
-              {s.due ? <Tag tone={due != null && due < 0 ? 'roseSolid' : due != null && due <= 3 ? 'rose' : 'slate'} title={'Our filing target' + (s.deadline ? ' · channel cutoff ' + s.deadline : '')}>{due == null ? '' : due < 0 ? 'File by ' + md(s.due) + ' — passed' : 'File by ' + md(s.due) + ' (' + due + 'd)'}</Tag> : s.channel === 'Direct' ? <Tag>No channel window</Tag> : null}
-            </>) : <span className="text-amber-800">No checkout matched for {r.unit || 'this unit'} — fix the match to pick the stay.</span>}
-          </div>
+          <p className="mt-1.5 text-ink">
+            {s ? <><b>{s.guestName || 'Guest'}</b> · {s.channel}{s.confirmationCode ? ' · ' + s.confirmationCode : ''} · {md(s.checkIn)}–{md(s.checkOut)}{s.due ? ' · file by ' + md(s.due) : s.channel === 'Direct' ? ' · no channel window' : ''}</>
+              : <span className="text-amber-800">No checkout matched for {r.unit || 'this report'} — pick the stay below.</span>}
+          </p>
           {r.photos.length ? (
             <div className="flex gap-1.5 flex-wrap mt-2">
               {r.photos.slice(0, 8).map(p => (
@@ -197,29 +264,18 @@ function Card({ r, reasons, focus, late, siblings, onNote, onPatch, onOpenClaim,
                 </a>
               ))}
             </div>
-          ) : r.photoCount ? (
-            <p className="text-[11.5px] text-muted mt-1.5 inline-flex items-center gap-1" title={r.photoError || undefined}><Camera size={12} /> {r.photoCount} photo{r.photoCount === 1 ? '' : 's'} in Slack{r.photoError ? ' — not copied yet' : ''}{r.photoError ? <button onClick={copyPhotos} disabled={!!busy} className="ml-1 font-semibold text-ink underline disabled:opacity-50">{busy === 'photos' ? 'Copying…' : 'Copy now'}</button> : null}</p>
           ) : null}
-          {r.text && r.text !== r.summary ? <details className="mt-1.5"><summary className="text-[11.5px] text-muted cursor-pointer">What was posted</summary><p className="text-[12px] text-ink/80 whitespace-pre-line mt-1">{r.text}</p></details> : null}
-        </div>
-        <div className="flex flex-row sm:flex-col flex-wrap items-stretch gap-1.5 shrink-0 w-full sm:w-[150px] [&>button]:flex-1 sm:[&>button]:flex-none">
-          <button onClick={autofill} disabled={!!busy || !s} title={s ? 'Make a draft claim against ' + s.guestName + ' with these items and photos, and open it' : 'Fix the match first — no stay picked'}
-            className="h-9 sm:h-8 px-2 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center justify-center gap-1 disabled:opacity-40">
-            {busy === 'claim' ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />} Autofill claim
-          </button>
-          <button onClick={() => setClosing(!closing)} disabled={!!busy} className="h-9 sm:h-8 px-2 rounded-lg border border-line text-[12px] font-semibold text-ink inline-flex items-center justify-center gap-1 hover:border-ink/40">
-            {busy === 'close' ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />} Not claimable
-          </button>
-          <button onClick={() => setFixing(!fixing)} className="min-h-[36px] sm:min-h-0 text-[11.5px] font-semibold text-muted hover:text-ink inline-flex items-center justify-center gap-1"><Pencil size={11} /> Fix unit / guest</button>
-        </div>
-      </div>
-      {closing ? (
-        <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-line">
-          {(late ? ['Too late to file'].concat(reasons.filter(x => x !== 'Too late to file')) : reasons).map(x => <button key={x} onClick={() => close(x)} className="text-[12px] rounded-full border border-line px-2.5 py-1 min-h-[36px] sm:min-h-0 hover:border-ink/40 text-ink">{x}</button>)}
+          {r.text && r.text !== r.summary ? <p className="text-ink/80 whitespace-pre-line mt-1.5 border-l-2 border-line pl-2">{r.text}</p> : null}
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap mt-1.5 text-[11.5px] text-muted">
+            <span>{r.author} · {ago(r.postedAt)}</span>
+            {r.permalink ? <a href={r.permalink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold hover:text-ink">Open in Slack <ExternalLink size={11} /></a> : null}
+            {!r.photos.length && nPhotos ? <span className="inline-flex items-center gap-1" title={r.photoError || undefined}><Camera size={12} /> {nPhotos} photo{nPhotos === 1 ? '' : 's'} in Slack{r.photoError ? <button onClick={copyPhotos} disabled={!!busy} className="ml-1 font-semibold text-ink underline disabled:opacity-50">{busy === 'photos' ? 'Copying…' : 'Copy now'}</button> : null}</span> : null}
+            <button onClick={() => setFixing(!fixing)} className="min-h-[36px] sm:min-h-0 font-semibold hover:text-ink inline-flex items-center gap-1"><Pencil size={11} /> Fix unit / guest</button>
+          </div>
+          {fixing ? <FixMatch r={r} onPatch={x => { onPatch(x); setFixing(false) }} /> : null}
         </div>
       ) : null}
-      {fixing ? <FixMatch r={r} onPatch={x => { onPatch(x); setFixing(false) }} /> : null}
-      {err ? <p className="text-[12px] text-rose-700 mt-1.5">{err}</p> : null}
+      {err ? <p className="text-[12px] text-rose-700 px-3 sm:px-4 pb-2">{err}</p> : null}
     </li>
   )
 }

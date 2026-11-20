@@ -41,8 +41,13 @@ export function GuidebookLauncher({ listingId, name, compact }: {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   // Filled-in Guesty custom fields prefill the matching questions (Jon, 2026-11-06).
   const [fromGuesty, setFromGuesty] = useState<Record<string, string>>({})
+  // SPEED (Jon, 2026-11-20): this button sits in the header of every listing page, and it fetched
+  // the Guesty facts and the how-to candidates the moment the page opened — two requests for a
+  // dialog most visits never open. Both now wait for the first time the dialog is opened.
+  const loadedFor = useRef({ facts: '', howtos: '' })
   useEffect(() => {
-    if (!listingId) return
+    if (!listingId || !open || loadedFor.current.facts === listingId) return
+    loadedFor.current.facts = listingId
     fetch('/api/guidebook/guesty-facts?ids=' + encodeURIComponent(listingId)).then(r => r.json()).then(d => {
       const g = d?.listings?.[listingId]
       if (!g?.facts) return
@@ -51,7 +56,7 @@ export function GuidebookLauncher({ listingId, name, compact }: {
       setFromGuesty(src)
       setAnswers(a => ({ ...pre, ...Object.fromEntries(Object.entries(a).filter(([, v]) => String(v).trim())) }))
     }).catch(() => {})
-  }, [listingId])
+  }, [listingId, open])
   const [recs, setRecs] = useState<{ name: string; type?: string; blurb?: string; area?: string }[]>([])
   const [recPick, setRecPick] = useState<Record<number, boolean>>({})
   const [recBusy, setRecBusy] = useState(false)
@@ -95,7 +100,8 @@ export function GuidebookLauncher({ listingId, name, compact }: {
   const [auditCands, setAuditCands] = useState<any[]>([])
   const [auditPick, setAuditPick] = useState<Record<number, boolean>>({})
   useEffect(() => {
-    if (!listingId) return
+    if (!listingId || !open || loadedFor.current.howtos === listingId) return
+    loadedFor.current.howtos = listingId
     fetch('/api/guidebook/audit-howtos?listingId=' + encodeURIComponent(listingId)).then(r => r.json()).then(j => {
       const cs = (j && j.candidates) || []
       setAuditCands(cs)
@@ -103,7 +109,7 @@ export function GuidebookLauncher({ listingId, name, compact }: {
       cs.forEach((c: any, i: number) => { pick[i] = !c.already })
       setAuditPick(pick)
     }).catch(() => {})
-  }, [listingId])
+  }, [listingId, open])
 
   async function generate(force = false) {
     if (missing.length) { setErr('Please answer: ' + missing.join(', ')); return }

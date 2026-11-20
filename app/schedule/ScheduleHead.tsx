@@ -48,9 +48,21 @@ export function ScheduleHead() {
   const short = sel ? sel.short : 0
   // The labor KPI is a guide, not an alarm (Jon, 2026-11-02): under it is amber, never red. Red is only "more work than hours".
   const tone: Tone = !k ? 'slate' : k.utilisationPct > 100 ? 'rose' : short > 0 || k.utilisationPct >= 85 || k.overloaded > 0 ? 'amber' : 'emerald'
+  // SAID ONCE (Jon, 2026-11-20: "some data is noisy"). The pill read "2 cleaners under the labor guide today ·
+  // 87% by the clock · 3 cleans with nobody on them · 7 past a full day" while the team rail said "Short 10h —
+  // add 2 cleaners", the day strip showed 8/10, the Next-7-days banner counted short days and a red chip counted
+  // the unassigned cleans. The rail owns the staffing verdict and the chip owns the unassigned count; this pill
+  // is the one thing nothing else on the page says — how full the day is by the clock — in a few words. When the
+  // day is under the labor guide it makes no claim of its own ("has room" beside "short" was the 11-16 finding):
+  // it shows the percentage in amber and the hover says where to look.
+  const words = !k ? 'Is today doable?' : short > 0 ? 'Crew ' + k.utilisationPct + '% by the clock ' + dayWord
+    : (k.utilisationPct > 100 ? 'Too much work ' : k.utilisationPct >= 85 ? 'Team nearly full ' : k.overloaded > 0 ? 'Work is uneven ' : 'Team has room ') + dayWord + ' · ' + k.utilisationPct + '%'
+  const extra = !k ? '' : (short > 0 ? short + (short === 1 ? ' cleaner' : ' cleaners') + ' under the labor guide — see the Team panel. ' : '')
+    + (k.unassignedCount > 0 ? k.unassignedCount + (k.unassignedCount === 1 ? ' clean has' : ' cleans have') + ' nobody on ' + (k.unassignedCount === 1 ? 'it. ' : 'them. ') : '')
+    + (k.overloaded > 0 ? k.overloaded + (k.overloaded === 1 ? ' person is' : ' people are') + ' past a full day. ' : '')
   const title = (k
     ? (other ? dayWord : 'Today') + ', by the clock (cleaning time + travel vs. shift time — a different question from the KPI hours on the board below): ' + hrs(k.workMinutes + k.travelMinutes) + ' of work on ' + k.peopleOnShift + ' '
-      + (k.peopleOnShift === 1 ? 'person' : 'people') + ' ≈ ' + hrs(k.capacityMinutes) + ' capacity. '
+      + (k.peopleOnShift === 1 ? 'person' : 'people') + ' ≈ ' + hrs(k.capacityMinutes) + ' capacity. ' + extra
     : 'Is the day doable? ')
     + (other ? 'The plan that opens below starts on today — use its pager for ' + dayWord + '. ' : '')
     + (open ? 'Click to hide the capacity plan.' : 'Click for the capacity plan, other days and suggested moves.')
@@ -64,9 +76,7 @@ export function ScheduleHead() {
           <span className="inline-flex items-center gap-1">
             <Users size={12} />
             <span className="sm:hidden">{k ? 'Crew ' + k.utilisationPct + '% ' + dayWord : 'Doable?'}</span>
-            <span className="hidden sm:inline">{k ? (short > 0 ? short + (short === 1 ? ' cleaner' : ' cleaners') + ' under the labor guide ' + dayWord : k.utilisationPct > 100 ? 'Too much work ' + dayWord : k.utilisationPct >= 85 ? 'Team nearly full ' + dayWord : k.overloaded > 0 ? 'Work is uneven ' + dayWord : 'Team has room ' + dayWord) + ' · ' + k.utilisationPct + '% by the clock' : 'Is today doable?'}</span>
-            {k && k.unassignedCount > 0 ? <span className="opacity-80 hidden sm:inline">· {k.unassignedCount} {k.unassignedCount === 1 ? 'clean' : 'cleans'} with nobody on {k.unassignedCount === 1 ? 'it' : 'them'}</span> : null}
-            {k && k.overloaded > 0 ? <span className="opacity-80 hidden sm:inline">· {k.overloaded} past a full day</span> : null}
+            <span className="hidden sm:inline">{words}</span>
             <ChevronDown size={12} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
           </span>
         </Pill>

@@ -17,6 +17,8 @@ export type UnitRow = {
   // is the guest-facing headline, shown small underneath and still searchable.
   id: string; name: string; marketingTitle?: string | null; building: string; unit: string | null
   dead: boolean
+  /** Listed in the last 60 days with no review yet (Jon, 2026-11-20: new is not weak). */
+  isNew?: boolean
   score: number
   titleLen: number
   sections: number
@@ -34,7 +36,7 @@ export type UnitRow = {
   topGap: { label: string; points: number } | null
 }
 
-type SortKey = 'name' | 'building' | 'score' | 'sections' | 'photos' | 'amenities' | 'rating' | 'occupancy' | 'adr' | 'revpar' | 'lastOptimized'
+type SortKey = 'name' | 'building' | 'score' | 'sections' | 'photos' | 'amenities' | 'rating' | 'occupancy' | 'adr' | 'revpar' | 'lastOptimized' | 'gap'
 
 const FILTERS: { key: string; label: string; tone: 'bad' | 'warn' | 'none'; test: (u: UnitRow) => boolean }[] = [
   { key: 'weak', label: 'Score under 60', tone: 'bad', test: u => u.score < 60 },
@@ -111,6 +113,9 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
         case 'name': return u.name.toLowerCase()
         case 'building': return u.building.toLowerCase()
         case 'lastOptimized': return u.lastOptimized || ''
+        // CLEAN-UP (Jon, 2026-11-20): "Next fix" sorts, biggest win first — the same ranking the
+        // Fix next tab's "By unit" view gives, without leaving the table. No gap sorts last.
+        case 'gap': return u.topGap ? -u.topGap.points : (dir === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY)
         default: {
           const v = (u as any)[sort]
           // Nulls always sort to the bottom, whichever direction — "unknown" is not "worst".
@@ -262,6 +267,7 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
                 meta={u.building}
                 tags={<>
                   {u.dead && <Tag>Inactive</Tag>}
+                  {u.isNew && <Tag title="Listed in the last 60 days, no review yet">New</Tag>}
                   {u.sections === 0 && <Tag tone="rose" title="No description sections">No desc</Tag>}
                   {u.photos < 10 && <Tag tone="rose" title="Under 10 photos">{u.photos} photos</Tag>}
                   {u.mustFix > 0 && <Tag tone="rose" title="Missing a safety amenity">Safety</Tag>}
@@ -313,7 +319,7 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
               {showMoney && <Th k="adr" right>ADR</Th>}
               {showMoney && <Th k="revpar" right>RevPAR</Th>}
               <Th k="lastOptimized">Optimized</Th>
-              <th className="px-2.5 py-2 text-left text-[10px] uppercase tracking-[0.09em] font-semibold text-muted whitespace-nowrap">Next fix</th>
+              <Th k="gap">Next fix</Th>
             </tr>
           </thead>
           <tbody>
@@ -327,7 +333,9 @@ export function UnitTable({ units, buildings, periodLabel, revLabel, basisLabel,
                 )}
                 <td className="px-2.5 py-1.5 max-w-[280px]">
                   {/* The guest-facing title is on hover — the ops name is what people scan for. */}
-                  <Link href={`/listings/${u.id}`} title={u.marketingTitle && u.marketingTitle !== u.name ? u.marketingTitle : undefined} className="font-semibold text-ink hover:text-brand-700 block truncate">{u.name}</Link>
+                  <Link href={`/listings/${u.id}`} title={u.marketingTitle && u.marketingTitle !== u.name ? u.marketingTitle : undefined} className="font-semibold text-ink hover:text-brand-700 block truncate">
+                    {u.name}{u.isNew && <span className="ml-1.5 text-[10.5px] font-medium text-muted" title="Listed in the last 60 days, no review yet">new</span>}
+                  </Link>
                 </td>
                 <td className="px-2.5 py-1.5 text-muted whitespace-nowrap">{u.building}</td>
                 <td className="px-2.5 py-1.5 text-right">

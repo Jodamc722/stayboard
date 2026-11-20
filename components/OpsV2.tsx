@@ -41,7 +41,7 @@ type Unit = { listingId: string; unit: string; market: string; market2?: string 
 type Deadline = { dueBy: string; minsLeft: number; passed: boolean; cleans: number; done: number; late: number; atRisk: number }
 type BehindRow = { taskId: string; unit: string; checkOutTime: string | null; arrivingAt: string | null; assignee: string | null }
 type VacantU = { listingId: string; unit: string; market: string; leftToday: string | null; nextArrival: string | null; openTasks: number }
-type OpsData = { ok: boolean; today: string; deadline: Deadline; behind?: { notStarted: number; units: BehindRow[] } | null; units: Unit[]; vacants?: VacantU[]; error?: string }
+type OpsData = { ok: boolean; today: string; deadline: Deadline; behind?: { notStarted: number; units: BehindRow[] } | null; units: Unit[]; vacants?: VacantU[]; error?: string; capacity?: CapData | null }
 type Glitch = { id: string; unit: string; issue: string; ageDays?: number; running?: boolean; unassigned?: boolean; assignees?: string[] }
 type StaffPerson = { name: string; role: string | null; clockedIn: boolean; shift: string | null; bzAlias: string | null; tasks: number; cleans: number }
 type Staffing = { ok: boolean; people: StaffPerson[]; summary: { clockedIn: number; nothingAssigned: number; idleNames: string[] } }
@@ -91,8 +91,15 @@ export function OpsV2({ unitsFooter, peopleFooter }: { unitsFooter?: ReactNode; 
   const { data: staff, error: staffErr, refresh: refreshStaff } = useCachedFetch<Staffing>(
     isToday ? '/api/ops-today/staffing' : `/api/ops-today/staffing?date=${date}`, { ttl: 5 * 60_000 })
   // The capacity model prices the same day the board is showing — today or a planned date.
-  const { data: cap, refresh: refreshCap } = useCachedFetch<CapData>(
-    isToday ? '/api/capacity' : `/api/capacity?date=${date}`, { ttl: 5 * 60_000 })
+  // ONE REQUEST FEWER ON TODAY (Jon, 2026-11-20 audit: ops-today 3.7s with capacity 1.4s beside it). Today's
+  // board is built with the capacity picture and now carries it (app/api/ops-today/route.ts), so this page no
+  // longer asks /api/capacity for the same picture in the same second. It still does for another day, and for
+  // today only if the board answered without one (an older copy on the device, or a picture that failed to price).
+  const capToday = isToday ? (data?.capacity || null) : null
+  const capKey = isToday ? (data && !data.capacity ? '/api/capacity' : null) : `/api/capacity?date=${date}`
+  const { data: capRead, refresh: refreshCap } = useCachedFetch<CapData>(capKey, { ttl: 5 * 60_000 })
+  // With no request to make, an answer left over from another day is not today's.
+  const cap: CapData | null = capToday || (capKey ? capRead || null : null)
   // THE ROSTER IS THE SAME LIST ALL DAY (2026-09-14, the tab-by-tab walk). This was an uncached
   // `no-store` fetch fired on every mount, while every other read on this page goes through the
   // 30s cache — and CapacityPanel on the Scheduler fired the identical request again on its own.
@@ -328,10 +335,12 @@ function CapacityStrip({ cap, roster, onRefresh, onPeople, compact, dayLabel, pa
     return (
       <span className="relative inline-flex">
         <button onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setAlignRight(r.left + 520 > window.innerWidth); setOpen(o => !o) }} aria-expanded={open}
-          title={fmtH(load) + ' of work for ' + k.peopleOnShift + ' people with ' + fmtH(k.capacityMinutes) + ' between them (' + k.utilisationPct + '% full)'}
+          title={fmtH(load) + ' of work for ' + k.peopleOnShift + ' people with ' + fmtH(k.capacityMinutes) + ' between them (' + k.utilisationPct + '% full)' + (bits.length ? ' · ' + bits.join(' · ') : '') + ' — click for who and what would help'}
           className={'inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-bold whitespace-nowrap ' + chipTone}>
+          {/* SAID ONCE (Jon, 2026-11-20: "some data is noisy"). The chip also carried "· 3 cleans unassigned · 7 people
+              have more than a day's work" — the unassigned count is the Plan day button and the not-started line,
+              and the people are named in the panel this opens. The verdict and the number stay; the rest is the hover. */}
           <Users size={11} /> {verdict} · {k.utilisationPct}% full
-          {bits.length > 0 && <span className="opacity-80 hidden sm:inline">· {bits.join(' · ')}</span>}
           <ChevronDown size={11} className={open ? 'rotate-180 transition-transform' : 'transition-transform'} />
         </button>
         {open && (

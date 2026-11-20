@@ -59,7 +59,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
   // cache) took 10s+ and the page looked dead. Pull only the sub-fields computeScore reads.
   const [{ data: listings }, workPage, revsPage] = await Promise.all([
     sb.from('guesty_listings')
-      .select("id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, last_optimized, pub:raw->publicDescription, pub2:raw->publicDescriptions, terms:raw->terms, integrations:raw->integrations, photoScore:raw->_photoScore, pidx:raw->_photoDigest, lastOptRaw:raw->>_lastOptimized, minN:raw->defaultListingMinNights, ib:raw->instantBookable, ib2:raw->instantBook, ci:raw->>defaultCheckInTime, ci2:raw->>checkInTime, co:raw->>defaultCheckOutTime, co2:raw->>checkOutTime, cancel:raw->>cancellationPolicy, prices:raw->prices, airbnbCancel:raw->airbnb->>cancellationPolicy, bookingCancel:raw->bookingcom->>cancellationPolicy")
+      .select("id, title, nickname, building, unit, status, bedrooms, max_occupancy, address_city, amenities, pictures, last_optimized, createdAt:raw->>createdAt, pub:raw->publicDescription, pub2:raw->publicDescriptions, terms:raw->terms, integrations:raw->integrations, photoScore:raw->_photoScore, pidx:raw->_photoDigest, lastOptRaw:raw->>_lastOptimized, minN:raw->defaultListingMinNights, ib:raw->instantBookable, ib2:raw->instantBook, ci:raw->>defaultCheckInTime, ci2:raw->>checkInTime, co:raw->>defaultCheckOutTime, co2:raw->>checkOutTime, cancel:raw->>cancellationPolicy, prices:raw->prices, airbnbCancel:raw->airbnb->>cancellationPolicy, bookingCancel:raw->bookingcom->>cancellationPolicy")
       .limit(1000), // deliberate cap: one row per listing, ~290
     // Open work per building is a COUNT, so it reads every open work order, paged by id — not an
     // unordered first 1,000.
@@ -108,14 +108,20 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
   type B = {
     name: string; city?: string; unitCount: number; beds: number; sleeps: number; active: number; scores: number[]
     rSum: number; rCnt: number; rSumP: number; rCntP: number
+    weak: number; mid: number; fresh: number
   }
+  // CLEAN-UP (Jon, 2026-11-20): NEW IS NOT WEAK. A unit Guesty created in the last 60 days that has
+  // no review yet is still being set up — "Crosby" (added Nov 18, score 38) led the whole list as the
+  // second-worst building. Such a unit keeps its score but is not counted as weak.
+  const NEW_DAYS = 60
+  const newSince = Date.now() - NEW_DAYS * 86400_000
   const map = new Map<string, B>()
   const units: UnitRow[] = []
   const fixes: FixItem[] = []
 
   ;(listings ?? []).forEach((l: any) => {
     const name = rollupBuilding(l.building)
-    if (!map.has(name)) map.set(name, { name, city: l.address_city || undefined, unitCount: 0, beds: 0, sleeps: 0, active: 0, scores: [], rSum: 0, rCnt: 0, rSumP: 0, rCntP: 0 })
+    if (!map.has(name)) map.set(name, { name, city: l.address_city || undefined, unitCount: 0, beds: 0, sleeps: 0, active: 0, scores: [], rSum: 0, rCnt: 0, rSumP: 0, rCntP: 0, weak: 0, mid: 0, fresh: 0 })
     const b = map.get(name)!
     b.unitCount += 1
     b.beds += Number(l.bedrooms) || 0
@@ -130,9 +136,14 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
       avgRating: _cnt[id] ? Math.round((_sum[id] / _cnt[id]) * 100) / 100 : null,
       reviewCount: _cnt[id] || 0,
     })
+    const createdMs = l.createdAt ? Date.parse(String(l.createdAt)) : NaN
+    const isNew = !dead && !_cnt[id] && Number.isFinite(createdMs) && createdMs >= newSince
     if (!dead) {
       b.active += 1
       b.scores.push(res.overall)
+      if (isNew) b.fresh += 1
+      else if (res.overall < 60) b.weak += 1
+      else if (res.overall < 75) b.mid += 1
       // Roll ratings up by REVIEW, not by unit: sum stars / total reviews. Averaging each unit's
       // average would let a 1-review unit swing the building as hard as a 200-review one.
       // Active units only, so the card's rating and score describe the same set of units.
@@ -146,7 +157,7 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
     const gaps = scoreGaps(res).filter(g => g.kind !== 'recommend')
     const amenities: string[] = Array.isArray(l.amenities) ? l.amenities : []
     units.push({
-      id, name: opsName, marketingTitle: title, building: name, unit: unitNumber(l), dead,
+      id, name: opsName, marketingTitle: title, building: name, unit: unitNumber(l), dead, isNew,
       score: res.overall,
       titleLen: title.length,
       sections: res.description.sections.length,
@@ -177,15 +188,18 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
     allScores.push(...b.scores)
     pSum += b.rSum; pCnt += b.rCnt; pSumP += b.rSumP; pCntP += b.rCntP
     const avg = b.scores.length ? Math.round(b.scores.reduce((s, n) => s + n, 0) / b.scores.length) : null
-    const weak = b.scores.filter(s => s < 60).length
     const { scores, rSum, rCnt, rSumP, rCntP, ...rest } = b
     return {
-      ...rest, avg, weak,
+      ...rest, avg,
       rating: star(rSum, rCnt), reviewCount: rCnt,           // all time
       ratingP: star(rSumP, rCntP), reviewCountP: rCntP,      // selected window
     }
   }).sort((a, b) => (a.avg ?? 999) - (b.avg ?? 999)) // weakest portfolios first
 
+  // ONE TRUE NUMBER (Jon, 2026-11-20). The header said "318 units" while the tab beside it said
+  // "Units 265": 318 is every listing Guesty holds, 265 the active ones, and the 53 between them are
+  // inactive listings (18 of them Waves). Every score and rating on this page is active units only,
+  // so active is the number the page states; the inactive count rides along in the hover text.
   const totalUnits = (listings ?? []).length
   const portfolioAvg = allScores.length ? Math.round(allScores.reduce((s, n) => s + n, 0) / allScores.length) : null
   return {
@@ -196,8 +210,8 @@ const getPortfolioData = unstable_cache(async (periodDays: number | null) => {
   // NOTE: the cache key must vary by period, or every window would serve whichever one warmed
   // the cache first. unstable_cache hashes the callback's ARGUMENTS into the key on top of these
   // keyParts, so passing periodDays in is what keeps the four windows separate. Bumped to v3
-  // because the cached shape changed (units + fixes added).
-}, ['portfolio-rollup-v3'], { revalidate: 120, tags: ['portfolio'] })
+  // because the cached shape changed (units + fixes added); v4 for isNew / mid / fresh.
+}, ['portfolio-rollup-v4'], { revalidate: 120, tags: ['portfolio'] })
 
 // Money is a separate, heavier read (every live reservation in the window) so it gets its own,
 // longer cache and only runs for the views that show it.
@@ -265,11 +279,16 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
     if (v === 'units') { if (revWin.key !== '90') qs.set('rev', revWin.key); if (basis !== DEFAULT_BASIS) qs.set('b', basis) }
     return `/buildings${qs.toString() ? `?${qs}` : ''}`
   }
-  const fixUnits = new Set(fixes.map(f => f.unitId)).size
+  const activeUnits = units.filter(u => !u.dead).length
+  const inactiveUnits = totalUnits - activeUnits
+  const activeBuildings = buildings.filter(b => b.active > 0).length
   const TABS: { key: View; label: string; n?: number | null; title?: string }[] = [
-    { key: 'buildings', label: 'Buildings', n: buildings.length },
-    { key: 'units', label: 'Units', n: units.filter(u => !u.dead).length },
-    { key: 'fix', label: 'Fix next', n: fixUnits, title: 'Units with an open Optimize Score gap' },
+    { key: 'buildings', label: 'Buildings', n: activeBuildings, title: `${activeBuildings} buildings with an active unit${buildings.length > activeBuildings ? ` · ${buildings.length - activeBuildings} more with none, at the foot of the list` : ''}` },
+    { key: 'units', label: 'Units', n: activeUnits, title: `${activeUnits} active units${inactiveUnits > 0 ? ` · ${inactiveUnits} inactive in Guesty, under Filters` : ''}` },
+    // CLEAN-UP (Jon, 2026-11-20): this tab carried "265", the same number as Units, because nearly
+    // every unit has some gap — a count that says nothing. It is a different list (one row per kind
+    // of fix, the units inside), so it keeps its tab and loses the number.
+    { key: 'fix', label: 'Fix next', title: 'One row per kind of fix, with every unit that needs it' },
     ...(canHealth ? [{ key: 'health' as View, label: 'Health', title: 'Weighted Health Score per unit' }] : []),
     // Other notes is house boilerplate chosen by whole properties (Jon, 2026-09-16); Guest access,
     // Neighborhood and Getting around are edited on each property's own page.
@@ -287,11 +306,13 @@ export default async function PortfolioPage({ searchParams }: { searchParams?: {
           </Link>
         )}
         <SyncListingsButton />
-        <Pill title={`${buildings.length} buildings · ${totalUnits} units`}>{totalUnits} units</Pill>
-        {portfolioAvg != null && <Pill tone="brand" title="Portfolio Optimize Score: average of every active unit (all time)">Score {portfolioAvg}</Pill>}
-        {portfolioRating != null && <Pill tone="amber" title={`Guest rating, all time · ${portfolioReviews} reviews`}>{portfolioRating.toFixed(2)}★ all</Pill>}
-        <Pill tone={portfolioRatingP != null ? 'amber' : 'slate'} title={portfolioRatingP != null ? `Guest rating over ${period.label.toLowerCase()} · ${portfolioReviewsP} reviews` : `No reviews in ${period.label.toLowerCase()}`}>
-          {portfolioRatingP != null ? `${portfolioRatingP.toFixed(2)}★` : '—'} {period.key === 'all' ? 'all' : period.key === '365' ? '12m' : period.key + 'd'}
+        {/* CLEAN-UP (Jon, 2026-11-20): the unit count lives on the Units tab below (one count, not
+            two); ratings are plain, not amber (nothing here asks for action); and with the window on
+            All the all-time rating is printed once, not twice. */}
+        {portfolioAvg != null && <Pill tone="brand" title={`Portfolio Optimize Score: average of the ${activeUnits} active units`}>Score {portfolioAvg}</Pill>}
+        {portfolioRating != null && period.key !== 'all' && <Pill title={`Guest rating, all time · ${portfolioReviews} reviews`}>{portfolioRating.toFixed(2)}★ all</Pill>}
+        <Pill title={portfolioRatingP != null ? `Guest rating over ${period.label.toLowerCase()} · ${portfolioReviewsP} reviews` : `No reviews in ${period.label.toLowerCase()}`}>
+          {portfolioRatingP != null ? `${portfolioRatingP.toFixed(2)}★` : 'no reviews'} {period.key === 'all' ? 'all' : period.key === '365' ? '12m' : period.key + 'd'}
         </Pill>
         {/* Rating window. Only the guest rating follows this — Optimize Score is all-time. */}
         <nav className="inline-flex rounded-xl border border-line bg-white p-0.5" aria-label="Rating period">

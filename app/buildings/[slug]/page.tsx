@@ -67,6 +67,11 @@ export default async function BuildingPage({ params }: { params: { slug: string 
 
   const buildingName = rollupBuilding(units[0].building)
 
+  // SPEED (Jon, 2026-11-20): the booked-rate read needs only the unit ids, so it starts here and
+  // runs alongside the review read instead of after it. Same call, same result, one wait less.
+  const live = units.filter((u: any) => !DEAD.includes(String(u.status || '').toLowerCase()))
+  const bookedP = bookedNightly(supabaseAdmin(), live.map((u: any) => String(u.id))).catch(() => new Map())
+
   // Per-unit "reviews to respond" count (real reviews with no host reply), for quick auditing.
   const unitIds = units.map((u: any) => u.id)
   const notResponded: Record<string, number> = {}
@@ -117,8 +122,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
 
   // STRATEGY (2026-11-18): what copy cannot fix — rating, thin reviews, a base price far from what
   // nights sell for, units that are the same on paper. Shown beside the score, never inside it.
-  const live = units.filter((u: any) => !DEAD.includes(String(u.status || '').toLowerCase()))
-  const booked = await bookedNightly(supabaseAdmin(), live.map((u: any) => String(u.id))).catch(() => new Map())
+  const booked = await bookedP
   const typeCount: Record<string, number> = {}
   for (const u of live) typeCount[typeKey(u)] = (typeCount[typeKey(u)] || 0) + 1
   const stratOf = (l: any) => {
@@ -156,7 +160,7 @@ export default async function BuildingPage({ params }: { params: { slug: string 
 
   return (
     <Shell>
-      <Link href="/buildings" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-4"><ArrowLeft size={15} /> Back to Portfolio</Link>
+      <Link href="/buildings" className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-ink mb-4"><ArrowLeft size={15} /> Back to Properties</Link>
 
       <header className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -164,7 +168,8 @@ export default async function BuildingPage({ params }: { params: { slug: string 
           <h1 className="text-3xl font-bold text-ink mt-1 tracking-tight">{buildingName}</h1>
           <p className="text-sm text-muted mt-1 flex flex-wrap gap-x-4 gap-y-1">
             {city && <span className="inline-flex items-center gap-1"><MapPin size={12} /> {city}</span>}
-            <span>{units.length} units</span>
+            {/* CLEAN-UP (Jon, 2026-11-20): "1 units"; and the count is the live units, with the retired ones named. */}
+            <span>{live.length} {live.length === 1 ? 'unit' : 'units'}{units.length > live.length ? ` · ${units.length - live.length} inactive` : ''}</span>
           </p>
           {bChan.length ? (
             <div className="mt-3 flex flex-wrap items-center gap-2">

@@ -516,7 +516,7 @@ function GridRow({ row, roster, mode, onRefresh, onAdd }: {
             {mode === 'people' && row.title ? (
               <a href={'/cleaners/' + encodeURIComponent(String(row.title))} onClick={e => e.stopPropagation()}
                 title={'Every task assigned to ' + row.title}
-                className="text-[14px] font-bold text-ink truncate block hover:underline decoration-dotted underline-offset-2">{row.title}</a>
+                className="text-[14px] font-bold text-ink truncate block hover:underline decoration-dotted underline-offset-2">{/* CLEAN-UP (Jon, 2026-11-20): "Opal Works Opal Works" is shown once. Display only — the link and every match keep the full name. */}{(() => { const w = String(row.title).trim().split(/\s+/); const h = w.length / 2; return w.length >= 2 && w.length % 2 === 0 && w.slice(0, h).join(' ').toLowerCase() === w.slice(h).join(' ').toLowerCase() ? w.slice(0, h).join(' ') : row.title })()}</a>
             ) : (
               <div className="text-[14px] font-bold text-ink lg:truncate">{row.title}</div>
             )}
@@ -836,6 +836,8 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
     } catch {}
     setPrefsReady(true)
   }, [])
+  // The tab badges wait for the board's own read — see where they are rendered.
+  const badgesReady = prefsReady && (!!data || !!error)
   // A deep link wins over the remembered choice, once.
   useEffect(() => { if (wantPeople) setMode('people') }, [wantPeople])
   const pickMode = (m: 'units' | 'vacant' | 'people' | 'review' | 'due') => { setMode(m); try { localStorage.setItem('opsgrid_mode', m) } catch {} }
@@ -1290,6 +1292,15 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
       {/* ── THE DAY, ONE LINE (Jon, 2026-09-22: "still just very visually difficult to see or read").
           The clock stays the biggest thing — the whole board is a 4pm deadline — and everything else
           on the strip is a plain pill: cleans left, under way, late, at risk, the crew, how fresh. */}
+      {/* THE FRAME WHILE IT LOADS (Jon, 2026-11-20 audit). Before the first read lands there was no day line at
+          all, so a slow tab (PM due, Focus) was a header, five tabs and a spinner. The line holds its place and
+          says what it is doing — no numbers until they are real. Units and People already say "Loading the
+          board…" in the list itself, so they do not get a second spinner. */}
+      {!data && loading && !error && mode !== 'units' && mode !== 'people' && (
+        <div className="mb-3 rounded-2xl border border-line bg-white px-3.5 py-2.5 flex items-center gap-2 text-[12.5px] text-muted">
+          <Loader2 size={13} className="animate-spin" /> Reading the day&hellip;
+        </div>
+      )}
       {(!dl || dl.cleans === 0) && aside && <div className="mb-3 flex items-center gap-2 flex-wrap">{aside}</div>}
       {dl && dl.cleans > 0 && (
         <div className={'mb-3 rounded-2xl border px-3.5 py-2.5 flex items-center gap-x-3 gap-y-1.5 flex-wrap ' + (dl.late > 0 ? 'border-rose-300 bg-rose-50/60' : dl.atRisk > 0 ? 'border-amber-300 bg-amber-50/60' : 'border-line bg-white')}>
@@ -1341,8 +1352,14 @@ export function OpsGrid({ data, glitches, roster, staff, loading, error, onRefre
               className={'shrink-0 px-3 py-2 text-[13px] font-bold inline-flex items-center gap-1.5 border-l border-line first:border-l-0 whitespace-nowrap ' + (mode === k ? 'bg-brand-600 text-white' : 'text-muted hover:text-ink')}>
               <Icon size={14} /> <span className={mode === k ? '' : 'max-sm:hidden'}>{label}</span>
               {k === 'vacant' && (data?.vacants || []).length > 0 && <span className="text-[11px] opacity-75 tabular-nums">{(data?.vacants || []).filter(v => mkt === 'all' || v.market === mkt || (v as any).market2 === mkt).length}</span>}
-              {k === 'review' && <ReviewCount market={prefsReady ? mkt : null} date={boardDate} />}
-              {k === 'due' && <DueCount market={prefsReady ? mkt : null} date={boardDate} />}
+              {/* SPEED (Jon, 2026-11-20 audit: the board's own read measured 3.7s): the two tab badges asked for
+                  their numbers in the same instant as the board — one of them a whole PM-ledger build — and so
+                  competed with the read the page is for. They now wait until the board has answered (or failed);
+                  a return visit paints both from the device copy at once, as before. */}
+              {k === 'review' && <ReviewCount market={badgesReady ? mkt : null} date={boardDate} />}
+              {/* On the PM due tab itself there is no badge: the tab is reading the whole ledger and says "N late"
+                  on its first line, and the count would be a second build of the same ledger at the same moment. */}
+              {k === 'due' && mode !== 'due' && <DueCount market={badgesReady ? mkt : null} date={boardDate} />}
             </button>
           ))}
         </div>

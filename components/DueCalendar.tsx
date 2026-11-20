@@ -117,9 +117,14 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
     return b.items.filter(i => i.band === band)
   }
   const buildings = useMemo(() => (data?.buildings || []).filter(b => shownItems(b).length), [data, band, filed])
+  // THE FRAME FIRST (Jon, 2026-11-20 audit: this tab opened on "Reading the cadence ledger…" and an otherwise
+  // blank page for six seconds). While the rows are still being read the tab draws itself — the headline line,
+  // the horizon, the filter chips — and only the list of buildings waits, saying that it is loading. It does NOT
+  // ask the badge's count endpoint for a number to show meanwhile: on a cold server that is a second build of the
+  // same ledger racing this one. (When the badge has already been read, the route serves this tab the ledger that
+  // read built — app/api/ops-today/due — so the wait is short.)
+  const pending = loading && !data
   const t = data?.totals
-
-  if (loading && !data) return <div className="px-4 py-10 text-center text-[13px] text-muted"><span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Reading the cadence ledger&hellip;</span></div>
   if (error && !data) return <div className="px-4 py-10 text-center text-[13px]"><p className="text-rose-700">{error}</p><button onClick={reload} className="mt-2 text-[12.5px] font-semibold text-brand-600 hover:underline">Try again</button></div>
 
   return (
@@ -128,7 +133,7 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
       <div className="flex items-start gap-3 flex-wrap">
         <div className="min-w-0 flex-1">
           <p className="text-[14px] font-semibold text-ink leading-snug">
-            {t && (t.late + t.week + t.later) === 0
+            {pending && !t ? <span className="font-normal text-muted">Reading what is due&hellip;</span> : t && (t.late + t.week + t.later) === 0
               ? 'Nothing preventative comes due in the next ' + (data?.horizonDays || 30) + ' days.'
               : <>
                   <b className="text-rose-700">{t?.late || 0}</b> late
@@ -180,7 +185,9 @@ export function DueCalendar({ market, date, onRefresh }: { market: string; date?
       {err && <p className="text-[12px] text-rose-700">{err}</p>}
       {note && <p className="text-[12px] text-muted">{note}</p>}
 
-      {buildings.length === 0 ? (
+      {pending ? (
+        <div className={CARD + ' px-4 py-8 text-center text-[13px] text-muted'}><span className="inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading the buildings&hellip;</span></div>
+      ) : buildings.length === 0 ? (
         <div className={CARD + ' px-4 py-8 text-center text-[13px] text-muted'}>Nothing in this slice. Every unit is inside its cadence.</div>
       ) : buildings.map(b => {
         const isOpen = !!open[b.key]

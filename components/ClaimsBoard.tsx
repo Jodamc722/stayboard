@@ -39,7 +39,22 @@ const MergeCtx = createContext<{ on: boolean; picked: Set<string>; toggle: (id: 
 
 const isNotPaid = (c: Claim) => c.outcome === 'denied' || c.outcome === 'withdrawn' || c.outcome === 'duplicate'
 
-const URGENCY_TONE: Record<string, Tone> = { expired: 'roseSolid', critical: 'rose', soon: 'amber', ok: 'emerald', none: 'slate' }
+// CLEAN-UP (Jon, 2026-11-20): a headline total reads in whole dollars ("$11,255", not "$11,255.30").
+// Rows keep the cents — that is the figure somebody matches against a payout.
+const money0 = (v: number) => '$' + Math.round(v || 0).toLocaleString('en-US')
+
+// CLEAN-UP (Jon, 2026-11-20): "12d left to file" was a green chip on every calm claim. Colour is for
+// what needs doing — red now, amber soon — and the rest is plain.
+const URGENCY_TONE: Record<string, Tone> = { expired: 'roseSolid', critical: 'rose', soon: 'amber', ok: 'slate', none: 'slate' }
+
+// TWO CLOCKS, EACH IN ITS OWN CHIP (2026-11-20). A claim is urgent on the EARLIER of two dates: our
+// filing date, or the day before the next guest arrives (lib/claims effectiveDue). The row coloured
+// the filing chip by that earlier date but wrote the filing date in it, so a claim on a unit that
+// had already turned read as a solid-red "10d left to file". Now the filing chip is coloured by the
+// filing date alone, and when the turnover is what makes the claim urgent the turnover chip is the
+// red one. Which claims count as aging out has not changed — only which chip says why.
+const filingUrgency = (c: Claim) => urgencyOf({ ...c, next_check_in: null })
+const turnoverDrives = (c: Claim) => { const u = urgencyOf(c); return (u === 'expired' || u === 'critical') && filingUrgency(c) !== u }
 
 // The row counts down to OUR due date. The channel's hard cutoff only speaks up when it is
 // actually close — otherwise it is noise on every row for two weeks.
@@ -56,16 +71,18 @@ function DeadlineChip({ claim }: { claim: Claim }) {
     : d < 0 ? 'Filing overdue ' + Math.abs(d) + 'd'
     : d === 0 ? 'File today'
     : d + 'd left to file'
-  return <Tag tone={URGENCY_TONE[u]} title={'Our due date' + (target ? ' · ' + target : '') + (claim.due_source === 'manual' ? ' · set by hand' : '')}>{text}{claim.due_source === 'manual' ? ' ·set' : ''}</Tag>
+  return <Tag tone={URGENCY_TONE[filingUrgency(claim)]} title={'Our due date' + (target ? ' · ' + target : '') + (claim.due_source === 'manual' ? ' · set by hand' : '')}>{text}{claim.due_source === 'manual' ? ' ·set' : ''}</Tag>
 }
 
 // The evidence clock. Only shown while it is the thing that decides the day.
 function TurnoverChip({ claim }: { claim: Claim }) {
   if (!claim.next_check_in) return null
   const a = daysUntil(claim.next_check_in)
-  if (a === null || a > 2) return null
+  const drives = turnoverDrives(claim)
+  if (a === null || (a > 2 && !drives)) return null
   return (
-    <Tag tone={a < 0 ? 'slate' : 'violet'} title="Next guest check-in — get the evidence before the unit turns">
+    <Tag tone={drives ? URGENCY_TONE[urgencyOf(claim)] : a < 0 ? 'slate' : 'violet'}
+      title={a < 0 ? 'The next guest checked in on ' + claim.next_check_in + ' — the evidence on file is all there will be. This is why the claim counts as aging out; the filing date is the chip beside it.' : 'Next guest check-in — get the evidence before the unit turns'}>
       {a < 0 ? 'Unit turned' : a === 0 ? 'Guest in today' : a === 1 ? 'Guest in tomorrow' : 'Guest in ' + a + 'd'}
     </Tag>
   )
@@ -260,35 +277,36 @@ export function ClaimsBoard() {
 
   const ctl = 'text-[12px] border border-line rounded-lg bg-white py-1'
   const canClose = data?.canClose === true
+  const showBoard = !!data && all.length > 0 && rows.length > 0
 
   return (
     <>
+      {/* CLEAN-UP (Jon, 2026-11-20): the header was five coloured chips and three buttons. It keeps
+          what somebody acts on — aging out (red, and a switch), how many are open, the money (whole
+          dollars) and the win rate as ONE plain chip — and New claim. Merge and the Payables report
+          sit on the tool row under it. Nothing is removed. */}
       <LeanHead title="Claims" icon={<ShieldAlert size={20} className="text-muted" />}>
-        {(atRisk.length > 0 || riskOnly) && <Pill tone="roseSolid" onClick={() => setRiskOnly(v => !v)} title={(riskOnly ? 'Showing only these — tap to show every claim. ' : 'Tap to show only these. ') + 'Not filed, and the filing date is within 2 days or already past: ' + atRisk.map(c => claimTitle(c)).join(' · ')}>{atRisk.length} aging out{riskOnly ? ' ✕' : ''}</Pill>}
+        {(atRisk.length > 0 || riskOnly) && <Pill tone="roseSolid" onClick={() => setRiskOnly(v => !v)} title={(riskOnly ? 'Showing only these — tap to show every claim. ' : 'Tap to show only these. ') + 'Not filed, and the filing date — or the day before the next guest arrives, when that is sooner — is within 2 days or already past: ' + atRisk.map(c => claimTitle(c)).join(' · ')}>{atRisk.length} aging out{riskOnly ? ' ✕' : ''}</Pill>}
         <Pill title={'Claims not yet closed' + basis}>{totals.open} open</Pill>
-        {/* PHONE (2026-11-09): the header strip is one sideways-scrolling line there, and five pills
-            plus three buttons pushed "New claim" off the screen. On a phone the header keeps what
-            needs acting on (aging out, open) and New claim; the money pills show from tablet up, and
-            Merge / Payables report move to the icon row under the header. Nothing is removed. */}
         <span className="hidden sm:contents">
-          <Pill tone="amber" title={'Asked for on every live claim plus the ones that were paid; withdrawn, duplicate and closed-denied claims are left out' + basis}>{money(totals.sought)} sought</Pill>
-          <Pill tone="emerald" title={'Money actually received, on claims marked paid in full or in part' + basis}>{money(totals.recovered)} recovered</Pill>
-          <Pill tone="brand" title={(totals.paid + totals.denied ? totals.paid + ' paid (in full or in part) of ' + (totals.paid + totals.denied) + ' the channel answered; withdrawn and duplicate claims are not counted' : 'Nothing decided yet') + basis}>{winRate === null ? '—' : winRate + '%'} win</Pill>
+          <Pill title={'Sought: asked for on every live claim plus the ones that were paid; withdrawn, duplicate and closed-denied claims are left out. Recovered: money actually received, on claims marked paid in full or in part. Win: ' + (totals.paid + totals.denied ? totals.paid + ' paid (in full or in part) of ' + (totals.paid + totals.denied) + ' the channel answered; withdrawn and duplicate claims are not counted' : 'nothing decided yet') + basis}>{money0(totals.sought)} sought · {money0(totals.recovered)} recovered{winRate === null ? '' : ' · ' + winRate + '% win'}</Pill>
         </span>
-        <button onClick={() => { setMergeOn(v => !v); setPicked(new Set()); setKeepId('') }} title="Merge claims — tick two or more, pick the one to keep; every item moves into it"
-          className={'text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border hidden sm:inline-flex items-center gap-1 ' + (mergeOn ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink hover:bg-app')}>
-          <Combine size={13} /> {mergeOn ? 'Merging…' : 'Merge'}
-        </button>
-        <button onClick={() => setShowReport(true)} title="Claims report for payables — paid claims, amounts received, CSV / copy / print"
-          className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-ink hover:bg-app hidden sm:inline-flex items-center gap-1">
-          <FileText size={13} /> Payables report
-        </button>
         <button onClick={() => setNewOpen(true)} className="lh-primary text-[12.5px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white hover:opacity-90 inline-flex items-center gap-1">
           <Plus size={13} /> New claim
         </button>
       </LeanHead>
 
       <div className="flex items-center gap-2 flex-wrap mb-3">
+        <span className="hidden sm:inline-flex items-center gap-1.5">
+          <button onClick={() => { setMergeOn(v => !v); setPicked(new Set()); setKeepId('') }} title="Merge claims — tick two or more, pick the one to keep; every item moves into it"
+            className={'text-[12px] font-semibold px-2.5 py-1 rounded-lg border inline-flex items-center gap-1 ' + (mergeOn ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:text-ink hover:bg-app')}>
+            <Combine size={13} /> {mergeOn ? 'Merging…' : 'Merge'}
+          </button>
+          <button onClick={() => setShowReport(true)} title="Claims report for payables — paid claims, amounts received, CSV / copy / print"
+            className="text-[12px] font-semibold px-2.5 py-1 rounded-lg border border-line bg-white text-muted hover:text-ink hover:bg-app inline-flex items-center gap-1">
+            <FileText size={13} /> Payables report
+          </button>
+        </span>
         <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-2 flex-wrap">
           <span className="relative flex-1 min-w-[140px] sm:flex-none">
             <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
@@ -313,9 +331,6 @@ export function ClaimsBoard() {
       {showReport && <PayablesReport claims={all} onClose={() => setShowReport(false)} />}
       {showTrash && <TrashDrawer kind="claim" onRestored={load} onClose={() => setShowTrash(false)} />}
 
-      {/* HK DAMAGE REPORTS (Jon, 2026-10-07) — new reports from #vr-hkdamagereports, to autofill or close. */}
-      <HkDamageQueue onOpenClaim={setOpenId} onClaimsChanged={load} focusId={hkFocus} />
-
       {loading && !data && <LeanEmpty>Loading claims…</LeanEmpty>}
 
       {data && all.length === 0 && <LeanEmpty>No claims yet — start one from the reservation with <b>New claim</b>.</LeanEmpty>}
@@ -323,26 +338,34 @@ export function ClaimsBoard() {
       {data && all.length > 0 && rows.length === 0 && (
         <LeanEmpty>No claim matches{riskOnly ? ' — nothing is aging out' : ''}. <button onClick={() => { setQ(''); setChannel('all'); setRiskOnly(false) }} className="underline font-semibold">Show every claim</button></LeanEmpty>
       )}
-      {data && all.length > 0 && rows.length > 0 && (
-        <MergeCtx.Provider value={{ on: mergeOn, picked, toggle: togglePick, dups, start: startMerge }}>
-        <div className="space-y-5">
-          <Section title="New" blurb="Started, nobody has worked it yet" rows={sec.new}
-            empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="Pending" blurb="On our desk — waiting on approval, or approved and waiting to be filed" rows={sec.pending}
-            empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="Submitted" blurb="Waiting on the channel — when they pay, Mark paid with the amount and the date; or Denied" rows={sec.submitted}
-            empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="Paid — to close out" blurb={'Each row shows what was paid and when — click it to change. ' + (canClose ? 'Tick money in and owner adjusted, then close.' : 'Accounting, the GM or Admin closes it out.')} rows={sec.settle} moneyOf="paid"
-            empty="Nothing waiting to be closed out." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
-          <Section title="🚩 Denied — not paid" blurb={'The channel said no — nothing received. ' + (canClose ? 'Close it out.' : 'Accounting, the GM or Admin closes it out.')} rows={sec.denied}
-            empty="No denied claims waiting to be closed." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />
+      {/* THE CLOCK LEADS (Jon, 2026-11-20). The page used to open on a screen of HK damage reports,
+          most of them "probably not claimable", with the claims about to lose their filing window
+          far below. Now the unfiled claims come first (New, then Pending — each sorted closest to
+          its deadline first), the HK intake sits under them as one line per report, and the claims
+          that are out of our hands follow. The intake stays mounted in one place whatever the
+          search shows, so typing in the search box never makes it reload. */}
+      <MergeCtx.Provider value={{ on: mergeOn, picked, toggle: togglePick, dups, start: startMerge }}>
+        <div className={'space-y-5 ' + (showBoard ? '' : 'mt-5')}>
+          {showBoard && <Section title="New" blurb="Started, nobody has worked it yet" rows={sec.new} stageTag={false}
+            empty="Nothing new." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />}
+          {showBoard && <Section title="Pending" blurb="On our desk — waiting on approval, or approved and waiting to be filed" rows={sec.pending}
+            empty="Nothing waiting on us." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />}
+
+          {/* HK DAMAGE REPORTS (Jon, 2026-10-07) — new reports from #vr-hkdamagereports, to autofill or close. */}
+          <HkDamageQueue onOpenClaim={setOpenId} onClaimsChanged={load} focusId={hkFocus} />
+
+          {showBoard && <Section title="Submitted" blurb="Waiting on the channel — when they pay, Mark paid with the amount and the date; or Denied" rows={sec.submitted} stageTag={false}
+            empty="Nothing with a channel right now." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />}
+          {showBoard && <Section title="Paid — to close out" blurb={'Each row shows what was paid and when — click it to change. ' + (canClose ? 'Tick money in and owner adjusted, then close.' : 'Accounting, the GM or Admin closes it out.')} rows={sec.settle} moneyOf="paid"
+            empty="Nothing waiting to be closed out." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />}
+          {showBoard && <Section title="🚩 Denied — not paid" blurb={'The channel said no — nothing received. ' + (canClose ? 'Close it out.' : 'Accounting, the GM or Admin closes it out.')} rows={sec.denied}
+            empty="No denied claims waiting to be closed." onDelete={removeClaim} onOpen={setOpenId} onMoved={load} canClose={canClose} />}
 
           {/* CLOSED — the one section behind tabs, and the tabs are how it ended. */}
-          <section>
+          {showBoard && <section>
             <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
               <h2 className="text-[13px] font-bold text-ink">Closed</h2>
-              <span className="text-[12px] text-muted">{sec.closed.length} claim{sec.closed.length === 1 ? '' : 's'}</span>
-              {closedRecovered > 0 && <Pill tone="emerald" title="Recovered in the tab you are looking at">{money(closedRecovered)} recovered</Pill>}
+              <span className="text-[12px] text-muted" title="Recovered in the tab you are looking at">{sec.closed.length} claim{sec.closed.length === 1 ? '' : 's'}{closedRecovered > 0 ? ' · ' + money0(closedRecovered) + ' recovered' : ''}</span>
             </div>
             {sec.closed.length === 0 ? <LeanEmpty>Nothing closed yet.</LeanEmpty> : (
               <>
@@ -369,10 +392,9 @@ export function ClaimsBoard() {
                 )}
               </>
             )}
-          </section>
+          </section>}
         </div>
-        </MergeCtx.Provider>
-      )}
+      </MergeCtx.Provider>
 
       {mergeOn && (() => {
         const list = all.filter(c => picked.has(c.id))
@@ -427,8 +449,10 @@ export function ClaimsBoard() {
  * the difference between whose move it is. An empty section still prints, because a board that
  * hides its empty lanes makes you wonder whether you filtered them away.
  */
-function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved, moneyOf = 'sought', canClose }: {
+function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved, moneyOf = 'sought', canClose, stageTag = true }: {
   title: string; blurb: string; rows: Claim[]; empty: string; canClose: boolean
+  /** Off where the section holds ONE stage (New, Submitted): the tag only repeated the heading. */
+  stageTag?: boolean
   onDelete: (id: string) => Promise<string | null>; onOpen: (id: string) => void; onMoved: () => void
   /** Which money the section's pill adds up: what we asked for, or (Money & owner) what was actually awarded. */
   moneyOf?: 'sought' | 'paid'
@@ -441,13 +465,14 @@ function Section({ title, blurb, rows, empty, onDelete, onOpen, onMoved, moneyOf
       <div className="flex items-baseline gap-2 flex-wrap px-1 mb-1.5">
         <h2 className="text-[13px] font-bold text-ink">{title}</h2>
         <span className="text-[12px] text-muted">{rows.length ? rows.length + ' claim' + (rows.length === 1 ? '' : 's') + ' · ' + blurb : blurb}</span>
-        {moneyOf === 'sought' && sought > 0 && <Pill tone="amber" title="Total sought in this section">{money(sought)}</Pill>}
-        {moneyOf === 'paid' && paid > 0 && <Pill tone="emerald" title="Awarded across this section — amount actually paid, as recorded on each claim">{money(paid)} received</Pill>}
+        {/* CLEAN-UP (Jon, 2026-11-20): totals in whole dollars and plain — colour is for what needs doing. */}
+        {moneyOf === 'sought' && sought > 0 && <Pill title="Total sought in this section">{money0(sought)}</Pill>}
+        {moneyOf === 'paid' && paid > 0 && <Pill title="Awarded across this section — amount actually paid, as recorded on each claim">{money0(paid)} received</Pill>}
         {moneyOf === 'paid' && settling > 0 && <Pill tone="amber" title="Paid claims with a step still open: money not yet verified in the account, or the owner statement not yet adjusted">{settling} to finish</Pill>}
       </div>
       {rows.length === 0 ? <LeanEmpty>{empty}</LeanEmpty> : (
         <LeanList>
-          {rows.map(c => <ClaimRow key={c.id} claim={c} showStage canClose={canClose} onDelete={() => onDelete(c.id)} onOpen={() => onOpen(c.id)} onMoved={onMoved} />)}
+          {rows.map(c => <ClaimRow key={c.id} claim={c} showStage={stageTag} canClose={canClose} onDelete={() => onDelete(c.id)} onOpen={() => onOpen(c.id)} onMoved={onMoved} />)}
         </LeanList>
       )}
     </section>
@@ -587,6 +612,7 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
         {mg.on && stage !== 'closed' && <input type="checkbox" checked={mg.picked.has(claim.id)} onChange={() => mg.toggle(claim.id)} className="shrink-0 w-5 h-5" title="Pick to merge" />}
         <button type="button" onClick={mg.on && stage !== 'closed' ? () => mg.toggle(claim.id) : onOpen} className={'flex-1 min-w-0 text-left ' + (mg.on && stage !== 'closed' ? 'basis-[80%]' : 'basis-full') + ' sm:basis-0'}>
           <div className="flex items-center gap-1.5 flex-wrap">
+            {unfiled && turnoverDrives(claim) && <TurnoverChip claim={claim} />}
             {unfiled && <DeadlineChip claim={claim} />}
             {unfiled && <HardChip claim={claim} />}
             <span className="text-[13.5px] font-semibold text-ink truncate max-w-[18rem]">{claimTitle(claim)}</span>
@@ -596,7 +622,7 @@ function ClaimRow({ claim, showStage, canClose, onDelete, onOpen, onMoved }: { c
             {moveErr && <Tag tone="rose">{moveErr}</Tag>}
             {!unfiled && <DeadlineChip claim={claim} />}
             {!unfiled && <HardChip claim={claim} />}
-            <TurnoverChip claim={claim} />
+            {!(unfiled && turnoverDrives(claim)) && <TurnoverChip claim={claim} />}
             {miss && miss.key !== 'called' && <Tag tone="amber" title={'Before it can be filed: ' + gates.filter(g => !g.ok).map(g => g.label).join(' · ') + ' — open the claim to add it'}>Needs {miss.short}{miss.more ? ' +' + miss.more : ''}</Tag>}
             {claim.channel && <Tag>{claim.channel}</Tag>}
             {claim.waiting_on && stage === 'submitted' && <Tag tone="sky">{claim.waiting_on === 'escalated' ? 'Escalated' : claim.waiting_on === 'guest' ? 'Awaiting guest' : 'Awaiting channel'}</Tag>}

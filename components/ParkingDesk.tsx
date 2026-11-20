@@ -15,6 +15,12 @@
 // are amber. One request per open instead of two; every control is at least 36px tall; the calendar
 // keeps its spot column in view when it scrolls sideways. Words: "guest spots" and "held spots",
 // "lot check" (not sweep / walk), everywhere on this desk.
+//
+// 2026-11-20 clean-up (Jon: "some data is noisy… think as my team"): the tab opens on the lot with
+// something in it (the server picks it) and on TONIGHT, the coordinator's question; the calendar is
+// the second tab. Flags nobody has touched for two days are counted apart as "old" — they were
+// turning every morning red for cars long gone. And the property the lot row still calls Boynton
+// reads Surfside everywhere a person sees it (the database key is untouched).
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Loader2, RefreshCw, Plus, ChevronLeft, ChevronRight, Search, Flag, Mail, Truck, Check, X, Copy, AlertTriangle, Pencil, RotateCw, Car, MapPinOff } from 'lucide-react'
 import { LeanHead, Pill, Tag, LeanList, LeanRow, LeanSection, LeanEmpty, LeanTabs } from '@/components/lean'
@@ -23,8 +29,13 @@ import { addDays, nightsBetween, cents, carLabel, tidyPlate } from '@/lib/plate'
 import type { Booking, Spot, Lot, Incident, Sweep, IncidentStatus, LotOverview } from '@/lib/parking-lots'
 
 type StaffLink = { code: string; hasPasscode: boolean; passcode: string | null; derived: boolean }
-type Bundle = { lot: Lot; spots: Spot[]; bookings: Booking[]; incidents: Incident[]; lastSweep: Sweep | null; today: string; from: string; to: string; lots: Lot[]; overview: LotOverview[]; staffLink: StaffLink | null; can: { edit: boolean; full: boolean }; buildings: string[] }
+type Overview = LotOverview & { staleFlags?: number }
+type Bundle = { lot: Lot; spots: Spot[]; bookings: Booking[]; incidents: Incident[]; lastSweep: Sweep | null; today: string; from: string; to: string; lots: Lot[]; overview: Overview[]; staleFlagIds?: string[]; staffLink: StaffLink | null; can: { edit: boolean; full: boolean }; buildings: string[] }
 type TabKey = 'calendar' | 'tonight' | 'flags' | 'settings'
+
+// CLEAN-UP (Jon, 2026-11-20) — SURFSIDE, NOT BOYNTON: the Boynton Beach property is now called Surfside. The
+// lot row keeps its old building key and name; this is what a person reads. Display only.
+const shown = (s: string | null | undefined) => String(s || '').replace(/\bBoynton(\s+Beach)?\b/gi, 'Surfside')
 
 const WINDOWS = [7, 14, 30]
 const weekday = (ymd: string) => new Date(ymd + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })
@@ -46,7 +57,7 @@ export function ParkingDesk() {
   const [lots, setLots] = useState<Lot[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
-  const [tab, setTab] = useState<TabKey>('calendar')
+  const [tab, setTab] = useState<TabKey>('tonight')
   const [start, setStart] = useState(addDays(today, -1))
   // A phone shows a week (it nearly fits); a desk shows two. Nothing drawn before the first read
   // depends on this, so the server and the browser can disagree about it safely.
@@ -59,7 +70,9 @@ export function ParkingDesk() {
   const [plateV, setPlateV] = useState<any | null>(null)
   // What the lots-only read says when there is no lot to open yet (who may make one, for which buildings).
   const [noLot, setNoLot] = useState<{ can: { edit: boolean; full: boolean }; buildings: string[] } | null>(null)
-  const [overview, setOverview] = useState<LotOverview[]>([])
+  const [overview, setOverview] = useState<Overview[]>([])
+  // Open flags nobody has touched for two days — the server names them (app/api/lots).
+  const [staleIds, setStaleIds] = useState<string[]>([])
   const [staffLink, setStaffLink] = useState<StaffLink | null>(null)
 
   const say = (m: string) => { setToast(m); setTimeout(() => setToast(null), 6000) }
@@ -85,18 +98,18 @@ export function ParkingDesk() {
       const j = await r.json()
       if (!r.ok || !j.ok) throw new Error(j.error || j.message || `HTTP ${r.status}`)
       if (mine !== seq.current) return
-      setOverview(j.overview || []); setStaffLink(j.staffLink || null); setLots(j.lots || [])
+      setOverview(j.overview || []); setStaffLink(j.staffLink || null); setLots(j.lots || []); setStaleIds(j.staleFlagIds || [])
       if (!j.lot) { setData(null); setNoLot({ can: j.can || { edit: false, full: false }, buildings: j.buildings || [] }); return }
       loadedKey.current = `${j.lot.id}|${from}|${to}`
       setData(j as Bundle)
       if (j.lot.id !== id) setLotId(j.lot.id)
-      // WHERE THE TAB OPENS, once: on the flags when a car is flagged (that is today's decision),
-      // on Tonight on a phone (the calendar is a desk tool), on the calendar otherwise.
+      // WHERE THE TAB OPENS, once: on the flags when a car is flagged NOW (that is today's
+      // decision — a flag left open from last week is not), on Tonight otherwise.
       if (!tabPicked.current) {
         tabPicked.current = true
-        const flagged = ((j.incidents || []) as Incident[]).some(i => OPEN.indexOf(i.status) >= 0)
+        const old: string[] = j.staleFlagIds || []
+        const flagged = ((j.incidents || []) as Incident[]).some(i => OPEN.indexOf(i.status) >= 0 && old.indexOf(i.id) < 0)
         if (flagged) setTab('flags')
-        else if (typeof window !== 'undefined' && window.innerWidth < 640) setTab('tonight')
       }
     } catch (e: any) { if (mine === seq.current) setErr(e?.message || String(e)) } finally { if (mine === seq.current) setLoading(false) }
   }, [from, to])
@@ -146,7 +159,8 @@ export function ParkingDesk() {
     const revenue = sold.reduce((a, b) => a + (b.nights ? b.amountCents / b.nights : 0), 0)
     return { live, sell: sell.length, sold: sold.length, unpaid, revenue }
   }, [bookings, spots, today])
-  const openFlags = incidents.filter(i => OPEN.indexOf(i.status) >= 0)
+  // Current flags only: the count, the red line and the tab badge are about cars to act on today.
+  const openFlags = incidents.filter(i => OPEN.indexOf(i.status) >= 0 && staleIds.indexOf(i.id) < 0)
   const checkedToday = !!data?.lastSweep && data.lastSweep.sweepDate === today
   // What the flagged cars are waiting for, in the order a person would act.
   const flagLine = (() => {
@@ -192,7 +206,7 @@ export function ParkingDesk() {
 
   return (
     <div>
-      <LeanHead title="Parking" sub={lot ? <>{lot.name} · {lot.rateCents > 0 ? `${cents(lot.rateCents, lot.currency)} a night` : 'included with the stay'} · {tonight.sell} guest spots{holdN ? ` · ${holdN} held, never sold` : ''}</> : undefined}>
+      <LeanHead title="Parking" sub={lot ? <>{shown(lot.name)} · {lot.rateCents > 0 ? `${cents(lot.rateCents, lot.currency)} a night` : 'included with the stay'} · {tonight.sell} guest spots{holdN ? ` · ${holdN} held, never sold` : ''}</> : undefined}>
         {lot && <>
           <Pill tone="brand" title={`Guest spots taken tonight${lot.rateCents > 0 ? ` · ${cents(tonight.revenue, lot.currency)} for tonight (each booking spread over its nights)` : ''}`} onClick={() => setTab('tonight')}>{tonight.sold}/{tonight.sell} {tonight.sold >= tonight.sell && tonight.sell > 0 ? 'full tonight' : 'taken tonight'}</Pill>
           {tonight.unpaid.length > 0 && <Pill tone="amber" title="Guest bookings still unpaid" onClick={() => setTab('tonight')}>{tonight.unpaid.length} unpaid</Pill>}
@@ -205,7 +219,7 @@ export function ParkingDesk() {
       {lot && openFlags.length > 0 && tab !== 'flags' && (
         <button type="button" onClick={() => setTab('flags')} className="mb-3 w-full text-left rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[13px] text-rose-900 flex items-center gap-x-2 gap-y-0.5 flex-wrap">
           <Flag size={14} className="shrink-0" />
-          <span className="font-semibold">{openFlags.length} {openFlags.length === 1 ? 'car' : 'cars'} flagged at {lot.building}</span>
+          <span className="font-semibold">{openFlags.length} {openFlags.length === 1 ? 'car' : 'cars'} flagged at {shown(lot.building)}</span>
           {flagLine && <span>{flagLine}</span>}
           <span className="ml-auto font-semibold underline">Open flags</span>
         </button>
@@ -223,7 +237,7 @@ export function ParkingDesk() {
       <div className="mb-3 flex items-center gap-1.5 flex-wrap">
         {overview.length === 0 && lots.map(l => (
           <button key={l.id} onClick={() => pickLot(l.id)} aria-pressed={l.id === lotId}
-            className={'h-9 text-[12px] font-semibold px-3 rounded-full border ' + (l.id === lotId ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{l.building}</button>
+            className={'h-9 text-[12px] font-semibold px-3 rounded-full border ' + (l.id === lotId ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{shown(l.building)}</button>
         ))}
         {can.full && lot && <button onClick={() => setTab('settings')} title="Set up a lot for another building (at the bottom of Settings)" className="h-9 text-[12px] font-semibold px-3 rounded-full border border-dashed border-line text-muted hover:text-ink">+ lot</button>}
         {lot && (
@@ -253,15 +267,15 @@ export function ParkingDesk() {
       {loading && !data && <LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1.5" />Reading the lot…</LeanEmpty>}
       {!loading && !lot && !err && (
         can.full
-          ? <NewLot buildings={data?.buildings || noLot?.buildings || []} onMade={(l) => { setLots(x => x.concat([l])); pickLot(l.id); setTab('calendar'); say(`${l.name} is set up.`) }} />
+          ? <NewLot buildings={data?.buildings || noLot?.buildings || []} onMade={(l) => { setLots(x => x.concat([l])); pickLot(l.id); setTab('calendar'); say(`${shown(l.name)} is set up.`) }} />
           : <LeanEmpty>No lot yet — a manager with full access on Parking sets one up here.</LeanEmpty>
       )}
 
       {lot && (
         <>
           <LeanTabs<TabKey> value={tab} onChange={setTab} tabs={[
-            { key: 'calendar', label: 'Calendar' },
             { key: 'tonight', label: 'Tonight', n: tonight.live.length },
+            { key: 'calendar', label: 'Calendar' },
             { key: 'flags', label: 'Flags', n: openFlags.length },
             { key: 'settings', label: 'Settings' },
           ]} right={tab === 'calendar' ? (
@@ -276,8 +290,8 @@ export function ParkingDesk() {
 
           {tab === 'calendar' && <Calendar lot={lot} spots={spots} bookings={bookings} start={start} days={days} today={today} canEdit={can.edit} onCell={(spotId, day) => openNew({ spotId, startsOn: day, endsOn: addDays(day, 1), kind: spots.find(s => s.id === spotId)?.kind === 'hold' ? 'staff' : 'guest' })} onBar={openBooking} />}
           {tab === 'tonight' && <Tonight lot={lot} spots={spots} bookings={bookings} today={today} canEdit={can.edit} onBooking={openBooking} onNew={openNew} link={allLink || link} onCopy={copy} lastSweep={data?.lastSweep || null} />}
-          {tab === 'flags' && <Flags lot={lot} incidents={incidents} canEdit={can.edit} canFull={can.full} onSettings={() => setTab('settings')} onNotice={inc => setNotice(inc)} onTow={draftTow} onClose={(inc, how, res) => incAction(inc, { action: 'incident.close', how, resolution: res }, how === 'reopen' ? 'Reopened.' : how === 'towed' ? 'Marked towed.' : 'Closed.')} onRegister={inc => openNew({ plate: inc.plate || '', make: inc.make || '', model: inc.model || '', color: inc.color || '', plateState: inc.plateState || '', spotId: inc.spotId || null })} onNote={(inc, notes) => incAction(inc, { action: 'incident.note', notes }, 'Note saved.')} />}
-          {tab === 'settings' && <Settings lot={lot} spots={spots} can={can} buildings={data?.buildings || []} link={link} allLink={allLink} staffLink={staffLink} onStaffLink={setStaffLink} onCopy={copy} onLot={(l) => { setData(d => d ? { ...d, lot: l } : d); setLots(ls => ls.map(x => x.id === l.id ? l : x)) }} onSpots={(ss) => setData(d => d ? { ...d, spots: ss } : d)} onMade={(l) => { setLots(x => x.concat([l])); pickLot(l.id); setTab('calendar'); say(`${l.name} is set up.`) }} say={say} />}
+          {tab === 'flags' && <Flags lot={lot} incidents={incidents} staleIds={staleIds} canEdit={can.edit} canFull={can.full} onSettings={() => setTab('settings')} onNotice={inc => setNotice(inc)} onTow={draftTow} onClose={(inc, how, res) => incAction(inc, { action: 'incident.close', how, resolution: res }, how === 'reopen' ? 'Reopened.' : how === 'towed' ? 'Marked towed.' : 'Closed.')} onRegister={inc => openNew({ plate: inc.plate || '', make: inc.make || '', model: inc.model || '', color: inc.color || '', plateState: inc.plateState || '', spotId: inc.spotId || null })} onNote={(inc, notes) => incAction(inc, { action: 'incident.note', notes }, 'Note saved.')} />}
+          {tab === 'settings' && <Settings lot={lot} spots={spots} can={can} buildings={data?.buildings || []} link={link} allLink={allLink} staffLink={staffLink} onStaffLink={setStaffLink} onCopy={copy} onLot={(l) => { setData(d => d ? { ...d, lot: l } : d); setLots(ls => ls.map(x => x.id === l.id ? l : x)) }} onSpots={(ss) => setData(d => d ? { ...d, spots: ss } : d)} onMade={(l) => { setLots(x => x.concat([l])); pickLot(l.id); setTab('calendar'); say(`${shown(l.name)} is set up.`) }} say={say} />}
 
           <BookingSheet open={sheetOpen} onClose={() => setSheetOpen(false)} lot={lot} spots={spots} bookings={bookings} draft={sheet} canFull={can.full} onSaved={onSaved} onDeleted={onDeleted} />
           <NoticeSheet open={!!notice} onClose={() => setNotice(null)} lot={lot} incident={notice} onSent={(inc, sent, failed, warning) => {
@@ -444,29 +458,38 @@ const SpotChip = ({ s }: { s: Spot }) => <span className={`shrink-0 inline-flex 
 // Each row leads with the step that is due now and nothing else; every other choice is inside the
 // row. Red means a person has to act now (send the notice, the deadline has passed). A car that is
 // simply on the clock is not red.
-function Flags({ lot, incidents, canEdit, canFull, onSettings, onNotice, onTow, onClose, onRegister, onNote }: {
-  lot: Lot; incidents: Incident[]; canEdit: boolean; canFull: boolean; onSettings: () => void
+function Flags({ lot, incidents, staleIds, canEdit, canFull, onSettings, onNotice, onTow, onClose, onRegister, onNote }: {
+  lot: Lot; incidents: Incident[]; staleIds: string[]; canEdit: boolean; canFull: boolean; onSettings: () => void
   onNotice: (i: Incident) => void; onTow: (i: Incident) => void; onClose: (i: Incident, how: 'towed' | 'resolved' | 'dismissed' | 'reopen', res?: string) => void; onRegister: (i: Incident) => void; onNote: (i: Incident, notes: string) => void
 }) {
   const [now, setNow] = useState(Date.now())
   const [showClosed, setShowClosed] = useState(false)
+  const [showOld, setShowOld] = useState(false)
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(t) }, [])
   const minsLeft = (i: Incident) => (i.towDueAt ? Math.round((new Date(i.towDueAt).getTime() - now) / 60000) : null)
   const isDue = (i: Incident) => { const m = minsLeft(i); return i.status === 'notified' && m != null && m <= 0 }
   // Most urgent first: past the deadline, then waiting for a notice, then a tow email to send, then on the clock.
   const rank = (i: Incident) => (isDue(i) ? 0 : i.status === 'open' ? 1 : i.status === 'tow_drafted' ? 2 : 3)
-  const open = incidents.filter(i => OPEN.indexOf(i.status) >= 0).slice().sort((a, b) => rank(a) - rank(b) || (a.seenAt < b.seenAt ? -1 : 1))
+  // OLD IS NOT OPEN-TODAY (Jon, 2026-11-20). A flag nobody has touched for two days sits under its
+  // own fold: still open, every action still on it, but not a red row and not in the count.
+  const isOld = (i: Incident) => staleIds.indexOf(i.id) >= 0
+  const open = incidents.filter(i => OPEN.indexOf(i.status) >= 0 && !isOld(i)).slice().sort((a, b) => rank(a) - rank(b) || (a.seenAt < b.seenAt ? -1 : 1))
+  const old = incidents.filter(i => OPEN.indexOf(i.status) >= 0 && isOld(i)).slice().sort((a, b) => (a.seenAt < b.seenAt ? -1 : 1))
+  const oldestDays = old.length ? Math.max(1, Math.round((now - new Date(old[0].seenAt).getTime()) / 86400000)) : 0
   const closed = incidents.filter(i => OPEN.indexOf(i.status) < 0)
   const go = 'shrink-0 h-9 inline-flex items-center gap-1.5 rounded-lg px-3 text-[12.5px] font-semibold whitespace-nowrap'
   const more = 'h-9 inline-flex items-center gap-1.5 rounded-lg border border-line bg-white px-3 text-[12.5px] font-semibold text-ink hover:bg-app disabled:opacity-40'
   const row = (i: Incident) => {
     const st = INC_STATUS[i.status]
     const left = minsLeft(i)
-    const due = isDue(i)
-    const waiting = i.status === 'notified' && !due
+    const stale = isOld(i)
+    const due = isDue(i) && !stale
+    const waiting = i.status === 'notified' && !due && !stale
     const live = OPEN.indexOf(i.status) >= 0
     let lead: ReactNode = undefined
-    if (live && canEdit) {
+    // An old flag leads with the likely truth — the car is gone. Everything else is inside the row.
+    if (live && canEdit && stale) lead = <button type="button" onClick={() => onClose(i, 'resolved', 'not seen since — closed as old')} title="The car is no longer there — close the flag" className={go + ' border border-line bg-white text-ink hover:bg-app'}><Check size={14} /> Car gone</button>
+    else if (live && canEdit) {
       if (i.status === 'open') lead = <button type="button" onClick={() => onNotice(i)} title="Read and send the notice to every guest in house" className={go + ' bg-rose-600 text-white'}><Mail size={14} /> Send notice</button>
       else if (due && lot.towEmail) lead = <button type="button" onClick={() => onTow(i)} title={`Draft the tow email to ${lot.towCompany || lot.towEmail} — a person still sends it from Gmail`} className={go + ' bg-rose-600 text-white'}><Truck size={14} /> Draft tow email</button>
       else if (due) lead = <button type="button" onClick={() => onClose(i, 'towed')} title="No tow company email is on file — arrange the tow by phone, then close this" className={go + ' bg-ink text-white'}><Truck size={14} /> Mark towed</button>
@@ -474,7 +497,7 @@ function Flags({ lot, incidents, canEdit, canFull, onSettings, onNotice, onTow, 
       else lead = <span title={i.towDueAt ? `Deadline ${timeET(i.towDueAt)}` : undefined} className={go + ' bg-amber-100 text-amber-800 tabular-nums'}>{left != null ? `${left} min left` : 'Notice sent'}</span>
     }
     return (
-      <LeanRow key={i.id} tint={i.status === 'open' || due ? 'rose' : undefined}
+      <LeanRow key={i.id} tint={!stale && (i.status === 'open' || due) ? 'rose' : undefined}
         lead={lead}
         name={<><span className="font-mono mr-1.5">{i.plate || 'no plate'}</span><span className="font-medium">{carLabel(i)}</span></>}
         meta={<>{i.spotLabel ? `spot ${i.spotLabel}` : 'in the lot'} · seen {whenET(i.seenAt)}</>}
@@ -484,6 +507,7 @@ function Flags({ lot, incidents, canEdit, canFull, onSettings, onNotice, onTow, 
           {waiting && i.noticeSentAt ? <Tag title={`To ${i.noticeSentN} ${i.noticeSentN === 1 ? 'guest' : 'guests'}`}>notice sent {timeET(i.noticeSentAt)}</Tag> : null}
           {i.status === 'tow_drafted' ? <Tag tone="violet" title={i.towTo ? `Drafted to ${i.towTo}` : undefined}>send it from Gmail Drafts</Tag> : null}
           {!live ? <Tag tone={st.tone}>{st.label}</Tag> : null}
+          {stale ? <Tag title="Still open, but nobody has touched it for two days">{st.label.toLowerCase()} · never closed</Tag> : null}
           {i.towDraftError ? <Tag tone="rose" title={i.towDraftError}>tow draft failed</Tag> : null}
         </>}
         actions={!live && canEdit ? <button type="button" onClick={() => onClose(i, 'reopen')} className={more}><RotateCw size={13} /> Reopen</button> : undefined}>
@@ -504,13 +528,20 @@ function Flags({ lot, incidents, canEdit, canFull, onSettings, onNotice, onTow, 
     <div>
       {!lot.towEmail && (
         <p className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex items-center gap-2 flex-wrap">
-          <span>No tow company email is on file for {lot.building}, so the tow email cannot be drafted when a deadline passes.</span>
+          <span>No tow company email is on file for {shown(lot.building)}, so the tow email cannot be drafted when a deadline passes.</span>
           {canFull ? <button type="button" onClick={onSettings} className="ml-auto font-semibold underline py-1.5">Add it in Settings</button> : null}
         </p>
       )}
       {open.length
         ? <LeanSection title="Open" n={open.length} right={<span title={`Flag → notice to every guest in house → ${lot.noticeMinutes === 60 ? '1 hour' : lot.noticeMinutes + ' minutes'} → tow email drafted for ${lot.towCompany || 'the tow company'} → a person sends it → towed`}>guests get {lot.noticeMinutes === 60 ? '1 hour' : lot.noticeMinutes + ' min'} after the notice</span>}><LeanList>{open.map(row)}</LeanList></LeanSection>
-        : <LeanEmpty><Check size={14} className="inline mr-1 text-emerald-600" />No car is flagged. Cars get flagged from the staff link, or from Check a plate above.</LeanEmpty>}
+        : <LeanEmpty><Check size={14} className="inline mr-1 text-emerald-600" />No car is flagged{old.length ? ' today' : ''}. Cars get flagged from the staff link, or from Check a plate above.</LeanEmpty>}
+      {old.length > 0 && (
+        <div className="mt-3">
+          <button type="button" onClick={() => setShowOld(v => !v)} aria-expanded={showOld} title="Flagged more than two days ago and never closed. If the car is still there, the next lot check flags it again."
+            className="h-9 px-1 text-[12px] font-semibold text-amber-800 hover:text-amber-900">{showOld ? 'Hide' : 'Show'} {old.length} old {old.length === 1 ? 'flag' : 'flags'} never closed · oldest {oldestDays}d</button>
+          {showOld && <LeanList>{old.map(row)}</LeanList>}
+        </div>
+      )}
       {closed.length > 0 && (
         <div className="mt-3">
           <button type="button" onClick={() => setShowClosed(v => !v)} aria-expanded={showClosed} className="h-9 px-1 text-[12px] font-semibold text-muted hover:text-ink">{showClosed ? 'Hide' : 'Show'} {closed.length} closed</button>
@@ -593,7 +624,7 @@ function Settings({ lot, spots, can, buildings, link, allLink, staffLink, onStaf
         <p className="text-[12.5px] text-muted">The one link to share: it opens with a property picker, then the lot. No login — the link is the key{staffLink?.hasPasscode ? ', plus the passcode' : ''}.</p>
         {staffLink && <StaffLinkCard link={allLink} staffLink={staffLink} ro={ro} onChange={onStaffLink} onCopy={onCopy} say={say} />}
         <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted pt-2">This lot's own link</h3>
-        <p className="text-[12.5px] text-muted">Opens {lot.building} only — for a person who should never see the other lots.</p>
+        <p className="text-[12.5px] text-muted">Opens {shown(lot.building)} only — for a person who should never see the other lots.</p>
         <div className="flex items-center gap-1.5 flex-wrap">
           <code className="text-[12px] bg-app rounded-lg px-2 py-1 break-all">{link}</code>
           <button onClick={() => onCopy(link, 'Staff link copied.')} className="h-9 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-3 text-[12px] font-semibold text-ink hover:bg-app"><Copy size={13} /> Copy</button>
@@ -641,22 +672,22 @@ function NewLot({ buildings, onMade }: { buildings: string[]; onMade: (l: Lot) =
   return (
     <section className="rounded-2xl border border-dashed border-line bg-white p-4 space-y-3">
       <h3 className="text-[11px] font-bold uppercase tracking-wider text-muted">New lot</h3>
-      <div className="flex items-center gap-1 flex-wrap">{buildings.map(x => <button key={x} onClick={() => setB(x)} aria-pressed={b === x} className={'h-9 text-[12px] font-semibold px-3 rounded-full border ' + (b === x ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{x}</button>)}{!buildings.length && <span className="text-[12px] text-muted">Every known building already has a lot.</span>}</div>
+      <div className="flex items-center gap-1 flex-wrap">{buildings.map(x => <button key={x} onClick={() => setB(x)} aria-pressed={b === x} className={'h-9 text-[12px] font-semibold px-3 rounded-full border ' + (b === x ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink')}>{shown(x)}</button>)}{!buildings.length && <span className="text-[12px] text-muted">Every known building already has a lot.</span>}</div>
       <div className="grid grid-cols-3 gap-2 max-w-md">
         <label className="block"><span className="text-[11px] font-semibold text-muted">Guest spots</span><input inputMode="numeric" value={sell} onChange={e => setSell(e.target.value)} className={inp} /></label>
         <label className="block"><span className="text-[11px] font-semibold text-muted">Held (never sold)</span><input inputMode="numeric" value={hold} onChange={e => setHold(e.target.value)} className={inp} /></label>
         <label className="block"><span className="text-[11px] font-semibold text-muted">$ per night</span><input inputMode="decimal" value={rate} onChange={e => setRate(e.target.value)} className={inp} /></label>
       </div>
       {err && <p className="text-[12px] text-rose-700">{err}</p>}
-      <button onClick={make} disabled={!b || busy} className="h-9 rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-4 disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin inline" /> : `Set up ${b || 'the lot'}`}</button>
+      <button onClick={make} disabled={!b || busy} className="h-9 rounded-lg bg-brand-600 text-white text-[12.5px] font-semibold px-4 disabled:opacity-50">{busy ? <Loader2 size={13} className="animate-spin inline" /> : `Set up ${b ? shown(b) : 'the lot'}`}</button>
     </section>
   )
 }
 
 
 // ── EVERY LOT AT A GLANCE: one card per property, the spots drawn as a map ──────────────────────
-function LotCard({ o, selected, onPick }: { o: LotOverview; selected: boolean; onPick: () => void }) {
-  const sq = (s: LotOverview['spots'][number]) => {
+function LotCard({ o, selected, onPick }: { o: Overview; selected: boolean; onPick: () => void }) {
+  const sq = (s: Overview['spots'][number]) => {
     const b = s.tonight
     const cls = s.flagged ? 'bg-rose-500 text-white ring-2 ring-rose-300'
       : !b ? (s.kind === 'hold' ? 'bg-slate-100 text-slate-500 border border-dashed border-slate-300' : 'bg-white text-ink border border-line')
@@ -669,11 +700,12 @@ function LotCard({ o, selected, onPick }: { o: LotOverview; selected: boolean; o
   return (
     <button type="button" onClick={onPick} aria-pressed={selected} className={`text-left rounded-2xl border bg-white px-3 py-2.5 transition ${selected ? 'border-ink ring-2 ring-ink/10' : 'border-line hover:border-ink/40'}`}>
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[13.5px] font-bold text-ink">{o.lot.building}</span>
+        <span className="text-[13.5px] font-bold text-ink">{shown(o.lot.building)}</span>
         <span className="text-[12px] text-muted">{o.lot.rateCents > 0 ? `${cents(o.lot.rateCents, o.lot.currency)}/night` : 'included'}</span>
         <span className="ml-auto text-[12px] font-semibold tabular-nums text-ink">{o.sold}/{o.sellable} {o.sold >= o.sellable && o.sellable ? 'full' : 'tonight'}</span>
         {o.unpaid > 0 && <Tag tone="amber">{o.unpaid} unpaid</Tag>}
         {o.flags > 0 && <Tag tone="rose">{o.flags} {o.flags === 1 ? 'flag' : 'flags'}</Tag>}
+        {!o.flags && (o.staleFlags || 0) > 0 && <Tag title="Flagged more than two days ago and never closed — on the Flags tab, under the fold">{o.staleFlags} old {o.staleFlags === 1 ? 'flag' : 'flags'}</Tag>}
       </div>
       <div className="mt-2 flex flex-wrap gap-1">{o.spots.map(sq)}</div>
     </button>

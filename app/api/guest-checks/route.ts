@@ -92,14 +92,21 @@ export async function GET(req: NextRequest) {
   }
   try {
     const RES_COLS = 'id,listing_id,guest_name,listing_name,check_in,check_out,status,source,custom_fields,payments:raw->money->payments'
-    const [rules, amounts, vfid] = await Promise.all([loadGuestCheckRules(), loadBuildingAmounts(), verifiedFieldId()])
+    // SPEED (Jon, 2026-11-20): TWO WAVES. This read used to take nine turns, each waiting on the
+    // last: rules → the arrivals → the checks (200 at a time) → the conversations → their photos →
+    // the check-in forms → the Salato sign-offs → the listings.
+    // Nothing in the first two depends on the other, and nothing after "which bookings need a
+    // check" depends on anything but that list — so: wave 1 is the rules and the three booking
+    // reads together; wave 2 is everything keyed by those bookings, together. Same queries, same rows.
+    //
     // Arrivals in the window, plus anyone in-house or just departed whose deposit is still held (release is work too).
     // IN HOUSE TOO (Jon, 2026-10-29: "make sure the verification works no matter her check-in time").
     // The window used to start at today's check-ins, so a guest who arrived early, or yesterday, or
     // whose check-in date had passed before anyone verified her, dropped off the desk and could not
     // be verified at all. Everyone still in the unit (checked in before today, checking out today or
     // later) is on the list until they are verified.
-    const [{ data: res }, { data: held }, { data: inHouse }] = await Promise.all([
+    const [rules, amounts, vfid, { data: res }, { data: held }, { data: inHouse }] = await Promise.all([
+      loadGuestCheckRules(), loadBuildingAmounts(), verifiedFieldId(),
       db.from('guesty_reservations').select(RES_COLS).gte('check_in', today).lt('check_in', addDays(to, 1)).limit(800),
       db.from('guest_checks').select('reservation_id').eq('deposit_status', 'captured').limit(400),
       db.from('guesty_reservations').select(RES_COLS).lt('check_in', today).gte('check_out', today).limit(800),
@@ -112,51 +119,59 @@ export async function GET(req: NextRequest) {
     }
     const needs = live.map(r => { const ch = channelOf(str(r.source)); const p = channelPolicy(ch, rules); return { r, ch, p } }).filter(x => x.p.verify || x.p.deposit)
     const ids = needs.map(x => str(x.r.id))
+    const lids = Array.from(new Set(needs.map(x => str(x.r.listing_id)).filter(Boolean)))
+    const chunks = (xs: string[], n: number) => { const out: string[][] = []; for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n)); return out }
+
+    // ── wave 2: everything keyed by those bookings, together ──
+    const checksP = Promise.all(chunks(ids, 200).map(part => db.from('guest_checks').select('*').in('reservation_id', part)))
+    // THE THREAD PHOTOS: images the guest sent on the booking's conversation (mirror; the desk's
+    // thread sweep refreshes the threads of the next few arrivals from Guesty live).
+    const photosP = (async () => {
+      const photosBy: Record<string, { url: string | null; at: string; type: string }[]> = {}
+      try {
+        const { data: convs } = ids.length ? await db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', ids.slice(0, 500)) : { data: [] as any[] }
+        const rOf: Record<string, string> = {}; for (const c of (convs || []) as any[]) rOf[str(c.id)] = str(c.reservation_id)
+        const reads = await Promise.all(chunks(Object.keys(rOf), 200).map(part => db.from('guesty_messages').select('conversation_id,sender,sent_at,attachments').in('conversation_id', part).not('attachments', 'is', null).limit(2000)))
+        for (const { data: ms } of reads) {
+          for (const m of (ms || []) as any[]) {
+            if (str(m.sender) === 'host' || !Array.isArray(m.attachments)) continue
+            for (const a of m.attachments) {
+              const t = str(a?.type || a?.mimeType || a?.contentType || a?.origFileName || '').toLowerCase()
+              if (!/png|jpe?g|heic|heif|webp|gif|image|pdf/.test(t)) continue
+              const rid = rOf[str(m.conversation_id)]
+              ;(photosBy[rid] = photosBy[rid] || []).push({ url: str(a?.attachmentUrl || a?.url || '') || null, at: str(m.sent_at), type: t.replace(/^.*\//, '').slice(0, 8) })
+            }
+          }
+        }
+      } catch { /* the row still renders without them */ }
+      return photosBy
+    })()
+    const cifP = readCif().catch(() => ({} as Record<string, any>))
+    const salatoP: Promise<any[]> = ids.length ? Promise.resolve(db.from('app_settings').select('key,value').in('key', ids.map(id => 'sv:' + id))).then(r => (r.data || []) as any[]) : Promise.resolve([])
+    // Building per listing, and whether it is a Salato unit — the deposit amount is per building.
+    const listingsP = (async () => {
+      const bld: Record<string, { building: string; l: any }> = {}
+      if (lids.length) { const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building').in('id', lids.slice(0, 500)); for (const l of (ls || []) as any[]) bld[str(l.id)] = { building: str(l.building), l } }
+      const salatoUnit: Record<string, boolean> = {}
+      // One at a time on purpose: the first call reads the Salato config and the rest reuse it (60s in memory).
+      for (const lid of lids) { try { salatoUnit[lid] = await isSalatoListing(db, lid, bld[lid]?.l) } catch { salatoUnit[lid] = false } }
+      return { bld, salatoUnit }
+    })()
+    const [checkReads, photosBy, cif, sv, { bld, salatoUnit }] = await Promise.all([checksP, photosP, cifP, salatoP, listingsP])
+
     const checks: Record<string, any> = {}
-    for (let i = 0; i < ids.length; i += 200) {
-      const { data, error } = await db.from('guest_checks').select('*').in('reservation_id', ids.slice(i, i + 200))
+    for (const { data, error } of checkReads) {
       if (error && MISSING(error.message)) return NextResponse.json({ ok: false, error: 'Guest checks need migrations 145 + 146 (guest_checks) — run them in Supabase and reload.' }, { status: 500 })
       for (const c of (data || []) as any[]) checks[str(c.reservation_id)] = c
     }
-    // THE THREAD PHOTOS: images the guest sent on the booking's conversation (mirror; the desk's
-    // thread sweep refreshes the threads of the next few arrivals from Guesty live).
-    const photosBy: Record<string, { url: string | null; at: string; type: string }[]> = {}
-    try {
-      const { data: convs } = ids.length ? await db.from('guesty_conversations').select('id,reservation_id').in('reservation_id', ids.slice(0, 500)) : { data: [] as any[] }
-      const rOf: Record<string, string> = {}; for (const c of (convs || []) as any[]) rOf[str(c.id)] = str(c.reservation_id)
-      const cids = Object.keys(rOf)
-      for (let i = 0; i < cids.length; i += 200) {
-        const { data: ms } = await db.from('guesty_messages').select('conversation_id,sender,sent_at,attachments').in('conversation_id', cids.slice(i, i + 200)).not('attachments', 'is', null).limit(2000)
-        for (const m of (ms || []) as any[]) {
-          if (str(m.sender) === 'host' || !Array.isArray(m.attachments)) continue
-          for (const a of m.attachments) {
-            const t = str(a?.type || a?.mimeType || a?.contentType || a?.origFileName || '').toLowerCase()
-            if (!/png|jpe?g|heic|heif|webp|gif|image|pdf/.test(t)) continue
-            const rid = rOf[str(m.conversation_id)]
-            ;(photosBy[rid] = photosBy[rid] || []).push({ url: str(a?.attachmentUrl || a?.url || '') || null, at: str(m.sent_at), type: t.replace(/^.*\//, '').slice(0, 8) })
-          }
-        }
-      }
-    } catch { /* the row still renders without them */ }
-
-    const cif = await readCif().catch(() => ({} as Record<string, any>))
 
     // Migration 158 adds the reading columns. Before it runs, nothing can be remembered about a read,
     // so nothing is queued to be read (else every load would pay for the same three photos again).
     const checkRows = Object.values(checks)
     const has158 = checkRows.length === 0 || checkRows.some((c: any) => c && 'id_match' in c)
     const salato: Record<string, string> = {}
-    if (ids.length) {
-      const { data: sv } = await db.from('app_settings').select('key,value').in('key', ids.map(id => 'sv:' + id))
-      for (const s of (sv || []) as any[]) { try { const v = typeof s.value === 'string' ? JSON.parse(s.value) : s.value; if (v && v.status === 'verified') salato[str(s.key).slice(3)] = str(v.signedAt || '') } catch { /* not ours */ } }
-    }
+    for (const s of sv) { try { const v = typeof s.value === 'string' ? JSON.parse(s.value) : s.value; if (v && v.status === 'verified') salato[str(s.key).slice(3)] = str(v.signedAt || '') } catch { /* not ours */ } }
     const canEdit = atLeast(g.access.levels['welcome-calls'], 'edit')
-    // Building per listing, and whether it is a Salato unit — the deposit amount is per building.
-    const lids = Array.from(new Set(needs.map(x => str(x.r.listing_id)).filter(Boolean)))
-    const bld: Record<string, { building: string; l: any }> = {}
-    if (lids.length) { const { data: ls } = await db.from('guesty_listings').select('id,nickname,title,building').in('id', lids.slice(0, 500)); for (const l of (ls || []) as any[]) bld[str(l.id)] = { building: str(l.building), l } }
-    const salatoUnit: Record<string, boolean> = {}
-    for (const lid of lids) { try { salatoUnit[lid] = await isSalatoListing(db, lid, bld[lid]?.l) } catch { salatoUnit[lid] = false } }
     const rows: GuestCheckRow[] = needs.map(({ r, ch, p }): GuestCheckRow => {
       const c = checks[str(r.id)] || {}
       const sal = salato[str(r.id)]

@@ -20,11 +20,14 @@ export const dynamic = 'force-dynamic'
 const str = (v: any, n = 2000) => String(v == null ? '' : v).trim().slice(0, n)
 const num = (v: any) => { if (v == null || String(v).trim() === '') return null; const n = Number(String(v).replace(/[^0-9.\-]/g, '')); return Number.isFinite(n) ? n : null }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const access = await getAccess()
   if (!access.user) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!access.allowed || !canSeeMoney(access)) return NextResponse.json({ error: 'no-access' }, { status: 403 })
   if (!isVrLogin(access)) return hotelOnlyRes()
+  // SPEED (Jon, 2026-11-20): ?can=1 answers the one thing the glitch board asks on every open —
+  // "may this person train?" — without reading the guidance and every saved case to say yes or no.
+  if (req.nextUrl.searchParams.get('can') === '1') return NextResponse.json({ ok: true, canTrain: canTrain(access) })
   const t = await loadTraining()
   return NextResponse.json({ ok: true, ...t, canTrain: canTrain(access) })
 }

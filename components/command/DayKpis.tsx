@@ -22,7 +22,7 @@
 //
 // Numbers come from the same reads the rest of the page uses, so the strip and the lanes never
 // disagree. Nothing here completes a Breezeway task; a call is logged the way the Calls desk logs it.
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from 'react'
 import Link from 'next/link'
 import { ExternalLink, UserPlus, Loader2, Phone, PhoneCall, PhoneOff, Eye, Send } from 'lucide-react'
 import { Tag, type Tone } from '@/components/lean'
@@ -46,16 +46,27 @@ import { UnpaidRow, type UnpaidRowT } from '@/components/UnpaidBoard'
 
 export const CALLS_URL = '/api/command/calls'
 type Key = 'team' | 'cleans' | 'insp' | 'welcome' | 'recovery' | 'maint' | 'unpaid' | 'glitches' | 'claims' | 'lostfound' | 'reviews' | 'notices' | 'checks' | 'blocked' | 'channels'
-/** The six tiles always on Today; the rest sit under More (2026-11-10). */
-const PRIMARY: Key[] = ['cleans', 'insp', 'welcome', 'maint', 'glitches', 'unpaid']
-const GROUPS: { label: string; keys: Key[] }[] = [
-  { label: 'Housekeeping & maintenance', keys: ['team', 'cleans', 'insp', 'maint', 'blocked'] },
-  { label: 'Guests', keys: ['welcome', 'recovery', 'notices', 'checks', 'reviews'] },
-  { label: 'Office', keys: ['lostfound', 'glitches', 'claims', 'unpaid', 'channels'] },
+// CLEAN-UP (Jon, 2026-11-20: "organized and easy to use"): the 15 tiles in the order the team acts
+// on them, five to a row on a desktop — the field day before 4pm, then today's guests, then the
+// office and the standing background. Was: six "primary" tiles, then three groups run together, so
+// Unpaid sat beside Who's working and Blocked units beside Recovery calls.
+const ORDER: Key[] = [
+  'cleans', 'insp', 'maint', 'team', 'glitches',          // the field day
+  'welcome', 'notices', 'checks', 'recovery', 'unpaid',   // today's guests
+  'reviews', 'claims', 'lostfound', 'blocked', 'channels', // office and standing
 ]
+/** A tile whose read has not landed is 'loading'; one whose read failed with nothing to show is 'error'. Never a zero. */
+type TileState = 'loading' | 'error' | undefined
+const stateOf = (q: { data?: any; error?: string | null }): TileState => q.data ? undefined : q.error ? 'error' : 'loading'
+/** The read was refused, not broken: this person's role does not include the page behind the tile. */
+const denied = (e?: string | null) => /forbidden|no-access|unauthor|\b40[13]\b/i.test(String(e || ''))
+/** How many rows of an open list are mounted at a time; the rest mount as the list is scrolled. */
+const LIST_PAGE = 24
 const CHECKS_URL = '/api/guest-checks'
 const BLOCKED_URL = '/api/blocked-units?days=30&cached=1'
-const CHANNELS_URL = '/api/channels'
+// SPEED (Jon, 2026-11-20): ?slim=1 — the tile needs the problem listings and a count, not every
+// listing × nine channels (~600KB, too big for the device copy, so the tile never painted from memory).
+const CHANNELS_URL = '/api/channels?slim=1'
 type BlockedRunT = { listingId: string; unit: string; building: string; market: string; from: string; to: string; nights: number; startsInDays: number; live: boolean; openEnded: boolean; reason: string; note: string | null; guestyLabel?: string | null; blockEnd?: string | null; createdAt?: string | null; blockStart?: string | null }
 type ChannelListingT = { id: string; name: string; building: string; verdict: string; missingMajor: string[]; cells: Record<string, { verdict: string; status: string | null }> }
 const REVIEWS_URL = '/api/reviews?days=60&hub=1'
@@ -233,31 +244,41 @@ function DayCallRowView({ r, canLog, callers, onChanged }: { r: DayCallRow; canL
 }
 
 // ── the tile ────────────────────────────────────────────────────────────────────────────────────
-function Tile({ label, done, needed, segs, sub, on, onClick, title, loading, big, noPct }: { label: string; done: number; needed: number; segs: Seg[]; sub: string; on: boolean; onClick: () => void; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string }; noPct?: boolean }) {
-  const pct = needed ? Math.round((done / needed) * 100) : 100
+// CLEAN-UP (Jon, 2026-11-20):
+//   · NOT LOADED LOOKS NOT LOADED. A tile whose read has not landed shows a dash and "reading…" —
+//     it used to print "0 / 0" or "0 off today · nothing blocked in the next 30 days" for up to 8
+//     seconds and then jump to the real number. A read that failed shows a dash and says so.
+//   · ONE NUMBER PER TILE. The corner percentage is gone: on a done/needed tile it repeated the
+//     fraction beside it, and on the others (Channels "46%", Unpaid "67%") nobody could say what it
+//     was a percentage of. The bar under the number still shows the split; hover a segment for its count.
+function Tile({ label, done, needed, segs, sub, on, onClick, title, state, big, word = 'done' }: { label: string; done: number; needed: number; segs: Seg[]; sub: string; on: boolean; onClick: () => void; title: string; state?: TileState; big?: { value: string; unit: string; tone: string }; word?: string }) {
+  const off = !!state
   const tone = big ? big.tone : !needed ? 'text-muted' : done === needed ? 'text-emerald-700' : segs.some(s => s.n && /late|urgent|unassigned/.test(s.filter)) ? 'text-rose-700' : 'text-ink'
   return (
-    <button onClick={onClick} aria-pressed={on} title={title + (on ? ' — click to close the list' : ' — click to open the list')}
+    <button onClick={onClick} aria-pressed={on} aria-busy={state === 'loading'} title={title + (on ? '' : ' — click to open the list')}
       className={'text-left rounded-2xl border bg-white px-3 sm:px-3.5 py-2.5 sm:py-3 min-h-[80px] sm:min-h-[96px] shadow-soft transition flex flex-col gap-1.5 min-w-0 ' + (on ? 'border-brand-400 ring-2 ring-brand-100' : 'border-line hover:border-ink/30')}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10.5px] uppercase tracking-[0.06em] sm:tracking-[0.12em] font-semibold text-muted truncate">{label}</span>
-        {loading ? <Loader2 size={11} className="animate-spin text-muted" /> : <span className={'text-[10.5px] font-bold tabular-nums ' + (needed ? 'text-muted' : 'text-muted/50')}>{needed && !noPct ? pct + '%' : ''}</span>}
+        {state === 'loading' ? <Loader2 size={11} className="animate-spin text-muted shrink-0" /> : null}
       </div>
       <div className="flex items-baseline gap-1">
-        {big ? <>
+        {off ? <>
+          <span className="lh-display text-[26px] sm:text-[30px] leading-none font-bold text-muted/50">—</span>
+          <span className="text-[11px] text-muted ml-1">{state === 'loading' ? 'reading…' : ''}</span>
+        </> : big ? <>
           <span className={'lh-display text-[26px] sm:text-[30px] leading-none font-bold tabular-nums ' + tone}>{big.value}</span>
           <span className="text-[11px] text-muted ml-1 truncate">{big.unit}</span>
         </> : <>
           <span className={'lh-display text-[26px] sm:text-[30px] leading-none font-bold tabular-nums ' + tone}>{done}</span>
           <span className="text-[13px] font-medium text-muted tabular-nums">/ {needed}</span>
-          <span className="text-[11px] text-muted ml-1">{needed ? 'done' : loading ? 'reading…' : 'none today'}</span>
+          <span className="text-[11px] text-muted ml-1">{needed ? word : 'none today'}</span>
         </>}
       </div>
       <div className="w-full h-1 rounded-full bg-line overflow-hidden flex mt-auto" aria-hidden>
-        {needed > 0 && segs.filter(s => s.n > 0).map(s => <span key={s.filter} className={'block h-full ' + s.cls} style={{ width: (s.n / needed) * 100 + '%' }} title={s.n + ' ' + s.label} />)}
+        {!off && needed > 0 && segs.filter(s => s.n > 0).map(s => <span key={s.filter} className={'block h-full ' + s.cls} style={{ width: (s.n / needed) * 100 + '%' }} title={s.n + ' ' + s.label} />)}
       </div>
       {/* Two lines from tablet up, cut at a word, never mid-word (2026-11-09); one line on a phone, where the tiles are narrow. */}
-      <div className="text-[11px] leading-[1.3] text-muted w-full truncate sm:whitespace-normal sm:line-clamp-2 sm:min-h-[2.6em]" title={sub}>{sub || ' '}</div>
+      <div className="text-[11px] leading-[1.3] text-muted w-full truncate sm:whitespace-normal sm:line-clamp-2 sm:min-h-[2.6em]" title={state === 'loading' ? undefined : sub}>{state === 'loading' ? ' ' : sub || ' '}</div>
     </button>
   )
 }
@@ -382,10 +403,24 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const blNew = blRuns.filter(blIsNew).length
   // Standing, and nobody wrote why: worth a look, not an alarm.
   const blBlank = blRuns.filter(r => r.live && !blIsNew(r) && !r.note && !r.guestyLabel).length
-  const chQ = useCachedFetch<{ ok?: boolean; listings?: ChannelListingT[]; error?: string }>(CHANNELS_URL, { ttl: 10 * 60_000 })
-  const chAll = chQ.data?.listings || []
-  const chBad = chAll.filter(l => ['suspended', 'failed', 'disconnected', 'missing'].includes(l.verdict))
-  const chHard = chBad.filter(l => l.verdict === 'suspended' || l.verdict === 'failed' || l.verdict === 'disconnected').length
+  const chQ = useCachedFetch<{ ok?: boolean; at?: string; total?: number; listings?: ChannelListingT[]; error?: string }>(CHANNELS_URL, { ttl: 10 * 60_000 })
+  // The server keeps this picture for ten minutes and hands back an expired copy however old it is
+  // while it rebuilds — so the morning's first open got last night's. An answer older than 20
+  // minutes is asked for once more a few seconds later, when the rebuild has landed (2026-11-20).
+  const chReasked = useRef(false)
+  useEffect(() => {
+    const at = Date.parse(String(chQ.data?.at || ''))
+    if (chReasked.current || !Number.isFinite(at) || Date.now() - at < 20 * 60_000) return
+    const t = setTimeout(() => { chReasked.current = true; chQ.refresh() }, 8000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chQ.data])
+  // CLEAN-UP (Jon, 2026-11-20): 'delisted' (the channel's own page is gone — Capri 211 on Airbnb,
+  // 2026-11-19) is the worst verdict there is, and this tile did not know it: such a listing was
+  // counted under "live everywhere". It is broken, with suspended / failed / disconnected.
+  const chBad = (chQ.data?.listings || []).filter(l => ['delisted', 'suspended', 'failed', 'disconnected', 'missing'].includes(l.verdict))
+  const chTotal = Math.max(Number(chQ.data?.total) || 0, chBad.length)
+  const chHard = chBad.filter(l => l.verdict !== 'missing').length
   const chMissing = chBad.length - chHard
 
   // ── who's working (Jon, 2026-10-05: "the Who's Working strip … should be at the top in one of the Today
@@ -446,7 +481,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
   const rcTodayDone = rcToday.filter(r => r.done).length
   const rcLater = rc ? rc.rows.filter(r => !r.today && !r.done).length : 0
 
-  const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; loading?: boolean; big?: { value: string; unit: string; tone: string }; chipLabels?: Record<string, string> }[] = [
+  const tiles: { key: Key; label: string; done: number; needed: number; segs: Seg[]; sub: string; title: string; state?: TileState; word?: string; big?: { value: string; unit: string; tone: string }; chipLabels?: Record<string, string> }[] = [
     { key: 'team', label: 'Who’s working', done: shCount('on'), needed: teamRead.length, title: 'The field team today (housekeeping, supervisors, maintenance, inspectors — not CCS or office): on shift, clocked out, not clocked in, starting later, from Homebase — and where each one probably is, from Breezeway',
       big: { value: String(shCount('on') + shCount('scheduled')), unit: shCount('scheduled') && !shCount('on') ? 'scheduled' : 'on shift', tone: shCount('late') ? 'text-amber-800' : 'text-ink' },
       segs: [{ label: 'on shift', n: shCount('on'), cls: 'bg-emerald-500', tone: 'emerald', filter: 'on' }, { label: 'not clocked in', n: shCount('late'), cls: 'bg-amber-400', tone: 'amber', filter: 'late' }, { label: 'starting later', n: shCount('later') + shCount('scheduled'), cls: 'bg-sky-400', tone: 'sky', filter: 'later' }, { label: 'clocked out', n: shCount('out'), cls: 'bg-slate-400', tone: 'slate', filter: 'out' }, { label: 'no shift', n: shCount('noshift'), cls: 'bg-slate-200', tone: 'slate', filter: 'noshift' }],
@@ -457,20 +492,20 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     { key: 'insp', label: 'Inspections', done: iDone, needed: iNeeded, title: 'The inspections that matter: every inspection on today’s board, plus a big arrival today or tomorrow with nothing walking the unit',
       segs: [{ label: 'done', n: iDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'in progress', n: iRun, cls: 'bg-sky-400', tone: 'sky', filter: 'running' }, { label: 'scheduled', n: Math.max(0, iSched), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'unassigned', n: iNobody, cls: 'bg-amber-400', tone: 'amber', filter: 'unassigned' }, { label: 'missing', n: iMissing, cls: 'bg-rose-500', tone: 'rose', filter: 'missing' }],
       sub: [iNobody ? iNobody + ' unconfirmed' : '', iMissing ? iMissing + ' big arrival' + (iMissing === 1 ? '' : 's') + ' uncovered' : bigSoon.length ? bigSoon.length + ' big arrival' + (bigSoon.length === 1 ? '' : 's') + ' covered' : '', iRun ? iRun + ' in progress' : ''].filter(Boolean).join(' · ') || (iNeeded ? 'all walked' : 'no big arrivals') },
-    { key: 'welcome', label: 'Welcome calls', done: wTodayDone, needed: wToday.length, loading: !calls && callsQ.loading, title: 'Welcome calls for today’s arrivals — done against owed. The rest of the 72-hour window is on the Calls desk',
+    { key: 'welcome', label: 'Welcome calls', done: wTodayDone, needed: wToday.length, state: stateOf(callsQ), title: 'Welcome calls for today’s arrivals — done against owed. The rest of the 72-hour window is on the Calls desk',
       segs: [{ label: 'done', n: wTodayDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'still owed', n: wOwedToday, cls: 'bg-rose-500', tone: 'rose', filter: 'today' }],
-      sub: callsQ.error || (calls && !calls.ok) ? 'could not read the Calls desk' : w ? [wOwedToday ? wOwedToday + ' arriving today still owed' : (wToday.length ? 'today’s arrivals all called' : 'no arrivals today'), wLater ? wLater + ' more due in the next 3 days' : ''].filter(Boolean).join(' · ') : '' },
-    { key: 'recovery', label: 'Recovery calls', done: rcTodayDone, needed: rcToday.length, loading: !calls && callsQ.loading, title: 'Today’s calls into or out of a unit in review recovery (a 3★-or-under review with nothing good since): the pre-arrival call for an arrival today, the post-checkout call for a checkout today',
+      sub: callsQ.error || (calls && !calls.ok) ? (denied(callsQ.error) ? 'not on your role' : 'could not read the Calls desk') : w ? [wOwedToday ? wOwedToday + ' arriving today still owed' : (wToday.length ? 'today’s arrivals all called' : 'no arrivals today'), wLater ? wLater + ' more due in the next 3 days' : ''].filter(Boolean).join(' · ') : '' },
+    { key: 'recovery', label: 'Recovery calls', done: rcTodayDone, needed: rcToday.length, state: stateOf(callsQ), title: 'Today’s calls into or out of a unit in review recovery (a 3★-or-under review with nothing good since): the pre-arrival call for an arrival today, the post-checkout call for a checkout today',
       segs: [{ label: 'done', n: rcTodayDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'open', n: Math.max(0, rcToday.length - rcTodayDone), cls: 'bg-amber-400', tone: 'amber', filter: 'open' }],
-      sub: calls?.recoveryFailed ? 'recovery scan failed — see the Calls desk' : rc ? [rcToday.filter(r => r.kind !== 'post').length ? rcToday.filter(r => r.kind !== 'post').length + ' arriving' : '', rcToday.filter(r => r.kind === 'post').length ? rcToday.filter(r => r.kind === 'post').length + ' checked out' : '', rcLater ? rcLater + ' more this week' : ''].filter(Boolean).join(' · ') || 'no recovery calls today' : '' },
+      sub: callsQ.error && !calls ? (denied(callsQ.error) ? 'not on your role' : 'could not read the Calls desk') : calls?.recoveryFailed ? 'recovery scan failed — see the Calls desk' : rc ? [rcToday.filter(r => r.kind !== 'post').length ? rcToday.filter(r => r.kind !== 'post').length + ' arriving' : '', rcToday.filter(r => r.kind === 'post').length ? rcToday.filter(r => r.kind === 'post').length + ' checked out' : '', rcLater ? rcLater + ' more this week' : ''].filter(Boolean).join(' · ') || 'no recovery calls today' : '' },
     { key: 'maint', label: 'Maintenance', done: mDone, needed: maint.length, title: 'Today’s maintenance work in Breezeway: urgent and high first, then what nobody is on, open, in progress, done',
       segs: [{ label: 'done', n: mDone, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'in progress', n: mRun, cls: 'bg-sky-400', tone: 'sky', filter: 'running' }, { label: 'open', n: Math.max(0, mOpen), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'unassigned', n: mNobody, cls: 'bg-amber-400', tone: 'amber', filter: 'unassigned' }],
       sub: [mUrgent ? mUrgent + ' urgent/high' : '', mNobody ? mNobody + ' unassigned' : '', mRun ? mRun + ' in progress' : ''].filter(Boolean).join(' · ') || (maint.length ? 'all closed' : 'nothing on the board') },
-    { key: 'unpaid', label: 'Unpaid', done: unpaidRows.length - uOpen, needed: unpaidRows.length, loading: !unpaidQ.data && unpaidQ.loading,
-      big: { value: unpaidQ.data ? money(uOwed) : '—', unit: unpaidRows.length ? 'owed · ' + unpaidRows.length + (unpaidRows.length === 1 ? ' stay' : ' stays') : 'nothing owed', tone: uToday ? 'text-rose-700' : unpaidRows.length ? 'text-ink' : 'text-emerald-700' },
+    { key: 'unpaid', label: 'Unpaid', done: unpaidRows.length - uOpen, needed: unpaidRows.length, state: stateOf(unpaidQ),
+      big: { value: money(uOwed), unit: unpaidRows.length ? 'owed · ' + unpaidRows.length + (unpaidRows.length === 1 ? ' stay' : ' stays') : 'nothing owed', tone: uToday ? 'text-rose-700' : unpaidRows.length ? 'text-ink' : 'text-emerald-700' },
       title: 'Money still owed by direct, VRBO and Google guests in house or arriving in the next 30 days (nearest first) — every other channel pays us itself. The bar is how far the chase has got',
       segs: [{ label: 'promised', n: uPromised, cls: 'bg-emerald-500', tone: 'emerald', filter: 'promised' }, { label: 'contacted', n: uContacted, cls: 'bg-sky-400', tone: 'sky', filter: 'contacted' }, { label: 'disputed', n: uDisputed, cls: 'bg-rose-500', tone: 'rose', filter: 'disputed' }, { label: 'to chase', n: uOpen, cls: 'bg-slate-300', tone: 'slate', filter: 'open' }, { label: 'in 48h grace', n: uGrace, cls: 'bg-slate-100', tone: 'slate', filter: 'grace' }],
-      sub: unpaidQ.error ? 'could not read the folios' : unpaidRows.length ? [uToday ? uToday + ' to collect today' : '', uWeek ? uWeek + ' arrive ≤7d' : '', uLater ? uLater + ' within 30d' : '', uOpen ? uOpen + ' to chase' : 'all chased', uGrace ? uGrace + ' in 48h grace' : ''].filter(Boolean).join(' · ') : 'direct, VRBO and Google all paid (30 days)' },
+      sub: unpaidQ.error ? (denied(unpaidQ.error) ? 'not on your role' : 'could not read the folios') : unpaidRows.length ? [uToday ? uToday + ' to collect today' : '', uWeek ? uWeek + ' arrive ≤7d' : '', uLater ? uLater + ' within 30d' : '', uOpen ? uOpen + ' to chase' : 'all chased', uGrace ? uGrace + ' in 48h grace' : ''].filter(Boolean).join(' · ') : 'direct, VRBO and Google all paid (30 days)' },
     { key: 'glitches', label: 'Glitches', done: glCovered, needed: gl.open, title: 'Open guest issues: past due, with no Breezeway task yet, and the ones with a task and an owner',
       big: { value: String(gl.open), unit: 'open', tone: gl.overdue ? 'text-rose-700' : gl.open ? 'text-ink' : 'text-emerald-700' },
       segs: [{ label: 'on it', n: glCovered, cls: 'bg-emerald-500', tone: 'emerald', filter: 'covered' }, { label: 'no task', n: gl.noTask, cls: 'bg-amber-400', tone: 'amber', filter: 'notask' }, { label: 'overdue', n: gl.overdue, cls: 'bg-rose-500', tone: 'rose', filter: 'overdue' }],
@@ -479,26 +514,32 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       big: { value: String(cl.open), unit: 'open', tone: cl.dueSoon ? 'text-rose-700' : cl.open ? 'text-ink' : 'text-emerald-700' },
       segs: [{ label: 'on track', n: clOk, cls: 'bg-emerald-500', tone: 'emerald', filter: 'ok' }, { label: 'due soon', n: cl.dueSoon, cls: 'bg-rose-500', tone: 'rose', filter: 'due' }],
       sub: cl.open ? [cl.dueSoon ? cl.dueSoon + ' due within 3 days' : 'nothing due soon', cl.review ? cl.review + ' in review' : ''].filter(Boolean).join(' · ') : 'no open claims' },
-    { key: 'lostfound', label: 'Lost & Found', done: lfN.withguest, needed: lfRows.length, loading: !lfQ.data && lfQ.loading, title: 'Found items still open: no stay attached yet, guest still to contact, with the guest (contacted, claimed, shipping), and past the hold window',
+    { key: 'lostfound', label: 'Lost & Found', done: lfN.withguest, needed: lfRows.length, state: stateOf(lfQ), title: 'Found items still open: no stay attached yet, guest still to contact, with the guest (contacted, claimed, shipping), and past the hold window',
+      // ONE CLEAR THING (2026-11-20): the items a person still has to move, not "with guest / open".
+      big: { value: String(lfN.nostay + lfN.contact), unit: lfRows.length ? 'to action · ' + lfRows.length + ' open' : 'nothing open', tone: lfN.nostay ? 'text-rose-700' : lfN.contact ? 'text-amber-800' : 'text-emerald-700' },
       segs: [{ label: 'with guest', n: lfN.withguest, cls: 'bg-emerald-500', tone: 'emerald', filter: 'withguest' }, { label: 'no stay yet', n: lfN.nostay, cls: 'bg-rose-500', tone: 'rose', filter: 'nostay' }, { label: 'contact guest', n: lfN.contact, cls: 'bg-amber-400', tone: 'amber', filter: 'contact' }, { label: 'hold ended', n: lfN.holdover, cls: 'bg-slate-400', tone: 'slate', filter: 'holdover' }],
-      sub: lfRows.length ? [lfN.nostay ? lfN.nostay + ' with no stay' : '', lfN.contact ? lfN.contact + ' to contact' : '', lfN.holdover ? lfN.holdover + ' past the hold' : '', !lfN.nostay && !lfN.contact ? 'every item is with its guest' : ''].filter(Boolean).join(' · ') : 'nothing open' },
-    { key: 'reviews', label: 'Reviews responded', done: rvDone.length, needed: rvAll.length, loading: !rvQ.data && rvQ.loading, title: 'Reviews from the last 60 days: answered publicly (or set aside) against the ones still waiting on a reply — low scores first',
+      sub: lfQ.error && !lfQ.data ? (denied(lfQ.error) ? 'not on your role' : 'could not read Lost & Found') : lfRows.length ? [lfN.nostay ? lfN.nostay + ' with no stay' : '', lfN.contact ? lfN.contact + ' to contact' : '', lfN.holdover ? lfN.holdover + ' past the hold' : '', !lfN.nostay && !lfN.contact ? 'every item is with its guest' : ''].filter(Boolean).join(' · ') : 'nothing open' },
+    { key: 'reviews', label: 'Reviews', done: rvDone.length, needed: rvAll.length, state: stateOf(rvQ),
+      // ONE CLEAR THING (2026-11-20): how many are waiting on a reply. "Reviews responded 212 / 240 done"
+      // made the reader subtract, and its title was cut off ("REVIEWS RESPOND…").
+      big: { value: String(rvWait.length), unit: 'to answer', tone: rvLow.length ? 'text-rose-700' : rvWait.length ? 'text-ink' : 'text-emerald-700' },
+      title: 'Reviews from the last 60 days: answered publicly (or set aside) against the ones still waiting on a reply — low scores first',
       segs: [{ label: 'responded', n: rvDone.length, cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: '3★ or under', n: rvLow.length, cls: 'bg-rose-500', tone: 'rose', filter: 'low' }, { label: 'waiting', n: Math.max(0, rvWait.length - rvLow.length), cls: 'bg-amber-400', tone: 'amber', filter: 'wait' }],
-      sub: rvQ.error ? 'could not read the reviews' : rvAll.length ? [rvWait.length ? rvWait.length + ' waiting on a reply' : 'all answered', rvLow.length ? rvLow.length + ' at 3★ or under' : ''].filter(Boolean).join(' · ') : 'no reviews in 60 days' },
-    { key: 'notices', label: 'Front-desk notices', done: ntC.sentToday, needed: ntToday.length, loading: !ntQ.data && ntQ.loading, title: 'Arrival notices the buildings need today (Elser’s registration form first): sent against to send, late ones first',
+      sub: rvQ.error ? (denied(rvQ.error) ? 'not on your role' : 'could not read the reviews') : rvAll.length ? [rvLow.length ? rvLow.length + ' at 3★ or under' : '', rvDone.length + ' of ' + rvAll.length + ' answered in 60 days'].filter(Boolean).join(' · ') : 'no reviews in 60 days' },
+    { key: 'notices', label: 'Front-desk notices', done: ntC.sentToday, needed: ntToday.length, state: stateOf(ntQ), word: 'sent', title: 'Arrival notices the buildings need today (Elser’s registration form first): sent against to send, late ones first',
       segs: [{ label: 'sent', n: ntC.sentToday, cls: 'bg-emerald-500', tone: 'emerald', filter: 'sent' }, { label: 'late', n: ntC.late, cls: 'bg-rose-500', tone: 'rose', filter: 'late' }, { label: 'due', n: ntC.due, cls: 'bg-amber-400', tone: 'amber', filter: 'due' }, { label: 'to send', n: Math.max(0, ntC.toSend - ntC.late - ntC.due), cls: 'bg-slate-300', tone: 'slate', filter: 'open' }],
-      sub: ntQ.error ? 'could not read the notices' : ntToday.length ? [ntC.toSend ? ntC.toSend + ' to send' : 'all sent', ntC.late ? ntC.late + ' late' : '', ntC.blocked ? ntC.blocked + ' with no recipient' : ''].filter(Boolean).join(' · ') : 'none needed today' },
-    { key: 'checks', label: 'ID & deposits', done: gcN('done'), needed: gcRows.length, loading: !gcQ.data && gcQ.loading, title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): guests ready against guests arriving, today first. A guest is ready when everything their channel asks for is in — ID, selfie, deposit. An ID is verified when its photo reads as the booking\'s guest, when the desk closes it by hand, or when “verified” is ticked on the booking in Guesty; a photo that does not read as the guest is flagged to check',
+      sub: ntQ.error ? (denied(ntQ.error) ? 'not on your role' : 'could not read the notices') : ntToday.length ? [ntC.toSend ? ntC.toSend + ' to send' : 'all sent', ntC.late ? ntC.late + ' late' : '', ntC.blocked ? ntC.blocked + ' with no recipient' : ''].filter(Boolean).join(' · ') : 'none needed today' },
+    { key: 'checks', label: 'ID & deposits', done: gcN('done'), needed: gcRows.length, state: stateOf(gcQ), word: 'ready', title: 'Arrivals in the next 7 days whose channel asks us to verify ID (Vrbo, Direct, Google) or collect a security deposit (Expedia): guests ready against guests arriving, today first. A guest is ready when everything their channel asks for is in — ID, selfie, deposit. An ID is verified when its photo reads as the booking\'s guest, when the desk closes it by hand, or when “verified” is ticked on the booking in Guesty; a photo that does not read as the guest is flagged to check',
       segs: [{ label: 'ready', n: gcN('done'), cls: 'bg-emerald-500', tone: 'emerald', filter: 'done' }, { label: 'ID to look at', n: gcN('check'), cls: 'bg-rose-600', tone: 'rose', filter: 'check' }, { label: 'need ID', n: gcN('id'), cls: 'bg-amber-400', tone: 'amber', filter: 'id' }, { label: 'need deposit', n: gcN('deposit'), cls: 'bg-amber-500', tone: 'amber', filter: 'deposit' }, { label: 'deposit to release', n: gcN('release'), cls: 'bg-rose-500', tone: 'rose', filter: 'release' }],
-      sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : 'could not read') : gcRows.length ? [gcTodayOpen ? gcTodayOpen + ' arriving today not ready' : 'today’s arrivals ready', gcN('check') ? gcN('check') + ' ID to look at' : '', gcN('release') ? gcN('release') + ' to release' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
-    { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, loading: !blQ.data && blQ.loading, title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
+      sub: gcQ.error ? (/migration/.test(gcQ.error) ? 'needs migration 145' : denied(gcQ.error) ? 'not on your role' : 'could not read') : gcRows.length ? [gcTodayOpen ? gcTodayOpen + ' arriving today not ready' : 'today’s arrivals ready', gcN('check') ? gcN('check') + ' ID to look at' : '', gcN('release') ? gcN('release') + ' to release' : ''].filter(Boolean).join(' · ') : 'nothing owed this week' },
+    { key: 'blocked', label: 'Blocked units', done: 0, needed: blRuns.length, state: stateOf(blQ), title: 'Units out of service on the calendar: off right now, starting within a week, and later — with the block note',
       big: { value: String(blLive), unit: 'off today', tone: blNew ? 'text-rose-700' : blBlank ? 'text-amber-800' : blLive ? 'text-ink' : 'text-emerald-700' },
       segs: [{ label: 'new in 48h', n: blNew, cls: 'bg-rose-500', tone: 'rose', filter: 'new' }, { label: 'standing', n: blLive - blNew, cls: 'bg-slate-400', tone: 'slate', filter: 'live' }, { label: 'within 7 days', n: blSoon, cls: 'bg-amber-400', tone: 'amber', filter: 'soon' }, { label: 'later', n: blLater, cls: 'bg-slate-300', tone: 'slate', filter: 'later' }],
-      sub: blQ.error ? 'could not read the calendar' : blRuns.length ? [blLive ? blLive + ' off now' : 'none off now', blNew ? blNew + ' new in 48h' : '', blBlank ? blBlank + ' with no reason' : '', blSoon ? blSoon + ' starting this week' : '', blQ.data?.nightsBlocked ? blQ.data.nightsBlocked + ' nights blocked in 30d' : ''].filter(Boolean).join(' · ') : 'nothing blocked in the next 30 days' },
-    { key: 'channels', label: 'Channels', done: Math.max(0, chAll.length - chBad.length), needed: chAll.length, loading: !chQ.data && chQ.loading, title: 'Every active listing against the major channels: live, or suspended / failed / disconnected, or simply not listed on one',
+      sub: blQ.error ? (denied(blQ.error) ? 'not on your role' : 'could not read the calendar') : blRuns.length ? [blLive ? blLive + ' off now' : 'none off now', blNew ? blNew + ' new in 48h' : '', blBlank ? blBlank + ' with no reason' : '', blSoon ? blSoon + ' starting this week' : '', blQ.data?.nightsBlocked ? blQ.data.nightsBlocked + ' nights blocked in 30d' : ''].filter(Boolean).join(' · ') : 'nothing blocked in the next 30 days' },
+    { key: 'channels', label: 'Channels', done: Math.max(0, chTotal - chBad.length), needed: chTotal, state: stateOf(chQ), title: 'Every active listing against the major channels: live, or broken (page removed / suspended / failed / disconnected), or simply not listed on one',
       big: { value: String(chHard), unit: chHard === 1 ? 'listing broken' : 'listings broken', tone: chHard ? 'text-rose-700' : chBad.length ? 'text-amber-800' : 'text-emerald-700' },
-      segs: [{ label: 'live everywhere', n: Math.max(0, chAll.length - chBad.length), cls: 'bg-emerald-500', tone: 'emerald', filter: 'live' }, { label: 'not on a channel', n: chMissing, cls: 'bg-amber-400', tone: 'amber', filter: 'missing' }, { label: 'suspended / failed', n: chHard, cls: 'bg-rose-500', tone: 'rose', filter: 'hard' }],
-      sub: chQ.error ? 'could not read channel health' : chAll.length ? [chHard ? 'suspended, failed or disconnected' : 'nothing broken', chMissing ? chMissing + ' not on every major channel' : ''].filter(Boolean).join(' · ') : 'no channel snapshot yet' },
+      segs: [{ label: 'live everywhere', n: Math.max(0, chTotal - chBad.length), cls: 'bg-emerald-500', tone: 'emerald', filter: 'live' }, { label: 'not on a channel', n: chMissing, cls: 'bg-amber-400', tone: 'amber', filter: 'missing' }, { label: 'broken', n: chHard, cls: 'bg-rose-500', tone: 'rose', filter: 'hard' }],
+      sub: chQ.error ? (denied(chQ.error) ? 'not on your role' : 'could not read channel health') : chTotal ? [chHard ? 'removed, suspended, failed or disconnected' : 'nothing broken', chMissing ? chMissing + ' not on every major channel' : ''].filter(Boolean).join(' · ') : 'no channel snapshot yet' },
   ]
 
   // ── the open list ──
@@ -562,7 +603,7 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       </Row> })
     }
     if (open === 'blocked') for (const r of blRuns) out.push({ key: 'bl:' + r.listingId + r.from, state: blIsNew(r) ? 'new' : r.live ? 'live' : r.startsInDays <= 7 ? 'soon' : 'later', sort: blIsNew(r) ? -1 : r.live ? 0 : r.startsInDays, node: <Row dot={blIsNew(r) ? 'rose' : null} title={r.unit} tags={<><Tag>{r.building}</Tag><Tag tone={blIsNew(r) ? 'rose' : r.live ? 'slate' : r.startsInDays <= 7 ? 'amber' : 'slate'}>{blIsNew(r) ? 'new · off now' : r.live ? 'off now' : 'in ' + r.startsInDays + 'd'}</Tag><Tag>{r.nights}{r.openEnded ? '+' : ''} night{r.nights === 1 ? '' : 's'}</Tag></>} meta={[r.from.slice(5) + ' → ' + (r.openEnded ? (r.blockEnd ? r.blockEnd.slice(5) + ' (Guesty)' : '?') : r.to.slice(5)), r.guestyLabel ? 'Guesty: ' + r.guestyLabel : r.reason, r.note].filter(Boolean).join(' · ')} actions={<Link href="/blocked" prefetch={false} className={GHOST}>Manage</Link>} /> })
-    if (open === 'channels') for (const l of chBad) out.push({ key: 'ch:' + l.id, state: l.verdict === 'missing' ? 'missing' : 'hard', sort: l.verdict === 'missing' ? 2 : 0, node: <Row dot={l.verdict !== 'missing' ? 'rose' : null} title={l.name} tags={<><Tag>{l.building}</Tag><Tag tone={l.verdict === 'missing' ? 'amber' : 'rose'}>{l.verdict}</Tag>{l.missingMajor.map(k => <Tag key={k}>not on {k.replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking.com')}</Tag>)}</>} meta={Object.entries(l.cells || {}).filter(([, c]) => c.verdict !== 'live').map(([k, c]) => k + ': ' + (c.status || c.verdict)).join(' · ')} actions={<Link href="/channels" prefetch={false} className={GHOST}>Channels</Link>} /> })
+    if (open === 'channels') for (const l of chBad) out.push({ key: 'ch:' + l.id, state: l.verdict === 'missing' ? 'missing' : 'hard', sort: l.verdict === 'missing' ? 2 : 0, node: <Row dot={l.verdict !== 'missing' ? 'rose' : null} title={l.name} tags={<><Tag>{l.building}</Tag><Tag tone={l.verdict === 'missing' ? 'amber' : 'rose'}>{l.verdict === 'delisted' ? 'page removed' : l.verdict === 'missing' ? 'not connected' : l.verdict}</Tag>{l.missingMajor.map(k => <Tag key={k}>not on {k.replace(/airbnb2?/i, 'Airbnb').replace(/bookingcom/i, 'Booking.com')}</Tag>)}</>} meta={Object.entries(l.cells || {}).filter(([, c]) => c.verdict !== 'live').map(([k, c]) => k + ': ' + (c.status || c.verdict)).join(' · ')} actions={<Link href="/channels" prefetch={false} className={GHOST}>Channels</Link>} /> })
     if (open === 'unpaid') for (const r of unpaidRows) out.push({ key: 'unpaid:' + r.id, state: r.inGrace && r.tracking.status === 'open' ? 'grace' : r.tracking.status, sort: (r.bucket === 'in_house' ? 0 : r.bucket === 'today' ? 1 : 2) + (r.tracking.status === 'open' ? 0 : 0.5), node: <UnpaidRow r={r} today={unpaidQ.data?.today || d.today} canEdit={!!unpaidQ.data?.canEdit} onPatch={onUnpaidPatch} simple /> })
     if (open === 'recovery' && rc) for (const r of rc.rows.filter(x => x.today)) out.push({ key: r.kind + r.id, state: r.done ? 'done' : 'open', sort: r.done ? 9 : r.today ? 0 : 2, node: <DayCallRowView r={r} canLog={can.calls || !!calls?.canEdit} callers={calls?.callers || []} onChanged={changed} /> })
     return out.sort((a, b) => a.sort - b.sort)
@@ -575,13 +616,20 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
     : tile.segs.filter(s => s.n > 0)
   const pick = filter !== 'all' && chips.some(c => c.filter === filter) ? filter : 'all'
   const shown = pick === 'all' ? items : items.filter(i => i.state === pick)
+  // SPEED (Jon, 2026-11-20): the open list sits in a 520px scroller, so about ten rows are ever in
+  // view — but all of them were mounted (78 cleans today, each with its Assign · Done · Nudge ·
+  // Comments strip: a few thousand of the page's ~5,800 DOM nodes). The first 24 mount; the rest
+  // mount as the list is scrolled. Same rows, same order, no "show more" to press.
+  const [listLimit, setListLimit] = useState(LIST_PAGE)
+  useEffect(() => { setListLimit(LIST_PAGE) }, [open, pick])
+  const onListScroll = (e: UIEvent<HTMLDivElement>) => { const el = e.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 480) setListLimit(l => (l < shown.length ? l + LIST_PAGE : l)) }
   const nudgeIds = shown.filter(i => i.taskId && i.who && i.state !== 'done').map(i => i.taskId as string)
   const nudgePeople = new Set(shown.filter(i => i.taskId && i.who && i.state !== 'done').map(i => i.who)).size
   const toggle = (k: Key) => {
     // The Unpaid tile points at the list already on the page (under the checklist) rather than opening a second copy.
     setOpen(k); setFilter('all')
   }
-  const headline = tile ? (tile.key === 'team' ? teamRead.length + ' field team · ' + shCount('on') + ' on shift · ' + shCount('out') + ' clocked out · ' + tmCount('at') + ' in a unit' : tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? items.filter(i => i.state === 'done').length + ' of ' + items.length + ' guests ready' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done') : ''
+  const headline = !tile ? '' : tile.state ? (tile.state === 'loading' ? 'reading…' : 'could not read') : (tile.key === 'lostfound' ? tile.needed + ' open' : tile.key === 'team' ? teamRead.length + ' field team · ' + shCount('on') + ' on shift · ' + shCount('out') + ' clocked out · ' + tmCount('at') + ' in a unit' : tile.key === 'unpaid' ? money(uOwed) + ' owed · ' + tile.done + ' of ' + tile.needed + ' contacted' : tile.key === 'glitches' || tile.key === 'claims' ? tile.needed + ' open' : tile.key === 'reviews' ? tile.done + ' of ' + tile.needed + ' responded' : tile.key === 'blocked' ? tile.needed + ' blocks in 30 days' : tile.key === 'channels' ? chHard + ' broken · ' + chMissing + ' not on every channel' : tile.key === 'checks' ? items.filter(i => i.state === 'done').length + ' of ' + items.length + ' guests ready' : tile.key === 'notices' ? tile.done + ' of ' + tile.needed + ' sent' : tile.done + ' of ' + tile.needed + ' done')
 
   // ── OPS HEALTH (Jon, 2026-10-05: "a scorecard for the today board, like health of our operations").
   // One number from the same counts as the tiles — lib/ops-health — so it can never say something a
@@ -659,22 +707,28 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
       {view === 'plan' ? (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4 mb-2">
           {plan.map(sec => {
-            const live = sec.lines.filter(l => l.n > 0).length
+            // NOT LOADED IS NOT DONE (2026-11-20): a line whose read has not landed (or failed) shows a
+            // dash — it used to show a green tick and "nothing blocked" until the number arrived.
+            const pending = (l: PlanLine) => !!tiles.find(x => x.key === l.key)?.state
+            const live = sec.lines.filter(l => !pending(l) && l.n > 0).length
+            const waiting = sec.lines.some(pending)
             return (
               <div key={sec.title} className={'rounded-2xl border p-3 ' + (sec.quiet ? 'border-line bg-app/40' : 'border-line bg-white')}>
                 <div className="flex items-baseline gap-2 mb-2">
                   <h3 className={'text-[13px] font-bold ' + (sec.quiet ? 'text-muted' : 'text-ink')}>{sec.title}</h3>
                   <span className="text-[11px] text-muted">{sec.hint}</span>
-                  {!sec.quiet ? <span className={'ml-auto text-[11px] font-bold px-1.5 rounded ' + (live ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800')}>{live ? live + ' open' : 'clear'}</span> : null}
+                  {!sec.quiet && (live || !waiting) ? <span className={'ml-auto text-[11px] font-bold px-1.5 rounded ' + (live ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800')}>{live ? live + ' open' : 'clear'}</span> : null}
                 </div>
                 <ul className="space-y-1">
                   {sec.lines.map((l, i) => (
                     <li key={i}>
                       <button onClick={() => openTile(l.key)} className="w-full text-left flex items-start gap-2 rounded-lg px-1.5 py-1 hover:bg-app/60">
-                        {l.n > 0
+                        {pending(l)
+                          ? <span className="shrink-0 min-w-[1.75rem] text-center text-[12px] font-bold text-muted/60">—</span>
+                          : l.n > 0
                           ? <span className={'shrink-0 min-w-[1.75rem] text-center text-[12px] font-bold rounded-md px-1 tabular-nums ' + (sec.quiet ? 'bg-slate-100 text-slate-600' : l.tone === 'rose' ? 'bg-rose-600 text-white' : l.tone === 'amber' ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-700')}>{l.n}</span>
                           : <span className="shrink-0 min-w-[1.75rem] text-center text-emerald-600"><Check size={13} className="inline" /></span>}
-                        <span className={'text-[12.5px] leading-snug ' + (l.n > 0 ? (sec.quiet ? 'text-muted' : 'text-ink') : 'text-muted')}>{l.n > 0 ? l.text : l.done}</span>
+                        <span className={'text-[12.5px] leading-snug ' + (!pending(l) && l.n > 0 ? (sec.quiet ? 'text-muted' : 'text-ink') : 'text-muted')}>{pending(l) || l.n > 0 ? l.text : l.done}</span>
                       </button>
                     </li>
                   ))}
@@ -684,25 +738,16 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
           })}
         </div>
       ) : null}
-      <div id="day-kpis-tiles" className={'space-y-2' + (view === 'plan' ? ' hidden' : '')}>
-        {/* SIX UP FRONT, THEN THE REST — ALL SHOWN (2026-11-12; was under More since 2026-11-10's "15 tiles before the work").
-            The six streams that run the day stay; the others (who's working, recovery calls, notices,
-            guest checks, reviews, lost & found, claims, blocked units, channels) sit under More —
-            same tiles, same lists, and an open one keeps More open. */}
-        {(() => {
-          const tileOf = (x: typeof tiles[number]) => <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} loading={x.loading} big={x.big} noPct={x.key === 'glitches' || x.key === 'claims' || x.key === 'blocked' || x.key === 'team'} />
-          const main = PRIMARY.map(k => tiles.find(x => x.key === k)).filter(Boolean) as typeof tiles
-          const rest = tiles.filter(x => PRIMARY.indexOf(x.key) < 0)
-          // EVERY TILE, ALWAYS (Jon, 2026-11-12: "I want to see all the tabs, not have to open or collapse").
-          // The six that run the day lead; the rest follow in their groups — nothing behind a More.
-          return (
-            <>
-              {/* One grid, 15 tiles — the six that run the day first, then housekeeping, guests and office in that order. */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">{main.concat(GROUPS.flatMap(g => rest.filter(x => g.keys.includes(x.key))), rest.filter(x => !GROUPS.some(g => g.keys.includes(x.key)))).map(tileOf)}</div>
-            </>
-          )
-        })()}
-      </div>
+      {/* EVERY TILE, ALWAYS (Jon, 2026-11-12: "I want to see all the tabs, not have to open or collapse").
+          One grid, 15 tiles, in the order the team acts on them (ORDER, 2026-11-20). In the Today-plan
+          view the grid is not drawn at all (it used to be drawn and hidden). */}
+      {view === 'plan' ? null : (
+        <div id="day-kpis-tiles" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {ORDER.map(k => tiles.find(x => x.key === k)).filter((x): x is typeof tiles[number] => !!x).map(x => (
+            <Tile key={x.key} label={x.label} done={x.done} needed={x.needed} segs={x.segs} sub={x.sub} on={open === x.key} onClick={() => toggle(x.key)} title={x.title} state={x.state} big={x.big} word={x.word} />
+          ))}
+        </div>
+      )}
       {open && tile && (
         <div className="mt-2 rounded-2xl border border-brand-200 bg-brand-50/30 p-2 sm:p-3">
           <div className="flex items-center gap-2 flex-wrap mb-2 px-1">
@@ -722,8 +767,8 @@ export function DayKpis({ d, live, roster, can, onChanged }: {
           </div>
           {open === 'team' && <div className={LIST + ' mb-2'}><TeamWhereStrip rows={fieldRows} /></div>}
           {shown.length === 0
-            ? <p className="px-2 py-3 text-[12.5px] text-muted">{(open === 'welcome' || open === 'recovery') && !calls ? (callsQ.loading ? 'Reading the Calls desk…' : 'Could not read the Calls desk.') : 'Nothing here.'}</p>
-            : <div className={LIST + ' max-h-[520px] overflow-y-auto'}>{shown.map(i => <div key={i.key}>{i.node}</div>)}</div>}
+            ? <p className="px-2 py-3 text-[12.5px] text-muted">{tile.state === 'loading' ? 'Reading…' : tile.state === 'error' ? (tile.sub ? tile.sub[0].toUpperCase() + tile.sub.slice(1) + '.' : 'Could not read this list.') : 'Nothing here.'}</p>
+            : <div className={LIST + ' max-h-[520px] overflow-y-auto'} onScroll={onListScroll}>{shown.slice(0, listLimit).map(i => <div key={i.key}>{i.node}</div>)}</div>}
         </div>
       )}
     </section>

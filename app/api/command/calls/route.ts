@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requireLevel } from '@/lib/access'
+import { atLeast } from '@/lib/features'
 import { ymdET } from '@/lib/team-schedule'
 import { loadCallsDesk, type WelcomeRow, type PostRow } from '@/lib/call-desk'
 
@@ -80,7 +81,10 @@ const rec = (r: WelcomeRow | PostRow) => r.recovery ? { rating: r.recovery.ratin
 export async function GET() {
   const gate = await requireLevel('welcome-calls', 'view')
   if (!gate.ok) return gate.res
-  const canEdit = (await requireLevel('welcome-calls', 'edit')).ok
+  // SPEED (Jon, 2026-11-20): the gate above already resolved this person's levels. Asking it a
+  // second time for 'edit' re-ran the whole sign-in check (session, member row, roles) before the
+  // calls desk read could start — and the answer is this one comparison.
+  const canEdit = atLeast(gate.access.levels['welcome-calls'], 'edit')
   const today = ymdET(new Date())
   try {
     const d = await loadCallsDesk(supabaseAdmin(), today)

@@ -20,6 +20,8 @@ type Row = {
   verdict: string; glitch_id: string | null; alerted: boolean; note: string | null
   /** The stay ended over a week ago and nobody filed it (worked out by the API). */
   stale?: boolean
+  /** Worth a look now: a named issue from the last three days, stay not ended (worked out by the API). */
+  fresh?: boolean
 }
 const fmt = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
 const GHOST = 'inline-flex items-center gap-1 text-[12px] font-semibold px-2.5 py-1 min-h-[36px] rounded-lg border border-line bg-white text-ink hover:border-ink/40 disabled:opacity-50'
@@ -93,12 +95,18 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
   }
 
   const all = rows || []
-  // The same test the board's one-line banner counts with, so "Eve caught N" and this list agree.
   const open_ = (r: Row) => !r.glitch_id && r.verdict !== 'dismissed' && r.severity !== 'none'
+  // CLEAN-UP (Jon, 2026-11-20): "To look at" is the same test the board's one line counts with (the
+  // API's `fresh`: a named issue from the last three days, stay not ended), so the two agree — it
+  // was every unfiled row in 14 days, 244 of them. The older and the vaguer ones are still under
+  // All, and "Dismiss stale" still clears the ones whose stay ended over a week ago.
+  const hasFresh = all.some(r => typeof r.fresh === 'boolean')
+  const look = (r: Row) => open_(r) && (hasFresh ? !!r.fresh : true)
   const nStale = all.filter(r => open_(r) && r.stale).length
-  const shown = all.filter(r => only === 'all' ? true : only === 'security' ? r.severity === 'security' : open_(r))
-  const nSec = all.filter(r => r.severity === 'security').length
-  const nOpen = all.filter(open_).length
+  const shown = all.filter(r => only === 'all' ? true : only === 'security' ? r.severity === 'security' : look(r))
+  // The safety count is what still needs a person, not every safety row ever heard.
+  const nSec = all.filter(r => r.severity === 'security' && open_(r)).length
+  const nOpen = all.filter(look).length
 
   return (
     <div className="rounded-2xl border border-line bg-white p-3 sm:p-4 mb-3">
@@ -106,8 +114,8 @@ export function GuestIssuesDetected({ onFiled, initialOnly }: { onFiled?: () => 
         <span className="text-[13px] font-bold text-ink">What we heard</span>
         <span className="text-[11.5px] text-muted">guest issues picked up from recorded calls and message threads. Each one is a suggestion: file it as a glitch or dismiss it. Nothing is filed on its own; customer care is still flagged</span>
         <span className="grow" />
-        {nSec > 0 && <Pill tone="rose" title="Safety or security — these also go to leadership">{nSec} safety</Pill>}
-        <Pill tone={nOpen ? 'amber' : 'slate'} title="Heard, but no glitch filed — waiting on a person">{nOpen} to look at</Pill>
+        {nSec > 0 && <Pill tone="rose" title="Safety or security, not filed or dismissed yet — these also go to leadership">{nSec} safety</Pill>}
+        <Pill tone={nOpen ? 'amber' : 'slate'} title="A named issue heard in the last three days, no glitch filed, stay not ended — waiting on a person">{nOpen} to look at</Pill>
         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
           {([['all', 'All'], ['open', 'To look at'], ['security', 'Safety']] as const).map(([k, l]) => (
             <button key={k} onClick={() => setOnly(k)} className={'px-2.5 py-1 font-semibold border-l border-line first:border-l-0 ' + (only === k ? 'bg-ink text-white' : 'bg-white text-muted')}>{l}</button>

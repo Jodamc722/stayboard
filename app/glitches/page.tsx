@@ -104,22 +104,24 @@ export default function GlitchesPage() {
   const markets = ['all', 'Miami', 'Broward', 'North', 'Vendor']
   const openCount = all.filter(g => !g.done).length
   const inPlay = sum ? sum.inPlay : 0
-  const boardRefunds = sum ? sum.refunds : 0
   const topCats = sum ? sum.topCats : []
 
   return (
     <Shell>
       {/* The Today-in-Ops tab shows what needs eyes now; this page manages the pattern.
           The title is the sidebar's word (2026-09-28 audit, 08 UX): one name per page. */}
+      {/* CLEAN-UP (Jon, 2026-11-20): one set of numbers. The header said "16 in play" and "$609
+          refunded" directly above a toolbar that said "16 open" and "$609 refunded" again. The board's
+          own line carries the board's numbers (it follows the market, the person and the search);
+          the header keeps only what no tab says for itself — the Breezeway count, on History. */}
       <LeanHead title="Glitches">
-        {!!sum && sum.total > 0 && <Pill tone={inPlay ? 'rose' : 'emerald'} title="Cards on the escalation board that are not closed">{inPlay} in play</Pill>}
-        {data && <Pill title={all.length + ' Breezeway guest-reported tasks on record'}>{openCount} open in Breezeway</Pill>}
-        {boardRefunds > 0 && <Pill tone="emerald" title="Refunds approved across board cards">${Math.round(boardRefunds).toLocaleString()} refunded</Pill>}
+        {data && tab === 'history' && <Pill title={all.length + ' Breezeway guest-reported tasks on record'}>{openCount} open in Breezeway</Pill>}
       </LeanHead>
 
       <LeanTabs value={tab} onChange={setTab}
         tabs={[
-          { key: 'board', label: 'Board', n: inPlay || null },
+          // On the Board the chips under the toolbar already count the cards in play.
+          { key: 'board', label: 'Board', n: tab === 'board' ? null : inPlay || null },
           { key: 'report', label: 'Report' },
           { key: 'history', label: 'History', n: data ? all.length : null },
           { key: 'patterns', label: 'Patterns' },

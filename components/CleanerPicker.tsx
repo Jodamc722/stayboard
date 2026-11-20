@@ -62,6 +62,16 @@ export function rosterMatch<T extends { name: string }>(list: T[], name: string)
   return loose.length === 1 ? loose[0] : undefined
 }
 
+// CLEAN-UP (Jon, 2026-11-20: "some data is noisy and unclean"): Breezeway carries accounts typed as "Opal Works Opal
+// Works" and "Gehron  Regis". On screen only — a name that is one phrase said twice is shown once, and runs of
+// spaces are one space. Nothing that is matched, staged or pushed reads this.
+export function tidyName(n: string): string {
+  const w = String(n || '').trim().split(/\s+/).filter(Boolean)
+  const h = w.length / 2
+  if (w.length >= 2 && w.length % 2 === 0 && w.slice(0, h).join(' ').toLowerCase() === w.slice(h).join(' ').toLowerCase()) return w.slice(0, h).join(' ')
+  return w.join(' ')
+}
+
 export default function CleanerPicker({ people, value, existing, onChange, disabled, placeholder, scheduled }: { people: Person[]; value: Person | null; existing?: string; onChange: (p: Person | null) => void; disabled?: boolean; placeholder?: string; scheduled?: Set<string> }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -93,13 +103,13 @@ export default function CleanerPicker({ people, value, existing, onChange, disab
   // passes a placeholder gets the placeholder.
   if (disabled) return <div className="text-[10px] text-muted italic truncate" title={existing || 'Nothing of ours to assign on this one'}>{existing || placeholder || 'Assign in Breezeway'}</div>
   const label = value ? value.name : (existing || '')
-  const _lp = label ? label.split(', ') : []
+  const _lp = label ? label.split(', ').map(tidyName) : []
   const _sn = (n: string) => { const p = (n || '').trim().split(/\s+/).filter(Boolean); return p.length > 1 ? p[0] + ' ' + p[p.length - 1][0] + '.' : (p[0] || '') }
-  const shortLabel = _lp.length > 1 ? _sn(_lp[0]) + ' +' + (_lp.length - 1) : _sn(label)
+  const shortLabel = _lp.length > 1 ? _sn(_lp[0]) + ' +' + (_lp.length - 1) : _sn(_lp[0] || '')
   const shownAsExisting = !value && !!existing
   return (
     <div className="relative max-w-[240px]" ref={ref}>
-      <button title={label || ''} ref={btnRef} onClick={() => { if (!open) place(); setOpen(o => !o) }} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
+      <button title={_lp.join(', ')} ref={btnRef} onClick={() => { if (!open) place(); setOpen(o => !o) }} className={`w-full inline-flex items-center gap-1 text-[11px] rounded-md border px-1.5 py-1 ${value ? 'border-brand-300 bg-brand-50 text-brand-800 font-semibold' : (shownAsExisting ? 'border-emerald-200 bg-emerald-50 text-emerald-800 font-medium' : 'border-line bg-app text-muted hover:text-ink')}`}>
         <User size={11} className="shrink-0" />
         <span className="truncate flex-1 text-left min-w-0">{shortLabel || (placeholder || 'Assign cleaner…')}</span>
         {value ? <span onClick={e => { e.stopPropagation(); onChange(null) }} className="text-muted hover:text-rose-600 px-0.5">&times;</span> : null}
@@ -119,7 +129,7 @@ export default function CleanerPicker({ people, value, existing, onChange, disab
             )}
             {onToday.map(p => (
               <button key={'on' + p.id} onClick={() => { onChange(p); setOpen(false); setQ('') }} className="w-full text-left text-[12px] px-2.5 py-1.5 rounded hover:bg-app flex items-center justify-between gap-2">
-                <span className="text-ink truncate font-medium">{p.name}</span>{p.region && <span className="text-[10px] text-muted shrink-0">{p.region}</span>}
+                <span className="text-ink truncate font-medium">{tidyName(p.name)}</span>{p.region && <span className="text-[10px] text-muted shrink-0">{p.region}</span>}
               </button>
             ))}
             {onToday.length > 0 && others.length > 0 && (
@@ -127,7 +137,7 @@ export default function CleanerPicker({ people, value, existing, onChange, disab
             )}
             {others.map(p => (
               <button key={p.id} onClick={() => { onChange(p); setOpen(false); setQ('') }} className="w-full text-left text-[12px] px-2.5 py-1.5 rounded hover:bg-app flex items-center justify-between gap-2">
-                <span className="text-ink truncate">{p.name}</span>{p.region && <span className="text-[10px] text-muted shrink-0">{p.region}</span>}
+                <span className="text-ink truncate">{tidyName(p.name)}</span>{p.region && <span className="text-[10px] text-muted shrink-0">{p.region}</span>}
               </button>
             ))}
           </div>

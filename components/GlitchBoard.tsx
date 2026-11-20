@@ -5,7 +5,7 @@ import PolishButton from './PolishButton'
 // Create a glitch by searching the guest name (reservation details auto-attach), push a
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, RefreshCw, Search, X, User2, Trash2, Loader2, Pencil, GraduationCap, Check } from 'lucide-react'
+import { Plus, RefreshCw, Search, X, User2, Trash2, Loader2, Pencil, GraduationCap, Check, SlidersHorizontal } from 'lucide-react'
 import { Pill, Tag, IconBtn } from './lean'
 import { StayPanel } from './StayPanel'
 import { VendorField, VendorName } from './VendorCard'
@@ -45,15 +45,25 @@ type Glitch = {
 const CLOSED_SHOWN = 20
 type ResMatch = { reservationId: string; listingId: string; unit: string; market: string; guestName: string; guestPhone: string | null; guestEmail: string | null; checkIn: string; checkOut: string; channel: string | null; total: number | null; notes: string | null; sentiment: { score?: number; band?: string; dissatisfied?: boolean; topIssue?: string | null; excerpt?: string | null } | null; guestyUrl: string }
 
-function dueState(due: string | null | undefined, closed: boolean): { label: string; cls: string } | null {
-  if (!due) return null
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-  const days = Math.round((new Date(due + 'T12:00:00').getTime() - new Date(today + 'T12:00:00').getTime()) / 86400000)
-  if (closed) return { label: 'due ' + due.slice(5), cls: 'bg-app text-muted border-line' }
-  if (days < 0) return { label: Math.abs(days) + 'd overdue', cls: 'bg-rose-600 text-white border-rose-600' }
-  if (days === 0) return { label: 'due today', cls: 'bg-amber-500 text-white border-amber-500' }
-  if (days === 1) return { label: 'due tomorrow', cls: 'bg-amber-50 text-amber-800 border-amber-300' }
-  return { label: 'due ' + due.slice(5) + ' (' + days + 'd)', cls: 'bg-white text-muted border-line' }
+// ONE CLOCK FOR THE CARD (Jon, 2026-11-20 audit: a card aged "1d" said "2d overdue", "3d" said
+// "4d overdue"). The two were counted differently: the age was whole 24-hour blocks since the card
+// was filed (filed 6 pm Wednesday, read Friday morning = 39 hours = "1d"), the overdue count was
+// calendar days past the due date (due Wednesday, today Friday = 2). A due date is a calendar day,
+// so the calendar is the right ruler: both now count Eastern calendar days, and a card can never be
+// late for longer than it has existed. Under twelve hours old it still reads in hours.
+function dayDiff(from: string, to: string): number {
+  const n = Math.round((Date.parse(to + 'T12:00:00Z') - Date.parse(from + 'T12:00:00Z')) / 86400000)
+  return Number.isFinite(n) ? n : 0
+}
+function cardClock(g: { created_at: string; due_date?: string | null }, closed: boolean): { age: string; days: number; late: number; due: string } {
+  const t = Date.parse(g.created_at)
+  const due = /^\d{4}-\d{2}-\d{2}/.test(String(g.due_date || '')) ? String(g.due_date).slice(0, 10) : ''
+  if (closed || !Number.isFinite(t)) return { age: '', days: 0, late: 0, due }
+  const today = todayET()
+  const days = Math.max(0, dayDiff(etDay(g.created_at), today))
+  const hours = Math.max(1, Math.floor((Date.now() - t) / 3600000))
+  const late = due && due < today ? Math.max(1, Math.min(dayDiff(due, today), Math.max(days, 1))) : 0
+  return { age: days === 0 || hours < 12 ? hours + 'h' : days + 'd', days, late, due }
 }
 
 // ── FOUR LANES, NOT SEVEN (Jon, 2026-09-15: "the way it looks is quite confusing") ─────────────
@@ -196,7 +206,7 @@ export function GlitchBoard() {
   // handed to each card's refund section, which used to fetch it again on every open.
   const [canTrain, setCanTrain] = useState(false)
   const [showTrain, setShowTrain] = useState(false)
-  useEffect(() => { fetch('/api/glitches/training', { cache: 'no-store' }).then(r => r.json()).then(j => setCanTrain(!!j?.canTrain)).catch(() => {}) }, [])
+  useEffect(() => { fetch('/api/glitches/training?can=1', { cache: 'no-store' }).then(r => r.json()).then(j => setCanTrain(!!j?.canTrain)).catch(() => {}) }, [])
   // WHO SIGNS OFF A REFUND OVER THE CAP: full access on Glitches (the server checks the same).
   // Not shown while access is still loading — the hook reports full until it knows.
   const acc = useAccess()
@@ -224,13 +234,29 @@ export function GlitchBoard() {
   const fullSeq = useRef(0)
   const shownId = useRef('')
   const [bldgOf, setBldgOf] = useState<Record<string, string>>({})
+  // CLEAN-UP (Jon, 2026-11-20): property and date range are the filters nobody needs on first view,
+  // so they fold under "Filters" (open by themselves when one is set). WHO and LATE are the two
+  // questions everyone opens the board with — "which are mine, which are late" — so they are a chip
+  // row, one click each.
+  const [showFilters, setShowFilters] = useState(false)
+  const [who, setWho] = useState('')
+  const [lateOnly, setLateOnly] = useState(false)
+  // The Closed lane is folded to a rail until someone opens it (remembered on this browser).
+  const [closedOpen, setClosedOpen] = useState(false)
+  useEffect(() => { try { if (window.localStorage.getItem('lh:glitches:closedOpen') === '1') setClosedOpen(true) } catch { /* no storage: folded */ } }, [])
+  const foldClosed = (v: boolean) => { setClosedOpen(v); try { window.localStorage.setItem('lh:glitches:closedOpen', v ? '1' : '0') } catch { /* cosmetic */ } }
+  // SPEED (Jon, 2026-11-20): the listing → building map only feeds the Property filter, so it is
+  // read when the filters are opened, not on every open of the board.
+  const askedListings = useRef(false)
   useEffect(() => {
+    if (!showFilters || askedListings.current) return
+    askedListings.current = true
     fetch('/api/listings?slim=1', { cache: 'no-store' }).then(r => r.json()).then(j => {
       const m: Record<string, string> = {}
       for (const l of (Array.isArray(j?.results) ? j.results : []) as any[]) if (l?.id && l?.building) m[String(l.id)] = String(l.building)
       setBldgOf(m)
-    }).catch(() => {})
-  }, [])
+    }).catch(() => { askedListings.current = false })
+  }, [showFilters])
   const linked = useRef('')
   useEffect(() => {
     try {
@@ -277,7 +303,12 @@ export function GlitchBoard() {
     } catch (e: any) { setErr(String(e?.message || e)) } finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
-  useEffect(() => { fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {}) }, [])
+  // SPEED (Jon, 2026-11-20): the Breezeway roster is only used inside an open card (assign, push to
+  // Breezeway), so it is read the first time a card opens instead of on every open of the board.
+  useEffect(() => {
+    if (!open || people.length) return
+    fetch('/api/breezeway/people', { cache: 'no-store' }).then(r => r.json()).then(j => setPeople(Array.isArray(j.people) ? j.people : [])).catch(() => {})
+  }, [open, people.length])
 
   const act = async (id: string, body: Record<string, any>, confirmMsg?: string) => {
     if (confirmMsg && !window.confirm(confirmMsg)) return
@@ -307,15 +338,34 @@ export function GlitchBoard() {
   const propOf = (g: Glitch) => (g.listing_id && bldgOf[g.listing_id]) || String(g.unit || '').trim().split(/[\s\-–#/]+/)[0] || ''
   const props = useMemo(() => Array.from(new Set(glitches.map(propOf).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [glitches, bldgOf])
   const dayOf = (g: Glitch) => dateBy === 'incident' ? String(g.incident_date || '').slice(0, 10) : etDay(g.created_at)
-  const rows = (market === 'all' ? glitches : glitches.filter(g => g.market === market))
+  const baseRows = (market === 'all' ? glitches : glitches.filter(g => g.market === market))
     .filter(g => !needle || [g.unit, g.overview, g.guest_name, g.guest_email, g.guest_phone, g.reservation_id, g.reported_by, g.category, g.assignee].some(v => String(v || '').toLowerCase().indexOf(needle) >= 0))
     .filter(g => !prop || propOf(g) === prop)
     .filter(g => { if (!dFrom && !dTo) return true; const d = dayOf(g); if (!d) return false; return (!dFrom || d >= dFrom) && (!dTo || d <= dTo) })
   const filtering = !!(needle || prop || dFrom || dTo)
   const markets = ['all', 'Miami', 'Broward', 'North', 'Vendor']
+  // WHO HOLDS WHAT, AND WHAT IS LATE — counted over the cards in play that the filters above leave,
+  // so a chip's number is the number of cards it shows. Names are matched ignoring case and doubled
+  // spaces (40 cards carry "Gehron  Regis" with two).
+  const inPlay = (g: Glitch) => laneOf(g.status).key !== 'closed'
+  const ownerOf = (g: Glitch) => String(g.assignee || '').replace(/\s+/g, ' ').trim()
+  const isLate = (g: Glitch) => inPlay(g) && cardClock(g, false).late > 0
+  const ownerBy: Record<string, { name: string; n: number }> = {}
+  for (const g of baseRows) { if (!inPlay(g)) continue; const nm = ownerOf(g) || 'Unassigned'; const k = nm.toLowerCase(); (ownerBy[k] = ownerBy[k] || { name: nm, n: 0 }).n++ }
+  const owners = Object.keys(ownerBy).map(k => ({ key: k, ...ownerBy[k] })).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name))
+  const rows = baseRows
+    .filter(g => !who || (ownerOf(g) || 'Unassigned').toLowerCase() === who)
+    .filter(g => !lateOnly || isLate(g))
+  const nLate = baseRows.filter(g => (!who || (ownerOf(g) || 'Unassigned').toLowerCase() === who) && isLate(g)).length
+  // A chip that no longer matches anyone (the last card was reassigned) lets go by itself.
+  const whoGone = !!who && loaded && !loading && !owners.some(o => o.key === who)
+  useEffect(() => { if (whoGone) setWho('') }, [whoGone])
+  const lateGone = lateOnly && loaded && !loading && nLate === 0
+  useEffect(() => { if (lateGone) setLateOnly(false) }, [lateGone])
+  // The Manager review lane IS the list of closes to approve (2026-11-20: the strip above the board
+  // repeated the same three cards), so this keeps only what has no lane of its own — refunds over the cap.
   const toApprove = {
-    refunds: rows.filter(g => !!g.refund_needs_approval && laneOf(g.status).key !== 'closed'),
-    closes: rows.filter(g => String(g.status) === 'manager_review'),
+    refunds: rows.filter(g => !!g.refund_needs_approval && inPlay(g)),
   }
   // THE SAME ISSUE FILED TWICE: open cards on one reservation with one category. There is no merge
   // for glitches, so the card says so and a person keeps one.
@@ -415,26 +465,34 @@ export function GlitchBoard() {
           <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)} title="Search — press / to jump here" placeholder="Guest, unit, reservation…"
             className="text-[12px] py-1 pl-6 pr-2 rounded-lg border border-line bg-white w-full sm:w-[160px]" />
         </span>
-        <select value={prop} onChange={e => setProp(e.target.value)} title="Property" className={'text-[12px] py-1 pl-2 pr-6 rounded-lg border bg-white max-w-full ' + (prop ? 'border-brand-300 text-brand-800 font-semibold' : 'border-line')}>
-          <option value="">All properties</option>
-          {props.map(p => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <span className={'inline-flex items-center gap-1 flex-wrap max-w-full min-w-0 text-[12px] rounded-lg border bg-white px-1.5 py-0.5 ' + (dFrom || dTo ? 'border-brand-300' : 'border-line')}>
-          <select value={dateBy} onChange={e => setDateBy(e.target.value as any)} title="Which date to filter on" className="text-[12px] bg-transparent pr-1">
-            <option value="reported">Reported</option>
-            <option value="incident">Incident</option>
+        {/* Property and date range fold under one button; it stays lit while either is set. */}
+        <button onClick={() => setShowFilters(v => !v)} aria-pressed={showFilters || !!(prop || dFrom || dTo)} title="Filter by property or by date"
+          className={'inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg border ' + (prop || dFrom || dTo ? 'border-brand-300 bg-brand-50 text-brand-800' : showFilters ? 'border-ink/40 bg-white text-ink' : 'border-line bg-white text-muted hover:text-ink')}>
+          <SlidersHorizontal size={12} /> Filters
+        </button>
+        {showFilters || prop || dFrom || dTo ? (<>
+          <select value={prop} onChange={e => setProp(e.target.value)} title="Property" className={'text-[12px] py-1 pl-2 pr-6 rounded-lg border bg-white max-w-full ' + (prop ? 'border-brand-300 text-brand-800 font-semibold' : 'border-line')}>
+            <option value="">All properties</option>
+            {props.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
-          <input type="date" value={dFrom} onChange={e => { setDFrom(e.target.value); if (!dTo || e.target.value > dTo) setDTo(e.target.value) }} title="From" className="text-[12px] bg-transparent min-w-0 w-[7.25rem] sm:w-auto" />
-          <span className="text-muted">–</span>
-          <input type="date" value={dTo} min={dFrom || undefined} onChange={e => setDTo(e.target.value)} title="To" className="text-[12px] bg-transparent min-w-0 w-[7.25rem] sm:w-auto" />
-        </span>
+          <span className={'inline-flex items-center gap-1 flex-wrap max-w-full min-w-0 text-[12px] rounded-lg border bg-white px-1.5 py-0.5 ' + (dFrom || dTo ? 'border-brand-300' : 'border-line')}>
+            <select value={dateBy} onChange={e => setDateBy(e.target.value as any)} title="Which date to filter on" className="text-[12px] bg-transparent pr-1">
+              <option value="reported">Reported</option>
+              <option value="incident">Incident</option>
+            </select>
+            <input type="date" value={dFrom} onChange={e => { setDFrom(e.target.value); if (!dTo || e.target.value > dTo) setDTo(e.target.value) }} title="From" className="text-[12px] bg-transparent min-w-0 w-[7.25rem] sm:w-auto" />
+            <span className="text-muted">–</span>
+            <input type="date" value={dTo} min={dFrom || undefined} onChange={e => setDTo(e.target.value)} title="To" className="text-[12px] bg-transparent min-w-0 w-[7.25rem] sm:w-auto" />
+          </span>
+        </>) : null}
         {filtering ? (
           <button onClick={() => { setQ(''); setProp(''); setDFrom(''); setDTo('') }}
             className="inline-flex items-center gap-1 text-[12px] font-semibold px-2 py-1 rounded-lg bg-brand-50 text-brand-700 hover:bg-brand-100">
             {rows.length} match{rows.length === 1 ? '' : 'es'} <X size={11} />
           </button>
         ) : null}
-        <GlitchKpis rows={gotAll || filtering ? rows : rows.concat(olderLite.filter(o => market === 'all' || o[0] === market).map(o => ({
+        {/* The older closed cards only stand in for the whole board's numbers — not for one person's or the late ones'. */}
+        <GlitchKpis approver={canApprove} rows={gotAll || filtering || who || lateOnly ? rows : rows.concat(olderLite.filter(o => market === 'all' || o[0] === market).map(o => ({
           status: 'closed', market: o[0], created_at: o[1], closed_at: o[2], closed_at_estimated: !!o[3], refund_approved: o[4], refund_needs_approval: !!o[5],
         } as unknown as Glitch)))} />
         <span className="ml-auto flex items-center gap-1">
@@ -444,6 +502,30 @@ export function GlitchBoard() {
         </span>
       </div>
       {err && <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{err}</div>}
+      {/* WHICH ARE MINE, WHICH ARE LATE (Jon, 2026-11-20): one click each, and every number is the
+          number of cards the chip leaves on the board. */}
+      {owners.length > 0 ? (
+        <div className="flex items-center gap-1 flex-wrap mb-3 text-[12px]">
+          {(() => {
+            const chip = (on: boolean) => 'px-2 py-1 rounded-lg border font-semibold whitespace-nowrap ' + (on ? 'bg-ink text-white border-ink' : 'bg-white text-muted border-line hover:text-ink hover:border-ink/40')
+            const total = owners.reduce((a, o) => a + o.n, 0)
+            return (<>
+              <button onClick={() => setWho('')} aria-pressed={!who} className={chip(!who)}>Everyone <span className="tabular-nums opacity-70">{total}</span></button>
+              {owners.map(o => (
+                <button key={o.key} onClick={() => setWho(who === o.key ? '' : o.key)} aria-pressed={who === o.key} title={'Only the cards ' + (o.key === 'unassigned' ? 'nobody holds' : o.name + ' holds')} className={chip(who === o.key)}>
+                  {o.name === 'Unassigned' || o.name === 'Support' ? o.name : o.name.split(' ')[0]} <span className="tabular-nums opacity-70">{o.n}</span>
+                </button>
+              ))}
+              {nLate > 0 || lateOnly ? (
+                <button onClick={() => setLateOnly(v => !v)} aria-pressed={lateOnly} title="Only the cards past their due date"
+                  className={'ml-1 px-2 py-1 rounded-lg border font-semibold whitespace-nowrap ' + (lateOnly ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-700 border-rose-200 hover:border-rose-400')}>
+                  Overdue <span className="tabular-nums opacity-80">{nLate}</span>
+                </button>
+              ) : null}
+            </>)
+          })()}
+        </div>
+      ) : null}
       {/* WHAT EVE CAUGHT — one line, only when there is something to review; the list opens in a side sheet (Jon, 2026-10-08). */}
       <EveSuggestions onFiled={load} />
       {showTrash && <TrashDrawer kind="glitch" onRestored={load} onClose={() => setShowTrash(false)} />}
@@ -452,8 +534,6 @@ export function GlitchBoard() {
       </Sheet>
       {showNew && <NewGlitch prefill={newPrefill} onDone={() => { setShowNew(false); setNewPrefill(null); load() }} onCancel={() => { setShowNew(false); setNewPrefill(null) }} />}
 
-      {/* FOR MANAGERS: what is waiting on your signature (Jon, 2026-10-02). Cards the team marked
-          complete sit in Guest follow-up with a badge; this row puts them one click away. */}
       {/* THE SAME ISSUE FILED TWICE (2026-11-10): one line per pair, one tap to fold them together. */}
       {dupGroups.length > 0 && !filtering ? (
         <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50/60 px-3 py-2 flex items-center gap-2 flex-wrap">
@@ -472,20 +552,15 @@ export function GlitchBoard() {
         </div>
       ) : null}
 
-      {/* REFUNDS FIRST (2026-11-09): a refund over the cap is a guest waiting on money, so for an
-          approver it leads; the close sign-offs follow. Each chip opens the card where the decision is. */}
-      {canApprove && (toApprove.refunds.length > 0 || toApprove.closes.length > 0) ? (
-        <div className="mb-3 rounded-2xl border border-violet-200 bg-violet-50/60 px-3 py-2 flex items-center gap-2 flex-wrap">
-          {toApprove.refunds.length > 0 ? <span className="text-[12px] font-bold text-violet-900">{toApprove.refunds.length} refund{toApprove.refunds.length === 1 ? '' : 's'} to approve</span> : null}
+      {/* FOR MANAGERS (Jon, 2026-10-02): a refund over the cap is a guest waiting on money; each chip
+          opens the card where the decision is. The closes waiting on a manager are the Manager review
+          lane itself, so they are not listed a second time here (2026-11-20). */}
+      {canApprove && toApprove.refunds.length > 0 ? (
+        <div className="mb-3 rounded-2xl border border-amber-200 bg-amber-50/60 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <span className="text-[12px] font-bold text-amber-900">{toApprove.refunds.length} refund{toApprove.refunds.length === 1 ? '' : 's'} to approve</span>
           {toApprove.refunds.slice(0, 8).map(g => (
-            <button key={'r' + g.id} onClick={() => { setRefundFor(g.id); setOpen(g.id) }} title="Open the card on its refund" className="text-[12px] font-semibold px-2.5 min-h-[36px] sm:min-h-[28px] rounded-lg bg-violet-600 border border-violet-600 text-white hover:bg-violet-700">
+            <button key={'r' + g.id} onClick={() => { setRefundFor(g.id); setOpen(g.id) }} title="Open the card on its refund" className="text-[12px] font-semibold px-2.5 min-h-[36px] sm:min-h-[28px] rounded-lg bg-white border border-amber-300 text-amber-900 hover:border-amber-500">
               {g.unit || 'No unit'}{g.guest_name ? ' · ' + g.guest_name.split(' ')[0] : ''}
-            </button>
-          ))}
-          {toApprove.closes.length > 0 ? <span className="text-[12px] font-bold text-violet-900">{toApprove.closes.length} close{toApprove.closes.length === 1 ? '' : 's'} to approve</span> : null}
-          {toApprove.closes.slice(0, 8).map(g => (
-            <button key={g.id} onClick={() => setOpen(g.id)} className="text-[12px] font-semibold px-2.5 min-h-[36px] sm:min-h-[28px] rounded-lg bg-white border border-violet-200 text-violet-900 hover:border-violet-400">
-              {g.unit || 'No unit'}{g.assignee ? ' · ' + g.assignee.split(' ')[0] : ''}
             </button>
           ))}
         </div>
@@ -498,7 +573,14 @@ export function GlitchBoard() {
           even the unit number is now hidden … make the screen horizontally scrollable"). Every lane
           keeps a full card width whatever the count of lanes; the board scrolls across and snaps a
           lane at a time on a phone. */}
-      <div className="flex gap-3 overflow-x-auto pb-3 -mx-1 px-1 snap-x snap-mandatory items-start" style={{ scrollbarGutter: 'stable' }}>
+      {/* THE WORKING LANES FIT ONE SCREEN (Jon, 2026-11-20 audit: at 1530px "Open 0" took a quarter of
+          the board and Manager review was cut off). A lane with nothing in it folds to a slim rail —
+          still a drop target — and so does Closed until someone opens it, because finished work is
+          not what the board is opened for. The lanes that have cards share the width that is left
+          (never under 220px; the unit name wraps on the card instead of cutting off, which is what
+          the fixed 300px lane was there to protect), so five of them sit side by side on a laptop.
+          A search or a filter opens Closed by itself, so a match there is never hidden. */}
+      <div className="flex gap-2.5 overflow-x-auto pb-3 -mx-1 px-1 snap-x snap-mandatory items-stretch" style={{ scrollbarGutter: 'stable' }}>
         {LANES.map(lane => {
           const cards = rows.filter(g => laneOf(g.status).key === lane.key)
           // THE CLOSED LANE SHOWS ITS NEWEST 20 (2026-11-09): it held every closed card of the
@@ -506,23 +588,43 @@ export function GlitchBoard() {
           // on the lane is still all of them; a search or filter shows every match.
           const capped = lane.key === 'closed' && !allClosed && !filtering && cards.length > CLOSED_SHOWN
           // Closed cards older than two weeks are not sent with the board; the button fetches them.
-          const olderN = lane.key === 'closed' && !gotAll && !filtering ? olderLite.filter(o => market === 'all' || o[0] === market).length : 0
+          // (They carry no assignee or due date, so they are not counted under a person or "Overdue".)
+          const olderN = lane.key === 'closed' && !gotAll && !filtering && !who && !lateOnly ? olderLite.filter(o => market === 'all' || o[0] === market).length : 0
           const older = olderN > 0
           const laneN = cards.length + olderN   // the lane's count is every closed card, sent or not
           const shown = capped ? cards.slice(0, CLOSED_SHOWN) : cards
+          const isClosed = lane.key === 'closed'
+          const folded = isClosed ? !closedOpen && !filtering && !allClosed : laneN === 0
+          const drop = {
+            onDragOver: (e: React.DragEvent) => e.preventDefault(),
+            onDrop: (e: React.DragEvent) => {
+              e.preventDefault()
+              const id = e.dataTransfer.getData('text/plain')
+              if (id) act(id, { action: 'move', status: lane.write })
+            },
+          }
+          if (folded) {
+            return (
+              <div key={lane.key} {...drop} role={isClosed ? 'button' : undefined} tabIndex={isClosed ? 0 : undefined}
+                onClick={isClosed ? () => foldClosed(true) : undefined}
+                onKeyDown={isClosed ? e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); foldClosed(true) } } : undefined}
+                title={isClosed ? 'Closed — ' + laneN + ' card' + (laneN === 1 ? '' : 's') + '. Click to open the lane; drop a card here to close it.' : lane.label + ' — nothing here. Drop a card to move it here.'}
+                className={'rounded-2xl bg-app/70 border border-line w-9 shrink-0 min-h-[140px] flex flex-col items-center gap-2 py-2.5 ' + (isClosed ? 'cursor-pointer hover:border-ink/30' : '')}>
+                <span className={'text-[11px] font-bold tabular-nums ' + (isClosed && laneN ? 'text-muted' : 'text-faint')}>{laneN}</span>
+                <span className="text-[12px] font-bold text-muted whitespace-nowrap [writing-mode:vertical-rl]">{lane.label}</span>
+              </div>
+            )
+          }
           return (
-            <div key={lane.key} className="rounded-2xl bg-app/70 border border-line w-[86vw] sm:w-[300px] shrink-0 snap-start">
+            <div key={lane.key} className="rounded-2xl bg-app/70 border border-line w-[86vw] sm:w-auto sm:flex-1 sm:min-w-[220px] sm:max-w-[380px] shrink-0 snap-start self-start">
               <div className="px-3 py-2 border-b border-line flex items-center gap-2" title={lane.label + ' — ' + lane.hint}>
                 <span className="text-[12px] font-bold text-ink">{lane.label}</span>
-                <span className={'text-[11px] font-bold tabular-nums px-1.5 rounded ' + (laneN ? 'bg-ink text-white' : 'text-faint')}>{laneN}</span>
+                <span className={'text-[11px] font-bold tabular-nums px-1.5 rounded ' + (laneN && !isClosed ? 'bg-ink text-white' : 'text-muted')}>{laneN}</span>
+                {isClosed && !filtering && !allClosed ? (
+                  <button onClick={() => foldClosed(false)} title="Fold the Closed lane away" aria-label="Fold the Closed lane away" className="ml-auto -my-1 p-1 text-muted hover:text-ink"><X size={13} /></button>
+                ) : null}
               </div>
-              <div className="p-1.5 space-y-1.5 min-h-[56px]"
-                onDragOver={e => e.preventDefault()}
-                onDrop={e => {
-                  e.preventDefault()
-                  const id = e.dataTransfer.getData('text/plain')
-                  if (id) act(id, { action: 'move', status: lane.write })
-                }}>
+              <div className="p-1.5 space-y-1.5 min-h-[56px]" {...drop}>
                 {shown.map(g => (
                   <GlitchCard key={g.id} g={g} onOpen={() => setOpen(g.id)} dup={dupN[g.id] || 0} />
                 ))}
@@ -940,7 +1042,7 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
   // not "declined", which is a decision somebody made about the guest.
   const refundRejected = refund === 0 && lastRefundEvent(g)?.action === 'refund_rejected'
   const [showActivity, setShowActivity] = useState(false)
-  const taskLabel = g.task_status === 'completed' ? 'Completed' : g.task_status === 'in_progress' ? 'In progress' : g.task_status ? 'Not started' : ''
+  const taskLabel = g.task_status === 'completed' ? 'Completed' : g.task_status === 'in_progress' ? 'In progress' : g.task_status === 'deleted' ? 'Deleted in Breezeway' : g.task_status ? 'Not started' : ''
   const taskTone = g.task_status === 'completed' ? 'bg-emerald-50 text-emerald-800 ring-emerald-200' : g.task_status === 'in_progress' ? 'bg-sky-50 text-sky-800 ring-sky-200' : 'bg-amber-50 text-amber-800 ring-amber-200'
   const chip = 'text-[11.5px] font-semibold px-2 py-0.5 rounded-md ring-1'
 
@@ -1186,7 +1288,7 @@ function GlitchDetail({ g, people, onClose, onChanged, act, canTrain, canApprove
 // Rows closed before migration 085 have an ESTIMATED closure time (backfilled from updated_at),
 // and they are counted separately rather than silently mixed in — a measurement and a guess should
 // never be added together without saying so.
-function GlitchKpis({ rows }: { rows: Glitch[] }) {
+function GlitchKpis({ rows, approver }: { rows: Glitch[]; approver?: boolean }) {
   const stat = useMemo(() => {
     const hours: number[] = []
     let estimated = 0
@@ -1201,38 +1303,44 @@ function GlitchKpis({ rows }: { rows: Glitch[] }) {
     hours.sort((a, b) => a - b)
     const median = hours.length ? hours[Math.floor(hours.length / 2)] : null
     const open = rows.filter(g => laneOf(g.status).key !== 'closed')
-    const oldest = open.reduce((acc: number, g) => {
-      const d = (Date.now() - Date.parse(g.created_at)) / 86400000
-      return Number.isFinite(d) && d > acc ? d : acc
-    }, 0)
+    // The same calendar-day ruler as the age on each card, so "oldest" is a number a card shows.
+    const oldest = open.reduce((acc: number, g) => Math.max(acc, cardClock(g, false).days), 0)
     const refunds = rows.map(g => Number(g.refund_approved) || 0).filter(n => n > 0)
     return {
       median, measured: hours.length, estimated,
-      open: open.length, oldest: Math.floor(oldest),
+      open: open.length, oldest,
       refundTotal: refunds.reduce((a, b) => a + b, 0),
       refundCount: refunds.length,
-      awaitingApproval: rows.filter(g => (g as any).refund_needs_approval).length,
+      // Only the ones still on the board: a closed card cannot be signed off from here, and the pill
+      // said "5 need approval" while the board offered none to approve (2026-11-20).
+      awaitingApproval: open.filter(g => (g as any).refund_needs_approval).length,
     }
   }, [rows])
 
   const dur = (h: number) => h < 48 ? Math.round(h) + 'h' : Math.round(h / 24) + 'd'
 
   // Pills, not tiles (lean pass). What each number means lives in its hover.
+  // CLEAN-UP (Jon, 2026-11-20): one count, not three. How many are open is already the "Everyone"
+  // chip (and each person's chip) under this line, and the page header no longer repeats these —
+  // so this keeps only what nothing else on the screen says: the oldest, the typical time to close,
+  // the money, and what waits on a signature.
   return (
     <>
-      <Pill tone={stat.open ? 'slate' : 'emerald'}
-        title={stat.open && stat.oldest > 0 ? 'Open now — oldest is ' + stat.oldest + ' day' + (stat.oldest === 1 ? '' : 's') + ' old' : 'Nothing outstanding'}>
-        {stat.open} open{stat.open && stat.oldest > 0 ? ' · ' + stat.oldest + 'd oldest' : ''}
-      </Pill>
+      {stat.open > 0 && stat.oldest > 0 ? (
+        <Pill tone={stat.oldest >= 7 ? 'amber' : 'slate'} title={'The oldest card still open was filed ' + stat.oldest + ' day' + (stat.oldest === 1 ? '' : 's') + ' ago (' + stat.open + ' open)'}>
+          oldest {stat.oldest}d
+        </Pill>
+      ) : null}
       <Pill title={stat.median != null
         ? 'Typical time to close: median of ' + stat.measured + ' closed' + (stat.estimated ? ' · ' + stat.estimated + ' older ones estimated, not counted' : '')
         : (stat.estimated ? stat.estimated + ' closed before we timed them' : 'Nothing closed yet')}>
         {stat.median != null ? dur(stat.median) : '—'} to close
       </Pill>
-      <Pill tone={stat.refundTotal ? 'emerald' : 'slate'} title={stat.refundCount ? 'Refunds given across ' + stat.refundCount + ' issue' + (stat.refundCount === 1 ? '' : 's') : 'No refunds logged'}>
+      <Pill title={stat.refundCount ? 'Refunds given across ' + stat.refundCount + ' issue' + (stat.refundCount === 1 ? '' : 's') : 'No refunds logged'}>
         {stat.refundTotal ? money(stat.refundTotal) || '$0' : '$0'} refunded
       </Pill>
-      {stat.awaitingApproval > 0 && <Pill tone="violet" title="Refunds over the cap, not yet signed off">{stat.awaitingApproval} need approval</Pill>}
+      {/* An approver already has the "refunds to approve" row with the cards to open. */}
+      {stat.awaitingApproval > 0 && !approver && <Pill tone="amber" title="Refunds over the cap on open cards, not yet signed off by a manager">{stat.awaitingApproval} need approval</Pill>}
     </>
   )
 }
@@ -1577,74 +1685,87 @@ function MoneyTab({ g, openRefund, onChanged, canTrain, canApprove }: { g: Glitc
 // has to be read.
 function GlitchCard({ g, onOpen, dup = 0 }: { g: Glitch; onOpen: () => void; dup?: number }) {
   const refund = Number(g.refund_approved) || 0
-  const owedRefund = String(g.status) === 'refund' && !refund
   const incident = g.glitch_type && g.glitch_type !== 'Glitch (Quality Issue)'
-  const closed = String(g.status) === 'closed'
-  const due = dueState(g.due_date, closed)
+  const lane = laneOf(g.status).key
+  const closed = lane === 'closed'
   const urgent = String(g.priority || '').toLowerCase() === 'urgent' && !closed
   const trade = tradeOf(g.category)
   const stay = stayState(g.check_in, g.check_out)
   // DAYS OPEN on the card (Jon, 2026-09-22: "a ticker, days open"). Grey under a day, amber from
-  // one, red from three — the age of the complaint is what the board should make hard to ignore.
-  const ageMs = Date.now() - Date.parse(g.created_at)
-  const ageDays = ageMs / 86400000
-  const age = !closed && Number.isFinite(ageMs) ? (ageDays >= 1 ? Math.floor(ageDays) + 'd' : Math.max(1, Math.floor(ageMs / 3600000)) + 'h') : ''
+  // one, red from three. Counted in Eastern calendar days, the same ruler as the due date (cardClock).
+  const clock = cardClock(g, closed)
 
   // RED MEANS A GUEST IS WAITING OR A DATE HAS PASSED (2026-11-09). The age chip went red on every
   // card three days old, so a quiet card waiting on a vendor part looked the same as a guest sitting
   // in a unit with no A/C. Old-but-nobody-waiting is amber; red is kept for the cards that hurt.
-  const pastDue = !!g.due_date && !closed && String(g.due_date).slice(0, 10) < todayET()
+  const pastDue = clock.late > 0
   const waiting = stay.now || pastDue || String(g.status) === 'guest_followup'
-  const taskTag = g.breezeway_task_id
-    ? (g.task_status === 'completed' ? <Tag tone="emerald" title="Breezeway task completed">Task done</Tag>
-      : g.task_status === 'in_progress' ? <Tag tone="sky" title="Breezeway task in progress">Task running</Tag>
-      : <Tag title="Breezeway task not started">Task not started</Tag>)
-    : <Tag tone="amber" title="No Breezeway task filed for the crew yet">No task</Tag>
-  // TWO LINES (lean pass, 2026-09-22): the unit, then the tags. What the guest said, the guest,
-  // market and dates are one click away in the sheet — and in the hover here.
-  const hover = [g.overview ? String(g.overview).slice(0, 200) : '', g.guest_name || '', g.market || '',
-    g.check_in ? stay.label + ' ' + fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out) : ''].filter(Boolean).join('\n')
+  // With the crew = the two lanes where a Breezeway task is still the next step.
+  const withCrew = lane === 'open' || lane === 'ops'
+
+  // CLEAN-UP (Jon, 2026-11-20: "clean, one liners and tags"; the unit read "Arya 1418 Full - 2…"
+  // and the guest "My…" while four coloured pills took the room). Three things changed:
+  //   · the unit has the first line to itself and wraps instead of cutting off;
+  //   · what is merely true — the guest, the trade, in house, the task's state, a refund given —
+  //     is one line of plain text, with the owner at its right end, always in the same place;
+  //   · a coloured tag is only something a person has to do: urgent, overdue, due today, no crew
+  //     task yet, crew done but guest not told, a refund waiting on a signature, a likely duplicate.
+  // Tags that repeated the column heading ("Refund?", "Awaiting manager approval") are gone.
+  const facts: string[] = []
+  if (trade) facts.push(trade.label)
+  if (g.breezeway_task_id && !closed) {
+    if (g.task_status === 'in_progress') facts.push('task running')
+    else if (g.task_status === 'completed') { if (!withCrew) facts.push('task done') }
+    else if (g.task_status !== 'deleted') facts.push('task not started')
+  }
+  if (refund > 0) facts.push(money(refund) + ' refunded')
+  if (clock.due && !closed && !pastDue && clock.due > todayET()) facts.push('due ' + fmtShort(clock.due))
+  const owner = g.assignee ? String(g.assignee).replace(/\s+/g, ' ').trim() : ''
+
+  const tags: React.ReactNode[] = []
+  if (urgent) tags.push(<Tag key="u" tone="roseSolid">Urgent</Tag>)
+  if (incident) tags.push(<Tag key="i" tone="rose">{g.glitch_type}</Tag>)
+  if (pastDue) tags.push(<Tag key="late" tone="rose" title={'Due ' + fmtShort(clock.due) + ' — ' + clock.late + ' day' + (clock.late === 1 ? '' : 's') + ' ago'}>{clock.late < clock.days ? clock.late + 'd overdue' : 'Overdue'}</Tag>)
+  else if (clock.due && !closed && clock.due === todayET()) tags.push(<Tag key="due" tone="amber">Due today</Tag>)
+  if (!closed && withCrew && !g.breezeway_task_id) tags.push(<Tag key="nt" tone="amber" title="No Breezeway task filed for the crew yet">No task</Tag>)
+  if (!closed && g.breezeway_task_id && g.task_status === 'deleted') tags.push(<Tag key="td" tone="amber" title="The Breezeway task for this card was deleted — nobody in the field has it">Task deleted</Tag>)
+  if (withCrew && g.breezeway_task_id && g.task_status === 'completed') tags.push(<Tag key="tdone" tone="amber" title="The crew finished the Breezeway task — tell the guest and move the card to Guest follow-up">Task done · tell guest</Tag>)
+  if (g.refund_needs_approval && !closed) tags.push(<Tag key="ap" tone="amber" title="Refund over the cap, waiting on a manager to sign it off">Refund needs approval</Tag>)
+  if (dup > 1) tags.push(<Tag key="d" tone="amber" title={dup + ' open cards for this stay with the same category — probably the same issue reported twice. Open them, keep one, and close or delete the other.'}>Duplicate ×{dup}</Tag>)
+
+  // What the guest said, the market and the dates are one click away in the sheet — and in the hover here.
+  const hover = [g.unit || '', g.overview ? String(g.overview).slice(0, 200) : '', g.guest_name || '', g.market || '',
+    g.check_in ? stay.label + ' ' + fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out) : '', owner ? 'Assigned to ' + owner : ''].filter(Boolean).join('\n')
 
   return (
     <div draggable onDragStart={e => e.dataTransfer.setData('text/plain', g.id)}
       className={'rounded-xl border bg-white cursor-grab active:cursor-grabbing ' +
         (urgent ? 'border-rose-300' : 'border-line')}>
       <button onClick={onOpen} title={hover} className="w-full text-left px-2.5 py-2 min-w-0">
-        <div className="flex items-center gap-1.5 min-w-0">
-          {/* UNIT · GUEST (Sulaman via Jon, 2026-10-02: "show the guest name in the title as well"). */}
-          <p className="text-[13px] font-semibold text-ink flex-1 min-w-0 flex items-baseline gap-1">
-            {/* A long unit name truncates instead of running under the age and the assignee (audit 2026-11-09). */}
-            <span className="truncate min-w-0 shrink">{g.unit || 'No unit'}</span>
-            {g.guest_name ? <span className="font-medium text-ink/70 truncate min-w-0 shrink-[4] basis-[30%]">· {g.guest_name}</span> : null}
-          </p>
-          {age ? (
-            <span title={'Open for ' + age + (ageDays >= 3 && waiting ? ' — and ' + (stay.now ? 'the guest is still in the unit' : pastDue ? 'it is past its due date' : 'the guest is waiting on a reply') : '')} className={'shrink-0 text-[10.5px] font-bold tabular-nums px-1.5 py-[2px] rounded-md ' +
-              (ageDays >= 3 && waiting ? 'bg-rose-50 text-rose-700' : ageDays >= 1 ? 'bg-amber-50 text-amber-800' : 'bg-app text-muted')}>{age}</span>
+        <div className="flex items-start gap-1.5 min-w-0">
+          <p className="text-[13px] font-semibold text-ink leading-snug flex-1 min-w-0 line-clamp-2 break-words">{g.unit || 'No unit'}</p>
+          {clock.age ? (
+            <span title={'Open for ' + clock.age + (clock.days >= 3 && waiting ? ' — and ' + (stay.now ? 'the guest is still in the unit' : pastDue ? 'it is past its due date' : 'the guest is waiting on a reply') : '')} className={'shrink-0 text-[10.5px] font-bold tabular-nums px-1.5 py-[2px] rounded-md ' +
+              (clock.days >= 3 && waiting ? 'bg-rose-50 text-rose-700' : clock.days >= 1 ? 'bg-amber-50 text-amber-800' : 'bg-app text-muted')}>{clock.age}</span>
           ) : null}
-          {g.assignee ? (
-            <span className="shrink-0 text-[10.5px] font-semibold text-muted inline-flex items-center gap-0.5" title={'Assigned to ' + g.assignee}>
-              <User2 size={10} />{g.assignee.split(' ')[0]}
+        </div>
+        {/* UNIT, THEN GUEST (Sulaman via Jon, 2026-10-02: "show the guest name in the title as well"). */}
+        <div className="flex items-baseline gap-1.5 min-w-0 mt-0.5 text-[11.5px] leading-snug text-muted">
+          <p className="flex-1 min-w-0 line-clamp-2 break-words">
+            {g.guest_name ? <span className="font-medium text-ink/80">{g.guest_name}</span> : null}
+            {stay.now ? <span className="font-medium text-ink/80" title={'Guest in the unit: ' + fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out)}>{g.guest_name ? ' · ' : ''}in house</span> : null}
+            {facts.length ? <span>{g.guest_name || stay.now ? ' · ' : ''}{facts.join(' · ')}</span> : null}
+          </p>
+          {g.vendor_name ? (
+            <VendorName vendorKey={g.vendor_key} name={g.vendor_name} size={10} className="shrink-0 text-[10.5px] font-semibold text-muted max-w-[90px]" />
+          ) : null}
+          {owner ? (
+            <span className="shrink-0 text-[10.5px] font-semibold text-ink/70 inline-flex items-center gap-0.5" title={'Assigned to ' + owner}>
+              <User2 size={10} />{owner.split(' ')[0]}
             </span>
           ) : null}
-          {g.vendor_name ? (
-            <VendorName vendorKey={g.vendor_key} name={g.vendor_name} size={10} className="shrink-0 text-[10.5px] font-semibold text-muted max-w-[110px]" />
-          ) : null}
         </div>
-        {/* WHO DO I SEND, HOW LOUD, CAN I ACT TODAY. Urgent first — it is the only tag that
-            changes the ORDER work gets done in. */}
-        <div className="flex items-center gap-1 flex-wrap mt-1">
-          {urgent ? <Tag tone="roseSolid">Urgent</Tag> : null}
-          {dup > 1 ? <Tag tone="amber" title={dup + ' open cards for this stay with the same category — probably the same issue reported twice. Open them, keep one, and close or delete the other.'}>Possible duplicate ×{dup}</Tag> : null}
-          {incident ? <Tag tone="rose">{g.glitch_type}</Tag> : null}
-          {trade ? <span title={g.category || ''} className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md ring-1 ' + trade.cls}>{trade.label}</span> : null}
-          {stay.now ? <Tag tone="emerald" title={'Guest in the unit: ' + fmtShort(g.check_in) + ' → ' + fmtShort(g.check_out)}>In house</Tag> : null}
-          {taskTag}
-          {refund > 0 ? <Tag tone="emerald" title="Refund given">{money(refund)}</Tag> : null}
-          {owedRefund ? <Tag tone="amber" title="Sitting in refund but no amount logged">Refund?</Tag> : null}
-          {(g as any).refund_needs_approval ? <Tag tone="violet" title="Refund over the cap, waiting on approval">Approval</Tag> : null}
-          {String(g.status) === 'manager_review' ? <Tag tone="violet" title="Marked complete by the team — waiting on a manager to approve the close">Awaiting manager approval</Tag> : null}
-          {due ? <span className={'shrink-0 whitespace-nowrap text-[10.5px] font-semibold leading-none px-1.5 py-[3px] rounded-md border ' + due.cls}>{due.label}</span> : null}
-        </div>
+        {tags.length ? <div className="flex items-center gap-1 flex-wrap mt-1">{tags}</div> : null}
       </button>
     </div>
   )

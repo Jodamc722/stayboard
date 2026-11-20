@@ -8,6 +8,7 @@
 //   POST { action, ... }                see the switch below
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isYmd, addDays } from '@/lib/plate'
 import {
   listLots, lotBundle, lotById, createLot, updateLot, updateSpot, addSpot, buildingsWithoutLot,
@@ -22,6 +23,40 @@ export const maxDuration = 60
 const who = (g: any) => String(g.access.profile?.name || g.access.profile?.full_name || g.access.email || 'someone')
 const lvl = (g: any) => String(g.access.levels['parking'] || (g.access.role === 'admin' ? 'full' : 'off'))
 const bad = (error: string, status = 400) => NextResponse.json({ ok: false, error }, { status })
+
+// CLEAN-UP (Jon, 2026-11-20: "some data is noisy"). A flag is a same-day job: notice, an hour, tow.
+// Nobody closes them afterwards, so the Eden card read "8 flags" for cars last seen 5 to 14 days
+// ago and the tab opened on them every morning. A flag nobody has touched for two days (seen, notice
+// sent or tow email drafted) is OLD: it stays open in the database and on the Flags tab, under its
+// own fold, but it no longer counts as a car to act on. A car that is still there is flagged again
+// by the next lot check (the same-car rule in lib/parking-lots only joins sightings 24 hours apart).
+// Nothing is written here; the rule for what a flag IS has not changed, only what the count shows.
+const FLAG_FRESH_HOURS = 48
+const OPEN_FLAG = ['open', 'notified', 'tow_drafted']
+type Overview = Awaited<ReturnType<typeof lotsOverview>>
+async function currentOverview(today: string, lots: Parameters<typeof lotsOverview>[1]): Promise<{ overview: (Overview[number] & { staleFlags: number })[]; staleFlagIds: string[] }> {
+  const ids = (lots || []).map(l => l.id)
+  const [overview, inc] = await Promise.all([
+    lotsOverview(today, lots),
+    ids.length
+      ? supabaseAdmin().from('parking_incidents').select('id, lot_id, spot_id, seen_at, notice_sent_at, tow_drafted_at').in('lot_id', ids).in('status', OPEN_FLAG).limit(500)
+      : Promise.resolve({ data: [] as any[] }),
+  ])
+  const cutoff = Date.now() - FLAG_FRESH_HOURS * 3600 * 1000
+  const touched = (i: any) => Math.max(...[i.seen_at, i.notice_sent_at, i.tow_drafted_at].map(t => (t ? new Date(t).getTime() : 0)))
+  const open = ((inc as any).data || []) as any[]
+  const stale = open.filter(i => touched(i) < cutoff)
+  const staleIds = new Set(stale.map(i => String(i.id)))
+  const fresh = open.filter(i => !staleIds.has(String(i.id)))
+  return {
+    staleFlagIds: Array.from(staleIds),
+    overview: overview.map(o => {
+      const mine = fresh.filter(i => String(i.lot_id) === o.lot.id)
+      const spots = mine.map(i => (i.spot_id ? String(i.spot_id) : '')).filter(Boolean)
+      return { ...o, flags: mine.length, staleFlags: stale.filter(i => String(i.lot_id) === o.lot.id).length, spots: o.spots.map(s => ({ ...s, flagged: spots.indexOf(s.id) >= 0 })) }
+    }),
+  }
+}
 
 export async function GET(req: NextRequest) {
   const gate = await requireLevel('parking', 'view')
@@ -53,16 +88,29 @@ export async function GET(req: NextRequest) {
     // fourth). `lot=auto` opens the first lot in this same request, so the tab loads in one call.
     const [lots, staff] = await Promise.all([listLots(), getStaffLink()])
     const staffLink = staff ? { code: staff.code, hasPasscode: !!staff.passcode, passcode: can.full ? staff.passcode : null, derived: staff.derived } : null
-    const lot = lotId === 'auto' ? (lots[0] || null) : lotId ? (lots.find(l => l.id === lotId) || await lotById(lotId)) : null
+    // The overview is asked for once and shared: `auto` needs it to choose the lot, everything else
+    // reads it alongside the bundle exactly as before.
+    const overviewP = currentOverview(today, lots)
+    overviewP.catch(() => null)   // an early return below must not leave a rejection unhandled
+    let lot = lotId && lotId !== 'auto' ? (lots.find(l => l.id === lotId) || await lotById(lotId)) : null
+    if (lotId === 'auto') {
+      // WHICH LOT OPENS (Jon, 2026-11-20). It was the first by name — the one lot with nothing in
+      // it, so the tab opened on an empty grid. Now: the lot with a car flagged, then the lot with
+      // the most cars tonight, then the first by name as before.
+      const { overview } = await overviewP
+      const busy = (o: (typeof overview)[number]) => o.spots.filter(s => s.tonight).length
+      const best = overview.slice().sort((a, b) => b.flags - a.flags || busy(b) - busy(a))[0]
+      lot = (best && (best.flags > 0 || busy(best) > 0) ? best.lot : lots[0]) || null
+    }
     if (!lot) {
       if (lotId && lotId !== 'auto') return bad('That lot does not exist.', 404)
-      const overview = await lotsOverview(today, lots)
-      return NextResponse.json({ ok: true, lots, overview, staffLink, can, today, buildings: can.full ? await buildingsWithoutLot(lots) : [] })
+      const { overview, staleFlagIds } = await overviewP
+      return NextResponse.json({ ok: true, lots, overview, staleFlagIds, staffLink, can, today, buildings: can.full ? await buildingsWithoutLot(lots) : [] })
     }
     const from = isYmd(sp.get('from')) ? String(sp.get('from')) : addDays(today, -7)
     const to = isYmd(sp.get('to')) ? String(sp.get('to')) : addDays(today, 60)
-    const [bundle, overview, buildings] = await Promise.all([lotBundle(lot, from, to), lotsOverview(today, lots), can.full ? buildingsWithoutLot(lots) : Promise.resolve([] as string[])])
-    return NextResponse.json({ ok: true, ...bundle, from, to, lots, overview, staffLink, can, buildings })
+    const [bundle, { overview, staleFlagIds }, buildings] = await Promise.all([lotBundle(lot, from, to), overviewP, can.full ? buildingsWithoutLot(lots) : Promise.resolve([] as string[])])
+    return NextResponse.json({ ok: true, ...bundle, from, to, lots, overview, staleFlagIds, staffLink, can, buildings })
   } catch (e: any) { return bad(String(e?.message || e), 500) }
 }
 

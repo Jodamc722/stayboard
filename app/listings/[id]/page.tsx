@@ -75,18 +75,27 @@ function hostReplyFromRaw(raw: any): string | null {
 // Sibling amenities for one building. This used to select `building, amenities` across the WHOLE
 // portfolio (up to 1000 rows) on EVERY unit page view, uncached, to end up using one building's
 // worth. Same 120s cache the Portfolio page already uses, keyed by building.
-const getSiblings = unstable_cache(async (building: string) => {
+//
+// SPEED (Jon, 2026-11-20): keyed by building, that cache still re-read the whole portfolio once per
+// building — 24 buildings, 24 identical 318-row reads every two minutes of browsing. One read now,
+// held as amenities-by-building, and each unit page takes its own building's list out of it.
+const getAmenityIndex = unstable_cache(async () => {
   const sb = supabaseAdmin()
-  const { data } = await sb.from('guesty_listings').select('id, building, amenities').limit(1000) // deliberate cap: one row per listing, ~290
-  const rows = (data ?? []).filter((s: any) => rollupBuilding(s.building) === building)
-  const siblingAmenities: string[] = Array.from(new Set(
-    rows.flatMap((s: any) => (Array.isArray(s.amenities) ? s.amenities : [])).map((a: any) => String(a)).filter(Boolean)
-  ))
-  const catalog: string[] = Array.from(new Set(
-    (data ?? []).flatMap((s: any) => (Array.isArray(s.amenities) ? s.amenities : [])).map((a: any) => String(a)).filter(Boolean)
-  ))
-  return { siblingAmenities, catalog }
-}, ['unit-siblings-v1'], { revalidate: 120 })
+  const { data } = await sb.from('guesty_listings').select('id, building, amenities').limit(1000) // deliberate cap: one row per listing, ~320
+  const sets: Record<string, Set<string>> = {}
+  const all = new Set<string>()
+  for (const s of (data ?? []) as any[]) {
+    const set = (sets[rollupBuilding(s.building)] ||= new Set<string>())
+    for (const a of (Array.isArray(s.amenities) ? s.amenities : [])) { const v = String(a); if (v) { set.add(v); all.add(v) } }
+  }
+  const byBuilding: Record<string, string[]> = {}
+  for (const k of Object.keys(sets)) byBuilding[k] = Array.from(sets[k])
+  return { byBuilding, catalog: Array.from(all) }
+}, ['unit-amenity-index-v1'], { revalidate: 120 })
+async function getSiblings(building: string): Promise<{ siblingAmenities: string[]; catalog: string[] }> {
+  const idx = await getAmenityIndex()
+  return { siblingAmenities: idx.byBuilding[building] || [], catalog: idx.catalog }
+}
 
 export default async function ListingDetailPage({ params }: { params: { id: string } }) {
   const supabase = createClient()
@@ -94,11 +103,37 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   if (!user) redirect('/login')
 
   const sb = supabaseAdmin()
-  const { data: listing } = await sb
-    .from('guesty_listings')
-    .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, beds, max_occupancy, address_full, address_city, address_state, amenities, pictures, tags, raw, last_optimized, photo_score')
-    .eq('id', params.id)
-    .maybeSingle()
+  // SPEED (Jon, 2026-11-20): the listing, its reviews, the open-work count and the booked rate were
+  // read one after another — five waits in a row before anything rendered — though each needs only
+  // the id in the URL. They start together now. Same queries, same results.
+  const [{ data: listing }, { data: revRows }, { data: revAll }, { count: openWorkCount }, bookedMap] = await Promise.all([
+    sb.from('guesty_listings')
+      .select('id, title, nickname, building, unit, room_type, status, bedrooms, bathrooms, beds, max_occupancy, address_full, address_city, address_state, amenities, pictures, tags, raw, last_optimized, photo_score')
+      .eq('id', params.id)
+      .maybeSingle(),
+    // The 40 most recent, with the reply text — what the Reviews tab shows.
+    sb.from('guesty_reviews')
+      .select('id, rating, content, channel, guest_name, created_at, excluded_from_score, raw')
+      .eq('listing_id', params.id)
+      .order('created_at', { ascending: false })
+      .limit(40),
+    // EVERY review's rating, nothing else (two small columns). The average and the count that feed
+    // the Optimize Score were taken from the 40 above, so a unit with 52 reviews read "40 reviews"
+    // here and scored on 40 while /buildings scored the same unit on all 52. Nine active units have
+    // more than 40. One score everywhere means one review count everywhere.
+    sb.from('guesty_reviews')
+      .select('rating, excluded_from_score')
+      .eq('listing_id', params.id)
+      .limit(1000), // deliberate cap: the most-reviewed unit has 52
+    // Open work on this unit — the Ops panel's headline. Cheap count, no rows pulled.
+    sb.from('breezeway_tasks_sync')
+      .select('id', { count: 'exact', head: true })
+      .eq('reference_property_id', params.id)
+      .not('status', 'ilike', '%complete%')
+      .not('status', 'ilike', '%cancel%'),
+    // What copy cannot fix (2026-11-18): rating, thin reviews, a base price far from what nights sell for.
+    bookedNightly(sb, [String(params.id)]).catch(() => new Map()),
+  ])
 
   if (!listing) notFound()
 
@@ -113,6 +148,10 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const dead = DEAD.includes(String(listing.status || '').toLowerCase())
   const buildingName = rollupBuilding(listing.building)
   const streetAddress = (listing as any).address_full || raw?.address?.full || null
+  // CLEAN-UP (Jon, 2026-11-20): the header printed "Miami, FL" and then the street address, which
+  // ends "…, Miami, FL 33130". City and state show on their own only when the address lacks them.
+  const addressHasPlace = !!(streetAddress && listing.address_city && String(streetAddress).toLowerCase().includes(String(listing.address_city).toLowerCase()))
+  const showBuilding = buildingName !== 'Unassigned' && !unitLabel(listing).toLowerCase().includes(buildingName.toLowerCase())
 
   // ONE definition of "optimized" — the column or the raw stamp, nothing inferred. See
   // lastOptimizedOf() for why this used to be three different answers on this page alone.
@@ -124,31 +163,22 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   // before 2026-09-16: the Vrbo lookup missed the platform key, and Booking was absent entirely.
   const otaLinks = otaLinksFrom(raw)
 
-  // Reviews first — they feed the Optimize Score's review signal.
-  const { data: revRows } = await sb
-    .from('guesty_reviews')
-    .select('id, rating, content, channel, guest_name, created_at, excluded_from_score, raw')
-    .eq('listing_id', params.id)
-    .order('created_at', { ascending: false })
-    .limit(40)
   const reviews = (revRows ?? []).map((r: any) => {
     const hostReply = hostReplyFromRaw(r.raw)
     return { ...r, hostReply, has_reply: !!hostReply }
   })
   // Normalize mixed-scale ratings to 0-5 stars before averaging (Booking/Expedia are 0-10).
-  const rated = reviews.filter((r: any) => ratingToStars(r.rating) != null && !r.excluded_from_score)
-  // Open work on this unit — the Ops panel's headline. Cheap count, no rows pulled.
-  const { count: openWorkCount } = await supabaseAdmin()
-    .from('breezeway_tasks_sync')
-    .select('id', { count: 'exact', head: true })
-    .eq('reference_property_id', params.id)
-    .not('status', 'ilike', '%complete%')
-    .not('status', 'ilike', '%cancel%')
+  // Rated over ALL of the unit's reviews (see the read above), not the 40 shown.
+  const allRevs: any[] = (revAll ?? []).length ? (revAll as any[]) : reviews
+  const rated = allRevs.filter((r: any) => ratingToStars(r.rating) != null && !r.excluded_from_score)
+  const reviewTotal = allRevs.length
   const openWork = Number(openWorkCount) || 0
 
   const avgRating = rated.length ? Math.round((rated.reduce((s: number, r: any) => s + (ratingToStars(r.rating) || 0), 0) / rated.length) * 100) / 100 : null
   const awaitingReply = reviews.filter((r: any) => !r.has_reply).length
 
+  // The two reads that need the listing's building run together too.
+  const sistersP = sisterUnits(sb, listing)
   const { siblingAmenities, catalog: amenityCatalog } = await getSiblings(buildingName)
   const curLower = new Set(amenities.map(a => String(a).toLowerCase()))
 
@@ -157,11 +187,7 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
   const parkingFact = buildingGuideFor([listing.building, listing.nickname, listing.title].filter(Boolean).join(' '))?.parking || null
   const res = computeScore(listing, { avgRating, reviewCount: rated.length, isBeach, siblingAmenities, parkingFact })
   const optimizeScore = res.overall
-  // What copy cannot fix (2026-11-18): rating, thin reviews, a base price far from what nights sell for.
-  const [bookedMap, sisters] = await Promise.all([
-    bookedNightly(supabaseAdmin(), [String(listing.id)]).catch(() => new Map()),
-    sisterUnits(supabaseAdmin(), listing),
-  ])
+  const sisters = await sistersP
   const baseN = Number((listing.raw as any)?.prices?.basePrice)
   const strategy = unitStrategy({
     avgRating, reviewCount: rated.length,
@@ -248,7 +274,9 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
         <div className="flex items-start gap-3 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] uppercase tracking-[0.16em] text-muted font-semibold inline-flex items-center gap-1.5">
-              <Building2 size={12} /> {unitLabel(listing)}{listing.building && listing.building !== unitLabel(listing) ? ` \u00b7 ${listing.building}` : ''}
+              {/* CLEAN-UP (Jon, 2026-11-20): "Arya 1704/1 · Arya 1704" under "Back to Arya" named the
+                  building three times. The building is added only when the unit's name does not carry it. */}
+              <Building2 size={12} /> {unitLabel(listing)}{showBuilding ? ` \u00b7 ${buildingName}` : ''}
             </p>
             <div className="flex items-baseline gap-2.5 flex-wrap mt-0.5">
               <h1 className="text-[22px] font-bold text-ink tracking-tight break-words">{name}</h1>
@@ -262,15 +290,15 @@ export default async function ListingDetailPage({ params }: { params: { id: stri
               )}
             </div>
             <div className="text-[12.5px] text-muted mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-              {place && <span>{place}</span>}
-              {(listing.bedrooms != null || listing.bathrooms != null || listing.max_occupancy != null) && <span className="text-line">|</span>}
+              {place && !addressHasPlace && <span>{place}</span>}
+              {place && !addressHasPlace && (listing.bedrooms != null || listing.bathrooms != null || listing.max_occupancy != null) && <span className="text-line">|</span>}
               <span>
                 {[listing.bedrooms != null ? `${listing.bedrooms} bd` : null,
                   listing.bathrooms != null ? `${listing.bathrooms} ba` : null,
                   listing.max_occupancy != null ? `sleeps ${listing.max_occupancy}` : null].filter(Boolean).join(' \u00b7 ')}
               </span>
-              <span className="text-line">|</span><span>{photoCount} photos</span>
-              {avgRating != null && <><span className="text-line">|</span><span>{avgRating}★ · {reviews.length} reviews</span></>}
+              <span className="text-line">|</span><span>{photoCount} {photoCount === 1 ? 'photo' : 'photos'}</span>
+              {avgRating != null && <><span className="text-line">|</span><span title={`${rated.length} rated${reviewTotal !== rated.length ? ` of ${reviewTotal}` : ''}, all time`}>{avgRating}★ · {reviewTotal} {reviewTotal === 1 ? 'review' : 'reviews'}</span></>}
               <span className="text-line">|</span>
               <span className={lastOptimized ? 'text-emerald-700 font-semibold' : 'text-muted'}>
                 {lastOptimized ? `Optimized ${lastOptimized}` : 'Never optimized'}

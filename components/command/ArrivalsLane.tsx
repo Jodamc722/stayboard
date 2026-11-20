@@ -21,7 +21,12 @@ const CH = (s: string) => String(s || '').replace(/airbnb2?/i, 'Airbnb').replace
 const shortUnit = (u: string) => String(u || '').replace(/\s+-\s+.*$/, '')
 
 export function ArrivalsLane() {
-  const { data, loading, refresh } = useCachedFetch<FdData>(URL, { ttl: 120_000 })
+  // SPEED (Jon, 2026-11-20): this lane sits under the tiles, the open list, Needs you and Now, and
+  // its read (~1.9s) used to start with the tiles'. It is asked for 2.5s after the page is up — the
+  // same wait the listing fixes at the bottom already have. On a return visit the device copy paints at once.
+  const [later, setLater] = useState(false)
+  useEffect(() => { const t = setTimeout(() => setLater(true), 2500); return () => clearTimeout(t) }, [])
+  const { data, loading, refresh } = useCachedFetch<FdData>(later ? URL : null, { ttl: 120_000 })
   const reload = () => { invalidateCache(URL); refresh() }
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')

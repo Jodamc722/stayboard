@@ -1,5 +1,6 @@
 // THE BULLETIN BOARD on Today (Jon, 2026-10-06) — replaces the week Scoreboard strip. Rules live in
-// lib/bulletin.ts. GET → { posts (board), haveTo (reminders), canPost, me, reviews?, people? };
+// lib/bulletin.ts. GET → { posts (board), haveTo (reminders), canPost, me };
+// GET ?compose=1 (leaders) → the same plus { reviews, people } for the post form;
 // POST { action, … } → the updated board.
 //   Leaders (admins and the owner) post, edit, pin, delete; anyone signed in reacts, replies and
 //   ticks a reminder done. Leaders also get the last three weeks of 5★ guest reviews to pin, and the
@@ -97,18 +98,27 @@ async function people(): Promise<string[]> {
   } catch { return [] }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const gate = await requireVrUser()
   if (!gate.ok) return gate.res
   const a = gate.access
-  const board = await readBoard()
   const canPost = isLeader(a)
-  const out: any = await view(board, String(a.email || ''), canPost)
-  if (canPost) {
-    const pinned = new Set(board.posts.map(p => p.review?.id).filter(Boolean) as string[])
-    const [reviews, ppl] = await Promise.all([goodReviews(pinned).catch(() => []), people()])
-    out.reviews = reviews; out.people = ppl
-  }
+  // SPEED (Jon, 2026-11-20). Two things made this read slow on every Today open for a leader:
+  //   · the post form's pick-lists — three weeks of 5★ reviews with their full text, then their
+  //     listings, then the staff list — were read on EVERY load, though they are only shown after
+  //     pressing Post. They now come with ?compose=1, which the form asks for when it opens.
+  //   · the staff list waited for the board row, and the reviews for both. What does not depend on
+  //     the board now starts with it.
+  const compose = canPost && !!req.nextUrl.searchParams.get('compose')
+  const peopleP = compose ? people() : null
+  const board = await readBoard()
+  const pinned = new Set(board.posts.map(p => p.review?.id).filter(Boolean) as string[])
+  const [out, reviews, ppl] = await Promise.all([
+    view(board, String(a.email || ''), canPost) as Promise<any>,
+    compose ? goodReviews(pinned).catch(() => []) : null,
+    peopleP,
+  ])
+  if (compose) { out.reviews = reviews; out.people = ppl }
   return NextResponse.json(out)
 }
 
