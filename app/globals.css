@@ -470,3 +470,35 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   .lh-row .lh-quiet { opacity: .4; transition: opacity .12s ease }
   .lh-row:hover .lh-quiet, .lh-row:focus-within .lh-quiet, .lh-row .lh-quiet[aria-pressed="true"] { opacity: 1 }
 }
+
+
+/* ================================================================================================
+   THE GARDEN HOTEL & RESORT — the hotel side wears the hotel's own brand (Jon, 2026-11-20: "make it
+   more garden looking … brand the interface to look like their colors and logos"). Read from
+   thegardenhotelandresort.com: sand paper #E7D8C9, forest green #364936 (their buttons and banner),
+   near-black #141617 text, Playfair Display uppercase headlines, Montserrat body. Shell puts
+   data-business="garden" on its root, so only the hotel's pages change; every page still reads its
+   colors through the same variables.
+   ================================================================================================ */
+[data-business="garden"] {
+  --c-app: 245 238 230;          /* a lighter sand for the page, so white cards still lift */
+  --c-rail: 231 216 201;         /* the site's sand, on the sidebar */
+  --c-ink: 20 22 23;
+  --c-muted: 84 86 78;
+  --c-line: 216 203 187;
+  --c-brand-50: 239 244 238;     /* forest green */
+  --c-brand-100: 224 233 222;
+  --c-brand-200: 197 212 195;
+  --c-brand-300: 158 181 156;
+  --c-brand-400: 113 142 111;
+  --c-brand-500: 79 107 78;
+  --c-brand-600: 54 73 54;       /* #364936 — the site's green */
+  --c-brand-700: 44 60 44;
+  --c-brand-800: 35 48 35;
+  --c-brand-900: 26 36 26;
+  --font-ui: 'Montserrat', 'Geist', system-ui, sans-serif;
+  --font-display: 'Playfair Display', Georgia, serif;
+  font-family: var(--font-ui);
+}
+[data-business="garden"] main h1 { font-family: var(--font-display); font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; font-size: 1.5rem; }
+[data-business="garden"] .gh-display { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.04em; }

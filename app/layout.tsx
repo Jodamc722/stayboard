@@ -59,6 +59,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Instrument+Serif&display=swap" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fraunces:wght@300;400;500&display=swap" />
+        {/* The Garden Hotel & Resort's own faces, for the hotel side (globals.css [data-business="garden"]). */}
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:wght@500;600&display=swap" />
         <style dangerouslySetInnerHTML={{ __html: FONT_VARS }} />
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
