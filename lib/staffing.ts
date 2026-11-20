@@ -115,9 +115,15 @@ export async function staffByName(): Promise<Record<string, StaffRow>> {
 /** Resolve a punch name to a staff record: exact first, then the fuzzy roster match. */
 export function resolveStaff(name: string, index: Record<string, StaffRow>): StaffRow | null {
   const direct = index[String(name || '').toLowerCase()]
-  if (direct) return direct
-  const hit = nameMatchesRoster(String(name || ''), Object.values(index).map(s => s.name))
-  return hit ? index[hit.toLowerCase()] || null : null
+  // ONE PERSON, ONE RECORD (Jon, 2026-11-20). A second spelling of somebody (two spaces, a typo, a
+  // maiden name) is kept as an INACTIVE row so it is never re-created, and it answers for nothing:
+  // the person's live record does. Before this, "Gehron  Regis" resolved to a bare row with no area
+  // or agency while the full "Gehron Regis" record sat beside it.
+  if (direct && direct.active !== false) return direct
+  const live = Object.values(index).filter(s => s.active !== false).map(s => s.name)
+  const hit = nameMatchesRoster(String(name || ''), live)
+  if (hit && index[hit.toLowerCase()]) return index[hit.toLowerCase()]
+  return direct || null
 }
 
 // ---------------------------------------------------------------- fee maths
@@ -164,7 +170,7 @@ const V057_COLUMNS = ['dept', 'dept_source', 'title', 'salaried', 'salary_hourly
 export async function upsertStaff(s: Partial<StaffRow> & { name: string }): Promise<{ ok: boolean; error?: string; migrationPending?: boolean }> {
   try {
     const sb = supabaseAdmin()
-    const row: any = { name: String(s.name).trim(), updated_at: new Date().toISOString() }
+    const row: any = { name: String(s.name).replace(/\s+/g, ' ').trim(), updated_at: new Date().toISOString() }
     if (!row.name) return { ok: false, error: 'name required' }
     if (s.agency !== undefined) row.agency = s.agency ? String(s.agency).trim().toLowerCase() : null
     if (s.role !== undefined) row.role = s.role

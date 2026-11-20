@@ -365,7 +365,9 @@ export function GlitchBoard() {
   // The Manager review lane IS the list of closes to approve (2026-11-20: the strip above the board
   // repeated the same three cards), so this keeps only what has no lane of its own — refunds over the cap.
   const toApprove = {
-    refunds: rows.filter(g => !!g.refund_needs_approval && inPlay(g)),
+    // CLOSED ONES TOO (Jon, 2026-11-20): six refunds on cards closed weeks ago were still waiting on a
+    // sign-off and nothing on the board reached an approver, because a closed card is not in play.
+    refunds: rows.filter(g => !!g.refund_needs_approval && !g.refund_approved_at && (inPlay(g) || /closed/i.test(String(g.status || '')))),
   }
   // THE SAME ISSUE FILED TWICE: open cards on one reservation with one category. There is no merge
   // for glitches, so the card says so and a person keeps one.

@@ -15,7 +15,7 @@ import { getAccess, requireLevel, canSeeMoney } from '@/lib/access'
 import { requireVrUser } from '@/lib/vr-gate'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSetting } from '@/lib/app-settings'
-import { getAgencies, upsertStaff, getStaff, staffSingleSourceReady, type Agency } from '@/lib/staffing'
+import { getAgencies, upsertStaff, getStaff, resolveStaff, staffSingleSourceReady, type Agency } from '@/lib/staffing'
 import { getCrew, DEPTS, DEPT_LABEL, SOURCE_LABEL, type Dept } from '@/lib/crew'
 import { getTimecardsAudited } from '@/lib/homebase-labor'
 import { nameMatchesRoster } from '@/lib/homebase'
@@ -349,6 +349,9 @@ export async function POST(req: NextRequest) {
     const name = names[key]
     // Already stated on the record — the whole point is that this can never override a person.
     if (stated[key]) { skipped.push(name); continue }
+    // ANOTHER SPELLING OF SOMEBODY ALREADY ON THE RECORD is that person, not a new one (2026-11-20:
+    // ten people were on the roster twice, each second row written here from a Breezeway spelling).
+    if (resolveStaff(name, crew.staff)?.dept) { skipped.push(name); continue }
     const r = crew.deptOfDetailed(name, roleOf[key] || null, null)
     // 'unrostered' means nobody has actually said. Writing 'other' for them would turn a visible
     // gap into a stated fact, which is the exact failure this roster exists to prevent.
