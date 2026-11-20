@@ -34,10 +34,29 @@ export function channelName(src: string | null | undefined): string {
   return src as string
 }
 
+/** Nights, revenue and the rates a set of stays puts inside [from, to] — the same night-by-night split everywhere. */
+function windowStats(live: any[], from: string, to: string, rooms: number) {
+  const lo = Date.parse(from + 'T00:00:00Z'), hi = Date.parse(to + 'T00:00:00Z') + 86400000
+  let nights = 0, revenue = 0, bookings = 0
+  for (const r of live) {
+    const units = Math.max(1, (r.room_ids || []).length)
+    const stayN = Math.max(1, num(r.nights) || Math.round((Date.parse(r.check_out) - Date.parse(r.check_in)) / 86400000))
+    const perNight = num(r.total) / (stayN * units)
+    const a = Math.max(lo, Date.parse(r.check_in + 'T00:00:00Z')), b = Math.min(hi, Date.parse(r.check_out + 'T00:00:00Z'))
+    const n = Math.max(0, Math.round((b - a) / 86400000))
+    if (n > 0) { nights += n * units; revenue += perNight * units * n; bookings++ }
+  }
+  const days = Math.round((hi - lo) / 86400000)
+  return { bookings, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * days)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * days)) : null, days }
+}
+
 export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: number } = {}) {
   const db = supabaseAdmin()
   const t0 = todayET()
-  const from = opts.from || addDays(t0, -29), to = opts.to || addDays(t0, 60)
+  // The period (Jon, 2026-11-20: "be able to select dates and time periods"). Default: this month.
+  const from = opts.from || t0.slice(0, 8) + '01', to = opts.to && opts.to >= from ? opts.to : (opts.from ? from : ymd(new Date(Date.UTC(Number(t0.slice(0, 4)), Number(t0.slice(5, 7)), 0))))
+  const spanDays = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1
+  const prevTo = addDays(from, -1), prevFrom = addDays(prevTo, -(spanDays - 1))
   const ahead = Math.min(120, Math.max(7, opts.ahead || 60))
   const fEnd = addDays(t0, ahead - 1)
 
@@ -48,6 +67,16 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
     db.from('garden_payments').select('kind,amount,paid_at').gte('paid_at', new Date(Date.now() - 30 * 86400000).toISOString()),
     db.from('garden_rooms').select('id,name,room_type_id,virtual:raw->isVirtual'),
   ])
+  const [prevQ, bookedQ, payQ, covQ, { getSetting }] = await Promise.all([
+    db.from('garden_reservations').select('status,check_in,check_out,nights,total,room_ids').not('status', 'in', '(canceled,no_show)').lte('check_in', prevTo).gte('check_out', prevFrom).limit(5000),
+    db.from('garden_reservations').select('status,total,source,booked_at').gte('booked_at', from).lt('booked_at', addDays(to, 1)).limit(5000),
+    db.from('garden_payments').select('kind,amount,paid_at').gte('paid_at', from).lt('paid_at', addDays(to, 1)).limit(5000),
+    db.from('garden_reservations').select('check_out').lt('nights', 30).order('check_out').limit(1),
+    import('../app-settings'),
+  ])
+  const histSet = await getSetting<string | null>('garden_history_from', null).catch(() => null)
+  const mirrorFrom = ((covQ.data || []) as any[])[0]?.check_out || null
+  const coverageFrom = [histSet, mirrorFrom].filter(Boolean).sort()[0] || null
   // Botanica units still in Guesty count as rooms, and their stays as bookings (reporting only).
   const [gyRes, gyUnits] = await Promise.all([botanicaGuestyReservations(from, to).catch(() => []), botanicaListings().catch(() => [])])
   // Sellable rooms per type: the physical (non-virtual) rooms Cloudbeds lists under it. The
@@ -67,6 +96,8 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   type Ch = { channel: string; bookings: number; nights: number; revenue: number; leadSum: number; leadN: number; losSum: number; cancelled: number }
   const ch: Record<string, Ch> = {}
   const month: Record<string, { nights: number; revenue: number }> = {}
+  const day: Record<string, { nights: number; revenue: number; arrivals: number; departures: number }> = {}
+  for (let i = 0; i < Math.min(spanDays, 800); i++) day[addDays(from, i)] = { nights: 0, revenue: 0, arrivals: 0, departures: 0 }
   let nights = 0, revenue = 0
   for (const r of live) {
     const units = Math.max(1, (r.room_ids || []).length)
@@ -80,11 +111,13 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
       if (d < lo || d >= hi) continue
       const m = new Date(d).toISOString().slice(0, 7)
       const mm = month[m] = month[m] || { nights: 0, revenue: 0 }
+      const dd = day[new Date(d).toISOString().slice(0, 10)]; if (dd) { dd.nights += units; dd.revenue += perNight * units }
       mm.nights += units; mm.revenue += perNight * units
       c.nights += units; c.revenue += perNight * units
       nights += units; revenue += perNight * units
     }
   }
+  for (const r of live) { if (day[r.check_in]) day[r.check_in].arrivals++; if (day[r.check_out]) day[r.check_out].departures++ }
   for (const r of cancelled) { const k = channelName(r.source); (ch[k] = ch[k] || { channel: k, bookings: 0, nights: 0, revenue: 0, leadSum: 0, leadN: 0, losSum: 0, cancelled: 0 }).cancelled++ }
   const windowDays = Math.round((hi - lo) / 86400000)
   const byChannel = Object.values(ch).sort((a, b) => b.revenue - a.revenue).map(c => ({
@@ -126,7 +159,8 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const channels = ((chans || []) as any[]).map(c => ({ id: c.id, name: c.name, group: channelName(c.name), kind: c.kind, on: c.status !== 'off', bookings: booked.get(channelName(c.name))?.bookings || 0 }))
 
   // ── Money collected, last 30 days ──────────────────────────────────────────────────────────
-  const P = ((pays || []) as any[])
+  void pays
+  const P = ((payQ.data || []) as any[])
   const collected = { charges: Math.round(P.filter(p => p.kind === 'charge' || p.kind === 'deposit').reduce((a, p) => a + num(p.amount), 0)), refunds: Math.round(P.filter(p => p.kind === 'refund').reduce((a, p) => a + num(p.amount), 0)), count: P.length }
 
   // ── Cloudbeds' own today (live) ─────────────────────────────────────────────────────────────
@@ -137,8 +171,11 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
 
   const fwdUnits = forward.reduce((a, d) => a + d.units, 0), fwdSold = forward.reduce((a, d) => a + d.sold, 0)
   return {
-    from, to, ahead, rooms, today, collected,
-    books: { bookings: live.length, cancelled: cancelled.length, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * windowDays)) * 100) : null, revpar: rooms ? Math.round(revenue / (rooms * windowDays)) : null, pickup7: { bookings: pickup7.length, revenue: Math.round(pickup7.reduce((a, r) => a + num(r.total), 0)) } },
+    from, to, ahead, rooms, today, collected, spanDays, coverageFrom,
+    prev: { from: prevFrom, to: prevTo, ...windowStats(((prevQ.data || []) as any[]), prevFrom, prevTo, rooms) },
+    booked: (() => { const B = ((bookedQ.data || []) as any[]); const L = B.filter(b => b.status !== 'canceled' && b.status !== 'no_show'); return { bookings: L.length, revenue: Math.round(L.reduce((a, b) => a + num(b.total), 0)), cancelled: B.length - L.length } })(),
+    byDay: Object.entries(day).sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, nights: v.nights, revenue: Math.round(v.revenue), occupancy: rooms ? Math.round((v.nights / rooms) * 1000) / 10 : null, adr: v.nights ? Math.round(v.revenue / v.nights) : null, arrivals: v.arrivals, departures: v.departures })),
+    books: { bookings: live.length, cancelled: cancelled.length, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * windowDays)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * windowDays)) : null, pickup7: { bookings: pickup7.length, revenue: Math.round(pickup7.reduce((a, r) => a + num(r.total), 0)) } },
     byChannel, byMonth: Object.entries(month).sort(([a], [b]) => a.localeCompare(b)).map(([m, v]) => ({ month: m, nights: v.nights, revenue: Math.round(v.revenue), adr: v.nights ? Math.round(v.revenue / v.nights) : null })),
     forward, forwardSummary: { occupancy: fwdUnits ? Math.round((fwdSold / fwdUnits) * 100) : null, rate: forward.length ? Math.round(forward.filter(d => d.rate).reduce((a, d) => a + (d.rate || 0), 0) / Math.max(1, forward.filter(d => d.rate).length)) : null },
     types, channels,

@@ -227,3 +227,38 @@ export async function ensureCleans(): Promise<number> {
   try { const { pushDayAssignments } = await import('./assign'); await pushDayAssignments() } catch { /* the plan still shows them */ }
   return inserts.length
 }
+
+
+/**
+ * HISTORY ON DEMAND (Jon, 2026-11-20: "select dates and time periods" on Revenue). The mirror holds a
+ * rolling window from the day the hotel was connected; a period before that has to be read from
+ * Cloudbeds once. This pulls the reservations checking in or out inside [from, to] (keep it to about
+ * ten days a call) with their totals, and writes them to the mirror — quietly: no events, no triggers,
+ * no cleans, because nothing about a past stay is news.
+ */
+export async function backfillReservations(from: string, to: string): Promise<{ reservations: number; totals: number }> {
+  if (!cloudbedsConfigured()) throw new Error('Cloudbeds is not connected.')
+  const db = supabaseAdmin()
+  const list = await getReservations({ from, to })
+  const { cbGet } = await import('./cloudbeds')
+  const totals: Record<string, { total: number | null; balance: number | null }> = {}
+  const num = (v: any) => { const x = Number(v); return v == null || v === '' || !Number.isFinite(x) ? null : x }
+  for (let page = 1; page <= 30; page++) {
+    const { data } = await cbGet<any[]>('getReservationsWithRateDetails', { reservationCheckOutFrom: from, reservationCheckOutTo: ymd(new Date(Date.parse(to) + 45 * 86400000)), pageNumber: page, pageSize: 100 })
+    const rows = Array.isArray(data) ? data : []
+    for (const r of rows) if (r?.reservationID) totals[String(r.reservationID)] = { total: num(r.total), balance: num(r.balance) }
+    if (rows.length < 100) break
+  }
+  const rows = list.map(r => ({
+    id: r.id, status: r.status, guest_name: r.guestName, guest_email: r.guestEmail, guest_phone: r.guestPhone, check_in: r.checkIn, check_out: r.checkOut,
+    nights: r.checkIn && r.checkOut ? Math.max(0, Math.round((Date.parse(r.checkOut) - Date.parse(r.checkIn)) / 86400000)) : null,
+    adults: r.adults, children: r.children, room_ids: r.roomIds, room_names: r.roomNames, source: r.source,
+    ...((totals[r.id]?.total ?? r.total) != null ? { total: totals[r.id]?.total ?? r.total } : {}), balance: totals[r.id]?.balance ?? r.balance,
+    booked_at: r.bookedAt || null, modified_at: r.modifiedAt || null, raw: r.raw, synced_at: new Date().toISOString(),
+  }))
+  for (let i = 0; i < rows.length; i += 200) { const { error } = await db.from('garden_reservations').upsert(rows.slice(i, i + 200), { onConflict: 'id' }); if (error) throw new Error(error.message) }
+  const { getSettingFresh, setSetting } = await import('../app-settings')
+  const cur = await getSettingFresh<string | null>('garden_history_from', null).catch(() => null)
+  if (!cur || from < cur) await setSetting('garden_history_from', from, 'backfill')
+  return { reservations: rows.length, totals: Object.keys(totals).length }
+}
