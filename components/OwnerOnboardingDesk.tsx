@@ -518,17 +518,18 @@ function IntroEmail({ rec, onRec }: { rec: Any; onRec?: (r: Any) => void }) {
   const cc = Array.from(new Set([from === 'sales' ? rec.custom.gm.email : '', ...team].filter(Boolean))).join(', ')
   // It leaves from a person's own mailbox, so Lighthouse cannot see it go: opening it in email marks it sent, and it can be set by hand.
   const intro = rec.intro as { at: string; by: string } | null | undefined
-  // SEND IT FROM HERE (Jon, 2026-11-20: "if Nick connects his email he can send emails from the app"): the person the
-  // email is written from can send it from their own connected Gmail without leaving the page.
-  const [me, setMe] = useState<Any>(null); const [sending, setSending] = useState(false); const [ask, setAsk] = useState(false); const [note, setNote] = useState('')
-  useEffect(() => { fetch('/api/me/google', { cache: 'no-store' }).then(r => r.json()).then(d => setMe(d?.google || null)).catch(() => {}) }, [])
-  const persona = from === 'sales' ? rec.custom.sales : rec.custom.gm
-  const mine = !!me?.email && String(persona?.email || '').trim().toLowerCase() === me.email
+  // SEND IT FROM HERE (Jon, 2026-11-20: "If from Nick it should send from Nick's email"): the email leaves from the
+  // connected Gmail of the person it is written from, whoever presses Send.
+  const [boxes, setBoxes] = useState<Any>(null); const [sending, setSending] = useState(false); const [ask, setAsk] = useState(false); const [note, setNote] = useState('')
+  useEffect(() => { fetch(`/api/owner-onboarding/${rec.code}/intro-send`, { cache: 'no-store' }).then(r => r.json()).then(d => setBoxes(d?.ok ? d : null)).catch(() => {}) }, [rec.code, rec.custom.sales.email, rec.custom.gm.email])
+  const box = boxes ? boxes[from] : null
+  const first = String(box?.name || '').split(' ')[0] || (from === 'sales' ? 'sales' : 'the GM')
+  const whose = box?.mine ? 'my' : first + '’s'
   async function sendNow() {
     setSending(true); setNote('')
     const d = await fetch(`/api/owner-onboarding/${rec.code}/intro-send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from }) }).then(r => r.json()).catch(() => null)
     setSending(false); setAsk(false)
-    if (d?.ok) { if (d.record && onRec) onRec(d.record); setNote('Sent from ' + me.email + ' to ' + d.to + (d.cc?.length ? ', copying ' + d.cc.join(', ') : '') + '.') } else setNote(d?.error || 'Not sent. Try again.')
+    if (d?.ok) { if (d.record && onRec) onRec(d.record); setNote('Sent from ' + (d.sentFrom || box?.email) + ' to ' + d.to + (d.cc?.length ? ', copying ' + d.cc.join(', ') : '') + '.') } else setNote(d?.error || 'Not sent. Try again.')
   }
   async function setSent(sent: boolean) {
     const d = await fetch('/api/owner-onboarding/' + rec.code, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intro: { sent, from } }) }).then(r => r.json()).catch(() => null)
@@ -550,15 +551,15 @@ function IntroEmail({ rec, onRec }: { rec: Any; onRec?: (r: Any) => void }) {
       <p className={lab + ' mt-3'}>Message</p>
       <pre className="mt-1 whitespace-pre-wrap rounded-xl bg-app p-3 text-[13px] leading-relaxed text-ink font-sans max-h-[360px] overflow-auto">{e.body}</pre>
       <div className="flex flex-wrap gap-2 mt-3">
-        {mine && me?.connected && me.mail ? (ask
-          ? <span className="inline-flex flex-wrap items-center gap-2 rounded-xl border border-ink px-3 py-1.5 text-[13px] text-ink"><span>Send to <b>{to || 'the owner'}</b> from {me.email}?</span><button type="button" disabled={sending || !to} onClick={sendNow} className="rounded-lg bg-ink px-3 py-1 font-semibold text-white disabled:opacity-50">{sending ? 'Sending…' : 'Yes, send'}</button><button type="button" onClick={() => setAsk(false)} className="font-semibold text-muted">Cancel</button></span>
-          : <button type="button" disabled={!to} onClick={() => setAsk(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50"><Send size={13} /> {intro ? 'Send again from my Gmail' : 'Send from my Gmail'}</button>) : null}
+        {box?.ready ? (ask
+          ? <span className="inline-flex flex-wrap items-center gap-2 rounded-xl border border-ink px-3 py-1.5 text-[13px] text-ink"><span>Send to <b>{to || 'the owner'}</b> from {box.email}?</span><button type="button" disabled={sending || !to} onClick={sendNow} className="rounded-lg bg-ink px-3 py-1 font-semibold text-white disabled:opacity-50">{sending ? 'Sending…' : 'Yes, send'}</button><button type="button" onClick={() => setAsk(false)} className="font-semibold text-muted">Cancel</button></span>
+          : <button type="button" disabled={!to} onClick={() => setAsk(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold disabled:opacity-50"><Send size={13} /> {intro ? 'Send again from ' : 'Send from '}{whose} Gmail</button>) : null}
         <CopyBtn text={e.body} label="Copy message" />
         <a href={`mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(e.subject)}${cc ? '&cc=' + encodeURIComponent(cc) : ''}&body=${encodeURIComponent(e.body)}`} onClick={() => { if (!intro) setSent(true) }} className="inline-flex items-center gap-1.5 rounded-xl bg-ink text-white px-3 py-2 text-[13px] font-semibold"><Mail size={13} /> Open in my email</a>
         <button type="button" onClick={() => setSent(!intro)} className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-white px-3 py-2 text-[13px] font-semibold text-ink">{intro ? 'Mark as not sent' : 'Mark as sent'}</button>
       </div>
       {note ? <p className="text-[12.5px] text-ink mt-2">{note}</p> : null}
-      <p className="text-[11.5px] text-muted mt-2">{mine && me?.connected && me.mail ? 'Send from my Gmail sends it now from your own mailbox and marks it sent. ' : mine ? <><a href="/account" className="underline font-semibold text-ink">Connect your Google account</a> to send this from Lighthouse in one click. </> : ''}This email goes from your own mailbox. Opening it in your email marks it sent; if you copied it instead, press Mark as sent.</p>
+      <p className="text-[11.5px] text-muted mt-2">{box?.ready ? <>Send from {whose} Gmail sends it now from {box.email} and marks it sent. </> : box?.email ? (box.mine ? <><a href="/account" className="underline font-semibold text-ink">Connect your Google account</a> to send this from Lighthouse in one click. </> : <>{first} has not connected Google yet, so it cannot be sent from {box.email} here. They do it on their Account page. </>) : null}Or copy it, or open it in your own email; if you copied it, press Mark as sent.</p>
     </section>
   )
 }

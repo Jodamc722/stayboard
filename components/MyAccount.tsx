@@ -89,7 +89,7 @@ export function MyAccount() {
         </div>
         <p className="text-[12.5px] text-muted">{me ? <>Sign in to Google as <b className="text-ink">{me}</b>. </> : null}Google will list what Lighthouse may do. Leave every box ticked, or email and booking links will not work.</p>
         {g ? <div className="mt-3 divide-y divide-line border-t border-line">
-          <Row ok={!!g.connected && g.mail} icon={<Mail size={14} />} title="Email" yes={'Lighthouse can send email as ' + (g.email || me) + '. Emails you send from the app leave from your mailbox and land in your Sent folder.'} no={g.connected ? 'Connected, but the email permission was left off. Connect again and tick the Gmail boxes.' : 'Not connected yet.'} />
+          <Row ok={!!g.connected && g.mail} icon={<Mail size={14} />} title="Email" yes={'Lighthouse can send email as ' + (g.email || me) + '. Emails written from you in the app (for example an owner’s introductory email) leave from your mailbox, even when a teammate presses Send, and land in your Sent folder.'} no={g.connected ? 'Connected, but the email permission was left off. Connect again and tick the Gmail boxes.' : 'Not connected yet.'} />
           <Row ok={!!g.connected && g.calendar} icon={<CalendarDays size={14} />} title="Calendar" yes="Your booking links offer only the times your Google Calendar shows as free, and bookings go straight onto it." no={g.connected ? 'Connected, but the calendar permission was left off. Connect again and tick the Calendar boxes.' : 'Not connected yet.'} />
         </div> : null}
         {g?.error ? <p className="mt-2 text-[12.5px] text-red-700">{g.error}</p> : null}
