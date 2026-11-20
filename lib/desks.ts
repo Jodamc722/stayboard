@@ -139,7 +139,8 @@ export const DESKS: Desk[] = [
       // administrator"). It is listing work, so it is a Properties row; Settings is the gear.
       { to: '/admin', label: 'Listing desk', hint: 'What needs an administrator today: listings not for sale or not connected, reply owed, optimization and photo work, blocked units — and the review report' },
       { to: '/onboarding', match: ['/onboarding/quick'], label: 'Unit setup', hint: 'New-unit inventory links: rooms, counts, photos and the buy list' },
-      { to: '/buildings/map', label: 'Map', hint: 'Every property on a real map: buildings, their units, and the homes being onboarded', jump: true },
+      // Back on the menu the same morning (Jon, 2026-11-20: "map can't find… should be in properties").
+      { to: '/buildings/map', label: 'Map', hint: 'Every property on a real map: buildings, their units, and the homes being onboarded' },
       { to: '/channels', label: 'Channels', hint: 'Which listing is live on which channel, and what broke', jump: true },
       { to: '/photos', label: 'Photos', hint: 'The photo library: every property and unit photo, full size — view, pick, download as a ZIP', jump: true },
       // Kept on the menu (2026-11-20): Jon asked for Linens as a tab for Roberto (2026-11-05) and it is in use.

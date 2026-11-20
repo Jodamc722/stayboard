@@ -14,9 +14,10 @@ import { ScheduleMultiCal } from '@/components/ScheduleMultiCal'
 type View = 'board' | 'gelog' | 'planner' | 'calendar'
 const TABS: { key: View; label: string; title: string }[] = [
   { key: 'board', label: 'Board', title: 'The day (or week) of cleans: assign, stage and push' },
+  // Second, beside Board, where it was before the rows were merged (Jon, 2026-11-20: "Multi calendar, where is that").
+  { key: 'calendar', label: 'Multi-calendar', title: 'Every unit across the coming weeks: stays, blocks and gaps' },
   { key: 'gelog', label: 'GE Log', title: 'The same day read by person: every task under whoever holds it' },
   { key: 'planner', label: 'Weekly planner', title: 'The Homebase week and the staffing forecast' },
-  { key: 'calendar', label: 'Multi-calendar', title: 'Every unit across the coming weeks: stays, blocks and gaps' },
 ]
 
 export function ScheduleTabs() {
