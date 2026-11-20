@@ -60,8 +60,28 @@ export async function saveBookingTypes(list: any[], by: string | null): Promise<
   if (!types.length) return { ok: false, error: 'Keep at least one booking type.' }
   if (new Set(types.map(t => t.slug)).size !== types.length) return { ok: false, error: 'Two booking types have the same link name.' }
   const cur = await readBooking()
-  const w = await setSetting(BOOKING_KEY, { ...cur, types: types.slice(0, 12) }, by)
+  const w = await setSetting(BOOKING_KEY, { ...cur, types: types.slice(0, 60) }, by)
   return w.ok ? { ok: true, types } : { ok: false, error: w.error }
+}
+
+/**
+ * MY OWN LINKS (Jon, 2026-11-20: "allow users to create own Calendly link… he can also set up his cal links").
+ * Anyone signed in keeps booking links on their own Google Calendar. This replaces the caller's links and touches
+ * nobody else's: the host is always the caller, whatever was sent. A link name already used by someone else is refused.
+ */
+export async function saveMyTypes(list: any[], me: string, by: string | null): Promise<{ ok: boolean; error?: string; types?: BookingType[] }> {
+  const host = String(me || '').trim().toLowerCase()
+  if (!/@/.test(host)) return { ok: false, error: 'Sign in first.' }
+  const mine = (Array.isArray(list) ? list : []).slice(0, 8).map(t => cleanType({ ...t, host })).filter(Boolean) as BookingType[]
+  if (new Set(mine.map(t => t.slug)).size !== mine.length) return { ok: false, error: 'Two of your links have the same link name.' }
+  const cur = await readBooking()
+  const others = cur.types.filter(t => t.host !== host)
+  const clash = mine.find(t => others.some(o => o.slug === t.slug))
+  if (clash) return { ok: false, error: `The link name “${clash.slug}” is already in use. Pick another, for example ${host.split('@')[0].replace(/[^a-z0-9]+/g, '-')}-${clash.slug}.` }
+  const types = [...others, ...mine]
+  if (!types.length) return { ok: false, error: 'Keep at least one booking link in the app.' }
+  const w = await setSetting(BOOKING_KEY, { ...cur, types: types.slice(0, 60) }, by)
+  return w.ok ? { ok: true, types: mine } : { ok: false, error: w.error }
 }
 
 const ymdET = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })

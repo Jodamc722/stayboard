@@ -1,4 +1,5 @@
 'use client'
+import { ConnectNudge } from '@/components/MyAccount'
 import { HandoffFloater } from '@/components/HandoffAlerts'
 import { MentionPopups } from '@/components/MentionPopups'
 import { applyTheme, isThemeKey } from '@/lib/theme'
@@ -542,6 +543,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
               <div className="text-xs text-ink truncate font-medium">{displayName || email?.split('@')[0]}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 {wsLabel && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-brand-50 text-brand-700">{wsLabel}</span>}
+                <a href="/account" className="text-[11px] text-muted hover:text-ink underline-offset-2 hover:underline">My account</a>
                 <button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1">
                   <LogOut size={10} /> Sign out
                 </button>
@@ -582,6 +584,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             <span className="text-[12px] font-semibold uppercase tracking-[0.14em] text-muted">{currentLabel}</span>
           </div>
         )}
+        {/* until a person has connected their Google account (email and calendar): one line, on every page */}
+        {!full && <ConnectNudge />}
         <main className="flex-1 overflow-auto overscroll-contain px-safe">
           {/* pb-24 on a phone: Eve's bubble floats above the bottom bar, and without room to scroll
               past it the last row of every board sits permanently under a 56px circle. */}
@@ -650,9 +654,9 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-ink truncate font-medium">{displayName || email?.split('@')[0]}</div>
-                <button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1 mt-0.5">
+                <div className="flex items-center gap-2 mt-0.5"><a href="/account" className="text-[11px] text-muted hover:text-ink">My account</a><button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1">
                   <LogOut size={10} /> Sign out
-                </button>
+                </button></div>
               </div>
             </div>
           </div>

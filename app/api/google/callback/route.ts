@@ -3,7 +3,7 @@
 // Run supabase/migrations/012_google_tokens.sql once before first use.
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { requireAdmin } from '@/lib/access'
+import { requireUser, isSuperadmin } from '@/lib/access'
 import { setGoogleReadGrant } from '@/lib/google-read'
 
 export const dynamic = 'force-dynamic'
@@ -11,15 +11,16 @@ export const dynamic = 'force-dynamic'
 function page(msg: string): NextResponse {
   const html = '<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:90vh;background:#FAF6EF;color:#102A43">'
     + '<div style="text-align:center"><p style="font-size:18px;font-weight:700">' + msg + '</p>'
-    + '<p style="font-size:13px;color:#6b7c8d">You can close this window and go back to the report.</p></div>'
+    + '<p style="font-size:13px;color:#6b7c8d">You can close this window and go back to Lighthouse.</p></div>'
     + '<script>try { window.close() } catch (e) {}</script></body></html>'
   return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } })
 }
 
 export async function GET(req: NextRequest) {
-  const gate = await requireAdmin('admin')
+  const gate = await requireUser()
   if (!gate.ok) return gate.res
   const user = gate.access.user
+  const isAdmin = isSuperadmin(gate.access.email) || gate.access.role === 'admin'
   const sp = new URL(req.url).searchParams
   const code = sp.get('code')
   if (!code) return page('Google authorization was cancelled.')
@@ -56,6 +57,11 @@ export async function GET(req: NextRequest) {
     }
   } catch { /* fall through to app login */ }
   const storeAs = googleEmail || String(user.email).toLowerCase()
+  // A team member connects their own account only: the Google account has to be the one they sign in to Lighthouse
+  // with. Nothing is stored otherwise. (An admin may connect a shared mailbox.)
+  if (!isAdmin && storeAs !== String(user.email).toLowerCase()) {
+    return page('That was ' + storeAs + '. Connect the Google account you sign in to Lighthouse with (' + String(user.email).toLowerCase() + ') and try again.')
+  }
   // state is "mailbox;scopes=read" (either part optional) — see app/api/google/auth.
   const stateParts = String(sp.get('state') || '').trim().toLowerCase().split(';').filter(Boolean)
   const wanted = stateParts.find(p => /@/.test(p)) || ''

@@ -10,18 +10,23 @@
 // send as the connected mailbox but still cannot READ any mail) + openid email (so the callback
 // knows which Google account actually authorized, instead of guessing).
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/access'
+import { requireUser, isSuperadmin } from '@/lib/access'
 import { GOOGLE_READ_SCOPES } from '@/lib/google-read'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const gate = await requireAdmin('admin')
+  // EVERYONE CONNECTS THEIR OWN (Jon, 2026-11-20: "allow users to… link their Google accounts… Anyone should have
+  // access"). A signed-in person connects the Google account that matches their Lighthouse login, and only that one.
+  // An admin can also connect a shared mailbox (support@) by naming it, as before.
+  const gate = await requireUser()
   if (!gate.ok) return gate.res
+  const isAdmin = isSuperadmin(gate.access.email) || gate.access.role === 'admin'
   const clientId = process.env.GOOGLE_CLIENT_ID
   if (!clientId) return NextResponse.json({ error: 'GOOGLE_CLIENT_ID not set in env' }, { status: 500 })
   const sp = new URL(req.url).searchParams
-  const mailbox = String(sp.get('mailbox') || '').trim().toLowerCase()
+  const own = String(gate.access.email || '').trim().toLowerCase()
+  const mailbox = isAdmin ? String(sp.get('mailbox') || '').trim().toLowerCase() || (sp.get('me') ? own : '') : own
   // ?scopes=read — Eve's learning consent (2026-09-18). Adds gmail/drive/calendar READ-ONLY on top
   // of the usual grant, and marks the state so the callback records it. Owner only: this is the
   // company's mail, and only Jon gets to hand it to her.

@@ -57,7 +57,7 @@ export function BookingLinksAdmin({ canEdit = true }: { canEdit?: boolean }) {
       {down.length ? <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-900"><b>No times can be shown yet.</b> {down.map(([h, e]) => <span key={h}>Lighthouse cannot read {h}’s calendar ({e}). They need to <a className="underline font-semibold" href={'/api/google/auth?mailbox=' + encodeURIComponent(h)}>connect Google again</a> and tick the calendar boxes. </span>)}</p> : null}
       {open ? (
         <div className="mt-3 border-t border-line pt-3 space-y-4">
-          <p className="text-muted">These are the general links. For an owner already in onboarding, copy the link from their page instead: it knows who they are and puts the booking on their timeline. Times are Eastern and skip anything on the host’s Google Calendar.</p>
+          <p className="text-muted">Everyone can keep their own booking links on their own calendar under <a href="/account" className="underline font-semibold text-ink">My account</a>; they show here too. These are the general links. For an owner already in onboarding, copy the link from their page instead: it knows who they are and puts the booking on their timeline. Times are Eastern and skip anything on the host’s Google Calendar.</p>
           {types.map((t, i) => (
             <div key={i} className="rounded-xl border border-line p-3">
               <div className="grid gap-3 sm:grid-cols-4">

@@ -359,7 +359,7 @@ export function isOpenPath(path: string): boolean {
 // /scoreboard (2026-11-06) is only a redirect to /training/scoreboard, the Team scoreboard, which the
 // training key gates like the rest of /training.
 // '/projects' (2026-11-06): a redirect to the Leadership board, which gates itself.
-export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk', '/scoreboard', '/projects']
+export const UNGATED_PAGES = ['/', '/users', '/stay-window', '/welcome/password', '/doorcode', '/front-desk', '/scoreboard', '/projects', '/account']
 
 // ---- Permission LEVELS (2026-08-04). Each DB role (app_roles) assigns one level per feature. ----
 // off  = hidden + middleware-blocked (like the old toggle-off)
