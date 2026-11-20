@@ -42,6 +42,9 @@ export async function logHk(changes: HkChange[], source: 'cloudbeds' | 'lighthou
     if (c.from !== 'clean') lines.push({ date, room_id: c.roomId, room_name: c.roomName, kind, event: 'cleaned', housekeeper: who, at: now, minutes: mins, source, by_email: by })
     if (c.to === 'inspected') lines.push({ date, room_id: c.roomId, room_name: c.roomName, kind, event: 'inspected', housekeeper: who, at: now, minutes: HK_MINUTES.inspect, source, by_email: by })
   }
+  // An inspected room closes its inspection task, so the inspector's count is real.
+  const inspected = done.filter(c => c.to === 'inspected').map(c => c.roomId)
+  if (inspected.length) await db.from('garden_tasks').update({ status: 'done', finished_at: now, finished_by: by || 'cloudbeds', updated_at: now }).eq('date', date).eq('kind', 'inspection').in('room_id', inspected).in('status', ['open', 'in_progress'])
   const { error } = await db.from('garden_hk_log').upsert(lines, { onConflict: 'date,room_id,event', ignoreDuplicates: true })
   if (error && !missing(error)) throw new Error(error.message)
   return error ? 0 : lines.length
@@ -67,6 +70,7 @@ const etHM = (iso: string) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Amer
 export async function hkPerformance(days = 14) {
   const db = supabaseAdmin()
   const t0 = todayET(0), from = todayET(-(Math.min(90, Math.max(1, days)) - 1))
+  const inspQ = await db.from('garden_tasks').select('date,assigned_to,status').eq('kind', 'inspection').neq('status', 'cancelled').gte('date', from).lte('date', t0).limit(10000).then(r => r, () => ({ data: [] as any[] }))
   const [logQ, dayQ, shiftQ, staffQ, { getHotel }] = await Promise.all([
     db.from('garden_hk_log').select('date,room_id,room_name,kind,event,housekeeper,at,minutes,source').gte('date', from).lte('date', t0).order('at').limit(20000),
     db.from('garden_hk_daily').select('date,data').gte('date', from).lte('date', t0).order('date'),
@@ -116,7 +120,7 @@ export async function hkPerformance(days = 14) {
     const lastTurn = L.filter(l => l.date === date && l.kind === 'turn').map(l => l.at).sort().pop() || null
     return {
       date, turns: d?.turn || null, checkouts: d?.checkout || null, stayovers: d?.stayover || null,
-      cleaned: C.length, minutes: C.reduce((a, l) => a + (Number(l.minutes) || 0), 0),
+      cleaned: C.length, inspected: L.filter(l => l.date === date && l.event === 'inspected').length, minutes: C.reduce((a, l) => a + (Number(l.minutes) || 0), 0),
       need, scheduled: (schedBy[date] || new Set()).size, worked: workers.size, unassigned: d?.unassigned ?? null,
       arrivals: d?.arrivals ?? null, arrivalsReady: d?.arrivalsReady ?? null, turnsReadyLogged: Object.keys(readyAt).length, turnsOnTime: onTime,
       lastTurnReady: lastTurn ? etHM(lastTurn) : null, mismatches: d?.mismatches ?? null, inProgress: date === t0,
@@ -140,5 +144,6 @@ export async function hkPerformance(days = 14) {
       unattributed: cleaned.filter(l => !l.housekeeper).length,
     },
     people, days: dayRows,
+    inspections: (() => { const I = ((inspQ.data || []) as any[]); const by: Record<string, { name: string; assigned: number; done: number }> = {}; for (const t of I) { const k = t.assigned_to || 'No inspector named'; const x = by[k] = by[k] || { name: k, assigned: 0, done: 0 }; x.assigned++; if (t.status === 'done') x.done++ } return { logged: L.filter(l => l.event === 'inspected').length, byPerson: Object.values(by).sort((a, b) => b.done - a.done) } })(),
   }
 }

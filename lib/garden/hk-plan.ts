@@ -40,6 +40,8 @@ export type HkRow = {
   out: HkGuest | null; in: HkGuest | null; stay: (HkGuest & { night: number }) | null
   condition: string | null; occupied: boolean | null; dnd: boolean; refused: boolean; comments: string | null
   assignedTo: string | null; assignedFrom: 'lighthouse' | 'cloudbeds' | null; taskIds: string[]; skipWhy: string | null; flag: string | null
+  /** Inspections (Jon, 2026-11-20: "for schedule also have inspections / inspected rooms"): who is to inspect it, and when it was inspected today and by whom. */
+  inspector: string | null; inspectedAt: string | null; inspectedBy: string | null
 }
 
 const s = (v: any) => (v == null ? '' : String(v))
@@ -70,7 +72,7 @@ export async function hkPlan(dateIn?: string) {
     db.from('garden_reservations').select('id,status,guest_name,check_in,check_out,nights,adults,children,room_ids,source').in('status', LIVE).lte('check_in', hi).gte('check_out', lo).limit(5000),
     db.from('garden_tasks').select('id,room_id,kind,status,assigned_to,started_at,finished_at').eq('date', date).in('kind', ['clean', 'stayover', 'inspection']).neq('status', 'cancelled'),
     db.from('garden_room_blocks').select('room_ids,kind,reason,start_date,end_date').lte('start_date', date).then(r => r, () => ({ data: [] as any[] })),
-    db.from('garden_staff').select('id,name,role,active').eq('active', true).eq('role', 'housekeeping').order('name'),
+    db.from('garden_staff').select('id,name,role,active').eq('active', true).in('role', ['housekeeping', 'manager']).order('name'),
     db.from('garden_shifts').select('id,date,staff_id,role,start_time,end_time,source').gte('date', lo).lte('date', hi).eq('role', 'housekeeping').then(r => r, () => ({ data: [] as any[] })),
   ])
   if (roomsQ.error) throw new Error(roomsQ.error.message)
@@ -99,6 +101,9 @@ export async function hkPlan(dateIn?: string) {
   const tasksByRoom: Record<string, any[]> = {}
   for (const t of ((tasksQ.data || []) as any[])) if (t.room_id) (tasksByRoom[s(t.room_id)] = tasksByRoom[s(t.room_id)] || []).push(t)
 
+  // Today's inspections as they were logged (lib/garden/hk-perf): when, and who pressed it here.
+  const inspLog: Record<string, { at: string; by: string | null }> = {}
+  if (live) { try { const { data } = await db.from('garden_hk_log').select('room_id,at,by_email').eq('date', date).eq('event', 'inspected'); for (const l of ((data || []) as any[])) inspLog[s(l.room_id)] = { at: s(l.at), by: l.by_email ? s(l.by_email).split('@')[0] : null } } catch { /* table not there yet */ } }
   const rows: HkRow[] = [], mismatches: { room: string; ours: string; cloudbeds: string }[] = [], notArrived: { room: string; guest: string }[] = []
   for (const rm of rooms) {
     const id = s(rm.id), R = resByRoom[id] || [], T = tasksByRoom[id] || []
@@ -125,7 +130,7 @@ export async function hkPlan(dateIn?: string) {
 
     // Where it stands.
     let state: HkState = 'planned', skipWhy: string | null = null
-    const inProgress = T.some(t => t.status === 'in_progress')
+    const inProgress = T.some(t => t.status === 'in_progress' && t.kind !== 'inspection')
     const noHk = (stay && (tagsBy[s(stay.id)] || []).some(t => t.key === 'nohk')) || false
     if (live) {
       const byCond: HkState = cond === 'inspected' ? 'ready' : cond === 'clean' ? 'inspect' : inProgress ? 'cleaning' : 'todo'
@@ -142,13 +147,14 @@ export async function hkPlan(dateIn?: string) {
       else state = inProgress ? 'cleaning' : 'todo'
     }
     const minutes = state === 'inspect' ? HK_MINUTES.inspect : ['ready', 'done', 'skip'].includes(state) ? 0 : HK_MINUTES[type]
-    const tAssigned = T.find(t => t.assigned_to)?.assigned_to || null
+    const tAssigned = T.find(t => t.assigned_to && t.kind !== 'inspection')?.assigned_to || null
+    const insp = T.find(t => t.kind === 'inspection') || null, il = inspLog[id] || null
     const cbAssigned = live && rm.housekeeper ? s(rm.housekeeper) : null
     rows.push({
       roomId: id, room: s(rm.name), area: areaOf(rm.name), roomType: rm.room_type || null, type, state, minutes,
       out: out ? guest(out) : null, in: inn ? guest(inn) : null, stay: stay && type === 'stayover' ? { ...guest(stay), night: Math.max(1, Math.round((Date.parse(date) - Date.parse(stay.check_in)) / 86400000)) } : null,
       condition: live ? cond : null, occupied: live ? occ : null, dnd: !!rm.dnd, refused: !!rm.refused_service, comments: rm.hk_comments || null,
-      assignedTo: tAssigned || cbAssigned, assignedFrom: tAssigned ? 'lighthouse' : cbAssigned ? 'cloudbeds' : null, taskIds: T.map(t => s(t.id)), skipWhy, flag: blocked ? 'Blocked / out of service in Cloudbeds' : flag,
+      assignedTo: tAssigned || cbAssigned, assignedFrom: tAssigned ? 'lighthouse' : cbAssigned ? 'cloudbeds' : null, taskIds: T.map(t => s(t.id)), inspector: insp?.assigned_to || null, inspectedAt: il?.at || null, inspectedBy: il?.by || (il ? insp?.assigned_to || null : null), skipWhy, flag: blocked ? 'Blocked / out of service in Cloudbeds' : flag,
     })
     if (live && rm.frontdesk_status) {
       const cb = s(rm.frontdesk_status), ours = type === 'turn' ? 'turnover' : type === 'checkout' ? 'check-out' : type === 'stayover' ? 'stayover' : type === 'arrival' ? 'check-in' : 'unused'
@@ -169,7 +175,12 @@ export async function hkPlan(dateIn?: string) {
   const plannedAll = rows.reduce((a, r) => a + (r.type === 'stayover' ? (r.state === 'skip' ? 0 : HK_MINUTES.stayover) : r.type === 'turn' || r.type === 'checkout' ? HK_MINUTES.checkout : 0), 0)
 
   // People: the hotel's housekeepers, who is on the schedule that day, and each one's load.
-  const staff = ((staffQ.data || []) as any[])
+  const allStaff = ((staffQ.data || []) as any[])
+  const staff = allStaff.filter(p => p.role === 'housekeeping')
+  // Anyone on the housekeeping or management roster can be given inspections.
+  const inspBy: Record<string, { todo: number; done: number }> = {}
+  for (const r of rows) if (r.inspector) { const x = inspBy[r.inspector] = inspBy[r.inspector] || { todo: 0, done: 0 }; if (r.state === 'inspect' || (!r.inspectedAt && r.condition !== 'inspected')) x.todo++; else x.done++ }
+  const inspectors = allStaff.map(p => ({ name: s(p.name), role: s(p.role), ...(inspBy[s(p.name)] || { todo: 0, done: 0 }) }))
   const SH = ((shiftsQ.data || []) as any[])
   const shiftOf: Record<string, string> = {}, shiftSrc: Record<string, { source: string; hours: string }> = {}
   for (const x of SH) if (x.date === date) { shiftOf[s(x.staff_id)] = s(x.id); shiftSrc[s(x.staff_id)] = { source: s(x.source) || 'manual', hours: `${s(x.start_time).slice(0, 5)}–${s(x.end_time).slice(0, 5)}` } }
@@ -208,12 +219,12 @@ export async function hkPlan(dateIn?: string) {
     summary: {
       turn: byType('turn'), checkout: byType('checkout'), stayover: byType('stayover'), arrival: byType('arrival'), dirty: byType('dirty'),
       arrivalsReady: n(r => !!r.in && (r.state === 'ready' || r.state === 'done')), arrivals: n(r => !!r.in),
-      toInspect: n(r => r.state === 'inspect'), minutes, working: people.filter(p => p.onShift).length,
+      toInspect: n(r => r.state === 'inspect'), inspected: n(r => r.condition === 'inspected' || !!r.inspectedAt), inspectorless: n(r => r.state === 'inspect' && !r.inspector), minutes, working: people.filter(p => p.onShift).length,
       plannedMinutes: rows.reduce((a, r) => a + (r.type === 'stayover' ? HK_MINUTES.stayover : r.type === 'turn' || r.type === 'checkout' ? HK_MINUTES.checkout : 0), 0),
       need: plannedAll ? Math.max(1, Math.ceil(plannedAll / SHIFT_MINUTES)) : 0,
       unassigned: n(r => open(r) && r.state !== 'inspect' && !r.assignedTo), rooms: rooms.length, outOfService: rooms.filter(r => oos.has(s(r.id)) || r.blocked).length,
     },
-    people, week, homebase, mismatches: live ? mismatches : [], notArrived, syncAt,
+    people, inspectors, week, homebase, mismatches: live ? mismatches : [], notArrived, syncAt,
     syncError: ((sync || []) as any[]).map(x => x.last_error).filter(Boolean)[0] || null,
   }
 }

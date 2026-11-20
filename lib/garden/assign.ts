@@ -142,3 +142,28 @@ export async function autoAssign(date: string, people: string[]): Promise<{ ok: 
   }
   return { ok: true, assigned: free.length, perPerson, warnings, cloudbeds }
 }
+
+
+/**
+ * INSPECTIONS (Jon, 2026-11-20: "for schedule also have inspections / inspected rooms"). Who inspects a
+ * room is kept on the day's inspection task for it (made here if there is none). Cloudbeds has no
+ * inspector on a room — only the Inspected condition, which the board's Inspected button writes — so
+ * this stays in Lighthouse.
+ */
+export async function assignInspector(date: string, roomIds: string[], to: string | null): Promise<{ ok: true; rooms: number }> {
+  const db = supabaseAdmin()
+  const ids = Array.from(new Set(roomIds.map(String))).slice(0, 200)
+  if (!ids.length) return { ok: true, rooms: 0 }
+  const { data: upd, error } = await db.from('garden_tasks').update({ assigned_to: to, updated_at: new Date().toISOString() }).eq('date', date).in('room_id', ids).eq('kind', 'inspection').neq('status', 'cancelled').select('room_id')
+  if (error) throw new Error(error.message)
+  if (to) {
+    const got = new Set(((upd || []) as any[]).map(t => String(t.room_id)))
+    const missing = ids.filter(id => !got.has(id))
+    if (missing.length) {
+      const { data: rm } = await db.from('garden_rooms').select('id,name').in('id', missing)
+      const rows = ((rm || []) as any[]).map(r => ({ room_id: r.id, room_name: r.name, date, kind: 'inspection', assigned_to: to, source: 'lighthouse', note: 'Inspection — from the housekeeping board' }))
+      if (rows.length) { const ins = await db.from('garden_tasks').insert(rows); if (ins.error) throw new Error(ins.error.message) }
+    }
+  }
+  return { ok: true, rooms: ids.length }
+}
