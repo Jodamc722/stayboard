@@ -56,13 +56,16 @@ export function thumbUrl(src: string, w = 640): string {
 }
 
 /** Up to `limit` photographs of our units in `area`, the best for the event's subjects, measured, none a collage. */
-export async function candidatePhotos(moment: string, area: string, limit = 10): Promise<Record<string, PhotoAsset>> {
+export async function candidatePhotos(moment: string, area: string, limit = 10, opts: { perSubject?: number; subjects?: string[] } = {}): Promise<Record<string, PhotoAsset>> {
   const id = IDENTITIES[moment]
   const set = buildingsIn([area as AreaKey])
-  if (!id || !set.length) return {}
+  // EDITOR (Jon, 2026-11-20: "add photos, swap photo"): the picker asks for more per subject, or for one subject.
+  const subjects = opts.subjects && opts.subjects.length ? opts.subjects : id ? id.subjects : []
+  const per = Math.max(1, opts.perSubject || 2)
+  if (!subjects.length || !set.length) return {}
   type Cand = { h: PhotoHit; s: number; subject: string }
   const picked: Cand[] = [], seenUrl = new Set<string>(), seenCore = new Set<string>()
-  for (const subject of id.subjects) {
+  for (const subject of subjects) {
     const subj = SUBJECT[subject] || null
     let hits: PhotoHit[] = []
     try { hits = (await searchPhotos(subject, 600)).hits } catch { hits = [] }
@@ -73,7 +76,7 @@ export async function candidatePhotos(moment: string, area: string, limit = 10):
       .sort((a, b) => b.s - a.s)
     let took = 0
     for (const c of scored) {
-      if (took >= 2) break
+      if (took >= per) break
       const k = core(String(c.h.caption || c.h.an?.subject || ''))
       if (seenUrl.has(c.h.url) || (k && seenCore.has(c.h.building + '|' + k))) continue
       seenUrl.add(c.h.url); if (k) seenCore.add(c.h.building + '|' + k)

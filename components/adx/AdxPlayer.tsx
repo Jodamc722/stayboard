@@ -1,20 +1,30 @@
 'use client'
 // AD STUDIO REBUILD (Jon, 2026-11-20: "Need the same engine that you use here to build them. Rebuild it completely.").
 //
-// A PIECE, OPEN. The canvas is drawn by the same player that exports it, so the preview is the file. Jon: "everything
-// editable afterwards" — click any line of words on the picture (or use the Words list beside it) and type: the piece
-// re-renders as you go and the measured audit runs again (does it still fit, is it still readable, is anything outside
-// the safe area). Export is frame by frame to MP4 (with or without the music) and PNG for a still; the studio says
-// which way the file was made. No drop-down menus. The layer editor, the voice and the reflows are later phases —
-// their seams are the document itself.
+// A PIECE, OPEN. The canvas is drawn by the same player that exports it, so the preview is the file.
+//
+// THE EDITOR (Jon, 2026-11-20: "need to be able to change themes, songs, length of videos or scenes, transitions etc.
+// Make it super interactive and easy to customize. Maybe a feature where you can click into the video and change
+// things, give you options, delete visuals, add photos, swap photo"):
+//   · click anything in the picture — a photograph, a line of words, a leaf, the logo, the button — and it is selected:
+//     drag it to move, drag its corner to resize, and its options open beside the picture and in a small bar under it
+//     (type the words, swap the photo, change the colour, delete). Clicking the same spot again picks what is behind.
+//   · Edit: the selected thing, then the scene on screen (length, how it comes in, background, what is in it, add a
+//     headline / a photo / a scene, move or delete the scene).
+//   · Look & sound: colour theme, headline type, the song and its volume, the length of the whole video.
+//   · Words and Files are as before. Undo and redo (⌘Z) cover every change.
+// None of it calls a model: every change is instant and free, and the measured audit runs again after each one
+// (does it still fit, is it still readable, is a photograph being stretched). No drop-down menus.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MUSIC } from '@/lib/ad-engine'
-import { type Composition, type TextLayer, type ButtonLayer, type Layer, runsToPlain, plainToRuns, cleanText } from '@/lib/adx/composition'
-import { renderFrame, restTime, sceneAt, hitText, canvasMeasure, type Assets, type Ctx } from '@/lib/adx/player'
+import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, runsToPlain, plainToRuns, cleanText } from '@/lib/adx/composition'
+import { renderFrame, restTime, sceneAt, canvasMeasure, type Assets, type Ctx } from '@/lib/adx/player'
 import { auditComposition, canvasSampler, type AuditResult } from '@/lib/adx/audit'
 import { loadAssets } from '@/lib/adx/assets'
 import { exportVideo, exportPng, type ExportResult } from '@/lib/adx/export'
+import * as E from '@/lib/adx/edit'
 import { UI } from './BriefWizard'
+import { LayerPanel, ScenePanel, StylePanel, PhotoPicker, Swatches, Sec, chip, type Pool } from './AdxPanels'
 
 const btn = (primary = false, disabled = false): React.CSSProperties => ({ fontSize: 12.5, fontWeight: 800, padding: '8px 13px', borderRadius: 9, border: primary ? 0 : '1px solid ' + UI.line, background: primary ? UI.gold : UI.panel2, color: primary ? '#0B0F16' : UI.ink, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, whiteSpace: 'nowrap' })
 const mmss = (s: number) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0')
@@ -23,24 +33,42 @@ function download(blob: Blob, name: string) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000)
 }
+type Tab = 'edit' | 'style' | 'words' | 'files'
+type Picker = { mode: 'swap'; layerId: string } | { mode: 'add'; sceneId: string } | { mode: 'scene'; sceneId: string }
+type Drag = { id: string; mode: 'move' | 'size'; sx: number; sy: number; k: number; box: Box; live: Box; moved: boolean }
 
 export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Composition; onChange: (d: Composition) => void; canEdit: boolean; display: string }) {
   const W = doc.canvas.w, H = doc.canvas.h, dur = doc.canvas.duration
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const wrapRef = useRef<HTMLDivElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
   const assets = useRef<Assets | null>(null)
   const docRef = useRef(doc); docRef.current = doc
   const tRef = useRef(0)
   /** Each text layer as it was when the piece opened: the accent's look is taken from here, so retyping never loses it. */
   const orig = useRef<Record<string, TextLayer>>({})
+  /** The colours the piece was designed in, for "As designed". */
+  const origColors = useRef<{ id: string; color: Record<string, string> }>({ id: doc.id, color: doc.tokens.color })
+  if (origColors.current.id !== doc.id) origColors.current = { id: doc.id, color: doc.tokens.color }
+  const hist = useRef<{ id: string; past: Composition[]; future: Composition[]; key: string; at: number }>({ id: doc.id, past: [], future: [], key: '', at: 0 })
+  if (hist.current.id !== doc.id) hist.current = { id: doc.id, past: [], future: [], key: '', at: 0 }
+  const dragRef = useRef<Drag | null>(null)
+  const poolCache = useRef<Record<string, Pool>>({})
+  const [, setHv] = useState(0)
   const [ready, setReady] = useState(false)
+  const [tick, setTick] = useState(0)
   const [missing, setMissing] = useState(0)
   const [t, setT] = useState(() => restTime(doc.scenes[0]))
   const [playing, setPlaying] = useState(false)
   const [guides, setGuides] = useState(false)
   const [audit, setAudit] = useState<AuditResult | null>(null)
-  const [edit, setEdit] = useState<null | { id: string; x: number; y: number; w: number }>(null)
+  const [sel, setSel] = useState<string | null>(null)
+  const [tab, setTab] = useState<Tab>('edit')
+  const [picker, setPicker] = useState<Picker | null>(null)
+  const [pool, setPool] = useState<Pool | null>(null)
+  const [poolQ, setPoolQ] = useState('')
+  const [poolBusy, setPoolBusy] = useState(false)
+  const [poolErr, setPoolErr] = useState('')
+  const [dragBox, setDragBox] = useState<{ id: string; box: Box } | null>(null)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [exp, setExp] = useState<null | { pct: number; stage: string }>(null)
   const [result, setResult] = useState<ExportResult | null>(null)
@@ -49,8 +77,10 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   tRef.current = t
 
   const music = MUSIC.find(m => m.key === doc.assets.audio.music.track && m.file)
+  /** What is drawn: the piece, with the thing being dragged where the pointer has it. */
+  const view = useMemo(() => (dragBox ? E.setBox(doc, dragBox.id, dragBox.box) : doc), [doc, dragBox])
   // which photographs are drawn, and where: when that changes the pictures are fetched again
-  const photoKey = useMemo(() => doc.id + '|' + doc.scenes.map(s => s.layers.map(l => (l.type === 'photo' ? [l.id, l.photo, l.box.w, l.box.h, l.focal ? 1 : 0].join(':') : '')).join(',')).join(';'), [doc])
+  const photoKey = useMemo(() => doc.id + '|' + doc.scenes.map(s => s.layers.map(l => (l.type === 'photo' ? [l.id, l.photo, l.box.w, l.box.h, l.focal ? 1 : 0, l.camera ? 1 : 0].join(':') : '')).join(',')).join(';'), [doc])
 
   useEffect(() => {
     for (const s of doc.scenes) for (const l of s.layers) if (l.type === 'text' && !orig.current[l.id]) orig.current[l.id] = l
@@ -58,16 +88,16 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
 
   useEffect(() => {
     let live = true
-    setReady(false)
-    loadAssets(docRef.current).then(r => { if (!live) return; assets.current = r.assets; setMissing(r.missing.length); setReady(true) })
+    if (!assets.current) setReady(false)          // after the first load the picture stays up while a new photograph arrives
+    loadAssets(docRef.current).then(r => { if (!live) return; assets.current = r.assets; setMissing(r.missing.length); setReady(true); setTick(x => x + 1) })
     return () => { live = false }
   }, [photoKey])
 
   // draw the frame on screen
   useEffect(() => {
     const cv = canvasRef.current; if (!cv || !assets.current) return
-    const g = cv.getContext('2d'); if (g) renderFrame(g as Ctx, doc, t, assets.current)
-  }, [doc, t, ready])
+    const g = cv.getContext('2d'); if (g) renderFrame(g as Ctx, view, t, assets.current)
+  }, [view, t, ready, tick])
 
   // the measured audit, a moment after every change
   useEffect(() => {
@@ -80,7 +110,10 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
       } catch { /* keep the last result */ }
     }, 350)
     return () => clearTimeout(h)
-  }, [doc, ready, W, H])
+  }, [doc, ready, tick, W, H])
+
+  // a shorter piece (a scene deleted, an undo) never leaves the playhead past the end
+  useEffect(() => { if (t > dur - 0.02) setT(Math.max(0, dur - 0.02)) }, [dur]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // play
   useEffect(() => {
@@ -89,44 +122,142 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     const a = audioRef.current
     if (a && music) { try { a.currentTime = Math.min(tRef.current, Math.max(0, (a.duration || 100) - 0.2)); a.volume = Math.max(0, Math.min(1, docRef.current.assets.audio.music.gain)); a.play().catch(() => {}) } catch { /* no sound in the preview is fine */ } }
     let raf = 0
-    const tick = () => {
+    const tick2 = () => {
       const x = (performance.now() - start) / 1000
       if (x >= dur) { setT(dur - 0.02); setPlaying(false); return }
-      setT(x); raf = requestAnimationFrame(tick)
+      setT(x); raf = requestAnimationFrame(tick2)
     }
-    raf = requestAnimationFrame(tick)
+    raf = requestAnimationFrame(tick2)
     return () => cancelAnimationFrame(raf)
   }, [playing, dur, music])
 
   const seek = (x: number) => { setPlaying(false); setT(Math.max(0, Math.min(dur - 0.02, x))) }
-  const togglePlay = () => { if (!playing && t >= dur - 0.1) setT(0); setPlaying(p => !p); setEdit(null) }
+  const togglePlay = () => { if (!playing && t >= dur - 0.1) setT(0); setPlaying(p => !p); setSel(null) }
 
-  // ── editing the words ──
-  const patchLayer = useCallback((id: string, fn: (l: Layer) => Layer) => {
-    const d = docRef.current
-    onChange({ ...d, scenes: d.scenes.map(s => (s.layers.some(l => l.id === id) ? { ...s, layers: s.layers.map(l => (l.id === id ? fn(l) : l)) } : s)), meta: { ...d.meta, origin: d.meta.origin === 'house' ? 'house' : 'edited' } })
+  // ── every change goes through here: it can be undone ──
+  const commit = useCallback((next: Composition, key = '') => {
+    const d = docRef.current; if (next === d) return
+    const h = hist.current, now = Date.now()
+    // a run of the same small change (typing a line, dragging a slider) is one step back, not fifty
+    if (!(key && key === h.key && now - h.at < 1200)) { h.past.push(d); if (h.past.length > 80) h.past.shift() }
+    h.future = []; h.key = key; h.at = now
+    setHv(x => x + 1); onChange(next)
   }, [onChange])
+  const undo = () => { const h = hist.current, p = h.past.pop(); if (!p) return; h.future.push(docRef.current); h.key = ''; setHv(x => x + 1); setDrafts({}); onChange(p) }
+  const redo = () => { const h = hist.current, n = h.future.pop(); if (!n) return; h.past.push(docRef.current); h.key = ''; setHv(x => x + 1); setDrafts({}); onChange(n) }
+
+  // ── the words ──
   const setWords = (l: TextLayer | ButtonLayer, text: string) => {
     setDrafts(x => ({ ...x, [l.id]: text }))
-    if (l.type === 'button') patchLayer(l.id, x => ({ ...(x as ButtonLayer), label: cleanText(text, 60) || (x as ButtonLayer).label }))
-    else patchLayer(l.id, x => ({ ...(x as TextLayer), runs: plainToRuns(text, orig.current[l.id] || (x as TextLayer)) }))
+    if (l.type === 'button') commit(E.patchLayer(docRef.current, l.id, x => ({ ...(x as ButtonLayer), label: cleanText(text, 60) || (x as ButtonLayer).label })), 'words:' + l.id)
+    else commit(E.patchLayer(docRef.current, l.id, x => ({ ...(x as TextLayer), runs: plainToRuns(text, orig.current[l.id] || (x as TextLayer)) })), 'words:' + l.id)
   }
   const wordsOf = (l: TextLayer | ButtonLayer) => (drafts[l.id] != null ? drafts[l.id] : l.type === 'button' ? l.label : runsToPlain(l))
-  const findLayer = (id: string) => { for (const s of doc.scenes) for (const l of s.layers) if (l.id === id && (l.type === 'text' || l.type === 'button')) return l as TextLayer | ButtonLayer; return null }
+  const select = (id: string | null) => { setSel(id); setDrafts({}); if (id) { setPicker(null); setTab('edit') } }
 
-  const onCanvasClick = (e: React.MouseEvent) => {
-    if (!canEdit) return
+  const si = sceneAt(doc, t)
+  const cur = doc.scenes[si]
+  const found = sel ? E.findLayer(view, sel) : null
+  const selLayer = found && found.si === si ? found.layer : null
+  const selRect = selLayer ? E.layerRect(view, selLayer) : null
+
+  // ── clicking into the picture ──
+  const pickAt = (clientX: number, clientY: number) => {
     const cv = canvasRef.current; if (!cv) return
     const r = cv.getBoundingClientRect(), k = W / r.width
-    const g = cv.getContext('2d') as Ctx
-    const hit = hitText(doc, t, (e.clientX - r.left) * k, (e.clientY - r.top) * k, canvasMeasure(g))
-    if (!hit) { setEdit(null); return }
+    const hits = E.hitLayers(doc, si, (clientX - r.left) * k, (clientY - r.top) * k, canvasMeasure(cv.getContext('2d') as Ctx))
     setPlaying(false)
-    const s = doc.scenes[hit.scene]
-    if (t < restTime(s) - 0.01) setT(restTime(s))
-    setEdit({ id: hit.layer.id, x: hit.rect.x0 / k, y: hit.rect.y1 / k + 8, w: Math.max(240, (hit.rect.x1 - hit.rect.x0) / k) })
+    if (!hits.length) { select(null); return }
+    if (t < restTime(cur) - 0.01) setT(restTime(cur))
+    const at = hits.findIndex(l => l.id === sel)
+    select(hits[at >= 0 ? (at + 1) % hits.length : 0].id)
   }
-  const closeEdit = () => { if (edit) setDrafts(x => { const y = { ...x }; delete y[edit.id]; return y }); setEdit(null) }
+  const onCanvasClick = (e: React.MouseEvent) => { if (canEdit) pickAt(e.clientX, e.clientY) }
+
+  const startDrag = (e: React.PointerEvent, mode: 'move' | 'size') => {
+    if (!canEdit || !selLayer || selLayer.type === 'fill') return
+    const cv = canvasRef.current; if (!cv) return
+    e.preventDefault(); e.stopPropagation()
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId) } catch { /* the drag still works without capture */ }
+    const b = selLayer.box as Box, box: Box = { x: b.x, y: b.y, w: b.w, h: selLayer.type === 'logo' ? (selRect ? selRect.y1 - selRect.y0 : 0) : b.h }
+    dragRef.current = { id: selLayer.id, mode, sx: e.clientX, sy: e.clientY, k: W / cv.getBoundingClientRect().width, box, live: box, moved: false }
+  }
+  const moveDrag = (e: React.PointerEvent) => {
+    const d = dragRef.current; if (!d) return
+    const dx = (e.clientX - d.sx) * d.k, dy = (e.clientY - d.sy) * d.k
+    if (!d.moved && Math.hypot(dx, dy) < 4 * d.k) return
+    d.moved = true
+    const sf = doc.canvas.safe
+    let b: Box
+    if (d.mode === 'move') {
+      let x = d.box.x + dx, y = d.box.y + dy
+      // it settles on the centre line and on the edges of the safe area
+      const snapX = [(W - d.box.w) / 2, sf.left, W - sf.right - d.box.w, 0, W - d.box.w], snapY = [sf.top, H - sf.bottom - d.box.h, 0, H - d.box.h]
+      for (const sx of snapX) if (Math.abs(x - sx) < 14) { x = sx; break }
+      for (const sy of snapY) if (Math.abs(y - sy) < 14) { y = sy; break }
+      b = { ...d.box, x: Math.round(x), y: Math.round(y) }
+    } else {
+      let w = Math.max(40, d.box.w + dx), h = Math.max(30, d.box.h + dy)
+      if (Math.abs(d.box.x + w - (W - sf.right)) < 14) w = W - sf.right - d.box.x
+      if (Math.abs(d.box.x + w - W) < 14) w = W - d.box.x
+      if (Math.abs(d.box.y + h - H) < 14) h = H - d.box.y
+      b = { ...d.box, w: Math.round(w), h: Math.round(h) }
+    }
+    d.live = b; setDragBox({ id: d.id, box: b })
+  }
+  const endDrag = (e: React.PointerEvent) => {
+    const d = dragRef.current; dragRef.current = null
+    if (!d) return
+    if (d.moved) commit(E.setBox(docRef.current, d.id, d.live))
+    else if (d.mode === 'move') pickAt(e.clientX, e.clientY)      // a click, not a drag: pick what is under it (or behind it)
+    setDragBox(null)
+  }
+
+  // ── the keyboard: undo, delete, nudge ──
+  const onKey = (e: KeyboardEvent) => {
+    if (!canEdit) return
+    const el = e.target as HTMLElement | null
+    const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
+    if (typing) return
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return }
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    if (e.key === 'Escape') { setPicker(null); select(null); return }
+    if (!selLayer || selLayer.type === 'fill') return
+    if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); commit(E.deleteLayer(doc, selLayer.id)); select(null); return }
+    const step = e.shiftKey ? 20 : 4, b = selLayer.box as Box
+    const move = e.key === 'ArrowLeft' ? { x: b.x - step } : e.key === 'ArrowRight' ? { x: b.x + step } : e.key === 'ArrowUp' ? { y: b.y - step } : e.key === 'ArrowDown' ? { y: b.y + step } : null
+    if (move) { e.preventDefault(); commit(E.setBox(doc, selLayer.id, move), 'nudge:' + selLayer.id) }
+  }
+  const keyRef = useRef(onKey); keyRef.current = onKey
+  useEffect(() => { const h = (e: KeyboardEvent) => keyRef.current(e); window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h) }, [])
+
+  // ── photographs to swap in or add ──
+  const loadPool = async (q: string) => {
+    setPoolQ(q); setPoolErr('')
+    const hit = poolCache.current[q]
+    if (hit) { setPool(hit); return }
+    setPoolBusy(true)
+    const qs = new URLSearchParams({ moment: doc.brief.moment, area: doc.brief.area, q })
+    const j = await fetch('/api/adx/photos?' + qs.toString()).then(r => r.json()).catch(() => null)
+    setPoolBusy(false)
+    if (!j?.ok) { setPoolErr(j?.error || 'The photographs did not load. Try again.'); return }
+    const p: Pool = { photos: j.photos || {}, thumbs: j.thumbs || {}, subjects: j.subjects || [] }
+    poolCache.current[q] = p; setPool(p)
+  }
+  const openPicker = (p: Picker) => { setPicker(p); setTab('edit'); setPlaying(false); if (!pool && !poolBusy) loadPool('') }
+  const pickPhoto = (key: string, asset: PhotoAsset) => {
+    if (!picker) return
+    if (picker.mode === 'swap') commit(E.swapPhoto(doc, picker.layerId, key, asset))
+    else if (picker.mode === 'add') { const r = E.addPhoto(doc, picker.sceneId, key, asset); commit(r.doc); setSel(r.layerId) }
+    else {
+      // the new scene opens with its headline selected, ready to be retyped (it starts as a copy of the scene before)
+      const r = E.addSceneLike(doc, picker.sceneId, key, asset); commit(r.doc)
+      const s = r.doc.scenes.find(x => x.id === r.sceneId); if (s) setT(restTime(s))
+      const head = s ? s.layers.find(l => l.type === 'text' && !!l.fit) : null; setDrafts({}); setSel(head ? head.id : null)
+    }
+    setPicker(null)
+  }
+  const goScene = (sid: string, d: Composition) => { const s = d.scenes.find(x => x.id === sid); if (s) { setPlaying(false); setT(restTime(s)) } }
 
   // ── export ──
   const run = async (withMusic: boolean) => {
@@ -146,47 +277,88 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   const captionText = [doc.social.caption, doc.social.hashtags.join(' '), music ? doc.assets.audio.music.credit : ''].filter(Boolean).join('\n\n')
   const copyCaption = async () => { try { await navigator.clipboard.writeText(captionText); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* the text is selectable below */ } }
 
-  const si = sceneAt(doc, t)
   const fails = audit ? audit.issues.filter(x => x.sev === 'fail') : []
   const warns = audit ? audit.issues.filter(x => x.sev === 'warn') : []
-  const editLayer = edit ? findLayer(edit.id) : null
   const sf = doc.canvas.safe
   const tall = H > W
   const area: React.CSSProperties = { width: '100%', boxSizing: 'border-box', background: UI.bg, border: '1px solid ' + UI.line, borderRadius: 8, color: UI.ink, padding: '7px 9px', fontSize: 13, lineHeight: 1.35, resize: 'vertical', fontFamily: 'inherit' }
+  const pct = (v: number, of: number) => (v / of) * 100 + '%'
+  // the frame is drawn where the thing meets the canvas, so its corner can always be reached
+  const vis = selRect && Math.min(W, selRect.x1) - Math.max(0, selRect.x0) > 8 && Math.min(H, selRect.y1) - Math.max(0, selRect.y0) > 8 ? { x0: Math.max(0, selRect.x0), y0: Math.max(0, selRect.y0), x1: Math.min(W, selRect.x1), y1: Math.min(H, selRect.y1) } : selRect
+  // the quick bar goes under the thing, or over it, or (for something that fills the frame) inside at the foot
+  const barAt: React.CSSProperties = !vis ? {} : (vis.y1 - vis.y0) / H > 0.4 ? { bottom: 14 } : vis.y1 / H < 0.7 ? { top: `calc(${pct(vis.y1, H)} + 12px)` } : { bottom: `calc(${pct(H - vis.y0, H)} + 12px)` }
+  const h = hist.current
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) clamp(320px, 30vw, 430px)', gap: 18, alignItems: 'start', color: UI.ink }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) clamp(330px, 31vw, 450px)', gap: 18, alignItems: 'start', color: UI.ink }}>
       {/* ── the picture ── */}
       <div style={{ minWidth: 0 }}>
-        <div ref={wrapRef} style={{ position: 'relative', margin: '0 auto', width: tall ? `min(100%, calc((100vh - 250px) * ${W / H}))` : '100%', maxWidth: tall ? 480 : 820 }}>
-          <canvas ref={canvasRef} width={W} height={H} onClick={onCanvasClick} title={canEdit ? 'Click a line of words to change it' : undefined}
-            style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 10, background: '#000', cursor: canEdit ? 'text' : 'default', boxShadow: '0 12px 40px rgba(0,0,0,.45)' }} />
-          {guides ? <div style={{ position: 'absolute', left: `${(sf.left / W) * 100}%`, top: `${(sf.top / H) * 100}%`, right: `${(sf.right / W) * 100}%`, bottom: `${(sf.bottom / H) * 100}%`, border: '1.5px dashed rgba(255,255,255,0.85)', borderRadius: 4, pointerEvents: 'none', boxShadow: '0 0 0 2000px rgba(255,60,60,0.10)' }} /> : null}
+        <div style={{ position: 'relative', margin: '0 auto', width: tall ? `min(100%, calc((100vh - 290px) * ${W / H}))` : '100%', maxWidth: tall ? 480 : 820 }}>
+          <canvas ref={canvasRef} width={W} height={H} onClick={onCanvasClick} title={canEdit ? 'Click anything to change it' : undefined}
+            style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 10, background: '#000', cursor: canEdit ? 'pointer' : 'default', boxShadow: '0 12px 40px rgba(0,0,0,.45)' }} />
+          {guides || dragBox ? <div style={{ position: 'absolute', left: pct(sf.left, W), top: pct(sf.top, H), right: pct(sf.right, W), bottom: pct(sf.bottom, H), border: '1.5px dashed rgba(255,255,255,0.85)', borderRadius: 4, pointerEvents: 'none', boxShadow: '0 0 0 2000px rgba(255,60,60,0.10)' }} /> : null}
           {!ready ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.55)', borderRadius: 10, fontSize: 13, color: UI.ink }}>Loading the photographs and type…</div> : null}
-          {edit && editLayer ? (
-            <div style={{ position: 'absolute', left: Math.max(0, Math.min(edit.x, (wrapRef.current?.clientWidth || 400) - 260)), top: edit.y, width: Math.min(Math.max(260, edit.w), 360), zIndex: 5, background: UI.panel, border: '1px solid ' + UI.gold, borderRadius: 10, padding: 9, boxShadow: '0 10px 30px rgba(0,0,0,.6)' }}>
-              <textarea autoFocus rows={editLayer.type === 'button' ? 1 : 2} value={wordsOf(editLayer)} onChange={e => setWords(editLayer, e.target.value)} onKeyDown={e => { if (e.key === 'Escape') closeEdit() }} style={area} />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                <span style={{ fontSize: 11, color: UI.mut, flex: 1 }}>{editLayer.type === 'button' ? 'The button’s words.' : 'A new line breaks the line. *Stars* mark the accent words.'}</span>
-                <button type="button" onClick={closeEdit} style={btn(true)}>Done</button>
+
+          {/* the selected thing: a frame to drag, a corner to resize */}
+          {canEdit && selLayer && vis ? (
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+              <div onPointerDown={e => startDrag(e, 'move')} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag}
+                style={{ position: 'absolute', left: pct(vis.x0, W), top: pct(vis.y0, H), width: pct(vis.x1 - vis.x0, W), height: pct(vis.y1 - vis.y0, H), border: '2px solid ' + UI.gold, boxShadow: '0 0 0 1px rgba(0,0,0,0.6)', boxSizing: 'border-box', cursor: 'move', pointerEvents: 'auto', touchAction: 'none' }}>
+                <div onPointerDown={e => startDrag(e, 'size')} onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={endDrag} title="Drag to resize"
+                  style={{ position: 'absolute', right: -2, bottom: -2, width: 16, height: 16, borderRadius: 4, background: UI.gold, border: '2px solid #0B0F16', cursor: 'nwse-resize', touchAction: 'none' }} />
+              </div>
+            </div>
+          ) : null}
+          {/* the quick bar by it: the commonest changes, right where the click was */}
+          {canEdit && selLayer && vis && !dragBox && !picker ? (
+            <div style={{ position: 'absolute', zIndex: 5, width: 280, maxWidth: '100%', left: `clamp(0px, ${pct(vis.x0, W)}, calc(100% - 280px))`, ...barAt, background: UI.panel, border: '1px solid ' + UI.gold, borderRadius: 10, padding: 9, boxShadow: '0 10px 30px rgba(0,0,0,.6)' }}>
+              <p style={{ margin: '0 0 6px', fontSize: 11, fontWeight: 800, color: UI.gold, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{E.layerName(doc, selLayer)}</p>
+              {selLayer.type === 'text' || selLayer.type === 'button' ? <textarea key={selLayer.id} autoFocus rows={selLayer.type === 'button' ? 1 : 2} value={wordsOf(selLayer)} onChange={e => setWords(selLayer, e.target.value)} onKeyDown={e => { if (e.key === 'Escape') select(null) }} aria-label="Words" style={{ ...area, marginBottom: 6 }} /> : null}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {selLayer.type === 'photo' ? <button type="button" onClick={() => openPicker({ mode: 'swap', layerId: selLayer.id })} style={btn(true)}>Swap photo</button> : null}
+                {selLayer.type === 'text' || selLayer.type === 'button' ? (<>
+                  <button type="button" onClick={() => commit(E.resizeText(doc, selLayer.id, -2))} style={chip()}>A −</button>
+                  <button type="button" onClick={() => commit(E.resizeText(doc, selLayer.id, 2))} style={chip()}>A +</button>
+                </>) : null}
+                {selLayer.type === 'logo' ? (<>
+                  <button type="button" onClick={() => commit(E.patchLayer(doc, selLayer.id, l => ({ ...l, variant: 'black', tint: undefined } as Layer)))} style={chip(selLayer.variant === 'black')}>Black</button>
+                  <button type="button" onClick={() => commit(E.patchLayer(doc, selLayer.id, l => ({ ...l, variant: 'white' } as Layer)))} style={chip(selLayer.variant === 'white')}>White</button>
+                </>) : null}
+                {selLayer.type !== 'photo' && selLayer.type !== 'logo' && (E.layerColor(doc, selLayer) || selLayer.type === 'motif') ? <Swatches small doc={doc} value={E.layerColor(doc, selLayer)} onPick={k => commit(E.setLayerColor(doc, selLayer.id, k))} /> : null}
+                <span style={{ flex: 1 }} />
+                <button type="button" onClick={() => { commit(E.deleteLayer(doc, selLayer.id)); select(null) }} style={{ ...chip(), color: UI.red, borderColor: 'rgba(224,108,108,0.4)' }}>Delete</button>
               </div>
             </div>
           ) : null}
         </div>
+
         {/* transport */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '12px auto 0', maxWidth: 820 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px auto 0', maxWidth: 820 }}>
           <button type="button" onClick={togglePlay} disabled={!ready} style={{ ...btn(true, !ready), minWidth: 74 }}>{playing ? '❚❚ Pause' : '▶ Play'}</button>
           <input type="range" min={0} max={dur} step={1 / 30} value={t} onChange={e => seek(Number(e.target.value))} aria-label="Position in the piece" style={{ flex: 1, accentColor: UI.gold }} />
-          <span style={{ fontSize: 12, color: UI.mut, fontVariantNumeric: 'tabular-nums', minWidth: 74, textAlign: 'right' }}>{mmss(t)} / {mmss(dur)}</span>
+          <span style={{ fontSize: 12, color: UI.mut, fontVariantNumeric: 'tabular-nums', minWidth: 70, textAlign: 'right' }}>{mmss(t)} / {mmss(dur)}</span>
+          {canEdit ? (<>
+            <button type="button" onClick={undo} disabled={!h.past.length} title="Undo (⌘Z)" style={btn(false, !h.past.length)}>↶ Undo</button>
+            <button type="button" onClick={redo} disabled={!h.future.length} title="Redo (⇧⌘Z)" style={btn(false, !h.future.length)}>↷</button>
+          </>) : null}
           <button type="button" onClick={() => setGuides(v => !v)} aria-pressed={guides} title="Shows the area the platform's own buttons leave clear" style={{ ...btn(), background: guides ? 'rgba(210,176,119,0.18)' : UI.panel2 }}>Safe area</button>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '10px auto 0', maxWidth: 820 }}>
-          {doc.scenes.map((s, i) => <button key={s.id} type="button" onClick={() => seek(restTime(s))} style={{ ...btn(), fontWeight: 700, borderColor: i === si ? UI.gold : UI.line, color: i === si ? UI.gold : UI.ink }}>{i + 1} · {s.name}</button>)}
+        {/* the scenes, each as wide as it is long */}
+        <div style={{ display: 'flex', gap: 4, margin: '10px auto 0', maxWidth: 820, alignItems: 'stretch' }}>
+          {doc.scenes.map((s, i) => (
+            <button key={s.id} type="button" onClick={() => { seek(restTime(s)); select(null); setTab('edit') }} title={`${s.name} · ${s.dur.toFixed(1)} s${i ? ' · comes in with a ' + s.transitionIn.type : ''}`}
+              style={{ flex: `${s.dur} 1 0`, minWidth: 0, textAlign: 'left', padding: '6px 8px', borderRadius: 8, border: '1px solid ' + (i === si ? UI.gold : UI.line), background: i === si ? 'rgba(210,176,119,0.14)' : UI.panel2, color: i === si ? UI.gold : UI.ink, cursor: 'pointer', overflow: 'hidden' }}>
+              <span style={{ display: 'block', fontSize: 12, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i + 1} · {s.name}</span>
+              <span style={{ display: 'block', fontSize: 10.5, color: UI.mut }}>{s.dur.toFixed(1)} s</span>
+            </button>
+          ))}
+          {canEdit ? <button type="button" onClick={() => openPicker({ mode: 'scene', sceneId: cur.id })} title="Add a scene after the one on screen" style={{ ...btn(), padding: '6px 10px' }}>+ Scene</button> : null}
         </div>
+        {canEdit ? <p style={{ margin: '10px auto 0', maxWidth: 820, fontSize: 11.5, color: UI.mut, textAlign: 'center' }}>Click anything in the picture to change it. Drag to move, drag the corner to resize, Delete removes it, ⌘Z undoes.</p> : null}
         {music ? <audio ref={audioRef} src={music.file} preload="auto" /> : null}
       </div>
 
-      {/* ── beside it: the check, the words, the files ── */}
+      {/* ── beside it: the check, then Edit · Look & sound · Words · Files ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
         <section style={{ background: UI.panel, border: '1px solid ' + (fails.length ? 'rgba(224,108,108,0.5)' : UI.line), borderRadius: 12, padding: '11px 13px' }}>
           <p style={{ margin: 0, fontSize: 13, fontWeight: 800 }}>
@@ -194,69 +366,88 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
             {audit ? <span style={{ fontWeight: 500, color: UI.mut, marginLeft: 8, fontSize: 11.5 }}>{audit.measured.text} lines measured · {audit.measured.photos} photos · {audit.measured.scenes} scenes</span> : null}
           </p>
           {missing ? <p style={{ margin: '6px 0 0', fontSize: 12, color: UI.red }}>{missing} photograph{missing === 1 ? '' : 's'} could not be loaded.</p> : null}
-          {fails.concat(warns).slice(0, 8).map((x, i) => (
-            <button key={i} type="button" onClick={() => { const s = doc.scenes.find(y => y.id === x.scene); if (s) seek(restTime(s)) }} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 0, padding: '7px 0 0', color: UI.ink, cursor: x.scene ? 'pointer' : 'default', fontSize: 12.5, lineHeight: 1.45 }}>
+          {fails.concat(warns).slice(0, 6).map((x, i) => (
+            <button key={i} type="button" onClick={() => { const s = doc.scenes.find(y => y.id === x.scene); if (s) seek(restTime(s)); if (x.layer && canEdit) select(x.layer) }} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 0, padding: '7px 0 0', color: UI.ink, cursor: x.scene ? 'pointer' : 'default', fontSize: 12.5, lineHeight: 1.45 }}>
               <span style={{ color: x.sev === 'fail' ? UI.red : UI.gold, fontWeight: 800, marginRight: 6 }}>{x.sev === 'fail' ? 'Fix' : 'Note'}</span>{x.msg}
             </button>
           ))}
         </section>
 
-        <section style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '11px 13px' }}>
-          <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 800 }}>Files</p>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(true)} style={btn(true, !ready || !!exp || !!fails.length)}>{music ? 'MP4 with music' : 'MP4'}</button>
-            {music ? <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(false)} style={btn(false, !ready || !!exp || !!fails.length)}>MP4 without sound</button> : null}
-            <button type="button" disabled={!ready} onClick={still} title="The frame on screen, full size — for a photo post" style={btn(false, !ready)}>PNG of this frame</button>
-          </div>
-          {fails.length && ready && !exp ? <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>Video export waits for the check to pass. <button type="button" onClick={() => run(!!music)} style={{ background: 'none', border: 0, padding: 0, color: UI.gold, cursor: 'pointer', fontSize: 11.5, textDecoration: 'underline' }}>Export anyway</button></p> : null}
-          {exp ? (
-            <div style={{ marginTop: 9 }}>
-              <div style={{ height: 6, borderRadius: 3, background: UI.panel2, overflow: 'hidden' }}><div style={{ width: exp.pct + '%', height: '100%', background: UI.gold, transition: 'width .2s' }} /></div>
-              <p style={{ margin: '5px 0 0', fontSize: 11.5, color: UI.mut }}>{exp.stage} · {exp.pct}%</p>
-            </div>
-          ) : null}
-          {result ? <p style={{ margin: '8px 0 0', fontSize: 12, color: result.path === 'webcodecs' ? UI.green : UI.gold, lineHeight: 1.45 }}>{result.path === 'webcodecs' ? '✓ ' : ''}{result.note} ({(result.blob.size / 1048576).toFixed(1)} MB in {(result.ms / 1000).toFixed(1)} s)</p> : null}
-          {err ? <p style={{ margin: '8px 0 0', fontSize: 12, color: UI.red }}>{err}</p> : null}
-          <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>{W} × {H} · 30 frames a second · {doc.scenes.length} scenes · {dur.toFixed(1)} s{music ? ' · ' + music.label : ''}</p>
-        </section>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {([['edit', 'Edit'], ['style', 'Look & sound'], ['words', 'Words'], ['files', 'Files']] as const).map(([k, name]) => (
+            <button key={k} type="button" onClick={() => { setTab(k); if (k !== 'edit') setPicker(null) }} aria-pressed={tab === k} style={{ ...btn(), flex: 1, background: tab === k ? UI.gold : UI.panel2, color: tab === k ? '#0B0F16' : UI.ink, border: tab === k ? 0 : '1px solid ' + UI.line }}>{name}</button>
+          ))}
+        </div>
 
-        <section style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '11px 13px' }}>
-          <p style={{ margin: '0 0 2px', fontSize: 13, fontWeight: 800 }}>Words</p>
-          <p style={{ margin: '0 0 10px', fontSize: 11.5, color: UI.mut }}>Every line is editable, here or by clicking it on the picture. *Stars* mark the accent words.</p>
-          {doc.scenes.map((s, i) => {
-            const line = doc.script.lines.find(l => l.scene === s.id)
-            return (
-              <div key={s.id} style={{ borderTop: i ? '1px solid ' + UI.line : 0, padding: i ? '9px 0 2px' : '0 0 2px' }}>
-                <button type="button" onClick={() => seek(restTime(s))} style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', color: i === si ? UI.gold : UI.mut, fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{i + 1} · {s.name}</button>
-                {s.layers.filter((l): l is TextLayer | ButtonLayer => l.type === 'text' || l.type === 'button').map(l => (
-                  <textarea key={l.id} rows={l.type === 'text' && l.fit ? 2 : 1} disabled={!canEdit} value={wordsOf(l)} onFocus={() => { if (si !== i) seek(restTime(s)) }} onChange={e => setWords(l, e.target.value)}
-                    onBlur={() => setDrafts(x => { const y = { ...x }; delete y[l.id]; return y })} aria-label={(l.type === 'button' ? 'Button' : l.fit ? 'Headline' : 'Label') + ' in scene ' + (i + 1)}
-                    style={{ ...area, marginTop: 6, fontWeight: l.type === 'text' && l.fit ? 700 : 500, fontFamily: l.type === 'text' && l.fit ? display : 'inherit', fontSize: l.type === 'text' && l.fit ? 14.5 : 12.5 }} />
-                ))}
-                {line ? (
-                  <label style={{ display: 'block', marginTop: 6 }}>
-                    <span style={{ fontSize: 10.5, color: UI.mut, fontWeight: 700 }}>Spoken line (for the voice, next phase)</span>
-                    <textarea rows={1} disabled={!canEdit} value={line.vo} onChange={e => onChange({ ...doc, script: { ...doc.script, lines: doc.script.lines.map(x => (x.scene === s.id ? { ...x, vo: e.target.value.slice(0, 300) } : x)) } })} style={{ ...area, marginTop: 3, fontSize: 12.5, color: UI.mut }} />
-                  </label>
-                ) : null}
+        {tab === 'edit' ? (!canEdit ? <Sec title="View only"><p style={{ margin: '6px 0 0', fontSize: 12.5, color: UI.mut }}>You can play and download this piece. Editing needs Ad Studio edit access.</p></Sec> : picker ? (
+          <PhotoPicker doc={doc} title={picker.mode === 'swap' ? 'Swap this photo' : picker.mode === 'add' ? 'Add a photo to this scene' : 'New scene — pick its photo'} pool={pool} busy={poolBusy} err={poolErr} q={poolQ} onQ={loadPool} onPick={pickPhoto} onCancel={() => setPicker(null)} exceptLayer={picker.mode === 'swap' ? picker.layerId : undefined} />
+        ) : (<>
+          {selLayer ? <LayerPanel doc={doc} scene={cur} layer={(E.findLayer(doc, selLayer.id)?.layer) || selLayer} commit={commit} wordsOf={wordsOf} setWords={setWords} onSwap={id => openPicker({ mode: 'swap', layerId: id })} onDeselect={() => select(null)} /> : null}
+          <ScenePanel doc={doc} scene={cur} index={si} sel={sel} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddPhoto={sid => openPicker({ mode: 'add', sceneId: sid })} onAddScene={sid => openPicker({ mode: 'scene', sceneId: sid })} onGo={goScene} />
+        </>)) : null}
+
+        {tab === 'style' ? (canEdit ? <StylePanel doc={doc} original={origColors.current.color} commit={commit} /> : null) : null}
+
+        {tab === 'files' ? (
+          <section style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '11px 13px' }}>
+            <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 800 }}>Files</p>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(true)} style={btn(true, !ready || !!exp || !!fails.length)}>{music ? 'MP4 with music' : 'MP4'}</button>
+              {music ? <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(false)} style={btn(false, !ready || !!exp || !!fails.length)}>MP4 without sound</button> : null}
+              <button type="button" disabled={!ready} onClick={still} title="The frame on screen, full size — for a photo post" style={btn(false, !ready)}>PNG of this frame</button>
+            </div>
+            {fails.length && ready && !exp ? <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>Video export waits for the check to pass. <button type="button" onClick={() => run(!!music)} style={{ background: 'none', border: 0, padding: 0, color: UI.gold, cursor: 'pointer', fontSize: 11.5, textDecoration: 'underline' }}>Export anyway</button></p> : null}
+            {exp ? (
+              <div style={{ marginTop: 9 }}>
+                <div style={{ height: 6, borderRadius: 3, background: UI.panel2, overflow: 'hidden' }}><div style={{ width: exp.pct + '%', height: '100%', background: UI.gold, transition: 'width .2s' }} /></div>
+                <p style={{ margin: '5px 0 0', fontSize: 11.5, color: UI.mut }}>{exp.stage} · {exp.pct}%</p>
               </div>
-            )
-          })}
-        </section>
+            ) : null}
+            {result ? <p style={{ margin: '8px 0 0', fontSize: 12, color: result.path === 'webcodecs' ? UI.green : UI.gold, lineHeight: 1.45 }}>{result.path === 'webcodecs' ? '✓ ' : ''}{result.note} ({(result.blob.size / 1048576).toFixed(1)} MB in {(result.ms / 1000).toFixed(1)} s)</p> : null}
+            {err ? <p style={{ margin: '8px 0 0', fontSize: 12, color: UI.red }}>{err}</p> : null}
+            <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>{W} × {H} · 30 frames a second · {doc.scenes.length} scenes · {dur.toFixed(1)} s{music ? ' · ' + music.label : ' · no music'}</p>
+          </section>
+        ) : null}
 
-        <section style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '11px 13px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <p style={{ margin: 0, fontSize: 13, fontWeight: 800, flex: 1 }}>Caption</p>
-            <button type="button" onClick={copyCaption} style={btn()}>{copied ? '✓ Copied' : 'Copy caption'}</button>
-          </div>
-          <textarea rows={4} disabled={!canEdit} value={doc.social.caption} onChange={e => onChange({ ...doc, social: { ...doc.social, caption: e.target.value.slice(0, 2200) } })} style={area} />
-          {doc.social.captionAlternates.length ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 7 }}>
-              {doc.social.captionAlternates.map((c, i) => <button key={i} type="button" disabled={!canEdit} onClick={() => onChange({ ...doc, social: { ...doc.social, caption: c, captionAlternates: doc.social.captionAlternates.map((x, k) => (k === i ? doc.social.caption : x)) } })} title="Use this caption instead" style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, color: UI.mut, padding: '6px 9px', fontSize: 12, lineHeight: 1.4, cursor: 'pointer' }}>↺ {c}</button>)}
+        {tab === 'words' ? (<>
+          <section style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '11px 13px' }}>
+            <p style={{ margin: '0 0 2px', fontSize: 13, fontWeight: 800 }}>Words</p>
+            <p style={{ margin: '0 0 10px', fontSize: 11.5, color: UI.mut }}>Every line is editable, here or by clicking it on the picture. *Stars* mark the accent words.</p>
+            {doc.scenes.map((s, i) => {
+              const line = doc.script.lines.find(l => l.scene === s.id)
+              return (
+                <div key={s.id} style={{ borderTop: i ? '1px solid ' + UI.line : 0, padding: i ? '9px 0 2px' : '0 0 2px' }}>
+                  <button type="button" onClick={() => seek(restTime(s))} style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', color: i === si ? UI.gold : UI.mut, fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase' }}>{i + 1} · {s.name}</button>
+                  {s.layers.filter((l): l is TextLayer | ButtonLayer => l.type === 'text' || l.type === 'button').map(l => (
+                    <textarea key={l.id} rows={l.type === 'text' && l.fit ? 2 : 1} disabled={!canEdit} value={wordsOf(l)} onFocus={() => { if (si !== i) seek(restTime(s)) }} onChange={e => setWords(l, e.target.value)}
+                      onBlur={() => setDrafts(x => { const y = { ...x }; delete y[l.id]; return y })} aria-label={(l.type === 'button' ? 'Button' : l.fit ? 'Headline' : 'Label') + ' in scene ' + (i + 1)}
+                      style={{ ...area, marginTop: 6, fontWeight: l.type === 'text' && l.fit ? 700 : 500, fontFamily: l.type === 'text' && l.fit ? display : 'inherit', fontSize: l.type === 'text' && l.fit ? 14.5 : 12.5 }} />
+                  ))}
+                  {line ? (
+                    <label style={{ display: 'block', marginTop: 6 }}>
+                      <span style={{ fontSize: 10.5, color: UI.mut, fontWeight: 700 }}>Spoken line (for the voice, next phase)</span>
+                      <textarea rows={1} disabled={!canEdit} value={line.vo} onChange={e => commit({ ...doc, script: { ...doc.script, lines: doc.script.lines.map(x => (x.scene === s.id ? { ...x, vo: e.target.value.slice(0, 300) } : x)) } }, 'vo:' + s.id)} style={{ ...area, marginTop: 3, fontSize: 12.5, color: UI.mut }} />
+                    </label>
+                  ) : null}
+                </div>
+              )
+            })}
+          </section>
+
+          <section style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '11px 13px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <p style={{ margin: 0, fontSize: 13, fontWeight: 800, flex: 1 }}>Caption</p>
+              <button type="button" onClick={copyCaption} style={btn()}>{copied ? '✓ Copied' : 'Copy caption'}</button>
             </div>
-          ) : null}
-          <p style={{ margin: '7px 0 0', fontSize: 11.5, color: UI.mut }}>{doc.social.hashtags.join(' ')}{music ? ' · the music credit is copied with it' : ''}</p>
-        </section>
+            <textarea rows={4} disabled={!canEdit} value={doc.social.caption} onChange={e => commit({ ...doc, social: { ...doc.social, caption: e.target.value.slice(0, 2200) } }, 'caption')} style={area} />
+            {doc.social.captionAlternates.length ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 7 }}>
+                {doc.social.captionAlternates.map((c, i) => <button key={i} type="button" disabled={!canEdit} onClick={() => commit({ ...doc, social: { ...doc.social, caption: c, captionAlternates: doc.social.captionAlternates.map((x, k) => (k === i ? doc.social.caption : x)) } })} title="Use this caption instead" style={{ textAlign: 'left', background: UI.panel2, border: '1px solid ' + UI.line, borderRadius: 8, color: UI.mut, padding: '6px 9px', fontSize: 12, lineHeight: 1.4, cursor: 'pointer' }}>↺ {c}</button>)}
+              </div>
+            ) : null}
+            <p style={{ margin: '7px 0 0', fontSize: 11.5, color: UI.mut }}>{doc.social.hashtags.join(' ')}{music ? ' · the music credit is copied with it' : ''}</p>
+          </section>
+        </>) : null}
       </div>
     </div>
   )
