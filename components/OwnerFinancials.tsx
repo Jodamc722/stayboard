@@ -21,10 +21,27 @@ export function OwnerFinancials() {
   const [from, setFrom] = useState(''); const [to, setTo] = useState('')
   const [f, setF] = useState<Financials | null>(null); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
   const [view, setView] = useState<View>('pl'); const [q, setQ] = useState(''); const [sort, setSort] = useState<keyof FinVals | 'name'>('net')
-  const load = (a: string, b: string) => {
+  // ONE OWNER, ONE BUILDING OR ONE LISTING (Jon, 2026-11-20: "share with owners on their actual gross values … pull
+  // it by owner or by listing or by property … filter options and a downloadable Excel"). Picking one narrows the
+  // whole report to it, and the Excel button then downloads that owner's own file.
+  const [scope, setScope] = useState<{ kind: 'owner' | 'building' | 'listing'; id: string } | null>(null)
+  const [opts, setOpts] = useState<{ owners: { id: string; name: string }[]; buildings: string[]; listings: { id: string; name: string; building: string }[] } | null>(null)
+  const qs = (a: string, b: string, sc = scope) => `from=${a}&to=${b}` + (sc ? '&' + sc.kind + '=' + encodeURIComponent(sc.id) : '')
+  const load = (a: string, b: string, sc = scope) => {
     setBusy(true); setErr('')
-    fetch(`/api/owner-financials?from=${a}&to=${b}`, { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok) setF(j.financials); else setErr(j?.error || 'Could not build the report.') }).catch(() => setErr('Could not build the report.')).finally(() => setBusy(false))
+    fetch('/api/owner-financials?' + qs(a, b, sc), { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (!j?.ok) { setErr(j?.error || 'Could not build the report.'); return }
+      const fin: Financials = j.financials; setF(fin)
+      // the pick lists come from a whole-portfolio read, and grow as wider periods are opened
+      if (!fin.scope) setOpts(o => {
+        const owners = new Map((o?.owners || []).map(x => [x.id, x] as [string, { id: string; name: string }])); fin.owners.forEach(x => owners.set(x.key, { id: x.key, name: x.name }))
+        const listings = new Map((o?.listings || []).map(x => [x.id, x] as [string, { id: string; name: string; building: string }])); fin.listings.forEach(x => { const id = x.key.split('|')[0]; if (id !== 'none') listings.set(id, { id, name: x.name, building: x.building }) })
+        const buildings = new Set([...(o?.buildings || []), ...fin.buildings.map(x => x.name).filter(n => n !== 'Not tied to a unit' && n !== 'No building set')])
+        return { owners: Array.from(owners.values()).sort((x, y) => x.name.localeCompare(y.name)), buildings: Array.from(buildings).sort((x, y) => x.localeCompare(y, undefined, { numeric: true })), listings: Array.from(listings.values()).sort((x, y) => x.name.localeCompare(y.name, undefined, { numeric: true })) }
+      })
+    }).catch(() => setErr('Could not build the report.')).finally(() => setBusy(false))
   }
+  const pickScope = (sc: typeof scope) => { setScope(sc); setQ(''); if (sc?.kind === 'listing') setView('pl'); if (from && to) load(from, to, sc) }
   useEffect(() => { fetch('/api/owner-financials?span=1', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j?.ok && j.from) { setSpan(j); setFrom(j.from); setTo(j.to); load(j.from, j.to) } else setErr('No owner statements on file yet.') }).catch(() => setErr('Could not read the statements.')) }, [])   // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (a: string, b: string) => { const x = a <= b ? [a, b] : [b, a]; setFrom(x[0]); setTo(x[1]); load(x[0], x[1]) }
   const yearOf = span ? Array.from(new Set(span.months.map(m => m.m.slice(0, 4)))) : []
@@ -54,7 +71,15 @@ export function OwnerFinancials() {
         {span ? <button type="button" onClick={() => pick(span.from, span.to)} className={'rounded-lg border px-2.5 py-1.5 font-semibold ' + (from === span.from && to === span.to ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink')}>All statements</button> : null}
         {yearOf.map(y => { const ms = (span?.months || []).filter(m => m.m.startsWith(y)); const a = ms[0]?.m, b = ms[ms.length - 1]?.m; return a && b ? <button key={y} type="button" onClick={() => pick(a, b)} className={'rounded-lg border px-2.5 py-1.5 font-semibold ' + (from === a && to === b && !(from === span!.from && to === span!.to) ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink')}>{y}</button> : null })}
         {busy ? <span className="inline-flex items-center gap-1.5 text-muted"><Loader2 size={13} className="animate-spin" /> Adding up the statements…</span> : null}
-        <a href={f ? `/api/owner-financials?from=${f.from}&to=${f.to}&format=xlsx` : undefined} aria-disabled={!f} className={'ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 font-semibold text-white ' + (f ? '' : 'pointer-events-none opacity-40')}><Download size={13} /> Excel</a>
+        <a href={f ? '/api/owner-financials?' + qs(f.from, f.to) + '&format=xlsx' : undefined} aria-disabled={!f} className={'ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 font-semibold text-white ' + (f ? '' : 'pointer-events-none opacity-40')}><Download size={13} /> {scope ? 'Excel for this ' + (scope.kind === 'building' ? 'building' : scope.kind) : 'Excel'}</a>
+        <div className="basis-full flex flex-wrap items-center gap-2 border-t border-line pt-2">
+          <span className="font-semibold text-ink">Show</span>
+          <button type="button" onClick={() => pickScope(null)} className={'rounded-lg border px-2.5 py-1.5 font-semibold ' + (!scope ? 'border-ink bg-ink text-white' : 'border-line bg-white text-ink')}>Everything</button>
+          <select value={scope?.kind === 'owner' ? scope.id : ''} onChange={e => pickScope(e.target.value ? { kind: 'owner', id: e.target.value } : null)} aria-label="One owner" className={sel + ' max-w-[220px] ' + (scope?.kind === 'owner' ? 'border-ink font-semibold' : '')}><option value="">One owner…</option>{(opts?.owners || []).map(o => <option key={o.id} value={o.id}>{o.name}</option>)}</select>
+          <select value={scope?.kind === 'building' ? scope.id : ''} onChange={e => pickScope(e.target.value ? { kind: 'building', id: e.target.value } : null)} aria-label="One building" className={sel + ' max-w-[220px] ' + (scope?.kind === 'building' ? 'border-ink font-semibold' : '')}><option value="">One property…</option>{(opts?.buildings || []).map(b => <option key={b} value={b}>{b}</option>)}</select>
+          <select value={scope?.kind === 'listing' ? scope.id : ''} onChange={e => pickScope(e.target.value ? { kind: 'listing', id: e.target.value } : null)} aria-label="One listing" className={sel + ' max-w-[240px] ' + (scope?.kind === 'listing' ? 'border-ink font-semibold' : '')}><option value="">One listing…</option>{(opts?.listings || []).map(l => <option key={l.id} value={l.id}>{l.name}{l.building && l.building !== l.name ? ' · ' + l.building : ''}</option>)}</select>
+          {f?.scope ? <span className="text-muted">Showing only <b className="text-ink">{f.scope.name}</b>. The Excel button downloads this {f.scope.kind === 'building' ? 'property' : f.scope.kind}’s own file, ready to share.</span> : null}
+        </div>
       </div>
       {err ? <LeanEmpty>{err}</LeanEmpty> : !f ? <LeanEmpty>Reading the owner statements…</LeanEmpty> : <>
         {f.notSynced.length ? <p className="rounded-xl bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900"><b>Not fully synced:</b> {f.notSynced.map(mLabel).join(', ')}. Figures for {f.notSynced.length === 1 ? 'that month' : 'those months'} may be short until the owner-statement sync finishes.</p> : null}

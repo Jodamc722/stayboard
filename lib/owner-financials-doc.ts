@@ -41,11 +41,13 @@ function groupSheet(wb: ExcelJS.Workbook, name: string, f: Financials, rows: Fin
 
 export async function financialsWorkbook(f: Financials): Promise<Buffer> {
   const wb = new ExcelJS.Workbook(); wb.creator = 'Lighthouse'; wb.created = new Date()
-  const period = `${mLabel(f.from)} to ${mLabel(f.to)} · ${f.statements} owner statements · ${f.ledgerLines.toLocaleString()} statement lines · made ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })}`
+  // narrowed to one owner, building or listing, it is a document for that owner: it says who it is for
+  const who = f.scope ? (f.scope.kind === 'owner' ? 'Prepared for ' : f.scope.kind === 'building' ? 'Building: ' : 'Listing: ') + f.scope.name + ' · ' : ''
+  const period = `${who}${mLabel(f.from)} to ${mLabel(f.to)} · ${f.scope && f.scope.kind !== 'owner' ? '' : f.statements + ' owner statements · '}${f.ledgerLines.toLocaleString()} statement lines · made ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' })}`
 
   // ── P&L: the lines down, the months across ──
   const ws = wb.addWorksheet('P&L', { views: [{ state: 'frozen', xSplit: 1, ySplit: 4 }] })
-  title(ws, 'Owner financials · profit and loss', period)
+  title(ws, (f.scope ? f.scope.name + ' · ' : 'Owner financials · ') + 'profit and loss', period)
   ws.addRow(['', ...f.months.map(mLabel), 'Total', '% of gross']); head(ws, 4)
   const section = (label: string) => { const r = ws.addRow([label]); r.font = { bold: true, size: 10, color: { argb: 'FF6B665C' } } }
   section('WHAT GUESTS PAID (from the bookings)')

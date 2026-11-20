@@ -23,8 +23,12 @@ export const FIN_LINES: { key: FinCat | 'gross' | 'expenses' | 'net' | 'guestRen
 export type FinVals = { /** from the bookings: accommodation fare, cleaning fees and their sum, and nights, for stays in the period */ guestRent: number; guestCleaning: number; guestGross: number; nights: number; rental: number; cleaning: number; fees: number; other: number; commission: number; charges: number; passthru: number; paid: number; gross: number; expenses: number; net: number }
 export type FinRow = FinVals & { key: string; name: string; building: string; owner: string; units: number; /** net and gross by month, for the trend columns */ byMonth: Record<string, { gross: number; net: number }> }
 export type FinDetail = { cat: FinCat; name: string; amount: number; lines: number }
+/** One owner, one building or one listing: the report narrowed to it, to share with that owner. */
+export type FinScope = { kind: 'owner' | 'building' | 'listing'; id: string; name: string }
 export type Financials = {
   from: string; to: string; months: string[]
+  /** Null for the whole portfolio. */
+  scope: FinScope | null
   /** Months in the range whose ledger is not fully synced (left out of nothing, but flagged), and months with ledger lines but no statement generated yet. */
   notSynced: string[]; noStatements: string[]; statements: number; ledgerLines: number
   /** Bookings read for the guest side, and what sat on units with no statement line in the period (left out of the rows). */
