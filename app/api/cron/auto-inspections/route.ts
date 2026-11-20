@@ -8,7 +8,7 @@
 // lib/auto-inspections.ts for the rules (big arrival / VIP / owner stay / arrival into a unit with a
 // bad review / a new low review) and who gets assigned.
 import { NextRequest, NextResponse } from 'next/server'
-import { runAutoInspections, runArrivalFeedbackInspections, runLowReviewInspections, retireArrivalInspections, runDeepCleanInspections, backfillInspectionTemplates } from '@/lib/auto-inspections'
+import { runAutoInspections, runArrivalFeedbackInspections, runLowReviewInspections, retireArrivalInspections, retireNoServiceInspections, runDeepCleanInspections, backfillInspectionTemplates } from '@/lib/auto-inspections'
 import { runPmRecurrence, pmRecurrenceRanWithin } from '@/lib/pm-recurrence'
 import { requireCron } from '@/lib/cron-auth'
 import { withRouteReceipt, recordRun } from '@/lib/automation-runs'
@@ -52,6 +52,10 @@ async function run(req: NextRequest) {
     // (Jon, 2026-09-28: time-sensitive — "if not completed, delete the task"). Own try, same reason.
     let retired: any = null
     try { retired = await retireArrivalInspections({ dryRun: preview }) } catch (e: any) { retired = { ok: false, error: String(e?.message || e).slice(0, 200) } }
+    // Open inspections at a no-inspection building (Botanica) are cancelled, not left on the
+    // supervisors' lists (Jon, 2026-11-20). Own try.
+    let noService: any = null
+    try { noService = await retireNoServiceInspections({ dryRun: preview }) } catch (e: any) { noService = { ok: false, error: String(e?.message || e).slice(0, 200) } }
     // EVERY DEEP CLEAN GETS A SUPERVISOR INSPECTION (Jon, 2026-10-16): a deep clean that finished
     // files "Deep clean inspection — <unit>" for the market supervisor, with the Deep Clean
     // Inspection 1.0 checklist. Own try — reads the task mirror, not the reservations.
@@ -98,12 +102,13 @@ async function run(req: NextRequest) {
         arrivalFeedback: arrivalFeedback ? { ok: arrivalFeedback.ok, created: arrivalFeedback.created, covered: arrivalFeedback.covered, movedForward: arrivalFeedback.movedForward, failed: arrivalFeedback.failed, error: arrivalFeedback.error } : null,
         lowReviews: lowReviews ? { ok: lowReviews.ok, created: lowReviews.created, movedForward: lowReviews.movedForward, alreadyCovered: lowReviews.alreadyCovered, waitingForCheckout: lowReviews.waitingForCheckout, failed: lowReviews.failed } : null,
         retiredArrivalInspections: retired ? { ok: retired.ok, found: retired.found, retired: (retired.retired || []).length, failed: (retired.failed || []).length } : null,
+        retiredNoService: noService ? { ok: noService.ok, found: noService.found, retired: (noService.retired || []).length, failed: (noService.failed || []).length, error: noService.error } : null,
         deepCleanInspections: deepCleans ? { ok: deepCleans.ok, enabled: deepCleans.enabled, scanned: deepCleans.scanned, created: deepCleans.created, failed: deepCleans.failed, alreadyFiled: deepCleans.alreadyFiled, notOurs: deepCleans.notOurs, error: deepCleans.error } : null,
         templateBackfill: templates ? { ok: templates.ok, scanned: templates.scanned, attached: (templates.attached || []).length, alreadyTemplated: templates.alreadyTemplated, failed: (templates.failed || []).length, verified: templates.verified, stopped: templates.stopped, error: templates.error } : null,
         pmRecurrence: pm ? { ok: pm.ok, skipped: pm.skipped, created: pm.created, proposed: pm.proposed, moved: pm.moved, error: pm.error } : null,
       })
     }
-    return NextResponse.json({ ...out, arrivalFeedback, lowReviews, retiredArrivalInspections: retired, deepCleanInspections: deepCleans, templateBackfill: templates, pmRecurrence: pm })
+    return NextResponse.json({ ...out, arrivalFeedback, lowReviews, retiredArrivalInspections: retired, retiredNoService: noService, deepCleanInspections: deepCleans, templateBackfill: templates, pmRecurrence: pm })
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: String(e?.message || e).slice(0, 300) }, { status: 500 })
   }

@@ -631,8 +631,8 @@ async function moveReviewInspectionsForward(db: any, existing: any[], today: str
   const moveLids = Array.from(new Set(needMove.map((e: any) => str(e.listing_id)).filter(Boolean)))
   const moveNext = await nextCheckouts(db, moveLids, today)
   // NO-INSPECTION BUILDINGS (Jon, 2026-11-06): an inspection filed before the rule (or by hand) at
-  // such a building is not rolled forward to a new day — Lighthouse does not chase it. It is left
-  // exactly as it is for a person to close.
+  // such a building is not rolled forward to a new day — Lighthouse does not chase it. The open
+  // ones Lighthouse filed are cancelled by retireNoServiceInspections (2026-11-20).
   const ns = await getNoService()
   const metaOf: Record<string, any> = {}
   if (moveLids.length) {
@@ -1138,6 +1138,52 @@ export async function retireArrivalInspections(opts: { dryRun?: boolean } = {}):
     } catch (e: any) {
       out.failed.push({ taskId, error: String(e?.message || e).slice(0, 140) })
     }
+  }
+  return out
+}
+
+// ── NO-INSPECTION BUILDINGS: THE ONES ALREADY ON THE BOARD (Jon, 2026-11-20) ────────────────────
+//
+//   "Remove quality inspections for Botanica as that is not managed by our operations."
+//
+// The Nov 6 rule stopped Lighthouse FILING inspections at a no-inspection building, and stopped it
+// rolling the old ones forward, but left them open "for a person to close". Nobody did: twelve sat
+// on the supervisors' lists and in the Field Run every morning. This retires them: every OPEN
+// inspection Lighthouse itself files by name (quality, pre-arrival) at a no-inspection building is
+// cancelled in Breezeway. A task a person named by hand is not touched, and a finished one never is.
+const LIGHTHOUSE_INSPECTION = /^\s*(\[Moved to [^\]]+\]\s*)?(quality inspection|pre-arrival inspection)\b/i
+export async function retireNoServiceInspections(opts: { dryRun?: boolean } = {}): Promise<{
+  ok: boolean; found: number; retired: { taskId: string; name: string; date: string }[]; failed: { taskId: string; error: string }[]
+}> {
+  const db = supabaseAdmin()
+  const out = { ok: true, found: 0, retired: [] as { taskId: string; name: string; date: string }[], failed: [] as { taskId: string; error: string }[] }
+  const ns = await getNoService()
+  if (!(ns.inspections || []).length) return out
+  const from = ymdET(new Date(Date.now() - 60 * 86400000))
+  const { data: rows } = await db.from('breezeway_tasks_sync')
+    .select('id, name, status, finished_at, scheduled_date, reference_property_id')
+    .or('name.ilike.%quality inspection%,name.ilike.%pre-arrival inspection%')
+    .gte('scheduled_date', from).limit(1000)
+  const open = ((rows || []) as any[]).filter(t => LIGHTHOUSE_INSPECTION.test(str(t.name)) && !t.finished_at
+    && !/complet|finish|close|approv|cancel|delet|void/i.test(str(t.status)))
+  if (!open.length) return out
+  const lids = Array.from(new Set(open.map(t => str(t.reference_property_id)).filter(Boolean)))
+  const metaOf: Record<string, any> = {}
+  try {
+    const { data: ls } = await db.from('guesty_listings').select('id, nickname, title, building').in('id', lids.slice(0, 300))
+    for (const l of (ls || []) as any[]) metaOf[str(l.id)] = l
+  } catch { /* the task's own name is still checked */ }
+  const stale = open.filter(t => { const m = metaOf[str(t.reference_property_id)] || {}; return skipsInspectionsIn(ns, m.building, m.nickname, m.title, t.name) })
+  out.found = stale.length
+  const row = (t: any) => ({ taskId: str(t.id), name: str(t.name).slice(0, 120), date: str(t.scheduled_date).slice(0, 10) })
+  if (opts.dryRun || !breezewayConfigured()) return { ...out, retired: stale.map(row) }
+  for (const t of stale) {
+    try {
+      const res = await cancelBreezewayTask(str(t.id))
+      if (!res.ok) throw new Error('Breezeway would not cancel (' + res.status + ')')
+      try { await db.from('breezeway_tasks_sync').update({ status: 'cancelled', synced_at: new Date().toISOString() }).eq('id', str(t.id)) } catch { /* next sync */ }
+      out.retired.push(row(t))
+    } catch (e: any) { out.failed.push({ taskId: str(t.id), error: String(e?.message || e).slice(0, 140) }) }
   }
   return out
 }
