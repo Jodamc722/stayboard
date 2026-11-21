@@ -156,7 +156,11 @@ Reply with ONLY this JSON:
 
 // ── 3. the composer ─────────────────────────────────────────────────────────────────────────────────────────────
 /** Which finished piece is shown as the worked example: always a DIFFERENT event and look, so structure is copied and design is not. */
-export const EXAMPLE_FOR: Record<string, string> = { thanksgiving: 'basel', christmas: 'thanksgiving', nye: 'christmas', basel: 'nye', stays: 'nye', ownerstory: 'nye', team: 'basel' }
+export const EXAMPLE_FOR: Record<string, string> = { thanksgiving: 'basel', christmas: 'thanksgiving', nye: 'christmas', basel: 'nye', stays: 'ownerstory', ownerstory: 'stays', team: 'basel' }
+/** The worked example for a piece. An event with a pairing uses it; any other owner piece is shown the owner design
+ *  and any other team piece the team design (2026-11-21: the everyday kinds have finished designs of their own now,
+ *  so an owner piece no longer learns its craft from a New Year's Eve countdown). */
+export const exampleFor = (moment: string, audience: 'guests' | 'owners' | 'team'): string => EXAMPLE_FOR[moment] || (audience === 'owners' ? 'ownerstory' : audience === 'team' ? 'team' : 'thanksgiving')
 
 /** Sections that are the same for every piece of an event: sent as the cached system prompt. */
 export function composerSystem(audience: 'guests' | 'owners' | 'team', example: Composition | null): string {
@@ -185,6 +189,13 @@ MOTION
 - The last scene holds at least 3.2 s.
 SCRIPT
 - The script is the spine. One spoken line per scene, about 2.5 words a second. The on-screen headline says the same thing in fewer words. Give two alternates for the opening line and for the last line.
+HOW IT WILL BE MARKED (measured on your document before anyone sees it; design to pass every line)
+- First frame: a picture is on screen from frame one and fills at least a quarter of the frame; the opening headline is 2 to 5 words and has landed by 1.5 s.
+- Hierarchy: in every scene the headline is at least 2.5 times the size of any label, and never under 72 px on a 1080-wide frame.
+- Composition: no band over 16% of the frame's height is left empty; across the piece photographs fill at least a fifth of the frame on average; the words of a scene start on one or two left edges, not four.
+- Brand: the mark is in the first scene and the last; one display face, one accent face, one label face; no more than three colours of type in a scene.
+- Rhythm: two scenes in a row never share the same ground AND the same arrangement; at most two kinds of transition; no scene asks for more than 4 words a second to be read (labels count); the last scene holds at least 3.2 s.
+- Finish: everything has arrived at least 1 s before its scene ends.
 
 THE FORMAT
 ${formatSpec()}
@@ -192,6 +203,17 @@ ${formatSpec()}
 THE LOOKS (art-direction systems; you compose inside one, you do not fill it in)
 ${looksText([])}
 ${ex ? `\nA FINISHED PIECE FOR A DIFFERENT EVENT, in the format (its frame was ${example!.canvas.w} x ${example!.canvas.h}; copy the structure and the level of craft, never its design, palette or words):\n${ex}` : ''}`
+}
+
+/** WHAT THIS KIND OF PIECE HAS TO DO WHERE IT IS SEEN (Jon, 2026-11-21: "From posts, to videos to shorts"). A short in
+ *  a full-screen feed, a story, a post in a grid and a still are judged differently by the person scrolling; the
+ *  designer is told which one it is making. */
+export function formatPlaybook(b: Brief): string {
+  const still = b.seconds <= 6
+  if (still) return `THE FORMAT: A STILL OR A SIX-SECOND POST. One frame has to carry everything: the strongest photograph, a headline of 2 to 5 words, the mark and the closing line, all readable at the size of a thumb. Nothing may depend on motion to make sense. Give the photograph at least half the frame.`
+  if (b.channel === 'feed' || b.channel === 'square') return `THE FORMAT: A POST IN THE FEED (${b.channel === 'feed' ? '4:5' : 'square'}). It is seen small, among other posts, usually with the sound off, and its first frame is its thumbnail in the grid. So: the first frame must work as a finished still; type is larger against the frame than in a full-screen video; the photograph carries at least half of most scenes; nothing important sits in the outer 6% of the frame. There are no platform buttons over it, so the whole frame is yours.`
+  if (b.channel === 'story') return `THE FORMAT: A STORY (9:16). People tap through: every scene must make sense on its own if it is the only one seen, and the first must say what this is within a second. Keep each scene to one thought. The top and the foot are under the app's own bar and reply field; carry the photograph or colour into them, never words.`
+  return `THE FORMAT: A SHORT (9:16) for Reels, TikTok and Shorts. The first second decides whether it is watched: open on the strongest photograph already on screen, with the headline landed by about one second. One thought per scene, each held 2.4 to 3.2 s; ${b.seconds >= 20 ? 'at this length vary the pace: a quicker scene after two held ones.' : 'do not rush them.'} It plays on a loop, so the last frame should sit well against the first. The right edge and the foot are under the app's own buttons and caption; carry the photograph or colour into them, never words.`
 }
 
 /** This piece: the brief Jon confirmed, the event's identity, the idea and the words he picked, the photographs. */
@@ -211,6 +233,8 @@ Caption     ${caption}
 
 THE PHOTOGRAPHS YOU MAY USE (attached as images in this order; ids are fixed; use each at most once)
 ${photoList(photos)}
+
+${formatPlaybook(b)}
 
 REPLY
 One JSON object in the format: concept, tokens, scenes (${lines.length} of them, ids s1 to s${lines.length}, durations adding up to about ${b.seconds} s), script, social. The canvas is ${ch.w} x ${ch.h}. Give each photo layer a "focal" point for what must stay in the crop. Nothing before or after the JSON.`
@@ -277,7 +301,7 @@ Judge it the way a creative director judges work before it leaves a top studio. 
 
 THE MEASURED CHECK FOUND
 ${findings || 'nothing failing'}
-Every item it lists must be fixed.${mine}${video}
+Every item it lists must be fixed. Lines marked [craft: …] are weaknesses measured in the design itself (not errors): deal with each one in your redesign and say how in your notes.${mine}${video}
 
 If, and only if, the piece is already at that standard${direction ? ' and what they asked for is already done' : ''}, reply with ONLY: {"verdict":"ship","notes":["one line on why it works"]}
 

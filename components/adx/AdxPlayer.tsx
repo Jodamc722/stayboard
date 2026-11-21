@@ -23,7 +23,7 @@
 // (does it still fit, is it still readable, is a photograph being stretched). No drop-down menus.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MUSIC } from '@/lib/ad-engine'
-import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, runsToPlain, plainToRuns, cleanText, musicLevel, lum as lumOf } from '@/lib/adx/composition'
+import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, type ChannelKey, runsToPlain, plainToRuns, cleanText, musicLevel, lum as lumOf } from '@/lib/adx/composition'
 import { renderFrame, restTime, sceneAt, canvasMeasure, type Assets, type Ctx } from '@/lib/adx/player'
 import { auditComposition, canvasSampler, type AuditResult } from '@/lib/adx/audit'
 import { loadAssets, setVideoListener, pauseVideos } from '@/lib/adx/assets'
@@ -32,6 +32,7 @@ import * as E from '@/lib/adx/edit'
 import { UI } from './BriefWizard'
 import { LayerPanel, ScenePanel, StylePanel, PhotoPicker, VideoPicker, AddBar, Swatches, Sec, chip, type Pool } from './AdxPanels'
 import AdxTimeline from './AdxTimeline'
+import { scorePiece, platformFit, type Scorecard } from '@/lib/adx/scorecard'
 
 const btn = (primary = false, disabled = false): React.CSSProperties => ({ fontSize: 12.5, fontWeight: 800, padding: '8px 13px', borderRadius: 9, border: primary ? 0 : '1px solid ' + UI.line, background: primary ? UI.gold : UI.panel2, color: primary ? '#0B0F16' : UI.ink, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, whiteSpace: 'nowrap' })
 const mmss = (s: number) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0')
@@ -56,7 +57,7 @@ async function shrinkImage(file: File): Promise<Blob> {
   return out
 }
 
-export default function AdxPlayer({ doc, onChange, canEdit, display, hold }: { doc: Composition; onChange: (d: Composition) => void; canEdit: boolean; display: string; /** true while something else is drawing this piece (the creative director's review): the preview leaves the video clips alone */ hold?: boolean }) {
+export default function AdxPlayer({ doc, onChange, canEdit, display, hold, onVariant }: { doc: Composition; onChange: (d: Composition) => void; canEdit: boolean; display: string; /** true while something else is drawing this piece (the creative director's review): the preview leaves the video clips alone */ hold?: boolean; /** make a copy of this piece in another shape (a feed post, a square, a story) and open it */ onVariant?: (channel: ChannelKey) => void }) {
   const W = doc.canvas.w, H = doc.canvas.h, dur = doc.canvas.duration
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -85,6 +86,9 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold }: { d
   const [playing, setPlaying] = useState(false)
   const [guides, setGuides] = useState(false)
   const [audit, setAudit] = useState<AuditResult | null>(null)
+  /** The craft score (lib/adx/scorecard): how good the piece is, measured on the piece itself after every change. */
+  const [score, setScore] = useState<Scorecard | null>(null)
+  const [scoreOpen, setScoreOpen] = useState(false)
   const [sel, setSel] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('edit')
   const [picker, setPicker] = useState<Picker | null>(null)
@@ -191,7 +195,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold }: { d
       try {
         const c = document.createElement('canvas'); c.width = W; c.height = H
         const g = c.getContext('2d', { willReadFrequently: true }) as Ctx
-        setAudit(auditComposition(docRef.current, canvasMeasure(g), { sample: canvasSampler(docRef.current, assets.current!, g) }))
+        const a = auditComposition(docRef.current, canvasMeasure(g), { sample: canvasSampler(docRef.current, assets.current!, g) })
+        setAudit(a); setScore(scorePiece(docRef.current, canvasMeasure(g), a))
       } catch { /* keep the last result */ }
     }, 350)
     return () => clearTimeout(h)
@@ -454,6 +459,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold }: { d
   const copyCaption = async () => { try { await navigator.clipboard.writeText(captionText); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* the text is selectable below */ } }
 
   const clipSound = hasClipSound(doc)
+  const weakest = score ? score.parts.filter(p => p.score < 10).sort((a, b) => a.score - b.score)[0] || null : null
+  const fits = useMemo(() => platformFit(doc), [doc])
   const fails = audit ? audit.issues.filter(x => x.sev === 'fail') : []
   const warns = audit ? audit.issues.filter(x => x.sev === 'warn') : []
   const sf = doc.canvas.safe
@@ -533,6 +540,25 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold }: { d
             {audit ? <span style={{ fontWeight: 500, color: UI.mut, marginLeft: 8, fontSize: 11.5 }}>{audit.measured.text} lines measured · {audit.measured.photos} photos · {audit.measured.scenes} scenes</span> : null}
           </p>
           {missing ? <p style={{ margin: '6px 0 0', fontSize: 12, color: UI.red }}>{missing} photograph{missing === 1 ? '' : 's'} could not be loaded.</p> : null}
+          {/* the craft score: one line, and the reasons on request (Jon, 2026-11-21: "real audits") */}
+          {score ? (
+            <p style={{ margin: '7px 0 0', fontSize: 12.5, lineHeight: 1.45 }}>
+              <span style={{ fontWeight: 800, color: score.total >= 90 ? UI.green : score.total >= 75 ? UI.gold : UI.red }}>Craft score {score.total}</span>
+              <span style={{ color: UI.mut }}> of 100{weakest ? ' · weakest: ' + weakest.label + ' ' + weakest.score : ' · nothing marked down'}</span>
+              <button type="button" onClick={() => setScoreOpen(v => !v)} aria-expanded={scoreOpen} style={{ background: 'none', border: 0, padding: '0 0 0 8px', color: UI.gold, cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}>{scoreOpen ? 'Hide' : 'Why'}</button>
+            </p>
+          ) : null}
+          {score && scoreOpen ? (
+            <div style={{ margin: '6px 0 2px', borderTop: '1px solid ' + UI.line, paddingTop: 6 }}>
+              {score.parts.map(p => (
+                <p key={p.key} style={{ margin: '3px 0 0', fontSize: 12, lineHeight: 1.45, color: UI.ink }}>
+                  <span style={{ display: 'inline-block', minWidth: 104, fontWeight: 700 }}>{p.label}</span>
+                  <span style={{ fontWeight: 800, color: p.score >= 9 ? UI.green : p.score >= 7 ? UI.gold : UI.red, fontVariantNumeric: 'tabular-nums' }}>{p.score}</span>
+                  <span style={{ color: UI.mut }}>{p.notes.length ? ' · ' + p.notes.join(' ') : ''}</span>
+                </p>
+              ))}
+            </div>
+          ) : null}
           {fails.concat(warns).slice(0, 6).map((x, i) => (
             <button key={i} type="button" onClick={() => { const s = doc.scenes.find(y => y.id === x.scene); if (s) seek(restTime(s)); if (x.layer && canEdit) select(x.layer) }} style={{ display: 'block', width: '100%', textAlign: 'left', background: 'transparent', border: 0, padding: '7px 0 0', color: UI.ink, cursor: x.scene ? 'pointer' : 'default', fontSize: 12.5, lineHeight: 1.45 }}>
               <span style={{ color: x.sev === 'fail' ? UI.red : UI.gold, fontWeight: 800, marginRight: 6 }}>{x.sev === 'fail' ? 'Fix' : 'Note'}</span>{x.msg}
@@ -575,6 +601,17 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold }: { d
             {result ? <p style={{ margin: '8px 0 0', fontSize: 12, color: result.path === 'webcodecs' ? UI.green : UI.gold, lineHeight: 1.45 }}>{result.path === 'webcodecs' ? '✓ ' : ''}{result.note} ({(result.blob.size / 1048576).toFixed(1)} MB in {(result.ms / 1000).toFixed(1)} s)</p> : null}
             {err ? <p style={{ margin: '8px 0 0', fontSize: 12, color: UI.red }}>{err}</p> : null}
             <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>{W} × {H} · 30 frames a second · {doc.scenes.length} scenes · {dur.toFixed(1)} s{music ? ' · ' + music.label : ' · no music'}</p>
+
+            {/* where it can go, and the same piece in another shape (Jon, 2026-11-21: "From posts, to videos to shorts") */}
+            <p style={{ margin: '14px 0 4px', fontSize: 13, fontWeight: 800 }}>Where it can go</p>
+            {fits.map(f => (
+              <div key={f.key} style={{ display: 'flex', alignItems: 'baseline', gap: 8, padding: '5px 0', borderTop: '1px solid ' + UI.line }}>
+                <span style={{ fontSize: 12.5, fontWeight: 700, minWidth: 118 }}>{f.label}</span>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.4, color: f.state === 'ready' ? UI.green : UI.mut }}>{f.state === 'ready' ? '✓ Ready' : f.state === 'notes' ? <><span style={{ color: UI.gold, fontWeight: 700 }}>Ready, with a note. </span>{f.notes.join(' ')}</> : f.notes[0]}</span>
+                {f.state === 'shape' && onVariant && canEdit ? <button type="button" onClick={() => onVariant(f.channel)} title="Makes a copy of this piece laid out for this shape and opens it. No AI is used; this piece stays as it is." style={chip()}>Make this shape</button> : null}
+              </div>
+            ))}
+            <p style={{ margin: '6px 0 0', fontSize: 11, color: UI.mut }}>The studio keeps words clear of every platform’s own buttons. A still for a photo post is “PNG of this frame”.</p>
           </section>
         ) : null}
 

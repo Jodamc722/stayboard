@@ -16,7 +16,7 @@ import { usageOf, costUsd } from '@/lib/ai-usage'
 import { looseJson } from '@/lib/ad-json'
 import { MUSIC } from '@/lib/ad-engine'
 import { sanitizeComposition, canvasFor, cleanText, LOOK_KEYS, type Brief, type Composition, type PhotoAsset } from './composition'
-import { conceptPrompt, copyPrompt, composerSystem, composerUser, repairPrompt, reviewPrompt, sceneCount, EXAMPLE_FOR } from './brief'
+import { conceptPrompt, copyPrompt, composerSystem, composerUser, repairPrompt, reviewPrompt, sceneCount, exampleFor } from './brief'
 import { identityOf } from './identities'
 import { auditComposition, issueLines, MEASURED_CODES, type Issue } from './audit'
 import { approxMeasure } from './player'
@@ -105,7 +105,7 @@ export function musicFor(moment: string, audience: Brief['audience'] = 'guests')
 }
 
 export async function runCompose(brief: Brief, concept: Concept, option: CopyOption, photos: Record<string, PhotoAsset>, by: string, priorUsd = 0): Promise<{ ok: true; doc: Composition; notes: string[]; issues: Issue[]; usd: number; repaired: boolean } | Fail> {
-  const example = housePiece(EXAMPLE_FOR[brief.moment] || 'thanksgiving')
+  const example = housePiece(exampleFor(brief.moment, brief.audience))
   const system = composerSystem(brief.audience, example)
   // the photographs, small, in the order of the list — the composer designs from what it sees
   const images = Object.values(photos).slice(0, 10).map(p => ({ type: 'image', source: { type: 'url', url: thumbUrl(p.src) } }))
@@ -155,7 +155,7 @@ export type Still = { scene: string; data: string }
 /** A graphic the director called for: made by the image model and placed by the browser, then seen in the next review. */
 export type ArtAsk = { scene: string; kind: ArtKind; style: string; what: string; box: { x?: number; y?: number; w?: number }; idle?: 'float' | 'sway' | 'spin' | 'pulse' }
 export async function runReview(doc: Composition, pool: Record<string, PhotoAsset>, stills: Still[], findings: string, round: number, canArt = false, direction = ''): Promise<{ ok: true; doc: Composition; verdict: 'ship' | 'revised'; notes: string[]; changed: string[]; art: ArtAsk[]; usd: number } | Fail> {
-  const example = housePiece(EXAMPLE_FOR[doc.brief.moment] || 'thanksgiving')
+  const example = housePiece(exampleFor(doc.brief.moment, doc.brief.audience))
   const system = composerSystem(doc.brief.audience, example)
   const photos: Record<string, PhotoAsset> = { ...pool, ...doc.assets.photos }
   const content: any[] = []

@@ -8,12 +8,15 @@
 // When Ad Studio's monthly AI budget is used up, or no AI key is set, the studio says so plainly and offers the house
 // design for the event, which costs nothing and is just as editable.
 import { useEffect, useRef, useState } from 'react'
-import type { Brief, Composition, PhotoAsset } from '@/lib/adx/composition'
+import type { Brief, Composition, PhotoAsset, ChannelKey } from '@/lib/adx/composition'
 import { ADX_MONTHLY_CAP_USD, ADX_HOUSE } from '@/lib/adx/composition'
 import { IDENTITIES, LOOKS, identityOf } from '@/lib/adx/identities'
 import { loadFonts } from '@/lib/adx/assets'
 import { lookAt } from '@/lib/adx/stills'
 import { placeArt } from '@/lib/adx/edit'
+import { variantOf, SHAPE_LABEL } from '@/lib/adx/reflow'
+import { scorePiece, craftLines } from '@/lib/adx/scorecard'
+import { approxMeasure, canvasMeasure, type Ctx } from '@/lib/adx/player'
 import BriefWizard, { UI } from './BriefWizard'
 import AdxPlayer from './AdxPlayer'
 
@@ -55,6 +58,8 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
   const [ask, setAsk] = useState('')
   const [askOpen, setAskOpen] = useState(false)
   const [enh, setEnh] = useState<{ before: Composition; after: Composition } | null>(null)
+  /** One line about what just happened to the piece (a copy made in another shape). */
+  const [info, setInfo] = useState('')
   const [budget, setBudget] = useState<Budget | null>(null)
   const [saved, setSaved] = useState<'saved' | 'saving' | 'unsaved' | ''>('')
   const spent = useRef(0)
@@ -128,7 +133,10 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
       setBusy('review'); setStage(`Drawing the frames and looking at them — review ${r} of ${rounds}`)
       let seen
       try { seen = await lookAt(d) } catch { said.push('The frames could not be drawn for the review, so the piece is as first designed.'); break }
-      const { status, j } = await post('/api/adx/review', { doc: d, photos: pool, stills: seen.stills, findings: seen.findings, round: r, canArt: r < rounds || !!direction, direction })
+      // what was weak, measured on the piece itself, goes to the director with what the check found (2026-11-21)
+      let craft = ''
+      try { craft = craftLines(scorePiece(d, approxMeasure, seen.audit)) } catch { /* the review still runs on what the check found */ }
+      const { status, j } = await post('/api/adx/review', { doc: d, photos: pool, stills: seen.stills, findings: [seen.findings, craft].filter(Boolean).join('\n'), round: r, canArt: r < rounds || !!direction, direction })
       if (j?.budget) setBudget(j.budget)
       if (!j?.ok || !j.doc) { said.push(j?.error ? 'The review stopped: ' + j.error : status === 0 ? 'The review did not finish (the connection dropped); the piece is as designed so far.' : 'The review did not finish; the piece is as designed so far.'); break }
       for (const n of (j.notes || []) as string[]) said.push(n)
@@ -165,6 +173,22 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
     changed.current = true; dirty.current = false
     setDoc(done); setSaved('saved')
     setEnh(done !== d ? { before: d, after: done } : null)
+  }
+  /** ONE PIECE, EVERY SHAPE (Jon, 2026-11-21: "From posts, to videos to shorts"): a copy of the open piece laid out
+   *  for a feed post, a square or a story, saved as a piece of its own and opened. No AI is used. */
+  const makeVariant = async (channel: ChannelKey) => {
+    const d = docRef.current; if (!d || busy || !canEdit) return
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    setBusy('variant'); setErr(''); setInfo('')
+    if (dirty.current) await post('/api/adx/pieces', { doc: d })              // what was being edited is kept first
+    let v: Composition
+    try { v = variantOf(d, channel, canvasMeasure(document.createElement('canvas').getContext('2d') as unknown as Ctx)) } catch { v = variantOf(d, channel) }
+    const { j } = await post('/api/adx/pieces', { doc: v })
+    setBusy('')
+    if (!j?.ok || !j.doc) { setErr(j?.error || 'The new shape was not saved. Try again.'); return }
+    changed.current = true; dirty.current = false
+    setDoc(j.doc); setSaved('saved'); setReview([]); setEnh(null); setNotes([])
+    setInfo(`This is “${d.title.slice(0, 60)}” laid out as ${SHAPE_LABEL[channel]}, saved as its own piece. The one it came from is unchanged.`)
   }
   /** Put the piece back as it was before the last enhancement. */
   const undoEnhance = () => { if (!enh || docRef.current !== enh.after) return; setReview([]); change(enh.before); setEnh(null) }
@@ -335,7 +359,8 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
                 <button type="button" onClick={() => setReview([])} style={{ background: 'none', border: 0, color: UI.mut, cursor: 'pointer', fontSize: 12.5 }}>Hide</button>
               </div>
             ) : null}
-            <AdxPlayer doc={doc} onChange={change} canEdit={canEdit} display={display} hold={busy === 'review'} />
+            {info ? <p style={{ fontSize: 12.5, color: UI.gold, margin: '0 0 10px' }}>{info} <button type="button" onClick={() => setInfo('')} style={{ background: 'none', border: 0, color: UI.mut, cursor: 'pointer', fontSize: 12 }}>Hide</button></p> : null}
+            <AdxPlayer doc={doc} onChange={change} canEdit={canEdit} display={display} hold={busy === 'review'} onVariant={busy ? undefined : makeVariant} />
             <p style={{ fontSize: 12, color: UI.mut, margin: '16px 0 0', lineHeight: 1.6 }}>{doc.concept.name ? <><b style={{ color: UI.ink }}>{doc.concept.name}.</b> {doc.concept.idea} </> : null}Photographs: {Array.from(new Set(Object.values(doc.assets.photos).map(p => p.building))).join(', ') || '—'} · {doc.brief.areaLabel}.</p>
           </div>
         )

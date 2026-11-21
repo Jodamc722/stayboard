@@ -99,15 +99,20 @@ export default function StudioHome({ rows, canEdit, canDelete, busy, display, la
         <p style={{ fontSize: 13, color: UI.mut, margin: '0 0 14px' }}>A short brief, three ideas, the script, then the piece is designed for it, drawn, looked at and redone where it is weak before you see it. Everything in it can be changed afterwards.</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 10, marginBottom: 30 }}>
           {ANYTIME.filter(k => adx.moments.indexOf(k.key) >= 0).map(k => (
-            <button key={k.key} type="button" disabled={!!busy} onClick={() => adx.onStart({ key: k.key } as Moment)}
-              style={{ textAlign: 'left', background: UI.panel, border: '1px solid ' + UI.gold, borderRadius: 14, padding: '16px 16px 14px', cursor: 'pointer', color: UI.ink }}>
+            <div key={k.key} style={{ textAlign: 'left', background: UI.panel, border: '1px solid ' + UI.gold, borderRadius: 14, padding: '16px 16px 14px', color: UI.ink }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(210,176,119,0.14)', display: 'grid', placeItems: 'center', fontSize: 18 }}>{k.emoji}</span>
                 <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16 }}>{k.label}</span>
               </span>
               <span style={{ display: 'block', fontSize: 12.5, color: UI.mut, lineHeight: 1.5, marginTop: 10 }}>{k.hint}. A video, an animated post or a still.</span>
-              <span style={{ display: 'block', fontSize: 11, color: UI.gold, marginTop: 8, fontWeight: 700, letterSpacing: '0.06em' }}>✦ DESIGNED FOR THE BRIEF · MP4 · PNG</span>
-            </button>
+              {/* each everyday kind has a finished design of its own to open for free (2026-11-21), beside the designed-for-the-brief route */}
+              <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 10 }}>
+                <button type="button" disabled={!!busy} onClick={() => adx.onStart({ key: k.key } as Moment)} title="A guided brief, three ideas, the script, then a piece designed for it"
+                  style={{ fontSize: 12, fontWeight: 800, padding: '6px 11px', borderRadius: 8, border: 0, background: UI.gold, color: '#0B0F16', cursor: 'pointer' }}>✦ Design this piece</button>
+                {ADX_HOUSE.indexOf(k.key) < 0 ? null : <button type="button" disabled={!!busy} onClick={() => adx.onHouse({ key: k.key } as Moment)} title="Opens the studio's own finished design, ready to edit. No AI is used."
+                  style={{ fontSize: 11.5, fontWeight: 700, padding: '6px 10px', borderRadius: 8, border: '1px solid ' + UI.line, background: UI.panel2, color: UI.ink, cursor: 'pointer' }}>House design</button>}
+              </span>
+            </div>
           ))}
         </div>
       </>) : null}
