@@ -17,6 +17,7 @@
 // "Reservation Notes" field (same field and safe-merge writer as the Claims board), and each
 // row shows what is already written on the reservation in Guesty.
 import { OwnerFinancials } from '@/components/OwnerFinancials'
+import { OwnerMail } from '@/components/OwnerMail'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Download,
@@ -377,7 +378,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
   const [pwErr, setPwErr] = useState('')
   const [pwBusy, setPwBusy] = useState(false)
 
-  const [view, setView] = useState<'work' | 'stmt' | 'prep' | 'fin'>('work')
+  const [view, setView] = useState<'work' | 'stmt' | 'prep' | 'fin' | 'mail'>('work')
   const [stmtOwner, setStmtOwner] = useState('')          // '' = overview grid
 
   const [q, setQ] = useState('')
@@ -1478,6 +1479,7 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           { key: 'stmt' as const, label: 'Statements', n: t ? t.statements : null },
           { key: 'prep' as const, label: 'Prep', n: data ? data.totals.prepOpen : null },
           { key: 'fin' as const, label: 'Financials', n: null },
+          { key: 'mail' as const, label: 'Owner emails', n: null },
         ]}
         value={view} onChange={v => { setView(v); if (v === 'stmt') setStmtOwner('') }}
         right={<>
@@ -1916,6 +1918,8 @@ export function OwnerAuditBoard({ share }: { share?: boolean }) {
           {/* ═══ OWNER PREP — the Expedia fee breakout ═══ */}
           {/* FINANCIALS: the P&L across months, its own period picker (components/OwnerFinancials) */}
           {view === 'fin' && <OwnerFinancials />}
+          {/* OWNER EMAILS: conversations BCC'd to Lighthouse, matched to owners (components/OwnerMail) */}
+          {view === 'mail' && <OwnerMail />}
           {view === 'prep' && (() => {
             const isSplit = (p: PrepItem) => p.splitDone || (p.cleaningAmt != null && p.rmAmt != null)
             const total = data.prep.length
