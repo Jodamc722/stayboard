@@ -162,6 +162,8 @@ export const DESKS: Desk[] = [
     blurb: 'Winning owners and keeping them: sales decks and building packages, owner onboarding, owner reports and Ad Studio.',
     views: [
       { to: '/sales', label: 'Sales', hint: 'Proposals and building packages: floor-plan rental comparisons, comps, the agent partner program; keynote and magazine from one link' },
+      // ONBOARDING COST (Jon, 2026-11-20: "build a cheat sheet for average onboarding cost… this is for sales… build it in app").
+      { to: '/sales/onboarding-cost', label: 'Onboarding cost', hint: 'What a new unit costs to get guest-ready: linen at par, the onboarding clean and inventory, from the unit’s beds, kitchen and appliances' },
       // OWNER ONBOARDING (Jon, 2026-11-12: "the owner onboarding link should be under sales, post signature").
       { to: '/owner-onboarding', label: 'Owner onboarding', hint: 'After the agreement is signed: the owner’s link and intro email, then their home, supplies, W-9 and ACH, the timeline and the handoff to accounting' },
       { to: '/reports', label: 'Owner reports', hint: 'Owner reviews, projections and onboarding decks (sales decks are on the Sales tab)' },
