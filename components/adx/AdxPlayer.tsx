@@ -14,6 +14,12 @@
 //   · Look & sound: colour theme, headline type, the song and its volume, the length of the whole video.
 //   · Words and Files are as before. Undo and redo (⌘Z) cover every change.
 //
+// ON A PHONE (Jon, 2026-11-21: "Make it where if on phone when click on video I can watch too"): the picture and the
+// options no longer sit side by side (the picture was squeezed to the width of a finger). On a narrow screen the
+// picture comes first, as tall as the screen allows, with a play button on it: tap it to watch, tap the picture to
+// pause. The timeline and the options follow underneath. Tapping the picture while it plays only pauses it; it never
+// starts an edit by accident.
+//
 // THE TIMELINE AND VIDEO (Jon, 2026-11-21: "Make the edit feature amazing and similar to the best editing tools";
 // "want to be able to add video, shorten the video, cut the video"): under the picture is a timeline (AdxTimeline):
 // drag the playhead, drag a clip's edges to trim it, drag a clip to move it, S cuts at the playhead, Space plays.
@@ -75,6 +81,19 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold, onVar
    *  enhancement, the title) becomes a step of undo like any other. */
   const emitted = useRef<Composition>(doc), prevDoc = useRef<Composition>(doc)
   const dragRef = useRef<Drag | null>(null)
+  /** The editor's own width and the window's height: under 760 px wide it is laid out for a phone. */
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [frame, setFrame] = useState<{ w: number; h: number }>({ w: 1200, h: 900 })
+  useEffect(() => {
+    const el = rootRef.current; if (!el) return
+    const read = () => setFrame({ w: el.clientWidth || 1200, h: window.innerHeight || 900 })
+    read()
+    window.addEventListener('resize', read)
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(read) : null
+    ro?.observe(el)
+    return () => { window.removeEventListener('resize', read); ro?.disconnect() }
+  }, [])
+  const narrow = frame.w < 760
   /** Where the picture was last clicked (canvas pixels, with the scene it was in): new things land there. */
   const lastPt = useRef<{ scene: string; x: number; y: number } | null>(null)
   const poolCache = useRef<Record<string, Pool>>({})
@@ -274,7 +293,12 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold, onVar
     const at = hits.findIndex(l => l.id === sel)
     select(hits[at >= 0 ? (at + 1) % hits.length : 0].id)
   }
-  const onCanvasClick = (e: React.MouseEvent) => { if (canEdit) { setSceneSel(null); pickAt(e.clientX, e.clientY) } }
+  // a tap on the picture while it plays only pauses it; someone who cannot edit plays and pauses with it
+  const onCanvasClick = (e: React.MouseEvent) => {
+    if (playing) { setPlaying(false); return }
+    if (!canEdit) { togglePlay(); return }
+    setSceneSel(null); pickAt(e.clientX, e.clientY)
+  }
 
   const startDrag = (e: React.PointerEvent, mode: 'move' | 'size') => {
     if (!canEdit || !selLayer || selLayer.type === 'fill') return
@@ -474,14 +498,19 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold, onVar
   const h = hist.current
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) clamp(330px, 31vw, 450px)', gap: 18, alignItems: 'start', color: UI.ink }}>
+    <div ref={rootRef} style={{ display: 'grid', gridTemplateColumns: narrow ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) clamp(330px, 31vw, 450px)', gap: narrow ? 14 : 18, alignItems: 'start', color: UI.ink }}>
       {/* ── the picture ── */}
       <div style={{ minWidth: 0 }}>
-        <div style={{ position: 'relative', margin: '0 auto', width: tall ? `min(100%, calc((100vh - 290px) * ${W / H}))` : '100%', maxWidth: tall ? 480 : 820 }}>
+        <div style={{ position: 'relative', margin: '0 auto', width: narrow ? `min(100%, ${Math.max(200, Math.round((frame.h - 150) * (W / H)))}px)` : tall ? `min(100%, calc((100vh - 290px) * ${W / H}))` : '100%', maxWidth: tall ? 480 : 820 }}>
           <canvas ref={canvasRef} width={W} height={H} onClick={onCanvasClick} title={canEdit ? 'Click anything to change it' : undefined}
             style={{ display: 'block', width: '100%', height: 'auto', borderRadius: 10, background: '#000', cursor: canEdit ? 'pointer' : 'default', boxShadow: '0 12px 40px rgba(0,0,0,.45)' }} />
           {guides || dragBox ? <div style={{ position: 'absolute', left: pct(sf.left, W), top: pct(sf.top, H), right: pct(sf.right, W), bottom: pct(sf.bottom, H), border: '1.5px dashed rgba(255,255,255,0.85)', borderRadius: 4, pointerEvents: 'none', boxShadow: '0 0 0 2000px rgba(255,60,60,0.10)' }} /> : null}
           {!ready ? <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,0.55)', borderRadius: 10, fontSize: 13, color: UI.ink }}>Loading the photographs and type…</div> : null}
+          {/* watch it: a play button on the picture, on a phone and for anyone who is only viewing */}
+          {ready && !playing && !exp && !dragBox && !selLayer && (narrow || !canEdit) ? (
+            <button type="button" onClick={e => { e.stopPropagation(); togglePlay() }} aria-label="Play" title="Play"
+              style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', width: 72, height: 72, borderRadius: 72, border: '2px solid rgba(255,255,255,0.85)', background: 'rgba(11,15,22,0.55)', color: '#fff', fontSize: 28, lineHeight: 1, paddingLeft: 6, cursor: 'pointer', boxShadow: '0 6px 22px rgba(0,0,0,.5)', zIndex: 4 }}>▶</button>
+          ) : null}
 
           {/* the selected thing: a frame to drag, a corner to resize */}
           {canEdit && selLayer && vis ? (
@@ -526,9 +555,9 @@ export default function AdxPlayer({ doc, onChange, canEdit, display, hold, onVar
           onEdit={(next, sid, kind) => { commit(next); setSceneSel(sid); if (kind === 'move') goScene(sid, next) }}
           onSplit={splitAt} onDuplicate={duplicateCur} onDelete={deleteCur}
           onAddScene={() => openPicker({ mode: 'scene', sceneId: cur.id })} onAddVideo={() => { setAddErr(''); setPicker({ mode: 'video', sceneId: cur.id }); setTab('edit'); setPlaying(false) }}
-          onSong={() => { setTab('style'); setPicker(null) }} />
+          onSong={() => { setTab('style'); setPicker(null) }} compact={narrow} />
         {canEdit && cur ? <AddBar doc={doc} scene={cur} at={lastPt.current && lastPt.current.scene === cur.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddPhoto={sid => openPicker({ mode: 'add', sceneId: sid })} onImage={addImageFile} onObject={addObject} busy={adding} err={addErr} /> : null}
-        {canEdit ? <p style={{ margin: '10px auto 0', maxWidth: 820, fontSize: 11.5, color: UI.mut, textAlign: 'center' }}>Click anything in the picture to change it. Drag to move, drag the corner to resize, Delete removes it.</p> : null}
+        {canEdit ? <p style={{ margin: '10px auto 0', maxWidth: 820, fontSize: 11.5, color: UI.mut, textAlign: 'center' }}>{narrow ? 'Tap ▶ to watch. Tap anything in the picture to change it; drag to move it.' : 'Click anything in the picture to change it. Drag to move, drag the corner to resize, Delete removes it.'}</p> : null}
         {music ? <audio ref={audioRef} src={music.file} preload="auto" /> : null}
       </div>
 

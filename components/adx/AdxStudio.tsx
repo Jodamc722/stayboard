@@ -329,7 +329,7 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
           </div>
         )
         : step === 'piece' && doc ? (
-          <div style={{ maxWidth: 1380, margin: '0 auto', padding: '20px 24px 40px' }}>
+          <div style={{ maxWidth: 1380, margin: '0 auto', padding: '20px clamp(10px, 3vw, 24px) 40px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 14px', flexWrap: 'wrap' }}>
               <button type="button" onClick={close} style={big(false)}>← Studio</button>
               <input value={doc.title} disabled={!canEdit} onChange={e => change({ ...doc, title: e.target.value.slice(0, 120) })} aria-label="Name of the piece"

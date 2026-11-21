@@ -44,6 +44,8 @@ export default function AdxTimeline(p: {
   /** A finished trim or move: one step of undo. */
   onEdit: (next: Composition, sid: string, kind: 'trim' | 'move') => void
   onSplit: () => void; onDuplicate: () => void; onDelete: () => void; onAddScene: () => void; onAddVideo: () => void; onSong: () => void
+  /** On a phone: no keyboard, so the line about keys is left out. */
+  compact?: boolean
 }) {
   const { doc, t, playing, canEdit } = p
   const wrap = useRef<HTMLDivElement>(null), track = useRef<HTMLDivElement>(null)
@@ -215,7 +217,7 @@ export default function AdxTimeline(p: {
           </span>
         </div>
       </div>
-      {canEdit ? <p style={{ margin: '7px 2px 0', fontSize: 11, color: UI.mut }}>Drag a clip’s edge to trim it, drag a clip to move it. Space plays · S cuts at the playhead · ← → step a frame · ⌘D duplicates · ⌘Z undoes.</p> : null}
+      {canEdit ? <p style={{ margin: '7px 2px 0', fontSize: 11, color: UI.mut }}>{p.compact ? 'Drag a clip’s edge to trim it, drag a clip to move it.' : 'Drag a clip’s edge to trim it, drag a clip to move it. Space plays · S cuts at the playhead · ← → step a frame · ⌘D duplicates · ⌘Z undoes.'}</p> : null}
     </div>
   )
 }

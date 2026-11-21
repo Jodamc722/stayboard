@@ -9,6 +9,7 @@ export const ADX_VERSIONS: AdxVersion[] = [
     'Where it can go: Reels, TikTok, Shorts, Stories, feed and square, each marked ready or what it needs',
     'Finished house designs for Our stays, For owners and Team, free to open and edit',
     'The designer is told how its work is marked and what each format has to do, and the review is given what scored low',
+    'On a phone: an open piece fills the screen and a tap on it plays it',
   ] },
   { v: '1.1', date: '2026-11-21', title: 'A real editor', items: [
     'A timeline under the picture: drag the playhead, drag a clip’s edges to trim it, drag a clip to move it',
