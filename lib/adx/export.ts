@@ -12,11 +12,12 @@
 import type { Composition } from './composition'
 import { MUSIC_FADE_IN } from './composition'
 import { renderFrame, type Assets, type Ctx } from './player'
+import { videoSrcAllowed } from './composition'
 import { muxMp4, type Mp4Sample } from './mp4'
 
 export type ExportPath = 'webcodecs' | 'recorder'
 export type ExportResult = { blob: Blob; ext: 'mp4' | 'webm'; path: ExportPath; note: string; frames: number; ms: number; audio: boolean }
-export type ExportOpts = { musicUrl?: string; musicGain?: number; onProgress?: (done: number, total: number, stage: string) => void; forceRecorder?: boolean }
+export type ExportOpts = { musicUrl?: string; musicGain?: number; /** false = leave the video clips' own sound out too ("without sound") */ clipSound?: boolean; onProgress?: (done: number, total: number, stage: string) => void; forceRecorder?: boolean }
 
 const H264 = ['avc1.64002A', 'avc1.640028', 'avc1.4D402A', 'avc1.4D0028', 'avc1.42E02A', 'avc1.42E028']
 const tick = () => new Promise<void>(r => setTimeout(r, 0))
@@ -43,20 +44,46 @@ function canvasFor(doc: Composition): { cv: HTMLCanvasElement | OffscreenCanvas;
 /** The music bed for the whole piece, mixed offline: fade in, hold, fade out with the end card. (Phase 2 adds the voice here.) */
 async function mixAudio(doc: Composition, musicUrl: string, gain: number): Promise<AudioBuffer | null> {
   const OAC = (globalThis as any).OfflineAudioContext || (globalThis as any).webkitOfflineAudioContext
-  if (!OAC || !musicUrl) return null
+  if (!OAC || (!musicUrl && !hasClipSound(doc))) return null
   const dur = doc.canvas.duration, sr = 48000
   const ctx: OfflineAudioContext = new OAC(2, Math.ceil(dur * sr), sr)
-  const ab = await fetch(musicUrl).then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null)
-  if (!ab) return null
-  const music = await ctx.decodeAudioData(ab)
-  const src = ctx.createBufferSource(); src.buffer = music
-  const g = ctx.createGain(); src.connect(g); g.connect(ctx.destination)
-  // the fade a person chose in the editor (0 = the music stops with the picture, with a breath of a ramp so it does not click)
-  const out = Math.max(0.04, Math.min(doc.assets.audio.music.fadeOut, Math.max(0.1, dur - MUSIC_FADE_IN)))
-  g.gain.setValueAtTime(0, 0); g.gain.linearRampToValueAtTime(gain, MUSIC_FADE_IN); g.gain.setValueAtTime(gain, Math.max(MUSIC_FADE_IN, dur - out)); g.gain.linearRampToValueAtTime(0, dur)
-  src.start(0, Math.max(0, Math.min(doc.assets.audio.music.start || 0, Math.max(0, music.duration - 1))))
-  return ctx.startRendering()
+  // any clip that keeps its own sound, then the song over it; a song that will not load does not silence the clips
+  let n = await mixClips(doc, ctx)
+  const ab = musicUrl ? await fetch(musicUrl).then(r => (r.ok ? r.arrayBuffer() : null)).catch(() => null) : null
+  const music = ab ? await ctx.decodeAudioData(ab).catch(() => null) : null
+  if (music) {
+    const src = ctx.createBufferSource(); src.buffer = music
+    const g = ctx.createGain(); src.connect(g); g.connect(ctx.destination)
+    // the fade a person chose in the editor (0 = the music stops with the picture, with a breath of a ramp so it does not click)
+    const out = Math.max(0.04, Math.min(doc.assets.audio.music.fadeOut, Math.max(0.1, dur - MUSIC_FADE_IN)))
+    g.gain.setValueAtTime(0, 0); g.gain.linearRampToValueAtTime(gain, MUSIC_FADE_IN); g.gain.setValueAtTime(gain, Math.max(MUSIC_FADE_IN, dur - out)); g.gain.linearRampToValueAtTime(0, dur)
+    src.start(0, Math.max(0, Math.min(doc.assets.audio.music.start || 0, Math.max(0, music.duration - 1))))
+    n++
+  }
+  return n ? ctx.startRendering() : null
 }
+
+/** VIDEO CLIPS that keep their own sound: each is laid into the mix where its scene sits, from where the clip starts,
+ *  at the speed and level the person chose. A clip whose sound cannot be read is simply silent. */
+async function mixClips(doc: Composition, ctx: OfflineAudioContext): Promise<number> {
+  let n = 0
+  const files = new Map<string, Promise<AudioBuffer | null>>()
+  for (const s of doc.scenes) for (const l of s.layers) {
+    if (l.type !== 'photo' || !l.clip || !(Number(l.clip.sound) > 0)) continue
+    const a = doc.assets.photos[l.photo]; if (!a || a.kind !== 'video' || !videoSrcAllowed(a.src)) continue
+    if (!files.has(a.src)) files.set(a.src, fetch(a.src).then(r => (r.ok ? r.arrayBuffer() : null)).then(ab => (ab ? ctx.decodeAudioData(ab) : null)).catch(() => null))
+    const buf = await files.get(a.src)!; if (!buf) continue
+    const speed = l.clip.speed || 1, from = Math.max(0, Math.min(l.clip.start || 0, buf.duration - 0.05)), len = Math.min(s.dur * speed, buf.duration - from)
+    if (len <= 0.05) continue
+    const node = ctx.createBufferSource(); node.buffer = buf; node.playbackRate.value = speed
+    const g = ctx.createGain(), at = s.start, end = at + len / speed, lvl = Math.max(0, Math.min(1, Number(l.clip.sound)))
+    g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(lvl, at + 0.03); g.gain.setValueAtTime(lvl, Math.max(at + 0.03, end - 0.03)); g.gain.linearRampToValueAtTime(0, end)
+    node.connect(g); g.connect(ctx.destination); node.start(at, from, len); n++
+  }
+  return n
+}
+/** True when a clip in the piece keeps its own sound. */
+export const hasClipSound = (doc: Composition) => doc.scenes.some(s => s.layers.some(l => l.type === 'photo' && !!l.clip && Number(l.clip.sound) > 0 && doc.assets.photos[l.photo]?.kind === 'video'))
 
 async function encodeAac(buf: AudioBuffer): Promise<{ samples: Mp4Sample[]; asc: Uint8Array }> {
   const AE = (globalThis as any).AudioEncoder, AD = (globalThis as any).AudioData
@@ -99,6 +126,7 @@ async function viaWebCodecs(doc: Composition, A: Assets, codec: string, audioBuf
   enc.configure({ codec, width: doc.canvas.w, height: doc.canvas.h, bitrate: 12_000_000, framerate: fps, avc: { format: 'avc' } })
   for (let f = 0; f < total; f++) {
     if (err) break
+    if (A.seek) await A.seek(doc, f / fps)          // every video clip on exactly this frame before it is drawn
     renderFrame(ctx, doc, f / fps, A)
     const vf = new VF(cv, { timestamp: Math.round((f * 1e6) / fps), duration: Math.round(1e6 / fps) })
     enc.encode(vf, { keyFrame: f % fps === 0 }); vf.close()
@@ -125,15 +153,17 @@ async function viaRecorder(doc: Composition, A: Assets, o: ExportOpts, why: stri
   if (!vtrack || typeof vtrack.requestFrame !== 'function') { vs = (canvas as any).captureStream(fps); vtrack = null }
   const tracks = [...vs.getVideoTracks()]
   let actx: AudioContext | null = null, src: AudioBufferSourceNode | null = null, hasAudio = false
-  if (o.musicUrl) {
+  if (o.musicUrl || (o.clipSound !== false && hasClipSound(doc))) {
     try {
-      actx = new AudioContext(); if (actx.state === 'suspended') await actx.resume()
-      const ab = await fetch(o.musicUrl).then(r => r.arrayBuffer()), buf = await actx.decodeAudioData(ab), dest = actx.createMediaStreamDestination()
-      src = actx.createBufferSource(); src.buffer = buf
-      const g = actx.createGain(), dur = doc.canvas.duration, t = actx.currentTime + 0.12, gain = o.musicGain ?? 0.5
-      const out = Math.max(0.04, Math.min(doc.assets.audio.music.fadeOut, Math.max(0.1, dur - MUSIC_FADE_IN)))
-      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + MUSIC_FADE_IN); g.gain.setValueAtTime(gain, t + Math.max(MUSIC_FADE_IN, dur - out)); g.gain.linearRampToValueAtTime(0, t + dur)
-      src.connect(g); g.connect(dest); tracks.push(...dest.stream.getAudioTracks()); hasAudio = true
+      // the same finished mix the frame-by-frame export uses (the song with its fades, and any clip's own sound),
+      // played into the recording — so both ways of exporting sound the same
+      const mix = await mixAudio(doc, o.musicUrl || '', o.musicGain ?? 0.5)
+      if (mix) {
+        actx = new AudioContext(); if (actx.state === 'suspended') await actx.resume()
+        const dest = actx.createMediaStreamDestination()
+        src = actx.createBufferSource(); src.buffer = mix; src.connect(dest)
+        tracks.push(...dest.stream.getAudioTracks()); hasAudio = true
+      }
     } catch { actx = null; src = null }
   }
   const types = ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
@@ -145,18 +175,19 @@ async function viaRecorder(doc: Composition, A: Assets, o: ExportOpts, why: stri
   renderFrame(ctx, doc, 0, A); vtrack?.requestFrame()
   rec.start(500)
   const start = performance.now() + 120
-  if (src && actx) src.start(actx.currentTime + 0.12, Math.max(0, Math.min(doc.assets.audio.music.start || 0, Math.max(0, (src.buffer?.duration || 100) - 1))))
+  if (src && actx) src.start(actx.currentTime + 0.12)
   let last = -1
   await new Promise<void>(res => {
     const step = () => {
       const x = Math.max(0, (performance.now() - start) / 1000), n = Math.floor(x * fps)
-      if (n > last && n < total) { last = n; renderFrame(ctx, doc, n / fps, A); vtrack?.requestFrame(); if (n % 6 === 0) o.onProgress?.(n, total, 'Recording in real time') }
+      if (n > last && n < total) { last = n; A.sync?.(doc, n / fps, true, true); renderFrame(ctx, doc, n / fps, A); vtrack?.requestFrame(); if (n % 6 === 0) o.onProgress?.(n, total, 'Recording in real time') }
       if (x >= doc.canvas.duration + 0.15) { res(); return }
       if (document.visibilityState === 'visible') requestAnimationFrame(step); else setTimeout(step, 1000 / fps)
     }
     step()
   })
   try { src?.stop() } catch { /* done */ }
+  A.sync?.(doc, 0, false)
   rec.stop(); await done
   try { await actx?.close() } catch { /* fine */ }
   const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm'
@@ -165,14 +196,14 @@ async function viaRecorder(doc: Composition, A: Assets, o: ExportOpts, why: stri
 
 /** The piece as a video file. Says which way it was made. */
 export async function exportVideo(doc: Composition, A: Assets, o: ExportOpts = {}): Promise<ExportResult> {
-  const wantAudio = !!o.musicUrl
+  const wantAudio = !!o.musicUrl || (o.clipSound !== false && hasClipSound(doc))
   const sup = await exportSupport(doc, wantAudio)
   if (o.forceRecorder) return viaRecorder(doc, A, o, 'the recorder was asked for')
   if (!sup.video) return viaRecorder(doc, A, o, sup.why)
   if (wantAudio && !sup.audio) return viaRecorder(doc, A, o, sup.why)
   try {
     let audioBuf: AudioBuffer | null = null
-    if (wantAudio) { o.onProgress?.(0, 1, 'Mixing the sound'); audioBuf = await mixAudio(doc, o.musicUrl!, o.musicGain ?? 0.5) }
+    if (wantAudio) { o.onProgress?.(0, 1, 'Mixing the sound'); audioBuf = await mixAudio(doc, o.musicUrl || '', o.musicGain ?? 0.5) }
     return await viaWebCodecs(doc, A, sup.video, audioBuf, o)
   } catch (e: any) {
     return viaRecorder(doc, A, o, 'the frame-by-frame encoder stopped (' + String(e?.message || e).slice(0, 80) + ')')
@@ -182,6 +213,7 @@ export async function exportVideo(doc: Composition, A: Assets, o: ExportOpts = {
 /** One frame as a PNG at full size. */
 export async function exportPng(doc: Composition, A: Assets, t: number): Promise<Blob> {
   const { cv, ctx } = canvasFor(doc)
+  if (A.seek) await A.seek(doc, t)
   renderFrame(ctx, doc, t, A)
   if ('convertToBlob' in cv) return (cv as OffscreenCanvas).convertToBlob({ type: 'image/png' })
   return new Promise<Blob>((res, rej) => (cv as HTMLCanvasElement).toBlob(b => (b ? res(b) : rej(new Error('could not make the image'))), 'image/png'))

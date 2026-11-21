@@ -7,13 +7,20 @@
 // so every edit is instant and free, and the plain-node tests run the same code the browser does.
 // What is saved still passes through sanitizeComposition (lib/adx/composition): an edit can never put anything into
 // a piece that the composer could not.
-import type { Composition, Scene, Layer, PhotoLayer, TextLayer, ShapeLayer, MotifLayer, MotifKey, PhotoAsset, Transition, Box, Entrance } from './composition'
-import { lum, contrast, resolveColor } from './composition'
+import type { Composition, Scene, Layer, PhotoLayer, TextLayer, ShapeLayer, MotifLayer, MotifKey, PhotoAsset, Transition, Box, Entrance, Cam } from './composition'
+import { lum, contrast, resolveColor, CLIP_SPEEDS, MAX_PIECE_SECONDS, MAX_SCENES, SCENE_FLOOR, SCENE_CEIL } from './composition'
 import { layoutText, logoHeight, maxUpscale, drawnScale, groundOf, type Measure } from './player'
 
 const r30 = (x: number) => Math.round(x * 30) / 30
 const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x))
-export const SCENE_MIN = 1.2, SCENE_MAX = 14
+/** A scene may be as short as a quick cut and as long as a video clip needs (THE TIMELINE, 2026-11-21). */
+export const SCENE_MIN = SCENE_FLOOR, SCENE_MAX = SCENE_CEIL
+/** Changing the WHOLE length never squeezes a scene under this: words need that long to be read. */
+const READ_MIN = 1.2
+export { MAX_PIECE_SECONDS, MAX_SCENES }
+/** Seconds the piece can still grow by, and whether one more scene fits. */
+export const roomLeft = (doc: Composition) => Math.max(0, MAX_PIECE_SECONDS - doc.scenes.reduce((a, s) => a + s.dur, 0))
+export const canAddScene = (doc: Composition) => doc.scenes.length < MAX_SCENES && roomLeft(doc) >= SCENE_MIN
 
 function touch(d: Composition): Composition {
   return { ...d, meta: { ...d.meta, origin: d.meta.origin === 'house' ? 'house' : 'edited' } }
@@ -39,15 +46,17 @@ export function retime(doc: Composition, syncBrief = false): Composition {
 
 // ── scenes ──────────────────────────────────────────────────────────────────────────────────────────────────────
 export function setSceneDur(doc: Composition, sid: string, dur: number): Composition {
-  return retime({ ...doc, scenes: doc.scenes.map(s => (s.id === sid ? { ...s, dur } : s)) }, true)
+  const room = roomLeft(doc)                                   // a piece never runs past its longest length
+  return retime({ ...doc, scenes: doc.scenes.map(s => (s.id === sid ? { ...s, dur: Math.min(dur, s.dur + room) } : s)) }, true)
 }
 /** The whole piece to `seconds`: every scene keeps its share (the end card never drops under 3 s). */
 export function setTotal(doc: Composition, seconds: number): Composition {
   const cur = doc.scenes.reduce((a, s) => a + s.dur, 0) || 1, k = seconds / cur, last = doc.scenes.length - 1
-  let scenes = doc.scenes.map((s, i) => ({ ...s, dur: clamp(s.dur * k, i === last ? 3 : SCENE_MIN, SCENE_MAX) }))
+  const floor = (s: Scene, i: number) => (i === last ? 3 : Math.min(READ_MIN, s.dur))      // a scene already cut short stays as short as it is
+  let scenes = doc.scenes.map((s, i) => ({ ...s, dur: clamp(s.dur * k, floor(s, i), SCENE_MAX) }))
   // what the clamps took or gave is spread over the scenes that can still move
   const off = seconds - scenes.reduce((a, s) => a + s.dur, 0)
-  if (Math.abs(off) > 0.05) { const free = scenes.filter((s, i) => s.dur + off / scenes.length > (i === last ? 3 : SCENE_MIN) && s.dur + off / scenes.length < SCENE_MAX); if (free.length) scenes = scenes.map(s => (free.indexOf(s) >= 0 ? { ...s, dur: s.dur + off / free.length } : s)) }
+  if (Math.abs(off) > 0.05) { const free = scenes.filter((s, i) => s.dur + off / scenes.length > floor(doc.scenes[i], i) && s.dur + off / scenes.length < SCENE_MAX); if (free.length) scenes = scenes.map(s => (free.indexOf(s) >= 0 ? { ...s, dur: s.dur + off / free.length } : s)) }
   return retime({ ...doc, scenes }, true)
 }
 export function setTransition(doc: Composition, sid: string, patch: Partial<Transition>): Composition {
@@ -89,18 +98,123 @@ function freshId(ids: Set<string>, base: string): string {
 }
 /** A new scene after `sid`, laid out like it, showing another photograph (every scene gets its own). */
 export function addSceneLike(doc: Composition, sid: string, photoKey: string, asset: PhotoAsset): { doc: Composition; sceneId: string } {
-  const i = doc.scenes.findIndex(s => s.id === sid); if (i < 0) return { doc, sceneId: sid }
-  const src = doc.scenes[i], ids = allIds(doc), map = new Map<string, string>()
+  const i = doc.scenes.findIndex(s => s.id === sid); if (i < 0 || !canAddScene(doc)) return { doc, sceneId: sid }
+  const src = { ...doc.scenes[i], dur: Math.min(doc.scenes[i].dur, roomLeft(doc)) }, ids = allIds(doc), map = new Map<string, string>()
   const nid = freshId(ids, src.id)
   const key = photoKeyFor(doc, photoKey, asset)
   let layers = src.layers.map(l => { const id = freshId(ids, l.id); map.set(l.id, id); return { ...l, id } as Layer })
   layers = layers.map(l => (l.type === 'motif' && l.target && map.has(l.target) ? { ...l, target: map.get(l.target) } : l))
   let had = false
-  layers = layers.map(l => { if (l.type !== 'photo') return l; had = true; return fitPhoto({ ...l, photo: key, focal: undefined }, asset) })
+  layers = layers.map(l => { if (l.type !== 'photo' || isAdded(doc, l)) return l; had = true; return showAsset(l, key, asset) })
   const scene: Scene = { ...src, id: nid, name: (asset.shows || 'New scene').split(/[.,;:]/)[0].trim().split(/\s+/).slice(0, 4).join(' ').slice(0, 30) || 'New scene', transitionIn: src.transitionIn.type === 'none' ? { type: 'cut' } : src.transitionIn, layers }
   let out: Composition = { ...doc, assets: { ...doc.assets, photos: { ...doc.assets.photos, [key]: asset } }, scenes: [...doc.scenes.slice(0, i + 1), scene, ...doc.scenes.slice(i + 1)] }
   if (!had) out = addPhoto(out, nid, key, asset).doc
   return { doc: retime(out, true), sceneId: nid }
+}
+
+// ── THE TIMELINE (Jon, 2026-11-21: "add video, shorten the video, cut the video… make the edit feature amazing and
+//    similar to the best editing tools"): split, duplicate, trim from either end, drag to a new place, video clips ──
+const camAt = (c: NonNullable<PhotoLayer['camera']>, q: number): Cam => {
+  const f = (k: 'scale' | 'x' | 'y', d: number) => { const a = c.from[k] ?? d, b = c.to[k] ?? d; return Math.round((a + (b - a) * q) * 10000) / 10000 }
+  return { scale: f('scale', 1), x: f('x', 0), y: f('y', 0) }
+}
+/** Can the scene be cut `at` seconds into it? Both halves must be long enough to exist. */
+export const canSplit = (doc: Composition, sid: string, at: number): boolean => { const s = doc.scenes.find(x => x.id === sid); return !!s && doc.scenes.length < MAX_SCENES && at >= SCENE_MIN - 0.001 && s.dur - at >= SCENE_MIN - 0.001 }
+/**
+ * CUT a scene in two at `at` seconds into it. The picture carries straight on across the cut: a video clip picks up
+ * where the first half stopped, a photograph's camera move continues, and nothing that has already arrived comes in
+ * a second time. What had not yet arrived goes to the second half and arrives there on time.
+ */
+export function splitScene(doc: Composition, sid: string, at: number): { doc: Composition; sceneId: string } {
+  const i = doc.scenes.findIndex(s => s.id === sid); at = r30(at)
+  if (i < 0 || !canSplit(doc, sid, at)) return { doc, sceneId: sid }
+  const s = doc.scenes[i], ids = allIds(doc), map = new Map<string, string>(), nid = freshId(ids, s.id), q = at / s.dur
+  const later = (l: Layer) => !!l.in && l.in.at >= at - 0.01
+  const first = s.layers.filter(l => l.type === 'fill' || !later(l)).map(l => (l.type === 'photo' && l.camera ? { ...l, camera: { ...l.camera, to: camAt(l.camera, q) } } as Layer : l))
+  let second = s.layers.map(l => {
+    const id = freshId(ids, l.id); map.set(l.id, id)
+    let x = { ...l, id } as Layer
+    if (x.in) { if (later(l)) x = { ...x, in: { ...x.in, at: Math.max(0, r30(x.in.at - at)) } } as Layer; else { const { in: _in, ...rest } = x as Layer & { in?: Entrance }; x = rest as Layer } }
+    if (x.type === 'photo' && l.type === 'photo' && l.camera) x = { ...x, camera: { ...l.camera, from: camAt(l.camera, q) } }
+    if (x.type === 'photo' && x.clip) x = { ...x, clip: { ...x.clip, start: Math.round((x.clip.start + at * (x.clip.speed || 1)) * 1000) / 1000 } }
+    return x
+  })
+  second = second.map(l => (l.type === 'motif' && l.target ? { ...l, target: map.get(l.target) } : l))
+  const a: Scene = { ...s, dur: at, layers: first.map(l => (l.type === 'motif' && l.target && !first.some(x => x.id === l.target) ? { ...l, target: undefined } : l)) }
+  const b: Scene = { ...s, id: nid, name: (s.name.replace(/ · \d+$/, '') + ' · 2').slice(0, 60), dur: r30(s.dur - at), transitionIn: { type: 'cut' }, layers: second }
+  return { doc: retime({ ...doc, scenes: [...doc.scenes.slice(0, i), a, b, ...doc.scenes.slice(i + 1)] }, true), sceneId: nid }
+}
+/** The same scene again, straight after itself. */
+export function duplicateScene(doc: Composition, sid: string): { doc: Composition; sceneId: string } {
+  const i = doc.scenes.findIndex(s => s.id === sid); if (i < 0 || !canAddScene(doc)) return { doc, sceneId: sid }
+  const s = doc.scenes[i], ids = allIds(doc), map = new Map<string, string>(), nid = freshId(ids, s.id)
+  let layers = s.layers.map(l => { const id = freshId(ids, l.id); map.set(l.id, id); return { ...l, id } as Layer })
+  layers = layers.map(l => (l.type === 'motif' && l.target ? { ...l, target: map.get(l.target) } : l))
+  const copy: Scene = { ...s, id: nid, name: (s.name.replace(/ copy$/, '') + ' copy').slice(0, 60), dur: Math.min(s.dur, roomLeft(doc)), transitionIn: s.transitionIn.type === 'none' ? { type: 'cut' } : s.transitionIn, layers }
+  return { doc: retime({ ...doc, scenes: [...doc.scenes.slice(0, i + 1), copy, ...doc.scenes.slice(i + 1)] }, true), sceneId: nid }
+}
+/**
+ * TRIM A SCENE FROM ITS START by `by` seconds (negative gives time back). A video clip then starts that much later
+ * in its file, so what you see at the cut is what was there; time can only be given back while the clip has earlier
+ * footage. Trimming the END is setSceneDur.
+ */
+export function trimSceneStart(doc: Composition, sid: string, by: number): Composition {
+  const s = doc.scenes.find(x => x.id === sid); if (!s) return doc
+  const vids = s.layers.filter((l): l is PhotoLayer => l.type === 'photo' && !!l.clip && doc.assets.photos[l.photo]?.kind === 'video')
+  // how far back the earliest clip can still go
+  for (const v of vids) by = Math.max(by, -(v.clip!.start / (v.clip!.speed || 1)))
+  by = clamp(by, -roomLeft(doc), s.dur - SCENE_MIN)
+  by = Math.round(by * 30) / 30
+  if (Math.abs(by) < 0.01) return doc
+  const layers = s.layers.map(l => {
+    let x = l
+    if (x.type === 'photo' && x.clip && doc.assets.photos[x.photo]?.kind === 'video') x = { ...x, clip: { ...x.clip, start: Math.max(0, Math.round((x.clip.start + by * (x.clip.speed || 1)) * 1000) / 1000) } }
+    // what has already arrived by the new start is simply there; what arrives later arrives that much sooner
+    if (x.in && by > 0) x = (x.in.at + x.in.dur <= by ? (({ in: _in, ...rest }) => rest)(x as Layer & { in?: Entrance }) : { ...x, in: { ...x.in, at: Math.max(0, r30(x.in.at - by)) } }) as Layer
+    return x
+  })
+  return retime({ ...doc, scenes: doc.scenes.map(x => (x.id === sid ? { ...x, dur: x.dur - by, layers } : x)) }, true)
+}
+/** Drag a scene to position `index` (0 = first). */
+export function moveSceneTo(doc: Composition, sid: string, index: number): Composition {
+  const i = doc.scenes.findIndex(s => s.id === sid); if (i < 0) return doc
+  const j = clamp(Math.round(index), 0, doc.scenes.length - 1); if (j === i) return doc
+  const scenes = doc.scenes.slice(); const [s] = scenes.splice(i, 1); scenes.splice(j, 0, s)
+  return retime({ ...doc, scenes })
+}
+/**
+ * A VIDEO CLIP as a scene of its own, edge to edge, after the scene on screen (before the end card when that is the
+ * scene on screen, so the piece still ends on the mark and the button). It starts at the start of the file and runs
+ * up to 8 seconds; trim it from there.
+ */
+export function addVideoScene(doc: Composition, sid: string, wantedKey: string, asset: PhotoAsset): { doc: Composition; sceneId: string; layerId: string } {
+  const at = doc.scenes.findIndex(s => s.id === sid)
+  if (at < 0 || asset.kind !== 'video' || !canAddScene(doc)) return { doc, sceneId: sid, layerId: '' }
+  const i = at === doc.scenes.length - 1 && doc.scenes.length > 1 ? at - 1 : at
+  const ids = allIds(doc), nid = freshId(ids, 'clip'), key = photoKeyFor(doc, wantedKey, asset), W = doc.canvas.w, H = doc.canvas.h
+  const ground = doc.scenes[at].layers.find(l => l.type === 'fill')
+  const dur = r30(clamp(Math.min(asset.dur || 5, 8, roomLeft(doc)), SCENE_MIN, SCENE_MAX))
+  const lid = nid + '-video'
+  const scene: Scene = { id: nid, name: (asset.shows || 'Video').split(/[.,;:]/)[0].trim().slice(0, 30) || 'Video', start: 0, dur, transitionIn: { type: 'cut' }, layers: [
+    { id: nid + '-ground', type: 'fill', color: ground && ground.type === 'fill' ? ground.color : Object.keys(doc.tokens.color)[0] },
+    { id: lid, type: 'photo', photo: key, cover: true, box: { x: 0, y: 0, w: W, h: H }, treatment: 'none', clip: { start: 0 } },
+  ] }
+  const out: Composition = { ...doc, assets: { ...doc.assets, photos: { ...doc.assets.photos, [key]: asset } }, scenes: [...doc.scenes.slice(0, i + 1), scene, ...doc.scenes.slice(i + 1)] }
+  return { doc: retime(out, true), sceneId: nid, layerId: lid }
+}
+/** Where a video layer starts in its file, how fast it plays, how loud its own sound is. */
+export function setClip(doc: Composition, lid: string, patch: Partial<NonNullable<PhotoLayer['clip']>>): Composition {
+  return patchLayer(doc, lid, l => {
+    if (l.type !== 'photo') return l
+    const a = doc.assets.photos[l.photo]; if (!a || a.kind !== 'video') return l
+    const c = { start: 0, ...(l.clip || {}), ...patch }
+    const speed = (CLIP_SPEEDS as readonly number[]).indexOf(Number(c.speed)) >= 0 ? Number(c.speed) : 1, sound = clamp(Number(c.sound) || 0, 0, 1)
+    return { ...l, clip: { start: Math.round(clamp(Number(c.start) || 0, 0, Math.max(0, (a.dur || 0) - 0.2)) * 1000) / 1000, ...(speed !== 1 ? { speed } : {}), ...(sound > 0.01 ? { sound: Math.round(sound * 100) / 100 } : {}) } }
+  })
+}
+/** The video layer of a scene, if it has one (the first, which is the one a person means by "the clip"). */
+export function videoOf(doc: Composition, scene: Scene): PhotoLayer | null {
+  return (scene.layers.find(l => l.type === 'photo' && doc.assets.photos[l.photo]?.kind === 'video') as PhotoLayer | undefined) || null
 }
 
 // ── layers ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -164,6 +278,7 @@ export function photoKeyFor(doc: Composition, wanted: string, asset: PhotoAsset)
 /** A photograph is never drawn past its real pixels: the camera's push is dropped first, then the window is made
  *  smaller round its centre. */
 export function fitPhoto(l: PhotoLayer, a: PhotoAsset, max = 1): PhotoLayer {
+  if (a.kind === 'video') return l                                // a moving picture fills its window; it is never shrunk to its pixels
   let out = l
   if (out.camera && maxUpscale(out, a.w, a.h) > max + 0.005) { const { camera: _c, ...rest } = out; out = rest as PhotoLayer }
   const up = maxUpscale(out, a.w, a.h)
@@ -178,10 +293,16 @@ export function photoInUse(doc: Composition, src: string, exceptLayer = ''): str
   for (const s of doc.scenes) for (const l of s.layers) if (l.type === 'photo' && l.id !== exceptLayer && doc.assets.photos[l.photo]?.src === src) return s.name
   return null
 }
+/** A window showing another picture: a photograph (fitted to its real pixels) or a video clip (from its start). */
+function showAsset(l: PhotoLayer, key: string, asset: PhotoAsset): PhotoLayer {
+  const { clip: _c, cover: _v, idle: _i, focal: _f, ...rest } = l
+  if (asset.kind === 'video') return { ...rest, photo: key, cover: true, clip: { start: 0 } }
+  return fitPhoto({ ...rest, photo: key }, asset)
+}
 export function swapPhoto(doc: Composition, lid: string, wantedKey: string, asset: PhotoAsset): Composition {
   const key = photoKeyFor(doc, wantedKey, asset)
   const d = { ...doc, assets: { ...doc.assets, photos: { ...doc.assets.photos, [key]: asset } } }
-  return patchLayer(d, lid, l => (l.type === 'photo' ? fitPhoto({ ...l, photo: key, focal: undefined }, asset) : l))
+  return patchLayer(d, lid, l => (l.type === 'photo' ? showAsset(l, key, asset) : l))
 }
 /** A photograph into a scene that has none, as a window inside the safe area, under the words. */
 export function addPhoto(doc: Composition, sid: string, wantedKey: string, asset: PhotoAsset): { doc: Composition; layerId: string } {
@@ -379,6 +500,7 @@ export function hitLayers(doc: Composition, sceneIndex: number, px: number, py: 
 /** What a layer is, in words a person would use. */
 export function layerName(doc: Composition, l: Layer): string {
   if (l.type === 'fill') return 'Background'
+  if (l.type === 'photo' && doc.assets.photos[l.photo]?.kind === 'video') return 'Video' + (doc.assets.photos[l.photo].shows ? ' · ' + doc.assets.photos[l.photo].shows.slice(0, 40) : '')
   if (l.type === 'photo' && doc.assets.photos[l.photo]?.source === 'upload') return 'Image' + (doc.assets.photos[l.photo].shows ? ' · ' + doc.assets.photos[l.photo].shows.slice(0, 40) : '')
   if (l.type === 'photo') { const a = doc.assets.photos[l.photo]; return 'Photo' + (a ? ' · ' + ([a.building, (a.shows || '').split(/[.,;]/)[0]].filter(Boolean).join(' · ').slice(0, 48)) : '') }
   if (l.type === 'text') { const t = l.runs.map(r => ('br' in r ? ' ' : r.t)).join('').replace(/\s+/g, ' ').trim(); return (l.fit ? 'Headline' : 'Label') + ' · “' + t.slice(0, 30) + (t.length > 30 ? '…' : '') + '”' }
@@ -413,7 +535,9 @@ export function setLayerColor(doc: Composition, lid: string, color: string): Com
 // options are open. Decorations are the engine's own drawn ones (the same the designer uses), so they animate.
 export type Pt = { x: number; y: number }
 /** Is this photo layer an image a person added (drawn whole, not one of the piece's photographs)? */
-export const isAdded = (doc: Composition, l: Layer): boolean => l.type === 'photo' && doc.assets.photos[l.photo]?.source === 'upload'
+export const isVideo = (doc: Composition, l: Layer): boolean => l.type === 'photo' && doc.assets.photos[l.photo]?.kind === 'video'
+/** An image, PNG or graphic a person added (shown whole, keeps its shape). A video clip is not one: it fills a window. */
+export const isAdded = (doc: Composition, l: Layer): boolean => l.type === 'photo' && doc.assets.photos[l.photo]?.source === 'upload' && doc.assets.photos[l.photo]?.kind !== 'video'
 /** A palette colour that shows on the scene's ground without shouting: the mid-tone furthest from it. */
 export function accentOn(doc: Composition, scene: Scene): string {
   const g = lum(groundOf(doc, scene)), vals = Object.entries(doc.tokens.color)

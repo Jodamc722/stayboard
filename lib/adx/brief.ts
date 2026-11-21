@@ -99,7 +99,7 @@ Safe area   words, the logo and the button stay inside: top ${ch.safe.top}, bott
 }
 export function photoList(photos: Record<string, PhotoAsset>): string {
   if (!Object.keys(photos).length) return '(none: this piece is made of type, colour, shapes and decoration. Use no photo layers, and fill every frame with design.)'
-  return Object.entries(photos).map(([k, p]) => `${k}  ${p.w} x ${p.h}  ${p.source}  ${p.building}${p.unit && p.unit !== p.building ? ' (' + p.unit + ')' : ''}  —  ${p.shows || 'no description'}`).join('\n')
+  return Object.entries(photos).map(([k, p]) => p.kind === 'video' ? `${k}  ${p.w} x ${p.h}  VIDEO, ${(p.dur || 0).toFixed(1)} s  —  ${p.shows || 'a video clip'}` : `${k}  ${p.w} x ${p.h}  ${p.source}  ${p.building}${p.unit && p.unit !== p.building ? ' (' + p.unit + ')' : ''}  —  ${p.shows || 'no description'}`).join('\n')
 }
 /** A piece of 6 seconds or less is one designed frame (a photo post). */
 export const sceneCount = (seconds: number) => (seconds <= 6 ? 1 : Math.max(3, Math.min(6, Math.round(seconds / 3))))
@@ -231,7 +231,7 @@ Fix them without changing the idea or the words more than a fix needs. Reply wit
 // composer never saw its piece; this pass is given every scene as a picture (rendered by the same player that
 // exports), the measured audit's findings, and is told to be hard on it. It answers with whole replacement scenes
 // (data, through the validator like everything else) or says the piece is ready.
-export function reviewPrompt(doc: Composition, findings: string, photos: Record<string, PhotoAsset>, round: number, rounds: number, canArt = false): string {
+export function reviewPrompt(doc: Composition, findings: string, photos: Record<string, PhotoAsset>, round: number, rounds: number, canArt = false, direction = ''): string {
   const b = doc.brief, id = identityOf(b.moment, b.audience, b.momentName)
   // GRAPHIC DESIGN, NOT ONLY LAYOUT (Jon, 2026-11-20: "Add graphic design, new style and needs the creative power of AI
   // not just templates"): the director may call for graphics made for this piece by an image model, and sees them
@@ -249,6 +249,18 @@ ${st.key ? `The brief asked for the "${st.label}" style, so prefer art style "${
 Ask only when it makes the piece more striking and more itself: a strong graphic idea beats decoration. Never ask for a pretend photograph of a home, for text or lettering, a logo, or a person.
 To ask, add to your reply:  "art":[{"scene":"s2","kind":"object","style":"3d","what":"a glossy gift box with a ribbon","box":{"x":640,"y":1180,"w":360},"idle":"float"}]
 "box" is where it sits on the ${doc.canvas.w} x ${doc.canvas.h} canvas (x, y of its top left, and its width; its height follows its shape); leave room for it in the scene you rewrite. "idle" may be float, sway, spin or pulse. It is placed under the words. You will see it rendered in the next review.`
+  // ENHANCE AGAIN AFTER EDITS (Jon, 2026-11-21: "can we do a rerun enhancement on editing"). A piece a person has
+  // changed by hand is theirs: the director polishes round their choices instead of redoing them, and follows the
+  // one line of direction they gave, if any.
+  const edited = doc.meta.origin === 'edited' || !!direction
+  const hasVideo = doc.scenes.some(s => s.layers.some(l => l.type === 'photo' && photos[l.photo]?.kind === 'video'))
+  const mine = !edited ? '' : `
+
+A PERSON HAS EDITED THIS PIECE BY HAND, and is asking you to enhance it, not to start again. Their choices stand: their words, which photograph or video is in which scene, the order of the scenes and how long each one runs, the colours and the song. Improve what surrounds those choices: placement, scale, crop, hierarchy, spacing, grounds, decoration, entrances. Never undo an edit to make the piece look like it did before.${direction ? `
+WHAT THEY ASKED FOR (do this first, and say in your notes how you did it): "${direction}"` : ''}`
+  const video = !hasVideo ? '' : `
+
+VIDEO CLIPS. A photo layer whose asset is marked VIDEO is moving footage, and the still you see is one frame of it. Keep that layer's "photo" and its "clip" object exactly as they are, keep it large (a clip should carry the frame), and never put a clip in the same scene as a photograph. You may move its box, change its mask, and design words and decoration over or beside it. Do not change the length of a scene that holds a clip.`
   return `YOU ARE NOW LOOKING AT YOUR OWN PIECE, RENDERED. The pictures above are each scene at its resting moment, exactly as people will see it. This is review ${round} of at most ${rounds}.
 
 ${briefText(b)}
@@ -265,9 +277,9 @@ Judge it the way a creative director judges work before it leaves a top studio. 
 
 THE MEASURED CHECK FOUND
 ${findings || 'nothing failing'}
-Every item it lists must be fixed.
+Every item it lists must be fixed.${mine}${video}
 
-If, and only if, the piece is already at that standard, reply with ONLY: {"verdict":"ship","notes":["one line on why it works"]}
+If, and only if, the piece is already at that standard${direction ? ' and what they asked for is already done' : ''}, reply with ONLY: {"verdict":"ship","notes":["one line on why it works"]}
 
 Otherwise redesign the weak scenes. Be bold: move, resize, re-crop (focal), change grounds, enlarge the photograph, add or remove shapes and decoration. Do not just nudge. Keep the idea, the meaning of the words (you may tighten a headline), every rule in your instructions, and the truth of the photographs: each used at most once, never drawn above 100% of its own pixels (sizes are listed below), never tinted.
 Reply with ONLY this JSON (no prose before or after):

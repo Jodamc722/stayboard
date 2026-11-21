@@ -50,6 +50,11 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
   /** What the creative director said after looking at the rendered frames, and where the review is. */
   const [review, setReview] = useState<string[]>([])
   const [stage, setStage] = useState('')
+  /** Enhance again (Jon, 2026-11-21: "a rerun enhancement on editing"): the one line of direction, whether its bar is
+   *  open, and the piece as it was before the last enhancement so it can be put back in one click. */
+  const [ask, setAsk] = useState('')
+  const [askOpen, setAskOpen] = useState(false)
+  const [enh, setEnh] = useState<{ before: Composition; after: Composition } | null>(null)
   const [budget, setBudget] = useState<Budget | null>(null)
   const [saved, setSaved] = useState<'saved' | 'saving' | 'unsaved' | ''>('')
   const spent = useRef(0)
@@ -115,7 +120,7 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
   // ── the creative director's review (Jon, 2026-11-20: "a true Claude creative build as if creating here"): draw
   //    every scene with the player that exports, send the frames with the measured check's findings, take back
   //    revised scenes, draw again, and keep a revision only when the measured check is no worse for it ──
-  const polish = async (d0: Composition, rounds: number, pool: Record<string, PhotoAsset>): Promise<Composition> => {
+  const polish = async (d0: Composition, rounds: number, pool: Record<string, PhotoAsset>, direction = ''): Promise<Composition> => {
     let d = d0
     const said: string[] = []
     setReview([])
@@ -123,7 +128,7 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
       setBusy('review'); setStage(`Drawing the frames and looking at them — review ${r} of ${rounds}`)
       let seen
       try { seen = await lookAt(d) } catch { said.push('The frames could not be drawn for the review, so the piece is as first designed.'); break }
-      const { status, j } = await post('/api/adx/review', { doc: d, photos: pool, stills: seen.stills, findings: seen.findings, round: r, canArt: r < rounds })
+      const { status, j } = await post('/api/adx/review', { doc: d, photos: pool, stills: seen.stills, findings: seen.findings, round: r, canArt: r < rounds || !!direction, direction })
       if (j?.budget) setBudget(j.budget)
       if (!j?.ok || !j.doc) { said.push(j?.error ? 'The review stopped: ' + j.error : status === 0 ? 'The review did not finish (the connection dropped); the piece is as designed so far.' : 'The review did not finish; the piece is as designed so far.'); break }
       for (const n of (j.notes || []) as string[]) said.push(n)
@@ -155,11 +160,14 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
   const polishOpen = async () => {
     const d = docRef.current; if (!d || busy || !canEdit) return
     if (saveTimer.current) clearTimeout(saveTimer.current)
-    setErr('')
-    const done = await polish(d, 1, {})
+    setErr(''); setAskOpen(false)
+    const done = await polish(d, 1, {}, ask.trim().slice(0, 240))
     changed.current = true; dirty.current = false
     setDoc(done); setSaved('saved')
+    setEnh(done !== d ? { before: d, after: done } : null)
   }
+  /** Put the piece back as it was before the last enhancement. */
+  const undoEnhance = () => { if (!enh || docRef.current !== enh.after) return; setReview([]); change(enh.before); setEnh(null) }
 
   // ── the open piece: every change is saved a moment later ──
   const change = (d: Composition) => {
@@ -304,9 +312,17 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
                 style={{ flex: 1, minWidth: 220, background: 'transparent', border: '1px solid transparent', borderRadius: 8, color: UI.ink, fontFamily: display, fontWeight: 800, fontSize: 20, padding: '6px 8px' }} />
               <span style={{ fontSize: 11.5, color: UI.mut }}>{doc.meta.origin === 'house' ? 'House design' : 'Designed for this brief'}{doc.meta.costUsd ? ` · AI cost $${doc.meta.costUsd.toFixed(2)}` : ''} · {saved === 'saving' ? 'Saving…' : saved === 'saved' ? 'Saved' : saved === 'unsaved' ? (doc.meta.origin === 'house' && !changed.current ? 'Not saved yet' : 'Unsaved changes') : ''}</span>
               {canEdit && saved === 'unsaved' ? <button type="button" onClick={save} style={big(true)}>Save</button> : null}
-              {canEdit && doc.meta.origin !== 'house' ? <button type="button" disabled={!!busy || (!!budget && budget.left <= 0)} onClick={polishOpen} title="The creative director draws every scene, looks at it and redoes what is weak. Uses AI." style={big(false, !!busy || (!!budget && budget.left <= 0))}>✦ Art-direct it again</button> : null}
+              {canEdit ? <button type="button" disabled={!!busy || (!!budget && budget.left <= 0)} onClick={() => setAskOpen(v => !v)} aria-pressed={askOpen} title="After your edits: the creative director draws every scene, looks at it and improves what is weak, keeping your words, photos, videos and timing. Uses AI." style={big(false, !!busy || (!!budget && budget.left <= 0))}>✦ Enhance</button> : null}
               {canEdit ? <button type="button" onClick={remove} title="Delete this piece" style={{ ...big(false), color: UI.red, borderColor: 'rgba(224,108,108,0.4)' }}>✕ Delete</button> : null}
             </div>
+            {canEdit && askOpen && !busy ? (
+              <div style={{ background: UI.panel, border: '1px solid ' + UI.gold, borderRadius: 12, padding: '10px 13px', margin: '0 0 12px', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input value={ask} onChange={e => setAsk(e.target.value.slice(0, 240))} onKeyDown={e => { if (e.key === 'Enter') polishOpen() }} autoFocus placeholder="Optional: tell it what to improve — bigger headline, calmer pace, more contrast on scene 2" aria-label="What to improve"
+                  style={{ flex: 1, minWidth: 240, background: UI.bg, border: '1px solid ' + UI.line, borderRadius: 8, color: UI.ink, padding: '9px 11px', fontSize: 13, fontFamily: 'inherit' }} />
+                <button type="button" onClick={polishOpen} style={big(true)}>✦ Enhance it</button>
+                <span style={{ flexBasis: '100%', fontSize: 11.5, color: UI.mut }}>It keeps your words, photos, video clips, order and timing, and improves the design around them. One click puts it back.</span>
+              </div>
+            ) : null}
             {Trouble()}
             {notes.length ? <p style={{ fontSize: 12, color: UI.mut, margin: '0 0 10px' }}>Tidied on the way in: {notes.slice(0, 4).join(' · ')}</p> : null}
             {review.length ? (
@@ -315,10 +331,11 @@ export default function AdxStudio({ start, canEdit, display, onClose }: { start:
                   <p style={{ margin: '0 0 4px', fontSize: 12.5, fontWeight: 800, color: UI.gold }}>The creative director looked at the finished frames</p>
                   {review.slice(0, 8).map((n, i) => <p key={i} style={{ margin: '2px 0 0', fontSize: 12.5, lineHeight: 1.45, color: UI.ink }}>· {n}</p>)}
                 </div>
+                {enh && doc === enh.after && canEdit ? <button type="button" onClick={undoEnhance} style={{ ...big(false), fontSize: 12, padding: '6px 10px' }}>↶ Undo the enhancement</button> : null}
                 <button type="button" onClick={() => setReview([])} style={{ background: 'none', border: 0, color: UI.mut, cursor: 'pointer', fontSize: 12.5 }}>Hide</button>
               </div>
             ) : null}
-            <AdxPlayer doc={doc} onChange={change} canEdit={canEdit} display={display} />
+            <AdxPlayer doc={doc} onChange={change} canEdit={canEdit} display={display} hold={busy === 'review'} />
             <p style={{ fontSize: 12, color: UI.mut, margin: '16px 0 0', lineHeight: 1.6 }}>{doc.concept.name ? <><b style={{ color: UI.ink }}>{doc.concept.name}.</b> {doc.concept.idea} </> : null}Photographs: {Array.from(new Set(Object.values(doc.assets.photos).map(p => p.building))).join(', ') || '—'} · {doc.brief.areaLabel}.</p>
           </div>
         )

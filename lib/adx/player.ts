@@ -7,7 +7,7 @@
 //
 // The layout pass (layoutText, textRect, restTime) needs no canvas — it takes a `Measure` — so the audit and the
 // plain-node tests run the same code the browser does.
-import type { Composition, Scene, Layer, TextLayer, PhotoLayer, ShapeLayer, VectorLayer, LogoLayer, ButtonLayer, MotifLayer, TypeStyle, Box, Ease } from './composition'
+import type { Composition, Scene, Layer, TextLayer, PhotoLayer, PhotoAsset, ShapeLayer, VectorLayer, LogoLayer, ButtonLayer, MotifLayer, TypeStyle, Box, Ease } from './composition'
 import { resolveColor, LOGO } from './composition'
 import { drawMotif, drawLogoDress } from './motifs'
 
@@ -17,6 +17,12 @@ export type Assets = {
   /** The picture for a photo layer (already cropped for it, or the whole photograph), or null while it loads. */
   photo: (l: PhotoLayer) => Img | null
   logo: (variant: 'black' | 'white') => Img | null
+  /** VIDEO CLIPS, in the preview: put every clip on the moment of its file that time t shows, playing or held. */
+  sync?: (doc: Composition, t: number, playing: boolean, silent?: boolean) => void
+  /** VIDEO CLIPS, frame by frame (export, stills, the audit): resolve once every clip is showing exactly time t. */
+  seek?: (doc: Composition, t: number) => Promise<void>
+  /** True when the piece has at least one video clip (the exporter then seeks before every frame). */
+  hasVideo?: boolean
 }
 /** Width in pixels of `text` set in `style` at `size`, tracking included. */
 export type Measure = (style: TypeStyle, size: number, text: string) => number
@@ -297,6 +303,28 @@ export function sceneAt(doc: Composition, t: number): number {
   for (let i = S.length - 1; i >= 0; i--) if (t >= S[i].start) return i
   return 0
 }
+/** VIDEO CLIPS: every video layer on screen at time t (the scene, and the one it is leaving during a transition),
+ *  with the moment of its file that is showing. Pure: the preview, the exporter and the tests all read it. */
+export function videoTimes(doc: Composition, t: number): { layer: PhotoLayer; asset: PhotoAsset; time: number; speed: number; sound: number }[] {
+  const S = doc.scenes, out: { layer: PhotoLayer; asset: PhotoAsset; time: number; speed: number; sound: number }[] = []
+  if (!S.length) return out
+  t = clamp(t, 0, Math.max(0, doc.canvas.duration - 1e-4))
+  const i = sceneAt(doc, t), sc = S[i], local = t - sc.start, trDur = sc.transitionIn.dur || 0
+  const add = (scene: Scene, loc: number) => {
+    for (const l of scene.layers) {
+      if (l.type !== 'photo') continue
+      const a = doc.assets.photos[l.photo]; if (!a || a.kind !== 'video') continue
+      const speed = l.clip?.speed || 1
+      // past the end of the file the last frame holds
+      out.push({ layer: l, asset: a, time: clamp((l.clip?.start || 0) + Math.max(0, loc) * speed, 0, Math.max(0, (a.dur || 0) - 0.04)), speed, sound: l.clip?.sound || 0 })
+    }
+  }
+  if (i > 0 && trDur > 0 && local < trDur) add(S[i - 1], S[i - 1].dur + local)
+  add(sc, local)
+  return out
+}
+/** How much of its file a video layer shows in a scene `dur` long, in seconds of the file. */
+export const clipSpan = (l: PhotoLayer, dur: number) => dur * (l.clip?.speed || 1)
 /** The moment a scene has fully arrived (every entrance done), for stills and for the audit. */
 export function restTime(scene: Scene): number {
   let end = 0

@@ -154,7 +154,7 @@ export type Still = { scene: string; data: string }
  */
 /** A graphic the director called for: made by the image model and placed by the browser, then seen in the next review. */
 export type ArtAsk = { scene: string; kind: ArtKind; style: string; what: string; box: { x?: number; y?: number; w?: number }; idle?: 'float' | 'sway' | 'spin' | 'pulse' }
-export async function runReview(doc: Composition, pool: Record<string, PhotoAsset>, stills: Still[], findings: string, round: number, canArt = false): Promise<{ ok: true; doc: Composition; verdict: 'ship' | 'revised'; notes: string[]; changed: string[]; art: ArtAsk[]; usd: number } | Fail> {
+export async function runReview(doc: Composition, pool: Record<string, PhotoAsset>, stills: Still[], findings: string, round: number, canArt = false, direction = ''): Promise<{ ok: true; doc: Composition; verdict: 'ship' | 'revised'; notes: string[]; changed: string[]; art: ArtAsk[]; usd: number } | Fail> {
   const example = housePiece(EXAMPLE_FOR[doc.brief.moment] || 'thanksgiving')
   const system = composerSystem(doc.brief.audience, example)
   const photos: Record<string, PhotoAsset> = { ...pool, ...doc.assets.photos }
@@ -165,7 +165,7 @@ export async function runReview(doc: Composition, pool: Record<string, PhotoAsse
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: st.data } })
   }
   if (!content.length) return { ok: false, status: 400, error: 'No frames came through to look at.' }
-  content.push({ type: 'text', text: reviewPrompt(doc, findings, photos, round, REVIEW_ROUNDS, canArt) })
+  content.push({ type: 'text', text: reviewPrompt(doc, findings, photos, round, REVIEW_ROUNDS, canArt, direction) })
   const a = await ask('adx-compose', { system, content, maxTokens: 12000, temperature: 0.5 })
   if (!a.ok) return a
   const notes = (Array.isArray(a.json?.notes) ? a.json.notes : []).map((n: any) => cleanText(n, 220)).filter(Boolean).slice(0, 6)
@@ -179,10 +179,21 @@ export async function runReview(doc: Composition, pool: Record<string, PhotoAsse
   const cost = (d: Composition) => { d.meta.costUsd = Math.round(((doc.meta.costUsd || 0) + a.usd) * 10000) / 10000; return d }
   if ((a.json?.verdict === 'ship' || !fresh.size) && !art.length) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes, changed: [], art: [], usd: a.usd }
   if (!fresh.size) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'revised', notes, changed: [], art, usd: a.usd }
-  const authored = { concept: doc.concept, tokens: doc.tokens, script: doc.script, social: doc.social, scenes: doc.scenes.map(s => fresh.get(s.id) || { id: s.id, name: s.name, dur: s.dur, transitionIn: s.transitionIn, layers: s.layers }) }
+  // A VIDEO CLIP IS THE PERSON'S FOOTAGE: whatever the revision says, the clip keeps its place in the file, its speed
+  // and its sound, and a scene that holds one keeps its length (a clip's length is an edit, not a design choice).
+  const clips = new Map<string, { photo: string; clip: unknown }>()
+  for (const s of doc.scenes) for (const l of s.layers) if (l.type === 'photo' && l.clip) clips.set(l.id, { photo: l.photo, clip: l.clip })
+  const keepClips = (s: any): any => {
+    const was = doc.scenes.find(x => x.id === s.id)
+    if (!was || !was.layers.some(l => l.type === 'photo' && l.clip)) return s
+    return { ...s, dur: was.dur, layers: (Array.isArray(s.layers) ? s.layers : []).map((l: any) => { const c = l && clips.get(String(l.id)); return c && l.type === 'photo' && l.photo === c.photo ? { ...l, clip: c.clip } : l }) }
+  }
+  const authored = { concept: doc.concept, tokens: doc.tokens, script: doc.script, social: doc.social, scenes: doc.scenes.map(s => (fresh.has(s.id) ? keepClips(fresh.get(s.id)) : { id: s.id, name: s.name, dur: s.dur, transitionIn: s.transitionIn, layers: s.layers })) }
   const trusted = { id: doc.id, title: doc.title, brief: doc.brief, canvas: doc.canvas, photos, music: doc.assets.audio.music, meta: { ...doc.meta } }
   const next = sanitizeComposition(authored, trusted).doc
   const hard = (d: Composition) => auditComposition(d, approxMeasure).issues.filter(x => x.sev === 'fail' && MEASURED_CODES.indexOf(x.code) < 0).length
-  if (next.scenes.length !== doc.scenes.length || hard(next) > hard(doc)) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes: notes.concat('A revision was drawn and set aside: it broke more rules than it fixed.'), changed: [], art: [], usd: a.usd }
+  // a revision that loses a clip the person added is not kept
+  const lostClip = Array.from(clips.keys()).some(id => !next.scenes.some(s => s.layers.some(l => l.id === id && l.type === 'photo' && !!l.clip)))
+  if (next.scenes.length !== doc.scenes.length || lostClip || hard(next) > hard(doc)) return { ok: true, doc: cost({ ...doc, meta: { ...doc.meta } }), verdict: 'ship', notes: notes.concat('A revision was drawn and set aside: it broke more rules than it fixed.'), changed: [], art: [], usd: a.usd }
   return { ok: true, doc: cost(next), verdict: 'revised', notes, changed: Array.from(fresh.keys()), art, usd: a.usd }
 }

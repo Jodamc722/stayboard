@@ -418,6 +418,13 @@ export async function signLibraryUpload(ext: string): Promise<{ path: string; th
   if (a.error || !a.data || b.error || !b.data) throw new Error('signed upload: ' + (a.error?.message || b.error?.message || 'no url'))
   return { path, thumbPath, signedUrl: a.data.signedUrl, thumbUrl: b.data.signedUrl }
 }
+/** A fresh signed address for a library video. A piece keeps a same-origin address that never expires
+ *  (/api/adx/video?path=…); this is where that address leads for the next few hours. */
+export async function signLibraryVideo(path: string): Promise<string | null> {
+  if (!/^library\/[a-z0-9]{6,40}\.(mp4|webm|mov|m4v)$/i.test(path)) return null
+  const { data } = await supabaseAdmin().storage.from(BUCKET).createSignedUrl(path, SIGN_TTL)
+  return data?.signedUrl || null
+}
 export async function saveLibraryMeta(m: { path: string; thumbPath?: string; name: string; dur: number; format: string }, by: string): Promise<void> {
   if (!/^library\/[a-z0-9]+\.(mp4|webm|mov|m4v)$/i.test(m.path)) throw new Error('bad path')
   const meta = { path: m.path, thumbPath: m.thumbPath && /^library\/[a-z0-9]+\.jpg$/i.test(m.thumbPath) ? m.thumbPath : '', name: String(m.name || 'Video').slice(0, 140), dur: Number(m.dur || 0), format: String(m.format || '').slice(0, 8), createdAt: new Date().toISOString(), by }

@@ -13,6 +13,12 @@
 //     headline / a photo / a scene, move or delete the scene).
 //   · Look & sound: colour theme, headline type, the song and its volume, the length of the whole video.
 //   · Words and Files are as before. Undo and redo (⌘Z) cover every change.
+//
+// THE TIMELINE AND VIDEO (Jon, 2026-11-21: "Make the edit feature amazing and similar to the best editing tools";
+// "want to be able to add video, shorten the video, cut the video"): under the picture is a timeline (AdxTimeline):
+// drag the playhead, drag a clip's edges to trim it, drag a clip to move it, S cuts at the playhead, Space plays.
+// "+ Video" adds a clip from the video library or the computer as a scene of its own; it trims, cuts, changes speed
+// and keeps or mutes its own sound like in any editor. Clips are held on the right frame by lib/adx/assets.ts.
 // None of it calls a model: every change is instant and free, and the measured audit runs again after each one
 // (does it still fit, is it still readable, is a photograph being stretched). No drop-down menus.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -20,11 +26,12 @@ import { MUSIC } from '@/lib/ad-engine'
 import { type Composition, type TextLayer, type ButtonLayer, type Layer, type Box, type PhotoAsset, runsToPlain, plainToRuns, cleanText, musicLevel, lum as lumOf } from '@/lib/adx/composition'
 import { renderFrame, restTime, sceneAt, canvasMeasure, type Assets, type Ctx } from '@/lib/adx/player'
 import { auditComposition, canvasSampler, type AuditResult } from '@/lib/adx/audit'
-import { loadAssets } from '@/lib/adx/assets'
-import { exportVideo, exportPng, type ExportResult } from '@/lib/adx/export'
+import { loadAssets, setVideoListener, pauseVideos } from '@/lib/adx/assets'
+import { exportVideo, exportPng, hasClipSound, type ExportResult } from '@/lib/adx/export'
 import * as E from '@/lib/adx/edit'
 import { UI } from './BriefWizard'
-import { LayerPanel, ScenePanel, StylePanel, PhotoPicker, AddBar, Swatches, Sec, chip, type Pool } from './AdxPanels'
+import { LayerPanel, ScenePanel, StylePanel, PhotoPicker, VideoPicker, AddBar, Swatches, Sec, chip, type Pool } from './AdxPanels'
+import AdxTimeline from './AdxTimeline'
 
 const btn = (primary = false, disabled = false): React.CSSProperties => ({ fontSize: 12.5, fontWeight: 800, padding: '8px 13px', borderRadius: 9, border: primary ? 0 : '1px solid ' + UI.line, background: primary ? UI.gold : UI.panel2, color: primary ? '#0B0F16' : UI.ink, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1, whiteSpace: 'nowrap' })
 const mmss = (s: number) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0')
@@ -34,7 +41,7 @@ function download(blob: Blob, name: string) {
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000)
 }
 type Tab = 'edit' | 'style' | 'words' | 'files'
-type Picker = { mode: 'swap'; layerId: string } | { mode: 'add'; sceneId: string } | { mode: 'scene'; sceneId: string }
+type Picker = { mode: 'swap'; layerId: string } | { mode: 'add'; sceneId: string } | { mode: 'scene'; sceneId: string } | { mode: 'video'; sceneId: string } | { mode: 'swapVideo'; layerId: string }
 type Drag = { id: string; mode: 'move' | 'size'; sx: number; sy: number; k: number; box: Box; live: Box; moved: boolean; lock: '' | 'aspect' | 'width' }
 /** A picked file made small enough to send: at most 2000 px on its long side, transparency kept. */
 async function shrinkImage(file: File): Promise<Blob> {
@@ -49,7 +56,7 @@ async function shrinkImage(file: File): Promise<Blob> {
   return out
 }
 
-export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Composition; onChange: (d: Composition) => void; canEdit: boolean; display: string }) {
+export default function AdxPlayer({ doc, onChange, canEdit, display, hold }: { doc: Composition; onChange: (d: Composition) => void; canEdit: boolean; display: string; /** true while something else is drawing this piece (the creative director's review): the preview leaves the video clips alone */ hold?: boolean }) {
   const W = doc.canvas.w, H = doc.canvas.h, dur = doc.canvas.duration
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
@@ -63,6 +70,9 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   if (origColors.current.id !== doc.id) origColors.current = { id: doc.id, color: doc.tokens.color }
   const hist = useRef<{ id: string; past: Composition[]; future: Composition[]; key: string; at: number }>({ id: doc.id, past: [], future: [], key: '', at: 0 })
   if (hist.current.id !== doc.id) hist.current = { id: doc.id, past: [], future: [], key: '', at: 0 }
+  /** The piece as this editor last gave it out, and as it last was: a change from outside (the creative director's
+   *  enhancement, the title) becomes a step of undo like any other. */
+  const emitted = useRef<Composition>(doc), prevDoc = useRef<Composition>(doc)
   const dragRef = useRef<Drag | null>(null)
   /** Where the picture was last clicked (canvas pixels, with the scene it was in): new things land there. */
   const lastPt = useRef<{ scene: string; x: number; y: number } | null>(null)
@@ -90,11 +100,23 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   const [copied, setCopied] = useState(false)
   const [adding, setAdding] = useState(false)
   const [addErr, setAddErr] = useState('')
-  tRef.current = t
+  /** While a clip's edge is dragged in the timeline: the piece as it would be. */
+  const [ghost, setGhost] = useState<Composition | null>(null)
+  /** The clip last clicked in the timeline (Delete removes it). */
+  const [sceneSel, setSceneSel] = useState<string | null>(null)
+  const [thumbs, setThumbs] = useState<Record<string, string>>({})
+  const thumbCache = useRef<Map<string, string>>(new Map())
+  const thumbRun = useRef({ on: false, again: false })
+  const playRef = useRef(false)
+  /** Which set of pictures is loaded, so a thumbnail is never drawn (and kept) before its photograph has arrived. */
+  const loadedKey = useRef('')
+  /** True while the exporter or the review drives the video clips: the preview must not move them. */
+  const busyRef = useRef(false); busyRef.current = !!exp || !!hold
+  tRef.current = t; playRef.current = playing
 
   const music = MUSIC.find(m => m.key === doc.assets.audio.music.track && m.file)
   /** What is drawn: the piece, with the thing being dragged where the pointer has it. */
-  const view = useMemo(() => (dragBox ? E.setBox(doc, dragBox.id, dragBox.box) : doc), [doc, dragBox])
+  const view = useMemo(() => ghost || (dragBox ? E.setBox(doc, dragBox.id, dragBox.box) : doc), [doc, dragBox, ghost])
   // which photographs are drawn, and where: when that changes the pictures are fetched again
   const photoKey = useMemo(() => doc.id + '|' + doc.scenes.map(s => s.layers.map(l => (l.type === 'photo' ? [l.id, l.photo, l.box.w, l.box.h, l.focal ? 1 : 0, l.camera ? 1 : 0].join(':') : '')).join(',')).join(';'), [doc])
 
@@ -105,15 +127,62 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   useEffect(() => {
     let live = true
     if (!assets.current) setReady(false)          // after the first load the picture stays up while a new photograph arrives
-    loadAssets(docRef.current).then(r => { if (!live) return; assets.current = r.assets; setMissing(r.missing.length); setReady(true); setTick(x => x + 1) })
+    loadAssets(docRef.current).then(r => { if (!live) return; assets.current = r.assets; loadedKey.current = photoKey; setMissing(r.missing.length); setReady(true); setTick(x => x + 1) })
     return () => { live = false }
   }, [photoKey])
+
+  // a video clip that has landed on a new frame asks to be drawn; clips stop when the editor closes
+  useEffect(() => {
+    setVideoListener(() => { if (!busyRef.current) setTick(x => x + 1) })
+    return () => { setVideoListener(null); pauseVideos() }
+  }, [])
 
   // draw the frame on screen
   useEffect(() => {
     const cv = canvasRef.current; if (!cv || !assets.current) return
+    // video clips are put on the moment the playhead is at (they play themselves while the piece plays)
+    if (!busyRef.current && assets.current.sync) assets.current.sync(view, t, playing)
     const g = cv.getContext('2d'); if (g) renderFrame(g as Ctx, view, t, assets.current)
-  }, [view, t, ready, tick])
+  }, [view, t, ready, tick, playing, hold])
+
+  // a small picture of every scene, for the timeline (drawn by the same player; kept until the scene changes)
+  useEffect(() => {
+    if (!ready || !assets.current || loadedKey.current !== photoKey) return
+    const pass = async () => {
+      const run = thumbRun.current
+      if (run.on) { run.again = true; return }
+      run.on = true
+      try {
+        const d = docRef.current, A = assets.current!, cache = thumbCache.current
+        const look = JSON.stringify([d.tokens, W, H, loadedKey.current.length])
+        let full: HTMLCanvasElement | null = null, small: HTMLCanvasElement | null = null
+        const out: Record<string, string> = {}
+        for (let i = 0; i < d.scenes.length; i++) {
+          const s = d.scenes[i], key = look + JSON.stringify(s.layers)
+          let url = cache.get(key)
+          if (!url) {
+            const at = Math.min(restTime(s), s.start + s.dur - 0.02)
+            // a video clip that is not on screen is put on its own moment first (the one on screen already is);
+            // while the piece plays or exports the clips are left alone and the picture is taken afterwards
+            let keep = true
+            if (A.seek && E.videoOf(d, s) && sceneAt(d, tRef.current) !== i) { if (playRef.current || busyRef.current) keep = false; else await A.seek(d, at) }
+            if (!full) { full = document.createElement('canvas'); full.width = W; full.height = H; small = document.createElement('canvas'); small.height = 120; small.width = Math.max(2, Math.round((120 * W) / H)) }
+            renderFrame(full.getContext('2d') as Ctx, d, at, A)
+            const sg = small!.getContext('2d')!; sg.imageSmoothingQuality = 'high'; sg.drawImage(full, 0, 0, small!.width, small!.height)
+            url = small!.toDataURL('image/jpeg', 0.7)
+            if (cache.size > 160) cache.clear()
+            if (keep) cache.set(key, url)
+          }
+          out[s.id] = url
+        }
+        setThumbs(prev => (Object.keys(out).length === Object.keys(prev).length && Object.keys(out).every(k => prev[k] === out[k]) ? prev : out))
+      } catch { /* a clip without its picture still shows its name and length */ }
+      run.on = false
+      if (run.again) { run.again = false; setTimeout(pass, 200) }
+    }
+    const h = setTimeout(pass, 420)
+    return () => clearTimeout(h)
+  }, [doc, ready, tick, photoKey, W, H, playing, exp, hold])
 
   // the measured audit, a moment after every change
   useEffect(() => {
@@ -149,8 +218,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     return () => cancelAnimationFrame(raf)
   }, [playing, dur, music])
 
-  const seek = (x: number) => { setPlaying(false); setT(Math.max(0, Math.min(dur - 0.02, x))) }
-  const togglePlay = () => { if (!playing && t >= dur - 0.1) setT(0); setPlaying(p => !p); setSel(null) }
+  const seek = (x: number) => { setPlaying(false); setT(Math.max(0, Math.min(docRef.current.canvas.duration - 0.02, x))) }
+  const togglePlay = () => { if (!ready) return; if (!playing && t >= dur - 0.1) setT(0); setPlaying(p => !p); setSel(null) }
 
   // ── every change goes through here: it can be undone ──
   const commit = useCallback((next: Composition, key = '') => {
@@ -159,10 +228,19 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     // a run of the same small change (typing a line, dragging a slider) is one step back, not fifty
     if (!(key && key === h.key && now - h.at < 1200)) { h.past.push(d); if (h.past.length > 80) h.past.shift() }
     h.future = []; h.key = key; h.at = now
-    setHv(x => x + 1); onChange(next)
+    emitted.current = next; setHv(x => x + 1); onChange(next)
   }, [onChange])
-  const undo = () => { const h = hist.current, p = h.past.pop(); if (!p) return; h.future.push(docRef.current); h.key = ''; setHv(x => x + 1); setDrafts({}); onChange(p) }
-  const redo = () => { const h = hist.current, n = h.future.pop(); if (!n) return; h.past.push(docRef.current); h.key = ''; setHv(x => x + 1); setDrafts({}); onChange(n) }
+  const undo = () => { const h = hist.current, p = h.past.pop(); if (!p) return; h.future.push(docRef.current); h.key = ''; emitted.current = p; setHv(x => x + 1); setDrafts({}); onChange(p) }
+  const redo = () => { const h = hist.current, n = h.future.pop(); if (!n) return; h.past.push(docRef.current); h.key = ''; emitted.current = n; setHv(x => x + 1); setDrafts({}); onChange(n) }
+  useEffect(() => {
+    const was = prevDoc.current
+    if (doc !== emitted.current && was !== doc && was.id === doc.id) {
+      const h = hist.current, now = Date.now()
+      if (!(h.key === 'outside' && now - h.at < 1200)) { h.past.push(was); if (h.past.length > 80) h.past.shift() }
+      h.future = []; h.key = 'outside'; h.at = now; setHv(x => x + 1)
+    }
+    prevDoc.current = doc; emitted.current = doc
+  }, [doc])
 
   // ── the words ──
   const setWords = (l: TextLayer | ButtonLayer, text: string) => {
@@ -173,8 +251,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   const wordsOf = (l: TextLayer | ButtonLayer) => (drafts[l.id] != null ? drafts[l.id] : l.type === 'button' ? l.label : runsToPlain(l))
   const select = (id: string | null) => { setSel(id); setDrafts({}); if (id) { setPicker(null); setTab('edit') } }
 
-  const si = sceneAt(doc, t)
-  const cur = doc.scenes[si]
+  const si = sceneAt(view, t)
+  const cur = view.scenes[si] || doc.scenes[0]
   const found = sel ? E.findLayer(view, sel) : null
   const selLayer = found && found.si === si ? found.layer : null
   const selRect = selLayer ? E.layerRect(view, selLayer) : null
@@ -191,7 +269,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     const at = hits.findIndex(l => l.id === sel)
     select(hits[at >= 0 ? (at + 1) % hits.length : 0].id)
   }
-  const onCanvasClick = (e: React.MouseEvent) => { if (canEdit) pickAt(e.clientX, e.clientY) }
+  const onCanvasClick = (e: React.MouseEvent) => { if (canEdit) { setSceneSel(null); pickAt(e.clientX, e.clientY) } }
 
   const startDrag = (e: React.PointerEvent, mode: 'move' | 'size') => {
     if (!canEdit || !selLayer || selLayer.type === 'fill') return
@@ -236,14 +314,29 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
 
   // ── the keyboard: undo, delete, nudge ──
   const onKey = (e: KeyboardEvent) => {
-    if (!canEdit) return
     const el = e.target as HTMLElement | null
     const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
-    if (typing) return
+    if (typing || exp) return
+    const plain = !(e.metaKey || e.ctrlKey || e.altKey)
+    // Space plays and pauses, as in every editor (a focused button is let go of first, so it is not pressed too)
+    if (plain && (e.key === ' ' || e.code === 'Space')) { e.preventDefault(); if (el && el.tagName === 'BUTTON') el.blur(); togglePlay(); return }
+    if (!canEdit) {
+      if (plain && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); seek(t + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 1 / 30)) }
+      return
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return }
-    if (e.metaKey || e.ctrlKey || e.altKey) return
-    if (e.key === 'Escape') { setPicker(null); select(null); return }
-    if (!selLayer || selLayer.type === 'fill') return
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicateCur(); return }
+    if (!plain) return
+    if (e.key === 'Escape') { setPicker(null); select(null); setSceneSel(null); return }
+    if (e.key.toLowerCase() === 's') { e.preventDefault(); splitAt(); return }
+    if (e.key === 'Home') { e.preventDefault(); seek(0); return }
+    if (e.key === 'End') { e.preventDefault(); seek(dur); return }
+    if (!selLayer || selLayer.type === 'fill') {
+      // nothing in the picture is selected: the arrows step through the piece a frame at a time (Shift: a second)
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); seek(t + (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 1 : 1 / 30)); return }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && sceneSel && cur && sceneSel === cur.id && doc.scenes.length > 1) { e.preventDefault(); deleteCur() }
+      return
+    }
     if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); commit(E.deleteLayer(doc, selLayer.id)); select(null); return }
     const step = e.shiftKey ? 20 : 4, b = selLayer.box as Box
     const move = e.key === 'ArrowLeft' ? { x: b.x - step } : e.key === 'ArrowRight' ? { x: b.x + step } : e.key === 'ArrowUp' ? { y: b.y - step } : e.key === 'ArrowDown' ? { y: b.y + step } : null
@@ -270,7 +363,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
     if (!picker) return
     if (picker.mode === 'swap') commit(E.swapPhoto(doc, picker.layerId, key, asset))
     else if (picker.mode === 'add') { const r = E.addPhoto(doc, picker.sceneId, key, asset); commit(r.doc); setSel(r.layerId) }
-    else {
+    else if (picker.mode === 'scene') {
       // the new scene opens with its headline selected, ready to be retyped (it starts as a copy of the scene before)
       const r = E.addSceneLike(doc, picker.sceneId, key, asset); commit(r.doc)
       const s = r.doc.scenes.find(x => x.id === r.sceneId); if (s) setT(restTime(s))
@@ -312,16 +405,46 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   }
   const goScene = (sid: string, d: Composition) => { const s = d.scenes.find(x => x.id === sid); if (s) { setPlaying(false); setT(restTime(s)) } }
 
+  // ── the timeline's tools: cut, duplicate, delete, and a video clip from the library or the computer ──
+  const splitAt = () => {
+    const d = docRef.current, x = tRef.current, s = d.scenes[sceneAt(d, x)]
+    if (!s || !E.canSplit(d, s.id, x - s.start)) return
+    const r = E.splitScene(d, s.id, x - s.start); if (r.sceneId === s.id) return
+    commit(r.doc); setPlaying(false); select(null); setSceneSel(r.sceneId)
+    const ns = r.doc.scenes.find(y => y.id === r.sceneId); if (ns) setT(ns.start + 0.0005)     // the playhead sits on the cut
+  }
+  const duplicateCur = () => {
+    const d = docRef.current, s = d.scenes[sceneAt(d, tRef.current)]; if (!s) return
+    const r = E.duplicateScene(d, s.id); if (r.sceneId === s.id) return
+    commit(r.doc); select(null); setSceneSel(r.sceneId); goScene(r.sceneId, r.doc)
+  }
+  const deleteCur = () => {
+    const d = docRef.current, i = sceneAt(d, tRef.current), s = d.scenes[i]; if (!s || d.scenes.length < 2) return
+    const next = d.scenes[i + 1] || d.scenes[i - 1], nd = E.deleteScene(d, s.id)
+    commit(nd); select(null); setSceneSel(null); if (next) goScene(next.id, nd)
+  }
+  const pickVideo = (key: string, asset: PhotoAsset) => {
+    if (!picker) return
+    const d = docRef.current
+    if (picker.mode === 'swapVideo') { commit(E.swapPhoto(d, picker.layerId, key, asset)); setSel(picker.layerId) }
+    else if (picker.mode === 'video') {
+      const r = E.addVideoScene(d, picker.sceneId, key, asset)
+      if (!r.layerId) setAddErr('There is no room for another clip: a piece runs up to ' + E.MAX_PIECE_SECONDS + ' seconds and ' + E.MAX_SCENES + ' scenes.')
+      else { commit(r.doc); setPlaying(false); setDrafts({}); setSel(r.layerId); setSceneSel(r.sceneId); const ns = r.doc.scenes.find(y => y.id === r.sceneId); if (ns) setT(ns.start + 0.0005) }
+    }
+    setPicker(null)
+  }
+
   // ── export ──
-  const run = async (withMusic: boolean) => {
+  const run = async (withSound: boolean) => {
     if (!assets.current || exp) return
-    setErr(''); setResult(null); setPlaying(false); setExp({ pct: 0, stage: 'Starting' })
+    setErr(''); setResult(null); setPlaying(false); busyRef.current = true; pauseVideos(); setExp({ pct: 0, stage: 'Starting' })
     try {
-      const r = await exportVideo(doc, assets.current, { musicUrl: withMusic && music ? music.file : undefined, musicGain: doc.assets.audio.music.gain, onProgress: (a, b, stage) => setExp({ pct: Math.round((a / Math.max(1, b)) * 100), stage }) })
+      const r = await exportVideo(doc, assets.current, { musicUrl: withSound && music ? music.file : undefined, musicGain: doc.assets.audio.music.gain, clipSound: withSound, onProgress: (a, b, stage) => setExp({ pct: Math.round((a / Math.max(1, b)) * 100), stage }) })
       download(r.blob, `${fileBase(doc)} (${W}x${H}).${r.ext}`)
       setResult(r)
     } catch (e: any) { setErr(String(e?.message || e)) }
-    setExp(null)
+    setExp(null); setTick(x => x + 1)          // the clips go back to the frame the playhead is on
   }
   const still = async () => {
     if (!assets.current) return
@@ -330,6 +453,7 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
   const captionText = [doc.social.caption, doc.social.hashtags.join(' '), music ? doc.assets.audio.music.credit : ''].filter(Boolean).join('\n\n')
   const copyCaption = async () => { try { await navigator.clipboard.writeText(captionText); setCopied(true); setTimeout(() => setCopied(false), 1800) } catch { /* the text is selectable below */ } }
 
+  const clipSound = hasClipSound(doc)
   const fails = audit ? audit.issues.filter(x => x.sev === 'fail') : []
   const warns = audit ? audit.issues.filter(x => x.sev === 'warn') : []
   const sf = doc.canvas.safe
@@ -368,7 +492,8 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
               <p style={{ margin: '0 0 6px', fontSize: 11, fontWeight: 800, color: UI.gold, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{E.layerName(doc, selLayer)}</p>
               {selLayer.type === 'text' || selLayer.type === 'button' ? <textarea key={selLayer.id} autoFocus rows={selLayer.type === 'button' ? 1 : 2} value={wordsOf(selLayer)} onChange={e => setWords(selLayer, e.target.value)} onKeyDown={e => { if (e.key === 'Escape') select(null) }} aria-label="Words" style={{ ...area, marginBottom: 6 }} /> : null}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                {selLayer.type === 'photo' && !E.isAdded(doc, selLayer) ? <button type="button" onClick={() => openPicker({ mode: 'swap', layerId: selLayer.id })} style={btn(true)}>Swap photo</button> : null}
+                {selLayer.type === 'photo' && E.isVideo(doc, selLayer) ? <button type="button" onClick={() => { setPicker({ mode: 'swapVideo', layerId: selLayer.id }); setTab('edit') }} style={btn(true)}>Replace video</button>
+                  : selLayer.type === 'photo' && !E.isAdded(doc, selLayer) ? <button type="button" onClick={() => openPicker({ mode: 'swap', layerId: selLayer.id })} style={btn(true)}>Swap photo</button> : null}
                 {selLayer.type === 'text' || selLayer.type === 'button' ? (<>
                   <button type="button" onClick={() => commit(E.resizeText(doc, selLayer.id, -2))} style={chip()}>A −</button>
                   <button type="button" onClick={() => commit(E.resizeText(doc, selLayer.id, 2))} style={chip()}>A +</button>
@@ -385,30 +510,18 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
           ) : null}
         </div>
 
-        {/* transport */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px auto 0', maxWidth: 820 }}>
-          <button type="button" onClick={togglePlay} disabled={!ready} style={{ ...btn(true, !ready), minWidth: 74 }}>{playing ? '❚❚ Pause' : '▶ Play'}</button>
-          <input type="range" min={0} max={dur} step={1 / 30} value={t} onChange={e => seek(Number(e.target.value))} aria-label="Position in the piece" style={{ flex: 1, accentColor: UI.gold }} />
-          <span style={{ fontSize: 12, color: UI.mut, fontVariantNumeric: 'tabular-nums', minWidth: 70, textAlign: 'right' }}>{mmss(t)} / {mmss(dur)}</span>
-          {canEdit ? (<>
-            <button type="button" onClick={undo} disabled={!h.past.length} title="Undo (⌘Z)" style={btn(false, !h.past.length)}>↶ Undo</button>
-            <button type="button" onClick={redo} disabled={!h.future.length} title="Redo (⇧⌘Z)" style={btn(false, !h.future.length)}>↷</button>
-          </>) : null}
-          <button type="button" onClick={() => setGuides(v => !v)} aria-pressed={guides} title="Shows the area the platform's own buttons leave clear" style={{ ...btn(), background: guides ? 'rgba(210,176,119,0.18)' : UI.panel2 }}>Safe area</button>
-        </div>
-        {/* the scenes, each as wide as it is long */}
-        <div style={{ display: 'flex', gap: 4, margin: '10px auto 0', maxWidth: 820, alignItems: 'stretch' }}>
-          {doc.scenes.map((s, i) => (
-            <button key={s.id} type="button" onClick={() => { seek(restTime(s)); select(null); setTab('edit') }} title={`${s.name} · ${s.dur.toFixed(1)} s${i ? ' · comes in with a ' + s.transitionIn.type : ''}`}
-              style={{ flex: `${s.dur} 1 0`, minWidth: 0, textAlign: 'left', padding: '6px 8px', borderRadius: 8, border: '1px solid ' + (i === si ? UI.gold : UI.line), background: i === si ? 'rgba(210,176,119,0.14)' : UI.panel2, color: i === si ? UI.gold : UI.ink, cursor: 'pointer', overflow: 'hidden' }}>
-              <span style={{ display: 'block', fontSize: 12, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i + 1} · {s.name}</span>
-              <span style={{ display: 'block', fontSize: 10.5, color: UI.mut }}>{s.dur.toFixed(1)} s</span>
-            </button>
-          ))}
-          {canEdit ? <button type="button" onClick={() => openPicker({ mode: 'scene', sceneId: cur.id })} title="Add a scene after the one on screen" style={{ ...btn(), padding: '6px 10px' }}>+ Scene</button> : null}
-        </div>
+        {/* the timeline: play, scrub, trim, cut, move, add */}
+        <AdxTimeline doc={doc} t={t} playing={playing} ready={ready} canEdit={canEdit} thumbs={thumbs} sceneSel={sceneSel} song={music ? music.label : ''}
+          canUndo={!!h.past.length} canRedo={!!h.future.length} guides={guides}
+          onSeek={seek} onTogglePlay={togglePlay} onUndo={undo} onRedo={redo} onGuides={() => setGuides(v => !v)}
+          onPickScene={(sid, at) => { seek(at); select(null); setSceneSel(sid); setTab('edit'); setPicker(null) }}
+          onPreview={(next, showT) => { setGhost(next); if (next) { setPlaying(false); if (showT != null) setT(Math.max(0, Math.min(next.canvas.duration - 0.02, showT))) } }}
+          onEdit={(next, sid, kind) => { commit(next); setSceneSel(sid); if (kind === 'move') goScene(sid, next) }}
+          onSplit={splitAt} onDuplicate={duplicateCur} onDelete={deleteCur}
+          onAddScene={() => openPicker({ mode: 'scene', sceneId: cur.id })} onAddVideo={() => { setAddErr(''); setPicker({ mode: 'video', sceneId: cur.id }); setTab('edit'); setPlaying(false) }}
+          onSong={() => { setTab('style'); setPicker(null) }} />
         {canEdit && cur ? <AddBar doc={doc} scene={cur} at={lastPt.current && lastPt.current.scene === cur.id ? { x: lastPt.current.x, y: lastPt.current.y } : undefined} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddPhoto={sid => openPicker({ mode: 'add', sceneId: sid })} onImage={addImageFile} onObject={addObject} busy={adding} err={addErr} /> : null}
-        {canEdit ? <p style={{ margin: '10px auto 0', maxWidth: 820, fontSize: 11.5, color: UI.mut, textAlign: 'center' }}>Click anything in the picture to change it. Drag to move, drag the corner to resize, Delete removes it, ⌘Z undoes.</p> : null}
+        {canEdit ? <p style={{ margin: '10px auto 0', maxWidth: 820, fontSize: 11.5, color: UI.mut, textAlign: 'center' }}>Click anything in the picture to change it. Drag to move, drag the corner to resize, Delete removes it.</p> : null}
         {music ? <audio ref={audioRef} src={music.file} preload="auto" /> : null}
       </div>
 
@@ -433,10 +546,12 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
           ))}
         </div>
 
-        {tab === 'edit' ? (!canEdit ? <Sec title="View only"><p style={{ margin: '6px 0 0', fontSize: 12.5, color: UI.mut }}>You can play and download this piece. Editing needs Ad Studio edit access.</p></Sec> : picker ? (
+        {tab === 'edit' ? (!canEdit ? <Sec title="View only"><p style={{ margin: '6px 0 0', fontSize: 12.5, color: UI.mut }}>You can play and download this piece. Editing needs Ad Studio edit access.</p></Sec> : picker && (picker.mode === 'video' || picker.mode === 'swapVideo') ? (
+          <VideoPicker title={picker.mode === 'video' ? 'Add a video clip' : 'Use a video here'} onPick={pickVideo} onCancel={() => setPicker(null)} />
+        ) : picker ? (
           <PhotoPicker doc={doc} title={picker.mode === 'swap' ? 'Swap this photo' : picker.mode === 'add' ? 'Add a photo to this scene' : 'New scene — pick its photo'} pool={pool} busy={poolBusy} err={poolErr} q={poolQ} onQ={loadPool} onPick={pickPhoto} onCancel={() => setPicker(null)} exceptLayer={picker.mode === 'swap' ? picker.layerId : undefined} />
         ) : (<>
-          {selLayer ? <LayerPanel doc={doc} scene={cur} layer={(E.findLayer(doc, selLayer.id)?.layer) || selLayer} commit={commit} wordsOf={wordsOf} setWords={setWords} onSwap={id => openPicker({ mode: 'swap', layerId: id })} onDeselect={() => select(null)} /> : null}
+          {selLayer ? <LayerPanel doc={doc} scene={cur} layer={(E.findLayer(doc, selLayer.id)?.layer) || selLayer} commit={commit} wordsOf={wordsOf} setWords={setWords} onSwap={id => openPicker({ mode: 'swap', layerId: id })} onSwapVideo={id => { setPicker({ mode: 'swapVideo', layerId: id }); setTab('edit'); setPlaying(false) }} onDeselect={() => select(null)} /> : null}
           <ScenePanel doc={doc} scene={cur} index={si} sel={sel} commit={commit} onSelect={id => { if (id && t < restTime(cur) - 0.01) seek(restTime(cur)); select(id) }} onAddScene={sid => openPicker({ mode: 'scene', sceneId: sid })} onGo={goScene} />
         </>)) : null}
 
@@ -446,11 +561,11 @@ export default function AdxPlayer({ doc, onChange, canEdit, display }: { doc: Co
           <section style={{ background: UI.panel, border: '1px solid ' + UI.line, borderRadius: 12, padding: '11px 13px' }}>
             <p style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 800 }}>Files</p>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(true)} style={btn(true, !ready || !!exp || !!fails.length)}>{music ? 'MP4 with music' : 'MP4'}</button>
-              {music ? <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(false)} style={btn(false, !ready || !!exp || !!fails.length)}>MP4 without sound</button> : null}
+              <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(true)} style={btn(true, !ready || !!exp || !!fails.length)}>{music ? 'MP4 with music' : clipSound ? 'MP4 with sound' : 'MP4'}</button>
+              {music || clipSound ? <button type="button" disabled={!ready || !!exp || !!fails.length} onClick={() => run(false)} style={btn(false, !ready || !!exp || !!fails.length)}>MP4 without sound</button> : null}
               <button type="button" disabled={!ready} onClick={still} title="The frame on screen, full size — for a photo post" style={btn(false, !ready)}>PNG of this frame</button>
             </div>
-            {fails.length && ready && !exp ? <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>Video export waits for the check to pass. <button type="button" onClick={() => run(!!music)} style={{ background: 'none', border: 0, padding: 0, color: UI.gold, cursor: 'pointer', fontSize: 11.5, textDecoration: 'underline' }}>Export anyway</button></p> : null}
+            {fails.length && ready && !exp ? <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>Video export waits for the check to pass. <button type="button" onClick={() => run(true)} style={{ background: 'none', border: 0, padding: 0, color: UI.gold, cursor: 'pointer', fontSize: 11.5, textDecoration: 'underline' }}>Export anyway</button></p> : null}
             {exp ? (
               <div style={{ marginTop: 9 }}>
                 <div style={{ height: 6, borderRadius: 3, background: UI.panel2, overflow: 'hidden' }}><div style={{ width: exp.pct + '%', height: '100%', background: UI.gold, transition: 'width .2s' }} /></div>

@@ -134,6 +134,15 @@ export function auditComposition(doc: Composition, measure: Measure, opts: { sam
       } else if (l.type === 'photo') {
         const a = doc.assets.photos[l.photo]
         if (!a) { fail('photo-missing', 'A scene points at a photograph that is not in the piece.', s.id, l.id); return }
+        if (a.kind === 'video') {
+          // a video clip a person added: it may be cut into several scenes, and moving pictures forgive more enlargement
+          // than a still; what is checked is that the scene does not run past the end of the file
+          const up = maxUpscale(l, a.w, a.h)
+          if (up > 2.6) warn('video-soft', `This ${a.w}×${a.h} video is drawn at ${Math.round(up * 100)}% of its real size and will look soft.`, s.id, l.id)
+          const over = (l.clip?.start || 0) + s.dur * (l.clip?.speed || 1) - (a.dur || 0)
+          if (over > 0.25) warn('video-holds', `The clip ends ${over.toFixed(1)} s before this scene does, so its last frame holds. Shorten the scene or start the clip earlier.`, s.id, l.id)
+          return
+        }
         if (a.source === 'upload') {
           // an image a person added (a sticker, a badge, a PNG): decoration, not one of the piece's photographs
           const up = drawnScale(l, a)
@@ -143,7 +152,11 @@ export function auditComposition(doc: Composition, measure: Measure, opts: { sam
         }
         photoN++; photosHere++
         lastPhotoSource = a.source
-        if (seenKey.has(l.photo) || seenSrc.has(a.src)) fail('photo-reuse', `The same photograph is used twice (also in ${seenKey.get(l.photo) || seenSrc.get(a.src)}). Every scene gets its own.`, s.id, l.id)
+        // the same photograph in the scene straight before is one shot carried across a cut (a split, a copy), not a reuse
+        // (same picture in the same window: a new layout with an old photograph is still a reuse)
+        const carried = si > 0 && S[si - 1].layers.some(x => x.type === 'photo' && (x.photo === l.photo || doc.assets.photos[x.photo]?.src === a.src) && x.box.x === l.box.x && x.box.y === l.box.y && x.box.w === l.box.w && x.box.h === l.box.h)
+        if (carried) { /* one shot, two scenes */ }
+        else if (seenKey.has(l.photo) || seenSrc.has(a.src)) fail('photo-reuse', `The same photograph is used twice (also in ${seenKey.get(l.photo) || seenSrc.get(a.src)}). Every scene gets its own.`, s.id, l.id)
         else { seenKey.set(l.photo, s.name); seenSrc.set(a.src, s.name) }
         const up = maxUpscale(l, a.w, a.h)
         if (up > R.maxPhotoUpscale + 0.005) fail('photo-soft', `This ${a.w}×${a.h} photograph is drawn at ${Math.round(up * 100)}% of its real size and will look soft. Make its window smaller (or use a larger photograph).`, s.id, l.id)

@@ -20,6 +20,7 @@ export async function lookAt(doc: Composition, width = 540): Promise<Look> {
   sg.imageSmoothingEnabled = true; sg.imageSmoothingQuality = 'high'
   const stills: Look['stills'] = []
   for (const s of doc.scenes) {
+    if (assets.seek) await assets.seek(doc, restTime(s))        // a video clip is put on the frame this moment shows
     renderFrame(g, doc, restTime(s), assets)
     sg.drawImage(full, 0, 0, small.width, small.height)
     const url = small.toDataURL('image/jpeg', 0.82)

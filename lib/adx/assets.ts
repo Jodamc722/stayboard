@@ -7,8 +7,8 @@
 // is cropped by the player instead. Everything remote goes through the studio's same-origin image proxy so the canvas
 // can be exported. Browser only.
 import type { Composition, PhotoLayer, PhotoAsset } from './composition'
-import { FONT_FILES, LOGO, photoSrcAllowed } from './composition'
-import type { Assets, Img } from './player'
+import { FONT_FILES, LOGO, photoSrcAllowed, videoSrcAllowed } from './composition'
+import { videoTimes, type Assets, type Img } from './player'
 
 const CLOUD = /^https:\/\/(assets\.guesty\.com|res\.cloudinary\.com)\/(.*\/)?image\/upload\//i
 /** Same-origin for the hosts the proxy serves; our own storage already allows the canvas to read it. */
@@ -44,6 +44,44 @@ function loadImg(url: string): Promise<HTMLImageElement | null> {
   return p
 }
 
+// ── VIDEO CLIPS (Jon, 2026-11-21: "add video, shorten the video, cut the video") ──────────────────────────────
+// A clip is drawn from a <video> element, one per layer, so two scenes cut from the same file each hold their own
+// place in it. The player only draws whatever frame the element is showing; putting it on the right frame is done
+// here, two ways: loosely while the preview plays (the element plays itself and is nudged back if it drifts), and
+// exactly, one seek per frame, for the export and the stills.
+const videoCache = new Map<string, Promise<HTMLVideoElement | null>>()
+let onVideoFrame: (() => void) | null = null
+/** The preview asks to be told when a held clip has landed on a new frame, so it can draw it. */
+export function setVideoListener(fn: (() => void) | null) { onVideoFrame = fn }
+/** Stop every clip (the editor closed, or an export is about to drive them itself). */
+export function pauseVideos() { videoCache.forEach(p => p.then(v => { try { v?.pause() } catch { /* already stopped */ } })) }
+function loadVideo(key: string, url: string): Promise<HTMLVideoElement | null> {
+  if (!url || typeof document === 'undefined') return Promise.resolve(null)
+  let p = videoCache.get(key)
+  if (!p) {
+    p = new Promise<HTMLVideoElement | null>(res => {
+      const v = document.createElement('video')
+      v.crossOrigin = 'anonymous'; v.muted = true; v.playsInline = true; v.preload = 'auto'
+      let settled = false
+      const ok = () => { if (settled) return; settled = true; v.width = v.videoWidth; v.height = v.videoHeight; res(v.videoWidth ? v : null) }
+      const bad = () => { if (settled) return; settled = true; videoCache.delete(key); res(null) }
+      v.addEventListener('loadeddata', ok, { once: true }); v.addEventListener('error', bad, { once: true })
+      v.addEventListener('seeked', () => { onVideoFrame?.() })
+      setTimeout(bad, 25000)
+      v.src = url; v.load()
+    })
+    videoCache.set(key, p)
+  }
+  return p
+}
+const seekTo = (v: HTMLVideoElement, time: number) => new Promise<void>(res => {
+  if (Math.abs(v.currentTime - time) < 0.004 && !v.seeking) { res(); return }
+  let settled = false
+  const done = () => { if (settled) return; settled = true; v.removeEventListener('seeked', done); res() }
+  v.addEventListener('seeked', done); setTimeout(done, 2000)
+  try { v.currentTime = time } catch { done() }
+})
+
 let fontsReady: Promise<void> | null = null
 /** Every face the studio draws with, loaded and registered before the first frame. */
 export function loadFonts(base = ''): Promise<void> {
@@ -64,14 +102,42 @@ export async function loadAssets(doc: Composition, opts: { resolve?: (url: strin
   await loadFonts(opts.fontBase || '')
   const byLayer = new Map<string, HTMLImageElement | null>(), missing: string[] = []
   const jobs: Promise<void>[] = []
+  const videos = new Map<string, HTMLVideoElement | null>()
   for (const s of doc.scenes) for (const l of s.layers) {
     if (l.type !== 'photo') continue
     const a = doc.assets.photos[l.photo]; if (!a) continue
+    if (a.kind === 'video') {
+      const src = videoSrcAllowed(a.src) ? resolve(a.src) : ''
+      jobs.push(loadVideo(l.id + '|' + src, src).then(v => { videos.set(l.id, v); if (!v) missing.push(l.photo) }))
+      continue
+    }
     const url = photoUrl(a, l)
     jobs.push(loadImg(url ? resolve(url) : '').then(im => { byLayer.set(l.id, im); if (!im) missing.push(l.photo) }))
   }
   const logos: Record<string, HTMLImageElement | null> = { black: null, white: null }
   jobs.push(loadImg(resolve(LOGO.black)).then(im => { logos.black = im }), loadImg(resolve(LOGO.white)).then(im => { logos.white = im }))
   await Promise.all(jobs)
-  return { assets: { photo: l => (byLayer.get(l.id) as unknown as Img) || null, logo: v => (logos[v] as unknown as Img) || null }, missing }
+  const sync: Assets['sync'] = (d, t, playing, silent) => {
+    const on = new Map(videoTimes(d, t).map(x => [x.layer.id, x] as const))
+    videos.forEach((v, id) => {
+      if (!v) return
+      const x = on.get(id)
+      try {
+        if (!x) { if (!v.paused) v.pause(); return }
+        v.playbackRate = x.speed; v.volume = Math.max(0, Math.min(1, x.sound || 0)); v.muted = !!silent || !(playing && x.sound > 0)
+        if (playing) {
+          // it plays itself; it is only moved when it has drifted from where the piece says it should be
+          if (v.paused) { if (Math.abs(v.currentTime - x.time) > 0.08) v.currentTime = x.time; v.play().catch(() => {}) }
+          else if (Math.abs(v.currentTime - x.time) > 0.35) v.currentTime = x.time
+        } else { if (!v.paused) v.pause(); if (Math.abs(v.currentTime - x.time) > 0.02) v.currentTime = x.time }
+      } catch { /* a clip that will not seek draws the frame it has */ }
+    })
+  }
+  const seek: Assets['seek'] = async (d, t) => {
+    const jobs2: Promise<void>[] = []
+    for (const x of videoTimes(d, t)) { const v = videos.get(x.layer.id); if (!v) continue; try { if (!v.paused) v.pause(); v.muted = true } catch { /* fine */ } jobs2.push(seekTo(v, x.time)) }
+    await Promise.all(jobs2)
+  }
+  const hasVideo = Array.from(videos.values()).some(Boolean)
+  return { assets: { photo: l => ((videos.get(l.id) || byLayer.get(l.id)) as unknown as Img) || null, logo: v => (logos[v] as unknown as Img) || null, ...(hasVideo ? { sync, seek, hasVideo } : {}) }, missing }
 }

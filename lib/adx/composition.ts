@@ -67,6 +67,19 @@ export function photoSrcAllowed(src: string): boolean {
   } catch { return false }
 }
 
+// VIDEO CLIPS (Jon, 2026-11-21: "want to be able to add video, shorten the video, cut the video"). A clip is a
+// file in the studio's own library (the bucket, behind a same-origin address that never expires) or one of the
+// videos that ship with the app. Nothing else can be a video source.
+const VIDEO_SRC = /^\/(ads\/library\/[a-z0-9\-_.]+\.(mp4|webm)|api\/adx\/video\?path=library%2F[a-z0-9]{6,40}\.(mp4|webm|mov|m4v))$/i
+export function videoSrcAllowed(src: string): boolean { const s = String(src || ''); return VIDEO_SRC.test(s) && s.indexOf('..') < 0 }
+/** The speeds a clip may play at. */
+export const CLIP_SPEEDS = [0.5, 1, 1.5, 2] as const
+/** The longest a piece may run, in seconds, and the most scenes it may be cut into. */
+export const MAX_PIECE_SECONDS = 60
+export const MAX_SCENES = 16
+/** The shortest and longest a scene may be (a cut can leave a short one; a video clip can run long). */
+export const SCENE_FLOOR = 0.5, SCENE_CEIL = 30
+
 // ── channels: the frame and what the platform's own buttons cover ───────────────────────────────────────────────
 export type ChannelKey = 'vertical' | 'story' | 'feed' | 'square'
 export const CHANNELS: Record<ChannelKey, { label: string; hint: string; w: number; h: number; safe: Safe }> = {
@@ -108,7 +121,7 @@ export type Run = { t: string; style?: string; color?: ColorRef } | { br: true }
 type Common = { id: string; opacity?: number; rotate?: number; in?: Entrance }
 export type FillLayer = Common & { type: 'fill'; color: ColorRef }
 export const IDLES = ['float', 'sway', 'spin', 'pulse'] as const
-export type PhotoLayer = Common & { type: 'photo'; photo: string; box: Box; /** How an added image or 3D object keeps moving once it has arrived. */ idle?: typeof IDLES[number]; /** An added graphic that fills its box edge to edge (a backdrop) instead of being shown whole. */ cover?: boolean; focal?: { x: number; y: number }; treatment: typeof TREATMENTS[number]; mask?: { shape: typeof MASKS[number]; radius?: number }; camera?: { from: Cam; to: Cam; ease?: Ease } }
+export type PhotoLayer = Common & { type: 'photo'; photo: string; box: Box; /** How an added image or 3D object keeps moving once it has arrived. */ idle?: typeof IDLES[number]; /** An added graphic that fills its box edge to edge (a backdrop) instead of being shown whole. */ cover?: boolean; /** A VIDEO layer: where in the file this scene starts (seconds), how fast it plays, and how loud its own sound is (0 or absent = muted). */ clip?: { start: number; speed?: number; sound?: number }; focal?: { x: number; y: number }; treatment: typeof TREATMENTS[number]; mask?: { shape: typeof MASKS[number]; radius?: number }; camera?: { from: Cam; to: Cam; ease?: Ease } }
 export type TextLayer = Common & { type: 'text'; style: string; color: ColorRef; box: Box; align?: 'left' | 'center' | 'right'; size?: number; fit?: { max: number; min: number; lines: number }; runs: Run[] }
 export type ShapeLayer = Common & { type: 'shape'; shape: typeof SHAPES[number]; color: ColorRef; box: Box; radius?: number; stroke?: number }
 export type VectorLayer = Common & { type: 'vector'; box: Box; viewBox: [number, number]; paths: { d: string; fill?: ColorRef; stroke?: ColorRef; strokeWidth?: number }[] }
@@ -135,6 +148,10 @@ export type PhotoAsset = {
   /** What the picture IS (photo analysis / caption) — the composer and the audit read it. */
   shows: string
   focal?: { x: number; y: number }
+  /** A video clip rather than a still picture: `dur` is the file's length in seconds, `poster` a still of it. */
+  kind?: 'video'
+  dur?: number
+  poster?: string
 }
 export type Rules = {
   guestAd: boolean; noPrices: boolean; noPhone: boolean; bannedSpoken: string[]; bannedAnywhere: string[]; endsOn: string
@@ -243,6 +260,13 @@ function layer(raw: unknown, ctx: { W: number; H: number; dur: number; palette: 
     if (isObj(raw.focal)) l.focal = { x: num(raw.focal.x, 0, 1, 0.5), y: num(raw.focal.y, 0, 1, 0.5) }
     if ((IDLES as readonly string[]).indexOf(raw.idle) >= 0 && ctx.photos[key].source === 'upload') l.idle = raw.idle
     if (raw.cover === true && ctx.photos[key].source === 'upload') l.cover = true
+    if (ctx.photos[key].kind === 'video') {
+      // a video always fills its window like a photograph, and always has a place in the file to start from
+      const c = isObj(raw.clip) ? raw.clip : {}, len = ctx.photos[key].dur || 0
+      const speed = (CLIP_SPEEDS as readonly number[]).indexOf(Number(c.speed)) >= 0 ? Number(c.speed) : 1
+      l.cover = true
+      l.clip = { start: Math.round(num(c.start, 0, Math.max(0, len - 0.2), 0) * 1000) / 1000, ...(speed !== 1 ? { speed } : {}), ...(num(c.sound, 0, 1, 0) > 0.01 ? { sound: Math.round(num(c.sound, 0, 1, 0) * 100) / 100 } : {}) }
+    }
     if (isObj(raw.mask) && (MASKS as readonly string[]).indexOf(raw.mask.shape) >= 0 && raw.mask.shape !== 'rect') l.mask = { shape: raw.mask.shape, ...(raw.mask.radius != null ? { radius: num(raw.mask.radius, 0, 600, 24) } : {}) }
     if (isObj(raw.camera)) l.camera = { from: cam(raw.camera.from), to: cam(raw.camera.to), ...((EASES as readonly string[]).indexOf(raw.camera.ease) >= 0 ? { ease: raw.camera.ease } : {}) }
     return l
@@ -334,7 +358,15 @@ function typeStyle(v: unknown, d: TypeStyle): TypeStyle {
 export type TrustedParts = { id: string; title?: string; brief: Brief; canvas: Composition['canvas']; photos: Record<string, PhotoAsset>; music?: { track: string; gain?: number; credit?: string; fadeOut?: number; start?: number }; meta?: Partial<Composition['meta']> }
 
 function photoAsset(v: unknown): PhotoAsset | null {
-  if (!isObj(v) || !photoSrcAllowed(String(v.src || ''))) return null
+  if (!isObj(v)) return null
+  if (v.kind === 'video') {
+    if (!videoSrcAllowed(String(v.src || ''))) return null
+    const a: PhotoAsset = { src: String(v.src), w: Math.round(num(v.w, 16, 8000, 1080)), h: Math.round(num(v.h, 16, 8000, 1920)), source: 'upload', building: '', unit: '', area: '', shows: cleanText(v.shows, 240), kind: 'video', dur: Math.round(num(v.dur, 0.3, 1800, 5) * 1000) / 1000 }
+    if (typeof v.poster === 'string' && photoSrcAllowed(v.poster)) a.poster = v.poster
+    if (isObj(v.focal)) a.focal = { x: num(v.focal.x, 0, 1, 0.5), y: num(v.focal.y, 0, 1, 0.5) }
+    return a
+  }
+  if (!photoSrcAllowed(String(v.src || ''))) return null
   const a: PhotoAsset = {
     src: String(v.src), w: Math.round(num(v.w, 1, 20000, 1200)), h: Math.round(num(v.h, 1, 20000, 800)),
     source: pick(v.source, ['ours', 'stock', 'ai', 'upload'] as const, 'ours'), building: cleanText(v.building, 60), unit: cleanText(v.unit, 80), area: cleanText(v.area, 30), shows: cleanText(v.shows, 240),
@@ -388,11 +420,11 @@ export function sanitizeComposition(authored: unknown, trusted: TrustedParts): {
   const scenes: Scene[] = []
   const ids = new Set<string>()
   let at = 0
-  const rawScenes = Array.isArray(a.scenes) ? a.scenes.slice(0, 8) : []
+  const rawScenes = Array.isArray(a.scenes) ? a.scenes.slice(0, MAX_SCENES) : []
   rawScenes.forEach((rs, i) => {
     if (!isObj(rs)) return
     let sid = idOf(rs.id, 's' + (i + 1)); while (ids.has(sid)) sid += 'x'; ids.add(sid)
-    const dur = Math.round(num(rs.dur, 1.2, 14, 3) * 30) / 30
+    const dur = Math.round(num(rs.dur, SCENE_FLOOR, SCENE_CEIL, 3) * 30) / 30
     const tr = isObj(rs.transitionIn) ? rs.transitionIn : {}
     const type = scenes.length === 0 ? 'none' : pick(tr.type, TRANSITIONS, 'cut')
     const transitionIn: Transition = { type }
@@ -413,9 +445,9 @@ export function sanitizeComposition(authored: unknown, trusted: TrustedParts): {
   // script and social
   const sc = isObj(a.script) ? a.script : {}
   const lines: { scene: string; vo: string }[] = []
-  for (const ln of Array.isArray(sc.lines) ? sc.lines.slice(0, 12) : []) if (isObj(ln) && scenes.some(s => s.id === ln.scene)) lines.push({ scene: String(ln.scene), vo: cleanText(ln.vo, 300) })
+  for (const ln of Array.isArray(sc.lines) ? sc.lines.slice(0, MAX_SCENES) : []) if (isObj(ln) && scenes.some(s => s.id === ln.scene)) lines.push({ scene: String(ln.scene), vo: cleanText(ln.vo, 300) })
   const alternates: Record<string, string[]> = {}
-  for (const [k, v] of Object.entries(isObj(sc.alternates) ? sc.alternates : {}).slice(0, 12)) if (scenes.some(s => s.id === k) && Array.isArray(v)) alternates[k] = v.slice(0, 4).map(x => cleanText(x, 300)).filter(Boolean)
+  for (const [k, v] of Object.entries(isObj(sc.alternates) ? sc.alternates : {}).slice(0, MAX_SCENES)) if (scenes.some(s => s.id === k) && Array.isArray(v)) alternates[k] = v.slice(0, 4).map(x => cleanText(x, 300)).filter(Boolean)
   const so = isObj(a.social) ? a.social : {}
   const co = isObj(a.concept) ? a.concept : {}
   const used = new Set<string>()

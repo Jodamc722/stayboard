@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { MUSIC } from '@/lib/ad-engine'
 import type { Composition, Layer, Scene, PhotoAsset, PhotoLayer, TextLayer, ButtonLayer, ShapeLayer, MotifLayer, Transition } from '@/lib/adx/composition'
-import { resolveColor, TRANSITIONS, MOTIF_VARIANTS } from '@/lib/adx/composition'
+import { resolveColor, TRANSITIONS, MOTIF_VARIANTS, CLIP_SPEEDS } from '@/lib/adx/composition'
 import * as E from '@/lib/adx/edit'
 import { groundOf, maxUpscale } from '@/lib/adx/player'
 import { UI } from './BriefWizard'
@@ -53,10 +53,10 @@ export function Swatches({ doc, value, onPick, small }: { doc: Composition; valu
 }
 
 // ── one thing in the picture ────────────────────────────────────────────────────────────────────────────────────
-export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwap, onDeselect }: {
+export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwap, onSwapVideo, onDeselect }: {
   doc: Composition; scene: Scene; layer: Layer; commit: Commit
   wordsOf: (l: TextLayer | ButtonLayer) => string; setWords: (l: TextLayer | ButtonLayer, text: string) => void
-  onSwap: (layerId: string) => void; onDeselect: () => void
+  onSwap: (layerId: string) => void; onSwapVideo?: (layerId: string) => void; onDeselect: () => void
 }) {
   const id = layer.id
   const patch = (fn: (l: Layer) => Layer, key = '') => commit(E.patchLayer(doc, id, fn), key)
@@ -65,7 +65,8 @@ export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwa
   const W = doc.canvas.w, H = doc.canvas.h
   const photo = layer.type === 'photo' ? doc.assets.photos[layer.photo] : null
   const added = E.isAdded(doc, layer)
-  const soft = layer.type === 'photo' && photo ? E.upscaleOf(doc, layer) > 1.005 : false
+  const video = E.isVideo(doc, layer)
+  const soft = !video && layer.type === 'photo' && photo ? E.upscaleOf(doc, layer) > 1.005 : false
   const accent = layer.type === 'text' ? (layer.runs.find(r => !('br' in r) && r.color) as { color?: string } | undefined) : undefined
   return (
     <Sec accent title={E.layerName(doc, layer)} right={<button type="button" onClick={onDeselect} style={chip()}>Done</button>}>
@@ -88,9 +89,38 @@ export function LayerPanel({ doc, scene, layer, commit, wordsOf, setWords, onSwa
         </div>
       </>) : null}
       {layer.type === 'photo' && added ? (soft ? <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.red }}>This image is drawn larger than its real pixels, so it will look soft. Make it smaller or add a larger file.</p> : <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>Your image, shown whole. Drag its corner to resize.</p>) : null}
-      {layer.type === 'photo' && !added ? (<>
+      {/* a video clip: which part of the file, how fast, how loud (Jon, 2026-11-21: "add video, shorten the video, cut the video") */}
+      {layer.type === 'photo' && video && photo ? (() => {
+        const c = layer.clip || { start: 0 }, sp = c.speed || 1, fileDur = photo.dur || 0, end = c.start + scene.dur * sp
+        const t2 = (x: number) => Math.floor(x / 60) + ':' + String(Math.floor(x % 60)).padStart(2, '0') + '.' + Math.floor((x % 1) * 10)
+        return (<>
+          <p style={{ margin: '8px 0 0', fontSize: 12, color: UI.mut, lineHeight: 1.45 }}>Showing <b style={{ color: UI.ink }}>{t2(c.start)} to {t2(Math.min(fileDur, end))}</b> of a {t2(fileDur)} video.</p>
+          {end > fileDur + 0.1 ? <p style={{ margin: '6px 0 0', fontSize: 11.5, color: UI.red }}>The scene runs past the end of the footage, so the last frame holds. Shorten the scene or start earlier.</p> : null}
+          <span style={label}>Starts at</span>
+          <div style={row}>
+            <input type="range" min={0} max={Math.max(0.1, Math.round((fileDur - 0.3) * 10) / 10)} step={0.1} value={c.start} onChange={e => commit(E.setClip(doc, id, { start: Number(e.target.value) }), 'clip:' + id)} aria-label="Where the clip starts in the video" style={{ flex: 1, minWidth: 80, accentColor: UI.gold }} />
+            <span style={{ fontSize: 12, color: UI.ink, fontVariantNumeric: 'tabular-nums', minWidth: 44, textAlign: 'right' }}>{t2(c.start)}</span>
+          </div>
+          <span style={label}>Speed</span>
+          <div style={row}>
+            {CLIP_SPEEDS.map(v => <button key={v} type="button" onClick={() => commit(E.setClip(doc, id, { speed: v }))} style={chip(sp === v)}>{v === 0.5 ? 'Slow ½×' : v === 1 ? 'Normal' : v === 2 ? 'Fast 2×' : v + '×'}</button>)}
+          </div>
+          <span style={label}>Its own sound</span>
+          <div style={row}>
+            {([['Muted', 0], ['Quiet', 0.35], ['Full', 1]] as const).map(([name, v]) => <button key={name} type="button" onClick={() => commit(E.setClip(doc, id, { sound: v }))} style={chip(Math.abs((c.sound || 0) - v) < 0.05)}>{name}</button>)}
+          </div>
+          <div style={{ ...row, marginTop: 12 }}>
+            {onSwapVideo ? <button type="button" onClick={() => onSwapVideo(id)} style={{ ...chip(), background: UI.gold, color: '#0B0F16', border: 0 }}>Replace video</button> : null}
+            <button type="button" onClick={() => onSwap(id)} style={chip()}>Use a photo instead</button>
+            <button type="button" onClick={() => commit(E.patchLayer(doc, id, l => { const { mask: _m, ...rest } = l as PhotoLayer; return { ...rest, box: { x: 0, y: 0, w: W, h: H } } as Layer }))} style={chip()}>Fill the frame</button>
+          </div>
+          <p style={{ margin: '8px 0 0', fontSize: 11.5, color: UI.mut }}>To shorten it, drag the clip’s edges in the timeline. S cuts it in two at the playhead.</p>
+        </>)
+      })() : null}
+      {layer.type === 'photo' && !added && !video ? (<>
         <div style={{ ...row, marginTop: 10 }}>
           <button type="button" onClick={() => onSwap(id)} style={{ ...chip(), background: UI.gold, color: '#0B0F16', border: 0 }}>Swap photo</button>
+          {onSwapVideo ? <button type="button" onClick={() => onSwapVideo(id)} style={chip()}>Use a video here</button> : null}
           <button type="button" onClick={() => commit(E.patchLayer(doc, id, l => { const { mask: _m, ...rest } = l as PhotoLayer; return { ...rest, box: { x: 0, y: 0, w: W, h: H } } as Layer }))} style={chip()}>Fill the frame</button>
         </div>
         {soft ? <p style={{ margin: '7px 0 0', fontSize: 11.5, color: UI.red }}>This window is larger than the photograph’s real pixels, so it will look soft. Make the window smaller or swap the photo.</p> : null}
@@ -210,6 +240,8 @@ export function ScenePanel({ doc, scene, index, sel, commit, onSelect, onAddScen
   const tr = scene.transitionIn, sid = scene.id, last = index === doc.scenes.length - 1
   const fill = scene.layers.find(l => l.type === 'fill')
   const setDur = (d: number, key = '') => commit(E.setSceneDur(doc, sid, d), key)
+  // a piece runs up to a minute: a scene can only grow into the time that is left
+  const longest = Math.min(E.SCENE_MAX, Math.round((scene.dur + E.roomLeft(doc)) * 10) / 10)
   const setTr = (p: Partial<Transition>) => commit(E.setTransition(doc, sid, p))
   const moving = tr.type !== 'none' && tr.type !== 'cut'
   const kinds = new Set(doc.scenes.map(s => s.transitionIn.type).filter(t => t !== 'none' && t !== 'cut'))
@@ -220,8 +252,8 @@ export function ScenePanel({ doc, scene, index, sel, commit, onSelect, onAddScen
       <span style={label}>Length</span>
       <div style={row}>
         <button type="button" onClick={() => setDur(scene.dur - 0.5)} disabled={scene.dur <= (last ? 3 : E.SCENE_MIN) + 0.01} style={chip(false, scene.dur <= (last ? 3 : E.SCENE_MIN) + 0.01)}>− ½ s</button>
-        <input type="range" min={last ? 3 : E.SCENE_MIN} max={E.SCENE_MAX} step={0.1} value={scene.dur} onChange={e => setDur(Number(e.target.value), 'dur:' + sid)} style={{ flex: 1, minWidth: 80, accentColor: UI.gold }} aria-label="Length of the scene" />
-        <button type="button" onClick={() => setDur(scene.dur + 0.5)} disabled={scene.dur >= E.SCENE_MAX} style={chip(false, scene.dur >= E.SCENE_MAX)}>+ ½ s</button>
+        <input type="range" min={last ? 3 : E.SCENE_MIN} max={Math.max(longest, last ? 3 : E.SCENE_MIN)} step={0.1} value={scene.dur} onChange={e => setDur(Number(e.target.value), 'dur:' + sid)} style={{ flex: 1, minWidth: 80, accentColor: UI.gold }} aria-label="Length of the scene" />
+        <button type="button" onClick={() => setDur(scene.dur + 0.5)} disabled={scene.dur >= longest - 0.01} style={chip(false, scene.dur >= longest - 0.01)}>+ ½ s</button>
       </div>
 
       <span style={label}>How this scene comes in</span>
@@ -405,6 +437,109 @@ export function PhotoPicker({ doc, title, pool, busy, err, q, onQ, onPick, onCan
             </button>
           )
         }) : null}
+      </div>
+    </Sec>
+  )
+}
+
+// ── a video clip, from the library or the computer ──────────────────────────────────────────────────────────────
+// Jon, 2026-11-21: "want to be able to add video, shorten the video, cut the video". The clips are the studio's video
+// library (the sales videos that ship with the app, anything exported or uploaded before) or a file from the
+// computer, which is uploaded to the library first so the piece can always find it again.
+type LibVid = { key: string; name: string; url: string; thumb: string; dur: number; format: string; builtin: boolean; path?: string }
+const VIDEO_MAX_MB = 50
+const probeVideo = (url: string) => new Promise<{ w: number; h: number; dur: number }>((res, rej) => {
+  const v = document.createElement('video'); v.muted = true; v.preload = 'metadata'
+  const h = setTimeout(() => rej(new Error('That video took too long to open. Try again.')), 25000)
+  v.onloadedmetadata = () => { clearTimeout(h); res({ w: v.videoWidth, h: v.videoHeight, dur: v.duration }) }
+  v.onerror = () => { clearTimeout(h); rej(new Error('That video could not be opened. MP4 (H.264) works everywhere.')) }
+  v.src = url
+})
+const putFile = (url: string, body: Blob, type: string, onPct?: (n: number) => void) => new Promise<void>((res, rej) => {
+  const xhr = new XMLHttpRequest()
+  xhr.open('PUT', url); xhr.setRequestHeader('Content-Type', type); xhr.setRequestHeader('x-upsert', 'true')
+  xhr.upload.onprogress = e => { if (e.lengthComputable && onPct) onPct(Math.round((e.loaded / e.total) * 100)) }
+  xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? res() : rej(new Error('The upload did not finish (' + xhr.status + '). Try again.')))
+  xhr.onerror = () => rej(new Error('The upload did not finish. Check the connection and try again.'))
+  xhr.send(body)
+})
+export function VideoPicker({ title, onPick, onCancel }: { title: string; onPick: (key: string, asset: PhotoAsset) => void; onCancel: () => void }) {
+  const [list, setList] = useState<LibVid[] | null>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState('')
+  const [pct, setPct] = useState<number | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    let live = true
+    fetch('/api/ads/library').then(r => r.json()).then(j => { if (!live) return; setList(j?.ok ? (j.videos || []) : []); if (!j?.ok) setErr(j?.error || 'The video library did not load. Try again.') })
+      .catch(() => { if (live) { setList([]); setErr('The video library did not load. Try again.') } })
+    return () => { live = false }
+  }, [])
+  const give = (id: string, src: string, name: string, m: { w: number; h: number; dur: number }) => {
+    if (!m.w || !m.h || !isFinite(m.dur) || m.dur < 0.3) throw new Error('That video could not be read (no length or size). Export it again as an MP4.')
+    onPick('video-' + id.replace(/[^a-z0-9]+/gi, '-').slice(-24), { src, w: m.w, h: m.h, dur: Math.round(m.dur * 1000) / 1000, kind: 'video', source: 'upload', building: '', unit: '', area: '', shows: name.slice(0, 80) })
+  }
+  const use = async (v: LibVid) => {
+    if (busy) return
+    setErr(''); setBusy(v.key)
+    try {
+      const src = v.builtin ? v.url : '/api/adx/video?path=' + encodeURIComponent(v.path || '')
+      give(v.path || v.key, src, v.name, await probeVideo(v.url || src))
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    setBusy('')
+  }
+  const upload = async (f: File) => {
+    if (busy) return
+    setErr('')
+    if (f.size > VIDEO_MAX_MB * 1048576) { setErr(`That file is ${(f.size / 1048576).toFixed(0)} MB. A clip can be up to ${VIDEO_MAX_MB} MB: export a shorter or smaller version (1080p is plenty).`); return }
+    setBusy('upload'); setPct(0)
+    const local = URL.createObjectURL(f)
+    try {
+      const ext = (f.name.match(/\.([a-z0-9]+)$/i)?.[1] || 'mp4').toLowerCase()
+      if (!/^(mp4|webm|mov|m4v)$/.test(ext)) throw new Error('That is not a video this studio can use. MP4, MOV or WebM.')
+      const m = await probeVideo(local)
+      if (!m.w || !isFinite(m.dur)) throw new Error('That video could not be read. Export it again as an MP4.')
+      // its first second as the library's thumbnail
+      const thumb = await new Promise<Blob | null>(res => {
+        const v = document.createElement('video'); v.muted = true; v.preload = 'auto'; v.src = local
+        const done = setTimeout(() => res(null), 8000)
+        v.onloadeddata = () => { try { v.currentTime = Math.min(1, m.dur / 2) } catch { res(null) } }
+        v.onseeked = () => { try { const c = document.createElement('canvas'); c.width = 640; c.height = Math.round((640 * m.h) / m.w); c.getContext('2d')!.drawImage(v, 0, 0, c.width, c.height); c.toBlob(b => { clearTimeout(done); res(b) }, 'image/jpeg', 0.8) } catch { res(null) } }
+        v.onerror = () => res(null)
+      })
+      const post = (body: unknown) => fetch('/api/ads/library', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json()).catch(() => null)
+      const s = await post({ sign: ext })
+      if (!s?.ok) throw new Error(s?.error || 'The upload could not start. Try again.')
+      await putFile(s.signedUrl, f, f.type || 'video/mp4', setPct)
+      if (thumb) await putFile(s.thumbUrl, thumb, 'image/jpeg').catch(() => {})
+      const name = f.name.replace(/\.[a-z0-9]+$/i, '')
+      const fmt = m.w > m.h * 1.2 ? '16:9' : m.h > m.w * 1.5 ? '9:16' : m.h > m.w * 1.1 ? '4:5' : '1:1'
+      const saved = await post({ meta: { path: s.path, thumbPath: thumb ? s.thumbPath : '', name, dur: m.dur, format: fmt } })
+      if (!saved?.ok) throw new Error(saved?.error || 'The video uploaded but was not saved to the library. Try again.')
+      give(String(s.path), '/api/adx/video?path=' + encodeURIComponent(String(s.path)), name, m)
+    } catch (e: any) { setErr(String(e?.message || e)) }
+    URL.revokeObjectURL(local); setBusy(''); setPct(null)
+  }
+  const len = (x: number) => (x >= 60 ? Math.floor(x / 60) + ' min ' + Math.round(x % 60) + ' s' : Math.round(x) + ' s')
+  return (
+    <Sec accent title={title} right={<button type="button" onClick={onCancel} style={chip()}>Cancel</button>}>
+      <p style={{ margin: '6px 0 8px', fontSize: 11.5, color: UI.mut }}>It comes in as a scene of its own, from its start. Trim, cut and mute it in the timeline.</p>
+      <input ref={fileRef} type="file" accept="video/mp4,video/webm,video/quicktime,.mp4,.mov,.m4v,.webm" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) upload(f) }} />
+      <button type="button" disabled={!!busy} onClick={() => fileRef.current?.click()} style={{ ...chip(false, !!busy), background: UI.gold, color: '#0B0F16', border: 0 }}>{busy === 'upload' ? `Uploading… ${pct ?? 0}%` : '↑ Upload a video'}</button>
+      <span style={{ fontSize: 11, color: UI.mut, marginLeft: 8 }}>MP4, MOV or WebM, up to {VIDEO_MAX_MB} MB</span>
+      {err ? <p style={{ margin: '10px 0 0', fontSize: 12.5, color: UI.red }}>{err}</p> : null}
+      <span style={label}>The video library</span>
+      {!list ? <p style={{ margin: 0, fontSize: 12.5, color: UI.mut }}>Opening the library…</p> : null}
+      {list && !list.length && !err ? <p style={{ margin: 0, fontSize: 12.5, color: UI.mut }}>Nothing in the library yet. Upload a video above.</p> : null}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
+        {(list || []).map(v => (
+          <button key={v.key} type="button" disabled={!!busy} onClick={() => use(v)} title={v.name}
+            style={{ position: 'relative', padding: 0, border: '1px solid ' + UI.line, borderRadius: 8, overflow: 'hidden', background: UI.panel2, cursor: busy ? 'default' : 'pointer', opacity: busy && busy !== v.key ? 0.5 : 1, aspectRatio: '16 / 10' }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {v.thumb ? <img src={v.thumb} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : null}
+            <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '16px 6px 4px', background: 'linear-gradient(transparent, rgba(0,0,0,0.8))', color: '#fff', fontSize: 10.5, fontWeight: 700, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{busy === v.key ? 'Opening…' : v.name}{v.dur ? ' · ' + len(v.dur) : ''}</span>
+          </button>
+        ))}
       </div>
     </Sec>
   )
