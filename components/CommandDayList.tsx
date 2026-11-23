@@ -184,7 +184,10 @@ export function CommandDayList() {
   const { live, fixRows, claims, links, dups, vendorNotes, backlog, approvals } = derived!
 
   return (
-    <div className="max-w-[1120px] mx-auto space-y-5">
+    // FULL WIDTH, LIKE EVERY OTHER PAGE (Jon, 2026-11-23: "look at spacing"). This was a 1120px column
+    // centred in the page, so on a wide window Today sat a quarter of a screen in from the sidebar with
+    // an empty band on each side, while Ops board, Maintenance and the rest start at the page's edge.
+    <div className="space-y-5">
       <DayLine d={data} loading={loading} reload={reload} roster={roster} vendorsOnSite={vendorsOnSite} />
       {/* THE BULLETIN BOARD (Jon, 2026-10-06) — replaced the week Scoreboard strip: Did you know stats,
           Have to, and what leaders post (Employee of the month, quote, shout-outs, 5★ reviews). At the TOP,
@@ -726,7 +729,7 @@ function WhenNear({ children }: { children: ReactNode }) {
 
 function Skeleton() {
   return (
-    <div className="max-w-[1120px] mx-auto space-y-5 animate-pulse">
+    <div className="space-y-5 animate-pulse">
       <div className="h-12 rounded-xl bg-white border border-line" />
       {[0, 1, 2, 3].map(i => (
         <div key={i}>

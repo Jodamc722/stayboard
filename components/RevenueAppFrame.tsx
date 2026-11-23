@@ -9,7 +9,7 @@ export function RevenueAppFrame({ url }: { url: string }) {
   const [loaded, setLoaded] = useState(false)
   return (
     // -mt/-mx pull the frame to the Shell's edges so the app gets the whole pane beside the sidebar.
-    <div className="flex flex-col -mx-3 -mt-4 sm:-m-6 lg:-m-8" style={{ height: 'calc(100dvh - 8px)' }}>
+    <div className="flex flex-col -mx-3 -mt-4 sm:-m-6 lg:-m-8 lg:-mb-20" style={{ height: 'calc(100dvh - 8px)' }}>
       <div className="flex items-center gap-2 px-3 sm:px-4 py-2 border-b border-line bg-white">
         <BarChart3 size={15} className="text-brand-600" />
         <span className="text-[13.5px] font-bold text-ink">Revenue App</span>
