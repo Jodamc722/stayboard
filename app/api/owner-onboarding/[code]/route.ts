@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { pinHomes } from '@/lib/geo'
 import { requireLevel, requireAdmin, isSuperadmin } from '@/lib/access'
 import { readRecord, saveRecord, deleteRecord, itemsFor, cleanCustom, cleanMore, cleanOwners, mergeCounts, ensureWalk, linenCountsChanged } from '@/lib/owner-onboard-server'
+import { liveDone, sendPricingBrief } from '@/lib/owner-onboard-pricing'
 import { cleanHome, cleanDeal, OO_STEPS, teamView, readyForCall, type OOStep } from '@/lib/owner-onboard'
 import { maybeSendCallInvite } from '@/lib/owner-onboard-callinvite'
 
@@ -25,6 +26,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   if (!r) return NextResponse.json({ ok: false, error: 'No such onboarding link.' }, { status: 404 })
   const b = await req.json().catch(() => ({} as any))
   const wasReady = readyForCall(r)
+  const wasLive = liveDone(r)
   if (b.custom) r.custom = cleanCustom(b.custom, r.custom)
   if (Array.isArray(b.owners)) r.owners = cleanOwners(b.owners, r.owners)
   const hadListing = r.attach.listingId
@@ -55,10 +57,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { code: stri
   // PHOTOS AND LISTING JUST BECAME DONE: the owner gets the link to book the onboarding call, once. Only on the
   // change itself, so an onboarding that was already past this point is never emailed out of the blue.
   const callInvite = Array.isArray(b.steps) && !wasReady && readyForCall(r) ? await maybeSendCallInvite(r, process.env.NEXT_PUBLIC_SITE_URL || req.nextUrl.origin, 'auto, after ' + String(g.access.email || '')).catch(() => 'failed' as const) : ''
+  // MARKED LIVE: Kyle at Pacer gets the listing and its fees to set up pricing, once, on the change itself.
+  const pricing = Array.isArray(b.steps) && !wasLive && liveDone(r) && !r.pricingBrief?.at ? await sendPricingBrief(r, 'auto, after ' + String(g.access.email || '')).then(x => (x.ok ? 'sent' : 'failed'), () => 'failed') : ''
   const w = await saveRecord(r, g.access.email || null)
   if (!w.ok) return NextResponse.json(w, { status: 500 })
   const items = await itemsFor(r)
-  return NextResponse.json({ ok: true, record: teamView(r), items, canDelete: isSuperadmin(g.access.email), callInvite })
+  return NextResponse.json({ ok: true, record: teamView(r), items, canDelete: isSuperadmin(g.access.email), callInvite, pricing })
 }
 
 // DELETE: for good, and only the GM (Jon, 2026-11-13: "need to be able to delete. only GM - me"). Everyone else archives.
