@@ -56,12 +56,13 @@ const MEASURES: (Measure & { of: (a: Acc, total: Acc) => number | null })[] = [
 // Split colours: the brand green first, then quiet hues that stay apart from it and from each other.
 const HUES = ['#52705a', '#c08a3e', '#5b7fa6', '#a8627a', '#7b6bd0', '#4f9a94', '#9a9a9a']
 
-export function GardenViews({ api, from, to, scope, fq }: { api: string; from: string; to: string; scope: string; fq: string }) {
-  const [d, setD] = useState<any>(null)
+export function GardenViews({ api, from, to, scope, fq, data }: { api: string; from: string; to: string; scope: string; fq: string; data?: any }) {
+  const [own, setD] = useState<any>(null)
+  const d = data !== undefined ? data : own
   const [dimKey, setDimKey] = useState('lead')
   const [mKey, setMKey] = useState('rev')
   const [splitKey, setSplitKey] = useState('')
-  useEffect(() => { setD(null); fetch(`${api}?depth=1&from=${from}&to=${to}&scope=${scope}${fq}`, { cache: 'no-store' }).then(r => r.json()).then(setD).catch(e => setD({ ok: false, error: String(e) })) }, [api, from, to, scope, fq])
+  useEffect(() => { if (data !== undefined) return; setD(null); fetch(`${api}?depth=1&from=${from}&to=${to}&scope=${scope}${fq}`, { cache: 'no-store' }).then(r => r.json()).then(setD).catch(e => setD({ ok: false, error: String(e) })) }, [api, from, to, scope, fq, data === undefined])
   // Which view is open lives in the URL, so a link opens the same one.
   useEffect(() => { try { const sp = new URLSearchParams(location.search); const g = sp.get('by'), m = sp.get('measure'), s = sp.get('split'); if (g && DIMS.some(x => x.key === g)) setDimKey(g); if (m && MEASURES.some(x => x.key === m)) setMKey(m); if (s && DIMS.some(x => x.key === s)) setSplitKey(s) } catch {} }, [])
   const keep = (k: string, v: string) => { try { const u = new URL(location.href); if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); history.replaceState(null, '', u.toString()) } catch {} }

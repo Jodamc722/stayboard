@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CalendarRange, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, Download, Loader2, RefreshCw, Share2, SlidersHorizontal, X } from 'lucide-react'
 import { LeanEmpty, Tag } from '@/components/lean'
 import { ResDrawer } from '@/components/GardenResDetail'
-import { GardenDepth } from '@/components/GardenDepth'
+import { GardenDepth, GardenSplit } from '@/components/GardenDepth'
 import { GardenViews } from '@/components/GardenViews'
 
 const money = (n: number | null | undefined) => n == null ? '—' : '$' + Math.round(n).toLocaleString('en-US')
@@ -97,6 +97,9 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
   const [range, setRange] = useState<[string, string]>(() => PRESETS[2].range(todayNY()))
   const [preset, setPreset] = useState('month')
   const [d, setD] = useState<any>(null)
+  // The in-depth report for the same period, side and filters: loaded once here, read by the side-by-side
+  // table at the top, the Views tab and the In-depth tab.
+  const [dd, setDd] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   const [metric, setMetric] = useState<Metric>('revenue')
   const [tab, setTab] = useState<Tab>('views')
@@ -124,13 +127,19 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
     if (r?.needsPassword && onLocked) { onLocked(String(r.error || '')); setLoading(false); return }
     setD(r); setLoading(false)
   }, [range, ahead, scope, fq, api, onLocked])
+  const loadDepth = useCallback(async () => {
+    setDd(null)
+    const r = await fetch(`${api}?depth=1&from=${range[0]}&to=${range[1]}&scope=${scope}${fq}`, { cache: 'no-store' }).then(x => x.json()).catch(e => ({ ok: false, error: String(e) }))
+    if (!r?.needsPassword) setDd(r)
+  }, [range, scope, fq, api])
+  useEffect(() => { loadDepth() }, [loadDepth])
   const pickTab = (k: Tab) => { setTab(k); try { const u = new URL(location.href); u.searchParams.set('view', k); history.replaceState(null, '', u.toString()) } catch {} }
   // REFRESH: read Cloudbeds now, then add the period up again.
   const refresh = async () => {
     setRefreshing('Reading Cloudbeds…')
     const r = await fetch(api, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh: true }) }).then(x => x.json()).catch(e => ({ ok: false, error: String(e) }))
     if (r?.needsPassword && onLocked) { onLocked(String(r.error || '')); setRefreshing(''); return }
-    await load()
+    await Promise.all([load(), loadDepth()])
     setRefreshing(r?.ok ? (r.fresh ? 'Already up to date' : 'Updated') : 'Cloudbeds did not answer — showing the last sync')
     setTimeout(() => setRefreshing(''), 4000)
   }
@@ -277,8 +286,11 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
       {d.basis ? <p className="text-[11.5px] text-muted mt-0.5">{d.basis.gross ? (d.basis.room ? `Revenue: ${d.basis.room.toLocaleString()} stays at room revenue before taxes and fees; ${d.basis.gross.toLocaleString()} Cloudbeds stays still at the reservation total (taxes and fees in it) until their breakdown is read.` : 'Revenue is the Cloudbeds reservation total for each stay, which has taxes and fees in it; Botanica stays in Guesty are accommodation plus cleaning.') : 'Revenue is room revenue before taxes and fees.'}</p> : null}
       {d.today && range[0] <= t0 && range[1] >= t0 ? <p className="text-[12px] text-ink mt-2"><span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mr-2">Today, live from Cloudbeds</span>{pct(d.today.occupancy)} occupied · {d.today.arrivals} arrivals · {d.today.departures} departures · {d.today.inHouse} in house · {d.today.bookings} booked today</p> : null}
 
+      {/* The three sides next to each other, before anything else. */}
+      <div className="mt-4">{dd?.ok && dd.split ? <GardenSplit d={dd} scope={scope} onScope={setScope} compact /> : dd && !dd.ok ? null : <p className="text-[12.5px] text-muted inline-flex items-center gap-2 mb-4"><Loader2 size={13} className="animate-spin" /> Comparing Whole property, Garden and Botanica…</p>}</div>
+
       {/* One chart. */}
-      <div className="rounded-xl border border-line bg-white p-3.5 mt-4">
+      <div className="rounded-xl border border-line bg-white p-3.5">
         <div className="flex items-center gap-2 flex-wrap mb-3">
           <span className="text-[13px] font-semibold text-ink">{metric === 'revenue' ? 'Room revenue' : metric === 'occupancy' ? 'Occupancy' : 'ADR'} by {grain}</span>
           <span className="text-[11.5px] text-muted">{series.some(x => x.future) ? 'lighter bars are still to come (on the books today)' : ''}</span>
@@ -310,8 +322,8 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
         ))}
       </div>
 
-      {tab === 'views' ? <GardenViews api={api} from={range[0]} to={range[1]} scope={scope} fq={fq} /> : null}
-      {tab === 'depth' ? <GardenDepth api={api} fq={fq} shared={shared} from={range[0]} to={range[1]} scope={scope} onScope={setScope} /> : null}
+      {tab === 'views' ? <GardenViews api={api} from={range[0]} to={range[1]} scope={scope} fq={fq} data={dd} /> : null}
+      {tab === 'depth' ? <GardenDepth api={api} fq={fq} shared={shared} data={dd} splitAbove from={range[0]} to={range[1]} scope={scope} onScope={setScope} /> : null}
 
       {tab === 'channels' ? (d.byChannel.length ? (
         <div className="rounded-xl border border-line bg-white overflow-x-auto">
