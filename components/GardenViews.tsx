@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Download, Loader2 } from 'lucide-react'
 import { LeanEmpty } from '@/components/lean'
 
-type Line = { c: string; l: number; d: number | null; a: string; b: string | null; s: string; w: string; t: string; n: number; r: number; e?: number; f?: number; x: number; k: number }
+type Line = { c: string; l: number; d: number | null; a: string; b: string | null; s: string; w: string; t: string; n: number; r: number; e?: number; f?: number; p?: number; x: number; k: number }
 type Dim = { key: string; label: string; hint: string; of: (x: Line) => string | null; order?: string[]; sort?: 'label' }
 type Measure = { key: string; label: string; additive: boolean; fmt: (v: number | null) => string }
 
@@ -41,14 +41,15 @@ const DIMS: Dim[] = [
 ]
 const nameOf = (dim: Dim, k: string) => dim.key === 'amonth' || dim.key === 'bmonth' ? monthName(k) : dim.key === 'aweek' || dim.key === 'bweek' ? weekName(k) : k
 
-type Acc = { rev: number; rent: number; fees: number; nights: number; stays: number; losSum: number; leadSum: number; leadN: number; dead: number }
-const acc = (): Acc => ({ rev: 0, rent: 0, fees: 0, nights: 0, stays: 0, losSum: 0, leadSum: 0, leadN: 0, dead: 0 })
-const put = (a: Acc, x: Line) => { if (x.x) { a.dead += x.k; return } a.rev += x.r; a.rent += x.e ?? x.r; a.fees += x.f || 0; a.nights += x.n; a.stays += x.k; a.losSum += x.l * x.k; if (x.d != null) { a.leadSum += x.d * x.k; a.leadN += x.k } }
+type Acc = { rev: number; rent: number; fees: number; other: number; nights: number; stays: number; losSum: number; leadSum: number; leadN: number; dead: number }
+const acc = (): Acc => ({ rev: 0, rent: 0, fees: 0, other: 0, nights: 0, stays: 0, losSum: 0, leadSum: 0, leadN: 0, dead: 0 })
+const put = (a: Acc, x: Line) => { if (x.x) { a.dead += x.k; return } a.rev += x.r; a.rent += x.e ?? x.r; a.fees += x.f || 0; a.other += x.p || 0; a.nights += x.n; a.stays += x.k; a.losSum += x.l * x.k; if (x.d != null) { a.leadSum += x.d * x.k; a.leadN += x.k } }
 const MEASURES: (Measure & { of: (a: Acc, total: Acc) => number | null })[] = [
   { key: 'rev', label: 'Revenue', additive: true, fmt: money, of: a => a.rev },
   { key: 'rent', label: 'Rent', additive: true, fmt: money, of: a => a.rent },
-  { key: 'fees', label: 'Fee income', additive: true, fmt: money, of: a => a.fees },
-  { key: 'feepct', label: 'Fees on top of rent', additive: false, fmt: v => v == null ? '—' : '+' + one(v) + '%', of: a => a.rent ? (a.fees / a.rent) * 100 : null },
+  { key: 'fees', label: 'Cleaning fees', additive: true, fmt: money, of: a => a.fees },
+  { key: 'other', label: 'Parking & add-ons', additive: true, fmt: money, of: a => a.other },
+  { key: 'feepct', label: 'Cleaning on top of rent', additive: false, fmt: v => v == null ? '—' : '+' + one(v) + '%', of: a => a.rent ? (a.fees / a.rent) * 100 : null },
   { key: 'nights', label: 'Room nights', additive: true, fmt: int, of: a => a.nights },
   { key: 'stays', label: 'Stays', additive: true, fmt: int, of: a => a.stays },
   { key: 'adr', label: 'ADR', additive: false, fmt: money, of: a => a.nights ? a.rev / a.nights : null },
@@ -97,7 +98,7 @@ export function GardenViews({ api, from, to, scope, fq, data }: { api: string; f
     if (split?.order) cols = split.order.filter(k => splitTot.has(k)); else if (split?.sort === 'label') cols.sort((a, b) => a.localeCompare(b, undefined, { numeric: true })); else cols.sort((a, b) => splitTot.get(b)!.rev - splitTot.get(a)!.rev)
     const shown = cols.slice(0, 6), rest = cols.slice(6)
     const cell = (g: string, s: string): Acc => cells.get(g)?.get(s) || acc()
-    const restOf = (g: string): Acc => { const a = acc(); for (const s of rest) { const c = cell(g, s); a.rev += c.rev; a.rent += c.rent; a.fees += c.fees; a.nights += c.nights; a.stays += c.stays; a.losSum += c.losSum; a.leadSum += c.leadSum; a.leadN += c.leadN; a.dead += c.dead } return a }
+    const restOf = (g: string): Acc => { const a = acc(); for (const s of rest) { const c = cell(g, s); a.rev += c.rev; a.rent += c.rent; a.fees += c.fees; a.other += c.other; a.nights += c.nights; a.stays += c.stays; a.losSum += c.losSum; a.leadSum += c.leadSum; a.leadN += c.leadN; a.dead += c.dead } return a }
     return { total, groups, keys, shown, rest, cell, restOf, unknown, lines: lines.length }
   }, [d, dim, split])
 
@@ -108,8 +109,8 @@ export function GardenViews({ api, from, to, scope, fq, data }: { api: string; f
   const splitCols = split ? [...view.shown, ...(view.rest.length ? ['Other'] : [])] : []
   const part = (g: string, s: string) => s === 'Other' ? view.restOf(g) : view.cell(g, s)
   const exportCsv = () => {
-    const head = [dim.label, 'Revenue', 'Rent', 'Fee income', 'Share of revenue %', 'Room nights', 'Stays', 'ADR', 'Average stay (nights)', 'Average booking window (days)', 'Cancelled %', ...splitCols.map(s => `${split!.label}: ${nameOf(split!, s)} — ${measure.label}`)]
-    const row = (label: string, a: Acc, g?: string) => [label, Math.round(a.rev), Math.round(a.rent), Math.round(a.fees), view.total.rev ? Math.round((a.rev / view.total.rev) * 1000) / 10 : 0, a.nights, Math.round(a.stays * 10) / 10, a.nights ? Math.round(a.rev / a.nights) : '', a.stays ? Math.round((a.losSum / a.stays) * 10) / 10 : '', a.leadN ? Math.round(a.leadSum / a.leadN) : '', a.stays + a.dead ? Math.round((a.dead / (a.stays + a.dead)) * 100) : '', ...(g ? splitCols.map(s => { const v = val(part(g, s)); return v == null ? '' : Math.round(v * 100) / 100 }) : splitCols.map(() => ''))]
+    const head = [dim.label, 'Revenue', 'Rent', 'Cleaning fees', 'Parking and add-ons', 'Share of revenue %', 'Room nights', 'Stays', 'ADR', 'Average stay (nights)', 'Average booking window (days)', 'Cancelled %', ...splitCols.map(s => `${split!.label}: ${nameOf(split!, s)} — ${measure.label}`)]
+    const row = (label: string, a: Acc, g?: string) => [label, Math.round(a.rev), Math.round(a.rent), Math.round(a.fees), Math.round(a.other), view.total.rev ? Math.round((a.rev / view.total.rev) * 1000) / 10 : 0, a.nights, Math.round(a.stays * 10) / 10, a.nights ? Math.round(a.rev / a.nights) : '', a.stays ? Math.round((a.losSum / a.stays) * 10) / 10 : '', a.leadN ? Math.round(a.leadSum / a.leadN) : '', a.stays + a.dead ? Math.round((a.dead / (a.stays + a.dead)) * 100) : '', ...(g ? splitCols.map(s => { const v = val(part(g, s)); return v == null ? '' : Math.round(v * 100) / 100 }) : splitCols.map(() => ''))]
     const rows = [head, ...view.keys.map(k => row(nameOf(dim, k), view.groups.get(k)!, k)), row('Total', view.total)]
     const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(',')).join('\n')
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `garden-${dim.key}-${from}-to-${to}.csv`; a.click(); URL.revokeObjectURL(a.href)
@@ -137,7 +138,7 @@ export function GardenViews({ api, from, to, scope, fq, data }: { api: string; f
             <thead className="text-[10.5px] uppercase tracking-wider text-muted"><tr className="border-b border-line">
               <th className="px-3 py-2 font-semibold text-left">{dim.label}</th><th className="px-3 py-2 font-semibold text-left w-[30%] min-w-[160px]">{measure.label}</th>
               {split ? splitCols.map(s => <th key={s} className={th}>{nameOf(split, s)}</th>) : <>
-                {mKey === 'rev' ? null : <th className={th}>Revenue</th>}<th className={th} title="Fee income, and what it adds on top of rent">Fees</th><th className={th} title="Share of the revenue shown here">Share</th><th className={th}>Room nights</th><th className={th}>Stays</th><th className={th}>ADR</th><th className={th} title="Average nights of the whole stay">Avg stay</th><th className={th} title="Average days between booking and arrival">Booked ahead</th><th className={th} title="Share of bookings cancelled or no-show">Cancelled</th></>}
+                {mKey === 'rev' ? null : <th className={th}>Revenue</th>}<th className={th} title="Cleaning fees, and what they add on top of rent">Cleaning</th><th className={th} title="Parking (Guesty) and add-on items (Cloudbeds): revenue, but not in ADR">Parking</th><th className={th} title="Share of the revenue shown here">Share</th><th className={th}>Room nights</th><th className={th}>Stays</th><th className={th}>ADR</th><th className={th} title="Average nights of the whole stay">Avg stay</th><th className={th} title="Average days between booking and arrival">Booked ahead</th><th className={th} title="Share of bookings cancelled or no-show">Cancelled</th></>}
             </tr></thead>
             <tbody>
               {view.keys.map(k => { const a = view.groups.get(k)!, v = val(a); return (
@@ -151,18 +152,18 @@ export function GardenViews({ api, from, to, scope, fq, data }: { api: string; f
                     <span className="w-[76px] text-right font-semibold text-ink">{measure.fmt(v)}</span>
                   </div></td>
                   {split ? splitCols.map(s => <td key={s} className="px-3 py-2 text-right">{measure.fmt(val(part(k, s)))}</td>) : <>
-                    {mKey === 'rev' ? null : <td className="px-3 py-2 text-right">{money(a.rev)}</td>}<td className="px-3 py-2 text-right whitespace-nowrap">{money(a.fees)}{a.rent ? <span className="text-muted"> +{Math.round((a.fees / a.rent) * 100)}%</span> : null}</td><td className="px-3 py-2 text-right text-muted">{view.total.rev ? pct((a.rev / view.total.rev) * 100) : '—'}</td><td className="px-3 py-2 text-right">{int(a.nights)}</td><td className="px-3 py-2 text-right">{int(a.stays)}</td>
+                    {mKey === 'rev' ? null : <td className="px-3 py-2 text-right">{money(a.rev)}</td>}<td className="px-3 py-2 text-right whitespace-nowrap">{money(a.fees)}{a.rent ? <span className="text-muted"> +{Math.round((a.fees / a.rent) * 100)}%</span> : null}</td><td className="px-3 py-2 text-right">{money(a.other)}</td><td className="px-3 py-2 text-right text-muted">{view.total.rev ? pct((a.rev / view.total.rev) * 100) : '—'}</td><td className="px-3 py-2 text-right">{int(a.nights)}</td><td className="px-3 py-2 text-right">{int(a.stays)}</td>
                     <td className="px-3 py-2 text-right">{a.nights ? money(a.rev / a.nights) : '—'}</td><td className="px-3 py-2 text-right">{a.stays ? one(a.losSum / a.stays) : '—'}</td><td className="px-3 py-2 text-right">{a.leadN ? Math.round(a.leadSum / a.leadN) + ' d' : '—'}</td><td className="px-3 py-2 text-right">{a.stays + a.dead ? pct((a.dead / (a.stays + a.dead)) * 100) : '—'}</td></>}
                 </tr>) })}
               <tr className="bg-app/60 font-semibold text-ink">
                 <td className="px-3 py-2">Total</td><td className="px-3 py-2 text-right">{measure.fmt(val(view.total))}</td>
                 {split ? splitCols.map(s => <td key={s} className="px-3 py-2" />) : <>
-                  {mKey === 'rev' ? null : <td className="px-3 py-2 text-right">{money(view.total.rev)}</td>}<td className="px-3 py-2 text-right whitespace-nowrap">{money(view.total.fees)}{view.total.rent ? ` +${Math.round((view.total.fees / view.total.rent) * 100)}%` : ''}</td><td className="px-3 py-2 text-right">100%</td><td className="px-3 py-2 text-right">{int(view.total.nights)}</td><td className="px-3 py-2 text-right">{int(view.total.stays)}</td>
+                  {mKey === 'rev' ? null : <td className="px-3 py-2 text-right">{money(view.total.rev)}</td>}<td className="px-3 py-2 text-right whitespace-nowrap">{money(view.total.fees)}{view.total.rent ? ` +${Math.round((view.total.fees / view.total.rent) * 100)}%` : ''}</td><td className="px-3 py-2 text-right">{money(view.total.other)}</td><td className="px-3 py-2 text-right">100%</td><td className="px-3 py-2 text-right">{int(view.total.nights)}</td><td className="px-3 py-2 text-right">{int(view.total.stays)}</td>
                   <td className="px-3 py-2 text-right">{view.total.nights ? money(view.total.rev / view.total.nights) : '—'}</td><td className="px-3 py-2 text-right">{view.total.stays ? one(view.total.losSum / view.total.stays) : '—'}</td><td className="px-3 py-2 text-right">{view.total.leadN ? Math.round(view.total.leadSum / view.total.leadN) + ' d' : '—'}</td><td className="px-3 py-2 text-right">{view.total.stays + view.total.dead ? pct((view.total.dead / (view.total.stays + view.total.dead)) * 100) : '—'}</td></>}
               </tr>
             </tbody>
           </table>
-          <p className="text-[11.5px] text-muted px-3.5 py-2 border-t border-line/60">Revenue and room nights are the part of each stay inside {from} to {to}. A stay in two rooms counts as one stay. {d.rentOnly ? 'Revenue here is rent only.' : 'Revenue here is rent plus fee income.'}{view.unknown ? ` ${int(view.unknown)} stay${view.unknown === 1 ? ' has' : 's have'} no ${dim.key.startsWith('b') || dim.key === 'lead' ? 'booking date' : 'value'} and ${view.unknown === 1 ? 'is' : 'are'} left out of this view.` : ''}{d.partial ? ' Some bookings could not be read just now, so these numbers may be short — refresh in a moment.' : ''}</p>
+          <p className="text-[11.5px] text-muted px-3.5 py-2 border-t border-line/60">Revenue and room nights are the part of each stay inside {from} to {to}. A stay in two rooms counts as one stay. {d.rentOnly ? 'Revenue here is rent only.' : 'Revenue here is rent plus cleaning.'} Parking and add-ons are counted separately.{view.unknown ? ` ${int(view.unknown)} stay${view.unknown === 1 ? ' has' : 's have'} no ${dim.key.startsWith('b') || dim.key === 'lead' ? 'booking date' : 'value'} and ${view.unknown === 1 ? 'is' : 'are'} left out of this view.` : ''}{d.partial ? ' Some bookings could not be read just now, so these numbers may be short — refresh in a moment.' : ''}</p>
         </div>
       ) : <LeanEmpty>No stays in this period{fq ? ' with these filters' : ''}.</LeanEmpty>}
     </div>

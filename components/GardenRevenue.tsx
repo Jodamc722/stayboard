@@ -112,7 +112,7 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
   const [refreshing, setRefreshing] = useState('')
   const [share, setShare] = useState<any | null>(null)
   const [copied, setCopied] = useState('')
-  // REVENUE = RENT + FEE INCOME, or rent alone (the revenue team, 2026-11-23). Travels with the filters.
+  // REVENUE = RENT + CLEANING, or rent alone; parking is its own line (Jon and the revenue team, 2026-11-23). Travels with the filters.
   const [rentOnly, setRentOnlyState] = useState(false)
   const setRentOnly = (v: boolean) => { setRentOnlyState(v); try { const u = new URL(location.href); if (v) u.searchParams.set('rev', 'rent'); else u.searchParams.delete('rev'); history.replaceState(null, '', u.toString()) } catch {} }
   const fq = useMemo(() => filterQuery(filter) + (rentOnly ? '&rev=rent' : ''), [filter, rentOnly])
@@ -202,8 +202,8 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
         <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" title="Botanica = the rooms sold as Botanica through Guesty (matched by room number). Garden = every other room.">
           {([['all', 'Whole property'], ['garden', 'Garden'], ['botanica', 'Botanica']] as [Scope, string][]).map(([k, l]) => <button key={k} onClick={() => setScope(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (scope === k ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink')}>{l}{d?.segments ? <span className="ml-1 font-normal opacity-80">{d.segments[k]}</span> : null}</button>)}
         </div>
-        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" title="Fee income: cleaning, parking and the other guest fees in Guesty; add-on items in Cloudbeds. Taxes are never included.">
-          {([[false, 'Rent + fees'], [true, 'Rent only']] as [boolean, string][]).map(([k, l]) => <button key={l} onClick={() => setRentOnly(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (rentOnly === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>)}
+        <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12.5px]" title="Cleaning counts in revenue and ADR. Parking and add-ons are shown separately. Taxes and the Guesty revenue fee are never included.">
+          {([[false, 'With cleaning'], [true, 'Rent only']] as [boolean, string][]).map(([k, l]) => <button key={l} onClick={() => setRentOnly(k)} className={'px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ' + (rentOnly === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{l}</button>)}
         </div>
         <div className="inline-flex items-center gap-1">
           <button onClick={() => shift(-1)} aria-label="Earlier period" className="p-1.5 rounded-lg border border-line bg-white text-muted hover:text-ink"><ChevronLeft size={15} /></button>
@@ -281,15 +281,15 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
 
       {/* The period in six numbers, each against the one before it. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <Kpi label={(future ? 'On the books' : 'Revenue') + (rentOnly ? ' · rent only' : ' · rent + fees')} value={money(b.revenue)} sub={`rent ${money(b.rent)} · fees ${money(b.fees)}${b.feePct != null ? ` (+${b.feePct}% on rent)` : ''}${prevCovered ? ' · ' + prevLabel : ''}`}>{prevCovered ? <Delta cur={b.revenue} prev={p.revenue} unit="pct" /> : <span className="text-muted">earlier period not loaded</span>}</Kpi>
+        <Kpi label={(future ? 'On the books' : 'Revenue') + (rentOnly ? ' · rent only' : ' · rent + cleaning')} value={money(b.revenue)} sub={`rent ${money(b.rent)} · cleaning ${money(b.fees)}${b.feePct != null ? ` (+${b.feePct}%)` : ''} · parking and add-ons ${money(b.other)} on top${prevCovered ? ' · ' + prevLabel : ''}`}>{prevCovered ? <Delta cur={b.revenue} prev={p.revenue} unit="pct" /> : <span className="text-muted">earlier period not loaded</span>}</Kpi>
         <Kpi label="Occupancy" value={pct(b.occupancy)} sub={`${b.nights.toLocaleString()} of ${(d.rooms * span).toLocaleString()} room nights`}>{prevCovered ? <Delta cur={b.occupancy} prev={p.occupancy} unit="pts" /> : null}</Kpi>
-        <Kpi label={rentOnly ? 'ADR · rent only' : 'ADR · with fees'} value={money(b.adr)} sub={`rent only ${money(b.adrRent)} · with fees ${money(b.adrAll)}`}>{prevCovered ? <Delta cur={b.adr} prev={p.adr} unit="pct" /> : null}</Kpi>
-        <Kpi label={rentOnly ? 'RevPAR · rent only' : 'RevPAR · with fees'} value={money(b.revpar)} sub={`revenue per room, ${d.rooms} rooms`}>{prevCovered ? <Delta cur={b.revpar} prev={p.revpar} unit="pct" /> : null}</Kpi>
+        <Kpi label={rentOnly ? 'ADR · rent only' : 'ADR · with cleaning'} value={money(b.adr)} sub={`rent only ${money(b.adrRent)} · with cleaning ${money(b.adrAll)}`}>{prevCovered ? <Delta cur={b.adr} prev={p.adr} unit="pct" /> : null}</Kpi>
+        <Kpi label={rentOnly ? 'RevPAR · rent only' : 'RevPAR · with cleaning'} value={money(b.revpar)} sub={`revenue per room, ${d.rooms} rooms`}>{prevCovered ? <Delta cur={b.revpar} prev={p.revpar} unit="pct" /> : null}</Kpi>
         <Kpi label="Stays" value={b.bookings.toLocaleString()} sub={`${b.cancelled} cancelled or no-show`}>{prevCovered ? <Delta cur={b.bookings} prev={p.bookings} unit="pct" /> : null}</Kpi>
         <Kpi label={future ? 'Booked so far' : 'Booked in this period'} value={past || !future ? String(d.booked.bookings) : '—'} sub={past || !future ? `${money(d.booked.revenue)} · for any stay date` : 'the period has not started'}>{d.booked.cancelled ? <span className="text-muted">{d.booked.cancelled} of them since cancelled</span> : <span className="text-muted">new reservations made</span>}</Kpi>
       </div>
       <p className="text-[11.5px] text-muted mt-1.5">{scope === 'all' ? 'Whole property' : scope === 'garden' ? 'Garden rooms only' : 'Botanica rooms only'}: {d.rooms} rooms{d.segments?.blocked ? `, ${d.segments.blocked} of them blocked in Cloudbeds` : ''}.{d.guesty?.bookings ? ` Includes ${d.guesty.bookings} Botanica booking${d.guesty.bookings === 1 ? '' : 's'} from Guesty (${money(d.guesty.revenue)}).` : ''}{filterN ? ` ${filterN} filter${filterN === 1 ? '' : 's'} on: every number below counts only what matches.` : ''}</p>
-      <p className="text-[11.5px] text-muted mt-0.5">Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Fee income is cleaning, parking and other guest fees in Guesty, and add-on items in Cloudbeds. Taxes are in neither.{d.basis?.gross ? ` ${d.basis.gross.toLocaleString()} Cloudbeds stay${d.basis.gross === 1 ? ' has' : 's have'} no breakdown from Cloudbeds yet and count${d.basis.gross === 1 ? 's' : ''} at the reservation total.` : ''}</p>
+      <p className="text-[11.5px] text-muted mt-0.5">Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Cleaning is the Guesty cleaning fee and counts in ADR. Parking (Guesty) and add-on items (Cloudbeds) are revenue shown separately, not in ADR. Taxes, and the Guesty revenue, service and marketing fees, are not counted.{d.basis?.gross ? ` ${d.basis.gross.toLocaleString()} Cloudbeds stay${d.basis.gross === 1 ? ' has' : 's have'} no breakdown from Cloudbeds yet and count${d.basis.gross === 1 ? 's' : ''} at the reservation total.` : ''}</p>
       {d.today && range[0] <= t0 && range[1] >= t0 ? <p className="text-[12px] text-ink mt-2"><span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted mr-2">Today, live from Cloudbeds</span>{pct(d.today.occupancy)} occupied · {d.today.arrivals} arrivals · {d.today.departures} departures · {d.today.inHouse} in house · {d.today.bookings} booked today</p> : null}
 
       {/* The three sides next to each other, before anything else. */}
@@ -298,7 +298,7 @@ export function GardenRevenue({ api = '/api/garden/revenue', shared = false, can
       {/* One chart. */}
       <div className="rounded-xl border border-line bg-white p-3.5">
         <div className="flex items-center gap-2 flex-wrap mb-3">
-          <span className="text-[13px] font-semibold text-ink">{metric === 'revenue' ? (rentOnly ? 'Rent' : 'Revenue (rent + fees)') : metric === 'occupancy' ? 'Occupancy' : 'ADR'} by {grain}</span>
+          <span className="text-[13px] font-semibold text-ink">{metric === 'revenue' ? (rentOnly ? 'Rent' : 'Revenue (rent + cleaning)') : metric === 'occupancy' ? 'Occupancy' : 'ADR'} by {grain}</span>
           <span className="text-[11.5px] text-muted">{series.some(x => x.future) ? 'lighter bars are still to come (on the books today)' : ''}</span>
           <div className="ml-auto inline-flex rounded-lg border border-line overflow-hidden text-[12px]">
             {(['revenue', 'occupancy', 'adr'] as Metric[]).map(m => <button key={m} onClick={() => setMetric(m)} className={'px-3 py-1 font-semibold border-l border-line first:border-l-0 ' + (metric === m ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{m === 'revenue' ? 'Revenue' : m === 'occupancy' ? 'Occupancy' : 'ADR'}</button>)}

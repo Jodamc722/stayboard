@@ -70,9 +70,9 @@ function Table({ title, note, cols, rows, max = 0, id, chips }: { title: string;
 export function GardenSplit({ d, scope, onScope, compact = false }: { d: any; scope: Scope; onScope: (s: Scope) => void; compact?: boolean }) {
   const all = d.split[0], bo = d.split[2]
   const rows: [string, (x: any) => string, string][] = [
-    ['Rooms', x => `${x.rooms}${x.blocked ? ` (${x.blocked} blocked)` : ''}`, 'rooms'], ['Rent', x => money(x.rent), 'rent'], ['Fee income', x => money(x.fees), 'fees'], ['Fees on top of rent', x => x.feePct == null ? '—' : '+' + x.feePct + '%', ''], ['Total revenue (rent + fees)', x => money((x.rent || 0) + (x.fees || 0)), '__total'],
+    ['Rooms', x => `${x.rooms}${x.blocked ? ` (${x.blocked} blocked)` : ''}`, 'rooms'], ['Rent', x => money(x.rent), 'rent'], ['Cleaning fees', x => money(x.fees), 'fees'], ['Cleaning on top of rent', x => x.feePct == null ? '—' : '+' + x.feePct + '%', ''], ['Room revenue (rent + cleaning)', x => money((x.rent || 0) + (x.fees || 0)), '__room'], ['Parking and add-ons (not in ADR)', x => money(x.other), 'other'], ['Total revenue', x => money((x.rent || 0) + (x.fees || 0) + (x.other || 0)), '__total'],
     ['Room nights sold', x => int(x.nights), 'nights'], ['Occupancy', x => pct(x.occupancy), ''],
-    ['ADR, rent only', x => money(x.adrRent), ''], ['ADR with fees', x => money(x.adrAll), ''], [d.rentOnly ? 'RevPAR, rent only' : 'RevPAR with fees', x => money(x.revpar), ''], ['Stays', x => int(x.stays), 'stays'], ['Arrivals in the period', x => int(x.arrivals), 'arrivals'], ['Average stay', x => x.avgStay == null ? '—' : x.avgStay + ' nights', ''],
+    ['ADR, rent only', x => money(x.adrRent), ''], ['ADR with cleaning', x => money(x.adrAll), ''], [d.rentOnly ? 'RevPAR, rent only' : 'RevPAR with cleaning', x => money(x.revpar), ''], ['Stays', x => int(x.stays), 'stays'], ['Arrivals in the period', x => int(x.arrivals), 'arrivals'], ['Average stay', x => x.avgStay == null ? '—' : x.avgStay + ' nights', ''],
     ['Cancelled / no-show', x => `${int(x.cancelled)} (${x.cancelRate}%)`, 'cancelled'], ['Revenue lost to cancellations', x => money(x.lostRevenue), 'lostRevenue'], ['Balance owed', x => `${money(x.owed)} · ${x.owedStays} stays`, 'owed'],
   ]
   const pad = compact ? 'px-3 py-1' : 'px-3 py-1.5'
@@ -90,11 +90,11 @@ export function GardenSplit({ d, scope, onScope, compact = false }: { d: any; sc
             <tr key={label} className="border-b border-line/60 last:border-0">
               <td className={pad + ' text-muted'}>{label}</td>
               {d.split.map((x: any) => <td key={x.scope} className={pad + ' text-right ' + (x.scope === scope ? 'bg-brand-50 font-semibold text-ink' : 'text-ink')}>{f(x)}</td>)}
-              <td className={pad + ' text-right text-muted'}>{key === '__total' ? (all.rent + all.fees ? Math.round(((bo.rent + bo.fees) / (all.rent + all.fees)) * 100) + '%' : '') : key && all[key] ? Math.round((bo[key] / all[key]) * 100) + '%' : ''}</td>
+              <td className={pad + ' text-right text-muted'}>{key === '__room' ? (all.rent + all.fees ? Math.round(((bo.rent + bo.fees) / (all.rent + all.fees)) * 100) + '%' : '') : key === '__total' ? (all.rent + all.fees + all.other ? Math.round(((bo.rent + bo.fees + bo.other) / (all.rent + all.fees + all.other)) * 100) + '%' : '') : key && all[key] ? Math.round((bo[key] / all[key]) * 100) + '%' : ''}</td>
             </tr>))}</tbody>
         </table>
       </div>
-      <p className="text-[11.5px] text-muted mt-1.5 px-1">Botanica = the rooms sold as Botanica through Guesty, matched by room number. A stay is counted on the side its room is on, whichever system it was booked in. Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Fee income is cleaning, parking and the other guest fees in Guesty, and add-on items in Cloudbeds. Taxes are in neither.</p>
+      <p className="text-[11.5px] text-muted mt-1.5 px-1">Botanica = the rooms sold as Botanica through Guesty, matched by room number. A stay is counted on the side its room is on, whichever system it was booked in. Rent is the room charge before taxes (Cloudbeds) or the accommodation fare (Guesty). Cleaning is the Guesty cleaning fee and counts in ADR; a Cloudbeds rate has no separate cleaning fee. Parking (Guesty) and add-on items (Cloudbeds) are revenue but stay out of ADR. Taxes, and Guesty's revenue, service and marketing fees, are not counted.</p>
     </section>
   )
 }
@@ -115,14 +115,14 @@ export function GardenDepth({ from, to, scope, onScope, api = '/api/garden/reven
   const exportCsv = () => {
     const out: any[][] = [[`The Garden Hotel & Resort — in-depth report`], [`${dayLabel(d.from)} to ${dayLabel(d.to)}`, d.label], []]
     const add = (title: string, head: string[], rows: any[][]) => { out.push([title]); out.push(head); for (const r of rows) out.push(r); out.push([]) }
-    add('Whole property vs Garden vs Botanica', ['', 'Rooms', 'Rent', 'Fee income', 'Fees on top of rent %', 'Revenue as shown', 'Room nights', 'Occupancy %', 'ADR rent only', 'ADR with fees', 'RevPAR as shown', 'Stays', 'Avg stay', 'Cancelled', 'Cancel %', 'Balance owed'], d.split.map((x: any) => [x.label, x.rooms, x.rent, x.fees, x.feePct, x.revenue, x.nights, x.occupancy, x.adrRent, x.adrAll, x.revpar, x.stays, x.avgStay, x.cancelled, x.cancelRate, x.owed]))
+    add('Whole property vs Garden vs Botanica', ['', 'Rooms', 'Rent', 'Cleaning fees', 'Cleaning on top of rent %', 'Parking and add-ons', 'Revenue as shown', 'Room nights', 'Occupancy %', 'ADR rent only', 'ADR with cleaning', 'RevPAR as shown', 'Stays', 'Avg stay', 'Cancelled', 'Cancel %', 'Balance owed'], d.split.map((x: any) => [x.label, x.rooms, x.rent, x.fees, x.feePct, x.other, x.revenue, x.nights, x.occupancy, x.adrRent, x.adrAll, x.revpar, x.stays, x.avgStay, x.cancelled, x.cancelRate, x.owed]))
     const core = (r: any) => [r.revenue, r.nights, r.occupancy ?? '', r.adr ?? '', r.revpar ?? '']
     const H = ['Revenue', 'Room nights', 'Occupancy %', 'ADR', 'RevPAR']
     add('By month', ['Month', ...H], d.byMonth.map((r: any) => [r.month, ...core(r)]))
     add('By day of week', ['Day', ...H], d.byDow.map((r: any) => [r.day, ...core(r)]))
     add('By wing', ['Wing', 'Rooms', ...H], d.byWing.map((r: any) => [r.wing, r.rooms, ...core(r)]))
     add('By room type', ['Room type', 'Rooms', ...H], d.byType.map((r: any) => [r.type, r.rooms, ...core(r)]))
-    add('By channel', ['Channel', 'Revenue', 'Rent', 'Fee income', 'Share %', 'Room nights', 'Stays', 'ADR', 'Booked ahead (days)', 'Cancelled', 'Cancel %'], d.byChannel.map((r: any) => [r.channel, r.revenue, r.rent, r.fees, r.share, r.nights, r.stays, r.adr ?? '', r.lead ?? '', r.cancelled, r.cancelRate]))
+    add('By channel', ['Channel', 'Revenue', 'Rent', 'Cleaning fees', 'Parking and add-ons', 'Share %', 'Room nights', 'Stays', 'ADR', 'Booked ahead (days)', 'Cancelled', 'Cancel %'], d.byChannel.map((r: any) => [r.channel, r.revenue, r.rent, r.fees, r.other, r.share, r.nights, r.stays, r.adr ?? '', r.lead ?? '', r.cancelled, r.cancelRate]))
     add('By length of stay', ['Length', 'Stays', 'Room nights', 'Revenue', 'ADR'], d.byLos.map((r: any) => [r.label, r.stays, r.nights, r.revenue, r.adr ?? '']))
     add('By how far ahead it was booked', ['Booked', 'Stays', 'Room nights', 'Revenue', 'ADR'], d.byLead.map((r: any) => [r.label, r.stays, r.nights, r.revenue, r.adr ?? '']))
     add('By room', ['Room', 'Type', 'Side', 'Blocked in Cloudbeds', ...H, 'Stays'], d.byRoom.map((r: any) => [r.room, r.type, r.segment, r.blocked ? 'yes' : '', ...core(r), r.stays]))
@@ -154,7 +154,7 @@ export function GardenDepth({ from, to, scope, onScope, api = '/api/garden/reven
           <Table id="gd-wing" title="By wing" note="rooms grouped by the first digit of the room number" cols={[{ h: 'Wing', v: r => r.wing, left: true }, { h: 'Rooms', v: r => r.rooms }, ...CORE]} rows={d.byWing} />
           <Table id="gd-type" title="By room type" cols={[{ h: 'Room type', v: r => r.type, left: true }, { h: 'Rooms', v: r => r.rooms }, ...CORE]} rows={d.byType} />
         </div>
-        <Table id="gd-channel" title="By channel" cols={[{ h: 'Channel', v: r => r.channel, left: true }, { h: 'Revenue', v: r => r.revenue, f: money, bar: true }, { h: 'Share', v: r => r.share, f: pct }, { h: 'Rent', v: r => r.rent, f: money }, { h: 'Fees', v: r => r.fees, f: money }, { h: 'Fees on rent', v: r => r.feePct, f: v => v == null ? '—' : '+' + v + '%' }, { h: 'Room nights', v: r => r.nights, f: int }, { h: 'Stays', v: r => r.stays, f: int }, { h: 'ADR', v: r => r.adr, f: money }, { h: 'Booked ahead', v: r => r.lead, f: v => v == null ? '—' : v + ' days' }, { h: 'Cancelled', v: r => r, f: (r: any) => `${r.cancelled} (${r.cancelRate}%)`, s: r => r.cancelRate }]} rows={d.byChannel} />
+        <Table id="gd-channel" title="By channel" cols={[{ h: 'Channel', v: r => r.channel, left: true }, { h: 'Revenue', v: r => r.revenue, f: money, bar: true }, { h: 'Share', v: r => r.share, f: pct }, { h: 'Rent', v: r => r.rent, f: money }, { h: 'Cleaning', v: r => r.fees, f: money }, { h: 'Cleaning on rent', v: r => r.feePct, f: v => v == null ? '—' : '+' + v + '%' }, { h: 'Parking', v: r => r.other, f: money }, { h: 'Room nights', v: r => r.nights, f: int }, { h: 'Stays', v: r => r.stays, f: int }, { h: 'ADR', v: r => r.adr, f: money }, { h: 'Booked ahead', v: r => r.lead, f: v => v == null ? '—' : v + ' days' }, { h: 'Cancelled', v: r => r, f: (r: any) => `${r.cancelled} (${r.cancelRate}%)`, s: r => r.cancelRate }]} rows={d.byChannel} />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-4">
           <Table id="gd-los" title="By length of stay" cols={[{ h: 'Length', v: r => r.label, left: true }, { h: 'Stays', v: r => r.stays, f: int }, { h: 'Room nights', v: r => r.nights, f: int }, { h: 'Revenue', v: r => r.revenue, f: money, bar: true }, { h: 'ADR', v: r => r.adr, f: money }]} rows={d.byLos} />
           <Table id="gd-lead" title="By how far ahead it was booked" cols={[{ h: 'Booked', v: r => r.label, left: true }, { h: 'Stays', v: r => r.stays, f: int }, { h: 'Room nights', v: r => r.nights, f: int }, { h: 'Revenue', v: r => r.revenue, f: money, bar: true }, { h: 'ADR', v: r => r.adr, f: money }]} rows={d.byLead} />
