@@ -670,7 +670,7 @@ function InspectionsView({ can, say, onAssigned }: { can: { edit: boolean; full:
   const scoreboardBanner = (
     <a href="/training/scoreboard" className="mb-3 flex items-center gap-3 rounded-2xl border border-brand-200 bg-brand-50 px-4 py-3 hover:bg-brand-100/60">
       <ClipboardCheck size={18} className="text-brand-700 shrink-0" />
-      <span className="flex-1 min-w-0 text-[13px] text-ink"><b>Team scoreboard</b> <span className="text-muted">— rankings, the report to send every 5 inspections, feedback to follow up, and every inspection to read.</span></span>
+      <span className="flex-1 min-w-0 text-[13px] text-ink"><b>Inspection scoreboard</b> <span className="text-muted">— rankings, the report to send every 5 inspections, feedback to follow up, and every inspection to read.</span></span>
       <ArrowRight size={16} className="text-brand-700 shrink-0" />
     </a>
   )

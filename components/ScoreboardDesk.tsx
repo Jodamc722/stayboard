@@ -154,7 +154,7 @@ export function ScoreboardDesk() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <LeanHead title="Team scoreboard" sub="HK Post Clean Inspection 1.0 — the clean as found. A report to send every 5 inspections.">
+      <LeanHead title="Inspection scoreboard" sub="HK Post Clean Inspection 1.0 — the clean as found. A report to send every 5 inspections.">
         <Pill title="Housekeepers with an inspection in this period">{d?.board.length ?? 0} people</Pill>
         {ready.length ? <Pill tone="amber" title="Reports ready to send" onClick={() => setTab('reports')}>{ready.length} to send</Pill> : null}
         {openFb.length ? <Pill tone="rose" title="Misses and coaching notes nobody has talked to her about yet" onClick={() => setTab('feedback')}>{openFb.length} open</Pill> : null}

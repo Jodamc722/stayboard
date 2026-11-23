@@ -287,7 +287,7 @@ export function BlockedUnits() {
   const linked = data?.linkedRuns || []
   return (
     <div className="space-y-3">
-      <LeanHead title="Blocked Units">
+      <LeanHead title="Blocked units">
         {data ? <>
           {/* CLEAN-UP (Jon, 2026-11-20): the first number is the one to act on; "N checked" was a count nobody acts on (now in the hover). */}
           <Pill tone={head.fix ? 'rose' : 'slate'} title="Down today and not a standing block: a repair, a clean, or a block nobody explained. These are the ones work can reopen. The dollar figure is each building's average nightly rate times the nights blocked in this window.">{head.fix} to reopen now{head.fix && lossText(head.lost) ? ' · ' + lossText(head.lost) : ''}</Pill>

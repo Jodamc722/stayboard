@@ -54,9 +54,11 @@ export function GuidebookGroups({ groups }: { groups: GuidebookGroup[] }) {
       {shown.length === 0 ? <LeanEmpty>No guidebook matches “{q.trim()}”.</LeanEmpty> : shown.map((grp, i) => {
         const on = isOpen(grp.name, i)
         return (
-          <section key={grp.name} className="mb-4">
+          <section key={grp.name} className="mb-2">
+            {/* A building's line is a real target (it was 17px tall, 2026-11-23 audit): the padding is the
+                space that used to sit under it, so the list keeps its rhythm. */}
             <button onClick={() => { if (!needle && !all) setOpen(prev => ({ ...prev, [grp.name]: !on })) }} aria-expanded={on}
-              className="w-full text-left text-[11px] font-bold uppercase tracking-wider mb-1.5 px-1 flex items-center gap-2 text-muted hover:text-ink">
+              className="w-full text-left text-[11px] font-bold uppercase tracking-wider py-1.5 mb-0.5 px-1 flex items-center gap-2 text-muted hover:text-ink">
               {on ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
               {grp.name}<span className="tabular-nums">{grp.items.length}</span>
             </button>

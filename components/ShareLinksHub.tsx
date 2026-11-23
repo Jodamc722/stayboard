@@ -312,7 +312,7 @@ export function ShareLinksHub() {
   const expiringCount = (links || []).filter(l => l.status === 'expiring').length
   const lockedCount = (links || []).filter(l => l.status === 'live' && locked.indexOf(l.code) >= 0).length
   const head = (
-    <LeanHead title="Share Links">
+    <LeanHead title="Share links">
       <Pill tone="emerald" title="Every link anyone outside the app can open, each with its own passcode, optional expiry and scope">{liveCount} live</Pill>
       {expiringCount ? <Pill tone="amber" title="Expiring soon — click to filter" onClick={() => setFStatus('expiring')}>{expiringCount} expiring</Pill> : null}
       {unsetCount ? <Pill tone="amber" onClick={() => setFStatus('unset')}

@@ -238,7 +238,7 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
                           </div>
                         )}
                         {!replying && (
-                          <div className="flex items-center gap-1.5 flex-wrap mt-2 lh-actions">
+                          <div className="flex items-center gap-1.5 flex-wrap mt-2">
                             {it.link && <a href={it.link} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-ink hover:bg-app"><ExternalLink size={12} /> Open</a>}
                             <button onClick={() => startCompose(it)} title="Turn this into a message to a teammate — it goes with the title and link" className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-violet-200 bg-white text-violet-700 hover:bg-violet-50"><Send size={12} /> Message…</button>
                             {it.entity && it.status !== 'done' && <button onClick={() => { setReplyTo(it.id); setReply('') }} className="text-[11.5px] font-semibold px-2 h-7 inline-flex items-center gap-1 rounded-md border border-line bg-white text-ink hover:bg-app"><MessageSquare size={12} /> Reply</button>}

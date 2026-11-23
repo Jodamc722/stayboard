@@ -135,14 +135,14 @@ export function ApiKeysPanel({ email, base, endpoints }: { email: string; base: 
             <code className="flex-1 text-[12px] font-mono bg-app border border-line rounded-lg px-3 py-2 break-all">{curl}</code>
             <button onClick={() => copy('curl', curl)} className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[12px] font-semibold">{copied === 'curl' ? <Check size={12} /> : <Copy size={12} />}</button>
           </div>
-          <table className="w-full text-[12.5px]">
+          <div className="overflow-x-auto"><table className="w-full text-[12.5px] min-w-[560px]">
             <thead><tr className="text-left text-[11px] uppercase tracking-wider text-muted"><th className="py-1 pr-3">Endpoint</th><th className="py-1 pr-3">Returns</th><th className="py-1">Parameters</th></tr></thead>
             <tbody className="divide-y divide-line/60">
               {endpoints.map(e => (
                 <tr key={e.path}><td className="py-1.5 pr-3 font-mono text-[12px] whitespace-nowrap">{e.path}</td><td className="py-1.5 pr-3 text-ink">{e.what}</td><td className="py-1.5 text-muted">{e.params || '—'}</td></tr>
               ))}
             </tbody>
-          </table>
+          </table></div>
           <p className="text-[12px] text-muted">An approved key reads every endpoint above. Five live keys per person. Revoke one the moment it leaves your hands; Jon can pull an approval at any time.</p>
         </div>
       </section>

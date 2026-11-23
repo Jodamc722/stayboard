@@ -8,7 +8,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { TrendingUp, TrendingDown, Star, ArrowRight, Loader2 } from 'lucide-react'
-import { Tag, IconBtn, LeanList, LeanRow, LeanEmpty, Clamp } from '@/components/lean'
+import { Tag, IconBtn, LeanList, LeanRow, LeanEmpty, LeanPick, Clamp } from '@/components/lean'
 
 type Pattern = {
   key: string; label: string; action: string
@@ -55,9 +55,7 @@ export function BuildingPatterns() {
     <div>
       {/* CONTROLS + CHANNEL WATCH on one line: where the low stars are coming from, portfolio-wide. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-3">
-        <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white">
-          {MKTS.map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
-        </select>
+        <LeanPick title="Market" value={market} onPick={setMarket} options={MKTS.map(m => ({ v: m, label: m === 'all' ? 'All' : m }))} />
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line">
           {[30, 90].map(d => (
             <button key={d} onClick={() => setDays(d)} className={'text-[12px] font-semibold px-2.5 py-1 ' + (days === d ? 'bg-ink text-white' : 'bg-white text-muted hover:bg-app')}

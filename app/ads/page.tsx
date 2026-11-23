@@ -53,8 +53,8 @@ export default async function AdsPage({ searchParams }: { searchParams?: { full?
   }
   return (
     <Shell>
-      {/* Top padding keeps the editor's top bar (voice + export buttons) clear of the floating Brief and bell buttons. */}
-      <div style={{ padding: '56px 0 24px' }}>
+      {/* No top padding: the Brief and bell buttons have their own strip above the page since 2026-11-09, so the 56px that used to clear them was an empty band (2026-11-23 audit). */}
+      <div style={{ padding: '0 0 24px' }}>
         {fonts}
         <AdStudioShell display={display.style.fontFamily} body={body.style.fontFamily} serif={serif.style.fontFamily} condensed={condensed.style.fontFamily} elegant={elegant.style.fontFamily} canEdit={atLeast(lv, 'edit')} canDelete={atLeast(lv, 'edit')} newEngine={newEngine} />
       </div>

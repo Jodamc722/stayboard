@@ -152,7 +152,7 @@ export function ProjectionsBoard() {
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
           <div className="text-[10.5px] uppercase tracking-[0.14em] text-brand-600 font-bold">Money</div>
-          <h1 className="text-2xl font-bold text-ink tracking-tight">Owner Projections</h1>
+          <h1 className="text-2xl font-bold text-ink tracking-tight">Owner projections</h1>
           <p className="text-[12.5px] text-muted mt-0.5">
             Net owner revenue for next season ({seasonLabel}) — baseline is the same month last year, adjusted by the market outlook; every month is editable per unit.
           </p>

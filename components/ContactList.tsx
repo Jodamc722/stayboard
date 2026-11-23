@@ -95,7 +95,7 @@ export function ContactList() {
   const sel = 'text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white text-ink'
   return (
     <div className="space-y-3">
-      <LeanHead title="Contacts">
+      <LeanHead title="Email list">
         {s ? <>
           <Pill title={'Every guest of the last two years as a mailing list · ' + s.withPhone.toLocaleString() + ' with a phone number'}>{s.contacts.toLocaleString()} contacts</Pill>
           <Pill tone="emerald" title={s.contacts ? Math.round((s.mailable / s.contacts) * 100) + '% of the list can be emailed' : 'Can be emailed'}>{(s.mailableAfterUnhappy ?? s.mailable).toLocaleString()} will email</Pill>

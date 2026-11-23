@@ -13,7 +13,7 @@ export default async function ProjectionsPage() {
   if (!user) redirect('/login')
   return (
     <Shell>
-      <div className="p-4 sm:p-6 max-w-[1500px] mx-auto">
+      <div className="max-w-[1500px] mx-auto">
         <ProjectionsBoard />
       </div>
     </Shell>

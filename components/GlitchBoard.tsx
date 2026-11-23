@@ -6,7 +6,7 @@ import PolishButton from './PolishButton'
 // Breezeway task for the field, and move the card along the escalation path.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Plus, RefreshCw, Search, X, User2, Trash2, Loader2, Pencil, GraduationCap, Check, SlidersHorizontal } from 'lucide-react'
-import { Pill, Tag, IconBtn } from './lean'
+import { Pill, Tag, IconBtn, LeanPick } from './lean'
 import { StayPanel } from './StayPanel'
 import { VendorField, VendorName } from './VendorCard'
 import CommentThread from './CommentThread'
@@ -468,9 +468,8 @@ export function GlitchBoard() {
       {/* ONE LINE: the verb, the market filter, the board's numbers, then the quiet tools. */}
       <div className="flex items-center gap-1.5 flex-wrap mb-3">
         <button onClick={() => setShowNew(true)} className="text-[12.5px] font-semibold px-2.5 py-1 rounded-lg bg-ink text-white inline-flex items-center gap-1"><Plus size={13} /> New glitch</button>
-        <select value={market} onChange={e => setMarket(e.target.value)} title="Market" className="text-[12px] py-1 pl-2 pr-6 rounded-lg border border-line bg-white max-w-full">
-          {markets.map(m => <option key={m} value={m}>{m === 'all' ? 'All markets' : m}</option>)}
-        </select>
+        {/* One row of buttons, not a drop-down (2026-11-23 audit): the market picker every other board uses. */}
+        <LeanPick title="Market" value={market} onPick={setMarket} options={markets.map(m => ({ v: m, label: m === 'all' ? 'All' : m }))} />
         {/* PHONE (2026-11-09): the search takes the rest of its line and the date range may wrap
             inside its own box — the two date inputs used to run off the right edge at 375px. */}
         <span className="relative flex-1 min-w-[130px] sm:flex-none">

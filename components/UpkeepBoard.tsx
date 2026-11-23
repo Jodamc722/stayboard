@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Loader2, RefreshCw, Plus, ExternalLink, Search, LayoutGrid, List, CalendarDays, Pencil, Wrench, Sparkles, Fan, ClipboardCheck, Building2, Zap, ArrowRight } from 'lucide-react'
 import { useCachedFetch, invalidateCache } from '@/lib/swr'
-import { LeanHead, Pill, Tag, LeanEmpty, type Tone } from '@/components/lean'
+import { LeanHead, Pill, Tag, LeanEmpty, LeanPick, type Tone } from '@/components/lean'
 import type { Upkeep, UpkeepProgram, UpkeepRow, UpkeepState, UpkeepRows } from '@/app/api/upkeep/route'
 import { UpkeepCalendar } from '@/components/UpkeepCalendar'
 import { UpkeepPrograms } from '@/components/UpkeepPrograms'
@@ -188,10 +188,8 @@ export function UpkeepBoard() {
         {t.none ? <Pill tone="slate" title="Never recorded on this unit — a data gap more often than neglect">{t.none} no record</Pill> : null}
       </> : null}
       {data && data.markets.length > 1 ? (
-        <select value={market} onChange={e => pickMarket(e.target.value)} className="h-8 rounded-lg border border-line bg-white px-2 text-[12px] font-semibold text-ink" aria-label="Area">
-          <option value="all">All areas</option>
-          {data.markets.map(m => <option key={m} value={m}>{m}</option>)}
-        </select>
+        // One row of buttons, not a drop-down: the same area picker Blocked units and Week plan use.
+        <LeanPick title="Area" value={market} onPick={pickMarket} options={[{ v: 'all', label: 'All' }, ...data.markets.map(m => ({ v: m, label: m }))]} />
       ) : null}
       <button onClick={reload} title="Re-read the ledger" className="h-8 w-8 rounded-lg border border-line bg-white text-muted hover:text-ink grid place-items-center"><RefreshCw size={13} className={loading ? 'animate-spin' : ''} /></button>
       {/* THE PROGRAMS ARE BUILT IN SETTINGS (Jon, 2026-10-03: "build out proper specific activities that

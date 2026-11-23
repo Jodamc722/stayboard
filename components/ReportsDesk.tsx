@@ -548,7 +548,7 @@ export function ReportsDesk({ scope = 'owners' }: { scope?: 'owners' | 'sales' }
 
   return (
     <div className="space-y-4">
-      <LeanHead title={salesOnly ? 'Sales decks' : 'Owner Reports'}>
+      <LeanHead title={salesOnly ? 'Sales decks' : 'Owner reports'}>
         <Pill title={salesOnly ? 'Sales decks made so far' : 'Owner documents generated so far'}>{shownCount} {salesOnly ? 'deck' : 'report'}{shownCount === 1 ? '' : 's'}</Pill>
         {nSent > 0 && <Pill tone="brand" title="Marked as sent to the owner">{nSent} sent</Pill>}
         {nUnopened > 0 && <Pill tone="amber" title="Sent, but the owner link has not been opened yet">{nUnopened} not opened</Pill>}

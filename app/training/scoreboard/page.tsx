@@ -5,7 +5,7 @@ import { Shell } from '@/components/Shell'
 import { ScoreboardDesk } from '@/components/ScoreboardDesk'
 
 export const dynamic = 'force-dynamic'
-export const metadata = { title: 'Team scoreboard' }
+export const metadata = { title: 'Inspection scoreboard' }
 
 export default function ScoreboardPage() {
   return (

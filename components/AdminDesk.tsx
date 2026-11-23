@@ -126,7 +126,7 @@ export function AdminDesk({ canEdit }: { canEdit: boolean }) {
 
   return (
     <div className="max-w-[1400px]">
-      <LeanHead title="Admin desk" sub={desk.data ? `${counts.all - counts.offline} active listings · ${counts.offline} offline in Guesty · updated ${agoText(desk.data.at)}` : desk.error ? 'Could not load: ' + desk.error : 'Reading the portfolio…'}>
+      <LeanHead title="Listing desk" sub={desk.data ? `${counts.all - counts.offline} active listings · ${counts.offline} offline in Guesty · updated ${agoText(desk.data.at)}` : desk.error ? 'Could not load: ' + desk.error : 'Reading the portfolio…'}>
         {/* CLEAN-UP (Jon, 2026-11-20): the header carries the two counts with a clock on them, in the
             morning email's words. "Not connected", "never optimized" and "blocked" were here AND on the
             tiles below; they are standing work, so they stay on the tiles only. Nothing is printed

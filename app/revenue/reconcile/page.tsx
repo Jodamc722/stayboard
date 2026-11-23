@@ -17,7 +17,7 @@ export default async function RevenueReconcilePage() {
   const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()).slice(0, 7)
   return (
     <Shell>
-      <div className="p-4 sm:p-6 max-w-[1400px] mx-auto">
+      <div className="max-w-[1400px] mx-auto">
         <RevenueAppReconcile initialMonth={month} />
       </div>
     </Shell>

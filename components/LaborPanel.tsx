@@ -235,7 +235,7 @@ export function LaborPanel() {
       {/* ONE LINE: title, the Board|Dashboard switch (nav diet 2026-08-11 — one Labor nav entry, the
           dashboard is a tab here) and the window's headline numbers. Every pill's hover carries the
           detail the old "Payroll vs revenue" tile grid printed. */}
-      <LeanHead title="Labor">
+      <LeanHead title="Team">
         <span className="inline-flex rounded-lg border border-line overflow-hidden divide-x divide-line mr-1">
           <span className="text-[12px] font-semibold px-2.5 py-1 bg-ink text-white">Board</span>
           <Link href="/labor/dashboard" prefetch={false} className="text-[12px] font-semibold px-2.5 py-1 bg-white text-muted hover:bg-app">Dashboard</Link>

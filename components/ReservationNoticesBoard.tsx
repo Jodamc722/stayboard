@@ -556,7 +556,7 @@ export function ReservationNoticesBoard({ isOwner = false }: { isOwner?: boolean
   }).length, [today])
 
   const head = (
-    <LeanHead title={<span title="Buildings that won't let a guest in until their front desk has been told who is coming. Red means the guest is arriving and nothing has gone out. Recipients, wording and automation live under Settings.">Front-Desk Notices</span>}>
+    <LeanHead title={<span title="Buildings that won't let a guest in until their front desk has been told who is coming. Red means the guest is arriving and nothing has gone out. Recipients, wording and automation live under Settings.">Front-desk notices</span>}>
       {counts.late > 0 && <Pill tone="rose" title="Guest arriving today and no notice has gone out">{counts.late} arriving, unsent</Pill>}
       {counts.due > 0 && <Pill tone="amber" title="Past the building's cutoff — send now">{counts.due} past cutoff</Pill>}
       <Pill tone={counts.toSend ? 'brand' : 'emerald'} title="Notices still to send for today">{counts.toSend} to send today</Pill>

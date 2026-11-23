@@ -980,7 +980,7 @@ export function BillingBoard() {
           : new Date(String(data?.month || month) + '-01T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
         const margin = mp ? mp.billed - mp.cost : null
         return (
-          <LeanHead title="Billable Hours">
+          <LeanHead title="Billable hours">
             <Pill title={'Billed to owners — ' + filtered.length + ' tasks in view. Costs + supplies (owner-billable line items): ' + money(kpis.items)}>{money(kpis.billed)} billed</Pill>
             <Pill tone="brand" title={mp ? 'Billable maintenance — ' + mp.tasksWithBilling + ' of ' + mp.tasks + ' tasks carry a cost' : 'No maintenance data'}>{mp ? money(mp.billed) : '—'} billable</Pill>
             <Pill title={mp ? 'Payroll (Homebase) — ' + mp.hours + 'h clocked · ' + mp.people + (mp.people === 1 ? ' person' : ' people') : 'Homebase unavailable'}>{mp ? money(mp.cost) : '—'} payroll</Pill>

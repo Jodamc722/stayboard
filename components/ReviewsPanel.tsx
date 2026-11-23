@@ -618,18 +618,18 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
         )}
         {/* Jon, 2026-11-18: "need to be able to sort by score" — on the answered list too (2026-11-20). */}
         {view === 'replied' && !s.loading && replied.length > 0 && (
-          <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] font-semibold" title="Order of the list">
+          <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] font-semibold max-w-full overflow-x-auto" title="Order of the list">
             {([['new', 'Newest'], ['low', 'Lowest score'], ['high', 'Highest score']] as const).map(([k, label]) => {
               const on = k === 'new' ? (sortBy !== 'low' && sortBy !== 'high') : sortBy === k
               // "Newest" here is the reply queue's default order too, so it never re-sorts that queue.
-              return <button key={k} onClick={() => setSortBy(k === 'new' ? 'wait' : k)} className={'px-2 py-1 ' + (on ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{label}</button>
+              return <button key={k} onClick={() => setSortBy(k === 'new' ? 'wait' : k)} className={'shrink-0 whitespace-nowrap px-2 py-1 ' + (on ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{label}</button>
             })}
           </div>
         )}
         {view === 'needs' && !s.loading && needs.length > 0 && (<>
-          <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] font-semibold" title="Order of the list">
+          <div className="inline-flex rounded-lg border border-line overflow-hidden text-[12px] font-semibold max-w-full overflow-x-auto" title="Order of the list">
             {([['wait', 'Longest waiting'], ['low', 'Lowest score'], ['high', 'Highest score'], ['new', 'Newest']] as const).map(([k, label]) => (
-              <button key={k} onClick={() => setSortBy(k)} className={'px-2 py-1 ' + (sortBy === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{label}</button>
+              <button key={k} onClick={() => setSortBy(k)} className={'shrink-0 whitespace-nowrap px-2 py-1 ' + (sortBy === k ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')}>{label}</button>
             ))}
           </div>
           <button onClick={draftAllAI} disabled={allAi || draftedCount === needs.length} title="Write an AI draft for every review in the queue that does not have one yet"
@@ -834,7 +834,10 @@ export function ReviewsPanel({ filter, focusUnit, focusNonce, mode, onCounts, on
                     {flags.length > 0 && (
                       <div className="flex items-center gap-1 flex-wrap">
                         <ShieldAlert size={12} className="text-amber-600 shrink-0" />
-                        {flags.map(f => <Tag key={f.key} tone={f.block ? 'rose' : 'amber'} title={f.block ? 'Read this before it goes public — the A key will not post it' : 'Worth a second look before it goes public'}>{f.label}</Tag>)}
+                        {/* A plain wrapping chip, not <Tag>: a flag can be a sentence ("template wording: …"), and a
+                            one-line chip that long pushed the whole page sideways on a phone (2026-11-23 audit). */}
+                        {flags.map(f => <span key={f.key} title={f.block ? 'Read this before it goes public — the A key will not post it' : 'Worth a second look before it goes public'}
+                          className={'min-w-0 text-[10.5px] font-semibold leading-snug px-1.5 py-[3px] rounded-md ' + (f.block ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800')}>{f.label}</span>)}
                       </div>
                     )}
                     {focused && (

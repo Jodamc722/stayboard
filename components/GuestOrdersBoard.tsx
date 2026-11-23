@@ -127,7 +127,7 @@ export function GuestOrdersBoard({ canEdit, canMoney }: { canEdit: boolean; canM
   }, [data, lane])
 
   const head = (pills?: ReactNode) => (
-    <LeanHead title={<span title="Pre-arrival extras guests pick from their reservation link. Approve, it is charged on the card in Guesty, then pushed to Breezeway and the crew on the delivery day.">Guest Orders</span>}>{pills}</LeanHead>
+    <LeanHead title={<span title="Pre-arrival extras guests pick from their reservation link. Approve, it is charged on the card in Guesty, then pushed to Breezeway and the crew on the delivery day.">Guest orders</span>}>{pills}</LeanHead>
   )
   if (err) return <>{head()}<div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{err}</div></>
   if (!data) return <>{head()}<LeanEmpty><Loader2 size={14} className="animate-spin inline mr-1.5" />Loading orders…</LeanEmpty></>

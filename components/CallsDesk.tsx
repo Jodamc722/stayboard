@@ -673,10 +673,12 @@ export function CallsDesk({ rows: initial, outRows: initialOut, kpis: k0, today,
       </header>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="inline-flex rounded-xl border border-line overflow-hidden text-[12.5px]">
+        {/* The strip scrolls on a phone; it used to clip, so Scoreboard and ID & deposits could not be
+            reached and the labels broke over four lines (2026-11-23 audit). */}
+        <div className="lh-tabs-strip inline-flex rounded-xl border border-line overflow-hidden text-[12.5px] max-w-full overflow-x-auto">
           {TABS.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)}
-              className={`px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ${tab === t.key ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
+              className={`lh-tab shrink-0 whitespace-nowrap px-2.5 sm:px-3 py-1.5 font-semibold border-l border-line first:border-l-0 ${tab === t.key ? 'bg-brand-600 text-white' : 'bg-white text-muted hover:text-ink'}`}>
               {t.label}{t.n ? <span className="ml-1 opacity-70 tabular-nums">{t.n}</span> : null}
             </button>
           ))}

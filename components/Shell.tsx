@@ -44,7 +44,7 @@ import {
 // (Cmd/Ctrl-K), at its URL and behind the same permission, and draws nothing in the sidebar.
 // ------------------------------------------------------------------------------------------------
 
-type NavItem = { to: string; label: string; Icon: any }
+type NavItem = { to: string; label: string; hint?: string; Icon: any }
 type NavSection = { title: string; items: NavItem[] }
 
 // One icon per desk (lib/desks.ts stays free of JSX). Settings (key `admin`) is the gear.
@@ -376,7 +376,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
   const gardenPinned: NavItem[] = (pins || []).map(p => gardenNav.find(g => g.to === p)).filter(Boolean).map((g: any) => ({ to: g.to, label: g.label, Icon: g.Icon }))
   // The Jump box reads the same map the sidebar does, and all of it: every page the person can open,
   // including the ones that are off the sidebar (`jump`).
-  const deskSections: NavSection[] = desks.map(x => ({ title: x.desk.label, items: x.views.map(v => ({ to: v.to, label: v.label, Icon: DESK_ICONS[x.desk.key] || Gauge })) }))
+  const deskSections: NavSection[] = desks.map(x => ({ title: x.desk.label, items: x.views.map(v => ({ to: v.to, label: v.label, hint: v.hint, Icon: DESK_ICONS[x.desk.key] || Gauge })) }))
 
   const jumpBox = (onNavigate?: () => void) => (
     <button type="button" onClick={() => { setPaletteOpen(true); if (onNavigate) onNavigate() }} title="Jump to any page (Cmd/Ctrl-K)"
@@ -410,7 +410,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
     return (
       <div key={x.desk.key} className="mb-1.5">
         <div title={x.desk.blurb}
-          className={'flex items-center gap-2 px-2.5 pt-2 pb-1 text-[10.5px] uppercase tracking-[0.12em] font-bold ' + (here ? 'text-brand-700' : 'text-muted/70')}>
+          className={'flex items-center gap-2 px-2.5 pt-2 pb-1 text-[10.5px] uppercase tracking-[0.12em] font-bold ' + (here ? 'text-brand-700' : 'text-muted')}>
           <Icon size={13} className={here ? 'text-brand-600' : ''} />
           <span className="truncate">{x.desk.label}</span>
         </div>
@@ -543,8 +543,8 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
               <div className="text-xs text-ink truncate font-medium">{displayName || email?.split('@')[0]}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 {wsLabel && <span className="text-[10px] font-semibold px-1.5 py-px rounded bg-brand-50 text-brand-700">{wsLabel}</span>}
-                <a href="/account" title="My account: your Google connection and booking links" className="text-[11px] text-muted hover:text-ink whitespace-nowrap">Account</a>
-                <button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1 whitespace-nowrap">
+                <a href="/account" title="My account: your Google connection and booking links" className="text-[11px] text-muted hover:text-ink whitespace-nowrap py-1.5 -my-1.5">Account</a>
+                <button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1 whitespace-nowrap py-1.5 -my-1.5">
                   <LogOut size={10} /> Sign out
                 </button>
               </div>
@@ -561,8 +561,10 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
             className="w-10 h-10 rounded-lg border border-line grid place-items-center text-muted hover:text-ink active:bg-app">
             <Menu size={18} />
           </button>
-          <LighthouseMark size={22} />
-          <span className="font-semibold text-[15px] text-ink truncate">{currentLabel}</span>
+          {/* The page name comes first on a narrow phone (2026-11-23 audit: "Maintenan…", "Open & Clo…" with
+              the page's own heading hidden as a duplicate). The mark shows from 430px, where both fit. */}
+          <span className="hidden min-[430px]:block shrink-0"><LighthouseMark size={22} /></span>
+          <span className="font-semibold text-[15px] text-ink truncate min-w-0">{currentLabel}</span>
           {/* Room for the Brief + alerts pair (HandoffFloater), which sits in this bar on a phone. */}
           {business !== 'garden' && <span aria-hidden className="ml-auto w-[92px] shrink-0" />}
           {canSee('/plan') && (
@@ -587,9 +589,10 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
         {/* until a person has connected their Google account (email and calendar): one line, on every page */}
         {!full && <ConnectNudge />}
         <main className="flex-1 overflow-auto overscroll-contain px-safe">
-          {/* pb-24 on a phone: Eve's bubble floats above the bottom bar, and without room to scroll
-              past it the last row of every board sits permanently under a 56px circle. */}
-          <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-10 sm:p-6 lg:px-8 lg:pt-6 lg:pb-8 animate-fade-in'}>
+          {/* lg:pb-20: the Inbox and Eve buttons float bottom-right on a desktop, and without room to
+              scroll past them the last row's buttons sat under them (2026-11-23 audit). On a phone the
+              two live in the bottom bar, so the page only needs its ordinary foot. */}
+          <div className={full ? 'h-full min-h-full' : 'max-w-[1600px] mx-auto px-3 pt-4 pb-10 sm:p-6 lg:px-8 lg:pt-6 lg:pb-20 animate-fade-in'}>
             {children}
           </div>
         </main>
@@ -654,7 +657,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-ink truncate font-medium">{displayName || email?.split('@')[0]}</div>
-                <div className="flex items-center gap-2 mt-0.5"><a href="/account" title="My account: your Google connection and booking links" className="text-[11px] text-muted hover:text-ink whitespace-nowrap">Account</a><button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1 whitespace-nowrap">
+                <div className="flex items-center gap-2 mt-0.5"><a href="/account" title="My account: your Google connection and booking links" className="text-[11px] text-muted hover:text-ink whitespace-nowrap py-1.5 -my-1.5">Account</a><button onClick={signOut} className="text-[11px] text-muted hover:text-ink flex items-center gap-1 whitespace-nowrap py-1.5 -my-1.5">
                   <LogOut size={10} /> Sign out
                 </button></div>
               </div>
@@ -671,7 +674,7 @@ export function Shell({ children, full = false }: { children: React.ReactNode; f
 
 // Cmd/Ctrl-K jump box. Type three letters, hit Enter. This is what makes a folded group free: you
 // never have to remember which drawer a tab lives in.
-function JumpPalette({ sections, onClose }: { sections: { title: string; items: { to: string; label: string; Icon: any }[] }[]; onClose: () => void }) {
+function JumpPalette({ sections, onClose }: { sections: { title: string; items: { to: string; label: string; hint?: string; Icon: any }[] }[]; onClose: () => void }) {
   const router = useRouter()
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
@@ -680,15 +683,19 @@ function JumpPalette({ sections, onClose }: { sections: { title: string; items: 
   useEffect(() => { const t = setTimeout(() => { if (inputRef.current) inputRef.current.focus() }, 20); return () => clearTimeout(t) }, [])
   useEffect(() => { setSel(0) }, [q])
 
-  const all: { to: string; label: string; Icon: any; group: string }[] = []
+  const all: { to: string; label: string; hint: string; Icon: any; group: string }[] = []
   for (let i = 0; i < sections.length; i++) {
     const items = sections[i].items
-    for (let j = 0; j < items.length; j++) all.push({ to: items[j].to, label: items[j].label, Icon: items[j].Icon, group: sections[i].title })
+    for (let j = 0; j < items.length; j++) all.push({ to: items[j].to, label: items[j].label, hint: items[j].hint || '', Icon: items[j].Icon, group: sections[i].title })
   }
+  // FIND A PAGE BY WHAT IT DOES (2026-11-23 audit). Two dozen pages are off the sidebar and only reachable
+  // here, and the box matched the page's name alone: "payroll" found nothing, though Team is the payroll
+  // page. A name or heading match still comes first; then pages whose one-line description has the words.
   const needle = q.trim().toLowerCase()
-  const hits = needle
-    ? all.filter(x => x.label.toLowerCase().indexOf(needle) >= 0 || x.group.toLowerCase().indexOf(needle) >= 0)
-    : all
+  const byName = needle ? all.filter(x => x.label.toLowerCase().indexOf(needle) >= 0 || x.group.toLowerCase().indexOf(needle) >= 0) : all
+  const hits = needle && needle.length >= 3
+    ? byName.concat(all.filter(x => byName.indexOf(x) < 0 && x.hint.toLowerCase().indexOf(needle) >= 0))
+    : byName
 
   const go = (to: string) => { onClose(); router.push(to) }
 
@@ -705,16 +712,18 @@ function JumpPalette({ sections, onClose }: { sections: { title: string; items: 
         <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
           placeholder="Jump to a tab…" aria-label="Jump to a tab"
           className="w-full px-4 py-3.5 text-[15px] outline-none border-b border-line text-ink placeholder:text-muted" />
-        <div className="max-h-80 overflow-y-auto p-1.5">
+        <div className="max-h-[min(62vh,560px)] overflow-y-auto p-1.5">
           {hits.length === 0 && <div className="px-3 py-6 text-sm text-muted text-center">No tab matches that.</div>}
           {hits.map((h, i) => {
             const HitIcon = h.Icon
             return (
               <button key={h.to} type="button" onMouseEnter={() => setSel(i)} onClick={() => go(h.to)}
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-left ${i === sel ? 'bg-brand-50 text-brand-700' : 'text-ink hover:bg-app'}`}>
-                <HitIcon size={15} />
-                <span>{h.label}</span>
-                <span className="ml-auto text-[11px] text-muted">{h.group}</span>
+                <HitIcon size={15} className="shrink-0" />
+                <span className="shrink-0">{h.label}</span>
+                {/* What the page is for, once the person is typing: it is how a page is told from its neighbour. */}
+                {needle && h.hint ? <span className="hidden sm:block min-w-0 truncate text-[12px] text-muted">{h.hint}</span> : null}
+                <span className="ml-auto shrink-0 text-[11px] text-muted">{h.group}</span>
               </button>
             )
           })}

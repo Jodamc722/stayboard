@@ -1033,8 +1033,8 @@ export function BillingReview() {
     return () => window.removeEventListener('keydown', onKey)
   }, [view, properties.length, walk, mayApprove, cleanIn, setState, toState])
 
-  if (!data && loading) return <><LeanHead title="Billable Hours" /><LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading {range ? short(range.from) + ' – ' + short(range.to) : monthLabel(month)}…</LeanEmpty></>
-  if (!data) return <><LeanHead title="Billable Hours" /><div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err || 'Nothing loaded.'}</div></>
+  if (!data && loading) return <><LeanHead title="Billable hours" /><LeanEmpty><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Loading {range ? short(range.from) + ' – ' + short(range.to) : monthLabel(month)}…</LeanEmpty></>
+  if (!data) return <><LeanHead title="Billable hours" /><div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{err || 'Nothing loaded.'}</div></>
   const isGm = !!data.me?.isGm
   const st: Stage = stage || (isGm ? 'gm' : 'ops')
   const approveAllLabel = st === 'gm' ? 'Final approve all shown' : 'Approve all shown'
@@ -1054,7 +1054,7 @@ export function BillingReview() {
     <div className="space-y-3">
       {/* ── one line: the four numbers the desk is judged on (whole month, never the filtered view).
             CLEAN-UP (Jon, 2026-11-20): "$X final" read as finalised; it is the money still waiting on final review. */}
-      <LeanHead title="Billable Hours">
+      <LeanHead title="Billable hours">
         <Pill title={'Open — ops to review · ' + kpi.open.n + ' task' + (kpi.open.n === 1 ? '' : 's')}>{money(kpi.open.$)} open</Pill>
         <Pill tone="brand" title={'Ops approved — waiting on final (GM) review · ' + kpi.gm.n + ' task' + (kpi.gm.n === 1 ? '' : 's')}>{money(kpi.gm.$)} in final review</Pill>
         <Pill tone="emerald" title={'Final approved — statement-ready · ' + kpi.done.n + ' task' + (kpi.done.n === 1 ? '' : 's')}>{money(kpi.done.$)} approved</Pill>

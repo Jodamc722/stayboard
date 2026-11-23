@@ -114,8 +114,8 @@ export function FfeCatalogList() {
         </div>
       )}
 
-      <div className="rounded-xl border border-line bg-white shadow-soft overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="rounded-xl border border-line bg-white shadow-soft overflow-x-auto">
+        <table className="w-full text-sm min-w-[560px]">
           <thead><tr className="text-[11px] uppercase tracking-wider text-muted border-b border-line">
             <th className="text-left px-4 py-2">Catalog</th><th className="text-left px-3 py-2">Based on</th><th className="text-right px-3 py-2">Items</th><th className="text-right px-3 py-2">Approved</th><th className="text-left px-3 py-2">Suppliers</th><th className="px-3 py-2" />
           </tr></thead>

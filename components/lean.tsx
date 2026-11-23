@@ -174,8 +174,16 @@ export function LeanRow({ lead, name, meta, tags, actions, children, tint, open:
             {tags}
           </div>
         </div>
-        {actions ? <div className="flex items-center gap-1 shrink-0 ml-auto">{actions}</div> : null}
-        {can && <button onClick={toggle} title={open ? 'Close' : 'Open'} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>}
+        {/* The actions and the chevron travel together. On a phone a long set of actions wraps inside its
+            own block instead of running off the right edge (the Sales rows dragged the page sideways and
+            hid Open and Delete), and the chevron stays at the end of that block instead of dropping to a
+            line of its own (2026-11-23 audit). From 640px up it is the same single line as before. */}
+        {(actions || can) ? (
+          <div className="flex items-center gap-1 sm:gap-2.5 ml-auto max-w-full min-w-0 sm:shrink-0">
+            {actions ? <div className="flex items-center gap-1 flex-wrap justify-end min-w-0 sm:flex-nowrap sm:shrink-0">{actions}</div> : null}
+            {can && <button onClick={toggle} title={open ? 'Close' : 'Open'} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>}
+          </div>
+        ) : null}
       </div>
       {can && open && <div className="px-3 sm:px-4 pb-3 space-y-2">{children}</div>}
     </li>

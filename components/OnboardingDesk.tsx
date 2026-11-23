@@ -40,7 +40,7 @@ export function OnboardingDesk() {
     <div>
       {/* One link per new unit: details → rooms → inventory and photos. Works before the unit is in
           Guesty; assign it to the listing when it goes live. */}
-      <LeanHead title="Onboarding">
+      <LeanHead title="Unit setup">
         {/* CLEAN-UP (Jon, 2026-11-20): colour on the one count that is ours to act on. A finished walk is
             waiting for us to assign it to its listing; a walk in progress is waiting on the walker. */}
         {stats.complete > 0 && <Pill tone="amber" title="Walk finished — assign it to its live Guesty listing">{stats.complete} to assign</Pill>}
