@@ -228,6 +228,8 @@ export type OORecord = {
   /** The email that asks the owner to book the onboarding call: sent on its own once the photos and the listing are
    *  done (lib/owner-onboard-callinvite), or by hand from the desk. */
   callInvite?: { at: string; to: string[]; by: string; error?: string } | null
+  /** The pricing email to Pacer, sent when the Live step is marked done (lib/owner-onboard-pricing). */
+  pricingBrief?: { at: string; to: string[]; by: string; error?: string } | null
   archived?: boolean
 }
 // WHERE THE OWNER STANDS, AT A GLANCE (Jon, 2026-11-16: "see if the onboarding email was sent or if the onboarding form
@@ -304,8 +306,8 @@ export function payoutHints(p?: OOPayout | null) {
 }
 /** The owner's view: no team notes, no internal fields, nothing encrypted. */
 export function ownerView(r: OORecord) {
-  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, deal, callInvite, ...rest } = r
-  void deal; void callInvite; void owners; void walk; void decisions; void remind
+  const { teamNotes, createdBy, payout, agreement, handoff, auth, linen, order, faq, payoutLog, owners, walk, decisions, remind, shop, deal, callInvite, pricingBrief, ...rest } = r
+  void deal; void callInvite; void pricingBrief; void owners; void walk; void decisions; void remind
   void payoutLog; void faq; void teamNotes; void createdBy; void agreement; void handoff; void linen
   // the owner sees the order list only once the team has sent it
   return { ...rest, order: order && order.status !== 'draft' ? { ...order, basis: undefined, got: order.review?.self ? Object.keys(shop?.got || {}) : undefined } : null, hasPassword: !!auth?.pass, payout: payoutHints(payout), custom: { ...r.custom, ownerEmail: '', ownerPhone: '' } }
