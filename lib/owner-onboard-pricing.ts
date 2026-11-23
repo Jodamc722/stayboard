@@ -3,8 +3,9 @@
 //
 // The moment the Live step is marked done, Kyle at Pacer (our pricing account managers) gets one email with what he
 // needs to price the unit: the listing and its links (Guesty and each booking site we have a link for), the home
-// (bedrooms, baths, beds, sleeps, size), and the fees and rules set in Guesty (base and weekend base, cleaning fee,
-// extra guest fee, pet fee, deposit, min and max nights). It goes once, on the change itself; the desk can send it
+// (bedrooms, baths, beds, sleeps, size), and the fees and rules set in Guesty (cleaning fee,
+// extra guest fee, pet fee, deposit, min and max nights). No base price: in Guesty it is only a placeholder
+// (Jon, 2026-11-23: "Base rate is irrelevant because that's a holder"); the nightly rate is Pacer's to set. It goes once, on the change itself; the desk can send it
 // again by hand. Nothing about the owner (name, money, payout) is in it.
 import 'server-only'
 import type { OORecord } from './owner-onboard'
@@ -47,7 +48,6 @@ export async function sendPricingBrief(r: OORecord, by: string): Promise<{ ok: b
     ['Home', [bedrooms === 0 ? 'Studio' : bedrooms != null ? bedrooms + ' bedroom' + (bedrooms === 1 ? '' : 's') : '', (l?.bathrooms ?? h?.bathrooms) != null ? (l?.bathrooms ?? h?.bathrooms) + ' bath' : '', (l?.accommodates ?? h?.guests) ? 'sleeps ' + (l?.accommodates ?? h?.guests) : '', (l?.areaSquareFeet || h?.sqft) ? (l?.areaSquareFeet || h?.sqft) + ' sq ft' : ''].filter(Boolean).join(' · ')],
     ['Beds', beds || (l?.beds ? l.beds + ' beds' : '')],
     ['Parking', h?.parking || ''], ['Washer and dryer', h ? (h.washer ? 'In unit' : 'No') : ''],
-    ['Base price', money(p.basePrice, cur)], ['Weekend base price', money(p.weekendBasePrice, cur)],
     ['Cleaning fee', money(p.cleaningFee, cur)],
     ['Extra guest fee', p.extraPersonFee ? money(p.extraPersonFee, cur) + (p.guestsIncludedInRegularFee ? ' per guest over ' + p.guestsIncludedInRegularFee : '') : ''],
     ['Pet fee', money(p.petFee, cur)], ['Security deposit', money(p.securityDepositFee, cur)],
