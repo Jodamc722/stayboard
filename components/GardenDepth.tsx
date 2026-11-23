@@ -44,9 +44,9 @@ const CORE: Col[] = [
   { h: 'ADR', v: r => r.adr, f: money }, { h: 'RevPAR', v: r => r.revpar, f: money },
 ]
 
-export function GardenDepth({ from, to, scope, onScope }: { from: string; to: string; scope: Scope; onScope: (s: Scope) => void }) {
+export function GardenDepth({ from, to, scope, onScope, api = '/api/garden/revenue', fq = '', shared = false }: { from: string; to: string; scope: Scope; onScope: (s: Scope) => void; api?: string; fq?: string; shared?: boolean }) {
   const [d, setD] = useState<any | null>(null)
-  useEffect(() => { setD(null); fetch(`/api/garden/revenue?depth=1&from=${from}&to=${to}&scope=${scope}`, { cache: 'no-store' }).then(r => r.json()).then(setD).catch(e => setD({ ok: false, error: String(e) })) }, [from, to, scope])
+  useEffect(() => { setD(null); fetch(`${api}?depth=1&from=${from}&to=${to}&scope=${scope}${fq}`, { cache: 'no-store' }).then(r => r.json()).then(setD).catch(e => setD({ ok: false, error: String(e) })) }, [from, to, scope, api, fq])
   if (!d) return <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Building the report…</p>
   if (!d.ok) return <LeanEmpty>{d.error}</LeanEmpty>
   const cur = d.split.find((x: any) => x.scope === scope) || d.split[0]
@@ -64,7 +64,7 @@ export function GardenDepth({ from, to, scope, onScope }: { from: string; to: st
     add('By length of stay', ['Length', 'Stays', 'Room nights', 'Revenue', 'ADR'], d.byLos.map((r: any) => [r.label, r.stays, r.nights, r.revenue, r.adr ?? '']))
     add('By how far ahead it was booked', ['Booked', 'Stays', 'Room nights', 'Revenue', 'ADR'], d.byLead.map((r: any) => [r.label, r.stays, r.nights, r.revenue, r.adr ?? '']))
     add('By room', ['Room', 'Type', 'Side', 'Blocked in Cloudbeds', ...H, 'Stays'], d.byRoom.map((r: any) => [r.room, r.type, r.segment, r.blocked ? 'yes' : '', ...core(r), r.stays]))
-    add('Balances owed', ['Guest', 'Room', 'Check-in', 'Check-out', 'Channel', 'Total', 'Balance'], d.owed.map((r: any) => [r.guest, r.rooms.join(' '), r.checkIn, r.checkOut, r.channel, r.total, r.balance]))
+    add('Balances owed', [shared ? 'Reservation' : 'Guest', 'Room', 'Check-in', 'Check-out', 'Channel', 'Total', 'Balance'], d.owed.map((r: any) => [shared ? r.id : r.guest, r.rooms.join(' '), r.checkIn, r.checkOut, r.channel, r.total, r.balance]))
     const csv = out.map(r => r.map(c => '"' + String(c ?? '').replace(/"/g, '""') + '"').join(',')).join('\n')
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = `garden-report-${scope}-${d.from}-to-${d.to}.csv`; a.click(); URL.revokeObjectURL(a.href)
   }
@@ -121,7 +121,7 @@ export function GardenDepth({ from, to, scope, onScope }: { from: string; to: st
         </div>
         <Table title="Every room" note="best earners first; a room with nothing sold is at the bottom" max={15} cols={[{ h: 'Room', v: r => r.room, left: true }, { h: 'Type', v: r => r.type, left: true }, { h: 'Side', v: r => r.segment === 'botanica' ? 'Botanica' : 'Garden', left: true }, { h: 'Revenue', v: r => r.revenue, f: money, bar: true }, { h: 'Nights', v: r => r.nights, f: int }, { h: 'Occupancy', v: r => r.occupancy, f: pct }, { h: 'ADR', v: r => r.adr, f: money }, { h: 'Stays', v: r => r.stays, f: int }, { h: '', v: r => r.blocked ? 'blocked in Cloudbeds' : '', left: true }]} rows={d.byRoom} />
         {d.unassigned?.nights ? <p className="text-[12px] text-muted -mt-3 mb-5 px-1">{int(d.unassigned.nights)} room nights ({money(d.unassigned.revenue)}) are on bookings with no room assigned yet, so they are in the totals but not on a room.</p> : null}
-        {d.owed.length ? <Table title="Balances owed" note="largest first" max={12} cols={[{ h: 'Guest', v: r => r.guest, left: true }, { h: 'Room', v: r => r.rooms.join(', ') || '—', left: true }, { h: 'Stay', v: r => `${r.checkIn} → ${r.checkOut}`, left: true }, { h: 'Channel', v: r => r.channel, left: true }, { h: 'Total', v: r => r.total, f: money }, { h: 'Balance', v: r => r.balance, f: money, bar: true }]} rows={d.owed} /> : null}
+        {d.owed.length ? <Table title="Balances owed" note="largest first" max={12} cols={[{ h: shared ? 'Reservation' : 'Guest', v: r => shared ? String(r.id).replace(/^gy:/, '').slice(0, 14) : r.guest, left: true }, { h: 'Room', v: r => r.rooms.join(', ') || '—', left: true }, { h: 'Stay', v: r => `${r.checkIn} → ${r.checkOut}`, left: true }, { h: 'Channel', v: r => r.channel, left: true }, { h: 'Total', v: r => r.total, f: money }, { h: 'Balance', v: r => r.balance, f: money, bar: true }]} rows={d.owed} /> : null}
       </>)}
     </div>
   )

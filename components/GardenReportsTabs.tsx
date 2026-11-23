@@ -18,7 +18,7 @@ export function GardenReportsTabs({ canEdit, owner }: { canEdit: boolean; owner:
           ))}
         </div>
       </div>
-      {tab === 'revenue' ? <GardenRevenue /> : <GardenDesk view="reports" canEdit={canEdit} owner={owner} />}
+      {tab === 'revenue' ? <GardenRevenue canShare={owner} /> : <GardenDesk view="reports" canEdit={canEdit} owner={owner} />}
     </>
   )
 }
