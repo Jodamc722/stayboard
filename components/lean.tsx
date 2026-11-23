@@ -180,7 +180,7 @@ export function LeanRow({ lead, name, meta, tags, actions, children, tint, open:
             line of its own (2026-11-23 audit). From 640px up it is the same single line as before. */}
         {(actions || can) ? (
           <div className="flex items-center gap-1 sm:gap-2.5 ml-auto max-w-full min-w-0 sm:shrink-0">
-            {actions ? <div className="flex items-center gap-1 flex-wrap justify-end min-w-0 sm:flex-nowrap sm:shrink-0">{actions}</div> : null}
+            {actions ? <div className="lh-row-actions flex items-center gap-1 flex-wrap justify-end min-w-0 sm:flex-nowrap sm:shrink-0">{actions}</div> : null}
             {can && <button onClick={toggle} title={open ? 'Close' : 'Open'} className="shrink-0 text-muted hover:text-ink p-1"><ChevronDown size={15} className={open ? 'rotate-180 transition' : 'transition'} /></button>}
           </div>
         ) : null}

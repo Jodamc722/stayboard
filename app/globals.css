@@ -433,6 +433,12 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   }
   .lh-tabs-strip::-webkit-scrollbar { display: none; }
   .lh-tab { flex: 0 0 auto; }
+
+  /* A LEAN ROW'S ACTIONS WRAP, EVEN WHEN A PAGE HANDS THEM OVER AS ONE GROUP (2026-11-23 audit). LeanRow
+     wraps its actions on a phone, but a page that passes a single span or div around its buttons (the
+     task strip on Maintenance) gave it one unbreakable item: right-aligned, it ran off the LEFT edge
+     and cut "Reassign" in half. The group itself wraps here. */
+  .lh-row-actions > span, .lh-row-actions > div { flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }
 }
 
 /* ------------------------------------------------------------------------------------------------
