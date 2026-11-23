@@ -1,4 +1,4 @@
-// GARDEN REVENUE & DISTRIBUTION (lib/garden/revenue). GET ?from=&to=&ahead=
+// GARDEN REVENUE & DISTRIBUTION (lib/garden/revenue). GET ?from=&to=&ahead=&scope=all|garden|botanica  (&depth=1 → the in-depth report)
 //   POST { from, to }  → read that stretch (16 days at most) from Cloudbeds into the mirror, for a period
 //                        before the hotel was connected (lib/garden/sync backfillReservations).
 import { NextRequest, NextResponse } from 'next/server'
@@ -13,8 +13,12 @@ export async function GET(req: NextRequest) {
   const gate = await requireGarden('reports', 'view')
   if (!gate.ok) return gate.res
   const sp = req.nextUrl.searchParams
+  const sc = sp.get('scope'), scope = sc === 'garden' || sc === 'botanica' ? sc : 'all'
+  const from = D.test(sp.get('from') || '') ? sp.get('from')! : undefined, to = D.test(sp.get('to') || '') ? sp.get('to')! : undefined
   try {
-    return NextResponse.json({ ok: true, ...(await gardenRevenue({ from: D.test(sp.get('from') || '') ? sp.get('from')! : undefined, to: D.test(sp.get('to') || '') ? sp.get('to')! : undefined, ahead: Number(sp.get('ahead')) || undefined })) })
+    // ?depth=1 → the in-depth report for the period and scope (lib/garden/report-depth).
+    if (sp.get('depth') && from && to) { const { gardenDepth } = await import('@/lib/garden/report-depth'); return NextResponse.json({ ok: true, ...(await gardenDepth(from, to >= from ? to : from, scope)) }) }
+    return NextResponse.json({ ok: true, ...(await gardenRevenue({ from, to, ahead: Number(sp.get('ahead')) || undefined, scope })) })
   } catch (e: any) { return NextResponse.json({ ok: false, error: String(e?.message || e) }) }
 }
 
