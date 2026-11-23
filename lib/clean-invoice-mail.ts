@@ -32,6 +32,17 @@ export async function mailState(): Promise<MailState> { return cleanState(await 
 async function save(s: MailState, by: string) { await setSetting(STATE, { ...s, handled: s.handled.slice(0, 300) }, by) }
 export async function setMailOn(on: boolean, by: string): Promise<MailState> { const s = await mailState(); s.on = on; await save(s, by); return s }
 
+/** Can Lighthouse read the mailbox at all? Asked when the page opens, so the switch is not turned on blind. */
+export async function mailReady(): Promise<{ ready: boolean; why?: string }> {
+  try {
+    const { token, error } = await accessTokenFor(INVOICE_MAILBOX)
+    if (!token) return { ready: false, why: `${INVOICE_MAILBOX} is not connected to Google${error ? ' (' + error + ')' : ''}.` }
+    const r = await fetch(`${GMAIL}/messages?maxResults=1&q=${encodeURIComponent(QUERY)}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+    if (r.status === 403) return { ready: false, why: `Lighthouse is not allowed to read ${INVOICE_MAILBOX} yet.` }
+    return r.ok ? { ready: true } : { ready: false, why: `Gmail answered ${r.status}.` }
+  } catch (e: any) { return { ready: false, why: String(e?.message || e).slice(0, 160) } }
+}
+
 const hdr = (m: any, name: string): string => String((m?.payload?.headers || []).find((h: any) => String(h.name).toLowerCase() === name.toLowerCase())?.value || '')
 function headersOf(m: any): MailHeaders {
   return { from: hdr(m, 'From'), to: hdr(m, 'To'), cc: hdr(m, 'Cc'), deliveredTo: hdr(m, 'Delivered-To'), subject: hdr(m, 'Subject'), autoSubmitted: hdr(m, 'Auto-Submitted'), precedence: hdr(m, 'Precedence'), messageId: hdr(m, 'Message-ID') || hdr(m, 'Message-Id'), references: hdr(m, 'References'), inReplyTo: hdr(m, 'In-Reply-To') }

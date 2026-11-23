@@ -136,6 +136,14 @@ function InvoiceMail({ onNew }: { onNew: () => void }) {
           </>
         ) : <Tag tone={m.on ? 'emerald' : 'slate'}>{m.on ? 'on' : 'off'}</Tag>}
       </div>
+      {/* The one thing that has to be true first: Lighthouse may read the mailbox. Only the mailbox's owner can allow it. */}
+      {m.ready === false ? (
+        <div className="mx-4 mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 flex items-center gap-2 flex-wrap">
+          <AlertTriangle size={14} className="shrink-0" />
+          <span className="flex-1 min-w-[200px]">{m.notReady || 'Lighthouse cannot read the mailbox yet.'} Nothing is read until it is allowed. Sign in to Lighthouse as {m.mailbox}, then:</span>
+          <a href={'/api/google/auth?scopes=read&mailbox=' + encodeURIComponent(m.mailbox)} target="_blank" rel="noreferrer" className="h-8 px-2.5 rounded-lg bg-ink text-white text-[12px] font-semibold inline-flex items-center">Allow reading</a>
+        </div>
+      ) : null}
       {(msg || m.lastError || m.lastRun) ? (
         <div className="px-4 pb-2 -mt-1 text-[12px]">
           {msg ? <span className="text-ink">{msg} </span> : null}

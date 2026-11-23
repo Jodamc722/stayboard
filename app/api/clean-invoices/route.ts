@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { listInvoices, getInvoice, saveInvoice, submitInvoice, recheckInvoice, removeInvoice, fileUrl } from '@/lib/clean-invoices'
-import { mailState, setMailOn, scanInvoiceMail, INVOICE_ADDRESS, INVOICE_MAILBOX } from '@/lib/clean-invoice-mail'
+import { mailState, mailReady, setMailOn, scanInvoiceMail, INVOICE_ADDRESS, INVOICE_MAILBOX } from '@/lib/clean-invoice-mail'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -26,7 +26,8 @@ export async function GET(req: NextRequest) {
   if (mail) {
     const s = await mailState()
     const canSwitch = (await requireLevel('clean-invoices', 'full')).ok
-    return NextResponse.json({ ok: true, address: INVOICE_ADDRESS, mailbox: INVOICE_MAILBOX, canSwitch, on: s.on, lastRun: s.lastRun, lastError: s.lastError, recent: s.handled.slice(0, 8) })
+    const rd = await mailReady()
+    return NextResponse.json({ ok: true, address: INVOICE_ADDRESS, mailbox: INVOICE_MAILBOX, canSwitch, ready: rd.ready, notReady: rd.why || null, on: s.on, lastRun: s.lastRun, lastError: s.lastError, recent: s.handled.slice(0, 8) })
   }
   const id = req.nextUrl.searchParams.get('id')
   if (id) {
