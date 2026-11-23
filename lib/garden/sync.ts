@@ -32,7 +32,18 @@ async function mark(entity: string, ok: { count?: number } | { error: string }) 
 
 export type GardenSyncResult = { ok: boolean; connected: boolean; rooms?: number; reservations?: number; housekeeping?: number; cleans?: number; events?: number; queue?: any; triggers?: any; phone?: any; hub?: any; homebase?: any; errors: string[] }
 
-export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenSyncResult> {
+/**
+ * FAST AND IN ORDER (Jon, 2026-11-23: "make sure the sync is organized — meaning fast"). A run was ~2
+ * minutes, mostly waiting on things one after another. Now:
+ *   together   rooms, reservations and room conditions are read from Cloudbeds at the same time
+ *   lighter    between full reads (every 3 hours) reservations ask Cloudbeds only for what CHANGED
+ *              since the last run, plus everyone in house — not the whole 74-day window again
+ *   then       cleans + the housekeeping day (they need the three above)
+ *   after      the slower feeds (rates, channels, payments, notes, totals…), three at a time, and
+ *              the desks (call queue, triggers, phone, Homebase)
+ * `quick: true` (the Sync button on the boards) stops after the housekeeping day — seconds, not minutes.
+ */
+export async function syncGarden(opts: { full?: boolean; quick?: boolean } = {}): Promise<GardenSyncResult> {
   const out: GardenSyncResult = { ok: true, connected: cloudbedsConfigured(), errors: [] }
   if (!out.connected) {
     await Promise.all(['rooms', 'reservations', 'housekeeping'].map(e => mark(e, { error: 'not connected — set CLOUDBEDS_API_KEY (or the OAuth trio) and CLOUDBEDS_PROPERTY_ID in Vercel' }).catch(() => {})))
@@ -42,7 +53,7 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
   const db = supabaseAdmin()
 
   // 1) Rooms
-  try {
+  const stepRooms = async () => { try {
     const rooms = await getRooms()
     if (rooms.length) {
       const rows = rooms.map(r => ({ id: r.id, name: r.name, room_type_id: r.roomTypeId, room_type: r.roomType, floor: r.floor, max_guests: r.maxGuests, status: r.status, raw: r.raw, synced_at: new Date().toISOString() }))
@@ -51,17 +62,21 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
     }
     out.rooms = rooms.length
     await mark('rooms', { count: rooms.length })
-  } catch (e: any) { out.ok = false; out.errors.push(`rooms: ${e?.message || e}`); await mark('rooms', { error: String(e?.message || e) }) }
+  } catch (e: any) { out.ok = false; out.errors.push(`rooms: ${e?.message || e}`); await mark('rooms', { error: String(e?.message || e) }) } }
 
-  // 2) Reservations — window plus modified-since on incremental runs
-  try {
+  // 2) Reservations — what changed since the last run; the whole window every 3 hours
+  const stepRes = async () => { try {
     const from = ymd(new Date(Date.now() - 14 * 86400000)), to = ymd(new Date(Date.now() + 60 * 86400000))
     let since: string | undefined
     if (!opts.full) {
       const { data } = await db.from('garden_sync_status').select('last_sync_at').eq('entity', 'reservations').maybeSingle()
       if (data?.last_sync_at) since = new Date(new Date(data.last_sync_at).getTime() - 10 * 60000).toISOString().slice(0, 19).replace('T', ' ')
     }
-    const list = since ? [...await getReservations({ from, to, modifiedSince: since }), ...await getReservations({ from, to })] : await getReservations({ from, to })
+    const { getSettingFresh, setSetting } = await import('../app-settings')
+    const lastFull = await getSettingFresh<string | null>('garden_res_full_at', null).catch(() => null)
+    const wantFull = !since || !!opts.full || !lastFull || Date.now() - Date.parse(lastFull) > 3 * 3600e3
+    const list = wantFull ? [...(since ? await getReservations({ from, to, modifiedSince: since }) : []), ...await getReservations({ from, to })] : await getReservations({ from, to, modifiedSince: since })
+    if (wantFull) await setSetting('garden_res_full_at', new Date().toISOString(), 'garden-sync').catch(() => {})
     // EVERYONE IN HOUSE, WHATEVER THE DATES (audit 2026-11-13): the two date windows miss a long stay
     // that arrived more than 14 days ago and leaves more than 60 days out, so its room read vacant
     // and it got no stayover cleans. Cloudbeds can be asked for the in-house list directly.
@@ -100,10 +115,10 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
     }
     out.reservations = rows.length
     await mark('reservations', { count: rows.length })
-  } catch (e: any) { out.ok = false; out.errors.push(`reservations: ${e?.message || e}`); await mark('reservations', { error: String(e?.message || e) }) }
+  } catch (e: any) { out.ok = false; out.errors.push(`reservations: ${e?.message || e}`); await mark('reservations', { error: String(e?.message || e) }) } }
 
   // 3) Housekeeping status → garden_rooms
-  try {
+  const stepHk = async () => { try {
     const hk = await getHousekeeping()
     let { data: cur } = await db.from('garden_rooms').select('id,hk_status,name,occupied,housekeeper,hk_comments,dnd,refused_service,frontdesk_status,blocked') as any
     if (!cur) cur = (await db.from('garden_rooms').select('id,hk_status,name')).data as any
@@ -131,11 +146,15 @@ export async function syncGarden(opts: { full?: boolean } = {}): Promise<GardenS
     try { const { logHk } = await import('./hk-perf'); await logHk(moved, 'cloudbeds') } catch (e: any) { out.errors.push(`hk log: ${e?.message || e}`) }
     out.housekeeping = hk.length
     await mark('housekeeping', { count: hk.length })
-  } catch (e: any) { out.ok = false; out.errors.push(`housekeeping: ${e?.message || e}`); await mark('housekeeping', { error: String(e?.message || e) }) }
+  } catch (e: any) { out.ok = false; out.errors.push(`housekeeping: ${e?.message || e}`); await mark('housekeeping', { error: String(e?.message || e) }) } }
+  const t0 = Date.now()
+  await Promise.all([stepRooms(), stepRes(), stepHk()])
 
   // 4) Auto cleans from the mirror
   try { out.cleans = await ensureCleans() } catch (e: any) { out.errors.push(`cleans: ${e?.message || e}`) }
   try { const { snapshotHkDay } = await import('./hk-perf'); await snapshotHkDay() } catch (e: any) { out.errors.push(`hk day: ${e?.message || e}`) }
+  ;(out as any).coreMs = Date.now() - t0
+  if (opts.quick) return out
   // 5) The Cloudbeds hub: multi-calendar, channels, payments, messaging (lib/garden/hub).
   try { const { syncHub } = await import('./hub'); out.hub = await syncHub() } catch (e: any) { out.errors.push(`hub: ${e?.message || e}`) }
   // 6) The desks that ride the sync: the day's events, the call queue, the triggers, the phone.

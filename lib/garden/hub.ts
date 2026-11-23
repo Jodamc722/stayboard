@@ -130,9 +130,14 @@ export async function syncHub(): Promise<HubResult> {
   if (!cloudbedsConfigured()) return { skipped: 'Cloudbeds not connected' }
   const { pullTotals, pullDetails } = await import('./res-detail')
   const feeds: [string, () => Promise<number | null>][] = [['calendar', () => pullCalendar()], ['channels', pullChannels], ['payments', () => pullPayments()], ['blocks', pullRoomBlocks], ['notes', pullReservationNotes], ['totals', () => pullTotals()], ['details', pullDetails], ['operto', async () => { const o = await import('./operto'); if (!o.opertoConfigured()) return null; const st = await o.pullOperto(); if (!st.ok) throw new Error(st.error || 'Operto failed'); return st.matched }], ['staff', async () => (await import('./schedule')).seedHousekeepers()], ['messages', pullMessages]]
-  for (const [k, fn] of feeds) {
-    try { const n = await fn(); out[k] = n; if (n != null) await mark(k, { count: n }) }
-    catch (e: any) { out[k] = `error: ${String(e?.message || e).slice(0, 160)}`; await mark(k, { error: String(e?.message || e) }) }
-  }
+  // Three feeds at a time: each is its own Cloudbeds read, and none waits on another.
+  let i = 0
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    while (i < feeds.length) {
+      const [k, fn] = feeds[i++]
+      try { const n = await fn(); out[k] = n; if (n != null) await mark(k, { count: n }) }
+      catch (e: any) { out[k] = `error: ${String(e?.message || e).slice(0, 160)}`; await mark(k, { error: String(e?.message || e) }) }
+    }
+  }))
   return out
 }

@@ -11,7 +11,7 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { cbGet, cloudbedsConfigured } from './cloudbeds'
-import { botanicaGuestyReservations, botanicaListings } from './guesty-bridge'
+import { loadStays, inScope, type Scope } from './segments'
 
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
 const addDays = (s: string, n: number) => ymd(new Date(Date.parse(s + 'T12:00:00Z') + n * 86400000))
@@ -50,7 +50,8 @@ function windowStats(live: any[], from: string, to: string, rooms: number) {
   return { bookings, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * days)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * days)) : null, days }
 }
 
-export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: number } = {}) {
+export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: number; scope?: Scope } = {}) {
+  const scope: Scope = opts.scope === 'garden' || opts.scope === 'botanica' ? opts.scope : 'all'
   const db = supabaseAdmin()
   const t0 = todayET()
   // The period (Jon, 2026-11-20: "be able to select dates and time periods"). Default: this month.
@@ -69,7 +70,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   ])
   const [prevQ, bookedQ, payQ, covQ, { getSetting }] = await Promise.all([
     db.from('garden_reservations').select('status,check_in,check_out,nights,total,room_ids').not('status', 'in', '(canceled,no_show)').lte('check_in', prevTo).gte('check_out', prevFrom).limit(5000),
-    db.from('garden_reservations').select('status,total,source,booked_at').gte('booked_at', from).lt('booked_at', addDays(to, 1)).limit(5000),
+    db.from('garden_reservations').select('status,total,source,booked_at,room_names').gte('booked_at', from).lt('booked_at', addDays(to, 1)).limit(5000),
     db.from('garden_payments').select('kind,amount,paid_at').gte('paid_at', from).lt('paid_at', addDays(to, 1)).limit(5000),
     db.from('garden_reservations').select('check_out').lt('nights', 30).order('check_out').limit(1),
     import('../app-settings'),
@@ -78,18 +79,21 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const mirrorFrom = ((covQ.data || []) as any[])[0]?.check_out || null
   const coverageFrom = [histSet, mirrorFrom].filter(Boolean).sort()[0] || null
   // Botanica units still in Guesty count as rooms, and their stays as bookings (reporting only).
-  const [gyRes, gyUnits] = await Promise.all([botanicaGuestyReservations(from, to).catch(() => []), botanicaListings().catch(() => [])])
+  // Every stay, Cloudbeds and Guesty, cut by room into Garden / Botanica (lib/garden/segments).
+  const seg = await loadStays(prevFrom, to)
+  const scoped = seg.stays.map(x => inScope(x, scope)).filter(Boolean) as any[]
+  const asRow = (x: any) => ({ id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, balance: x.balance, source: x.source, room_ids: x.parts.map((p: any) => p.room), room_names: x.rooms, guest_name: x.guest, booked_at: x.bookedAt, origin: x.origin })
   // Sellable rooms per type: the physical (non-virtual) rooms Cloudbeds lists under it. The
   // calendar carries what is left per night, not the type's size, so the size comes from here.
   const RM = ((roomsQ.data || []) as any[]).filter(r => r.virtual !== true && r.virtual !== 'true')
-  const cbNames = new Set(RM.map(r => String(r.name || '').trim().toLowerCase()))
-  const gyOnly = gyUnits.filter(u => !cbNames.has(u.name.trim().toLowerCase()))
-  const rooms = RM.length + gyOnly.length
+  const segRooms = seg.rooms.filter(r => scope === 'all' || r.segment === scope)
+  const rooms = segRooms.length
   const unitsOf: Record<string, number> = {}
   for (const r of RM) unitsOf[String(r.room_type_id)] = (unitsOf[String(r.room_type_id)] || 0) + 1
 
   // ── On the books ────────────────────────────────────────────────────────────────────────────
-  const R = [...((res || []) as any[]).map(r => ({ ...r, origin: 'cloudbeds' })), ...(gyRes as any[])]
+  void res
+  const R = scoped.filter(x => x.checkIn <= to && x.checkOut >= from).map(asRow)
   const live = R.filter(r => r.status !== 'canceled' && r.status !== 'no_show')
   const cancelled = R.filter(r => r.status === 'canceled' || r.status === 'no_show')
   const lo = Date.parse(from + 'T00:00:00Z'), hi = Date.parse(to + 'T00:00:00Z') + 86400000
@@ -172,14 +176,15 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const fwdUnits = forward.reduce((a, d) => a + d.units, 0), fwdSold = forward.reduce((a, d) => a + d.sold, 0)
   return {
     from, to, ahead, rooms, today, collected, spanDays, coverageFrom,
-    prev: { from: prevFrom, to: prevTo, ...windowStats(((prevQ.data || []) as any[]), prevFrom, prevTo, rooms) },
-    booked: (() => { const B = ((bookedQ.data || []) as any[]); const L = B.filter(b => b.status !== 'canceled' && b.status !== 'no_show'); return { bookings: L.length, revenue: Math.round(L.reduce((a, b) => a + num(b.total), 0)), cancelled: B.length - L.length } })(),
+    prev: { from: prevFrom, to: prevTo, ...windowStats(scoped.filter(x => x.status !== 'canceled' && x.status !== 'no_show' && x.checkIn <= prevTo && x.checkOut >= prevFrom).map(asRow), prevFrom, prevTo, rooms) },
+    booked: (() => { const segOf: Record<string, string> = {}; for (const r of seg.rooms) segOf[r.name] = r.segment; const B = ((bookedQ.data || []) as any[]).filter(b => scope === 'all' || (Array.isArray(b.room_names) && b.room_names.length ? b.room_names.some((n: string) => segOf[n] === scope) : scope === 'garden')); const L = B.filter(b => b.status !== 'canceled' && b.status !== 'no_show'); return { bookings: L.length, revenue: Math.round(L.reduce((a, b) => a + num(b.total), 0)), cancelled: B.length - L.length } })(),
     byDay: Object.entries(day).sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, nights: v.nights, revenue: Math.round(v.revenue), occupancy: rooms ? Math.round((v.nights / rooms) * 1000) / 10 : null, adr: v.nights ? Math.round(v.revenue / v.nights) : null, arrivals: v.arrivals, departures: v.departures })),
     books: { bookings: live.length, cancelled: cancelled.length, nights, revenue: Math.round(revenue), adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * windowDays)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * windowDays)) : null, pickup7: { bookings: pickup7.length, revenue: Math.round(pickup7.reduce((a, r) => a + num(r.total), 0)) } },
     byChannel, byMonth: Object.entries(month).sort(([a], [b]) => a.localeCompare(b)).map(([m, v]) => ({ month: m, nights: v.nights, revenue: Math.round(v.revenue), adr: v.nights ? Math.round(v.revenue / v.nights) : null })),
     forward, forwardSummary: { occupancy: fwdUnits ? Math.round((fwdSold / fwdUnits) * 100) : null, rate: forward.length ? Math.round(forward.filter(d => d.rate).reduce((a, d) => a + (d.rate || 0), 0) / Math.max(1, forward.filter(d => d.rate).length)) : null },
     types, channels,
-    guesty: { units: gyOnly.length, bookings: (gyRes as any[]).length, revenue: Math.round((gyRes as any[]).reduce((a, r) => a + num(r.total), 0)) },
+    scope, segments: { all: seg.rooms.length, garden: seg.rooms.filter(r => r.segment === 'garden').length, botanica: seg.rooms.filter(r => r.segment === 'botanica').length, blocked: segRooms.filter(r => r.blocked).length },
+    guesty: { units: 0, bookings: R.filter(r => r.origin === 'guesty' && r.status !== 'canceled').length, revenue: Math.round(R.filter(r => r.origin === 'guesty' && r.status !== 'canceled').reduce((a, r) => a + num(r.total), 0)) },
     bookings: live.slice().sort((a, b) => String(a.check_in).localeCompare(String(b.check_in))).slice(0, 400).map(r => ({
       id: r.id, guest: r.guest_name || null, rooms: r.room_names || null, checkIn: r.check_in, checkOut: r.check_out, nights: num(r.nights) || null,
       channel: channelName(r.source), total: Math.round(num(r.total)), balance: r.balance != null ? Math.round(num(r.balance)) : null, status: r.status, bookedAt: r.booked_at || null, origin: r.origin,

@@ -7,7 +7,6 @@
 import 'server-only'
 import { supabaseAdmin } from '../supabase-admin'
 import { reviewStats } from './reviews'
-import { botanicaGuestyReservations, botanicaListings } from './guesty-bridge'
 
 export type Dataset<T = any> = { key: string; label: string; what: string; rows: T[]; summary?: Record<string, any> }
 const LIVE = ['confirmed', 'not_confirmed', 'checked_in', 'checked_out']
@@ -44,20 +43,16 @@ function stayMetrics(res: Res[], from: string, to: string, rooms: number) {
 // units are folded in here so the report is the whole property. A unit whose name Cloudbeds already has
 // is not added twice; a stay Cloudbeds already holds is dropped in the bridge.
 async function pull(from: string, to: string): Promise<{ res: Res[]; rooms: any[] }> {
-  const db = supabaseAdmin()
-  const [{ data: res }, { data: rooms }, gyRes, gyUnits] = await Promise.all([
-    db.from('garden_reservations').select('id,status,check_in,check_out,nights,total,balance,source,room_ids,room_names,guest_name,booked_at').in('status', LIVE).lte('check_in', to).gte('check_out', from).limit(5000),
-    // Physical rooms only: Cloudbeds' virtual (linked / combined) rooms are half the list and are not
-    // inventory — counting them halved occupancy and RevPAR in the owner report (audit 2026-11-13).
-    db.from('garden_rooms').select('id,name,room_type,status').or('raw->>isVirtual.is.null,raw->>isVirtual.eq.false'),
-    botanicaGuestyReservations(from, to).catch(() => []),
-    botanicaListings().catch(() => []),
-  ])
-  const R = (rooms || []) as any[]
-  const have = new Set(R.map(r => String(r.name || '').trim().toLowerCase()))
-  const extra = gyUnits.filter(u => !have.has(u.name.trim().toLowerCase())).map(u => ({ id: 'gy:' + u.id, name: u.name, room_type: 'Botanica · in Guesty', status: 'active' }))
-  const cb = ((res || []) as any[]).map(r => ({ ...r, origin: 'cloudbeds' as const })) as Res[]
-  return { res: [...cb, ...(gyRes as Res[])], rooms: [...R, ...extra] }
+  // One reader for reporting (lib/garden/segments): Cloudbeds + the Guesty Botanica stays it does not
+  // hold, with Guesty units matched to Cloudbeds rooms by number so no room is counted twice.
+  const { loadStays } = await import('./segments')
+  const { rooms, stays } = await loadStays(from, to)
+  const idOf: Record<string, string> = {}; for (const r of rooms) idOf[r.name] = r.id
+  const res: Res[] = stays.filter(x => LIVE.includes(x.status)).map(x => ({
+    id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, source: x.source,
+    room_ids: x.parts.map(p => idOf[p.room] || p.room).filter(Boolean), room_names: x.parts.map(p => p.room).filter(Boolean), guest_name: x.guest, balance: x.balance, booked_at: x.bookedAt, origin: x.origin,
+  }))
+  return { res, rooms: rooms.map(r => ({ id: r.id, name: r.name, room_type: r.type, status: 'active', segment: r.segment })) }
 }
 
 export async function datasetsFor(from: string, to: string): Promise<Record<string, Dataset>> {
