@@ -9,7 +9,7 @@ export const metadata = { title: 'Share Links — Lighthouse' }
 export default function LinksPage() {
   return (
     <Shell>
-      <div className="max-w-4xl">
+      <div>
         <ShareLinksHub />
       </div>
     </Shell>

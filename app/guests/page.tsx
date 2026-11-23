@@ -9,7 +9,7 @@ export const metadata = { title: 'Guests — Lighthouse' }
 export default function GuestsPage() {
   return (
     <Shell>
-      <div className="max-w-5xl">
+      <div>
         <GuestsDirectory />
       </div>
     </Shell>

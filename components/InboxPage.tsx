@@ -176,7 +176,7 @@ export function InboxPage({ initialTab }: { initialTab?: Tab }) {
   )
 
   return (
-    <div className="max-w-3xl">
+    <div>
       <div className="flex items-center gap-2 mb-1">
         <InboxIcon size={18} className="text-brand-600" />
         <h1 className="text-[17px] font-bold text-ink">Messages</h1>

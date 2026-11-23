@@ -8,7 +8,7 @@ export const metadata = { title: 'Contacts — Lighthouse' }
 export default function ContactsPage() {
   return (
     <Shell>
-      <div className="max-w-6xl">
+      <div>
         <ContactList />
       </div>
     </Shell>

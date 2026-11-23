@@ -493,7 +493,7 @@ export function LeadershipBoard({ initialItem }: { initialItem?: string | null }
   }
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { void uploadPhoto(e.target.files?.[0] || null); e.currentTarget.value = '' }} />
       <LeanHead title="Leadership" icon={<Compass size={20} className="text-brand-600" />} sub={`${stats.open} open · everyone's work on one screen`}>
         {canEdit && <button onClick={() => (adding ? setAdding(false) : startAdd())} className={BTN_DARK}><Plus size={14} /> Add</button>}

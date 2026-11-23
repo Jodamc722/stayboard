@@ -82,7 +82,7 @@ export function PhotoLibrary({ canEdit }: { canEdit: boolean }) {
   const refresh = async () => { setRefreshing(true); try { await fetch(LIB + '?refresh=1', { cache: 'no-store' }); invalidateCache(LIB); await idx.refresh() } finally { setRefreshing(false) } }
 
   return (
-    <div className="max-w-[1400px]">
+    <div>
       <LeanHead title="Photo library" sub={idx.data ? `${idx.data.buildings.length} properties · ${idx.data.units} units · ${idx.data.photos.toLocaleString()} photos · as Guesty holds them, full size · updated ${agoText(idx.data.at)}` : idx.error ? 'Could not load: ' + idx.error : 'Reading the library…'}>
         <div className="relative">
           <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
