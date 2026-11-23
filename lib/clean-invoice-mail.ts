@@ -12,7 +12,7 @@
 // OFF until someone with full access turns it on (the switch is on the Cleaning invoices page).
 // "Check the mailbox now" on that page runs one pass by hand whether or not the switch is on.
 import 'server-only'
-import { accessTokenFor, sendGmail } from './gmail-send'
+import { accessTokenFor, forgetToken, sendGmail } from './gmail-send'
 import { getSetting, setSetting } from './app-settings'
 import { submitInvoice } from './clean-invoices'
 import {
@@ -37,7 +37,10 @@ export async function mailReady(): Promise<{ ready: boolean; why?: string }> {
   try {
     const { token, error } = await accessTokenFor(INVOICE_MAILBOX)
     if (!token) return { ready: false, why: `${INVOICE_MAILBOX} is not connected to Google${error ? ' (' + error + ')' : ''}.` }
-    const r = await fetch(`${GMAIL}/messages?maxResults=1&q=${encodeURIComponent(QUERY)}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+    let r = await fetch(`${GMAIL}/messages?maxResults=1&q=${encodeURIComponent(QUERY)}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+    // A token held in memory keeps the permissions it was minted with: right after reading is allowed it
+    // still answers 403 for up to 45 minutes. Forget it and ask once more before saying no.
+    if (r.status === 403) { forgetToken(INVOICE_MAILBOX); const again = await accessTokenFor(INVOICE_MAILBOX); if (again.token) r = await fetch(`${GMAIL}/messages?maxResults=1&q=${encodeURIComponent(QUERY)}`, { headers: { Authorization: `Bearer ${again.token}` }, cache: 'no-store' }) }
     if (r.status === 403) return { ready: false, why: `Lighthouse is not allowed to read ${INVOICE_MAILBOX} yet.` }
     return r.ok ? { ready: true } : { ready: false, why: `Gmail answered ${r.status}.` }
   } catch (e: any) { return { ready: false, why: String(e?.message || e).slice(0, 160) } }
@@ -92,10 +95,13 @@ export async function scanInvoiceMail(opts: { force?: boolean; peek?: boolean; b
     return { ok: false, ran: true, handled: done, waiting, error }
   }
   try {
-    const { token, error } = await accessTokenFor(INVOICE_MAILBOX)
+    const first = await accessTokenFor(INVOICE_MAILBOX)
+    let token = first.token
+    const error = first.error
     if (!token) return await fail(`${INVOICE_MAILBOX} is not connected to Google${error ? ' (' + error + ')' : ''}.`)
     const g = async (path: string) => fetch(GMAIL + path, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
-    const list = await g(`/messages?maxResults=25&q=${encodeURIComponent(QUERY)}`)
+    let list = await g(`/messages?maxResults=25&q=${encodeURIComponent(QUERY)}`)
+    if (list.status === 403) { forgetToken(INVOICE_MAILBOX); const again = await accessTokenFor(INVOICE_MAILBOX); if (again.token) { token = again.token; list = await g(`/messages?maxResults=25&q=${encodeURIComponent(QUERY)}`) } }
     if (list.status === 403) return await fail(`The Google connection for ${INVOICE_MAILBOX} cannot read mail. Reconnect Google on My account and allow reading.`)
     if (!list.ok) return await fail(`Gmail search failed (${list.status}).`)
     const ids: string[] = ((await list.json().catch(() => ({} as any))).messages || []).map((m: any) => String(m.id))
