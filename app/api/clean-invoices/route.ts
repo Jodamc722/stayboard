@@ -3,16 +3,31 @@
 //   GET ?id=                 → one invoice with its lines, flags and unbilled cleans (+ a link to the file)
 //   POST multipart file      → upload, read, check against the cleans (edit level)
 //   POST { op, id, … }       → approve | dispute | reopen | resolve (one line) | recheck | delete
+//   GET ?mail=1              → invoices by email: the address, the switch, what came in lately
+//   GET ?mail=peek           → what one pass over the mailbox would do, changing nothing (full level)
+//   POST { op: mail-on | mail-off | mail-scan }  → the switch, and one pass by hand (full level)
 import { NextRequest, NextResponse } from 'next/server'
 import { requireLevel } from '@/lib/access'
 import { listInvoices, getInvoice, saveInvoice, submitInvoice, recheckInvoice, removeInvoice, fileUrl } from '@/lib/clean-invoices'
+import { mailState, setMailOn, scanInvoiceMail, INVOICE_ADDRESS, INVOICE_MAILBOX } from '@/lib/clean-invoice-mail'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 300
 
 export async function GET(req: NextRequest) {
   const g = await requireLevel('clean-invoices', 'view')
   if (!g.ok) return g.res
+  const mail = req.nextUrl.searchParams.get('mail')
+  if (mail === 'peek') {
+    const f = await requireLevel('clean-invoices', 'full')
+    if (!f.ok) return f.res
+    return NextResponse.json(await scanInvoiceMail({ peek: true }))
+  }
+  if (mail) {
+    const s = await mailState()
+    const canSwitch = (await requireLevel('clean-invoices', 'full')).ok
+    return NextResponse.json({ ok: true, address: INVOICE_ADDRESS, mailbox: INVOICE_MAILBOX, canSwitch, on: s.on, lastRun: s.lastRun, lastError: s.lastError, recent: s.handled.slice(0, 8) })
+  }
   const id = req.nextUrl.searchParams.get('id')
   if (id) {
     const inv = await getInvoice(id)
@@ -36,6 +51,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, invoice: inv })
     }
     const b: any = await req.json().catch(() => ({}))
+    if (b.op === 'mail-on' || b.op === 'mail-off' || b.op === 'mail-scan') {
+      // Turning on a job that sends email from jon@, or running it by hand, is a full-access act.
+      const f = await requireLevel('clean-invoices', 'full')
+      if (!f.ok) return f.res
+      if (b.op === 'mail-scan') return NextResponse.json(await scanInvoiceMail({ force: true, by: who || 'clean-invoices', budgetMs: 150_000 }))
+      const s = await setMailOn(b.op === 'mail-on', who || 'clean-invoices')
+      return NextResponse.json({ ok: true, on: s.on })
+    }
     const id = String(b.id || '')
     if (b.op === 'recheck') { const inv = await recheckInvoice(id); return inv ? NextResponse.json({ ok: true, invoice: inv }) : NextResponse.json({ ok: false, error: 'No such invoice.' }, { status: 404 }) }
     if (b.op === 'delete') { await removeInvoice(id); return NextResponse.json({ ok: true }) }

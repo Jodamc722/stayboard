@@ -2,7 +2,7 @@
 // CLEANING INVOICES (lib/clean-invoices). Upload → the lines read off the invoice → each matched to a
 // clean on record → the flags first → approve or dispute. Prices are not judged here.
 import { useEffect, useRef, useState } from 'react'
-import { Upload, Loader2, FileText, Check, AlertTriangle, RotateCcw, Trash2, ExternalLink, ArrowLeft } from 'lucide-react'
+import { Upload, Loader2, FileText, Check, AlertTriangle, RotateCcw, Trash2, ExternalLink, ArrowLeft, Mail, Copy, RefreshCw } from 'lucide-react'
 import { Tag, LeanEmpty, type Tone } from '@/components/lean'
 
 type Verdict = 'match' | 'date_off' | 'not_done' | 'no_clean' | 'duplicate' | 'unknown_unit'
@@ -61,6 +61,8 @@ export function CleanInvoices() {
         {err ? <p className="w-full text-[12.5px] text-rose-700">{err}</p> : null}
       </div>
 
+      <InvoiceMail onNew={load} />
+
       <div className="mt-5">
         {!rows ? <p className="text-[13px] text-muted inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Loading…</p>
           : !rows.length ? <LeanEmpty>No invoices yet. Upload the first one above.</LeanEmpty>
@@ -84,6 +86,77 @@ export function CleanInvoices() {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// INVOICES BY EMAIL (Jon, 2026-11-23; lib/clean-invoice-mail). One line: the address to send or cc an
+// invoice to, the switch, and what came in lately. Someone at Stay gets the audit back as a reply; an
+// outside sender gets a short "received" note and the audit goes to Jon.
+function InvoiceMail({ onNew }: { onNew: () => void }) {
+  const [m, setM] = useState<any>(null)
+  const [busy, setBusy] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [msg, setMsg] = useState('')
+  const load = () => fetch('/api/clean-invoices?mail=1', { cache: 'no-store' }).then(r => r.json()).then(j => { if (j.ok) setM(j) }).catch(() => {})
+  useEffect(() => { load() }, [])
+  if (!m) return null
+  const post = async (op: string) => {
+    setBusy(op); setMsg('')
+    const j = await fetch('/api/clean-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op }) }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }))
+    setBusy('')
+    if (op === 'mail-scan') {
+      const n = (j.handled || []).filter((h: any) => h.invoices?.length).length
+      setMsg(j.error ? j.error : j.note ? 'Not run: ' + j.note + '.' : n ? `Read ${n} email${n === 1 ? '' : 's'}.` : 'Nothing new in the mailbox.')
+      if (n) onNew()
+    } else if (!j.ok) setMsg(j.error || 'That did not save.')
+    load()
+  }
+  const copy = () => { try { navigator.clipboard.writeText(m.address).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) } catch {} }
+  const when = (s?: string | null) => s ? new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }) : ''
+  const seg = (on: boolean) => 'px-2.5 h-8 text-[12px] font-semibold ' + (on ? 'bg-ink text-white' : 'bg-white text-muted hover:text-ink')
+  return (
+    <div className="mt-3 rounded-2xl border border-line bg-white">
+      <div className="px-4 py-3 flex items-center gap-x-3 gap-y-2 flex-wrap">
+        <Mail size={16} className="text-muted shrink-0" />
+        <div className="flex-1 min-w-[240px]">
+          <div className="text-[13.5px] font-semibold text-ink">Or email it: <span className="select-all font-mono text-[13px]">{m.address}</span></div>
+          <div className="text-[12px] text-muted">Send or cc an invoice (PDF, photo or CSV) and the audit comes back as a reply. A vendor who emails it gets a short “received” note; the audit goes to {m.mailbox}.</div>
+        </div>
+        <button onClick={copy} title="Copy the address" className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink inline-flex items-center gap-1.5 hover:bg-app">{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}</button>
+        {m.canSwitch ? (
+          <>
+            <div className="inline-flex rounded-lg border border-line overflow-hidden" role="radiogroup" title="When on, the mailbox is checked every 10 minutes and replies go out on their own">
+              <button role="radio" aria-checked={!m.on} disabled={!!busy} onClick={() => m.on && post('mail-off')} className={seg(!m.on)}>Off</button>
+              <button role="radio" aria-checked={!!m.on} disabled={!!busy} onClick={() => !m.on && post('mail-on')} className={seg(!!m.on) + ' border-l border-line'}>On</button>
+            </div>
+            <button onClick={() => post('mail-scan')} disabled={!!busy} title="Read the mailbox once, now, whether or not the switch is on. Takes about a minute per invoice." className="h-8 px-2.5 rounded-lg border border-line bg-white text-[12px] font-semibold text-ink inline-flex items-center gap-1.5 hover:bg-app disabled:opacity-50">
+              {busy === 'mail-scan' ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} {busy === 'mail-scan' ? 'Reading…' : 'Check now'}
+            </button>
+          </>
+        ) : <Tag tone={m.on ? 'emerald' : 'slate'}>{m.on ? 'on' : 'off'}</Tag>}
+      </div>
+      {(msg || m.lastError || m.lastRun) ? (
+        <div className="px-4 pb-2 -mt-1 text-[12px]">
+          {msg ? <span className="text-ink">{msg} </span> : null}
+          {m.lastError ? <span className="text-rose-700">{m.lastError} </span> : null}
+          {m.lastRun ? <span className="text-muted">Last checked {when(m.lastRun)}.</span> : null}
+        </div>
+      ) : null}
+      {(m.recent || []).length ? (
+        <ul className="border-t border-line/70 divide-y divide-line/60">
+          {m.recent.map((h: any) => (
+            <li key={h.id} className="px-4 py-1.5 flex items-center gap-2 flex-wrap text-[12.5px]">
+              <span className="text-muted whitespace-nowrap">{when(h.at)}</span>
+              <span className="font-semibold text-ink">{h.from}</span>
+              <span className="text-muted truncate max-w-[18rem]">{h.subject}</span>
+              <span className="text-ink">{h.headline}</span>
+              {h.invoices?.length ? <Tag tone={h.replied ? 'slate' : 'rose'} title={h.error || undefined}>{h.replied ? (h.team ? 'audit sent back' : 'receipt sent · audit to Jon') : 'reply failed'}</Tag> : null}
+              {(h.invoices || []).map((id: string) => <a key={id} href={'/clean-invoices?id=' + id} className="text-brand-700 font-semibold hover:underline">Open</a>)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   )
 }

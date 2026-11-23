@@ -84,8 +84,11 @@ export type GmailAttachment = {
 
 // Build the RFC822 message. HTML-only stays a single text/html part (unchanged wire shape). With
 // attachments we nest: multipart/mixed [ multipart/related [ html, inline images ], files... ].
-function buildRaw(opts: { to: string[]; cc?: string[]; subject: string; html: string; attachments?: GmailAttachment[] }): string {
-  const headTo = `To: ${opts.to.join(', ')}\r\n`
+function buildRaw(opts: { to: string[]; cc?: string[]; subject: string; html: string; attachments?: GmailAttachment[]; inReplyTo?: string; references?: string }): string {
+  // A reply names the message it answers, so every mail program files it in the same conversation.
+  const clean = (v?: string) => String(v || '').replace(/[\r\n]+/g, ' ').trim()
+  const headReply = (clean(opts.inReplyTo) ? `In-Reply-To: ${clean(opts.inReplyTo)}\r\n` : '') + (clean(opts.references || opts.inReplyTo) ? `References: ${clean(opts.references || opts.inReplyTo)}\r\n` : '')
+  const headTo = headReply + `To: ${opts.to.join(', ')}\r\n`
   const cc = (opts.cc || []).map(c => String(c || '').trim()).filter(Boolean)
   const headCc = cc.length ? `Cc: ${cc.join(', ')}\r\n` : ''
   const headSubj = `Subject: ${encodeHeader(opts.subject)}\r\n`
@@ -275,18 +278,22 @@ export async function sendGmail(opts: {
   attachments?: GmailAttachment[]
   /** Which automation sent it, for email_log.source. Optional: without it the subject is read for a guess, as before. */
   source?: string
+  /** A reply inside an existing Gmail conversation: the thread's id, and the Message-ID header of the message answered. */
+  threadId?: string
+  inReplyTo?: string
+  references?: string
 }): Promise<{ ok: boolean; error?: string }> {
   const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
   const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
   if (!to.length && !cc.length) return { ok: false, error: 'no recipients' }
   const { token, error } = await accessTokenFor(opts.fromEmail)
   if (!token) return { ok: false, error }
-  const raw = buildRaw({ to, cc, subject: opts.subject, html: opts.html, attachments: opts.attachments })
+  const raw = buildRaw({ to, cc, subject: opts.subject, html: opts.html, attachments: opts.attachments, inReplyTo: opts.inReplyTo, references: opts.references })
   try {
     const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ raw: rawToB64url(raw) }),
+      body: JSON.stringify(opts.threadId ? { raw: rawToB64url(raw), threadId: opts.threadId } : { raw: rawToB64url(raw) }),
       cache: 'no-store',
     })
     if (r.ok) {

@@ -161,6 +161,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/invoice-mail",
+      "schedule": "4,14,24,34,44,54 * * * *"
+    },
+    {
       "path": "/api/cron/lost-found",
       "schedule": "7,22,37,52 * * * *"
     },
