@@ -282,6 +282,8 @@ export async function sendGmail(opts: {
   threadId?: string
   inReplyTo?: string
   references?: string
+  /** Send a message over about 1 MB through Gmail's upload address, which takes up to 35 MB. Asked for by the email review, whose answer carries the original files. */
+  largeUpload?: boolean
 }): Promise<{ ok: boolean; error?: string }> {
   const to = opts.to.map(t => String(t || '').trim()).filter(Boolean)
   const cc = (opts.cc || []).map(t => String(t || '').trim()).filter(Boolean)
@@ -290,7 +292,19 @@ export async function sendGmail(opts: {
   if (!token) return { ok: false, error }
   const raw = buildRaw({ to, cc, subject: opts.subject, html: opts.html, attachments: opts.attachments, inReplyTo: opts.inReplyTo, references: opts.references })
   try {
-    const r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    let r: Response
+    if (opts.largeUpload && raw.length > 1_000_000) {
+      // Two parts: the small JSON (which conversation it belongs to), then the message itself as it is.
+      const b = boundary('up')
+      const body = Buffer.concat([
+        Buffer.from(`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(opts.threadId ? { threadId: opts.threadId } : {})}\r\n--${b}\r\nContent-Type: message/rfc822\r\n\r\n`, 'utf8'),
+        Buffer.from(raw, 'latin1'),
+        Buffer.from(`\r\n--${b}--`, 'utf8'),
+      ])
+      r = await fetch('https://gmail.googleapis.com/upload/gmail/v1/users/me/messages/send?uploadType=multipart', {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${b}` }, body, cache: 'no-store',
+      })
+    } else r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(opts.threadId ? { raw: rawToB64url(raw), threadId: opts.threadId } : { raw: rawToB64url(raw) }),

@@ -13,11 +13,11 @@ export function MailReview() {
   const load = () => fetch('/api/mail-review', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then(j => { if (j?.ok) setM(j) }).catch(() => {})
   useEffect(() => { load() }, [])
   if (!m) return null
-  const post = async (op: string) => {
-    setBusy(op); setMsg('')
-    const j = await fetch('/api/mail-review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op }) }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }))
+  const post = async (op: string, id?: string) => {
+    setBusy(id ? op + id : op); setMsg('')
+    const j = await fetch('/api/mail-review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op, id }) }).then(r => r.json()).catch(e => ({ ok: false, error: String(e) }))
     setBusy('')
-    if (op === 'scan') { const n = (j.handled || []).filter((h: any) => h.replied).length; setMsg(j.error ? j.error : j.note ? 'Not run: ' + j.note + '.' : n ? `Reviewed ${n} email${n === 1 ? '' : 's'}. The answer is in your inbox.` : 'Nothing new in the mailbox.') }
+    if (op === 'scan' || op === 'redo') { const n = (j.handled || []).filter((h: any) => h.replied).length; setMsg(j.error ? j.error : j.note ? 'Not run: ' + j.note + '.' : n ? `Reviewed ${n} email${n === 1 ? '' : 's'}. The answer is in your inbox.` : 'Nothing new in the mailbox.') }
     else if (!j.ok) setMsg(j.error || 'That did not save.')
     load()
   }
@@ -65,6 +65,7 @@ export function MailReview() {
               <span className="text-muted truncate max-w-[18rem]">{h.subject}</span>
               <span className="text-ink">{h.line}</span>
               {h.error ? <span className="text-rose-700" title={h.error}>{h.replied ? 'reviewed with a problem' : 'not sent'}</span> : null}
+              {/^left alone/.test(h.line || '') ? null : <button onClick={() => post('redo', h.id)} disabled={!!busy} title="Review this email again and send a fresh answer" className="ml-auto h-7 px-2 rounded-md border border-line bg-white text-[11.5px] font-semibold text-ink inline-flex items-center gap-1 hover:bg-app disabled:opacity-50">{busy === 'redo' + h.id ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Again</button>}
             </li>
           ))}
         </ul>

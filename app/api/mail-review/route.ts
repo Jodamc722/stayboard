@@ -1,10 +1,10 @@
 // EMAIL REVIEW (lib/mail-review). Admins only: it reads jon@'s mailbox and sends from it.
 //   GET            → the address, the switch, whether the mailbox can be read, what came in lately
 //   GET ?peek=1    → what one pass would do, changing nothing
-//   POST { op: on | off | scan }
+//   POST { op: on | off | scan }   ·   POST { op: redo, id } reviews one email again
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/access'
-import { reviewState, reviewReady, setReviewOn, scanReviewMail, REVIEW_ADDRESS, REVIEW_MAILBOX } from '@/lib/mail-review'
+import { reviewState, reviewReady, setReviewOn, scanReviewMail, redoReview, REVIEW_ADDRESS, REVIEW_MAILBOX } from '@/lib/mail-review'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
   try {
     const b: any = await req.json().catch(() => ({}))
     if (b.op === 'scan') return NextResponse.json(await scanReviewMail({ force: true, by: who, budgetMs: 150_000 }))
+    if (b.op === 'redo') return NextResponse.json(await redoReview(String(b.id || ''), who))
     if (b.op === 'on' || b.op === 'off') { const s = await setReviewOn(b.op === 'on', who); return NextResponse.json({ ok: true, on: s.on }) }
     return NextResponse.json({ ok: false, error: 'Unknown op.' }, { status: 400 })
   } catch (e: any) {

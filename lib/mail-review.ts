@@ -8,7 +8,7 @@
 //
 // OFF until Jon turns it on (the switch is on My account). "Check now" runs one pass by hand.
 import 'server-only'
-import { accessTokenFor, forgetToken, sendGmail } from './gmail-send'
+import { accessTokenFor, forgetToken, sendGmail, type GmailAttachment } from './gmail-send'
 import { getSetting, setSetting } from './app-settings'
 import { anthropicMessages } from './anthropic-call'
 import { textOf } from './anthropic-text'
@@ -17,7 +17,7 @@ import { standingRulesForPrompt } from './eve/memory'
 import { replySubject, type MailHeaders, type MailPart } from './clean-invoice-mail-rules'
 import {
   REVIEW_ADDRESS, REVIEW_MAILBOX, MAX_REVIEWS_PER_DAY, EMPTY_REVIEW_STATE, REVIEW_PROMPT, cleanReviewState, skipReason, pickDocs, docKind, imageType, mailText,
-  parseReview, reviewHtml, reviewLine, addressOf, threadText, isHeavy, type ReviewState, type Reviewed, type Review, type ThreadMsg,
+  parseReview, reviewHtml, reviewLine, addressOf, threadText, isHeavy, realParts, MAX_ATTACH_BACK, type ReviewState, type Reviewed, type Review, type ThreadMsg,
 } from './mail-review-rules'
 import { xlsxCsv } from './xlsx-read'
 
@@ -86,7 +86,7 @@ async function reviewOne(h: MailHeaders, text: string, docs: { part: MailPart; b
     + `\n\nToday is ${etDay()}. Return the JSON.` })
   const rules = await standingRulesForPrompt(undefined, 25)
   const { model, fallback } = await modelPairFor('email-review')
-  const r = await anthropicMessages(key, { model, max_tokens: 4500, system: REVIEW_PROMPT + (rules ? '\n\n' + rules : ''), messages: [{ role: 'user', content }] }, fallback, 'email-review')
+  const r = await anthropicMessages(key, { model, max_tokens: 8000, system: REVIEW_PROMPT + (rules ? '\n\n' + rules : ''), messages: [{ role: 'user', content }] }, fallback, 'email-review')
   if (!r.ok) throw new Error(String(r.data?.error?.message || `the reader answered ${r.status}`).slice(0, 200))
   return parseReview(textOf(r.data))
 }
@@ -159,12 +159,16 @@ export async function scanReviewMail(opts: { force?: boolean; peek?: boolean; by
       state.count++
 
       let review: Review | null = null, problem = ''
+      // The files as they arrived, to send back on the answer ("attachments need to still be connected").
+      const originals = new Map<string, Buffer>()
       try {
         const docs: { part: MailPart; bytes: Buffer }[] = []
         for (const p of take) {
           const a = await g(`/messages/${id}/attachments/${p.attachmentId}`)
           if (!a.ok) { unread.push({ name: p.filename, why: 'could not be fetched' }); continue }
-          const bytes = await asText(p, b64((await a.json()).data))
+          const original = b64((await a.json()).data)
+          originals.set(p.attachmentId, original)
+          const bytes = await asText(p, original)
           if (!bytes) { unread.push({ name: p.filename, why: 'could not be opened' }); continue }
           docs.push({ part: p, bytes })
         }
@@ -196,12 +200,26 @@ export async function scanReviewMail(opts: { force?: boolean; peek?: boolean; by
       // Written down BEFORE the answer is sent: a send that fails must not cause a second review.
       state.handled.unshift(rec); await save(state, by)
 
+      // Every real file on the email goes back on the answer, read or not, while it fits.
+      const files: GmailAttachment[] = []
+      let back = 0, left = 0
+      for (const p of realParts(parts)) {
+        if (back + p.size > MAX_ATTACH_BACK) { left++; continue }
+        let bytes = originals.get(p.attachmentId)
+        if (!bytes) { try { const a = await g(`/messages/${id}/attachments/${p.attachmentId}`); if (a.ok) bytes = b64((await a.json()).data) } catch { /* counted below */ } }
+        if (!bytes) { left++; continue }
+        files.push({ filename: p.filename, content: bytes, contentType: (p.mimeType || 'application/octet-stream').split(';')[0] }); back += p.size
+      }
+
       // TO JON ONLY. Never to the sender, never to anyone else on the email.
-      const s = await sendGmail({
+      const answer = (attached: number, notAttached: number) => ({
         fromEmail: REVIEW_MAILBOX, to: [REVIEW_MAILBOX], subject: replySubject(h.subject), source: 'mail-review',
-        html: reviewHtml(review || parseReview(''), { from: h.from, subject: h.subject, unread, error: problem || undefined }),
+        html: reviewHtml(review || parseReview(''), { from: h.from, subject: h.subject, unread, error: problem || undefined, attached, notAttached }),
         threadId: String(m.threadId || ''), inReplyTo: h.messageId, references: (h.references + ' ' + h.messageId).trim(),
       })
+      let s = await sendGmail({ ...answer(files.length, left), attachments: files, largeUpload: true })
+      // An answer without the files beats no answer: if the big send is refused, send the words alone.
+      if (!s.ok && files.length) s = await sendGmail(answer(0, files.length + left))
       rec.replied = s.ok; if (!s.ok) rec.error = s.error
       await save(state, by)
       done.push(rec); waiting--
@@ -215,6 +233,16 @@ export async function scanReviewMail(opts: { force?: boolean; peek?: boolean; by
   } catch (e: any) {
     return await fail(String(e?.message || e).slice(0, 300))
   }
+}
+
+/** Review one email again (the "Again" button): forget that it was handled, then run a pass. */
+export async function redoReview(id: string, by: string): Promise<ReviewRun> {
+  const s = await reviewState()
+  const left = s.handled.filter(h => h.id !== id)
+  if (left.length === s.handled.length) return { ok: false, ran: false, handled: [], waiting: 0, error: 'That email is no longer in the list.' }
+  s.handled = left
+  await save(s, by)
+  return scanReviewMail({ force: true, by, budgetMs: 150_000 })
 }
 
 export { REVIEW_ADDRESS, REVIEW_MAILBOX }
