@@ -26,13 +26,17 @@ export type SegRoom = { id: string; name: string; type: string; segment: Segment
 // RENT AND FEE INCOME (the revenue team, 2026-11-23: "can we get fee income added to this report … fees
 // accounted for an additional +26.1% of revenue on top of rent"). Every stay carries both:
 //   rent   Cloudbeds: the room subtotal before taxes and fees · Guesty: accommodation as the guest paid it
-//   fees   Cloudbeds: what is on the reservation beyond rooms and taxes (add-on items) · Guesty: totalFees
-//          (cleaning, parking, the revenue fee, service and the rest; never less than the cleaning fee)
-// `total` is what the reports add up: rent + fees, or rent alone when the page asks for "rent only".
-export type StayPart = { room: string; segment: Segment; total: number; rent: number; fees: number }
+//   fees   the CLEANING fee (Guesty fareCleaning). Cloudbeds does not itemise one: its rate already carries it.
+//   other  PARKING (Guesty invoice lines titled Parking) and, in Cloudbeds, what is on the reservation beyond
+//          rooms and taxes (add-on items).
+// Jon, 2026-11-23: "parking and cleaning is rev but cleaning is part of ADR … parking separate … rev fee
+// leave out". So `total` — what revenue, ADR and RevPAR add up — is rent + cleaning (or rent alone on "rent
+// only"); parking and add-ons are revenue shown on their own line, never in ADR; Guesty's revenue fee,
+// service, marketing and the other pass-through lines are not counted anywhere.
+export type StayPart = { room: string; segment: Segment; total: number; rent: number; fees: number; other: number }
 export type SegStay = {
   id: string; origin: 'cloudbeds' | 'guesty'; status: string; guest: string | null; checkIn: string; checkOut: string; nights: number
-  source: string | null; bookedAt: string | null; balance: number | null; total: number; rent: number; fees: number; parts: StayPart[]
+  source: string | null; bookedAt: string | null; balance: number | null; total: number; rent: number; fees: number; other: number; parts: StayPart[]
   /** What `total` is: 'room' = room revenue before taxes and fees, 'gross' = Cloudbeds' reservation total (taxes and fees in it). */
   basis: 'room' | 'gross'
 }
@@ -81,7 +85,7 @@ export async function segmentRooms(): Promise<{ rooms: SegRoom[]; botanica: Set<
 /** Stays touching [from, to] (cancelled included, by status), each split into rooms with a segment. */
 const nightsOf = (ci: string, co: string, n: any) => Math.max(1, num(n) || Math.round((Date.parse(co) - Date.parse(ci)) / 86400000))
 const CB_COLS = 'id,status,guest_name,check_in,check_out,nights,total,balance,source,room_names,booked_at'
-const GY_COLS = 'id,listing_id,status,check_in,check_out,nights,source,guest_name,created_at,accom:raw->money->>fareAccommodationAdjusted,clean:raw->money->>fareCleaning,fees:raw->money->>totalFees,balance:raw->money->>balanceDue'
+const GY_COLS = 'id,listing_id,status,check_in,check_out,nights,source,guest_name,created_at,accom:raw->money->>fareAccommodationAdjusted,clean:raw->money->>fareCleaning,items:raw->money->invoiceItems,balance:raw->money->>balanceDue'
 /** One Cloudbeds reservation as a stay, cut by room. */
 function fromCb(r: any, botanica: Set<string>): SegStay | null {
   const ci = s(r.check_in).slice(0, 10), co = s(r.check_out).slice(0, 10)
@@ -90,12 +94,12 @@ function fromCb(r: any, botanica: Set<string>): SegStay | null {
   const net = r.room_revenue != null && Number.isFinite(Number(r.room_revenue)) ? Number(r.room_revenue) : null
   const rent = net != null ? net : num(r.total)
   // Beyond rooms and taxes: only knowable once Cloudbeds' breakdown has been read for the reservation.
-  const fees = net != null && r.taxes_fees != null ? Math.max(0, Math.round((num(r.total) - net - num(r.taxes_fees)) * 100) / 100) : 0
-  const total = rent + fees
+  const other = net != null && r.taxes_fees != null ? Math.max(0, Math.round((num(r.total) - net - num(r.taxes_fees)) * 100) / 100) : 0
+  const fees = 0, total = rent
   // No room yet: it is the hotel's own booking until a room says otherwise.
   const k = Math.max(1, names.length)
-  const parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: botanica.has(nm) ? 'botanica' : 'garden', total: total / k, rent: rent / k, fees: fees / k })) : [{ room: '', segment: 'garden', total, rent, fees }]
-  return { id: s(r.id), origin: 'cloudbeds', status: s(r.status), guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.booked_at || null, balance: r.balance != null ? num(r.balance) : null, total, rent, fees, parts, basis: net != null ? 'room' : 'gross' }
+  const parts: StayPart[] = names.length ? names.map(nm => ({ room: nm, segment: botanica.has(nm) ? 'botanica' : 'garden', total: total / k, rent: rent / k, fees: 0, other: other / k })) : [{ room: '', segment: 'garden', total, rent, fees, other }]
+  return { id: s(r.id), origin: 'cloudbeds', status: s(r.status), guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.booked_at || null, balance: r.balance != null ? num(r.balance) : null, total, rent, fees, other, parts, basis: net != null ? 'room' : 'gross' }
 }
 /** One Guesty Botanica reservation as a stay; null when Cloudbeds already holds it or it is not a booking. */
 function fromGy(r: any, listingRoom: Record<string, string>, inCb: Set<string>): SegStay | null {
@@ -106,9 +110,10 @@ function fromGy(r: any, listingRoom: Record<string, string>, inCb: Set<string>):
   const status = /cancel|declin|expired|closed/.test(st) ? 'canceled' : st === 'checked_in' || st === 'checked_out' ? st : /confirm|reserv/.test(st) ? 'confirmed' : 'other'
   if (status === 'other') return null   // inquiries and unconfirmed holds are not bookings
   // The Botanica deal: the owner keeps cleaning, so a stay's revenue is accommodation + cleaning.
-  const rent = Math.round(num(r.accom) * 100) / 100, fees = Math.round(Math.max(num(r.fees), num(r.clean)) * 100) / 100
+  const rent = Math.round(num(r.accom) * 100) / 100, fees = Math.round(num(r.clean) * 100) / 100
+  const other = Math.round((Array.isArray(r.items) ? r.items : []).reduce((a: number, it: any) => a + (/park/i.test(s(it?.title)) ? num(it?.amount) : 0), 0) * 100) / 100
   const total = Math.round((rent + fees) * 100) / 100
-  return { id: 'gy:' + s(r.id), origin: 'guesty', status, guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.created_at || null, balance: r.balance != null ? num(r.balance) : null, total, rent, fees, basis: 'room', parts: [{ room: listingRoom[s(r.listing_id)] || '', segment: 'botanica', total, rent, fees }] }
+  return { id: 'gy:' + s(r.id), origin: 'guesty', status, guest: r.guest_name || null, checkIn: ci, checkOut: co, nights: nightsOf(ci, co, r.nights), source: r.source || null, bookedAt: r.created_at || null, balance: r.balance != null ? num(r.balance) : null, total, rent, fees, other, basis: 'room', parts: [{ room: listingRoom[s(r.listing_id)] || '', segment: 'botanica', total, rent, fees, other }] }
 }
 
 let _netCol: { at: number; has: boolean } | null = null
@@ -170,7 +175,7 @@ export async function loadBooked(from: string, to: string): Promise<{ stays: Seg
 export function inScope(st: SegStay, scope: Scope): (SegStay & { rooms: string[] }) | null {
   const parts = scope === 'all' ? st.parts : st.parts.filter(p => p.segment === scope)
   if (!parts.length) return null
-  return { ...st, parts, total: parts.reduce((a, p) => a + p.total, 0), rent: parts.reduce((a, p) => a + p.rent, 0), fees: parts.reduce((a, p) => a + p.fees, 0), rooms: parts.map(p => p.room).filter(Boolean) }
+  return { ...st, parts, total: parts.reduce((a, p) => a + p.total, 0), rent: parts.reduce((a, p) => a + p.rent, 0), fees: parts.reduce((a, p) => a + p.fees, 0), other: parts.reduce((a, p) => a + p.other, 0), rooms: parts.map(p => p.room).filter(Boolean) }
 }
 
 
@@ -191,7 +196,7 @@ export function narrow(all: { rooms: SegRoom[]; stays: SegStay[] }, scope: Scope
     if (f?.losMax != null && st.nights > f.losMax) continue
     if (f?.leadMin != null || f?.leadMax != null) { const d = leadDays(st); if (d == null || (f.leadMin != null && d < f.leadMin) || (f.leadMax != null && d > f.leadMax)) continue }
     const x = inScope(st, scope); if (!x) continue
-    if (roomOk) { const parts = x.parts.filter(p => roomOk.has(p.room)); if (!parts.length) continue; stays.push({ ...x, parts, total: parts.reduce((a, p) => a + p.total, 0), rent: parts.reduce((a, p) => a + p.rent, 0), fees: parts.reduce((a, p) => a + p.fees, 0), rooms: parts.map(p => p.room).filter(Boolean) }) }
+    if (roomOk) { const parts = x.parts.filter(p => roomOk.has(p.room)); if (!parts.length) continue; stays.push({ ...x, parts, total: parts.reduce((a, p) => a + p.total, 0), rent: parts.reduce((a, p) => a + p.rent, 0), fees: parts.reduce((a, p) => a + p.fees, 0), other: parts.reduce((a, p) => a + p.other, 0), rooms: parts.map(p => p.room).filter(Boolean) }) }
     else stays.push(x)
   }
   return { rooms, stays }

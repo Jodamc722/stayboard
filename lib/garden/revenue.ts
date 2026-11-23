@@ -90,7 +90,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const N = narrow(seg, scope, filter, channelName)
   const scoped = N.stays as any[]
   void prevQ
-  const asRow = (x: any) => ({ id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, balance: x.balance, source: x.source, room_ids: x.parts.map((p: any) => p.room), room_names: x.rooms, guest_name: x.guest, booked_at: x.bookedAt, origin: x.origin, basis: x.basis, rent: x.rent, fees: x.fees })
+  const asRow = (x: any) => ({ id: x.id, status: x.status, check_in: x.checkIn, check_out: x.checkOut, nights: x.nights, total: x.total, balance: x.balance, source: x.source, room_ids: x.parts.map((p: any) => p.room), room_names: x.rooms, guest_name: x.guest, booked_at: x.bookedAt, origin: x.origin, basis: x.basis, rent: x.rent, fees: x.fees, other: x.other })
   // Sellable rooms per type: the physical (non-virtual) rooms Cloudbeds lists under it. The
   // calendar carries what is left per night, not the type's size, so the size comes from here.
   const RM = ((roomsQ.data || []) as any[]).filter(r => r.virtual !== true && r.virtual !== 'true')
@@ -110,7 +110,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
   const month: Record<string, { nights: number; revenue: number }> = {}
   const day: Record<string, { nights: number; revenue: number; arrivals: number; departures: number }> = {}
   for (let i = 0; i < Math.min(spanDays, 800); i++) day[addDays(from, i)] = { nights: 0, revenue: 0, arrivals: 0, departures: 0 }
-  let nights = 0, revenue = 0, rentW = 0, feesW = 0
+  let nights = 0, revenue = 0, rentW = 0, feesW = 0, otherW = 0
   for (const r of live) {
     const units = Math.max(1, (r.room_ids || []).length)
     const stayN = Math.max(1, num(r.nights) || Math.round((Date.parse(r.check_out) - Date.parse(r.check_in)) / 86400000))
@@ -126,7 +126,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
       const dd = day[new Date(d).toISOString().slice(0, 10)]; if (dd) { dd.nights += units; dd.revenue += perNight * units }
       mm.nights += units; mm.revenue += perNight * units
       c.nights += units; c.revenue += perNight * units
-      nights += units; revenue += perNight * units; rentW += num(r.rent) / stayN; feesW += num(r.fees) / stayN
+      nights += units; revenue += perNight * units; rentW += num(r.rent) / stayN; feesW += num(r.fees) / stayN; otherW += num(r.other) / stayN
     }
   }
   for (const r of live) { if (day[r.check_in]) day[r.check_in].arrivals++; if (day[r.check_out]) day[r.check_out].departures++ }
@@ -195,7 +195,7 @@ export async function gardenRevenue(opts: { from?: string; to?: string; ahead?: 
     prev: { from: prevFrom, to: prevTo, ...windowStats(scoped.filter(x => x.status !== 'canceled' && x.status !== 'no_show' && x.checkIn <= prevTo && x.checkOut > prevFrom).map(asRow), prevFrom, prevTo, rooms) },
     booked: (() => { const B = narrow({ rooms: seg.rooms, stays: (bookedQ as any).stays }, scope, filter, channelName).stays; const L = B.filter(b => b.status !== 'canceled' && b.status !== 'no_show'); return { bookings: L.length, revenue: Math.round(L.reduce((a, b) => a + num(b.total), 0)), nights: L.reduce((a, b) => a + b.nights * b.parts.length, 0), cancelled: B.length - L.length } })(),
     byDay: Object.entries(day).sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date, nights: v.nights, revenue: Math.round(v.revenue), occupancy: rooms ? Math.round((v.nights / rooms) * 1000) / 10 : null, adr: v.nights ? Math.round(v.revenue / v.nights) : null, arrivals: v.arrivals, departures: v.departures })),
-    books: { bookings: live.length, cancelled: cancelled.length, nights, revenue: Math.round(revenue), rent: Math.round(rentW), fees: Math.round(feesW), feePct: rentW ? Math.round((feesW / rentW) * 1000) / 10 : null, adrRent: nights ? Math.round(rentW / nights) : null, adrAll: nights ? Math.round((rentW + feesW) / nights) : null, adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * windowDays)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * windowDays)) : null, pickup7: { bookings: pickup7.length, revenue: Math.round(pickup7.reduce((a, r) => a + num(r.total), 0)) } },
+    books: { bookings: live.length, cancelled: cancelled.length, nights, revenue: Math.round(revenue), rent: Math.round(rentW), fees: Math.round(feesW), other: Math.round(otherW), otherPct: rentW ? Math.round((otherW / rentW) * 1000) / 10 : null, feePct: rentW ? Math.round((feesW / rentW) * 1000) / 10 : null, adrRent: nights ? Math.round(rentW / nights) : null, adrAll: nights ? Math.round((rentW + feesW) / nights) : null, adr: nights ? Math.round(revenue / nights) : null, occupancy: rooms ? Math.round((nights / (rooms * windowDays)) * 1000) / 10 : null, revpar: rooms ? Math.round(revenue / (rooms * windowDays)) : null, pickup7: { bookings: pickup7.length, revenue: Math.round(pickup7.reduce((a, r) => a + num(r.total), 0)) } },
     byChannel, byMonth: Object.entries(month).sort(([a], [b]) => a.localeCompare(b)).map(([m, v]) => ({ month: m, nights: v.nights, revenue: Math.round(v.revenue), adr: v.nights ? Math.round(v.revenue / v.nights) : null })),
     forward, forwardSummary: { occupancy: fwdUnits ? Math.round((fwdSold / fwdUnits) * 100) : null, rate: forward.length ? Math.round(forward.filter(d => d.rate).reduce((a, d) => a + (d.rate || 0), 0) / Math.max(1, forward.filter(d => d.rate).length)) : null },
     types, channels,

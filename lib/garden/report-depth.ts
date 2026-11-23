@@ -23,16 +23,16 @@ function summary(all: { rooms: SegRoom[]; stays: SegStay[] }, scope: Scope, from
   const N = narrow(all, scope, f, channelName)
   const lo = ms(from), hi = ms(to) + DAY, days = Math.round((hi - lo) / DAY)
   const R = N.rooms
-  const a = agg(); let cancelled = 0, lost = 0, owed = 0, owedN = 0, arrivals = 0, rent = 0, fees = 0
+  const a = agg(); let cancelled = 0, lost = 0, owed = 0, owedN = 0, arrivals = 0, rent = 0, fees = 0, other = 0
   for (const x of N.stays) {
     if (!isLive(x)) { if (x.checkIn <= to && x.checkOut > from) { cancelled++; lost += x.total } continue }
     const n = Math.max(0, Math.round((Math.min(hi, ms(x.checkOut)) - Math.max(lo, ms(x.checkIn))) / DAY))
     if (n <= 0) continue
-    a.stays++; a.nights += n * x.parts.length; a.revenue += (x.total / x.nights) * n; rent += (x.rent / x.nights) * n; fees += (x.fees / x.nights) * n
+    a.stays++; a.nights += n * x.parts.length; a.revenue += (x.total / x.nights) * n; rent += (x.rent / x.nights) * n; fees += (x.fees / x.nights) * n; other += (x.other / x.nights) * n
     if (x.checkIn >= from && x.checkIn <= to) arrivals++
     if ((x.balance || 0) > 0) { owed += x.balance || 0; owedN++ }
   }
-  return { scope, label: SEGMENT_LABEL[scope], rooms: R.length, blocked: R.filter(r => r.blocked).length, days, ...line(a, R.length, days), rent: r0(rent), fees: r0(fees), feePct: rent ? r1((fees / rent) * 100) : null, adrRent: a.nights ? r0(rent / a.nights) : null, adrAll: a.nights ? r0((rent + fees) / a.nights) : null, revparAll: R.length && days ? r0((rent + fees) / (R.length * days)) : null, arrivals, cancelled, cancelRate: a.stays + cancelled ? r0((cancelled / (a.stays + cancelled)) * 100) : 0, lostRevenue: r0(lost), owed: r0(owed), owedStays: owedN, avgStay: a.stays ? r1(a.nights / a.stays) : null }
+  return { scope, label: SEGMENT_LABEL[scope], rooms: R.length, blocked: R.filter(r => r.blocked).length, days, ...line(a, R.length, days), rent: r0(rent), fees: r0(fees), other: r0(other), otherPct: rent ? r1((other / rent) * 100) : null, feePct: rent ? r1((fees / rent) * 100) : null, adrRent: a.nights ? r0(rent / a.nights) : null, adrAll: a.nights ? r0((rent + fees) / a.nights) : null, revparAll: R.length && days ? r0((rent + fees) / (R.length * days)) : null, arrivals, cancelled, cancelRate: a.stays + cancelled ? r0((cancelled / (a.stays + cancelled)) * 100) : 0, lostRevenue: r0(lost), owed: r0(owed), owedStays: owedN, avgStay: a.stays ? r1(a.nights / a.stays) : null }
 }
 
 export async function gardenDepth(from: string, to: string, scope: Scope = 'all', filter?: StayFilter | null) {
@@ -47,7 +47,7 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
   const live = S.filter(isLive)
 
   const month: Record<string, Agg> = {}, dow: Agg[] = Array.from({ length: 7 }, agg), dowDays = [0, 0, 0, 0, 0, 0, 0]
-  const wing: Record<string, Agg> = {}, type: Record<string, Agg> = {}, room: Record<string, Agg> = {}, chan: Record<string, Agg & { lead: number; leadN: number; cancelled: number; rent: number; fees: number }> = {}
+  const wing: Record<string, Agg> = {}, type: Record<string, Agg> = {}, room: Record<string, Agg> = {}, chan: Record<string, Agg & { lead: number; leadN: number; cancelled: number; rent: number; fees: number; other: number }> = {}
   const LOS = ['1 night', '2 nights', '3 nights', '4–6 nights', '7–13 nights', '14–29 nights', '30+ nights'], LEAD = ['Same day', '1–3 days', '4–7 days', '8–14 days', '15–30 days', '31–60 days', '61+ days']
   const los = LOS.map(agg), lead = LEAD.map(agg)
   const bucket = (n: number, edges: number[]) => { let i = 0; while (i < edges.length && n > edges[i]) i++; return i }
@@ -58,9 +58,9 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
     const a = Math.max(lo, ms(x.checkIn)), b = Math.min(hi, ms(x.checkOut))
     const n = Math.max(0, Math.round((b - a) / DAY)); if (n <= 0) continue
     const k = channelName(x.source)
-    const c = chan[k] = chan[k] || { ...agg(), lead: 0, leadN: 0, cancelled: 0, rent: 0, fees: 0 }
+    const c = chan[k] = chan[k] || { ...agg(), lead: 0, leadN: 0, cancelled: 0, rent: 0, fees: 0, other: 0 }
     const inWin = (x.total / x.nights) * n
-    c.stays++; c.nights += n * x.parts.length; c.revenue += inWin; c.rent += (x.rent / x.nights) * n; c.fees += (x.fees / x.nights) * n
+    c.stays++; c.nights += n * x.parts.length; c.revenue += inWin; c.rent += (x.rent / x.nights) * n; c.fees += (x.fees / x.nights) * n; c.other += (x.other / x.nights) * n
     const L = los[bucket(x.nights, [1, 2, 3, 6, 13, 29])]; L.stays++; L.nights += n * x.parts.length; L.revenue += inWin
     if (x.bookedAt) { const d = Math.round((ms(x.checkIn) - ms(String(x.bookedAt).slice(0, 10))) / DAY); if (d >= 0) { c.lead += d; c.leadN++; const B = lead[bucket(d, [0, 3, 7, 14, 30, 60])]; B.stays++; B.nights += n * x.parts.length; B.revenue += inWin } }
     for (const p of x.parts) {
@@ -75,7 +75,7 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
       }
     }
   }
-  for (const x of S) if (!isLive(x) && x.checkIn <= to && x.checkOut > from) { const k = channelName(x.source); (chan[k] = chan[k] || { ...agg(), lead: 0, leadN: 0, cancelled: 0, rent: 0, fees: 0 }).cancelled++ }
+  for (const x of S) if (!isLive(x) && x.checkIn <= to && x.checkOut > from) { const k = channelName(x.source); (chan[k] = chan[k] || { ...agg(), lead: 0, leadN: 0, cancelled: 0, rent: 0, fees: 0, other: 0 }).cancelled++ }
 
   const totalRev = live.reduce((s2, x) => { const n = Math.max(0, Math.round((Math.min(hi, ms(x.checkOut)) - Math.max(lo, ms(x.checkIn))) / DAY)); return s2 + (x.total / x.nights) * n }, 0)
   const countBy = (f: (r: SegRoom) => string) => { const o: Record<string, number> = {}; for (const r of R) o[f(r)] = (o[f(r)] || 0) + 1; return o }
@@ -93,7 +93,7 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
     byType: Object.keys(typeN).map(t => ({ type: t, rooms: typeN[t], ...line(type[t] || agg(), typeN[t], days) })).sort((a, b) => b.revenue - a.revenue),
     byRoom: R.map(r => ({ room: r.name, type: r.type, segment: r.segment, blocked: r.blocked, ...line(room[r.name] || agg(), 1, days) })).sort((a, b) => b.revenue - a.revenue || a.room.localeCompare(b.room, undefined, { numeric: true })),
     unassigned: room['No room yet'] ? line(room['No room yet'], 0, days) : null,
-    byChannel: Object.entries(chan).map(([channel, c]) => ({ channel, ...line(c, 0, 0), rent: r0(c.rent), fees: r0(c.fees), feePct: c.rent ? r1((c.fees / c.rent) * 100) : null, share: totalRev ? r0((c.revenue / totalRev) * 100) : 0, lead: c.leadN ? r0(c.lead / c.leadN) : null, cancelled: c.cancelled, cancelRate: c.stays + c.cancelled ? r0((c.cancelled / (c.stays + c.cancelled)) * 100) : 0 })).sort((a, b) => b.revenue - a.revenue),
+    byChannel: Object.entries(chan).map(([channel, c]) => ({ channel, ...line(c, 0, 0), rent: r0(c.rent), fees: r0(c.fees), other: r0(c.other), feePct: c.rent ? r1((c.fees / c.rent) * 100) : null, share: totalRev ? r0((c.revenue / totalRev) * 100) : 0, lead: c.leadN ? r0(c.lead / c.leadN) : null, cancelled: c.cancelled, cancelRate: c.stays + c.cancelled ? r0((c.cancelled / (c.stays + c.cancelled)) * 100) : 0 })).sort((a, b) => b.revenue - a.revenue),
     byLos: LOS.map((label, i) => ({ label, ...line(los[i], 0, 0) })), byLead: LEAD.map((label, i) => ({ label, ...line(lead[i], 0, 0) })),
     owed: owedList,
     partial: !!all.partial, filter: f || {}, rentOnly: !!f?.rentOnly,
@@ -102,13 +102,13 @@ export async function gardenDepth(from: string, to: string, scope: Scope = 'all'
     // groups it any way asked (components/GardenViews). No guest name on it.
     //   c channel · l nights of the whole stay · d days booked ahead (null unknown) · a arrival · b booked on
     //   s side · w wing · t room type · n nights in the period · r revenue in the period · x 1 = cancelled / no-show
-    //   e rent in the period · f fee income in the period (r is e + f, or e alone on "rent only")
+    //   e rent in the period · f cleaning fees in the period (r is e + f, or e alone on "rent only") · p parking and add-ons
     //   k share of one stay this line is (1 / rooms on the stay), so stays add up to whole numbers
     cube: S.flatMap(x => {
       const a = Math.max(lo, ms(x.checkIn)), b = Math.min(hi, ms(x.checkOut)), n = Math.max(0, Math.round((b - a) / DAY))
       if (n <= 0) return []
       const dead = !isLive(x), d = leadDays(x)
-      return x.parts.map(p => { const rm = roomBy[p.room]; return { c: channelName(x.source), l: x.nights, d, a: x.checkIn, b: x.bookedAt ? String(x.bookedAt).slice(0, 10) : null, s: p.segment, w: rm?.wing || 'No room yet', t: rm?.type || 'No room yet', n, r: Math.round((p.total / x.nights) * n * 100) / 100, e: Math.round((p.rent / x.nights) * n * 100) / 100, f: Math.round((p.fees / x.nights) * n * 100) / 100, x: dead ? 1 : 0, k: Math.round((1 / x.parts.length) * 1000) / 1000 } })
+      return x.parts.map(p => { const rm = roomBy[p.room]; return { c: channelName(x.source), l: x.nights, d, a: x.checkIn, b: x.bookedAt ? String(x.bookedAt).slice(0, 10) : null, s: p.segment, w: rm?.wing || 'No room yet', t: rm?.type || 'No room yet', n, r: Math.round((p.total / x.nights) * n * 100) / 100, e: Math.round((p.rent / x.nights) * n * 100) / 100, f: Math.round((p.fees / x.nights) * n * 100) / 100, p: Math.round((p.other / x.nights) * n * 100) / 100, x: dead ? 1 : 0, k: Math.round((1 / x.parts.length) * 1000) / 1000 } })
     }),
   }
 }
