@@ -26,6 +26,10 @@ export const LINK_KINDS = [
   // Have a password. It should show reservation names, and check in and checkout dates. Also past
   // guests too"). Names and dates only — no phone, email, door code or money — on its own passcode.
   'surfside-guests',
+  // THE GARDEN REVENUE REPORT (Jon, 2026-11-23: "a shareable link with passcode to share with the Rev
+  // team"). Garden → Reports → Revenue, read-only, no guest names. Minted from the report's own Share
+  // button (lib/garden/revenue-share); always on a passcode.
+  'garden-revenue',
 ] as const
 export type LinkKind = typeof LINK_KINDS[number]
 export const AUDIENCES = ['crew', 'vendor', 'owner', 'guest', 'partner', 'internal'] as const
@@ -37,14 +41,14 @@ export const CREATABLE_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-
 /** Kinds whose link never expires by nature — the crew boards. Everything else is "generated". */
 // 'project-board' is standing on purpose: a board handed to an owner is open until somebody
 // revokes it, which makes it exactly the kind of link that must not hide behind a filter.
-export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'project-board', 'photo-library', 'surfside-guests']
+export const STANDING_KINDS: LinkKind[] = ['vendor-board', 'scheduler', 'field-board', 'parking', 'day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'project-board', 'photo-library', 'surfside-guests', 'garden-revenue']
 
 export const KIND_LABEL: Record<LinkKind, string> = {
   'vendor-board': 'Vendor cleaning board', scheduler: 'Team scheduler', 'field-board': 'Live field board', parking: 'Parking board',
   'day-sheet': 'Day sheet', delivery: 'Delivery log', 'orders-live': 'Guest orders — live', 'salato-desk': 'Salato desk board',
   marketing: 'Direct bookings report', 'owner-audit': 'Owner statement audit', botanica: 'Botanica report', 'botanica-bookings': 'Botanica bookings export',
   'owner-report': 'Owner report', guidebook: 'Guidebook', guide: 'Guest guide page', 'order-form': 'Order form', count: 'Inventory count', 'custom-page': 'Custom report',
-  'project-board': 'Project board', 'photo-library': 'Photo library', 'surfside-guests': 'Surfside guest list',
+  'project-board': 'Project board', 'photo-library': 'Photo library', 'surfside-guests': 'Surfside guest list', 'garden-revenue': 'Garden revenue report',
 }
 export const AUDIENCE_LABEL: Record<Audience, string> = {
   crew: 'Our crew', vendor: 'Vendors', owner: 'Owners', guest: 'Guests', partner: 'Partners & front desks', internal: 'Internal / reviewers',
@@ -93,6 +97,7 @@ export function pathFor(kind: string, code: string): string {
     case 'botanica': return '/report/botanica'
     case 'botanica-bookings': return '/report/botanica-bookings'
     case 'surfside-guests': return '/report/surfside-guests'
+    case 'garden-revenue': return '/report/garden-revenue'
     case 'owner-report': return '/r/' + code
     case 'guidebook': return '/g/' + code
     case 'guide': return '/guide/' + code
@@ -106,7 +111,7 @@ export function pathFor(kind: string, code: string): string {
 
 /** A FIXED page (one row per page, on a short readable code) versus a code-per-row page. Fixed
  *  pages cannot be minted twice: a second "day sheet" link would need a second page. */
-export const FIXED_CODE_KINDS: string[] = ['day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'order-form', 'surfside-guests']
+export const FIXED_CODE_KINDS: string[] = ['day-sheet', 'delivery', 'orders-live', 'salato-desk', 'marketing', 'owner-audit', 'botanica', 'botanica-bookings', 'order-form', 'surfside-guests', 'garden-revenue']
 
 export function linkStatus(l: Pick<ShareLinkRow, 'revoked_at' | 'expires_at' | 'open' | 'passcode_hash'>, now = Date.now()): LinkStatus {
   if (l.revoked_at) return 'revoked'
@@ -187,6 +192,7 @@ export function describeLink(l: Pick<ShareLinkRow, 'kind' | 'scope' | 'audience'
     case 'order-form': parts.push('open form, no passcode'); break
     case 'count': parts.push('inventory count sheet'); break
     case 'surfside-guests': parts.push('Surfside reservations: guest name, check-in, check-out'); parts.push('current, upcoming and past guests'); parts.push('no contact details, codes or money'); break
+    case 'garden-revenue': parts.push('Garden revenue, occupancy, ADR by period'); parts.push('Garden / Botanica / whole property, filters'); parts.push('no guest names'); break
     case 'photo-library': parts.push('every property and unit photo'); parts.push('view & download, nothing editable'); break
     default: {
       parts.push(scopeWords())
