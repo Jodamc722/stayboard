@@ -21,7 +21,7 @@ export const REPLY_TAG = 'Invoice check'
 const OURS = /@(stay-hospitality\.com|staysoflo\.com)$|^guillermo\.?stayhospitality@gmail\.com$/i
 export const isTeam = (email: string): boolean => OURS.test(String(email || '').trim().toLowerCase())
 
-export type MailHeaders = { from: string; to: string; cc: string; deliveredTo: string; subject: string; autoSubmitted: string; precedence: string; messageId: string; references: string; inReplyTo: string }
+export type MailHeaders = { from: string; to: string; cc: string; bcc?: string; deliveredTo: string; subject: string; autoSubmitted: string; precedence: string; messageId: string; references: string; inReplyTo: string }
 export type MailPart = { filename: string; mimeType: string; size: number; attachmentId: string; inline: boolean }
 
 /** "Ana Ruiz <ana@x.com>" → ana@x.com */
@@ -34,10 +34,14 @@ export function nameOf(v: string): string {
   return (m ? m[1] : '').trim()
 }
 
-/** Was this message addressed, copied or delivered to the invoice address? */
+/**
+ * Was this message addressed, copied or delivered to the invoice address? Bcc counts: when Jon himself
+ * blind-copies the address from his own mailbox, the copy Gmail keeps has no Delivered-To line and the
+ * address is only on the Bcc line (found live 2026-11-23, his first forward was Bcc only).
+ */
 export function addressedToUs(h: MailHeaders, address = INVOICE_ADDRESS): boolean {
   const a = address.toLowerCase()
-  return [h.to, h.cc, h.deliveredTo].some(v => String(v || '').toLowerCase().includes(a))
+  return [h.to, h.cc, h.bcc, h.deliveredTo].some(v => String(v || '').toLowerCase().includes(a))
 }
 
 /**

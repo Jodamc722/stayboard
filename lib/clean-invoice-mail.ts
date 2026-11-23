@@ -25,7 +25,7 @@ const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const STATE = 'clean_invoice_mail'
 const LOCK = 'clean_invoice_mail_lock'
 const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://lighthouse-stay.vercel.app').replace(/\/+$/, '')
-const QUERY = `{deliveredto:${INVOICE_ADDRESS} to:${INVOICE_ADDRESS} cc:${INVOICE_ADDRESS}} newer_than:7d`
+const QUERY = `{deliveredto:${INVOICE_ADDRESS} to:${INVOICE_ADDRESS} cc:${INVOICE_ADDRESS} bcc:${INVOICE_ADDRESS}} newer_than:7d`
 const etDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 
 export async function mailState(): Promise<MailState> { return cleanState(await getSetting<unknown>(STATE, EMPTY_STATE).catch(() => EMPTY_STATE)) }
@@ -48,7 +48,7 @@ export async function mailReady(): Promise<{ ready: boolean; why?: string }> {
 
 const hdr = (m: any, name: string): string => String((m?.payload?.headers || []).find((h: any) => String(h.name).toLowerCase() === name.toLowerCase())?.value || '')
 function headersOf(m: any): MailHeaders {
-  return { from: hdr(m, 'From'), to: hdr(m, 'To'), cc: hdr(m, 'Cc'), deliveredTo: hdr(m, 'Delivered-To'), subject: hdr(m, 'Subject'), autoSubmitted: hdr(m, 'Auto-Submitted'), precedence: hdr(m, 'Precedence'), messageId: hdr(m, 'Message-ID') || hdr(m, 'Message-Id'), references: hdr(m, 'References'), inReplyTo: hdr(m, 'In-Reply-To') }
+  return { from: hdr(m, 'From'), to: hdr(m, 'To'), cc: hdr(m, 'Cc'), bcc: hdr(m, 'Bcc'), deliveredTo: hdr(m, 'Delivered-To'), subject: hdr(m, 'Subject'), autoSubmitted: hdr(m, 'Auto-Submitted'), precedence: hdr(m, 'Precedence'), messageId: hdr(m, 'Message-ID') || hdr(m, 'Message-Id'), references: hdr(m, 'References'), inReplyTo: hdr(m, 'In-Reply-To') }
 }
 function partsOf(payload: any): MailPart[] {
   const out: MailPart[] = []

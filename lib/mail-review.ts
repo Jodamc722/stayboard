@@ -17,8 +17,9 @@ import { standingRulesForPrompt } from './eve/memory'
 import { replySubject, type MailHeaders, type MailPart } from './clean-invoice-mail-rules'
 import {
   REVIEW_ADDRESS, REVIEW_MAILBOX, MAX_REVIEWS_PER_DAY, EMPTY_REVIEW_STATE, REVIEW_PROMPT, cleanReviewState, skipReason, pickDocs, docKind, imageType, mailText,
-  parseReview, reviewHtml, reviewLine, addressOf, type ReviewState, type Reviewed, type Review,
+  parseReview, reviewHtml, reviewLine, addressOf, threadText, isHeavy, type ReviewState, type Reviewed, type Review, type ThreadMsg,
 } from './mail-review-rules'
+import { xlsxCsv } from './xlsx-read'
 
 const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const STATE = 'mail_review'
@@ -45,7 +46,7 @@ export async function reviewReady(): Promise<{ ready: boolean; why?: string }> {
 
 const hdr = (m: any, name: string): string => String((m?.payload?.headers || []).find((h: any) => String(h.name).toLowerCase() === name.toLowerCase())?.value || '')
 function headersOf(m: any): MailHeaders {
-  return { from: hdr(m, 'From'), to: hdr(m, 'To'), cc: hdr(m, 'Cc'), deliveredTo: hdr(m, 'Delivered-To'), subject: hdr(m, 'Subject'), autoSubmitted: hdr(m, 'Auto-Submitted'), precedence: hdr(m, 'Precedence'), messageId: hdr(m, 'Message-ID') || hdr(m, 'Message-Id'), references: hdr(m, 'References'), inReplyTo: hdr(m, 'In-Reply-To') }
+  return { from: hdr(m, 'From'), to: hdr(m, 'To'), cc: hdr(m, 'Cc'), bcc: hdr(m, 'Bcc'), deliveredTo: hdr(m, 'Delivered-To'), subject: hdr(m, 'Subject'), autoSubmitted: hdr(m, 'Auto-Submitted'), precedence: hdr(m, 'Precedence'), messageId: hdr(m, 'Message-ID') || hdr(m, 'Message-Id'), references: hdr(m, 'References'), inReplyTo: hdr(m, 'In-Reply-To') }
 }
 const b64 = (s: string) => Buffer.from(String(s || '').replace(/-/g, '+').replace(/_/g, '/'), 'base64')
 const unhtml = (h: string) => h.replace(/<(style|script)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|tr|h\d|blockquote)>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
@@ -67,7 +68,7 @@ function read(payload: any): { text: string; parts: MailPart[] } {
 }
 
 /** One email → what it is, what the documents are, the steps. Throws with a plain reason on failure. */
-async function reviewOne(h: MailHeaders, text: string, docs: { part: MailPart; bytes: Buffer }[], unread: { name: string; why: string }[]): Promise<Review> {
+async function reviewOne(h: MailHeaders, text: string, docs: { part: MailPart; bytes: Buffer }[], unread: { name: string; why: string }[], earlier = ''): Promise<Review> {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('AI is not configured')
   const content: any[] = []
@@ -76,16 +77,33 @@ async function reviewOne(h: MailHeaders, text: string, docs: { part: MailPart; b
     content.push({ type: 'text', text: `Attached file "${d.part.filename}":` })
     if (k === 'pdf') content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: d.bytes.toString('base64') } })
     else if (k === 'image') content.push({ type: 'image', source: { type: 'base64', media_type: imageType(d.part), data: d.bytes.toString('base64') } })
+    // Word and Excel files arrive here already turned into text (see asText below).
     else content.push({ type: 'text', text: d.bytes.toString('utf8').slice(0, 60000) })
   }
+  if (earlier) content.push({ type: 'text', text: `EARLIER IN THIS CONVERSATION (background, oldest first):\n\n${earlier}` })
   content.push({ type: 'text', text: `THE EMAIL\nFrom: ${h.from}\nTo: ${h.to}${h.cc ? '\nCc: ' + h.cc : ''}\nSubject: ${h.subject}\n\n${text || '(no text in the body)'}`
     + (unread.length ? `\n\nAttached but not readable here (name only): ${unread.map(u => u.name).join(', ')}` : '')
     + `\n\nToday is ${etDay()}. Return the JSON.` })
   const rules = await standingRulesForPrompt(undefined, 25)
   const { model, fallback } = await modelPairFor('email-review')
-  const r = await anthropicMessages(key, { model, max_tokens: 3000, system: REVIEW_PROMPT + (rules ? '\n\n' + rules : ''), messages: [{ role: 'user', content }] }, fallback, 'email-review')
+  const r = await anthropicMessages(key, { model, max_tokens: 4500, system: REVIEW_PROMPT + (rules ? '\n\n' + rules : ''), messages: [{ role: 'user', content }] }, fallback, 'email-review')
   if (!r.ok) throw new Error(String(r.data?.error?.message || `the reader answered ${r.status}`).slice(0, 200))
   return parseReview(textOf(r.data))
+}
+
+/** A Word or Excel attachment as plain text, or null when it cannot be opened. Everything else unchanged. */
+async function asText(part: MailPart, bytes: Buffer): Promise<Buffer | null> {
+  const k = docKind(part)
+  try {
+    if (k === 'word') {
+      const mammoth: any = await import('mammoth')
+      const out = await (mammoth.default || mammoth).extractRawText({ buffer: bytes })
+      const t = String(out?.value || '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim()
+      return t ? Buffer.from(t, 'utf8') : null
+    }
+    if (k === 'sheet') { const csv = xlsxCsv(bytes, 300, 30); return csv ? Buffer.from(csv, 'utf8') : null }
+  } catch { return null }
+  return bytes
 }
 
 export type ReviewRun = { ok: boolean; ran: boolean; handled: Reviewed[]; waiting: number; error?: string; note?: string }
@@ -146,9 +164,32 @@ export async function scanReviewMail(opts: { force?: boolean; peek?: boolean; by
         for (const p of take) {
           const a = await g(`/messages/${id}/attachments/${p.attachmentId}`)
           if (!a.ok) { unread.push({ name: p.filename, why: 'could not be fetched' }); continue }
-          docs.push({ part: p, bytes: b64((await a.json()).data) })
+          const bytes = await asText(p, b64((await a.json()).data))
+          if (!bytes) { unread.push({ name: p.filename, why: 'could not be opened' }); continue }
+          docs.push({ part: p, bytes })
         }
-        review = await reviewOne(h, text, docs, unread)
+        // The rest of the conversation, for "review the chain": a forward quotes only the last message.
+        let earlier = ''
+        try {
+          const t = m.threadId ? await g(`/threads/${m.threadId}?format=full`) : null
+          if (t?.ok) {
+            const mine = Number(m.internalDate) || Date.now()
+            const msgs: ThreadMsg[] = (((await t.json()).messages || []) as any[])
+              .filter(x => String(x.id) !== id && (Number(x.internalDate) || 0) <= mine)
+              .sort((a, b) => (Number(a.internalDate) || 0) - (Number(b.internalDate) || 0))
+              .map(x => ({ from: hdr(x, 'From'), date: hdr(x, 'Date').replace(/\s*[+-]\d{4}.*$/, ''), subject: hdr(x, 'Subject'), text: read(x.payload).text }))
+            earlier = threadText(msgs)
+          }
+        } catch { /* the email itself is enough */ }
+        try { review = await reviewOne(h, text, docs, unread, earlier) }
+        catch (e: any) {
+          // Usually too many pages at once. Read it again from the text files alone and say which
+          // PDFs and photos were left out, rather than answer with nothing.
+          const light = docs.filter(d => !isHeavy(docKind(d.part)))
+          if (light.length === docs.length) throw e
+          for (const d of docs) if (isHeavy(docKind(d.part))) unread.push({ name: d.part.filename, why: 'too much to read in one go with the rest' })
+          review = await reviewOne(h, text, light, unread, earlier)
+        }
       } catch (e: any) { problem = String(e?.message || e).slice(0, 200) }
       rec.line = review ? reviewLine(review) : 'could not be reviewed'
       if (problem) rec.error = problem

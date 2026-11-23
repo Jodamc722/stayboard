@@ -198,7 +198,7 @@ export const AI_TASKS: AiTask[] = [
     matters: 'Every line is then checked against the cleans on record. A misread unit or date becomes a false flag the office has to clear by hand. One call per upload.' },
   // Email review (Jon, 2026-11-23): an email forwarded to jon+review@ is read with its attachments.
   { key: 'email-review', title: 'Email review — what it is, the documents, the steps', group: 'Operations', def: 'sonnet', background: true,
-    what: 'Reads an email forwarded or copied to jon+review@stay-hospitality.com, with its PDFs and photos, and writes what it is, what each document is and the steps needed. The answer goes to Jon only.',
+    what: 'Reads an email forwarded or copied to jon+review@stay-hospitality.com, with its PDFs, photos, Word and Excel files and the earlier messages of the conversation, and writes what it is, the answer to what Jon asked, what each document is and the steps needed. The answer goes to Jon only.',
     matters: 'Jon acts on the steps. A weak model misreads a date or an amount on a document, or invents a step. One call per email, at most 25 a day.' },
   // And what Adam takes from a document: the rules he files as memories.
   { key: 'adam-study', title: 'Adam — learning from an uploaded file', group: 'Garden Hotel', def: 'sonnet', background: true,

@@ -31,7 +31,7 @@ export function MailReview() {
         <Mail size={16} className="text-muted shrink-0" />
         <div className="flex-1 min-w-[240px]">
           <div className="text-[13.5px] font-semibold text-ink">Email review: <span className="select-all font-mono text-[13px]">{m.address}</span></div>
-          <div className="text-[12px] text-muted">Forward, cc or bcc any email here. Lighthouse reads it with its attachments and answers {m.mailbox} only: what it is, what each document is, and the steps needed. Nobody else on the email is answered.</div>
+          <div className="text-[12px] text-muted">Forward, cc or bcc any email here. Lighthouse reads it with its attachments and answers {m.mailbox} only: what it is, what each document is, and the steps needed. Type a question above the forward and it is answered too. Nobody else on the email is answered.</div>
         </div>
         <button onClick={copy} title="Copy the address" className={btn}>{copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}</button>
         <div className="inline-flex rounded-lg border border-line overflow-hidden" role="radiogroup" title="When on, the mailbox is checked every 10 minutes">
